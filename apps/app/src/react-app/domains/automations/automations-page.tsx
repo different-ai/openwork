@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import { useMemo, useState } from "react"
 import { createPortal } from "react-dom"
+import { featureAnalytics } from "@/app/lib/analytics"
 import { useQuery } from "@tanstack/react-query"
 import {
   AlertCircle,
@@ -55,6 +56,8 @@ import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal"
 import { automationCreationPlacement } from "./automation-availability"
 import { resolveAutomationPlacement } from "./automation-placement"
 import { AutomationEditor } from "./automation-editor"
+import { AutomationShareButton } from "./automation-share-button"
+import { SharedAutomationsSection } from "./shared-automations-section"
 import { automationEditChoices, useAutomationEditorSetup } from "./use-automation-editor-setup"
 import {
   ACTIVE_RUN_STATUSES,
@@ -65,6 +68,7 @@ import {
   useAutomationListQuery,
   useAutomationRunsQuery,
   useAutomationsDenContext,
+  useAutomationSharingEnabled,
 } from "./use-automations"
 import { automationExecutionThreadRoute, automationExecutionIdentity, automationLocalSessionRoute } from "./automation-cloud-thread"
 import { automationRunConnectionFix, automationRunNotice, formatAutomationSchedule, formatAutomationTime, runStatusLabel } from "./automation-format"
@@ -187,6 +191,7 @@ export function AutomationsPage(props: {
   const [archiveOpen, setArchiveOpen] = useState(false)
 
   const denContext = useAutomationsDenContext()
+  const sharingEnabled = useAutomationSharingEnabled(denContext)
   const { client, organizationId, ready, queryRoot } = denContext
   const { busyAction, setBusyAction, refresh, act } = useAutomationActions(denContext)
   const selectedId = searchParams.get("automation")?.trim() || null
@@ -363,6 +368,7 @@ export function AutomationsPage(props: {
                     ...input,
                     ...(workspaceId ? { workspaceId } : {}),
                   })
+              featureAnalytics.automationCreated(chosenPlacement)
               await refresh()
               openAutomation(detail.automation.id)
               toast.success("Automation created and active")
@@ -475,6 +481,9 @@ export function AutomationsPage(props: {
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
+            {sharingEnabled && task.state !== "archived" ? (
+              <AutomationShareButton key={`${organizationId}:${task.id}`} context={denContext} automation={task} refresh={refresh} />
+            ) : null}
             {editable ? <Button variant="outline" onClick={() => {
               setRepairingModel(false)
               setEditing(true)
@@ -811,6 +820,9 @@ export function AutomationsPage(props: {
           ))}
         </div>
       )}
+      {sharingEnabled ? (
+        <SharedAutomationsSection key={organizationId} context={denContext} search={query} refresh={refresh} openAutomation={openAutomation} />
+      ) : null}
     </div>
   )
 }

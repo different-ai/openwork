@@ -59,7 +59,7 @@ When the skill captures work you just finished in this conversation, write it so
 - **Inputs:** the few values that change per use (for example customer, use case, recipient) and how to read them from a short request.
 - **Sources:** the exact pages, files or records you used (titles plus IDs or links). Tell the next run to read them directly instead of searching.
 - **Steps:** the shortest sequence of calls that worked, in order.
-- **Assets:** if you wrote a script or template that produced the output, save it in the workspace (for example \`tools/<skill-name>.py\`) and include a verbatim copy in a fenced code block, with how to run it on new inputs. The next run reuses the workspace file when it exists.
+- **Assets:** if you wrote a script, template or reference that produced the output, save it with the skill as a supporting file (for example \`scripts/build-report.py\` or \`templates/report.md\`) and say in \`SKILL.md\` when to read or run it, by that path.
 - **Output:** file name pattern, location and format, any reply or draft template, and the one check to run before reporting.
 
 Keep it general: don't present one customer's results as facts for another.
@@ -67,11 +67,12 @@ Keep it general: don't present one customer's results as facts for another.
 ## Workflow
 
 1. Draft the complete \`SKILL.md\`.
-2. Execute \`create_skill\` with:
+2. Execute \`create_skill\` with (omit \`files\` when the skill needs none):
    \`\`\`json
    {
      "pluginName": "<plugin title>",
-     "skillMarkdown": "<complete SKILL.md>"
+     "skillMarkdown": "<complete SKILL.md>",
+     "files": [{ "path": "scripts/build-report.py", "text": "<complete file>" }]
    }
    \`\`\`
 3. Use the returned plugin id and skill id to report that the skill is ready to use now. The result contains text and structured skill details; report the saved result in text.

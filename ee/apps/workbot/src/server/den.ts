@@ -16,6 +16,12 @@ import type { Tokens } from "./sealed.js"
  * is (`/v1/workbot/session`) and mint each turn's short-lived app token (`/v1/workbot/run-token`).
  */
 export const WORKBOT_CLIENT_ID = "openwork-workbot"
+/**
+ * Asks Den's sign-in page to sign an existing account in and offer no way to create one. The phone app sends it:
+ * app stores require an app that creates accounts to delete them too, and Den has no account deletion.
+ * Den's page reads the same name (ee/apps/den-web/app/mcp/workbot-sign-in.ts).
+ */
+export const SIGN_IN_ONLY_PARAM = "openwork_sign_in_only"
 const SCOPES = "openid profile email offline_access mcp:read mcp:write"
 const TIMEOUT_MS = 20_000
 /** Each remote-session:status attempt; Workbot retries once. */
@@ -89,6 +95,8 @@ export const denSessionSchema = z.object({
   stepTurns: z.boolean().default(false),
   /** New chats get their own session cell on the runner (per-chat session cells). A Den from before it doesn't say: off. */
   sessionCells: z.boolean().default(false),
+  /** Workbot in the OpenWork phone app is on for this person. A Den from before the phone app doesn't say: off. */
+  mobile: z.boolean().default(false),
 })
 
 const runTokenSchema = z.object({
@@ -304,8 +312,11 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
     devices: (accessToken: string) => authorized("GET", "/v1/workbot/devices", accessToken),
     /** What happened to a chat's cloud computer, for Den's registry. Den answers 204, or 404 where Devices is off. */
     reportComputer: (accessToken: string, report: RemoteDeviceWorkbotReport) => authorized("POST", "/v1/workbot/devices/computer", accessToken, report, DEVICE_REPORT_TIMEOUT_MS),
-    /** Where to send the browser to sign in; Den returns it to /auth/callback with a code. */
-    async authorizeUrl(input: { state: string; verifier: string; chooseWorkspace?: boolean }) {
+    /**
+     * Where to send the browser to sign in; Den returns it to /auth/callback with a code. The phone app keeps its own
+     * PKCE verifier and passes only its challenge, so the code is useless to anyone but the app that asked.
+     */
+    async authorizeUrl(input: { state: string; chooseWorkspace?: boolean; signInOnly?: boolean } & ({ verifier: string } | { challenge: string })) {
       const { authorizationEndpoint, resource } = await discover()
       const url = new URL(authorizationEndpoint)
       url.search = new URLSearchParams({
@@ -314,10 +325,11 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
         redirect_uri: redirectUri,
         scope: SCOPES,
         state: input.state,
-        code_challenge: pkceChallenge(input.verifier),
+        code_challenge: "challenge" in input ? input.challenge : pkceChallenge(input.verifier),
         code_challenge_method: "S256",
         // Explicit workspace changes must not silently reuse the active workspace's existing grant.
         ...(input.chooseWorkspace ? { prompt: "consent" } : {}),
+        ...(input.signInOnly ? { [SIGN_IN_ONLY_PARAM]: "true" } : {}),
         resource,
       }).toString()
       return url.toString()
@@ -361,15 +373,18 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
     remoteRead: (accessToken: string, input: { sessionId: string; workspaceId?: string; limit: number; from: "end" } | { requestId: string }) => remoteCall(accessToken, "read", input),
     remoteStop: (accessToken: string, input: { sessionId: string; workspaceId?: string; messageId: string }) => remoteCall(accessToken, "stop", input),
     /** The normal private Cloud-skill path: Den owns permissions, audit, and persistence. */
-    async saveBrowserSkill(accessToken: string, pluginName: string, skillMarkdown: string) {
+    /** With `skillId`, publishes the taught skill's next version instead of creating another skill. */
+    async saveBrowserSkill(accessToken: string, pluginName: string, skillMarkdown: string, skillId?: string) {
       const client = new Client({ name: "openwork-workbot", version: "1" })
       const transport = new StreamableHTTPClientTransport(new URL(`${options.apiUrl}/mcp/agent`), {
         requestInit: { headers: { authorization: `Bearer ${accessToken}` } },
       })
       try {
         await client.connect(transport, { timeout: TIMEOUT_MS })
-        const result = await client.callTool({ name: "create_skill", arguments: { pluginName, skillMarkdown } }, undefined, { timeout: TIMEOUT_MS })
-        if (result.isError) throw new Error("The skill could not be saved. Check your skill-creation permission or choose a different name.")
+        const result = await client.callTool(skillId
+          ? { name: "update_skill", arguments: { skillId, skillMarkdown, reason: "Edited after teaching in the browser" } }
+          : { name: "create_skill", arguments: { pluginName, skillMarkdown } }, undefined, { timeout: TIMEOUT_MS })
+        if (result.isError) throw new Error(skillId ? "The skill could not be updated. Check that you can still edit it." : "The skill could not be saved. Check your skill-creation permission or choose a different name.")
         return skillCreatedPayloadSchema.parse(result.structuredContent)
       } finally { await client.close() }
     },

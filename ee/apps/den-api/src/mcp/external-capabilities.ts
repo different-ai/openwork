@@ -24,6 +24,7 @@ import {
 import {
   ExternalMcpDiagnosticError,
   externalMcpDiagnosticForLog,
+  isToolScopeRefusal,
   safeExternalMcpEndpointForLog,
   type ExternalMcpDiagnostic,
 } from "../capability-sources/external-mcp-diagnostics.js"
@@ -46,7 +47,7 @@ import { compareCapabilityMatches, scoreText, tokenize } from "./search.js"
 import { EXTERNAL_MCP_SEARCH_CONNECTION_LIMIT, scoreExternalTool, selectExternalMcpSearchConnections } from "./external-search-selection.js"
 import type { CapabilityMatch, CapabilityToolAnnotations } from "./search.js"
 import { AGENT_SOURCE_BLOCKED_MESSAGE, agentMayUseExternalTool, agentReadAllowlist, type AgentReadAllowlist } from "./agent-read-sources.js"
-import { WORKBOT_CONNECTION_WITHHELD_MESSAGE } from "./workbot-turn-limits.js"
+import { connectionsWithheld, WORKBOT_CONNECTION_WITHHELD_MESSAGE } from "./workbot-turn-limits.js"
 import { DEN_MCP_WRITE_SCOPE } from "./scopes.js"
 import {
   codemodeScriptPath,
@@ -118,6 +119,35 @@ export async function resolveMcpMemberIdentity(input: {
   organizationId: string
 }): Promise<McpMemberIdentity | null> {
   return (await resolveMcpMember(input))?.identity ?? null
+}
+
+/**
+ * The member as this token may act. A Workbot turn's token names the
+ * connections an admin took away from Workbot (workbot-turn-limits.ts); every
+ * route that reaches a connection builds its member here.
+ */
+export function mcpMemberForToken<T extends McpMemberIdentity>(member: T, scopes: ReadonlySet<string>): T {
+  const withheldConnectionIds = connectionsWithheld(scopes)
+  return withheldConnectionIds ? { ...member, withheldConnectionIds } : member
+}
+
+/**
+ * Why this caller may not use a connection the member was granted, or null: an
+ * admin took it away from Workbot, or its OAuth issuer changed and waits for an
+ * admin's review. execute_capability and the routes that serve one connection
+ * answer from here.
+ */
+export function externalMcpConnectionHold(
+  connection: Pick<ExternalMcpConnectionRow, "id" | "name" | "oauthIssuerReviewRequiredAt">,
+  member: Pick<McpMemberIdentity, "withheldConnectionIds">,
+): { reason: "withheld_from_workbot" | "issuer_review"; message: string } | null {
+  if (member.withheldConnectionIds?.has(connection.id)) {
+    return { reason: "withheld_from_workbot", message: `"${connection.name}" ${WORKBOT_CONNECTION_WITHHELD_MESSAGE}` }
+  }
+  if (connection.oauthIssuerReviewRequiredAt) {
+    return { reason: "issuer_review", message: `"${connection.name}" is blocked until an organization admin reviews its changed OAuth issuer.` }
+  }
+  return null
 }
 
 /** The member identity plus the team rows it was built from, for callers that also need the teams. */
@@ -298,6 +328,8 @@ export function externalMcpAuthErrorCode(
     .find((current) => current instanceof ExternalMcpDiagnosticError)
   if (diagnosticError instanceof ExternalMcpDiagnosticError) {
     if (diagnosticError.diagnostic.code === "MCP_OAUTH_INVALID_GRANT") return "invalid_grant"
+    // Reconnecting cannot fix it, so it is not reported as a sign-in failure.
+    if (isToolScopeRefusal(diagnosticError.diagnostic)) return null
     if (
       diagnosticError.diagnostic.phase === "AUTH_TOKEN_ACQUISITION"
       || diagnosticError.diagnostic.phase === "AUTH_RESOURCE_VALIDATION"
@@ -1238,8 +1270,9 @@ async function prepareExternalCapability(input: {
   if (connection.kind !== "external_mcp") {
     return { ok: false, error: "unknown_capability", message: `Connection "${input.connectionId}" is a native provider connector and does not expose MCP tools.` }
   }
-  if (input.member.withheldConnectionIds?.has(connection.id)) {
-    return { ok: false, error: "forbidden", message: `"${connection.name}" ${WORKBOT_CONNECTION_WITHHELD_MESSAGE}` }
+  const hold = externalMcpConnectionHold(connection, input.member)
+  if (hold?.reason === "withheld_from_workbot") {
+    return { ok: false, error: "forbidden", message: hold.message }
   }
 
   const canUse = await memberCanUseExternalMcpConnection({
@@ -1263,8 +1296,8 @@ async function prepareExternalCapability(input: {
     }
   }
 
-  if (connection.oauthIssuerReviewRequiredAt) {
-    const message = `"${connection.name}" is blocked until an organization admin reviews its changed OAuth issuer.`
+  if (hold?.reason === "issuer_review") {
+    const message = hold.message
     return {
       ok: false,
       error: "needs_connection",

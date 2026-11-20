@@ -181,42 +181,14 @@ function isWithinOnePatchAhead(updateVersion: string, maxVersion: string): boole
   return updateMajor === maxMajor && updateMinor === maxMinor && updatePatch <= maxPatch + 1;
 }
 
-function isNewerPrereleaseOnInstalledRelease(
+export function isAlphaUpdateAllowed(
   updateVersion: string,
-  currentVersion: string | null | undefined,
+  desktopConfig: DenDesktopConfig | null | undefined,
 ): boolean {
-  if (!currentVersion) return false;
-  const update = parseComparableVersion(updateVersion);
-  const current = parseComparableVersion(currentVersion);
-  if (!update?.prerelease.length || !current?.prerelease.length) return false;
-  if (compareVersions(updateVersion, currentVersion) !== 1) return false;
+  if (!isAlphaChannelAllowedByDesktopConfig(desktopConfig)) return false;
 
-  const count = Math.max(update.release.length, current.release.length);
-  for (let index = 0; index < count; index += 1) {
-    if ((update.release[index] ?? 0) !== (current.release[index] ?? 0)) return false;
-  }
-  return true;
-}
-
-export function isAlphaUpdateAllowedByVersionCeiling(input: {
-  updateVersion: string;
-  currentVersion?: string | null;
-  denLatestAppVersion: string;
-  desktopConfig: DenDesktopConfig | null | undefined;
-}): boolean {
-  if (!isAlphaChannelAllowedByDesktopConfig(input.desktopConfig)) return false;
-
-  const denAllowsUpdate = isWithinOnePatchAhead(
-    input.updateVersion,
-    input.denLatestAppVersion,
-  ) || isNewerPrereleaseOnInstalledRelease(
-    input.updateVersion,
-    input.currentVersion,
-  );
-  if (!denAllowsUpdate) return false;
-
-  const orgMaxVersion = maxAllowedDesktopVersion(input.desktopConfig);
-  return !orgMaxVersion || isWithinOnePatchAhead(input.updateVersion, orgMaxVersion);
+  const orgMaxVersion = maxAllowedDesktopVersion(desktopConfig);
+  return !orgMaxVersion || isWithinOnePatchAhead(updateVersion, orgMaxVersion);
 }
 
 async function readDenLatestAppVersion(): Promise<string | null> {
@@ -351,28 +323,6 @@ export async function isUpdateSupportedByDen(updateVersion: string): Promise<boo
   return comparison !== null && comparison <= 0;
 }
 
-/**
- * Alpha channel builds may run one patch ahead of the current Den/org maximum
- * (e.g. Den allows 0.13.3, alpha 0.13.4-alpha.N is allowed). An installed
- * prerelease may also advance within its existing release while Den's global
- * stable metadata catches up. Explicit organization ceilings still apply, and
- * larger release jumps stay blocked so alpha cannot bypass staged rollout.
- */
-export async function isAlphaUpdateAllowed(
-  updateVersion: string,
-  desktopConfig: DenDesktopConfig | null | undefined,
-  currentVersion?: string | null,
-): Promise<boolean> {
-  if (!isAlphaChannelAllowedByDesktopConfig(desktopConfig)) return false;
-  const latestAppVersion = await readDenLatestAppVersion();
-  if (!latestAppVersion) return false;
-  return isAlphaUpdateAllowedByVersionCeiling({
-    updateVersion,
-    currentVersion,
-    denLatestAppVersion: latestAppVersion,
-    desktopConfig,
-  });
-}
 
 /**
  * Combined gate: the update must be supported by Den (version metadata

@@ -2,6 +2,7 @@ import { createHash } from "node:crypto"
 import { ProtocolError, ProtocolErrorCode, type McpServer } from "@modelcontextprotocol/server"
 import { z } from "zod"
 import type { RemoteSkillDescriptor } from "./marketplace-capabilities.js"
+import { skillFileResource, type SkillFile, type SkillFileResource } from "../skill-files.js"
 import { standardSkillMarkdown, type RemoteSkillSource } from "./skill-tools.js"
 
 /**
@@ -20,8 +21,11 @@ import { standardSkillMarkdown, type RemoteSkillSource } from "./skill-tools.js"
 
 export const SKILLS_EXTENSION_ID = "io.modelcontextprotocol/skills"
 
-/** The SKILL.md bytes a skill:// resource read returns, and their SEP-2640 digest. */
-export type ResolvedSkillContent = { markdown: string; digest: string; size: number }
+/**
+ * The SKILL.md bytes a skill:// resource read returns, and their SEP-2640
+ * digest, plus the skill's supporting files, each its own skill:// resource.
+ */
+export type ResolvedSkillContent = { markdown: string; digest: string; size: number; files: SkillFileResource[] }
 
 export type ResolvedSkill = {
   skill: RemoteSkillDescriptor
@@ -31,13 +35,32 @@ export type ResolvedSkill = {
   blocked?: { status: string; message: string }
 }
 
-export function skillContent(skill: RemoteSkillDescriptor, source: string): ResolvedSkillContent {
+export function skillContent(skill: RemoteSkillDescriptor, source: string, files: readonly SkillFile[] = []): ResolvedSkillContent {
   const markdown = standardSkillMarkdown(skill, source)
   return {
     markdown,
     digest: `sha256:${createHash("sha256").update(markdown, "utf8").digest("hex")}`,
     size: Buffer.byteLength(markdown, "utf8"),
+    files: files.map((file) => skillFileResource(skill.name, file)),
   }
+}
+
+/** The root every file of a skill sits under: its SKILL.md URI without the file name. */
+function skillRootUri(skill: RemoteSkillDescriptor): string {
+  return skill.location.slice(0, -"SKILL.md".length)
+}
+
+/**
+ * The supporting file a URI names, among the skills this member can load now.
+ * A file is readable exactly when its skill's manifest lists it.
+ */
+export function findSkillFile(resolved: readonly ResolvedSkill[], uri: string): SkillFileResource | undefined {
+  for (const entry of resolved) {
+    if (!entry.content || !uri.startsWith(skillRootUri(entry.skill))) continue
+    const file = entry.content.files.find((candidate) => candidate.uri === uri)
+    if (file) return file
+  }
+  return undefined
 }
 
 /** Pair each descriptor with its authorized content or setup block. Unsynced or vanished skills are dropped. */
@@ -50,7 +73,7 @@ export function resolveSkills(skills: RemoteSkillDescriptor[], sources: Map<stri
       resolved.push({ skill, blocked: { status: source.blocked.status, message: source.blocked.message } })
       continue
     }
-    resolved.push({ skill, content: skillContent(skill, source.content) })
+    resolved.push({ skill, content: skillContent(skill, source.content, source.files) })
   }
   return resolved
 }
@@ -60,7 +83,10 @@ function extensionEntry(resolved: ResolvedSkill & { content: ResolvedSkillConten
   return {
     uri: resolved.skill.location,
     frontmatter: { name: resolved.skill.name, description: resolved.skill.description },
-    resources: [{ uri: resolved.skill.location, digest: resolved.content.digest, size: resolved.content.size }],
+    resources: [
+      { uri: resolved.skill.location, digest: resolved.content.digest, size: resolved.content.size },
+      ...resolved.content.files.map((file) => ({ uri: file.uri, digest: file.digest, size: file.size })),
+    ],
     _meta: {
       [`${SKILLS_EXTENSION_ID}/title`]: resolved.skill.title,
       ...(resolved.skill.pluginName ? { [`${SKILLS_EXTENSION_ID}/plugin`]: resolved.skill.pluginName } : {}),

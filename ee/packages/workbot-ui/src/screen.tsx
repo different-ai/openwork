@@ -52,7 +52,7 @@ import { LastGlimpse, LiveGlimpse, WorkbotComputer } from "./computer";
 import { readBrowserSkillRunPrompt, type BrowserTeachingContext } from "@openwork/types/browser-demonstration";
 import { readWorkbotCorrectionPrompt, workbotCorrectionPrompt, workbotContextLabel, workbotViewContextSchema, type WorkbotViewContext } from "@openwork/types/workbot-context";
 import type { DocumentOpenOutcome, DocumentOpenRequest } from "@openwork/documents";
-import { ComputerNavigationContext, DockedChat, DocumentNavigationContext, DocumentNavigationStatus, DocumentOffers, type DocumentNavigationState, OpenDocumentContext, SentContext, useWideScreen, WorkspaceNavigationContext } from "./workspace";
+import { ComputerNavigationContext, DockedChat, DocumentNavigationContext, DocumentNavigationStatus, DocumentOffers, type DocumentNavigationState, OpenDocumentContext, SentContext, TeachingNavigationContext, TeachingOffer, useWideScreen, WorkspaceNavigationContext } from "./workspace";
 import { useQueryClient } from "@tanstack/react-query";
 import { useNativeDictation } from "@openwork/ui/react";
 import { WorkbotDictation } from "./native-dictation";
@@ -252,6 +252,13 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
   const navigateComputerFromChat = guided && computerViews(host).length > 0 && tab !== "computer"
     ? () => setTab("computer")
     : null;
+  // Asked to be taught a browser task, Workbot opens the teaching window in the Browser view. Each request counts up,
+  // and the view sets it back once the window is open. Null where this chat has no teaching window.
+  const [teachRequest, setTeachRequest] = useState(0);
+  const settleTeachRequest = useCallback(() => setTeachRequest(0), []);
+  const openTeaching = !side && host.browserDemonstrations === true && computerViews(host).includes("browser")
+    ? () => { setTeachRequest(current => current + 1); setTab("computer"); }
+    : null;
   // Files open in the panel beside the chat (a sheet on a phone) that BrowserExperience owns, with browser tasks.
   const openFile = useContext(OpenFileContext);
   // The welcome shows once, while there's no conversation yet; leaving it, Workbot starts the conversation itself.
@@ -292,6 +299,15 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
       for (const receipt of turn.navigation) followed.current.add(receipt.id);
       if (from === viewRef.current) followNavigation(target);
       else setNavigationStatus(current => ({ ...current, [target.id]: "superseded" }));
+    }
+  });
+  // A reply to a message sent from this page opens the teaching window once; history never replays it.
+  useEffect(() => {
+    if (!openTeaching || !data) return;
+    for (const turn of data.turns) {
+      if (!turn.teaching || !sentFrom.current.has(turn.id) || followed.current.has(turn.teaching.id)) continue;
+      followed.current.add(turn.teaching.id);
+      openTeaching();
     }
   });
   // The open file at its newest version: when Workbot revises it, the panel follows (same id, newer updatedAt).
@@ -496,6 +512,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
         if (turn.greeting) { setGreetingAwaited(true); start.mutate(); return; }
         // A retry may ask again; what it asked before is never replayed.
         for (const receipt of turn.navigation) followed.current.add(receipt.id);
+        if (turn.teaching) followed.current.add(turn.teaching.id);
         sentFrom.current.set(turn.id, viewRef.current);
         retry.mutate(turn.id, { onSuccess: () => setEditErrors(current => { const next = { ...current }; delete next[turn.id]; return next; }), onError: error => setEditErrors(current => ({ ...current, [turn.id]: error })) });
       }}
@@ -525,6 +542,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
       <OpenDocumentContext.Provider value={tab === "documents" && documentContext?.kind === "document" ? documentContext.fileId : null}>
       <WorkspaceNavigationContext.Provider value={host.workspaceAssistant && host.documents ? navigateFromChat : null}>
       <ComputerNavigationContext.Provider value={navigateComputerFromChat}>
+      <TeachingNavigationContext.Provider value={openTeaching}>
       <ComputerOnScreenContext.Provider value={tab === "computer" ? computerView : null}>
       <DocumentNavigationContext.Provider value={guided && host.documents ? { status: navigationStatus, open: followNavigation } : null}>
         {layout(<div ref={chrome.frame} className="relative flex min-h-0 flex-1 flex-col" data-workbot-workspace>
@@ -548,7 +566,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
             {tab === "devices" && <WorkbotDevices computerFor={computerFor} />}
           </div>
           <div className="flex min-h-0 min-w-0 flex-1" style={{ display: tab === "computer" ? undefined : "none" }} hidden={tab !== "computer"}>
-            {computerVisited && tab === "computer" && !browserPreview?.visible && computerViews(host).length > 0 && <WorkbotComputer key={`${host.identity?.organizationId}:${host.identity?.principalId}`} onTeachingChange={setTeaching} onRun={text => submit(text, undefined, true)} canTeach={!side} onViewChange={setComputerView} onContextChange={setBrowserContext} />}
+            {computerVisited && tab === "computer" && !browserPreview?.visible && computerViews(host).length > 0 && <WorkbotComputer key={`${host.identity?.organizationId}:${host.identity?.principalId}`} onTeachingChange={setTeaching} onRun={text => submit(text, undefined, true)} canTeach={!side} teachRequest={teachRequest} onTeachRequestSettled={settleTeachRequest} onViewChange={setComputerView} onContextChange={setBrowserContext} />}
             {docked && <DockedChat name={name} context={currentContext} includeContext={includeContext} onIncludeContext={setIncludeContext} composer={composer} conversation={conversation} unavailable={!data && !loading} />}
           </div>
           </div>
@@ -557,6 +575,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
         </div>, floating)}
       </DocumentNavigationContext.Provider>
       </ComputerOnScreenContext.Provider>
+      </TeachingNavigationContext.Provider>
       </ComputerNavigationContext.Provider>
       </WorkspaceNavigationContext.Provider>
       </OpenDocumentContext.Provider>
@@ -577,7 +596,7 @@ function ChatScreen({ host, composerState, position, navigation, onDraftsChange 
         />
         {leavingDocuments && <div className="border-t border-[var(--wb-hairline)] px-4 py-2 text-[13px]" role="status">You have unsaved document edits. <button type="button" className="ml-3 underline" onClick={() => setLeavingDocuments(null)}>Keep editing</button><button type="button" className="ml-3 underline" onClick={() => { const next = leavingDocuments; setLeavingDocuments(null); setDocumentsDirty(false); setTab(next, true); }}>Discard edits and leave Documents</button></div>}
         <div className="flex min-h-0 flex-1 border-t border-[#01162712]">
-          {tab === "computer" ? <WorkbotComputer key={`${host.identity?.organizationId}:${host.identity?.principalId}`} onTeachingChange={setTeaching} onRun={text => submit(text, undefined, true)} canTeach={!side} /> : tab === "documents" ? <WorkbotDocuments onDirtyChange={setDocumentsDirty} /> : tab === "devices" ? <WorkbotDevices computerFor={computerFor} /> : <WorkbotCalendar connectionsHref={host.connectionsHref ?? null} assistantName={data?.name ?? "Workbot"} />}
+          {tab === "computer" ? <WorkbotComputer key={`${host.identity?.organizationId}:${host.identity?.principalId}`} onTeachingChange={setTeaching} onRun={text => submit(text, undefined, true)} canTeach={!side} teachRequest={teachRequest} onTeachRequestSettled={settleTeachRequest} /> : tab === "documents" ? <WorkbotDocuments onDirtyChange={setDocumentsDirty} /> : tab === "devices" ? <WorkbotDevices computerFor={computerFor} /> : <WorkbotCalendar connectionsHref={host.connectionsHref ?? null} assistantName={data?.name ?? "Workbot"} />}
         </div>
       </div>
     );
@@ -2055,6 +2074,7 @@ const TurnView = memo(function TurnView(props: {
       </div>
       <DocumentOffers links={offers} />
       <DocumentNavigationStatus receipts={turn.navigation} />
+      <TeachingOffer receipt={turn.teaching} />
       {turn.outputs.length ? <ArtifactCards files={turn.outputs} /> : null}
       {/* Quiet: running and finished tasks live in the task sheet (the report says it's done); one that failed or was
           stopped stays here with its way forward. */}

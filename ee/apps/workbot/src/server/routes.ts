@@ -185,6 +185,8 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       workspaceAssistant: async () => member.den.workspaceAssistant,
       // Opening a document on request needs Documents too; Den still checks the member's Drive access on open.
       guidedNavigation: async () => member.den.guidedNavigation && member.den.documents === true,
+      // The same switches the teaching route checks: asked to be taught, Workbot opens the teaching window.
+      teachingNavigation: async () => member.den.browser === true && member.den.browserDemonstrations === true,
       connectors: () => connectors(`${member.den.organization.id}:${member.den.memberId}`, member.accessToken),
       sandboxGateway: member.den.sandboxGateway,
       browserRecovery: member.den.browserRecovery,
@@ -218,8 +220,18 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     return null
   }
 
-  app.use("/v1/workbot/*", input.sameOrigin, input.member)
-  app.use("/v1/workbot", input.sameOrigin, input.member)
+  /**
+   * The phone app works only where its feature is on. `/me` still answers, so the app can say so instead of failing;
+   * turning the feature off stops every phone on its next request.
+   */
+  const phoneAllowed: MiddlewareHandler<AppEnv> = async (c, next) => {
+    const member = c.get("member")
+    if (member.app && !member.den.mobile && c.req.path !== "/v1/workbot/me") return c.json({ error: "workbot_mobile_not_enabled" }, 403)
+    await next()
+  }
+
+  app.use("/v1/workbot/*", input.sameOrigin, input.member, phoneAllowed)
+  app.use("/v1/workbot", input.sameOrigin, input.member, phoneAllowed)
   const teachingSaves = new Map<string, { markdown: string; name: string; saving: ReturnType<Den["saveBrowserSkill"]> }>()
   app.post("/v1/workbot/teaching", bodyLimit({ maxSize: 8192 }), async c => {
     c.header("Cache-Control", "no-store")
@@ -231,7 +243,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     }
     if (!member.den.enabled || !member.den.browser || !member.den.browserDemonstrations || !await allowed()) return c.json({ error: "feature_disabled" }, 403)
     const raw: unknown = await c.req.json().catch(() => null)
-    const save = z.object({ action: z.literal("save"), demonstrationId: z.string().uuid(), name: z.string().trim().min(1).max(100), purpose: z.string().trim().min(1).max(1000) }).strict().safeParse(raw)
+    const save = z.object({ action: z.literal("save"), demonstrationId: z.string().uuid(), name: z.string().trim().min(1).max(100), purpose: z.string().trim().min(1).max(1000), skillId: z.string().trim().min(1).max(160).optional() }).strict().safeParse(raw)
     const command = demonstrationCommandSchema.safeParse(raw)
     if (!save.success && !command.success) return c.json({ error: "invalid_request" }, 400)
     try {
@@ -244,13 +256,15 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
         if (!state.ok || state.value.demonstration?.id !== save.data.demonstrationId) return c.json({ error: "demonstration_unavailable" }, 409)
         const markdown = compileBrowserDemonstration(state.value.demonstration, save.data.name, save.data.purpose)
         if (!await allowed()) return c.json({ error: "feature_disabled" }, 403)
-        const key = JSON.stringify([member.den.organization.id, member.den.memberId, save.data.demonstrationId])
+        // Editing the saved skill names it: each changed draft is one new version of that skill, which Den allows only
+        // to someone who can edit it. Without a skill named, a demonstration is saved as a new skill once.
+        const key = JSON.stringify([member.den.organization.id, member.den.memberId, save.data.demonstrationId, ...(save.data.skillId ? [save.data.skillId, markdown] : [])])
         let receipt = teachingSaves.get(key)
         if (receipt && (receipt.markdown !== markdown || receipt.name !== save.data.name)) return c.json({ error: "already_saved", message: "This demonstration already has a save attempt. Check the saved skill before making another version." }, 409)
         if (!receipt) {
           if (teachingSaves.size >= 1000) return c.json({ error: "save_capacity", message: "Skill saving is busy. Keep your draft and try again later." }, 503)
           // Retain failed/uncertain saves too: never automatically repeat a persistent write.
-          receipt = { markdown, name: save.data.name, saving: den.saveBrowserSkill(member.accessToken, save.data.name, markdown) }
+          receipt = { markdown, name: save.data.name, saving: den.saveBrowserSkill(member.accessToken, save.data.name, markdown, save.data.skillId) }
           teachingSaves.set(key, receipt)
         }
         const saved = await receipt.saving
@@ -313,6 +327,7 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
       calmChat: who.enabled && who.calmChat,
       devices: who.enabled,
       commandPalette: true,
+      mobile: who.enabled && who.mobile,
       denUrl: config.denWebUrl ?? (await den.webUrl().catch(() => null)),
     })
   })
@@ -326,6 +341,8 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     if (code === "desktop_outdated") return c.json({ error: code, message: rebuilt ? "Your computer still needs an update after rebuilding. Ask your workspace admin for help." : "Your computer needs an update before it can connect. Rebuild it, or ask your workspace admin if that doesn't help." }, 409)
     // The runner moves the computer to the new version itself once the work running on it finishes.
     if (code === "desktop_updating") return c.json({ error: code, message: "Your computer is updating. It will be ready when its current work finishes." }, 409)
+    // Its desktop wouldn't start, so the runner is replacing it. The view says so and asks again, which waits for the new one.
+    if (code === "desktop_replacing") return c.json({ error: code, message: "Your computer's desktop didn't start, so it is being replaced. This usually takes about a minute." }, 409)
     return c.json({ error: "desktop_unavailable", message: "Your computer is unavailable. Try reconnecting." }, 409)
   }
   /** One automatic rebuild per computer at a time: the Browser view and the chat's live glimpse can both find it outdated. */
@@ -355,7 +372,8 @@ export function registerWorkbotRoutes(app: Hono<AppEnv>, input: { config: Config
     /** The chat's computer, once this request knows which runner session it is. */
     let computer: { sessionId: string; chat: WorkbotChat } | null = null
     const failed = (code: string, rebuilt = false) => {
-      if (computer) report(computer, { event: "failed", code })
+      // A computer being replaced hasn't failed: the runner is already bringing up the new one.
+      if (computer && code !== "desktop_replacing") report(computer, { event: "failed", code })
       return desktopFailure(c, operation, code, rebuilt)
     }
     /** The views Den allows right now, or null when this request isn't allowed. The runner is told only these. */

@@ -4,7 +4,7 @@ import { REMOTE_DEVICE_AVAILABILITY_LABELS, remoteDeviceTypeLabel, type RemoteDe
 import { Cloud, Laptop, Monitor } from "lucide-react";
 import { createContext } from "react";
 import { useWorkbotDevices } from "./data";
-import { deviceWork, type DeviceWork } from "./device-work";
+import { deviceTaskLine, deviceWork, type DeviceWork } from "./device-work";
 import { computerTabLabel, computerViews, workbotHost } from "./host";
 import { remoteJobActive, useWorkbotRemoteJobs } from "./remote-jobs";
 
@@ -69,6 +69,7 @@ function DeviceIcon({ device }: { device: RemoteDevice }) {
 function DeviceRow({ device, work, onOpen }: { device: RemoteDevice; work: DeviceWork | null; onOpen: (() => void) | null }) {
   const host = workbotHost();
   const detail = deviceStatusLine(device);
+  const taskLine = work ? null : deviceTaskLine(device);
   const openLabel = computerTabLabel(host) === "Browser" ? "Open Workbot's browser" : "Open Workbot's computer";
   return <li className={row} data-workbot-device={device.availability}>
     <DeviceIcon device={device} />
@@ -77,7 +78,7 @@ function DeviceRow({ device, work, onOpen }: { device: RemoteDevice; work: Devic
       <span className="flex min-w-0 flex-wrap gap-x-3 text-[12px] leading-4 text-[var(--wb-muted)]">
         <span>{remoteDeviceTypeLabel(device)}</span>
         {device.access === "shared" ? <span>Shared with your organization</span> : null}
-        {!work && device.kind === "desktop" && device.computerId !== null ? <span>Takes tasks from Workbot</span> : null}
+        {taskLine ? <span data-workbot-device-tasks={device.remoteAccess?.effective === "off" ? "off" : "on"}>{taskLine}</span> : null}
       </span>
       {/* What Workbot is doing there now: the breathing dot the chat uses for live work, amber when it waits on the person. */}
       {work ? <span className="flex min-w-0 items-center gap-1.5 pt-0.5 text-[12px] leading-4 text-[var(--wb-text)]" data-workbot-device-work={work.needsYou ? "needs-you" : "working"} title={work.detail ?? undefined}>

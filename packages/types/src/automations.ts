@@ -1184,6 +1184,43 @@ export const createAutomationSchema = z.union([actionCreateAutomationSchema, leg
 export type CreateAutomation = z.infer<typeof legacyCreateAutomationSchema>
 export type CreateAutomationDefinition = z.infer<typeof createAutomationSchema>
 
+export const automationSharingSchema = z.object({
+  orgWide: z.boolean(),
+  memberIds: z.array(z.string()),
+  teamIds: z.array(z.string()),
+}).meta({ ref: "AutomationSharing" })
+export type AutomationSharing = z.infer<typeof automationSharingSchema>
+
+export const updateAutomationSharingSchema = z.object({
+  orgWide: z.boolean().default(false),
+  memberIds: z.array(z.string()).max(200).default([]),
+  teamIds: z.array(z.string()).max(200).default([]),
+}).strict().meta({ ref: "UpdateAutomationSharing" })
+export type UpdateAutomationSharing = z.input<typeof updateAutomationSharingSchema>
+
+export const sharedAutomationSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  sharedBy: z.object({ memberId: z.string(), name: z.string() }),
+  sharedAt: z.string().datetime(),
+  schedule: automationScheduleSchema,
+  executionTarget: automationExecutionTargetSchema,
+  action: automationActionSchema,
+}).meta({ ref: "SharedAutomation" })
+export type SharedAutomation = z.infer<typeof sharedAutomationSchema>
+
+export const sharedAutomationListSchema = z.object({
+  items: z.array(sharedAutomationSchema),
+  nextCursor: z.string().nullable(),
+}).meta({ ref: "SharedAutomationList" })
+export type SharedAutomationList = z.infer<typeof sharedAutomationListSchema>
+
+export const copySharedAutomationSchema = z.object({
+  name: z.string().trim().min(1).max(120).optional(),
+  model: automationModelSchema.optional(),
+}).strict().meta({ ref: "CopySharedAutomation" })
+export type CopySharedAutomation = z.infer<typeof copySharedAutomationSchema>
+
 /**
  * What an in-app agent may hand back when a person describes recurring work.
  *

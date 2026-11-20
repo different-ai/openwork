@@ -108,6 +108,7 @@ There are three ways to identify an item, used in this order (details in [mappin
 ```
 
 - Exported for every secret field, whether or not a value is stored. `set` tells the importer whether the source had one.
+- A placeholder with `"set": false` and no other instruction is not asked about: the source had no value to bring, so a value the target already holds is kept and an empty one stays empty. One with `"set": true`, or without `set` (a hand-written file), needs a decision before approval.
 - Paths are stable, so a blob edited and uploaded again keeps its placeholders (as Auth0 does with `AUTH0_PRESERVE_KEYWORDS`).
 - Ways to fill a placeholder on upload:
 
@@ -128,6 +129,7 @@ There are three ways to identify an item, used in this order (details in [mappin
 - `rev` = `sha256(canonicalJson({ spec without $secret values, name, key }))` (`itemRev`); areas whose names are derived (people) leave the name out. A rename on the target after export is therefore a change there, and a rename only in the blob is an edit. Canonical JSON: sorted keys; arrays in a defined order per field (ordered lists stay ordered, sets are sorted by id).
 - `baseHash` = hash over the sorted `(area, id, rev)` of everything in `scope` at export.
 - On the target we compute the same values from the current state. That lets us run the three-way diff and detect drift (see [mapping.md](./mapping.md#three-way-diff)).
+- **Hashes in files already written must keep meaning the same thing.** An area's `informationalFields` are left out of `rev`, and `comparableSpec` changes what is hashed, so neither may be changed for a field that already ships: every older file and before-snapshot would read as changed. A *new* field may be informational (`workbot.settings` `gatewayModel`). For an existing field an import must never write on its own (how a person signs in, the kind of a stored key), an area lists it in `derivedFields`: never planned as a change, still part of `rev`.
 
 ## Versioning
 

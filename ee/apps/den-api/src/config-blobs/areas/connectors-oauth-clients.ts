@@ -6,9 +6,10 @@
  * Rows keyed by a connection id belong to that connection: an external MCP
  * connection's pre-registered client is exported inside `connectors.mcp`
  * (`oauth.client`), because its provider id IS the connection's id and a
- * separate item would reference its own owner. Clients of native-provider
- * connections (kind `native_provider`) and the sandbox's sample Microsoft
- * client are not exported in v1.
+ * separate item would reference its own owner. For the same reason the client
+ * of a native-provider connection (kind `native_provider`) is exported inside
+ * that connection's `connectors.mcp` item (`native.client`). The sandbox's
+ * sample Microsoft client is not exported.
  *
  * Exported: client id, selected optional features, tenant id. Never the
  * client secret (a `$secret` placeholder) nor anything else in `extra`

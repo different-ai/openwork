@@ -2,12 +2,10 @@ import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { GatewayApiKeyTable, GatewayKeyTable, GatewayCredentialSetTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderOauthStateTable, GatewayProviderTable, InferenceKeyTable, MemberTable, TeamMemberTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { parseGatewayProviderSecret } from "@openwork/types/den/gateway"
 import { db } from "../db.js"
-import { isLiteLlmProviderId } from "@openwork-ee/utils/litellm-catalog"
-import { isTrueFoundryProviderId } from "@openwork-ee/utils/truefoundry-catalog"
-import { createInferenceEgressFetch } from "@openwork-ee/utils/inference-egress"
-import { logoutAwsSso } from "@openwork-ee/utils/aws-identity-center"
+import { isLiteLlmProviderId, isTrueFoundryProviderId } from "@openwork-ee/gateway-catalog"
+import { createInferenceEgressFetch, logoutAwsSso } from "@openwork-ee/gateway-upstreams"
 import { revokeGoogleToken } from "./inference-provider-google-oauth.js"
-import { gatewayMemberSignInMethod, sameMemberSignInConfiguration } from "./gateway-member-sign-in.js"
+import { providerMemberSignInMethod, providerMemberSignInScope, sameMemberSignInConfiguration } from "./gateway-member-sign-in.js"
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
 type MemberId = typeof MemberTable.$inferSelect.id
@@ -96,8 +94,10 @@ export async function lockMemberOAuthAuthorization(tx: Tx, provider: Provider, s
   if (!member?.userId || expectedUserId !== undefined && member.userId !== expectedUserId) return false
   const [current] = await tx.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.id, provider.id)).for("update")
   // Member sets: each member's own Google, Microsoft or AWS sign-in, their own LiteLLM key, or the TrueFoundry token OpenWork created for them.
-  if (!current || current.status !== "active" || !(gatewayMemberSignInMethod(current.provider_id) || isLiteLlmProviderId(current.provider_id) || isTrueFoundryProviderId(current.provider_id))
-    || current.organization_id !== provider.organization_id || current.provider_id !== provider.provider_id) return false
+  if (!current || current.status !== "active" || !(providerMemberSignInMethod(current) || isLiteLlmProviderId(current.provider_id) || isTrueFoundryProviderId(current.provider_id))
+    || current.organization_id !== provider.organization_id || current.provider_id !== provider.provider_id
+    // The API scope members' Microsoft tokens are for is part of the sign-in configuration the caller checked.
+    || providerMemberSignInScope(current) !== providerMemberSignInScope(provider)) return false
   const [currentSet] = await tx.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.id, set.id)).for("update")
   if (!currentSet || currentSet.gateway_provider_id !== provider.id || currentSet.status !== "active" || currentSet.credential_mode !== "member"
     || !sameMemberSignInConfiguration(currentSet, set)) return false

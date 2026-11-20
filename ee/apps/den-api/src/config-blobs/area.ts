@@ -135,9 +135,21 @@ export type ConfigNaturalKey = {
   get: (item: ConfigItem) => string | null
 }
 
-/** What planning knows about an op besides the op itself: the secret decisions (never values). */
+/**
+ * What planning knows about an op besides the op itself: the secret decisions
+ * (never values), and how each reference in the spec resolves in this plan.
+ */
 export type ConfigPreflightInfo = {
   secrets: ReadonlyArray<{ path: string; field: string; decision: "keep" | "env" | "value" | "unset" }>
+  /**
+   * One entry per `$ref` in the op's spec, by spec path
+   * (`assignments.members[0]`): `target` is an item the organization already
+   * holds (`id`); `planned` and `invite` are items this same plan creates
+   * (for people: an invitation, so the person has not joined when the op
+   * runs); `drop` is left out; `unresolved` still needs the admin. Absent
+   * when the caller did not resolve references.
+   */
+  refs?: ReadonlyArray<{ path: string; ref: string; resolution: "target" | "planned" | "invite" | "drop" | "unresolved"; id?: string }>
 }
 
 /**
@@ -176,6 +188,13 @@ export type ConfigArea = {
   /** SQL table names whose config this area owns (coverage check). */
   tables: string[]
   naturalKeys: ConfigNaturalKey[]
+  /**
+   * The area's keys are given by the server (a default on first create,
+   * export or import) and edited on the item, not by imports: an import only
+   * fills the key of a matched item that has none. A different key on the two
+   * sides is not a change, and the key is left out of `rev`.
+   */
+  assignedKeys?: boolean
   similarity?: ConfigSimilarity
   /** Spec paths holding `$secret` placeholders, e.g. "credentials.apiKey", "headers[].value". */
   secretFields: string[]
@@ -202,6 +221,26 @@ export type ConfigArea = {
    * join). Left out of diffs and hashes, so they never make an item differ.
    */
   informationalFields?: string[]
+  /**
+   * Spec fields an import never writes on their own: the target works them
+   * out for itself (how a person signs in), or they are only saved together
+   * with something else (the kind of a stored key, saved when a key is
+   * entered). Like `informationalFields` they are never planned as a change,
+   * but they stay in `rev`: listing a field here leaves the hashes in files
+   * and before-snapshots already written as they are, so an older file still
+   * restores without every item showing as changed.
+   */
+  derivedFields?: string[]
+  /**
+   * References an entry can't exist without (paths use `[]` for array
+   * elements). Dropping one removes the array element it sits in, in the plan
+   * and at apply (`access[].member`: a grant goes with the person it names).
+   * One that sits in no array is the item's own (`team`: the settings of that
+   * team) and can't be dropped: it stays unresolved until it is mapped or the
+   * item is skipped, so an import never widens what an item applies to.
+   * Without this, a dropped reference only removes its own key.
+   */
+  requiredRefs?: string[]
   /** The item's name is derived on the target and never set by import (people): a different name is not a change. */
   informationalName?: boolean
   /**
@@ -216,6 +255,13 @@ export type ConfigArea = {
   cosmeticFields?: string[]
   /** Unique constraints on the target that a create/rename could break, e.g. team name. */
   uniqueFields?: Array<{ label: string; get: (item: ConfigItem | ResolvedConfigItem) => string | null }>
+  /**
+   * Values two items created by one import can't share, though items the
+   * target already holds may (a plugin's name is unique among the plugins one
+   * person created, and an import creates all of its plugins as one person).
+   * The second create would fail at apply, so both are flagged in the plan.
+   */
+  uniqueAmongCreates?: Array<{ label: string; get: (item: ConfigItem | ResolvedConfigItem) => string | null }>
   /**
    * Whether `apply` writes only through `ctx.db` (so the engine may pass a transaction).
    * False when it calls services that use the global db or make external calls.
@@ -241,6 +287,12 @@ export type ConfigArea = {
    */
   preflight?(ctx: ConfigAreaContext, op: ConfigApplyOp, info: ConfigPreflightInfo): Promise<ConfigPreflightResult | null>
   exportItems(ctx: ConfigAreaContext): Promise<ConfigItem[]>
+  /**
+   * Called on the items of an export before the file is written: give every
+   * item without a key its key, store it, and return the items with their
+   * keys. Only for `assignedKeys` areas.
+   */
+  ensureKeys?(ctx: ConfigAreaContext, items: ConfigItem[]): Promise<ConfigItem[]>
   /**
    * Read only these items (by local id). Used by apply to re-check drift and to
    * snapshot just the items about to be written, instead of exporting the area.

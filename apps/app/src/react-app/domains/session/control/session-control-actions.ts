@@ -23,6 +23,8 @@ import { useSessionActivityStore } from "../status/session-activity-store";
 import { selectSessionAttention } from "../status/session-attention";
 import { isSameWorkbenchSession, useWorkbenchStore } from "../chat/workbench-store";
 import { controlWorkspaceLabel as workspaceLabel, listControlSessions, type ControlSessionLike as SessionLike } from "./list-control-sessions";
+import { sessionTreeQuery } from "./session-tree-query";
+import { SESSION_TREE_QUERY_ID } from "@openwork/types/session-link";
 
 type SessionControlWorkspace = OpenworkWorkspaceInfo & {
   displayNameResolved: string;
@@ -48,6 +50,8 @@ type UseSessionControlActionsInput = {
   refreshRouteState: () => Promise<unknown> | unknown;
   reloadWorkspaceSessions: (workspaceId: string) => Promise<void>;
   archiveSession: (sessionId: string, archived: boolean, options?: ArchiveSessionOptions) => Promise<ArchiveSessionOutcome>;
+  /** Sessions started from a session are listed under it and linked to it. */
+  sessionTreeEnabled?: boolean;
 };
 
 const ARCHIVE_TARGET_WORKING_HINT = "This session is still working. If the user wants it closed, ask them to stop it in the app (or wait until session.list_sessions reports working=false), then archive. If not, leave it running.";
@@ -95,6 +99,7 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
     sessionsByWorkspaceId,
     workspaces,
     archiveSession,
+    sessionTreeEnabled,
   } = input;
   const pinnedIds = useSessionManagementStore((s) => s.pinnedIds);
   const checkDesktopRestriction = useCheckDesktopRestriction();
@@ -148,6 +153,40 @@ export function useSessionControlActions(input: UseSessionControlActionsInput) {
       return { ok: true, workspaceId: workspace.id, models };
     },
   }), [checkDesktopRestriction, isSignedIn, workspaceModels, workspaces]));
+
+  // Registered only while the feature is on: the server reads `canStartLinked`
+  // from it before linking a session the agent starts, so off means no links.
+  useControlAction(useMemo<OpenworkControlAction | null>(() => !sessionTreeEnabled ? null : ({
+    id: SESSION_TREE_QUERY_ID,
+    label: "List the sessions started from a session",
+    description: "Return the sessions started from a session (side chats the person opened, and sessions its agent started with session.create), each with `kind` (side or sub), `depth` and `status`, plus the `parent` it was started from, if any. `canStartLinked` is whether a session started from it now is listed under it; one its agent starts also reports back when it finishes a turn.",
+    kind: "query",
+    effects: { data: "read", ui: "none", external: false },
+    sideEffect: "none",
+    args: [
+      { name: "sessionId", type: "string", required: true, description: "Session id from session.search, session.read or session.list_sessions." },
+      { name: "workspaceId", type: "string", required: false, description: "Workspace id. Omit to find the session's workspace." },
+    ],
+    execute: async (args) => {
+      const sessionId = stringArg(args, "sessionId");
+      if (!sessionId) return { ok: false, error: "sessionId is required" };
+      const workspaceId = stringArg(args, "workspaceId");
+      const workspace = workspaceId
+        ? workspaces.find((candidate) => candidate.id === workspaceId)
+        : findSessionWorkspace(workspaces, sessionsByWorkspaceId, sessionId);
+      if (!workspace) return { ok: false, error: workspaceId ? `Workspace not found: ${workspaceId}` : `Session not found: ${sessionId}` };
+      const endpoint = endpointForWorkspace(workspace);
+      const engine = endpoint ? await routeSessionEndpoint(endpoint).catch(() => null) : null;
+      const activity = useSessionActivityStore.getState();
+      return sessionTreeQuery({
+        workspaceId: workspace.id,
+        sessionId,
+        sessions: (sessionsByWorkspaceId[workspace.id] ?? []).flatMap((session) => session.id ? [{ ...session, id: session.id, title: session.title ?? "" }] : []),
+        engineV2: Boolean(engine && isOpencodeV2BaseUrl(engine.opencodeBaseUrl)),
+        statusFor: (id) => activity.getStatus(endpoint?.workspaceId ?? workspace.id, id),
+      });
+    },
+  }), [endpointForWorkspace, sessionTreeEnabled, sessionsByWorkspaceId, workspaces]));
 
   const listSessionsControlAction = useMemo<OpenworkControlAction>(() => ({
     id: "session.list_sessions",

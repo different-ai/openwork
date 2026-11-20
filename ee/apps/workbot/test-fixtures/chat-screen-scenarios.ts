@@ -20,6 +20,7 @@ export type FixtureTurn = {
   greeting?: boolean
   retryable?: boolean
   outputs?: Array<{ id: string; name: string; mediaType: string; size: number; updatedAt?: number }>
+  teaching?: { id: string }
 }
 export type FixtureThread = { name: string; organizationName: string; status: "idle" | "busy"; turns: FixtureTurn[]; hasEarlier: boolean; filesEnabled: boolean }
 

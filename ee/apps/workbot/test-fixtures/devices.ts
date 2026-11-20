@@ -3,6 +3,7 @@ import type { RemoteDevice } from "@openwork/types/den/remote-devices"
 /**
  * UI-only deterministic fixtures for the Devices page; no computer is contacted. `working`: the `remote` scenario, whose
  * remote tasks run on the Mac Studio (`fixture-studio` in remote-jobs.ts) while Workbot also works in its own chat.
+ * The Mac Studio's owner allowed tasks there; the MacBook Air has not been allowed yet, so it takes none.
  */
 export function fixtureDevices(working: boolean): RemoteDevice[] {
   const now = Date.now()
@@ -14,8 +15,8 @@ export function fixtureDevices(working: boolean): RemoteDevice[] {
     ...values,
   })
   return [
-    device("rdv_fixture_studio", { kind: "desktop", provider: "openwork_desktop", label: "Mac Studio", computerId: "fixture-studio", appVersion: "0.18.70" }),
-    device("rdv_fixture_air", { kind: "desktop", provider: "openwork_desktop", label: "Sam's MacBook Air", computerId: "fixture-air", appVersion: "0.18.70" }),
+    device("rdv_fixture_studio", { kind: "desktop", provider: "openwork_desktop", label: "Mac Studio", computerId: "fixture-studio", appVersion: "0.18.70", remoteAccess: { effective: "created", chosen: true, reason: null } }),
+    device("rdv_fixture_air", { kind: "desktop", provider: "openwork_desktop", label: "Sam's MacBook Air", computerId: "fixture-air", appVersion: "0.18.70", remoteAccess: { effective: "off", chosen: false, reason: "not_chosen" } }),
     device("rdv_fixture_workbot", {
       kind: "vm", provider: "workbot", label: "Workbot's computer", workbotChat: "main", availability: "unknown", lastSeenAt: at(12 * 60_000),
       workingSince: working ? at(2 * 60_000) : null,

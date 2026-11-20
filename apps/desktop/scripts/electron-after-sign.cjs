@@ -58,6 +58,21 @@ function verifyComputerUseHelper(appPath, requireDistributionSignature, { runCom
   }
 }
 
+function verifyMicrosandboxRuntime(appPath, { runCommand = run, spawn = spawnSync } = {}) {
+  const nativeRoot = path.join(appPath, "Contents/Resources/app.asar.unpacked/node_modules/@superradcompany/microsandbox-darwin-arm64");
+  if (!existsSync(nativeRoot)) return; // The SDK does not publish a Darwin x64 runtime.
+  const executable = path.join(nativeRoot, "bin/msb");
+  runCommand("codesign", ["--verify", "--strict", "--verbose=2", executable]);
+  const result = spawn("codesign", ["--display", "--entitlements", ":-", "--verbose=4", executable], { encoding: "utf8" });
+  if (result.error) throw result.error;
+  if (result.status !== 0 || result.stderr.includes("Signature=adhoc")) {
+    throw new Error("Notarized microsandbox runtime requires a Developer ID signature.");
+  }
+  if (!/<key>com\.apple\.security\.hypervisor<\/key>\s*<true\s*\/>/.test(result.stdout)) {
+    throw new Error("Signed microsandbox runtime is missing its Hypervisor entitlement.");
+  }
+}
+
 // Offline checks on the signed, notarized, stapled bundle. These read the
 // bundle itself, so they never guess the executable name (it follows each
 // flavor's productName) and never launch the app on the build machine.
@@ -141,6 +156,7 @@ async function afterSign(context, {
   const appName = `${context.packager.appInfo.productFilename}.app`;
   const appPath = path.join(context.appOutDir, appName);
   await timed("verify-helper", () => verifyComputerUseHelper(appPath, true, { runCommand, spawn: spawnNotary }));
+  await timed("verify-microsandbox", () => verifyMicrosandboxRuntime(appPath, { runCommand, spawn: spawnNotary }));
 
   const notaryTempDir = mkdtempSync(path.join(tmpdir(), "openwork-electron-notary-"));
   const notaryZipPath = path.join(notaryTempDir, `${context.packager.appInfo.productFilename}-notary.zip`);
@@ -163,3 +179,4 @@ module.exports = afterSign;
 module.exports.default = afterSign;
 module.exports.runWithRetry = runWithRetry;
 module.exports.verifySignedApp = verifySignedApp;
+module.exports.verifyMicrosandboxRuntime = verifyMicrosandboxRuntime;

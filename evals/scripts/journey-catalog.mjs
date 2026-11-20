@@ -17,6 +17,10 @@ const definitions = {
     cases: [{ id: 'AGENT-VIS-04', engines: ['v1', 'v2'], optIns: ['OPENWORK_EVAL_E2E_TESTS'], example: { placement: '--local', engine: 'v1' } }],
   },
   'app-smoke.e2e.test.ts': { name: 'Open a working desktop', critical: true },
+  'packaged-sandbox.proof.test.ts': {
+    name: 'Run sandbox tools from the packaged macOS app', placement: 'local',
+    needs: { platform: 'darwin', env: ['OPENWORK_EVAL_ELECTRON_BINARY'], optIn: ['MICROSANDBOX_LIVE'] },
+  },
   // Installs a newer signed build from a loopback feed through Squirrel.Mac; only packaged-smoke-macos provides both builds.
   'packaged-update-install.e2e.test.ts': {
     name: 'Update an activated enterprise install in place', placement: 'local',

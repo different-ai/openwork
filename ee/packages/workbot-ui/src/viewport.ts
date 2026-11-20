@@ -8,7 +8,10 @@ import { useCallback, useLayoutEffect, useState } from "react";
  */
 type WorkbotViewportPosition = "fixed" | "absolute";
 
-/** iOS resizes/pans the visual viewport for its keyboard, not the 100dvh layout viewport. */
+/**
+ * iOS resizes/pans the visual viewport for its keyboard, not the 100dvh layout viewport. Android resizes the page
+ * itself (the host page's `interactive-widget=resizes-content`), so there both agree and this only confirms them.
+ */
 export function useWorkbotViewport(active = true, position: WorkbotViewportPosition = "fixed") {
   // A dialog portal can mount after its owner's layout effect. Observe the actual node attachment, not just open.
   const [node, setNode] = useState<HTMLDivElement | null>(null);
@@ -33,11 +36,14 @@ export function useWorkbotViewport(active = true, position: WorkbotViewportPosit
     resize();
     visual.addEventListener("resize", resize);
     visual.addEventListener("scroll", resize);
+    // The keyboard check reads the page's height, which can change without the visual viewport changing.
+    window.addEventListener("resize", resize);
     // A document scroll (iOS bringing a focused field into view) moves pageTop without a visual viewport scroll.
     if (position === "absolute") window.addEventListener("scroll", resize, { passive: true });
     return () => {
       visual.removeEventListener("resize", resize);
       visual.removeEventListener("scroll", resize);
+      window.removeEventListener("resize", resize);
       window.removeEventListener("scroll", resize);
       node.removeAttribute("data-workbot-keyboard");
     };

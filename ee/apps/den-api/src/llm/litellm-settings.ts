@@ -6,7 +6,7 @@
 import { z } from "zod"
 import { eq, inArray } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, GatewayCredentialSetTable, GatewayLiteLlmIssuedKeyTable, GatewayProviderCredentialTable, MemberTable } from "@openwork-ee/den-db/schema"
-import { LITELLM_ADMIN_CREDENTIAL_SUBJECT, LITELLM_DOC_URL, LITELLM_ENV, LITELLM_NPM, LITELLM_PROVIDER_ID, LITELLM_PROVIDER_NAME, isLiteLlmProviderId, liteLlmSpendTrackingEnabled } from "@openwork-ee/utils/litellm-catalog"
+import { LITELLM_ADMIN_CREDENTIAL_SUBJECT, LITELLM_DOC_URL, LITELLM_ENTRA_KEY_SOURCE, LITELLM_ENV, LITELLM_NPM, LITELLM_PROVIDER_ID, LITELLM_PROVIDER_NAME, isLiteLlmProviderId, liteLlmSpendTrackingEnabled } from "@openwork-ee/gateway-catalog"
 import type { GatewayLiteLlmStatus } from "@openwork/types/den/gateway"
 import { db } from "../db.js"
 import { normalizeLiteLlmBaseUrl } from "./litellm.js"
@@ -23,16 +23,26 @@ const settingsSchema = z.object({
   members: z.record(z.string(), z.object({ grantId: z.string().nullable(), groupId: z.string(), teamId: z.string().nullable(), matchedAt: z.string() })),
   lastSyncedAt: z.string().nullable(),
   lastSyncError: z.string().nullable(),
-  /** member mode only: each person pastes their key, or OpenWork creates it. */
-  keySource: z.enum(["personal", "issued"]).default("personal"),
+  /**
+   * member mode only: each person pastes their key, OpenWork creates it, or (entra) the proxy
+   * accepts sign-in tokens and each person signs in with Microsoft Entra ID instead of holding a key.
+   */
+  keySource: z.enum(["personal", "issued", LITELLM_ENTRA_KEY_SOURCE]).default("personal"),
+  /** entra only: the API scope of the organization's app registration that members' access tokens are issued for. */
+  entraScope: z.string().min(1).max(512).optional(),
   /** issued only: one key per LiteLLM team, or a copy of the person's existing key. */
   issueStrategy: z.enum(["per_team", "mirror"]).default("per_team"),
   /** issued + mirror: what to do for someone with no key to copy. */
   mirrorFallback: z.enum(["per_team", "error"]).default("per_team"),
   /** issued + per team: LiteLLM team id -> the credential set holding that team's keys. */
   teamSets: z.record(z.string(), z.string()).default({}),
-})
+}).refine((settings) => settings.keySource !== LITELLM_ENTRA_KEY_SOURCE || (settings.mode === "member" && settings.entraScope !== undefined), "Microsoft Entra sign-in needs member mode and an API scope.")
 export type LiteLlmSettings = z.infer<typeof settingsSchema>
+
+/** Each person signs in with Microsoft Entra ID: OpenWork holds no LiteLLM key and cannot read the proxy's models, teams or keys. */
+export function isLiteLlmEntraSignIn(settings: LiteLlmSettings | null): settings is LiteLlmSettings & { entraScope: string } {
+  return settings?.mode === "member" && settings.keySource === LITELLM_ENTRA_KEY_SOURCE && settings.entraScope !== undefined
+}
 
 export function readLiteLlmSettings(settings: Record<string, unknown>): LiteLlmSettings | null {
   const parsed = settingsSchema.safeParse(settings.litellm)
@@ -62,6 +72,7 @@ export async function liteLlmStatus(provider: { id: typeof GatewayCredentialSetT
   let baseUrl: string | null = null
   try { baseUrl = typeof provider.settings.upstreamBaseUrl === "string" ? normalizeLiteLlmBaseUrl(provider.settings.upstreamBaseUrl).adminBaseUrl : null } catch { baseUrl = null }
   const issued = settings.mode === "member" && settings.keySource === "issued"
+  const entra = isLiteLlmEntraSignIn(settings)
   const issuedRows = issued ? await reader.select({ memberId: GatewayLiteLlmIssuedKeyTable.org_membership_id, slot: GatewayLiteLlmIssuedKeyTable.slot, status: GatewayLiteLlmIssuedKeyTable.status })
     .from(GatewayLiteLlmIssuedKeyTable).where(eq(GatewayLiteLlmIssuedKeyTable.gateway_provider_id, provider.id)) : []
   const attentionRows = issuedRows.filter((row) => row.slot === "member" && ATTENTION_STATUSES.some((status) => status === row.status))
@@ -81,11 +92,13 @@ export async function liteLlmStatus(provider: { id: typeof GatewayCredentialSetT
     }),
     baseUrl,
     spendTracking: liteLlmSpendTrackingEnabled(settings.mode),
-    hasSyncKey: credentials.some((row) => row.subject === syncSubject && row.memberId === null && row.status === "active"),
+    // Member Entra sign-in never has a key to sync with.
+    hasSyncKey: !entra && credentials.some((row) => row.subject === syncSubject && row.memberId === null && row.status === "active"),
     lastSyncedAt: settings.lastSyncedAt,
     lastSyncError: settings.lastSyncError,
     modelCount: settings.catalog.length,
     teamCount: settings.teams.length,
     connectedMemberCount: settings.mode === "member" ? new Set(credentials.filter((row) => row.memberId !== null && row.status === "active").map((row) => row.memberId)).size : 0,
+    ...(entra ? { entraScope: settings.entraScope } : {}),
   }
 }

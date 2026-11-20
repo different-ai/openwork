@@ -87,6 +87,9 @@ try {
     await page.setViewportSize({ width: 390, height: 520 })
     await page.waitForFunction(height => document.querySelector(".workbot-scroll").clientHeight < height - 200, fullHeight)
     await atBottom("keyboard size")
+    // Android resizes the page for its keyboard (interactive-widget=resizes-content): the message box sits on it.
+    const box = await page.locator("[data-workbot-composer]").filter({ visible: true }).first().boundingBox()
+    assert.ok(box && box.y >= 0 && box.y + box.height <= 520, `The message box is fully above the keyboard: ${JSON.stringify(box)}`)
     await page.screenshot({ path: `${out}/keyboard.png` })
     await page.setViewportSize({ width: 390, height: 844 })
     await page.waitForFunction(height => document.querySelector(".workbot-scroll").clientHeight >= height - 2, fullHeight)

@@ -97,11 +97,9 @@ export const resolveOrganizationContextMiddleware: MiddlewareHandler<{
     return c.json({ error: "organization_not_found" }, 404) as never
   }
 
-  // an organization that requires SSO opens only from a
-  // session signed in through its SSO. API keys are issued from such a
-  // session (POST /v1/api-keys runs behind this check), so they are not re-checked.
-  if (!apiKey) {
-    const ssoBlock = await findSsoAccessBlock({ sessionId: session?.id ?? null, organizationId: normalizedOrganizationId })
+  const signInSessionId = c.get("signInSessionId")
+  if (signInSessionId) {
+    const ssoBlock = await findSsoAccessBlock({ sessionId: signInSessionId, organizationId: normalizedOrganizationId })
     if (ssoBlock) {
       return c.json(ssoRequiredErrorBody(ssoBlock), 403) as never
     }

@@ -29,9 +29,7 @@ import { isDeepStrictEqual } from "node:util"
 import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { lockUsageOrganization } from "@openwork-ee/den-db/gateway-usage-limits"
 import { AuthUserTable, GatewayCredentialSetTable, GatewayModelGroupModelTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderModelTable, GatewayProviderOauthStateTable, GatewayProviderTable, MemberTable, TeamTable } from "@openwork-ee/den-db/schema"
-import { gatewayAudienceKey } from "@openwork-ee/utils/gateway-routing"
-import { isLiteLlmProviderId } from "@openwork-ee/utils/litellm-catalog"
-import { isTrueFoundryProviderId } from "@openwork-ee/utils/truefoundry-catalog"
+import { gatewayAudienceKey, isLiteLlmProviderId, isTrueFoundryProviderId } from "@openwork-ee/gateway-catalog"
 import { createDenTypeId, denTypeIdPrefixes, normalizeDenTypeId, type DenTypeId, type DenTypeIdName } from "@openwork-ee/utils/typeid"
 import { configRefSchema, configSecretSchema, type ConfigApplyStep, type ConfigFieldChange, type ConfigSpec } from "@openwork/types/den/config-blobs"
 import { GATEWAY_PROVIDER_CREDENTIAL_KINDS, GATEWAY_PROVIDER_CREDENTIAL_MODES, GATEWAY_PROVIDER_STATUSES, gatewayAwsSsoSettingsSchema, type GatewayAccessGrantWrite, type GatewayCredentialSetPatch, type GatewayModelGroupPatch } from "@openwork/types/den/gateway"
@@ -50,7 +48,7 @@ import { readLiteLlmSettings } from "../../llm/litellm-settings.js"
 import type { ModelsDevProvider } from "../../llm/models-dev.js"
 import { resolvePermissionsForMember } from "../../permissions/resolve.js"
 import { defineConfigArea, type ConfigApplyOp, type ConfigApplyResult, type ConfigAreaContext, type ConfigItem, type ResolvedConfigItem } from "../area.js"
-import { ConfigApplyError, ConfigStepLog, applyWithSteps, configItemError, opTouched, secretEffects, touches } from "./route-support.js"
+import { ConfigApplyError, ConfigStepLog, applyWithSteps, configItemError, loadMemberEmails, opTouched, secretEffects, touches } from "./route-support.js"
 
 const AREA = "ai-gateway.providers" as const
 const MANAGE = "gateway_providers.manage" as const
@@ -86,7 +84,7 @@ function providerSpecSchema<Ref extends z.ZodType, Secret extends z.ZodType>(ref
     /** Custom OpenAI-compatible providers only: their own model list (address is settings.upstreamBaseUrl). */
     custom: z.object({ models: z.array(gatewayCustomModelSchema).min(1).max(500) }).strict().optional(),
     /** LiteLLM providers only, informational: they are synced from the proxy and can't be applied. */
-    litellm: z.object({ mode: z.enum(["org", "member"]), keySource: z.enum(["personal", "issued"]).nullable(), issueStrategy: z.enum(["per_team", "mirror"]).nullable(), mirrorFallback: z.enum(["per_team", "error"]).nullable() }).strict().optional(),
+    litellm: z.object({ mode: z.enum(["org", "member"]), keySource: z.enum(["personal", "issued", "entra"]).nullable(), issueStrategy: z.enum(["per_team", "mirror"]).nullable(), mirrorFallback: z.enum(["per_team", "error"]).nullable() }).strict().optional(),
     /** Provider universe policy: [] follows every supported catalog model. */
     modelIds: z.array(modelIdSchema).max(500),
     /** Ordered pins (catalog model ids). */
@@ -162,7 +160,9 @@ async function readProviders(ctx: ConfigAreaContext, ids: readonly string[] | nu
   const teamIds = [...new Set(grants.flatMap((grant) => grant.team_id ? [grant.team_id] : []))]
   const memberIds = [...new Set(grants.flatMap((grant) => grant.org_membership_id ? [grant.org_membership_id] : []))]
   const teams = teamIds.length ? await database.select({ id: TeamTable.id, name: TeamTable.name }).from(TeamTable).where(inArray(TeamTable.id, teamIds)) : []
-  const people = memberIds.length ? await database.select({ id: MemberTable.id, email: AuthUserTable.email, name: AuthUserTable.name }).from(MemberTable).innerJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId)).where(inArray(MemberTable.id, memberIds)) : []
+  const people = memberIds.length ? await database.select({ id: MemberTable.id, name: AuthUserTable.name }).from(MemberTable).innerJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId)).where(inArray(MemberTable.id, memberIds)) : []
+  // Someone who was invited and has not joined yet is named by the email they were invited with, as in every other area.
+  const emails = await loadMemberEmails(database, organizationId, memberIds)
   const modelById = new Map(models.map((model) => [model.id, model]))
 
   return providers.map((provider): ConfigItem => {
@@ -198,9 +198,10 @@ async function readProviders(ctx: ConfigAreaContext, ids: readonly string[] | nu
       access: grants.filter((grant) => grant.gateway_provider_id === provider.id).flatMap((grant): ExportSpec["access"] => {
         const base = { id: grant.id, modelGroup: grant.model_group_id, credentialSet: grant.credential_set_id }
         if (grant.org_membership_id) {
-          const person = people.find((entry) => entry.id === grant.org_membership_id)
-          // A grant to someone without a sign-in email can't be carried by email.
-          return person?.email ? [{ ...base, audience: "member", member: { $ref: `people/${person.email.toLowerCase()}`, ...(person.name ? { name: person.name } : {}) } }] : []
+          const email = emails.get(grant.org_membership_id)
+          const name = people.find((entry) => entry.id === grant.org_membership_id)?.name
+          // A grant to someone without an email can't be carried by email.
+          return email ? [{ ...base, audience: "member", member: { $ref: `people/${email}`, ...(name ? { name } : {}) } }] : []
         }
         if (grant.team_id) {
           const team = teams.find((entry) => entry.id === grant.team_id)
@@ -334,12 +335,11 @@ async function freeIds(tx: GatewayTx, wanted: { models: string[]; groups: string
   const groups = wanted.groups.flatMap((id) => typedId("gatewayModelGroup", id) ?? [])
   const sets = wanted.sets.flatMap((id) => typedId("gatewayCredentialSet", id) ?? [])
   const grants = wanted.grants.flatMap((id) => typedId("inferenceProviderAccess", id) ?? [])
-  const [takenModels, takenGroups, takenSets, takenGrants] = await Promise.all([
-    models.length ? tx.select({ id: GatewayProviderModelTable.id }).from(GatewayProviderModelTable).where(inArray(GatewayProviderModelTable.id, models)) : [],
-    groups.length ? tx.select({ id: GatewayModelGroupTable.id }).from(GatewayModelGroupTable).where(inArray(GatewayModelGroupTable.id, groups)) : [],
-    sets.length ? tx.select({ id: GatewayCredentialSetTable.id }).from(GatewayCredentialSetTable).where(inArray(GatewayCredentialSetTable.id, sets)) : [],
-    grants.length ? tx.select({ id: GatewayProviderAccessTable.id }).from(GatewayProviderAccessTable).where(inArray(GatewayProviderAccessTable.id, grants)) : [],
-  ])
+  // One statement at a time: a transaction on PlanetScale's serverless driver fails when a second statement is sent before the first answered.
+  const takenModels = models.length ? await tx.select({ id: GatewayProviderModelTable.id }).from(GatewayProviderModelTable).where(inArray(GatewayProviderModelTable.id, models)) : []
+  const takenGroups = groups.length ? await tx.select({ id: GatewayModelGroupTable.id }).from(GatewayModelGroupTable).where(inArray(GatewayModelGroupTable.id, groups)) : []
+  const takenSets = sets.length ? await tx.select({ id: GatewayCredentialSetTable.id }).from(GatewayCredentialSetTable).where(inArray(GatewayCredentialSetTable.id, sets)) : []
+  const takenGrants = grants.length ? await tx.select({ id: GatewayProviderAccessTable.id }).from(GatewayProviderAccessTable).where(inArray(GatewayProviderAccessTable.id, grants)) : []
   const free = <T extends string>(ids: T[], taken: Array<{ id: T }>) => new Set(ids.filter((id) => !taken.some((row) => row.id === id)))
   return { models: free(models, takenModels), groups: free(groups, takenGroups), sets: free(sets, takenSets), grants: free(grants, takenGrants) }
 }
@@ -886,6 +886,11 @@ export const aiGatewayProvidersArea = defineConfigArea({
   orderedArrays: ["pinnedModelIds", "custom.models"],
   arrayKeys: { models: "modelId", "custom.models": "id" },
   comparableSpec,
+  // The kind of a stored key is saved when a key is entered and never on its own: a credential set that is still
+  // waiting for its key has none, and that alone is not a difference to plan.
+  derivedFields: ["credentialSets[].credentialKind"],
+  // A grant to a team or a person is nothing without them: dropping who it names drops the grant.
+  requiredRefs: ["access[].team", "access[].member"],
   // Catalog reads (models.dev), Google/AWS token revocation and LiteLLM key
   // deletion happen around the writes, so the engine must not wrap apply in its own transaction.
   transactional: false,

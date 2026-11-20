@@ -5,6 +5,7 @@ import {
   ConnectorInstanceAccessGrantTable,
   DesktopPolicyMemberTable,
   ExternalMcpConnectionAccessGrantTable,
+  AutomationShareTable,
   InvitationTable,
   GatewayProviderAccessTable,
   GatewayUsageAssignmentTable,
@@ -476,6 +477,7 @@ export async function deleteTeam(c: ResourceActionContext, payload: ResourceOrga
     await deleteTeamWorkbotSettings(tx, team.id)
     await deleteTeamPrompts(tx, team.id)
     await deleteTeamAutoRouterAccess(tx, team.id)
+    await tx.delete(AutomationShareTable).where(eq(AutomationShareTable.team_id, team.id))
     await tx.delete(ExternalMcpConnectionAccessGrantTable).where(eq(ExternalMcpConnectionAccessGrantTable.teamId, team.id))
     await tx.delete(LlmProviderAccessTable).where(eq(LlmProviderAccessTable.teamId, team.id))
     // Usage-limit assignments have no removed_at; unassigning deletes them. This

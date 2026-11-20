@@ -9,21 +9,19 @@
 // Both resolve the name, rewrite the request for the model's own protocol under the member's
 // Gateway alias, and hand it to the normal Gateway pipeline, which authorizes, meters and forwards
 // it, so any model works through either API whatever its provider speaks.
-import { createGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
+import { createGatewayModelAlias } from "@openwork-ee/gateway-catalog"
 import { AUTO_ROUTER_THINKING_LEVELS, autoRouterThinkingLevels, type AutoRouterThinkingLevel } from "@openwork/types/den/auto-router"
 import { cursorModelName, matchCursorModel, parseCursorModelName } from "@openwork/types/den/gateway-cursor"
 import {
   accessPriority, forwardedHeaders, maxOutputTokens, translateResponse, translatorFor, type AutoTarget,
 } from "./auto-router/handler.js"
-import { isJsonObject, type JsonObject } from "./auto-router/chat.js"
-import { chatToolCallIds, type AutoTranslator } from "./auto-router/protocol.js"
-import type { ReasoningStore } from "./auto-router/reasoning-store.js"
+import { isJsonObject, type JsonObject, chatToolCallIds, type AutoTranslator, chatStreamToResponses, chatToResponses, responsesReasoningEffort, responsesToChat, type ResponsesToolNames } from "@openwork-ee/gateway-protocols"
+import type { ReasoningStore } from "@openwork-ee/gateway-protocols"
 import type { GatewayContext } from "./middleware/gateway-auth.js"
-import { classifyProtocolFamily, type ProtocolFamily } from "./protocols.js"
+import { classifyProtocolFamily, type ProtocolFamily } from "@openwork-ee/gateway-upstreams"
 import type { GatewayMemberAccessRow } from "./provider-access.js"
-import type { ProviderCatalog } from "./provider-catalog.js"
+import type { ProviderCatalog } from "@openwork-ee/gateway-catalog"
 import { isEventStreamContentType, isJsonContentType } from "./relay.js"
-import { chatStreamToResponses, chatToResponses, responsesReasoningEffort, responsesToChat, type ResponsesToolNames } from "./cursor-responses.js"
 import { resolveSmartRouter, type SmartToolDependencies, type SmartToolRouter } from "./smart-tools.js"
 
 export const cursorPathPrefix = "/api/v1/cursor"

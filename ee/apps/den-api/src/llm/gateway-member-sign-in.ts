@@ -4,19 +4,42 @@
  * what makes a member's stored credential usable.
  *
  *   google     Google OAuth client (Vertex)                          oauth_google
- *   microsoft  Entra ID tenant + confidential app registration (Foundry)  oauth_azure
+ *   microsoft  Entra ID tenant + confidential app registration (Foundry, LiteLLM)  oauth_azure
  *   aws_sso    IAM Identity Center instance, account, permission set (Bedrock)  aws_sso
+ *
+ * Microsoft access tokens are issued for one API scope. Microsoft Foundry
+ * accepts Azure Cognitive Services tokens (`scope` null below). A LiteLLM
+ * provider in member Microsoft Entra sign-in mode names a scope of the
+ * organization's own app registration, which its proxy validates (JWT auth).
  */
 import { isDeepStrictEqual } from "node:util"
-import { GatewayCredentialSetTable, GatewayProviderCredentialTable } from "@openwork-ee/den-db/schema"
+import { GatewayCredentialSetTable, GatewayProviderCredentialTable, GatewayProviderTable } from "@openwork-ee/den-db/schema"
+import { liteLlmEntraScope } from "@openwork-ee/gateway-catalog"
 import { GATEWAY_MEMBER_SIGN_IN_CREDENTIAL_KINDS, gatewayAwsSsoSettingsSchema, gatewayMemberSignInMethod, microsoftTenantIdSchema, type GatewayAwsSsoSettings, type GatewayMemberSignInMethod, type InferenceProviderSecret } from "@openwork/types/den/inference"
 import { googleOAuthClientBinding } from "./inference-provider-google-oauth.js"
 
 type CredentialSet = Pick<typeof GatewayCredentialSetTable.$inferSelect, "id" | "oauth_client_id" | "oauth_client_secret" | "oauth_tenant_id" | "aws_sso">
 type Credential = Pick<typeof GatewayProviderCredentialTable.$inferSelect, "kind" | "expires_at" | "last_error">
+type SignInProvider = Pick<typeof GatewayProviderTable.$inferSelect, "provider_id" | "settings">
 
-export { gatewayMemberSignInMethod }
 export type { GatewayMemberSignInMethod }
+
+/**
+ * The API scope members' Microsoft access tokens are issued for: a LiteLLM
+ * provider's own scope in member Microsoft Entra sign-in mode, or null (Azure
+ * Cognitive Services for Microsoft Foundry, and every other provider).
+ */
+export function providerMemberSignInScope(provider: SignInProvider): string | null {
+  return liteLlmEntraScope(provider)
+}
+
+/**
+ * How members sign in to a saved provider: its catalog provider's method, or
+ * Microsoft for a LiteLLM provider in member Microsoft Entra sign-in mode.
+ */
+export function providerMemberSignInMethod(provider: SignInProvider): GatewayMemberSignInMethod | null {
+  return gatewayMemberSignInMethod(provider.provider_id, { liteLlmEntraSignIn: providerMemberSignInScope(provider) !== null })
+}
 
 export function memberSignInCredentialKind(method: GatewayMemberSignInMethod) {
   return GATEWAY_MEMBER_SIGN_IN_CREDENTIAL_KINDS[method]
@@ -27,14 +50,19 @@ export function readAwsSsoSettings(value: unknown): GatewayAwsSsoSettings | null
   return parsed.success ? parsed.data : null
 }
 
-/** What an administrator still has to enter before members can sign in, or null when the set is complete. */
-export function memberSignInConfigurationError(method: GatewayMemberSignInMethod, set: Omit<CredentialSet, "id">): string | null {
+/**
+ * What an administrator still has to enter before members can sign in, or null when the set is complete.
+ * `scope` is the provider's own Microsoft API scope (providerMemberSignInScope).
+ */
+export function memberSignInConfigurationError(method: GatewayMemberSignInMethod, set: Omit<CredentialSet, "id">, scope: string | null = null): string | null {
   switch (method) {
     case "google":
       return set.oauth_client_id?.trim() && set.oauth_client_secret?.trim() ? null : "Member credential sets require a non-empty Google OAuth client ID and secret."
-    case "microsoft":
-      if (!set.oauth_tenant_id || !microsoftTenantIdSchema.safeParse(set.oauth_tenant_id).success) return "Microsoft Foundry member sets require the Entra ID directory (tenant) ID, a GUID."
-      return set.oauth_client_id?.trim() && set.oauth_client_secret?.trim() ? null : "Microsoft Foundry member sets require the Entra ID application (client) ID and a client secret."
+    case "microsoft": {
+      const product = scope === null ? "Microsoft Foundry" : "LiteLLM"
+      if (!set.oauth_tenant_id || !microsoftTenantIdSchema.safeParse(set.oauth_tenant_id).success) return `${product} member sets require the Entra ID directory (tenant) ID, a GUID.`
+      return set.oauth_client_id?.trim() && set.oauth_client_secret?.trim() ? null : `${product} member sets require the Entra ID application (client) ID and a client secret.`
+    }
     case "aws_sso":
       return readAwsSsoSettings(set.aws_sso) ? null : "Amazon Bedrock member sets require the AWS access portal URL, IAM Identity Center region, AWS account ID and permission set name."
   }
@@ -57,23 +85,29 @@ export function sameMemberSignInConfiguration(a: Omit<CredentialSet, "id">, b: O
 /**
  * Binds a browser entry attempt to the set's sign-in configuration, so a change
  * while someone is signing in invalidates the attempt. Google keeps its original
- * binding; the others are namespaced by method.
+ * binding; the others are namespaced by method. A provider's own Microsoft API
+ * scope (`scope`) is part of the configuration it binds.
  */
-export function memberSignInBinding(method: GatewayMemberSignInMethod, set: CredentialSet, verifier: string): string | null {
-  if (memberSignInConfigurationError(method, set)) return null
+export function memberSignInBinding(method: GatewayMemberSignInMethod, set: CredentialSet, verifier: string, scope: string | null = null): string | null {
+  if (memberSignInConfigurationError(method, set, scope)) return null
   switch (method) {
     case "google":
       return googleOAuthClientBinding(verifier, set.oauth_client_id ?? "", set.oauth_client_secret ?? "")
-    case "microsoft":
-      return googleOAuthClientBinding(verifier, `microsoft:${set.oauth_tenant_id?.toLowerCase()}:${set.oauth_client_id}`, set.oauth_client_secret ?? "")
+    case "microsoft": {
+      const tenant = set.oauth_tenant_id?.toLowerCase()
+      return googleOAuthClientBinding(verifier, scope === null ? `microsoft:${tenant}:${set.oauth_client_id}` : `microsoft:${JSON.stringify([tenant, set.oauth_client_id, scope])}`, set.oauth_client_secret ?? "")
+    }
     case "aws_sso":
       return googleOAuthClientBinding(verifier, `aws_sso:${JSON.stringify(readAwsSsoSettings(set.aws_sso))}`, set.id)
   }
 }
 
-/** A member's stored credential can serve requests now or after a silent renewal. */
-export function memberSignInCredentialUsable(method: GatewayMemberSignInMethod, set: Omit<CredentialSet, "id">, credential: Credential, parsed: InferenceProviderSecret, now = Date.now()): boolean {
-  if (memberSignInConfigurationError(method, set)) return false
+/**
+ * A member's stored credential can serve requests now or after a silent renewal.
+ * A Microsoft token counts only for the API scope the provider configures now (`scope`).
+ */
+export function memberSignInCredentialUsable(method: GatewayMemberSignInMethod, set: Omit<CredentialSet, "id">, credential: Credential, parsed: InferenceProviderSecret, now = Date.now(), scope: string | null = null): boolean {
+  if (memberSignInConfigurationError(method, set, scope)) return false
   const expiry = credential.expires_at?.getTime()
   if (expiry === undefined || !Number.isFinite(expiry)) return false
   switch (method) {
@@ -83,6 +117,7 @@ export function memberSignInCredentialUsable(method: GatewayMemberSignInMethod, 
       return parsed.kind === "oauth_azure" && credential.last_error !== "invalid_client" && Boolean(parsed.token.refreshToken)
         && parsed.token.microsoftIdentity?.tenantId.toLowerCase() === set.oauth_tenant_id?.toLowerCase()
         && parsed.token.microsoftIdentity?.clientId === set.oauth_client_id
+        && (parsed.token.microsoftIdentity?.scope ?? null) === scope
     case "aws_sso":
       return parsed.kind === "aws_sso" && isDeepStrictEqual(parsed.awsSso.sso, readAwsSsoSettings(set.aws_sso))
         && parsed.awsSso.clientSecretExpiresAt * 1000 > now

@@ -7,10 +7,10 @@ import {
   configTokenPermissions,
   DEN_API_KEY_TYPES,
   deleteOrganizationApiKey,
-  DEN_API_KEY_RATE_LIMIT_MAX,
   DEN_API_KEY_RATE_LIMIT_TIME_WINDOW_MS,
   listOrganizationApiKeys,
 } from "../../api-keys.js"
+import { env } from "../../env.js"
 import { ORGANIZATION_AUDIT_ACTIONS } from "../../audit-events.js"
 import { apiKeyAuditColumns, apiKeyCreatedEvent } from "../../audit/domain/api-keys.js"
 import { appendDomainChangesAfterCommit, finishLegacyAuditAction } from "../../audit/domain/legacy.js"
@@ -265,7 +265,7 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
           // Better Auth apiKey permissions: {"config":["export","submit",...]} (server-only field).
           ...(config ? { permissions: configTokenPermissions(config.scopes) } : {}),
           rateLimitEnabled: true,
-          rateLimitMax: DEN_API_KEY_RATE_LIMIT_MAX,
+          rateLimitMax: env.apiKeyRateLimitMax,
           rateLimitTimeWindow: DEN_API_KEY_RATE_LIMIT_TIME_WINDOW_MS,
         },
       })

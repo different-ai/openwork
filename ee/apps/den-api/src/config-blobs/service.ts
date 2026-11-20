@@ -42,6 +42,7 @@ import {
   CONFIG_BLOB_FORMAT_VERSION,
   CONFIG_BLOB_MAX_BYTES,
   CONFIG_CHANGE_REQUEST_OPEN_STATUSES,
+  CONFIG_DECISIONS_FILE_FORMAT,
   EMPTY_CONFIG_DECISIONS,
   configBlobSchema,
   flattenConfigAreas,
@@ -64,6 +65,7 @@ import {
   type ConfigChangeRequestStatus,
   type ConfigChangeRequestSummary,
   type ConfigDecisions,
+  type ConfigDecisionsFile,
   type ConfigDeployment,
   type ConfigImportMode,
   type ConfigPlan,
@@ -94,6 +96,7 @@ import { ConfigApplyError } from "./areas/route-support.js"
 import {
   baseHash as computeBaseHash,
   buildPlan,
+  planRefTargets,
   checkWrittenItems,
   CONFIG_APPLY_INTERRUPTED_CODE,
   emptyApplyCounts,
@@ -128,6 +131,7 @@ import {
   getChangeRequest,
   deleteAliasesForLocalIds,
   insertAliases,
+  latestAppliedFromSource,
   listAliasRows,
   listChangeRequests,
   listChangeRequestStatuses,
@@ -354,7 +358,8 @@ async function exportAreas(ctx: ConfigAreaContext, keys: readonly ConfigAreaKey[
   const out: ExportedArea[] = []
   for (const key of keys) {
     const area = getConfigArea(key)
-    const items = await area.exportItems(ctx)
+    const read = await area.exportItems(ctx)
+    const items = area.ensureKeys ? await area.ensureKeys(ctx, read) : read
     out.push({ area, items: [...items].sort((left, right) => (left.id < right.id ? -1 : left.id > right.id ? 1 : 0)) })
   }
   return out
@@ -436,19 +441,31 @@ async function loadActor(organizationId: OrganizationId, memberId: string | null
 
 /** Normalized email → member id, for members and invited people (their placeholder member rows). */
 async function loadPeople(organizationId: OrganizationId): Promise<Map<string, string>> {
+  return (await loadDirectory(organizationId)).people
+}
+
+/**
+ * The organization's member rows, read once: `people` (normalized email →
+ * member id, what a people reference resolves against) and `names` (member
+ * id → their name, else their email) for the people who are in it now.
+ */
+async function loadDirectory(organizationId: OrganizationId): Promise<{ people: Map<string, string>; names: Map<string, string> }> {
   const rows = await db.$primary
-    .select({ id: MemberTable.id, userEmail: AuthUserTable.email, inviteEmail: InvitationTable.email, removedAt: MemberTable.removedAt })
+    .select({ id: MemberTable.id, userName: AuthUserTable.name, userEmail: AuthUserTable.email, inviteEmail: InvitationTable.email, removedAt: MemberTable.removedAt })
     .from(MemberTable)
     .leftJoin(AuthUserTable, eq(MemberTable.userId, AuthUserTable.id))
     .leftJoin(InvitationTable, eq(MemberTable.inviteId, InvitationTable.id))
     .where(eq(MemberTable.organizationId, organizationId))
   const people = new Map<string, string>()
+  const names = new Map<string, string>()
   // A current member wins over a removed row with the same email.
   for (const row of [...rows.filter((entry) => !entry.removedAt), ...rows.filter((entry) => entry.removedAt)]) {
     const email = (row.userEmail ?? row.inviteEmail)?.trim().toLowerCase()
-    if (email && !people.has(email)) people.set(email, row.id)
+    if (!email) continue
+    if (!people.has(email)) people.set(email, row.id)
+    if (!row.removedAt) names.set(row.id, row.userName?.trim() || email)
   }
-  return people
+  return { people, names }
 }
 
 /**
@@ -459,6 +476,20 @@ async function loadPeople(organizationId: OrganizationId): Promise<Map<string, s
  */
 function canReadPeople(caller: Pick<ConfigCaller, "can" | "tokenAreas">): boolean {
   return canView(caller, PEOPLE_AREA_KEY)
+}
+
+/**
+ * A plan as this caller may read it: people hidden from who may not read
+ * them (`peopleRedactorFor`), and the organization's items a reference could
+ * be pointed at (`refTargets`) only for the areas the caller may view. The
+ * stored plan lists them for its author.
+ */
+function planFor(plan: ConfigPlan, caller: Pick<ConfigCaller, "can" | "tokenAreas">, people: PeopleRedactor | null): ConfigPlan {
+  const shown = people ? people.plan(plan) : plan
+  if (!shown.refTargets) return shown
+  const { refTargets, ...rest } = shown
+  const visible = refTargets.filter((entry) => canView(caller, entry.area))
+  return visible.length > 0 ? { ...rest, refTargets: visible } : rest
 }
 
 /** Null when the caller may read people; otherwise what hides them from what it is sent. */
@@ -591,7 +622,7 @@ function runNotFound(): ConfigBlobError {
 export async function getChangeRequestPlan(organizationId: OrganizationId, id: string, caller: Pick<ConfigCaller, "can" | "tokenAreas">): Promise<{ plan: ConfigPlan | null; decisions: ConfigDecisions }> {
   const row = await loadVisible(organizationId, id, caller)
   const people = await peopleRedactorFor(organizationId, caller)
-  return { plan: row.plan && people ? people.plan(row.plan) : row.plan, decisions: row.decisions ?? EMPTY_CONFIG_DECISIONS }
+  return { plan: row.plan ? planFor(row.plan, caller, people) : row.plan, decisions: row.decisions ?? EMPTY_CONFIG_DECISIONS }
 }
 
 export async function getBeforeSnapshot(organizationId: OrganizationId, id: string, caller: Pick<ConfigCaller, "can" | "tokenAreas">): Promise<unknown> {
@@ -678,7 +709,25 @@ export async function dryRunChangeRequest(org: ConfigOrganization, caller: Confi
   })
   const people = await peopleRedactorFor(org.id, caller)
   if ("invalid" in planned) return { plan: null, errors: people ? planned.invalid.map(people.text) : planned.invalid }
-  return people ? { plan: people.plan(planned.plan), errors: planned.fatal.map(people.text) } : { plan: planned.plan, errors: planned.fatal }
+  return { plan: planFor(planned.plan, caller, people), errors: people ? planned.fatal.map(people.text) : planned.fatal }
+}
+
+/**
+ * The answers a new import of a source starts with: those of the last applied
+ * import of the same source into this organization. What was matched, pointed
+ * elsewhere, left out and renamed; an invitation is not repeated (the person
+ * was invited then), and deletes, overwrites and invitation emails are
+ * decided each time. The plan says they were reused, and the review can
+ * change any of them.
+ */
+async function earlierAnswers(org: ConfigOrganization, blob: ConfigBlob): Promise<ConfigDecisions | null> {
+  if (!blob.source) return null
+  const earlier = await latestAppliedFromSource(org.id, { instanceId: blob.source.instanceId, organizationId: blob.source.organization.id })
+  if (!earlier?.decisions) return null
+  const { matches, skips, renames } = earlier.decisions
+  const refs = earlier.decisions.refs.filter((entry) => !("invite" in entry.resolution))
+  if (matches.length + refs.length + skips.length + renames.length === 0) return null
+  return { ...EMPTY_CONFIG_DECISIONS, matches, refs, skips, renames, reusedFrom: earlier.id }
 }
 
 export async function submitChangeRequest(org: ConfigOrganization, caller: ConfigCaller, input: SubmitInput, options: { source?: "ui" | "api" | "revert"; revertsChangeRequestId?: ConfigChangeRequestId; decisions?: ConfigDecisions } = {}): Promise<ConfigChangeRequestSummary> {
@@ -701,7 +750,7 @@ export async function submitChangeRequest(org: ConfigOrganization, caller: Confi
     sourceDeployment: blob.source?.deployment ?? null,
     areas: scope,
     baseHash: blob.baseHash ?? null,
-    decisions: options.decisions ?? null,
+    decisions: options.decisions ?? (source === "revert" ? null : await earlierAnswers(org, blob)),
     autoApply: input.autoApply,
     availableAt: new Date(),
     ...(options.revertsChangeRequestId ? { revertsChangeRequestId: options.revertsChangeRequestId } : {}),
@@ -810,6 +859,36 @@ async function baseSpecsFor(organizationId: OrganizationId, hash: string | null)
 }
 
 /** What planning reads from a request: a stored row, or an unsaved dry run. */
+/**
+ * Items an earlier import of this source created or matched are recognised by
+ * their saved link before anything else. An area's export leaves some items
+ * out (a skill or plugin that only its creator can reach is personal, which
+ * is what an imported item becomes when the people it was shared with are
+ * left out), so the saved link would never see them and the item would be
+ * created again. Read those by id and add them to the target items, for the
+ * items of this file only: nothing else personal becomes visible to the plan.
+ */
+async function addLinkedTargetItems(input: {
+  ctx: ConfigAreaContext
+  areas: Partial<Record<ConfigAreaKey, { items: readonly { id?: string | null }[] }>>
+  targetItems: Map<ConfigAreaKey, ConfigItem[]>
+  aliases: ReadonlyMap<ConfigAreaKey, ReadonlyMap<string, string>>
+}): Promise<void> {
+  for (const [key, items] of input.targetItems) {
+    const links = input.aliases.get(key)
+    const area = registeredArea(key)
+    if (!links || !area?.readItems) continue
+    const known = new Set(items.map((item) => item.id))
+    const missing = new Set<string>()
+    for (const item of input.areas[key]?.items ?? []) {
+      const localId = item.id ? links.get(item.id) : undefined
+      if (localId && !known.has(localId)) missing.add(localId)
+    }
+    if (missing.size === 0) continue
+    items.push(...await readItemsFor(area, input.ctx, [...missing]))
+  }
+}
+
 type PlanSource = Pick<ConfigChangeRequestRow, "organizationId" | "blob" | "mode" | "baseHash" | "createdByMemberId" | "approvals" | "decisions" | "secretInputs" | "apiKeyId">
   & Partial<Pick<ConfigChangeRequestRow, "sourceKind" | "revertsChangeRequestId">>
 
@@ -843,7 +922,9 @@ async function planChangeRequest(row: PlanSource, overrides: { decisions?: Confi
   const decisions = overrides.decisions ?? row.decisions ?? EMPTY_CONFIG_DECISIONS
   const secretInputs = overrides.secretInputs ?? row.secretInputs ?? []
   const grouped = sourceInstanceId ? groupAliases(await listAliasRows(row.organizationId, sourceInstanceId, db.$primary)) : null
+  if (grouped) await addLinkedTargetItems({ ctx, areas, targetItems, aliases: grouped.aliases })
   const access = await planningAccessFor(row.organizationId, actor, row.apiKeyId)
+  const directory = await loadDirectory(row.organizationId)
   const planInput: Parameters<typeof buildPlan>[0] = {
     areas: CONFIG_AREAS,
     blobAreas: areas,
@@ -855,7 +936,7 @@ async function planChangeRequest(row: PlanSource, overrides: { decisions?: Confi
     mayInvite: access.mayInvite,
     decisions,
     secretInputs,
-    people: await loadPeople(row.organizationId),
+    people: directory.people,
     allowEnv: configAllowEnv(),
     deployment,
     features,
@@ -880,6 +961,9 @@ async function planChangeRequest(row: PlanSource, overrides: { decisions?: Confi
     if (verdicts.size > 0) result = buildPlan({ ...planInput, preflight: verdicts })
   }
   if (grouped) addAliasProvenance(result.plan, grouped.provenance)
+  // Outside the areas the file carries, what a reference left open could be pointed at (display only).
+  const refTargets = planRefTargets(result.plan, { scope, targetItems, members: directory.names, visibleAreas: access.visibleAreas })
+  if (refTargets.length > 0) result.plan.refTargets = refTargets
   for (const entry of blob.omitted ?? []) {
     result.plan.issues.push({ level: "warning", message: `${areaLabel(entry.area)} was left out of the export: ${entry.reason}`, area: entry.area })
   }
@@ -956,7 +1040,7 @@ async function replan(row: ConfigChangeRequestRow, caller: ConfigCaller, change:
   const updated = await updateChangeRequest(row.organizationId, row.id, [row.status], { ...change, ...patch })
   if (!updated) throw new ConfigBlobError(409, { error: "change_request_moved_on", message: "This change moved on while you were editing it. Reload and try again." })
   const people = await peopleRedactorFor(row.organizationId, caller)
-  return { changeRequest: await summaryFor(updated, caller), plan: updated.plan && people ? people.plan(updated.plan) : updated.plan }
+  return { changeRequest: await summaryFor(updated, caller), plan: updated.plan ? planFor(updated.plan, caller, people) : updated.plan }
 }
 
 async function loadEditable(organizationId: OrganizationId, id: string, caller: ConfigCaller): Promise<ConfigChangeRequestRow> {
@@ -975,6 +1059,45 @@ export async function updateDecisions(organizationId: OrganizationId, id: string
   const invitedBefore = new Set((row.decisions?.refs ?? []).filter((entry) => "invite" in entry.resolution).map(inviteKey))
   if (decisions.refs.some((entry) => "invite" in entry.resolution && !invitedBefore.has(inviteKey(entry)))) await authorizeWrites(caller, [PEOPLE_AREA_KEY])
   return replan(row, caller, { decisions })
+}
+
+/** The organization the request's file was exported from, when the file says. */
+function sourceOrganizationId(row: Pick<ConfigChangeRequestRow, "blob">): string | null {
+  const envelope = parseEnvelope(row.blob)
+  return envelope.ok ? envelope.value.blob.source?.organization.id ?? null : null
+}
+
+/** The answers given on a request, as a file to keep next to the export (see `configDecisionsFileSchema`). */
+export async function getDecisionsFile(organizationId: OrganizationId, id: string, caller: Pick<ConfigCaller, "can" | "tokenAreas">): Promise<ConfigDecisionsFile> {
+  const row = await loadVisible(organizationId, id, caller)
+  const { matches, refs, skips, renames } = row.decisions ?? EMPTY_CONFIG_DECISIONS
+  const source = sourceOrganizationId(row)
+  return {
+    format: CONFIG_DECISIONS_FILE_FORMAT,
+    formatVersion: 1,
+    source: source ? { organizationId: source } : null,
+    target: { organizationId },
+    changeRequestId: row.id,
+    decisions: { matches, refs, skips, renames },
+  }
+}
+
+/**
+ * Gives a request the answers of an earlier import. Only of the same source
+ * into this organization: the ids in the answers are this organization's
+ * items, and the handles are the source file's. The answers go through the
+ * same planning as answers given by hand, so one the plan refuses (leaving
+ * out a reference an item can't be imported without) is refused here too.
+ */
+export async function replayDecisionsFile(organizationId: OrganizationId, id: string, caller: ConfigCaller, file: ConfigDecisionsFile) {
+  if (file.target.organizationId !== organizationId) {
+    throw new ConfigBlobError(409, { error: "decisions_other_organization", message: "These answers were given in another organization. Answers only carry over to a later import into the same organization." })
+  }
+  const row = await loadEditable(organizationId, id, caller)
+  if ((file.source?.organizationId ?? null) !== sourceOrganizationId(row)) {
+    throw new ConfigBlobError(409, { error: "decisions_other_source", message: "These answers were given for a file exported from another organization. Answers only carry over to a later import of the same source." })
+  }
+  return updateDecisions(organizationId, id, caller, { ...(row.decisions ?? EMPTY_CONFIG_DECISIONS), ...file.decisions, reusedFrom: file.changeRequestId })
 }
 
 /**

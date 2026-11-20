@@ -3,29 +3,63 @@ import type { Context, ErrorHandler, Hono, MiddlewareHandler } from "hono"
 import { deleteCookie, getCookie, setCookie } from "hono/cookie"
 import { routePath } from "hono/route"
 import { z } from "zod"
-import type { Config } from "./config.js"
+import { WORKBOT_APP_CALLBACK_PATH, WORKBOT_APP_ID, WORKBOT_IOS_APP_ID, type Config } from "./config.js"
 import { DenRateLimitedError, DenSignedOutError, DenUnavailableError, WorkbotTurnAccessError, type Den, type DenSession } from "./den.js"
 import { reportError } from "./error-reporting.js"
 import { createSealer, MAX_COOKIE_VALUE, randomToken, sessionSchema, type Tokens } from "./sealed.js"
 
 /**
  * A signed-in person, entirely in their browser's cookie (see sealed.ts): their Den tokens and the id of this
- * sign-in. Workbot itself keeps nothing on disk, so it runs as any number of instances.
+ * sign-in. Workbot itself keeps nothing on disk, so it runs as any number of instances. The phone app holds the same
+ * thing, sealed for the app instead of a cookie, and sends it as a bearer token; it can neither read nor change it.
  */
 export type Session = { id: string; userId: string; organizationId: string; tokens: Tokens; createdAt: number }
 
-/** The signed-in person on a Workbot request: their Den session, and an access token fresh enough to use. */
-export type Member = { session: Session; accessToken: string; den: DenSession }
+/**
+ * The signed-in person on a Workbot request: their Den session, an access token fresh enough to use, and whether
+ * the request came from the phone app.
+ */
+export type Member = { session: Session; accessToken: string; den: DenSession; app: boolean }
 export type AppEnv = { Variables: { member: Member } }
 
 const loginSchema = z.object({ state: z.string(), verifier: z.string(), returnTo: z.string(), createdAt: z.number(), organizationId: z.string().optional() })
 /** An organization id from a link (Den's Workbot entry), never trusted beyond choosing whether to sign in again. */
 const organizationIdSchema = z.string().regex(/^[A-Za-z0-9_-]{1,128}$/)
+/** A phone app sign-in in progress, sealed into Den's `state`: the app's own state and where to send it back. */
+const appLoginSchema = z.object({ kind: z.literal("app"), appState: z.string(), redirectUri: z.string(), createdAt: z.number() })
+type AppLogin = z.infer<typeof appLoginSchema>
 const SESSION_PURPOSE = "workbot-session-v1"
 const LOGIN_PURPOSE = "workbot-login-v1"
+const APP_SESSION_PURPOSE = "workbot-app-session-v1"
+const APP_LOGIN_PURPOSE = "workbot-app-login-v1"
+
+/**
+ * The phone app starts a sign-in with its PKCE challenge (S256), its own state and its return address. Anyone can
+ * start one with a challenge of their own, so the code must only ever reach the OpenWork app: its return address is a
+ * page on Workbot that iOS and Android open only in the verified app (see config.ts).
+ */
+const appLoginQuerySchema = z.object({
+  code_challenge: z.string().regex(/^[A-Za-z0-9_-]{43,128}$/),
+  code_challenge_method: z.literal("S256"),
+  state: z.string().regex(/^[A-Za-z0-9_-]{16,200}$/),
+  redirect_uri: z.string().max(200),
+})
+/** The phone app trades Den's code for its session with the verifier only it has. */
+const appTokenSchema = z
+  .object({
+    code: z.string().min(1).max(4_000),
+    codeVerifier: z.string().regex(/^[A-Za-z0-9._~-]{43,128}$/),
+    redirectUri: z.string().max(200),
+  })
+  .strict()
 
 /** Refresh a little before Den's 45-minute access token runs out. */
 const REFRESH_MARGIN_MS = 2 * 60_000
+/**
+ * The phone app refreshes on its own a little earlier, so the images and files it loads outside its requests never
+ * carry a session that is about to be replaced.
+ */
+const APP_REFRESH_MARGIN_MS = 6 * 60_000
 /** How long Den's answer about who someone is (and whether Workbot is on) is reused. */
 const DEN_SESSION_CACHE_MS = 30_000
 /**
@@ -59,21 +93,42 @@ function safeReturnPath(value: string | undefined, publicUrl: string) {
   }
 }
 
-function page(title: string, message: string, action: { href: string; label: string }) {
+function page(title: string, message: string, action: { href: string; label: string } | null) {
   const escape = (text: string) => text.replace(/[&<>"']/g, (char) => `&#${char.charCodeAt(0)};`)
+  const link = action ? `<a href="${escape(action.href)}">${escape(action.label)}</a>` : ""
   return `<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>${escape(title)}</title>
 <style>body{margin:0;min-height:100vh;display:grid;place-items:center;font-family:Inter,"Segoe UI",system-ui,sans-serif;background:#fbfcfd;color:#011627}
 main{max-width:360px;padding:24px;text-align:center}h1{font-size:18px;font-weight:600;margin:0 0 8px}p{font-size:14px;line-height:20px;color:#5c6670;margin:0 0 20px}
 a{display:inline-block;background:#011627;color:#fff;text-decoration:none;font-size:14px;font-weight:500;padding:9px 16px;border-radius:999px}</style></head>
-<body><main><h1>${escape(title)}</h1><p>${escape(message)}</p><a href="${escape(action.href)}">${escape(action.label)}</a></main></body></html>`
+<body><main><h1>${escape(title)}</h1><p>${escape(message)}</p>${link}</main></body></html>`
 }
 
 const hashToken = (token: string) => createHash("sha256").update(token).digest("hex")
 
+/** The phone app's sealed session, sent as `Authorization: Bearer …`; null when the request carries none. */
+const bearerOf = (c: Context) => /^Bearer\s+([A-Za-z0-9._-]+)$/.exec(c.req.header("authorization") ?? "")?.[1] ?? null
+
+/** Adds headers to the response a route produced, copying it first when its headers can't change. */
+function withHeaders(c: Context, headers: Record<string, string>) {
+  try {
+    for (const [name, value] of Object.entries(headers)) c.res.headers.set(name, value)
+  } catch {
+    const response = new Response(c.res.body, c.res)
+    for (const [name, value] of Object.entries(headers)) response.headers.set(name, value)
+    c.res = response
+  }
+}
+
 /** What sign-in needs from Den. */
 export type DenAuth = Pick<Den, "authorizeUrl" | "exchangeCode" | "session" | "refresh" | "revoke"> & Partial<Pick<Den, "recordSignIn">>
 
-export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCookies" | "sessionSecret">; den: DenAuth; now?: () => number; report?: typeof reportError }) {
+export function createAuth(input: {
+  /** Without `appRedirectUris` and `appLinks`, the phone app cannot sign in here. */
+  config: Pick<Config, "publicUrl" | "secureCookies" | "sessionSecret"> & Partial<Pick<Config, "appRedirectUris" | "appLinks">>
+  den: DenAuth
+  now?: () => number
+  report?: typeof reportError
+}) {
   const { config, den } = input
   const now = input.now ?? Date.now
   const report = input.report ?? reportError
@@ -84,6 +139,8 @@ export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCo
   const sessionCookie = config.secureCookies ? "__Host-workbot" : `workbot_session${local ? `_${local}` : ""}`
   const loginCookie = config.secureCookies ? "__Host-workbot-login" : `workbot_login${local ? `_${local}` : ""}`
   const cookieOptions = { httpOnly: true, secure: config.secureCookies, sameSite: "Lax" as const, path: "/" }
+  const appRedirects = new Set(config.appRedirectUris ?? [])
+  const appLinks = config.appLinks ?? { iosTeamId: null, androidCertSha256: [] }
   /** Keyed by the refresh token being spent: Den rotates refresh tokens, so each one is spent once. */
   const refreshing = new Map<string, Promise<Tokens>>()
   const refreshed = new Map<string, { at: number; tokens: Tokens }>()
@@ -105,9 +162,17 @@ export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCo
     deleteCookie(c, sessionCookie, cookieOptions)
   }
 
-  /** Tokens fresh enough to use, and whether they changed (the cookie must then be rewritten). */
-  const freshTokens = async (session: Session): Promise<{ tokens: Tokens; changed: boolean }> => {
-    if (session.tokens.expiresAt - now() > REFRESH_MARGIN_MS) return { tokens: session.tokens, changed: false }
+  const readAppSession = (sealed: string) => sealer.open(APP_SESSION_PURPOSE, sealed, sessionSchema)
+  /** What the phone app keeps: its sealed session (the same size limit as the cookie) and when its access token runs out. */
+  const appSession = (session: Session) => {
+    const value = sealer.seal(APP_SESSION_PURPOSE, session)
+    if (value.length > MAX_COOKIE_VALUE) throw new Error("app_session_too_large")
+    return { session: value, expiresAt: session.tokens.expiresAt }
+  }
+
+  /** Tokens fresh enough to use, and whether they changed (the cookie, or the app's session, must then be rewritten). */
+  const freshTokens = async (session: Session, margin = REFRESH_MARGIN_MS): Promise<{ tokens: Tokens; changed: boolean }> => {
+    if (session.tokens.expiresAt - now() > margin) return { tokens: session.tokens, changed: false }
     const refreshToken = session.tokens.refreshToken
     if (!refreshToken) throw new DenSignedOutError()
     const key = hashToken(refreshToken)
@@ -193,8 +258,66 @@ export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCo
     return pending
   }
 
-  /** Requires a current session; a scope-bound tab may only see its original identity. */
+  const unavailable = (c: Context, error: unknown, stage: "refresh" | "session" = "session") => {
+    if (error instanceof DenRateLimitedError) {
+      // Reported once, when Den answered; requests during the wait don't reach Den.
+      return c.json({ error: "den_unavailable" }, 503, { "Retry-After": String(error.retryAfter) })
+    }
+    console.error("[workbot] den unavailable", { error: error instanceof Error ? error.message : "unknown" })
+    report(stage === "refresh" ? "token_refresh_failed" : "den_unavailable", error, { response: "den_unavailable" })
+    return c.json({ error: "den_unavailable" }, 503)
+  }
+
+  /**
+   * The phone app's requests: its session rides along as a bearer token; when its tokens had to be refreshed, the
+   * response carries the replacement (`Workbot-Session`) for the app to keep. No cookies are read or written.
+   */
+  const appMember: MiddlewareHandler<AppEnv> = async (c, next) => {
+    const session = readAppSession(bearerOf(c) ?? "")
+    if (!session) return c.json({ error: "signed_out" }, 401)
+    let stage: "refresh" | "session" = "refresh"
+    let rotated: Session | null = null
+    try {
+      const { tokens, changed } = await freshTokens(session)
+      stage = "session"
+      const current = { ...session, tokens }
+      if (changed) rotated = current
+      const value = await denSession(session.id, tokens.accessToken)
+      if (value.user.id !== session.userId || value.organization.id !== session.organizationId) {
+        return c.json({ error: "identity_changed", message: "The signed-in account or workspace changed. Sign in again before restoring work." }, 401)
+      }
+      c.set("member", { session: current, accessToken: tokens.accessToken, den: value, app: true })
+    } catch (error) {
+      if (error instanceof DenSignedOutError) {
+        denSessions.delete(session.id)
+        return c.json({ error: "signed_out" }, 401)
+      }
+      const response = unavailable(c, error, stage)
+      // Den couldn't say who this is, but the app keeps what the refresh produced: its next request uses those tokens.
+      if (rotated) {
+        try {
+          const replacement = appSession(rotated)
+          response.headers.set("Workbot-Session", replacement.session)
+          response.headers.set("Workbot-Session-Expires", String(replacement.expiresAt))
+        } catch {
+          // Too large to send; the failure itself is reported above.
+        }
+      }
+      return response
+    }
+    await next()
+    if (rotated) {
+      const replacement = appSession(rotated)
+      withHeaders(c, { "Workbot-Session": replacement.session, "Workbot-Session-Expires": String(replacement.expiresAt) })
+    }
+  }
+
+  /**
+   * Requires a current session (the page's cookie, or the app's bearer session); a scope-bound tab may only see its
+   * original identity. 401 `signed_out` sends the page (or the app) to sign in.
+   */
   const member: MiddlewareHandler<AppEnv> = async (c, next) => {
+    if (bearerOf(c) !== null) return appMember(c, next)
     const session = readSession(c)
     if (!session) {
       if (getCookie(c, sessionCookie)) deleteCookie(c, sessionCookie, cookieOptions)
@@ -225,7 +348,7 @@ export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCo
         // claims only restrict the authenticated identity; they never select it.
         return c.json({ error: "identity_changed", message: "The signed-in account or workspace changed. Check sign-in before restoring work." }, 401)
       }
-      c.set("member", { session: current, accessToken: tokens.accessToken, den: value })
+      c.set("member", { session: current, accessToken: tokens.accessToken, den: value, app: false })
     } catch (error) {
       if (error instanceof DenSignedOutError) {
         endSession(c, session.id)
@@ -239,13 +362,7 @@ export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCo
           // Too large to write; the failure itself is reported below.
         }
       }
-      if (error instanceof DenRateLimitedError) {
-        // Reported once, when Den answered; requests during the wait don't reach Den.
-        return c.json({ error: "den_unavailable" }, 503, { "Retry-After": String(error.retryAfter) })
-      }
-      console.error("[workbot] den unavailable", { error: error instanceof Error ? error.message : "unknown" })
-      report(stage === "refresh" ? "token_refresh_failed" : "den_unavailable", error, { response: "den_unavailable" })
-      return c.json({ error: "den_unavailable" }, 503)
+      return unavailable(c, error, stage)
     }
     await next()
   }
@@ -259,7 +376,8 @@ export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCo
     if (error instanceof WorkbotTurnAccessError) return error.response()
     if (error instanceof DenSignedOutError) {
       // The next request asks Den who this is rather than trust what it said before; that check ends the sign-in.
-      const session = readSession(c)
+      const bearer = bearerOf(c)
+      const session = bearer !== null ? readAppSession(bearer) : readSession(c)
       if (session) denSessions.delete(session.id)
       return c.json({ error: "signed_out" }, 401)
     }
@@ -280,6 +398,20 @@ export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCo
       if (origin && origin !== config.publicUrl) return c.json({ error: "forbidden" }, 403)
     }
     await next()
+  }
+
+  /** Den's answer goes back to the phone app at its own address; the app checks its state and trades the code. */
+  const returnToApp = (c: Context, login: AppLogin) => {
+    if (!appRedirects.has(login.redirectUri) || now() - login.createdAt > LOGIN_TTL_MS) {
+      return c.html(page("Let's try that again", "That sign-in took too long. Open the OpenWork app and sign in again.", null), 400)
+    }
+    const target = new URL(login.redirectUri)
+    const code = c.req.query("code")
+    if (code) target.searchParams.set("code", code)
+    else target.searchParams.set("error", (c.req.query("error") ?? "access_denied").slice(0, 100))
+    target.searchParams.set("state", login.appState)
+    c.header("Cache-Control", "no-store")
+    return c.redirect(target.toString(), 302)
   }
 
   const register = (app: Hono<AppEnv>) => {
@@ -317,8 +449,56 @@ export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCo
       }
     })
 
+    /**
+     * The phone app's sign-in. The app keeps its PKCE verifier and sends only the challenge; Workbot sends the person
+     * to Den with that challenge and its own return address, and keeps nothing itself: the app's state and return
+     * address travel sealed in Den's `state`. Den's code then goes back to the app, which trades it at
+     * /auth/app/token with the verifier only it has. The phone never holds Den's tokens, only its sealed session.
+     */
+    app.get("/auth/app/login", async (c) => {
+      const query = appLoginQuerySchema.safeParse(c.req.query())
+      if (!query.success || !appRedirects.has(query.data.redirect_uri)) {
+        return c.html(page("Let's try that again", "That sign-in didn't start from the OpenWork app. Open the app and sign in again.", null), 400)
+      }
+      const login: AppLogin = { kind: "app", appState: query.data.state, redirectUri: query.data.redirect_uri, createdAt: now() }
+      try {
+        return c.redirect(await den.authorizeUrl({ state: sealer.seal(APP_LOGIN_PURPOSE, login), challenge: query.data.code_challenge, signInOnly: true }), 302)
+      } catch (error) {
+        console.error("[workbot] sign-in unavailable", { error: error instanceof Error ? error.message : "unknown" })
+        report("sign_in_unavailable", error)
+        return c.html(page("Workbot can't reach OpenWork", "Signing in isn't working right now. Try again in a minute.", null), 503)
+      }
+    })
+
+    /**
+     * The phone app's return address when it opens in a browser instead of the app (the app isn't installed, or the
+     * phone hasn't verified it yet): the code stays on this page, which loads nothing else.
+     */
+    app.get(WORKBOT_APP_CALLBACK_PATH, (c) => {
+      c.header("Cache-Control", "no-store")
+      return c.html(page("Open the OpenWork app", "Signing in finishes in the OpenWork app. Open it there and sign in again.", null))
+    })
+
+    /** What iOS and Android check before they open the return address in the OpenWork app, and only in it. */
+    app.get("/.well-known/apple-app-site-association", (c) => {
+      if (!appLinks.iosTeamId) return c.json({ error: "not_found" }, 404)
+      const appId = `${appLinks.iosTeamId}.${WORKBOT_IOS_APP_ID}`
+      return c.json({ applinks: { details: [{ appIDs: [appId], components: [{ "/": WORKBOT_APP_CALLBACK_PATH }] }] }, webcredentials: { apps: [appId] } })
+    })
+    app.get("/.well-known/assetlinks.json", (c) => {
+      if (appLinks.androidCertSha256.length === 0) return c.json({ error: "not_found" }, 404)
+      return c.json([
+        {
+          relation: ["delegate_permission/common.handle_all_urls"],
+          target: { namespace: "android_app", package_name: WORKBOT_APP_ID, sha256_cert_fingerprints: appLinks.androidCertSha256 },
+        },
+      ])
+    })
+
     app.get("/auth/callback", async (c) => {
       const state = c.req.query("state") ?? ""
+      const appLogin = sealer.open(APP_LOGIN_PURPOSE, state, appLoginSchema)
+      if (appLogin) return returnToApp(c, appLogin)
       const login = sealer.open(LOGIN_PURPOSE, getCookie(c, loginCookie), loginSchema)
       deleteCookie(c, loginCookie, cookieOptions)
       const code = c.req.query("code")
@@ -346,10 +526,58 @@ export function createAuth(input: { config: Pick<Config, "publicUrl" | "secureCo
       }
     })
 
+    /** The phone app trades Den's code (and the verifier only it has) for its sealed session. */
+    app.post("/auth/app/token", async (c) => {
+      const body = appTokenSchema.safeParse(await c.req.json().catch(() => null))
+      if (!body.success || !appRedirects.has(body.data.redirectUri)) return c.json({ error: "invalid_request" }, 400)
+      try {
+        const tokens = await den.exchangeCode(body.data.code, body.data.codeVerifier)
+        const who = await den.session(tokens.accessToken)
+        if (!who.mobile) {
+          // The phone app is a feature a workspace turns on. Without it there is no phone session to hold, and
+          // what Den just issued is given back.
+          if (tokens.refreshToken) await den.revoke(tokens.refreshToken).catch(() => undefined)
+          return c.json({ error: "workbot_mobile_not_enabled" }, 403)
+        }
+        const id = randomToken()
+        const sealed = appSession({ id, userId: who.user.id, organizationId: who.organization.id, tokens, createdAt: now() })
+        void den.recordSignIn?.(tokens.accessToken, id).catch(() => undefined)
+        return c.json(sealed)
+      } catch (error) {
+        console.error("[workbot] app sign-in failed", { error: error instanceof Error ? error.message : "unknown" })
+        // Den refusing the code (a reused or expired one, or the wrong verifier) is tagged apart from Den failing.
+        report("sign_in_failed", error, { reason: error instanceof DenSignedOutError ? "rejected" : "error" })
+        if (error instanceof DenSignedOutError) return c.json({ error: "sign_in_failed" }, 400)
+        return c.json({ error: "den_unavailable" }, 503)
+      }
+    })
+
+    /** The phone app's session, refreshed ahead of time when its access token runs out soon; otherwise the same one. */
+    app.post("/auth/app/refresh", async (c) => {
+      const session = readAppSession(bearerOf(c) ?? "")
+      if (!session) return c.json({ error: "signed_out" }, 401)
+      try {
+        const { tokens } = await freshTokens(session, APP_REFRESH_MARGIN_MS)
+        return c.json(appSession({ ...session, tokens }))
+      } catch (error) {
+        if (error instanceof DenSignedOutError) {
+          denSessions.delete(session.id)
+          return c.json({ error: "signed_out" }, 401)
+        }
+        return unavailable(c, error, "refresh")
+      }
+    })
+
     app.post("/auth/logout", sameOrigin, async (c) => {
-      const session = readSession(c)
+      const bearer = bearerOf(c)
+      const session = bearer !== null ? readAppSession(bearer) : readSession(c)
       // Revoking is best effort: Den being unreachable must never keep the person signed in here.
       if (session?.tokens.refreshToken) await den.revoke(session.tokens.refreshToken).catch(() => undefined)
+      if (bearer !== null) {
+        // The phone app forgets its session itself; nothing here is a cookie.
+        if (session) denSessions.delete(session.id)
+        return c.json({ ok: true })
+      }
       endSession(c, session?.id ?? null)
       return c.json({ ok: true })
     })

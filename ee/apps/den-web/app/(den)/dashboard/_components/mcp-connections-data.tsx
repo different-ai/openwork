@@ -158,6 +158,8 @@ export type ExternalMcpConnection = {
   manualOAuthEndpoints?: { authorizationEndpoint: string; tokenEndpoint: string } | null;
   authorizationServerIssuer?: string | null;
   requestedScopes?: string[];
+  /** Sign-in asks for requestedScopes alone, leaving out any others the server asks for. */
+  requestSelectedScopesOnly?: boolean;
 };
 
 export type McpRequirementsDiscovery = {
@@ -791,6 +793,7 @@ export type UpdateMcpConnectionInput = {
   manualOAuthEndpoints?: { authorizationEndpoint: string; tokenEndpoint: string } | null;
   authorizationServerIssuer?: string | null;
   requestedScopes?: string[];
+  requestSelectedScopesOnly?: boolean;
   access: McpConnectionAccessInput;
 };
 

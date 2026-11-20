@@ -10,6 +10,8 @@
     "sdk:check": "pnpm den:contract && pnpm --filter @openwork/sdk typecheck",
     "sdk:build": "pnpm --filter @openwork/sdk build",
     "den:contract": "node scripts/den-contract.mjs",
+    "prepare": "node -e \"const hook = './scripts/install-git-hooks.mjs'; if (require('node:fs').existsSync(hook)) import(hook)\" -- --auto",
+    "check": "node scripts/check.mjs",
     "hooks:install": "node scripts/install-git-hooks.mjs",
     "docs:pdf": "node scripts/docs-pdf.mjs",
     "test:node-runtime": "node --test scripts/tests/node-runtime-baseline.test.mjs apps/server/test/node-runtime.test.mjs .devcontainer/node-runtime.test.mjs packaging/helm/openwork-ee/tests/node-runtime.mjs",

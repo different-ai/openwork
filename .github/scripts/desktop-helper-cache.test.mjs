@@ -18,6 +18,22 @@ function fixture(body) {
   for (const name of ["electron-build.mjs", "prepare-computer-use-helper.mjs", "prepare-dictation-helper.mjs", "prepare-server-constants.mjs"]) {
     copyFileSync(new URL(`../../apps/desktop/scripts/${name}`, import.meta.url), join(scripts, name));
   }
+  // Packaging has its own suites; this fixture records the preflight before the
+  // real helper scripts run, without requiring packaging dependencies here.
+  const packagingTests = [
+    "prepare-runtime-node-modules.test.mjs",
+    "prepare-packaged-sandbox-image.test.mjs",
+    "packaged-runtime-dependencies.test.mjs",
+    "packaged-native-signing.test.mjs",
+  ];
+  for (const name of packagingTests) {
+    writeFileSync(join(scripts, name), `import { appendFileSync } from "node:fs";
+import { test } from "node:test";
+test("packaging preflight fixture", () => {
+  appendFileSync(process.env.NATIVE_TEST_CALLS, JSON.stringify({ name: "packaging-preflight", file: ${JSON.stringify(name)} }) + "\\n");
+});
+`);
+  }
   writeFileSync(join(scripts, "prepare-sidecar.mjs"), "");
   writeFileSync(join(native, "Package.swift"), "// fixture package");
   const computerSource = join(native, "Sources/ComputerUse/main.swift");
@@ -55,14 +71,17 @@ if (name === "swiftc") fs.writeFileSync(args[args.indexOf("-o") + 1], "fixture d
       encoding: "utf8", timeout: 20_000,
       env: {
         ...process.env, PATH: `${bin}:${process.env.PATH}`,
+        NODE_TEST_CONTEXT: undefined,
         NODE_OPTIONS: `--require=${JSON.stringify(preload)}`,
         OPENWORK_REUSE_NATIVE_HELPERS: reuse, OPENWORK_COMPUTER_USE_FORCE_BUILD: "",
         NATIVE_TEST_ROOT: root, NATIVE_TEST_CALLS: calls,
       },
     });
     assert.equal(result.status, 86, result.stderr || result.stdout);
-    return readFileSync(calls, "utf8").trim().split("\n").map(line => JSON.parse(line))
-      .filter(call => call.name === "swiftc" || (call.name === "swift" && !call.args.includes("--show-bin-path")))
+    const recorded = readFileSync(calls, "utf8").trim().split("\n").map(line => JSON.parse(line));
+    assert.deepEqual(recorded.slice(0, packagingTests.length).map(call => call.name), packagingTests.map(() => "packaging-preflight"));
+    assert.deepEqual(recorded.filter(call => call.name === "packaging-preflight").map(call => call.file).sort(), [...packagingTests].sort());
+    return recorded.filter(call => call.name === "swiftc" || (call.name === "swift" && !call.args.includes("--show-bin-path")))
       .map(call => call.name);
   };
   try { body({ root, run, computerSource, dictation }); }

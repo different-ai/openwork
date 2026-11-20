@@ -4,8 +4,9 @@
  * genuine reply works only once, a reply is exchanged only for the person who
  * started the connection (another signed-in account is refused, a browser with
  * no OpenWork session must confirm the account first), a server declaring its
- * protected resource on another site is refused, and a member cannot replace an
- * admin-provisioned connector by its key. Ported from evals/core/den-manage-connectors*.e2e.test.ts
+ * protected resource on another site is refused, a member cannot replace an
+ * admin-provisioned connector by its key, and sign-in asks for every scope a
+ * server's challenge names unless an admin asks for chosen scopes only. Ported from evals/core/den-manage-connectors*.e2e.test.ts
  * and evals/specs/mcp-oauth-response-issuer.test.ts, mcp-oauth-declared-resource.test.ts.
  */
 import assert from "node:assert/strict"
@@ -29,9 +30,11 @@ const nativeProvider = await startFakeHttpServer((request, _raw, response) => {
 const den = await bootDen({ env: { DEN_GOOGLE_OAUTH_TOKEN_URL: `${nativeProvider.url}/token`, DEN_GOOGLE_OAUTH_USERINFO_URL: `${nativeProvider.url}/userinfo` } })
 const issuer = await startFakeOAuthMcpServer({ responseIssuer: true })
 const foreign = await startFakeOAuthMcpServer({ protectedResource: "https://mcp.example.com/mcp" })
+/** Names every scope it supports in its sign-in challenge, although reading needs one. */
+const greedy = await startFakeOAuthMcpServer({ challengeScopes: ["ads:read", "ads:manage", "pages:list"] })
 const plain = await startFakeMcpServer({ tools: [{ name: "read_notes", description: "Read notes", text: "notes" }] })
 after(async () => {
-  await Promise.all([issuer.close(), foreign.close(), plain.close(), nativeProvider.close()])
+  await Promise.all([issuer.close(), foreign.close(), greedy.close(), plain.close(), nativeProvider.close()])
   await den.close()
 })
 
@@ -213,4 +216,59 @@ test("a member cannot replace a connector an admin provisioned by its key, and i
   assert.equal(rows.length, 1)
   assert.equal(rows[0]?.name, "Provisioned Notes")
   assert.equal(rows[0]?.url, `${plain.url}/mcp`)
+})
+
+test("sign-in asks for every scope a server's challenge names unless an admin asks for chosen scopes only", async () => {
+  const settings = { name: "Ads reports", url: `${greedy.url}/mcp`, authType: "oauth", credentialMode: "per_member", access: { orgWide: true, memberIds: [], teamIds: [] } }
+  /** The scopes Den asks the provider for when the owner clicks Sign in. */
+  const scopesAsked = async (connectionId: string): Promise<string[]> => {
+    const started = await den.as(owner, orgId)("GET", `/v1/mcp-connections/${connectionId}/connect/start`)
+    assert.equal(started.status, 200, summary(started))
+    const authorize = new URL(text(field(started.body, "authorizeUrl"), "authorize URL"))
+    return (authorize.searchParams.get("scope") ?? "").split(" ").filter(Boolean).sort()
+  }
+  /** Saves settings the way the settings page does: against the version it last read. Starting a sign-in also touches the connection. */
+  const save = async (connectionId: string, changes: Record<string, unknown>) => {
+    const listed = await den.as(owner, orgId)("GET", "/v1/mcp-connections?scope=manageable")
+    const expectedUpdatedAt = text(field(list(field(listed.body, "connections")).find((row) => row.id === connectionId), "updatedAt"), "updated at")
+    return den.as(owner, orgId)("PUT", `/v1/mcp-connections/${connectionId}`, { ...settings, expectedUpdatedAt, ...changes })
+  }
+
+  const created = await den.as(owner, orgId)("POST", "/v1/mcp-connections", { ...settings, requestedScopes: ["ads:read"] })
+  assert.equal(created.status, 200, summary(created))
+  const connectionId = text(field(created.body, "id"), "connection id")
+  assert.equal(field(created.body, "requestSelectedScopesOnly"), false)
+  // A chosen scope is added to the challenge's; it never removes one.
+  assert.deepEqual(await scopesAsked(connectionId), ["ads:manage", "ads:read", "pages:list"])
+
+  // The choice is a feature that is off until a platform administrator turns it on.
+  const early = await save(connectionId, { requestSelectedScopesOnly: true })
+  assert.equal(early.status, 404, summary(early))
+  assert.equal(field(early.body, "error"), "feature_disabled")
+  assert.equal((await den.setFeature(orgId, "connectionSelectedScopesOnly", true)).status, 200)
+
+  const only = await save(connectionId, { requestSelectedScopesOnly: true })
+  assert.equal(only.status, 200, summary(only))
+  assert.equal(field(only.body, "requestSelectedScopesOnly"), true)
+  assert.deepEqual(await scopesAsked(connectionId), ["ads:read"])
+
+  // An edit that says nothing about the choice keeps it.
+  const renamed = await save(connectionId, { name: "Ads reporting" })
+  assert.equal(renamed.status, 200, summary(renamed))
+  assert.equal(field(renamed.body, "requestSelectedScopesOnly"), true)
+  assert.deepEqual(await scopesAsked(connectionId), ["ads:read"])
+
+  // Asking for chosen scopes only needs scopes to ask for.
+  const none = await save(connectionId, { requestedScopes: [], requestSelectedScopesOnly: true })
+  assert.equal(none.status, 400, summary(none))
+
+  // Turning the feature off leaves the choice saved but stops applying it; turning it on applies it again.
+  assert.equal((await den.setFeature(orgId, "connectionSelectedScopesOnly", false)).status, 200)
+  assert.deepEqual(await scopesAsked(connectionId), ["ads:manage", "ads:read", "pages:list"])
+  assert.equal((await den.setFeature(orgId, "connectionSelectedScopesOnly", true)).status, 200)
+  assert.deepEqual(await scopesAsked(connectionId), ["ads:read"])
+
+  const off = await save(connectionId, { requestSelectedScopesOnly: false })
+  assert.equal(off.status, 200, summary(off))
+  assert.deepEqual(await scopesAsked(connectionId), ["ads:manage", "ads:read", "pages:list"])
 })

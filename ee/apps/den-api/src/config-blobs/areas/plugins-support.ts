@@ -31,22 +31,25 @@ import {
   PluginTable,
 } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import type { ConfigApplyStep, ConfigRef } from "@openwork/types/den/config-blobs"
+import { configItemKeySchema, type ConfigApplyStep, type ConfigRef } from "@openwork/types/den/config-blobs"
 import { z } from "zod"
 import { listTeamsForMember } from "../../member-teams.js"
 import type { PluginArchActorContext } from "../../routes/org/plugin-system/access.js"
 import { createResourceAccessGrant, deleteResourceAccessGrant } from "../../routes/org/plugin-system/store.js"
-import type { ConfigAreaContext, ConfigDb } from "../area.js"
+import { assignDefaultExternalKey, setExternalKey, type KeyedItem, type KeyedKind } from "../../routes/org/plugin-system/external-keys.js"
+import type { ConfigApplyOp, ConfigAreaContext, ConfigDb, ConfigItem } from "../area.js"
 import {
   ConfigApplyError,
   configRouteContext,
   isJsonObject,
   loadMemberEmails,
   loadTeamNames,
+  OWN_MANAGER_ACCESS_KEPT,
   personRef,
   resolvedRefIds,
   specRefSchema,
   teamRef,
+  touches,
   type ConfigStepLog,
   type JsonObject,
 } from "./route-support.js"
@@ -253,7 +256,7 @@ export async function applyAccess(input: {
     const key = grantKey(grant)
     if (desiredKeys.has(key)) continue
     if (grant.orgMembershipId === self && grant.role === "manager") {
-      input.warnings.push("Your own manager access was kept.")
+      input.warnings.push(OWN_MANAGER_ACCESS_KEPT)
       continue
     }
     const detail = grant.orgWide ? "everyone" : grant.teamId ?? grant.orgMembershipId ?? grant.id
@@ -458,4 +461,35 @@ export function jsonOverlap(left: unknown, right: unknown): number {
   let equal = 0
   for (const [path, value] of a) if (b.get(path) === value) equal += 1
   return equal / Math.max(a.size, b.size)
+}
+
+// ---------------------------------------------------------------------------
+// Stable keys
+
+/** An item's key when it is a valid one, else undefined (the server then gives a default). */
+export function itemKey(key: string | null | undefined): string | undefined {
+  const parsed = key ? configItemKeySchema.safeParse(key) : null
+  return parsed?.success ? parsed.data : undefined
+}
+
+/** Export: every item without a key gets its default, stored, so the file always carries one. */
+export async function ensureItemKeys(kind: KeyedKind, organizationId: string, items: ConfigItem[]): Promise<ConfigItem[]> {
+  const out: ConfigItem[] = []
+  for (const item of items) {
+    out.push(item.key ? item : { ...item, key: await assignDefaultExternalKey({ kind, organizationId, id: item.id }, item.name) })
+  }
+  return out
+}
+
+/**
+ * Update: a matched item that has no key yet takes the file's, so the next
+ * import finds it by key whatever it is called by then. An item that has a
+ * key keeps it (the plan sends no key change then).
+ */
+export async function adoptItemKey(item: KeyedItem, op: Extract<ConfigApplyOp, { kind: "update" }>, log: ConfigStepLog, warnings: string[]): Promise<void> {
+  if (op.previous.key || !touches(op.changes, "key")) return
+  const key = itemKey(op.item.key)
+  if (!key) return
+  const taken = !await log.run({ action: "update", target: item.kind === "plugin" ? "plugin" : "config object", detail: `key ${key}` }, () => setExternalKey(item, key, { onlyWhenUnset: true }))
+  if (taken) warnings.push(`The key "${key}" is already used by another item here, so "${op.previous.name}" keeps no key for now.`)
 }

@@ -7,7 +7,7 @@ import { isCollectibleArtifactTarget, type OpenTarget, type OpenTargetPreview } 
 
 export const PERSISTED_PANEL_TAB_STORE_KEY = "openwork:panel-tabs:v1";
 
-export type PanelTabType = "artifact" | "browser" | "app" | "mcp-app" | "remote-thread";
+export type PanelTabType = "artifact" | "browser" | "app" | "mcp-app" | "remote-thread" | "side-chat";
 
 export type { BrowserPanelTab } from "../../../../app/lib/desktop-types";
 import type { BrowserPanelTab } from "../../../../app/lib/desktop-types";
@@ -27,7 +27,10 @@ export type McpAppPanelTab = { id: string; type: "mcp-app"; label: string; appId
 /** A task running on another computer, opened from its row in the chat. */
 export type RemoteThreadPanelTab = { id: string; type: "remote-thread"; label: string; threadKey: string; owner: { workspaceId: string; sessionId: string } };
 
-export type PanelTab = BrowserPanelTab | ArtifactPanelTab | AppPanelTab | McpAppPanelTab | RemoteThreadPanelTab;
+export const SIDE_CHAT_TAB_ID = "side-chat";
+export type SideChatPanelTab = { id: typeof SIDE_CHAT_TAB_ID; type: "side-chat"; label: string };
+
+export type PanelTab = BrowserPanelTab | ArtifactPanelTab | AppPanelTab | McpAppPanelTab | RemoteThreadPanelTab | SideChatPanelTab;
 
 export type SessionPanelState = {
   tabs: PanelTab[];
@@ -151,6 +154,10 @@ function isSameTab(left: PanelTab, right: PanelTab) {
 
   if (left.type === "mcp-app" && right.type === "mcp-app") {
     return left.label === right.label && left.part === right.part && left.origin === right.origin;
+  }
+
+  if (left.type === "side-chat" && right.type === "side-chat") {
+    return left.label === right.label;
   }
 
   if (left.type === "remote-thread" && right.type === "remote-thread") {

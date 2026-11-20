@@ -39,6 +39,8 @@ import {
   isJsonObject,
   loadMemberEmails,
   loadTeamNames,
+  OWN_MANAGER_ACCESS_KEPT,
+  ownManagerAccessPreflight,
   personRef,
   resolvedRefIds,
   specObject,
@@ -159,6 +161,8 @@ export const settingsCollectionsArea = defineConfigArea({
     return readCollections(ctx, ids)
   },
 
+  preflight: ownManagerAccessPreflight,
+
   async apply(ctx, op): Promise<ConfigApplyResult> {
     return applyWithSteps(async (log) => {
       const { payload, c } = await configRouteContext(ctx)
@@ -245,7 +249,7 @@ export const settingsCollectionsArea = defineConfigArea({
           if (desiredKeys.has(key)) continue
           if (grant.orgMembershipId === payload.currentMember.id && grant.role === "manager") {
             // Same rule as the creator grant in the dashboard: the person applying keeps managing it.
-            warnings.push("Your own manager access was kept.")
+            warnings.push(OWN_MANAGER_ACCESS_KEPT)
             continue
           }
           await log.run(

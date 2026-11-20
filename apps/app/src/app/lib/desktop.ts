@@ -131,6 +131,7 @@ declare global {
         onEvent?: (callback: (payload: SpeechDictationEvent) => void) => () => void;
       };
       automationRunner?: {
+        onRunLifecycle?: (callback: (event: unknown) => void) => () => void;
         /** `computer_disconnected`: Den refuses this computer until someone signs in on it again. */
         onCredentialRejected?: (
           callback: (rejection?: { reason: "computer_disconnected" | "credential_rejected" }) => void,
@@ -262,7 +263,7 @@ declare global {
         getProxy?: () => Promise<BrowserProxyState>;
         setControlEnabled?: (enabled: boolean) => Promise<boolean>;
         /** The size tabs lay out at while the agent controls them, drawn scaled to fit the panel. */
-        setAgentViewport?: (key: AgentViewportKey) => Promise<AgentViewportKey>;
+        setTabPageSize?: (tabId: string, key: AgentViewportKey) => Promise<boolean>;
         /** The conversation started a new turn: tabs the person took over go back to the agent. */
         startAgentTurn?: (sessionId: string) => Promise<boolean>;
         /** The conversation's turn ended: its tabs fit the panel again. */
@@ -290,6 +291,8 @@ declare global {
         distribution?: DesktopDistributionInfo;
         initialDeepLinks?: string[];
         platform?: "darwin" | "linux" | "windows";
+        arch?: string;
+        isPackaged?: boolean;
         version?: string;
         evalFatalBootstrapFailure?: string | null;
       };

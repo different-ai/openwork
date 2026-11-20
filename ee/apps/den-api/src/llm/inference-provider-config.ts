@@ -1,36 +1,10 @@
 import type { ModelsDevProvider } from "./models-dev.js"
 import { GATEWAY_REQUEST_MODEL_HEADER } from "@openwork/types/den/gateway"
-import { inferenceEgressAllowedOrigins, isAwsRegion, validateInferenceUrl } from "@openwork-ee/utils/inference-egress"
-import { inferenceCredentialEnvNames } from "@openwork-ee/utils/inference-credentials"
-import { isMicrosoftFoundryOverrideAllowed } from "@openwork-ee/utils/microsoft-foundry-catalog"
+import { inferenceEgressAllowedOrigins, isAwsRegion, validateInferenceUrl } from "@openwork-ee/gateway-upstreams"
+import { inferenceCredentialEnvNames, isMicrosoftFoundryOverrideAllowed } from "@openwork-ee/gateway-catalog"
 import { readProviderEnvNames, runtimeProviderEnvNames } from "./provider-credentials.js"
 
 type JsonRecord = Record<string, unknown>
-
-/**
- * models.dev `npm` packages the inference gateway can proxy (plan §5.3).
- * Bedrock requests are re-signed with SigV4 by the gateway. Anything else is
- * rejected at create time with `unsupported_provider`.
- */
-export const SUPPORTED_GATEWAY_NPM_PACKAGES = [
-  "@ai-sdk/anthropic",
-  "@ai-sdk/openai",
-  "@ai-sdk/mistral",
-  "@ai-sdk/azure",
-  "@ai-sdk/openai-compatible",
-  "@openrouter/ai-sdk-provider",
-  "@ai-sdk/google",
-  "@ai-sdk/google-vertex",
-  "@ai-sdk/google-vertex/anthropic",
-  "@ai-sdk/amazon-bedrock",
-  "@ai-sdk/amazon-bedrock/mantle",
-] as const
-
-export type SupportedGatewayNpm = (typeof SUPPORTED_GATEWAY_NPM_PACKAGES)[number]
-
-export function isSupportedGatewayNpm(npm: string | null): npm is SupportedGatewayNpm {
-  return npm !== null && SUPPORTED_GATEWAY_NPM_PACKAGES.some((entry) => entry === npm)
-}
 
 /**
  * Snapshot of the catalog block persisted in `gateway_providers.provider_config`.

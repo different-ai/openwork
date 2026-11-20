@@ -64,6 +64,7 @@ import {
   type GithubDiscoveryTreeEntry,
 } from "./github-discovery.js"
 import { planConnectorImportedResourceCleanup, uniqueIds } from "./connector-cleanup.js"
+import { assignDefaultExternalKey, setExternalKey, type KeyedItem } from "./external-keys.js"
 import {
   DEFAULT_OPENWORK_MARKETPLACE_DESCRIPTION,
   DEFAULT_OPENWORK_MARKETPLACE_LOGO_URL,
@@ -80,6 +81,17 @@ import { db } from "../../../db.js"
 import { withPrimaryReads } from "../../../read-routing.js"
 import { requestReadFor } from "../../../request-reads.js"
 import { latestConfigObjectVersions } from "../../../config-object-versions.js"
+import {
+  SKILL_FILE_MAX_BYTES,
+  SKILL_FILES_MAX_COUNT,
+  SKILL_FILES_MAX_TOTAL_BYTES,
+  checkSkillFiles,
+  isSkillFileText,
+  sameSkillFiles,
+  skillFilePathProblem,
+  skillFilesFromPayload,
+  type SkillFile,
+} from "../../../skill-files.js"
 import { keysetAfter, keysetPage, type KeysetCursor } from "../../../list-pagination.js"
 import { resolveOrganizationMemberAuthority } from "../../../organization-team-roles.js"
 import { resolveMemberPermissions, resolvePermissionsForMember } from "../../../permissions/resolve.js"
@@ -293,6 +305,8 @@ type GithubPluginMcpImportPlugin = {
 
 type GithubPluginSkillImportSkill = {
   description: string | null
+  /** Text files beside SKILL.md, read only for the skills an import will store. */
+  files?: SkillFile[]
   name: string
   pluginKey: string
   pluginName: string
@@ -383,7 +397,7 @@ type GrantTarget = ConfigObjectGrantTarget | MarketplaceGrantTarget | PluginGran
 
 export class PluginArchRouteFailure extends Error {
   constructor(
-    readonly status: 400 | 404 | 409 | 502,
+    readonly status: 400 | 404 | 409 | 413 | 502,
     readonly error: string,
     message: string,
     options?: ErrorOptions,
@@ -641,9 +655,34 @@ async function getPublicGithubDiscoveryFileTexts(snapshot: PublicGithubTreeSnaps
   return Object.fromEntries(paths.map((path, index) => [path, texts[index] ?? null]))
 }
 
+/**
+ * What a skill version stores beside its SKILL.md: its supporting files, under
+ * `files`. A write that names no payload keeps the files of the version before
+ * it, so editing SKILL.md alone never drops them; a payload replaces them.
+ */
+function skillVersionPayload(input: { previousPayload?: unknown; value: ConfigObjectInput }): Record<string, unknown> | null {
+  const payload = input.value.normalizedPayloadJson
+  if (payload === undefined) {
+    const kept = skillFilesFromPayload(input.previousPayload)
+    return kept.length > 0 ? { files: kept } : null
+  }
+  const { files: rawFiles, ...rest } = payload
+  if (rawFiles === undefined) return Object.keys(rest).length > 0 ? rest : null
+  const checked = checkSkillFiles(rawFiles)
+  if ("problem" in checked) {
+    throw new PluginArchRouteFailure(
+      400,
+      "invalid_skill_files",
+      checked.problem.path ? `${checked.problem.message} (${checked.problem.path})` : checked.problem.message,
+    )
+  }
+  const next = checked.files.length > 0 ? { ...rest, files: checked.files } : rest
+  return Object.keys(next).length > 0 ? next : null
+}
+
 const STANDARD_SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 
-function deriveSkillProjection(value: ConfigObjectInput) {
+export function deriveSkillProjection(value: ConfigObjectInput) {
   const rawSourceText = normalizeOptionalString(value.rawSourceText)
   if (!rawSourceText) {
     throw new PluginArchRouteFailure(
@@ -816,6 +855,7 @@ function serializeConfigObject(row: ConfigObjectRow, latestVersion: ConfigObject
     currentRelativePath: row.currentRelativePath,
     deletedAt: row.deletedAt ? row.deletedAt.toISOString() : null,
     description: row.description,
+    externalKey: row.externalKey,
     id: row.id,
     latestVersion: latestVersion ? serializeVersion(latestVersion) : null,
     objectType: row.objectType,
@@ -1012,6 +1052,7 @@ function serializePlugin(row: PluginRow, memberCount?: number, marketplaces: Plu
     createdByOrgMembershipId: row.createdByOrgMembershipId,
     deletedAt: row.deletedAt ? row.deletedAt.toISOString() : null,
     description: row.description,
+    externalKey: row.externalKey,
     id: row.id,
     extension: serializePluginExtension(row, componentCounts),
     marketplaces,
@@ -1691,6 +1732,8 @@ export async function getConfigObjectDetail(context: PluginArchActorContext, con
 
 export async function createConfigObject(input: {
   context: PluginArchActorContext
+  /** The object's stable key (config-blob imports keep the source's); a slug of the title otherwise. */
+  externalKey?: string
   /** Use this id for the new object (config-blob imports reuse the source id); a fresh one otherwise. */
   id?: ConfigObjectId
   objectType: ConfigObjectRow["objectType"]
@@ -1744,7 +1787,9 @@ export async function createConfigObject(input: {
         createdVia: input.sourceMode,
         id: versionId,
         isDeletedVersion: false,
-        normalizedPayloadJson: input.value.normalizedPayloadJson ?? null,
+        normalizedPayloadJson: input.objectType === "skill"
+          ? skillVersionPayload({ value: input.value })
+          : input.value.normalizedPayloadJson ?? null,
         organizationId,
         rawSourceText: normalizeOptionalString(input.value.rawSourceText),
       schemaVersion: normalizeOptionalString(input.value.schemaVersion),
@@ -1787,6 +1832,7 @@ export async function createConfigObject(input: {
     }
   })
 
+  await firstExternalKey({ kind: "config_object", organizationId, id: configObjectId }, projection.title, input.externalKey)
   return getConfigObjectDetail(input.context, configObjectId)
 }
 
@@ -1851,6 +1897,14 @@ export async function createConfigObjectVersion(input: {
 
   const now = new Date()
   const projection = deriveProjection({ objectType: row.objectType, value: input.value })
+  const normalizedPayloadJson = row.objectType === "skill"
+    ? skillVersionPayload({
+      previousPayload: input.value.normalizedPayloadJson === undefined
+        ? (await getLatestVersions([row.id])).get(row.id)?.normalizedPayloadJson
+        : undefined,
+      value: input.value,
+    })
+    : input.value.normalizedPayloadJson ?? null
   await db.transaction(async (tx) => {
     await tx.insert(ConfigObjectVersionTable).values({
       configObjectId: row.id,
@@ -1860,7 +1914,7 @@ export async function createConfigObjectVersion(input: {
       createdVia: row.sourceMode === "connector" ? "connector" : row.sourceMode,
       id: createDenTypeId("configObjectVersion"),
       isDeletedVersion: false,
-      normalizedPayloadJson: input.value.normalizedPayloadJson ?? null,
+      normalizedPayloadJson,
       organizationId: row.organizationId,
       rawSourceText: normalizeOptionalString(input.value.rawSourceText),
       schemaVersion: normalizeOptionalString(input.value.schemaVersion),
@@ -1880,6 +1934,31 @@ export async function createConfigObjectVersion(input: {
   })
 
   return getConfigObjectDetail(input.context, row.id)
+}
+
+/** Change (or clear, with null) the stable key a configuration import finds this object by. */
+export async function setConfigObjectExternalKey(input: { context: PluginArchActorContext; configObjectId: ConfigObjectId; externalKey: string | null }) {
+  const row = await getConfigObjectRow(input.context.organizationContext.organization.id, input.configObjectId)
+  if (!row) {
+    throw new PluginArchRouteFailure(404, "config_object_not_found", "Config object not found.")
+  }
+  await requirePluginArchResourceRole({ context: input.context, resourceId: row.id, resourceKind: "config_object", role: "manager" })
+  if (input.externalKey !== row.externalKey) {
+    await changeExternalKey({ kind: "config_object", organizationId: row.organizationId, id: row.id }, input.externalKey)
+  }
+  return getConfigObjectDetail(input.context, row.id)
+}
+
+/** The key a new item starts with: the one asked for when it is free, else a slug of its name. */
+async function firstExternalKey(item: KeyedItem, name: string, wanted: string | undefined): Promise<string | null> {
+  if (wanted && await setExternalKey(item, wanted, { onlyWhenUnset: true })) return wanted
+  return assignDefaultExternalKey(item, name)
+}
+
+async function changeExternalKey(item: KeyedItem, key: string | null) {
+  if (!await setExternalKey(item, key)) {
+    throw new PluginArchRouteFailure(409, "external_key_taken", `Another ${item.kind === "plugin" ? "plugin" : "skill, agent or command"} in this organization already has the key "${key}".`)
+  }
 }
 
 export async function setConfigObjectLifecycle(input: { context: PluginArchActorContext; configObjectId: ConfigObjectId; action: "archive" | "delete" | "restore" }) {
@@ -2786,6 +2865,8 @@ export async function getPluginDetail(context: PluginArchActorContext, pluginId:
 export async function createPlugin(input: {
   context: PluginArchActorContext
   description?: string | null
+  /** The plugin's stable key (config-blob imports keep the source's); a slug of the name otherwise. */
+  externalKey?: string
   /** Use this id for the new plugin (config-blob imports reuse the source id); a fresh one otherwise. */
   id?: PluginId
   name: string
@@ -2817,6 +2898,7 @@ export async function createPlugin(input: {
     createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
     deletedAt: null,
     description: normalizeOptionalString(input.description ?? undefined),
+    externalKey: null,
     id: input.id ?? createDenTypeId("plugin"),
     name,
     organizationId: input.context.organizationContext.organization.id,
@@ -2842,7 +2924,7 @@ export async function createPlugin(input: {
     })
   })
 
-  return serializePlugin(row, 0)
+  return serializePlugin({ ...row, externalKey: await firstExternalKey({ kind: "plugin", organizationId: row.organizationId, id: row.id }, name, input.externalKey) }, 0)
 }
 
 function pluginMcpConnectionSetupInput(setup: PluginMcpConnectionSetup) {
@@ -3035,8 +3117,11 @@ export async function createPluginBundle(input: {
   return getPluginDetail(input.context, plugin.id)
 }
 
-export async function updatePlugin(input: { context: PluginArchActorContext; description?: string | null; name?: string; pluginId: PluginId }) {
+export async function updatePlugin(input: { context: PluginArchActorContext; description?: string | null; externalKey?: string | null; name?: string; pluginId: PluginId }) {
   const row = await ensureEditablePlugin(input.context, input.pluginId)
+  if (input.externalKey !== undefined && input.externalKey !== row.externalKey) {
+    await changeExternalKey({ kind: "plugin", organizationId: row.organizationId, id: row.id }, input.externalKey)
+  }
   const updatedAt = new Date()
   await db.update(PluginTable).set({
     description: input.description === undefined ? row.description : normalizeOptionalString(input.description ?? undefined),
@@ -3502,6 +3587,7 @@ async function ensureDefaultMarketplacePlugins(input: {
         createdByOrgMembershipId,
         deletedAt: null,
         description: entry.description,
+        externalKey: null,
         id: createDenTypeId("plugin"),
         name: entry.name,
         organizationId,
@@ -5256,7 +5342,45 @@ async function withExistingConnectionReuse(input: { organizationId: Organization
   return result
 }
 
-async function computeGithubPluginMcpImportPlan(input: { githubUrl: string; includeSkillText?: boolean; organizationId?: OrganizationId }): Promise<GithubPluginMcpImportPlan> {
+/**
+ * The text files in a skill's folder besides SKILL.md, read from the repository.
+ * Files that are too large, not text, or past the per-skill limits are left out.
+ */
+async function getPublicGithubSkillFiles(input: { snapshot: PublicGithubTreeSnapshot; sourcePath: string }): Promise<SkillFile[]> {
+  if (!input.sourcePath.endsWith("/SKILL.md")) return []
+  const directory = input.sourcePath.slice(0, -"/SKILL.md".length)
+  const candidates: Array<{ discoveryPath: string; path: string }> = []
+  let budget = SKILL_FILES_MAX_TOTAL_BYTES
+  const entries = input.snapshot.treeEntries
+    .filter((entry) => entry.kind === "blob" && entry.path.startsWith(`${directory}/`) && entry.path !== input.sourcePath)
+    .sort((a, b) => a.path.localeCompare(b.path))
+  for (const entry of entries) {
+    if (candidates.length === SKILL_FILES_MAX_COUNT) break
+    const path = entry.path.slice(directory.length + 1)
+    if (entry.size === null || entry.size > SKILL_FILE_MAX_BYTES || entry.size > budget || skillFilePathProblem(path)) continue
+    budget -= entry.size
+    candidates.push({ discoveryPath: entry.path, path })
+  }
+  const texts = await mapPublicGithubConcurrently(candidates, (candidate) => getPublicGithubTextFile({
+    branch: input.snapshot.branch,
+    discoveryPath: candidate.discoveryPath,
+    snapshot: input.snapshot,
+  }))
+  const files = candidates.flatMap((candidate, index) => {
+    const text = texts[index]
+    return typeof text === "string" && isSkillFileText(text) ? [{ path: candidate.path, text }] : []
+  })
+  const checked = checkSkillFiles(files)
+  return "files" in checked ? checked.files : []
+}
+
+async function computeGithubPluginMcpImportPlan(input: {
+  githubUrl: string
+  includeSkillText?: boolean
+  /** Also read the supporting files of these skills ("all", or the selected skill keys). */
+  includeSkillFilesFor?: "all" | ReadonlySet<string>
+  organizationId?: OrganizationId
+}): Promise<GithubPluginMcpImportPlan> {
   const target = parsePublicGithubPluginUrl(input.githubUrl)
   const snapshot = await getPublicGithubRepositoryTree(target)
   const fileTextByPath = await getPublicGithubDiscoveryFileTexts(snapshot)
@@ -5299,6 +5423,14 @@ async function computeGithubPluginMcpImportPlan(input: { githubUrl: string; incl
           sourcePath: job.path,
         }))
       }
+    }
+  }
+
+  const skillFilesFor = input.includeSkillFilesFor
+  if (skillFilesFor) {
+    for (const skill of skills) {
+      if (!skill.supported || (skillFilesFor !== "all" && !skillFilesFor.has(skill.skillKey))) continue
+      skill.files = await getPublicGithubSkillFiles({ snapshot, sourcePath: skill.sourcePath })
     }
   }
 
@@ -6175,6 +6307,7 @@ async function grantImportAccessToPluginArchResource(input: {
 }
 
 type ImportedGithubObject = {
+  files: SkillFile[]
   id: ConfigObjectId
   mcpUrlKeys: string[]
   objectType: "mcp" | "skill"
@@ -6259,6 +6392,7 @@ async function importedGithubObjects(context: PluginArchActorContext, pluginId: 
       mcpUrlKeys: object.objectType === "mcp"
         ? servers.flatMap((server) => typeof server.url === "string" ? [importedMcpKey(server.url)] : [])
         : [],
+      files: object.objectType === "skill" ? skillFilesFromPayload(payload) : [],
       objectType: object.objectType,
       rawSourceText: object.objectType === "skill" ? version?.rawSourceText ?? null : null,
       // Only a GitHub import's own objects carry a source path it may prune by.
@@ -6333,12 +6467,13 @@ export async function importGithubPluginMcps(input: {
   if (input.marketplaceId) {
     await ensureEditableMarketplace(input.context, input.marketplaceId)
   }
+  const selectedSkillKeys = new Set(input.selectedSkillKeys?.map((key) => key.trim()).filter(Boolean) ?? [])
   const plan = await computeGithubPluginMcpImportPlan({
     githubUrl: input.githubUrl,
     includeSkillText: true,
+    includeSkillFilesFor: input.selectedSkillKeys === undefined ? "all" : selectedSkillKeys,
     organizationId: input.context.organizationContext.organization.id,
   })
-  const selectedSkillKeys = new Set(input.selectedSkillKeys?.map((key) => key.trim()).filter(Boolean) ?? [])
   const selectedServerKeys = new Set(input.selectedServerKeys?.map((key) => key.trim()).filter(Boolean) ?? [])
   const selectedServerNames = new Set(input.selectedServerNames?.map((name) => name.trim()).filter(Boolean) ?? [])
   const consideredServers = selectedServerKeys.size > 0
@@ -6498,6 +6633,7 @@ export async function importGithubPluginMcps(input: {
     if (!skillText) {
       throw new PluginArchRouteFailure(400, "invalid_skill_import", "Selected skill content was unavailable.")
     }
+    const skillFiles = skill.files ?? []
     const metadata = skillMetadataFromText(skillText)
     const sourcePath = githubImportSourcePath(plan, skill.sourcePath)
     const byPath = sourcePath ? existingBySourcePath.get(sourcePath) : undefined
@@ -6507,7 +6643,7 @@ export async function importGithubPluginMcps(input: {
       matchedObjectIds.add(existingSkill.id)
       await recordGithubImportSourcePath(existingSkill, sourcePath)
       // Stored text is trimmed on write; compare the same way.
-      if (existingSkill.rawSourceText?.trim() === skillText.trim()) {
+      if (existingSkill.rawSourceText?.trim() === skillText.trim() && sameSkillFiles(existingSkill.files, skillFiles)) {
         unchanged.push({ name: metadata.title, objectType: "skill" })
         continue
       }
@@ -6515,7 +6651,8 @@ export async function importGithubPluginMcps(input: {
         context: input.context,
         configObjectId: existingSkill.id,
         reason: `Re-imported from ${input.githubUrl}`,
-        value: { rawSourceText: skillText },
+        // Always named, so a file removed upstream is removed here too.
+        value: { normalizedPayloadJson: { files: skillFiles }, rawSourceText: skillText },
       })
       updatedSkills.push({ configObjectId: existingSkill.id, name: metadata.title, sourcePath: skill.sourcePath })
       continue
@@ -6536,6 +6673,7 @@ export async function importGithubPluginMcps(input: {
           sourceSchemaVersion: skill.sourceSchemaVersion,
           sourcePath: skill.sourcePath,
         },
+        ...(skillFiles.length > 0 ? { normalizedPayloadJson: { files: skillFiles } } : {}),
         rawSourceText: skillText,
       },
     })

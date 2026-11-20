@@ -5,7 +5,7 @@ import { noteInventoryWrite } from "./inventory-writes.js"
 import { forgetRequestReadsOnWrite } from "./request-reads.js"
 import { shouldReadFromPrimary } from "./read-routing.js"
 
-export const { db, client } = createDenDb({
+export const { db, client, readClient } = createDenDb({
   databaseUrl: env.databaseUrl,
   mode: env.dbMode,
   planetscale: env.planetscale,

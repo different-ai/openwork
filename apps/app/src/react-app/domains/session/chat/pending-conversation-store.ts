@@ -1,3 +1,4 @@
+import { sandboxSendDisposition } from "@/react-app/kernel/sandbox-transition";
 import type { Session } from "@opencode-ai/sdk/v2/client";
 import { create } from "zustand";
 import { snapshotComposerSessionState, type ComposerSessionState } from "../surface/composer-state-store";
@@ -13,8 +14,9 @@ export type PendingConversation = {
   scope: string | null;
   destination: NewSessionDestination;
   submitted: ComposerSessionState;
-  phase: "creating" | "creation-failed" | "persisted";
+  phase: "creating" | "creation-failed" | "sandbox-deferred" | "persisted";
   error: unknown;
+  sandboxNote?: string;
   sessionId?: string;
   /** Bridges publication until the route's session list acknowledges this ID. */
   session?: Session;
@@ -101,7 +103,7 @@ export function createPendingConversation<T extends { session: Session }>(id: st
   const run = () => {
     const current = usePendingConversationStore.getState().conversations[id];
     if (!current || current.phase === "persisted") return Promise.resolve();
-    update(id, { phase: "creating", error: null });
+    update(id, { phase: "creating", error: null, sandboxNote: undefined });
     return once.run(id, create, async (created) => {
       // Publish the real ID to the sidebar before any assignment/admission work.
       update(id, { phase: "persisted", sessionId: created.session.id, session: created.session, error: null });
@@ -109,15 +111,23 @@ export function createPendingConversation<T extends { session: Session }>(id: st
       retries.delete(id);
     }).catch((error: unknown) => {
       // A publication failure must never turn a real session back into a create retry.
-      if (!usePendingConversationStore.getState().conversations[id]?.sessionId) update(id, { phase: "creation-failed", error });
-      else update(id, { error });
+      if (usePendingConversationStore.getState().conversations[id]?.sessionId) {
+        update(id, { error });
+        return;
+      }
+      const disposition = sandboxSendDisposition(error);
+      if (disposition.kind === "deferred") update(id, { phase: "sandbox-deferred", sandboxNote: disposition.note });
+      else update(id, { phase: "creation-failed", error });
     });
   };
   retries.set(id, run);
   return run();
 }
 
-export function retryPendingConversation(id: string) { return retries.get(id)?.() ?? Promise.resolve(); }
+export function retryPendingConversation(id: string, submitted?: ComposerSessionState) {
+  if (submitted) update(id, { submitted: snapshotComposerSessionState(submitted) });
+  return retries.get(id)?.() ?? Promise.resolve();
+}
 
 export function acknowledgePendingSession(scope: string | null, workspaceId: string, sessionId: string) {
   for (const entry of Object.values(usePendingConversationStore.getState().conversations)) {

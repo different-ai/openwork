@@ -126,6 +126,14 @@ export interface ServerConfig {
   /** Desktop-owned managed engines only; never enabled by remote clients. */
   resumeInterruptedTasks?: boolean;
   anonymousInference?: { desktop: DesktopFreeHost };
+  /** Host-provisioned Den origin for signed-out feature discovery; never accepted from HTTP or workspace config. */
+  trustedDenOrigin?: string;
+  /**
+   * Desktop only: proxy variables that point the agent engine at the app's
+   * relay, which follows the computer's proxy settings. Empty when the person
+   * already set a proxy themselves.
+   */
+  engineSystemProxyEnv?: () => Promise<Record<string, string>>;
   /**
    * Set by OpenWork Desktop or a hosted web bootstrap for a brand-new install (no earlier
    * OpenWork state on disk). The server then starts on this engine unless an

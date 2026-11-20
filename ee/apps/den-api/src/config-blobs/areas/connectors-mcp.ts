@@ -1,6 +1,7 @@
 /**
- * `connectors.mcp`: external MCP connections (Connectors › MCP) and who can
- * use them.
+ * `connectors.mcp`: external MCP connections (Connectors › MCP), the
+ * organization's built-in provider connections (Google Workspace, Microsoft
+ * 365, …) and who can use them.
  *
  * Exported per connection: URL, auth type, credential mode, direct exposure,
  * API-key transport, OAuth settings (issuer, scopes, manual endpoints) and the
@@ -13,15 +14,25 @@
  * per-member credentials, SDK-registered (dynamic) OAuth clients and cached
  * discovery, readiness and health state.
  *
- * Not in v1: native-provider connections (kind `native_provider`), the tool
- * policy, and grants that come from marketplace plugin bindings (those follow
- * the plugin). An apply never changes them.
+ * A built-in provider connection (kind `native_provider`) carries `native`:
+ * its provider, and the organization's OAuth app for it (client id, selected
+ * optional features, tenant; the client secret is a placeholder). Its URL and
+ * sign-in settings are the provider's own and are never written. The sample
+ * Microsoft 365 of a sandbox organization is not exported, nor is a built-in
+ * connection that has no OAuth app. Each person's sign-in stays behind, as for
+ * every connection.
+ *
+ * Not in v1: the tool policy, and grants that come from marketplace plugin
+ * bindings (those follow the plugin). An apply never changes them.
  *
  * Applies through the same handlers as POST/PUT/DELETE /v1/mcp-connections
  * (`createExternalConnectionResponse`, `replaceExternalConnectionResponse`,
  * `deleteExternalConnection`): API-key and no-auth connections are probed
  * before they are saved (a failed probe fails the item), and OAuth discovery
- * is checked.
+ * is checked. Built-in provider connections go through the handlers of the
+ * dashboard's own setup: `createNativeProviderConnectionResponse` (POST
+ * /v1/mcp-connections with kind `native_provider`), the same replace handler
+ * for name and access, and `saveOrgOAuthProviderClient` for the OAuth app.
  */
 import { manualOAuthEndpointSchema } from "@openwork/enterprise-mcp-client"
 import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
@@ -38,13 +49,18 @@ import {
 import { externalMcpRequestHeaderNames } from "../../capability-sources/external-mcp-request-headers.js"
 import { externalMcpUrlCredentialProblems, redactExternalMcpUrlCredentials } from "../../capability-sources/external-mcp-url-credentials.js"
 import { normalizeOAuthClientExtra } from "../../capability-sources/oauth-credentials.js"
+import { readProviderTenantId } from "../../capability-sources/oauth-tenant.js"
+import { getNativeOAuthProvider } from "../../capability-sources/provider-registry.js"
+import { isSandboxMicrosoftClient } from "../../capability-sources/sandbox-microsoft-endpoints.js"
 import {
   createExternalConnectionResponse,
+  createNativeProviderConnectionResponse,
   deleteExternalConnection,
   replaceExternalConnectionResponse,
   type CreateExternalConnectionBody,
   type UpdateConnectionBody,
 } from "../../routes/org/mcp-connections.js"
+import { saveOrgOAuthProviderClient, type SaveOrgOAuthProviderClientBody } from "../../routes/org/oauth-providers.js"
 import { hasPermission } from "../../routes/org/shared.js"
 import { defineConfigArea, type ConfigApplyOp, type ConfigApplyResult, type ConfigAreaContext, type ConfigItem } from "../area.js"
 import {
@@ -67,6 +83,7 @@ import {
   secretEffects,
   secretIsSet,
   secretPlaceholder,
+  secretWrite,
   specAudienceSchema,
   specObject,
   specSecretSchema,
@@ -119,7 +136,50 @@ const specSchema = z.object({
     }).strict().nullable(),
   }).strict().nullable(),
   access: specAudienceSchema.extend({ orgWide: z.boolean() }).strict(),
+  /**
+   * Only on a built-in provider connection (Google Workspace, Microsoft 365, …).
+   * Its `url`, `authType`, `credentialMode` and the fields after them are the
+   * provider's own: exported for people reading the file, never written.
+   */
+  native: z.object({
+    /** The provider key, e.g. `google-workspace`. It can't change once the connection exists. */
+    provider: z.string().trim().min(1).max(64),
+    /** The organization's own OAuth app for this connection. */
+    client: z.object({
+      clientId: z.string().trim().min(1).max(512),
+      /** Optional permission features the members are asked for. null leaves the provider's defaults (or the stored selection). */
+      features: z.array(z.string().trim().min(1).max(128)).nullable(),
+      /** Microsoft Entra tenant, for providers bound to one tenant. */
+      tenantId: z.string().trim().min(1).max(253).nullable(),
+      clientSecret: specSecretSchema,
+    }).strict(),
+  }).strict().optional(),
 }).strict()
+
+type NativeSpec = NonNullable<z.infer<typeof specSchema>["native"]>
+
+/** The plain fields of `native` at apply time. The client secret is read separately. */
+const applyNativeSchema = z.object({
+  provider: z.string(),
+  client: z.object({
+    clientId: z.string(),
+    features: z.array(z.string()).nullable(),
+    tenantId: z.string().nullable(),
+  }).passthrough(),
+}).passthrough()
+
+function nativeProviderOf(spec: ConfigSpec | JsonObject): string | null {
+  return isJsonObject(spec.native) && typeof spec.native.provider === "string" ? spec.native.provider : null
+}
+
+function readFeatures(extra: Record<string, unknown> | null): string[] | null {
+  const value = extra?.features
+  if (!Array.isArray(value)) return null
+  return value.filter((feature): feature is string => typeof feature === "string").sort()
+}
+
+/** The fields a built-in provider connection takes from its provider: an import can't set them. */
+const NATIVE_FIXED_FIELDS = ["url", "authType", "credentialMode", "exposeDirectly", "apiKeyAuthScheme", "apiKey", "requestHeaders", "oauth"]
 
 type OAuthSpec = NonNullable<z.infer<typeof specSchema>["oauth"]>
 
@@ -258,9 +318,13 @@ export const connectorsMcpArea = defineConfigArea({
   tables: ["external_mcp_connection", "external_mcp_connection_access_grant"],
   naturalKeys: [{
     label: "URL",
-    get: (item) => typeof item.spec.url === "string" ? normalizeExternalMcpIdentityUrl(item.spec.url) : null,
+    get: (item) => nativeProviderOf(item.spec) === null && typeof item.spec.url === "string" ? normalizeExternalMcpIdentityUrl(item.spec.url) : null,
+  }, {
+    // One built-in connection per provider on both sides: the same one. More than one falls back to key, then name.
+    label: "provider",
+    get: (item) => nativeProviderOf(item.spec),
   }],
-  secretFields: ["apiKey", "requestHeaders[].value", "oauth.client.clientSecret"],
+  secretFields: ["apiKey", "requestHeaders[].value", "oauth.client.clientSecret", "native.client.clientSecret"],
   redactCredentials: redactConnectionCredentials,
   arrayKeys: { requestHeaders: "name" },
   transactional: false,
@@ -269,6 +333,23 @@ export const connectorsMcpArea = defineConfigArea({
   // POST/PUT /v1/mcp-connections refuse a URL with credentials; so does an import, before it runs.
   async preflight(_ctx, op) {
     if (op.kind === "delete") return null
+    const provider = nativeProviderOf(op.item.spec)
+    if (op.kind === "update" && nativeProviderOf(op.previous.spec) !== provider) {
+      return {
+        block: provider === null
+          ? `"${op.previous.name}" is a built-in ${nativeProviderOf(op.previous.spec)} connection here; an import can't turn it into an MCP connection. Skip it, or map the item to another connection.`
+          : nativeProviderOf(op.previous.spec) === null
+            ? `"${op.previous.name}" is an MCP connection here; an import can't turn it into a built-in ${provider} connection. Skip it, or map the item to another connection.`
+            : `A built-in connection's provider can't change ("${op.previous.name}" is ${nativeProviderOf(op.previous.spec)} here, ${provider} in the file).`,
+      }
+    }
+    if (provider !== null) {
+      if (!getNativeOAuthProvider(provider)) return { block: `"${provider}" is not a built-in provider on this server.` }
+      if (op.kind === "update" && touches(op.changes, ...NATIVE_FIXED_FIELDS)) {
+        return { warnings: [`The URL and sign-in settings of "${op.item.name}" are ${provider}'s own and are left as they are.`] }
+      }
+      return null
+    }
     if (op.kind === "create" || touches(op.changes, "url")) {
       const block = urlCredentialBlock(op.item.spec.url, op.item.name, false)
       return block ? { block } : null
@@ -278,6 +359,12 @@ export const connectorsMcpArea = defineConfigArea({
   },
 
   irreversible: (op) => {
+    if (op.kind === "delete" && nativeProviderOf(op.previous.spec) !== null) {
+      return [
+        `People's sign-ins to "${op.previous.name}" are deleted; they connect again after a restore.`,
+        `Its OAuth app's client secret is deleted; it must be re-entered to restore it.`,
+      ]
+    }
     if (op.kind === "delete") {
       return [
         `People's sign-ins and personal keys for "${op.previous.name}" are deleted; they connect again after a restore.`,
@@ -287,6 +374,15 @@ export const connectorsMcpArea = defineConfigArea({
     if (op.kind !== "update") return []
     const out: string[] = []
     const changes = op.changes
+    if (nativeProviderOf(op.item.spec) !== null) {
+      if (touches(changes, "native.client.clientId", "native.client.tenantId")) {
+        out.push(`Members' sign-ins to "${op.previous.name}" are revoked (their tokens are revoked at the provider); they sign in again.`)
+      }
+      const client = isJsonObject(op.item.spec.native) && isJsonObject(op.item.spec.native.client) ? op.item.spec.native.client : null
+      const previousClient = isJsonObject(op.previous.spec.native) && isJsonObject(op.previous.spec.native.client) ? op.previous.spec.native.client : null
+      if (client) out.push(...secretEffects(client.clientSecret, `OAuth app's client secret of "${op.previous.name}"`, previousClient?.clientSecret ?? { set: false }))
+      return out
+    }
     if (touches(changes, "url", "authType", "credentialMode", "apiKeyAuthScheme", "oauth.authorizationServerIssuer", "oauth.manualOAuthEndpoints")) {
       out.push(`Members' sign-ins to "${op.previous.name}" are revoked; they sign in again.`)
       if (touches(changes, "url", "authType", "credentialMode", "apiKeyAuthScheme", "oauth.authorizationServerIssuer") && isJsonObject(op.previous.spec.oauth) && isJsonObject(op.previous.spec.oauth.client)) {
@@ -340,6 +436,7 @@ async function applyConnection(ctx: ConfigAreaContext, op: ConfigApplyOp, log: C
   }
 
   const raw = specObject(op.item.spec)
+  if (raw.native !== undefined) return applyNativeConnection(ctx, op, raw, log)
   const spec = parseApplySpec(raw)
   const specAccess = readAccess(raw)
   const headers = readHeaderDecisions(raw.requestHeaders)
@@ -378,8 +475,10 @@ async function applyConnection(ctx: ConfigAreaContext, op: ConfigApplyOp, log: C
               },
             } : {}),
             ...(spec.oauth.manualOAuthEndpoints ? { manualOAuthEndpoints: spec.oauth.manualOAuthEndpoints } : {}),
-            ...(spec.oauth.authorizationServerIssuer ? { authorizationServerIssuer: spec.oauth.authorizationServerIssuer } : {}),
-            ...(spec.oauth.requestedScopes.length > 0 ? { requestedScopes: spec.oauth.requestedScopes } : {}),
+            // Both always sent, also when empty: left out, a known server gets its default issuer and scopes
+            // here, which the source does not have, and the next import of the same file would plan to remove them.
+            authorizationServerIssuer: spec.oauth.authorizationServerIssuer,
+            requestedScopes: spec.oauth.requestedScopes,
           }
         : {}),
       access: accessInput,
@@ -396,6 +495,9 @@ async function applyConnection(ctx: ConfigAreaContext, op: ConfigApplyOp, log: C
 
   const connection = await getExternalMcpConnection({ organizationId: payload.organization.id, connectionId: normalizeDenTypeId("externalMcpConnection", op.targetId) })
   if (!connection) throw new ConfigApplyError("connection_not_found", `The connection "${op.previous.name}" no longer exists.`, 404)
+  if (connection.kind !== "external_mcp") {
+    throw new ConfigApplyError("immutable_field", `"${connection.name}" is a built-in provider connection; an import can't turn it into an MCP connection.`, 400, "native")
+  }
   // Same checks as PUT /v1/mcp-connections/:connectionId before it replaces.
   const canUpdateAnyConnection = await hasPermission(c, "connections.update")
   if (!canUpdateAnyConnection && connection.createdByOrgMembershipId !== payload.currentMember.id) {
@@ -510,6 +612,142 @@ async function applyConnection(ctx: ConfigAreaContext, op: ConfigApplyOp, log: C
   return { localId: connection.id, warnings }
 }
 
+/** Create or update of a built-in provider connection: name, access and the organization's OAuth app. */
+async function applyNativeConnection(
+  ctx: ConfigAreaContext,
+  op: Exclude<ConfigApplyOp, { kind: "delete" }>,
+  raw: JsonObject,
+  log: ConfigStepLog,
+): Promise<Omit<ConfigApplyResult, "steps">> {
+  const { c, payload, requestId } = await configRouteContext(ctx)
+  const parsed = applyNativeSchema.safeParse(raw.native)
+  if (!parsed.success) throw new ConfigApplyError("invalid_spec", parsed.error.issues.map((issue) => `native.${issue.path.join(".")}: ${issue.message}`).join("; "))
+  const native = parsed.data
+  const provider = getNativeOAuthProvider(native.provider)
+  if (!provider) throw new ConfigApplyError("unknown_oauth_provider", `"${native.provider}" is not a built-in provider on this server.`, 400, "native.provider")
+  const specAccess = readAccess(raw)
+  const access = {
+    orgWide: specAccess.orgWide,
+    memberIds: specAccess.memberIds.map((id) => normalizeDenTypeId("member", id)),
+    teamIds: specAccess.teamIds.map((id) => normalizeDenTypeId("team", id)),
+  }
+  const client = isJsonObject(raw.native) && isJsonObject(raw.native.client) ? raw.native.client : {}
+  const clientSecret = resolvedSecret(client.clientSecret, "native.client.clientSecret")
+  const warnings: string[] = []
+
+  if (op.kind === "create") {
+    if (clientSecret?.decision !== "value") {
+      warnings.push(`Created without its OAuth app's client secret: someone must enter it before people can sign in to ${provider.displayName}.`)
+    }
+    const localId = await log.run({ action: "create", target: "connection", detail: `${op.item.name} (${provider.displayName})` }, async () => {
+      const created = await expectRouteOk(await createNativeProviderConnectionResponse(c, payload, {
+        kind: "native_provider",
+        nativeProviderKey: provider.providerId,
+        name: op.item.name,
+        oauthClient: {
+          clientId: native.client.clientId,
+          ...(clientSecret?.decision === "value" ? { clientSecret: clientSecret.value } : {}),
+          ...(native.client.features ? { features: native.client.features } : {}),
+        },
+      }, {
+        access,
+        ...(op.item.key ? { externalKey: op.item.key } : {}),
+        ...(native.client.tenantId ? { tenantId: native.client.tenantId } : {}),
+        ...(op.preferredId ? { preferredId: normalizeDenTypeId("externalMcpConnection", op.preferredId) } : {}),
+      }), `Create "${op.item.name}"`)
+      return stringField(created, "id")
+    })
+    return { localId, warnings }
+  }
+
+  const connection = await getExternalMcpConnection({ organizationId: payload.organization.id, connectionId: normalizeDenTypeId("externalMcpConnection", op.targetId) })
+  if (!connection) throw new ConfigApplyError("connection_not_found", `The connection "${op.previous.name}" no longer exists.`, 404)
+  if (connection.kind !== "native_provider") {
+    throw new ConfigApplyError("immutable_field", `"${connection.name}" is an MCP connection; an import can't turn it into a built-in ${provider.displayName} connection.`, 400, "native")
+  }
+  if (connection.nativeProviderKey !== provider.providerId) {
+    throw new ConfigApplyError("immutable_field", "A built-in connection's provider can't change; create one for the other provider instead.", 400, "native.provider")
+  }
+  // Same checks as PUT /v1/mcp-connections/:connectionId before it replaces.
+  const canUpdateAnyConnection = await hasPermission(c, "connections.update")
+  if (!canUpdateAnyConnection && connection.createdByOrgMembershipId !== payload.currentMember.id) {
+    throw new ConfigApplyError("forbidden", `Only people allowed to edit any connection, or its creator, can edit "${connection.name}".`, 403)
+  }
+  const touched = opTouched(op)
+  const inScope = (...paths: string[]) => touches(touched, ...paths)
+  if (inScope("key") && (op.item.key ?? null) !== (connection.externalKey ?? null)) {
+    warnings.push("A connection's key can't change; the existing key was kept.")
+  }
+  if (inScope(...NATIVE_FIXED_FIELDS)) {
+    warnings.push(`The URL and sign-in settings are ${provider.displayName}'s own; they were left as they are.`)
+  }
+
+  const name = inScope("name") ? op.item.name : connection.name
+  const directGrants = await listDirectExternalMcpConnectionAccess({ organizationId: payload.organization.id, connectionId: connection.id })
+  const accessNow = {
+    orgWide: directGrants.some((grant) => grant.orgWide),
+    memberIds: [...new Set(directGrants.flatMap((grant) => grant.orgMembershipId ? [grant.orgMembershipId] : []))],
+    teamIds: [...new Set(directGrants.flatMap((grant) => grant.teamId ? [grant.teamId] : []))],
+  }
+  const nextAccess = inScope("access") ? access : accessNow
+  const rowSteps: ConfigApplyStep[] = [
+    ...(name !== connection.name ? [{ action: "set" as const, target: "name", detail: name }] : []),
+    ...(inScope("access") ? [
+      ...(nextAccess.orgWide !== accessNow.orgWide ? [{ action: "set" as const, target: "access.orgWide", detail: String(nextAccess.orgWide) }] : []),
+      ...await audienceSteps(ctx.db, payload.organization.id, "access", {
+        teams: idDiff(accessNow.teamIds, nextAccess.orgWide ? [] : nextAccess.teamIds),
+        members: idDiff(accessNow.memberIds, nextAccess.orgWide ? [] : nextAccess.memberIds),
+      }),
+    ] : []),
+  ]
+  const [firstRowStep, ...otherRowSteps] = rowSteps
+  if (firstRowStep) {
+    // One PUT with the row's own URL and sign-in settings: only the name and the access grants differ.
+    const body: UpdateConnectionBody = {
+      expectedUpdatedAt: connection.updatedAt.toISOString(),
+      name,
+      url: connection.url,
+      authType: connection.authType,
+      credentialMode: connection.credentialMode,
+      access: nextAccess,
+    }
+    await log.run(firstRowStep, async () => {
+      await expectRouteOk(await replaceExternalConnectionResponse(c, payload, body, connection, canUpdateAnyConnection, c.get("session"), requestId), `Update "${op.item.name}"`)
+    })
+    log.add(...otherRowSteps)
+  }
+
+  const decided = secretWrite(clientSecret)
+  const previousClient = isJsonObject(op.previous.spec.native) && isJsonObject(op.previous.spec.native.client) ? op.previous.spec.native.client : null
+  // "unset" of a secret that is not stored writes nothing.
+  const secret = decided === null && !secretIsSet(previousClient?.clientSecret) ? undefined : decided
+  const clientBody: SaveOrgOAuthProviderClientBody = {
+    ...(inScope("native.client.clientId") ? { clientId: native.client.clientId } : {}),
+    ...(inScope("native.client.features") && native.client.features ? { features: native.client.features } : {}),
+    ...(inScope("native.client.tenantId") && native.client.tenantId ? { tenantId: native.client.tenantId } : {}),
+    ...(secret !== undefined ? { clientSecret: secret } : {}),
+  }
+  const clientSteps: ConfigApplyStep[] = [
+    ...(clientBody.clientId !== undefined ? [{ action: "set" as const, target: "native.client.clientId", detail: clientBody.clientId }] : []),
+    ...(clientBody.features !== undefined ? [{ action: "set" as const, target: "native.client.features", detail: clientBody.features.join(", ") || "none" }] : []),
+    ...(clientBody.tenantId !== undefined ? [{ action: "set" as const, target: "native.client.tenantId", detail: clientBody.tenantId }] : []),
+    ...(secret !== undefined ? [{ action: secret === null ? "delete" as const : "set" as const, target: "native.client.clientSecret" }] : []),
+  ]
+  const [firstClientStep, ...otherClientSteps] = clientSteps
+  if (firstClientStep) {
+    // Same permission as POST /v1/oauth-providers/:providerId/client.
+    if (!(await hasPermission(c, "oauth_clients.manage"))) {
+      throw new ConfigApplyError("forbidden", `Only people allowed to manage OAuth apps can change the OAuth app of "${connection.name}".`, 403)
+    }
+    // One save: the route writes all of these in one upsert of the client row.
+    await log.run(firstClientStep, async () => {
+      await expectRouteOk(await saveOrgOAuthProviderClient(c, payload, connection.id, clientBody), `Save the OAuth app of "${connection.name}"`)
+    })
+    log.add(...otherClientSteps)
+  }
+  return { localId: connection.id, warnings }
+}
+
 function headerNames(value: unknown): string[] {
   if (!Array.isArray(value)) return []
   return value.flatMap((header) => isJsonObject(header) && typeof header.name === "string" ? [header.name] : [])
@@ -541,7 +779,6 @@ async function readConnections(ctx: ConfigAreaContext, ids: readonly string[] | 
     .from(ExternalMcpConnectionTable)
     .where(and(
       eq(ExternalMcpConnectionTable.organizationId, organizationId),
-      eq(ExternalMcpConnectionTable.kind, "external_mcp"),
       connectionIds ? inArray(ExternalMcpConnectionTable.id, connectionIds) : undefined,
     ))
   if (rows.length === 0) return []
@@ -566,12 +803,27 @@ async function readConnections(ctx: ConfigAreaContext, ids: readonly string[] | 
   ])
   const clientsByConnection = new Map(clients.map((client) => [client.providerId, client]))
 
-  const items: ConfigItem[] = rows.map((row) => {
+  const items: ConfigItem[] = rows.flatMap((row): ConfigItem[] => {
     const rowGrants = grants.filter((grant) => grant.externalMcpConnectionId === row.id)
     const client = clientsByConnection.get(row.id)
     const clientExtra = client ? normalizeOAuthClientExtra(client.extra) : null
+    let native: NativeSpec | null = null
+    if (row.kind === "native_provider") {
+      const provider = row.nativeProviderKey ? getNativeOAuthProvider(row.nativeProviderKey) : null
+      // Not portable: a provider this server doesn't know, a connection nobody gave an OAuth app, a sandbox's sample.
+      if (!provider || !client || isSandboxMicrosoftClient(clientExtra)) return []
+      native = {
+        provider: provider.providerId,
+        client: {
+          clientId: client.clientId,
+          features: readFeatures(clientExtra),
+          tenantId: provider.tenantIdExtraKey ? readProviderTenantId(clientExtra, provider.tenantIdExtraKey) : null,
+          clientSecret: secretPlaceholder(AREA, row.id, "native.client.clientSecret", Boolean(client.clientSecret)),
+        },
+      }
+    }
     const configuration = row.oauthConfiguration
-    const oauth: OAuthSpec | null = row.authType === "oauth"
+    const oauth: OAuthSpec | null = row.authType === "oauth" && !native
       ? {
           authorizationServerIssuer: configuration?.authorizationServerIssuer ?? null,
           requestedScopes: [...(configuration?.requestedScopes ?? [])].sort(),
@@ -596,7 +848,7 @@ async function readConnections(ctx: ConfigAreaContext, ids: readonly string[] | 
       teamNames,
       memberEmails,
     })
-    return {
+    return [{
       id: row.id,
       key: row.externalKey,
       name: row.name,
@@ -616,8 +868,9 @@ async function readConnections(ctx: ConfigAreaContext, ids: readonly string[] | 
         })),
         oauth,
         access: { orgWide: rowGrants.some((grant) => grant.orgWide), ...audience },
+        ...(native ? { native } : {}),
       },
-    }
+    }]
   })
   return items.sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id))
 }

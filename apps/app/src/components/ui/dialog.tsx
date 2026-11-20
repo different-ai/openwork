@@ -5,6 +5,8 @@ import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import { XIcon } from "lucide-react"
 
+import { PortalContainerContext } from "./portal-container"
+
 function Dialog({ ...props }: DialogPrimitive.Root.Props) {
   return <DialogPrimitive.Root data-slot="dialog" {...props} />
 }
@@ -45,8 +47,9 @@ function DialogContent({
 }: DialogPrimitive.Popup.Props & {
   showCloseButton?: boolean
 }) {
+  const container = React.useContext(PortalContainerContext)
   return (
-    <DialogPortal>
+    <DialogPortal container={container}>
       <DialogOverlay />
       {/* Dismissal hides the popup in the same frame: an exit animation would keep
           the dialog (and its fields) on screen until Base UI unmounts it. */}

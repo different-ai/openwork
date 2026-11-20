@@ -1,5 +1,6 @@
 import {
   readFeatures,
+  lockFeatureForMutation,
   readOrganizationFeatureOverridesForMany,
   readOrganizationMemberFeatureOverrides,
   setFeatureRollout,
@@ -68,6 +69,11 @@ export async function getOrganizationFeatures(organizationId: string, options: R
 
 export async function organizationFeatureEnabled(organizationId: string, key: FeatureKey, options: ReadOptions = {}): Promise<boolean> {
   return (await getOrganizationFeatures(organizationId, options))[key]
+}
+
+/** Transaction-local authorization, including a concurrent first deployment kill switch. */
+export async function lockOrganizationFeatureForMutation(database: Parameters<typeof lockFeatureForMutation>[0], organizationId: string, userId: string, key: FeatureKey): Promise<boolean> {
+  return lockFeatureForMutation(database, organizationId, userId, key, env.features)
 }
 
 /**
@@ -151,14 +157,15 @@ export async function updateMemberFeatureOverrides(input: Parameters<typeof setM
  * Route guard for organization routes: answers 404 `feature_disabled` as if the
  * route did not exist when the feature is off for the caller's organization. Use after
  * orgMemberRoute()/orgRoleRoute()/orgPermissionRoute(). Uses the features the
- * organization context already read for this request.
+ * organization context already read for this request. `message` is the
+ * sentence a screen shows the person when the feature went off under them.
  */
-export function requireFeature(key: FeatureKey): MiddlewareHandler<{ Variables: Partial<OrganizationContextVariables> }> {
+export function requireFeature(key: FeatureKey, message?: string): MiddlewareHandler<{ Variables: Partial<OrganizationContextVariables> }> {
   return async (c, next) => {
     const payload = c.get("organizationContext")
     if (!payload) return c.json({ error: "organization_not_found" }, 404)
     // Reuse the feature snapshot already resolved for this request.
-    if (!payload.features[key]) return c.json({ error: "feature_disabled", feature: key }, 404)
+    if (!payload.features[key]) return c.json({ error: "feature_disabled", feature: key, ...(message ? { message } : {}) }, 404)
     // A request through a gated route is a use of the feature, for /admin.
     markFeaturesUsed({ organizationId: payload.organization.id, memberId: payload.currentMember.id, keys: [key] })
     await next()

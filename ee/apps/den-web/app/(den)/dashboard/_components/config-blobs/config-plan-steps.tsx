@@ -6,12 +6,13 @@ import {
   type ConfigFieldChange,
   type ConfigPlan,
   type ConfigPlanItem,
+  type ConfigPlanRef,
   type ConfigPlanSecret,
   type ConfigSecretInput,
   parseConfigRef,
 } from "@openwork/types/den/config-blobs";
 import { ChevronRight } from "lucide-react";
-import { useState } from "react";
+import { useId, useState } from "react";
 import { DenButton } from "../../../_components/ui/button";
 import { DenCheckbox } from "../../../_components/ui/checkbox";
 import { DenChip } from "../../../_components/ui/chip";
@@ -23,6 +24,9 @@ import { DenSwitch } from "../../../_components/ui/switch";
 import {
   CONFIG_OP_LABELS,
   type ConfigPlanEntry,
+  type ConfigRefEntry,
+  type ConfigRefGroup,
+  decideRefs,
   deletesHeading,
   formatFieldChange,
   formatFieldPath,
@@ -32,6 +36,7 @@ import {
   inviteCount,
   isDeletable,
   isPeopleRef,
+  isRefChoiceRefused,
   isRefOpen,
   itemName,
   keepableSecrets,
@@ -40,7 +45,12 @@ import {
   matchTierLabel,
   needsMatch,
   planEntries,
-  refEntries,
+  refChoice,
+  refGroupChoice,
+  refGroups,
+  refHandle,
+  refName,
+  refusesChoice,
   targetChoices,
 } from "./config-blobs-model";
 
@@ -131,62 +141,151 @@ export function MatchStep({ plan, decisions, editable, saving, onDecisions }: St
 // References
 
 export function ReferencesStep({ plan, decisions, editable, saving, onDecisions }: StepProps) {
-  const entries = refEntries(plan);
-  if (entries.length === 0) return <StepEmpty>Every reference points to something that exists.</StepEmpty>;
-
-  function current(area: ConfigAreaKey, ref: string, path: string): string {
-    const found = decisions.refs.find((entry) => entry.area === area && entry.ref === ref && entry.path === path);
-    if (!found) return "";
-    if ("targetId" in found.resolution) return `target:${found.resolution.targetId}`;
-    return "drop" in found.resolution ? "drop" : "invite";
-  }
-
-  function choose(area: ConfigAreaKey, ref: string, path: string, value: string) {
-    const rest = decisions.refs.filter((entry) => !(entry.area === area && entry.ref === ref && entry.path === path));
-    if (!value) {
-      onDecisions({ ...decisions, refs: rest });
-      return;
-    }
-    const resolution: ConfigDecisions["refs"][number]["resolution"] = value.startsWith("target:")
-      ? { targetId: value.slice("target:".length) }
-      : value === "invite" ? { invite: true } : { drop: true };
-    onDecisions({ ...decisions, refs: [...rest, { area, ref, path, resolution }] });
-  }
+  const groups = refGroups(plan);
+  if (groups.length === 0) return <StepEmpty>Every reference points to something that exists.</StepEmpty>;
+  const disabled = !editable || saving;
+  const decide = (uses: readonly ConfigRefEntry[], choice: string) => onDecisions(decideRefs(decisions, uses, choice));
+  // Beside rows that open, a row with nothing to open keeps the same left edge for its name.
+  const inset = groups.some((group) => group.uses.length > 1);
 
   return (
     <div className="flex flex-col divide-y divide-gray-100" data-testid="config-step-references">
-      {entries.map((entry) => {
-        const { reference } = entry;
-        const parsed = parseConfigRef(reference.ref);
-        const people = isPeopleRef(reference);
-        const choices = parsed ? targetChoices(plan, parsed.area) : [];
-        const value = current(entry.area, entry.item.ref, reference.path);
-        return (
-          <div key={`${entry.area}:${entry.item.ref}:${reference.path}`} className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4" data-testid="config-ref-item">
-            <div className="min-w-0">
-              <p className="truncate text-[13px] font-medium text-gray-900">{reference.name ?? parsed?.target ?? reference.ref}</p>
-              <p className="truncate text-[12px] text-gray-500">Used by {itemName(entry.item)} in {entry.areaLabel}</p>
-            </div>
-            <div className="flex shrink-0 items-center justify-end gap-2 sm:w-80">
-              {isRefOpen(reference) ? <DenChip tone="warning">Choose</DenChip> : null}
-              <div className="w-60">
-                <DenSelect
-                  aria-label={`What to do with ${reference.name ?? reference.ref}`}
-                  value={value}
-                  disabled={!editable || saving}
-                  menuWidth="trigger"
-                  onChange={(event) => choose(entry.area, entry.item.ref, reference.path, event.target.value)}
-                >
-                  <option value="" disabled>Choose what to do</option>
-                  {choices.map((choice) => <option key={choice.id} value={`target:${choice.id}`}>Use “{choice.name}”</option>)}
-                  {people ? <option value="invite">Invite this person</option> : null}
-                  <option value="drop">Leave it out</option>
-                </DenSelect>
-              </div>
-            </div>
-          </div>
-        );
-      })}
+      {groups.map((group) => group.uses.length === 1 ? (
+        <RefUseRow key={group.key} plan={plan} decisions={decisions} entry={group.uses[0]} title={group.name} inset={inset} disabled={disabled} onChoose={decide} />
+      ) : (
+        <RefGroupRow key={group.key} plan={plan} decisions={decisions} group={group} disabled={disabled} onChoose={decide} />
+      ))}
+    </div>
+  );
+}
+
+type RefRowProps = {
+  plan: ConfigPlan;
+  decisions: ConfigDecisions;
+  disabled: boolean;
+  onChoose: (uses: readonly ConfigRefEntry[], choice: string) => void;
+};
+
+/** What can be done with a reference: map it to something here, invite the person, or leave it out. */
+function RefChoiceSelect({ plan, uses, label, value, placeholder, disabled, testId, onChange }: {
+  plan: ConfigPlan;
+  /** The uses this select decides: a choice is offered while at least one of them can take it. */
+  uses: readonly ConfigRefEntry[];
+  label: string;
+  value: string;
+  placeholder: string;
+  disabled: boolean;
+  testId: string;
+  onChange: (choice: string) => void;
+}) {
+  const reference = uses[0]?.reference;
+  const parsed = reference ? parseConfigRef(reference.ref) : null;
+  const choices = parsed ? targetChoices(plan, parsed.area) : [];
+  // A choice already made stays listed, so the select can show it.
+  const offers = (choice: string) => value === choice || uses.some((entry) => !refusesChoice(entry.reference, choice));
+  return (
+    <div className="w-60">
+      <DenSelect aria-label={label} value={value} disabled={disabled} menuWidth="trigger" data-testid={testId} onChange={(event) => onChange(event.target.value)}>
+        <option value="" disabled>{placeholder}</option>
+        {choices.map((choice) => <option key={choice.id} value={`target:${choice.id}`}>Use “{choice.name}”</option>)}
+        {reference && isPeopleRef(reference) && offers("invite") ? <option value="invite">Invite this person</option> : null}
+        {offers("drop") ? <option value="drop">Leave it out</option> : null}
+      </DenSelect>
+    </div>
+  );
+}
+
+/** One use of a reference. `title` names the reference; inside a group the row is named by the item that uses it. */
+function RefUseRow({ plan, decisions, entry, title, inset, disabled, onChoose }: RefRowProps & { entry: ConfigRefEntry; title?: string; inset?: boolean }) {
+  const { reference } = entry;
+  const choice = refChoice(decisions, entry);
+  const refused = isRefChoiceRefused(decisions, entry);
+  // Said before any choice is made: this use has no "Leave it out", and why.
+  const required = isRefOpen(reference) && refusesChoice(reference, "drop");
+  return (
+    <div className="flex flex-col gap-2 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4" data-testid="config-ref-item">
+      <div className={`min-w-0 ${inset ? "pl-5" : ""}`}>
+        {title ? (
+          <>
+            <p className="truncate text-[13px] font-medium text-gray-900" title={refHandle(reference)}>{title}</p>
+            <p className="truncate text-[12px] text-gray-500">Used by {itemName(entry.item)} in {entry.areaLabel}</p>
+          </>
+        ) : (
+          <p className="truncate text-[13px] text-gray-900">{itemName(entry.item)}<span className="text-gray-500"> in {entry.areaLabel}</span></p>
+        )}
+        {refused || required ? (
+          <p className="text-[12px] text-gray-500" data-testid="config-ref-refused">
+            {required || choice === "drop" ? "This item can’t be imported without it. Choose one here, or leave the item out on Review." : "That choice can’t be used here. Choose another."}
+          </p>
+        ) : null}
+      </div>
+      <div className="flex shrink-0 items-center justify-end gap-2 sm:w-80">
+        {isRefOpen(reference) ? <DenChip tone="warning">Choose</DenChip> : null}
+        <RefChoiceSelect
+          plan={plan}
+          uses={[entry]}
+          label={`What to do with ${refName(reference)} in ${itemName(entry.item)}`}
+          value={choice}
+          placeholder="Choose what to do"
+          disabled={disabled}
+          testId="config-ref-select"
+          onChange={(next) => onChoose([entry], next)}
+        />
+      </div>
+    </div>
+  );
+}
+
+/** A person or item several items point to: one choice covers every use; each use can still differ. */
+function RefGroupRow({ plan, decisions, group, disabled, onChoose }: RefRowProps & { group: ConfigRefGroup }) {
+  const usesId = useId();
+  const refused = group.uses.some((entry) => isRefChoiceRefused(decisions, entry));
+  const choice = refGroupChoice(decisions, group);
+  const count = group.uses.length;
+  const decided = count - group.open;
+  // The uses a choice for all did not settle are the answer here, so they show without a click (DESIGN.md S3).
+  const [toggled, setToggled] = useState<boolean | null>(null);
+  const expanded = toggled ?? (refused || (group.open > 0 && decided > 0));
+  return (
+    <div className="py-3" data-testid="config-ref-group">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+        <button
+          type="button"
+          aria-expanded={expanded}
+          aria-controls={usesId}
+          onClick={() => setToggled(!expanded)}
+          className="flex min-w-0 items-start gap-1.5 rounded-md text-left focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900/20"
+          data-testid="config-ref-group-toggle"
+        >
+          <ChevronRight className={`mt-0.5 size-3.5 shrink-0 text-gray-400 transition-transform duration-150 ease-out motion-reduce:transition-none ${expanded ? "rotate-90" : ""}`} strokeWidth={1.5} aria-hidden="true" />
+          <span className="min-w-0">
+            <span className="block truncate text-[13px] font-medium text-gray-900" title={refHandle(group.reference)}>{group.name}</span>
+            <span className="block truncate text-[12px] text-gray-500">
+              {group.open > 0 && decided > 0 ? `${group.open} of ${count} items still ${group.open === 1 ? "needs" : "need"} a choice` : `Used by ${count} items`}
+            </span>
+          </span>
+        </button>
+        <div className="flex shrink-0 items-center justify-end gap-2 sm:w-80">
+          {group.open > 0 ? <DenChip tone="warning">Choose</DenChip> : null}
+          <RefChoiceSelect
+            plan={plan}
+            uses={group.uses}
+            label={`What to do with ${group.name} in all ${count} items`}
+            value={choice ?? ""}
+            placeholder={choice === null ? "Different choices" : `Choose for all ${count}`}
+            disabled={disabled}
+            testId="config-ref-group-select"
+            onChange={(next) => onChoose(group.uses, next)}
+          />
+        </div>
+      </div>
+      {expanded ? (
+        <div id={usesId} className="mt-1 flex flex-col divide-y divide-gray-100 pl-5">
+          {group.uses.map((entry) => (
+            <RefUseRow key={`${entry.area}:${entry.item.ref}:${entry.reference.path}`} plan={plan} decisions={decisions} entry={entry} disabled={disabled} onChoose={onChoose} />
+          ))}
+        </div>
+      ) : null}
     </div>
   );
 }
@@ -319,7 +418,7 @@ function SecretRow({ entry, secret, editable, saving, allowEnv, onInput }: {
 // People
 
 export function PeopleStep({ plan, decisions, editable, saving, onDecisions }: StepProps) {
-  const count = inviteCount(plan, decisions);
+  const count = inviteCount(plan);
   return (
     <div className="flex min-h-12 items-center justify-between gap-4 py-3" data-testid="config-step-people">
       <div className="min-w-0">

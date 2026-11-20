@@ -177,7 +177,7 @@ enum AXChildScan {
     }
 }
 
-private struct AXChildrenSnapshot {
+struct AXChildrenSnapshot {
     let parent: AXUIElement
     let total: Int?
     let elements: [AXUIElement]
@@ -536,94 +536,24 @@ final class MacAccessibility {
     }
 
     func read(_ target: WindowTarget, budget: AXReadBudget = AXReadBudget(seconds: 2), check: () throws -> Void = {}) async throws -> WindowState {
-        var records: [ElementRecord] = []
-        var protectedFrames: [CGRect] = []
-        var visited: Set<AXUIElement> = []
-        var pending: [(AXUIElement, Int, CGRect?)] = [(target.element, 0, nil)]
-        var issue: String?
-        var listCapped = false
-        var focused: AXUIElement?
-        var childSnapshots: [AXChildrenSnapshot] = []
-        while let (element, depth, parentFrame) = pending.popLast() {
-            try Task.checkCancellation(); try check()
-            // Only the scan limits withhold the image. Past 300 listed elements the
-            // scan continues for protected fields, and the listing is marked truncated.
-            guard depth < 24, visited.count < 1500 else { issue = "tree_limit"; break }
-            guard visited.insert(element).inserted else { continue }
-            do {
-                try budget.check()
-                guard let role = try checkedString(element, kAXRoleAttribute, budget) else {
-                    throw UseError("accessibility_unavailable", "An accessible role could not be verified.", next: "observe")
-                }
-                let secure = try isProtected(element, role: role, budget)
-                let bounds = try checkedFrame(element, budget)
-                if secure {
-                    guard let bounds, Geometry.valid(bounds) else {
-                        throw UseError("missing_secure_mask", "A protected control has no usable mask.", next: "observe")
-                    }
-                    protectedFrames.append(bounds)
-                    // A password the person gave can be typed here. The field stays masked
-                    // in every image and its value is never read.
-                    if try isSecureTextField(element, role: role, budget) {
-                        let label = try checkedString(element, kAXTitleAttribute, budget, displayOnly: true)
-                            ?? checkedString(element, kAXDescriptionAttribute, budget, displayOnly: true) ?? ""
-                        let enabled = try checkedBool(element, kAXEnabledAttribute, budget, displayOnly: true) != false
-                        records.append(.secureField(ref: "e\(records.count + 1)", element: element, role: role, labelHash: textHash(label), frame: bounds,
-                            actions: try actionNames(element, budget), settable: try valueSettable(element, budget, displayOnly: true), enabled: enabled))
-                    }
-                } else {
-                    let rawLabel = try checkedString(element, kAXTitleAttribute, budget, displayOnly: true)
-                        ?? checkedString(element, kAXDescriptionAttribute, budget, displayOnly: true) ?? ""
-                    var label = rawLabel
-                    if label.isEmpty, role == "AXButton",
-                       let name = ElementRecord.windowButtonLabel(subrole: try checkedString(element, kAXSubroleAttribute, budget, displayOnly: true)) {
-                        label = name
-                    }
-                    let value = try checkedString(element, kAXValueAttribute, budget, displayOnly: true)
-                    let actions = try actionNames(element, budget)
-                    let settable = try valueSettable(element, budget, displayOnly: true)
-                    let enabled = try checkedBool(element, kAXEnabledAttribute, budget, displayOnly: true) != false
-                    if let bounds, Geometry.valid(bounds), !label.isEmpty || !(value ?? "").isEmpty || !actions.isEmpty || settable || ElementRecord.interactiveRoles.contains(role),
-                       !ElementRecord.isClutter(role: role, label: label, value: value, frame: bounds, parentFrame: parentFrame) {
-                        if records.count < 300 {
-                            // The hash is of the raw AX text, so validation reads compare like with like.
-                            records.append(ElementRecord(ref: "e\(records.count + 1)", element: element, role: role,
-                                label: String(label.prefix(180)), value: value.map { String($0.prefix(500)) }, frame: bounds,
-                                actions: actions, settable: settable, enabled: enabled, protected: false,
-                                labelHash: textHash(rawLabel), valueHash: value.map(textHash)))
-                        } else { listCapped = true }
-                    }
-                    let descendants = try children(element, limit: 1500 - visited.count - pending.count, budget: budget, check: check)
-                    childSnapshots.append(descendants)
-                    if descendants.truncated { issue = "tree_limit" }
-                    pending += descendants.elements.reversed().map { ($0, depth + 1, bounds) }
-                }
-            } catch is CancellationError { throw CancellationError() }
-            catch {
-                issue = (error as? UseError)?.code ?? "accessibility_unavailable"
-                break
-            }
-            await Task.yield()
-        }
-        try check()
-        if issue == nil {
-            do {
-                // Revalidate the exact ordered child lists after traversal.
-                // Counts alone miss insert/remove/reorder mutations of equal size.
-                for snapshot in childSnapshots {
-                    let current = try children(snapshot.parent, limit: snapshot.elements.count, budget: budget, check: check)
-                    try AXChildScan.requireStable(expectedCount: snapshot.total, currentCount: current.total,
-                                                  expected: snapshot.elements, current: current.elements)
-                }
+        let reader = AXTreeReader(
+            role: { try self.checkedString($0, kAXRoleAttribute, budget) },
+            subrole: { try self.checkedString($0, kAXSubroleAttribute, budget, displayOnly: true) },
+            isProtected: { try self.isProtected($0, role: $1, budget, subrole: $2) },
+            isSecureTextField: { try self.isSecureTextField($0, role: $1, budget) },
+            frame: { try self.checkedFrame($0, budget) },
+            text: { try self.checkedString($0, $1, budget, displayOnly: true) },
+            flag: { try self.checkedBool($0, $1, budget, displayOnly: true) },
+            actions: { try self.actionNames($0, budget) },
+            settable: { try self.valueSettable($0, budget, displayOnly: true) },
+            children: { try self.children($0, limit: $1, budget: budget, check: $2) },
+            focused: { window in
                 var pid: pid_t = 0
-                guard AXUIElementGetPid(target.element, &pid) == .success else { throw UseError("window_unavailable", "The window exited.", next: "observe") }
-                focused = try checkedElement(AXUIElementCreateApplication(pid), kAXFocusedUIElementAttribute, budget)
-            } catch is CancellationError { throw CancellationError() }
-            catch { issue = (error as? UseError)?.code ?? "accessibility_unavailable" }
-        }
-        try check()
-        return WindowState(records: records, visited: visited.count, truncated: issue != nil,
-            protectedFrames: protectedFrames, privacyIssue: issue, focused: focused, listCapped: listCapped)
+                guard AXUIElementGetPid(window, &pid) == .success else { throw UseError("window_unavailable", "The window exited.", next: "observe") }
+                return try self.checkedElement(AXUIElementCreateApplication(pid), kAXFocusedUIElementAttribute, budget)
+            },
+            checkBudget: { try budget.check() })
+        return try await AXTreeScan.run(target.element, reader: reader, check: check)
     }
 
     func validateRecord(_ record: ElementRecord, target: WindowTarget) throws {
@@ -668,7 +598,7 @@ final class MacAccessibility {
         return Data(SHA256.hash(data: data))
     }
     func imageDigest(_ data: Data) -> Data { Data(SHA256.hash(data: data)) }
-    private func textHash(_ text: String) -> Data { Data(SHA256.hash(data: Data(text.utf8))) }
+    private func textHash(_ text: String) -> Data { AXTreeScan.textHash(text) }
 
     @discardableResult
     /// `background` asks the app, not the screen, what is at the point: another
@@ -977,7 +907,8 @@ final class MacAccessibility {
         // belong to the sheet only when the walk below reaches the sheet itself.
         let host = try checkedString(target.element, kAXRoleAttribute, budget) == "AXSheet"
             ? try checkedElement(target.element, kAXWindowAttribute, budget) : nil
-        while let node = current, visited.count < 24, visited.insert(node).inserted {
+        // As deep as a window scan reads, so every listed control can be verified.
+        while let node = current, visited.count <= AXTreeScan.maxDepth, visited.insert(node).inserted {
             try budget.check()
             var pid: pid_t = 0
             guard AXUIElementGetPid(node, &pid) == .success, pid == owner else {
@@ -1094,10 +1025,14 @@ final class MacAccessibility {
     private func isSecureTextField(_ element: AXUIElement, role: String, _ budget: AXReadBudget) throws -> Bool {
         try ElementRecord.textRoles.contains(role) && checkedString(element, kAXSubroleAttribute, budget) == "AXSecureTextField"
     }
-    private func isProtected(_ element: AXUIElement, role: String, _ budget: AXReadBudget) throws -> Bool {
+    /// `subrole` is a display-only read the scan already made; it stands in only where the
+    /// subrole read is display-only anyway, so text inputs always read it strictly here.
+    private func isProtected(_ element: AXUIElement, role: String, _ budget: AXReadBudget, subrole known: String?? = .none) throws -> Bool {
         let subroleDisplayOnly = !AXChildScan.subroleDecidesMask(role: role)
-        return try checkedString(element, kAXSubroleAttribute, budget, displayOnly: subroleDisplayOnly) == "AXSecureTextField"
-            || checkedBool(element, "AXProtectedContent", budget) == true
+        let subrole: String?
+        if subroleDisplayOnly, case .some(let read) = known { subrole = read }
+        else { subrole = try checkedString(element, kAXSubroleAttribute, budget, displayOnly: subroleDisplayOnly) }
+        return try subrole == "AXSecureTextField" || checkedBool(element, "AXProtectedContent", budget) == true
     }
     private func actionNames(_ element: AXUIElement, _ budget: AXReadBudget) throws -> [String] {
         try prepare(element, budget)

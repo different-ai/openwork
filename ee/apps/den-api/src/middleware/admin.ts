@@ -83,8 +83,10 @@ export async function isLocalDeploymentOperatorUserId(userId: string): Promise<b
   return isPlatformAdminUserId(userId)
 }
 
+type DeploymentPrincipal = Pick<AuthContextVariables, "apiKey" | "session" | "user">
+
 /** A genuine Better Auth user session (not an API key or MCP token) of an allowlisted local operator. */
-export async function hasLocalDeploymentOperatorSessionAuthority(principal: AuthContextVariables): Promise<boolean> {
+export async function hasLocalDeploymentOperatorSessionAuthority(principal: DeploymentPrincipal): Promise<boolean> {
   if (principal.apiKey || !principal.user?.id || !principal.session?.id || !principal.session.token) return false
   try {
     normalizeDenTypeId("session", principal.session.id)
@@ -101,7 +103,7 @@ export async function hasLocalDeploymentOperatorSessionAuthority(principal: Auth
  * counts; organization roles, permissions and ownership never do. Always false
  * on hosted Den, before any lookup.
  */
-export async function isLocalDeploymentOperator(principal: AuthContextVariables): Promise<boolean> {
+export async function isLocalDeploymentOperator(principal: DeploymentPrincipal): Promise<boolean> {
   if (env.features.deployment !== "self_hosted") return false
   const apiKey = principal.apiKey
   if (!apiKey) return hasLocalDeploymentOperatorSessionAuthority(principal)
@@ -119,7 +121,7 @@ export async function isLocalDeploymentOperator(principal: AuthContextVariables)
  * Caller-specific hint for GET /v1/org: the same authority the installation
  * diagnostics enforce. Advisory: lookup failures answer false, never block core.
  */
-export async function canManageDeploymentServices(principal: AuthContextVariables): Promise<boolean> {
+export async function canManageDeploymentServices(principal: DeploymentPrincipal): Promise<boolean> {
   try {
     return await isLocalDeploymentOperator(principal)
   } catch {

@@ -13,6 +13,7 @@ import {
 } from "@/components/tools/use-chat-tool-reconnect"
 import { Button } from "@/components/ui/button"
 import { getCapabilityCallSentence, type CapabilityCallSentence } from "@/lib/capability-call"
+import { shortFailureText } from "@/lib/code-mode-summary"
 import { codeModeScriptError } from "@/lib/code-mode-tools"
 import {
   isOpenWorkSkillCall,
@@ -165,13 +166,6 @@ function formatTechnicalValue(value: unknown): string {
 }
 
 /** One human sentence explaining what to do about a failed call. */
-/** First sentence of a raw tool error, short enough for the row. */
-function shortError(text: string | undefined): string | null {
-  const first = (text ?? "").replace(/\s+/g, " ").trim().split(/(?<=[.!?])\s/)[0] ?? ""
-  if (!first) return null
-  return first.length > 90 ? `${first.slice(0, 89)}…` : first
-}
-
 function failureInstruction(part: DynamicToolUIPart, reconnectName: string | null): string {
   if (reconnectName) {
     return `${reconnectName} needs a fresh sign-in.`
@@ -196,7 +190,7 @@ export function TechnicalDetailsPanel({ part }: { part: DynamicToolUIPart }) {
     <div className="mt-1.5">
       <TextTechnicalDetails>
         <div className="flex flex-col gap-2">
-          {part.state === "output-error" && part.errorText ? <p className="whitespace-pre-wrap wrap-break-word text-red-11">{part.errorText}</p> : null}
+          {part.state === "output-error" && part.errorText ? <p className="whitespace-pre-wrap wrap-break-word text-foreground">{part.errorText}</p> : null}
           {script ? <pre className="whitespace-pre font-mono">{script.code}</pre>
             : input ? <pre className="whitespace-pre-wrap wrap-break-word font-mono">{formatTechnicalValue(part.input)}</pre> : null}
           {"output" in part && part.output !== undefined ? <pre className="whitespace-pre-wrap wrap-break-word font-mono text-slate-9">{formatTechnicalValue(part.output)}</pre> : null}
@@ -324,7 +318,7 @@ export function CapabilityCallLine({
     const sentence = sentenceFor(false)
     const label = sentence.failure ?? `${sentence.past} failed`
     // Quiet, but never unexplained: one muted line says why (T2).
-    const quietReason = shortError(codeModeScriptError(part) ?? undefined)
+    const quietReason = shortFailureText(codeModeScriptError(part))
     return (
       <div data-capability-call={part.toolName} className={cn(RAIL_ROW, className)}>
         <div className={RAIL_LINE}>
@@ -347,7 +341,7 @@ export function CapabilityCallLine({
     const reason = reconnectState === "connected"
       ? "Connection restored. Check whether the action finished before retrying."
       : reconnectAction ? failureInstruction(part, reconnectAction.connectionName)
-        : shortError(part.state === "output-error" ? part.errorText : reportedFailure ?? undefined)
+        : shortFailureText(part.state === "output-error" ? part.errorText : reportedFailure)
     return (
       <div data-capability-call={part.toolName} className={cn(RAIL_ROW, className)}>
         <div className="flex min-h-6.5 min-w-0 items-center gap-2 text-sm">

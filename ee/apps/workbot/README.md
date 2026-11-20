@@ -67,6 +67,32 @@ returns at once while their Den session lasts. Den is asked who the person is at
 30 seconds, so a revoked grant or membership signs them out quickly. Changes must come from this site's own origin.
 Signing out revokes the refresh token at Den.
 
+## The phone app
+
+The [OpenWork app](../openwork-ios) for iPhone signs in through Workbot, so Den keeps one return address and the phone
+never holds Den tokens:
+
+1. The app opens `/auth/app/login` in the system's sign-in browser with its own PKCE challenge, its state and its
+   return address.
+2. Workbot sends the person to Den with that challenge, marked sign-in only (`openwork_sign_in_only=true`): Den's
+   sign-in page asks for an email first and never offers to create an account, because app stores require an app
+   that creates accounts to delete them too. Den returns to Workbot's `/auth/callback`, which hands the
+   code to the app's return address: `/auth/app/callback` on Workbot itself, which iOS opens only in the OpenWork app
+   it verified against `/.well-known/apple-app-site-association`. Anyone can start a sign-in with a challenge of
+   their own, so the code never goes to an address another app could claim. Private-use schemes are rejected on
+   every deployment, including localhost; phone sign-in requires an HTTPS deployment with verified app links.
+3. The app trades the code and its verifier at `POST /auth/app/token` for a Workbot session, encrypted with
+   `WORKBOT_SESSION_SECRET` like the cookie, and sends it as `Authorization: Bearer`. When the Den tokens inside are
+   refreshed, the response carries the new session in `Workbot-Session`; `POST /auth/app/refresh` renews it before it
+   expires, and `POST /auth/logout` revokes it.
+
+The phone app is behind the `workbotMobile` feature. A member whose workspace doesn't have it cannot sign a phone in:
+`POST /auth/app/token` answers `403 workbot_mobile_not_enabled` and gives back what Den issued. If the feature is
+turned off later, `/v1/workbot/me` says so and every other request from a phone is refused the same way.
+
+Android is not built yet. `/.well-known/assetlinks.json` is served for it once `WORKBOT_ANDROID_CERT_SHA256` is set,
+so an Android app can use the same return address.
+
 ## Configuration
 
 | Variable | | |
@@ -76,6 +102,8 @@ Signing out revokes the refresh token at Den.
 | `WORKBOT_DEN_WEB_URL` | sign-in origin | Den's web app, for the link back and app logos |
 | `WORKBOT_RUNNER_URL`, `WORKBOT_RUNNER_TOKEN` | required | The headless runner and its service token (`HEADLESS_API_TOKEN`) |
 | `WORKBOT_SESSION_SECRET` | required | ≥ 32 characters; encrypts the sign-in cookies. Changing it signs everyone out |
+| `WORKBOT_IOS_TEAM_ID` | unset | The OpenWork app's Apple team ID, served in `apple-app-site-association` so iOS returns sign-in to the app. Unset: the iPhone app can't finish signing in |
+| `WORKBOT_ANDROID_CERT_SHA256` | unset | SHA-256 fingerprints of an Android app's signing certificates, comma-separated, served in `assetlinks.json`. Unset: nothing is served; no Android app exists yet |
 | `PORT` / `WORKBOT_PORT` | `3020` | |
 | `WORKBOT_SENTRY_DSN` | unset | Optional Sentry error reports from the server: route errors, sign-in and token refresh failures, `den_unavailable`, runner unreachable or 5xx, live-event relay failures. Stable codes only, never messages, tokens or cookies. Unset sends nothing |
 | `WORKBOT_SENTRY_ENVIRONMENT`, `WORKBOT_SENTRY_RELEASE` | unset, `workbot@<WORKBOT_VERSION>` | Tags on those reports |
@@ -196,6 +224,13 @@ retries never replay an earlier request. Under the reply, Workbot says
 document" (Den refused or failed), or "Not opened, because you moved on" with
 an Open action. While a document opens, the view context names nothing, so a
 message sent meanwhile never references the previous document.
+
+Where browser teaching is on, asking Workbot in the main chat to be taught a
+browser task works the same way: Workbot requests the teaching window with
+`open_teaching`, and the page follows it once for a message sent from that
+page, opening Browser with the window ready. Nothing is recorded until the
+person presses Start teaching. A Teach Workbot action under the reply opens the
+window again; reloads and history never replay the request.
 The Documents browser remains mounted while the user switches surfaces, keeping
 local drafts intact. Turning the assistant off removes contextual actions and
 rejects new context requests without unmounting an already-open editor.

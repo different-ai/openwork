@@ -4,10 +4,11 @@ import { Dialog } from "@base-ui/react/dialog";
 import { DEFAULT_GATEWAY_API_KEY_EXPIRY, type CreatedGatewayApiKey } from "@openwork/types/den/gateway-api-keys";
 import { KeyRound, Lock, Plug, Plus, X } from "lucide-react";
 import { useState } from "react";
+import { markFeatureUsed } from "../../_lib/feature-usage";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenButton } from "../../_components/ui/button";
 import { expiryFromDays, formatExpiry, useCreateGatewayApiKey } from "./gateway-api-keys-data";
-import { CopyField, GATEWAY_TOOLS, GatewayToolSteps, type GatewayToolId } from "./gateway-tool-setup";
+import { CopyField, GATEWAY_TOOLS, GatewayToolSteps, useGatewayTools, type GatewayToolId } from "./gateway-tool-setup";
 
 /**
  * Library › Models › "Use OpenWork AI Gateway with other tools": one small
@@ -27,7 +28,7 @@ const BUTTON_LABELS: Partial<Record<GatewayToolId, string>> = {
 function ToolMark({ tool, size }: { tool: Tool; size: "sm" | "md" }) {
   const box = size === "sm" ? "h-5 w-5 rounded-[6px] border-0 bg-transparent" : "h-9 w-9 rounded-[10px]";
   const image = size === "sm" ? "h-[14px] w-[14px]" : "h-[18px] w-[18px]";
-  if (!tool.slug) {
+  if (!tool.slug && !tool.serviceUrl) {
     return (
       <span className={`flex shrink-0 items-center justify-center ${size === "md" ? "border border-gray-100 bg-white" : ""} ${box}`}>
         <Plug size={size === "sm" ? 14 : 18} className="text-gray-500" aria-hidden />
@@ -40,16 +41,20 @@ function ToolMark({ tool, size }: { tool: Tool; size: "sm" | "md" }) {
 /** The "Set up" row: a logo button per tool. */
 export function GatewayToolSetupRow({ enabled, baseUrl }: { enabled: boolean; baseUrl: string }) {
   const [open, setOpen] = useState<GatewayToolId | null>(null);
-  const tool = GATEWAY_TOOLS.find((entry) => entry.id === open) ?? null;
+  const tools = useGatewayTools();
+  const tool = tools.find((entry) => entry.id === open) ?? null;
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 px-2 py-2" data-testid="gateway-tool-setup-row">
       <span className="w-12 shrink-0 text-[12px] font-medium leading-5 text-[var(--dls-text-secondary)]">Set up</span>
       <div className="flex flex-wrap items-center gap-1.5">
-        {GATEWAY_TOOLS.map((entry) => (
+        {tools.map((entry) => (
           <button
             key={entry.id}
             type="button"
-            onClick={() => setOpen(entry.id)}
+            onClick={() => {
+              setOpen(entry.id);
+              if (entry.id === "opencode") markFeatureUsed("gatewayOpenCodeSetup");
+            }}
             aria-label={`Set up ${entry.name}`}
             title={entry.line}
             data-testid={`gateway-tool-setup-${entry.id}`}
@@ -96,8 +101,12 @@ function ToolSetup({ tool, enabled, baseUrl, onClose }: { tool: Tool; enabled: b
           <X size={16} aria-hidden />
         </Dialog.Close>
       </div>
-      <ApiKeyStep tool={tool} enabled={enabled} created={created} onCreated={setCreated} />
-      <div className="h-px bg-gray-100" aria-hidden />
+      {tool.id !== "opencode" ? (
+        <>
+          <ApiKeyStep tool={tool} enabled={enabled} created={created} onCreated={setCreated} />
+          <div className="h-px bg-gray-100" aria-hidden />
+        </>
+      ) : null}
       <GatewayToolSteps tool={tool.id} apiKey={created?.key ?? null} baseUrl={baseUrl} />
       <div className="flex justify-end">
         <DenButton size="sm" variant={created ? "primary" : "secondary"} onClick={onClose} data-testid="gateway-tool-setup-done">Done</DenButton>

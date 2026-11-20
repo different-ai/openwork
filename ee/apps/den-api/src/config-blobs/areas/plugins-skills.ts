@@ -45,7 +45,10 @@ import { ConfigApplyItemError, defineConfigArea, type ConfigAreaContext, type Co
 import {
   accessByRoleSchema,
   accessSpec,
+  adoptItemKey,
   applyAccess,
+  ensureItemKeys,
+  itemKey,
   jsonOverlap,
   loadAudienceNames,
   loadConfigObjects,
@@ -58,7 +61,7 @@ import {
   sharedConfigObjectIds,
   textOverlap,
 } from "./plugins-support.js"
-import { ConfigApplyError, applyWithSteps, isJsonObject, specObject, touches } from "./route-support.js"
+import { ConfigApplyError, applyWithSteps, isJsonObject, ownManagerAccessPreflight, specObject, touches } from "./route-support.js"
 
 const AREA = "plugins.skills"
 
@@ -153,7 +156,7 @@ async function readSkills(ctx: ConfigAreaContext, ids: readonly string[] | null)
     const sourceManaged = row.sourceMode === "connector" || row.connectorInstanceId !== null
     return {
       id: row.id,
-      key: null,
+      key: row.externalKey,
       name: row.title,
       spec: {
         type: row.objectType,
@@ -199,11 +202,19 @@ export const pluginsSkillsArea = defineConfigArea({
   viewPermission: "sharing.manage_all",
   managePermission: "sharing.manage_all",
   tables: ["config_object", "config_object_version", "config_object_access_grant", "remote_mcp_app"],
+  assignedKeys: true,
+  ensureKeys: (ctx, items) => ensureItemKeys("config_object", ctx.organizationId, items),
   naturalKeys: [{
     // Source-managed objects are identified by the source and file they come from.
     label: "source file",
     get: (item) => item.spec.managedBy === "source" && typeof item.spec.source === "string" && typeof item.spec.sourcePath === "string"
       ? `${normalizeText(item.spec.source)}\n${item.spec.sourcePath}`
+      : null,
+  }, {
+    // First contact, for objects that have no key in common yet: the same type and title is the same one.
+    label: "type and title",
+    get: (item) => item.spec.managedBy !== "source" && typeof item.spec.type === "string" && normalizeText(item.name)
+      ? `${item.spec.type}\n${normalizeText(item.name)}`
       : null,
   }],
   similarity: (blob, target) => {
@@ -230,7 +241,7 @@ export const pluginsSkillsArea = defineConfigArea({
     ? `"${item.name}" comes from ${typeof item.spec.source === "string" ? `the source "${item.spec.source}"` : "a source"}; remove it from the repository instead.`
     : null,
 
-  async preflight(_ctx, op) {
+  async preflight(ctx, op) {
     if (op.kind === "create") {
       if (isAgentTemplate(op.item.spec.type, op.item.spec.sourcePath)) return { skip: AGENT_TEMPLATE_SKIP }
       if (op.item.spec.managedBy === "source") {
@@ -243,7 +254,7 @@ export const pluginsSkillsArea = defineConfigArea({
       const source = typeof op.previous.spec.source === "string" ? `the source "${op.previous.spec.source}"` : "its source"
       return { block: `"${op.previous.name}" comes from ${source}: its content and archived state change in the repository, not by import. Skip this item (or keep its content as it is here).` }
     }
-    return null
+    return ownManagerAccessPreflight(ctx, op)
   },
 
   irreversible: (op) => {
@@ -295,6 +306,7 @@ export const pluginsSkillsArea = defineConfigArea({
         const created = await log.run({ action: "create", target: "object", detail: `${spec.type} "${op.item.name}"` }, () => createConfigObject({
           context: actor,
           ...(op.preferredId ? { id: normalizeDenTypeId("configObject", op.preferredId) } : {}),
+          ...(itemKey(op.item.key) ? { externalKey: itemKey(op.item.key) } : {}),
           objectType: spec.type,
           sourceMode: spec.origin === "import" ? "import" : "cloud",
           sourcePath: spec.sourcePath,
@@ -318,6 +330,7 @@ export const pluginsSkillsArea = defineConfigArea({
       if (touches(op.changes, "type") && row.objectType !== spec.type) {
         throw new ConfigApplyError("type_changed", `"${row.title}" is a ${row.objectType}; an import can't turn it into a ${spec.type}. Create a new item instead.`, 409, "type")
       }
+      await adoptItemKey({ kind: "config_object", organizationId: ctx.organizationId, id: configObjectId }, op, log, warnings)
       const contentChanged = touches(op.changes, "content")
       const lifecycleChanged = touches(op.changes, "archived") && (row.status === "archived") !== spec.archived
       if (sourceManaged && (contentChanged || lifecycleChanged)) {

@@ -26,6 +26,9 @@ const jsonObjectSchema = z.object({}).passthrough()
 // MEDIUMTEXT allows ~12.58 MB of encrypted plaintext; 1 MiB stays safely below storage
 // while still ~40x the largest real skill document, yielding a clean 400 instead of a 500.
 const configObjectInputMaxPayloadBytes = 1_048_576
+// normalizedPayloadJson carries a skill's supporting files (up to 8 MiB of text, see
+// skill-files.ts), so it gets the room its MEDIUMTEXT column has, minus a margin.
+const configObjectInputMaxNormalizedPayloadBytes = 11 * 1_048_576
 const rawSourceTextSchema = z.string().trim().min(1).refine(
   (value) => Buffer.byteLength(value, "utf8") <= configObjectInputMaxPayloadBytes,
   { message: `rawSourceText must be at most ${configObjectInputMaxPayloadBytes} bytes (1 MiB) after UTF-8 encoding.` },
@@ -179,8 +182,8 @@ export const connectorAccountRepositoryParamsSchema = connectorAccountParamsSche
 export const configObjectInputSchema = z.object({
   rawSourceText: rawSourceTextSchema.optional(),
   normalizedPayloadJson: jsonObjectSchema.refine(
-    (value) => Buffer.byteLength(JSON.stringify(value), "utf8") <= configObjectInputMaxPayloadBytes,
-    { message: `normalizedPayloadJson must stringify to at most ${configObjectInputMaxPayloadBytes} bytes (1 MiB) after UTF-8 encoding.` },
+    (value) => Buffer.byteLength(JSON.stringify(value), "utf8") <= configObjectInputMaxNormalizedPayloadBytes,
+    { message: `normalizedPayloadJson must stringify to at most ${configObjectInputMaxNormalizedPayloadBytes} bytes (11 MiB) after UTF-8 encoding.` },
   ).optional(),
   parserMode: z.string().trim().min(1).max(100).optional(),
   schemaVersion: z.string().trim().min(1).max(100).optional(),
@@ -288,11 +291,21 @@ export const pluginCreateSchema = z.object({
   marketplaceId: marketplaceIdSchema.optional(),
 })
 
+/** A stable key: lowercase letters, digits, dots, dashes and underscores. */
+export const externalKeySchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,127}$/)
+
+export const configObjectExternalKeySchema = z.object({
+  /** The key a configuration import finds this object by; null clears it. */
+  externalKey: externalKeySchema.nullable(),
+})
+
 export const pluginUpdateSchema = z.object({
   name: z.string().trim().min(1).max(255).optional(),
   description: nullableStringSchema.optional(),
+  /** The key a configuration import finds this plugin by; null clears it. */
+  externalKey: externalKeySchema.nullable().optional(),
 }).superRefine((value, ctx) => {
-  if (value.name === undefined && value.description === undefined) {
+  if (value.name === undefined && value.description === undefined && value.externalKey === undefined) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: "Provide at least one field to update.",
@@ -655,6 +668,7 @@ export const configObjectVersionSchema = z.object({
 
 export const configObjectSchema = z.object({
   id: configObjectIdSchema,
+  externalKey: z.string().nullable(),
   organizationId: denTypeIdSchema("organization"),
   objectType: configObjectTypeSchema,
   sourceMode: configObjectSourceModeSchema,
@@ -712,6 +726,7 @@ export const pluginExtensionSchema = z.object({
 
 export const pluginSchema = z.object({
   id: pluginIdSchema,
+  externalKey: z.string().nullable(),
   organizationId: denTypeIdSchema("organization"),
   name: z.string().trim().min(1).max(255),
   description: nullableStringSchema,

@@ -508,7 +508,7 @@ nohup env \
   DEN_PASSWORD_BREACH_SCREENING_ENABLED="$DEN_PASSWORD_BREACH_SCREENING_ENABLED" \
   DEN_GENERATED_ARTIFACT_VIEWS_ENABLED="$DEN_GENERATED_ARTIFACT_VIEWS_ENABLED" \
   OPENWORK_DEV_MODE="$OPENWORK_DEV_MODE" \
-  NODE_OPTIONS="--conditions=development" \
+  NODE_OPTIONS="${NODE_OPTIONS:-} --conditions=development" \
   pnpm --filter @openwork-ee/den-api exec tsx watch src/main.ts > /tmp/den-api.log 2>&1 &
 
 wait_for_http "http://127.0.0.1:$DEN_API_PORT/health" "Den API" 180
@@ -531,7 +531,7 @@ if [ "$GATEWAY_ENABLED" = "true" ]; then
     NODE_ENV=test \
     SENTRY_DSN= \
     SENTRY_LOG_LEVEL=off \
-    NODE_OPTIONS="--conditions=development" \
+    NODE_OPTIONS="${NODE_OPTIONS:-} --conditions=development" \
     pnpm --filter @openwork-ee/gateway exec tsx src/server.ts > /tmp/gateway.log 2>&1 &
   wait_for_http "http://127.0.0.1:$GATEWAY_PORT/ready" "AI Gateway" 180
 fi
@@ -570,7 +570,7 @@ if [ "${RUN_SEED:-0}" = "1" ]; then
 fi
 
 den_web_marker=.openwork-daytona/den-web-build.tree
-den_web_key="$(build_key HEAD:packages/ui HEAD:ee/packages/utils HEAD:ee/apps/den-web)"
+den_web_key="$(build_key HEAD:packages/ui HEAD:ee/packages/utils HEAD:ee/packages/gateway-catalog HEAD:ee/apps/den-web)"
 if [ -n "$den_web_key" ] && [ -d ee/apps/den-web/.next ] && [ -f "$den_web_marker" ] \
   && [ "$(cat "$den_web_marker")" = "$den_web_key" ]; then
   echo "==> Skipping Den Web build (baked build matches this ref)."

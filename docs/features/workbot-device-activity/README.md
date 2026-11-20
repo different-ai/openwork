@@ -13,7 +13,7 @@ Workbot's Devices list (and the Computers tab in its profile, where that is on) 
 | The same, a task the computer has not taken yet | Workbot's task is waiting to start here · *task* |
 | Workbot's own computer, a turn running in its chat | Workbot is working in its chat |
 
-A computer with nothing running looks as it did, including "Takes tasks from Workbot".
+A computer with nothing running looks as it did: one that takes tasks says "Takes tasks from Workbot", and one that takes none says why.
 
 ## Where the line comes from
 

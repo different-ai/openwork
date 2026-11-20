@@ -86,6 +86,7 @@ import {
   memberSessionList,
   sessionAccessOf,
 } from "../remote-sessions/sessions.js"
+import { listedTargets } from "../remote-sessions/targets.js"
 import { readRemoteSessionStatus, type RemoteSessionStatusSources } from "./remote-session-status.js"
 import { scoreText, tokenize, type CapabilityMatch } from "./search.js"
 
@@ -837,7 +838,7 @@ function targetsPayload(
   options: { includeModels: boolean; cloudAvailable: boolean; policy: RemoteSessionAccessPolicy; now: number },
 ): Record<string, unknown> {
   return {
-    computers: targets.computers.map((computer) => ({
+    computers: listedTargets(targets.computers, options.now).map((computer) => ({
       computerId: computer.computerId,
       kind: computer.registered ? "registered" : "desktop",
       label: computerLabel(computer),

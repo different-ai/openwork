@@ -5,10 +5,11 @@ type Step = { ms: number; count: number }
 /** What one bridge command asked the guest, from its command line; never the command or its payload. */
 function bridgeStep(command: string) {
   if (/openwork-desktop-bridge start /.test(command)) return "desktop_start"
-  const helper = /openwork-desktop-bridge (install|versions|export|import) /.exec(`${command} `)?.[1]
-  if (helper) return `desktop_${helper}`
+  // A health check that also asks what the computer was built with is still a health check.
   const path = /openwork-desktop-bridge call '?\/([a-z/]+)/.exec(command)?.[1]
-  return path ? path.replaceAll("/", "_") : "command"
+  if (path) return path.replaceAll("/", "_")
+  const helper = /openwork-desktop-bridge (install|versions|export|import) /.exec(`${command} `)?.[1]
+  return helper ? `desktop_${helper}` : "command"
 }
 
 /**
@@ -18,7 +19,10 @@ function bridgeStep(command: string) {
 export class DesktopTiming {
   private readonly started = performance.now()
   private readonly steps: Record<string, Step> = {}
-  /** The VM's state when the request first looked it up: `stopped` is paused, `missing` means a new computer. */
+  /**
+   * The VM's state when the request first looked it up: `stopped` is paused, `missing` means a new computer. Unset when
+   * it was seen running moments ago and never looked up.
+   */
   before?: string
 
   constructor(readonly sessionId: string, readonly operation: string) {}

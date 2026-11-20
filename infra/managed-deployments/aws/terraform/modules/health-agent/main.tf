@@ -16,6 +16,22 @@ variable "service_names" { type = map(string) }
 variable "target_group_arns" { type = map(string) }
 variable "database_identifier" { type = string }
 variable "certificate_arn" { type = string }
+variable "ai_gateway_url" {
+  type    = string
+  default = null
+}
+variable "workbot_url" {
+  type    = string
+  default = null
+}
+variable "efs_file_system_id" {
+  type    = string
+  default = null
+}
+variable "runner_backup_vault_name" {
+  type    = string
+  default = null
+}
 
 data "aws_caller_identity" "current" {}
 data "aws_region" "current" {}
@@ -23,16 +39,25 @@ data "aws_partition" "current" {}
 
 locals {
   # The control plane accepts reports only from exactly this role.
-  function_name = "openwork-${var.compact_id}-health"
-  arn_prefix    = "arn:${data.aws_partition.current.partition}"
-  account       = data.aws_caller_identity.current.account_id
-  region        = data.aws_region.current.name
+  function_name      = "openwork-${var.compact_id}-health"
+  arn_prefix         = "arn:${data.aws_partition.current.partition}"
+  account            = data.aws_caller_identity.current.account_id
+  region             = data.aws_region.current.name
+  assistants_enabled = anytrue([for service in ["headless_runner", "workbot", "ai_gateway"] : contains(keys(var.service_names), service)])
 }
 
 data "archive_file" "agent" {
   type        = "zip"
-  source_file = "${path.module}/../../../health/health_agent.py"
+  source_file = local.assistants_enabled ? null : "${path.module}/../../../health/health_agent.py"
   output_path = "${path.root}/build/health-agent.zip"
+
+  dynamic "source" {
+    for_each = local.assistants_enabled ? toset(["health_agent.py", "assistant_health_agent.py"]) : toset([])
+    content {
+      filename = source.value
+      content  = file("${path.module}/../../../health/${source.value}")
+    }
+  }
 }
 
 data "aws_iam_policy_document" "assume" {
@@ -77,6 +102,22 @@ data "aws_iam_policy_document" "agent" {
     actions   = ["elasticloadbalancing:DescribeTargetHealth", "ecs:DescribeTaskDefinition", "cloudwatch:GetMetricStatistics"]
     resources = ["*"]
   }
+  dynamic "statement" {
+    for_each = var.efs_file_system_id != null ? [var.efs_file_system_id] : []
+    content {
+      sid       = "ReadRunnerStorageMetadata"
+      actions   = ["elasticfilesystem:DescribeFileSystems"]
+      resources = ["${local.arn_prefix}:elasticfilesystem:${local.region}:${local.account}:file-system/${statement.value}"]
+    }
+  }
+  dynamic "statement" {
+    for_each = var.runner_backup_vault_name != null ? [var.runner_backup_vault_name] : []
+    content {
+      sid       = "ReadRunnerBackupMetadata"
+      actions   = ["backup:ListRecoveryPointsByBackupVault"]
+      resources = ["${local.arn_prefix}:backup:${local.region}:${local.account}:backup-vault:${statement.value}"]
+    }
+  }
   statement {
     sid       = "WriteOwnLogs"
     actions   = ["logs:CreateLogStream", "logs:PutLogEvents"]
@@ -99,14 +140,14 @@ resource "aws_lambda_function" "agent" {
   function_name    = local.function_name
   role             = aws_iam_role.agent.arn
   runtime          = "python3.12"
-  handler          = "health_agent.handler"
+  handler          = local.assistants_enabled ? "assistant_health_agent.handler" : "health_agent.handler"
   filename         = data.archive_file.agent.output_path
   source_code_hash = data.archive_file.agent.output_base64sha256
-  timeout          = 60
+  timeout          = var.ai_gateway_url != null ? 120 : 60
   memory_size      = 256
   architectures    = ["arm64"]
   environment {
-    variables = {
+    variables = merge({
       CONTROL_PLANE_ORIGIN = var.control_plane_origin
       DEPLOYMENT_ID        = var.deployment_id
       WEB_URL              = var.web_url
@@ -116,7 +157,15 @@ resource "aws_lambda_function" "agent" {
       TARGET_GROUP_ARNS    = jsonencode(var.target_group_arns)
       DATABASE_IDENTIFIER  = var.database_identifier
       CERTIFICATE_ARN      = var.certificate_arn
-    }
+      },
+      var.workbot_url != null ? { WORKBOT_URL = var.workbot_url } : {},
+      var.ai_gateway_url != null ? { AI_GATEWAY_URL = var.ai_gateway_url } : {},
+      var.efs_file_system_id != null ? {
+        EFS_FILE_SYSTEM_ID  = var.efs_file_system_id
+        EFS_FILE_SYSTEM_ARN = "${local.arn_prefix}:elasticfilesystem:${local.region}:${local.account}:file-system/${var.efs_file_system_id}"
+      } : {},
+      var.runner_backup_vault_name != null ? { RUNNER_BACKUP_VAULT_NAME = var.runner_backup_vault_name } : {},
+    )
   }
   depends_on = [aws_iam_role_policy.agent, aws_cloudwatch_log_group.agent]
 }

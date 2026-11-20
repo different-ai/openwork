@@ -9,26 +9,26 @@
  * - Apply writes only the permissions an update's changes name, one
  *   `agent_permission_setting` row each, in one transaction on `ctx.db`, and
  *   appends the same `agent_permission_policy` audit change as the routes
- *   (routes/org/agent-permissions.ts → saveAgentPermissionPolicy). A
- *   permission whose feature is off on the target (files sent to connected
- *   accounts need `fileSendPermissions`) is left as stored there, with a
- *   warning, exactly as the routes preserve what the editor can't show.
+ *   (routes/org/agent-permissions.ts → saveAgentPermissionPolicy). With the
+ *   sandbox rollout off, an incoming requirement leaves the target's setting
+ *   unchanged; removal is still allowed.
  */
 import { and, asc, eq, inArray } from "@openwork-ee/den-db/drizzle"
 import { AgentPermissionPolicyTable, AgentPermissionSettingTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import type { FeatureMap } from "@openwork/features"
 import {
   agentPermissionDecisionLabels,
   agentPermissionDefinitions,
   agentPermissionSettingsSchema,
   normalizeAgentPermissionSetting,
+  type AgentPermissionDefinition,
   type AgentPermissionKey,
   type AgentPermissionSetting,
   type AgentPermissionSettings,
 } from "@openwork/types/den/agent-permissions"
 import { configRefSchema, type ConfigApplyStep } from "@openwork/types/den/config-blobs"
 import { z } from "zod"
+import { isSandboxRequirement } from "../../agent-permissions.js"
 import { agentPermissionPolicyChangedEvent, type AgentPermissionAuditScope } from "../../audit/domain/agent-permissions.js"
 import { appendDomainChanges } from "../../audit/domain/legacy.js"
 import { currentAuditChangeCapture } from "../../audit/request-capture.js"
@@ -72,7 +72,7 @@ function jsonList(value: unknown): unknown {
   }
 }
 
-function definitionOf(key: string) {
+function definitionOf(key: string): AgentPermissionDefinition | null {
   return agentPermissionDefinitions.find((entry) => entry.key === key) ?? null
 }
 
@@ -142,6 +142,9 @@ function describeSetting(key: AgentPermissionKey, setting: AgentPermissionSettin
   const definition = definitionOf(key)
   const label = definition?.label ?? key
   if (!setting) return `${label}: not set`
+  if (definition?.toggleMeans === "requires" && setting.decision) {
+    return `${label}: ${setting.decision === "allow" ? "not required" : "required"}`
+  }
   const parts = [setting.decision ? agentPermissionDecisionLabels[setting.decision] : null]
   if (setting.allow?.length) parts.push(`${setting.allow.length} always allowed`)
   if (setting.block?.length) parts.push(`${setting.block.length} always blocked`)
@@ -325,6 +328,8 @@ export const membersAgentPermissionsArea = defineConfigArea({
   // The name is Everyone or the team's: renaming the team is a members.teams change.
   informationalName: true,
   secretFields: [],
+  // A team's policy is that team's: without the team it would become everyone's.
+  requiredRefs: ["team"],
   // Every write goes through ctx.db in one transaction (with the audit change).
   transactional: true,
   irreversible: () => [],
@@ -357,7 +362,12 @@ export const membersAgentPermissionsArea = defineConfigArea({
     const pick = (keys: Iterable<AgentPermissionKey>) => {
       const desired = new Map<AgentPermissionKey, AgentPermissionSetting | null>()
       for (const key of keys) {
-        desired.set(key, settings[key] ?? null)
+        const setting = settings[key]
+        if (!ctx.features.sandboxTools && isSandboxRequirement(key, setting)) {
+          warnings.push(`${definitionOf(key)?.label ?? key} was not changed because the sandbox is turned off.`)
+          continue
+        }
+        desired.set(key, setting ?? null)
       }
       return desired
     }

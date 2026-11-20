@@ -392,9 +392,15 @@ export function createWebMcpBroker(/** @type {any} */ {
   discoveryTimeoutMs = DEFAULT_DISCOVERY_TIMEOUT_MS,
   executionTimeoutMs = DEFAULT_EXECUTION_TIMEOUT_MS,
   createHandle = randomHandle,
+  // Tool descriptors, results and errors are website text. Whatever leaves the broker, to its
+  // caller or through a callback, passes through `redact` first; the copies it keeps to check a
+  // tool against its page stay as the page wrote them.
+  redact = (value) => value,
 } = {}) {
   const handles = new Map();
   const activeExecutions = new Map();
+  const reportActivity = (activity) => onActivity?.(redact(activity));
+  const reportTools = (tabId, tools) => onToolsChanged?.(tabId, redact(tools));
 
   async function frameIsEligible(frame) {
     if (typeof isFrameAllowed !== "function") return true;
@@ -482,7 +488,7 @@ export function createWebMcpBroker(/** @type {any} */ {
         return { toolId, ...item.descriptor };
       });
       onToolCountChanged?.(tabId, tools.length);
-      onToolsChanged?.(tabId, tools.map((tool) => ({
+      reportTools(tabId, tools.map((tool) => ({
         toolId: tool.toolId,
         name: tool.name,
         title: tool.title,
@@ -512,7 +518,7 @@ export function createWebMcpBroker(/** @type {any} */ {
       const { tools: discovered } = await inspectTab(tab);
       if (revision !== tab.webMcpRevision) return 0;
       onToolCountChanged?.(tabId, discovered.length);
-      onToolsChanged?.(tabId, discovered.map((tool) => ({
+      reportTools(tabId, discovered.map((tool) => ({
         name: tool.descriptor.name,
         title: tool.descriptor.title,
         origin: tool.descriptor.origin,
@@ -665,7 +671,7 @@ export function createWebMcpBroker(/** @type {any} */ {
       if (executionTimer) clearTimeout(executionTimer);
       await assertTabAccess?.(entry.tabId, sessionId);
       if (signal?.aborted) throw new WebMcpBrokerError("canceled", "The WebMCP execution was canceled.");
-      onActivity?.({
+      reportActivity({
         tabId: entry.tabId,
         name: current.descriptor.name,
         origin: current.descriptor.origin,
@@ -689,7 +695,7 @@ export function createWebMcpBroker(/** @type {any} */ {
       };
     } catch (error) {
       if (activityTabId && currentDescriptor) {
-        onActivity?.({
+        reportActivity({
           tabId: activityTabId,
           name: currentDescriptor.name,
           origin: currentDescriptor.origin,
@@ -716,9 +722,9 @@ export function createWebMcpBroker(/** @type {any} */ {
   }
 
   return {
-    executeTool,
+    executeTool: async (args, options) => redact(await executeTool(args, options)),
     invalidateTab,
-    listTools,
+    listTools: async (args) => redact(await listTools(args)),
     refreshTabToolCount,
   };
 }

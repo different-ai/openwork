@@ -154,6 +154,14 @@ export type ProviderTimeout = {
   timeoutMs: number
 }
 
+export type SandboxCreateProgress =
+  | { kind: "resolving" | "complete" }
+  | { kind: "resolved"; totalDownloadBytes: number | null }
+  | { kind: "layerDownloadProgress" | "layerDownloadComplete"; layerIndex: number; downloadedBytes: number }
+  | { kind: "startup"; phase: string; completedBytes: number; totalBytes?: number | null }
+
+export type SandboxCreateOptions = ProviderTimeout & { onProgress?: (event: SandboxCreateProgress) => void }
+
 export type SandboxQuery = {
   idempotencyKey?: string
   labels?: Readonly<Record<string, string>>
@@ -177,7 +185,7 @@ export interface SandboxProvider {
   /** The image new instances should boot, or `null` when the provider has no pin. */
   currentImage(): ImageRef | null
   /** Throws `conflict` when `idempotencyKey` already names a live instance. */
-  create(spec: SandboxSpec, opts: ProviderTimeout): Promise<SandboxHandle>
+  create(spec: SandboxSpec, opts: SandboxCreateOptions): Promise<SandboxHandle>
   find(query: SandboxQuery): Promise<SandboxHandle | null>
   /** All discoverable instances matching every supplied filter, across all pages. */
   list(query: SandboxQuery): Promise<SandboxHandle[]>

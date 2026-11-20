@@ -61,10 +61,10 @@ export default async function CloudPage() {
         }
       >
         <LpPreviewFrame label="OpenWork Cloud preview" tall>
-          <LpDemoCloud />
+          <LpDemoCloud adminOnly />
         </LpPreviewFrame>
         <p className="mt-3 text-[13px] text-[var(--lp-muted)]">
-          A working preview. Switch between OpenWork Web and the admin dashboard.
+          A working preview of the admin dashboard. Click around Members, Library, Gateways and Policies.
         </p>
       </LpProductHero>
 

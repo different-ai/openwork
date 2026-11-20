@@ -18,6 +18,9 @@
  *   archivePolicy), so revision checks, entitlement locks, provider validation,
  *   expiry of stale increase requests and the usage audit stay identical.
  *   Only what the plan's changes name is written.
+ * - People who have not accepted their invitation yet hold a limit like anyone
+ *   else: their member row already exists and keeps its id when they join, so
+ *   the people a run invites are assigned in that same run.
  */
 import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { createGatewayUsageLimits, GatewayUsageError, type GatewayUsageScope } from "@openwork-ee/den-db/gateway-usage-limits"
@@ -408,6 +411,8 @@ export const aiGatewayLimitsArea = defineConfigArea({
   similarity,
   secretFields: [],
   arrayKeys: { limits: "timeframe" },
+  // A limit on one provider's usage is that provider's: without it, it would become a limit on everything.
+  requiredRefs: ["provider"],
   // The usage service opens its own (deadlock-retried) transactions.
   transactional: false,
   irreversible,

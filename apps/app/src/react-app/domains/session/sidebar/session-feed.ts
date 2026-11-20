@@ -3,11 +3,13 @@
 // stays there until it has new activity, which brings it back to the top.
 // Sessions waiting on the person stay in their normal place (the row itself
 // shows they need you). Archived sessions live in their own shelf.
+import type { SessionLinkKind } from "@openwork/types/session-link";
 import type { WorkspaceSessionGroup } from "../../../../app/types";
 import type { FeedFolder, FeedGroupBy, FeedPlacement, FeedSortBy, WorkspaceGroupState } from "./session-management-store";
 import { sessionCreatedAt, sessionLastActivityAt } from "./session-activity";
 import { workbenchSessionKey } from "../chat/workbench-store";
 import { shouldHideAttachedSideChat } from "./side-chat-status";
+import { EMPTY_SESSION_TREE, type SessionTree } from "./session-tree";
 import {
   getRootSessions,
   isActiveWorkSessionStatus,
@@ -18,7 +20,12 @@ import {
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
-export type FeedEntry = { group: WorkspaceSessionGroup; session: SessionListItem };
+export type FeedEntry = {
+  group: WorkspaceSessionGroup;
+  session: SessionListItem;
+  /** Set on a session listed under the one it was started from, which is the entry before it. */
+  nested?: { depth: number; kind: SessionLinkKind };
+};
 /** `all` is the single, unlabeled section when the Feed is not grouped. */
 export type FeedSection = "today" | "yesterday" | "earlier" | "active" | "inactive" | "all";
 const SECTION_ORDER: Record<FeedGroupBy, FeedSection[]> = {
@@ -57,6 +64,8 @@ export type SessionFeedContext = {
   groupsByWorkspace: Readonly<Record<string, WorkspaceGroupState>>;
   groupBy: FeedGroupBy;
   sortBy: FeedSortBy;
+  /** Sessions listed under the one they were started from. Omitted: every session has its own row. */
+  treeFor?: (workspaceId: string) => SessionTree;
 };
 
 /**
@@ -92,13 +101,22 @@ export function buildSessionFeed(groups: readonly WorkspaceSessionGroup[], conte
     const groupId = context.groupsByWorkspace[workspaceId]?.assignments[sessionId];
     return groupId ? folders.find((folder) => folder.workspaceId === workspaceId && folder.groupId === groupId) : undefined;
   };
+  const treeFor = (workspaceId: string) => context.treeFor?.(workspaceId) ?? EMPTY_SESSION_TREE;
+  // A session and the ones listed under it move through the Feed as one block.
+  const withNested = (entries: FeedEntry[]) => entries.flatMap((entry) => [
+    entry,
+    ...treeFor(entry.group.workspace.id).descendantsOf(entry.session.id)
+      .map((child): FeedEntry => ({ group: entry.group, session: child.session, nested: { depth: child.depth, kind: child.kind } })),
+  ]);
   for (const group of groups) {
+    const tree = treeFor(group.workspace.id);
     const roots = getRootSessions(partitionArchivedSessions(group.sessions).active)
-      .filter((session) => !context.pinnedIds.has(session.id) && !shouldHideAttachedSideChat(
+      .filter((session) => !context.pinnedIds.has(session.id) && !tree.nestedIds.has(session.id) && !(shouldHideAttachedSideChat(
         context.attachedSideChatKeys.has(workbenchSessionKey({ workspaceId: group.workspace.id, sessionId: session.id })),
         context.selectedSessionId === session.id,
         context.statusById?.[session.id],
-      ));
+        // A session with sessions listed under it keeps its row, so they are never orphaned.
+      ) && tree.descendantsOf(session.id).length === 0));
     for (const session of roots) {
       const folder = folderFor(group.workspace.id, session.id);
       (folder ? folder.entries : listed).push({ group, session });
@@ -119,7 +137,7 @@ export function buildSessionFeed(groups: readonly WorkspaceSessionGroup[], conte
   const newestFirst = (a: FeedEntry, b: FeedEntry) => timeOf(b.session) - timeOf(a.session);
   listed.sort(newestFirst);
   for (const folder of folders) {
-    folder.entries.sort(newestFirst);
+    folder.entries = withNested(folder.entries.sort(newestFirst));
     const ids = folder.entries.map((entry) => entry.session.id);
     folder.attention = ids.some((id) => isNeedsAttentionSessionStatus(context.statusById?.[id])) ? "needs-you"
       : ids.some((id) => context.unreadIds.has(id)) ? "unread"
@@ -131,11 +149,15 @@ export function buildSessionFeed(groups: readonly WorkspaceSessionGroup[], conte
   const today = midnight.getTime();
   // Active: the agent is working, it is waiting on the person, or it finished
   // with a result not read yet.
-  const sectionOf = ({ session }: FeedEntry): FeedSection => {
+  const isActive = (sessionId: string) => {
+    const status = context.statusById?.[sessionId];
+    return isActiveWorkSessionStatus(status) || isNeedsAttentionSessionStatus(status) || context.unreadIds.has(sessionId);
+  };
+  const sectionOf = ({ group, session }: FeedEntry): FeedSection => {
     if (context.groupBy === "none") return "all";
     if (context.groupBy === "activity") {
-      const status = context.statusById?.[session.id];
-      return isActiveWorkSessionStatus(status) || isNeedsAttentionSessionStatus(status) || context.unreadIds.has(session.id)
+      // Work in a session listed under this one keeps the whole block in Active.
+      return isActive(session.id) || treeFor(group.workspace.id).descendantsOf(session.id).some((child) => isActive(child.session.id))
         ? "active"
         : "inactive";
     }
@@ -146,6 +168,6 @@ export function buildSessionFeed(groups: readonly WorkspaceSessionGroup[], conte
   for (const entry of listed) bySection.get(sectionOf(entry))?.push(entry);
   const sections = [...bySection]
     .filter(([, entries]) => entries.length > 0)
-    .map(([section, entries]) => ({ section, entries }));
+    .map(([section, entries]) => ({ section, entries: withNested(entries) }));
   return { folders, sections, sortKeyById, reorderable };
 }

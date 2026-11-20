@@ -87,12 +87,11 @@ export const resolveUserOrganizationsMiddleware: MiddlewareHandler<{
     ? scopedOrgs[0]?.slug ?? null
     : resolved.activeOrgSlug
 
-  // never act in an organization that requires SSO from a
-  // session that did not sign in through it. Fall back to the first
-  // organization the session may open; the list itself stays complete so the
-  // person can still choose it (and be sent through its SSO).
-  if (!apiKey && activeOrganizationId) {
-    const blocked = await findSsoBlockedOrganizations({ sessionId: session?.id ?? null, organizationIds: scopedOrgs.map((org) => org.id) })
+  // For a sign-in session, fall back to the first organization it may open.
+  // Keep the list complete so the person can still choose an SSO organization.
+  const signInSessionId = c.get("signInSessionId")
+  if (signInSessionId && activeOrganizationId) {
+    const blocked = await findSsoBlockedOrganizations({ sessionId: signInSessionId, organizationIds: scopedOrgs.map((org) => org.id) })
     if (blocked.has(activeOrganizationId)) {
       const fallback = scopedOrganizationId ? null : scopedOrgs.find((org) => !blocked.has(org.id)) ?? null
       activeOrganizationId = fallback?.id ?? null

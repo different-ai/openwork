@@ -5,7 +5,7 @@ import {
   type ProviderCheck,
 } from "@openwork/types/den/diagnostics"
 import type { PermissionKey } from "@openwork/types/den/permissions"
-import { createInferenceEgressFetch } from "@openwork-ee/utils/inference-egress"
+import { createInferenceEgressFetch } from "@openwork-ee/gateway-upstreams"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { env } from "../env.js"
 import { gatewayManagementUnavailable } from "../gateway-deployment.js"

@@ -140,9 +140,16 @@ async function answer(request: IncomingMessage, response: ServerResponse) {
       const file = files.get(id)
       return file ? [{ id: file.id, name: file.name, mediaType: file.mediaType, size: file.size }] : []
     })
-    const turn: FixtureTurn = { id: input.id, text: input.text, sentAt: now, finishedAt: now, status: "done", attachments, parts: [{ kind: "text", text: "Got it.", step: 0 }], modelSteps: 1, error: null }
+    // Asked to be taught, the answer carries the receipt that opens the teaching window.
+    const teach = /\bteach\b/i.test(input.text)
+    const turn: FixtureTurn = { id: input.id, text: input.text, sentAt: now, finishedAt: now, status: "done", attachments, parts: [{ kind: "text", text: teach ? "Sure, opening the teaching window. Pick the tab and press Start teaching." : "Got it.", step: 0 }], modelSteps: 1, error: null, ...(teach ? { teaching: { id: `teach-${input.id}` } } : {}) }
     current.turns.push(turn)
     return json(response, 202, { ok: true })
+  }
+  // The teaching window lists one tab and has nothing recorded.
+  if (request.method === "POST" && path === "/v1/workbot/teaching") {
+    await body(request)
+    return json(response, 200, { demonstration: null, tabs: [{ id: "tab-1", origin: "https://www.example.com" }] })
   }
   if (request.method === "POST" && path === "/v1/workbot/files") {
     const bytes = await body(request)
@@ -277,7 +284,7 @@ const vite = await createServer({
         if (url === "/fixture/browser-witness") { json(response, 200, browserRequests); return }
         if (url.startsWith("/v1/workbot")) { void answer(request, response); return }
         if (url === "/" || url.startsWith("/?") || url.startsWith("/documents") || url.startsWith("/devices") || url.startsWith("/browser") || url.startsWith("/computer")) {
-          void server.transformIndexHtml(url, `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" /><title>Workbot</title></head><body style="margin:0"><div id="root"></div><script type="module" src="/@fs/${entry}"></script></body></html>`)
+          void server.transformIndexHtml(url, `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" /><title>Workbot</title></head><body style="margin:0"><div id="root"></div><script type="module" src="/@fs/${entry}"></script></body></html>`)
             .then((html) => { response.setHeader("Content-Type", "text/html"); response.end(html) })
           return
         }

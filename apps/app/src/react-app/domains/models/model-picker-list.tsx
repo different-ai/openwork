@@ -7,6 +7,9 @@ import { ActionContextMenu } from "@/components/ui/action-context-menu";
 import { ProviderIcon } from "@/react-app/design-system/provider-icon";
 import { AutoPickerRecovery, useObservedAutoAccessSnapshot } from "@/react-app/domains/cloud/auto-access-ui";
 import { freeAutoSwitchedOff } from "@/app/lib/inference-access";
+import { markFeatureUsed } from "@/app/lib/den";
+import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import type { MenuAction } from "@/components/ui/action-menu-model";
 import { Command, CommandCollection, CommandGroup, CommandGroupLabel, CommandHeader, CommandInput, CommandItem, CommandList, CommandPanel } from "@/components/ui/command";
 import { AUTO_ROUTER_GROUP, fixedModelTitle, immutableModelPin, isAutoModel, isAutoRouterModel, isPinModelShortcut, markExplicitModelChoice, modelGroups, modelMakerId, modelSource, modelStateLabel, modelSubtitle, modelTitle, orderedModelPins, retainedModelCopy, withAutoDefaultPin, MODEL_SOURCE_LABELS, type ModelGroup, type ModelPickerCatalogState, type RetainedModelSelection } from "./model-catalog";
@@ -102,10 +105,35 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
   }, [modelShortcuts]);
   // Searching ranks every model in one list (best first); browsing keeps the groups.
   const searching = query.trim().length > 0;
-  const search = useMemo(() => searching ? searchModels(options, query) : null, [searching, options, query]);
+  const providerFilterSyncFix = useDesktopFeature("providerFilterSyncFix");
+  const [providerId, setProviderId] = useState("");
+  const providers = useMemo(() => {
+    const available = options.filter((option) => !option.disabled);
+    const listed = [...new Set(available.map((option) => option.providerID))].map((id) => {
+      const models = available.filter((option) => option.providerID === id);
+      return { id, name: models[0]?.description?.trim() || id, source: models[0] ? MODEL_SOURCE_LABELS[modelSource(models[0])] : "", count: models.length };
+    });
+    // Two connections to the same provider (a device key and the organization's copy) are told apart by where they run.
+    return listed.map((provider) => ({
+      ...provider,
+      label: provider.source && listed.some((other) => other.id !== provider.id && other.name === provider.name) ? `${provider.name} · ${provider.source}` : provider.name,
+    })).sort((a, b) => a.label.localeCompare(b.label));
+  }, [options]);
+  const selectedProvider = providerFilterSyncFix ? providers.find((provider) => provider.id === providerId) : undefined;
+  const scopedOptions = useMemo(() => {
+    if (!providerFilterSyncFix) return options;
+    // Rows and group headings carry the same label as the selector, so twin providers stay distinguishable in results.
+    const labels = new Map(providers.filter((provider) => provider.label !== provider.name).map((provider) => [provider.id, provider.label]));
+    const scoped = selectedProvider ? options.filter((option) => option.providerID === selectedProvider.id) : options;
+    return labels.size ? scoped.map((option) => labels.has(option.providerID) ? { ...option, description: labels.get(option.providerID) } : option) : scoped;
+  }, [options, providers, selectedProvider, providerFilterSyncFix]);
+  const search = useMemo(() => searching ? searchModels(scopedOptions, query, { providerFilterSyncFix }) : null, [searching, scopedOptions, query, providerFilterSyncFix]);
+  useEffect(() => {
+    if (searching && providerFilterSyncFix) markFeatureUsed("providerFilterSyncFix");
+  }, [searching, providerFilterSyncFix]);
   const groups: ModelGroup[] = search
     ? search.matches.length ? [{ value: SEARCH_GROUP, items: search.matches.map((match) => match.option) }] : []
-    : modelGroups(options, favorites, recent, query);
+    : modelGroups(scopedOptions, favorites, recent, query);
   const providerMiss = search?.provider && !search.provider.found ? search.provider : undefined;
   const pins = orderedModelPins(options, favorites);
   const pinned = new Set(pins.map(modelRefKey));
@@ -118,7 +146,7 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
   const select = (option: ModelOption) => {
     if (!canSelect(option)) return;
     const variant = search ? resolveSearchIntent(option, search.intent).variant : undefined;
-    onSelect(option, variant === undefined ? undefined : { variant });
+    onSelect(options.find((item) => modelRefKey(item) === modelRefKey(option)) ?? option, variant === undefined ? undefined : { variant });
   };
   const alternative = pins.find((option) => !isAutoModel(option) && modelRefKey(option) !== modelRefKey(current))
     ?? options.find((option) => !option.disabled && !isAutoModel(option) && modelRefKey(option) !== modelRefKey(current));
@@ -136,6 +164,8 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
     onQueryChange("");
     root.current?.querySelector<HTMLInputElement>('[aria-label="Search all models"]')?.focus({ preventScroll: true });
   };
+  const providerRecovery = providerFilterSyncFix && search?.modelWords.length && (search.providerQuery || selectedProvider)
+    ? { query: search.providerQuery ?? "", label: search.provider?.label ?? selectedProvider?.label } : undefined;
   const retry = async () => {
     if (!catalogState?.onRetry || retryBusy) return;
     setRetryBusy(true); setRetryFailed(false);
@@ -152,7 +182,7 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
     && !options.some((option) => modelRefKey(option) === modelRefKey(current) && !option.disabled) ? retainedSelection : undefined;
   const retainedCopy = retained ? retainedModelCopy(retained.reason) : null;
   const retainedName = retained ? (fixedModelTitle(retained.model) ?? (retained.title ? modelTitle({ ...retained.model, title: retained.title, description: retained.description }) : "Saved model")) : "";
-  const retainedVisible = retained && (!query.trim() || `${retainedName} ${retained.description ?? ""}`.toLowerCase().includes(query.trim().toLowerCase()));
+  const retainedVisible = retained && (!selectedProvider || retained.model.providerID === selectedProvider.id) && (!query.trim() || `${retainedName} ${retained.description ?? ""}`.toLowerCase().includes(query.trim().toLowerCase()));
   const retainedState = retainedCopy?.subtitle;
   const retainedSubtitle = [retained && !isAutoModel(retained.model) ? retained.description?.trim() : null, retainedState].filter(Boolean).join(" · ");
   // A saved model that was pinned stays where the person pinned it, at the top of Pinned.
@@ -171,6 +201,21 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
   }}>
     <Command items={groups} filter={null} value={query} onValueChange={onQueryChange}>
       <CommandHeader className={leading ? "flex items-center gap-0" : undefined}>{leading}<CommandInput ref={searchInputRef} autoFocus={autoFocusSearch} aria-label="Search all models" placeholder="Search models…" className="h-8 text-base sm:text-base md:text-base lg:text-sm" /></CommandHeader>
+      {providerFilterSyncFix && providers.length > 1 ? <div className="border-b border-border px-2 py-1">
+        <Select value={selectedProvider?.id ?? ""} onValueChange={(value) => { setProviderId(value ?? ""); onQueryChange(""); }}>
+          <SelectTrigger aria-label="Filter models by provider" size="sm" className="w-full rounded-md border-0 bg-transparent px-2 font-normal shadow-none">
+            <SelectValue>{selectedProvider?.label ?? "All providers"}</SelectValue>
+          </SelectTrigger>
+          <SelectContent align="start">
+            <SelectItem value="">All providers</SelectItem>
+            {providers.map((provider) => <SelectItem key={provider.id} value={provider.id}>
+              <ProviderIcon providerId={provider.id} providerName={provider.name} size={16} />
+              <span className="min-w-0 flex-1 truncate">{provider.label}</span>
+              <span className="text-muted-foreground">{provider.count}</span>
+            </SelectItem>)}
+          </SelectContent>
+        </Select>
+      </div> : null}
       {/* The list sizes to its rows so placeholders after it stay in view; this panel does the scrolling. */}
       <CommandPanel className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain [scrollbar-width:thin] [&>[data-slot=scroll-area]]:h-auto">
         {retainedVisible ? <div data-testid="retained-selected-model" aria-disabled="true" aria-label={`${retainedName}, current model, ${retainedSubtitle}`} className="px-2 pt-2">
@@ -187,8 +232,8 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
             searchIntentSummary(search.intent)].filter(Boolean).join(" ")}
         </p> : null}
         {!loading && groups.length === 0 && query.trim() ? <div role="status" className="flex flex-col items-center gap-1 px-4 py-7 text-center text-sm">
-          <p>No models match “{query.trim()}”</p><p className="text-muted-foreground">{providerMiss ? `${providerMiss.label} isn't connected in this workspace.` : "Try a shorter name, or search by provider."}</p>
-          <Button size="sm" variant="outline" className="mt-2" onClick={clearSearch}>Clear search</Button>
+          <p>No models match “{query.trim()}”</p><p className="text-muted-foreground">{providerFilterSyncFix ? "Try another model name or provider." : providerMiss ? `${providerMiss.label} isn't connected in this workspace.` : "Try a shorter name, or search by provider."}</p>
+          <Button size="sm" variant="outline" className="mt-2" onClick={providerRecovery ? () => onQueryChange(providerRecovery.query) : clearSearch}>{providerRecovery ? `Show all ${providerRecovery.label} models` : "Clear search"}</Button>
         </div> : null}
         {empty ? <div role="status" className="flex flex-col items-center gap-1 px-4 py-7 text-center text-sm" data-testid="model-catalog-empty">
           <p>No models yet</p><p className="text-muted-foreground">{onConnectProvider ? <>Connect a provider, or turn OpenWork Free back on in {onOpenProviderSettings ? <button type="button" className="text-foreground underline-offset-2 hover:underline focus-visible:underline focus-visible:outline-none" onClick={onOpenProviderSettings}>AI providers</button> : "AI providers"}.</> : "Your organization manages model access. Ask your workspace owner or admin."}</p>

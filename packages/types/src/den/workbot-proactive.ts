@@ -638,6 +638,8 @@ export const AGENT_CHECK_REASONS = [
   // `workbotAgentBrief`: the check found nothing for the messenger, or found something that can wait.
   "no_findings",
   "findings_held",
+  // `workbotAgentStoppedSources`: a source the agent read lately is no longer on for the member.
+  "source_stopped",
 ] as const
 export type AgentCheckReason = (typeof AGENT_CHECK_REASONS)[number]
 /** What started the check: `morning` is the first check of the day; `requested` an extra check the agent asked for. */

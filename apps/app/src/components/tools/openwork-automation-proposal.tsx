@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { AlertTriangle, CalendarClock, Check } from "lucide-react"
-import type { DynamicToolUIPart } from "ai"
+import type { DynamicToolUIPart, UIMessage } from "ai"
 import { useNavigate } from "react-router"
 import { toast } from "sonner"
 import { useQuery } from "@tanstack/react-query"
@@ -10,8 +10,10 @@ import { useQuery } from "@tanstack/react-query"
 import { automationProposalSchema, type AutomationProposal } from "@openwork/types/automations"
 
 import { createDenClient, readDenSettings } from "@/app/lib/den"
+import { featureAnalytics } from "@/app/lib/analytics"
 import { Button } from "@/components/ui/button"
 import { Tool } from "@/components/ui/tool"
+import { codeModeToolCalls } from "@/lib/code-mode-tools"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
 import { AUTOMATION_CLOUD_DEFAULT_MODEL, type AutomationExecutionTarget } from "@openwork/types/automations"
 import { isDesktopRuntime } from "@/app/lib/runtime-env"
@@ -39,10 +41,19 @@ import { useWorkspaceMaybe } from "@/react-app/shell/workspace-provider"
 import { useDesktopRestriction } from "@/react-app/domains/cloud/desktop-config-provider"
 import { getConnectedProviderItems, useProviderListQuery } from "@/react-app/infra/provider-list-query"
 
+function contentText(output: unknown[]): string | null {
+  const text = output.flatMap((item) => {
+    if (typeof item !== "object" || item === null || !("text" in item)) return []
+    return typeof item.text === "string" ? [item.text] : []
+  })
+  return text.length > 0 ? text.join("\n") : null
+}
+
 function parseOutputValue(output: unknown): unknown {
-  if (typeof output !== "string") return output
+  const text = Array.isArray(output) ? contentText(output) : output
+  if (typeof text !== "string") return text
   try {
-    return JSON.parse(output)
+    return JSON.parse(text)
   } catch {
     return null
   }
@@ -68,6 +79,18 @@ export function isAutomationProposalToolPart(part: DynamicToolUIPart): boolean {
   return part.toolName === "openwork_execute"
     && part.state === "output-available"
     && parseAutomationProposal(part.output) !== null
+}
+
+export function automationProposalCalls(part: DynamicToolUIPart): DynamicToolUIPart[] {
+  return (codeModeToolCalls(part) ?? []).filter(isAutomationProposalToolPart)
+}
+
+export function automationProposalsInParts(parts: UIMessage["parts"]): DynamicToolUIPart[] {
+  return parts.flatMap((part) => {
+    if (part.type !== "dynamic-tool") return []
+    if (isAutomationProposalToolPart(part)) return [part]
+    return automationProposalCalls(part)
+  })
 }
 
 export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPart }) {
@@ -186,6 +209,7 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
             // of following whichever workspace is active at run time.
             ...(pinnedWorkspaceId ? { workspaceId: pinnedWorkspaceId } : {}),
           })
+      featureAnalytics.automationCreated(placement)
       setCreated(detail.automation.id)
       toast.success("Automation created and active")
     } catch (error) {

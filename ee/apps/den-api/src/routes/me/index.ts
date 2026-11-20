@@ -1,7 +1,7 @@
 import { and, eq, gt, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import { AuthAccountTable, AuthUserTable, InvitationTable, MemberTable, OrganizationTable, RateLimitTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import { withoutAgentHarnessRules, withoutBrowserUploadRules, withoutFileSendRules, type AgentPermissionRule } from "@openwork/types/den/agent-permissions"
+import { AGENT_SANDBOX_MODES_CAPABILITY_HEADER, AGENT_SANDBOX_ONLY_CAPABILITY_HEADER, agentPermissionRulesForClient } from "@openwork/types/den/agent-permissions"
 import { BILLING_PLAN_TIERS } from "@openwork/types/den/billing-plans"
 import { desktopConfigSchema } from "@openwork/types/den/desktop-policies"
 import type { Hono } from "hono"
@@ -30,6 +30,7 @@ import { findSsoAccessBlock, listMemberSsoSignIns, ssoRequiredErrorBody, ssoSign
 import { registerMeActivationRoutes } from "./activation.js"
 import { registerMeAgentRoutes } from "./agent.js"
 import { registerMeFeatureIntroRoutes } from "./feature-intros.js"
+import { registerMePersonalSkillsRoutes } from "./personal-skills.js"
 
 const DOWNLOAD_LINK_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000
 const DOWNLOAD_LINK_RATE_LIMIT_MAX = 5
@@ -186,6 +187,7 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
   registerMeActivationRoutes(app)
   registerMeAgentRoutes(app)
   registerMeFeatureIntroRoutes(app)
+  registerMePersonalSkillsRoutes(app)
 
   app.get(
     "/v1/me",
@@ -494,7 +496,7 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
     describeRoute({
       tags: ["Users"],
       summary: "Get current user's desktop config",
-      description: "Returns the authenticated desktop app restrictions for the caller's active organization, including the caller's agent permissions as ordered OpenCode permission rules and the model new chats start with (defaultModel, applied by OpenCode v2 desktops only) when the organization has chosen one the caller can use. Computer use, Mac app scripting and outside-folder rules follow the organization's agent permission settings. X-OpenWork-Browser-Upload-Permissions: 1 clients receive browserUploadPermissions with the verified organization and member scope, and the organization's browser_upload rules. Older clients receive a conservative website block when an active managed upload rule cannot be enforced.",
+      description: "Returns the authenticated desktop app restrictions for the caller's active organization, including the caller's agent permissions as ordered OpenCode permission rules and the model new chats start with (defaultModel, applied by OpenCode v2 desktops only) when the organization has chosen one the caller can use. Computer use, Mac app scripting and outside-folder rules follow the organization's agent permission settings. X-OpenWork-Browser-Upload-Permissions: 1 clients receive browserUploadPermissions with the verified organization and member scope, and the organization's browser_upload rules. Older clients receive a conservative website block when an active managed upload rule cannot be enforced. X-OpenWork-Sandbox-Only: 1 clients receive the organization's host_execution rule (sandbox-only when it denies); other clients receive blocks for commands, file edits, outside folders, computer use, local MCP servers and websites while it is required, whether or not the sandbox rollout is on. Clients that send X-OpenWork-Sandbox-Modes: 1 also receive sandbox_opt_out rules for the Use OpenWork Sandbox requirement.",
       responses: {
         200: jsonResponse("Current user desktop config returned successfully.", meDesktopConfigResponseSchema),
         401: jsonResponse("The caller must be signed in to read desktop config.", unauthorizedSchema),
@@ -515,14 +517,15 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
       // Published desktops reject a rule list naming an action they do not know,
       // so file-send rules reach only desktops that ask for them.
       const supportsFileSends = c.req.header("X-OpenWork-File-Send-Permissions") === "1"
-      const uploadRules: AgentPermissionRule[] = supportsBrowserUploads ? rules : withoutBrowserUploadRules(rules)
-      const deliveredRules: AgentPermissionRule[] = supportsFileSends ? uploadRules : withoutFileSendRules(uploadRules)
-      // Published clients drop unknown actions. Refuse browsing conservatively
-      // rather than silently dropping an active managed upload permission.
-      if (!supportsBrowserUploads && rules.some((rule) => rule.action === "browser_upload")) {
-        deliveredRules.push({ action: "webfetch", resource: "*", effect: "deny", source: "Browser upload policy requires an updated OpenWork app" })
+      // host_execution (sandbox-only) reaches only desktops that enforce it. A
+      // desktop that does not gets blocks it understands instead, and the
+      // sandboxTools rollout is deliberately not consulted: turning it off must
+      // not hand a required sandbox back to the host.
+      const supportsSandboxOnly = c.req.header(AGENT_SANDBOX_ONLY_CAPABILITY_HEADER) === "1"
+      const supportsSandboxModes = c.req.header(AGENT_SANDBOX_MODES_CAPABILITY_HEADER) === "1"
+      const agentPermissions = {
+        rules: agentPermissionRulesForClient(rules, { browserUploads: supportsBrowserUploads, fileSends: supportsFileSends, sandboxOnly: supportsSandboxOnly, sandboxModes: supportsSandboxModes }),
       }
-      const agentPermissions = { rules: deliveredRules }
       // The model new chats start with; only v2 desktops apply it. A failure leaves desktops on their own default.
       const defaultModel = await desktopConfigDefaultModel({ organizationId: organization.id, memberId: currentMember.id })
       const automations = automationAvailabilityFor({

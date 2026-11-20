@@ -1,5 +1,4 @@
-import { withBedrockMantleProvider } from "@openwork-ee/utils/bedrock-mantle-catalog"
-import { withMicrosoftFoundryProvider } from "@openwork-ee/utils/microsoft-foundry-catalog"
+import { withBedrockMantleProvider, withMicrosoftFoundryProvider } from "@openwork-ee/gateway-catalog"
 
 const MODELS_DEV_API_URL = "https://models.openworklabs.com/api.json"
 const MODELS_DEV_CACHE_TTL_MS = 1000 * 60 * 10

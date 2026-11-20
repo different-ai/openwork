@@ -7,6 +7,7 @@ import { registerOrgDefaultModelRoutes } from "./default-model.js"
 import { registerOrgAutoRouterRoutes } from "./auto-router.js"
 import { registerOrgPromptRoutes } from "./prompts.js"
 import { registerOrgApiKeyRoutes } from "./api-keys.js"
+import { registerManagedDeploymentConfigurationRoutes } from "./managed-deployment-configuration.js"
 import { registerManagedDeploymentRoutes } from "./managed-deployments.js"
 import { registerOrgAuditRoutes } from "./audit.js"
 import { registerOrgBillingRoutes } from "./billing.js"
@@ -89,6 +90,7 @@ export function registerOrgRoutes<T extends { Variables: OrgRouteVariables & Req
   registerOrgInventoryRevisionRoutes(app)
   registerOrgFeatureUsageRoutes(app)
   registerManagedDeploymentRoutes(app)
+  registerManagedDeploymentConfigurationRoutes(app)
   registerDeleteOrganizationRoutes(app)
   registerOrgApiKeyRoutes(app)
   registerOrgAuditRoutes(app)

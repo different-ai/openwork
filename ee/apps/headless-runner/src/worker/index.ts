@@ -15,7 +15,10 @@ import { CellsStore } from "../cells-store.js"
 import { CellCallError, INTERNAL_PATHS, SESSION_CELL_ID, SessionCells, sessionCellName, type CellIdentity, type InternalPath } from "../cells.js"
 import { localMemory } from "../memory.js"
 import { serviceHealthResponse } from "../service-health.js"
+import { cellIdsResponse } from "../cell-ids.js"
+import { computerDetailResponse, computerFleetResponse } from "../computer-fleet.js"
 import { durableObjectSql } from "./sql.js"
+import { CELL_UNAVAILABLE, CELL_UNAVAILABLE_RETRY_SECONDS, cellRouteFailure, type CellRouteFailure } from "./route-failure.js"
 
 /**
  * The runner on celld (or any Durable Objects host): the same HTTP API as the Node server, so callers keep their URL
@@ -438,7 +441,7 @@ function reporterFor(config: Config) {
   return reporter
 }
 /** Reports a router failure (the route and error type, never the request); a no-op without HEADLESS_SENTRY_DSN. */
-function reportRouterError(c: Context<{ Bindings: CellEnv }>, error: Error) {
+function reportRouterError(c: Context<{ Bindings: CellEnv }>, error: Error, unavailable: CellRouteFailure | null = null) {
   let config: Config
   try {
     config = configFor(c.env)
@@ -448,7 +451,11 @@ function reportRouterError(c: Context<{ Bindings: CellEnv }>, error: Error) {
   }
   const reporter = reporterFor(config)
   if (!reporter.enabled) return
-  const sent = reporter.report({ code: "request_failed", tags: { route: routePath(c), method: c.req.method }, error })
+  // An unreachable cell is its own issue, a warning, grouped by reason: a full node answers this way for every
+  // conversation it owns, and that must not drown the reports of real failures.
+  const sent = unavailable
+    ? reporter.report({ code: CELL_UNAVAILABLE, kind: `${CELL_UNAVAILABLE}:${unavailable.reason}`, level: "warning", tags: { reason: unavailable.reason, route: routePath(c), method: c.req.method } })
+    : reporter.report({ code: "request_failed", tags: { route: routePath(c), method: c.req.method }, error })
   try {
     c.executionCtx.waitUntil(sent)
   } catch {
@@ -456,12 +463,25 @@ function reportRouterError(c: Context<{ Bindings: CellEnv }>, error: Error) {
   }
 }
 router.onError((error, c) => {
+  const unavailable = cellRouteFailure(error)
+  if (unavailable) {
+    // The host could not reach the cell, so nothing of the request ran: tell the caller to send it again, instead of
+    // an internal error it cannot tell from a bug (route-failure.ts).
+    console.warn("[headless-cells] cell unavailable", { path: c.req.path, reason: unavailable.reason })
+    reportRouterError(c, error, unavailable)
+    return c.json({ error: CELL_UNAVAILABLE, reason: unavailable.reason }, 503, { "Retry-After": String(CELL_UNAVAILABLE_RETRY_SECONDS), "Cache-Control": "no-store" })
+  }
   console.error("[headless-cells] request failed", { path: c.req.path, error: error.message })
   reportRouterError(c, error)
   return c.json({ error: "internal_error" }, 500)
 })
 // Service-wide configuration facts stay in the router: no owner or conversation cell is touched.
 router.get("/v1/health", (c) => serviceHealthResponse(c.req.raw, configFor(c.env)))
+// The providers' list of this runner's computers: asked of the providers from here, so no cell wakes for it.
+router.get("/v1/computers", (c) => computerFleetResponse(configFor(c.env), { fetch: (url, init) => fetch(url, init) }))
+router.get("/v1/computers/:source/:id", (c) => computerDetailResponse(configFor(c.env), { fetch: (url, init) => fetch(url, init) }, c.req.param("source"), c.req.param("id")))
+// Which cell id each cell name has, for Den's admin page. Derived from the name: no cell is woken or touched.
+router.post("/v1/cells/ids", (c) => cellIdsResponse(c.req.raw, { valid: (name) => parseCell(name) !== null, id: (name) => c.env.HEADLESS_CELL.idFromName(name).toString() }))
 const catalogs = new WeakMap<Config, ReturnType<typeof gatewayModelCatalog>>()
 router.get("/v1/models", async (c) => {
   const config = configFor(c.env)

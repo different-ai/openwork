@@ -12,7 +12,7 @@ export interface BrowserTaskInput {
     observationId?: string;
     toolId?: string;
     input?: unknown;
-    action?: { type: "click" | "fill" | "select" | "set_checked" | "key" | "scroll"; ref?: string; text?: string; checked?: boolean; values?: string[]; key?: string; x?: number; y?: number; deltaY?: number };
+    action?: { type: "click" | "fill" | "fill_secret" | "select" | "set_checked" | "key" | "scroll"; ref?: string; text?: string; secretRef?: string; checked?: boolean; values?: string[]; key?: string; x?: number; y?: number; deltaY?: number };
   };
 }
 

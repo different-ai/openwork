@@ -24,7 +24,7 @@ const configItemSchema = z.object({
 const resolutionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("target"), id: z.string(), via: z.enum(["target", "decision"]) }),
   z.object({ kind: z.literal("planned"), area: configAreaKeySchema, ref: z.string() }),
-  z.object({ kind: z.literal("drop") }),
+  z.object({ kind: z.literal("drop"), entry: z.literal(true).optional() }),
   z.object({ kind: z.literal("invite"), email: z.string() }),
   z.object({ kind: z.literal("unresolved"), reason: z.string() }),
 ])

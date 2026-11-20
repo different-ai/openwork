@@ -6,6 +6,7 @@ import { streamSSE } from "hono/streaming"
 import type { ErrorReporter } from "./error-reporting.js"
 import type { SessionEvents } from "./events.js"
 import { serviceHealthResponse, type ServiceHealthConfig } from "./service-health.js"
+import { computerDetailResponse, computerFleetResponse, type ComputerFleetConfig } from "./computer-fleet.js"
 import { SavedFileLimitError, type SavedFiles } from "./saved-files.js"
 import { formatBytes } from "./tool-files.js"
 import { z } from "zod"
@@ -39,6 +40,8 @@ const createSessionBody = z
     tasks: z.boolean().optional(),
     /** The host opens a document beside this chat on the person's explicit request (`open_document`). Off unless asked for. */
     documentNavigation: z.boolean().optional(),
+    /** The host opens its teaching window on the person's explicit request (`open_teaching`). Off unless asked for. */
+    teachingNavigation: z.boolean().optional(),
     /** Run this conversation's computer through the runner's sandbox gateway (SANDBOX_GATEWAY), not its own provider. Off unless asked for. */
     sandboxGateway: z.boolean().optional(),
     /** Trusted host rollout for read-only browser recovery. */
@@ -144,6 +147,8 @@ export function createApp(input: {
   apiToken: string
   /** Validated deployment settings, used only for the authenticated configuration-presence check. */
   healthConfig?: ServiceHealthConfig
+  /** The computer settings, for the fleet list (`GET /v1/computers`): which providers to ask, with whose key. */
+  computerFleet?: ComputerFleetConfig
   /** Models a caller may pick per turn; without it only the default is listed. */
   models?: (modelAccess?: HeadlessModelAccess) => Promise<ModelCatalog>
   /** Bounded synthetic completion with scoped access or the deployment key; no conversation is created. */
@@ -225,6 +230,10 @@ export function createApp(input: {
   })
 
   app.get("/v1/health", (c) => serviceHealthResponse(c.req.raw, input.healthConfig))
+  // Every computer the providers hold for this runner, for Den's admin page. Reads the providers; touches no conversation.
+  app.get("/v1/computers", () => computerFleetResponse(input.computerFleet, { fetch: (url, init) => fetch(url, init) }))
+  // One of them in full: the provider's record, where it was placed and why, and its lifecycle events.
+  app.get("/v1/computers/:source/:id", (c) => computerDetailResponse(input.computerFleet, { fetch: (url, init) => fetch(url, init) }, c.req.param("source"), c.req.param("id")))
   app.get("/v1/models", async (c) => c.json(input.models ? await input.models() : { defaultModel: "", models: [] }))
   app.post("/v1/models", bodyLimit({ maxSize: 8192 }), (c) => scopedCatalogResponse(c.req.raw, input.models))
   app.post("/v1/model-probe", bodyLimit({ maxSize: 8192 }), (c) => modelProbeResponse(c.req.raw, input.modelProbe))
@@ -256,7 +265,7 @@ export function createApp(input: {
       return c.json({ error: "desktop_not_configured" }, 409)
     } catch (error) {
       // The page only gets a stable code; the reason goes to the runner's log, where an operator can act on it.
-      const code = typeof error === "object" && error !== null && "desktopCode" in error && (error.desktopCode === "desktop_outdated" || error.desktopCode === "desktop_unresponsive" || error.desktopCode === "desktop_updating") ? error.desktopCode : "desktop_unavailable"
+      const code = typeof error === "object" && error !== null && "desktopCode" in error && (error.desktopCode === "desktop_outdated" || error.desktopCode === "desktop_unresponsive" || error.desktopCode === "desktop_updating" || error.desktopCode === "desktop_replacing") ? error.desktopCode : "desktop_unavailable"
       console.error("[headless-runner] desktop failed", { sessionId: session.id, operation: c.req.param("operation"), code, error: error instanceof Error ? error.message : "unknown" })
       return c.json({ error: code }, 409)
     }

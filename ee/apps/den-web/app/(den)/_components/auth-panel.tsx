@@ -3,7 +3,7 @@
 import { ArrowRight, CheckCircle2 } from "lucide-react";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useRef, useState, type FormEvent, type ReactNode } from "react";
-import { isSingleOrgSignupDisabled, resolveVisibleAuthMode } from "../_lib/auth-ui-policy";
+import { emailFirstStepWhenSignUpClosed, isSingleOrgSignupDisabled, resolveVisibleAuthMode } from "../_lib/auth-ui-policy";
 import { isSamePathname } from "../_lib/client-route";
 import { getDesktopGrant } from "../_lib/desktop-handoff";
 import { readLastSignInMethod, type LastSignInMethod } from "../_lib/last-sign-in";
@@ -295,6 +295,7 @@ export function AuthPanel({
   emailStepContent,
   socialFirst = false,
   socialProviders = ["google", "github"],
+  signInOnly = false,
 }: {
   prefilledEmail?: string;
   prefillKey?: string;
@@ -325,6 +326,11 @@ export function AuthPanel({
   socialFirst?: boolean;
   /** Which providers a social-first panel offers. */
   socialProviders?: readonly ("google" | "github")[];
+  /**
+   * Signs existing accounts in and offers no way to create one (the OpenWork phone app). The person gives their
+   * email first, so Google and GitHub are offered only to an account that already uses them.
+   */
+  signInOnly?: boolean;
 }) {
   const router = useRouter();
   const pathname = usePathname();
@@ -377,10 +383,14 @@ export function AuthPanel({
   const isSingleOrgMode = runtimeConfigLoaded && runtimeConfig.orgMode === "single_org";
   const isSingleOrgSsoMode = isSingleOrgMode && runtimeConfig.singleOrgSsoConfigured;
   const isSingleOrgPrivateSignup = isSingleOrgSignupDisabled(runtimeConfig, runtimeConfigLoaded);
-  const visibleAuthMode = resolveVisibleAuthMode({ authMode, runtimeConfig, runtimeConfigLoaded });
+  // Closed by this deployment's setting, or because the caller only signs existing accounts in.
+  const signUpClosed = isSingleOrgPrivateSignup || signInOnly;
   const singleOrgName = runtimeConfig.singleOrgName || "OpenWork";
   const singleOrgSlug = runtimeConfig.singleOrgSlug.trim();
   const emailFirstInvite = emailFirstInvitationId?.trim() ?? "";
+  // An invitation still creates its account where sign-up is otherwise closed.
+  const noNewAccounts = signUpClosed && !emailFirstInvite;
+  const visibleAuthMode = signInOnly && noNewAccounts ? "sign-in" : resolveVisibleAuthMode({ authMode, runtimeConfig, runtimeConfigLoaded });
 
   function getLoginOptionsPath(targetEmail: string) {
     const params = new URLSearchParams({ email: targetEmail });
@@ -391,10 +401,10 @@ export function AuthPanel({
   }
 
   useEffect(() => {
-    if (isSingleOrgPrivateSignup && !emailFirstInvite && authMode === "sign-up") {
+    if (noNewAccounts && authMode === "sign-up") {
       setAuthMode("sign-in");
     }
-  }, [authMode, emailFirstInvite, isSingleOrgPrivateSignup, setAuthMode]);
+  }, [authMode, noNewAccounts, setAuthMode]);
 
   useEffect(() => {
     if (!isSingleOrgSsoMode || pathname === "/" || pathname === "/join-org") {
@@ -442,7 +452,7 @@ export function AuthPanel({
   };
 
   const requestedEmailFirstStep = loginOption?.nextStep ?? "email";
-  const emailFirstStep: EmailFirstStep = isSingleOrgPrivateSignup && !emailFirstInvite && requestedEmailFirstStep === "new_account" ? "password" : requestedEmailFirstStep;
+  const emailFirstStep: EmailFirstStep = emailFirstStepWhenSignUpClosed(requestedEmailFirstStep, noNewAccounts);
   const emailFirstEmail = email.trim();
   const ssoOrganizationName = loginOption?.organizationName ?? "Your organization";
   const ssoContinueLabel = loginOption?.organizationName ? `Continue with ${loginOption.organizationName} SSO` : "Continue with SSO";
@@ -550,7 +560,7 @@ export function AuthPanel({
   // The segmented tabs are the primary sign-in/sign-up switch. Hide them for the
   // focused sub-flows (email verification, password reset) where switching mode
   // mid-step would be confusing.
-  const showModeTabs = !emailFirstFlow && !isSingleOrgSsoMode && !isSingleOrgPrivateSignup && !verificationRequired && !isPasswordResetRequest;
+  const showModeTabs = !emailFirstFlow && !isSingleOrgSsoMode && !signUpClosed && !verificationRequired && !isPasswordResetRequest;
   const showSingleOrgSso = isSingleOrgMode && Boolean(singleOrgSlug) && !verificationRequired && !isPasswordResetRequest && (!hideSocialAuth || isSingleOrgSsoMode);
   const showSingleOrgSsoDivider = showSingleOrgSso && !isSingleOrgSsoMode;
   const showEmailPasswordAuth = !isSingleOrgSsoMode;
@@ -610,7 +620,7 @@ export function AuthPanel({
         }
 
         setEmail(trimmedEmail);
-        setAuthMode(nextOption.nextStep === "new_account" ? "sign-up" : "sign-in");
+        setAuthMode(nextOption.nextStep === "new_account" && !signInOnly ? "sign-up" : "sign-in");
         setLoginOption(nextOption);
       } catch (error) {
         if (!superseded()) {
@@ -674,7 +684,7 @@ export function AuthPanel({
     const alternativeStep = loginOption?.alternativeStep;
     if (!loginOption || !alternativeStep) return;
     setLoginOptionError(null);
-    setAuthMode(alternativeStep === "new_account" ? "sign-up" : "sign-in");
+    setAuthMode(alternativeStep === "new_account" && !signInOnly ? "sign-up" : "sign-in");
     setLoginOption({ ...loginOption, nextStep: alternativeStep, alternativeStep: null });
   };
 
@@ -706,7 +716,7 @@ export function AuthPanel({
       }
 
       setEmail(trimmedEmail);
-      setAuthMode(nextOption.nextStep === "new_account" ? "sign-up" : "sign-in");
+      setAuthMode(nextOption.nextStep === "new_account" && !signInOnly ? "sign-up" : "sign-in");
       setLoginOption(nextOption);
     } catch (error) {
       setLoginOptionError(error instanceof Error ? error.message : "Could not check sign-in options.");
@@ -844,7 +854,7 @@ export function AuthPanel({
           </div>
         ) : null}
 
-        {socialFirst && showSocialAuth && !waitingForPrefilledLoginOption && emailFirstStep === "email" && !showRememberedSignIn && !rememberedSignInPending ? (
+        {socialFirst && !signInOnly && showSocialAuth && !waitingForPrefilledLoginOption && emailFirstStep === "email" && !showRememberedSignIn && !rememberedSignInPending ? (
           <div className="grid gap-2.5">
             {socialProviders.includes("google") ? (
               <SocialButton onClick={() => void beginSocialAuth("google")} disabled={!runtimeConfigLoaded || authBusy || desktopRedirectBusy}>
@@ -1501,7 +1511,7 @@ export function AuthPanel({
               <span>Waiting for your verification code</span>
             </div>
           ) : null}
-          {authError && visibleAuthMode === "sign-in" && !isSingleOrgPrivateSignup && !verificationRequired && showEmailPasswordAuth ? (
+          {authError && visibleAuthMode === "sign-in" && !signUpClosed && !verificationRequired && showEmailPasswordAuth ? (
             <button
               type="button"
               className="mt-1 inline-flex items-center justify-center gap-1 font-medium text-[var(--dls-text-primary)] transition hover:opacity-70"

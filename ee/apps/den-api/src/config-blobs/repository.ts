@@ -93,6 +93,28 @@ export async function getChangeRequest(
   return rows[0] ?? null
 }
 
+/** The last applied import of this source into the organization that holds answers: its id and answers. */
+export async function latestAppliedFromSource(
+  organizationId: OrganizationId,
+  source: { instanceId: string; organizationId: string },
+  database: ConfigDatabase = db.$primary,
+): Promise<Pick<ConfigChangeRequestRow, "id" | "decisions"> | null> {
+  const rows = await database
+    .select({ id: ConfigChangeRequestTable.id, decisions: ConfigChangeRequestTable.decisions })
+    .from(ConfigChangeRequestTable)
+    .where(and(
+      eq(ConfigChangeRequestTable.organizationId, organizationId),
+      eq(ConfigChangeRequestTable.status, "applied"),
+      eq(ConfigChangeRequestTable.sourceInstanceId, source.instanceId),
+      eq(ConfigChangeRequestTable.sourceOrgId, source.organizationId),
+      ne(ConfigChangeRequestTable.sourceKind, "revert"),
+      isNotNull(ConfigChangeRequestTable.decisions),
+    ))
+    .orderBy(desc(ConfigChangeRequestTable.appliedAt), desc(ConfigChangeRequestTable.id))
+    .limit(1)
+  return rows[0] ?? null
+}
+
 /** The columns a summary needs: leaves the blob, secret inputs and snapshot encrypted and unread. */
 const summaryColumns = {
   id: ConfigChangeRequestTable.id,

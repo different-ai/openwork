@@ -278,6 +278,13 @@ overrides:
       - "**/*.json#/paths/~1v1~1telemetry~1dimensions"
     rules:
       ow-list-pagination: "off"
+  # The platform-admin outreach list is one snapshot computed for this moment:
+  # at most 50 accounts per reason, with totals that count every match. The
+  # admin page reads it whole, so it is not a paged collection.
+  - files:
+      - "**/*.json#/paths/~1v1~1admin~1opportunities~1outreach"
+    rules:
+      ow-list-pagination: "off"
   - files:
       - "**/*.json#/components/schemas/AutomationDesktopTarget/properties/lastSeenAt"
     rules:

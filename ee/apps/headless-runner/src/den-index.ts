@@ -12,8 +12,10 @@ import type { IndexFields } from "./storage/index-outbox.js"
  *   are dropped, except `index_disabled` and `rate_limited`, which are kept and retried (`index_disabled` only comes from Dens from before the index was always on).
  * - Failures back off per row: immediately, 30 s, 2 min, 10 min, then hourly. A Den outage delays the index, never a
  *   turn: nothing here runs inside a turn.
- * - Rows older than 7 days are dropped (also those that never got a capability). Once a day the whole cell is
- *   snapshotted again (`indexSnapshotAll`) so Den's index converges after anything it missed.
+ * - Rows older than 7 days are dropped (also those that never got a capability), and at most once a day the whole
+ *   store is snapshotted again (`indexSnapshotAll`) so Den's index converges after anything it missed. Both happen
+ *   when the flusher runs for an update; neither asks for a run. On celld a run is the cell's alarm, and a job that
+ *   always wants another one wakes every conversation's cell once a day for ever, with nothing new to report.
  *
  * Never log or report a capability or any field value; reports carry codes only.
  */
@@ -37,6 +39,9 @@ export type IndexOutbox = {
   deferIndexUpdate(sessionId: string, version: number, retryAt: number): void
   nextIndexUpdateAt(): number | null
   dropIndexUpdatesBefore(createdBefore: number): number
+  /** When every session was last snapshotted, or null if never: kept in the store, so a cell that slept still knows. */
+  indexSnapshotAt(): number | null
+  /** Queues a fresh snapshot of every session and records when. */
   indexSnapshotAll(now: number): void
 }
 
@@ -97,10 +102,8 @@ export function denIndexJob(input: { outbox: IndexOutbox; send: IndexSend; error
   const { outbox, send } = input
   const now = input.now ?? Date.now
   const failures = new Map<string, number>()
-  const started = now()
-  // Dropping old rows is one cheap delete: due at start (a cell may live only minutes), then daily.
-  let nextDropAt = started
-  let nextSnapshotAt = started + DEN_INDEX_SNAPSHOT_EVERY_MS
+  // Dropping old rows is one cheap delete: in the first run after a start (a cell may live only minutes), then daily.
+  let nextDropAt = now()
 
   // At most one report per code and reason per minute: a Den outage or a stale key is one alert, not one per row.
   const reported = new Map<string, number>()
@@ -125,9 +128,9 @@ export function denIndexJob(input: { outbox: IndexOutbox; send: IndexSend; error
 
   return {
     name: "den-index",
+    // Only an update that can be sent asks for a run; with none, the store (a sleeping cell) is left alone.
     nextAt() {
-      const pending = outbox.nextIndexUpdateAt()
-      return Math.min(pending ?? Number.POSITIVE_INFINITY, nextDropAt, nextSnapshotAt)
+      return outbox.nextIndexUpdateAt()
     },
     async run() {
       const at = now()
@@ -135,10 +138,9 @@ export function denIndexJob(input: { outbox: IndexOutbox; send: IndexSend; error
         nextDropAt = at + DEN_INDEX_SNAPSHOT_EVERY_MS
         outbox.dropIndexUpdatesBefore(at - DEN_INDEX_MAX_AGE_MS)
       }
-      if (at >= nextSnapshotAt) {
-        nextSnapshotAt = at + DEN_INDEX_SNAPSHOT_EVERY_MS
-        outbox.indexSnapshotAll(at)
-      }
+      // At most once a day, on a day the store has something to send.
+      const snapshotAt = outbox.indexSnapshotAt()
+      if (snapshotAt === null || at - snapshotAt >= DEN_INDEX_SNAPSHOT_EVERY_MS) outbox.indexSnapshotAll(at)
       const due = outbox.pendingIndexUpdates(at, READ_LIMIT).flatMap((update) => (update.capability ? [{ ...update, capability: update.capability }] : []))
       for (let start = 0; start < due.length; start += DEN_INDEX_BATCH) {
         const batch = due.slice(start, start + DEN_INDEX_BATCH)

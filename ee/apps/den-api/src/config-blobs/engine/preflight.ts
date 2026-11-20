@@ -20,7 +20,10 @@ export async function runPreflight(execution: ExecutionPlan, areas: readonly Con
     if (!preview) continue
     let verdict: ConfigPreflightResult | null
     try {
-      verdict = await area.preflight(ctx, preview, { secrets: op.secrets.map((secret) => ({ path: secret.path, field: secret.field, decision: secret.decision })) })
+      verdict = await area.preflight(ctx, preview, {
+        secrets: op.secrets.map((secret) => ({ path: secret.path, field: secret.field, decision: secret.decision })),
+        refs: op.refs.map((ref) => ({ path: ref.path, ref: ref.ref, resolution: ref.resolution.kind, ...(ref.resolution.kind === "target" ? { id: ref.resolution.id } : {}) })),
+      })
     } catch {
       // A check that can't run never stops the plan: the apply does the real check.
       verdict = { warnings: ["this change couldn't be checked before apply"] }

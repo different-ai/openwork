@@ -702,6 +702,10 @@ export function SessionHistoryStatus({ complete, pending, loading, failed, faile
   // report, and an announcement derived from missing history alone would stay
   // visible with nothing left to clear it.
   if (!loading && !failed && !retrying) return null;
+  if (!failed && !retrying) return <div data-thread-history-status className="relative z-10 h-0 shrink-0">
+    <span role="status" className="sr-only">Loading earlier messages…</span>
+    <div aria-hidden="true" className="pointer-events-none absolute inset-x-0 top-0 h-0.5 bg-dls-accent/60 motion-safe:animate-pulse" />
+  </div>;
   return <div data-thread-history-status className="flex shrink-0 justify-center px-3 pt-2 sm:px-5">
     <TaskRecovery compact state={failed && !retrying ? "failed" : "retrying"}
       title={retrying ? pending ? "Loading conversation…" : "Loading earlier messages…" : failed

@@ -91,3 +91,26 @@ test("rows the Agents list does not show keep their Stop", async () => {
   const container = await render(new Set(["another_call"]))
   expect(container.querySelector("[data-subagent-stop]")).not.toBeNull()
 })
+
+test("running helpers are counted by the Agents list's rule: an activity record or a busy engine status", async () => {
+  const { statusKey } = await import("../src/react-app/domains/session/sync/session-sync")
+  const { getReactQueryClient } = await import("../src/react-app/infra/query-client")
+  const queryClient = getReactQueryClient()
+  // One helper is known running by its activity record, two only by the engine's status, one is idle.
+  store.getState().seedSessionRun(WORKSPACE, "ses_a", { type: "busy" })
+  queryClient.setQueryData(statusKey(WORKSPACE, "ses_b"), { type: "busy" })
+  queryClient.setQueryData(statusKey(WORKSPACE, "ses_c"), { type: "retry", attempt: 1, message: "", next: 0 })
+  queryClient.setQueryData(statusKey(WORKSPACE, "ses_d"), { type: "idle" })
+  const ids = ["ses_a", "ses_b", "ses_c", "ses_d"]
+  function Count() {
+    return <span data-count>{runLine.useRunningSubagentIds(WORKSPACE, ids).join(",")}</span>
+  }
+  const container = document.createElement("div")
+  document.body.append(container)
+  root = createRoot(container)
+  await act(async () => root?.render(<Count />))
+  expect(container.querySelector("[data-count]")?.textContent).toBe("ses_a,ses_b,ses_c")
+
+  await act(async () => { queryClient.setQueryData(statusKey(WORKSPACE, "ses_b"), { type: "idle" }) })
+  expect(container.querySelector("[data-count]")?.textContent).toBe("ses_a,ses_c")
+})

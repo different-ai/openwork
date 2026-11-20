@@ -63,6 +63,7 @@ interface MessageListContextValue {
   composerSubagentToolCallIds: ReadonlySet<string>
   /** Re-submit an interrupted run by sending its recovery prompt. */
   onResumeInterrupted?: (recoveryPrompt: string) => void
+  onRunCommand?: (command: string) => void
   /** Open one Library item's detail, by the same id Library rows use. Absent where there is no Library. */
   onOpenLibraryDetail?: (detailId: string) => void
   onMcpReconnect: (
@@ -100,6 +101,7 @@ interface MessageListProviderProps {
   onOpenRemoteTask?: (start: RemoteThreadStart) => void
   composerSubagentToolCallIds?: ReadonlySet<string>
   onResumeInterrupted?: (recoveryPrompt: string) => void
+  onRunCommand?: (command: string) => void
   onOpenLibraryDetail?: (detailId: string) => void
   onMcpReconnect: (
     action: ChatToolReconnectAction,
@@ -150,6 +152,7 @@ export function MessageListProvider({
   onOpenRemoteTask,
   composerSubagentToolCallIds = NO_TOOL_CALL_IDS,
   onResumeInterrupted,
+  onRunCommand,
   onOpenLibraryDetail,
   onMcpReconnect,
   onMcpReopenAuthorization,
@@ -164,6 +167,7 @@ export function MessageListProvider({
     onStopSubagentSession,
     onOpenRemoteTask,
     onResumeInterrupted,
+    onRunCommand,
     onOpenLibraryDetail,
     onMcpReconnect,
     onMcpReopenAuthorization,
@@ -179,6 +183,7 @@ export function MessageListProvider({
       onStopSubagentSession,
       onOpenRemoteTask,
       onResumeInterrupted,
+      onRunCommand,
       onOpenLibraryDetail,
       onMcpReconnect,
       onMcpReopenAuthorization,
@@ -193,6 +198,7 @@ export function MessageListProvider({
     onStopSubagentSession,
     onOpenRemoteTask,
     onResumeInterrupted,
+    onRunCommand,
     onOpenLibraryDetail,
     onMcpReconnect,
     onMcpReopenAuthorization,
@@ -207,6 +213,7 @@ export function MessageListProvider({
     onStopSubagentSession: (sessionId: string) => handlersRef.current.onStopSubagentSession?.(sessionId),
     onOpenRemoteTask: (start: RemoteThreadStart) => handlersRef.current.onOpenRemoteTask?.(start),
     onResumeInterrupted: (recoveryPrompt: string) => handlersRef.current.onResumeInterrupted?.(recoveryPrompt),
+    onRunCommand: (command: string) => handlersRef.current.onRunCommand?.(command),
     onOpenLibraryDetail: (detailId: string) => handlersRef.current.onOpenLibraryDetail?.(detailId),
     onMcpReconnect: (
       action: ChatToolReconnectAction,
@@ -222,6 +229,7 @@ export function MessageListProvider({
   const canStopSubagentSession = Boolean(onStopSubagentSession)
   const canOpenRemoteTask = Boolean(onOpenRemoteTask)
   const canResumeInterrupted = Boolean(onResumeInterrupted)
+  const canRunCommand = Boolean(onRunCommand)
   const canOpenLibraryDetail = Boolean(onOpenLibraryDetail)
   const mcpAppOrigin = React.useMemo<McpAppOrigin | null>(
     () => client ? { client, workspaceId, sessionId, readOnly, ...(mcpAppEngine ? { engine: mcpAppEngine } : {}) } : null,
@@ -280,6 +288,7 @@ export function MessageListProvider({
       onResumeInterrupted: canResumeInterrupted
         ? stableHandlers.onResumeInterrupted
         : undefined,
+      onRunCommand: canRunCommand ? stableHandlers.onRunCommand : undefined,
       onOpenLibraryDetail: canOpenLibraryDetail
         ? stableHandlers.onOpenLibraryDetail
         : undefined,
@@ -311,6 +320,7 @@ export function MessageListProvider({
       canStopSubagentSession,
       canOpenRemoteTask,
       canResumeInterrupted,
+      canRunCommand,
       canOpenLibraryDetail,
     ],
   )

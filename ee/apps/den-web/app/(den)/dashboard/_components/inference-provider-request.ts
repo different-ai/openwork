@@ -5,6 +5,7 @@
  * `inference-providers.ts` schemas.
  */
 
+import { isSupportedGatewayNpm, MICROSOFT_FOUNDRY_PROVIDER_ID } from "@openwork-ee/gateway-catalog";
 import { gatewayMemberSignInMethod } from "@openwork/types/den/inference";
 import type {
   GatewayAwsSsoSettings,
@@ -94,7 +95,7 @@ const accessGrantSchema: z.ZodType<GatewayAccessGrant> = z.object({
 });
 const liteLlmStatusSchema: z.ZodType<GatewayLiteLlmStatus> = z.object({
   mode: z.enum(["org", "member"]),
-  keySource: z.enum(["personal", "issued"]).nullable().catch(null),
+  keySource: z.enum(["personal", "issued", "entra"]).nullable().catch(null),
   issueStrategy: z.enum(["per_team", "mirror"]).nullable().catch(null),
   mirrorFallback: z.enum(["per_team", "error"]).nullable().catch(null),
   issuedMemberCount: z.number().catch(0),
@@ -103,36 +104,24 @@ const liteLlmStatusSchema: z.ZodType<GatewayLiteLlmStatus> = z.object({
   baseUrl: z.string().nullable(), spendTracking: z.boolean(), hasSyncKey: z.boolean(),
   lastSyncedAt: z.string().nullable(), lastSyncError: z.string().nullable(),
   modelCount: z.number(), teamCount: z.number(), connectedMemberCount: z.number(),
+  entraScope: z.string().optional().catch(undefined),
 });
 const trueFoundryStatusSchema: z.ZodType<GatewayTrueFoundryStatus> = z.object({
   controlPlaneUrl: z.string().nullable(), gatewayBaseUrl: z.string().nullable(),
-  createMissingUsers: z.boolean().catch(false), hasAdminKey: z.boolean(),
+  createMissingUsers: z.boolean().catch(false), trackUsageCosts: z.boolean().catch(false), hasAdminKey: z.boolean(),
   lastSyncedAt: z.string().nullable(), lastSyncError: z.string().nullable(),
-  modelCount: z.number(), activeMemberCount: z.number().catch(0), createdUserCount: z.number().catch(0), attentionCount: z.number().catch(0),
+  modelCount: z.number(),
+  availableModels: z.array(z.object({ id: z.string(), name: z.string() })).catch([]),
+  selectedModelIds: z.array(z.string()).nullable().catch(null),
+  activeMemberCount: z.number().catch(0), createdUserCount: z.number().catch(0), attentionCount: z.number().catch(0),
   attention: z.array(z.object({ memberId: z.string(), name: z.string().nullable(), email: z.string().nullable(), reason: z.enum(["not_in_truefoundry", "user_inactive", "token_limit", "no_models", "error"]), message: z.string().nullable() })).catch([]),
 });
 const authorizationRequestSchema: z.ZodType<GatewayAuthorizationRequest> = z.object({
   credentialSetId: z.string(), name: z.string(), authUrl: z.string(),
 });
 
-/** models.dev `npm` packages the gateway can proxy; mirrors den-api. */
-export const SUPPORTED_GATEWAY_NPM_PACKAGES = [
-  "@ai-sdk/anthropic",
-  "@ai-sdk/openai",
-  "@ai-sdk/mistral",
-  "@ai-sdk/azure",
-  "@ai-sdk/openai-compatible",
-  "@openrouter/ai-sdk-provider",
-  "@ai-sdk/google",
-  "@ai-sdk/google-vertex",
-  "@ai-sdk/google-vertex/anthropic",
-  "@ai-sdk/amazon-bedrock",
-  "@ai-sdk/amazon-bedrock/mantle",
-] as const;
-
-export function isSupportedGatewayNpm(npm: string | null): boolean {
-  return npm !== null && SUPPORTED_GATEWAY_NPM_PACKAGES.some((entry) => entry === npm);
-}
+/** Whether AI Gateway can proxy this models.dev `npm` package (the one list in @openwork-ee/gateway-catalog). */
+export { isSupportedGatewayNpm };
 
 export function isGoogleVertexNpm(npm: string | null): boolean {
   return npm === "@ai-sdk/google-vertex" || npm === "@ai-sdk/google-vertex/anthropic";
@@ -151,8 +140,8 @@ export function isAmazonBedrockNpm(npm: string | null): boolean {
   return npm === "@ai-sdk/amazon-bedrock" || npm === "@ai-sdk/amazon-bedrock/mantle";
 }
 
-/** Synthetic catalog provider for Claude on Microsoft Foundry; mirrors @openwork-ee/utils/microsoft-foundry-catalog. */
-export const MICROSOFT_FOUNDRY_PROVIDER_ID = "microsoft-foundry";
+/** Synthetic catalog provider for Claude on Microsoft Foundry. */
+export { MICROSOFT_FOUNDRY_PROVIDER_ID };
 
 export function isMicrosoftFoundryProvider(providerId: string | null): boolean {
   return providerId === MICROSOFT_FOUNDRY_PROVIDER_ID;
@@ -163,7 +152,7 @@ export function isGatewayOnlyNpm(npm: string | null, providerId: string | null =
   return npm === "@ai-sdk/amazon-bedrock/mantle" || isMicrosoftFoundryProvider(providerId);
 }
 
-/** Mirrors `isAwsRegion` in @openwork-ee/utils/inference-egress. */
+/** Mirrors `isAwsRegion` in @openwork-ee/gateway-upstreams (egress). */
 export function isAwsRegion(value: string): boolean {
   return value.length <= 32 && /^[a-z]{2}(?:-[a-z]+)+-\d{1,2}$/.test(value);
 }

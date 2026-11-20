@@ -130,7 +130,7 @@ key, with a link to create one.
   outputs, images, tools) and the answer is written back as a Responses object,
   or as Responses events when streamed (text, reasoning summaries, function
   calls, then `response.completed`). A `reasoning.effort` the model has is used
-  when the name carries no level. Code: `ee/apps/gateway/src/cursor-responses.ts`.
+  when the name carries no level. Code: `ee/packages/gateway-protocols/src/clients/cursor-responses.ts`.
   So a model works through either API, whichever its provider speaks.
 - Cursor sends tools in the flat Responses shape (`{type, name, parameters}`) to
   `/chat/completions`; they are nested under `function` first.
@@ -149,7 +149,7 @@ key, with a link to create one.
 `ANTHROPIC_BASE_URL` = `<gateway>/api/v1/claude-code`. Claude Code sends the key
 as `Authorization: Bearer` (`ANTHROPIC_AUTH_TOKEN`; `ANTHROPIC_API_KEY` stays
 empty). Code: `ee/apps/gateway/src/claude-code.ts`,
-`ee/apps/gateway/src/claude-code-messages.ts`. Public docs:
+`ee/packages/gateway-protocols/src/clients/claude-code-messages.ts`. Public docs:
 `packages/docs/ai-gateway/claude-code.mdx`.
 
 - `GET /v1/models`: the member's models in Anthropic's list shape, for Claude
