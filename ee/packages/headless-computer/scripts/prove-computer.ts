@@ -16,8 +16,8 @@ async function gatewayProvider() {
 
 async function directProvider() {
   const kind = process.env.HEADLESS_COMPUTER
-  if (kind !== "daytona" && kind !== "freestyle") throw new Error("HEADLESS_COMPUTER must be daytona or freestyle, or set SANDBOX_GATEWAY=differently")
-  const apiKey = kind === "daytona" ? process.env.DAYTONA_API_KEY : process.env.FREESTYLE_API_KEY
+  if (kind !== "daytona" && kind !== "freestyle" && kind !== "instabox") throw new Error("HEADLESS_COMPUTER must be daytona, freestyle or instabox, or set SANDBOX_GATEWAY=differently")
+  const apiKey = { daytona: process.env.DAYTONA_API_KEY, freestyle: process.env.FREESTYLE_API_KEY, instabox: process.env.INSTABOX_API_KEY }[kind]
   if (!apiKey) throw new Error(`Missing ${kind} API key`)
   return createComputerProvider({ kind, apiKey, snapshot: process.env.HEADLESS_COMPUTER_SNAPSHOT, apiUrl: process.env.DAYTONA_API_URL, target: process.env.DAYTONA_TARGET })
 }
@@ -37,7 +37,8 @@ const files: ComputerFiles = {
   },
   putPreview: async () => true,
 }
-const computers = new Computers({ provider, idlePauseMs: 1000, keepDays: 1, scope: "computer-proof" }, { files, readFile: async file => ({ text: new TextDecoder().decode(file.bytes) }) })
+// The runner keeps instabox computers until removed, so the proof does too and deletes its own in finally.
+const computers = new Computers({ provider, idlePauseMs: 1000, keepDays: 1, persistent: provider.id === "instabox", scope: "computer-proof" }, { files, readFile: async file => ({ text: new TextDecoder().decode(file.bytes) }) })
 const session = `proof-${randomUUID()}`
 try {
   const result = await computers.bash(session, "printf 'hello from shared computer' > /workspace/out/proof.txt; python3 -c 'import pandas, openpyxl; print(17*23)'", 60)

@@ -435,6 +435,19 @@ from `HEADLESS_COMPUTER_KEEP_DAYS` so paused disks can expire too. Desktop mode
 rejects container snapshots. See [Workbot's Computer tab](../../../docs/computer-use/workbot.md)
 for image preparation, shared applications and the live microVM lifecycle check.
 
+### instabox computer
+
+Build the snapshot with
+`INSTABOX_API_KEY=… pnpm --filter @openwork-ee/headless-computer snapshot:build:instabox`,
+then set `HEADLESS_COMPUTER=instabox`, `INSTABOX_API_KEY`, the printed
+`HEADLESS_COMPUTER_SNAPSHOT` and `HEADLESS_COMPUTER_PERSISTENT=true`. One snapshot
+serves both the plain computer and `HEADLESS_COMPUTER_DESKTOP=true`. instabox
+pauses a computer with its memory and cannot delete one after a period unused,
+so the runner refuses to start without `HEADLESS_COMPUTER_PERSISTENT=true`:
+computers stay until their conversation is deleted. The account's plan sets
+the size. See [Workbot's Computer tab](../../../docs/computer-use/workbot.md)
+for what the builder installs and checks.
+
 ### Sandbox gateway
 
 A sandbox gateway sits in front of several providers and is configured apart
@@ -540,5 +553,6 @@ Opt-in verification, creating and cleaning one real computer:
 ```sh
 HEADLESS_COMPUTER=daytona DAYTONA_API_KEY=… HEADLESS_COMPUTER_SNAPSHOT=… pnpm --filter @openwork-ee/headless-computer proof:live
 HEADLESS_COMPUTER=freestyle FREESTYLE_API_KEY=… pnpm --filter @openwork-ee/headless-computer proof:live
+HEADLESS_COMPUTER=instabox INSTABOX_API_KEY=… HEADLESS_COMPUTER_SNAPSHOT=… pnpm --filter @openwork-ee/headless-computer proof:live
 SANDBOX_GATEWAY=differently SANDBOX_GATEWAY_URL=… SANDBOX_GATEWAY_API_KEY=… SANDBOX_GATEWAY_TEMPLATE=… pnpm --filter @openwork-ee/headless-computer proof:live
 ```

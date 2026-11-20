@@ -30,6 +30,7 @@ COPY packages/sandbox/package.json /app/packages/sandbox/package.json
 COPY packages/sandbox-daytona/package.json /app/packages/sandbox-daytona/package.json
 COPY packages/sandbox-differently/package.json /app/packages/sandbox-differently/package.json
 COPY packages/sandbox-freestyle/package.json /app/packages/sandbox-freestyle/package.json
+COPY packages/sandbox-instabox/package.json /app/packages/sandbox-instabox/package.json
 COPY packages/types/package.json /app/packages/types/package.json
 COPY packages/workbook/package.json /app/packages/workbook/package.json
 RUN pnpm install --frozen-lockfile --filter "@openwork-ee/headless-runner..."
@@ -44,6 +45,7 @@ COPY packages/sandbox /app/packages/sandbox
 COPY packages/sandbox-daytona /app/packages/sandbox-daytona
 COPY packages/sandbox-differently /app/packages/sandbox-differently
 COPY packages/sandbox-freestyle /app/packages/sandbox-freestyle
+COPY packages/sandbox-instabox /app/packages/sandbox-instabox
 COPY packages/types /app/packages/types
 COPY packages/workbook /app/packages/workbook
 # build-desktop.mjs copies and fingerprints this asset outside its workspace.
