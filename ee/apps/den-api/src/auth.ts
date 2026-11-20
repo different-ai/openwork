@@ -1937,7 +1937,7 @@ export const auth = betterAuth({
 
           const referenceId = normalizeDenTypeId("organization", activeOrganizationId);
           // An organization that requires SSO grants MCP access only from a session signed in through its SSO.
-          const ssoBlock = await findSsoAccessBlock({ sessionId: typeof session.id === "string" ? session.id : null, organizationId: referenceId });
+          const ssoBlock = await findSsoAccessBlock({ sessionId: typeof session.id === "string" ? normalizeDenTypeId("session", session.id) : null, organizationId: referenceId });
           if (ssoBlock) {
             throw new APIError("FORBIDDEN", { message: SSO_REQUIRED_MESSAGE });
           }
