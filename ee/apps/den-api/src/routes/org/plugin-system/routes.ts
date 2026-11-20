@@ -2,12 +2,16 @@ import { declarativeDeleteSchema, declarativeResponses, externalKeyParamsSchema,
 import { findMarketplaceByExternalKey } from "./store.js"
 import type { Context, Hono } from "hono"
 import { describeRoute } from "hono-openapi"
+import { bodyLimit } from "hono/body-limit"
 import { z } from "zod"
 import { credentialPromptResponseFields, pluginConnectionKeyPrompt } from "../../../credential-prompt.js"
 import { SECURE_ENTRY_REQUIRED } from "../../../middleware/refuse-machine-secrets.js"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { queryValidator, jsonValidator, orgMemberRoute, paramValidator, resolveMemberTeamsMiddleware } from "../../../middleware/index.js"
-import { emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../../openapi.js"
+import { binaryResponse, emptyResponse, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../../openapi.js"
+import { readSkillFileBytes } from "../../../skill-file-blobs.js"
+import { skillFilesFromPayload, type SkillFileBody } from "../../../skill-files.js"
+import { SKILL_ZIP_MAX_BYTES, SkillZipError, readSkillZip, writeSkillZip } from "../../../skill-zip.js"
 import type { PermissionKey } from "@openwork/types/den/permissions"
 import type { OrgRouteVariables } from "../shared.js"
 import {
@@ -310,6 +314,36 @@ export function isAgentPluginMcpOAuthClientSetup(input: { apiKey?: string | null
   return isAgentPluginMcpSecretSetup(input)
 }
 
+/** The skill name in SKILL.md frontmatter, which Den keeps to lowercase letters, digits and hyphens. */
+function skillNameFromMarkdown(markdown: string): string | null {
+  const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(markdown)?.[1] ?? ""
+  return /^name:\s*["']?([a-z0-9-]{1,64})["']?\s*$/m.exec(frontmatter)?.[1] ?? null
+}
+
+/** The skill in an uploaded archive (multipart field `file`), and an optional `pluginName`. */
+async function uploadedSkillZip(c: OrgContext): Promise<{ skillMarkdown: string; files: SkillFileBody[]; pluginName: string | null }> {
+  if (!c.req.header("content-type")?.toLowerCase().startsWith("multipart/form-data")) {
+    throw new PluginArchRouteFailure(400, "invalid_skill_zip", "Upload the skill as multipart form data, with the .zip in a field named file.")
+  }
+  const body = await c.req.parseBody()
+  const file = body.file instanceof File ? body.file : null
+  if (!file) throw new PluginArchRouteFailure(400, "invalid_skill_zip", "Choose a .zip file of the skill.")
+  try {
+    const read = readSkillZip(Buffer.from(await file.arrayBuffer()))
+    const pluginName = typeof body.pluginName === "string" ? body.pluginName.trim().slice(0, 255) : ""
+    return { skillMarkdown: read.skillMarkdown, files: read.files, pluginName: pluginName || null }
+  } catch (error) {
+    if (error instanceof SkillZipError) throw new PluginArchRouteFailure(400, "invalid_skill_zip", error.message)
+    throw error
+  }
+}
+
+const skillZipBodyLimit = bodyLimit({
+  // The archive plus the multipart framing around it.
+  maxSize: SKILL_ZIP_MAX_BYTES + 64 * 1024,
+  onError: (c) => c.json({ error: "invalid_skill_zip", message: `A skill archive can be at most ${SKILL_ZIP_MAX_BYTES / (1024 * 1024)} MB.` }, 413),
+})
+
 function withPluginArchOrgContext(app: Hono<any>, method: "delete" | "get" | "patch" | "post" | "put", path: string, ...handlers: unknown[]) {
   const routeHandler = handlers.pop() as unknown
   const routeMiddlewares = handlers as unknown[]
@@ -487,6 +521,84 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
         const params = validParam<any>(c)
         const body = validJson<any>(c) as any
         return c.json({ ok: true, item: await createConfigObjectVersion({ configObjectId: params.configObjectId, context: actorContext(c), reason: body.reason, value: body.input }) }, 201)
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "post", pluginArchRoutePaths.configObjectSkillZip,
+    paramValidator(configObjectParamsSchema),
+    describeRoute({
+      tags: ["Config Objects"],
+      summary: "Update a skill from a ZIP archive",
+      description: "Publishes a new immutable version of an existing skill from a .zip in the layout Anthropic's Agent Skills use: SKILL.md at the root, or in one folder named after the skill. Send multipart form data with the archive in `file`. The archive's supporting files replace the skill's current ones. Up to 40 MB per archive, 500 files, 10 MB per file and 30 MB of supporting files.",
+      responses: {
+        201: jsonResponse("Skill version created from the archive.", configObjectMutationResponseSchema),
+        400: jsonResponse("The archive or the skill in it was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to update skills.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks permission to edit this skill.", forbiddenSchema),
+        404: jsonResponse("The skill could not be found.", notFoundSchema),
+        413: jsonResponse("The archive is larger than 40 MB.", invalidRequestSchema),
+      },
+    }),
+    skillZipBodyLimit,
+    async (c: OrgContext) => {
+      try {
+        const params = validParam<any>(c)
+        const context = actorContext(c)
+        const existing = await getConfigObjectDetail(context, params.configObjectId)
+        if (existing.objectType !== "skill") throw new PluginArchRouteFailure(400, "not_a_skill", "Only a skill can be updated from a ZIP archive.")
+        const upload = await uploadedSkillZip(c)
+        return c.json({
+          ok: true,
+          item: await createConfigObjectVersion({
+            configObjectId: params.configObjectId,
+            context,
+            reason: "Uploaded as a ZIP archive",
+            value: { rawSourceText: upload.skillMarkdown, normalizedPayloadJson: { files: upload.files } },
+          }),
+        }, 201)
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "get", pluginArchRoutePaths.configObjectSkillZip,
+    paramValidator(configObjectParamsSchema),
+    describeRoute({
+      tags: ["Config Objects"],
+      summary: "Download a skill as a ZIP archive",
+      description: "Returns the skill's latest version as a .zip: one folder named after the skill, holding SKILL.md and every supporting file. The layout uploads to Claude and back to OpenWork as it is.",
+      responses: {
+        200: binaryResponse("The skill as a ZIP archive, served as an attachment named after the skill.", ["application/zip"]),
+        400: jsonResponse("The config object is not a skill.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to download skills.", unauthorizedSchema),
+        403: jsonResponse("The caller cannot view this skill.", forbiddenSchema),
+        404: jsonResponse("The skill could not be found.", notFoundSchema),
+      },
+    }),
+    async (c: OrgContext) => {
+      try {
+        const params = validParam<any>(c)
+        const detail = await getConfigObjectDetail(actorContext(c), params.configObjectId)
+        const version = detail.latestVersion
+        if (detail.objectType !== "skill" || !version?.rawSourceText) throw new PluginArchRouteFailure(400, "not_a_skill", "Only a skill can be downloaded as a ZIP archive.")
+        const files: SkillFileBody[] = []
+        for (const entry of skillFilesFromPayload(version.normalizedPayloadJson)) {
+          const bytes = await readSkillFileBytes(detail.organizationId, entry)
+          if (!bytes) throw new PluginArchRouteFailure(502, "skill_file_unavailable", `The file ${entry.path} could not be read. Try again.`)
+          files.push({ path: entry.path, bytes })
+        }
+        const folder = skillNameFromMarkdown(version.rawSourceText) ?? "skill"
+        const zip = writeSkillZip({ folder, skillMarkdown: version.rawSourceText, files })
+        return new Response(new Uint8Array(zip), {
+          headers: {
+            "Content-Type": "application/zip",
+            "Content-Disposition": `attachment; filename="${folder}.zip"`,
+            "Cache-Control": "no-store",
+            "X-Content-Type-Options": "nosniff",
+          },
+        })
       } catch (error) {
         return routeErrorResponse(c, error)
       }
@@ -815,6 +927,39 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
             name: body.name,
             orgWide: body.orgWide,
             sourceRepositoryUrl: body.sourceRepositoryUrl,
+          }),
+        }, 201)
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
+    })
+
+  withPluginArchOrgContext(app, "post", pluginArchRoutePaths.pluginSkillZip,
+    describeRoute({
+      tags: ["Plugins"],
+      summary: "Import a skill from a ZIP archive",
+      description: "Creates a private plugin holding one skill from a .zip in the layout Anthropic's Agent Skills use (and Claude exports): SKILL.md at the root, or in one folder named after the skill, with any supporting files beside it. Send multipart form data with the archive in `file` and an optional `pluginName` (the skill name by default). Files of any type; up to 40 MB per archive, 500 files, 10 MB per file and 30 MB of supporting files. The skill is available to its creator at once and is not shared.",
+      responses: {
+        201: jsonResponse("Plugin and skill created from the archive.", pluginMutationResponseSchema),
+        400: jsonResponse("The archive or the skill in it was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to import skills.", unauthorizedSchema),
+        403: jsonResponse("The caller lacks permission to create plugins.", forbiddenSchema),
+        413: jsonResponse("The archive is larger than 40 MB.", invalidRequestSchema),
+      },
+    }),
+    skillZipBodyLimit,
+    async (c: OrgContext) => {
+      try {
+        const context = actorContext(c)
+        await requirePluginArchCapability(context, "plugin.create")
+        await requirePluginArchCapability(context, "config_object.create")
+        const upload = await uploadedSkillZip(c)
+        return c.json({
+          ok: true,
+          item: await createPluginBundle({
+            context,
+            name: upload.pluginName ?? skillNameFromMarkdown(upload.skillMarkdown) ?? "Imported skill",
+            components: [{ type: "skill", value: { rawSourceText: upload.skillMarkdown, normalizedPayloadJson: { files: upload.files } } }],
           }),
         }, 201)
       } catch (error) {
