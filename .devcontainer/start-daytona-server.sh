@@ -570,7 +570,7 @@ if [ "${RUN_SEED:-0}" = "1" ]; then
 fi
 
 den_web_marker=.openwork-daytona/den-web-build.tree
-den_web_key="$(build_key HEAD:packages/ui HEAD:ee/packages/utils HEAD:ee/apps/den-web)"
+den_web_key="$(build_key HEAD:packages/ui HEAD:ee/packages/utils HEAD:ee/packages/gateway-catalog HEAD:ee/apps/den-web)"
 if [ -n "$den_web_key" ] && [ -d ee/apps/den-web/.next ] && [ -f "$den_web_marker" ] \
   && [ "$(cat "$den_web_marker")" = "$den_web_key" ]; then
   echo "==> Skipping Den Web build (baked build matches this ref)."

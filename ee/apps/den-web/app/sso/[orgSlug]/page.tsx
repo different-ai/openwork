@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { DenStatusScreen } from "../../../components/den-status-screen";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { getSocialCallbackUrl, requestJson } from "../../(den)/_lib/den-flow";
 
@@ -40,6 +40,7 @@ export default function OrganizationSsoSignInPage() {
   const [attempt, setAttempt] = useState(0);
   const [choices, setChoices] = useState<{ organizationName: string; providers: SsoProviderOption[] } | null>(null);
   const [chosenProviderId, setChosenProviderId] = useState<string | null>(null);
+  const startRequests = useRef(new Map<string, ReturnType<typeof requestJson>>());
   const orgSlug = typeof params?.orgSlug === "string" ? params.orgSlug : "";
 
   const callbackURL = useMemo(() => searchParams.get("callbackURL") || getSocialCallbackUrl(), [searchParams]);
@@ -66,19 +67,28 @@ export default function OrganizationSsoSignInPage() {
           providerId = options?.providers[0]?.providerId ?? null;
         }
 
-        const { response, payload } = await requestJson("/api/auth/sign-in/sso", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
-          body: JSON.stringify({
-            ...(providerId ? { providerId } : { organizationSlug: orgSlug }),
-            callbackURL,
-            errorCallbackURL,
-            loginHint,
-          }),
-        });
+        // React StrictMode runs this effect twice in dev. A second sign-in/sso
+        // call overwrites the OAuth state cookie and the callback then fails
+        // with state_mismatch, so both runs share one request.
+        const requestKey = JSON.stringify([orgSlug, providerId, callbackURL, errorCallbackURL, loginHint, attempt]);
+        let startRequest = startRequests.current.get(requestKey);
+        if (!startRequest) {
+          startRequest = requestJson("/api/auth/sign-in/sso", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "application/json",
+            },
+            body: JSON.stringify({
+              ...(providerId ? { providerId } : { organizationSlug: orgSlug }),
+              callbackURL,
+              errorCallbackURL,
+              loginHint,
+            }),
+          });
+          startRequests.current.set(requestKey, startRequest);
+        }
+        const { response, payload } = await startRequest;
 
         if (!response.ok) {
           throw new Error(

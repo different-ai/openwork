@@ -19,7 +19,7 @@
  *   so OpenWork keeps exactly one per person and reuses it.
  */
 import { createHash, randomBytes } from "node:crypto"
-import { createInferenceEgressFetch, validateInferenceUrl } from "@openwork-ee/utils/inference-egress"
+import { createInferenceEgressFetch, validateInferenceUrl } from "@openwork-ee/gateway-upstreams"
 import type { ModelsDevProvider } from "./models-dev.js"
 import { matchTrueFoundryModel, trueFoundryModelConfig } from "./truefoundry-models.js"
 

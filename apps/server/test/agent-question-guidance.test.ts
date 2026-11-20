@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { askDescription, questionToolDefinition, questionWritingGuidance } from "../src/opencode-plugins/openwork-agent-questions";
 import { OpenWorkCapabilitiesKnowledge } from "../src/opencode-plugins/openwork-capabilities-knowledge";
 
-test("the engine's question tool and ask_without_waiting both ask for one short sentence", async () => {
+test("the engine's question tool and ask_without_waiting both ask for short questions", async () => {
   const hooks = await OpenWorkCapabilitiesKnowledge();
   const question = { description: "Ask the user a question." };
   await hooks["tool.definition"]({ toolID: "question" }, question);

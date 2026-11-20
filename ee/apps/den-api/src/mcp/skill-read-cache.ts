@@ -35,6 +35,11 @@ export function isSkillDocumentUri(uri: string | null): uri is string {
   return typeof uri === "string" && /^skill:\/\/[^/]+\/SKILL\.md$/.test(uri)
 }
 
+/** A file under a skill other than its SKILL.md: a supporting file, if the skill has it. */
+export function isSkillFileUri(uri: string | null): uri is string {
+  return typeof uri === "string" && /^skill:\/\/[^/]+\/.+$/.test(uri) && !isSkillDocumentUri(uri)
+}
+
 function entryKey(key: SkillReadKey) {
   return `${key.organizationId}\u0000${key.userId}\u0000${key.uri}`
 }

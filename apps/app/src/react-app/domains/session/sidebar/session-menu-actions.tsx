@@ -1,4 +1,4 @@
-import { Archive, ArchiveRestore, Columns2, FolderPlus, Pencil, Pin, PinOff, Tag, Trash2 } from "lucide-react";
+import { Archive, ArchiveRestore, Columns2, FolderPlus, Pencil, Pin, PinOff, Tag, Trash2, X } from "lucide-react";
 
 import type { MenuAction } from "@/components/ui/action-menu-model";
 import { getDisplaySessionTitle } from "@/app/lib/session-title";
@@ -75,6 +75,43 @@ export function buildSessionMenuActions(options: GroupActionsOptions & {
   if (options.onDelete) actions.push({ type: "separator" }, {
     type: "item", id: "delete", label: t("workspace_list.delete_session"), icon: <Trash2 className="size-4" />,
     variant: "destructive", onSelect: options.onDelete,
+  });
+  return actions;
+}
+
+export function buildSelectedSessionsMenuActions(options: {
+  count: number;
+  archivedCount: number;
+  pinnedCount: number;
+  onArchive?: (archived: boolean) => void;
+  onPin: (pinned: boolean) => void;
+  group?: Omit<GroupActionsOptions, "assignedGroupId" | "onCreateGroup">;
+  onClear: () => void;
+}): MenuAction[] {
+  const { count } = options;
+  const allArchived = options.archivedCount === count;
+  const allPinned = options.pinnedCount === count;
+  const actions: MenuAction[] = [{
+    type: "item", id: "selection-pin",
+    label: allPinned ? t("session_management.unpin_sessions", { count }) : t("session_management.pin_sessions", { count: count - options.pinnedCount }),
+    icon: allPinned ? <PinOff className="size-4" /> : <Pin className="size-4" />,
+    onSelect: () => options.onPin(!allPinned),
+  }];
+  if (options.group) actions.push({
+    type: "item", id: "selection-move-to-group", label: t("session_management.move_to_group"), icon: <Tag className="size-4" />,
+    submenu: buildSessionGroupActions({ ...options.group, assignedGroupId: null }), submenuClassName: { dropdown: "w-52" },
+  });
+  const onArchive = options.onArchive;
+  if (onArchive) actions.push({
+    type: "item", id: "selection-archive",
+    label: allArchived ? t("session_management.unarchive_sessions", { count }) : t("session_management.archive_sessions", { count: count - options.archivedCount }),
+    icon: allArchived ? <ArchiveRestore className="size-4" /> : <Archive className="size-4" />,
+    dataAttributes: { "data-session-selection-archive": true },
+    onSelect: () => onArchive(!allArchived),
+  });
+  actions.push({ type: "separator" }, {
+    type: "item", id: "selection-clear", label: t("session_management.clear_selection"), icon: <X className="size-4" />,
+    onSelect: options.onClear,
   });
   return actions;
 }

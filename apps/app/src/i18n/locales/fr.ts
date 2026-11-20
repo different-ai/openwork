@@ -2579,10 +2579,4 @@ export default {
   "claude_import.cowork_title": "Tâches Cowork",
   "claude_import.cowork_state": "Non incluses dans l'export de Claude. Enregistrez les fichiers dont vous avez besoin depuis chaque tâche.",
   "claude_import.learn_more": "En savoir plus",
-  "context_panel.host_execution": "Exécuter les outils sur cet ordinateur",
-  "context_panel.host_execution_desc": "Désactivez pour n'exécuter les commandes et fichiers de l'agent que dans un sandbox local. S'applique à tous les espaces de travail de cet appareil.",
-  "context_panel.host_execution_sandbox_only": "Sandbox uniquement. Applications, navigateur et serveurs MCP bloqués.",
-  "context_panel.host_execution_managed": "Désactivé par votre organisation. Un administrateur peut le modifier dans les permissions de l'agent.",
-  "context_panel.host_execution_sandbox_unavailable": "Le sandbox n'est pas disponible pour ce compte : les agents ne peuvent donc pas exécuter d'outils tant que ceci est désactivé.",
-  "context_panel.host_execution_saved": "Enregistré. S'applique à partir de votre prochain message.",
 } as const;

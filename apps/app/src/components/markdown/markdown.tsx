@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, memo, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 
 import {
   Dialog,
@@ -7,6 +7,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { markFeatureUsed } from "@/app/lib/den";
 import { desktopBridge } from "@/app/lib/desktop";
 import { isElectronRuntime } from "@/app/lib/runtime-env";
 import { useOpenTargets } from "@/lib/target-provider";
@@ -18,6 +19,7 @@ import { openTargetForHref, openTargetFromLocalPath, planFileOpen, resolveCollec
 
 import { applyTextHighlights } from "./text-highlights";
 import {
+  CODE_RUN_BUTTON_HTML,
   createStreamingMarkdownRenderer,
   hasFencedCodeBlock,
   renderHighlightedMarkdownHtml,
@@ -37,6 +39,21 @@ import { enhanceNearViewport } from "./near-viewport";
 export { renderHighlightedMarkdownHtml, renderMarkdownHtml } from "./markdown-primitive";
 
 const CODE_COPY_RESET_DELAY_MS = 2000;
+const CODE_RUN_RESET_DELAY_MS = 2000;
+
+function syncCodeRunButtons(root: HTMLElement, runnable: boolean) {
+  for (const block of root.querySelectorAll("[data-openwork-code-run]")) {
+    const existing = block.querySelector(":scope > [data-openwork-code-run-button]");
+    if (!runnable) existing?.remove();
+    else if (!existing) block.insertAdjacentHTML("afterbegin", CODE_RUN_BUTTON_HTML);
+  }
+}
+
+const MarkdownTableExpandContext = createContext(false);
+
+export function MarkdownTableExpand({ enabled, children }: { enabled: boolean; children: ReactNode }) {
+  return <MarkdownTableExpandContext.Provider value={enabled}>{children}</MarkdownTableExpandContext.Provider>;
+}
 
 type MarkdownBlockInnerProps = {
   className?: string;
@@ -47,6 +64,7 @@ type MarkdownBlockInnerProps = {
   highlightQuery?: string;
   /** Text-first rail: GitHub pull request and issue links show their mark. */
   githubReferences?: boolean;
+  onRunCommand?: (command: string) => void;
 } & Omit<
   React.ComponentProps<"div">,
   "ref" | "className" | "children" | "dangerouslySetInnerHTML"
@@ -68,6 +86,7 @@ function MarkdownBlockInner({
   sessionReferences = false,
   highlightQuery,
   githubReferences = false,
+  onRunCommand,
   ...props
 }: MarkdownBlockInnerProps) {
   const rootRef = useRef<HTMLDivElement>(null);
@@ -93,9 +112,12 @@ function MarkdownBlockInner({
   const [linkMenu, setLinkMenu] = useState<{ target: OpenTarget; anchor: HTMLElement } | null>(null);
   useEffect(() => setLinkMenu(null), [client, workspaceId, workspaceRoot]);
   const [imagePreview, setImagePreview] = useState<{ src: string; alt: string } | null>(null);
+  const tableExpand = useContext(MarkdownTableExpandContext);
+  const [expandedTableMarkdown, setExpandedTableMarkdown] = useState<string | null>(null);
   const references = useSessionReferencesMaybe();
   const untrusted = useUntrustedMarkdown();
   const presentation = untrusted ? "remote" : "chat";
+  const runCommand = onRunCommand && !untrusted && !streaming ? onRunCommand : null;
   const resolveReference = sessionReferences && !untrusted ? references?.resolve : undefined;
   const streamingRenderer = useMemo(() => createStreamingMarkdownRenderer(presentation, resolveReference), [presentation, resolveReference]);
   const streamedBlocks = useMemo(
@@ -215,14 +237,16 @@ function MarkdownBlockInner({
 
       applyTextHighlights(root, highlightQuery ?? "");
       syncCodeWrapStates();
+      syncCodeRunButtons(root, runCommand !== null);
     });
-  }, [highlightQuery, rendered]);
+  }, [highlightQuery, rendered, runCommand]);
 
   useEffect(() => {
     const root = rootRef.current;
     if (!root || !githubReferences) return;
     decorateGitHubReferences(root);
   }, [githubReferences, rendered]);
+
 
   useEffect(() => {
     const root = rootRef.current;
@@ -374,6 +398,16 @@ function MarkdownBlockInner({
     const handleClick = (event: MouseEvent) => {
       if (!(event.target instanceof Element) || handleSessionReference(event)) return;
 
+      const tableExpandButton = event.target.closest("[data-openwork-table-expand]");
+      if (tableExpandButton instanceof HTMLButtonElement) {
+        event.preventDefault();
+        event.stopPropagation();
+        if (!tableExpand) return;
+        setExpandedTableMarkdown(tableExpandButton.dataset.openworkTableExpand || null);
+        try { markFeatureUsed("chatTableExpand"); } catch {}
+        return;
+      }
+
       const copyButton = event.target.closest("[data-openwork-code-copy]");
       if (copyButton instanceof HTMLButtonElement) {
         event.preventDefault();
@@ -382,6 +416,23 @@ function MarkdownBlockInner({
         const codeBlock = copyButton.closest("[data-openwork-code-block]");
         const code = codeBlock?.querySelector("code");
         void handleCopy(copyButton, code?.textContent ?? "");
+        return;
+      }
+
+      const runButton = event.target.closest("[data-openwork-code-run-button]");
+      if (runButton instanceof HTMLButtonElement) {
+        event.preventDefault();
+        event.stopPropagation();
+        const command = runButton.closest("[data-openwork-code-block]")?.getAttribute("data-openwork-code-run");
+        if (!command || !runCommand || runButton.disabled) return;
+        runCommand(command);
+        runButton.disabled = true;
+        const label = runButton.querySelector("[data-openwork-code-run-label]");
+        if (label) label.textContent = "Sent";
+        window.setTimeout(() => {
+          runButton.disabled = false;
+          if (label) label.textContent = "Run";
+        }, CODE_RUN_RESET_DELAY_MS);
         return;
       }
 
@@ -508,13 +559,17 @@ function MarkdownBlockInner({
       root.removeEventListener("contextmenu", handleContextMenu);
       root.removeEventListener("keydown", handleKeyDown);
     };
-  }, [handleCopy, onOpenTarget, targetAt, rendered, references, resolveReference, sessionReferences]);
+  }, [handleCopy, onOpenTarget, targetAt, rendered, references, resolveReference, sessionReferences, runCommand, tableExpand]);
 
   if (isEmpty) {
     return null;
   }
 
-  const rootClassName = cn("markdown-content max-w-none select-text text-foreground", className);
+  const rootClassName = cn(
+    "markdown-content max-w-none select-text text-foreground",
+    !tableExpand && "[&_[data-openwork-table-expand]]:hidden",
+    className,
+  );
 
   return (
     <>
@@ -545,6 +600,24 @@ function MarkdownBlockInner({
         />
       ) : null}
       <MermaidZoomPortals diagrams={mermaidDiagrams} />
+      <Dialog
+        open={expandedTableMarkdown !== null}
+        onOpenChange={(open) => {
+          if (!open) setExpandedTableMarkdown(null);
+        }}
+      >
+        <DialogContent className="block max-h-[90vh] overflow-auto pt-14 lg:w-[min(96vw,1400px)] lg:max-w-[min(96vw,1400px)] lg:rounded-3xl">
+          <DialogTitle className="sr-only">Table</DialogTitle>
+          {expandedTableMarkdown ? (
+            <MarkdownBlock
+              text={expandedTableMarkdown}
+              sessionReferences={sessionReferences}
+              githubReferences={githubReferences}
+              className="text-sm [&_[data-openwork-table-expand]]:hidden [&_[data-openwork-table]]:my-0"
+            />
+          ) : null}
+        </DialogContent>
+      </Dialog>
       <Dialog
         open={imagePreview !== null}
         onOpenChange={(open) => {

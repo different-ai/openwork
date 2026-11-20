@@ -171,6 +171,10 @@ jobs:
             printf 'Automatic merge withheld: PR is no longer an open, ready revert targeting dev.\n' >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
+          if [[ "$(gh api "repos/$GITHUB_REPOSITORY" --jq .allow_auto_merge)" != "true" ]]; then
+            printf 'Approved verified head %s; auto-merge is off for this repository, so a maintainer merges.\n' "$HEAD_SHA" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           gh pr merge "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" \
             --auto --squash --match-head-commit "$HEAD_SHA"
           printf 'Automatic merge requested for verified head %s; GitHub enforces required checks and reviews.\n' "$HEAD_SHA" >> "$GITHUB_STEP_SUMMARY"

@@ -2,6 +2,7 @@ import type { CallToolResult, McpServer, ToolAnnotations } from "@modelcontextpr
 import { z } from "zod"
 import type { RemoteSkillDescriptor } from "./marketplace-capabilities.js"
 import { tokenize } from "./search.js"
+import { skillFileMimeType, type SkillFile } from "../skill-files.js"
 
 /**
  * Direct skill tools for the `/mcp/agent` endpoint.
@@ -42,7 +43,16 @@ export const LIST_SKILLS_OUTPUT_SCHEMA = z.object({
 
 export const GET_SKILL_OUTPUT_SCHEMA = remoteSkillDescriptorSchema.extend({
   provenance: z.string().optional().describe("Source or attribution information for the skill, when available."),
-  content: z.string().describe("Complete authorized SKILL.md with normalized name and description frontmatter followed by the source instructions."),
+  content: z.string().describe("Complete authorized SKILL.md with normalized name and description frontmatter followed by the source instructions; with file, that file's text instead."),
+  files: z.array(z.object({
+    path: z.string().describe("Path relative to the skill's folder; pass it as file to read it."),
+    size: z.number().int().nonnegative().describe("Size in bytes."),
+  })).optional().describe("The skill's supporting files (references, scripts, templates), when it has any."),
+  filesNote: z.string().optional().describe("How to read the supporting files: the note the text response ends with, for clients that show structured content instead of text."),
+  file: z.object({
+    path: z.string().describe("The supporting file that content holds."),
+    mimeType: z.string().describe("Its media type."),
+  }).optional().describe("Present when a supporting file was read instead of SKILL.md."),
 })
 
 export type ListSkillsPayload = z.infer<typeof LIST_SKILLS_OUTPUT_SCHEMA>
@@ -55,7 +65,7 @@ export type GetSkillPayload = z.infer<typeof GET_SKILL_OUTPUT_SCHEMA>
  * `blocked` carries the readiness hint and the action that unblocks it.
  */
 export type RemoteSkillSource =
-  | { content: string; provenance?: string }
+  | { content: string; provenance?: string; files?: SkillFile[] }
   | { blocked: { status: string; message: string; action: unknown } }
   | null
 
@@ -126,7 +136,16 @@ function jsonText(value: unknown): CallToolResult["content"] {
   return [{ type: "text", text: JSON.stringify(value, null, 2) }]
 }
 
-function skillErrorResult(error: "unknown_skill" | "skill_unavailable" | "skill_needs_setup", name: string, message: string, extra: Record<string, unknown> = {}): CallToolResult {
+/** Tells the model which files came with the skill and how to read one; empty when there are none. */
+export function supportingFilesNote(skill: RemoteSkillDescriptor, files: readonly { path: string }[]): string {
+  if (files.length === 0) return ""
+  return [
+    `Supporting files of this skill. Paths in the skill are relative to its folder. Read one with get_skill ${JSON.stringify({ name: skill.capability, file: "<path>" })}:`,
+    ...files.map((entry) => `- ${entry.path}`),
+  ].join("\n")
+}
+
+function skillErrorResult(error: "unknown_skill" | "unknown_skill_file" | "skill_unavailable" | "skill_needs_setup", name: string, message: string, extra: Record<string, unknown> = {}): CallToolResult {
   return {
     isError: true,
     content: jsonText({ error, name, message, ...extra }),
@@ -137,8 +156,8 @@ export function registerAgentSkillCatalogTools(input: {
   server: McpServer
   /** Every skill the calling member may use right now, built-in and marketplace alike. */
   listSkills: () => Promise<RemoteSkillDescriptor[]>
-  /** The authorized SKILL.md source for one listed skill. */
-  readSkill: (skill: RemoteSkillDescriptor) => Promise<RemoteSkillSource>
+  /** The authorized SKILL.md source for one listed skill, with its supporting files; `file` is set when the call reads one of them. */
+  readSkill: (skill: RemoteSkillDescriptor, read: { file?: string }) => Promise<RemoteSkillSource>
 }) {
   input.server.registerTool(
     LIST_SKILLS_TOOL_NAME,
@@ -180,15 +199,17 @@ export function registerAgentSkillCatalogTools(input: {
         "Read one skill's authorized SKILL.md by its name or exact capability, as returned by list_skills or the skill index.",
         "Read-only; requires an active OpenWork membership and access to the skill. The text response is the complete SKILL.md; read it fully before following it.",
         "Structured content returns the skill descriptor plus content (the complete normalized SKILL.md) and optional provenance; it does not execute the instructions.",
+        "A skill may come with supporting files such as references/GUIDE.md; they are listed after the SKILL.md and in files. Pass file with one of those paths to read it.",
         "Returns unknown_skill for missing or ambiguous references, skill_unavailable if the source is gone, or skill_needs_setup with status and action when a required connection is not ready. Call list_skills for an exact name or capability.",
       ].join(" "),
       annotations: SKILL_TOOL_ANNOTATIONS,
       inputSchema: z.object({
         name: z.string().trim().min(1).max(512).describe("The skill name (e.g. create-skill) or its exact capability (e.g. skill:create-skill or plugin:<pluginId>:<configObjectId>)."),
+        file: z.string().trim().min(1).max(255).optional().describe("A supporting file of the skill to read instead of SKILL.md, as a path relative to the skill's folder (e.g. references/GUIDE.md)."),
       }),
       outputSchema: GET_SKILL_OUTPUT_SCHEMA,
     },
-    async ({ name }) => {
+    async ({ name, file }) => {
       const skills = await input.listSkills()
       const plainMatches = findRemoteSkill(skills, name) ? [] : findRemoteSkillsByPlainName(skills, name)
       if (plainMatches.length > 1) {
@@ -200,19 +221,39 @@ export function registerAgentSkillCatalogTools(input: {
       if (!skill) {
         return skillErrorResult("unknown_skill", name, `No skill named "${name}" is available to you. Call list_skills for the exact name or capability.`)
       }
-      const source = await input.readSkill(skill)
+      const source = await input.readSkill(skill, { ...(file ? { file } : {}) })
       if (source && "blocked" in source) {
         return skillErrorResult("skill_needs_setup", name, source.blocked.message, { status: source.blocked.status, action: source.blocked.action })
       }
       if (!source) {
         return skillErrorResult("skill_unavailable", name, `Skill "${skill.name}" is no longer available. Call list_skills for the current catalog.`)
       }
+      const files = (source.files ?? []).map((entry) => ({ path: entry.path, size: Buffer.byteLength(entry.text, "utf8") }))
+      if (file) {
+        const wanted = file.replace(/^\.\//, "")
+        const match = source.files?.find((entry) => entry.path === wanted)
+        if (!match) {
+          return skillErrorResult("unknown_skill_file", name, files.length > 0
+            ? `Skill "${skill.name}" has no file "${file}". Pass one of the listed paths.`
+            : `Skill "${skill.name}" has no supporting files.`, { files: files.map((entry) => entry.path) })
+        }
+        const filePayload: GetSkillPayload = {
+          ...describeRemoteSkill(skill),
+          content: match.text,
+          file: { path: match.path, mimeType: skillFileMimeType(match.path) },
+        }
+        return { content: [{ type: "text", text: match.text }], structuredContent: filePayload }
+      }
       const payload: GetSkillPayload = {
         ...describeRemoteSkill(skill),
         ...(source.provenance ? { provenance: source.provenance } : {}),
         content: standardSkillMarkdown(skill, source.content),
+        // Many clients show the model structured content instead of the text,
+        // so the note rides here too; content stays the exact SKILL.md.
+        ...(files.length > 0 ? { files, filesNote: supportingFilesNote(skill, files) } : {}),
       }
-      return { content: [{ type: "text", text: payload.content }], structuredContent: payload }
+      const text = payload.filesNote ? `${payload.content}\n\n---\n${payload.filesNote}` : payload.content
+      return { content: [{ type: "text", text }], structuredContent: payload }
     },
   )
 }

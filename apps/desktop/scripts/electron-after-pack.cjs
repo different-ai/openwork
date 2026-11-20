@@ -61,6 +61,12 @@ function normalizeAsarEntryPath(entry, separator) {
   return entry.split(separator).join("/");
 }
 
+// @electron/asar looks up nested entries by host separators only, so a
+// forward-slash path below the archive root is not found on Windows.
+function asarLookupPath(file) {
+  return file.split("/").join(path.sep);
+}
+
 function verifyRuntimeDependencies(context) {
   const appAsarPath = resolveAppAsarPath(context);
   if (!appAsarPath || !fs.existsSync(appAsarPath)) {
@@ -121,8 +127,8 @@ function verifyPackagedSandboxDependencies(appAsarPath, packagedFiles, context) 
         throw new Error(`Missing unpacked microsandbox runtime asset: ${file}`);
       }
     }
-    const sdk = JSON.parse(asar.extractFile(appAsarPath, "node_modules/microsandbox/package.json"));
-    const native = JSON.parse(asar.extractFile(appAsarPath, `${nativeRoot}/package.json`));
+    const sdk = JSON.parse(asar.extractFile(appAsarPath, asarLookupPath("node_modules/microsandbox/package.json")));
+    const native = JSON.parse(asar.extractFile(appAsarPath, asarLookupPath(`${nativeRoot}/package.json`)));
     if (sdk.version !== native.version || sdk.optionalDependencies[native.name] !== native.version) {
       throw new Error("Packaged microsandbox SDK and native runtime versions do not match.");
     }
@@ -135,7 +141,8 @@ function verifyPackagedSandboxDependencies(appAsarPath, packagedFiles, context) 
     for (const entry of packagedFiles) {
       if (!/^\/(?:server\/|node_modules\/)/.test(entry)) continue;
       const file = entry.slice(1);
-      const info = asar.statFile(appAsarPath, file, false);
+      const archiveFile = asarLookupPath(file);
+      const info = asar.statFile(appAsarPath, archiveFile, false);
       const destination = path.join(extracted, file);
       if ("link" in info) {
         // ASAR links are archive-root-relative, not relative to the alias.
@@ -143,19 +150,19 @@ function verifyPackagedSandboxDependencies(appAsarPath, packagedFiles, context) 
         const target = path.resolve(extracted, info.link);
         const relativeTarget = path.relative(extracted, target);
         if (path.isAbsolute(relativeTarget) || relativeTarget === ".." || relativeTarget.startsWith(`..${path.sep}`)) throw new Error(`Packaged runtime link escapes archive: ${file}`);
-        const resolved = asar.statFile(appAsarPath, file);
+        const resolved = asar.statFile(appAsarPath, archiveFile);
         fs.mkdirSync(path.dirname(destination), { recursive: true });
         if ("files" in resolved) {
           fs.symlinkSync(process.platform === "win32" ? target : path.relative(path.dirname(destination), target), destination, process.platform === "win32" ? "junction" : "dir");
         } else if (/\.(?:[cm]?js|json)$/.test(file)) {
-          fs.writeFileSync(destination, asar.extractFile(appAsarPath, file));
+          fs.writeFileSync(destination, asar.extractFile(appAsarPath, archiveFile));
         }
         continue;
       }
       // Package directories such as ipaddr.js also have JavaScript suffixes.
       if ("files" in info || !/\.(?:[cm]?js|json)$/.test(file)) continue;
       fs.mkdirSync(path.dirname(destination), { recursive: true });
-      fs.writeFileSync(destination, asar.extractFile(appAsarPath, file));
+      fs.writeFileSync(destination, asar.extractFile(appAsarPath, archiveFile));
     }
     const result = spawnSync(process.execPath, ["--experimental-import-meta-resolve", path.join(__dirname, "packaged-runtime-dependencies.mjs"), extracted], { encoding: "utf8", env: { ...process.env, NODE_PATH: "", NODE_OPTIONS: "" } });
     if (result.error) throw result.error;
@@ -166,7 +173,7 @@ function verifyPackagedSandboxDependencies(appAsarPath, packagedFiles, context) 
 }
 
 function verifyPackagedSandboxImage(appAsarPath, arch) {
-  const lock = JSON.parse(asar.extractFile(appAsarPath, "server/dist/packaged-sandbox-image.json"));
+  const lock = JSON.parse(asar.extractFile(appAsarPath, asarLookupPath("server/dist/packaged-sandbox-image.json")));
   const imageRoot = path.join(path.dirname(appAsarPath), "sandbox-image");
   const metadata = JSON.parse(fs.readFileSync(path.join(imageRoot, "manifest.json"), "utf8"));
   const digest = lock.manifests[arch];
@@ -230,7 +237,11 @@ async function signMicrosandboxRuntime(context, { spawn = spawnSync } = {}) {
   }
   if (!identity && process.env.MACOS_NOTARIZE === "true") throw new Error("A Developer ID identity is required to sign the microsandbox runtime.");
   identity ||= "-";
-  const args = ["--force", "--options", "runtime", "--entitlements", path.resolve(__dirname, "../build/entitlements.microsandbox.mac.plist"), "--sign", identity];
+  // An ad-hoc signature has no Team ID, so the hardened runtime refuses to load
+  // the runtime's own firmware library ("different Team IDs") and no sandbox
+  // can start. Developer ID builds share one team and keep library validation.
+  const entitlements = identity === "-" ? "entitlements.microsandbox.adhoc.mac.plist" : "entitlements.microsandbox.mac.plist";
+  const args = ["--force", "--options", "runtime", "--entitlements", path.resolve(__dirname, "../build", entitlements), "--sign", identity];
   if (keychain) args.push("--keychain", keychain);
   if (identity !== "-") args.push("--timestamp");
   args.push(executable);

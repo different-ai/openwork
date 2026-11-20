@@ -1,5 +1,5 @@
 /** @jsxImportSource react */
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import type { Agent } from "@opencode-ai/sdk/v2/client";
 
 import type { CloudImportedPlugin } from "@/app/cloud/import-state";
@@ -12,6 +12,7 @@ import { presentOpencodeSessionError, type OpencodeSessionErrorPresentation } fr
 import type { ComposerSettingsSection } from "@/react-app/domains/settings/library";
 import { ReactSessionComposer } from "@/react-app/domains/session/surface/composer/composer";
 import { WorkspaceRunModeMenu } from "@/react-app/domains/session/surface/composer/workspace-run-mode-menu";
+import { WorkspaceSandboxModePill } from "@/react-app/domains/session/surface/composer/sandbox-mode-pill";
 import {
   snapshotComposerSessionState,
   persistableComposerDraftText,
@@ -85,6 +86,7 @@ export type NewTaskComposerContext = {
 
 export type NewTaskComposerProps = {
   flush?: boolean;
+  initialComposer?: ComposerSessionState;
   draft: string;
   onDraftChange: (value: string) => void;
   /** Called with a non-empty draft and in-memory attachments; the caller creates the session (and workspace if needed). */
@@ -96,6 +98,7 @@ export type NewTaskComposerProps = {
   /** Disable submission while a default workspace is being prepared. */
   busy: boolean;
   context: NewTaskComposerContext | null;
+  sandboxModeControl?: ReactNode;
 };
 
 export type NewTaskComposerHandoff = {
@@ -139,7 +142,7 @@ const FALLBACK_MODEL: ModelRef = { providerID: "", modelID: "" };
 export function NewTaskComposer(props: NewTaskComposerProps) {
   const context = props.context;
   const draftOwnerKey = context?.draftOwnerKey ?? "legacy";
-  const [initialState] = useState(() => context?.draftOwnerKey ? useComposerStateStore.getState().sessions[draftOwnerKey] : undefined);
+  const [initialState] = useState(() => props.initialComposer ?? (context?.draftOwnerKey ? useComposerStateStore.getState().sessions[draftOwnerKey] : undefined));
   const [mentions, setMentions] = useState<Record<string, ComposerMentionKind>>(initialState?.mentions ?? {});
   const [attachments, setAttachments] = useState<ComposerAttachment[]>(initialState?.attachments ?? []);
   const [skills, setSkills] = useState<SkillCard[]>([]);
@@ -535,6 +538,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
         }}
       /> : null}
       runModeControl={<WorkspaceRunModeMenu client={workspaceClient} workspaceId={workspaceId} busy={props.busy} />}
+      sandboxModeControl={props.sandboxModeControl ?? <WorkspaceSandboxModePill client={workspaceClient} workspaceId={workspaceId} onOpenPermissions={() => context?.onOpenSettingsSection?.("permissions")} />}
       draft={props.draft}
       mentions={mentions}
       onDraftChange={handleDraftChange}

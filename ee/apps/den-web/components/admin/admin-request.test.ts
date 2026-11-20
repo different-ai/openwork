@@ -44,3 +44,22 @@ test("structured release-verification messages survive the browser proxy and adm
     assert.equal(requested.message, payload.message);
   }
 });
+
+test("an admin 403 says why Den refused it", async (context) => {
+  let payload: unknown = null;
+  context.mock.method(globalThis, "fetch", async () => Response.json(payload, { status: 403 }));
+  const cases: Array<[unknown, string]> = [
+    [{ error: "forbidden" }, "This account is not on the OpenWork admin allowlist."],
+    [{ error: "admin_email_unverified" }, "This account's email address is not verified. Verify it, then retry."],
+    [{ error: "admin_email_required" }, "This account has no email address to check against the admin allowlist."],
+    [{ error: "independent_approval_required", message: "Another admin must approve this change." }, "Another admin must approve this change."],
+  ];
+  for (const [body, message] of cases) {
+    payload = body;
+    const requested = await requestAdmin("/v1/admin/features", () => true);
+    assert.equal(requested.access, "forbidden");
+    assert.equal(requested.access === "forbidden" ? requested.message : null, message);
+    const sent = await sendAdmin("/v1/admin/features", "POST", {});
+    assert.equal(sent.ok ? null : sent.message, message);
+  }
+});

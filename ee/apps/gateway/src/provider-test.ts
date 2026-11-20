@@ -3,11 +3,9 @@
 // the gateway sends one short prompt the same way it would forward a member's
 // request, and answers whether the provider replied. Nothing is stored or logged
 // as usage, and the upstream body never reaches the caller.
-import { BEDROCK_MANTLE_DEFAULT_API_PATH } from "@openwork-ee/utils/bedrock-mantle-catalog"
-import { bedrockMantleHost, bedrockRuntimeHost, inferenceEgressAllowedOrigins, isAwsRegion, isPublicInferenceAddress, validateInferenceUrl } from "@openwork-ee/utils/inference-egress"
-import type { InferenceAddressResolver } from "@openwork-ee/utils/inference-egress"
-import { isInferenceCredentialKindSupported, pickInferenceApiKeyFromMap } from "@openwork-ee/utils/inference-credentials"
-import { PROVIDER_TEST_SIGNATURE_HEADER, verifyProviderTestSignature } from "@openwork-ee/utils/provider-test-signature"
+import { BEDROCK_MANTLE_DEFAULT_API_PATH, isInferenceCredentialKindSupported, pickInferenceApiKeyFromMap, gatewayCustomCatalogProvider } from "@openwork-ee/gateway-catalog"
+import { bedrockMantleHost, bedrockRuntimeHost, inferenceEgressAllowedOrigins, isAwsRegion, isPublicInferenceAddress, validateInferenceUrl, PROVIDER_TEST_SIGNATURE_HEADER, verifyProviderTestSignature, bedrockMantleService, bedrockService, signAwsRequest, buildAuthHeader, classifyProtocolFamily, defaultBaseUrl, vertexPublisherBase } from "@openwork-ee/gateway-upstreams"
+import type { InferenceAddressResolver, AwsCredentials, MintGcpAccessToken, ProtocolFamily } from "@openwork-ee/gateway-upstreams"
 import { GATEWAY_PROVIDER_CREDENTIAL_KINDS, parseGatewayProviderSecret } from "@openwork/types/den/gateway"
 import type { GatewayAwsKeysSecret, GatewayGcpServiceAccountSecret, GatewayProviderTestResult } from "@openwork/types/den/gateway"
 import { gatewayCustomModelSchema, isGatewayCustomProviderId, normalizeGatewayCustomBaseUrl } from "@openwork/types/den/gateway-custom-providers"
@@ -16,15 +14,9 @@ import { lookup } from "node:dns/promises"
 import { isIP } from "node:net"
 import type { Context, Hono } from "hono"
 import { z } from "zod"
-import { bedrockMantleService, bedrockService, signAwsRequest } from "./credentials/aws-sigv4.js"
-import type { AwsCredentials } from "./credentials/aws-sigv4.js"
-import type { MintGcpAccessToken } from "./credentials/gcp-service-account.js"
 import type { InferenceAuthVariables } from "./middleware/inference-auth.js"
 import type { OrganizationVariables } from "./middleware/org-context.js"
-import { buildAuthHeader, classifyProtocolFamily, defaultBaseUrl, vertexPublisherBase } from "./protocols.js"
-import type { ProtocolFamily } from "./protocols.js"
-import { gatewayCustomCatalogProvider } from "./provider-catalog.js"
-import type { CatalogProvider, ProviderCatalog } from "./provider-catalog.js"
+import type { CatalogProvider, ProviderCatalog } from "@openwork-ee/gateway-catalog"
 
 export const gatewayProviderTestPath = "/api/v1/provider-tests"
 

@@ -5,7 +5,7 @@ import {
   MemberTable, TeamTable, TeamMemberTable,
 } from "@openwork-ee/den-db"
 import { isDenTypeId } from "@openwork-ee/utils/typeid"
-import { createGatewayModelAlias, parseGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
+import { createGatewayModelAlias, parseGatewayModelAlias } from "@openwork-ee/gateway-catalog"
 import type { GatewaySelectionConflict, GatewayUsableModel } from "@openwork/types/den/gateway"
 import { AUTO_ROUTER_PROVIDER_ID, autoRouterModelId, autoRouterModelName } from "@openwork/types/den/auto-router"
 import type { GatewayContext } from "./middleware/gateway-auth.js"

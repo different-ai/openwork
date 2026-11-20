@@ -6,8 +6,11 @@ import { Button } from "@/components/ui/button";
 import { t } from "@/i18n";
 import { cn } from "@/lib/utils";
 
+import type { EmptyPanelView } from "./files-rail";
+
 export type PanelEmptyActions = {
   onOpenBrowser?: () => void;
+  onOpenFiles: () => void;
   onOpenExtensions?: () => void;
   onOpenSideChat?: () => void;
 };
@@ -26,10 +29,7 @@ type PanelDestination = {
   activate: () => void;
 };
 
-export function getPanelDestinations(
-  actions: PanelEmptyActions,
-  onOpenFiles: () => void,
-): PanelDestination[] {
+export function getPanelDestinations(actions: PanelEmptyActions): PanelDestination[] {
   const destinations: PanelDestination[] = [];
 
   if (actions.onOpenBrowser) {
@@ -47,7 +47,7 @@ export function getPanelDestinations(
     label: "Files & artifacts",
     description: "View files and artifacts created in this session.",
     icon: <FileText aria-hidden="true" />,
-    activate: onOpenFiles,
+    activate: actions.onOpenFiles,
   });
 
   if (actions.onOpenSideChat) {
@@ -73,17 +73,22 @@ export function getPanelDestinations(
   return destinations;
 }
 
-export function PanelEmpty({ onOpenBrowser, onOpenExtensions, onOpenSideChat }: PanelEmptyActions) {
-  const [destination, setDestination] = React.useState<"chooser" | "files">("chooser");
-
-  if (destination === "files") {
+export function PanelEmpty({
+  view,
+  onShowChooser,
+  onOpenBrowser,
+  onOpenFiles,
+  onOpenExtensions,
+  onOpenSideChat,
+}: PanelEmptyActions & { view: EmptyPanelView; onShowChooser: () => void }) {
+  if (view === "files") {
     return (
       <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4 sm:p-6">
         <Button
           variant="ghost"
           size="sm"
           className="mb-6 w-fit gap-2"
-          onClick={() => setDestination("chooser")}
+          onClick={onShowChooser}
         >
           <ArrowLeft />
           All destinations
@@ -101,10 +106,7 @@ export function PanelEmpty({ onOpenBrowser, onOpenExtensions, onOpenSideChat }: 
     );
   }
 
-  const destinations = getPanelDestinations(
-    { onOpenBrowser, onOpenExtensions, onOpenSideChat },
-    () => setDestination("files"),
-  );
+  const destinations = getPanelDestinations({ onOpenBrowser, onOpenFiles, onOpenExtensions, onOpenSideChat });
 
   return (
     <div className="flex min-h-0 flex-1 flex-col overflow-y-auto p-4 sm:p-6">

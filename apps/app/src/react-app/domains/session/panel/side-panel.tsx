@@ -8,6 +8,7 @@ import {
   Globe,
   Loader2,
   MessagesSquare,
+  MonitorSmartphone,
   Maximize2,
   PanelRight,
   PictureInPicture2,
@@ -17,7 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { useDragControls } from "motion/react";
-import { AGENT_VIEWPORTS, type AgentViewportKey } from "@openwork/browser-tabs";
+import { AGENT_VIEWPORTS, DEFAULT_AGENT_VIEWPORT, type AgentViewportKey } from "@openwork/browser-tabs";
 
 import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import { PanelTab, PanelTabClose, PanelTabItem, PanelTabList } from "@/components/panel-tabs";
@@ -47,6 +48,7 @@ import type { OpenTarget } from "../artifacts/open-target";
 import type { OpenTargetOptions } from "@/lib/target-provider";
 import { useSidePanelTabs } from "./use-side-panel-tabs";
 import { handlePanelEscape, PanelEmpty } from "./panel-empty";
+import type { EmptyPanelView } from "./files-rail";
 import {
   getElectronBrowser,
   getNativeMenuPoint,
@@ -55,7 +57,11 @@ import {
 import { computeBrowserBounds, createBrowserBoundsSync } from "./browser-bounds-sync";
 import { browserOperationLabels } from "./browser-status";
 import type { BrowserPresentationMode } from "./browser-presentation-store";
-import { chooseAgentViewport, storedAgentViewport } from "./agent-viewport";
+import { chooseTabPageSize } from "./agent-viewport";
+import { isBrowserSecretsDialogTarget } from "./browser-secrets";
+import { BrowserSecretsButton } from "./browser-secrets-dialog";
+import { NO_SESSION_SIDE_PANEL_KEY } from "./side-panel-session";
+import { useBrowserSecretsEnabled } from "./use-browser-secrets";
 
 /** Floating browser presentation controls, present only while that feature is on. */
 export type BrowserPresentationControls = {
@@ -71,6 +77,9 @@ type SidePanelProps = {
   isLocalWorkspace?: boolean;
   onClose: () => void;
   onOpenExtensions?: () => void;
+  emptyView: EmptyPanelView;
+  onShowEmptyChooser: () => void;
+  onOpenFiles: () => void;
   /** Floating browser presentation; undefined keeps the docked-only browser. */
   browserPresentation?: BrowserPresentationControls;
   /** The browser is shown full screen: keep its tab but not a second native view here. */
@@ -86,28 +95,27 @@ if (import.meta.hot) {
   });
 }
 
-/** The size pages lay out at while the agent works, like Chrome's device toolbar. */
-function AgentViewportMenu({ viewport }: { viewport: { key: AgentViewportKey; scale: number } | null }) {
-  const [chosen, setChosen] = React.useState(storedAgentViewport);
-  const active = viewport?.key ?? chosen;
+function PageSizeMenu({ tabId, viewport }: { tabId: string; viewport: { key: AgentViewportKey; scale: number } | null }) {
+  const active = viewport?.key ?? DEFAULT_AGENT_VIEWPORT;
+  const fixed = !AGENT_VIEWPORTS[active].fitsPanel;
   return (
     <Popover>
       <PopoverTrigger
         render={(
-          <Button variant="ghost" size="sm" className="h-6 shrink-0 px-2 text-xs text-muted-foreground"
-            aria-label={`Agent page size: ${AGENT_VIEWPORTS[active].label}. Change it`} data-testid="browser-agent-page-size">
-            {AGENT_VIEWPORTS[active].label}{viewport && viewport.scale < 1 ? ` · ${Math.round(viewport.scale * 100)}%` : ""}
+          <Button variant="ghost" size={fixed ? "sm" : "icon-sm"} className={fixed ? "h-6 shrink-0 px-2 text-xs text-muted-foreground" : "shrink-0"}
+            aria-label={`Page size: ${AGENT_VIEWPORTS[active].label}. Change it`} data-testid="browser-page-size">
+            {fixed ? `${AGENT_VIEWPORTS[active].label}${viewport && viewport.scale < 1 ? ` · ${Math.round(viewport.scale * 100)}%` : ""}` : <MonitorSmartphone />}
           </Button>
         )}
       />
       <PopoverContent align="end" side="bottom" sideOffset={8} className="w-64 gap-0 p-1">
         <p className="px-2 pb-1.5 pt-1 text-xs text-muted-foreground">
-          While the agent works, pages keep this size. A fixed size scales to fit the panel.
+          Pages show at the panel's width, like any website. Pick a fixed size to check a phone, tablet or desktop layout.
         </p>
         {(Object.keys(AGENT_VIEWPORTS) as AgentViewportKey[]).map((key) => (
-          <button key={key} type="button" aria-pressed={key === active} data-testid={`browser-agent-page-size-${key}`}
+          <button key={key} type="button" aria-pressed={key === active} data-testid={`browser-page-size-${key}`}
             className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs hover:bg-muted aria-pressed:bg-muted"
-            onClick={() => { setChosen(key); chooseAgentViewport(key); }}>
+            onClick={() => chooseTabPageSize(tabId, key)}>
             <span className="font-medium">{AGENT_VIEWPORTS[key].label}</span>
             <span className="text-muted-foreground">
               {AGENT_VIEWPORTS[key].fitsPanel ? "Fits the panel" : `${AGENT_VIEWPORTS[key].width} × ${AGENT_VIEWPORTS[key].height}`}
@@ -117,6 +125,11 @@ function AgentViewportMenu({ viewport }: { viewport: { key: AgentViewportKey; sc
       </PopoverContent>
     </Popover>
   );
+}
+
+function BrowserSecretsControl({ sessionId, pageUrl }: { sessionId: string; pageUrl: string }) {
+  const enabled = useBrowserSecretsEnabled();
+  return enabled && sessionId !== NO_SESSION_SIDE_PANEL_KEY ? <BrowserSecretsButton key={sessionId} sessionId={sessionId} pageUrl={pageUrl} /> : null;
 }
 
 const MARKDOWN_PRIMITIVE_ARTIFACT_CONTENT = `# Artifact Markdown Proof
@@ -382,7 +395,6 @@ export function BrowserPanelContent({
           <span role="status" className="min-w-0 flex-1 truncate text-muted-foreground">
             {tab.browserTask?.status === "paused" ? "You have control · your next message hands it back" : tab.browserTask?.status === "running" ? browserOperationLabels[tab.browserTask.operation ?? ""] ?? "Working on this page" : tab.browserTask?.status === "needs_attention" ? browserOperationLabels[tab.browserTask.operation ?? ""] ?? "Review this page" : "This conversation's tab"}
           </span>
-          <AgentViewportMenu viewport={tab.agentViewport ?? null} />
           <Button variant="outline" size="sm" className="h-6 px-2 text-xs"
             onClick={() => { void window.__OPENWORK_ELECTRON__?.browser?.taskControl?.(tab.id, tab.browserTask?.status === "paused" ? "resume" : "pause"); }}>
             {tab.browserTask?.status === "paused" ? "Resume browser" : "Take over"}
@@ -464,6 +476,7 @@ export function BrowserPanelContent({
                 <Globe />
               </InputGroupAddon>
             </InputGroup>
+            <PageSizeMenu tabId={tab.id} viewport={tab.agentViewport ?? null} />
             {tab.siteToolCount > 0 ? (
               <Popover>
                 <PopoverTrigger
@@ -517,6 +530,7 @@ export function BrowserPanelContent({
                 </PopoverContent>
               </Popover>
             ) : null}
+            <BrowserSecretsControl sessionId={sessionId} pageUrl={tab.url} />
           </div>
         ) : (
           <p className="px-2 text-sm text-muted-foreground">
@@ -615,6 +629,9 @@ export function SidePanel({
   isLocalWorkspace,
   onClose,
   onOpenExtensions,
+  emptyView,
+  onShowEmptyChooser,
+  onOpenFiles,
   browserPresentation,
   browserShownElsewhere = false,
   sideChat,
@@ -807,6 +824,7 @@ export function SidePanel({
       <div
         className="flex h-full flex-col"
         onKeyDownCapture={(event) => {
+          if (isBrowserSecretsDialogTarget(event.target)) return;
           if (!handlePanelEscape(event.key, onClose)) return;
           event.preventDefault();
           event.stopPropagation();
@@ -861,6 +879,9 @@ export function SidePanel({
         </div> : null}
         {!activeTab ? (
           <PanelEmpty
+            view={emptyView}
+            onShowChooser={onShowEmptyChooser}
+            onOpenFiles={onOpenFiles}
             onOpenBrowser={isBrowserAvailable ? createTab : undefined}
             onOpenExtensions={onOpenExtensions}
             onOpenSideChat={sideChat?.onOpen}

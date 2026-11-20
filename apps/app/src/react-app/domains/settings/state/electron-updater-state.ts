@@ -537,11 +537,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
         ? targetVersion
           ? result.latestVersion === targetVersion
           : checkedReleaseChannel === "alpha"
-            ? await isAlphaUpdateAllowed(
-                result.latestVersion,
-                latestDesktopConfig,
-                result.currentVersion ?? appVersion,
-              )
+            ? isAlphaUpdateAllowed(result.latestVersion, latestDesktopConfig)
             : await isUpdateAllowed(result.latestVersion, latestDesktopConfig)
         : result.available;
       if (!isCurrentRequest()) return;
@@ -613,7 +609,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     const allowed = result.available && result.latestVersion && comparison === 1
       ? channel === "stable"
         ? result.latestVersion === targetVersion
-        : await isAlphaUpdateAllowed(result.latestVersion, desktopConfigRef.current, appVersion)
+        : isAlphaUpdateAllowed(result.latestVersion, desktopConfigRef.current)
       : false;
     if (!isCurrentRequest()) return null;
     if (allowed) updateAnalytics.offered(appVersion, result.latestVersion ?? undefined);
@@ -847,7 +843,7 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
           .catch(() => desktopConfigRef.current);
         if (!isCurrentReleaseChannel()) return;
         const stillAllowed = downloadedReleaseChannelRef.current === "alpha"
-          ? await isAlphaUpdateAllowed(downloadedVersion, currentDesktopConfig, appVersion)
+          ? isAlphaUpdateAllowed(downloadedVersion, currentDesktopConfig)
           : isUpdateAllowedByDesktopConfig(downloadedVersion, currentDesktopConfig);
         if (!isCurrentReleaseChannel()) return;
         if (!stillAllowed) {

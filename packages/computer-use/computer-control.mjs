@@ -92,6 +92,15 @@ const setupNotFinished = (answer) => failure("not_allowed", answer === "dismisse
 // A call made in the wrong order dispatched nothing: report it without revoking or closing anything.
 const SEQUENCE_CODES = new Set(["session_open", "session_required"]);
 const uiText = (value, limit) => typeof value === "string" && value.length <= limit;
+/**
+ * What the approval card names for a saved secret: its label, its kind, and the input
+ * type of the field it goes into. Anything else is refused before the person is asked.
+ * @param {{ label?: unknown, kind?: unknown, field?: unknown } | null | undefined} secret
+ */
+const validSecretApproval = (secret) => Boolean(secret) && typeof secret === "object"
+  && typeof secret.label === "string" && secret.label.length <= 80 && secret.label.trim().length >= 1
+  && typeof secret.kind === "string" && ["password", "code", "token"].includes(secret.kind)
+  && typeof secret.field === "string" && secret.field.length <= 32 && secret.field.trim().length >= 1;
 const uiNumber = (value, max = Number.MAX_SAFE_INTEGER) => Number.isSafeInteger(value) && value >= 0 && value <= max;
 /** The Mac and Windows helpers take at most this many drag points. */
 export const DRAG_POINTS = 32;
@@ -201,7 +210,8 @@ function deadline(ms) {
  * @typedef {{ isError?: boolean, content: Array<{ type: string, text?: string, data?: string, mimeType?: string }> }} ComputerResult
  * @typedef {{ sessionId?: string, rootSessionId?: string, agentName?: string }} ChatInput
  * @typedef {{ ok?: boolean, error?: { code: string, message: string }, mayHaveActed?: boolean, [key: string]: unknown }} ScriptResult
- * @typedef {{ id: string, reason: "setup" | "script" | "files" | "credential", computer: string, placement: "local" | "remote", detail?: string, appId?: string, purpose?: string, standing?: boolean, script?: { app: string, code: string }, files?: { app: string, names: string[], save?: boolean }, credential?: { site?: string, app?: string, appId?: string } }} ComputerRequest
+ * @typedef {{ id: string, reason: "setup" | "script" | "files" | "credential", computer: string, placement: "local" | "remote", detail?: string, appId?: string, purpose?: string, standing?: boolean, script?: { app: string, code: string }, files?: { app: string, names: string[], save?: boolean }, credential?: { site?: string, app?: string, appId?: string, secret?: SecretApproval } }} ComputerRequest
+ * @typedef {{ label: string, kind: "password" | "code" | "token", field: string }} SecretApproval
  * @typedef {{ targets?: Record<string, string>, computer?: string }} SavedChoices
  * @typedef {{ effect: "allow" } | { effect: "ask" } | { effect: "deny", message: string }} MoveDecision
  * @typedef {{ kind: "files", app: string, names: string[], save?: boolean } | { kind: "clipboard" }} ContentMove
@@ -550,19 +560,27 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
    * (a redirect, a lookalike, a window the agent was steered to) without their yes.
    * "Always" covers one exact site. An app is asked about every time: another program
    * can carry the same id, so nothing standing may rest on it.
-   * @param {{ site?: string, app?: string, label?: string }} recipient
+   * `secret`: OpenWork fills a secret the person saved for this chat on `site`, instead
+   * of text the agent holds. The card names it, and it is asked about every time: a
+   * standing "always" for typed credentials never covers it, and an "always" answer to
+   * it counts once and remembers nothing.
+   * @param {{ site?: string, app?: string, label?: string, secret?: SecretApproval }} recipient
    * @returns {Promise<"allow" | "always" | "dismiss" | "aborted" | "timeout" | "busy" | "too_many">}
    */
   async function approveCredential(grant, recipient, signal) {
-    const { site, app, label } = recipient;
+    const { site, app, label, secret } = recipient;
     const shown = site ?? label ?? app;
     if (!(site || app) || !shown || shown.length > 200) return "too_many";
-    if (site && grant.credentialsAlwaysFor?.has(site)) return "always";
+    // A secret is approved only for an exact site, and only when the card can name it whole.
+    if (secret !== undefined && !(site && canonicalBrowserSite(site) && validSecretApproval(secret))) return "too_many";
+    if (site && !secret && grant.credentialsAlwaysFor?.has(site)) return "always";
     if (scriptRequests.has(chatKey(grant))) return "busy";
     const target = targetFor(grant);
     // An app's name can be copied by another app; its id is shown beside it.
     const answer = await approve(grant, { id: randomUUID(), reason: /** @type {const} */ ("credential"), computer: target.label, placement: target.placement,
-      ...(site ? { credential: { site } } : { standing: false, credential: { app: shown, appId: app } }) }, signal);
+      ...(secret ? { standing: false, credential: { site, secret: { label: secret.label, kind: secret.kind, field: secret.field } } }
+        : site ? { credential: { site } } : { standing: false, credential: { app: shown, appId: app } }) }, signal);
+    if (secret) return answer === "always" ? "allow" : answer;
     if (site && answer === "always") (grant.credentialsAlwaysFor ??= new Set()).add(site);
     return answer;
   }
@@ -1738,12 +1756,16 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
     /**
      * Asks the person before the built-in browser types a password or code on `site`
      * (an exact origin). The browser is its own feature, so this works with computer use off.
-     * @param {ChatInput & { site?: string }} input
+     * With `secret`, the browser is about to fill a secret the person saved for this chat:
+     * the card names it and the field, and the person is asked every time. A `secret`
+     * that is not a label, a kind and a field type is refused without asking.
+     * @param {ChatInput & { site?: string, secret?: SecretApproval }} input
      */
-    async approveCredential({ sessionId, site } = {}, { signal = new AbortController().signal } = {}) {
+    async approveCredential({ sessionId, site, secret } = {}, { signal = new AbortController().signal } = {}) {
       if (closed || resetting || typeof site !== "string") return false;
+      if (secret !== undefined && !validSecretApproval(secret)) return false;
       const grant = await grantFor(sessionId);
-      return ["allow", "always"].includes(await approveCredential(grant, { site }, signal));
+      return ["allow", "always"].includes(await approveCredential(grant, secret === undefined ? { site } : { site, secret }, signal));
     },
     /**
      * @param {ChatInput & { app?: string, code?: string, timeoutMs?: number }} input

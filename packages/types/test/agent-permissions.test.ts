@@ -15,9 +15,11 @@ import {
   normalizeAgentPermissionSettings,
   resolveAgentPermissionRules,
   resolveHostExecution,
+  resolveSandboxRequirement,
   withoutAgentHarnessPermissions,
   withoutAgentHarnessRules,
   withoutHostExecutionPermissions,
+  withoutSandboxOptOutPermissions,
   type AgentPermissionRule,
   type AgentPermissionSettings,
 } from "../src/den/agent-permissions.ts"
@@ -27,23 +29,34 @@ const rulesFor = (everyone: AgentPermissionSettings, teams: { source: string; se
   resolveAgentPermissionRules({ everyone: { source: AGENT_PERMISSION_EVERYONE, settings: everyone }, teams })
 const required: AgentPermissionRule = { action: "host_execution", resource: "*", effect: "deny", source: AGENT_PERMISSION_EVERYONE }
 
-test("hostExecution is a Commands switch that allows by default and is host-enforced", () => {
-  const definition = agentPermissionDefinition("hostExecution")
-  assert.equal(definition.action, "host_execution")
-  assert.equal(definition.section, "commands")
-  assert.equal(definition.label, "Run tools on this computer")
-  assert.deepEqual(agentPermissionDecisionsFor(definition), ["allow", "deny"])
-  assert.equal(agentPermissionDefaultDecision("hostExecution"), "allow")
-  assert.ok(AGENT_HARNESS_PERMISSION_KEYS.some((key) => key === "hostExecution"))
-  assert.ok(AGENT_HARNESS_PERMISSION_ACTIONS.some((action) => action === "host_execution"))
-})
+const useRequired: AgentPermissionRule = { ...required, action: "sandbox_opt_out" }
+const requirements = [
+  { key: "hostExecution", action: "host_execution", label: "Force OpenWork Sandbox" },
+  { key: "sandboxOptOut", action: "sandbox_opt_out", label: "Use OpenWork Sandbox" },
+] satisfies { key: keyof AgentPermissionSettings; action: AgentPermissionRule["action"]; label: string }[]
 
-test("settings store a block, reject Ask first and lists, and read a stale Ask as a block", () => {
-  assert.ok(agentPermissionSettingsSchema.safeParse({ hostExecution: { decision: "deny" } }).success)
-  assert.equal(agentPermissionSettingsSchema.safeParse({ hostExecution: { decision: "ask" } }).success, false)
-  assert.equal(agentPermissionSettingsSchema.safeParse({ hostExecution: { decision: "deny", allow: ["ls"] } }).success, false)
-  assert.deepEqual(normalizeAgentPermissionSettings({ hostExecution: { decision: "ask" } }), { hostExecution: { decision: "deny" } })
-})
+for (const { key, action, label } of requirements) {
+  test(`${key} is a Commands requirement that allows by default and is harness-enforced`, () => {
+    const definition = agentPermissionDefinition(key)
+    assert.equal(definition.action, action)
+    assert.equal(definition.section, "commands")
+    assert.equal(definition.label, label)
+    assert.equal(definition.control, "toggle")
+    assert.equal(definition.toggleMeans, "requires")
+    assert.equal(definition.patterns, null)
+    assert.deepEqual(agentPermissionDecisionsFor(definition), ["allow", "deny"])
+    assert.equal(agentPermissionDefaultDecision(key), "allow")
+    assert.ok(AGENT_HARNESS_PERMISSION_KEYS.some((entry) => entry === key))
+    assert.ok(AGENT_HARNESS_PERMISSION_ACTIONS.some((entry) => entry === action))
+  })
+
+  test(`${key} stores a deny, rejects Ask first and lists, and reads a stale Ask as deny`, () => {
+    assert.ok(agentPermissionSettingsSchema.safeParse({ [key]: { decision: "deny" } }).success)
+    assert.equal(agentPermissionSettingsSchema.safeParse({ [key]: { decision: "ask" } }).success, false)
+    assert.equal(agentPermissionSettingsSchema.safeParse({ [key]: { decision: "deny", allow: ["ls"] } }).success, false)
+    assert.deepEqual(normalizeAgentPermissionSettings({ [key]: { decision: "ask" } }), { [key]: { decision: "deny" } })
+  })
+}
 
 test("nothing set delivers no rule; a block delivers one deny rule and nothing for other actions", () => {
   assert.deepEqual(rulesFor({}), [])
@@ -55,8 +68,8 @@ test("nothing set delivers no rule; a block delivers one deny rule and nothing f
 })
 
 test("a team's own decision replaces Everyone's, and the strictest of a member's teams wins", () => {
-  const block = { hostExecution: { decision: "deny" as const } }
-  const allow = { hostExecution: { decision: "allow" as const } }
+  const block: AgentPermissionSettings = { hostExecution: { decision: "deny" } }
+  const allow: AgentPermissionSettings = { hostExecution: { decision: "allow" } }
   assert.equal(agentPermissionRulesRequireSandbox(rulesFor({}, [{ source: "Finance", settings: block }])), true)
   assert.equal(agentPermissionRulesRequireSandbox(rulesFor(block, [{ source: "Research", settings: allow }])), false)
   assert.equal(agentPermissionRulesRequireSandbox(rulesFor({}, [{ source: "Research", settings: allow }, { source: "Finance", settings: block }])), true)
@@ -111,6 +124,39 @@ test("the setting hides with the harness permissions and on its own, without cha
   const stored: AgentPermissionSettings = { hostExecution: { decision: "deny" }, commands: { decision: "ask" } }
   assert.deepEqual(withoutHostExecutionPermissions(stored), { commands: { decision: "ask" } })
   assert.deepEqual(withoutAgentHarnessPermissions(stored), { commands: { decision: "ask" } })
-  assert.deepEqual(withoutAgentHarnessRules([required]), [])
+  assert.deepEqual(withoutSandboxOptOutPermissions({ ...stored, sandboxOptOut: { decision: "deny" } }), stored)
+  assert.deepEqual(withoutAgentHarnessPermissions({ ...stored, sandboxOptOut: { decision: "deny" } }), { commands: { decision: "ask" } })
+  assert.deepEqual(withoutAgentHarnessRules([required, useRequired]), [])
   assert.deepEqual(stored.hostExecution, { decision: "deny" })
+})
+
+
+test("Force implies Use; explicit Use and Force retain their own sources and team precedence", () => {
+  assert.deepEqual(resolveSandboxRequirement(undefined), { use: false, force: false, useSource: null, forceSource: null })
+  assert.deepEqual(resolveSandboxRequirement([required]), { use: true, force: true, useSource: AGENT_PERMISSION_EVERYONE, forceSource: AGENT_PERMISSION_EVERYONE })
+  assert.deepEqual(resolveSandboxRequirement([useRequired]), { use: true, force: false, useSource: AGENT_PERMISSION_EVERYONE, forceSource: null })
+  const forced = rulesFor({ sandboxOptOut: { decision: "deny" } }, [
+    { source: "Team A", settings: { sandboxOptOut: { decision: "allow" }, hostExecution: { decision: "deny" } } },
+  ])
+  assert.deepEqual(resolveSandboxRequirement(forced), { use: true, force: true, useSource: "Team A", forceSource: "Team A" })
+  const both = rulesFor({ sandboxOptOut: { decision: "deny" } }, [
+    { source: "Team A", settings: { sandboxOptOut: { decision: "allow" }, hostExecution: { decision: "deny" } } },
+    { source: "Team B", settings: { sandboxOptOut: { decision: "deny" } } },
+  ])
+  assert.deepEqual(resolveSandboxRequirement(both), { use: true, force: true, useSource: "Team B", forceSource: "Team A" })
+})
+
+test("sandbox rules are delivered according to each desktop generation's headers", () => {
+  const legacy = { browserUploads: false, fileSends: false, sandboxOnly: false }
+  const intermediate = { ...legacy, sandboxOnly: true }
+  const current = { ...intermediate, sandboxModes: true }
+  const force = rulesFor({ hostExecution: { decision: "deny" } })
+  const use = rulesFor({ sandboxOptOut: { decision: "deny" } })
+  const both = rulesFor({ hostExecution: { decision: "deny" }, sandboxOptOut: { decision: "deny" } })
+  assert.deepEqual(use, [useRequired])
+  assert.deepEqual(agentPermissionRulesForClient(use, legacy), [])
+  assert.deepEqual(agentPermissionRulesForClient(both, legacy), ["shell", "edit", "external_directory", "computer", "computer_files", "computer_clipboard", "script", "mcp", "webfetch"].map((action) => ({ action, resource: "*", effect: "deny", source: AGENT_SANDBOX_ONLY_UPDATE_REQUIRED_SOURCE })))
+  assert.deepEqual(agentPermissionRulesForClient(both, intermediate), force)
+  assert.deepEqual(agentPermissionRulesForClient(use, intermediate), [])
+  for (const rules of [force, use, both]) assert.deepEqual(agentPermissionRulesForClient(rules, current), rules)
 })

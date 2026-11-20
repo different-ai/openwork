@@ -45,8 +45,8 @@ import {
   type CapabilityMatch,
 } from "./search.js"
 import { mcpMemberForToken, resolveMcpMember, resolveMcpMemberIdentity } from "./external-capabilities.js"
-import { executeMarketplaceCapability, listAccessibleMarketplaceSkillDescriptors, listAccessibleMarketplaceSkillSources, parseMarketplaceCapabilityName, type RemoteSkillDescriptor } from "./marketplace-capabilities.js"
-import { registerSkillsExtension, resolveSkills, type ResolvedSkill } from "./skills-extension.js"
+import { executeMarketplaceCapability, listAccessibleMarketplaceSkillDescriptors, listAccessibleMarketplaceSkillSources, parseMarketplaceCapabilityName, readMarketplaceSkillFiles, type RemoteSkillDescriptor } from "./marketplace-capabilities.js"
+import { findSkillFile, registerSkillsExtension, resolveSkills, type ResolvedSkill } from "./skills-extension.js"
 import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
 import { automationService } from "../automations/service.js"
 import { AGENT_AUTOMATION_INDEX_LIMIT, registerAgentAutomationResources } from "./automation-index.js"
@@ -114,7 +114,7 @@ import {
 } from "./connect-mcp-server-index.js"
 import { registerAgentSkillTools } from "./skill-created-app.js"
 import { registerAgentSkillCatalogTools, standardSkillMarkdown, type RemoteSkillSource } from "./skill-tools.js"
-import { isSkillDocumentUri, readCachedSkill, rememberSkillRead, skillReadResponse } from "./skill-read-cache.js"
+import { isSkillDocumentUri, isSkillFileUri, readCachedSkill, rememberSkillRead, skillReadResponse } from "./skill-read-cache.js"
 import {
   parseSkillSyncRequest,
   skillBatchResponse,
@@ -368,7 +368,11 @@ export async function readRemoteSkillSource(input: {
     }
     return null
   }
-  return { content: result.content, provenance: result.provenance }
+  return {
+    content: result.content,
+    provenance: result.provenance,
+    files: await readMarketplaceSkillFiles({ organizationId: input.organizationId, configObjectId: marketplace.configObjectId }),
+  }
 }
 
 const EXECUTE_CAPABILITY_TIMEOUT_MESSAGE = `The capability call exceeded ${EXECUTE_CAPABILITY_TIMEOUT_MS / 1_000}s. Retry once; if it times out again, narrow the request (fewer results, tighter query) and tell the user the service is slow — do NOT tell them to reconfigure or reconnect.`
@@ -450,7 +454,23 @@ export function registerAgentSkillResources(input: {
   onSkillRead?: (uri: string, text: string) => void
   /** The client asked for the index as changes against what it holds (skill-index-sync.ts). */
   indexSync?: { revision: string | null; known?: Record<string, string> }
+  /** This request reads one supporting file of a skill (skill://<name>/<path>, not SKILL.md). */
+  fileRead?: { uri: string; resolveSkills: () => Promise<ResolvedSkill[]> }
 }) {
+  const fileRead = input.fileRead
+  if (fileRead) {
+    // Supporting files are not known until a skill's source is read, so only
+    // the one this request names is registered, and only when its skill's
+    // manifest lists it for this member.
+    input.server.registerResource("agent-skill-file", fileRead.uri, {
+      title: fileRead.uri.slice(fileRead.uri.lastIndexOf("/") + 1),
+      description: "A supporting file of an Agent Skill.",
+    }, async () => {
+      const file = findSkillFile(await fileRead.resolveSkills(), fileRead.uri)
+      if (!file) throw new ProtocolError(ProtocolErrorCode.InvalidParams, `No skill file at ${fileRead.uri} is available to you.`)
+      return { contents: [{ uri: file.uri, mimeType: file.mimeType, text: file.text }] }
+    })
+  }
   input.server.registerResource("agent-skills-index", AGENT_SKILL_INDEX_URI, {
     title: "Available Agent Skills",
     description: "Authorized Agent Skills discovery index for this OpenWork member.",
@@ -561,6 +581,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     const skillReadUri = method === "resources/read" && requestInfo.id !== null && isSkillDocumentUri(requestInfo.resourceUri)
       ? requestInfo.resourceUri
       : null
+    const skillFileReadUri = method === "resources/read" && isSkillFileUri(requestInfo.resourceUri) ? requestInfo.resourceUri : null
     // Several SKILL.md bodies in one read, or one a message is about to use (skill-index-sync.ts).
     const skillBatch = skillReadUri && requestInfo.skillSync && (requestInfo.skillSync.uris || requestInfo.skillSync.use)
       ? { uris: [...new Set([skillReadUri, ...(requestInfo.skillSync.uris ?? [])])], use: requestInfo.skillSync.use === true }
@@ -886,6 +907,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         member: memberIdentity,
         ...(nativeSkills ? { resolveSkills: loadResolvedSkills } : {}),
         ...(indexSync ? { indexSync: { revision: inventoryRevision, known: indexSync.known } } : {}),
+        ...(skillFileReadUri ? { fileRead: { uri: skillFileReadUri, resolveSkills: loadResolvedSkills } } : {}),
         ...(skillReadKey ? { onSkillRead: (uri: string, text: string) => {
           if (uri === skillReadKey.uri) rememberSkillRead(skillReadKey, text)
         } } : {}),
@@ -1030,17 +1052,18 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     registerAgentSkillCatalogTools({
       server,
       listSkills: loadRemoteSkills,
-      readSkill: (skill) => readRemoteSkillSource({
+      // Reading one supporting file is not a new use of the skill.
+      readSkill: (skill, read) => readRemoteSkillSource({
         skill,
         organizationId: principal.organizationId,
         member: memberIdentity,
-        recordUse: true,
+        recordUse: read.file === undefined,
       }),
     })
 
     registerAgentSkillTools({
       server,
-      create: async ({ pluginName, skillMarkdown }) => {
+      create: async ({ pluginName, skillMarkdown, files }) => {
         if (!principal.scopes.has(DEN_MCP_WRITE_SCOPE)) {
           return {
             ok: false,
@@ -1065,7 +1088,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
               return createPluginBundle({
                 context: skillContext,
                 name: pluginName,
-                components: [{ type: "skill", value: { rawSourceText: skillMarkdown } }],
+                components: [{ type: "skill", value: { rawSourceText: skillMarkdown, ...(files ? { normalizedPayloadJson: { files } } : {}) } }],
               })
             })
             const memberships = await listPluginMemberships({
@@ -1108,7 +1131,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           throw error
         }
       },
-      update: async ({ skillId, skillMarkdown, reason }) => {
+      update: async ({ skillId, skillMarkdown, files, reason }) => {
         if (!principal.scopes.has(DEN_MCP_WRITE_SCOPE)) {
           return {
             ok: false,
@@ -1135,7 +1158,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
                 context: skillContext,
                 configObjectId,
                 reason,
-                value: { rawSourceText: skillMarkdown },
+                value: { rawSourceText: skillMarkdown, ...(files ? { normalizedPayloadJson: { files } } : {}) },
               }),
             }
           }, { result: (value) => value.created ? null : 400 }))

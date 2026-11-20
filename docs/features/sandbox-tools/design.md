@@ -124,6 +124,11 @@ native execution must not be presumed confined by this evidence.
 
 ## 6. Controls: local plus organization, stricter wins
 
+> The single "Run tools on this computer" switch described below shipped in the first release. It is now two
+> settings, **Use OpenWork Sandbox** and **Force OpenWork Sandbox**; [modes.md](modes.md) is the current contract.
+> Force is exactly the `hostExecution: deny` behavior this section specifies, and every guarantee here still holds
+> for it. Use is the "Extra tools" row of section 1, now opt-in instead of following the rollout.
+
 Definition in `packages/types/src/den/agent-permissions.ts`:
 
 - Key `hostExecution`, host action `host_execution`, Commands section, toggle **Run tools on this computer**.

@@ -11,11 +11,12 @@
  * On multi-organization deployments, the organization's own settings decide:
  * - SSO set up, nothing required: SSO is offered first, the usual methods stay
  *   available, and people on the domain can join other organizations.
- * - "Require SSO" (`requireSso`): the organization itself can only be opened
- *   from a session signed in through its SSO. Sign-in is not blocked, so the
- *   same person can still use other organizations.
+ * - "Require SSO" (`requireSso`): a sign-in session can only open the
+ *   organization if it signed in through the organization's SSO. The same
+ *   person can still sign in another way to use other organizations.
  * - "Restrict this domain to our SSO" (`restrictDomainToSso`): the strict
  *   behavior again, for every email on the verified domain, invitation or not.
+ * Agent and API key credentials are governed by their own access controls.
  */
 
 export type OrganizationSsoPolicy = {

@@ -30,12 +30,13 @@ export function cloudShellUrl(region: string) {
 
 /**
  * Opens an AWS console page through the organization's access portal: the
- * portal signs the person in to this account with this role, then goes to the
- * page. Without a saved sign-in the console page is returned as it is.
+ * portal signs the person in to this account with the saved role, or asks them
+ * to choose one, then goes to the page. Without a saved sign-in the console
+ * page is returned as it is.
  */
 export function throughAccessPortal(destination: string, accountId: string, signIn: AwsSignIn | null) {
   if (!signIn) return destination
-  const params = new URLSearchParams({ account_id: accountId, role_name: signIn.roleName, destination })
+  const params = new URLSearchParams({ account_id: accountId, ...(signIn.roleName ? { role_name: signIn.roleName } : {}), destination })
   return `${signIn.portalUrl}/#/console?${params}`
 }
 
@@ -166,10 +167,24 @@ function launchParameters(input: AwsLaunch) {
   }
 }
 
+/** Defaults unchanged since each parameter's first installer template release. */
+export const quickCreateDefaults: ReadonlyMap<string, string> = new Map([
+  ["Size", "small"], ["NetworkMode", "dedicated"], ["VpcId", ""],
+  ["ServiceSubnetIds", ""], ["LoadBalancerSubnetIds", ""], ["EcsClusterArn", ""],
+  ["ManagedRuntimeProfile", "legacy"], ["HeadlessRunnerEnabled", "false"],
+  ["WorkbotEnabled", "false"], ["SlackAssistantEnabled", "false"],
+  ["HeadlessModelProtocol", "anthropic"], ["HeadlessModelBaseUrl", "https://api.anthropic.com/v1"],
+  ["HeadlessModel", ""], ["HeadlessModelSecretArn", ""], ["HeadlessComputerProvider", "off"],
+  ["HeadlessComputerSecretArn", ""], ["HeadlessComputerSnapshot", ""],
+  ["DaytonaApiUrl", "https://app.daytona.io/api"], ["DaytonaTarget", "us"],
+])
+
 /** Opens CloudFormation quick-create, prefilled; the customer reviews and approves. */
 export function quickCreateUrl(input: AwsLaunch) {
   const params = new URLSearchParams({ templateURL: input.release.templateUrl, stackName: stackName(input.deploymentId) })
-  for (const [key, value] of Object.entries(launchParameters(input))) params.set(`param_${key}`, value)
+  for (const [key, value] of Object.entries(launchParameters(input))) {
+    if (quickCreateDefaults.get(key) !== value) params.set(`param_${key}`, value)
+  }
   const region = input.target.region
   return `https://${region}.console.aws.amazon.com/cloudformation/home?region=${region}#/stacks/quickcreate?${params}`
 }

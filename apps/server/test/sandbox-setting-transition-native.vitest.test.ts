@@ -85,7 +85,11 @@ test.skipIf(process.env.OPENWORK_TEST_SANDBOX_NATIVE !== "1")("setting applies b
     for (let attempt = 0; attempt < 200 && !await access(started).then(() => true, () => false); attempt++) await delay(25);
     await access(started);
     config.workspaces.push({ id: "hostile", name: "Hostile", path: hostile, preset: "starter", workspaceType: "local" });
-    const busy = await request("/workspace/safe/sandbox-settings", "PUT", { allowHostExecution: false });
+    const use = await request("/workspace/safe/sandbox-settings", "PUT", { useSandbox: true });
+    expect(use.status, await use.clone().text()).toBe(200);
+    expect(await use.json()).toMatchObject({ useSandbox: true, forceSandbox: false, effectiveUseSandbox: true, effectiveForceSandbox: false, pending: false });
+    expect(await pid()).toBe(originalPid);
+    const busy = await request("/workspace/safe/sandbox-settings", "PUT", { forceSandbox: true });
     expect(busy.status, await busy.clone().text()).toBe(200);
     expect(await busy.json()).toMatchObject({ allowHostExecution: false, effectiveAllowHostExecution: true, pending: true });
     expect(await pid()).toBe(originalPid);
@@ -105,6 +109,7 @@ test.skipIf(process.env.OPENWORK_TEST_SANDBOX_NATIVE !== "1")("setting applies b
     expect(denied.status).toBe(409);
     const pendingPrompt = await request(`/workspace/safe/opencode2/api/session/${sessionId}/prompt`, "POST", { text: "Must not start in the old host process." });
     expect(pendingPrompt.status).toBe(409);
+    expect(await pendingPrompt.json()).toMatchObject({ code: "sandbox_engine_policy_pending", message: "Your sandbox setting is saved and applies when current tasks finish. Send this again then." });
     // Existing inference may issue its next host tool after the saved denial.
     // It uses applied local policy, not desired intent, until this turn ends.
     holdInference = false; releaseInference();
@@ -121,12 +126,18 @@ test.skipIf(process.env.OPENWORK_TEST_SANDBOX_NATIVE !== "1")("setting applies b
       automaticallyApplied = record(settings) && settings.pending === false && settings.effectiveAllowHostExecution === false;
       if (!automaticallyApplied) await delay(25);
     }
-    expect(automaticallyApplied).toBe(true);
+    expect(automaticallyApplied, automaticallyApplied ? undefined : JSON.stringify({
+      settings: await (await request("/workspace/safe/sandbox-settings")).json(),
+      status: await status(),
+    })).toBe(true);
     expect(await pid()).not.toBe(originalPid);
     // The hostile location was not initialized in the old project-enabled process.
     const setting = await request("/workspace/hostile/sandbox-settings", "PUT", { allowHostExecution: false });
     expect(setting.status, await setting.clone().text()).toBe(200);
-    expect(await setting.json()).toEqual({ allowHostExecution: false, effectiveAllowHostExecution: false, pending: false, managed: false, featureEnabled: true });
+    expect(await setting.json()).toEqual({
+      useSandbox: true, forceSandbox: true, effectiveUseSandbox: true, effectiveForceSandbox: true, managedUse: false, managedForce: false,
+      allowHostExecution: false, effectiveAllowHostExecution: false, pending: false, managed: false, featureEnabled: true, verification: "verified",
+    });
     const isolatedPid = await pid(); expect(isolatedPid).not.toBe(originalPid);
     const plugins = await request("/workspace/hostile/opencode2/api/agent");
     expect(plugins.status, await plugins.clone().text()).toBe(200);
@@ -167,7 +178,10 @@ test.skipIf(process.env.OPENWORK_TEST_SANDBOX_NATIVE !== "1")("setting applies b
       restored = record(settings) && settings.pending === false && settings.effectiveAllowHostExecution === true;
       if (!restored) await delay(25);
     }
-    expect(restored).toBe(true);
+    expect(restored, restored ? undefined : JSON.stringify({
+      settings: await (await request("/workspace/hostile/sandbox-settings")).json(),
+      status: await status(),
+    })).toBe(true);
     expect(await pid()).not.toBe(isolatedPid);
     // Explicit ordinary mode must really re-enable project discovery.
     expect((await request("/workspace/hostile/opencode2/api/agent")).status).toBe(200);

@@ -100,7 +100,7 @@ RUN CI=1 ELECTRON_SKIP_BINARY_DOWNLOAD=1 PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1 \
   && NEXT_PUBLIC_POSTHOG_KEY= NEXT_PUBLIC_POSTHOG_API_KEY= \
     pnpm --filter @openwork-ee/den-web build \
   && pnpm --filter @openwork-ee/den-api run build:mcp-apps \
-  && { git rev-parse HEAD:packages/ui HEAD:ee/packages/utils HEAD:ee/apps/den-web; cat /workspace/.openwork-daytona/pnpm-lock.sha256; } \
+  && { git rev-parse HEAD:packages/ui HEAD:ee/packages/utils HEAD:ee/packages/gateway-catalog HEAD:ee/apps/den-web; cat /workspace/.openwork-daytona/pnpm-lock.sha256; } \
     | sha256sum | cut -d ' ' -f 1 > /workspace/.openwork-daytona/den-web-build.tree \
   && { git rev-parse HEAD:packages/mcp-apps; cat /workspace/.openwork-daytona/pnpm-lock.sha256; } \
     | sha256sum | cut -d ' ' -f 1 > /workspace/.openwork-daytona/den-api-assets.tree \

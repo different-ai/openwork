@@ -19,6 +19,11 @@ export const CHECKS = [
     fix: "Fix the type errors above. Do not silence them with `any`, `as` or @ts-ignore.",
   },
   {
+    name: "browser-secrets",
+    command: ["node", "--test", "packages/computer-use/browser-secrets.test.mjs", "packages/computer-use/browser-task-secrets.test.mjs", "packages/computer-use/browser-secrets.review.test.mjs", "packages/computer-use/computer-control-secret-approval.test.mjs", "apps/desktop/electron/session-runner-computer-requests.test.mjs"],
+    fix: "Fix the secret isolation, approval or redaction regression above before enabling browser secret handles.",
+  },
+  {
     name: "node-source-imports",
     command: ["node", "scripts/check-node-source-imports.mjs"],
     fix: "Den API and the Gateway load this source in plain Node: import what Node can resolve, as the message says.",

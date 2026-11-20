@@ -56,6 +56,8 @@ function importedSpecifiers(source) {
 // never in this script's checkout or the build machine's node_modules.
 export function verifyPackagedImportGraph(root, entry = "server/dist/local-sandbox-runtime.js") {
   const packageRoot = realpathSync(root);
+  // Report archive paths with forward slashes on every host.
+  const shown = (file) => relative(packageRoot, file).split(sep).join("/");
   const seen = new Set();
   function visit(file) {
     if (seen.has(file)) return;
@@ -69,11 +71,11 @@ export function verifyPackagedImportGraph(root, entry = "server/dist/local-sandb
       try {
         target = fileURLToPath(import.meta.resolve(specifier, pathToFileURL(file).href));
       } catch (cause) {
-        throw new Error(`Packaged runtime cannot resolve ${specifier} imported by ${relative(packageRoot, file)}`, { cause });
+        throw new Error(`Packaged runtime cannot resolve ${specifier} imported by ${shown(file)}`, { cause });
       }
       const local = relative(packageRoot, target);
       if (isAbsolute(local) || local === ".." || local.startsWith(`..${sep}`) || !existsSync(target)) {
-        throw new Error(`Packaged runtime import escapes or is missing: ${specifier} from ${relative(packageRoot, file)}`);
+        throw new Error(`Packaged runtime import escapes or is missing: ${specifier} from ${shown(file)}`);
       }
       // Server internals have their own packaging boundaries; this check owns
       // the local runtime's external provider graph, including lazy imports.
@@ -81,7 +83,7 @@ export function verifyPackagedImportGraph(root, entry = "server/dist/local-sandb
     }
   }
   visit(resolve(packageRoot, entry));
-  return [...seen].map((file) => relative(packageRoot, file)).sort();
+  return [...seen].map(shown).sort();
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

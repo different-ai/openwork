@@ -374,7 +374,7 @@ export class AutomationService {
   }
 
   async copyShared(scope: OwnerScope, id: string, options: CopySharedAutomation) {
-    const [source] = (await listSharedAutomations(scope, id)).items
+    const [source] = (await listSharedAutomations(scope, { automationId: id, limit: 1 })).items
     if (!source) throw new Error("automation_not_found")
     const action = source.action.kind === "agent" && options.model
       ? { ...source.action, model: options.model } : source.action

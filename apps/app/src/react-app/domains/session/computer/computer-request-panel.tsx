@@ -1,11 +1,13 @@
 import { useState, type ReactNode } from "react"
-import { Monitor } from "lucide-react"
+import { KeyRound, Monitor } from "lucide-react"
 import { useLocation, useNavigate } from "react-router"
 import type { ComputerRequest } from "@openwork/types/desktop-ipc"
 
 import { desktopBridge } from "@/app/lib/desktop"
 import { Button } from "@/components/ui/button"
 import { settingsNavigationFromPathname } from "@/react-app/shell/workspace-routes"
+
+import { browserSecretKindLabel } from "../panel/browser-secrets"
 
 /** "com.apple.TextEdit" reads as "TextEdit"; the agent's own purpose says the rest. */
 function appLabel(appId: string | undefined) {
@@ -207,6 +209,65 @@ function CredentialRequest({ sessionId, request, credential }: { sessionId: stri
   )
 }
 
+const SECRET_FIELDS = new Map([
+  ["password", "a password field"],
+  ["text", "a text field"],
+  ["email", "an email field"],
+  ["tel", "a phone number field"],
+  ["url", "a web address field"],
+  ["search", "a search field"],
+  ["textarea", "a multi-line text field"],
+])
+
+function SecretRequest({ sessionId, request, site, secret }: { sessionId: string; request: ComputerRequest; site: string | undefined; secret: NonNullable<NonNullable<ComputerRequest["credential"]>["secret"]> }) {
+  const [busy, setBusy] = useState<"allow" | "dismiss" | null>(null)
+  const [error, setError] = useState("")
+
+  async function answer(next: "allow" | "dismiss") {
+    if (busy) return
+    setBusy(next)
+    setError("")
+    try {
+      await desktopBridge.computerAnswerRequest({ sessionId, answer: next, id: request.id })
+    } catch (cause) {
+      setError(`That wasn't saved. ${cause instanceof Error ? cause.message : String(cause)}`)
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const label = revealHidden(secret.label)
+  const where = site ? revealHidden(site) : null
+  const hidden = label.hidden + (where?.hidden ?? 0)
+  return (
+    <div className="overflow-hidden border-b border-dls-border bg-transparent" data-testid="session-computer-request" data-reason="credential" data-credential="secret">
+      <div className="flex flex-col gap-3 px-4 py-3">
+        <div className="flex min-w-0 items-start gap-3">
+          <div className="mt-0.5 flex size-8 shrink-0 items-center justify-center rounded-xl border border-dls-border bg-dls-hover text-dls-secondary">
+            <KeyRound size={16} strokeWidth={1.9} />
+          </div>
+          <div className="min-w-0 flex-1">
+            <div className="text-[13px] font-medium leading-5 text-dls-text">
+              Fill “<span dir="auto" style={{ unicodeBidi: "isolate" }} className="break-words" data-testid="session-computer-credential-secret-label">{label.parts}</span>”
+              {where ? <> on <span dir="ltr" style={{ unicodeBidi: "bidi-override" }} className="break-all font-mono" data-testid="session-computer-credential-site">{where.parts}</span></> : null}?
+            </div>
+            <div className="mt-0.5 text-[12px] leading-5 text-dls-secondary" data-testid="session-computer-credential-field">{browserSecretKindLabel(secret.kind)}, into {SECRET_FIELDS.get(secret.field) ?? "a field on this page"}.</div>
+            <div className="mt-0.5 text-[12px] leading-5 text-dls-secondary">{where
+              ? "OpenWork fills it without showing it to the agent, and sends it only to the sites you allowed for it. Check the address is the site you meant."
+              : "OpenWork can't tell which site this is for, so it won't be filled."}</div>
+            {hidden ? <div className="mt-2 text-[12px] font-medium leading-5 text-amber-11" data-testid="session-computer-credential-hidden">This request has {hidden === 1 ? "1 hidden character" : `${hidden} hidden characters`}, shown as &lt;U+…&gt;. Don't fill it unless you expected that.</div> : null}
+            {error ? <div role="alert" className="mt-1 text-[12px] leading-5 text-red-11">{error}</div> : null}
+          </div>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-2">
+          <Button type="button" variant="ghost" size="sm" disabled={busy !== null} aria-busy={busy === "dismiss"} data-testid="session-computer-credential-dismiss" onClick={() => void answer("dismiss")}>Don't fill</Button>
+          {where ? <Button type="button" size="sm" disabled={busy !== null} aria-busy={busy === "allow"} data-testid="session-computer-credential-allow" onClick={() => void answer("allow")}>Fill</Button> : null}
+        </div>
+      </div>
+    </div>
+  )
+}
+
 /**
  * Shown above the composer while the agent waits for computer use. The tool
  * call carries on by itself once the person answers, so the agent never has
@@ -215,6 +276,7 @@ function CredentialRequest({ sessionId, request, credential }: { sessionId: stri
 export function ComputerRequestPanel({ sessionId, request }: { sessionId: string; request: ComputerRequest }) {
   if (request.reason === "script" && request.script) return <ScriptRequest sessionId={sessionId} request={request} script={request.script} />
   if (request.reason === "files" && request.files) return <FilesRequest sessionId={sessionId} request={request} files={request.files} />
+  if (request.reason === "credential" && request.credential?.secret) return <SecretRequest sessionId={sessionId} request={request} site={request.credential.site} secret={request.credential.secret} />
   if (request.reason === "credential" && request.credential) return <CredentialRequest sessionId={sessionId} request={request} credential={request.credential} />
   return <SetupRequest sessionId={sessionId} request={request} />
 }

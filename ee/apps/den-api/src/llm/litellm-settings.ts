@@ -6,7 +6,7 @@
 import { z } from "zod"
 import { eq, inArray } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, GatewayCredentialSetTable, GatewayLiteLlmIssuedKeyTable, GatewayProviderCredentialTable, MemberTable } from "@openwork-ee/den-db/schema"
-import { LITELLM_ADMIN_CREDENTIAL_SUBJECT, LITELLM_DOC_URL, LITELLM_ENTRA_KEY_SOURCE, LITELLM_ENV, LITELLM_NPM, LITELLM_PROVIDER_ID, LITELLM_PROVIDER_NAME, isLiteLlmProviderId, liteLlmSpendTrackingEnabled } from "@openwork-ee/utils/litellm-catalog"
+import { LITELLM_ADMIN_CREDENTIAL_SUBJECT, LITELLM_DOC_URL, LITELLM_ENTRA_KEY_SOURCE, LITELLM_ENV, LITELLM_NPM, LITELLM_PROVIDER_ID, LITELLM_PROVIDER_NAME, isLiteLlmProviderId, liteLlmSpendTrackingEnabled } from "@openwork-ee/gateway-catalog"
 import type { GatewayLiteLlmStatus } from "@openwork/types/den/gateway"
 import { db } from "../db.js"
 import { normalizeLiteLlmBaseUrl } from "./litellm.js"

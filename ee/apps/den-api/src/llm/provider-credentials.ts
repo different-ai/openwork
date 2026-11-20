@@ -1,7 +1,7 @@
 import { readProviderEnvNames, selectPrimaryCredentialEnvName, selectLegacyScalarCredentialEnvName } from "@openwork/types/managed-provider-config"
 export { readProviderEnvNames, selectPrimaryCredentialEnvName, selectLegacyScalarCredentialEnvName } from "@openwork/types/managed-provider-config"
 import { aiSdkEnvSetting } from "@openwork-ee/utils/ai-sdk-env-settings"
-import { isAwsRegion } from "@openwork-ee/utils/inference-egress"
+import { isAwsRegion } from "@openwork-ee/gateway-upstreams"
 
 type JsonRecord = Record<string, unknown>
 

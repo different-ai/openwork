@@ -23,6 +23,7 @@ import { globalOpencodeConfigDir, workspaceOpencodeConfigCandidates } from "@ope
 
 import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./media-permissions.mjs";
 import { registerMigrationIpc } from "./migration.mjs";
+import { createSystemProxyRelay, systemProxyRelayEnv } from "./system-proxy-relay.mjs";
 import { pickRemoteDebugPort, remoteDebugMenuItems, remoteDebugRelaunchArgs, resolveRemoteDebugPort } from "./remote-debug-port.mjs";
 import { registerSessionPins } from "./session-pins.mjs";
 import { createRuntimeManager, createSystemCaCertificateVerifyProc, sandboxFeatureDenOrigin } from "./runtime.mjs";
@@ -34,6 +35,7 @@ import { createNativeDictation, createSpeechDictation } from "./native-dictation
 import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
 import { deferBrowserStop } from "@openwork/computer-use/browser-navigation";
+import { BrowserSecretError, createBrowserSecrets } from "@openwork/computer-use/browser-secrets";
 import { createComputerControl } from "@openwork/computer-use/computer-control";
 import { createComputerAgentPermissions } from "./computer-agent-permissions.mjs";
 import { createBrowserUploadGrantStore, createBrowserUploadPermissions } from "./browser-upload-permissions.mjs";
@@ -1291,7 +1293,7 @@ const browserUploadPermissions = createBrowserUploadPermissions({
   readPolicy: async () => {
     const server = await runtimeManager.openworkServerInfo();
     if (!server.baseUrl || !(server.clientToken ?? server.ownerToken)) throw new Error("OpenWork server unavailable");
-    // Trusted local service verifies the current Den organization, member and rollout.
+    // loopback-fetch: the trusted local service verifies the current Den organization, member and rollout.
     const response = await fetch(`${server.baseUrl}/managed-policy/browser-upload-permissions`, {
       headers: { Authorization: `Bearer ${server.clientToken ?? server.ownerToken}` }, signal: AbortSignal.timeout(15_000),
     });
@@ -1311,11 +1313,59 @@ const browserUploadPermissions = createBrowserUploadPermissions({
   },
 });
 
+// Secrets the person enters for the agent's built-in browser (`browserSecretHandles`). Enrollment
+// keeps values in this process, never in configuration, logs, tool arguments or child environments.
+const browserSecrets = createBrowserSecrets();
+// On only once the local server, which verifies the signed-in member's rollout with Den,
+// confirmed the feature. What the app window reports can turn it off, never on.
+let browserSecretsEnabled = false;
+let browserSecretsReport = 0;
+async function setBrowserSecretsEnabled(requested) {
+  const report = ++browserSecretsReport;
+  if (!requested) {
+    // Turning off revokes enrollment and substitution; late readback still passes through redaction.
+    if (browserSecretsEnabled) browserSecrets.clear();
+    browserSecretsEnabled = false;
+    return false;
+  }
+  // Recheck on every use: a renderer's earlier report is not continuing rollout authority.
+  let confirmed = false;
+  try {
+    const server = await runtimeManager.openworkServerInfo();
+    if (server.baseUrl && (server.clientToken ?? server.ownerToken)) {
+      // loopback-fetch: the local policy service verifies the signed-in Den identity.
+      const response = await fetch(`${server.baseUrl}/managed-policy/browser-secret-handles`, {
+        headers: { Authorization: `Bearer ${server.clientToken ?? server.ownerToken}` }, signal: AbortSignal.timeout(10_000),
+      });
+      confirmed = response.ok && (await response.json())?.enabled === true;
+    }
+  } catch { /* Not confirmed: the feature stays off and the app asks again. */ }
+  // A newer report, such as the feature turning off meanwhile, decides instead of this answer.
+  if (report === browserSecretsReport) {
+    if (!confirmed && browserSecretsEnabled) browserSecrets.clear();
+    browserSecretsEnabled = confirmed;
+  }
+  return report === browserSecretsReport && confirmed && browserSecretsEnabled;
+}
+/** @param {unknown} kind @returns {kind is "password" | "code" | "token"} */
+const isBrowserSecretKind = (kind) => kind === "password" || kind === "code" || kind === "token";
+/** A secret is entered, listed and removed only from the main OpenWork window, never from a page or another window. */
+function assertBrowserSecretsSender(event) {
+  if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) {
+    throw new Error("Browser secrets require the main OpenWork window.");
+  }
+}
+
 browserPanel = createBrowserPanel({
   // Organization policy is checked before any remembered or in-chat consent.
   approveFiles: (sessionId, request, signal) => browserUploadPermissions.approve(sessionId, request, signal),
   // A password or code is typed only on a site the person confirmed in the chat.
   approveCredential: (sessionId, request, signal) => computerControl.approveCredential({ sessionId, site: request.site }, { signal }),
+  secrets: browserSecrets,
+  secretsEnabled: async () => browserSecretsEnabled && await setBrowserSecretsEnabled(true),
+  // A secret is entered only after the person confirmed this secret for this exact site, each time.
+  approveSecret: async (sessionId, request, signal) => isBrowserSecretKind(request.kind)
+    && computerControl.approveCredential({ sessionId, site: request.site, secret: { label: request.label, kind: request.kind, field: request.field } }, { signal }),
   showNativeContextMenu: nativeContextMenus.show,
   closeNativeContextMenu: nativeContextMenus.close,
   remoteDebugPort,
@@ -1513,10 +1563,27 @@ function validateSkillName(raw) {
 
 // Apply the build opt-out before the runtime captures inherited environment values.
 await applyDesktopFreeBuildSettings({ appVersion: resolveAppVersion(app) });
+// Started the first time an engine is to follow the computer's proxy
+// settings, and kept for the life of the app: engines hold its address.
+let systemProxyRelay;
+const engineSystemProxyEnv = async () => {
+  await app.whenReady();
+  systemProxyRelay ??= createSystemProxyRelay({
+    resolveProxy: (url) => session.defaultSession.resolveProxy(url),
+    log: (message) => console.log(message),
+  }).start();
+  try {
+    return systemProxyRelayEnv((await systemProxyRelay).url);
+  } catch (error) {
+    systemProxyRelay = undefined;
+    throw error;
+  }
+};
 const runtimeManager = createRuntimeManager({
   app,
   desktopRoot: path.resolve(__dirname, ".."),
   listLocalWorkspacePaths: () => workspaceStore.listLocalWorkspacePaths(),
+  engineSystemProxyEnv,
   trustedDenOrigin: async () => sandboxFeatureDenOrigin((await workspaceStore.getDesktopBootstrapConfig()).apiBaseUrl),
   // This callback stays in Electron's main process. Engine tools and shell
   // commands cannot approve a Drive write by replaying a token or HTTP reply.
@@ -1683,6 +1750,8 @@ const keepAwakeSenders = new Set();
 
 const quitSequencer = createQuitSequencer({
   stop: async () => {
+    // No secret outlives the app, nor the wait for the rest to shut down.
+    browserSecrets.clear();
     keepAwake.releaseAll();
     showShutdownScreen();
     desktopAutomationRunner.stop();
@@ -2289,6 +2358,32 @@ const desktopCommandHandlers = {
   "computerEndTurn": async (event, sessionId) => {
       assertComputerSender(event);
       return computerControl.endTurn({ sessionId: String(sessionId ?? "") });
+  },
+  // Browser secrets. Only the main OpenWork window may enter, list or remove one. These handlers
+  // never throw anything built from their arguments and never log: an error thrown here would
+  // reach the console and error reports with its message.
+  "browserSecretsSetEnabled": async (event, enabled) => {
+      assertBrowserSecretsSender(event);
+      return setBrowserSecretsEnabled(enabled === true);
+  },
+  "browserSecretsList": async (event, sessionId) => {
+      assertBrowserSecretsSender(event);
+      return browserSecretsEnabled && typeof sessionId === "string" && await setBrowserSecretsEnabled(true) ? browserSecrets.list(sessionId) : [];
+  },
+  "browserSecretsAdd": async (event, input) => {
+      assertBrowserSecretsSender(event);
+      if (!browserSecretsEnabled || !await setBrowserSecretsEnabled(true)) return { ok: false, error: "Secrets for the built-in browser are not available yet. Try again in a moment." };
+      try {
+        const { sessionId, label, kind, origins, value } = input && typeof input === "object" ? input : {};
+        return { ok: true, secret: browserSecrets.add({ sessionId, label, kind, origins, value }) };
+      } catch (error) {
+        // The store's own messages never repeat what was typed; anything else is not passed on.
+        return { ok: false, error: error instanceof BrowserSecretError ? error.message : "The secret could not be saved. Check each field and try again." };
+      }
+  },
+  "browserSecretsRemove": async (event, input) => {
+      assertBrowserSecretsSender(event);
+      return typeof input?.sessionId === "string" && typeof input?.secretRef === "string" && browserSecrets.remove(input.sessionId, input.secretRef);
   },
   "getDesktopBootstrapConfig": async (event, ...args) => {
       return workspaceStore.getDesktopBootstrapConfig();

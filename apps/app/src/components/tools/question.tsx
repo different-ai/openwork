@@ -53,14 +53,53 @@ function getQuestionToolDetail(part: QuestionToolPart): string | undefined {
   return undefined
 }
 
+const ANSWERED_OUTPUT = /^User has answered your questions?: "[\s\S]*"="([\s\S]*)"\. You can now continue/
+
+export function questionToolAnswers(part: QuestionToolPart): string[][] | null {
+  if (part.state !== "output-available") return null
+  const fromMetadata = part.callProviderMetadata?.openwork?.questionAnswers
+  if (Array.isArray(fromMetadata) && fromMetadata.every((answer) => Array.isArray(answer) && answer.every((value) => typeof value === "string"))) {
+    return fromMetadata as string[][]
+  }
+  if ((part.input?.questions?.length ?? 0) !== 1 || typeof part.output !== "string") return null
+  const answer = ANSWERED_OUTPUT.exec(part.output)?.[1]?.trim()
+  return answer && answer !== "Unanswered" ? [[answer]] : null
+}
+
+export function questionAnswerSummary(answers: string[][] | null): string | null {
+  const parts = (answers ?? []).map((answer) => answer.map((value) => value.trim()).filter(Boolean).join(", ")).filter(Boolean)
+  return parts.length > 0 ? parts.join(" · ") : null
+}
+
 export function QuestionTool({ part }: QuestionToolProps) {
+  const answers = questionToolAnswers(part)
+  const summary = questionAnswerSummary(answers)
+  const questions = part.input?.questions ?? []
+
+  if (!summary || !answers) {
+    return (
+      <Tool
+        toolPart={part}
+        title={toolDisplayTitle(
+          getQuestionToolTitle(part),
+          getQuestionToolDetail(part)
+        )}
+      />
+    )
+  }
+
   return (
-    <Tool
-      toolPart={part}
-      title={toolDisplayTitle(
-        getQuestionToolTitle(part),
-        getQuestionToolDetail(part)
-      )}
-    />
+    <Tool toolPart={part} title="You answered" detail={summary}>
+      <dl className="flex flex-col gap-2" data-testid="question-tool-answers">
+        {questions.map((question, index) => (
+          <div key={`${index}:${question.question}`} className="flex flex-col gap-0.5">
+            <dt className="text-muted-foreground whitespace-pre-wrap wrap-break-word">{question.question || question.header}</dt>
+            <dd className="text-foreground whitespace-pre-wrap wrap-break-word">
+              {answers[index]?.filter((value) => value.trim()).join(", ") || "No answer"}
+            </dd>
+          </div>
+        ))}
+      </dl>
+    </Tool>
   )
 }

@@ -97,7 +97,7 @@ export function createNativeDriver(load: () => Promise<Microsandbox> = () => imp
   }
 
   const driver: MicrosandboxDriver = {
-    async create(config, timeoutMs) {
+    async create(config, timeoutMs, onProgress) {
       const m = await sdk()
       if (await driver.get(config.name)) throw new MicrosandboxDriverError("sandboxAlreadyExists", `Sandbox ${config.name} already exists`)
       const owner = randomUUID()
@@ -120,9 +120,16 @@ export function createNativeDriver(load: () => Promise<Microsandbox> = () => imp
       // Host names in an allow-list are only enforceable on HTTPS when the host can read the request authority.
       if (config.network.egress === "allow-list") builder = builder.interceptTls()
       let calledOff = false
+      let finished = false
       let timer: ReturnType<typeof setTimeout> | undefined
       try {
         const creation = await builder.createWithProgress()
+        if (onProgress) void (async () => {
+          for await (const event of creation) {
+            if (finished || calledOff) break
+            onProgress(event)
+          }
+        })().catch(() => undefined) // Telemetry must never gate creation.
         timer = setTimeout(() => {
           calledOff = true
           creation.cancel()
@@ -132,12 +139,14 @@ export function createNativeDriver(load: () => Promise<Microsandbox> = () => imp
         remember(sandbox.id, Promise.resolve(sandbox))
         return info(await m.Sandbox.get(config.name))
       } catch (error) {
+        finished = true
         if (hasCode(error, "sandboxAlreadyExists")) throw error
         await removeFailed(m, config.name, owner)
         if (calledOff) throw new MicrosandboxDriverError("createCancelled", `Creating sandbox ${config.name} took longer than ${timeoutMs} ms and was called off`)
         if (error instanceof Error && PORT_IN_USE.test(error.message)) throw new MicrosandboxDriverError("portInUse", error.message)
         throw error
       } finally {
+        finished = true
         if (timer) clearTimeout(timer)
       }
     },

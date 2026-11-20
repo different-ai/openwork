@@ -19,18 +19,15 @@ export function appendQuoteToDraft(draft: string, text: string): string {
   return existing ? `${existing}\n\n${quote}` : quote;
 }
 
-/**
- * The selection, when all of it sits inside one reply within `scope`. A
- * selection that reaches into the person's own message, a tool row or
- * another reply offers nothing: there is no single thing to ask about.
- */
 export function replySelection(selection: Selection | null, scope: Element): { text: string; range: Range } | null {
   if (!selection || selection.isCollapsed || selection.rangeCount === 0) return null;
   const range = selection.getRangeAt(0);
-  const container = range.commonAncestorContainer;
-  const element = container instanceof Element ? container : container.parentElement;
-  const reply = element?.closest('[data-message-role="assistant"]');
-  if (!reply || !scope.contains(reply)) return null;
+  const inReply = (node: Node) => {
+    const element = node instanceof Element ? node : node.parentElement;
+    const reply = element?.closest('[data-message-role="assistant"]');
+    return Boolean(reply && scope.contains(reply));
+  };
+  if (!inReply(range.startContainer) || !inReply(range.endContainer)) return null;
   const text = selection.toString().trim();
   return text ? { text, range } : null;
 }

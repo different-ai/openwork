@@ -133,7 +133,7 @@ export function normalizeAwsTargetForCreate(input: z.input<typeof awsTargetCreat
 
 /**
  * How the organization's people sign in to AWS: their IAM Identity Center
- * access portal and the role (permission set) to open the console with. With
+ * access portal and optional role (permission set) to open the console with. With
  * it, every AWS link opens through the portal in the deployment's own account.
  * Only AWS-hosted portal addresses are accepted, so a saved value can never
  * send an approver anywhere else.
@@ -141,7 +141,7 @@ export function normalizeAwsTargetForCreate(input: z.input<typeof awsTargetCreat
 export const awsSignInSchema = z.object({
   portalUrl: z.string().trim().max(300).refine((value) => awsPortalBase(value) !== null, "Enter your AWS access portal URL, such as https://your-company.awsapps.com/start.")
     .overwrite((value) => awsPortalBase(value) ?? value),
-  roleName: z.string().trim().regex(/^[\w+=,.@-]{1,64}$/, "Enter the role name as the access portal shows it, such as AdministratorAccess."),
+  roleName: z.string().trim().regex(/^[\w+=,.@-]{0,64}$/, "Enter the role name as the access portal shows it, such as AdministratorAccess.").nullable().default(null).overwrite((value) => value || null),
 }).strict()
 export type AwsSignIn = z.infer<typeof awsSignInSchema>
 
@@ -345,7 +345,9 @@ export const managedDeploymentLaunchInputSchema = z.object({
 }).strict().superRefine((input, context) => {
   if ((input.assistants || input.runtimeProfile) && input.kind !== "update") context.addIssue({ code: "custom", path: ["runtimeProfile"], message: "Change the runtime profile or computers with a version-increasing Update, not Install or Retry." })
 })
-const cloudShellHandoffSchema = z.object({ action: z.literal("run_in_cloud_shell"), url: z.string().url(), command: z.string(), instructions: z.string() })
+/** The same console destination without the access portal; absent in older API responses. */
+const directConsoleUrlSchema = z.string().url().nullable().optional()
+const cloudShellHandoffSchema = z.object({ action: z.literal("run_in_cloud_shell"), url: z.string().url(), directUrl: directConsoleUrlSchema, command: z.string(), instructions: z.string() })
 export const managedDeploymentLaunchSchema = z.object({
   deployment: managedDeploymentSchema,
   kind: deploymentRunKindSchema,
@@ -361,7 +363,7 @@ export const managedDeploymentLaunchSchema = z.object({
    * the API keeps parsing launches. Make it required once both have shipped.
    */
   handoff: z.discriminatedUnion("action", [
-    z.object({ action: z.literal("open_link"), url: z.string().url(), command: z.null(), instructions: z.string() }),
+    z.object({ action: z.literal("open_link"), url: z.string().url(), directUrl: directConsoleUrlSchema, command: z.null(), instructions: z.string() }),
     cloudShellHandoffSchema,
   ]).optional(),
   expiresAt: z.string().datetime(),

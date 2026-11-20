@@ -53,6 +53,7 @@ export type MessageContentProps = {
   sessionReferences?: boolean
   highlightQuery?: string
   githubReferences?: boolean
+  onRunCommand?: (command: string) => void
   className?: string
 } & React.ComponentProps<"div">
 
@@ -64,6 +65,7 @@ const MessageContent = ({
   sessionReferences,
   highlightQuery,
   githubReferences,
+  onRunCommand,
   ...props
 }: MessageContentProps) => {
   if (markdown) {
@@ -75,6 +77,7 @@ const MessageContent = ({
         sessionReferences={sessionReferences}
         highlightQuery={highlightQuery}
         githubReferences={githubReferences}
+        onRunCommand={onRunCommand}
         {...props}
       />
     )

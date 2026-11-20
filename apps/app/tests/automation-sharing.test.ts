@@ -63,7 +63,7 @@ function shared(id: string, name: string, executionTarget: "cloud" | "desktop" =
   return {
     id, name, executionTarget,
     sharedBy: { memberId: "member_owner", name: "Owner" },
-    sharedAt: 100,
+    sharedAt: "2026-11-18T20:00:00.000Z",
     schedule: { kind: "daily", hour: 9, minute: 0, timezone: "UTC" },
     action: { kind: "agent", instructions: "Summarize recent activity", model: { providerId: "test", modelId: "test", variant: null } },
   }

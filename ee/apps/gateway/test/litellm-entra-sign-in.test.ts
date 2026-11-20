@@ -5,9 +5,8 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { Hono } from "hono"
-import { isInferenceCredentialKindSupported } from "@openwork-ee/utils/inference-credentials"
-import { liteLlmEntraScope } from "@openwork-ee/utils/litellm-catalog"
-import { microsoftRefreshScopes, microsoftSignInScopes, readMicrosoftTokens } from "@openwork-ee/utils/microsoft-entra"
+import { isInferenceCredentialKindSupported, liteLlmEntraScope } from "@openwork-ee/gateway-catalog"
+import { microsoftRefreshScopes, microsoftSignInScopes, readMicrosoftTokens } from "@openwork-ee/gateway-upstreams"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { resolveFeatures, type FeatureContext } from "@openwork/features"
 import { createLiteLlmEntraFeatureCheck } from "../src/litellm-entra-feature.js"
@@ -24,7 +23,7 @@ import type { OrganizationVariables } from "../src/middleware/org-context.js"
 process.env.DATABASE_URL ??= "mysql://fixture:fixture@127.0.0.1:1/fixture"
 process.env.DEN_DB_ENCRYPTION_KEY ??= "fixture-encryption-key-0000000000000000"
 const { registerGatewayRoutes, gatewayPathPrefix, gatewayModelsPath } = await import("../src/gateway.js")
-const { createProviderCatalog } = await import("../src/provider-catalog.js")
+const { createProviderCatalog } = await import("@openwork-ee/gateway-catalog")
 
 const organizationId = createDenTypeId("organization")
 const orgMembershipId = createDenTypeId("member")

@@ -95,9 +95,11 @@ import type { OpenTargetOptions } from "@/lib/target-provider";
 import { SidePanel } from "../panel/side-panel";
 import { getSidePanelSessionKey } from "../panel/side-panel-session";
 import { PanelSessionProvider } from "@/react-app/kernel/panel-session-context";
+import { isFilesRailActive, openFileTabId, type EmptyPanelView } from "../panel/files-rail";
 import { useCreateTab, useOpenBrowserRailPane } from "../panel/use-side-panel-tabs";
 import { useBrowserPresentationController } from "../panel/use-browser-presentation";
 import { useBrowserAgentTurns } from "../panel/agent-viewport";
+import { personBrowserPanelWidth } from "../panel/browser-panel-width";
 import { BrowserPresentationSurfaces, BrowserRailButton } from "../panel/browser-presentation";
 import { DebugRailProvider, DebugRailSlot } from "../panel/debug-rail-slot";
 import { SessionDebugPanel } from "../surface/debug-panel";
@@ -317,6 +319,7 @@ export type SessionPageProps = {
   onRenameSession?: (sessionId: string, title: string, workspaceId: string) => Promise<void> | void;
   onDeleteSession?: (sessionId: string, workspaceId: string) => Promise<void> | void;
   onArchiveSession?: (sessionId: string, archived: boolean, workspaceId: string) => Promise<void> | void;
+  onArchiveSessions?: (sessions: { workspaceId: string; sessionId: string }[], archived: boolean) => Promise<void> | void;
   archiveDisabledReason?: string;
   onAccessibleTargetsChange?: (targets: OpenTarget[]) => void;
   /** Settings content rendered inside the right pane when the settings rail icon is active. */
@@ -559,7 +562,13 @@ export function SessionPage(props: SessionPageProps) {
   const sidePanelOpen = activeSidePanel !== null;
   const panelRailActive = activeSidePanel === "panel";
   const browserRailActive = panelRailActive && activePanelTab?.type === "browser";
-  const filesRailActive = panelRailActive && activePanelTab?.type !== "browser";
+  const [emptyFilesPanelKey, setEmptyFilesPanelKey] = useState<string | null>(null);
+  const emptyPanelView: EmptyPanelView = emptyFilesPanelKey === sidePanelSessionKey ? "files" : "chooser";
+  const filesRailActive = isFilesRailActive({
+    panelOpen: panelRailActive,
+    activeTabType: activePanelTab?.type ?? null,
+    emptyView: emptyPanelView,
+  });
   const showCloudSignIn = shellConfig.cloudSignin && !denAuth.isSignedIn && denAuth.status !== "checking";
   const cloudSignIn = useCloudSignIn();
   // The browser opens on Den's sign-up tab (label stays "Sign in").
@@ -688,11 +697,32 @@ export function SessionPage(props: SessionPageProps) {
   const { isPoppedOut: browserIsPoppedOut, placeOpenedBrowser, handlePanelClosed: handleBrowserPanelClosed } = browserPresentation;
   const remoteComputersFeature = useDesktopFeature("remoteComputers");
   const sessionTreeEnabled = useDesktopFeature("sessionTree");
+  const sessionMultiSelectEnabled = useDesktopFeature("sessionMultiSelect");
   const [primaryChatElement, setPrimaryChatElement] = useState<HTMLElement | null>(null);
   // The button hides itself when this computer can't run it and no VM is connected.
   const computerUse = isElectronRuntime();
   useComputerEndTurn(props.sidebar.sessionStatusById, computerUse);
   useBrowserAgentTurns(props.sidebar.sessionStatusById);
+
+  const {
+    leftSidebarResizing,
+    leftSidebarWidth,
+    rightSidebarExpandedWidth: browserPanelWidth,
+    setRightSidebarExpandedWidth: setBrowserPanelWidth,
+    startLeftSidebarResize,
+  } = useWorkspaceShellLayout({
+    expandedRightWidth: 520,
+    minRightWidth: 320,
+  });
+  const [browserPanelDefaultWidth, setBrowserPanelDefaultWidth] = useState(browserPanelWidth);
+  const panelGroupRef = useRef<HTMLDivElement | null>(null);
+  const widenBrowserPanelForPerson = useEffectEvent((ownerSessionId: string | null | undefined) => {
+    if (isMobile || (ownerSessionId != null && getSidePanelSessionKey(ownerSessionId) !== sidePanelSessionKey)) return;
+    const width = personBrowserPanelWidth(browserPanelWidth, panelGroupRef.current?.clientWidth ?? window.innerWidth);
+    if (width === browserPanelWidth) return;
+    setBrowserPanelDefaultWidth(width);
+    browserPanelRef.current?.resize(`${width}px`);
+  });
 
   // Open the side panel of the conversation that owns a browser event. For the
   // conversation on screen that is the visible panel; for a background
@@ -724,6 +754,7 @@ export function SessionPage(props: SessionPageProps) {
         // active. Passive title/loading updates still preserve that artifact.
         openTab(ownerSessionId, payload.tab);
       }
+      if (payload?.forPerson) widenBrowserPanelForPerson(payload.ownerSessionId);
       if (placeOpenedBrowser(payload?.ownerSessionId)) return;
       openOwnerSidePanel(payload?.ownerSessionId);
     });
@@ -739,17 +770,6 @@ export function SessionPage(props: SessionPageProps) {
     });
     return () => { unsubOpen?.(); unsubClose?.(); };
   }, [browserIsPoppedOut, handleBrowserPanelClosed, openOwnerSidePanel, openTab, placeOpenedBrowser, panelSessionId, setCurrentSidePanel, setSidePanelState, sidePanelSessionKey]);
-  const {
-    leftSidebarResizing,
-    leftSidebarWidth,
-    rightSidebarExpandedWidth: browserPanelWidth,
-    setRightSidebarExpandedWidth: setBrowserPanelWidth,
-    startLeftSidebarResize,
-  } = useWorkspaceShellLayout({
-    expandedRightWidth: 520,
-    minRightWidth: 320,
-  });
-  const [browserPanelDefaultWidth, setBrowserPanelDefaultWidth] = useState(browserPanelWidth);
   const sidebarProviderStyle: CSSProperties & Record<"--sidebar-width", string> = {
     "--sidebar-width": `${leftSidebarWidth}px`,
   };
@@ -997,10 +1017,9 @@ export function SessionPage(props: SessionPageProps) {
   useControlAction(setBrowserProxyControlAction);
   const openArtifactRailPane = useCallback(() => {
     if (!hasArtifactTargets) {
-      const documentTab = activePanelTab?.type !== "browser" && activePanelTab
-        ? activePanelTab
-        : sessionPanelState.tabs.find((tab) => tab.type !== "browser");
-      selectTab(sidePanelSessionKey, documentTab?.id ?? null);
+      const fileTabId = openFileTabId(sessionPanelState.tabs, sessionPanelState.activeTabId);
+      selectTab(sidePanelSessionKey, fileTabId);
+      if (!fileTabId) setEmptyFilesPanelKey(sidePanelSessionKey);
       setCurrentSidePanel("panel");
       return;
     }
@@ -1029,7 +1048,8 @@ export function SessionPage(props: SessionPageProps) {
     }
 
     setCurrentSidePanel("panel");
-  }, [activePanelTab, artifactFileTargets, hasArtifactTargets, openTab, panelSessionId, selectTab, sessionPanelState, setCurrentSidePanel, sidePanelSessionKey]);
+  }, [artifactFileTargets, hasArtifactTargets, openTab, panelSessionId, selectTab, sessionPanelState, setCurrentSidePanel, sidePanelSessionKey]);
+  const showEmptyPanelChooser = useCallback(() => setEmptyFilesPanelKey(null), []);
   const removeAccessibleTarget = useCallback((target: OpenTarget) => {
     const nextHiddenIds = new Set(hiddenAccessibleTargetIds);
     nextHiddenIds.add(target.id);
@@ -1502,6 +1522,9 @@ export function SessionPage(props: SessionPageProps) {
       isLocalWorkspace={fileOriginForRuntime({ desktop: isElectronRuntime(), serverUrl: props.openworkServerClient?.baseUrl, sandboxBackend: props.selectedWorkspaceDisplay.sandboxBackend }) === "local"}
       onClose={closeRightPane}
       onOpenExtensions={props.settingsSlot ? () => setCurrentSidePanel("extensions") : undefined}
+      emptyView={emptyPanelView}
+      onShowEmptyChooser={showEmptyPanelChooser}
+      onOpenFiles={openArtifactRailPane}
       browserPresentation={browserPresentation.enabled ? { onPresent: browserPresentation.present } : undefined}
       browserShownElsewhere={browserPresentation.mode === "fullscreen"}
       sideChat={sideChat}
@@ -1539,6 +1562,7 @@ export function SessionPage(props: SessionPageProps) {
           sessionAttentionSourceById={props.sidebar.sessionAttentionSourceById}
           sessionAttentionKindById={props.sidebar.sessionAttentionKindById}
           sessionTreeEnabled={sessionTreeEnabled}
+          sessionMultiSelectEnabled={sessionMultiSelectEnabled}
           connectingWorkspaceId={props.sidebar.connectingWorkspaceId}
           workspaceConnectionStateById={props.sidebar.workspaceConnectionStateById}
           newTaskDisabled={props.sidebar.newTaskDisabled}
@@ -1552,6 +1576,9 @@ export function SessionPage(props: SessionPageProps) {
           onOpenDeleteSession={props.onDeleteSession ? openDeleteModal : undefined}
           onArchiveSession={props.onArchiveSession ? (sessionId, archived, workspaceId) => {
             void props.onArchiveSession?.(sessionId, archived, workspaceId);
+          } : undefined}
+          onArchiveSessions={props.onArchiveSessions ? (sessions, archived) => {
+            void props.onArchiveSessions?.(sessions, archived);
           } : undefined}
           archiveDisabledReason={props.archiveDisabledReason}
           onOpenCreateGroupModal={openCreateGroupModal}
@@ -1803,6 +1830,7 @@ export function SessionPage(props: SessionPageProps) {
           <div className={cn("flex min-h-0 flex-1 max-lg:p-0", props.primarySurface !== "flat" && "lg:pb-2 lg:pl-2")}>
           <ResizablePanelGroup
             orientation="horizontal"
+            elementRef={panelGroupRef}
             onLayoutChanged={sidePanelOpen ? commitBrowserPanelWidth : undefined}
             className={cn("min-h-0 flex-1 max-lg:rounded-none", props.primarySurface !== "flat" && "lg:rounded-[14px]")}
           >

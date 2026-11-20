@@ -5,12 +5,12 @@
 // Chat Completions; each endpoint writes the answer back in its own protocol.
 import { autoRouterIdFromModel, autoRouterModelName } from "@openwork/types/den/auto-router"
 import { isSmartRouterToolName, matchSmartRouter, parseClaudeCodeModelName, smartRouterToolName } from "@openwork/types/den/gateway-cursor"
-import { isJsonObject, type JsonObject } from "./auto-router/chat.js"
+import { isJsonObject, type JsonObject } from "@openwork-ee/gateway-protocols"
 import type { AutoRouterConfig, LoadMemberAutoRouters } from "./auto-router/config.js"
 import { autoCandidates, autoRouterError, type RoutedCandidate } from "./auto-router/handler.js"
 import type { GatewayContext } from "./middleware/gateway-auth.js"
 import type { GatewayMemberAccessRow } from "./provider-access.js"
-import type { ProviderCatalog } from "./provider-catalog.js"
+import type { ProviderCatalog } from "@openwork-ee/gateway-catalog"
 
 export type SmartToolDependencies = {
   /** False when the Gateway has no TypeSafe key: Smart is then off and nothing is listed. */

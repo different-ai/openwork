@@ -44,6 +44,10 @@ export type ArchiveSessionOutcome =
   /** Agent path: the warning goes back through the agent's conversation, never a dialog. */
   | { kind: "target_working" | "self_archive_while_working"; sessionId: string; title: string };
 
+export type ArchiveSessionRef = { workspaceId: string; sessionId: string };
+
+type BatchEntry = { target: ArchiveTarget; undo?: { workspaceId: string; sessionId: string; fromKey: string; landingKey: string | null } | null };
+
 export type ArchiveSessionOptions = {
   signal?: AbortSignal;
   requester?: { sessionId: string };
@@ -81,6 +85,8 @@ export function useSessionArchive(input: {
   const mounted = useRef(true);
   const pending = useRef<((outcome: ArchiveSessionOutcome) => void) | null>(null);
   const settle = (kind: "done" | "cancelled"): ArchiveSessionOutcome => ({ kind });
+  const batch = useRef<BatchEntry[] | null>(null);
+  const idle = useRef<Promise<void>>(Promise.resolve());
   const undoNavigation = useRef<{
     workspaceId: string; sessionId: string; fromKey: string; landingKey: string | null;
   } | null>(null);
@@ -136,6 +142,7 @@ export function useSessionArchive(input: {
   }
 
   function showUndo(target: ArchiveTarget, archived: boolean, undo?: typeof undoNavigation.current) {
+    if (batch.current) { batch.current.push({ target, undo }); return; }
     const message = archived ? t("session_management.session_archived", { title: target.title }) : t("session_management.session_unarchived");
     toast.undo(<span title={message}>{message}</span>, {
       id: `session-archive:${target.sessionId}`,
@@ -154,6 +161,8 @@ export function useSessionArchive(input: {
   async function archive(target: ArchiveTarget, confirmed: boolean, request?: ArchiveSessionOptions) {
     if (busy.current) return;
     busy.current = true;
+    let markIdle = () => {};
+    idle.current = new Promise<void>(resolve => { markIdle = resolve; });
     const refusal = (kind: "target_working" | "self_archive_while_working"): ArchiveSessionOutcome =>
       ({ kind, sessionId: target.sessionId, title: target.title });
     const askUser = () => {
@@ -334,6 +343,7 @@ export function useSessionArchive(input: {
       activeController.current = null;
       for (const release of releases.values()) release();
       busy.current = false;
+      markIdle();
       if (mounted.current) setStopping(false);
     }
   }
@@ -347,6 +357,7 @@ export function useSessionArchive(input: {
   }
 
   function resolveTarget(sessionId: string, options?: ArchiveSessionOptions, workspaceId?: string): ArchiveTarget | { error: string } {
+    const input = current.current.input;
     const workspace = input.workspaces.find(workspace => (!workspaceId || workspace.id === workspaceId)
       && input.sessionsByWorkspaceId[workspace.id]?.some(session => session.id === sessionId));
     if (!workspace) return { error: "Session was not found in the current session list" };
@@ -382,9 +393,43 @@ export function useSessionArchive(input: {
     });
   }
 
+  function showBatchUndo(entries: BatchEntry[], archived: boolean) {
+    const count = entries.length;
+    const message = archived ? t("session_management.sessions_archived", { count }) : t("session_management.sessions_unarchived", { count });
+    toast.undo(<span title={message}>{message}</span>, {
+      id: `session-archive-batch:${entries.map(({ target }) => target.sessionId).join(",")}`,
+      icon: archived ? Archive : ArchiveRestore,
+      undo: { label: t("common.undo"), onClick: () => {
+        if (!mounted.current) return;
+        if (archived) void (async () => { for (const { target, undo } of entries) await restore(target, false, undo); })();
+        else void archiveSessionsInWorkspaces(entries.map(({ target }) => ({ workspaceId: target.workspace.id, sessionId: target.sessionId })), true);
+      } },
+      closeLabel: t("common.close"),
+    });
+  }
+
+  async function archiveSessionsInWorkspaces(refs: readonly ArchiveSessionRef[], archived: boolean): Promise<ArchiveSessionOutcome[]> {
+    if (busy.current || pending.current || batch.current) return [settle("cancelled")];
+    const entries: BatchEntry[] = [];
+    const outcomes: ArchiveSessionOutcome[] = [];
+    batch.current = entries;
+    try {
+      for (const ref of refs) {
+        if (!mounted.current) break;
+        outcomes.push(await archiveSessionInWorkspace(ref.workspaceId, ref.sessionId, archived));
+        await idle.current;
+      }
+    } finally {
+      batch.current = null;
+    }
+    if (entries.length > 0 && mounted.current) showBatchUndo(entries, archived);
+    return outcomes;
+  }
+
   return {
     archiveSession,
     archiveSessionInWorkspace,
+    archiveSessionsInWorkspaces,
     archiveDialog: (
       <AlertDialog open={target !== null} onOpenChange={open => { if (!open && !busy.current) closeDialog(settle("cancelled")); }}>
         <AlertDialogContent className="max-h-[calc(100dvh-2rem)] overflow-y-auto">

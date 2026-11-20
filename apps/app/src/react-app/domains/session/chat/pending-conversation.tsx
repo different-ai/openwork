@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Message, MessageContent } from "@/components/ui/message";
 import { TaskRecovery } from "@/components/chat/task-recovery";
 import { presentOpencodeSessionError } from "../sync/session-error";
@@ -5,10 +6,14 @@ import { persistableComposerDraftText } from "../surface/composer-state-store";
 import { resolvePastedTextPlaceholders } from "../surface/composer/pasted-text";
 import { retryPendingConversation, type PendingConversation } from "./pending-conversation-store";
 import { NewTaskComposer, type NewTaskComposerContext } from "./new-task-composer";
+import { WorkspaceSandboxModePill } from "../surface/composer/sandbox-mode-pill";
 
 const noop = () => {};
 
 export function PendingConversationView({ conversation, composer }: { conversation: PendingConversation; composer: NewTaskComposerContext | null }) {
+  if (conversation.phase === "sandbox-deferred") {
+    return <DeferredConversationComposer key={conversation.id} conversation={conversation} composer={composer} />;
+  }
   const failed = conversation.phase === "creation-failed";
   const text = persistableComposerDraftText(resolvePastedTextPlaceholders(conversation.submitted.draft, conversation.submitted.pasteParts));
   const error = failed ? presentOpencodeSessionError(conversation.error, "Couldn’t send your message") : null;
@@ -40,5 +45,21 @@ export function PendingConversationView({ conversation, composer }: { conversati
         context={composer ? { ...composer, draftOwnerKey: undefined, draftScope: null,
           draftSessionId: undefined, destination: undefined, client: null, workspaceId: null } : null} />
     </div>
+  </div>;
+}
+
+function DeferredConversationComposer({ conversation, composer }: { conversation: PendingConversation; composer: NewTaskComposerContext | null }) {
+  const [draft, setDraft] = useState(conversation.submitted.draft);
+  return <div className="flex h-full min-h-0 flex-col justify-end">
+    <p role="status" data-testid="sandbox-send-note" className="mx-3 mb-2 text-xs text-muted-foreground">{conversation.sandboxNote}</p>
+    <NewTaskComposer draft={draft} onDraftChange={setDraft} initialComposer={conversation.submitted} busy={false} flush={false}
+      context={composer ? { ...composer, draftOwnerKey: undefined, draftScope: null,
+        draftSessionId: undefined, destination: undefined, client: null, workspaceId: null } : null}
+      sandboxModeControl={<WorkspaceSandboxModePill client={composer?.client ?? null} workspaceId={composer?.workspaceId ?? null}
+        onOpenPermissions={() => composer?.onOpenSettingsSection?.("permissions")} />}
+      onRunTask={(_text, _attachments, handoff) => {
+        handoff?.consume?.();
+        return retryPendingConversation(conversation.id, handoff?.submitted);
+      }} />
   </div>;
 }

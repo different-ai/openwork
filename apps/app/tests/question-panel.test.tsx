@@ -325,3 +325,98 @@ describe("a question in the conversation (questionInThread)", () => {
     });
   });
 });
+
+describe("several questions in a row", () => {
+  beforeEach(() => clearQuestionDrafts());
+
+  async function doubleClick(element: HTMLElement) {
+    await act(async () => { element.click(); element.click(); });
+  }
+
+  test("a double click on a single choice answers it once and opens the next question", async () => {
+    const replies: string[][][] = [];
+    await render(<QuestionPanel questions={twoQuestions} busy={false} onReply={(answers) => replies.push(answers)} />, async ({ container }) => {
+      await doubleClick(button(container, "main"));
+      await settle(200);
+      expect(container.textContent).toContain("Question 2 of 2");
+      expect(container.textContent).toContain("Which checks should run?");
+      await click(button(container, "Unit tests"));
+      await click(button(container, "Submit"));
+      expect(replies).toEqual([[["main"], ["Unit tests"]]]);
+    });
+  });
+
+  test("a double click on the last question sends the answers once", async () => {
+    const replies: string[][][] = [];
+    await render(<QuestionPanel questions={questions} busy={false} onReply={(answers) => replies.push(answers)} />, async ({ container }) => {
+      await doubleClick(button(container, "Archive sessions"));
+      await settle(200);
+      expect(replies).toEqual([[["Archive sessions"]]]);
+    });
+  });
+
+  test("a double click on Next in the conversation does not skip a question", async () => {
+    const three: QuestionInfo[] = [...twoQuestions, { header: "Ship", question: "Open the PR?", options: [{ label: "Yes", description: "" }] }];
+    await render(<QuestionPanel variant="thread" questions={three} busy={false} onReply={() => {}} />, async ({ container }) => {
+      await click(button(container, "dev"));
+      await doubleClick(button(container, "Next"));
+      expect(container.textContent).toContain("Question 2 of 3");
+    });
+  });
+
+  test("Back reopens the previous question with its answer, and the later answer is kept", async () => {
+    const replies: string[][][] = [];
+    await render(<QuestionPanel questions={twoQuestions} busy={false} onReply={(answers) => replies.push(answers)} />, async ({ container }) => {
+      expect(container.querySelector("[data-question-back]")).toBeNull();
+      await click(button(container, "main"));
+      await settle(200);
+      await click(button(container, "Typecheck"));
+      await click(button(container, "Back"));
+      expect(container.textContent).toContain("Question 1 of 2");
+      expect(selectedOptions(container)).toEqual(["main"]);
+
+      await click(button(container, "dev"));
+      await settle(200);
+      expect(selectedOptions(container)).toEqual(["Typecheck"]);
+      await click(button(container, "Submit"));
+      expect(replies).toEqual([[["dev"], ["Typecheck"]]]);
+    });
+  });
+
+  test("Back in the conversation restores a typed answer", async () => {
+    await render(<QuestionPanel variant="thread" questions={twoQuestions} busy={false} onReply={() => {}} />, async ({ container }) => {
+      await click(button(container, "Other"));
+      await type(container.querySelector("input[type='text']") as HTMLInputElement, "release");
+      await click(button(container, "Next"));
+      await click(button(container, "Back"));
+      expect((container.querySelector("input[type='text']") as HTMLInputElement).value).toBe("release");
+    });
+  });
+
+  test("a reply that fails can be sent again; one in flight cannot", async () => {
+    let calls = 0;
+    let fail = true;
+    const onReply = () => {
+      calls += 1;
+      return fail ? Promise.reject(new Error("offline")) : new Promise(() => {});
+    };
+    await render(<QuestionPanel variant="thread" questions={questions} busy={false} onReply={onReply} />, async ({ container }) => {
+      await click(button(container, "Archive sessions"));
+      await click(button(container, "Submit"));
+      await settle(0);
+      fail = false;
+      await doubleClick(button(container, "Submit"));
+      expect(calls).toBe(2);
+    });
+  });
+
+  test("a refetch of the same request keeps the question in progress", async () => {
+    const panel = (asked: QuestionInfo[]) => <QuestionPanel requestId="que_refetch" questions={asked} busy={false} onReply={() => {}} />;
+    await render(panel(twoQuestions), async ({ container, rerender }) => {
+      await click(button(container, "main"));
+      await settle(200);
+      await rerender(panel(twoQuestions.map((question) => ({ ...question }))));
+      expect(container.textContent).toContain("Question 2 of 2");
+    });
+  });
+});

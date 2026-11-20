@@ -2,7 +2,7 @@
 
 import { useState } from "react"
 import { AlertTriangle, CalendarClock, Check } from "lucide-react"
-import type { DynamicToolUIPart } from "ai"
+import type { DynamicToolUIPart, UIMessage } from "ai"
 import { useNavigate } from "react-router"
 import { toast } from "sonner"
 import { useQuery } from "@tanstack/react-query"
@@ -83,6 +83,14 @@ export function isAutomationProposalToolPart(part: DynamicToolUIPart): boolean {
 
 export function automationProposalCalls(part: DynamicToolUIPart): DynamicToolUIPart[] {
   return (codeModeToolCalls(part) ?? []).filter(isAutomationProposalToolPart)
+}
+
+export function automationProposalsInParts(parts: UIMessage["parts"]): DynamicToolUIPart[] {
+  return parts.flatMap((part) => {
+    if (part.type !== "dynamic-tool") return []
+    if (isAutomationProposalToolPart(part)) return [part]
+    return automationProposalCalls(part)
+  })
 }
 
 export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPart }) {
