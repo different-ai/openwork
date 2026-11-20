@@ -38,7 +38,6 @@ import { TaskRecovery } from "./task-recovery"
 import { BackgroundTaskNotice, SubagentNoticeRow, backgroundShellNoticeFromMessage, subagentNoticeFromMessage } from "./background-tasks"
 import { messageAutoAccessWall } from "@/app/lib/inference-access"
 import { markFeatureUsed } from "@/app/lib/den"
-import { isFollowUpWaiting, useFollowUpDeliveryStore } from "@/react-app/domains/session/status/follow-up-delivery-store"
 import { AutoAccessNotice } from "@/react-app/domains/cloud/auto-access-ui"
 import { OpenWorkModelsLimitCard } from "@/react-app/domains/cloud/usage-limit-card"
 import type { OpenWorkModelsLimit } from "@/react-app/domains/cloud/usage-limit-state"
@@ -986,22 +985,15 @@ function renderUserText(text: string, highlightQuery: string | undefined, refere
 
 const FOLLOW_UP_WAITING_DELAY_MS = 600
 
-/**
- * Under a sent message the agent has not read yet. A message the agent reads
- * straight away settles before this appears.
- */
 function FollowUpWaitingStatus() {
-  const [shown, setShown] = React.useState(false)
-  React.useEffect(() => {
-    const timer = window.setTimeout(() => {
-      setShown(true)
-      markFeatureUsed("followUpDelivery")
-    }, FOLLOW_UP_WAITING_DELAY_MS)
-    return () => window.clearTimeout(timer)
-  }, [])
-  if (!shown) return null
   return (
-    <span role="status" data-follow-up-waiting className="px-1 text-xs text-muted-foreground">
+    <span
+      role="status"
+      data-follow-up-waiting
+      className="px-1 text-xs text-muted-foreground animate-in fade-in duration-200"
+      style={{ animationDelay: `${FOLLOW_UP_WAITING_DELAY_MS}ms`, animationFillMode: "backwards" }}
+      onAnimationEnd={() => markFeatureUsed("followUpDelivery")}
+    >
       {t("session.follow_up_waiting")}
     </span>
   )
@@ -1009,12 +1001,11 @@ function FollowUpWaitingStatus() {
 
 const UserMessage = React.memo(
   ({ message }: UserMessageProps) => {
-    const { onRevertToUserMessage, onEditUserMessage, highlightQuery, readOnly, followUpDelivery } = useMessageList()
+    const { onRevertToUserMessage, onEditUserMessage, highlightQuery, readOnly, waitingFollowUpIds } = useMessageList()
     const references = useSessionReferencesMaybe()
     const wall = messageAutoAccessWall(message.metadata)
     const { sessionId, workspaceId } = useMessageList()
-    const waitingForStep = useFollowUpDeliveryStore((state) =>
-      followUpDelivery && isFollowUpWaiting(state.booksByWorkspaceId[workspaceId], sessionId, message.id))
+    const waitingForStep = waitingFollowUpIds.includes(message.id)
     const { onOpenTarget } = useOpenTargets()
     const openLink = (event: React.MouseEvent) => {
       if (event.defaultPrevented || !onOpenTarget || !(event.target instanceof Element)) return

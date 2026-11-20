@@ -88,7 +88,6 @@ type ComposerProps = {
   steering: boolean;
   /** What Enter does while the agent is working; Cmd/Ctrl+Enter does the other. Defaults to queue. */
   followUpDefault?: "queue" | "steer";
-  /** While the agent works and a message is typed, show which key sends when (feature `followUpDelivery`). */
   followUpChords?: boolean;
   submissionPreparing: boolean;
   submissionPreparingLabel?: string;
@@ -413,7 +412,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   }, [dictation, props.childConversation, props.busy, props.disabled, props.editing, props.draft, props.attachments, props.onSend, props.onSteer, props.onQueue, props.submissionPreparing, props.stopping]);
 
   const showStop = props.busy && !props.editing;
-  // Named as Settings › Follow-up messages names them.
   const enterSteers = props.followUpDefault === "steer";
   const followUpChords = [
     { keys: "↵", label: enterSteers ? "settings.follow_up.steer" : "settings.follow_up.queue" },

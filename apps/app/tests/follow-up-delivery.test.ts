@@ -1,7 +1,6 @@
 import { describe, expect, test } from "bun:test";
 
-import { FOLLOW_UP_SETTLED_EVENT, FOLLOW_UP_WAITING_EVENT } from "../src/app/lib/follow-up-delivery";
-import { createV2EventTranslationState, translateV2Event } from "../src/app/lib/opencode-v2-adapter";
+import { FOLLOW_UP_SETTLED_EVENT, FOLLOW_UP_WAITING_EVENT, createV2EventTranslationState, translateV2Event } from "../src/app/lib/opencode-v2-adapter";
 import type { OpencodeEvent } from "../src/app/types";
 import {
   addWaitingFollowUp,

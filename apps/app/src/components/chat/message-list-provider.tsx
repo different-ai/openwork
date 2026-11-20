@@ -22,8 +22,7 @@ import type { SentMessageDraft } from "@/react-app/domains/session/surface/compo
 interface MessageListContextValue {
   mcpAppOrigin: McpAppOrigin | null
   readOnly: boolean
-  /** Sent messages say when the agent has not read them yet (feature `followUpDelivery`). */
-  followUpDelivery: boolean
+  waitingFollowUpIds: readonly string[]
   workspaceId: string
   sessionId: string
   /** Verified principal/org, endpoint, workspace and session; absent means no retention. */
@@ -84,7 +83,7 @@ interface MessageListProviderProps {
   client?: OpenworkServerClient
   mcpAppEngine?: "v1" | "v2"
   readOnly?: boolean
-  followUpDelivery?: boolean
+  waitingFollowUpIds?: readonly string[]
   children: React.ReactNode
   workspaceId: string
   sessionId: string
@@ -126,11 +125,13 @@ export interface DispatchAction {
   section: "commands" | "skills" | "mcps" | "plugins" | "providers"
 }
 
+const NO_WAITING_FOLLOW_UPS: readonly string[] = []
+
 export function MessageListProvider({
   client,
   mcpAppEngine,
   readOnly = false,
-  followUpDelivery = false,
+  waitingFollowUpIds = NO_WAITING_FOLLOW_UPS,
   children,
   workspaceId,
   sessionId,
@@ -262,7 +263,7 @@ export function MessageListProvider({
     () => ({
       mcpAppOrigin,
       readOnly,
-      followUpDelivery,
+      waitingFollowUpIds,
       workspaceId,
       sessionId,
       uiStateOwner,
@@ -301,7 +302,7 @@ export function MessageListProvider({
     [
       mcpAppOrigin,
       readOnly,
-      followUpDelivery,
+      waitingFollowUpIds,
       workspaceId,
       sessionId,
       uiStateOwner,

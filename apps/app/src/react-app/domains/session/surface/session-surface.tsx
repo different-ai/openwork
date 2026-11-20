@@ -137,6 +137,7 @@ import { ComposerSubagentTracker, useComposerRemoteTasks, useComposerSubagentPar
 import { ComposerBackgroundTasks } from "@/react-app/domains/session/surface/composer/composer-background-tasks";
 import { sessionBackgroundShells, settleBackgroundShell, useBackgroundShellStore } from "@/react-app/domains/session/status/background-shell-store";
 import { useDesktopFeature } from "@/react-app/domains/session/status/use-desktop-feature";
+import { useFollowUpDeliveryStore } from "@/react-app/domains/session/status/follow-up-delivery-store";
 import { useFollowUpSuggestion } from "./composer/use-follow-up-suggestion";
 import { parseSideQuestionCommand } from "../links/side-question";
 import { showSideChatTab, useSideQuestionStore } from "../links/side-question-store";
@@ -218,6 +219,8 @@ import {
 } from "./composer-auto-send";
 import { useOrgMcpConnections } from "@/react-app/domains/connections/use-org-mcp-connections";
 import { buildConnectorToolIdentities } from "@/react-app/domains/connections/connector-tool-identity";
+
+const NO_WAITING_FOLLOW_UPS: readonly string[] = [];
 
 const EMPTY_TRANSCRIPT: UIMessage[] = [];
 const IDLE_STATUS: SessionStatus = { type: "idle" };
@@ -2312,6 +2315,8 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const backgroundShells = useMemo(() => sessionBackgroundShells(runningShells, props.sessionId), [runningShells, props.sessionId]);
   const followUpSuggestionsEnabled = useDesktopFeature("followUpSuggestions");
   const followUpDeliveryEnabled = useDesktopFeature("followUpDelivery");
+  const waitingFollowUpIds = useFollowUpDeliveryStore((state) =>
+    (followUpDeliveryEnabled ? state.booksByWorkspaceId[props.workspaceId]?.[props.sessionId] : undefined) ?? NO_WAITING_FOLLOW_UPS);
   const chatRunCommandsEnabled = useDesktopFeature("chatRunCommands");
   const questionMinimizeEnabled = useDesktopFeature("questionMinimize");
   const questionInThreadEnabled = useDesktopFeature("questionInThread");
@@ -4050,7 +4055,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
                       client={props.client}
                       mcpAppEngine={isOpencodeV2BaseUrl(props.opencodeBaseUrl) ? "v2" : "v1"}
                       readOnly={archived || !archiveStateKnown || archiveHeld}
-                      followUpDelivery={followUpDeliveryEnabled}
+                      waitingFollowUpIds={waitingFollowUpIds}
                       workspaceId={props.workspaceId}
                       sessionId={props.sessionId}
                       showThinking={showThinking}

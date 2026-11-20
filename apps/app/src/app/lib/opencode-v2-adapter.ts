@@ -38,7 +38,6 @@ import {
   mentionText,
 } from "../../react-app/domains/session/surface/composer/sent-message-tokens";
 import { readShowThinkingPreference } from "../../react-app/kernel/local-preferences-storage";
-import { FOLLOW_UP_SETTLED_EVENT, FOLLOW_UP_WAITING_EVENT } from "./follow-up-delivery";
 import {
   BACKGROUND_SHELL_FINISHED_EVENT,
   BACKGROUND_SHELL_NOTICE_KEY,
@@ -54,6 +53,9 @@ import {
   type EngineShell,
 } from "./background-shell-tasks";
 import { SUBAGENT_NOTICE_KEY, readSubagentCompletion, subagentNoticeLabel, type SubagentNotice } from "./subagent-notices";
+
+export const FOLLOW_UP_WAITING_EVENT = "session.follow_up.waiting";
+export const FOLLOW_UP_SETTLED_EVENT = "session.follow_up.settled";
 
 type RequestOptions = {
   signal?: AbortSignal;
