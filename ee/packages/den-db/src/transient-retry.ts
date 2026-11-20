@@ -1,4 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises"
+import { Agent, fetch as undiciFetch, type RequestInit as UndiciRequestInit } from "undici"
 
 // This bounds admission, backoff and the second attempt; it does not change
 // the SDK's first-attempt timeout or retry a response body after headers arrive.
@@ -39,12 +40,25 @@ function isStandaloneRead(body: unknown): boolean {
   }
 }
 
-export function createRetryingPlanetScaleFetch() {
+// PlanetScale's edge sends no Keep-Alive hint, so undici's 4 s default closed
+// idle sockets and the next query paid a new TCP and TLS handshake. The edge
+// kept idle connections open for at least 90 s when measured; 30 s leaves margin
+// against reusing a socket the server is closing.
+export const PLANETSCALE_KEEP_ALIVE_MS = 30_000
+
+/** One socket pool per driver client, so separate clients never queue behind each other. */
+export function createPlanetScaleDispatcher(): Agent {
+  return new Agent({ keepAliveTimeout: PLANETSCALE_KEEP_ALIVE_MS, keepAliveMaxTimeout: 10 * 60_000 })
+}
+
+export function createRetryingPlanetScaleFetch(dispatcher: Agent = createPlanetScaleDispatcher()) {
+  const send = (input: string, init?: RequestInit) =>
+    undiciFetch(input, { ...(init as UndiciRequestInit), dispatcher }) as unknown as Promise<Response>
   return async (input: string, init?: RequestInit): Promise<Response> => {
     const started = performance.now()
     init?.signal?.throwIfAborted()
     try {
-      return await globalThis.fetch(input, init)
+      return await send(input, init)
     } catch (originalError) {
       init?.signal?.throwIfAborted()
       if (!isStandaloneRead(init?.body) || !isSocketFailure(originalError)) throw originalError
@@ -58,7 +72,7 @@ export function createRetryingPlanetScaleFetch() {
         const deadline = AbortSignal.timeout(remaining)
         const signal = init?.signal ? AbortSignal.any([init.signal, deadline]) : deadline
         console.warn("[db] retrying standalone PlanetScale read after socket failure")
-        return await globalThis.fetch(input, { ...init, signal })
+        return await send(input, { ...init, signal })
       } catch {
         init?.signal?.throwIfAborted()
         throw originalError
