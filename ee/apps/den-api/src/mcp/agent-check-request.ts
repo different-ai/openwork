@@ -57,6 +57,7 @@ export async function requestAgentCheck(input: { organizationId: DenTypeId<"orga
   const now = input.now ?? Date.now()
   // The member's own policy (their team's, else the organization's): the same rhythm and limits their checks follow.
   const { settings, template } = await resolveMemberAgentPolicy({ organizationId: input.organizationId, memberId: input.memberId, userId: input.userId })
+  if (!settings.enabled) return { ok: false, text: "Extra checks aren't on for this member." }
   const brief = resolveAgentBrief(settings, template)
   return changeAgentCheckRequests(input.memberId, (row, state) => {
     if (!row) return { requests: null, result: { ok: false, text: "This member has no agent yet." } }
