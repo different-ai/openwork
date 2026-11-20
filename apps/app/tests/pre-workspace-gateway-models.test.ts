@@ -55,7 +55,6 @@ test("mixed ready and pending assignments offer only ready models", () => {
     providerID: mixed.id,
     modelID: ready.id,
     title: ready.name,
-    description: mixed.name,
     behaviorTitle: "Reasoning",
     behaviorLabel: "Default",
     behaviorDescription: "",
