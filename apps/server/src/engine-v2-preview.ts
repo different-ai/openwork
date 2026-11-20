@@ -75,6 +75,7 @@ import {
   type EngineV2SkippedProviderReason,
 } from "./opencode-v2-local-auth.js";
 import { ORGANIZATION_PROVIDER_ID, organizationProviderGate } from "./organization-provider-gate.js";
+import { cloudSkillFoldersRoot } from "./cloud-skill-folders-root.js";
 
 export type { EngineV2SkippedProvider, EngineV2SkippedProviderReason } from "./opencode-v2-local-auth.js";
 
@@ -1316,6 +1317,7 @@ export function createEngineV2Preview(options: {
       } : {}),
       historyDatabase,
       contextTools: contextBridge,
+      cloudSkillFoldersDirectory: cloudSkillFoldersRoot(config),
       ...(providerSessionBridge ? { providerSession: providerSessionBridge } : {}),
       bin: resolved.bin,
       rootDir,

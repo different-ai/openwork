@@ -44,6 +44,12 @@ const skillIndexSchema = z.object({
     digest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
     size: z.number().int().nonnegative().optional(),
     setup: z.object({ status: z.string().max(64), message: z.string().max(4_000) }).optional(),
+    // The skill's supporting files, each with its digest (Dens since skill folders).
+    files: z.array(z.object({
+      path: z.string().min(1).max(255),
+      digest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+      size: z.number().int().nonnegative(),
+    })).max(500).optional(),
   }).passthrough()),
   // Delivery metadata retained for older clients.
   delivery: z.enum(["native"]).optional(),
@@ -388,4 +394,53 @@ export function renderOpenWorkConnectSkillInstruction(skills: OpenWorkConnectSki
   lines.push("</available_remote_skills>");
   logInjectedMarketplaceSkills(injectedMarketplaceSkills);
   return lines.join("\n");
+}
+
+/** A listed skill's SKILL.md and supporting files, every one matching the digest the index lists. */
+export type OpenWorkConnectSkillSource = { skill: OpenWorkConnectSkill; markdown: string; files: Array<{ path: string; bytes: Uint8Array }> };
+
+function bytesDigest(bytes: Uint8Array): string {
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+}
+
+/** `skill://<name>/<path>` beside a skill's SKILL.md, each segment percent-encoded as Den lists it. */
+function skillFileUrl(skillUrl: string, path: string): string {
+  return `${skillUrl.slice(0, -"SKILL.md".length)}${path.split("/").map(encodeURIComponent).join("/")}`;
+}
+
+/**
+ * Read one listed skill in full for a skill folder: SKILL.md and each
+ * supporting file, on one session, through the same working openwork-cloud
+ * config. Only a skill in the current index is read, and only the files it
+ * lists. Null unless every body arrives and matches its digest, so a folder is
+ * never built from a partial or altered skill.
+ */
+export async function readOpenWorkConnectSkillSource(
+  config: ServerConfig,
+  url: string,
+  fetcher: McpFetch = externalFetch,
+): Promise<OpenWorkConnectSkillSource | null> {
+  try {
+    const working = await readWorkingCloudIndex(config, fetcher);
+    const skill = working?.index.skills.find((entry) => entry.url === url);
+    if (!working || !skill?.digest || skill.setup) return null;
+    const reader = await sessionReader(working.cloud, fetcher);
+    if (!reader) return null;
+    const markdown = await reader.read(url);
+    if (markdown === null || sha256Digest(markdown) !== skill.digest) return null;
+    const files: OpenWorkConnectSkillSource["files"] = [];
+    for (const file of skill.files ?? []) {
+      if (reader.broken) return null;
+      const fileUrl = skillFileUrl(url, file.path);
+      const result = await reader.readContents(fileUrl);
+      const text = result?.texts.get(fileUrl);
+      const blob = result?.blobs.get(fileUrl);
+      const bytes = text !== undefined ? new Uint8Array(Buffer.from(text, "utf8")) : blob !== undefined ? new Uint8Array(Buffer.from(blob, "base64")) : null;
+      if (!bytes || bytesDigest(bytes) !== file.digest) return null;
+      files.push({ path: file.path, bytes });
+    }
+    return { skill, markdown, files };
+  } catch {
+    return null;
+  }
 }

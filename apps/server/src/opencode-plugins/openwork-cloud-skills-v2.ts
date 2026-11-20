@@ -11,6 +11,7 @@ const catalogSchema = z.object({
     pluginName: z.string().optional(),
     digest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
     setup: z.object({ status: z.string(), message: z.string() }).optional(),
+    files: z.array(z.object({ path: z.string(), digest: z.string() })).optional(),
   })),
 });
 type Catalog = z.infer<typeof catalogSchema>;
@@ -53,6 +54,11 @@ const skillId = (skill: CatalogSkill) => `${CLOUD_SKILL_ID_PREFIX}${skill.name}`
 // included, when a registered skill lacks it.
 const skillPath = (skill: CatalogSkill) => `/openwork/remote-skills/${skill.name}.md`;
 
+/** One version of a skill with supporting files: changes when any of its digests does. */
+const folderKey = (skill: CatalogSkill) => skill.digest && skill.files?.length
+  ? JSON.stringify([skill.name, skill.digest, skill.files.map(file => [file.path, file.digest])])
+  : null;
+
 function discoveryContent(skill: CatalogSkill): string {
   return [
     "This is discovery metadata, NOT the skill's instructions or proof of access.",
@@ -94,13 +100,23 @@ function budgeted(skills: CatalogSkill[], budget: number, descriptionChars: numb
  * Each organization skill is a native skill with its full description. A
  * skill whose authorized SKILL.md has been read for a message, verified against
  * the digest Den published, carries it; every other skill keeps the discovery
- * note, so it still works through get_skill.
+ * note, so it still works through get_skill. A skill with supporting files
+ * that has a verified folder on this machine (`folders`, by folder key) is
+ * registered at that folder's SKILL.md, so the engine names its base directory
+ * and lists its files, and the agent can read them and run its scripts.
  */
-export function nativeSkills(catalog: Catalog, contents: ReadonlyMap<string, string>): NativeSkill[] {
-  return budgeted(catalog.skills, NATIVE_BUDGET_CHARS, NATIVE_DESCRIPTION_CHARS, skill => {
+export function nativeSkills(catalog: Catalog, contents: ReadonlyMap<string, string>, folders: ReadonlyMap<string, string> = new Map()): NativeSkill[] {
+  const listed = budgeted(catalog.skills, NATIVE_BUDGET_CHARS, NATIVE_DESCRIPTION_CHARS, skill => {
     if (skill.setup) return setupContent(skill, skill.setup);
     const body = skill.digest ? contents.get(skill.digest) : undefined;
     return body ?? discoveryContent(skill);
+  });
+  const byId = new Map(catalog.skills.map(skill => [skillId(skill), skill]));
+  return listed.map(native => {
+    const skill = byId.get(native.id);
+    const key = skill && !skill.setup && skill.digest && contents.has(skill.digest) ? folderKey(skill) : null;
+    const folder = key ? folders.get(key) : undefined;
+    return folder ? { ...native, path: folder } : native;
   });
 }
 
@@ -157,6 +173,8 @@ export async function registerCloudSkillDiscovery(context: CloudSkillContext) {
   // Verified SKILL.md bodies by digest, in memory only, for the warm skills.
   // A body is re-read only when Den publishes a new digest for one of them.
   const contents = new Map<string, string>();
+  // SKILL.md paths of verified skill folders on this machine, by folder key.
+  const folders = new Map<string, string>();
   // Skill IDs messages used, most recent last.
   const warm: string[] = [];
   const controller = new AbortController();
@@ -164,7 +182,7 @@ export async function registerCloudSkillDiscovery(context: CloudSkillContext) {
   let promptHook: Registration | undefined;
   let toolHook: Registration | undefined;
 
-  const call = async (name: "openwork_skills" | "openwork_skill_read", input: unknown) => {
+  const call = async (name: "openwork_skills" | "openwork_skill_read" | "openwork_skill_folder", input: unknown) => {
     const response = await fetch(context.options.url, {
       method: "POST", redirect: "error",
       signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
@@ -188,6 +206,22 @@ export async function registerCloudSkillDiscovery(context: CloudSkillContext) {
     }
   };
 
+  /**
+   * Ask OpenWork for each used skill's folder. It checks the folder file by
+   * file every time and rebuilds it from Den when anything changed, so a
+   * skill's scripts are exactly what the organization published when they run.
+   */
+  const ensureFolders = async (entries: CatalogSkill[]) => {
+    for (const skill of entries) {
+      const key = folderKey(skill);
+      if (!key || skill.setup || !skill.url || !contents.has(skill.digest!)) continue;
+      const result = z.object({ ok: z.literal(true), path: z.string().min(1) })
+        .safeParse(await call("openwork_skill_folder", { url: skill.url }).catch(() => null));
+      if (result.success) folders.set(key, result.data.path);
+      else folders.delete(key);
+    }
+  };
+
   const warmEntries = () => {
     const listed = new Set(nativeSkills(catalog, contents).map(skill => skill.id));
     return catalog.skills.filter(skill => warm.includes(skillId(skill)) && listed.has(skillId(skill)));
@@ -199,7 +233,9 @@ export async function registerCloudSkillDiscovery(context: CloudSkillContext) {
     publishing = publishing.catch(() => {}).then(async () => {
       const wanted = new Set(warmEntries().flatMap(skill => skill.digest && !skill.setup ? [skill.digest] : []));
       for (const digest of contents.keys()) if (!wanted.has(digest)) contents.delete(digest);
-      const next = nativeSkills(catalog, contents);
+      const wantedFolders = new Set(warmEntries().flatMap(skill => folderKey(skill) ?? []));
+      for (const key of folders.keys()) if (!wantedFolders.has(key)) folders.delete(key);
+      const next = nativeSkills(catalog, contents, folders);
       const key = JSON.stringify(next);
       if (closed || key === fingerprint) return;
       skills = next;
@@ -234,6 +270,8 @@ export async function registerCloudSkillDiscovery(context: CloudSkillContext) {
       // Freshly authorized for this use, and counted by Den as one.
       // A body that cannot be read leaves the discovery note: get_skill still works.
       await readBodies(entries, true);
+      // A folder that cannot be built leaves the skill as it was: its body still loads.
+      await ensureFolders(entries);
       for (const skill of entries) {
         const id = skillId(skill);
         warm.splice(0, warm.length, ...warm.filter(entry => entry !== id), id);

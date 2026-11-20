@@ -90,9 +90,10 @@ export type McpResourceReader = {
   read(uri: string, meta?: Record<string, unknown>): Promise<string | null>;
   /**
    * One `resources/read` whose result may list several resources: each URI's
-   * text, plus the result's `_meta`. Null when the request itself failed.
+   * text, each binary resource's base64 blob, plus the result's `_meta`. Null
+   * when the request itself failed.
    */
-  readContents(uri: string, meta?: Record<string, unknown>): Promise<{ texts: Map<string, string>; meta: Record<string, unknown> } | null>;
+  readContents(uri: string, meta?: Record<string, unknown>): Promise<{ texts: Map<string, string>; blobs: Map<string, string>; meta: Record<string, unknown> } | null>;
   /** Set once a request failed at the transport or session level; open a new reader. */
   readonly broken: boolean;
 };
@@ -153,10 +154,13 @@ export async function openMcpResourceReader(input: {
     const result = jsonRpcResult(resource.payload);
     if (!result || !Array.isArray(result.contents)) return null;
     const texts = new Map<string, string>();
+    const blobs = new Map<string, string>();
     for (const item of result.contents) {
-      if (isRecord(item) && typeof item.uri === "string" && typeof item.text === "string" && !texts.has(item.uri)) texts.set(item.uri, item.text);
+      if (!isRecord(item) || typeof item.uri !== "string") continue;
+      if (typeof item.text === "string" && !texts.has(item.uri)) texts.set(item.uri, item.text);
+      else if (typeof item.blob === "string" && !blobs.has(item.uri)) blobs.set(item.uri, item.blob);
     }
-    return { texts, meta: isRecord(result._meta) ? result._meta : {} };
+    return { texts, blobs, meta: isRecord(result._meta) ? result._meta : {} };
   };
   return {
     readContents,

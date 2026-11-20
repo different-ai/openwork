@@ -50,6 +50,8 @@ export interface OpencodeV2ProviderSpec {
 }
 
 export interface ManagedOpencodeV2ServerOptions {
+  /** Root of the organization skill folders, given read access and no edits in the engine's permissions. */
+  cloudSkillFoldersDirectory?: string;
   isolateProjectConfig?: () => Promise<boolean>;
   bin: string;
   rootDir: string;
@@ -263,6 +265,8 @@ export function renderOpencodeV2Config(input: {
   organizationMcp?: OrganizationMcpServers;
   agentPermissionsPluginDirectory?: string;
   sandboxPluginDirectory?: string;
+  /** Root of the organization skill folders (cloud-skill-folders.ts). */
+  cloudSkillFoldersDirectory?: string;
 }): Record<string, unknown> {
   const disabled = new Set(input.disabledProviderIds ?? []);
   const enabledProviders = input.providers.filter((provider) => !disabled.has(provider.id)
@@ -366,7 +370,15 @@ export function renderOpencodeV2Config(input: {
   const contextWrites = [DRIVE_UPLOAD_PERMISSION, "drive_pull_file", "drive_push_file", GMAIL_DRAFT_PERMISSION, OUTLOOK_DRAFT_PERMISSION];
   const permissions: EngineV2PermissionRule[] = [
     ...(input.contextTools && input.contextPluginDirectory ? contextWrites.map(action => ({ action, resource: "*", effect: "ask" as const })) : []),
-    ...agentPermissionEngineV2Rules(input.agentPermissionRules ?? []), ...(input.permissions ?? []),
+    ...agentPermissionEngineV2Rules(input.agentPermissionRules ?? []),
+    // Organization skill folders: the agent may always read them and run their
+    // scripts (they are what the organization published, even where outside
+    // folders are restricted), and its edit tools may never change them.
+    ...(input.cloudSkillFoldersDirectory ? [
+      { action: "external_directory", resource: `${input.cloudSkillFoldersDirectory}/*`, effect: "allow" as const },
+      { action: "edit", resource: `${input.cloudSkillFoldersDirectory}/*`, effect: "deny" as const },
+    ] : []),
+    ...(input.permissions ?? []),
   ];
   return {
     $schema: "https://opencode.ai/config.json",
@@ -664,6 +676,7 @@ async function createManagedOpencodeV2ServerInner(
       contextPluginDirectory,
       sandboxPluginDirectory,
       contextTools: options.contextTools,
+      ...(options.cloudSkillFoldersDirectory ? { cloudSkillFoldersDirectory: options.cloudSkillFoldersDirectory } : {}),
       ...(options.permissions ? { permissions: await options.permissions() } : {}),
       ...(options.agentPermissions ? await agentPermissionsConfig(options.agentPermissions) : {}),
       skills,

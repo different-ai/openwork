@@ -8,6 +8,7 @@ import {
   readOpenWorkConnectSkillContent,
   readOpenWorkConnectSkillContents,
   readOpenWorkConnectSkillIndex,
+  readOpenWorkConnectSkillSource,
   resetOpenWorkConnectSkillCatalogCacheForTests,
 } from "../src/connect-skill-catalog.js";
 import { writeConnectCloudMcp } from "../src/connect-state.js";
@@ -228,5 +229,47 @@ describe("incremental sync with Den", () => {
     expect(Object.fromEntries(bodies)).toEqual({ [crmUrl]: crmBody, [tamperedUrl]: "not the published body" });
     expect(den.reads).toEqual([crmUrl, tamperedUrl]);
     expect(initializes).toBe(1);
+  });
+
+  test("reads a listed skill in full for its folder: text and binary files, each matching its digest", async () => {
+    const script = "print('folder proof')\n";
+    const logo = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff]);
+    const bytesDigest = (bytes: Uint8Array) => `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+    const files = [
+      { path: "assets/logo.png", digest: bytesDigest(logo), size: logo.length },
+      { path: "scripts/build.py", digest: digest(script), size: script.length },
+    ];
+    let served: Record<string, { text?: string; blob?: string }> = {
+      [crmUrl]: { text: crmBody },
+      "skill://crm-sync/scripts/build.py": { text: script },
+      "skill://crm-sync/assets/logo.png": { blob: logo.toString("base64") },
+    };
+    const fetcher = async (_url: string, init?: RequestInit) => {
+      const body = JSON.parse(String(init?.body));
+      if (body.method === "initialize") return Response.json({ jsonrpc: "2.0", id: body.id, result: { protocolVersion: "2025-06-18" } });
+      if (body.method === "notifications/initialized") return new Response(null, { status: 202 });
+      const uri: string = body.params.uri;
+      if (uri === "skill://index.json") {
+        const text = JSON.stringify({ $schema: SCHEMA, delivery: "native", skills: [{ ...skill("crm-sync", crmUrl, crmBody), files }] });
+        return Response.json({ jsonrpc: "2.0", id: body.id, result: { contents: [{ uri, text }] } });
+      }
+      return Response.json({ jsonrpc: "2.0", id: body.id, result: { contents: served[uri] ? [{ uri, ...served[uri] }] : [] } });
+    };
+
+    expect((await readOpenWorkConnectSkillIndex(config, fetcher)).skills[0]?.files).toEqual(files);
+    const source = await readOpenWorkConnectSkillSource(config, crmUrl, fetcher);
+    expect(source?.markdown).toBe(crmBody);
+    expect(source?.files.map(file => [file.path, Buffer.from(file.bytes).toString("base64")])).toEqual([
+      ["assets/logo.png", logo.toString("base64")],
+      ["scripts/build.py", Buffer.from(script).toString("base64")],
+    ]);
+
+    // One file that does not match its digest, or is missing, means no folder at all.
+    served = { ...served, "skill://crm-sync/scripts/build.py": { text: "tampered" } };
+    expect(await readOpenWorkConnectSkillSource(config, crmUrl, fetcher)).toBeNull();
+    served = { [crmUrl]: { text: crmBody } };
+    expect(await readOpenWorkConnectSkillSource(config, crmUrl, fetcher)).toBeNull();
+    // Only skills the index lists.
+    expect(await readOpenWorkConnectSkillSource(config, "skill://other/SKILL.md", fetcher)).toBeNull();
   });
 });
