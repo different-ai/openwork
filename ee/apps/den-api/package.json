@@ -74,7 +74,7 @@
     "@openwork/sandbox-daytona": "workspace:*",
     "@openwork/types": "workspace:*",
     "@sentry/hono": "10.75.2",
-    "@sentry/node": "10.75.2",
+    "@sentry/node": "11.14.0",
     "@standard-community/standard-json": "^0.3.5",
     "@standard-community/standard-openapi": "^0.2.9",
     "@standard-schema/spec": "^1.1.0",
