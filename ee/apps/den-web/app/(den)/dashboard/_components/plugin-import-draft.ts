@@ -20,11 +20,17 @@ export type PluginImportSkill = {
   sourcePath: string;
   supported: boolean;
   skippedReason: "invalid_skill" | null;
+  /** Files in the skill's folder besides SKILL.md. */
+  supportingFileCount: number | null;
 };
 
 export type PluginImportPreview = {
   repositoryFullName: string;
+  /** No plugin manifest: the person chooses each skill and confirms the source. */
+  requiresSkillSelection: boolean;
   rootPath: string;
+  /** The commit the preview read, so the folders shown are the ones imported. */
+  sourceRevisionRef: string;
   servers: PluginImportServer[];
   skills: PluginImportSkill[];
   warnings: string[];
@@ -128,7 +134,9 @@ export function parsePluginImportPreview(payload: unknown): PluginImportPreview 
 
   return {
     repositoryFullName: typeof item.repositoryFullName === "string" ? item.repositoryFullName : "",
+    requiresSkillSelection: item.requiresSkillSelection === true,
     rootPath: typeof item.rootPath === "string" ? item.rootPath : "",
+    sourceRevisionRef: typeof item.sourceRevisionRef === "string" ? item.sourceRevisionRef : "",
     servers: Array.isArray(item.servers)
       ? item.servers.flatMap((entry) => {
           if (!isRecord(entry) || typeof entry.name !== "string") return [];
@@ -153,6 +161,7 @@ export function parsePluginImportPreview(payload: unknown): PluginImportPreview 
             sourcePath: typeof entry.sourcePath === "string" ? entry.sourcePath : "SKILL.md",
             supported: entry.supported === true,
             skippedReason: entry.skippedReason === "invalid_skill" ? "invalid_skill" : null,
+            supportingFileCount: typeof entry.supportingFileCount === "number" ? entry.supportingFileCount : null,
           }];
         })
       : [],
@@ -191,6 +200,14 @@ function parseStoredDraft(value: unknown): PluginImportDraft | null {
   }
 }
 
+/** The skill's folder on GitHub at the previewed commit, for checking it before import. */
+export function pluginImportSkillFolderUrl(preview: PluginImportPreview, sourcePath: string): string | null {
+  if (!preview.repositoryFullName || !preview.sourceRevisionRef) return null;
+  const folder = [preview.rootPath, sourcePath.replace(/\/?SKILL\.md$/, "")].filter(Boolean).join("/");
+  const encoded = folder.split("/").map(encodeURIComponent).join("/");
+  return `https://github.com/${preview.repositoryFullName}/tree/${encodeURIComponent(preview.sourceRevisionRef)}${encoded ? `/${encoded}` : ""}`;
+}
+
 export function loadPluginImportDraft(): PluginImportDraft | null {
   if (typeof window === "undefined") return null;
   const value = window.sessionStorage.getItem(STORAGE_KEY);
@@ -227,7 +244,9 @@ export function minimizePluginImportDraft(draft: PluginImportDraft): PluginImpor
     githubUrl,
     preview: {
       repositoryFullName: draft.preview.repositoryFullName,
+      requiresSkillSelection: draft.preview.requiresSkillSelection,
       rootPath: draft.preview.rootPath,
+      sourceRevisionRef: draft.preview.sourceRevisionRef,
       servers: selectedServers.map((server) => ({ ...server, url: null })),
       skills: selectedSkills.map((skill) => ({
         ...skill,

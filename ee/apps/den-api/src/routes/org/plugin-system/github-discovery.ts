@@ -21,6 +21,7 @@ export type GithubDiscoveryClassification =
   | "claude_multi_plugin_repo"
   | "claude_single_plugin_repo"
   | "folder_inferred_repo"
+  | "skill_folders_repo"
   | "unsupported"
 
 export type GithubDiscoveredPluginSourceKind =
@@ -29,6 +30,7 @@ export type GithubDiscoveredPluginSourceKind =
   | "plugin_manifest"
   | "standalone_claude"
   | "folder_inference"
+  | "skill_folder"
 
 export type GithubDiscoveredPluginComponentKind =
   | "skill"
@@ -497,9 +499,35 @@ function inferredRootsFromKnownFolders(entries: GithubDiscoveryTreeEntry[]) {
   return [...inferred]
 }
 
+/**
+ * SKILL.md files at fixed places only: the linked folder itself (then it is
+ * the only skill), or one level down, directly or under skills/. Nothing
+ * deeper and no hidden folders, so an arbitrary repository is never read as
+ * a skill collection. The paths are the SKILL.md files, never folders.
+ */
+export function discoverSkillFolderEntrypoints(entries: GithubDiscoveryTreeEntry[]) {
+  const blobs = entries.filter((entry) => entry.kind === "blob").map((entry) => normalizePath(entry.path))
+  if (blobs.includes("SKILL.md")) return ["SKILL.md"]
+  return blobs
+    .filter((path) => {
+      const segments = path.split("/")
+      if (segments.at(-1) !== "SKILL.md" || segments.some((segment) => segment.startsWith("."))) return false
+      return segments.length === 2 || (segments.length === 3 && segments[0] === "skills")
+    })
+    .sort()
+}
+
 export function buildGithubRepoDiscovery(input: {
   entries: GithubDiscoveryTreeEntry[]
   fileTextByPath: Record<string, string | null | undefined>
+  /**
+   * When set, a repository without any plugin manifest may still offer the
+   * skill folders it has, as one plugin with this name. Nothing is selected
+   * by default: the person importing names each skill. Only the GitHub URL
+   * import opts in; connected repositories, which can import on their own,
+   * keep requiring a manifest.
+   */
+  skillFoldersPluginName?: string
 }) {
   const knownPaths = buildPathSet(input.entries)
   const warnings: string[] = []
@@ -678,6 +706,40 @@ export function buildGithubRepoDiscovery(input: {
   //     warnings,
   //   } satisfies GithubRepoDiscoveryResult
   // }
+
+  const skillEntrypoints = input.skillFoldersPluginName ? discoverSkillFolderEntrypoints(input.entries) : []
+  if (input.skillFoldersPluginName && skillEntrypoints.length > 0) {
+    const warning = "This repository has no plugin manifest. Choose each skill folder to import; none are selected for you."
+    return {
+      classification: "skill_folders_repo",
+      discoveredPlugins: [{
+        componentKinds: ["skill"],
+        componentPaths: {
+          agents: [],
+          commands: [],
+          hooks: [],
+          lspServers: [],
+          mcpServers: [],
+          monitors: [],
+          settings: [],
+          skills: skillEntrypoints,
+        },
+        description: null,
+        displayName: input.skillFoldersPluginName,
+        key: "skill-folders",
+        manifestPath: null,
+        metadata: {},
+        rootPath: "",
+        selectedByDefault: false,
+        sourceKind: "skill_folder",
+        sourceSchemaVersion: null,
+        supported: true,
+        warnings: [],
+      }],
+      marketplace: null,
+      warnings: [warning],
+    } satisfies GithubRepoDiscoveryResult
+  }
 
   warnings.push(`OpenWork supports Agent Plugins ${AGENT_PLUGIN_V1_SUPPORTED_VERSIONS.join(" and ")} and Claude-compatible plugins. Add a standards-compliant plugin.json, .claude-plugin/marketplace.json, or .claude-plugin/plugin.json to this repository.`)
 

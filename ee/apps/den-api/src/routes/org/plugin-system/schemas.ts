@@ -1072,7 +1072,7 @@ const githubPluginMcpImportServerSchema = z.object({
 
 const githubPluginMcpImportPlanSchema = z.object({
   branch: z.string(),
-  classification: z.enum(["agent_plugin_repo", "claude_marketplace_repo", "claude_multi_plugin_repo", "claude_single_plugin_repo", "folder_inferred_repo", "unsupported"]),
+  classification: z.enum(["agent_plugin_repo", "claude_marketplace_repo", "claude_multi_plugin_repo", "claude_single_plugin_repo", "folder_inferred_repo", "skill_folders_repo", "unsupported"]),
   marketplace: z.object({
     description: z.string().nullable(),
     name: z.string().nullable(),
@@ -1099,7 +1099,9 @@ const githubPluginMcpImportPlanSchema = z.object({
     sourceSchemaVersion: z.string().nullable(),
     sourcePath: z.string(),
     supported: z.boolean(),
+    supportingFileCount: z.number().int().nonnegative().describe("Files in the skill's folder besides SKILL.md."),
   })),
+  requiresSkillSelection: z.boolean().describe("True when the repository has no plugin manifest: nothing is selected by default, and an import must name each skill in selectedSkillKeys."),
   sourceSchemaVersion: z.string().nullable(),
   sourceRevisionRef: z.string(),
   warnings: z.array(z.string()),
@@ -1278,7 +1280,7 @@ export const githubDiscoveryTreeSummarySchema = z.object({
 }).meta({ ref: "PluginArchGithubDiscoveryTreeSummary" })
 export const githubDiscoveredPluginSchema = z.object({
   key: z.string().trim().min(1),
-  sourceKind: z.enum(["agent_plugin_manifest", "marketplace_entry", "plugin_manifest", "standalone_claude", "folder_inference"]),
+  sourceKind: z.enum(["agent_plugin_manifest", "marketplace_entry", "plugin_manifest", "standalone_claude", "folder_inference", "skill_folder"]),
   sourceSchemaVersion: z.enum(["1.0.0", "1.1.0"]).nullable(),
   rootPath: z.string(),
   displayName: z.string().trim().min(1),
@@ -1304,7 +1306,7 @@ export const githubConnectorDiscoveryResponseSchema = pluginArchMutationResponse
   "PluginArchGithubConnectorDiscoveryResponse",
   z.object({
     autoImportNewPlugins: z.boolean(),
-    classification: z.enum(["agent_plugin_repo", "claude_marketplace_repo", "claude_multi_plugin_repo", "claude_single_plugin_repo", "folder_inferred_repo", "unsupported"]),
+    classification: z.enum(["agent_plugin_repo", "claude_marketplace_repo", "claude_multi_plugin_repo", "claude_single_plugin_repo", "folder_inferred_repo", "skill_folders_repo", "unsupported"]),
     connectorInstance: connectorInstanceSchema,
     connectorTarget: connectorTargetSchema,
     discoveredPlugins: z.array(githubDiscoveredPluginSchema),
