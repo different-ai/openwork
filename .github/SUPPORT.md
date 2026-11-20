@@ -20,4 +20,4 @@ Use the right channel to get faster help:
 
 ## Maintainer triage
 
-Maintainers use the rubric in `TRIAGE.md` to label and route issues.
+Maintainers label and route new issues; the label rules live in `.opencode/agents/triage.md`.
