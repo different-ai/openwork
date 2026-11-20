@@ -50,6 +50,11 @@ export const CHECKS = [
     fix: "Move the code to the folder the message names. Do not add the violation to the baseline.",
   },
   {
+    name: "package-names",
+    command: ["node", "scripts/check-package-names.mjs"],
+    fix: "Name the package @openwork/<folder> (@openwork-ee/<folder> under ee/), family first, as the message says.",
+  },
+  {
     name: "code-habits",
     command: ["node", "scripts/check-code-habits.mjs"],
     fix: "Remove the comment or the effect as the message says. Do not add it to the baseline.",

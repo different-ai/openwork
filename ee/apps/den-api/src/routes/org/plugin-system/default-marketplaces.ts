@@ -39,14 +39,28 @@ export const RETIRED_STARTER_PLUGIN_NAMES = [
 ] as const
 
 /**
- * Built-in plugins earlier Den builds seeded into the OpenWork Marketplace for
- * desktop features that no longer exist. Den no longer seeds them and retires
- * any copy that is still an untouched, empty system seed, matched by its exact
- * name and description. A copy someone imported into or filled in is kept.
+ * Built-in plugins earlier Den builds seeded into the OpenWork Marketplace. They
+ * were a name and description only: the desktop app ships these capabilities
+ * itself, so the copies did nothing and read as plugins added by whoever opened
+ * the Library first. Den no longer seeds any plugin and retires any copy that is
+ * still an untouched, empty system seed, matched by its exact name and
+ * description. A copy someone imported into or filled in is kept.
  */
 export const RETIRED_DEFAULT_OPENWORK_PLUGINS: readonly DefaultMarketplacePluginEntry[] = [
   {
     name: "Computer Use",
     description: "Mac only: control Mac apps through semantic accessibility refs, screenshots, background-safe clicks, keyboard input, and strict mode.",
+  },
+  {
+    name: "OpenWork Browser",
+    description: "Automate the built-in browser panel that stays visible inside OpenWork.",
+  },
+  {
+    name: "OpenAI Image Gen",
+    description: "Generate image artifacts with gpt-image-2.",
+  },
+  {
+    name: "Ollama",
+    description: "Local model provider at http://localhost:11434.",
   },
 ]

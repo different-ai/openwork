@@ -1,7 +1,7 @@
-import { previewWorld } from "../packages/freestyle/src/index.ts";
-import { ensureSnapshot } from "../packages/freestyle/src/builder.ts";
+import { previewWorld } from "../packages/evidence-freestyle/src/index.ts";
+import { ensureSnapshot } from "../packages/evidence-freestyle/src/builder.ts";
 import { appendFile, writeFile } from "node:fs/promises";
-import type { BuildStage } from "../packages/freestyle/src/cache.ts";
+import type { BuildStage } from "../packages/evidence-freestyle/src/cache.ts";
 
 const sha = process.argv[2];
 if (!sha) throw new Error("Usage: node --env-file=.env.freestyle.local scripts/prepare-freestyle-preview.ts <full-pushed-sha>");

@@ -71,7 +71,7 @@ Anonymous live discovery probes against Linear and GitHub returned 401 â†’ 200 â
 
 ### CI regression checks
 
-The Vercel filtered install includes `@openwork/enterprise-mcp-client` as a declared Den web dependency. The browser form imports its narrow `manual-oauth` export, not the server runtime or an undeclared relative source path. A clean filtered install reproduced the original missing-`zod` build failure; the same production build passes with this dependency declared.
+The Vercel filtered install includes `@openwork/mcp-enterprise-client` as a declared Den web dependency. The browser form imports its narrow `manual-oauth` export, not the server runtime or an undeclared relative source path. A clean filtered install reproduced the original missing-`zod` build failure; the same production build passes with this dependency declared.
 
 Permission and destination confirmations use the shared Base UI checkbox, retaining checked/disabled state and label/keyboard semantics. Both connector browser proofs were rerun after this change. UI guardrails pass without baseline changes (DESIGN.md P5, V1, V2).
 

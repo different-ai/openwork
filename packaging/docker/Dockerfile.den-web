@@ -10,7 +10,7 @@ COPY patches /app/patches
 COPY packages/types/package.json /app/packages/types/package.json
 COPY packages/managed-deployments/package.json /app/packages/managed-deployments/package.json
 COPY packages/features/package.json /app/packages/features/package.json
-COPY packages/enterprise-mcp-client/package.json /app/packages/enterprise-mcp-client/package.json
+COPY packages/mcp-enterprise-client/package.json /app/packages/mcp-enterprise-client/package.json
 COPY packages/ui/package.json /app/packages/ui/package.json
 COPY ee/packages/utils/package.json /app/ee/packages/utils/package.json
 COPY ee/packages/gateway-catalog/package.json /app/ee/packages/gateway-catalog/package.json
@@ -26,7 +26,7 @@ RUN pnpm install --frozen-lockfile --trust-lockfile --filter @openwork-ee/den-we
 COPY packages/types /app/packages/types
 COPY packages/managed-deployments /app/packages/managed-deployments
 COPY packages/features /app/packages/features
-COPY packages/enterprise-mcp-client /app/packages/enterprise-mcp-client
+COPY packages/mcp-enterprise-client /app/packages/mcp-enterprise-client
 COPY packages/ui /app/packages/ui
 COPY ee/packages/utils /app/ee/packages/utils
 COPY ee/packages/gateway-catalog /app/ee/packages/gateway-catalog

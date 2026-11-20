@@ -23,7 +23,7 @@ COPY packages/free-auto/package.json /app/packages/free-auto/package.json
 COPY packages/automations/package.json /app/packages/automations/package.json
 COPY packages/codemode/package.json /app/packages/codemode/package.json
 COPY packages/email/package.json /app/packages/email/package.json
-COPY packages/enterprise-mcp-client/package.json /app/packages/enterprise-mcp-client/package.json
+COPY packages/mcp-enterprise-client/package.json /app/packages/mcp-enterprise-client/package.json
 COPY packages/install-config/package.json /app/packages/install-config/package.json
 COPY packages/connect-link/package.json /app/packages/connect-link/package.json
 COPY packages/headless-threads/package.json /app/packages/headless-threads/package.json
@@ -67,7 +67,7 @@ COPY packages/free-auto /app/packages/free-auto
 COPY packages/automations /app/packages/automations
 COPY packages/codemode /app/packages/codemode
 COPY packages/email /app/packages/email
-COPY packages/enterprise-mcp-client /app/packages/enterprise-mcp-client
+COPY packages/mcp-enterprise-client /app/packages/mcp-enterprise-client
 COPY packages/install-config /app/packages/install-config
 COPY packages/connect-link /app/packages/connect-link
 COPY packages/headless-threads /app/packages/headless-threads

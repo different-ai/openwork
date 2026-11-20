@@ -9,7 +9,12 @@ export type ToolSession = {
   call(name: string, input: Record<string, unknown>, signal: AbortSignal): Promise<ToolResult>
   close(): Promise<void>
 }
-export type McpConnector = (input: { token: string; signal: AbortSignal }) => Promise<ToolSession>
+export type McpConnector = (input: {
+  token: string
+  signal: AbortSignal
+  /** Called when the server says its tool list changed while this session is open. */
+  onToolsChanged?: () => void
+}) => Promise<ToolSession>
 
 export const MAX_TOOL_OUTPUT_CHARS = 50_000
 const TOOL_TIMEOUT_MS = 120_000
@@ -155,8 +160,13 @@ export function remoteMcpConnector(options: {
   allowlist: string[]
   reservedNames: ReadonlySet<string>
 }): McpConnector {
-  return async ({ token, signal }) => {
-    const client = new Client({ name: "openwork-headless-runner", version: "0.1.0" })
+  return async ({ token, signal, onToolsChanged }) => {
+    // Negotiates the 2026-07-28 protocol where the server speaks it (falling back to 2025's), so the client can listen
+    // for tools/list_changed; the list itself is fetched again by the caller, which decides when that is worth it.
+    const client = new Client({ name: "openwork-headless-runner", version: "0.1.0" }, {
+      versionNegotiation: { mode: "auto" },
+      ...(onToolsChanged ? { listChanged: { tools: { autoRefresh: false, onChanged: () => onToolsChanged() } } } : {}),
+    })
     const transport = new StreamableHTTPClientTransport(new URL(options.url), {
       requestInit: { headers: { authorization: `Bearer ${token}` } },
     })

@@ -180,7 +180,9 @@ function createMySqlPool(config: mysql.PoolOptions) {
     ...config,
     waitForConnections: true,
     connectionLimit: 10,
-    maxIdle: 10,
+    // mysql2 only closes idle connections above maxIdle, so maxIdle equal to
+    // connectionLimit kept every burst connection open forever.
+    maxIdle: 2,
     idleTimeout: 60_000,
     queueLimit: 0,
     enableKeepAlive: true,
