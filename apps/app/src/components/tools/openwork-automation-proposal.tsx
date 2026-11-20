@@ -21,7 +21,6 @@ import {
   automationCreationPlacement,
   useAutomationDeploymentEnabled,
   useDesktopAutomationsEnabled,
-  useSimplerAutomationReview,
 } from "@/react-app/domains/automations/automation-availability"
 import {
   automationCanUseChoices,
@@ -99,7 +98,6 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
   const denAuth = useDenAuth()
   const automationsEnabled = useAutomationDeploymentEnabled()
   const desktopAllowed = useDesktopAutomationsEnabled()
-  const simplerReview = useSimplerAutomationReview(automationsEnabled)
   const workspaceContext = useWorkspaceMaybe()
   const [created, setCreated] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
@@ -110,6 +108,14 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
   const token = settings.authToken?.trim() ?? ""
   const organizationId = settings.activeOrgId?.trim() ?? ""
   const signedIn = denAuth.isSignedIn && Boolean(token) && Boolean(organizationId)
+  const featuresQuery = useQuery({
+    queryKey: ["den", "org-features", organizationId || null],
+    queryFn: () => createDenClient({ baseUrl: settings.baseUrl, token }).getOrgFeatures(organizationId),
+    enabled: signedIn && automationsEnabled && Boolean(proposal),
+    staleTime: 30_000,
+    retry: false,
+  })
+  const simplerReview = signedIn && automationsEnabled && !featuresQuery.isError && featuresQuery.data?.automationSimpleReview === true
   // Offer the same places the Automations page does: this desktop and, when Den
   // says Cloud can run agent Automations for this member, the cloud. An older
   // Den answers null and the runtime's fixed placement stays.
