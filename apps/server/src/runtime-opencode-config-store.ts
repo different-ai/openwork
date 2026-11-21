@@ -1,6 +1,6 @@
 import { desktopConfigSchema, type DesktopConfig } from "@openwork/types/den/desktop-policies-runtime";
 import { existsSync } from "node:fs";
-import { importNodeSqlite, runtimeDbPath } from "./runtime-db.js";
+import { configureRuntimeSqliteReader, importNodeSqlite, runtimeDbPath } from "./runtime-db.js";
 import type { ServerConfig } from "./types.js";
 import {
   createWorkspaceKvStore,
@@ -196,6 +196,7 @@ export async function listRuntimeOpencodeConfigRows(config: ServerConfig): Promi
       const { Database } = await import("bun:sqlite");
       const sqlite = new Database(path, { readonly: true, create: false });
       try {
+        configureRuntimeSqliteReader(sqlite);
         rows = sqlite.query(sql).all();
       } finally {
         sqlite.close();
@@ -204,6 +205,7 @@ export async function listRuntimeOpencodeConfigRows(config: ServerConfig): Promi
       const { DatabaseSync } = await importNodeSqlite();
       const sqlite = new DatabaseSync(path, { readOnly: true });
       try {
+        configureRuntimeSqliteReader(sqlite);
         rows = sqlite.prepare(sql).all();
       } finally {
         sqlite.close();
@@ -463,6 +465,7 @@ export async function inspectRuntimeOpencodeConfigState(
     try {
       const sqlite = new Database(path, { readonly: true, create: false });
       try {
+        configureRuntimeSqliteReader(sqlite);
         const row = sqlite.query(`
           SELECT
             length(CAST(config_json AS BLOB)) AS configBytes,
@@ -489,6 +492,7 @@ export async function inspectRuntimeOpencodeConfigState(
   try {
     const sqlite = new DatabaseSync(path, { readOnly: true });
     try {
+      configureRuntimeSqliteReader(sqlite);
       const row = sqlite.prepare(`
           SELECT
             length(CAST(config_json AS BLOB)) AS configBytes,

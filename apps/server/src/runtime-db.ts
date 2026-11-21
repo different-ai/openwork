@@ -27,6 +27,34 @@ export function importNodeSqlite(): Promise<typeof import("node:sqlite")> {
   return import(NODE_SQLITE_SPECIFIER);
 }
 
+/**
+ * Several connections share runtime.sqlite (cached writers plus short-lived
+ * read-only handles). SQLite's default busy timeout is 0, so any overlap with a
+ * write failed immediately with "database is locked" (DESKTOP-APP-7E).
+ */
+export const RUNTIME_SQLITE_BUSY_TIMEOUT_MS = 5000;
+
+type SqlExecutor = { exec: (sql: string) => unknown };
+
+/** Applies the busy timeout so readers wait for an in-flight write instead of failing. */
+export function configureRuntimeSqliteReader(sqlite: SqlExecutor): void {
+  sqlite.exec(`PRAGMA busy_timeout = ${RUNTIME_SQLITE_BUSY_TIMEOUT_MS}`);
+}
+
+/** Busy timeout plus WAL so readers and a writer no longer block each other. */
+export function configureRuntimeSqliteConnection(sqlite: SqlExecutor, path: string): void {
+  configureRuntimeSqliteReader(sqlite);
+  try {
+    sqlite.exec("PRAGMA journal_mode = WAL");
+  } catch (error) {
+    console.warn(
+      `[runtime-db] could not enable WAL for ${path}; continuing with busy timeout only: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
+}
+
 export function runtimeDbPath(config: Pick<ServerConfig, "configPath">): string {
   const override = process.env.OPENWORK_RUNTIME_DB?.trim();
   if (override) return resolve(override);
@@ -45,6 +73,7 @@ export async function openRuntimeSqliteDatabase(path: string): Promise<RuntimeSq
     const { Database } = await import("bun:sqlite");
     const { drizzle } = await import("drizzle-orm/bun-sqlite");
     const sqlite = new Database(path, { create: true });
+    configureRuntimeSqliteConnection(sqlite, path);
     return {
       kind: "bun",
       sqlite,
@@ -55,6 +84,7 @@ export async function openRuntimeSqliteDatabase(path: string): Promise<RuntimeSq
 
   const { DatabaseSync } = await importNodeSqlite();
   const sqlite = new DatabaseSync(path);
+  configureRuntimeSqliteConnection(sqlite, path);
   return {
     kind: "node",
     sqlite,
