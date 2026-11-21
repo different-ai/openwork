@@ -68,7 +68,7 @@
     "htmlparser2": "8.0.2",
     "jsonc-parser": "^3.2.1",
     "minimatch": "^11.0.8",
-    "undici": "6.29.1",
+    "undici": "8.12.4",
     "yaml": "^2.9.0",
     "zod": "^4.6.6",
     "@openwork/computer-use": "workspace:*"
