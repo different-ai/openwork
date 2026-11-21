@@ -28,7 +28,6 @@ export type LibraryUsageRow = z.infer<typeof libraryUsageRowSchema>;
 export type LibraryUsageReport = z.infer<typeof libraryUsageReportSchema>;
 export type LibraryUsageFilter = "all" | "unused" | "failing";
 
-/** Words for each view, so every view reads the same way. */
 export const libraryUsageCopy: Record<LibraryUsageKind, {
   label: string; noun: string; plural: string; emptyTitle: string; emptyBody: string; emptyAction: string;
 }> = {
@@ -78,18 +77,12 @@ export function summarizeLibraryUsage(rows: readonly LibraryUsageRow[]): Library
   };
 }
 
-/** Share of calls that failed, as a short word for the list: "2 of 9". */
 export function failureLabel(row: Pick<LibraryUsageRow, "failures" | "uses">): string | null {
   if (row.failures === null) return null;
   if (row.failures === 0) return "0";
   return `${row.failures} of ${row.uses}`;
 }
 
-/**
- * Counting starts when the feature is turned on. While that is more recent
- * than the chosen window, "Not used" means "not since then", so the screen
- * names the start date instead of implying a full window.
- */
 export function countingSinceLabel(report: Pick<LibraryUsageReport, "days" | "trackingSince">, now: number): string | null {
   if (!report.trackingSince) return null;
   const since = new Date(report.trackingSince).getTime();
@@ -106,10 +99,6 @@ export function lastUsedLabel(lastUsedAt: string | null, now: number): string | 
   if (days < 7) return `${days} days ago`;
   return new Date(at).toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
-
-// ---------------------------------------------------------------------------
-// Drill-down: one item's people and days, one person's items and days.
-// ---------------------------------------------------------------------------
 
 export const libraryUsageSources = ["agent", "workflow", "automation", "app", "artifact"] as const;
 export type LibraryUsageSource = (typeof libraryUsageSources)[number];
@@ -153,7 +142,6 @@ export function libraryUsageBreakdownPath(kind: LibraryUsageKind, days: LibraryU
   return `/v1/library-usage?${params.toString()}`;
 }
 
-/** What started a use, in the words people see. */
 export const libraryUsageSourceLabels: Record<LibraryUsageSource, string> = {
   agent: "Agents",
   workflow: "Workflows",
@@ -162,7 +150,6 @@ export const libraryUsageSourceLabels: Record<LibraryUsageSource, string> = {
   artifact: "Workflow artifacts",
 };
 
-/** Uses per source across rows, most used first, leaving out sources nobody used. */
 export function sumLibraryUsageSources(rows: readonly Pick<LibraryUsageBreakdownRow, "sources">[]): { source: LibraryUsageSource; label: string; uses: number }[] {
   return libraryUsageSources
     .map((source) => ({ source, label: libraryUsageSourceLabels[source], uses: rows.reduce((sum, row) => sum + (row.sources[source] ?? 0), 0) }))
@@ -170,7 +157,6 @@ export function sumLibraryUsageSources(rows: readonly Pick<LibraryUsageBreakdown
     .sort((a, b) => b.uses - a.uses);
 }
 
-/** Every UTC day of the report, oldest first, with zero for days nobody used it. */
 export function dailyLibraryUsage(report: Pick<LibraryUsageBreakdown, "from" | "to" | "rows">): { date: string; uses: number; failures: number }[] {
   const byDate = new Map(report.rows.flatMap((row) => row.date ? [[row.date, row] as const] : []));
   const days: { date: string; uses: number; failures: number }[] = [];
@@ -185,7 +171,6 @@ export function dailyLibraryUsage(report: Pick<LibraryUsageBreakdown, "from" | "
   return days;
 }
 
-/** A member's display name and email from the organization; removed members keep a neutral label. */
 export function libraryUsageMember(members: readonly { id: string; user: { name: string; email: string } }[], memberId: string | null): { name: string; email: string | null } {
   const member = memberId ? members.find((entry) => entry.id === memberId) : undefined;
   if (!member) return { name: "Former member", email: null };

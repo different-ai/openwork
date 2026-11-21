@@ -3,10 +3,6 @@ import { MemoryUnavailableError, type MemoryAccess } from "./memory.js"
 import type { Store } from "./store.js"
 import type { ToolResult, ToolSpec } from "./types.js"
 
-/**
- * A per-session scratch filesystem stored in SQLite. There is no host
- * filesystem, no shell, and no process execution behind these tools.
- */
 export const FILE_LIMITS = {
   maxFileBytes: 1024 * 1024,
   maxSessionBytes: 10 * 1024 * 1024,
@@ -90,11 +86,9 @@ export const FILE_TOOL_NAMES: ReadonlySet<string> = new Set(FILE_TOOLS.map((tool
 
 const fail = (output: string): ToolResult => ({ output, isError: true })
 
-/** Characters one read returns, under the 50,000 a tool result keeps, so a long file is read in parts. */
 const MAX_READ_CHARS = 40_000
 const MAX_FOUND_LINES = 100
 
-/** Part of a file: matching lines, a range of lines, or all of it when it fits. Ranges and matches are numbered. */
 export function readPart(content: string, input: { start?: number; lines?: number; find?: string }) {
   if (!input.find && !input.start && !input.lines && content.length <= MAX_READ_CHARS) return content
   const all = content.split("\n")
@@ -132,14 +126,8 @@ function checkedWrite(store: Store, sessionId: string, path: string, content: st
   return { output: `Wrote ${path} (${size} bytes).`, isError: false }
 }
 
-/** The memory/ folder, which a conversation may share with others of the same person (see memory.ts). */
 export const isMemoryPath = (path: string) => path === "memory" || path.startsWith("memory/")
 
-/**
- * Runs a scratch file tool. With `memory`, paths under memory/ live there instead (another conversation's, or the
- * owner's), so the person's conversations remember together; everything else stays in this one. Without it, memory/
- * is this conversation's own, as every other path.
- */
 export async function runFileTool(store: Store, sessionId: string, name: string, input: unknown, memory?: MemoryAccess | null): Promise<ToolResult> {
   const shared = (path: string) => (memory && isMemoryPath(path) ? memory : null)
   try {
@@ -194,7 +182,6 @@ export async function runFileTool(store: Store, sessionId: string, name: string,
     }
     return fail(`Unknown file tool: ${name}`)
   } catch (error) {
-    // The owner's memory is in another cell that didn't answer: a write may or may not have reached it.
     if (error instanceof MemoryUnavailableError) return fail("Memory didn't respond, so this call's outcome is unknown. Read the file before repeating a change.")
     throw error
   }

@@ -1,8 +1,3 @@
-// Test a provider configuration before it is saved.
-// Den sends the provider, its settings, an organization credential and one model;
-// the gateway sends one short prompt the same way it would forward a member's
-// request, and answers whether the provider replied. Nothing is stored or logged
-// as usage, and the upstream body never reaches the caller.
 import { BEDROCK_MANTLE_DEFAULT_API_PATH, isInferenceCredentialKindSupported, pickInferenceApiKeyFromMap, gatewayCustomCatalogProvider } from "@openwork-ee/gateway-catalog"
 import { bedrockMantleHost, bedrockRuntimeHost, inferenceEgressAllowedOrigins, isAwsRegion, isPublicInferenceAddress, validateInferenceUrl, PROVIDER_TEST_SIGNATURE_HEADER, verifyProviderTestSignature, bedrockMantleService, bedrockService, signAwsRequest, buildAuthHeader, classifyProtocolFamily, defaultBaseUrl, vertexPublisherBase } from "@openwork-ee/gateway-upstreams"
 import type { InferenceAddressResolver, AwsCredentials, MintGcpAccessToken, ProtocolFamily } from "@openwork-ee/gateway-upstreams"
@@ -28,8 +23,6 @@ const ERROR_BODY_LIMIT = 16_384
 const requestSchema = z.object({
   providerId: z.string().trim().min(1).max(255),
   model: z.string().trim().min(1).max(255),
-  // Upstream destination settings. upstreamBaseUrl is only used when the operator allowlisted its origin,
-  // except for a custom OpenAI-compatible provider, where it may be any public HTTPS address.
   settings: z.object({
     project: z.string().trim().max(255).optional(),
     location: z.string().trim().max(63).optional(),
@@ -39,7 +32,6 @@ const requestSchema = z.object({
     upstreamBaseUrl: z.string().trim().max(2048).optional(),
   }).strict().default({}),
   credential: z.object({ kind: z.enum(GATEWAY_PROVIDER_CREDENTIAL_KINDS), secret: z.string().min(1).max(65535) }).strict(),
-  /** Custom providers only: the model's settings as they will be saved (its id must equal `model`). */
   customModel: gatewayCustomModelSchema.optional(),
 }).strict()
 
@@ -53,12 +45,10 @@ type Credential =
 
 export type ProviderTestDependencies = {
   fetch: typeof fetch
-  /** The database encryption key Den also holds; Den signs each test with a key derived from it. */
   signingSecret: string | undefined
   catalog: ProviderCatalog
   mintGcpAccessToken: MintGcpAccessToken
   now: () => Date
-  /** DNS for the custom-provider address check; the egress transport re-checks every connection. */
   resolveHost?: InferenceAddressResolver
 }
 
@@ -88,32 +78,21 @@ function readCredential(input: TestRequest, catalog: CatalogProvider): Credentia
   }
 }
 
-/** Anthropic Messages and OpenAI Chat Completions share this shape. */
 function messagesBody(model: string) {
   return { model, max_tokens: MAX_OUTPUT_TOKENS, messages: [{ role: "user", content: TEST_PROMPT }] }
 }
 
-/**
- * A saved provider's base URL override, honoured here only for an origin the
- * operator allowlisted (a private endpoint or proxy the deployment owns). Any
- * other address would let a caller aim a test at a host of their choosing.
- */
 function operatorBaseUrl(settings: Settings): string | null | { error: string } {
   const override = settings.upstreamBaseUrl
   if (!override) return null
   try {
     if (inferenceEgressAllowedOrigins().has(new URL(override).origin)) return override
-  } catch { /* Reported below. */ }
+  } catch {}
   return { error: "This provider address can't be tested. Remove the custom address or ask your operator to allow it." }
 }
 
 const CUSTOM_ADDRESS_REFUSED = "AI Gateway only reaches public HTTPS addresses. Private networks (localhost, 10.x, 192.168.x, internal hosts) need your operator to allow the address first."
 
-/**
- * A custom provider's address: any public HTTPS base, or an origin the operator
- * allowlisted, with the same structural check the gateway applies when it
- * forwards (validateInferenceUrl). DNS answers are checked separately.
- */
 function customBaseUrl(settings: Settings): { url: URL } | { error: string; code: "invalid_settings" | "address_not_allowed" } {
   const normalized = settings.upstreamBaseUrl ? normalizeGatewayCustomBaseUrl(settings.upstreamBaseUrl) : null
   if (!normalized) return { code: "invalid_settings", error: "Enter the provider's API address, for example https://api.example.com/v1." }
@@ -122,11 +101,6 @@ function customBaseUrl(settings: Settings): { url: URL } | { error: string; code
   }
 }
 
-/**
- * Resolves a custom provider's host so a private address gets a clear answer
- * instead of a failed connection. The egress transport repeats the check for the
- * connection it actually makes, so this is for the message, not the guard.
- */
 async function checkCustomHost(url: URL, resolveHost: InferenceAddressResolver): Promise<{ code: string; message: string } | null> {
   const host = url.hostname.replace(/^\[|\]$/g, "")
   if (isIP(host) || inferenceEgressAllowedOrigins().has(url.origin)) return null
@@ -141,23 +115,16 @@ async function checkCustomHost(url: URL, resolveHost: InferenceAddressResolver):
 
 const TEST_TOOL = { type: "function", function: { name: "noop", description: "Does nothing. Do not call it.", parameters: { type: "object", properties: {} } } }
 
-/**
- * The OpenAI Chat Completions prompt for a custom model. Settings the desktop
- * will send are exercised too (tools when tool calling is on), so a provider
- * that refuses them fails here rather than in a member's chat.
- */
 function customBody(model: string, customModel: GatewayCustomModel | undefined, tokenField: "max_tokens" | "max_completion_tokens") {
   const { max_tokens: _maxTokens, ...base } = messagesBody(model)
   return { ...base, [tokenField]: MAX_OUTPUT_TOKENS, ...(customModel?.tool_call ? { tools: [TEST_TOOL] } : {}) }
 }
 
-/** Where the prompt goes and what it says, in the provider's own API. */
 function buildCall(family: ProtocolFamily, catalog: CatalogProvider, settings: Settings, model: string): { url: string; body: Record<string, unknown>; headers?: Record<string, string> } | { error: string } {
   const encoded = encodeURIComponent(model)
   const vertex = family === "google_vertex" || family === "google_vertex_anthropic"
   const override = vertex ? null : operatorBaseUrl(settings)
   if (override !== null && typeof override === "object") return override
-  // Same order as the gateway's own forwarding: operator override, catalog address, family default.
   const root = (fallback: string | null) => (override ?? fallback)?.replace(/\/+$/, "") ?? null
   const missing = { error: "This provider has no address to test." }
   const generateContent = { contents: [{ role: "user", parts: [{ text: TEST_PROMPT }] }], generationConfig: { maxOutputTokens: MAX_OUTPUT_TOKENS } }
@@ -184,7 +151,6 @@ function buildCall(family: ProtocolFamily, catalog: CatalogProvider, settings: S
     }
     case "openai": {
       const url = root(catalog.api ?? defaultBaseUrl(family, settings))
-      // The Responses API takes every current OpenAI model, reasoning ones included.
       return url ? { url: `${url}/responses`, body: { model, input: TEST_PROMPT, max_output_tokens: MAX_OUTPUT_TOKENS } } : missing
     }
     case "azure": {
@@ -241,10 +207,9 @@ async function readErrorMessage(response: Response, secrets: string[]) {
         if (typeof candidate === "string" && candidate.trim()) message = candidate
         else for (const child of Object.values(value)) if (typeof child === "object" && child !== null) pending.push(child)
       }
-    } catch { /* Not JSON: no message to show. */ }
+    } catch {}
     if (typeof message !== "string") return null
     let safe = message.trim().slice(0, 300)
-    // Never echo the key back, even partly masked by the provider.
     for (const secret of secrets) if (secret.length >= 8) safe = safe.split(secret).join("…")
     return safe.replace(/\b(sk|key|AKIA|ASIA)[-_A-Za-z0-9]{12,}\b/g, "…")
   } catch { return null }
@@ -253,7 +218,6 @@ async function readErrorMessage(response: Response, secrets: string[]) {
 const MODEL_MISSING = /\b(?:model[^.]{0,80}\b(?:not (?:be )?found|does ?n[o']t exist|not exist|is not (?:available|supported|a valid model)|unknown|invalid)|(?:unknown|invalid|unsupported|no such) model)\b/i
 const PARAMETER_REFUSED = /\b(?:unsupported (?:parameter|value|argument)|unrecognized (?:request )?(?:argument|parameter)|unknown (?:parameter|field|argument)|extra (?:inputs|fields) (?:are )?not permitted|(?:parameter|argument|field)[^.]{0,80}\bnot supported|does not support (?:tools|tool|function)|not supported (?:with|for|by) this model)/i
 
-/** A 400 that names a refused parameter, for example `max_tokens` on newer reasoning models. */
 function refusesParameter(status: number, providerMessage: string | null) {
   return (status === 400 || status === 422) && providerMessage !== null && PARAMETER_REFUSED.test(providerMessage)
 }
@@ -277,7 +241,6 @@ function statusMessage(status: number, providerMessage: string | null, model: st
 
 type PreparedCall = { url: string; body: Record<string, unknown>; headers?: Record<string, string> }
 
-/** The custom-provider call, or why it can't be made. Only an address that passes the gateway's egress checks is used. */
 async function buildCustomCall(input: TestRequest, dependencies: ProviderTestDependencies): Promise<PreparedCall | { code: string; error: string }> {
   if (input.customModel && input.customModel.id !== input.model) return { code: "invalid_request", error: "The model settings don't match the model being tested." }
   const base = customBaseUrl(input.settings)
@@ -300,7 +263,6 @@ export async function runProviderTest(input: TestRequest, dependencies: Provider
   const secrets: string[] = []
   if (credential.kind === "gcp_service_account") {
     if (family !== "google_vertex" && family !== "google_vertex_anthropic") return failed("invalid_credential", "A service account key only works with Google Vertex AI.", model)
-    // Each test signs in afresh; the cache key never matches a saved credential.
     const minted = await dependencies.mintGcpAccessToken({ credentialId: `provider-test:${crypto.randomUUID()}`, serviceAccount: credential.serviceAccount, now: dependencies.now() })
     if (minted.kind === "error") return failed("provider_authentication_failed", "Google rejected the service account key. Check that it's current and belongs to this project.", model)
     auth = { kind: "header", ...buildAuthHeader(family, minted.accessToken) }
@@ -354,10 +316,8 @@ export async function runProviderTest(input: TestRequest, dependencies: Provider
   if (!(response instanceof Response)) return response
   let providerMessage: string | null = null
   if (!response.ok) {
-    // AWS signature errors can echo the canonical request, including the session token.
     providerMessage = isAwsFamily(family) ? null : await readErrorMessage(response, secrets)
     if (isAwsFamily(family)) await response.body?.cancel().catch(() => {})
-    // Newer OpenAI-compatible reasoning models take max_completion_tokens instead; the desktop sends whichever the model takes.
     if (custom && refusesParameter(response.status, providerMessage) && /max_tokens/.test(providerMessage ?? "")) {
       response = await send(customBody(model, input.customModel, "max_completion_tokens"))
       if (!(response instanceof Response)) return response
@@ -368,7 +328,6 @@ export async function runProviderTest(input: TestRequest, dependencies: Provider
     await response.body?.cancel().catch(() => {})
     return { ok: true, model, status: response.status, code: null, message: null }
   }
-  // A 404 that doesn't name the model is the address, not the model: nothing answers at {base}/chat/completions.
   if (custom && response.status === 404 && !(providerMessage && (MODEL_MISSING.test(providerMessage) || providerMessage.includes(model)))) {
     return failed("endpoint_not_found", "Nothing answered at this API address. Check it ends where the provider's OpenAI-compatible API starts, usually /v1.", model, 404)
   }
@@ -383,7 +342,6 @@ export function registerProviderTestRoute(api: Hono<ProviderTestEnv>, dependenci
     c.header("cache-control", "no-store")
     const identity = c.get("inference")
     if (identity.kind !== "gateway") return c.json({ error: { code: "invalid_api_key", message: "An OpenWork Gateway key is required." } }, 401)
-    // Only Den, after checking that this member may manage providers, can ask for a test.
     const body = await c.req.text()
     const signature = c.req.header(PROVIDER_TEST_SIGNATURE_HEADER)
     if (!dependencies.signingSecret || !signature || !verifyProviderTestSignature(dependencies.signingSecret, { organizationId: identity.organizationId, memberId: identity.orgMembershipId, body }, signature, dependencies.now().getTime())) {

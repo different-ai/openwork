@@ -39,7 +39,6 @@ const AI_GATEWAY_TABS: readonly TabItem<AiGatewayTab>[] = [
   { value: "openwork-models", label: "OpenWork Models", icon: Sparkles },
 ];
 
-/** Each tab's feature intro, for its unseen dot (DESIGN.md I9). */
 const AI_GATEWAY_TAB_INTROS: Record<AiGatewayTab, FeatureIntroKey> = {
   overview: "ai-gateway.overview",
   "ai-providers": "ai-gateway.ai-providers",
@@ -78,7 +77,6 @@ function AiGatewayOverview({ orgId }: { orgId: string }) {
     );
   }
 
-  // With feature intros on, the overview intro replaces "No usage yet" (DESIGN.md I1); off, the page is unchanged.
   return (
     <FeatureIntroGate introKey="ai-gateway.overview" facts={{ providers: inferenceProviders.length }}>
       {inferenceProviders.length === 0 ? <AiGatewayNoUsage orgSlug={orgSlug} /> : (
@@ -131,13 +129,10 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
   const searchParams = useSearchParams();
   const introUnseen = useFeatureIntroUnseen();
   const introsEnabled = useFeatureIntroRuntime().enabled;
-  // Smart Routers moved into AI Providers; old links to their tab land there.
   const requestedTab = searchParams.get("tab") === "auto-router" ? "ai-providers" : searchParams.get("tab");
   const nestedContent = providerContent ?? pageContent;
   const nestedTab = providerContent !== undefined ? "ai-providers" : pageTab;
-  // Sub-pages (provider, router and limit forms) never show the section intro.
   const gatewayIntroFacts = useAiGatewayIntroFacts(introsEnabled && nestedContent === undefined);
-  // Without an explicit tab, land on the first one this person can open.
   const defaultTab = AI_GATEWAY_TABS.find((item) => canOpenAiGatewayTab(memberAccess, item.value))?.value ?? "overview";
   const tab = nestedContent !== undefined && nestedTab
     ? nestedTab
@@ -209,6 +204,5 @@ export function AiGatewayScreen({ providerContent, pageContent, pageTab }: { pro
   );
 
   if (nestedContent !== undefined) return page;
-  // Nothing set up yet (no providers, OpenWork Models off): the section intro replaces the page (DESIGN.md I2).
   return <FeatureIntroGate introKey="ai-gateway" facts={gatewayIntroFacts}>{page}</FeatureIntroGate>;
 }

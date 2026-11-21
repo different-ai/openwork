@@ -1,18 +1,5 @@
 import type { CapabilityMatch, CapabilityToolAnnotations } from "./search.js"
 
-/**
- * A search match in MCP `Tool` shape: `name`, `description`, the
- * `inputSchema` for `execute_capability`'s `arguments`, optional
- * `outputSchema` and `annotations`, plus the Den details a client acts on
- * (kind, connection status, App binding, script path).
- *
- * It also keeps the older fields (method, path, summary, pathParams,
- * queryParams, hasBody, bodySchema, querySchema, argumentsSchema, invocation,
- * readOnly) because desktop releases from before `inputSchema` still read
- * them and pass path, query, and body. Remove them once those have updated.
- * A connection's `path` is its server URL, which can carry credentials, so it
- * is left out; API route templates stay.
- */
 export type CapabilityToolMatch = Omit<CapabilityMatch, "annotations" | "path"> & {
   path?: string
   description: string
@@ -30,11 +17,6 @@ function isServerUrl(path: string): boolean {
   return URL.canParse(path)
 }
 
-/**
- * Den API and native connector operations take `{ path, query, body }`, the
- * same shape as their Code Mode paths. Every other capability takes its own
- * arguments object.
- */
 function inputSchemaFor(match: CapabilityMatch, httpArguments: boolean): Record<string, unknown> {
   if (isRecord(match.argumentsSchema)) return match.argumentsSchema
   if (!httpArguments) return match.hasBody ? { type: "object" } : NO_ARGUMENTS
@@ -77,7 +59,6 @@ export function capabilityToolMatch(match: CapabilityMatch, httpArguments: boole
 
 export type CapabilityArgumentIssue = { path: string; keyword: string; message: string }
 
-/** Map `arguments` onto Den's `path`, `query`, and `body` inputs, or list what is wrong. */
 export function splitCapabilityArguments(
   args: unknown,
   httpArguments: boolean,
@@ -96,17 +77,6 @@ export function splitCapabilityArguments(
 
 type CapabilityCall = { name: string; arguments?: unknown; path?: unknown; query?: unknown; body?: unknown }
 
-/**
- * The input a source executes: `arguments`, when given, replaces the older
- * path/query/body fields. Misplaced arguments become a tool execution error
- * the model can correct.
- *
- * The older fields stay accepted for a while because callers still send them:
- * sessions that listed tools or searched on a Den build from before
- * `arguments` (including old instances still serving during a rollout),
- * Automation instructions written for that form, and outside MCP clients
- * following older guidance. Remove them once those have moved to `arguments`.
- */
 export function capabilityCallInput<T extends CapabilityCall>(
   input: T,
   httpArguments: boolean,

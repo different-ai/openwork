@@ -60,7 +60,6 @@ export function SettingsShell(props: SettingsShellProps) {
     scopeRef: shellRef,
     besideChat: props.compact === true,
   });
-  // The bar floats over the page it searches and is not part of it.
   const page = (
     <div className="relative flex min-h-0 flex-1 flex-col">
       <div ref={pageRef} className="contents">

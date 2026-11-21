@@ -11,8 +11,6 @@ import type {
   ComputerFleetTotals,
 } from "@openwork/types/den/admin-computer-fleet";
 
-/** What the Computer fleet page shows of its data: labels, ages, the list's filters and the history grid's layout. */
-
 const MINUTE_MS = 60_000;
 const HOUR_MS = 60 * MINUTE_MS;
 const TEN_MINUTES_MS = 10 * MINUTE_MS;
@@ -40,7 +38,6 @@ export const ATTENTION_LABEL: Record<ComputerFleetAttention, string> = {
 
 const count = (value: number) => value.toLocaleString("en-US");
 
-/** How long ago a moment was, in the largest unit that fits; "not reported" when the provider gave none. */
 export function formatAge(iso: string | null, now: number): string {
   if (iso === null) return "Not reported";
   const elapsed = now - Date.parse(iso);
@@ -51,7 +48,6 @@ export function formatAge(iso: string | null, now: number): string {
   return `${count(Math.floor(elapsed / (24 * HOUR_MS)))} d ago`;
 }
 
-/** A length of time in its two largest units: "3 h 12 min", "2 d 4 h", "45 s". */
 export function formatDuration(ms: number): string {
   if (!Number.isFinite(ms) || ms < 0) return "Not known";
   const seconds = Math.floor(ms / 1000);
@@ -64,10 +60,8 @@ export function formatDuration(ms: number): string {
   return hours % 24 === 0 ? `${count(days)} d` : `${count(days)} d ${hours % 24} h`;
 }
 
-/** A rule's length in seconds as a person says it: "5 minutes", "1 hour", "14 days". */
 export function formatSpan(seconds: number): string {
   const unit = (value: number, name: string) => `${count(value)} ${name}${value === 1 ? "" : "s"}`;
-  // A rule set in whole days, hours or minutes is said that way: "1 hour", not "60 minutes".
   if (seconds >= 86_400 && seconds % 86_400 === 0) return unit(seconds / 86_400, "day");
   if (seconds >= 3600 && seconds % 3600 === 0) return unit(seconds / 3600, "hour");
   if (seconds >= 60 && seconds % 60 === 0) return unit(seconds / 60, "minute");
@@ -77,24 +71,18 @@ export function formatSpan(seconds: number): string {
   return unit(Math.round(seconds / 86_400), "day");
 }
 
-/**
- * How long a computer has been in its state: since its provider last changed it. Null when it does not say. The
- * direct provider moves that time with every use, so for a running computer there it says nothing about the state.
- */
 export function stateDuration(sandbox: Pick<ComputerFleetSandbox, "lastChangedAt" | "state" | "pausedAt" | "source">, now: number): string | null {
   if (sandbox.source === "direct" && sandbox.state === "running") return null;
   const since = Date.parse((sandbox.state === "paused" ? sandbox.pausedAt : null) ?? sandbox.lastChangedAt ?? "");
   return Number.isFinite(since) && now >= since ? formatDuration(now - since) : null;
 }
 
-/** Whether a computer was built from what new computers are built from now. */
 export function imageLabel(sandbox: Pick<ComputerFleetSandbox, "image" | "imageCurrent">): "Current" | "Older" | "Not known" {
   if (sandbox.imageCurrent === true) return "Current";
   if (sandbox.imageCurrent === false) return "Older";
   return "Not known";
 }
 
-/** A computer's size as its provider gave it: "2 CPU, 4 GB". */
 export function formatSize(sandbox: Pick<ComputerFleetSandbox, "cpu" | "memoryMb">): string {
   const parts = [
     sandbox.cpu === null ? null : `${count(sandbox.cpu)} CPU`,
@@ -105,7 +93,6 @@ export function formatSize(sandbox: Pick<ComputerFleetSandbox, "cpu" | "memoryMb
 
 export const SOURCE_NAME: Record<ComputerFleetSource["source"], string> = { gateway: "Sandbox gateway", direct: "Direct provider" };
 
-/** Where a computer runs: the gateway's pool and region, or the provider it was created at. */
 export function formatPlace(sandbox: Pick<ComputerFleetSandbox, "source" | "provider" | "pool" | "backend" | "region">): string {
   if (sandbox.source === "direct") return sandbox.provider;
   const pool = sandbox.pool ?? sandbox.backend ?? sandbox.provider;
@@ -114,45 +101,36 @@ export function formatPlace(sandbox: Pick<ComputerFleetSandbox, "source" | "prov
 
 export type ListFilter = "attention" | "running" | "all";
 
-/** The computers a filter shows. The list arrives ordered: needing a look first, then the busiest states. */
 export function filterSandboxes(sandboxes: readonly ComputerFleetSandbox[], filter: ListFilter): ComputerFleetSandbox[] {
   if (filter === "attention") return sandboxes.filter((sandbox) => sandbox.attention !== null);
   if (filter === "running") return sandboxes.filter((sandbox) => sandbox.state === "running" || sandbox.state === "starting" || sandbox.state === "pausing" || sandbox.state === "stopping");
   return [...sandboxes];
 }
 
-/** The filter a page opens on: what needs a look when anything does. */
 export const defaultFilter = (listed: readonly Pick<ComputerFleetSandbox, "attention">[]): ListFilter => (listed.some((sandbox) => sandbox.attention !== null) ? "attention" : "all");
 
 export type StateShare = { state: ComputerFleetState; count: number; share: number };
-/** A state the provider did not name has no count of its own, so the bar leaves it out. */
 const BAR_STATES: Array<Exclude<ComputerFleetState, "unknown">> = ["running", "starting", "pausing", "stopping", "paused", "stopped", "failed"];
 
-/** The fleet's computers by state, as shares of one bar; states with none are left out. */
 export function stateShares(totals: ComputerFleetTotals): StateShare[] {
   if (totals.total === 0) return [];
   return BAR_STATES.flatMap((state) => (totals[state] > 0 ? [{ state, count: totals[state], share: totals[state] / totals.total }] : []));
 }
 
-/** What the history grid shades by. */
 export type HistoryMetric = "running" | "total" | "attention";
 export const bucketValue = (bucket: ComputerFleetHistoryBucket, metric: HistoryMetric) => bucket[metric];
 
-/** 0 to 4: nothing, then quarters of the highest reading in view. `down`: a provider or the runner's list was down. */
 export type GridLevel = 0 | 1 | 2 | 3 | 4 | "down";
 export function bucketLevel(bucket: ComputerFleetHistoryBucket | null, metric: HistoryMetric, max: number): GridLevel {
   if (!bucket) return 0;
   const value = bucketValue(bucket, metric);
-  // A square where something was down and nothing was counted says so; one with counts shows the counts.
   if (bucket.sourceDown && value === 0) return "down";
   if (value <= 0 || max <= 0) return 0;
-  // Anything that needs a look is worth the darkest square, however many there are.
   if (metric === "attention") return 4;
   const share = value / max;
   return share > 0.75 ? 4 : share > 0.5 ? 3 : share > 0.25 ? 2 : 1;
 }
 
-/** What a square says when pointed at. */
 export function bucketTitle(bucket: ComputerFleetHistoryBucket | null, start: number, minutes: number): string {
   const from = new Date(start);
   const time = `${from.toLocaleDateString("en-US", { month: "short", day: "numeric" })}, ${from.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit", hour12: false })}`;
@@ -167,10 +145,6 @@ export function bucketTitle(bucket: ComputerFleetHistoryBucket | null, start: nu
 export type GridColumn = { key: string; label: string; cells: Array<{ start: number; bucket: ComputerFleetHistoryBucket | null }> };
 export type HistoryGrid = { columns: GridColumn[]; rows: number; rowLabels: string[]; bucketMinutes: number };
 
-/**
- * The fleet's history laid out like a contribution grid. A day: one column an hour, six ten-minute squares down it.
- * Longer ranges: one column a day in the viewer's time zone, twenty-four hour squares down it.
- */
 export function historyGrid(buckets: readonly ComputerFleetHistoryBucket[], range: ComputerFleetHistoryRange, now: number): HistoryGrid {
   const byStart = new Map(buckets.map((bucket) => [bucket.at, bucket]));
   if (range === "24h") {
@@ -180,7 +154,6 @@ export function historyGrid(buckets: readonly ComputerFleetHistoryBucket[], rang
       const local = new Date(hour).getHours();
       columns.push({
         key: String(hour),
-        // Every third hour is named, so the labels do not crowd.
         label: local % 3 === 0 ? String(local).padStart(2, "0") : "",
         cells: Array.from({ length: 6 }, (_, slot) => ({ start: hour + slot * TEN_MINUTES_MS, bucket: byStart.get(hour + slot * TEN_MINUTES_MS) ?? null })),
       });
@@ -196,12 +169,10 @@ export function historyGrid(buckets: readonly ComputerFleetHistoryBucket[], rang
     day.setDate(today.getDate() - back);
     columns.push({
       key: String(day.getTime()),
-      // A date is about three squares wide: every third day is named in a week, every seventh in a month.
       label: back % (days === 7 ? 3 : 7) === 0 ? day.toLocaleDateString("en-US", { month: "short", day: "numeric" }) : "",
       cells: Array.from({ length: 24 }, (_, hour) => {
         const start = new Date(day);
         start.setHours(hour);
-        // Stored hours start on the UTC hour; a half-hour time zone lands inside one, so round down to it.
         const stored = Math.floor(start.getTime() / HOUR_MS) * HOUR_MS;
         return { start: start.getTime(), bucket: byStart.get(stored) ?? null };
       }),
@@ -211,10 +182,8 @@ export function historyGrid(buckets: readonly ComputerFleetHistoryBucket[], rang
 }
 
 export type FleetNotice = { tone: "error" | "warning" | "info"; message: string };
-/** A failure code as words: `http_503` reads "http 503". */
 export const plainCode = (code: string) => code.replaceAll("_", " ");
 
-/** The one thing to say above the fleet, most serious first; null when there is nothing to say. */
 export function fleetNotice(fleet: AdminComputerFleet): FleetNotice | null {
   if (fleet.runnerError === "http_404") {
     return { tone: "info", message: "The headless runner in use is from before it could list its computers. This page fills in once a current runner is deployed." };
@@ -234,7 +203,6 @@ export function fleetNotice(fleet: AdminComputerFleet): FleetNotice | null {
   if (pools.length > 0) {
     return { tone: "error", message: `${pools.length === 1 ? `The gateway's pool ${pools[0]?.name} is` : `${count(pools.length)} of the gateway's pools are`} not healthy (${pools.map((pool) => pool.health).join(", ")}). New computers may not start there.` };
   }
-  // The whole fleet's, so a list narrowed to one organization still says what is wrong elsewhere.
   const kinds = attentionCounts(fleet);
   const stuck = kinds.stuck_starting + kinds.stuck_pausing + kinds.stuck_stopping;
   if (stuck > 0) return { tone: "error", message: `${stuck === 1 ? "1 computer has" : `${count(stuck)} computers have`} been starting, pausing or stopping far longer than that takes. The person waiting on ${stuck === 1 ? "it" : "them"} sees a computer that does not come back.` };
@@ -247,7 +215,6 @@ export function fleetNotice(fleet: AdminComputerFleet): FleetNotice | null {
 }
 
 type AttentionCounts = Record<ComputerFleetAttention, number>;
-/** How many computers in the whole fleet need a look, by why; counted from the list when the server does not say. */
 export function attentionCounts(fleet: Pick<AdminComputerFleet, "attentionCounts" | "sandboxes">): AttentionCounts {
   if (fleet.attentionCounts) return fleet.attentionCounts;
   const counts: AttentionCounts = { failed: 0, stuck_starting: 0, stuck_pausing: 0, stuck_stopping: 0, expired: 0, idle_running: 0, long_running: 0 };
@@ -255,12 +222,10 @@ export function attentionCounts(fleet: Pick<AdminComputerFleet, "attentionCounts
   return counts;
 }
 
-/** The value the organization filter sends for "every organization". */
 export const ALL_ORGANIZATIONS = "";
 export const UNKNOWN_ORGANIZATION = "unknown";
 export type OrganizationOption = { value: string; label: string };
 
-/** The organizations the list can be narrowed to: those with computers, most first, then the ones nobody can name. */
 export function organizationOptions(fleet: Pick<AdminComputerFleet, "organizations" | "unknownOrganization" | "totals">): OrganizationOption[] {
   return [
     { value: ALL_ORGANIZATIONS, label: `All organizations (${count(fleet.totals.total)})` },
@@ -269,7 +234,6 @@ export function organizationOptions(fleet: Pick<AdminComputerFleet, "organizatio
   ];
 }
 
-/** Where a computer's own page lives. */
 export const computerHref = (sandbox: Pick<ComputerFleetSandbox, "source" | "id">) => `/admin/computer-fleet/${sandbox.source}/${encodeURIComponent(sandbox.id)}`;
 
 const EVENT_TITLE: Record<string, string> = {
@@ -296,7 +260,6 @@ const EVENT_TITLE: Record<string, string> = {
   preempted: "Moved out for another computer",
 };
 
-/** What an event is called: Den's own sentence, or a name for the gateway's action. */
 export function eventTitle(event: Pick<ComputerFleetEvent, "origin" | "type" | "message">): string {
   if (event.origin === "den") return event.message || event.type.replaceAll("_", " ");
   return EVENT_TITLE[event.type] ?? event.type.replaceAll("_", " ");
@@ -306,10 +269,6 @@ const QUIET_MS = 2 * 60 * 60_000;
 
 export type Explanation = { tone: "neutral" | "good" | "warning" | "danger"; headline: string; points: string[] };
 
-/**
- * Why a computer is in the state it is in, from what its provider, the runner's rules and Den's record of its
- * conversation say. States what is known and names what is only likely as likely.
- */
 export function explainComputer(detail: AdminComputerDetail, now: number): Explanation {
   const { computer, settings, conversation } = detail;
   const since = (iso: string | null) => {
@@ -327,7 +286,6 @@ export function explainComputer(detail: AdminComputerDetail, now: number): Expla
     const idleMs = computer.lastActivityAt ? now - Date.parse(computer.lastActivityAt) : null;
     const turn = since(conversation?.activeTurnSince ?? null);
     const life = since(computer.createdAt);
-    // When the conversation last had a turn or an open view, as Den knows it.
     const quietAt = Math.max(Date.parse(conversation?.lastActiveAt ?? "") || 0, Date.parse(detail.reported?.at ?? "") || 0);
     const quietMs = conversation && quietAt > 0 ? now - quietAt : null;
     if (computer.attention === "long_running" && computer.runSeconds !== null) {
@@ -340,7 +298,6 @@ export function explainComputer(detail: AdminComputerDetail, now: number): Expla
       tone = "good";
       headline = `Running: its conversation has had a turn under way for ${turn}.`;
     } else if (computer.attention === "idle_running" && quietMs !== null && quietMs > QUIET_MS) {
-      // Flagged from what Den knows of the conversation: the provider may well still see activity.
       tone = "warning";
       headline = `Running, but its conversation has been quiet for ${formatDuration(quietMs)}.`;
       points.push(`The runner pauses a computer ${pause ?? "minutes"} after its last use. One still running hours after its conversation went quiet is either running a long background job, or the runner has lost track of it.`);

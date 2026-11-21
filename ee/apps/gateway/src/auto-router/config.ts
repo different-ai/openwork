@@ -1,8 +1,3 @@
-// Loads one Smart Router (packages/types/src/den/auto-router.ts) for a member:
-// only when the router is assigned to the member (everyone, one of their
-// teams, or them). Routers and team memberships are cached briefly: every
-// Smart request needs them, and an admin's change takes effect within the
-// cache lifetime.
 import { and, asc, eq } from "@openwork-ee/den-db/drizzle"
 import {
   AutoRouterAccessTable,
@@ -23,21 +18,12 @@ export type AutoRouterConfigModel = {
   tasks: string[]
 }
 
-/** One router; models in the admin's order (the first wins ties and is the fallback). */
 export type AutoRouterConfig = { id: string; name: string; models: AutoRouterConfigModel[] }
 
 type StoredRouter = AutoRouterConfig & { assignment: AutoRouterAssignment }
 
-/**
- * The router the member asked for, or null when the router does not exist in
- * the organization or is not assigned to them.
- */
 export type LoadAutoRouterConfig = (input: { organizationId: string; routerId: string; memberId: string }) => Promise<AutoRouterConfig | null>
 
-/**
- * Every router that applies to the member and has models. The 3rd party tool
- * endpoints list these.
- */
 export type LoadMemberAutoRouters = (input: { organizationId: string; memberId: string }) => Promise<AutoRouterConfig[]>
 
 const CACHE_MS = 15_000

@@ -8,11 +8,6 @@ import { immutableInstallerUrl, inferInstallerSource, installerSourceBaseUrl, In
 
 type Config = typeof ManagedInstallerConfigTable.$inferSelect
 type ValidationRow = typeof ManagedInstallerValidationTable.$inferSelect
-/**
- * Single-administrator approval removes the second-administrator check on the default installer
- * for every new install, so one administrator session must not be able to turn it on by itself.
- * Only the deployment operator can allow it; without that, a saved `platform_admin` policy is inactive.
- */
 const SINGLE_ADMIN_APPROVAL_ENV = "DEN_MANAGED_INSTALLER_SINGLE_ADMIN_APPROVAL"
 const singleAdminApprovalAllowed = () => process.env[SINGLE_ADMIN_APPROVAL_ENV] === "true"
 const savedApprovalMode = (row?: Config): ManagedInstallerApprovalMode => row?.approval_mode === "platform_admin" ? "platform_admin" : "independent_admin"
@@ -41,24 +36,17 @@ function compareReleaseVersions(next: string, current: string) {
 }
 const environmentRelease = (provider: ManagedInstallerProvider) => provider === "aws" ? awsRelease() : gcpRelease()
 
-/** The release prefix the deployment's environment release came from, if any. */
 function environmentSourceBaseUrl(provider: ManagedInstallerProvider) {
   const prefix = `DEN_MANAGED_DEPLOYMENT_${provider.toUpperCase()}`
   const template = environmentRelease(provider)?.templateUrl ?? (process.env[`${prefix}_RELEASE`] === undefined ? process.env[`${prefix}_TEMPLATE_URL`] : undefined)
   return inferInstallerSource(provider, template)
 }
 
-/** The bucket a normalized release source is in: the regional S3 host, or the Google Cloud Storage bucket path. */
 function bucketRoot(provider: ManagedInstallerProvider, base: string) {
   const url = new URL(base)
   return provider === "aws" ? `${url.origin}/` : `${url.origin}/${url.pathname.split("/")[1]}/`
 }
 
-/**
- * The pinned template becomes every new install's CloudFormation stack or Cloud Shell tutorial, so an
- * administrator may only choose sources the operator trusts: the environment release's bucket, plus the
- * prefixes listed in DEN_MANAGED_DEPLOYMENT_<PROVIDER>_SOURCE_ALLOWLIST (comma-separated).
- */
 function requireAllowedSource(provider: ManagedInstallerProvider, base: string) {
   const variable = `DEN_MANAGED_DEPLOYMENT_${provider.toUpperCase()}_SOURCE_ALLOWLIST`
   const environment = environmentSourceBaseUrl(provider)
@@ -89,7 +77,6 @@ export function installerProviderState(provider: ManagedInstallerProvider, row?:
   return { provider, release, source, available: release !== null, sourceBaseUrl, revision: sha256(JSON.stringify({ row: row ?? null, environmentRevision, approvalMode: approvalMode(row) })), updatedAt: row?.updated_at.toISOString() ?? null, approvalMode: approvalMode(row), pendingValidation: null }
 }
 
-/** Always primary: settings must be visible to launches and updates across API replicas. Missing schema fails closed. */
 export async function effectiveInstallerRelease(provider: ManagedInstallerProvider): Promise<ManagedDeploymentRelease | null> {
   const [row] = await db.$primary.select().from(ManagedInstallerConfigTable).where(eq(ManagedInstallerConfigTable.provider, provider))
   const state = installerProviderState(provider, row)
@@ -169,7 +156,6 @@ async function changeSetting(input: { provider: ManagedInstallerProvider, expect
       }
     }
     if (input.action === "source_saved" && row.source_base_url === input.sourceBaseUrl) return
-    // Compare the saved policy: choosing a second administrator also clears a saved policy the operator no longer allows.
     if (input.action === "approval_saved" && savedApprovalMode(row) === input.approvalMode) return
     if (input.action === "reset" && !row.release && initial) return
     const updated = { ...row, ...(input.action === "approval_saved" && input.approvalMode ? { approval_mode: input.approvalMode } : {}), ...(input.action === "source_saved" ? { source_base_url: input.sourceBaseUrl ?? null } : {}), ...(input.action === "pinned" && candidate ? { release: candidate.validation.release } : {}), ...(input.action === "reset" ? { release: null } : {}), revision: randomUUID(), updated_at: new Date() }

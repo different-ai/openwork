@@ -25,27 +25,14 @@ import { ConnectorLogo } from "./item-logo";
 import type { AgentPolicyScope } from "./workbot-agent-scope";
 import { AgentConnectionToolsButton } from "./workbot-agent-tools";
 
-/**
- * What members' agents read. The calendar is one setting on General (`AgentCalendarPolicy`): on for everyone, members
- * choose, or not allowed. It is read through whichever calendar app the organization connected, with nothing to pick.
- * Everything else is a connector (the Connectors tab, `WorkbotProactiveSources`): each connection the organization has,
- * under its own setting. Mail and chat are read through the Google Workspace, Microsoft 365 or Slack connector. The
- * server enforces all of it for members' agents.
- *
- * With Your agent's brief on (`view.brief`), every connection can be listed with no count cap, each under its policy,
- * and each has "Tools agents may use" (workbot-agent-tools.tsx).
- */
-
 type SourcesView = Pick<WorkbotProactiveView, "settings" | "sourceConnections">;
 
-/** The connections agents read now, before Your agent's brief: the admin's list, or every one with reviewed read tools. */
 export function listedConnections(view: SourcesView): AgentSourceOption[] {
   const all = view.sourceConnections?.all ?? [];
   const ids = agentOtherConnections(view.settings.sources) ?? view.sourceConnections?.other.map((connection) => connection.id) ?? [];
   return ids.flatMap((id) => all.filter((option) => option.id === id));
 }
 
-/** "Uses Google Workspace", "Uses Google Workspace or Microsoft 365", "No calendar app connected". */
 export function calendarStateLine(view: SourcesView): string {
   if (view.settings.sources.calendar === "off") return "Agents don't read it";
   if (!view.sourceConnections) return `Uses ${AGENT_CORE_SOURCE_COPY.calendar.via}`;
@@ -55,44 +42,31 @@ export function calendarStateLine(view: SourcesView): string {
   return `Uses ${names.slice(0, -1).join(", ")} or ${names.at(-1)}`;
 }
 
-/**
- * The policy a connector has now (every connection listed): the admin's saved choice, else the server's (a reviewed
- * connection an admin removed before every connection was listed stays not allowed), else members choose.
- */
 export function otherPolicy(view: SourcesView, option: AgentOtherSourceConnection): AgentSourcePolicy {
   return view.settings.sources.connections[option.id] ?? option.policy ?? "members";
 }
 
-/**
- * In a tab, Connectors lists only the connections an admin set (or the server holds back), not every connection: the
- * rest are up to each member, and "Add connector" brings one into the list.
- */
 export function otherConnectionAdded(view: SourcesView, option: AgentOtherSourceConnection): boolean {
   return view.settings.sources.connections[option.id] !== undefined || (option.policy ?? "members") !== "members";
 }
 
-/** "58 other connections are up to each member.", "1 other connection is up to each member." */
 export function otherConnectionsRestLine(count: number): string {
   return count === 1 ? "1 other connection is up to each member." : `${count} other connections are up to each member.`;
 }
 
-/** "12 connections", "1 connection". */
 export function connectionCount(count: number): string {
   return `${count} connection${count === 1 ? "" : "s"}`;
 }
 
-/** Connections that can still be added, before Your agent's brief: the ones agents can read that aren't listed yet. */
 export function addableConnections(view: SourcesView): AgentSourceOption[] {
   const here = new Set(listedConnections(view).map((option) => option.id));
   return (view.sourceConnections?.all ?? []).filter((option) => option.slots.includes("other") && !here.has(option.id));
 }
 
-/** Adds a connection to the ones agents read. */
 export function addConnectionChange(view: SourcesView, connectionId: string): AgentSourcesPolicyInput {
   return { otherConnections: [...listedConnections(view).map((option) => option.id), connectionId] };
 }
 
-/** Takes a connection out of the ones agents read, and clears its setting. */
 export function removeConnectionChange(view: SourcesView, connectionId: string): AgentSourcesPolicyInput {
   return { otherConnections: listedConnections(view).map((option) => option.id).filter((id) => id !== connectionId), connections: { [connectionId]: null } };
 }
@@ -115,10 +89,8 @@ function PolicySelect({ label, value, disabled, onChange }: { label: string; val
   );
 }
 
-/** Connectors shows a filter once the list is longer than this. */
 const FILTER_FROM = 8;
 
-/** The connections whose name contains what was typed, ignoring case. */
 export function filterConnections<T extends { name: string }>(connections: readonly T[], typed: string): T[] {
   const query = typed.trim().toLowerCase();
   return query ? connections.filter((connection) => connection.name.toLowerCase().includes(query)) : [...connections];
@@ -133,7 +105,6 @@ function AddConnector<Option extends Pick<AgentSourceOption, "id" | "name" | "ur
   const [query, setQuery] = useState("");
   const triggerRef = useRef<HTMLButtonElement>(null);
   const popupRef = useRef<HTMLDivElement>(null);
-  // A long list gets a box to find one by name.
   const searchable = options.length > FILTER_FROM;
   const shown = searchable ? filterConnections(options, query) : options;
   return (
@@ -171,10 +142,6 @@ function AddConnector<Option extends Pick<AgentSourceOption, "id" | "name" | "ur
   );
 }
 
-/**
- * The calendar's one control, for the Calendar row on General: on for everyone, members choose, or not allowed. Which
- * calendar app is read is automatic, so there is nothing else to set.
- */
 export function AgentCalendarPolicy({ view, disabled, onChange }: {
   view: SourcesView;
   disabled: boolean;
@@ -189,13 +156,11 @@ export function AgentCalendarPolicy({ view, disabled, onChange }: {
 }
 
 export function WorkbotProactiveSources({ view, canManage, saving, onChange, tools, heading = true }: {
-  /** False where the tab around it already says "Connectors". */
   heading?: boolean;
   view: WorkbotProactiveView;
   canManage: boolean;
   saving: boolean;
   onChange: (change: WorkbotProactiveSettingsInput) => void;
-  /** With the brief on: where to list each connection's tools (under Everyone's policy, or `scope`'s) and connect one. */
   tools?: { orgId: string; scope?: AgentPolicyScope; connectorHref: (connectionId: string) => string };
 }) {
   const headingId = useId();
@@ -203,19 +168,15 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange, too
   const locked = !canManage || saving;
   const { sources } = view.settings;
   const connections = view.sourceConnections;
-  // Your agent's brief: any connected connector can be a source, each tool decided read or not.
   const anyConnector = view.brief !== undefined;
 
   const save = (change: AgentSourcesPolicyInput) => onChange({ sources: change });
-  // A connection's tools open from a button on its row.
   const toolsButtonOf = (option: { id: string; name: string }) => tools && anyConnector ? (
     <AgentConnectionToolsButton orgId={tools.orgId} scope={tools.scope} connectionId={option.id} name={option.name} connectHref={tools.connectorHref(option.id)} disabled={locked} onChange={save} />
   ) : null;
 
-  // With the brief: every connection, each with its policy and its tools.
   const everyConnectionRows = () => {
     const everything = connections?.other ?? [];
-    // In a tab: only the connections that were added; the rest are behind "Add connector".
     const all = everything.filter((option) => otherConnectionAdded(view, option));
     const rest = everything.filter((option) => !otherConnectionAdded(view, option));
     const filtering = all.length > FILTER_FROM;
@@ -264,7 +225,6 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange, too
     );
   };
 
-  // Before the brief: each connection added here, with its own policy.
   const listedRows = () => {
     const members = listedConnections(view);
     return (

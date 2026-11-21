@@ -2,23 +2,13 @@ import Link from "next/link";
 import type { ReactNode } from "react";
 
 export type DenCatalogListProps = {
-  /** Left label, usually the count ("6 marketplaces"). */
   label: string;
-  /** Right label above the figure column ("Plugins", "Components"). */
   valueLabel?: string;
-  /** Width of the trailing figure column. Must match the rows in this list. */
   valueWidth?: string;
   children: ReactNode;
   className?: string;
 };
 
-/**
- * DenCatalogList
- *
- * Divided list for catalogue surfaces (marketplaces, plugins). Hierarchy comes
- * from type and rhythm rather than boxes, so rows fill the available width
- * instead of being padded out to match a neighbour in a grid.
- */
 export function DenCatalogList({
   label,
   valueLabel,
@@ -49,36 +39,22 @@ export function DenCatalogList({
 }
 
 export type DenCatalogRowProps = {
-  /** Usually a CatalogIdentityTile. Sits in a fixed slot so titles align. */
   leading?: ReactNode;
   title: string;
-  /** Renders the title in mono for identifiers matched against a repository. */
   monospacedTitle?: boolean;
-  /** Sits beside the title: "Built in", or a readiness exception. */
   badge?: ReactNode;
   description?: ReactNode;
-  /** Uppercase micro-label under the description, e.g. owning marketplaces. */
   meta?: ReactNode;
-  /** Figure for the trailing column. Rendered in mono so counts compare. */
   value?: string;
-  /** Dims the figure when it is a zero rather than a quantity. */
   valueMuted?: boolean;
   valueCaption?: string;
   valueWidth?: string;
   href?: string;
-  /** Trailing control for rows that are not themselves a link. */
   action?: ReactNode;
   id?: string;
   className?: string;
 };
 
-/**
- * DenCatalogRow
- *
- * One entry in a DenCatalogList. The leading tile and trailing figure use fixed
- * slots so identity and counts line up down the column regardless of how long
- * the titles and descriptions are.
- */
 export function DenCatalogRow({
   leading,
   title,

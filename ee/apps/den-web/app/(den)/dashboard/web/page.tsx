@@ -121,7 +121,6 @@ function clearStripeReturnParameters() {
 export default function WebPage() {
   const { orgContext, orgBusy, activeOrg, runReauthableAction } = useOrgDashboard();
   const { runtimeConfig, runtimeConfigLoaded } = useDenFlow();
-  // Feature intros: OpenWork Web answers `?` only; the page is its own next step.
   useFeatureIntro("web", orgContext ? {} : null);
   const orgId = orgContext?.organization.id ?? null;
   const webAvailable = runtimeConfigLoaded
@@ -143,7 +142,6 @@ export default function WebPage() {
     orgContext?.currentMember.isOwner ?? false,
     orgContext?.currentMember.permissions,
   );
-  // Checkout and checkout sync need `billing.manage`.
   const canPurchaseWeb = access.canManageBilling;
 
   async function requestWebBilling(expectedOrgId: string, quiet: boolean): Promise<StripeWebBilling | null> {

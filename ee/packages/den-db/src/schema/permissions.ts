@@ -4,7 +4,6 @@ import { denTypeIdColumn } from "../columns"
 import { MemberTable, OrganizationTable } from "./org"
 import { TeamTable } from "./teams"
 
-// Database order: values are only ever appended (an in-place, metadata-only change in MySQL).
 export const permissionSetDefaultKeyValues = ["member", "admin", "super-admin", "billing-manager"] as const
 export type PermissionSetDefaultKey = (typeof permissionSetDefaultKeyValues)[number]
 

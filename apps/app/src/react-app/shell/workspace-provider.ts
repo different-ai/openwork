@@ -38,7 +38,6 @@ export function WorkspaceProvider({
   return React.createElement(WorkspaceContext.Provider, { value }, children);
 }
 
-/** Like useWorkspace, but null when rendered outside a WorkspaceProvider. */
 export function useWorkspaceMaybe() {
   return React.use(WorkspaceContext);
 }

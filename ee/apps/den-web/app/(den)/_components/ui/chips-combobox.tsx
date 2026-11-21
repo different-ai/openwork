@@ -12,25 +12,17 @@ import {
 type ChipItem = { value: string; label: string; create: boolean };
 
 export type DenChipsComboboxProps = {
-  /** Selected values, shown as removable chips in the order chosen. */
   value: readonly string[];
-  /** The new selection; the typed query is used up, so clear it here too. */
   onChange: (next: string[]) => void;
-  /** Values to choose from; anything typed that isn't one of these can be added. */
   options: readonly string[];
-  /** Text typed in the box. Controlled, so a form can keep text that was never entered. */
   query: string;
   onQueryChange: (query: string) => void;
-  /** How two values are told apart, for example case-insensitively. */
   toKey?: (value: string) => string;
-  /** Cleans typed text before it becomes a value. */
   normalize?: (value: string) => string;
   maxItems?: number;
   maxLength?: number;
   placeholder?: string;
-  /** Shown when nothing matches and nothing is typed yet. */
   emptyLabel?: string;
-  /** Shown under the list once `maxItems` are chosen. */
   limitLabel?: string;
   ariaLabel: string;
   disabled?: boolean;
@@ -40,12 +32,6 @@ export type DenChipsComboboxProps = {
 const defaultKey = (value: string) => value.trim().toLowerCase();
 const defaultNormalize = (value: string) => value.trim();
 
-/**
- * A multi-select combobox with chips: pick existing values from the list, or
- * type a new one and press Enter. Backspace in the empty box removes the last
- * chip. Built on Base UI's Combobox for keyboard, focus and ARIA behavior;
- * styled like DenCombobox.
- */
 export function DenChipsCombobox({
   value,
   onChange,
@@ -64,7 +50,6 @@ export function DenChipsCombobox({
   invalid = false,
 }: DenChipsComboboxProps) {
   const anchorRef = useRef<HTMLDivElement>(null);
-  /** True once arrow keys moved through the list since the last keystroke: Enter then picks that row. */
   const browsingRef = useRef(false);
   const selectedKeys = new Set(value.map(toKey));
   const full = maxItems !== undefined && value.length >= maxItems;
@@ -72,13 +57,11 @@ export function DenChipsCombobox({
   const typed = normalize(query);
   const typedKey = toKey(typed);
   const items: ChipItem[] = options.map((option) => ({ value: option, label: option, create: false }));
-  // Selected values that aren't options yet (typed in this session) still show as checked rows.
   for (const selected of value) {
     if (!options.some((option) => toKey(option) === toKey(selected))) items.push({ value: selected, label: selected, create: false });
   }
   const filtered = typedKey ? items.filter((item) => toKey(item.label).includes(typedKey)) : items;
   const exact = filtered.find((item) => toKey(item.value) === typedKey);
-  // The best match comes first, so Enter picks it: the exact option, or adding what was typed.
   const shown: ChipItem[] = !typedKey
     ? filtered
     : exact
@@ -97,23 +80,18 @@ export function DenChipsCombobox({
       keys.add(key);
       values.push(item.value);
     }
-    // One update: the owner clears its query in onChange. A separate
-    // onQueryChange here would race it with a stale copy of the owner's state.
     onChange(values);
   }
 
   return (
     <Combobox.Root<ChipItem, true>
       multiple
-      // The "Add …" row is a real item too, so picking it by arrow or click is a normal selection.
       items={shown[0]?.create ? [shown[0], ...items] : items}
       filteredItems={shown}
       value={selectedItems}
       onValueChange={(next) => commit(next)}
       inputValue={query}
       onInputValueChange={(next, details) => {
-        // Only typing changes the query. Base UI clears the box when the list
-        // closes (reason input-clear); keep the text so a form can save it.
         if (details.reason === "input-change") {
           browsingRef.current = false;
           onQueryChange(next);
@@ -157,9 +135,6 @@ export function DenChipsCombobox({
           autoComplete="off"
           spellCheck={false}
           onKeyDown={(event) => {
-            // Enter with text typed adds it: the existing option's spelling when
-            // it matches one, else the typed text. After arrowing to a row,
-            // Base UI picks that row instead.
             if (event.key === "ArrowDown" || event.key === "ArrowUp") browsingRef.current = true;
             if (event.key !== "Enter" || !typedKey || browsingRef.current) return;
             event.preventDefault();

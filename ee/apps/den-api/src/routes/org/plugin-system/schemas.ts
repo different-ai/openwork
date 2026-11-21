@@ -23,11 +23,7 @@ import { idParamSchema } from "../shared.js"
 
 const cursorSchema = z.string().trim().min(1).max(255)
 const jsonObjectSchema = z.object({}).passthrough()
-// MEDIUMTEXT allows ~12.58 MB of encrypted plaintext; 1 MiB stays safely below storage
-// while still ~40x the largest real skill document, yielding a clean 400 instead of a 500.
 const configObjectInputMaxPayloadBytes = 1_048_576
-// normalizedPayloadJson carries a skill's supporting files (up to 8 MiB of text, see
-// skill-files.ts), so it gets the room its MEDIUMTEXT column has, minus a margin.
 const configObjectInputMaxNormalizedPayloadBytes = 11 * 1_048_576
 const rawSourceTextSchema = z.string().trim().min(1).refine(
   (value) => Buffer.byteLength(value, "utf8") <= configObjectInputMaxPayloadBytes,
@@ -231,11 +227,6 @@ export const resourceAccessGrantWriteSchema = z.object({
   }
 })
 
-/**
- * The same connector setup an admin fills in on the Connections page. It
- * configures the connection for a plugin-declared MCP server, either inline
- * while creating the plugin or later through the configure route.
- */
 export const pluginMcpConnectionSetupSchema = z.object({
   authType: z.enum(["oauth", "apikey", "none"]).optional().default("oauth"),
   credentialMode: z.enum(["shared", "per_member"]).optional(),
@@ -291,18 +282,15 @@ export const pluginCreateSchema = z.object({
   marketplaceId: marketplaceIdSchema.optional(),
 })
 
-/** A stable key: lowercase letters, digits, dots, dashes and underscores. */
 export const externalKeySchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,127}$/)
 
 export const configObjectExternalKeySchema = z.object({
-  /** The key a configuration import finds this object by; null clears it. */
   externalKey: externalKeySchema.nullable(),
 })
 
 export const pluginUpdateSchema = z.object({
   name: z.string().trim().min(1).max(255).optional(),
   description: nullableStringSchema.optional(),
-  /** The key a configuration import finds this plugin by; null clears it. */
   externalKey: externalKeySchema.nullable().optional(),
 }).superRefine((value, ctx) => {
   if (value.name === undefined && value.description === undefined && value.externalKey === undefined) {
@@ -462,8 +450,6 @@ export const githubDiscoveryApplySchema = z.object({
   selectedKeys: z.array(z.string().trim().min(1).max(255)).max(200),
 })
 
-// Like every other create path, an import is private to its creator unless the
-// request names a wider audience.
 export const githubPluginMcpImportAccessSchema = z.object({
   orgWide: z.boolean().optional().default(false).describe("Share with everyone in the organization. Requires the org-wide sharing permission."),
   memberIds: z.array(memberIdSchema).max(200).optional().default([]),
@@ -1188,7 +1174,6 @@ const pluginMcpRequirementConfigureItemSchema = (
     }),
   })
 )
-/** An API-key requirement set up without its key also returns credentialPrompt. */
 export const pluginMcpRequirementConfigureResponseSchema = z.object({
   ok: z.literal(true),
   item: pluginMcpRequirementConfigureItemSchema,

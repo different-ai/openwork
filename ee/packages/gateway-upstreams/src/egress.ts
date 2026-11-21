@@ -6,16 +6,12 @@ import { request as httpsRequest } from "node:https"
 import { Readable } from "node:stream"
 import { createBrotliDecompress, createGunzip, createInflate } from "node:zlib"
 
-// Node >=18.7 supports strategy; this workspace's older Node declaration omits
-// the second argument. Byte sizing is essential (the default counts chunks).
 const toWeb: (stream: Readable, options: { strategy: QueuingStrategy<Uint8Array> }) => ReturnType<typeof Readable.toWeb> = Readable.toWeb
 
 export class InferenceEgressError extends Error {
   constructor() { super("Inference egress destination is not permitted."); this.name = "InferenceEgressError" }
 }
 
-// Mirrors the existing managed-MCP guard's IPv4 exclusions. IPv6 is more
-// conservative: only global unicast, excluding transition/special-use ranges.
 export function isPublicInferenceAddress(address: string): boolean {
   if (isIP(address) === 4) {
     const [a, b, c] = address.split(".").map(Number)
@@ -29,7 +25,6 @@ export function isPublicInferenceAddress(address: string): boolean {
   if (isIP(address) !== 6 || address.includes("%")) return false
   const canonical = new URL(`http://[${address}]/`).hostname.slice(1, -1)
   const [first, second] = canonical.split(":").map((word) => parseInt(word || "0", 16))
-  // Reject mapped, NAT64, 6to4, Teredo, ULA, local, multicast and documentation.
   return (first & 0xe000) === 0x2000 && first !== 0x2002
     && !(first === 0x2001 && (second < 0x200 || second === 0xdb8))
     && !(first === 0x3fff && second < 0x1000)
@@ -47,8 +42,6 @@ export function inferenceEgressAllowedOrigins(value = process.env.GATEWAY_EGRESS
   return origins
 }
 
-// Shared by Den configuration validation and Gateway tests/inference. Multi-region
-// endpoints use a different host from ordinary regions and keep location eu/us.
 export function vertexHost(location: string) {
   if (location === "eu" || location === "us") return `aiplatform.${location}.rep.googleapis.com`
   return location === "global" ? "aiplatform.googleapis.com" : `${location}-aiplatform.googleapis.com`
@@ -127,12 +120,6 @@ export function createInferenceEgressFetch(options: { allowedOrigins?: ReadonlyS
     const headers = new Headers(request.headers)
     for (const name of ["host", "connection", "transfer-encoding", "content-length"]) headers.delete(name)
     headers.set("accept-encoding", "identity")
-    // Vertex rawPredict rejects a chunked request body with HTTP 400, so a body the
-    // caller already holds in full is sent to Vertex with its exact Content-Length.
-    // Node chunks only POST, PUT and PATCH bodies; any other method (TrueFoundry's
-    // DELETE …/revoke/all) would send its body with no length, read upstream as a
-    // malformed next request, so it gets a Content-Length too. Every other upstream,
-    // and any caller-supplied stream, stays chunked.
     const needsLength = isVertexHost(url.hostname) || !["POST", "PUT", "PATCH"].includes(request.method)
     const fixedBody = needsLength && request.body && init?.body != null && !(init.body instanceof ReadableStream)
       ? new Uint8Array(await request.arrayBuffer()) : null
@@ -169,7 +156,6 @@ export function createInferenceEgressFetch(options: { allowedOrigins?: ReadonlyS
           incoming.on("error", () => decompressor.destroy(new Error("Upstream body failed")))
           decompressor.on("close", () => incoming.destroy())
         }
-        // Node and DOM declare distinct but compatible web-stream types.
         const body = toWeb(decompressor ? incoming.pipe(decompressor) : incoming, {
           strategy: { highWaterMark: 64 * 1024, size: (chunk: Uint8Array) => chunk.byteLength },
         }) as ReadableStream<Uint8Array>

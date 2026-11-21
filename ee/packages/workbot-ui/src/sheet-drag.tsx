@@ -3,14 +3,7 @@
 import { useRef, type PointerEvent as ReactPointerEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { FloatingGlass } from "./floating-glass";
 
-/**
- * Drag a phone sheet down to close it, as on iOS: the sheet follows the finger from its top (the grabber and the
- * header), and a long or quick enough pull closes it; anything less springs back. Only where the sheet is a bottom
- * sheet (under 640px, Tailwind's `sm`); wider screens show the same sheet as a side panel and ignore the gesture.
- * Close and Escape keep working everywhere.
- */
 const PHONE_SHEET = "(max-width: 639.98px)";
-/** Movement before a press becomes a drag, so taps on the header's tabs and buttons stay taps. */
 const SLOP_PX = 6;
 
 type Drag = { id: number; startY: number; dy: number; at: number; velocity: number; moved: boolean };
@@ -27,7 +20,6 @@ export function useSheetDrag(onClose: () => void) {
   const place = (dy: number, follow: boolean) => {
     const node = popup.current;
     if (!node) return;
-    // While following the finger, no transition; letting go uses the sheet's own curve (workbot-sheet-motion).
     node.style.transition = follow ? "none" : "";
     node.style.transform = dy > 0 ? `translateY(${dy}px)` : "";
   };
@@ -72,7 +64,6 @@ export function useSheetDrag(onClose: () => void) {
       },
       onPointerUp(event: ReactPointerEvent<HTMLElement>) { end(event, false); },
       onPointerCancel(event: ReactPointerEvent<HTMLElement>) { end(event, true); },
-      // A drag that started on a tab or button must not also press it.
       onClickCapture(event: ReactMouseEvent<HTMLElement>) {
         if (!swallowClick.current) return;
         swallowClick.current = false;

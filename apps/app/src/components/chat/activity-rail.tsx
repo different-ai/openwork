@@ -5,14 +5,9 @@ import { ChevronRight } from "lucide-react"
 
 import { cn } from "@/lib/utils"
 
-/**
- * The turn's text-first activity rail: sentences share the reply's left edge,
- * brand marks sit after the verb, and disclosure chevrons trail the text.
- */
 export const RAIL_ROW = "group/step -my-1 min-w-0"
 export const RAIL_LINE = "flex min-h-6.5 min-w-0 items-center gap-2 text-sm text-muted-foreground"
 
-/** A trailing disclosure chevron; rotates 90° when open (S3). */
 export function TrailingChevron({ open, className }: { open: boolean; className?: string }) {
   return (
     <ChevronRight
@@ -23,7 +18,6 @@ export function TrailingChevron({ open, className }: { open: boolean; className?
   )
 }
 
-/** Quiet metadata beside a label ("3 steps", "1 failed"), never a middle-dot string (C7). */
 export function RailMeta({ children, className }: { children: React.ReactNode; className?: string }) {
   return <span className={cn("shrink-0 text-[11px] text-muted-foreground/80", className)}>{children}</span>
 }
@@ -31,7 +25,6 @@ export function RailMeta({ children, className }: { children: React.ReactNode; c
 export function TextSentenceLine({ verb, object, mark, title, tone = "normal", className }: {
   verb: string
   object?: string
-  /** A real brand mark, inline between the verb and its object. */
   mark?: React.ReactNode
   title?: string
   tone?: "normal" | "running" | "failed" | "waiting"

@@ -16,7 +16,6 @@ function KindMark({ kind }: { kind: "Skill" | "Command" }) {
   );
 }
 
-/** Create a plugin example: a skill, a command and a connector added one by one; all shown under reduced motion. */
 export function PluginCreateExample() {
   const step = useExampleStep(createExampleInside.length + 1, 1800);
   const shown = step === null ? createExampleInside.length : step;
@@ -53,7 +52,6 @@ export function PluginCreateExample() {
   );
 }
 
-/** Import from GitHub example: the preview of a public plugin, with what can and can't come in. */
 export function PluginImportExample() {
   const step = useExampleStep(importExampleItems.length);
 
@@ -84,7 +82,6 @@ export function PluginImportExample() {
   );
 }
 
-/** Skill editor example: a skill's name, when the AI uses it, and its steps in plain words. */
 export function PluginSkillExample() {
   return (
     <div>

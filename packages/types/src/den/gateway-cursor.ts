@@ -24,7 +24,6 @@ export const CURSOR_MODEL_ID_SUFFIX_LENGTH = 4;
 /** Appended to the Gateway's API base URL (`…/api/v1`) for Cursor's "Override OpenAI Base URL". */
 export const CURSOR_BASE_URL_PATH = "/cursor";
 
-/** TypeID suffix alphabet (Crockford base32, lowercase). */
 const ID_SUFFIX = /^[0-9a-hjkmnp-tv-z]{4,26}$/;
 
 /** `https://gateway.example/api/v1` becomes `https://gateway.example/api/v1/cursor`. */
@@ -53,7 +52,6 @@ export function cursorModelName(input: { name: string; modelId: string; thinking
 
 export type ParsedCursorModelName = {
   slug: string;
-  /** What the model's id must end with. */
   idSuffix: string;
   thinking: AutoRouterThinkingLevel;
 };
@@ -117,12 +115,6 @@ export function parseClaudeCodeModelName(value: unknown): ParsedCursorModelName 
   return typeof value === "string" ? parseCursorModelName(value.replace(/\[[^\]]*\]\s*$/, "")) : null;
 }
 
-/**
- * Claude Desktop in Gateway mode uses the Claude Code endpoint as its
- * Gateway base URL, but its model picker keeps only ids that name a Claude model: one with claude,
- * opus, sonnet or haiku in it and no other model family (gpt, gemini, deepseek...). This mirrors that
- * check (Claude Desktop 5.x) on the name Claude Code uses, so setup can say which models it shows.
- */
 const CLAUDE_DESKTOP_CLAUDE_WORDS = /claude|opus|sonnet|haiku|anthropic/;
 const CLAUDE_DESKTOP_OTHER_FAMILIES = /deepseek|gemini|gemma|glm|gpt|grok|kimi|llama|minimax|mistral|mixtral|moonshot|nemotron|openai|qwen|codex|ernie|hunyuan|doubao|nova-|phi-|yi-/;
 

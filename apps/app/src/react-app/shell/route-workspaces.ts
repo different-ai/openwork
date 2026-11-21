@@ -1,7 +1,3 @@
-// Shared pure helpers for the workspace-scoped routes (session-route,
-// settings-route). These were duplicated in both route files and had
-// drifted. One copy now.
-
 import type { Session } from "@opencode-ai/sdk/v2/client";
 
 import { describeOpencodeConfigError } from "@openwork/types/opencode-config-error";
@@ -25,10 +21,6 @@ export type RouteWorkspace = OpenworkWorkspaceInfo & {
   displayNameResolved: string;
 };
 
-/**
- * Sessions as the routes handle them: native SDK sessions, optionally enriched with run-status
- * fields that the sidebar probes defensively via getSessionStatus.
- */
 export type RouteSession = Session & {
   status?: unknown;
   state?: unknown;
@@ -37,7 +29,6 @@ export type RouteSession = Session & {
   openworkSessionLink?: SessionLink | null;
 };
 
-// Absent for v1 prefix reads; null means an exhausted v2 cursor traversal.
 type RouteSessionListResult = { nextCursor?: string | null } & (
   | { data: RouteSession[]; error?: undefined; request: Request; response: Response }
   | { data?: undefined; error: unknown; request: Request; response: Response });
@@ -60,10 +51,8 @@ export const v2RouteSessionList: RouteSessionListTransport = async ({ endpoint, 
     token: endpoint.token,
   }).listSessionsPage({ limit, cursor });
 
-/** Resolve the owning server's engine even when this workspace isn't selected. */
 export async function routeSessionEndpoint(endpoint: ResolvedWorkspaceEndpoint): Promise<ResolvedWorkspaceEndpoint> {
   const status = await endpoint.client.getEngineV2PreviewStatus().catch((error: unknown) => {
-    // Servers predating the preview endpoint still use v1.
     if (error instanceof OpenworkServerError && error.status === 404) return null;
     throw error;
   });
@@ -72,16 +61,9 @@ export async function routeSessionEndpoint(endpoint: ResolvedWorkspaceEndpoint):
     : endpoint;
 }
 
-/**
- * Create a session and report the engine endpoint that owns it. Callers that
- * key follow-up state by `opencodeBaseUrl` (the hero's one-step auto-send) must
- * use this endpoint, not the workspace's default v1 one, or the mounted
- * session surface never finds that state when chat is routed to v2.
- */
 export async function createRouteSessionOnEngine(
   endpoint: ResolvedWorkspaceEndpoint,
   directory?: string,
-  /** The session this one is started from. Only the v2 engine records it. */
   link?: SessionLink,
 ): Promise<{ session: Session; endpoint: ResolvedWorkspaceEndpoint }> {
   const native = await routeSessionEndpoint(endpoint);
@@ -101,7 +83,6 @@ export async function deleteRouteSession(endpoint: ResolvedWorkspaceEndpoint, se
   return deleteNativeSession(await routeSessionEndpoint(endpoint), sessionId);
 }
 
-/** The OpenWork server's own `opencode_config_invalid` answer already says which file and field. */
 function openworkConfigErrorMessage(error: unknown): string | null {
   if (!error || typeof error !== "object" || !("code" in error) || error.code !== "opencode_config_invalid") return null;
   return "message" in error && typeof error.message === "string" && error.message.trim() ? error.message : null;
@@ -121,8 +102,6 @@ export async function listRouteSessions(
     try {
       items = unwrap(result);
     } catch (thrown) {
-      // A folder whose OpenCode config is invalid lists nothing. Say why,
-      // instead of an empty list that looks like lost chats.
       const configMessage = describeOpencodeConfigError(result.error) ?? openworkConfigErrorMessage(result.error);
       const error = configMessage
         ? Object.assign(new Error(configMessage), { code: "opencode_config_invalid" })
@@ -136,8 +115,6 @@ export async function listRouteSessions(
       throw error;
     }
     if (result.nextCursor !== undefined) {
-      // v2's workspace proxy can filter an entire page. Only its native cursor
-      // establishes exhaustion, never the number of visible rows.
       for (const session of items) {
         if (!sessions.has(session.id)) sessions.set(session.id, session);
       }
@@ -146,8 +123,6 @@ export async function listRouteSessions(
       cursors.add(result.nextCursor);
       cursor = result.nextCursor;
     } else {
-      // v1 has no older-page cursor and defaults to 100 without an explicit
-      // limit. Replace the prefix on each read; do not append stale duplicates.
       if (items.length < limit) return items;
       limit *= 2;
     }
@@ -216,14 +191,6 @@ export function classifyRouteSessionReadError(error: unknown): "not-found" | "re
   return "error";
 }
 
-/**
- * Engine calls can briefly fail while the desktop server is up but the
- * workspace engine is not answering: startup, a blue/green rollover, or an
- * overloaded event loop that misses the 10 s request timeout. Keep that gap
- * inside a bounded retry instead of a dead-end error. Terminal authorization
- * and workspace errors still fail immediately. `onRetry` fires before each
- * wait with the 1-based attempt that just failed.
- */
 export async function withTransientEngineRetry<T>(input: {
   load: () => Promise<T>;
   retryDelaysMs?: readonly number[];
@@ -251,7 +218,6 @@ export async function withTransientEngineRetry<T>(input: {
 
 export const readRouteSessionsWithRetry = withTransientEngineRetry;
 
-/** Waits between task-creation attempts; each attempt itself may take the 10 s request timeout. */
 export const TASK_CREATE_RETRY_DELAYS_MS: readonly number[] = [1_000, 2_000, 4_000];
 
 export type TaskCreateFailure = {
@@ -260,12 +226,6 @@ export type TaskCreateFailure = {
   description: string;
 };
 
-/**
- * A stalled engine (timeouts, connection blips, 5xx from the proxy) is a
- * different situation from a misconfigured or missing one: it usually comes
- * back on its own or after a reload, and the person should not have to reload
- * the whole app to find out.
- */
 export function describeTaskCreateFailure(error: unknown, attempts: number): TaskCreateFailure {
   const message = describeRouteError(error);
   if (classifyRouteSessionReadError(error) === "retryable") {
@@ -280,7 +240,6 @@ export function describeTaskCreateFailure(error: unknown, attempts: number): Tas
 
 export type TaskCreateRetryNotice = { title: string; description: string };
 
-/** Retry countdown wording; engine internals stay behind developer mode. */
 export function describeTaskCreateRetry(input: {
   developerMode: boolean;
   attempt: number;
@@ -344,8 +303,6 @@ export async function refreshRouteWorkspaceListState(input: {
   desktopWorkspaces: RouteWorkspace[];
   previousWorkspaces: RouteWorkspace[];
   orderIds: string[];
-  /** Optional startup backoff. Route callers opt in when their local server
-   * can briefly accept connections before its workspace API is ready. */
   retryDelaysMs?: readonly number[];
   wait?: (delayMs: number) => Promise<void>;
 }): Promise<RouteWorkspaceListState> {
@@ -409,9 +366,6 @@ export function mergeRouteWorkspaces(
     const match =
       desktopById.get(workspace.id) ??
       desktopByPath.get(normalizeDirectoryPath(workspace.path ?? ""));
-    // For local workspaces, prefer the server's view (which knows things like
-    // `path` and per-workspace runtime fields) and only fall back to the
-    // desktop's display name when the server doesn't provide one.
     const merged = match
       ? {
           ...workspace,
@@ -467,12 +421,6 @@ export function orderRouteWorkspaces(workspaces: RouteWorkspace[], orderIds: str
   return ordered;
 }
 
-/**
- * Capture the first visible workspace order and extend it without letting the
- * server's active-workspace-first list reshuffle existing sidebar entries.
- * IDs that are temporarily absent stay in the preference so a transient
- * discovery gap cannot move them when they return.
- */
 export function stabilizeRouteWorkspaceOrder(
   workspaces: RouteWorkspace[],
   orderIds: string[],

@@ -5,7 +5,6 @@ import { ExampleAvatar, ExampleCaption, ExampleGroupLabel, ExampleRow, ExampleRo
 import { useExampleStep } from "../use-example-step";
 import { libraryShareExample } from "./library-example-data";
 
-/** "Share with your team": a skill of yours and the team and person who can use it. */
 export function LibraryShareExample() {
   const step = useExampleStep(libraryShareExample.people.length);
 

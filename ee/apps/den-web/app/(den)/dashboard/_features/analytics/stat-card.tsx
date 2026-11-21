@@ -4,11 +4,7 @@ import type { ReactNode } from "react";
 import { DenSkeleton } from "../../../_components/ui/skeleton";
 import { AUTOMATION_CARD_CLASS } from "../../../_components/ui/dashboard-styles";
 
-/**
- * Several figures as one card, divided by hairlines, instead of a grid of
- * identical boxes (DESIGN.md S1, V7). `StatCard`s inside it lose their own card.
- */
-export function StatStrip({ children, columns, label }: { children: ReactNode; /** Literal grid classes, so Tailwind generates them. */ columns: string; label: string }) {
+export function StatStrip({ children, columns, label }: { children: ReactNode; columns: string; label: string }) {
   return <div role="group" aria-label={label} data-analytics-stat-strip
     className={`${AUTOMATION_CARD_CLASS} grid overflow-hidden ${columns} [&>[data-analytics-stat]]:rounded-none [&>[data-analytics-stat]]:border-0 [&>[data-analytics-stat]]:bg-transparent [&>[data-analytics-stat]]:shadow-[inset_-1px_-1px_0_var(--den-shell-line)]`}>
     {children}

@@ -5,7 +5,6 @@ import { useExampleStep } from "../use-example-step";
 import { ExampleAvatar, ExampleRow, ExampleRows } from "../example-parts";
 import { accessExamplePlugin, accessExampleWhere, accessExampleWho } from "./access-example-data";
 
-/** Plugin page example: who can use it, and where it shows up for them. */
 export function PluginAccessExample() {
   const step = useExampleStep(accessExampleWho.length);
 

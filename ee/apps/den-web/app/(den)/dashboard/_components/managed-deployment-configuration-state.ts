@@ -7,7 +7,6 @@ import {
 export type AwsDeployment = Extract<ManagedDeployment, { provider: "aws" }>;
 export type ConfigurationView = NonNullable<AwsDeployment["configuration"]>;
 export type ConfigurationChangeView = NonNullable<ConfigurationView["change"]>;
-/** An AWS deployment whose view says what may change now. */
 export type EditableDeployment = AwsDeployment & { configuration: ConfigurationView };
 export type ConfigurationEntry = { shown: boolean; disabled: boolean; reason: string | null };
 
@@ -25,12 +24,6 @@ export function hasConfiguration(deployment: ManagedDeployment): deployment is E
   return deployment.provider === "aws" && deployment.configuration !== undefined;
 }
 
-/**
- * The "Edit configuration" control. Hidden only when the feature is off for
- * this person; otherwise it stays visible and a lock says why it can't be used.
- * `permissionReason` is the page's sentence for someone who may not manage
- * deployments, repeated beside the control because the page is long.
- */
 export function configurationEntry(deployment: ManagedDeployment, options: { enabled: boolean; canManage: boolean; permissionReason?: string }): ConfigurationEntry {
   if (!options.enabled || !deployment.configuration) return { shown: false, disabled: true, reason: null };
   if (!options.canManage) return { shown: true, disabled: true, reason: options.permissionReason ?? null };
@@ -38,21 +31,14 @@ export function configurationEntry(deployment: ManagedDeployment, options: { ena
   return { shown: true, disabled: lock !== null, reason: lock ? LOCK_REASONS[lock] : null };
 }
 
-/** What the deployment records now: the "before" of every change. */
 export function recordedConfiguration(deployment: AwsDeployment): DeploymentConfiguration {
   return { name: deployment.name, domainName: deployment.domainName, ownerEmail: deployment.ownerEmail, size: deployment.size, target: deployment.target };
 }
 
-/** The recorded configuration as a request. Sent as is, it withdraws a pending change. */
 export function recordedDocument(deployment: AwsDeployment): AwsManagedDeploymentInput {
   return { provider: "aws", ...recordedConfiguration(deployment) };
 }
 
-/**
- * What the dialog opens with: the request already made when a change is
- * pending, failed or expired, otherwise the recorded configuration. A rename is
- * saved at once, so the name always comes from the deployment.
- */
 export function configurationDraft(deployment: AwsDeployment): AwsManagedDeploymentInput {
   const requested = deployment.configuration?.change?.requested;
   return requested ? { ...requested, name: deployment.name } : recordedDocument(deployment);
@@ -60,10 +46,8 @@ export function configurationDraft(deployment: AwsDeployment): AwsManagedDeploym
 
 export type DraftPlan =
   | { ok: true; configuration: AwsManagedDeploymentInput; plan: Extract<DeploymentConfigurationPlan, { ok: true }> }
-  /** `incomplete`: a value the draft needs is still empty, so the message says what to enter and nothing has gone wrong. */
   | { ok: false; message: string; field: DeploymentConfigurationField | null; incomplete: boolean };
 
-/** A value the draft cannot be sent without has not been entered yet. */
 function draftIncomplete(draft: AwsManagedDeploymentInput): boolean {
   const computers = draft.target.assistants;
   const provider = computers?.computerProvider ?? "off";
@@ -71,7 +55,6 @@ function draftIncomplete(draft: AwsManagedDeploymentInput): boolean {
     || (provider !== "off" && (!computers?.computerSecretArn || (provider === "daytona" && !computers.computerSnapshot)));
 }
 
-/** The draft as the API will read it. Every rule about what may change is the shared plan's. */
 export function planConfigurationDraft(deployment: AwsDeployment, draft: AwsManagedDeploymentInput): DraftPlan {
   const incomplete = draftIncomplete(draft);
   const parsed = awsManagedDeploymentInputSchema.safeParse(draft);
@@ -86,7 +69,6 @@ export function planConfigurationDraft(deployment: AwsDeployment, draft: AwsMana
   return { ok: true, configuration: parsed.data, plan };
 }
 
-/** Why "Add gateway runtime" can't be used on this deployment, or null. */
 export function gatewayLockReason(deployment: EditableDeployment, assistantsAvailable: boolean): string | null {
   if (!assistantsAvailable) return GATEWAY_RUNTIME_NOT_ENABLED;
   if (deployment.configuration.gatewayAvailable) return null;
@@ -95,57 +77,40 @@ export function gatewayLockReason(deployment: EditableDeployment, assistantsAvai
     : "This deployment's installer isn't the published one. Ask your OpenWork operator.";
 }
 
-/** Why an otherwise valid plan can't be sent from this workspace, or null. */
 export function planLockReason(deployment: EditableDeployment, plan: Extract<DeploymentConfigurationPlan, { ok: true }>, assistantsAvailable: boolean): string | null {
   if (plan.needsAssistantsFeature && !assistantsAvailable) return GATEWAY_RUNTIME_NOT_ENABLED;
   return plan.enablesGateway ? gatewayLockReason(deployment, assistantsAvailable) : null;
 }
 
 export type RuntimeBlock = {
-  /** The lock line of the block, or null. */
   reason: string | null;
-  /** Edit configuration is where this deployment's runtime changes: the block points there and offers no Update control of its own. */
   viaConfiguration: boolean;
 };
 
-/**
- * The detail's "Managed runtime" block. Once Edit configuration can be used,
- * "wait for a newer installer" is no longer true and the block points there.
- */
 export function runtimeBlock(deployment: ManagedDeployment, reason: string | null, entry: ConfigurationEntry, assistantsAvailable: boolean): RuntimeBlock {
   if (!reason || !entry.shown || entry.disabled || !assistantsAvailable) return { reason, viaConfiguration: false };
   const run = deployment.run;
   if (run && !run.expired && (run.state === "awaiting_approval" || run.state === "provisioning")) return { reason, viaConfiguration: false };
-  // The core-services block says where the gateway runtime is added; a gateway deployment's computers are all that is left to change.
   const gateway = deployment.provider === "aws" && deployment.target.runtimeProfile === "gateway";
   return { reason: gateway ? "Use Edit configuration to change cloud computers." : null, viaConfiguration: true };
 }
 
 type Run = NonNullable<ManagedDeployment["run"]>;
 
-/** A change whose approval ran out before anyone approved it: nothing started, so there is no progress to show. */
 export function changeNeverApproved(run: Pick<Run, "kind" | "state" | "expired"> & Partial<Pick<Run, "lastSeenAt">>): boolean {
   return run.kind === "configure" && run.state === "awaiting_approval" && run.expired && !run.lastSeenAt;
 }
 
-/** The shell reserved permission to change AWS, but the installer has not enrolled yet. */
 export function approvalReserved(run: Pick<Run, "kind" | "state" | "lastSeenAt"> | null): boolean {
   return run?.kind === "configure" && run.state === "awaiting_approval" && Boolean(run.lastSeenAt);
 }
 
-/**
- * The approval handoff the page is holding, while it is still the one to act
- * on: issued for the deployment's active run, which is still awaiting approval.
- * A change someone replaced or withdrew, or one whose approval ran out, has
- * no command to show.
- */
 export function currentHandoff<Handoff extends { deployment: Pick<ManagedDeployment, "id" | "run"> }>(handoff: Handoff | null, deployment: Pick<ManagedDeployment, "id" | "run">): Handoff | null {
   const run = deployment.run;
   if (!handoff || !run || handoff.deployment.id !== deployment.id || handoff.deployment.run?.id !== run.id) return null;
   return run.state === "awaiting_approval" && !run.expired && !approvalReserved(run) ? handoff : null;
 }
 
-// What to do after each installer failure when the run was a configuration change: the next step is the change itself, not Retry.
 const CHANGE_FAILURES: Record<string, string> = {
   release_verification_failed: "The release could not be verified. Open the installer logs in AWS.",
   infrastructure_failed: "AWS could not apply the change. Open the installer logs in AWS, then review the change and try again.",
@@ -156,10 +121,8 @@ const CHANGE_FAILURES: Record<string, string> = {
   runner_failed: "The AWS account or hosted zone did not match. Check the deployment details.",
 };
 
-/** A change that reached AWS and then went quiet until its time ran out. */
 export const CHANGE_STOPPED_REPORTING = "The installer stopped reporting. Open the installer logs in AWS, then review the change and try again.";
 
-/** Why a configuration change's run failed and what to do next, or null for a code this screen has no sentence for. */
 export function changeFailureMessage(errorCode: string): string | null {
   return CHANGE_FAILURES[errorCode] ?? null;
 }
@@ -191,7 +154,6 @@ export function fieldLabel(field: DeploymentConfigurationField): string {
   return FIELD_LABELS[field];
 }
 
-/** How the runtime a deployment has is named. */
 export function runtimeLabel(target: AwsDeployment["target"]): string {
   if (target.runtimeProfile === "gateway") return "Gateway runtime";
   return assistantsEnabled(target.assistants) ? "Core services and its own runner" : "Core services only";
@@ -199,7 +161,6 @@ export function runtimeLabel(target: AwsDeployment["target"]): string {
 
 const COMPUTER_PROVIDERS: Record<string, string> = { off: "Off", daytona: "Daytona", freestyle: "Freestyle" };
 
-/** A changed value as a person reads it. Secret ARNs are references and are shown whole. */
 export function valueLabel(field: DeploymentConfigurationField, value: string | null, deployment?: AwsDeployment): string {
   if (value === null || value === "") return "Not set";
   if (field === "target.runtimeProfile") return value === "gateway" ? "Gateway runtime" : deployment ? runtimeLabel({ ...deployment.target, runtimeProfile: "legacy" }) : "Core services only";
@@ -215,7 +176,6 @@ function networkLabel(network: AwsDeployment["target"]["network"]): string {
   return cluster ? `${network.vpcId} · cluster ${cluster}` : network.vpcId;
 }
 
-/** The values chosen at installation, which no change can touch. */
 export function fixedConfigurationRows(deployment: AwsDeployment): { field: string; label: string; value: string }[] {
   return [
     { field: "domainName", label: FIELD_LABELS.domainName, value: deployment.domainName },
@@ -231,11 +191,6 @@ export type ChangeGroup = { effect: DeploymentConfigurationChange["effect"]; cha
 
 const SERVICES_RESTART = "The OpenWork API and web app restart.";
 
-/**
- * What a group of changes does to the running installation. Every approved run
- * restarts the OpenWork API and web app, whatever changed; `first` is the group
- * that says so, so it is said once.
- */
 function effectSentence(group: Pick<ChangeGroup, "effect" | "changes">, deployment: AwsDeployment, all: DeploymentConfigurationChange[], first: boolean): string {
   const restart = first ? ` ${SERVICES_RESTART}` : "";
   switch (group.effect) {
@@ -251,7 +206,6 @@ function effectSentence(group: Pick<ChangeGroup, "effect" | "changes">, deployme
   }
 }
 
-/** Changes that do the same thing to the installation, in order, with what that is said once. */
 export function changeGroups(deployment: AwsDeployment, changes: DeploymentConfigurationChange[]): ChangeGroup[] {
   const groups: Pick<ChangeGroup, "effect" | "changes">[] = [];
   for (const change of changes) {
@@ -263,13 +217,11 @@ export function changeGroups(deployment: AwsDeployment, changes: DeploymentConfi
   return groups.map((group) => ({ ...group, sentence: effectSentence(group, deployment, changes, group === first) }));
 }
 
-/** One sentence naming the action, where it happens, what restarts or is billed, and what OpenWork sees. */
 export function consentSentence(deployment: AwsDeployment, changes: DeploymentConfigurationChange[]): string {
   const has = (effect: DeploymentConfigurationChange["effect"]) => changes.some((change) => change.effect === effect);
   const provider = changes.find((change) => change.field === "target.assistants.computerProvider")?.after ?? deployment.target.assistants.computerProvider;
   const computers = COMPUTER_PROVIDERS[provider] ?? provider;
   const consequences = [
-    // Every approved run redeploys both, whatever it changes.
     ...(changes.some((change) => change.effect !== "saved_immediately") ? ["the OpenWork API and web app restart"] : []),
     ...(has("restarts_runner") && !has("adds_gateway_runtime") ? ["the managed runner restarts"] : []),
     ...(has("adds_gateway_runtime") ? ["AWS adds and bills the gateway runtime's services, storage and backups, which can't be removed later"] : []),
@@ -283,7 +235,6 @@ function clockTime(iso: string): string {
   return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
 }
 
-/** What is true of a requested change right now. */
 export function changeStateLine(change: Pick<ConfigurationChangeView, "state" | "requestedAt" | "expiresAt">, time: (iso: string) => string = clockTime, reserved = false): string {
   if (reserved) return "AWS approval is reserved. Waiting for the installer to connect. This change can't be discarded; if it stays here, ask your OpenWork operator to check the installer in AWS.";
   switch (change.state) {

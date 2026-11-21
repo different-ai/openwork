@@ -1,14 +1,3 @@
-/**
- * One-to-one matching of blob items to target items within one area
- * (mapping.md › Match tiers). Tiers 1–5 are identity checks and match
- * automatically; tier 6 ("proposed") only ever produces suggestions and
- * flags the item `needs_mapping`.
- *
- * Pass order: explicit decisions first (an admin's choice beats everything),
- * then id, alias, key, natural key, proposed. Each pass sees only the items
- * still unmatched on both sides, so a lower tier never steals a target that
- * a higher tier matched.
- */
 import type {
   ConfigBlobItem,
   ConfigMatchCandidate,
@@ -20,24 +9,17 @@ import type { ConfigArea, ConfigItem } from "../area.js"
 import { stringifyCanonical } from "./canonical.js"
 import { isPlainObject, joinPath } from "./util.js"
 
-/** Lowest score shown as a candidate. */
 export const PROPOSE_THRESHOLD = 0.35
-/** A candidate is preselected only at or above this score… */
 export const SUGGEST_MIN_SCORE = 0.85
-/** …and this far ahead of the next one. */
 export const SUGGEST_MIN_LEAD = 0.15
 const MAX_CANDIDATES = 5
-/** Above this many (unmatched blob item × unmatched target item) pairs, no proposals are scored. */
 export const MAX_PROPOSAL_PAIRS = 50_000
 export const TOO_MANY_TO_SUGGEST = "too many items to suggest matches; choose manually"
-/** Names longer than this are compared on their first characters only (edit distance is quadratic). */
 const MAX_NAME_COMPARE = 64
-/** Leaves past this many per item are left out of the overlap score. */
 const MAX_LEAVES = 256
 
 export type ItemMatch = {
   index: number
-  /** Stable handle: blob id, else `key:<key>`, else `#<index>`. */
   ref: string
   blob: ConfigBlobItem
   target: ConfigItem | null
@@ -45,9 +27,7 @@ export type ItemMatch = {
   flags: ConfigPlanFlag[]
   reasons: string[]
   candidates?: ConfigMatchCandidate[]
-  /** Tier 6: the candidate the UI should preselect, when one is clearly ahead. Never applied. */
   suggestedTargetId?: string
-  /** The admin chose "create new item" for this blob item. */
   decidedCreate?: boolean
 }
 
@@ -55,17 +35,13 @@ export type AreaMatchInput = {
   area: Pick<ConfigArea, "key" | "naturalKeys" | "similarity">
   blobItems: readonly ConfigBlobItem[]
   targetItems: readonly ConfigItem[]
-  /** Source id → local id, for this area and the blob's source instance. */
   aliases?: ReadonlyMap<string, string>
-  /** Confirmed matches for this area (`ConfigDecisions.matches`). */
   decisions?: ReadonlyArray<{ ref: string; targetId: string }>
 }
 
 export type AreaMatchResult = {
   matches: ItemMatch[]
-  /** Target items no blob item matched (proposed suggestions do not count as matched). */
   unmatchedTargets: ConfigItem[]
-  /** Validation errors (duplicate id / key). When non-empty the upload must be rejected. */
   errors: string[]
 }
 
@@ -75,12 +51,10 @@ export function blobItemRef(item: Pick<ConfigBlobItem, "id" | "key">, index: num
   return `#${index}`
 }
 
-/** A blob item seen as a `ConfigItem` (for natural keys, similarity and unique fields). */
 export function blobItemAsConfigItem(item: ConfigBlobItem, index: number): ConfigItem {
   return { id: item.id ?? blobItemRef(item, index), key: item.key ?? null, name: item.name, spec: item.spec }
 }
 
-/** Duplicate ids or keys inside one blob area are a validation error. */
 export function validateBlobItems(areaKey: string, items: readonly ConfigBlobItem[]): string[] {
   const errors: string[] = []
   const ids = new Map<string, number>()
@@ -125,7 +99,6 @@ export function matchArea(input: AreaMatchInput): AreaMatchResult {
     if (reason) match.reasons.push(reason)
   }
 
-  // Tier 3, run first: an admin's confirmed choice.
   const decisionsByRef = new Map((input.decisions ?? []).map((decision) => [decision.ref, decision.targetId]))
   for (const match of matches) {
     const targetId = decisionsByRef.get(match.ref)
@@ -147,14 +120,12 @@ export function matchArea(input: AreaMatchInput): AreaMatchResult {
     claim(match, target, tier, tier === "decision" ? "confirmed match" : undefined)
   }
 
-  // Tier 1: id.
   for (const match of matches) {
     if (!isOpen(match) || !match.blob.id) continue
     const target = targetsById.get(match.blob.id)
     if (target && !taken.has(target.id)) claim(match, target, "id")
   }
 
-  // Tier 2: alias.
   for (const match of matches) {
     if (!isOpen(match) || !match.blob.id) continue
     const localId = input.aliases?.get(match.blob.id)
@@ -162,7 +133,6 @@ export function matchArea(input: AreaMatchInput): AreaMatchResult {
     if (target && !taken.has(target.id)) claim(match, target, "alias")
   }
 
-  // Identity conflict: id/alias says A, key says B.
   for (const match of matches) {
     if (!match.target || decided.has(match.index) || (match.matchedBy !== "id" && match.matchedBy !== "alias") || !match.blob.key) continue
     const byKey = targetsByKey.get(match.blob.key)?.[0]
@@ -176,14 +146,12 @@ export function matchArea(input: AreaMatchInput): AreaMatchResult {
     }
   }
 
-  // Tier 4: key.
   for (const match of matches) {
     if (!isOpen(match) || !match.blob.key) continue
     const target = targetsByKey.get(match.blob.key)?.find((item) => !taken.has(item.id))
     if (target) claim(match, target, "key")
   }
 
-  // Tier 5: natural keys, only when the value is unique on both sides among unmatched items.
   for (const naturalKey of area.naturalKeys) {
     const blobByValue = new Map<string, ItemMatch[]>()
     for (const match of matches) {
@@ -206,8 +174,6 @@ export function matchArea(input: AreaMatchInput): AreaMatchResult {
     }
   }
 
-  // Tier 6: proposals, never applied. Scoring is per pair, so it is skipped
-  // when there are too many pairs to score: the admin chooses by hand.
   const openMatches = matches.filter(isOpen)
   const openTargets = targetItems.filter((item) => !taken.has(item.id))
   if (openMatches.length > 0 && openTargets.length > 0 && openMatches.length * openTargets.length > MAX_PROPOSAL_PAIRS) {
@@ -217,7 +183,6 @@ export function matchArea(input: AreaMatchInput): AreaMatchResult {
       match.reasons.push(TOO_MANY_TO_SUGGEST)
     }
   } else if (openMatches.length > 0 && openTargets.length > 0) {
-    // Leaves and normalised names are computed once per item, not once per pair.
     const preparedTargets = area.similarity ? [] : openTargets.map(prepareForSimilarity)
     for (const match of openMatches) {
       const blobItem = blobItemAsConfigItem(match.blob, match.index)
@@ -250,9 +215,6 @@ export function matchArea(input: AreaMatchInput): AreaMatchResult {
   return { matches, unmatchedTargets: targetItems.filter((item) => !taken.has(item.id)), errors }
 }
 
-// ---------------------------------------------------------------------------
-// Default similarity (tier 6)
-
 export function normalizeName(name: string): string {
   return name.toLowerCase().normalize("NFKD").replace(/[\u0300-\u036f]/g, "").replace(/[^a-z0-9]+/g, " ").trim()
 }
@@ -273,7 +235,6 @@ export function levenshtein(a: string, b: string): number {
   return previous[b.length]!
 }
 
-/** 0..1: half token Jaccard, half normalized edit distance, on normalized names. */
 export function nameSimilarity(a: string, b: string): number {
   return preparedNameSimilarity(prepareName(a), prepareName(b))
 }
@@ -298,10 +259,6 @@ function preparedNameSimilarity(left: PreparedName, right: PreparedName): number
   return (jaccard + edit) / 2
 }
 
-/**
- * Leaf fields of a spec as `path → canonical value`. Secrets and ref name
- * hints are ignored. Stops after `limit` leaves.
- */
 export function specLeaves(spec: unknown, path = "", out = new Map<string, string>(), limit = Number.POSITIVE_INFINITY): Map<string, string> {
   if (out.size >= limit || isConfigSecret(spec)) return out
   if (isConfigRef(spec)) {
@@ -337,12 +294,10 @@ function overlapOf(left: ReadonlyMap<string, string>, right: ReadonlyMap<string,
   return { score: total ? equal / total : 0, equal, total }
 }
 
-/** Share of equal leaf fields over the union of leaf paths. */
 export function specOverlap(a: unknown, b: unknown): { score: number; equal: number; total: number } {
   return overlapOf(specLeaves(a), specLeaves(b))
 }
 
-/** An item with what the default similarity needs, computed once. */
 export type PreparedItem = { item: ConfigItem; name: PreparedName; leaves: Map<string, string> }
 
 export function prepareForSimilarity(item: ConfigItem): PreparedItem {
@@ -364,7 +319,6 @@ function scorePrepared(blob: PreparedItem, target: PreparedItem, naturalKeys: Co
       reasons.push(`same ${naturalKey.label}`)
     }
   }
-  // A couple of equal empty-ish fields say little: overlap counts fully from 3 equal leaves.
   const confidence = Math.min(1, overlap.equal / 3)
   return { score: Math.min(1, 0.55 * name + 0.45 * overlap.score * confidence + bonus), reasons }
 }

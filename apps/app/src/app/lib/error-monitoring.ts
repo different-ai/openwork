@@ -1,22 +1,3 @@
-/**
- * Web error monitoring for the OpenWork web deployment (Sentry, zero-dependency).
- *
- * Principles (mirrors `analytics.ts`):
- * - Detection-first: report that a web instance failed to boot or hit an
- *   uncaught error. Only the error type, message, stack text, page URL, and
- *   coarse build context are sent — never chat content, file contents,
- *   prompts, or tokens.
- * - Fire-and-forget: monitoring must never break or slow the app.
- * - Off by default: active only when the build is the web deployment
- *   (`VITE_OPENWORK_DEPLOYMENT=web`), `VITE_OPENWORK_SENTRY_DSN` is set, and
- *   the page is not running inside Electron (the desktop app keeps its own
- *   consent-gated telemetry in `apps/desktop/electron/sentry.mjs`).
- * - Respects the same `analyticsEnabled` preference as product analytics.
- *
- * The pre-boot half lives as an inline script in `index.html` so a bundle
- * that never loads is still reported; once this module starts it takes over
- * via `window.__openworkWebErrorMonitorActive`.
- */
 import { isAnalyticsEnabled } from "./analytics";
 import { formatCrashDiagnostic, redactCrashText } from "./crash-diagnostics";
 import { getOpenWorkDeployment } from "./openwork-deployment";
@@ -34,7 +15,6 @@ export type SentryDsnTarget = {
   envelopeUrl: string;
 };
 
-/** Parse a Sentry DSN into its envelope ingest URL. Returns null when unusable. */
 export function parseSentryDsn(dsn: string): SentryDsnTarget | null {
   const match = /^https:\/\/([\w.-]+)@([\w.-]+(?::\d+)?)\/(\d+)$/.exec(dsn.trim());
   if (!match) return null;
@@ -50,16 +30,10 @@ export type WebErrorMonitoringGate = {
   electronRuntime: boolean;
 };
 
-/** Pure gate: web deployment only, never inside Electron, and a parseable DSN. */
 export function shouldMonitorWebErrors(input: WebErrorMonitoringGate): boolean {
   return input.deployment === "web" && !input.electronRuntime && parseSentryDsn(input.dsn) !== null;
 }
 
-/**
- * Strip query and fragment before reporting: sign-in and deep-link URLs can
- * carry credentials (`grant`, `openworkToken`, `accessToken`) that must never
- * leave the page.
- */
 export function sanitizePageUrl(href: string): string {
   try {
     const url = new URL(href);
@@ -95,7 +69,6 @@ function newEventId(): string {
   return crypto.randomUUID().replace(/-/g, "");
 }
 
-/** Build a minimal Sentry error event. Only error identity + coarse context. */
 export function buildWebErrorEvent(input: WebErrorInput): WebErrorEvent {
   const diagnostic = formatCrashDiagnostic({ name: input.type, message: input.message, stack: input.stack });
   const event: WebErrorEvent = {
@@ -113,14 +86,12 @@ export function buildWebErrorEvent(input: WebErrorInput): WebErrorEvent {
   return event;
 }
 
-/** Serialize an event into a Sentry envelope body. */
 export function buildSentryEnvelope(event: WebErrorEvent): string {
   const header = JSON.stringify({ event_id: event.event_id, sent_at: new Date().toISOString() });
   const itemHeader = JSON.stringify({ type: "event" });
   return `${header}\n${itemHeader}\n${JSON.stringify(event)}`;
 }
 
-/** Set once the gate opens; null keeps every reporting path inert (desktop). */
 let monitor: { target: SentryDsnTarget; release: string } | null = null;
 let sentCount = 0;
 const seenErrors = new Set<string>();
@@ -140,10 +111,8 @@ function deliver(target: SentryDsnTarget, input: WebErrorInput) {
       keepalive: true,
       body: buildSentryEnvelope(event),
     }).catch(() => {
-      // Network failure — drop silently. Monitoring must never surface errors.
     });
   } catch {
-    // Event construction or fetch unavailable — drop silently.
   }
 }
 
@@ -153,11 +122,6 @@ function resourceUrl(target: EventTarget | null): string | null {
   return null;
 }
 
-/**
- * One-time setup. Called first thing from the app entry so uncaught errors,
- * unhandled rejections (including a failed bootstrap await), and lazy-chunk
- * load failures are reported for web deployments.
- */
 export function startWebErrorMonitoring() {
   if (monitor || typeof window === "undefined") return;
   const dsn = String(import.meta.env.VITE_OPENWORK_SENTRY_DSN ?? "").trim();
@@ -170,7 +134,6 @@ export function startWebErrorMonitoring() {
   const target = parseSentryDsn(dsn);
   if (!target) return;
 
-  // Hand off from the pre-boot beacon in index.html.
   window.__openworkWebErrorMonitorActive = true;
   const release = String(import.meta.env.VITE_OPENWORK_BUILD_SHA ?? "").trim()
     || String(import.meta.env.VITE_OPENWORK_APP_VERSION ?? "").trim();
@@ -218,12 +181,6 @@ export function startWebErrorMonitoring() {
   });
 }
 
-/**
- * Report an error a React error boundary caught. React swallows render throws
- * before they reach the window "error" listener above, so the boundary hands
- * them over explicitly. Same formatter, gate, dedupe and cap as every
- * other event; a no-op until startWebErrorMonitoring() has opened the gate.
- */
 export function reportCaughtWebError(error: unknown) {
   if (!monitor) return;
   try {
@@ -237,6 +194,5 @@ export function reportCaughtWebError(error: unknown) {
       phase: "runtime",
     });
   } catch {
-    // Recovery must survive unavailable browser APIs, without logging payloads.
   }
 }

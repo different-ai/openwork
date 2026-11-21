@@ -1,8 +1,3 @@
-/**
- * Copy for the OAuth error page that Better Auth redirects to when an
- * authorization request cannot continue and there is no trusted redirect URI
- * to return the error to (DESIGN.md C6: what happened + the next action).
- */
 export type OAuthErrorPageState = {
   code: string;
   title: string;

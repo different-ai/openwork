@@ -10,7 +10,6 @@ type Status = Awaited<ReturnType<OpenworkServerClient["cloudComputerStatus"]>>
 type Frame = Awaited<ReturnType<OpenworkServerClient["cloudComputerFrame"]>>
 const keys = new Map([["Enter", "enter"], ["Tab", "tab"], ["Escape", "escape"], ["Backspace", "backspace"], ["Delete", "delete"], ["ArrowUp", "arrowup"], ["ArrowDown", "arrowdown"], ["ArrowLeft", "arrowleft"], ["ArrowRight", "arrowright"]])
 
-/** The user and agent watch and operate the very same VM desktop. */
 export function CloudComputerControl({ client }: { client: OpenworkServerClient }) {
   const [open, setOpen] = useState(false)
   const [status, setStatus] = useState<Status | null>(null)

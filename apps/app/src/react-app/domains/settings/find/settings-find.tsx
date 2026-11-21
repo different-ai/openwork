@@ -15,11 +15,6 @@ export const SETTINGS_FIND_LABEL = "Find on this page";
 const DEBOUNCE_MS = 150;
 const MUTATION_DEBOUNCE_MS = 100;
 
-/**
- * Open state for find on a settings page, and the Cmd/Ctrl+F that opens it.
- * Settings shown beside a chat share that shortcut with "Find in
- * conversation", so there it is taken only while focus is inside `scopeRef`.
- */
 export function useSettingsFind(input: {
   scopeRef: RefObject<HTMLElement | null>;
   besideChat: boolean;
@@ -40,12 +35,10 @@ export function useSettingsFind(input: {
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => handleShortcut(event);
-    // Capture, so the page's find wins over the conversation's when both are mounted.
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
   }, []);
 
-  // Leaving settings closes find, so it is not waiting open on the next visit.
   useEffect(() => closeFind, [closeFind]);
 
   return { open, focusNonce, openFind, closeFind };
@@ -75,17 +68,11 @@ export function SettingsFindButton(props: { onOpen: () => void }) {
 }
 
 type SettingsFindBarProps = {
-  /** The settings page being searched; the bar itself sits outside it. */
   contentRef: RefObject<HTMLElement | null>;
-  /** Changes each time find is asked for, to put the cursor back in the field. */
   focusNonce: number;
   onClose: () => void;
 };
 
-/**
- * Finds text on the open settings page, including what is scrolled out of
- * view: highlights every match, counts them and steps through them.
- */
 export function SettingsFindBar(props: SettingsFindBarProps) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [query, setQuery] = useState("");
@@ -108,8 +95,6 @@ export function SettingsFindBar(props: SettingsFindBarProps) {
   const collect = useEffectEvent((fromStart: boolean) => {
     const root = props.contentRef.current;
     const nextRanges = root ? collectFindRanges(root, appliedQuery) : [];
-    // A new query starts at its first match; a page that changed under the
-    // same query keeps the reader's place.
     const nextIndex = fromStart ? 0 : Math.min(activeIndexRef.current, Math.max(0, nextRanges.length - 1));
     show(nextRanges, nextIndex, fromStart);
   });
@@ -137,7 +122,6 @@ export function SettingsFindBar(props: SettingsFindBarProps) {
     collect(true);
   }, [appliedQuery]);
 
-  // Another settings page, or content that loads late, is searched again.
   useEffect(() => {
     const root = props.contentRef.current;
     if (!root || appliedQuery.length < FIND_MIN_QUERY_LENGTH) return;

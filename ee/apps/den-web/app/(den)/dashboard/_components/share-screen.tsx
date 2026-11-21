@@ -25,7 +25,6 @@ import { usePluginAccess } from "./plugin-access-data";
 import { usePlugin } from "./plugin-data";
 import { WhoCanUseIt } from "./who-can-use-it";
 
-/** "6 people can use it now." or "8 people in Sales can use it now." */
 function ShareLayout({ back, logo, title, subtitle, draft, setDraft, savedDraft, ownerName, onSave, saving, error }: {
   back: { href: string; label: string };
   logo: ReactNode;
@@ -85,7 +84,6 @@ function viewerName(org: DenOrgContext | null, fallback: string): string {
   return me?.user.name || me?.user.email || fallback;
 }
 
-/** A7: share a connector the member added. */
 export function ShareConnectorScreen({ connectionId }: { connectionId: string }) {
   const router = useRouter();
   const toast = useDenToast();
@@ -128,7 +126,6 @@ export function ShareConnectorScreen({ connectionId }: { connectionId: string })
         description: sharedToastDescription(draft, orgContext, orgContext.currentMember.id),
         action: { label: "Undo", onClick: () => saveAccess(connectionId, previous) },
       });
-      // Back to the item that was shared, where "Who can use it" shows the change.
       router.push(back.href);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Sharing did not save.");
@@ -153,7 +150,6 @@ export function ShareConnectorScreen({ connectionId }: { connectionId: string })
   );
 }
 
-/** B3: share a plugin the member made. */
 export function SharePluginScreen({ pluginId }: { pluginId: string }) {
   const router = useRouter();
   const toast = useDenToast();
@@ -199,7 +195,6 @@ export function SharePluginScreen({ pluginId }: { pluginId: string }) {
           },
         },
       });
-      // Back to the item that was shared, where "Who can use it" shows the change.
       router.push(back.href);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Sharing did not save.");

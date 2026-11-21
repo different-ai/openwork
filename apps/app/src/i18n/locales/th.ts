@@ -1,8 +1,3 @@
-/**
- * Thai translations
- * Professional terms (Skills, Plugins, Commands, Sessions, OpenCode, OpenPackage, OpenWork) are NOT translated
- */
-
 export default {
   "artifact.office_empty": "ไฟล์นี้ไม่มีข้อความที่อ่านได้ เปิดในแอปอื่นเพื่อดูต้นฉบับ",
   "artifact.office_empty_slide": "สไลด์นี้ไม่มีข้อความที่อ่านได้",

@@ -21,31 +21,6 @@ import {
   type ProactivePolicy,
 } from "@openwork/automations/proactive"
 
-/**
- * "Your agent" under `workbotAgentBrief`: one rhythm, a plain-text brief, and two steps per check.
- *
- *   rhythm (a check every N hours inside working hours, plus extra checks the agent asked for)
- *     ─▶ step 1, the check: a read-only background turn in the agent's own session. It researches, keeps notes in
- *        memory/ and ends with a findings report (P0/P1, sources, ids) or NO_FINDINGS. It never decides what to send.
- *     ─▶ step 2, the message (only with P0/P1 findings): a short tool-less turn that knows the member's recent
- *        conversation, what was sent today and the time. It writes {messages: [{text, about, update}]} or NO_REPLY.
- *     ─▶ Den's hard limits in code: messages per day, hours and quiet hours, told-once per `about` id (an update
- *        passes once a day), the sources the admin allows. Nothing about what matters or how to say it.
- *
- * Pure and host-free like proactive.ts: Den supplies reading, the turns, delivery and storage.
- */
-
-// =====================================================================================================================
-// The prompts
-// =====================================================================================================================
-//
-// Ported from the design spec "Your agent: default settings and prompts (dots-style)" (sections 3 and 4; its default
-// brief is DEFAULT_AGENT_BRIEF in @openwork/types). The spec was written from the OpenAI dots Dreamer prompt, Grok
-// Bot's routines skill, OpenClaw's heartbeat and Claude Duet's launch post, and pre-tested by having a model play the
-// messenger on fictional days. Paragraphs are reflowed onto one line each; every wording change since the port was
-// made because the replay evals (evals/scripts/agent-replay) showed a gain, and is listed in
-// docs/features/workbot-agent-brief/README.md under "Prompt changes".
-
 /** Starts every check prompt, so the model (and anyone reading the transcript) knows the member did not write it. */
 export const AGENT_CHECK_MARKER = "[check]"
 /** The whole report when a check found nothing for the messenger. */
@@ -55,7 +30,6 @@ export const AGENT_CHECKPOINT_DIR = "memory/checks/"
 /** Checkpoints older than this are deleted by the agent at each check (the check prompt names the cutoff). */
 export const AGENT_CHECKPOINT_RETENTION_DAYS = 14
 
-/** Text the model must read as one block: a `"""` inside it can't close the block early. */
 function quoted(text: string): string {
   return text.trim().replaceAll('"""', "\u201C\u201C\u201C")
 }
@@ -133,9 +107,7 @@ export function agentCheckPrompt(input: {
   extraChecksLeft: number
   sources: readonly AgentPromptSource[]
   unavailable?: readonly AgentPromptUnavailable[]
-  /** What Den sent the member recently (the messenger's messages), so the check knows what was told. */
   sent?: readonly AgentSentRecord[]
-  /** The last findings report this agent handed the messenger, so what it held isn't lost. */
   lastReport?: { at: number; text: string } | null
 }): string {
   const { now, timeZone, occasion } = input
@@ -170,7 +142,6 @@ export function agentCheckPrompt(input: {
 /** A message Den sent: when, the `about` ids it carried, and its first sentence. */
 export type AgentSentRecord = { at: number; about: string[]; lead: string }
 
-/** How long Den remembers what it sent, for the check prompt. */
 const SENT_KEPT_MS = 36 * 3_600_000
 
 /** The lead of a message as the record keeps it: its first sentence, links as their labels, short. */
@@ -263,10 +234,6 @@ export function agentMessagePrompt(input: {
   ].join("\n")
 }
 
-// =====================================================================================================================
-// Reading the two answers
-// =====================================================================================================================
-
 /** What step 1 found: nothing for the messenger, or a report with how many P0 and P1 findings it names. */
 export type AgentCheckReport = { kind: "none" } | { kind: "findings"; report: string; p0: number; p1: number }
 
@@ -293,7 +260,6 @@ export type AgentBriefMessage = { text: string; about: string[]; update: boolean
 export type AgentMessagesReply =
   | { kind: "quiet" }
   | { kind: "messages"; messages: AgentBriefMessage[] }
-  /** `reason`: what was wrong, for the one retry and the log. Never shown to the member. */
   | { kind: "invalid"; reason: string }
 
 const aboutSchema = z.string().trim().min(3).max(400).refine((value) => {
@@ -340,15 +306,10 @@ export function agentMessageRetryPrompt(reason: string): string {
   return `That answer wasn't in the required shape (${reason}). Answer again with only the JSON object, or exactly ${AGENT_QUIET_REPLY}.`
 }
 
-// =====================================================================================================================
-// The rhythm: when checks run
-// =====================================================================================================================
-
 /** When the member's agent checks: their hours and days, how often, and quiet hours inside the day. */
 export type AgentRhythm = {
   policy: Pick<ProactivePolicy, "workingDays" | "startHour" | "endHour">
   everyHours: number
-  /** Quiet hours: no checks and nothing sent inside them; anything urgent goes first at the next check. */
   quietWindow: AgentHourWindow | null
 }
 
@@ -420,16 +381,10 @@ export function isFirstCheckOfDay(rhythm: AgentRhythm, lastCheckAt: number | nul
   return lastCheckAt < zonedInstant(timeZone, local.year, local.month, local.day, rhythm.policy.startHour)
 }
 
-// =====================================================================================================================
-// Extra checks the agent asks for: request_check(at, why)
-// =====================================================================================================================
-
 /** One extra check the agent asked for, as Den keeps it in the agent's state. */
 export type AgentCheckRequest = { at: number; why: string; requestedAt: number; done?: boolean }
 
-/** A request this close to one already made is the same request: asking again changes nothing. */
 const REQUEST_SAME_MS = 10 * MINUTE_MS
-/** A scheduled check up to this long before the requested time already covers it. */
 const REQUEST_COVERED_MS = 15 * MINUTE_MS
 const REQUEST_MIN_LEAD_MS = 5 * MINUTE_MS
 const REQUEST_HORIZON_MS = DAY_MS
@@ -526,10 +481,6 @@ export function parseRequestedCheckTime(value: string, now: number, timeZone: st
   return Number.isFinite(at) ? at : null
 }
 
-// =====================================================================================================================
-// Den's hard limits on what step 2 wrote
-// =====================================================================================================================
-
 /** `<source>:<id>`, the source resolved to one the check read (aliases such as "slack" are the caller's to resolve). */
 export function parseAboutId(about: string, resolveSource: (source: string) => string | null = (source) => source): AgentItem | null {
   const colon = about.indexOf(":")
@@ -539,7 +490,6 @@ export function parseAboutId(about: string, resolveSource: (source: string) => s
   return source && id ? { source, id, preset: null } : null
 }
 
-/** A stable, short fingerprint (FNV-1a, 64 bits as two 32-bit halves). For dedupe keys only, never for security. */
 function fingerprint(text: string): string {
   let a = 0x811c9dc5
   let b = 0x01000193 ^ 0x9e3779b9
@@ -565,12 +515,10 @@ export function updateLedgerItem(items: readonly AgentItem[], day: string): Agen
 export type AgentPlannedMessage = { text: string; about: AgentItem[]; ledger: { item: AgentItem; outcome: "sent" | "folded" }[]; update: boolean }
 
 export type AgentBriefDelivery =
-  /** Nothing is sent and nothing recorded: the next check inside the member's hours sees it again. */
   | { kind: "held"; reason: "outside_hours" | "quiet_hours" | "snoozed" }
   | {
       kind: "plan"
       deliver: AgentPlannedMessage[]
-      /** `already_told`: every item was told before (and it isn't today's update); `unknown_source`: no item from a source it read; `daily_limit`: past the limit, not recorded. */
       skipped: { message: AgentBriefMessage; reason: "already_told" | "unknown_source" | "daily_limit" }[]
     }
 
@@ -581,10 +529,8 @@ export type AgentBriefDelivery =
  */
 export function decideBriefDelivery(input: {
   messages: readonly AgentBriefMessage[]
-  /** Source ids the check read; `resolveSource` maps what step 2 wrote ("slack", "Gmail") to one of them. */
   sources: ReadonlySet<string>
   resolveSource?: (source: string) => string | null
-  /** Ledger keys already recorded for the member (`source:id`). */
   told: ReadonlySet<string>
   sentToday: number
   dailyCap: number
@@ -634,8 +580,6 @@ export function decideBriefDelivery(input: {
 
 /** How long a message Den sends may be; step 2 aims for about 350 characters. */
 export const AGENT_BRIEF_MESSAGE_LIMIT = 1_000
-
-// ---- The check gate (`workbotAgentCheckGate`): is this check worth running? ------------------------------------------
 
 /**
  * Before a scheduled check, Den takes a cheap look itself at what reached the member since the agent last looked
@@ -746,8 +690,6 @@ export function decideCheckGate(answers: unknown, skipAt: number = AGENT_CHECK_G
   if (typeof probability !== "number" || !(probability >= 0 && probability <= 1)) return { kind: "run", why: "no_answer" }
   return probability <= skipAt ? { kind: "skip", why: "routine" } : { kind: "run", why: "may_matter" }
 }
-
-// ---- The send check (`workbotAgentSendCheck`) ------------------------------------------------------------------------
 
 /**
  * How sure the check model must be before Den holds a message, unless the policy sets its own. High on purpose:

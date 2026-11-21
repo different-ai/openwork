@@ -1,18 +1,6 @@
 import { normalizeDirectoryPath } from "../utils";
 import { normalizeDirectoryQueryPath } from "../utils";
 
-/**
- * Branded string for directory values sent over the wire to the OpenCode server.
- *
- * The server compares `session.directory === query.directory` with strict
- * equality, so every call site that creates, lists, or deletes sessions must
- * use the same canonical format.  The brand makes it a *compile error* to pass
- * a raw `string` where a `TransportDirectory` is expected — you must go
- * through {@link toSessionTransportDirectory} first.
- *
- * On Windows this preserves native backslashes (`C:\Users\…`); on Unix it
- * normalises to forward-slashed paths without a trailing separator.
- */
 export type TransportDirectory = string & {
   readonly __transportDirectory: unique symbol;
 };
@@ -26,14 +14,6 @@ export function resolveScopedClientDirectory(input: {
   return toSessionTransportDirectory(input.targetRoot);
 }
 
-/**
- * Canonical formatter for directory values sent to the OpenCode server.
- *
- * Returns a {@link TransportDirectory} — the only format the server accepts for
- * exact directory matching.  All session create / list / delete calls must use
- * this (or {@link resolveScopedClientDirectory}) instead of the local-only
- * {@link normalizeDirectoryQueryPath}.
- */
 export function toSessionTransportDirectory(input?: string | null): TransportDirectory {
   const trimmed = (input ?? "").trim();
   if (!trimmed) return "" as TransportDirectory;

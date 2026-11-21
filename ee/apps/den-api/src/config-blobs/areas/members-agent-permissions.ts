@@ -1,18 +1,3 @@
-/**
- * Config-blob area `members.agent-permissions`: the Agents and Browser tabs
- * of Everyone and of each team (what agents may do on members' computers).
- *
- * - One item per stored policy: Everyone's (key `everyone`) or one team's
- *   overrides (`team` references `members.teams`). Settings are exported as
- *   stored, every permission included, whatever the source's flags.
- * - Matched by scope: Everyone, or the team's name.
- * - Apply writes only the permissions an update's changes name, one
- *   `agent_permission_setting` row each, in one transaction on `ctx.db`, and
- *   appends the same `agent_permission_policy` audit change as the routes
- *   (routes/org/agent-permissions.ts → saveAgentPermissionPolicy). With the
- *   sandbox rollout off, an incoming requirement leaves the target's setting
- *   unchanged; removal is still allowed.
- */
 import { and, asc, eq, inArray } from "@openwork-ee/den-db/drizzle"
 import { AgentPermissionPolicyTable, AgentPermissionSettingTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -52,9 +37,7 @@ import { specObject, teamRef } from "./route-support.js"
 const AREA = "members.agent-permissions"
 
 const specSchema = z.object({
-  /** null: Everyone. Otherwise the team whose overrides these are. */
   team: configRefSchema.nullable().default(null),
-  /** Stored settings per permission; a permission left out allows (Everyone) or inherits Everyone's (a team). */
   settings: agentPermissionSettingsSchema.default({}),
 }).strict()
 
@@ -62,7 +45,6 @@ const applySettingsSchema = z.object({ settings: agentPermissionSettingsSchema.d
 
 type PolicyId = ReturnType<typeof createDenTypeId<"agentPermissionPolicy">>
 
-/** JSON columns arrive as strings on engines like MariaDB (as in agent-permissions.ts). */
 function jsonList(value: unknown): unknown {
   if (typeof value !== "string") return value
   try {
@@ -97,7 +79,6 @@ async function readSettings(database: Database, policyIds: string[]): Promise<Ma
   return out
 }
 
-/** Settings in definition order, so exports are stable. */
 function orderedSettings(settings: AgentPermissionSettings): AgentPermissionSettings {
   const out: AgentPermissionSettings = {}
   for (const definition of agentPermissionDefinitions) {
@@ -130,11 +111,9 @@ async function readPolicies(ctx: ConfigAreaContext, ids?: string[]): Promise<Con
   const items = policies.flatMap((policy): ConfigItem[] => {
     const spec = { settings: orderedSettings(settings.get(policy.id) ?? {}) }
     if (policy.scopeKey === EVERYONE_SCOPE) return [{ id: policy.id, key: EVERYONE_SCOPE, name: "Everyone", spec: { team: null, ...spec } }]
-    // A team that no longer exists has no tab to show its overrides on.
     if (!policy.teamId || policy.teamName === null) return []
     return [{ id: policy.id, key: null, name: policy.teamName, spec: { team: teamRef(policy.teamId, policy.teamName), ...spec } }]
   })
-  // Everyone first, then teams by name.
   return items.sort((left, right) => (left.key === EVERYONE_SCOPE ? -1 : right.key === EVERYONE_SCOPE ? 1 : left.name.localeCompare(right.name) || left.id.localeCompare(right.id)))
 }
 
@@ -158,18 +137,10 @@ function sameSetting(left: AgentPermissionSetting | undefined, right: AgentPermi
   return (a.decision ?? null) === (right.decision ?? null) && list(a.allow) === list(right.allow) && list(a.block) === list(right.block)
 }
 
-/**
- * Writes the named permissions of one scope (null clears one), leaving every
- * other stored permission row untouched. Creates the policy when the first
- * permission is set and removes it when the last one is cleared, as
- * saveAgentPermissionPolicy does.
- */
 async function writeScopeSettings(ctx: ConfigAreaContext, input: {
   scope: TeamScope
   desired: Map<AgentPermissionKey, AgentPermissionSetting | null>
-  /** Create: the policy must not exist yet; reuse this id for it when free. */
   create?: { preferredId?: string }
-  /** Update / delete: the policy being written. */
   policyId?: string
 }): Promise<{ policyId: string | null; steps: ConfigApplyStep[] }> {
   const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
@@ -243,8 +214,6 @@ async function writeScopeSettings(ctx: ConfigAreaContext, input: {
       }
 
       if (steps.length === 0 && input.create && !policyId) {
-        // Nothing settable here (empty, or only permissions whose feature is off): keep the scope's
-        // policy row so the item has a local id; it reads as no overrides.
         policyId = preferredPolicyId(input.create.preferredId) ?? createDenTypeId("agentPermissionPolicy")
         await tx.insert(AgentPermissionPolicyTable).values({
           id: policyId,
@@ -272,7 +241,6 @@ async function writeScopeSettings(ctx: ConfigAreaContext, input: {
       return { policyId, steps }
     })
   } catch (error) {
-    // The transaction rolled back: nothing of this item was written.
     throw asItemError(error, [])
   }
 }
@@ -286,7 +254,6 @@ function preferredPolicyId(id: string | undefined) {
   }
 }
 
-/** Permission keys an update's changes name (`settings.<key>…`); every key when the whole settings object changed. */
 function changedKeys(changes: readonly { path: string }[]): Set<AgentPermissionKey> {
   const keys = new Set<AgentPermissionKey>()
   for (const change of changes) {
@@ -325,12 +292,9 @@ export const membersAgentPermissionsArea = defineConfigArea({
   tables: ["agent_permission_policy", "agent_permission_setting"],
   naturalKeys: [{ label: "scope", get: scopeNaturalKey }],
   uniqueFields: [{ label: "scope", get: scopeUniqueKey }],
-  // The name is Everyone or the team's: renaming the team is a members.teams change.
   informationalName: true,
   secretFields: [],
-  // A team's policy is that team's: without the team it would become everyone's.
   requiredRefs: ["team"],
-  // Every write goes through ctx.db in one transaction (with the audit change).
   transactional: true,
   irreversible: () => [],
 

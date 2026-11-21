@@ -4,7 +4,6 @@ import type { DocumentSave, EditorDocument, EditorRequest, TextDocument } from "
 const escapeXml = (text: string) => text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&apos;")
 function validXml(text: string) { if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(text)) throw new Error("This edit contains unsupported control characters.") }
 
-/** Edit original ZIP entries, retaining styles, charts, images and all unrelated package parts. */
 async function patchPackage(bytes: Uint8Array, replacements: Map<string, string>) {
   const entries = listZipEntries(bytes)
   if (entries.some(entry => /(^_xmlsignatures\/|vbaProject\.bin$)/i.test(entry.name))) throw new Error("Signed or macro-enabled Office files must be edited in their original application.")
@@ -84,7 +83,6 @@ export async function patchExcel(bytes: Uint8Array, save: Extract<DocumentSave, 
   const lastRow = Math.max(dimensions?.lastRow ?? 1, ...save.changes.map(change => change.row))
   const lastColumn = Math.max(dimensions?.lastColumn ?? 1, ...save.changes.map(change => change.column))
   xml = xml.replace(/<dimension\b[^>]*\/>/, `<dimension ref="A1:${columnLetters(lastColumn)}${lastRow}"/>`)
-  // Preserve the workbook’s calculation policy: untouched formulas have not been audited.
   const replacements = new Map([[sheet.path, xml]])
   return patchPackage(bytes, replacements)
 }
@@ -93,7 +91,6 @@ export async function patchExcel(bytes: Uint8Array, save: Extract<DocumentSave, 
 export async function openWord(bytes: Uint8Array) {
   const xml = await readZipTextEntry(bytes, zipEntryMap(listZipEntries(bytes)), "word/document.xml")
   if (!xml) throw new Error("This Word file has no document body.")
-  // xmlText performs the shared DTD/entity and size checks before any XML is examined.
   xmlText(xml)
   const paragraphs: TextDocument["sections"][number]["paragraphs"] = []
   for (const paragraph of xml.matchAll(/<w:p\b[^>]*>[\s\S]*?<\/w:p>/g)) {

@@ -34,7 +34,6 @@ function extensionOf(name: string) {
   return name.includes(".") ? (name.split(".").pop() ?? "").toLowerCase() : "";
 }
 
-/** The short label and color a file type shows on its badge. */
 function badgeFor(name: string, mediaType: string): { label: string; color: string } {
   const extension = extensionOf(name);
   if (mediaType === "application/pdf" || extension === "pdf") return { label: "PDF", color: "var(--wb-type-pdf)" };
@@ -77,7 +76,6 @@ export function FileBadge({ name, mediaType }: { name: string; mediaType: string
 
 function Thumbnail({ src, className }: { src: string | null; className: string }) {
   return src ? (
-    // Blob URLs from our own API; next/image cannot optimize them.
     // eslint-disable-next-line @next/next/no-img-element
     <img src={src} alt="" className={`object-cover ${className}`} />
   ) : (
@@ -94,7 +92,6 @@ export function AppMark({ name, size = 12, fallback = "dot", iconCandidates, til
   name: string; size?: number; fallback?: "dot" | "letter" | "plug"; iconCandidates?: readonly string[]; tile?: boolean; site?: string;
 }) {
   const candidates = useMemo(() => iconCandidates ?? workbotHost().appIcons(name, site), [iconCandidates, name, site]);
-  // Reset the failed-candidate index when a different app (or fresh metadata) occupies this row.
   const mark = <AppMarkImage key={`${name}:${candidates.join("|")}`} name={name} size={size} fallback={fallback} candidates={candidates} />;
   return tile ? <span aria-hidden className="grid size-8 shrink-0 place-items-center overflow-hidden rounded-[7px] bg-[var(--wb-surface)] shadow-[0_0_0_1px_var(--wb-ring)]">{mark}</span> : mark;
 }
@@ -108,8 +105,6 @@ function AppMarkImage({ name, size, fallback, candidates }: { name: string; size
   // eslint-disable-next-line @next/next/no-img-element
   return <img src={src} alt="" width={size} height={size} referrerPolicy="no-referrer" onError={() => setFailed((count) => count + 1)} className="shrink-0 object-contain" style={{ width: size, height: size }} />;
 }
-
-// ---------------------------------------------------------------- uploads
 
 function ProgressRing({ value }: { value: number }) {
   const circumference = 2 * Math.PI * 8;
@@ -177,8 +172,6 @@ export function AttachButton({ enabled, onFiles }: { enabled: boolean; onFiles: 
   const input = useRef<HTMLInputElement>(null);
   const [showLock, setShowLock] = useState(false);
   const surface = useRetainedSurface(showLock);
-  // A press (mouse click or touch tap) pins the explanation: on touch, the emulated hover and focus changes that
-  // follow a tap would otherwise close it before it can be read. Only Escape or a press elsewhere dismisses it.
   const pinned = useRef(false);
   if (!enabled) {
     return (
@@ -247,8 +240,6 @@ function LockGlyph() {
   );
 }
 
-// ---------------------------------------------------------------- in the thread
-
 function SentImage({ attachment, localUrl }: { attachment: WorkbotAttachment; localUrl?: string | null }) {
   const remote = useWorkbotImageUrl(localUrl ? null : attachment.id);
   const open = useContext(OpenFileContext);
@@ -298,8 +289,6 @@ export function SentAttachments({ attachments, localUrls }: { attachments: Workb
     </div>
   );
 }
-
-// ---------------------------------------------------------------- the Files panel
 
 export function FilesButton({ open, onOpen }: { open: boolean; onOpen: () => void }) {
   return (
@@ -377,7 +366,7 @@ export function FilesPanel({ open, onClose, assistantName, onOpenFile }: { open:
  * Files the person sent and files Workbot made, newest first, with how many and how much they take. The Files panel
  * and the Files tab of Workbot's profile show the same list.
  */
-export function FilesList({ enabled, assistantName, onOpenFile, framed = true }: { enabled: boolean; assistantName: string; onOpenFile: (file: WorkbotFile) => void; /** The panel's footer; the profile tab shows the count above the list instead. */ framed?: boolean }) {
+export function FilesList({ enabled, assistantName, onOpenFile, framed = true }: { enabled: boolean; assistantName: string; onOpenFile: (file: WorkbotFile) => void; framed?: boolean }) {
   const files = useWorkbotFiles(enabled);
   const list = files.data?.files ?? [];
   const total = list.reduce((sum, file) => sum + file.size, 0);

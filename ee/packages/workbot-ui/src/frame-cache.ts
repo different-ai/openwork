@@ -1,8 +1,3 @@
-/**
- * Last real pictures, scoped to host identity, chat, view and (when supplied) the browser task. The tab's session
- * storage survives reload, not closing the tab. Four small images at most; task records expire after a day and live
- * view fallbacks after five minutes. Storage being unavailable/full never breaks the conversation.
- */
 const PREFIX = "workbot.frame.v1:";
 const MAX_AGE = 5 * 60_000;
 const TASK_MAX_AGE = 24 * 60 * 60_000;
@@ -22,7 +17,6 @@ function maxAge(key: string) {
 }
 const validImage = (image: string) => image.startsWith("data:image/jpeg;base64,") && image.length <= 512_000;
 
-/** Compare parsed scope fields, never string prefixes (chat/task ids may contain punctuation). */
 function viewScope(key: string): string | null {
   try {
     const scope: unknown = JSON.parse(key);
@@ -35,7 +29,6 @@ function viewScope(key: string): string | null {
 export function createFrameCache(storage: () => FrameStorage | undefined = () => typeof window === "undefined" ? undefined : window.sessionStorage) {
   const frames = new Map<string, Frame>();
   const listeners = new Map<string, Set<() => void>>();
-  // A denied stream must not repopulate the cache from another still-mounted viewer's cleanup.
   const deniedViews = new Set<string>();
   function viewFramesDenied(key: string) { const scope = viewScope(key); return scope !== null && deniedViews.has(scope); }
   function allowViewFrames(key: string) { const scope = viewScope(key); if (scope !== null) deniedViews.delete(scope); }
@@ -50,12 +43,11 @@ export function createFrameCache(storage: () => FrameStorage | undefined = () =>
         const name = store.key(index);
         if (name?.startsWith(PREFIX)) keys.add(name.slice(PREFIX.length));
       }
-    } catch { /* Memory and mounted viewers are still invalidated if storage is unavailable. */ }
+    } catch {}
     const matching = [...keys].filter(candidate => viewScope(candidate) === scope);
-    // Remove every frame before notifying: subscribers must never read a sibling stale task.
     for (const candidate of matching) {
       frames.delete(candidate);
-      try { storage()?.removeItem(PREFIX + candidate); } catch { /* Storage may be disabled. */ }
+      try { storage()?.removeItem(PREFIX + candidate); } catch {}
     }
     for (const candidate of matching) notify(candidate);
   }
@@ -71,7 +63,7 @@ export function createFrameCache(storage: () => FrameStorage | undefined = () =>
   function notify(key: string) { for (const listener of listeners.get(key) ?? []) listener(); }
   function forgetFrame(key: string) {
     frames.delete(key);
-    try { storage()?.removeItem(PREFIX + key); } catch { /* Storage may be disabled. */ }
+    try { storage()?.removeItem(PREFIX + key); } catch {}
     notify(key);
   }
   function readStored(key: string): Frame | undefined {
@@ -81,7 +73,7 @@ export function createFrameCache(storage: () => FrameStorage | undefined = () =>
       const frame: unknown = JSON.parse(raw);
       if (typeof frame === "object" && frame !== null && "image" in frame && typeof frame.image === "string" && validImage(frame.image) && "at" in frame && typeof frame.at === "number" && Number.isFinite(frame.at)) return { image: frame.image, at: frame.at };
       forgetFrame(key);
-    } catch { /* Bad or unavailable storage is an absent frame. */ }
+    } catch {}
     return undefined;
   }
   function lastFrame(key: string, now = Date.now()): string | null {
@@ -89,7 +81,6 @@ export function createFrameCache(storage: () => FrameStorage | undefined = () =>
     const frame = frames.get(key) ?? readStored(key);
     if (!frame) return null;
     if (now < frame.at || now - frame.at >= maxAge(key)) { forgetFrame(key); return null; }
-    // Reads do not make an old frame new or admit unrelated identities to the in-memory cache.
     return frame.image;
   }
   function keepFrame(key: string, image: string, now = Date.now()) {
@@ -110,11 +101,10 @@ export function createFrameCache(storage: () => FrameStorage | undefined = () =>
         if (!saved || now < saved.at || now - saved.at >= maxAge(scope)) forgetFrame(scope);
         else if (scope !== key) kept.push({ key: scope, at: saved.at });
       }
-      // Evict before writing so a full sessionStorage can still accept the newest frame.
       kept.sort((a, b) => b.at - a.at);
       for (const old of kept.slice(MAX_FRAMES - 1)) forgetFrame(old.key);
       store.setItem(PREFIX + key, JSON.stringify(frame));
-    } catch { /* Storage full or off: keep the bounded memory fallback. */ }
+    } catch {}
     finally { notify(key); }
   }
   return { lastFrame, keepFrame, forgetFrame, subscribeFrame, forgetViewFrames, viewFramesDenied, allowViewFrames };
@@ -134,5 +124,5 @@ export function captureFrame(target: HTMLElement, key: string) {
     if (!ctx || !canvas.getContext("2d")?.getImageData(canvas.width >> 1, canvas.height >> 1, 1, 1).data[3]) return;
     ctx.drawImage(canvas, 0, 0, small.width, small.height);
     keepFrame(key, small.toDataURL("image/jpeg", 0.65));
-  } catch { /* A tainted or disappearing canvas never breaks the conversation. */ }
+  } catch {}
 }

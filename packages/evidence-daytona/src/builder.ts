@@ -24,15 +24,12 @@ export const DAYTONA_BASE_PREFIX = "ow-dy-base-ubuntu2404-";
 export const DAYTONA_IMAGE_PREFIX = "ow-dy-evidence-image-v1-";
 export const DAYTONA_TEMPLATE_PREFIX = "ow-dy-evidence-web-v1-";
 const BUILDER_KIND = "openwork-daytona-builder-v1";
-/** Largest VM our Daytona organization allows. */
 const VM_SIZE = { cpu: 4, memory: 8, disk: 10 };
 const ROOT = "/opt/openwork-preview";
 
 const NODE_VERSION = "v24.22.1";
-/** From https://nodejs.org/dist/v24.22.1/SHASUMS256.txt (node-v24.22.1-linux-x64.tar.xz). */
 const NODE_SHA256 = "6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6";
 
-/** Node 24, Bun and git on plain Ubuntu; Freestyle's base image ships them. */
 const BASE_RECIPE = `export DEBIAN_FRONTEND=noninteractive
 apt-get update
 apt-get install -y --no-install-recommends ca-certificates curl gnupg git xz-utils
@@ -49,7 +46,6 @@ bun --version`;
 export const DAYTONA_BASE_SNAPSHOT = `${DAYTONA_BASE_PREFIX}${digest(BASE_RECIPE).slice(0, 16)}`;
 
 
-/** Free filesystem cache before saving, and keep apt archives out of the image. */
 const SLIM_RECIPE = `apt-get clean
 rm -rf /var/lib/apt/lists/* /root/.cache/node-gyp /tmp/* || true`;
 
@@ -57,7 +53,6 @@ export interface DaytonaBuildOptions {
   observe?: ObserveBuild;
   sourceFetch?: typeof fetch;
   diagnostic?: (stage: string, log: string) => Promise<void>;
-  /** The dev commit whose warm image to start from; defaults to the dev head. */
   imageSha?: string;
 }
 
@@ -106,15 +101,9 @@ async function reportBuildFailure(api: DaytonaApi, sandbox: Sandbox, stage: stri
   });
 }
 
-/**
- * A cached layer: reuse the snapshot when it exists, otherwise build it in a
- * builder VM and save it. The builder's unique name is the lock between
- * concurrent builds (a dev warm-up and several PRs).
- */
 interface LayerInput {
   name: string; stage: string; parent: () => Promise<string>;
   prepare: (sandbox: Sandbox) => Promise<void>;
-  /** Save memory too (running processes). Otherwise files only, from a stopped VM. */
   withMemory: boolean;
   observe: ObserveBuild; labels?: Record<string, string>;
 }
@@ -133,7 +122,6 @@ export async function ensureLayer(api: DaytonaApi, input: LayerInput): Promise<s
     if (existing) await api.deleteSnapshot(existing.id);
     const owner = await api.getSandbox(builderName);
     if (owner) {
-      // Another build of this layer is running; wait for it. A stuck or dead builder is replaced.
       const age = owner.createdAt ? Date.now() - Date.parse(owner.createdAt) : 0;
       if (owner.labels.kind !== BUILDER_KIND) throw new Error(`Refusing to reuse unrelated sandbox ${builderName}`);
       if (["error", "build_failed", "stopped", "archived"].includes(owner.state) || age > 60 * 60_000) await api.deleteSandbox(owner.id);
@@ -144,10 +132,8 @@ export async function ensureLayer(api: DaytonaApi, input: LayerInput): Promise<s
     let created: Sandbox;
     try {
       created = await api.createSandbox({ name: builderName, snapshot: parent, labels: { ...input.labels, kind: BUILDER_KIND, layer: digest(input.name).slice(0, 24) },
-        // Polling keeps a live build active; a dead controller's builder stops, then is deleted.
         autoStopMinutes: 30, autoDeleteMinutes: 60 });
     } catch (error) {
-      // Lost the race for the builder name; loop to wait for the winner.
       if (error instanceof DaytonaApiError && (error.status === 409 || /already exists/i.test(error.message))) { await delay(2_000); continue; }
       throw error;
     }
@@ -173,7 +159,6 @@ export async function ensureLayer(api: DaytonaApi, input: LayerInput): Promise<s
       if (input.stage === "daytona-world") await diagnoseGuestFailure(api, diagnosticSandbox, input.stage);
       throw error;
     } finally {
-      // Awaited: a failing CI step exits right after, and a builder left running holds the lock.
       await api.deleteSandbox(created.id).catch(() => undefined);
     }
   }
@@ -207,11 +192,6 @@ export async function ensureImage(api: DaytonaApi, devSha: string, options: Dayt
   });
 }
 
-/**
- * The viewer and Chrome's remote-control port are reached through Daytona's
- * private per-port URLs, which rewrite the Host header. One gateway per port,
- * each pinned to its service, keeps the same access-cookie check as Freestyle.
- */
 const GATEWAY_UNITS = `cdp_port=$(node -e 'console.log(new URL(JSON.parse(require("fs").readFileSync("/opt/openwork-preview/services.json","utf8")).cdp).port)')
 cat > /etc/systemd/system/openwork-evidence-gateway.service <<UNIT
 [Unit]
@@ -230,11 +210,6 @@ UNIT
 systemctl daemon-reload
 systemctl start openwork-evidence-gateway openwork-evidence-cdp`;
 
-/**
- * This commit's evidence world, saved running. Like Freestyle: copy dev's running
- * world and apply the change when only hot-reloadable files changed, otherwise
- * build in full from the warm dev image.
- */
 async function buildEvidenceWorld<Result>(sha: string, api: DaytonaApi, options: DaytonaBuildOptions,
   buildLayer: (input: LayerInput) => Promise<Result>): Promise<{ result: Result; runtimeFingerprint: string }> {
   if (!/^[a-f0-9]{40}$/.test(sha)) throw new Error("A full pushed source SHA is required");
@@ -342,8 +317,6 @@ export async function prepareWorldLayer(api: DaytonaApi, input: LayerInput, sour
     input.observe({ stage: input.stage, durationMs: Math.round(performance.now() - start), cacheHit: true });
     return { name: existing.name };
   }
-  // A concurrent warm-up owns its builder and snapshot. Do not wait on, adopt,
-  // delete, or change either: this run gets an independent VM from its parent.
   const parent = await input.parent();
   const created = await api.createSandbox({ name: `ow-dy-evidence-${randomUUID().replaceAll("-", "")}`, snapshot: parent,
     labels: { kind: EVIDENCE_KIND, sourceSha }, autoStopMinutes: 30, autoDeleteMinutes: 0 });
@@ -354,8 +327,6 @@ export async function prepareWorldLayer(api: DaytonaApi, input: LayerInput, sour
     const prepareStart = performance.now();
     await input.prepare(sandbox);
     input.observe({ stage: `${input.stage}-prepare`, durationMs: Math.round(performance.now() - prepareStart) });
-    // Match template preparation: do not carry build filesystem caches into
-    // the journey's later memory checkpoints.
     await api.execChecked(sandbox, "sh -c 'sync && echo 3 > /proc/sys/vm/drop_caches'");
     input.observe({ stage: input.stage, durationMs: Math.round(performance.now() - start), cacheHit: false,
       reason: "ephemeral PR world; template save omitted" });

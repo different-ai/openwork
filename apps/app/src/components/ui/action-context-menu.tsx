@@ -33,8 +33,6 @@ type ActionContextMenuProps = {
 
 export function ActionContextMenu({ actions, children, render, className, contentClassName, includeEditing = false, tabIndex }: ActionContextMenuProps) {
   const showNative = useNativeContextMenu();
-  // With nothing to offer (e.g. a reply still streaming), keep the element and
-  // let the platform's own menu open instead of an empty one.
   const empty = actions.length === 0;
 
   const onContextMenu = (event: MouseEvent<HTMLElement>) => {
@@ -54,7 +52,6 @@ export function ActionContextMenu({ actions, children, render, className, conten
     if (showNative) {
       void showNative(actions, { point, includeEditing });
     } else {
-      // Base UI opens on contextmenu; supply the focused element's keyboard anchor.
       event.currentTarget.dispatchEvent(new window.MouseEvent("contextmenu", {
         bubbles: true, cancelable: true, clientX: point.x, clientY: point.y,
       }));

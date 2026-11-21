@@ -15,21 +15,13 @@ import {
 import type { FeatureIntro, FeatureIntroFacts, FeatureIntroKey } from "./types";
 
 export type FeatureIntroResolution = {
-  /** What to render; null renders the page unchanged (no intro, loading, or set up). */
   size: FeatureIntroSize | null;
-  /** The intro on screen: the section's for a full screen chosen by its tab, else this one. */
   intro: FeatureIntro | null;
   element: ReactNode;
 };
 
 const nothing: FeatureIntroResolution = { size: null, intro: null, element: null };
 
-/**
- * Resolves which intro surface a page shows (DESIGN.md I2) from facts the page
- * already loads. Pass `null` while those are still loading: nothing renders
- * until they are known, so a set-up page never flashes an intro.
- * Also records "seen" once per mount, whether or not an intro is visible.
- */
 export function useFeatureIntro(key: FeatureIntroKey, facts: FeatureIntroFacts | null | undefined): FeatureIntroResolution {
   const runtime = useFeatureIntroRuntime();
   const { enabled, loaded, reportFacts, registerActive, record, stateFor, contextFor } = runtime;
@@ -44,11 +36,9 @@ export function useFeatureIntro(key: FeatureIntroKey, facts: FeatureIntroFacts |
     return registerActive(key);
   }, [intro, key, registerActive]);
 
-  // Facts count only while this gate is mounted and loaded; they are withdrawn on unmount or reload.
   useEffect(() => {
     if (!ready || !facts) return;
     return reportFacts(reporter, key, facts);
-    // factsSignature stands in for `facts` so a new object with the same values doesn't re-report.
   }, [ready, reporter, key, factsSignature, reportFacts]);
 
   const ctx = ready && facts ? contextFor(key, facts) : null;
@@ -88,18 +78,12 @@ export function useFeatureIntro(key: FeatureIntroKey, facts: FeatureIntroFacts |
   return { size: choice.size, intro: shown, element };
 }
 
-/**
- * Wraps a page or tab body. Full screen and box replace `children` (the empty
- * state), a banner sits above them, and set up renders `children` alone.
- * Until the organization is loaded it renders `children` unchanged.
- */
 export function FeatureIntroGate({
   introKey,
   facts,
   children,
 }: {
   introKey: FeatureIntroKey;
-  /** Setup facts from data the page already loads; null while loading. */
   facts: FeatureIntroFacts | null | undefined;
   children: ReactNode;
 }) {
@@ -116,10 +100,6 @@ export function FeatureIntroGate({
   return <>{children}</>;
 }
 
-/**
- * Quiet unseen dot lookup (I9), e.g. `unseen: introUnseen("ai-gateway.limits")`
- * on a `TabItem`. Always false until the organization is loaded.
- */
 export function useFeatureIntroUnseen(): (key: FeatureIntroKey | null | undefined) => boolean {
   const { enabled, loaded, setupFor, stateFor } = useFeatureIntroRuntime();
   return (key) => Boolean(key && enabled && loaded && getFeatureIntro(key) && introDotVisible(setupFor(key), stateFor(key), Date.now()));

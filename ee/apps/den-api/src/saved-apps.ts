@@ -19,7 +19,6 @@ function dashboardScope(context: PluginArchActorContext) {
   )
 }
 
-/** Share through the workflow's existing access model; never copy result data. */
 export async function shareSavedApp(context: PluginArchActorContext, appId: string, email: string) {
   const view = await getArtifactView({ context, artifactViewId: appId })
   if (view.status !== "active" || !view.activeRevisionId) throw new Error("artifact_view_not_found")
@@ -34,7 +33,6 @@ export async function shareSavedApp(context: PluginArchActorContext, appId: stri
     .limit(1)
   if (!member) throw new Error("teammate_not_found")
   const grants = await listResourceAccess(resource)
-  // Repeated shares must not downgrade an existing editor or manager grant.
   if (!grants.items.some((grant) => grant.orgMembershipId === member.id && !grant.removedAt)) {
     await createResourceAccessGrant({ ...resource, value: { orgMembershipId: member.id, orgWide: false, role: "viewer" } })
   }
@@ -54,7 +52,6 @@ export async function setAppOnDashboard(context: PluginArchActorContext, appId: 
       artifact_view_id: id,
     }).onDuplicateKeyUpdate({ set: { artifact_view_id: id } })
   } else {
-    // Removal remains possible if access to the underlying app was revoked.
     await db.delete(DashboardAppTable).where(and(dashboardScope(context), eq(DashboardAppTable.artifact_view_id, id)))
   }
 }
@@ -77,7 +74,6 @@ export async function getSavedApp(input: {
   describeUnavailable?: Parameters<typeof executeLiveArtifactWorkflow>[0]["describeUnavailable"]
   buildTools?: () => Promise<BuiltCodemodeTools>
 }): Promise<SavedAppDetail> {
-  // The exact-revision path also restores a draft from its original conversation.
   const view = input.revisionId
     ? (await getGeneratedArtifactViewRevision({ context: input.context, artifactViewId: input.appId, revisionId: input.revisionId })).view
     : await getArtifactView({ context: input.context, artifactViewId: input.appId })

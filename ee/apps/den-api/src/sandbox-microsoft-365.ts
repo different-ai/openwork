@@ -6,10 +6,8 @@ import { SANDBOX_MICROSOFT_CLIENT_MARKER, sandboxMicrosoftAddresses } from "./ca
 import { assertPublicUrl } from "./capability-sources/url-guard.js"
 import { env } from "./env.js"
 
-/** The sample apps one Microsoft 365 connector replaces on cloud deployments. */
 export const SANDBOX_MICROSOFT_APP_KEYS: ReadonlySet<string> = new Set(["outlook", "calendar", "drive"])
 export const SANDBOX_MICROSOFT_EXTERNAL_KEY = "sandbox-microsoft-365"
-/** What Workbot and agents may do with the sample mail, calendar and files: read, save drafts, change events and files. Never send mail. */
 export const SANDBOX_MICROSOFT_FEATURES = ["mailRead", "mailDraft", "calendarRead", "calendarWrite", "filesRead", "filesWrite"] as const
 
 export class SandboxMicrosoftUnavailableError extends Error {}
@@ -20,18 +18,10 @@ const registeredClientSchema = z.object({
   tenant_id: z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/),
 })
 
-/** Den's callback for Microsoft 365, the exact address the workplace must send people back to. */
 export function sandboxMicrosoftCallbackUrl(apiBaseUrl: string) {
   return `${apiBaseUrl.replace(/\/+$/, "")}/v1/oauth-providers/microsoft-365/connect/callback`
 }
 
-/**
- * Registers Den with the sandbox's workplace sign-in (an ordinary confidential OAuth client, no shared secret
- * configured anywhere) and adds one per-person Microsoft 365 connector backed by it. Each member approves once in
- * their own browser; the connector then reads that browser's private sample workspace. Throws
- * SandboxMicrosoftUnavailableError when the workplace has no Microsoft 365 sign-in (an older workshop), so the caller
- * can fall back to the separate sample connectors.
- */
 export async function addSandboxMicrosoft365(input: {
   organizationId: DenTypeId<"organization">
   ownerMemberId: DenTypeId<"member">

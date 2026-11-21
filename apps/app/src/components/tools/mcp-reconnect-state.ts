@@ -18,11 +18,6 @@ export type ChatMcpReconnectRecord = {
   responseSubmitted?: boolean
 }
 
-/**
- * A sign-in that is still in the browser. It belongs to the connection, not to
- * the tool call whose card started it: the card moves to the newest report of
- * a connection, and the sign-in must outlive that move.
- */
 export type ChatMcpReconnectAttempt = {
   id: number
   phase: "opening" | "authorization_opened"
@@ -61,8 +56,6 @@ export const useChatMcpReconnectStore = create<ChatMcpReconnectStore>((set) => (
   setAttempt: (connectionKey, attempt) => set((state) => ({
     attempts: attempt ? { ...state.attempts, [connectionKey]: attempt } : withoutAttempt(state.attempts, connectionKey),
   })),
-  // The outcome lands on the tool calls that were showing the sign-in, so a
-  // report that arrives later for the same connection starts from its own state.
   settleAttempt: (connectionKey, keys, record) => set((state) => ({
     attempts: withoutAttempt(state.attempts, connectionKey),
     records: {
@@ -76,7 +69,6 @@ export const useChatMcpReconnectStore = create<ChatMcpReconnectStore>((set) => (
   reset: () => set({ records: {}, attempts: {} }),
 }))
 
-/** What a tool call's card shows: its own outcome, else the connection's sign-in in flight. */
 export function effectiveChatMcpReconnectRecord(
   state: Pick<ChatMcpReconnectStore, "records" | "attempts">,
   key: string,

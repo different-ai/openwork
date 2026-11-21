@@ -1,7 +1,5 @@
 import { XMLParser } from "fast-xml-parser"
 import { z } from "zod"
-// Self-reference, not "./schema.js": den-api loads this package's TypeScript
-// source at runtime, where only package exports resolve to the .ts files.
 import { assistantsEnabled, awsRegionSchema, gatewayAssistants, type AwsSignIn, type AwsTarget } from "@openwork/managed-deployments/schema"
 
 /**
@@ -39,12 +37,6 @@ export function throughAccessPortal(destination: string, accountId: string, sign
   const params = new URLSearchParams({ account_id: accountId, ...(signIn.roleName ? { role_name: signIn.roleName } : {}), destination })
   return `${signIn.portalUrl}/#/console?${params}`
 }
-
-// ---- Identity proof: a signed, unsent STS GetCallerIdentity request ----
-// The runner (enrollment) and health agent (reports) sign the request with
-// their own temporary role credentials and an `x-openwork-proof` header. The
-// control plane replays it only to the fixed regional STS endpoint; AWS
-// verifies the signature and returns the caller's account and role.
 
 export const PROOF_HEADER = "x-openwork-proof"
 const SIGNED_HEADERS = ["content-type", "host", PROOF_HEADER, "x-amz-date", "x-amz-security-token"].sort().join(";")
@@ -103,28 +95,14 @@ export async function verifyAwsIdentity(input: {
   if (identity.Account !== input.target.accountId || !identity.Arn.startsWith(expectedArn)) throw new Error("identity_invalid")
 }
 
-// ---- Bootstrap: CloudFormation ----
-
 export type AwsLaunch = {
   deploymentId: string
   runId: string
   challenge: string
   target: AwsTarget
-  /** Explicitly configured runs also send false/empty values to disable an installed runner. */
   includeAssistantParameters?: boolean
-  /** Omit on untouched historical records whose installer template predates runtime profiles. */
   includeRuntimeProfileParameter?: boolean
-  /**
-   * Default true. False only for a configuration change of a record stored without
-   * `network`: it was created before network choice existed, when the installer
-   * template had no network parameters. Every template that has them defaults to
-   * the dedicated network such a record uses, so omitting them changes nothing.
-   */
   includeNetworkParameters?: boolean
-  /**
-   * The command first asks OpenWork whether this run is still the approval to apply,
-   * and stops before `update-stack` when it is not. Configuration changes only.
-   */
   approvalCheck?: boolean
   domainName: string
   ownerEmail: string
@@ -208,8 +186,6 @@ export function approvalCheckUrl(apiOrigin: string, deploymentId: string, runId:
 export function updateStackCommand(input: AwsLaunch) {
   const parameters = Object.entries(launchParameters(input)).map(([ParameterKey, ParameterValue]) => ({ ParameterKey, ParameterValue }))
   const check = `[ "$(aws sts get-caller-identity --query Account --output text)" = ${quoteShell(input.target.accountId)} ] || { echo "Switch to AWS account ${input.target.accountId}." >&2; exit 1; }`
-  // Only OpenWork's own 200 lets the command continue: a refusal, a redirect, a timeout, a proxy's
-  // answer or a missing curl all leave the status something else, and curl follows no redirect.
   const confirm = [
     `_openwork_approval_status=$(curl --silent --show-error --max-time 30 --output /dev/null --write-out '%{http_code}' --request POST --header 'content-type: application/json'`,
     "--data", quoteShell(JSON.stringify({ challenge: input.challenge })), `${quoteShell(approvalCheckUrl(input.release.apiOrigin, input.deploymentId, input.runId))}) && [ "$_openwork_approval_status" = 200 ]`,

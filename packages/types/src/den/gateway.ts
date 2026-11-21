@@ -7,8 +7,6 @@ import type {
 } from "./inference.js";
 import type { GatewayCustomProviderStatus } from "./gateway-custom-providers.js";
 
-// Persisted enum values and secret formats are unchanged; Models billing stays
-// in den/inference. Gateway consumers should use these canonical exports.
 export {
   INFERENCE_PROVIDER_CREDENTIAL_KINDS as GATEWAY_PROVIDER_CREDENTIAL_KINDS,
   INFERENCE_PROVIDER_CREDENTIAL_MODES as GATEWAY_PROVIDER_CREDENTIAL_MODES,
@@ -70,7 +68,6 @@ export type GatewayModelGroupWrite =
   | {
       name: string;
       description?: string | null;
-      /** Explicit configured catalog model IDs, not row/wire IDs. Empty means no models. */
       modelIds: string[];
       allModels?: never;
       status?: GatewayResourceStatus;
@@ -78,7 +75,6 @@ export type GatewayModelGroupWrite =
   | {
       name: string;
       description?: string | null;
-      /** Link every supported catalog model configured on this provider. Mutually exclusive with modelIds. */
       allModels: true;
       modelIds?: never;
       status?: GatewayResourceStatus;
@@ -95,15 +91,11 @@ export interface GatewayModelGroup {
 export interface GatewayCredentialSetWrite {
   name: string;
   credentialMode: InferenceProviderCredentialMode;
-  /** Write-only; mutually exclusive with apiKeys. Omission retains encrypted material. */
   credential?: { kind: InferenceProviderCredentialKind; secret: string };
   apiKeys?: Record<string, string>;
-  /** Omit to retain; empty string explicitly clears OAuth client configuration. */
   oauthClientId?: string;
   oauthClientSecret?: string;
-  /** Microsoft Foundry member sets: the Entra ID directory (tenant) ID. Omit to retain; empty string clears. */
   oauthTenantId?: string;
-  /** Amazon Bedrock member sets: the IAM Identity Center instance, account and permission set. Omit to retain; null clears. */
   awsSso?: GatewayAwsSsoSettings | null;
   status?: GatewayResourceStatus;
 }
@@ -115,9 +107,7 @@ export interface GatewayCredentialSet {
   createdBy?: { id: string; name: string | null; email: string | null } | null;
   credentialMode: InferenceProviderCredentialMode;
   status: GatewayResourceStatus;
-  /** Set configuration exists; not a successful upstream probe or consent. */
   configured: boolean;
-  /** Readiness for this caller only; never evidence of another member's token. */
   credentialStatus: GatewayCredentialStatus;
   oauthClientId?: string | null;
   hasOauthClientSecret?: boolean;
@@ -138,9 +128,7 @@ export interface GatewayAccessGrant extends GatewayAccessGrantWrite {
 export type GatewayModelGroupPatch = {
   name?: string;
   description?: string | null;
-  /** Explicit configured catalog model IDs. Mutually exclusive with allModels. */
   modelIds?: string[];
-  /** Link every supported catalog model configured on this provider. Mutually exclusive with modelIds. */
   allModels?: true;
   status?: GatewayResourceStatus;
 };
@@ -162,7 +150,6 @@ export interface GatewaySelection {
 }
 
 export const GATEWAY_GRANT_HEADER = "x-openwork-gateway-grant-id";
-// Diagnostic request metadata only; never authorizes or selects an upstream.
 export const GATEWAY_REQUEST_MODEL_HEADER = "x-openwork-gateway-request-model";
 
 export interface GatewaySelectionConflict {
@@ -178,10 +165,8 @@ export interface GatewaySelectionConflict {
 }
 
 export interface GatewayUsableModel {
-  /** gwm_<gmg suffix>_<gcs suffix>_<ipm suffix>, never a raw upstream ID. */
   id: string;
   name: string;
-  /** config.id must equal id so SDK requests carry the selected combination. */
   config: Record<string, unknown> & { id: string };
   upstreamModelId: string;
   modelGroupId: string;
@@ -208,46 +193,31 @@ export interface GatewayProviderCredentialSummary {
 }
 
 export interface GatewayProviderSummary {
-  /** Persisted ipr_ provider identity; groups do not create desktop providers. */
   id: string;
   providerId: string;
   name: string;
   source: "openwork_gateway";
-  /** Aggregate compatibility hints only; individual sets are authoritative. */
   credentialMode: InferenceProviderCredentialMode;
   credentialStatus: GatewayCredentialStatus;
   authUrl: string | null;
   status: GatewayResourceStatus;
-  /** Stored provider creation time; optional for compatibility with older servers. */
   createdAt?: string;
   updatedAt: string;
   providerConfig: Record<string, unknown>;
-  /** Universe policy: [] follows all supported catalog models; nonempty restricts to these IDs. Never grants group membership. */
   modelIds: string[];
-  /** Display when catalog refresh is unavailable or compatibility excludes catalog models. */
   catalogWarning?: string;
   models: GatewayUsableModel[];
-  /**
-   * True only when models + authorizationRequests.models represent every
-   * effective active grant's alias assignment within the provider universe.
-   * Credential/config/catalog omissions make this false even if aggregate
-   * credentialStatus is ready. Missing on older servers means unknown.
-   */
   modelAssignmentsComplete: boolean;
   pinnedModelIds: string[];
   authorizationRequests: GatewayAuthorizationRequest[];
   migration?: GatewayProviderMigration;
-  /** Legacy management hints. Never flatten these back into matrix writes. */
   access?: { allMembers: boolean; memberIds: string[]; teamIds: string[] };
   settings?: Record<string, unknown>;
   oauthClientId?: string | null;
   oauthCallbackUrl?: string;
   hasOauthClientSecret?: boolean;
-  /** Per-person credential rows; only for callers who hold Manage Gateway providers. */
   credentials?: GatewayProviderCredentialSummary[];
-  /** Credential counts by status, returned instead of `credentials` to callers who may only view providers. */
   credentialCounts?: GatewayProviderCredentialCounts;
-  /** Only the caller's ow_gw_ key, in provider-scoped env slots. */
   apiKey?: string;
   apiKeys?: Record<string, string>;
 }
@@ -262,28 +232,20 @@ export type GatewayLiteLlmAttentionReason = "not_in_litellm" | "no_key_to_mirror
 
 export interface GatewayLiteLlmStatus {
   mode: InferenceProviderCredentialMode;
-  /** member mode: each person pastes their key, OpenWork creates it, or (entra) each person signs in with Microsoft. */
   keySource: "personal" | "issued" | "entra" | null;
-  /** issued: one key per LiteLLM team, or a copy of each person's existing key. */
   issueStrategy: "per_team" | "mirror" | null;
-  /** issued + mirror: fall back to per-team keys, or report people with no key to copy. */
   mirrorFallback: "per_team" | "error" | null;
-  /** issued: people with at least one key OpenWork created. */
   issuedMemberCount: number;
-  /** issued: people OpenWork could not create keys for (first 50 in attention). */
   attentionCount: number;
   attention: Array<{ memberId: string; name: string | null; email: string | null; reason: GatewayLiteLlmAttentionReason }>;
-  /** LiteLLM proxy root, never a key. */
   baseUrl: string | null;
   spendTracking: boolean;
-  /** Organization key (org mode) or admin key (member mode) is stored. */
   hasSyncKey: boolean;
   lastSyncedAt: string | null;
   lastSyncError: string | null;
   modelCount: number;
   teamCount: number;
   connectedMemberCount: number;
-  /** entra: the API scope members' access tokens are issued for. Only for callers who hold Manage Gateway providers. */
   entraScope?: string;
 }
 
@@ -293,7 +255,6 @@ export interface GatewayLiteLlmSyncResult {
   teamCount: number;
   members: { matched: number; rejected: number; unavailable: number; removed: number };
   warnings: string[];
-  /** issued mode: keys OpenWork created or refreshed in this sync. */
   issued?: { people: number; keys: number; notInLiteLlm: number; noKeyToMirror: number; noModels: number; errors: number; removed: number };
 }
 
@@ -307,29 +268,18 @@ export type GatewayTrueFoundryAttentionReason = "not_in_truefoundry" | "user_ina
  * trackUsageCosts is on, for models with public pricing.
  */
 export interface GatewayTrueFoundryStatus {
-  /** Control plane root, never a key. */
   controlPlaneUrl: string | null;
-  /** OpenAI-compatible gateway base the AI Gateway forwards to. */
   gatewayBaseUrl: string | null;
-  /** Add allowed people missing from TrueFoundry as TrueFoundry users. */
   createMissingUsers: boolean;
-  /** Track usage costs in OpenWork: models with public pricing are priced and count towards usage limits. */
   trackUsageCosts: boolean;
-  /** The TrueFoundry admin key is stored. */
   hasAdminKey: boolean;
   lastSyncedAt: string | null;
   lastSyncError: string | null;
-  /** Models people are served. */
   modelCount: number;
-  /** Every chat model TrueFoundry listed at the last sync, picked or not. */
   availableModels: Array<{ id: string; name: string }>;
-  /** Models an admin picked, or null when people get every TrueFoundry model. */
   selectedModelIds: string[] | null;
-  /** People with a working token and at least one model. */
   activeMemberCount: number;
-  /** TrueFoundry users OpenWork added because they were missing. */
   createdUserCount: number;
-  /** People OpenWork has no working token for (first 50 in attention). */
   attentionCount: number;
   attention: Array<{ memberId: string; name: string | null; email: string | null; reason: GatewayTrueFoundryAttentionReason; message: string | null }>;
 }
@@ -360,7 +310,6 @@ export interface GatewayProviderDetails extends GatewayProviderSummary {
   accessGrants: GatewayAccessGrant[];
   litellm?: GatewayLiteLlmStatus;
   truefoundry?: GatewayTrueFoundryStatus;
-  /** Custom OpenAI-compatible providers, for callers who hold Manage Gateway providers. Never the key. */
   custom?: GatewayCustomProviderStatus;
 }
 

@@ -19,32 +19,23 @@ export type GatewayAccessRow = {
 }
 export type LoadGatewayAccess = (scope: GatewayAccessScope, consistency?: "primary") => Promise<GatewayAccessRow[]>
 export type GatewayAccessProvider = Pick<typeof GatewayProviderTable.$inferSelect, "id" | "provider_id" | "name"> & { litellmKeySource: string | null }
-/** An access row across every provider the member can reach, tagged with its provider. */
 export type GatewayMemberAccessRow = GatewayAccessRow & { provider: GatewayAccessProvider }
 export type LoadMemberGatewayAccess = (scope: GatewayContext) => Promise<GatewayMemberAccessRow[]>
 type AccessDb = Pick<typeof import("./db.js").db, "select">
 
-// All relations are application-enforced, so every ownership/status edge is
-// checked here. Plain read: callers re-check in their flow rather than locking.
 export async function loadGatewayAccess(scope: GatewayAccessScope, executor: AccessDb): Promise<GatewayAccessRow[]> {
   return gatewayAccessQuery(scope, executor)
 }
 
-/** Same authorization as loadGatewayAccess, for every active provider in the member's organization. */
 export async function loadMemberGatewayAccess(scope: GatewayContext, executor: AccessDb): Promise<GatewayMemberAccessRow[]> {
   return gatewayAccessQuery({ ...scope, gatewayProviderId: undefined }, executor)
 }
 
 export const loadMemberGatewayAccessFromDb: LoadMemberGatewayAccess = async (scope) => loadMemberGatewayAccess(scope, (await import("./db.js")).db)
 
-/**
- * The caller's key is still active and still the member's, checked on every read so a revoked key loses
- * access even if it was authenticated moments earlier. Member API keys live in their own table.
- */
 function callerKeyActive(scope: GatewayContext) {
   if (scope.keySource === "api_key") {
     const keys = GatewayApiKeyTable
-    // A member's API key also stops at its expiry, even mid-session.
     return sql`exists (select 1 from ${keys} where ${keys.id} = ${scope.gatewayKeyId}
       and ${keys.org_membership_id} = ${MemberTable.id} and ${keys.organization_id} = ${MemberTable.organizationId}
       and ${keys.status} = 'active' and ${keys.revoked_at} is null
@@ -75,12 +66,10 @@ function gatewayAccessQuery(scope: GatewayContext & { gatewayProviderId: Gateway
     .innerJoin(sets, and(eq(sets.id, grants.credential_set_id), eq(sets.gateway_provider_id, GatewayProviderTable.id)))
     .leftJoin(links, eq(links.model_group_id, groups.id))
     .leftJoin(models, and(eq(models.id, links.gateway_provider_model_id), eq(models.gateway_provider_id, GatewayProviderTable.id),
-      // Applied on every read, OAuth fence and pre-egress recheck, even if rows are stale.
       sql`(JSON_LENGTH(${GatewayProviderTable.model_ids}) = 0 OR JSON_CONTAINS(${GatewayProviderTable.model_ids}, JSON_QUOTE(${models.model_id})))`))
     .where(and(
       eq(MemberTable.id, scope.orgMembershipId), eq(MemberTable.organizationId, scope.organizationId), isNull(MemberTable.removedAt), isNotNull(MemberTable.userId),
       callerKeyActive(scope),
-      // Omitted only by loadMemberGatewayAccess; the org boundary still comes from the member join.
       scope.gatewayProviderId === undefined ? undefined : eq(GatewayProviderTable.id, scope.gatewayProviderId),
       eq(GatewayProviderTable.status, "active"), eq(groups.status, "active"), eq(sets.status, "active"),
       or(
@@ -134,7 +123,6 @@ export function selectGatewayGrant(rows: GatewayAccessRow[], requestedModel: str
       : requestedModel === null || row.model?.model_id === requestedModel))
   if (!candidates.length) return { kind: "denied", code: requestedModel === null ? "provider_access_denied" : "model_access_denied" }
   const priority = (row: GatewayAccessRow) => row.grant.org_membership_id !== null ? 3 : row.grant.team_id !== null ? 2 : 1
-  // Model-less requests cannot infer intent from audience priority across sets.
   const highest = candidates.reduce((highest, row) => Math.max(highest, priority(row)), 0)
   const winners = requestedModel === null && accessGrantId === null ? candidates : candidates.filter((row) => priority(row) === highest)
   winners.sort((a, b) => a.grant.id < b.grant.id ? -1 : a.grant.id > b.grant.id ? 1 : 0)
@@ -148,7 +136,6 @@ export function selectGatewayGrant(rows: GatewayAccessRow[], requestedModel: str
       }])).values()],
     } }
   }
-  // Model-less equivalent sets still attribute to the most specific stable rule.
   const row = winners.find((row) => priority(row) === highest)
   if (!row) return { kind: "denied", code: "provider_access_denied" }
   return { kind: "selected", selection: { row, requestedModel, upstreamModel: requestedModel === null ? null : row.model?.model_id ?? null } }
@@ -168,32 +155,20 @@ export function accessibleGatewayModels(rows: GatewayAccessRow[]) {
   return [...models.values()].sort((a, b) => a.id.localeCompare(b.id))
 }
 
-/** One entry of the OpenAI List Models response, plus the fields a client needs to call it. */
 export type GatewayListedModel = {
   id: string
   object: "model"
-  /** Unix seconds when the model was added to the provider. */
   created: number
-  /** The upstream provider type, such as "anthropic" or "openai". */
   owned_by: string
   name: string
   openwork: {
-    /**
-     * The ipr_ id that goes in /api/v1/providers/{provider_id}/... to call this model. For a Smart
-     * Router, `openwork-auto`: it is called only through POST /api/v1/chat/completions.
-     */
     provider_id: string
     provider_name: string
     upstream_model_id: string
-    /** Set on Smart Routers, whose id is `openwork-smart-<router id>`. */
     smart_router?: true
   }
 }
 
-/**
- * Every model the member's grants allow, across providers, in the OpenAI list shape, then the Smart
- * Routers the member can use.
- */
 export function listGatewayModels(rows: GatewayMemberAccessRow[], smartRouters: readonly { id: string; routerName: string }[] = []): { object: "list"; data: GatewayListedModel[] } {
   const models = new Map<string, GatewayListedModel>()
   for (const row of rows) {

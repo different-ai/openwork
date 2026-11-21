@@ -11,7 +11,6 @@ const requestSchema = z.object({
   sessionId: z.string().min(1).max(256).optional(), callId: z.string().min(1).max(256).optional(),
 }).strict();
 
-/** Engine-only API. Its credential authorizes guest operations, never host filesystem/shell APIs. */
 export async function createSandboxToolsBridge(config: ServerConfig, runtime: ReturnType<typeof createLocalSandboxRuntime> = localSandboxRuntime(config)) {
   const token = randomBytes(32).toString("base64url");
   const server = await serve({ hostname: "127.0.0.1", port: 0, fetch: async request => {

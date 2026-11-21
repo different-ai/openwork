@@ -8,16 +8,6 @@ import { MyBotExample } from "./examples/my-bot/my-bot-example";
 import { WebExample } from "./examples/web/web-example";
 import { MEMBERS_INVITE_ROUTE } from "./members";
 
-/*
- * Work-section pages whose intro answers `?` only: each page already is its
- * own next step, so none of them ever gives way to an intro.
- * - Home: admins get the overview (people, invites, activity), members a page
- *   whose one action is getting the app. An intro there would push the same
- *   action twice and hide the overview.
- * - OpenWork Web: the page is the purchase or "Open OpenWork Web" step, and
- *   checkout is a request, not a link an intro could make.
- * - My bot: its switch, hours and sources are the setup, on the page itself.
- */
 export const homeIntros = [
   defineFeatureIntro({
     key: "home",
@@ -61,7 +51,6 @@ export const homeIntros = [
       alt: "Example: in OpenWork Web, someone asks for a summary of this week in #launch. It reads #launch in Slack, finds the launch plan in Drive and drafts the update.",
     },
     docsUrl: docsPage("cloud/run-in-the-cloud/open-cloud-in-browser"),
-    // The page's purchase or open button is the action; an intro link can't start checkout.
     ctas: [],
     setupState: () => "done",
   }),
@@ -84,7 +73,6 @@ export const homeIntros = [
       alt: "Example: last check 9:30 AM found two things that need you. Today's checks at 9:30, 11:30 and 1:30, two sent in Slack. It reads Gmail, Google Calendar and Slack.",
     },
     docsUrl: docsPage("workbot/my-bot"),
-    // The switch at the top of the page is the action.
     ctas: [],
     setupState: () => "done",
   }),

@@ -114,8 +114,6 @@ function ArtifactPanelView({ sessionId, client, workspaceId, workspaceRoot, targ
   const showOfficeOutline = officeFormat !== null && officeOutlineEnabled;
   const usesObjectUrl = ["image", "pdf", "html"].includes(target.preview);
   const isMermaidArtifact = target.kind === "file" && /\.mmd$/i.test(target.value);
-  // Plain text opens directly in CodeMirror. Markdown and HTML default to
-  // their rendered previews and retain the existing Edit toggle.
   const isDirectTextEdit = isTextContent(target) && target.preview === "text";
   const isDirectCodeEdit = target.kind === "file" && target.preview === "code";
   const canUseDesktopWorkspaceActions = Boolean(isLocalWorkspace && onOpenTarget && platform.capabilities.revealInFileManager);

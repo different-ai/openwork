@@ -5,7 +5,6 @@ import { useExampleStep } from "../use-example-step";
 import { ExampleCaption, ExampleRow, ExampleRows } from "../example-parts";
 import { teamAccessExampleRows, teamAccessExampleTeam } from "./team-access-example-data";
 
-/** Team access example: plugins a team can use, and where each grant comes from. */
 export function TeamAccessExample() {
   const step = useExampleStep(teamAccessExampleRows.length);
 

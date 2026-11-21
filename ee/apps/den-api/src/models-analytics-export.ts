@@ -52,10 +52,6 @@ export function modelsAnalyticsSpan(row: typeof Event.$inferSelect) {
   }
 }
 
-// The event store is the outbox. Stable span IDs make retries idempotent;
-// failures never run on the chat request path. Recheck access on every batch.
-// Connecting a destination was part of the retired Task analytics screen; an
-// existing destination keeps exporting while consent holds.
 export function startModelsAnalyticsExportLoop() {
   let running = false
   const timer = setInterval(async () => {
@@ -65,8 +61,6 @@ export function startModelsAnalyticsExportLoop() {
       const destinations = await db.select({ orgId: Settings.org_id }).from(Settings).where(and(eq(Settings.enabled, true), eq(Settings.export_enabled, true)))
       for (const destination of destinations) {
         try {
-          // Opt-out, disconnect and deletion acquire this same row lock. They
-          // cannot return while an authorized batch is still being transmitted.
           await db.transaction(async (tx) => {
             const [config] = await tx.select().from(Settings).where(eq(Settings.org_id, destination.orgId)).limit(1).for("update")
             if (!config?.enabled || !config.export_enabled) return
@@ -79,9 +73,9 @@ export function startModelsAnalyticsExportLoop() {
             await send({ host: config.langfuse_host, publicKey: config.langfuse_public_key, secretKey: config.langfuse_secret_key }, rows.filter((row) => row.type !== "task.started").map(modelsAnalyticsSpan))
             await tx.update(Event).set({ exported_at: new Date() }).where(inArray(Event.id, rows.map((row) => row.id)))
           })
-        } catch { /* Keep the batch for retry; no credentials or payloads in logs. */ }
+        } catch {}
       }
-    } catch { /* A disabled deployment or unavailable store must not affect chat. */ }
+    } catch {}
     finally { running = false }
   }, 30_000)
   timer.unref()

@@ -1,30 +1,3 @@
-/**
- * Runs an execution plan through the area adapters, in order
- * (change-requests.md › Apply, step 3). Locking, snapshots, run rows and
- * alias writes are the caller's job; this resolves each op's item, calls
- * `area.apply` and keeps a per-item report the caller can persist after every
- * item (`onProgress`).
- *
- * What an adapter receives:
- * - every `$ref` gets `id`: the local target id (existing item, or the id a
- *   planned create in this run produced);
- * - refs with a `drop` decision are removed (from arrays: the element);
- * - people refs with an `invite` decision get the `id` of the
- *   `members.people` create the plan added for them (it runs first), so an
- *   adapter never sees a reference without an id;
- * - every `$secret` becomes a `ResolvedConfigSecret` (keep / value / unset).
- *   `env` decisions must be resolved by the caller into `value` secrets. A
- *   supplied value is bound to one placeholder: the op must hold a `value` or
- *   `env` decision for that exact path, and a path is used at most once per
- *   run (`buildPlan` already refuses blobs that repeat a `$secret` path);
- * - an update carries the plan's field `changes` and the `secretPaths` whose
- *   decision writes a credential. An update with neither is never sent: it is
- *   reported `noop`.
- *
- * No transaction: each adapter writes through the domain services, which
- * commit per item. The report (what was written, where it stopped) and the
- * before-snapshot are the safety net (change-requests.md › Apply).
- */
 import type {
   ConfigApplyFailure,
   ConfigApplyItemStatus,
@@ -40,20 +13,9 @@ import { DROP_ENTRY, DROP_REF, PEOPLE_AREA, inviteRef, rewriteRefs } from "./ref
 import { isPlainObject, isUnsafeKey } from "./util.js"
 
 export type ExecuteOptions = {
-  /**
-   * Whether `id` is unused on the whole instance for a create in `area`;
-   * creates reuse the source id when it is (D4). Without it, no id is reused.
-   */
   isIdFree?: (id: string, area: ConfigAreaKey) => Promise<boolean>
-  /**
-   * Called (and awaited) after an item starts and after it ends, with the
-   * whole report so far: the caller persists it, so a crash leaves an
-   * accurate partial report. Its failures are the caller's to swallow.
-   */
   onProgress?: (items: readonly ConfigApplyReportItem[]) => Promise<void>
-  /** Failure for an error that is not a ConfigApplyItemError (the caller redacts). Default: code "error" and the message. */
   describeError?: (error: unknown) => ConfigApplyFailure
-  /** Clock, for tests. */
   now?: () => number
 }
 
@@ -61,9 +23,7 @@ export type ExecuteResult = {
   ok: boolean
   items: ConfigApplyReportItem[]
   warnings: string[]
-  /** Every create that ran. */
   created: Array<{ area: ConfigAreaKey; ref: string; sourceId?: string; localId: string }>
-  /** Alias rows to write: creates that could not keep their source id, and confirmed matches to a different id. */
   aliases: Array<{ area: ConfigAreaKey; sourceId: string; localId: string }>
 }
 
@@ -77,7 +37,6 @@ export function countApplyItems(items: readonly Pick<ConfigApplyReportItem, "sta
   return counts
 }
 
-/** The report items of a plan before anything ran: every op `not_reached`. */
 export function pendingReportItems(execution: ExecutionPlan): ConfigApplyReportItem[] {
   return execution.ops.map((op) => ({
     area: op.area,
@@ -98,7 +57,6 @@ function defaultFailure(error: unknown): ConfigApplyFailure {
   return { code: "error", message: error instanceof Error ? error.message : String(error) }
 }
 
-/** An update that would write nothing: no field changes and no credential to store. */
 export function isNoopUpdate(op: Pick<ExecutionOp, "kind" | "changes" | "secretPaths">): boolean {
   return op.kind === "update" && op.changes.length === 0 && op.secretPaths.length === 0
 }
@@ -124,9 +82,7 @@ export async function executePlan(
     if (opts.onProgress) await opts.onProgress(items)
   }
   const areaByKey = new Map(areas.map((area) => [area.key, area]))
-  /** `${area}\u0000${blob ref}` → local id of creates done in this run. */
   const planned = new Map<string, string>()
-  /** Secret paths whose supplied value an op already received: a value goes into one placeholder only. */
   const usedSecrets = new Set<string>()
   for (const [index, op] of execution.ops.entries()) {
     const entry = items[index]
@@ -150,7 +106,6 @@ export async function executePlan(
       entry.localId = applied.localId
       entry.warnings = applied.warnings ?? []
       entry.steps = applied.steps ?? []
-      // An adapter that reports steps and wrote none found nothing to do after all.
       entry.status = applied.steps !== undefined && applied.steps.length === 0 ? "noop" : "applied"
       if (entry.status === "noop") entry.irreversible = []
       entry.durationMs = now() - started
@@ -173,7 +128,6 @@ export async function executePlan(
       } else {
         entry.failure = describe(error)
       }
-      // Effects only count once something was written for the item.
       if (entry.steps.length === 0) entry.irreversible = []
       await progress()
       break
@@ -213,13 +167,11 @@ async function toApplyOp(
   return { kind: "create", item }
 }
 
-/** The op's spec with refs and secrets resolved, as `ResolvedConfigItem.spec`. */
 export function resolveSpec(
   op: Pick<ExecutionOp, "refs" | "secrets">,
   spec: ConfigSpec,
   planned: ReadonlyMap<string, string>,
   secrets: ReadonlyMap<string, ResolvedConfigSecret>,
-  /** Paths whose supplied value was already placed (shared across a run): a second use throws. */
   usedSecrets: Set<string> = new Set<string>(),
 ): ConfigSpec {
   const refsByPath = new Map(op.refs.map((ref) => [ref.path, ref]))
@@ -246,7 +198,6 @@ export function resolveSpec(
         throw new Error(`${path}: ${resolution.reason}`)
     }
   })
-  // Planning refuses this drop (the reference is the item's own); never write an item emptied by one.
   if (withRefs === DROP_ENTRY) throw new Error("a reference this item can't be imported without was dropped")
   const decisions = new Map<string, ExecutionOp["secrets"][number]>()
   for (const secret of op.secrets) {
@@ -260,7 +211,6 @@ export function resolveSpec(
     const decision = decisions.get(path)
     if (!decision) throw new Error(`secret ${path}: no decision`)
     if (decision.decision === "value" || decision.decision === "env") {
-      // A supplied value only goes where the plan decided to write one, and only once.
       const provided = secrets.get(path)
       if (!provided) throw new Error(`secret ${path}: no value was provided`)
       if (provided.$secret !== path) throw new Error(`secret ${path}: resolved for a different placeholder`)
@@ -285,7 +235,6 @@ function replaceSecrets(value: unknown, replace: (path: string) => ResolvedConfi
   return value
 }
 
-/** The placeholders whose value the caller must supply (`value` inputs, `env` lookups) before `executePlan`. */
 export function secretsNeedingValues(execution: ExecutionPlan): Array<{ area: ConfigAreaKey; ref: string; path: string; decision: "value" | "env"; env?: string }> {
   const out: Array<{ area: ConfigAreaKey; ref: string; path: string; decision: "value" | "env"; env?: string }> = []
   for (const op of execution.ops) {

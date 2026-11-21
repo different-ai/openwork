@@ -10,7 +10,6 @@ type RunNotice = {
   message: string;
 };
 
-/** A desktop occurrence no desktop picked up: Den records it as skipped, and it never started. */
 export function isMissedAutomationRun(run: RunReceiptState): boolean {
   return run.status === "skipped" && run.error?.code === "runner_unavailable" && run.attemptCount === 0 && run.startedAt == null;
 }
@@ -54,11 +53,6 @@ export function runStatusLabel(run: RunReceiptState) {
   return run.status === "succeeded" ? "Completed" : run.status.replaceAll("_", " ");
 }
 
-/**
- * The fix for a run that could not use a connection: the connection named in
- * the run's warning event, opened on Your Connections in the signed-in Den.
- * The link is built here from the connection id, never taken from the run.
- */
 export function automationRunConnectionFix(
   run: Pick<AutomationRun, "error">,
   events: readonly Pick<AutomationRunEvent, "type" | "payload">[],
@@ -76,5 +70,4 @@ export function formatAutomationTime(value: number | null | undefined) {
   return typeof value === "number" ? new Date(value).toLocaleString() : "—";
 }
 
-/** One shared label for every schedule kind; Den web and the agent listing use the same one. */
 export { formatAutomationSchedule };

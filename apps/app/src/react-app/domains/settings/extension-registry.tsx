@@ -5,10 +5,6 @@ import { extensionContribution } from "../../../app/extensions";
 import type { OpenworkServerClient } from "../../../app/lib/openwork-server";
 import type { LocalProviderInstallInput, LocalProviderSyncInput } from "./openai-image-extension";
 
-/**
- * Context bag that the settings route passes to extension config factories.
- * Each extension picks what it needs; unused fields are ignored.
- */
 export type ExtensionConfigContext = {
   openworkServerClient?: OpenworkServerClient | null;
   hostOpenworkServerClient?: OpenworkServerClient | null;

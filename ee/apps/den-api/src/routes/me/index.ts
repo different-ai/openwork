@@ -154,7 +154,6 @@ function normalizeNamePart(value: string) {
 
 async function checkDownloadLinkRateLimit(userId: string, now: number) {
   const key = `me:send-download-link:${userId}`
-  // primary: the counter is read back right after earlier requests wrote it.
   const [row] = await db.$primary
     .select({ id: RateLimitTable.id, count: RateLimitTable.count, lastRequest: RateLimitTable.lastRequest })
     .from(RateLimitTable)
@@ -289,8 +288,6 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
     async (c) => {
     const user = c.get("user")
     const email = user.email?.trim().toLowerCase()
-    // Only a verified email proves the person owns the inbox an invitation went to. Without it, listing would hand
-    // out the invitation id that accepting otherwise requires from the emailed link, even where verification is off.
     if (!email || user.emailVerified !== true) return c.json({ invitations: [] })
 
     const userId = normalizeDenTypeId("user", user.id)
@@ -402,7 +399,6 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
         .set({ name, updatedAt })
         .where(eq(AuthUserTable.id, normalizeDenTypeId("user", user.id)))
       await cache.auth.deleteSessionsForUser(normalizeDenTypeId("user", user.id))
-      // account.profile_updated in every membership (direct update: no better-auth hook).
       await recordProfileUpdated({ userId: user.id, before: user.name, after: name })
 
       return c.json({
@@ -456,14 +452,12 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
       }
 
       const sessionId = normalizeDenTypeId("session", session.id)
-      // an organization that requires SSO is entered only from a session signed in through it.
       const ssoBlock = await findSsoAccessBlock({ sessionId, organizationId: activeOrg.id })
       if (ssoBlock) {
         return c.json(ssoRequiredErrorBody(ssoBlock), 403)
       }
       await setSessionActiveOrganization(sessionId, activeOrg.id)
       c.set("session", { ...session, activeOrganizationId: activeOrg.id })
-      // session.organization_entered in the destination organization only.
       if (session.activeOrganizationId !== activeOrg.id) {
         await recordSessionOrganizationEntered({ userId: user.id, organizationId: activeOrg.id, sessionId })
       }
@@ -514,19 +508,12 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
       const features = await getOrganizationFeatures(organization.id, { userId: currentMember.userId })
       const rules = await readAgentPermissionRulesForMember({ organizationId: organization.id, orgMemberId: currentMember.id })
       const supportsBrowserUploads = c.req.header("X-OpenWork-Browser-Upload-Permissions") === "1"
-      // Published desktops reject a rule list naming an action they do not know,
-      // so file-send rules reach only desktops that ask for them.
       const supportsFileSends = c.req.header("X-OpenWork-File-Send-Permissions") === "1"
-      // host_execution (sandbox-only) reaches only desktops that enforce it. A
-      // desktop that does not gets blocks it understands instead, and the
-      // sandboxTools rollout is deliberately not consulted: turning it off must
-      // not hand a required sandbox back to the host.
       const supportsSandboxOnly = c.req.header(AGENT_SANDBOX_ONLY_CAPABILITY_HEADER) === "1"
       const supportsSandboxModes = c.req.header(AGENT_SANDBOX_MODES_CAPABILITY_HEADER) === "1"
       const agentPermissions = {
         rules: agentPermissionRulesForClient(rules, { browserUploads: supportsBrowserUploads, fileSends: supportsFileSends, sandboxOnly: supportsSandboxOnly, sandboxModes: supportsSandboxModes }),
       }
-      // The model new chats start with; only v2 desktops apply it. A failure leaves desktops on their own default.
       const defaultModel = await desktopConfigDefaultModel({ organizationId: organization.id, memberId: currentMember.id })
       const automations = automationAvailabilityFor({
         metadata: organization.metadata,
@@ -535,20 +522,15 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
 
       return c.json({
         ...desktopPolicy,
-        // Local models (Ollama, LM Studio) get their own switch only with the
-        // rollout on; otherwise they follow the provider setting, as before.
         allowLocalModels: desktopPolicy.allowLocalModels,
-        // The Automations page shows when either kind is allowed; only Desktop Automations make this desktop a runner.
         automationsEnabled: env.automations.enabled && (automations.desktop || automations.cloud),
         desktopAutomationsEnabled: automations.desktop,
         cloudAutomationsEnabled: automations.cloud,
         dashboardEnabled: env.dashboardsEnabled,
-        // Compatibility field for published desktops: Connect is always on.
         connectEnabled: true,
         liveProviderSync: true,
         nativeAffordanceCodeMode: true,
         opencodeV2Only: features.opencodeV2Only,
-        // Compatibility fields for published desktops: both behaviors are now always on.
         localProviderMirror: true,
         removeOpencodeZen: true,
         agentPermissions,

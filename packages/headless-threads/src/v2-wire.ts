@@ -1,10 +1,3 @@
-/**
- * The OpenCode v2 wire boundary, plus the server routes that pick an engine
- * and a model.
- *
- * v2 payloads are mapped into the v1 wire shapes `wire.ts` already parses, so
- * snapshots, transcripts, and waits behave the same on either engine.
- */
 import { z } from "zod";
 
 import type { HeadlessThreadModel } from "./types.js";
@@ -34,7 +27,6 @@ export function toHeadlessModel(model: z.infer<typeof defaultModelSchema>["model
   };
 }
 
-/** v2 routes wrap every payload in `{ data }`. */
 function data<T extends z.ZodType>(schema: T) {
   return z.object({ data: schema }).passthrough();
 }
@@ -181,7 +173,6 @@ function fromV2Content(messageId: string, content: V2Content, index: number): Me
   return [];
 }
 
-/** A v2 tool's text content, or its structured result as JSON. */
 function v2ToolOutput(content: unknown, result: unknown): string | undefined {
   if (Array.isArray(content)) {
     const text = content.flatMap((item) => {
@@ -206,7 +197,6 @@ function v2ErrorText(error: unknown): string | undefined {
   return parsed.data.message ?? parsed.data.type;
 }
 
-/** v2 errors are `{ type, message }`; give them the `name` v1 errors carry. */
 function fromV2Error(error: unknown): unknown {
   const parsed = z.object({ type: z.string().optional(), name: z.string().optional() }).passthrough().safeParse(error);
   if (!parsed.success) return error;

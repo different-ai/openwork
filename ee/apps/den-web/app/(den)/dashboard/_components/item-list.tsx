@@ -9,7 +9,6 @@ import { type ButtonSize, type ButtonVariant, buttonVariants, DenButton } from "
 import { DenNotice } from "../../_components/ui/notice";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
-/** A button-styled client-side link, so moving between steps keeps the page state. */
 export function LinkButton({ variant = "secondary", size = "md", className = "", ...rest }: ComponentProps<typeof Link> & {
   variant?: ButtonVariant;
   size?: ButtonSize;
@@ -17,17 +16,11 @@ export function LinkButton({ variant = "secondary", size = "md", className = "",
   return <Link {...rest} className={buttonVariants({ variant, size, className: `gap-2 ${className}` })} />;
 }
 
-/**
- * The one list used by My Library and Manage, in the Computers row language:
- * flat rows on the page with a hairline between them, a 32px logo lane, name
- * and description, a status lane, and an action lane. No card around it.
- */
 export function ItemSection({ title, meta, children, testId, variant = "default" }: {
   title: string;
   meta?: ReactNode;
   children: ReactNode;
   testId?: string;
-  /** "rule": a hairline header over a flat list, as the Library reads. */
   variant?: "default" | "rule";
 }) {
   if (variant === "rule") {
@@ -55,19 +48,15 @@ export function ItemSection({ title, meta, children, testId, variant = "default"
 export function ItemPanel({ children, className = "", variant = "divided" }: {
   children: ReactNode;
   className?: string;
-  /** Inset lists use padded, rounded rows instead of edge-to-edge dividers. */
   variant?: "divided" | "inset";
 }) {
   return (
-    // Both variants read as Computers rows now; "inset" is kept for callers. Rows sit flush on the page:
-    // side padding belonged to the card this used to be.
     <div data-variant={variant} className={`flex flex-col border-t border-[var(--den-list-line)] [&>*]:border-b [&>*]:border-[var(--den-list-line)] [&>*]:px-0! ${className}`}>
       {children}
     </div>
   );
 }
 
-/** Placeholder rows the size of ItemRow, for an ItemPanel whose list is loading. */
 export function ItemRowsSkeleton({ label, rows = 3 }: { label: string; rows?: number }) {
   return (
     <div role="status" aria-label={label} data-testid="item-rows-skeleton" className="flex flex-col divide-y divide-[var(--den-list-line)] motion-safe:animate-pulse">
@@ -84,7 +73,6 @@ export function ItemRowsSkeleton({ label, rows = 3 }: { label: string; rows?: nu
   );
 }
 
-/** An ItemSection whose title and rows are still loading. */
 export function ItemSectionSkeleton({ label, rows }: { label: string; rows?: number }) {
   return (
     <div className="flex flex-col gap-2.5">
@@ -111,7 +99,6 @@ export function ItemRow({
   statusOnNarrow?: boolean;
   wideAction?: boolean;
   wrapDescription?: boolean;
-  /** Numeric comparisons stay next to the name instead of using the status lane. */
   comparison?: ReactNode;
   logo?: ReactNode;
   title: ReactNode;
@@ -120,7 +107,6 @@ export function ItemRow({
   action?: ReactNode;
   href?: string;
   testId?: string;
-  /** Compact state lane remains visible in a narrow Library window. */
   compact?: boolean;
 }) {
   const body = (
@@ -159,12 +145,10 @@ export type ItemMenuEntry = {
   href?: string;
   destructive?: boolean;
   disabled?: boolean;
-  /** Ask before running onSelect. */
   confirm?: { title: string; description: string; action: string };
   testId?: string;
 };
 
-/** Remove menu entry that asks first; the same copy everywhere an item can be removed. */
 export function removeEntry(name: string, onRemove: () => Promise<void>): ItemMenuEntry {
   return {
     label: "Remove",
@@ -174,7 +158,6 @@ export function removeEntry(name: string, onRemove: () => Promise<void>): ItemMe
   };
 }
 
-/** Asks before a step that cannot be taken back; stays open with the error if the step fails. */
 export function ConfirmDialog({ confirm, destructive = false, onConfirm, onClose }: {
   confirm: { title: string; description: string; action: string } | null;
   destructive?: boolean;
@@ -185,7 +168,6 @@ export function ConfirmDialog({ confirm, destructive = false, onConfirm, onClose
   const [error, setError] = useState<string | null>(null);
   const cancelRef = useRef<HTMLButtonElement>(null);
   const { reauthDialogOpen } = useOrgDashboard();
-  // Keep the last copy while the dialog closes, so it doesn't blank out mid-exit.
   const [shown, setShown] = useState({ confirm, destructive });
   const changed = confirm && (confirm.title !== shown.confirm?.title
     || confirm.description !== shown.confirm?.description
@@ -212,8 +194,6 @@ export function ConfirmDialog({ confirm, destructive = false, onConfirm, onClose
   }
 
   return (
-    // Step aside while the identity check is open: it renders below this portal
-    // and would be unclickable. The pending action resumes once it resolves.
     <AlertDialog.Root open={Boolean(confirm) && !reauthDialogOpen} onOpenChange={(open) => { if (!open && !busy) close(); }}>
       <AlertDialog.Portal>
         <AlertDialog.Backdrop className="fixed inset-0 z-50 bg-gray-950/45" />
@@ -281,12 +261,10 @@ export function ItemMenu({ label, entries, size = "sm", testId }: { label: strin
   );
 }
 
-/** Label and value rows under Details: flat, a hairline between them, as settings rows are. */
 export function DetailRows({ rows }: { rows: { label: string; value: ReactNode; wrap?: boolean }[] }) {
   return (
     <div className="flex flex-col divide-y divide-[var(--den-list-line)] border-y border-[var(--den-list-line)]">
       {rows.map((row) => (
-        // A long value reads as a paragraph under its label; a short one sits across from it.
         <div key={row.label} className={`flex min-h-10 gap-x-4 gap-y-0.5 py-2 text-[13px] leading-5 ${row.wrap ? "flex-col" : "items-center justify-between"}`}>
           <span className="shrink-0 text-[var(--dls-text-secondary)]">{row.label}</span>
           <span className={row.wrap ? "min-w-0 max-w-[760px] break-words text-[var(--dls-text-primary)]" : "min-w-0 truncate text-right text-[var(--dls-text-primary)]"}>{row.value}</span>
@@ -296,19 +274,12 @@ export function DetailRows({ rows }: { rows: { label: string; value: ReactNode; 
   );
 }
 
-/** Disclosures one under another, sharing the hairline between them. */
 export function DisclosureGroup({ children }: { children: ReactNode }) {
   return <div className="flex flex-col [&>section+section]:border-t-0">{children}</div>;
 }
 
-/**
- * One collapsed part of a page: a row that names what is inside, with a
- * chevron on the right that turns as it opens (DESIGN.md P3, S3). The one
- * disclosure every detail page uses. Several in a row go in a `DisclosureGroup`.
- */
 export function DisclosureSection({ label, state, open, onToggle, children, testId }: {
   label: string;
-  /** What is set, at a glance, beside the chevron. */
   state?: ReactNode;
   open: boolean;
   onToggle: () => void;
@@ -336,7 +307,6 @@ export function FilterInput({ value, onChange, size = "sm", className = "", plac
   size?: "sm" | "md";
   className?: string;
   placeholder?: string;
-  /** Enter runs the one action the current value offers. */
   onEnter?: () => void;
 }) {
   return (

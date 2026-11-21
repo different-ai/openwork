@@ -99,11 +99,6 @@ const openApiDocumentSchema = z.object({
 const app = new Hono<{ Variables: AppVariables }>()
 const strictTransportSecurityHeader = "max-age=31536000; includeSubDomains"
 
-// Deny-by-default, mirroring the route guards: every operation requires a
-// session token or an organization API key unless its describeRoute declares
-// its own `security` (an empty array marks a public route). Declared at
-// document level and copied onto every operation that declares none, so tools
-// that ignore document-level security still see it.
 const defaultOperationSecurity: Array<Record<string, string[]>> = [{ denApiKey: [] }, { bearerAuth: [] }]
 const openApiOperationMethods = ["get", "post", "put", "patch", "delete", "head", "options", "trace"] as const
 
@@ -151,14 +146,6 @@ registerAppErrorHandler(app, (error, c, requestId) => {
   return operationalErrorResponse(error, c, requestId)
 })
 
-// The handoff exchange is called from Cloud instance pages, whose Daytona
-// preview origins rotate on every re-sign and can never be statically
-// allowlisted. Reflecting the origin here is safe because this route is
-// authenticated solely by the one-time, 5-minute grant in the request body
-// and never consults cookies or sessions - a hostile page gains nothing
-// without a valid grant. Registered before the global CORS middleware so it
-// answers the preflight for exactly this path; every other route keeps the
-// strict allowlist below.
 if (!env.corsHandledByEdge) {
   app.use(
     "/v1/auth/desktop-handoff/exchange",
@@ -176,9 +163,6 @@ const corsLogger = appLogger.child({ component: "cors" })
 const WEB_ORIGIN_LOOKUP_FAILURE_LOG_INTERVAL_MS = 60_000
 let lastWebOriginLookupFailureLoggedAt = 0
 
-// Operator CORS_ORIGINS plus the exact origins organizations approved in
-// Org settings. The database list is cached per process for 30 seconds and a
-// lookup failure fails closed rather than failing the request.
 async function resolveStrictCorsOrigin(origin: string) {
   if (!origin) return null
   if (env.corsOrigins.includes(origin)) return origin
@@ -202,8 +186,6 @@ if (!env.corsHandledByEdge) {
     cors({
       origin: resolveStrictCorsOrigin,
       credentials: true,
-      // Browser clients (app-web) send the Automation model-attention capability header on create/update/run;
-      // without it here the preflight fails and the request never reaches Den ("Failed to fetch").
       allowHeaders: ["Content-Type", "Authorization", "X-Api-Key", "X-Request-Id", "X-OpenWork-Legacy-Org-Id", "X-OpenWork-Org-Id", "X-OpenWork-Audit-Correlation", "X-OpenWork-Browser-Upload-Permissions", "X-OpenWork-File-Send-Permissions", AGENT_SANDBOX_ONLY_CAPABILITY_HEADER, AGENT_SANDBOX_MODES_CAPABILITY_HEADER, AUTOMATION_MODEL_ATTENTION_CAPABILITY_HEADER, AUTOMATION_SCHEDULE_KINDS_HEADER],
       allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
       exposeHeaders: ["Content-Length", "Content-Disposition", "X-Audit-Next-Cursor", "X-Audit-Snapshot-Sequence", "X-Audit-Resource-Scope"],
@@ -213,12 +195,7 @@ if (!env.corsHandledByEdge) {
 }
 
 app.use("*", sessionMiddleware)
-// Generic operation audit capture (src/audit/request-capture.ts); every route is
-// declared in src/audit/routes and checked by scripts/check-audit-route-coverage.ts.
-// Registered before preclaimScopeMiddleware so its 403 denials are recorded
-// (platform store) against the endpoint they refused.
 app.use("*", auditRequestMiddleware)
-// Config tokens (API keys of type `config`) only reach /v1/config-blobs/*.
 app.use("*", confineConfigTokens)
 app.use("/v1/*", preclaimScopeMiddleware)
 
@@ -236,8 +213,6 @@ app.get(
   }),
   publicRoute,
   (c) => {
-    // MCP view-domain probes need a direct success response even when this
-    // deployment also has a marketing or web app URL configured.
     return c.json({ ok: true, service: "den-api", version: env.serviceVersion })
   },
 )
@@ -287,8 +262,6 @@ app.get(
       appLogger.error("readiness database check failed", { component: "readiness", error })
       database = "error"
     }
-    // A draining instance still finishes in-flight work but must not look
-    // ready for new traffic.
     if (isDraining()) return c.json({ ok: false, service: "den-api", checks: { database }, draining: true }, 503)
     if (database === "error") return c.json({ ok: false, service: "den-api", checks: { database } }, 503)
     return c.json({ ok: true, service: "den-api", checks: { database } })
@@ -304,8 +277,6 @@ registerDeprecatedMemoryRoutes(app)
 registerDeprecatedSkillHubRoutes(app)
 registerDevRoutes(app)
 registerMeRoutes(app)
-// Interactive sessions are not a scheduler feature: their credentials, polls,
-// inventory and receipts stay available when the Automation runtime is off.
 registerSessionRunnerRoutes(app, { automationService: env.automations.runtimeEnabled ? automationService : undefined })
 registerAutomationRoutes(app, { enabled: env.automations.runtimeEnabled, sessionRunners: false })
 registerRemoteSessionRoutes(app)
@@ -422,10 +393,6 @@ const openApiOptions: Parameters<typeof generateSpecs>[1] = {
     },
     servers: env.apiPublicUrl ? [{ url: env.apiPublicUrl }] : [],
     security: defaultOperationSecurity,
-    // Every tag used by a describeRoute must be registered here; the Spectral
-    // gate (operation-tag-defined) fails otherwise. Protocol adapters (SCIM,
-    // OAuth) are tagged by protocol. Internal is excluded from the published
-    // snapshot (see scripts/generate-openapi-snapshot.ts).
     tags: [
       { name: "System", description: "Service health, readiness, API documentation, and desktop version metadata." },
       { name: "Authentication", description: "Sign-in discovery, administrator bootstrap, OAuth provider connections, and MCP token minting." },

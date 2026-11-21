@@ -33,12 +33,9 @@ function emitOpenworkSettingsChanged() {
   try {
     window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
   } catch {
-    // ignore browser event dispatch failures
   }
 }
 
-/** Matches the boot sequence's definition of a usable local server: running,
- * with a base URL and at least one token the route can authenticate with. */
 export function isReadyLocalOpenworkServerInfo(
   info: OpenworkServerInfo | null | undefined,
 ): info is OpenworkServerInfo {
@@ -62,13 +59,6 @@ export function openworkServerSettingsChanged(
     || previous.hostToken !== next.hostToken;
 }
 
-/**
- * Poll the local server bridge until it reports a ready server. A restart
- * (app update, remote-access toggle, slow cold start) briefly answers with
- * `running: false` or without a base URL/tokens; that window is a readiness
- * gap, not a failure. Bounded: returns the last observed info (ready or not)
- * after `maxAttempts` polls so callers decide how to report exhaustion.
- */
 export async function waitForReadyLocalOpenworkServerInfo(options?: {
   fetchInfo?: () => Promise<OpenworkServerInfo | null>;
   maxAttempts?: number;
@@ -100,15 +90,6 @@ export type DesktopLocalReconnectInput = {
   workspaceType: string | null | undefined;
 };
 
-/**
- * Gate for the session route's local reconnect effect. Reconnect must not
- * start while desktop runtime bootstrap is still in flight — the boot
- * sequence owns starting the server, and probing `openworkServerInfo`
- * mid-bootstrap is what surfaced "did not report a base URL" errors during
- * app updates. It runs only once boot completed (`ready`), definitively
- * failed (`error`), or is idle after the route already became interactive
- * (dev HMR remounts the boot provider without re-running boot).
- */
 export function shouldAttemptDesktopLocalReconnect(input: DesktopLocalReconnectInput): boolean {
   if (!input.desktopRuntime) return false;
   const bootSettled =
@@ -171,9 +152,6 @@ export async function ensureDesktopLocalOpenworkConnection(
       startedEngine = true;
     }
 
-    // The server publishes its base URL and tokens asynchronously after a
-    // (re)start, so gate on observed readiness with bounded retries instead
-    // of failing on the first empty answer.
     const info = await waitForReadyLocalOpenworkServerInfo();
     if (!isReadyLocalOpenworkServerInfo(info) || !info.baseUrl) {
       captureOnboardingEvent("onboarding_engine_failed", { reason: "readiness_timeout" });

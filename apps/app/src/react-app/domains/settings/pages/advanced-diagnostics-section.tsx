@@ -58,7 +58,6 @@ function formatCheckedAt(checkedAt: string): string | null {
   return `checked ${date.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
 }
 
-/** The exact runtime state, for the support engineer reading over someone's shoulder. Closed by default. */
 function TechnicalDetails(props: { health: OpenworkCloudMcpHealth }) {
   const health = props.health;
   const projection = health.tools.providerProjection;
@@ -128,10 +127,8 @@ export interface AdvancedDiagnosticsSectionProps {
   signedIn: boolean;
   orgSelected: boolean;
   cloudMcpHealth: OpenworkCloudMcpHealth | null;
-  /** False until the workspace has a server connection the check can ask. */
   canCheck: boolean;
   onRefresh: () => Promise<OpenworkCloudMcpHealth | null>;
-  /** Copies the full sanitized report and tells the person it worked. */
   onCopyReport: () => Promise<void>;
 }
 
@@ -162,8 +159,6 @@ export function AdvancedDiagnosticsSection(props: AdvancedDiagnosticsSectionProp
     }
   };
 
-  // "Run diagnostics" lands here: show a result instead of asking for another click.
-  // The page can open before the workspace connection exists, so wait for it.
   useEffect(() => {
     if (autoChecked.current || props.cloudMcpHealth || !props.canCheck || !props.signedIn || !props.orgSelected) return;
     autoChecked.current = true;

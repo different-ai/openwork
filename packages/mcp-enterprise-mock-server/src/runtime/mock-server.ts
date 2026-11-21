@@ -200,7 +200,6 @@ class EnterpriseMcpMockServerRuntime implements EnterpriseMcpMockServer {
         try {
           await this.stopListener()
         } catch {
-          // The rollback attempt below is the authoritative recovery result.
         }
         this.state = previousState
         previousState.setRuntime("idle", null)
@@ -234,9 +233,6 @@ class EnterpriseMcpMockServerRuntime implements EnterpriseMcpMockServer {
     if (this.server) return this.snapshot()
     this.seedManualClient()
     const server = createServer((request, response) => {
-      // The development server can be restarted in place when a fault scenario
-      // changes. Make that boundary explicit to Node and Bun clients instead
-      // of leaving a reusable socket pointed at a retired listener generation.
       response.setHeader("connection", "close")
       this.activeRequestCount += 1
       let finalized = false
@@ -402,9 +398,6 @@ class EnterpriseMcpMockServerRuntime implements EnterpriseMcpMockServer {
       for (const socket of this.sockets) socket.destroy()
     }
     await closing
-    // Let in-process HTTP clients observe the listener's FIN before a scenario
-    // restart reuses the same fixed OAuth resource port. This keeps normal
-    // keep-alive behavior while preventing one stale pooled request.
     await new Promise<void>((resolve) => setImmediate(resolve))
     this.sockets.clear()
     this.activeRequestCount = 0

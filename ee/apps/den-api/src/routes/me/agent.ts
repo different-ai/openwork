@@ -58,18 +58,7 @@ import type { AgentTemplateVersion } from "../../workbot-proactive/template.js"
 import { workbotOrigin } from "../../workbot/config.js"
 import { resolveMemberAgentPolicy, resolveMemberWorkbotSettings, type AgentPolicy, type MemberTeamAgent } from "../../workbot/team-settings.js"
 
-/** How long the page waits for a connection's tools before saying nothing about them (the tool cache answers most). */
 const PAGE_TOOLS_DEADLINE_MS = 4_000
-
-/**
- * A member's own agent, as settings: what it will tell them about, and their controls in plain words ("stop telling
- * me about calendar changes", "snooze until tomorrow", "turn it off"). Exposed through Connect, so the member can
- * say it to Workbot; a background agent's read-scoped token can read it but never change it.
- *
- * It also answers "what did it do and why was it quiet?" (the last check,
- * today's checks, the next one) and takes the member's own words, narrower limits and Undo. A change made through
- * Connect is saved as from chat; one from Den's Library page as from the page.
- */
 
 const memberAgentDocumentSchema = memberAgentViewSchema.meta({ ref: "MemberAgent" })
 const memberAgentSavedDocumentSchema = memberAgentSavedSchema.meta({ ref: "MemberAgentSaved" })
@@ -89,7 +78,6 @@ function newChangeId() {
   return `chg_${randomBytes(9).toString("base64url")}`
 }
 
-/** When the agent next looks on its schedule: never inside a snooze, never outside the member's hours. */
 function nextScheduledCheck(row: NonNullable<ViewRow>, settings: WorkbotProactiveSettings, now: number): string {
   const limits = memberLimits(settings, row.overrides)
   const timeZone = rowTimeZone(row)
@@ -98,10 +86,6 @@ function nextScheduledCheck(row: NonNullable<ViewRow>, settings: WorkbotProactiv
   return new Date(nextWorkingStart(memberPolicy(limits), Math.max(at, now), timeZone)).toISOString()
 }
 
-/**
- * The brief settings of the member's policy (their team's own, else the organization's) when `workbotAgentBrief` is
- * on for this member (null keeps today's agent), and the template they are carried over from.
- */
 async function agentSetup(member: MemberContext, policy: AgentPolicy): Promise<{ template: AgentTemplateVersion; brief: AgentBriefPolicy | null }> {
   const briefOn = await agentBriefAllowed(member.organizationId, member.userId)
   return { template: policy.template, brief: briefOn ? resolveAgentBrief(policy.settings, policy.template) : null }
@@ -114,9 +98,7 @@ async function memberAgentView(input: {
   settings: WorkbotProactiveSettings
   row: ViewRow
   template: AgentTemplateVersion
-  /** `workbotAgentBrief`: the organization's brief settings; null keeps today's view. */
   brief: AgentBriefPolicy | null
-  /** Den's operations, for counting what its own providers read outside the calendar. */
   catalog: () => Promise<readonly McpToolOperation[]>
 }): Promise<MemberAgentView> {
   const { settings, row, template, brief } = input
@@ -130,7 +112,6 @@ async function memberAgentView(input: {
     available: settings.enabled,
     on,
     snoozedUntil: row?.snoozedUntil && row.snoozedUntil.getTime() > now ? row.snoozedUntil.toISOString() : null,
-    // With the brief, what it tells them about is text (`brief`), not four switches.
     responsibilities: brief ? [] : AGENT_RESPONSIBILITIES.map((id) => ({ id, ...AGENT_RESPONSIBILITY_COPY[id], enabled: template.responsibilities[id], muted: muted.has(id) })),
     destination,
     workingHours: { workingDays: settings.workingDays, startHour: settings.startHour, endHour: settings.endHour, dailyCap: settings.dailyCap },
@@ -146,7 +127,6 @@ async function memberAgentView(input: {
   ])
   const checks = today.flatMap((entry) => memberAgentCheck(entry) ?? [])
   const sources = await memberSources({ organizationId: input.organizationId, memberId: input.memberId, settings, row, mode: brief ? "any" : "reviewed" })
-  // With the brief, any connector can be a source: say how many of its tools the agent may call (0 still shows).
   const readTools = brief
     ? await sourceReadToolCounts({
       sources,
@@ -157,7 +137,6 @@ async function memberAgentView(input: {
     : null
   const limits = memberLimits(settings, row?.overrides, brief)
   const state = parseAgentState(row?.state)
-  // An agent that hasn't checked yet checks as soon as the member's hours open.
   const nextChecks = brief && settings.enabled && on
     ? memberNextChecks({ rhythm: memberRhythm(limits, brief), lastCheckAt: state.lastPassAt, requests: state.requests, now, timeZone, snoozedUntil: row?.snoozedUntil?.getTime() ?? null })
     : null
@@ -193,10 +172,6 @@ function memberConnectionView(connection: MemberConnection) {
   return { id: connection.id, name: connection.name, url: connection.url, state: connection.state }
 }
 
-/**
- * The member's sources as their agent sees them: the admin's policy, their choices, their connections, and how many
- * members connected each (for a core source's automatic default).
- */
 async function memberSources(input: { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member">; settings: WorkbotProactiveSettings; row: ViewRow; mode: SourceMode }): Promise<ResolvedSource[]> {
   const [connections, connectedMembers] = await Promise.all([
     listMemberConnections({ organizationId: input.organizationId, memberId: input.memberId }),
@@ -212,23 +187,19 @@ async function memberSources(input: { organizationId: DenTypeId<"organization">;
   })
 }
 
-/** The answer when agents are off for this member. */
 function disabled(feature: string): { error: "feature_disabled"; feature: string } {
   return { error: "feature_disabled", feature }
 }
 
 type MemberContext = { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member">; userId: DenTypeId<"user"> }
-/** The member with what their own teams say about their agent, so their policy is resolved without reading teams again. */
 type AgentMember = MemberContext & { workbot: MemberTeamAgent }
 
 export function registerMeAgentRoutes<T extends { Variables: AuthContextVariables & Partial<OrganizationContextVariables> }>(app: Hono<T>) {
-  /** The signed-in member, or why the route is off for them. */
   const memberOf = async (context: OrganizationContextVariables["organizationContext"] | undefined): Promise<AgentMember | { error: "workbot" | "workbotProactive" }> => {
     if (!context || workbotOrigin() === null) return { error: "workbot" }
     const userId = context.currentMember.userId
     if (!userId) return { error: "workbotProactive" }
     const member = { organizationId: context.organization.id, memberId: context.currentMember.id, userId }
-    // Workbot turned off for this member (workbotTeamSettings) is Workbot not being there for them: no agent either.
     const workbot = await resolveMemberWorkbotSettings({ ...member, organization: context.organization })
     return workbot.enabled ? { ...member, workbot: { agent: workbot.agent, agentFrom: workbot.agentFrom } } : { error: "workbot" }
   }
@@ -251,7 +222,6 @@ export function registerMeAgentRoutes<T extends { Variables: AuthContextVariable
       const member = await memberOf(c.get("organizationContext"))
       if ("error" in member) return c.json(disabled(member.error), 404)
       c.header("Cache-Control", "no-store")
-      // Only ever the caller's own teams' policy, or the organization's.
       const policy = await resolveMemberAgentPolicy(member)
       return c.json(await memberAgentView({ ...member, settings: policy.settings, row: await readAgentInstance(member.memberId), ...(await agentSetup(member, policy)), catalog: () => getCatalog(app as unknown as Hono, c.env) }))
     },
@@ -311,10 +281,8 @@ export function registerMeAgentRoutes<T extends { Variables: AuthContextVariable
       const setup = await agentSetup(member, policy)
       const now = Date.now()
 
-      // On, snooze stay as before; everything else (mutes too) is logged with where it came from, so it can be undone.
       const plain: MemberAgentInput = { ...(input.on !== undefined ? { on: input.on } : {}), ...(input.snooze !== undefined ? { snooze: input.snooze } : {}) }
       const source = cameThroughConnect(c.req.raw.headers) ? "chat" : "page"
-      // Sources are looked up before the save (they read connections, outside the row's lock).
       const sources = input.sources ? await memberSources({ ...member, settings, row: await readAgentInstance(member.memberId), mode: setup.brief ? "any" : "reviewed" }) : undefined
       const outcome = await changeMemberAgent<MemberAgentChangeResult>(member.organizationId, member.memberId, (row) => {
         const stored = parseStoredPreferences(row?.preferences)

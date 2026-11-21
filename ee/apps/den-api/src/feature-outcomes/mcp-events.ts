@@ -5,7 +5,6 @@ import { RECEIPT_RETENTION_MS } from "../mcp-events/repository.js"
 import type { FeatureOutcomeReader, FeatureOutcomeStatus } from "./outcomes.js"
 
 const statusOf = (status: string): FeatureOutcomeStatus => status === "delivered" ? "succeeded" : status === "skipped" ? "skipped" : status === "failed" ? "failed" : "running"
-/** Delivered means the existing runner accepted the event turn, not that the model completed its instruction. */
 export const readMcpEventOutcomes: FeatureOutcomeReader = async (range) => {
   const retained = new Date(range.to.getTime() - RECEIPT_RETENTION_MS)
   const from = retained > range.from ? retained : range.from

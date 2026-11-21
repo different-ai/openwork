@@ -88,7 +88,6 @@ export function AuthScreen({ agentSignIn = false }: { agentSignIn?: boolean }) {
     <SetupFrame
       step="account"
       panelVisual={<OnboardingTexture />}
-      // The sign-up panel carries its own heading (P2).
       title=""
       description="One account for your desktop, your tools, and your team."
     >
@@ -112,11 +111,6 @@ export function AuthScreen({ agentSignIn = false }: { agentSignIn?: boolean }) {
   );
 }
 
-/**
- * Sign-up while an agent waits (A7): the story names the app that asked, and
- * the panel keeps "Signing in for" above the sign-in so the person never
- * loses track of why they are here.
- */
 function AgentSignInScreen({ status }: { status: "checking" | "redirecting" | "error" | null }) {
   const [oauthQuery, setOauthQuery] = useState("");
   useEffect(() => {

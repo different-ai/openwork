@@ -50,9 +50,6 @@ const automationScheduler = startAutomationSchedulerLoop({ enabled: env.automati
 
 appLogger.info("external mcp implementation selected", { component: "server", runtime: externalMcpClientRuntimeName })
 
-// Optional bind host: eval/testkit servers run in dev mode (unauthenticated
-// dev outbox) and must not be reachable from the LAN; production/default
-// behavior (all interfaces) is unchanged when DEN_BIND_HOST is unset.
 const bindHost = process.env.DEN_BIND_HOST?.trim()
 const server = serveDenHttp({ fetch: trackEventStreams(app.fetch), port: env.port, ...(bindHost ? { hostname: bindHost } : {}) }, (info) => {
   markServerListening()

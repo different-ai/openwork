@@ -20,7 +20,6 @@ type Database = typeof db | Parameters<Parameters<typeof db["transaction"]>[0]>[
 
 const EVERYONE_SCOPE = "everyone"
 
-/** With the rollout off, preserve stored requirements and allow their removal. */
 export function isSandboxRequirement(key: AgentPermissionKey, setting: AgentPermissionSettings[AgentPermissionKey]): boolean {
   return (key === "hostExecution" || key === "sandboxOptOut") && setting?.decision === "deny"
 }
@@ -31,7 +30,6 @@ export type AgentPermissionPolicyRecord = {
   updatedAt: Date | null
 }
 
-/** One scope's stored policy, as read inside a save. */
 export type AgentPermissionPolicyState = {
   policyId: PolicyId | null
   settings: AgentPermissionSettings
@@ -50,7 +48,6 @@ export type AgentPermissionTeamPolicyRecord = AgentPermissionPolicyRecord & {
   memberCount: number
 }
 
-/** JSON columns arrive as strings on engines like MariaDB (JSON = LONGTEXT alias). */
 function jsonList(value: unknown): unknown {
   if (typeof value !== "string") return value
   try {
@@ -83,7 +80,6 @@ async function readSettings(database: Database, policyIds: PolicyId[]): Promise<
   return settings
 }
 
-/** Members per team, counted as the organization's team lists count them. */
 async function teamMemberCounts(teamIds: TeamId[]): Promise<Map<TeamId, number>> {
   if (teamIds.length === 0) return new Map()
   const rows = await db
@@ -94,7 +90,6 @@ async function teamMemberCounts(teamIds: TeamId[]): Promise<Map<TeamId, number>>
   return new Map(rows.map((row) => [row.teamId, Number(row.members)]))
 }
 
-/** Everyone's settings and every team's, with each team's name and size, teams by name. */
 export async function listAgentPermissionPolicies(organizationId: OrganizationId): Promise<{
   everyone: AgentPermissionPolicyRecord
   teams: AgentPermissionTeamPolicyRecord[]
@@ -142,19 +137,12 @@ export async function findOrganizationTeam(organizationId: OrganizationId, teamI
   return { ...team, memberCount: (await teamMemberCounts([team.id])).get(team.id) ?? 0 }
 }
 
-/**
- * Replaces one policy's settings: everyone's (teamId null) or one team's. A
- * permission left out stops applying: for a team it inherits everyone's
- * again, and settings with nothing left remove the policy.
- */
 export async function saveAgentPermissionPolicy(input: {
   organizationId: OrganizationId
   teamId: TeamId | null
   settings: AgentPermissionSettings
-  /** Stored settings for these keys survive replacement; incoming settings for them are ignored. */
   preserveKeys?: readonly AgentPermissionKey[]
   updatedByOrgMemberId: MemberId
-  /** Runs inside the save's transaction, after the write, with what was stored before and after (audit). */
   onChange?: AgentPermissionPolicyChange
 }): Promise<{ settings: AgentPermissionSettings; updatedAt: Date | null }> {
   const scopeKey = input.teamId ?? EVERYONE_SCOPE
@@ -216,7 +204,6 @@ export async function saveAgentPermissionPolicy(input: {
   })
 }
 
-/** Removes a team's policy inside the transaction that deletes the team. */
 export async function deleteTeamAgentPermissionPolicy(database: Database, teamId: TeamId): Promise<void> {
   const policies = await database
     .select({ id: AgentPermissionPolicyTable.id })
@@ -228,13 +215,11 @@ export async function deleteTeamAgentPermissionPolicy(database: Database, teamId
   await database.delete(AgentPermissionPolicyTable).where(inArray(AgentPermissionPolicyTable.id, ids))
 }
 
-/** Removes every agent permission of an organization inside the transaction that deletes it. */
 export async function deleteOrganizationAgentPermissions(database: Database, organizationId: OrganizationId): Promise<void> {
   await database.delete(AgentPermissionSettingTable).where(eq(AgentPermissionSettingTable.organizationId, organizationId))
   await database.delete(AgentPermissionPolicyTable).where(eq(AgentPermissionPolicyTable.organizationId, organizationId))
 }
 
-/** The rules a member's apps enforce: everyone's settings, then the member's teams', by team name. */
 export async function readAgentPermissionRulesForMember(input: {
   organizationId: OrganizationId
   orgMemberId: MemberId
@@ -258,10 +243,6 @@ export async function readAgentPermissionRulesForMember(input: {
   if (policies.length === 0) return []
   const settings = await readSettings(db, policies.map((policy) => policy.id))
   const everyone = policies.find((policy) => policy.scopeKey === EVERYONE_SCOPE)
-  // Remove before resolving dependencies: a disabled computer policy must not
-  // derive a scripting deny. Stored settings remain available for re-enabling.
-  // Every team counts, with or without its own record: a team without one has
-  // everyone's settings, so another team's record cannot undo them.
   return resolveAgentPermissionRules({
     everyone: everyone ? { source: AGENT_PERMISSION_EVERYONE, settings: settings.get(everyone.id) ?? {} } : null,
     teams: teams.map((team) => {

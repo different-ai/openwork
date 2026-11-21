@@ -3,17 +3,11 @@ import { sha256Hex } from "@openwork/free-auto/node"
 import type { AutoConfig } from "./config.js"
 import { FreeRequestError } from "./errors.js"
 
-// OpenRouter-only routing fields. Free Auto calls OpenAI directly, which does not know them, so they are dropped.
 const ROUTING_FIELDS = ["provider", "models", "route", "transforms", "usage", "plugins", "reasoning"]
 const RESPONSES_ROUTING_FIELDS = ROUTING_FIELDS.filter((field) => field !== "reasoning")
-// The Gateway names the end user to OpenAI from the authenticated principal; a client cannot name itself.
 const IDENTITY_FIELDS = ["user", "safety_identifier"]
 function record(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value) }
 
-/**
- * Forward the native SDK's stateless input without translating its tool catalog or continuation items.
- * Older clients keep Chat Completions. Both protocols use the dedicated model and report usage for allowance settlement.
- */
 export type FreeProtocol = "chat" | "responses"
 
 export function prepareFreeRequest(value: unknown, config: Pick<AutoConfig, "upstreamModel">, safetyIdentifier: string, protocol: FreeProtocol = "chat") {
@@ -24,8 +18,6 @@ export function prepareFreeRequest(value: unknown, config: Pick<AutoConfig, "ups
     if (!(typeof value.input === "string" && value.input.length > 0 || Array.isArray(value.input) && value.input.length > 0)) {
       throw new FreeRequestError(400, "unsupported_free_inference_input", "Auto needs a Responses request with input. Nothing was sent.")
     }
-    // Stateless native SDK input, including reasoning items and function calls, stays in its original wire format.
-    // Hosted tools, prior stored responses and background jobs bypass the per-request allowance meter.
     if (value.background === true || value.previous_response_id != null || value.conversation != null
       || value.tools !== undefined && (!Array.isArray(value.tools) || value.tools.some((tool) => !record(tool) || tool.type !== "function"))) {
       throw new FreeRequestError(400, "unsupported_free_inference_input", "Auto supports stateless function calling. Nothing was sent.")

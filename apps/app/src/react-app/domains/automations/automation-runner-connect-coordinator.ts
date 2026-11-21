@@ -1,13 +1,8 @@
 type Schedule = (callback: () => void, delayMs: number) => () => void
 
 type AutomationRunnerConnectCoordinatorOptions = {
-  /**
-   * Registers the runner. `"disconnected"`: Den refuses this computer until
-   * someone signs in on it again, so the next attempt waits `disconnectedRetryMs`.
-   */
   connect: (isCurrent: () => boolean) => Promise<void | "disconnected">
   refreshMs: number
-  /** How long to wait between attempts while this computer is disconnected. */
   disconnectedRetryMs: number
   schedule?: Schedule
 }
@@ -54,7 +49,6 @@ export function createAutomationRunnerConnectCoordinator(
     }
     const task = drain()
     running = task
-    /** `nextMs` is when to connect again after an attempt that settled; null after one that failed. */
     const settle = (nextMs: number | null) => {
       if (running !== task) return
       running = undefined
@@ -91,11 +85,6 @@ export function createAutomationRunnerConnectCoordinator(
         void request(false).catch(() => undefined)
       }, delayMs)
     },
-    /**
-     * Den told the running runner that this computer is disconnected. A new
-     * credential would be refused too: wait the long interval instead of
-     * minting one now. A new sign-in calls `request()`, which tries at once.
-     */
     computerDisconnected() {
       if (disposed) return
       clearRefresh()

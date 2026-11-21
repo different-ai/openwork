@@ -12,12 +12,6 @@ import type {
 } from "../../../../app/lib/den";
 import type { CloudImportedProvider } from "../../../../app/cloud/import-state";
 
-/**
- * Pure helpers that build and reconcile the cloud-managed ("lpr_*") provider
- * block inside a workspace `opencode.jsonc`. Extracted from the provider-auth
- * store so the diff/update behaviour can be unit tested directly (#2346).
- */
-
 const getStringList = (value: unknown): string[] =>
   Array.isArray(value)
     ? value.filter(
@@ -43,13 +37,6 @@ const removeCloudProviderComment = (raw: string, providerId: string) =>
 
 export const getCloudProviderEnv = readProviderEnvNames;
 
-/**
- * Split a connect payload's credential into the opencode auth.json entry and
- * the env vars to upsert. Multi-env providers (`apiKeys`) set every value as
- * an env var, then choose the auth entry by credential-shaped env name rather
- * than by position: Azure declares its resource name before its API key.
- * Legacy single-credential payloads (`apiKey`) keep today's auth-only behaviour.
- */
 export const resolveCloudProviderCredentials = (
   provider: Pick<
     DenOrgLlmProviderConnection,
@@ -81,38 +68,18 @@ export const getCloudManagedProviderId = (
   provider: Pick<DenOrgLlmProvider, "id" | "providerId" | "source">,
 ) => (provider.source === "openwork" ? "openwork" : provider.id.trim());
 
-/**
- * A provider key in `opencode.jsonc` that is owned by the cloud-import system:
- * `lpr_*` keys (org-managed providers), `ipr_*` keys (providers routed through
- * the OpenWork inference gateway), the `openwork` hosted provider and the
- * organization's Smart Routers (`openwork-auto`).
- * These keys are never hand-authored, so re-importing over an existing block
- * with one of these ids is a safe reconcile (recovers a lost import baseline)
- * rather than a clobber of a user's manual provider (#2346).
- */
 export const isCloudManagedProviderKey = (providerId: string) =>
   /^(lpr|ipr)_/i.test(providerId) || providerId.trim() === "openwork" || providerId.trim() === AUTO_ROUTER_PROVIDER_ID;
 
 export const OPENWORK_GATEWAY_PROVIDER_SOURCE = "openwork_gateway";
-/** Badge copy for providers routed through the OpenWork inference gateway. */
 export const OPENWORK_GATEWAY_BADGE_LABEL = "via OpenWork Gateway";
 
-/**
- * Runtime provider ids whose sync status reports the OpenWork inference
- * gateway as source — the UI badges these "via OpenWork Gateway".
- */
-/**
- * A gateway provider the server sync skipped because this member has not yet
- * authorized their own account (`member_auth_required`). Rendered as a
- * "Connect" row in Settings > AI providers and the model picker.
- */
 export type GatewayConnectProvider = {
   cloudProviderId: string;
   credentialSetId?: string;
   models?: GatewayUsableModel[];
   providerId: string;
   name: string;
-  /** Legacy metadata only; never opened or sent to an authenticated endpoint. */
   authUrl: string | null;
 };
 
@@ -129,10 +96,8 @@ export function isGatewaySetConnected(provider: GatewayConnectProvider, imported
 
 export const GATEWAY_MEMBER_AUTH_REQUIRED_REASON = "member_auth_required";
 
-/** Copy shown under a gateway provider that still needs the member's sign-in. */
 export const gatewayConnectCopy = (name: string) => `Sign in to ${name} to use it`;
 
-/** Skipped sync entries that need the member's own sign-in, in server order. */
 export const resolveGatewayConnectProviders = (
   skippedProviders:
     | Record<string, { cloudProviderId: string; credentialSetId?: string; models?: GatewayUsableModel[]; providerId: string; name: string; reason: string; authUrl?: string | null }>
@@ -150,7 +115,6 @@ export const resolveGatewayConnectProviders = (
       authUrl: provider.authUrl ?? null,
     }));
 
-/** The fields of a Den Gateway provider the live-sync helpers below read. */
 export type LiveGatewayProvider = {
   id: string;
   providerId: string;
@@ -161,10 +125,6 @@ export type LiveGatewayProvider = {
   authorizationRequests: { credentialSetId: string; name: string; authUrl: string; models?: GatewayUsableModel[] }[];
 };
 
-/**
- * Sign-in rows for live provider sync, built from Den's Gateway list the same
- * way the server sync derives its `member_auth_required` skips.
- */
 export const resolveLiveGatewayConnectProviders = (providers: readonly LiveGatewayProvider[]): GatewayConnectProvider[] =>
   providers.flatMap((provider) => {
     const requests = provider.authorizationRequests.map((request) => ({
@@ -179,10 +139,6 @@ export const resolveLiveGatewayConnectProviders = (providers: readonly LiveGatew
     return [{ cloudProviderId: provider.id, providerId: provider.id, name: provider.name, authUrl: null }];
   });
 
-/**
- * Ready Gateway providers in the shape Settings lists synced providers, for
- * live provider sync where the engine (not the server sync) delivers them.
- */
 export const resolveLiveGatewayImportedProviders = (providers: readonly LiveGatewayProvider[]): Record<string, CloudImportedProvider> =>
   Object.fromEntries(providers.filter((provider) => provider.models.length > 0).map((provider) => [provider.id, {
     cloudProviderId: provider.id,
@@ -195,7 +151,6 @@ export const resolveLiveGatewayImportedProviders = (providers: readonly LiveGate
     importedAt: null,
   } satisfies CloudImportedProvider]));
 
-/** Whether Den no longer asks this member to sign in to the row's provider or credential set. */
 export function isLiveGatewaySetConnected(provider: GatewayConnectProvider, providers: readonly LiveGatewayProvider[]) {
   const live = providers.find((entry) => entry.id === provider.cloudProviderId);
   if (!live) return false;
@@ -262,7 +217,6 @@ export async function connectGatewayProvider(input: {
   signal: AbortSignal;
   openUrl: (url: string) => void | Promise<void>;
   resync: () => Promise<unknown>;
-  /** Whether the provider is now present in the materialized provider map. */
   isConnected: () => boolean;
   wait?: (ms: number) => Promise<void>;
   pollIntervalMs?: number;
@@ -310,7 +264,6 @@ export const resolveGatewayProviderIds = (
   );
 
 
-/** OpenCode provider id → the organization's Gateway provider id, for per-provider usage limits. */
 export const resolveGatewayCloudProviderIds = (
   importedCloudProviders: Record<string, Pick<CloudImportedProvider, "providerId" | "source" | "cloudProviderId">> | undefined,
 ): Map<string, string> =>
@@ -342,8 +295,6 @@ export const isCloudProviderOutOfSync = (
   (importedProvider.updatedAt ?? null) !== (provider.updatedAt ?? null) ||
   !sameStringList(
     importedProvider.modelIds,
-    // Normalize both sides: raw Den ids can include whitespace/empty values,
-    // which otherwise made providers permanently out-of-sync.
     getProviderModelIds(provider),
   );
 
@@ -351,7 +302,6 @@ export const buildCloudProviderConfig = (
   provider: DenOrgLlmProviderConnection,
 ): ProviderConfig => {
   const next: ProviderConfig = buildManagedProviderConfig(provider);
-  // Keep the renderer adapter's existing treatment of optional values.
   for (const key of ["npm", "api"] as const) {
     const value = provider.providerConfig[key];
     if (typeof value === "string" && value.trim()) next[key] = value;
@@ -366,12 +316,6 @@ export const buildCloudProviderConfig = (
   return next;
 };
 
-/**
- * Build the per-key runtime provider patch for a cloud import/reconcile.
- * Sent to `PATCH /workspace/:id/config` where record values upsert and
- * explicit `null` deletes (`mergeRuntimeProviderUpdate`) — no client-side
- * read-modify-write of the user's `opencode.jsonc` at all.
- */
 export const buildRuntimeProviderPatch = (
   provider: DenOrgLlmProviderConnection,
   localProviderId: string,

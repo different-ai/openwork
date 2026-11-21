@@ -20,26 +20,14 @@ import { ProvidersExample } from "./examples/ai-gateway/providers-example";
 import { SmartRouterExample } from "./examples/ai-gateway/smart-router-example";
 import { UsersTeamsExample } from "./examples/ai-gateway/users-teams-example";
 
-/**
- * Facts the AI Gateway pages report from data they already load. A missing
- * fact means "not loaded yet": a section never takes over the page on a guess.
- */
 export type AiGatewayFacts = {
-  /** Gateway providers (`GET /v1/inference-providers?scope=manageable`). */
   providers?: number;
-  /** OpenWork Models turned on (`GET /v1/inference`). */
   openworkModels?: boolean;
-  /** Who added the first provider, when it was someone else (only returned to provider managers). */
   setUpBy?: string | null;
-  /** Smart Routers (`GET /v1/org/auto-routers`); only reported where the feature is on. */
   smartRouters?: number;
-  /** Spend limit policies, not archived (`GET /v1/gateway/usage-limit-policies`). */
   policies?: number;
-  /** Provider access grants to anyone (everyone, a team or a person). */
   accessGrants?: number;
-  /** Members may create AI Gateway API keys (`GET /v1/org/ai-gateway/api-keys`); only where the feature is on. */
   memberApiKeys?: boolean;
-  /** Active member AI Gateway API keys in the organization. */
   apiKeys?: number;
 };
 
@@ -87,7 +75,6 @@ export const aiGatewayIntros = [
       { when: (ctx) => ctx.can("canManageGatewayProviders"), label: "Add your first AI provider", href: getNewAiGatewayProviderRoute() },
       { when: () => true, label: "Add your first AI provider", href: getNewAiGatewayProviderRoute(), locked: { reason: MANAGE_PROVIDERS_LOCK } },
     ],
-    // Full screen only once both facts are known and neither is set up.
     setupState: (ctx) => {
       if (ctx.facts.providers === undefined || ctx.facts.openworkModels === undefined) return "done";
       return gatewaySetUp(ctx) ? "done" : "none";
@@ -113,7 +100,6 @@ export const aiGatewayIntros = [
       { when: (ctx) => ctx.can("canManageGatewayProviders"), label: "Add an AI provider", href: getNewAiGatewayProviderRoute() },
       { when: () => true, label: "Add an AI provider", href: getNewAiGatewayProviderRoute(), locked: { reason: MANAGE_PROVIDERS_LOCK } },
     ],
-    // Usage comes from your own providers, so the overview has nothing to show without one.
     setupState: (ctx) => ((ctx.facts.providers ?? 0) > 0 ? "done" : "none"),
   }),
 
@@ -144,7 +130,6 @@ export const aiGatewayIntros = [
     key: "ai-gateway.smart-routers",
     parent: "ai-gateway",
     version: 1,
-    // Smart Routers live on AI Providers; old `?tab=auto-router` links still land there.
     match: { path: PATH, tab: "auto-router" },
     icon: Route,
     title: "Smart Routers",
@@ -164,7 +149,6 @@ export const aiGatewayIntros = [
       { when: (ctx) => ctx.can("canManageGatewayProviders"), label: "Set up a Smart Router", href: getNewAiGatewaySmartRouterRoute() },
       { when: () => true, label: "Set up a Smart Router", href: getNewAiGatewaySmartRouterRoute(), locked: { reason: MANAGE_PROVIDERS_LOCK } },
     ],
-    // Banner only: providers exist but no router yet. Unknown (or feature off) shows nothing.
     setupState: (ctx) => {
       if ((ctx.facts.providers ?? 0) === 0 || ctx.facts.smartRouters === undefined) return "done";
       return ctx.facts.smartRouters === 0 ? "partial" : "done";
@@ -218,7 +202,6 @@ export const aiGatewayIntros = [
       { when: (ctx) => ctx.can("canManageGatewayProviders"), label: "Choose who can use your providers", href: getAiGatewayProvidersRoute() },
       { when: () => true, label: "Choose who can use your providers", href: getAiGatewayProvidersRoute(), locked: { reason: MANAGE_PROVIDERS_LOCK } },
     ],
-    // OpenWork Models reach everyone, so only an org on its own providers alone can have nobody with access.
     setupState: (ctx) => {
       if (ctx.facts.accessGrants === undefined) return "none";
       if (ctx.facts.openworkModels === undefined) return "done";

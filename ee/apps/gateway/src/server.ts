@@ -18,7 +18,6 @@ installGracefulShutdown(server, {
   drainTimeoutMs: env.shutdownDrainMs,
   afterDrainTimeoutMs: 4_000,
   async afterDrain() {
-    // Settle usage for streams that just finished so billing is not lost.
     await waitForQueueIdle(() => gatewayUsageWrites.state())
     await closeUsageWriteDatabase()
     await flush(2_000)

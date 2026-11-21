@@ -46,10 +46,6 @@ export type ClaudeImportViewProps = {
   onOpenSession: (sessionId: string) => void;
 };
 
-/**
- * Settings → Import: brings Claude Code sessions saved for this folder and
- * chats from a Claude data export into the workspace as regular chats.
- */
 export function ClaudeImportView(props: ClaudeImportViewProps) {
   return (
     <LayoutStack>
@@ -62,7 +58,6 @@ export function ClaudeImportView(props: ClaudeImportViewProps) {
   );
 }
 
-/** Section title with Claude's own mark, since every row in it came from Claude. */
 function SectionTitle(props: { children: string }) {
   return (
     <LayoutSectionItemTitle className="flex items-center gap-2">
@@ -87,7 +82,6 @@ function ClaudeCodeSection(props: ClaudeImportViewProps) {
       return props.client.listClaudeCodeSessions(props.workspaceId);
     },
   });
-  // Sessions not imported yet start ticked: the person came here to bring them over.
   const [excluded, setExcluded] = useState<Set<string>>(new Set());
   const [results, setResults] = useState<Map<string, ClaudeImportResult>>(new Map());
   const selected = useMemo(

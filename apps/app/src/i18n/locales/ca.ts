@@ -1,8 +1,3 @@
-/**
- * Catalan translations (Català)
- * Professional terms (Skills, Plugins, Commands, Sessions, OpenCode, OpenPackage, OpenWork) are NOT translated
- */
-
 export default {
   "artifact.office_empty": "Aquest fitxer no conté text llegible. Obre’l en una altra aplicació per veure l’original.",
   "artifact.office_empty_slide": "Aquesta diapositiva no conté text llegible.",

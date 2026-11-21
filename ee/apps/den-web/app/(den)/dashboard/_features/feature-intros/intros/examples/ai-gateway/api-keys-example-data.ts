@@ -1,5 +1,3 @@
-/** Sample data only: no API calls (DESIGN.md I7). */
-
 export const apiKeysExampleRows: ReadonlyArray<{
   name: string;
   owner: string;

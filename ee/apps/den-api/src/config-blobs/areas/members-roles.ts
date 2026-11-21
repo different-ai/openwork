@@ -1,19 +1,3 @@
-/**
- * Config-blob area `members.roles`: permission sets (roles) and which teams
- * have each custom role.
- *
- * - Built-in sets (Member, Admin, Super admin) are items keyed by their
- *   `default_key`; they always exist, so they are only ever updated, never
- *   created, renamed or deleted.
- * - Spec: the keys the set allows now (`permission_set_permission` current
- *   state only, never its history) and, for custom roles, team references.
- * - Apply goes through the permission routes' own functions
- *   (routes/org/permissions.ts *Action) with an in-process route context, so
- *   "you can only turn on permissions you hold", the Admin / Super admin set
- *   rules and the audit events are exactly the dashboard's.
- * - `organization_role` (legacy custom role names) has no live writer and no
- *   rows on current organizations; it is owned here for the coverage check only.
- */
 import { allowedKeys, readPermissionSetStates } from "@openwork-ee/den-db/permissions"
 import { and, asc, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { PermissionSetTable, PermissionSetTeamTable, TeamTable } from "@openwork-ee/den-db/schema"
@@ -41,15 +25,11 @@ import { ConfigApplyError, applyWithSteps, configRouteContext, expectRouteOk, is
 const AREA = "members.roles"
 
 const roleSpecSchema = z.object({
-  /** Which built-in set this is; null for a custom role. */
   builtIn: z.enum(PERMISSION_DEFAULT_SET_KEYS).nullable().default(null),
-  /** Permission keys the set allows; every other catalog key is denied. Sorted. */
   allow: z.array(z.string().min(1).max(128)).max(1000),
-  /** Teams that have this custom role. Always empty for built-in sets. */
   teams: z.array(specRefSchema).max(500).default([]),
 }).strict()
 
-/** Plain fields at apply time (`teams` holds resolved refs, read with resolvedRefIds). */
 const roleApplyFieldsSchema = z.object({
   builtIn: z.enum(PERMISSION_DEFAULT_SET_KEYS).nullable(),
   allow: z.array(z.string().min(1).max(128)).max(1000),
@@ -93,7 +73,6 @@ function preferredSetId(id: string | undefined) {
   }
 }
 
-/** Known catalog keys from the blob, and the ones this server does not know. */
 function splitAllowed(allow: readonly string[]) {
   const known = [...new Set(allow.filter(isPermissionKey))]
   const unknown = [...new Set(allow.filter((key) => !isPermissionKey(key)))]
@@ -117,7 +96,6 @@ export const membersRolesArea = defineConfigArea({
     { label: "name", get: (item) => builtInOf(item) ? null : normalizedName(item.name) || null },
   ],
   secretFields: [],
-  // The permission actions open their own organization-locked transactions on the global db.
   transactional: false,
   protectedFromDelete: (item) => {
     const builtIn = builtInOf(item)
@@ -177,7 +155,6 @@ export const membersRolesArea = defineConfigArea({
         return { localId, warnings }
       }
 
-      // update: each part is written only when the plan changes it.
       const setId = normalizeDenTypeId("permissionSet", op.targetId)
       const [set] = await ctx.db
         .select({ id: PermissionSetTable.id, name: PermissionSetTable.name, defaultKey: PermissionSetTable.defaultKey, archivedAt: PermissionSetTable.archivedAt })
@@ -189,7 +166,6 @@ export const membersRolesArea = defineConfigArea({
         throw new ConfigApplyError("invalid_spec", `"${set.name}" can't change between a built-in and a custom role.`, 400, "builtIn")
       }
 
-      // Name: built-in sets keep their names.
       const name = op.item.name.trim()
       if (touches(op.changes, "name")) {
         if (set.defaultKey === null && name && name !== set.name) {
@@ -201,7 +177,6 @@ export const membersRolesArea = defineConfigArea({
         }
       }
 
-      // Permissions: send only keys whose status changes (the action re-plans against the locked set).
       if (touches(op.changes, "allow")) {
         if (set.defaultKey !== null) await ensureCurrentDefaultPermissionSets(organizationId)
         const current = allowedKeys((await readPermissionSetStates(ctx.db, [set.id])).get(set.id))
@@ -219,7 +194,6 @@ export const membersRolesArea = defineConfigArea({
         }
       }
 
-      // Teams (custom roles): give the role to added teams, take it from removed ones.
       if (set.defaultKey === null && touches(op.changes, "teams")) {
         const current = (await activeTeamIdsBySet(ctx, [set.id])).get(set.id) ?? []
         const currentTeams = new Set(current.map((team) => team.id))
@@ -243,7 +217,6 @@ export const membersRolesArea = defineConfigArea({
   },
 })
 
-/** The `name` hint of the resolved ref to `id` in `refs`, if any. */
 function refName(refs: unknown, id: string): string | null {
   if (!Array.isArray(refs)) return null
   for (const ref of refs) {
@@ -256,7 +229,6 @@ async function readRoles(ctx: ConfigAreaContext, ids: readonly string[] | null):
   const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
   const setIdFilter = ids?.flatMap((id) => preferredSetId(id) ?? []) ?? null
   if (setIdFilter && setIdFilter.length === 0) return []
-  // Same as GET /v1/permissions/sets: the built-in sets are created on first read.
   await ensureCurrentDefaultPermissionSets(organizationId)
   const sets = (await ctx.db
     .select({ id: PermissionSetTable.id, name: PermissionSetTable.name, defaultKey: PermissionSetTable.defaultKey })

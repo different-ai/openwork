@@ -26,7 +26,6 @@ export type Rankable = {
   title: string;
   detail?: string;
   keywords?: string;
-  /** Shown when nothing is typed. Entries that only appear when searched (every chat, older tasks) set false. */
   preview?: boolean;
 };
 
@@ -62,7 +61,6 @@ export function rankPaletteItems<T extends Rankable>(query: string, items: reado
   const wanted = normalize(trimmed);
   const tokens = wanted.split(" ");
   const haystack = (item: T) => [item.title, item.keywords, item.detail].filter(Boolean).join(" ");
-  // Every word has to match somewhere, so "side bud" finds the "Budget" side chat but not every side chat.
   const candidates = items.filter((item) => tokens.every((token) => fuzzysort.single(token, haystack(item)) !== null));
   const recent = new Set(recentIds);
   const ranked = fuzzysort.go(trimmed, candidates, {
@@ -76,7 +74,6 @@ export function rankPaletteItems<T extends Rankable>(query: string, items: reado
       return tier * 10 + (recent.has(result.obj.id) ? score * 1.1 : score);
     },
   }).map((result) => result.obj);
-  // Tokens that matched across fields but not as one phrase still count, after the phrase matches.
   const extra = tokens.length > 1 ? candidates.filter((item) => !ranked.includes(item)).slice(0, Math.max(0, SEARCH_LIMIT - ranked.length)) : [];
   const ordered = [...ranked, ...extra];
   const best = ordered[0]?.group;
@@ -139,7 +136,6 @@ export function recordPaletteRecent(id: string, storage: RecentsStorage | undefi
   try {
     storage?.setItem(COMMAND_PALETTE_RECENTS_KEY, JSON.stringify(next));
   } catch {
-    // Storage off or full: the action still runs; it just isn't remembered.
   }
   return next;
 }

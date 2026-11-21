@@ -2,8 +2,6 @@ import { z } from "zod";
 
 export const INFERENCE_USAGE_CONVERSION_FACTOR = 100_000_000;
 
-// Den's web app loads this module from source, where a runtime relative import cannot resolve, so it keeps
-// its own copy of managed-models-policy's metadata reader instead of importing it.
 function readOrganizationMetadata(input: unknown): Record<string, unknown> {
   if (input === null || input === undefined) return {};
   const value: unknown = typeof input === "string" ? JSON.parse(input) : input;
@@ -94,8 +92,6 @@ export function hasOpenWorkModelsAllowanceHttpMarker(response: Pick<Response, "s
     && response.headers.get("X-OpenWork-Usage-State") === "blocked";
 }
 
-// For upstreamModel values, please get from models.dev/api.json provider = openrouter.models.id
-
 export const INFERENCE_MODEL_ALIASES = {
   "z-ai/glm-5.2": {
     upstreamModel: "z-ai/glm-5.2",
@@ -151,7 +147,6 @@ export const INFERENCE_MODEL_ALIASES = {
     enabled: true,
     usageFactor: 1,
   },
-  // The model behind free Auto, on the organization's own usage.
   "openai/gpt-6-luna": {
     upstreamModel: "openai/gpt-6-luna",
     displayName: "OpenWork: GPT-6 Luna",
@@ -320,7 +315,6 @@ export function freeInferenceAccess(input: {
   bucket?: { used_amount: number } | null;
   now?: Date;
 }): InferenceAccess {
-  // Like paid Models: the current limit applies, and the allowance is used up once usage reaches it.
   const limit = input.config.weeklyLimitAmount;
   const used = input.bucket?.used_amount ?? 0;
   const valid = [limit, used].every((amount) => Number.isSafeInteger(amount) && amount >= 0);
@@ -333,8 +327,6 @@ export function freeInferenceAccess(input: {
     remainingUsd: valid ? remaining / INFERENCE_USAGE_CONVERSION_FACTOR : null, resetsAt: freeInferenceWindow(input.now).end.toISOString(),
     reason, canUpgrade: false, catalog: managedModelCatalog() };
 }
-
-// --- Inference gateway (per-org provider destinations) ---
 
 export const INFERENCE_PROVIDER_CREDENTIAL_MODES = ["org", "member"] as const;
 export type InferenceProviderCredentialMode =
@@ -363,7 +355,6 @@ export const INFERENCE_PROVIDER_CREDENTIAL_STATUSES = [
 export type InferenceProviderCredentialStatus =
   (typeof INFERENCE_PROVIDER_CREDENTIAL_STATUSES)[number];
 
-// openwork_free: signed-in members' free Auto, served from the dedicated OpenAI key.
 export const INFERENCE_REQUEST_ROUTES = ["openwork_openrouter", "org_provider", "openwork_free"] as const;
 export type InferenceRequestRoute = (typeof INFERENCE_REQUEST_ROUTES)[number];
 
@@ -391,9 +382,6 @@ export type InferenceUsageSource = (typeof INFERENCE_USAGE_SOURCES)[number];
 
 export const INFERENCE_ROLLUP_GRANULARITIES = ["hour", "day"] as const;
 export type InferenceRollupGranularity = (typeof INFERENCE_ROLLUP_GRANULARITIES)[number];
-
-// Decrypted `secret` payloads for the structured credential kinds. `api_key`
-// is a plain string and has no schema.
 
 export const inferenceApiKeyMapSecretSchema = z
   .record(z.string(), z.string())
@@ -447,7 +435,6 @@ export function microsoftApiScopeError(value: string): string | null {
   const graph = `That is a Microsoft Graph scope, and LiteLLM cannot validate Microsoft Graph tokens. Use a scope your own app registration exposes, for example ${MICROSOFT_API_SCOPE_EXAMPLE}.`;
   const incomplete = `Enter the application ID URI followed by the scope name, for example ${MICROSOFT_API_SCOPE_EXAMPLE}.`;
   const separator = lower.lastIndexOf("/");
-  // A bare permission name (User.Read) is a Microsoft Graph permission.
   if (separator < 0) return graph;
   if (separator === lower.length - 1) return incomplete;
   const resource = lower.slice(0, separator);
@@ -473,15 +460,12 @@ export const inferenceOauthTokenSecretSchema = z.object({
     clientId: z.string().min(1),
     authorizationRevision: authorizationRevisionSchema.optional(),
   }).optional(),
-  /** Member Entra ID sign-in (Microsoft Foundry, LiteLLM). The tenant and client the refresh token belongs to. */
   microsoftIdentity: z.object({
     tenantId: microsoftTenantIdSchema,
     objectId: z.string().min(1).max(255),
-    /** preferred_username or email from the ID token; display only, never an authorization input. */
     userName: z.string().min(1).max(320).nullable(),
     clientId: z.string().min(1),
     authorizationRevision: authorizationRevisionSchema,
-    /** The API scope the access token was issued for. Absent: Azure Cognitive Services (Microsoft Foundry). */
     scope: z.string().min(1).max(512).optional(),
   }).optional(),
 });
@@ -511,7 +495,6 @@ const awsRegionSchema = z.string().max(32).regex(/^[a-z]{2}(?:-[a-z]+)+-\d{1,2}$
  */
 export const gatewayAwsSsoSettingsSchema = z.object({
   startUrl: awsSsoStartUrlSchema,
-  /** IAM Identity Center home region, which can differ from the Bedrock region. */
   region: awsRegionSchema,
   accountId: awsAccountIdSchema,
   roleName: awsPermissionSetNameSchema,
@@ -527,13 +510,10 @@ export const inferenceAwsSsoSecretSchema = z.object({
   refreshToken: z.string().min(1).max(16_384),
   clientId: z.string().min(1).max(4096),
   clientSecret: z.string().min(1).max(16_384),
-  /** Epoch seconds after which the registered OIDC client, and its refresh token, stop working. */
   clientSecretExpiresAt: z.number().int().positive(),
   sso: gatewayAwsSsoSettingsSchema,
   identity: z.object({
-    /** The assumed-role ARN from STS GetCallerIdentity at sign-in. */
     arn: z.string().min(1).max(2048),
-    /** The role session name, normally the person's Identity Center user name. Display only. */
     userName: z.string().min(1).max(320).nullable(),
     authorizationRevision: authorizationRevisionSchema,
   }),
@@ -571,7 +551,6 @@ export function gatewayMemberSignInMethod(providerId: string, options: { liteLlm
 export const gatewayMemberConnectionsResponseSchema = z.object({
   connections: z.array(z.object({
     providerId: z.string(),
-    /** Older Den responses omit it; they only offered Google sign-in. */
     signInMethod: z.enum(GATEWAY_MEMBER_SIGN_IN_METHODS).default("google"),
     credentialSetId: z.string(),
     providerName: z.string(),
@@ -649,7 +628,6 @@ export function hasUnresolvedGatewayTemplate(value: unknown): boolean {
       decoded = next;
     } catch { return true; }
   }
-  // Do not accept deeply encoded substitutions we could not inspect completely.
   return /%|[{}]|\$/.test(decoded);
 }
 

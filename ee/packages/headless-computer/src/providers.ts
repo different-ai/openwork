@@ -1,7 +1,6 @@
 import { isSandboxError, type SandboxProvider } from "@openwork/sandbox"
 import { computerSnapshotSlug } from "./image.js"
 
-/** A Workbot computer's size where the provider takes one per sandbox. */
 const COMPUTER_RESOURCES = { cpu: 2, memoryGb: 4, diskGb: 8 }
 
 export type ComputerProviderConfig = {
@@ -13,9 +12,7 @@ export type ComputerProviderConfig = {
   sandboxClass?: "container" | "linux-vm"
   desktop?: boolean
   keepDays?: number
-  /** Never auto-delete a conversation's computer; it stays paused with its memory until removed. */
   persistent?: boolean
-  /** Freestyle: the domain the desktop viewer is published under (default style.dev). */
   endpointDomain?: string
 }
 
@@ -27,7 +24,6 @@ export type SandboxGatewayConfig = {
   kind: "differently"
   url: string
   apiKey: string
-  /** The gateway's template for the computer image; the gateway maps it to each provider's own image. */
   template: string
 }
 
@@ -65,7 +61,6 @@ export async function createComputerProvider(config: ComputerProviderConfig): Pr
     return createFreestyleProvider({
       apiKey: config.apiKey, snapshot: config.snapshot ?? computerSnapshotSlug(),
       firewall: { rules: [{ action: "allow", source: {}, destination: { public: true } }] },
-      // The viewer port is reached through Freestyle's TLS edge; tickets inside the guest still gate every connection.
       ...(config.desktop ? { endpointDomain: config.endpointDomain ?? "style.dev" } : {}),
     })
   }

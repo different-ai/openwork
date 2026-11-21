@@ -1,6 +1,3 @@
-// Shared shape + SSE plumbing for the protocol usage parsers. Parsers never
-// retain message content: only usage counters and the reported model.
-
 export type ParsedUsage = {
   found: boolean
   model: string | null
@@ -12,13 +9,11 @@ export type ParsedUsage = {
   reasoningTokens: number | null
   costUsd?: number | null
   upstreamRequestId?: string
-  // Fixed annotation only; never capture an upstream error message/body.
   streamError?: "upstream_stream_error"
 }
 
 export type UsageParser = {
   push(chunkText: string): void
-  // Binary framings (AWS event-stream) must see the raw bytes.
   pushBytes?(chunk: Uint8Array): void
   result(): ParsedUsage
   complete?(): boolean
@@ -62,9 +57,6 @@ export function emptyUsage(): ParsedUsage {
   }
 }
 
-// Bound both complete lines and multi-line events BEFORE copying/parsing them.
-// Incomplete events at EOF are not usage evidence. Overflow disables observation
-// only; callers still relay their original bytes.
 export function createSseUsageParser(
   applyEvent: (target: ParsedUsage, event: unknown) => void,
   options: { maxBufferLength?: number; isTerminal?: (event: unknown) => boolean } = {},
@@ -127,8 +119,6 @@ export function createSseUsageParser(
   }
 }
 
-// Collects a (non-SSE) streamed JSON body up to the buffer bound and parses
-// it once at the end — used for Google's JSON-array streaming form.
 export function createJsonBodyUsageParser(
   parseJson: (body: unknown) => ParsedUsage,
   options: { maxBufferLength?: number } = {},

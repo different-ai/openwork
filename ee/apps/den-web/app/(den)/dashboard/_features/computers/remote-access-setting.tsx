@@ -12,14 +12,6 @@ import { SavedUndoLine, SettingRow } from "../../_components/scoped-setting";
 import { hairline, secondaryText } from "./computer-parts";
 import { remoteAccessSettingsErrorStatus, useRemoteAccessSettings, useSaveRemoteAccessSettings } from "./remote-access-data";
 
-/*
- * The organization's limit on what other devices (a member's own, Workbot,
- * agents working for them) may do on its members' computers. It only limits
- * what a member may choose for their own computers in Desktop Settings ›
- * Devices: raising it changes nothing until a member also turns it on, and it
- * never opens one member's computer to another. `off` is the one value that
- * acts by itself: nobody's computer takes anything from other devices.
- */
 export const REMOTE_ACCESS_OPTIONS: ReadonlyArray<{ value: RemoteSessionAccessMode; title: string; description: string }> = [
   {
     value: "off",
@@ -38,7 +30,6 @@ export const REMOTE_ACCESS_OPTIONS: ReadonlyArray<{ value: RemoteSessionAccessMo
   },
 ];
 
-/** Added to "Start tasks on a computer" while a computer takes nothing until its owner allows it. */
 export const REMOTE_ACCESS_OPT_IN_LINE = "Each member allows their computers themselves; until they do, nothing reaches them.";
 
 export const REMOTE_ACCESS_SETTING_LABEL = "What other devices can do on computers";
@@ -50,31 +41,19 @@ const SAVED_LINES: Record<RemoteSessionAccessMode, string> = {
   all: "Saved. Members can now let other devices open sessions on their own computers.",
 };
 
-/**
- * The choices the select offers. "Start tasks and open sessions" is offered only while the
- * organization can choose it, or while it is the value in force, so the
- * select always shows what applies.
- */
 export function remoteAccessChoices(access: RemoteSessionAccessMode, allowsAll: boolean): RemoteSessionAccessMode[] {
   return REMOTE_ACCESS_OPTIONS.map((option) => option.value).filter((value) => value !== "all" || allowsAll || access === "all");
 }
 
-/** One line of what a value means for the organization. */
 export function remoteAccessMeaning(access: RemoteSessionAccessMode, optIn: boolean): string {
   const description = REMOTE_ACCESS_OPTIONS.find((option) => option.value === access)?.description ?? "";
   return access === "created" && optIn ? `${description} ${REMOTE_ACCESS_OPT_IN_LINE}` : description;
 }
 
-/**
- * Whether a save can be taken back. "Start tasks and open sessions" can only be saved while
- * the organization may choose it, so a save that narrowed it from there, in
- * an organization that no longer may, has no Undo: Den would refuse it.
- */
 export function remoteAccessUndoable(previous: RemoteSessionAccessMode, allowsAll: boolean): boolean {
   return previous !== "all" || allowsAll;
 }
 
-/** An API from before the setting was served on every Computers page answers 404: there is then no row to show. */
 export function remoteAccessSettingUnavailable(error: unknown): boolean {
   return remoteAccessSettingsErrorStatus(error) === 404;
 }
@@ -83,7 +62,6 @@ function parseAccess(value: string): RemoteSessionAccessMode | null {
   return REMOTE_ACCESS_OPTIONS.find((option) => option.value === value)?.value ?? null;
 }
 
-/** The "Remote access" group on Manage › Computers: a rule heading over its one settings row. */
 function Section({ busy, children }: { busy?: boolean; children: ReactNode }) {
   return <div className="mb-8" aria-busy={busy || undefined}>
     <ItemSection variant="rule" title="Remote access" testId="session-access-setting">
@@ -94,15 +72,11 @@ function Section({ busy, children }: { busy?: boolean; children: ReactNode }) {
 
 export function RemoteAccessSettingView({ access, allowsAll = true, optIn = false, canEdit, saving, saved, undoable = true, error, onChange, onUndo }: {
   access: RemoteSessionAccessMode;
-  /** "Start tasks and open sessions" can be chosen. Older APIs do not say, and there it always could. */
   allowsAll?: boolean;
-  /** A computer whose owner has not chosen takes nothing. */
   optIn?: boolean;
   canEdit: boolean;
   saving: boolean;
-  /** Set right after a save, until it is undone or the page is left. */
   saved: RemoteSessionAccessMode | null;
-  /** The value before the save can still be chosen. False: the saved line has no Undo. */
   undoable?: boolean;
   error: string | null;
   onChange: (access: RemoteSessionAccessMode) => void;
@@ -110,7 +84,6 @@ export function RemoteAccessSettingView({ access, allowsAll = true, optIn = fals
 }) {
   const choices = remoteAccessChoices(access, allowsAll);
   return <Section>
-    {/* One line of what the current value means, under the row. */}
     <SettingRow flush label={REMOTE_ACCESS_SETTING_LABEL} labelId={LABEL_ID} stateLine={<span data-testid="session-access-meaning">{remoteAccessMeaning(access, optIn)}</span>}>
       <div className="w-[26rem] max-w-full">
         <DenSelect size="sm" aria-labelledby={LABEL_ID} data-testid="session-access-select" value={access} disabled={!canEdit || saving}
@@ -127,12 +100,6 @@ export function RemoteAccessSettingView({ access, allowsAll = true, optIn = fals
   </Section>;
 }
 
-/**
- * Manage › Computers: what members may let their other devices reach, or
- * nothing at all. Saves on change, with Undo. The row is there whenever Den
- * serves the setting; an API from before it was served on every Computers
- * page answers 404, and then there is no row.
- */
 export function RemoteAccessSetting({ orgId }: { orgId: string }) {
   const query = useRemoteAccessSettings(orgId, true);
   const save = useSaveRemoteAccessSettings(orgId);

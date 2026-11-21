@@ -76,13 +76,10 @@ function toolCallProviderMetadata(part: ToolPart): ProviderMetadata {
       : null;
   const mcpResult = persistedMcpResult
     ?? (part.state.status === "error" ? connectionActionMcpResultFromError(part.state.error) : null);
-  // The engine's task tool reports the sub-agent's session id in state
-  // metadata. Forward it so the transcript card can open that child session.
   const childSessionId = part.tool === "task" && typeof stateMetadata.sessionId === "string" && stateMetadata.sessionId.trim()
     ? stateMetadata.sessionId.trim()
     : null;
   const appBuilder = /(?:^|_)(?:search_capabilities|prepare_app|create_app|update_app)$/.test(part.tool);
-  // A task started or followed up on another computer keeps its start time after it returns.
   const remoteSession = connectRemoteSessionAction(part.tool) !== null
     || (/(?:^|_)execute_capability$/.test(part.tool) && isRecord(part.state.input)
       && typeof part.state.input.name === "string" && part.state.input.name.startsWith("remote-session:"));
@@ -97,7 +94,6 @@ function toolCallProviderMetadata(part: ToolPart): ProviderMetadata {
   const fileDestination = toolName === "write" && typeof stateMetadata.filepath === "string" ? stateMetadata.filepath
     : toolName === "edit" && isRecord(stateMetadata.filediff) && typeof stateMetadata.filediff.file === "string" ? stateMetadata.filediff.file : null;
   const workspacePaths = isJsonValue(stateMetadata.openworkWorkspacePaths) ? stateMetadata.openworkWorkspacePaths : null;
-  // An edit's own line counts, for the text-first rail's "+11 −3".
   const filediff = toolName === "edit" && isRecord(stateMetadata.filediff) ? stateMetadata.filediff : null;
   const diffStats = filediff && typeof filediff.additions === "number" && typeof filediff.deletions === "number"
     ? { added: filediff.additions, removed: filediff.deletions } : null;
@@ -195,8 +191,6 @@ export function parseDynamicToolUIPart(part: ToolPart): DynamicToolUIPart | null
     };
   }
 
-  // OpenCode emits pending/running tool parts with `{}` input before args
-  // (e.g. filePath) are filled in. Skip UI until the next part.updated.
   if (shouldDeferInProgressTool(part)) {
     return null;
   }
@@ -205,18 +199,12 @@ export function parseDynamicToolUIPart(part: ToolPart): DynamicToolUIPart | null
     type: "dynamic-tool",
     toolName: sandboxToolRenderer(part.tool),
     toolCallId: part.callID,
-    // The engine's running event means the full builder input was submitted;
-    // pending events still represent the model writing its arguments.
     state: part.state.status === "running" && /(?:^|_)(?:search_capabilities|prepare_app|create_app|update_app)$/.test(part.tool) ? "input-available" : "input-streaming",
     input: part.state.input,
     callProviderMetadata: toolCallProviderMetadata(part),
   };
 }
 
-/**
- * A finished reasoning part's engine timing, kept on the UI part so the chat
- * can say how long the model thought ("Thought 12s"). Unknown stays absent.
- */
 export function reasoningTime(part: { time?: { start?: number; end?: number } }): { time?: { start: number; end: number } } {
   const start = part.time?.start
   const end = part.time?.end

@@ -35,7 +35,6 @@ type NavItem = {
   newTab?: boolean;
 };
 
-/** Pages that are a product in the Products menu, so the menu can mark the current one. */
 const PRODUCT_PAGE_HREF: Partial<Record<ActivePage, string>> = {
   connect: "/connect",
   "ai-gateway": "/ai-gateway",

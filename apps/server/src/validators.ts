@@ -41,12 +41,6 @@ export function validateMcpName(name: string): void {
   }
 }
 
-/**
- * Provider ids only OpenWork's own sync may define. The Smart Router provider
- * passes the "only your organization's providers" policy by id, so a client
- * write that defines it could point Smart at any endpoint; such writes are refused. Removing
- * one (`null`) stays allowed.
- */
 const RESERVED_PROVIDER_IDS = new Set(["openwork-auto"]);
 
 export function isReservedProviderId(id: string): boolean {
@@ -67,11 +61,6 @@ function hasReservedProviderKey(value: unknown): boolean {
   return Object.entries(value).some(([key, child]) => isReservedProviderId(key) || hasReservedProviderKey(child));
 }
 
-/**
- * Refuses OpenCode config text (JSON or JSONC) that defines a reserved
- * provider. Keys are checked after JSONC decoding, so escaped spellings
- * (`openwork-\u0061uto`) are caught too.
- */
 export function validateUserOpencodeConfigText(content: string): void {
   const parsed: unknown = parseJsonc(content, [], { allowTrailingComma: true, disallowComments: false });
   if (hasReservedProviderKey(parsed)) {

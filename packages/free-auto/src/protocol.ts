@@ -10,7 +10,6 @@ export const DESKTOP_FREE_TOKEN_HEADER = "x-openwork-desktop-token";
 export const DESKTOP_FREE_PROVIDER_ID = "openwork-free";
 export const DESKTOP_FREE_MODEL_ID = "openai/gpt-6-luna";
 
-// Signed-out desktop routes.
 export const DESKTOP_FREE_SESSION_PATH = "/api/anonymous/session";
 export const DESKTOP_FREE_STATUS_PATH = "/api/anonymous/status";
 export const DESKTOP_FREE_MODELS_PATH = "/api/anonymous/v1/models";
@@ -18,7 +17,6 @@ export const DESKTOP_FREE_CHAT_PATH = "/api/anonymous/v1/chat/completions";
 export const DESKTOP_FREE_RESPONSES_PATH = "/api/anonymous/v1/responses";
 /** Like OpenCode Zen's: a client with no desktop proof sends this key (or none) and is limited by its IP. */
 export const DESKTOP_FREE_OPEN_API_KEY = "public";
-// Signed-in members use their OpenWork Models key on the regular inference routes.
 export const MEMBER_FREE_STATUS_PATH = "/api/v1/auto/status";
 export const MEMBER_FREE_MODELS_PATH = "/api/v1/models";
 export const MEMBER_FREE_CHAT_PATH = "/api/v1/chat/completions";
@@ -93,7 +91,6 @@ export type DesktopFreeAccessStatus = {
   modelID: typeof DESKTOP_FREE_MODEL_ID;
   allowance: {
     limitUsd: number; usedUsd: number; remainingUsd: number; resetsAt: string;
-    /** Unlimited is independent from the weekly counters, which remain visible for accounting. */
     unlimited?: boolean;
   } | null;
   catalog?: ManagedModelRecommendation[];

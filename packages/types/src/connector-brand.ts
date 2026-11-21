@@ -41,7 +41,6 @@ const SIMPLE_ICON_SLUG_BY_APEX: Record<string, string> = {
   "polar.sh": "polar",
   "exa.ai": "exa",
   "render.com": "render",
-  // Brands without square Simple Icons marks use their apex favicon.
   "airtable.com": "airtable",
   "figma.com": "figma",
   "grafana.com": "grafana",
@@ -99,7 +98,6 @@ export function brandIconCandidates(input: {
 
 export type BrandHint = { simpleIconSlug?: string; serviceUrl?: string };
 
-/** Official domains, not an MCP server's deployment address. */
 const BRAND_BY_NAME: Record<string, BrandHint> = {
   asana: { simpleIconSlug: "asana" },
   confluence: { simpleIconSlug: "confluence" },
@@ -142,13 +140,11 @@ function knownBrandHint(name: string): BrandHint | undefined {
   const key = BRAND_NAMES.find((brand) => {
     const start = normalized.indexOf(brand);
     if (start < 0) return false;
-    // A brand is a whole word/phrase, never a substring of a different name.
     return new RegExp(`(^|[^a-z0-9])${brand.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}($|[^a-z0-9])`).test(normalized);
   });
   return key ? { ...BRAND_BY_NAME[key] } : undefined;
 }
 
-/** Public hostname only: no credentials, IP literals, internal suffixes or URL secrets. */
 function publicHostname(value?: string | null): string | undefined {
   if (!value || /[\u0000-\u0020\u007f-\u009f\\]/.test(value.trim())) return undefined;
   try {
@@ -175,7 +171,6 @@ function faviconUrl(domain: string): string {
   return `https://www.google.com/s2/favicons?sz=64&domain=${encodeURIComponent(domain)}`;
 }
 
-/** Accept only public static logo sources, without query strings or fragments. */
 function trustedConnectorIcon(value?: string | null): string | undefined {
   const safe = safeBrandImageUrl(value ?? undefined);
   if (!safe) return undefined;
@@ -210,7 +205,6 @@ export function connectorIconCandidates(input: {
   const primary = brandCandidates.filter((candidate) => !candidate.startsWith("https://www.google.com/s2/favicons?"));
   const favicons = brandCandidates.filter((candidate) => candidate.startsWith("https://www.google.com/s2/favicons?"));
   const explicit = trustedConnectorIcon(input.iconUrl);
-  // A native provider is authoritative even when its only mark is a favicon.
   if (nativeName) return [...new Set([...brandCandidates, ...(explicit ? [explicit] : [])])];
   return [...new Set([...primary, ...(explicit ? [explicit] : []), ...favicons])];
 }

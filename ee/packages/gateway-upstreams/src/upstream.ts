@@ -1,8 +1,3 @@
-// Where a Gateway request goes and how it is signed: the upstream URL for a
-// provider (catalog default, saved override, Vertex, Bedrock and Foundry hosts),
-// checked against the egress rules, and the auth header or SigV4 signer that
-// turns a resolved credential into a request the provider accepts. The Gateway
-// loads providers and credentials; this module only decides from them.
 import type { GatewayAwsKeysSecret, GatewayProviderCredentialKind, GatewayRequestProtocol } from "@openwork/types/den/gateway"
 import { isGatewayCustomProviderId } from "@openwork/types/den/gateway-custom-providers"
 import { isMicrosoftFoundryOverrideAllowed, type CatalogProvider } from "@openwork-ee/gateway-catalog"
@@ -30,23 +25,16 @@ export type ResolvedUpstream = {
   family: ProtocolFamily
   protocol: GatewayRequestProtocol
   url: URL
-  /** Host (and Mantle API path) derived from the region rather than an operator override. */
   regionDerived: boolean
 }
 
-// Static header auth, or a signer that must run on the final request (SigV4
-// hashes the body, so it follows every body rewrite).
 export type UpstreamAuth =
   | { kind: "header"; header: AuthHeader }
   | { kind: "signer"; host: string; sign: (request: { method: string; url: URL; headers: Headers; body: string | Uint8Array<ArrayBuffer> | null }) => void }
 
 function readBaseUrl(provider: UpstreamProvider, catalog: CatalogProvider | null, family: ProtocolFamily) {
-  // Revalidate persisted overrides at runtime; self-hosted origins require an
-  // explicit operator allowlist even when den-api accepted the configuration.
   const override = provider.settings.upstreamBaseUrl
   if (typeof override === "string" && override) return override
-  // A custom provider's only address is its saved one, checked on every request
-  // by resolveUpstream and the egress transport (public HTTPS or allowlisted).
   if (isGatewayCustomProviderId(provider.provider_id)) return null
   const config = provider.provider_config
   const options = isJsonObject(config.options) ? config.options : null
@@ -60,10 +48,6 @@ export function isAwsFamily(family: ProtocolFamily): family is "bedrock" | "bedr
   return family === "bedrock" || family === "bedrock_mantle"
 }
 
-// Bedrock egress is bedrock-runtime.<region>.amazonaws.com (Mantle:
-// bedrock-mantle.<region>.api.aws). Catalog URLs and admin-entered hosts never
-// choose it; only an operator-allowlisted origin (a private endpoint or proxy
-// the deployment owns) may replace it.
 function awsOperatorOverride(settings: Record<string, unknown>) {
   const override = settings.upstreamBaseUrl
   if (typeof override !== "string" || !override) return undefined
@@ -77,10 +61,6 @@ function awsUpstreamBase(family: "bedrock" | "bedrock_mantle", settings: Record<
   return override === undefined ? defaultBaseUrl(family, settings) : override
 }
 
-// Microsoft Foundry egress is <resource>.services.ai.azure.com. The request can
-// carry a member's own Entra ID token, so catalog URLs and admin-entered hosts
-// never choose it: a saved override is used only on that same origin or on an
-// operator-allowlisted one, and any other saved override is refused.
 function foundryUpstreamBase(settings: Record<string, unknown>) {
   const override = settings.upstreamBaseUrl
   if (typeof override !== "string" || !override) return defaultBaseUrl("microsoft_foundry", settings)
@@ -109,7 +89,6 @@ export function resolveUpstream(provider: UpstreamProvider, catalog: CatalogProv
     }
   }
   const forwardedRest = family === "google_vertex" || family === "google_vertex_anthropic" || family === "bedrock_mantle" ? stripApiVersionPrefix(rest) : rest
-  // Check before URL normalization can move an operation to another path.
   if (rest.includes("\\") || rest.split("/").some((part) => /^(?:\.|%2e){1,2}$/i.test(part))) return { error: "Invalid upstream path." }
   const protocol = classifyRequestProtocol(family, forwardedRest)
   let url: URL
@@ -127,13 +106,11 @@ export function resolveUpstream(provider: UpstreamProvider, catalog: CatalogProv
 export function materializeAuth(credential: UpstreamCredential, provider: UpstreamProvider, family: ProtocolFamily, now: Date): UpstreamAuth | { error: string } {
   if (!isAwsFamily(family)) {
     if (credential.kind === "aws_keys") return { error: `AWS credentials are only supported for Amazon Bedrock providers, not ${provider.provider_id}.` }
-    // A member's Entra ID token goes as a bearer; a Foundry resource key as api-key.
     return { kind: "header", header: buildAuthHeader(family, credential.secret, credential.credentialKind === "oauth_azure") }
   }
   const settingsRegion = typeof provider.settings.region === "string" && provider.settings.region ? provider.settings.region : null
   const region = (credential.kind === "aws_keys" ? credential.awsKeys.region : undefined) ?? settingsRegion
   if (!isAwsRegion(region)) return { error: "Bedrock providers require a valid AWS region." }
-  // A static key (Bedrock API key) keeps the settings.region host resolved earlier.
   if (credential.kind === "secret") return { kind: "header", header: buildAuthHeader(family, credential.secret) }
   const credentials = credential.awsKeys
   return {

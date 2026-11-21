@@ -1,11 +1,3 @@
-/**
- * Folds each `CREATE [UNIQUE] INDEX name ON table (cols)` into its table's
- * `CREATE TABLE`. The resulting tables are identical (same SHOW CREATE TABLE),
- * but MySQL builds them with one atomic DDL each instead of one per index.
- * Every test file creates its own database, so with ~15 files at once the
- * separate index DDLs dominated the suite (31s vs 6s per database measured).
- * Anything that does not match is kept as its own statement, after the tables.
- */
 export function inlineIndexes(statements: readonly string[]): string[] {
   const tables = new Map<string, string>()
   const rest: string[] = []

@@ -53,24 +53,8 @@ import { buildNativeCapabilityName, connectionStatusMatch, nativeOperations } fr
 import { InventoryEventBus, type InventoryRevision } from "./inventory-event-bus.js"
 import { rejectStandaloneSseResponse } from "./standalone-sse.js"
 
-/**
- * One OpenWork Connect connection as its own standard MCP server, at
- * /mcp/agent/servers/:connectionId: an external MCP connection, or a native
- * provider (Google Workspace, Microsoft 365). Clients with their own tool
- * search group tools by server, so each connection's tools load on their own.
- *
- * The path sits under /mcp/agent because that is the one public OAuth
- * resource: the same metadata, tokens and checks as /mcp/agent apply, and
- * clients accept the advertised resource for any URL beneath it.
- *
- * Every tool runs as the capability execute_capability takes for it, through
- * the same executor and capability context, so grants, tool policy, scopes,
- * connection checks, audit and usage counting are unchanged.
- */
-
 const connectionServerLogger = appLogger.child({ component: "connection_mcp_server" })
 
-/** How long a client may keep a tools/list result; changes also send tools/list_changed. */
 export const CONNECTION_SERVER_TOOLS_TTL_MS = 60_000
 
 export type ConnectionServerExecute = (call: CapabilityExecuteInput) => Promise<ExecuteCapabilityToolResult>
@@ -82,10 +66,8 @@ type ConnectionServerIdentity = {
   websiteUrl?: string
 }
 
-/** A connection one member may use, as its server serves it to them. */
 export type ResolvedConnectionServer = ConnectionServerIdentity & (
   | { state: "ready"; tools: () => Promise<ConnectionServerTool[]> }
-  /** Not connected for this member yet: only the status tool is listed. */
   | { state: "pending"; showStatus: (execute: ConnectionServerExecute) => Promise<ExecuteCapabilityToolResult> }
 )
 
@@ -102,7 +84,6 @@ export const CONNECTION_SERVER_SOURCES: ConnectionServerSources = {
     try {
       id = normalizeDenTypeId("externalMcpConnection", connectionId)
     } catch {
-      // Native providers without a connector row use their registry key (google-workspace).
       return null
     }
     return getExternalMcpConnection({ organizationId, connectionId: id })
@@ -126,9 +107,7 @@ async function externalConnectionServer(input: {
   redirectUriBase: string
 }, sources: ConnectionServerSources): Promise<ResolvedConnectionServer | null> {
   const { connection, member } = input
-  // A connection whose tools are all disabled serves nothing, like an unknown one.
   if (connection.toolPolicy?.allDisabled) return null
-  // The grant and credential checks the connection's status capability runs.
   const status = await sources.externalStatus({ organizationId: connection.organizationId, member, connectionId: connection.id })
   if (!status.ok) return null
   const identity = {
@@ -148,7 +127,6 @@ async function externalConnectionServer(input: {
       try {
         tools = await sources.externalTools({ connection, member, redirectUriBase: input.redirectUriBase })
       } catch (error) {
-        // Provider errors can quote the provider; clients get a fixed message and the log keeps only safe fields.
         connectionServerLogger.warn("Connection server tool listing failed", {
           connectionId: connection.id,
           organizationId: connection.organizationId,
@@ -166,7 +144,6 @@ async function externalConnectionServer(input: {
   }
 }
 
-/** The card search shows for a native provider the member has not connected. */
 function nativeStatusResult(entry: NativeProviderConnectionEntry): ExecuteCapabilityToolResult {
   const status = connectionStatusMatch(entry, 1).connectionStatus
   if (!status) throw new Error("Native connection status is unavailable.")
@@ -205,11 +182,6 @@ function nativeConnectionServer(entry: NativeProviderConnectionEntry, catalog: r
   }
 }
 
-/**
- * The connection a member asked for, only when they may use it. Unknown,
- * malformed, other-organization, ungranted and disabled connections are all
- * null, so a caller cannot tell them apart.
- */
 export async function resolveConnectionServer(input: {
   organizationId: DenTypeId<"organization">
   member: McpMemberIdentity
@@ -218,13 +190,11 @@ export async function resolveConnectionServer(input: {
   catalog: readonly McpToolOperation[]
 }, sources: ConnectionServerSources = CONNECTION_SERVER_SOURCES): Promise<ResolvedConnectionServer | null> {
   const row = await sources.externalConnection({ organizationId: input.organizationId, connectionId: input.connectionId })
-  // Taken away from Workbot by an admin: unavailable to a Workbot turn, like a connection it was never granted.
   if (row && input.member.withheldConnectionIds?.has(row.id)) return null
   if (row?.kind === "external_mcp") {
     return externalConnectionServer({ connection: row, member: input.member, redirectUriBase: input.redirectUriBase }, sources)
   }
   if (row && row.kind !== "native_provider") return null
-  // Native providers: their connector rows and the legacy registry keys, granted to this member.
   const entries = await sources.nativeEntries({
     organizationId: input.organizationId,
     orgMembershipId: input.member.orgMembershipId,
@@ -238,7 +208,6 @@ function toolArguments(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? Object.fromEntries(Object.entries(value)) : {}
 }
 
-/** One connection's standalone MCP server: its tools, or until it is connected, its status tool. */
 export function createConnectionServer(input: {
   connection: ResolvedConnectionServer
   execute: ConnectionServerExecute
@@ -273,14 +242,12 @@ export function createConnectionServer(input: {
   return server
 }
 
-/** What any member sees for a connection they cannot use, whatever the reason. */
 async function connectionUnavailableResponse(request: Request): Promise<Response> {
   let id: string | number | null = null
   try {
     const body: unknown = await request.clone().json()
     if (typeof body === "object" && body !== null && "id" in body && (typeof body.id === "string" || typeof body.id === "number")) id = body.id
   } catch {
-    // Preflight already rejected malformed JSON; a missing id uses null.
   }
   return new Response(JSON.stringify({
     jsonrpc: "2.0",
@@ -322,9 +289,7 @@ export type ConnectionServerRouteDeps = {
   member: typeof resolveMcpMemberIdentity
   catalog: (app: Hono, env: unknown) => Promise<readonly McpToolOperation[]>
   sources: ConnectionServerSources
-  /** The executor execute_capability uses. */
   executeCapability: typeof executeCapability
-  /** execute_capability's time budget around each call. */
   withBudget: (capability: string, invoke: () => Promise<ExecuteCapabilityToolResult>) => Promise<ExecuteCapabilityToolResult>
   revision: InventoryRevision
   pollMs?: number
@@ -337,15 +302,10 @@ export const CONNECTION_SERVER_ROUTE_DEPS: ConnectionServerRouteDeps = {
   catalog: getCatalog,
   sources: CONNECTION_SERVER_SOURCES,
   executeCapability,
-  // Loaded on first call: agent.js also loads the App host bundles, which unit tests do not build.
   withBudget: async (capability, invoke) => (await import("./agent.js")).executeCapabilityWithBudget({ capability, invoke }),
   revision: (organizationId) => cache.inventory.revision(normalizeDenTypeId("organization", organizationId)),
 }
 
-/**
- * Serves each connection a member may use as its own MCP server, behind the
- * connectionMcpServers feature. Access is checked again on every request.
- */
 export function registerConnectionServerRoutes<T extends { Variables: RequestIdVariables & Record<string, unknown> }>(
   app: Hono<T>,
   deps: ConnectionServerRouteDeps = CONNECTION_SERVER_ROUTE_DEPS,
@@ -379,12 +339,10 @@ export function registerConnectionServerRoutes<T extends { Variables: RequestIdV
       member,
       connectionId: c.req.param("connectionId"),
       redirectUriBase,
-      // The listed tools follow the same rollouts as execute_capability below.
       catalog,
     }, deps.sources)
     if (!connection) return connectionUnavailableResponse(c.req.raw)
 
-    // The context execute_capability builds for the same caller.
     const capabilityContext = createCapabilityRegistryContext({
       app: app as unknown as Hono,
       env: c.env,

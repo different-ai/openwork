@@ -43,8 +43,6 @@ export function useAutomationRuns(automationId: string | null) {
       return value.items.map((item) => automationRunSchema.parse(item));
     },
     enabled: Boolean(automationId),
-    // Fast while a run is in flight; otherwise often enough to pick up scheduled runs.
-    // Starting or cancelling a run here refetches at once.
     refetchInterval: (query) => query.state.data?.some((run) => ACTIVE_RUN_STATUSES.includes(run.status)) ? 5_000 : 60_000,
   });
 }

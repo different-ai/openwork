@@ -13,7 +13,6 @@ export const WorkbotTeamSettingTable = mysqlTable(
     id: denTypeIdColumn("workbotTeamSetting", "id").notNull().primaryKey(),
     organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
     teamId: denTypeIdColumn("team", "team_id").notNull(),
-    /** A key that is absent means the team uses the organization's value; a key that is present is the team's own. */
     settings: json("settings").$type<Record<string, unknown>>().notNull(),
     updatedByOrgMemberId: denTypeIdColumn("member", "updated_by_org_member_id"),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),

@@ -1,17 +1,13 @@
-/** Shorter queries match most of a page and are not searched. */
 export const FIND_MIN_QUERY_LENGTH = 2;
 
-/** More matches than this stop being useful to step through. */
 const FIND_MAX_MATCHES = 1000;
 
-/** Text that is on the page but not shown to someone reading it. */
 const SKIPPED = "script, style, .sr-only";
 
 const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 export type TextMatch = { start: number; end: number };
 
-/** Every occurrence of `query` in `text`, ignoring case, left to right without overlap. */
 export function findTextMatches(text: string, query: string): TextMatch[] {
   const needle = query.trim();
   if (!needle || !text) return [];
@@ -26,12 +22,6 @@ function isShown(element: Element) {
   return typeof element.checkVisibility === "function" ? element.checkVisibility({ visibilityProperty: true }) : true;
 }
 
-/**
- * Ranges for every match of `query` in the text under `root`, in reading
- * order, including text scrolled out of view. Nothing in the page is changed:
- * the ranges are painted with the CSS Custom Highlight API, so React keeps
- * owning every node.
- */
 export function collectFindRanges(
   root: Node,
   query: string,
@@ -59,7 +49,6 @@ export function collectFindRanges(
   return ranges.slice(0, FIND_MAX_MATCHES);
 }
 
-/** The match to land on after moving `step` from `index`, wrapping at both ends. */
 export function wrappedMatchIndex(index: number, step: number, total: number) {
   if (total <= 0) return 0;
   const remainder = (index + step) % total;

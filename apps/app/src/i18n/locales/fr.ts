@@ -1,8 +1,3 @@
-/**
- * French translations (Français)
- * Professional terms (Skills, Plugins, Commands, Sessions, OpenCode, OpenPackage, OpenWork) are NOT translated
- */
-
 export default {
   "artifact.office_empty": "Aucun texte lisible dans ce fichier. Ouvrez-le dans une autre application pour voir l’original.",
   "artifact.office_empty_slide": "Aucun texte lisible sur cette diapositive.",

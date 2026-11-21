@@ -62,10 +62,6 @@ function decryptDatabaseValue(value: string) {
   const [ivBase64, authTagBase64, encrypted, ...unexpected] = value
     .slice(ENCRYPTION_VERSION_PREFIX.length)
     .split(".")
-  // AES-GCM legitimately produces an empty ciphertext for an empty plaintext;
-  // the IV and authentication tag still authenticate that value. Artifact view
-  // revisions use empty encrypted strings for optional CSS, so distinguish a
-  // missing segment from a present-but-empty ciphertext segment.
   if (!ivBase64 || !authTagBase64 || encrypted === undefined || unexpected.length > 0) {
     throw new Error("Encrypted value is malformed")
   }
@@ -82,14 +78,12 @@ function decryptDatabaseValue(value: string) {
   return decrypted
 }
 
-// Binary values: the prefix bytes, a 12-byte IV, the 16-byte GCM tag, then the ciphertext.
 const ENCRYPTED_BYTES_PREFIX = new Uint8Array(Buffer.from("enc:b1:", "utf8"))
 
 export function encryptDatabaseBytes(value: Uint8Array): Uint8Array {
   const iv = crypto.randomBytes(12)
   const cipher = crypto.createCipheriv(ENCRYPTION_ALGORITHM, getDatabaseEncryptionKey(), new Uint8Array(iv))
   const encrypted = [cipher.update(value), cipher.final()]
-  // The tag exists only once final() has run.
   const parts = [ENCRYPTED_BYTES_PREFIX, iv, cipher.getAuthTag(), ...encrypted]
   return new Uint8Array(Buffer.concat(parts.map((part) => new Uint8Array(part))))
 }

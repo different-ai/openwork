@@ -14,7 +14,6 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 const AGENT_PERMISSIONS_PATH = "/v1/agent-permissions";
 
-/** "everyone" or a team's id. */
 export type AgentPermissionScopeId = string;
 export const EVERYONE_SCOPE: AgentPermissionScopeId = "everyone";
 
@@ -53,8 +52,6 @@ function toPolicy(policy: z.infer<typeof policySchema>): AgentPermissionPolicy {
     teamId: policy.teamId,
     name: policy.name,
     memberCount: policy.memberCount,
-    // Stored settings are already valid; normalizing keeps an older server's
-    // unknown permissions out of the editor instead of failing the page.
     settings: normalizeAgentPermissionSettings(policy.settings),
     updatedAt: policy.updatedAt,
   };
@@ -96,7 +93,6 @@ function scopePath(scopeId: AgentPermissionScopeId): string {
     : `${AGENT_PERMISSIONS_PATH}/teams/${encodeURIComponent(scopeId)}`;
 }
 
-/** Saves each scope's settings in turn; the first failure stops and is thrown. */
 export function useSaveAgentPermissions(orgId: string) {
   const queryClient = useQueryClient();
   const { runReauthableAction } = useOrgDashboard();
@@ -123,7 +119,6 @@ export function useSaveAgentPermissions(orgId: string) {
   });
 }
 
-/** Removes a team's agent permissions, so its members get Everyone's again. */
 export function useRemoveTeamAgentPermissions(orgId: string, teamId: string) {
   const queryClient = useQueryClient();
   const { runReauthableAction } = useOrgDashboard();
@@ -144,12 +139,10 @@ export function useRemoveTeamAgentPermissions(orgId: string, teamId: string) {
   });
 }
 
-/** Whether a team has its own agent permissions: a saved record, not Everyone's. */
 export function hasTeamRecord(policy: AgentPermissionPolicy): boolean {
   return policy.scopeId !== EVERYONE_SCOPE && policy.updatedAt !== null;
 }
 
-/** A team's own agent permissions, counted for lists: "1 change", or null while it follows Everyone. */
 export function teamOverrideSummary(policy: AgentPermissionPolicy | undefined): string | null {
   if (!policy || !hasTeamRecord(policy)) return null;
   const count = Object.keys(normalizeAgentPermissionSettings(policy.settings)).length;

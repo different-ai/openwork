@@ -94,10 +94,6 @@ function billingReturnUrl(c: { req: { raw: Request } }) {
 }
 
 function checkoutSuccessUrl(c: { req: { raw: Request } }) {
-  // `return=models` sends the user back to the OpenWork Models page after a
-  // successful inference checkout — that's where they subscribed from and
-  // where the unlocked value (the model lineup) is visible. The billing page
-  // remains the status/portal view.
   return env.stripe.billingSuccessUrl ?? `${getRequestOrigin(c)}/dashboard/billing/stripe/checking?session_id={CHECKOUT_SESSION_ID}&return=models`
 }
 
@@ -152,14 +148,12 @@ function checkoutCancelUrl(c: { req: { raw: Request } }) {
   return env.stripe.billingCancelUrl ?? billingReturnUrl(c)
 }
 
-/** Den web origin for return pages: the configured billing URL's origin, else the request's. */
 function checkoutReturnOrigin(c: { req: { raw: Request } }) {
   const configured = env.stripe.billingSuccessUrl
   if (configured) {
     try {
       return new URL(configured, getRequestOrigin(c)).origin
     } catch {
-      // Fall back to the request origin.
     }
   }
   return getRequestOrigin(c)
@@ -207,8 +201,6 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
         return c.json(openWorkWebUnavailableResponse(), 404)
       }
       const web = await getOpenWorkWebBillingSummary(payload.organization.id)
-      // hasAccess stays the organization's; memberHasAccess is the caller's own
-      // (an admin may have chosen who gets Web, see webPerMember).
       const memberHasAccess = web.hasAccess && payload.currentMember.openworkWeb
       return c.json({ billing: { stripe: { web: { ...web, memberHasAccess } } } })
     },
@@ -230,18 +222,12 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
       const user = c.get("user")
       const payload = c.get("organizationContext")
       const email = getRequiredUserEmail(user)
-      // The portal URL is a live Stripe session that can change billing, so it
-      // needs the same check as POST /v1/billing/stripe/portal (billing_portal.use,
-      // including the recent sign-in). Without it the URL is omitted; the read still succeeds.
       const portal = await requirePermission(c, "billing_portal.use")
       const billing = await getOrgBillingSummary({
         organizationId: payload.organization.id,
         includePortalUrl: portal.ok,
         returnUrl: billingReturnUrl(c),
       })
-      // Den web still reads `billing.polar` as the cloud-worker access summary
-      // (den-flow.ts getBillingSummary). Polar billing is retired, so this is
-      // the constant "no gate, access allowed" shape it always had in practice.
       const polar = email ? retiredPolarBillingStatus : null
 
       return c.json({ billing: { ...billing, polar } })
@@ -383,13 +369,6 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
         }, 409)
       }
       if (session === "inference_subscription_exists") {
-        // The organization already has an OpenWork Models subscription Stripe
-        // is still collecting on (typically past due after a failed renewal).
-        // A second Checkout would charge them twice, so hand them the billing
-        // portal where the payment method can be fixed instead. The portal URL
-        // is a live Stripe session that can change billing, so it needs the
-        // same check as POST /v1/billing/stripe/portal (billing_portal.use with
-        // a recent sign-in); Start a subscription alone never returns it.
         const portalAccess = await requirePermission(c, "billing_portal.use")
         if (!portalAccess.ok) {
           const failure = portalAccess.response.error === "forbidden"
@@ -474,10 +453,6 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
         503: jsonResponse("This deployment does not sell anything through Stripe.", billingNotConfiguredSchema),
       },
     }),
-    // Read-only invoices have their own permission (billing_invoices.view: on
-    // for admins, sensitive because invoices carry the billing address), so
-    // people can see them without the portal, which can change payment details
-    // and cancel the subscription.
     orgPermissionRoute("billing_invoices.view"),
     async (c) => {
       const parsed = billingInvoicesQuerySchema.safeParse({
@@ -499,7 +474,6 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
         startingAfter: parsed.data.cursor ?? null,
       }).catch((error: unknown) => {
         if (billingNotConfiguredProductForError(error, "portal")) return "not_configured" as const
-        // A cursor from another customer, or one that no longer exists.
         if (error instanceof Error && error.message.includes("No such invoice")) return "invalid_cursor" as const
         throw error
       })

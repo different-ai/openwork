@@ -19,33 +19,12 @@ import {
 import type { DerivedPdf, PdfPageImage } from "../pdf-attachments/derive.js";
 import { looksLikePdf, withPdfDocument } from "../pdf-attachments/pdfium.js";
 
-/**
- * Makes PDFs work with every model the engine can run — whether the PDF was
- * attached in chat or read from the workspace by a tool.
- *
- * Runs on `experimental.chat.messages.transform`, which rewrites only what is
- * sent to the provider for this step. The persisted transcript keeps the
- * original PDF part or tool attachment, so switching models later re-decides.
- *
- * - Models that accept PDF input receive the PDF as-is, within the provider's
- *   per-request page and byte limits counted across every PDF in the step.
- * - Models that accept images receive rendered page images plus page-marked
- *   text; further pages come from the `openwork_pdf_pages` tool on demand.
- * - Text-only models receive the page-marked text, with an honest note about
- *   pages that have no text layer.
- * - Oversized, encrypted, or corrupt PDFs become a clear note instead of a
- *   provider error.
- */
 const PDF_MIMES = new Set(["application/pdf", "application/x-pdf"]);
 const GENERIC_MIME = "application/octet-stream";
 const MIB = 1024 * 1024;
-/** Ceiling for bytes the plugin will decode and process at all. */
 const MAX_PDF_BYTES = 64 * MIB;
-/** Page images attached inline for image-capable models. */
 const MAX_INLINE_PAGES = EAGER_RENDERED_PAGES;
-/** Total inline image bytes per PDF; keeps requests under provider payload limits. */
 const INLINE_IMAGE_BUDGET_BYTES = 12 * MIB;
-/** Extracted text inlined in the note; the full text stays on disk. */
 const MAX_INLINE_TEXT_CHARS = 60_000;
 const PAGE_TOOL_NAME = "openwork_pdf_pages";
 
@@ -54,13 +33,10 @@ type RuntimeContext = {
   listProviders?: () => Promise<unknown>;
 };
 
-/** One PDF found in the step's messages, wherever it sits. */
 type PdfSource = {
   filename: string;
   url: string;
-  /** Stable identity for caching across steps, when the surrounding part has one. */
   key: string | null;
-  /** Identity fields to carry onto replacement parts. */
   ids: Record<string, unknown>;
 };
 
@@ -72,17 +48,13 @@ type StepModel = {
 
 type Inspection = {
   bytes: number;
-  /** null when PDFium cannot open the bytes. */
   pages: number | null;
 };
 
-/** Remaining native allowance for this step, shared by every PDF in it. */
 type NativeBudget = {
   policy: NativePdfPolicy;
   pages: number;
-  /** Request body bytes still free for base64 PDF payloads. */
   encodedBytes: number;
-  /** Context tokens still free for natively-sent PDFs; null when the context size is unknown. */
   tokens: number | null;
   contextTokens: number | null;
 };
@@ -174,13 +146,6 @@ function pdfSourceFromFilePart(value: unknown): PdfSource | null {
   return { filename, url, key: memoKey(value.sessionID, value.id, url), ids: basePartIds(value) };
 }
 
-/**
- * Identity under which a later step may reuse this part's content digest
- * without decoding it again. Only an inline data URL is immutable content; a
- * workspace file can change between steps and is always re-read. The key is
- * scoped to the session so one session's persisted part can never stand in
- * for another's, and the caller scopes it to the workspace as well.
- */
 function memoKey(sessionID: unknown, id: unknown, url: string, index?: number): string | null {
   if (!url.startsWith("data:") || typeof id !== "string" || !id || typeof sessionID !== "string" || !sessionID) return null;
   return `${sessionID}:${id}:${index ?? ""}:${url.length}`;
@@ -241,12 +206,6 @@ function decodeDataUrl(url: string): Buffer {
   return buffer;
 }
 
-/**
- * Reads a workspace PDF the user or model pointed at. The path must resolve
- * inside the workspace, and the bytes flow through a handle whose identity is
- * verified after opening, so a path swapped mid-read is refused rather than
- * forwarded.
- */
 async function readWorkspacePdf(root: string | null, filePath: string): Promise<Buffer> {
   if (!root) throw new Error("Workspace root is unavailable for workspace PDF paths.");
   const absolute = resolve(root, filePath);
@@ -358,13 +317,11 @@ function failureNote(source: PdfSource, message: string, derived: DerivedPdf | n
 }
 
 const inspectionByDigest = new Map<string, Inspection>();
-/** Content hash per persisted part (scoped to workspace and session), so later steps never re-decode a data URL they have already seen. */
 const digestByKey = new Map<string, string>();
 
 function scopedMemoKey(root: string | null, key: string): string {
   return `${root ?? ""}\n${key}`;
 }
-/** What the current model of each session can take, recorded by the last transform for the page tool. */
 const supportBySession = new Map<string, ModelInputSupport>();
 
 function rememberDigest(root: string | null, source: PdfSource, digest: string): void {
@@ -394,11 +351,6 @@ function megabytes(bytes: number): string {
   return `${(bytes / MIB).toFixed(bytes >= 10 * MIB ? 0 : 1)} MB`;
 }
 
-/**
- * Decides whether this PDF should ride natively in this step and, if so, takes
- * it out of the shared allowance. Unreadable bytes pass through as before this
- * plugin existed, as long as they fit the request.
- */
 function claimNative(inspection: Inspection, budget: NativeBudget): { ok: true } | { ok: false; detail: string } {
   const { policy } = budget;
   if (inspection.bytes > policy.maxRawBytes) {
@@ -528,11 +480,6 @@ async function transformParts(parts: unknown[], root: string | null, support: Mo
   return result;
 }
 
-/**
- * Providers ask for documents and images ahead of the question. Files and the
- * synthetic notes that carry document text move first; the user's own text
- * keeps its order. Only the provider-facing copy is reordered.
- */
 function isDocumentPart(part: unknown): boolean {
   return isRecord(part) && (part.type === "file" || (part.type === "text" && part.synthetic === true));
 }
@@ -607,8 +554,6 @@ function pageToolOutput(derived: DerivedPdf, requested: number[], served: PdfPag
   return lines.join("\n");
 }
 
-// Single export: the OpenCode plugin loader treats every export of a plugin
-// module as a plugin factory, so helpers must stay module-private.
 export const OpenWorkPdfAttachments = async (factoryInput?: unknown) => {
   const factoryContext = normalizeOpenCodeContext(factoryInput);
   const resolver: InputSupportResolver = factoryContext.listProviders

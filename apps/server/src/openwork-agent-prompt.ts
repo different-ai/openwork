@@ -1,17 +1,3 @@
-/**
- * Base prompt of the `openwork` agent, injected through the runtime OpenCode
- * config. It replaces the engine's provider prompt, so it carries only the
- * stable identity and operating rules; static discovery guidance,
- * browser and app-control mechanics are appended per request by the
- * server plugins, and the user's time zone and locale arrive from the app.
- *
- * Kept dependency-free so tests and specs can import it without the runtime
- * database.
- */
-/**
- * The one Connect routing sentence in the base prompt. Exported so the v2
- * instructions can swap it for the native-skill wording without drifting.
- */
 export const OPENWORK_CONNECT_ROUTING_INSTRUCTION =
   "Org-connected services, remote skills, Workflows, and Automations reach you through OpenWork Connect: list remote skills with openwork-cloud_list_skills and read one with openwork-cloud_get_skill by its name or capability; discover services and Workflows with openwork-cloud_search_capabilities, then run with openwork-cloud_execute_capability using an exact returned name. Discover on demand; only name services and skills that those tools or the remote skill catalog actually return.";
 
@@ -69,11 +55,6 @@ If the flag is absent/false, openwork_context is unavailable, or the question to
 
 ${OPENWORK_CONNECT_ROUTING_INSTRUCTION}`;
 
-/**
- * Appends the organization's Prompts (written by its admins in Den, already
- * ordered: everyone's first, then each of the member's teams by name) to an
- * OpenWork prompt. Without any, the prompt is returned unchanged.
- */
 export function appendOrganizationPrompts(prompt: string, organizationPrompts: string | undefined): string {
   const text = organizationPrompts?.trim();
   return text ? `${prompt}\n\n## Organization instructions\n\n${text}` : prompt;

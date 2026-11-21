@@ -106,7 +106,6 @@ export function parseAnswerInput(value: unknown): AnswerInput {
   }
   if (v.kind !== "permission") return invalid()
   keys(v, ["kind", "requestId", "decision"])
-  // Never "always": a remote surface approves one request at a time.
   if (v.decision !== "once" && v.decision !== "reject") return invalid()
   return { kind: "permission", requestId: text(v.requestId, 240), decision: v.decision }
 }
@@ -144,7 +143,6 @@ export function parseCommand(value: unknown): Command {
   const v = object(value)
   if (v.kind === "remote_session_attach") {
     keys(v, ["commandId", "kind", "title", "prompt", "model", "expiresAt", "workspaceId", "sessionId"])
-    // An attach never creates or sends anything.
     if (v.prompt !== null || v.model !== null) return invalid()
     return {
       commandId: text(v.commandId, 160), kind: "remote_session_attach", title: text(v.title, 120), prompt: null, model: null,
@@ -334,12 +332,11 @@ export function parseJournal(value: unknown): Journal {
       if (e.phase !== "prepared" && e.phase !== "created" && e.phase !== "delivered" && e.phase !== "failed") return invalid()
       const command = parseCommand(e.command)
       const attach = command.kind === "remote_session_attach"
-      // Pre-capability version-1 entries are always at-most-once; never infer replay safety from today's adapter.
       const legacyCreation = !attach && e.creation === undefined && e.intendedSessionId === undefined
       if (!legacyCreation && e.creation !== "idempotent" && e.creation !== "at_most_once") return invalid()
       const creation = e.creation === "idempotent" ? "idempotent" : "at_most_once"
       if (e.sendReplay !== undefined && e.sendReplay !== "idempotent" && e.sendReplay !== "at_most_once") return invalid()
-      const sendReplay = e.sendReplay === "idempotent" ? "idempotent" : "at_most_once" // Unlabelled dev journals never assume native send safety.
+      const sendReplay = e.sendReplay === "idempotent" ? "idempotent" : "at_most_once"
       const intended = attach ? command.sessionId : sessionIdForCommand(command.commandId)
       const intendedSessionId = legacyCreation ? intended : text(e.intendedSessionId, 240)
       if (intendedSessionId !== intended) return invalid()
@@ -360,7 +357,6 @@ export function parseJournal(value: unknown): Journal {
       if (promptMessageId !== (command.prompt === null ? null : stableMessageId(command.commandId))) return invalid()
       if ((e.phase === "prepared" && receipt !== null) || ((e.phase === "created" || e.phase === "delivered") && receipt === null)) return invalid()
       if (receipt && command.workspaceId && receipt.workspaceId !== command.workspaceId) return invalid()
-      // An attach holds exactly the session it names, and only once delivered.
       if (attach && ((receipt !== null) !== (e.phase === "delivered") || (receipt && receipt.sessionId !== command.sessionId))) return invalid()
       if ((e.phase === "delivered") !== (completion?.status === "delivered") || (e.phase === "failed") !== (completion?.status === "failed")) return invalid()
       if (acknowledged && completion === null) return invalid()
@@ -388,21 +384,18 @@ export function parseJournal(value: unknown): Journal {
       if (request.action === "read" && id !== null) return invalid()
       if (request.action === "send" && id !== (request.input.messageId ?? stableMessageId(request.requestId))) return invalid()
       if (request.action === "stop" && request.input.messageId !== null && id !== request.input.messageId) return invalid()
-      // An answer's marker is set to its pending requestId only once the native reply was dispatched.
       if (request.action === "answer" && id !== null && id !== request.input.requestId) return invalid()
       return { request, sendReplay, messageId: id, turn, completion, completionAcknowledged: acknowledged }
     }),
   }
   if (new Set(journal.commands.map(e => e.command.commandId)).size !== journal.commands.length
     || new Set(journal.requests.map(e => e.request.requestId)).size !== journal.requests.length) return invalid()
-  // One live command per session. A failed creation may keep its receipt for inspection, but no longer holds the session.
   const receipts = journal.commands.flatMap(e => e.receipt && e.phase !== "failed" ? [`${e.receipt.workspaceId}\0${e.receipt.sessionId}`] : [])
   if (new Set(receipts).size !== receipts.length) return invalid()
   const intendedIds = journal.commands.filter(e => e.creation === "idempotent" && e.command.kind === "remote_session_create").map(e => e.intendedSessionId)
   if (new Set(intendedIds).size !== intendedIds.length) return invalid()
   for (const e of journal.requests) {
     const c = journal.commands.find(c => c.command.commandId === e.request.commandId)
-    // Failed unknown-session requests are legitimate outbox entries, but success/pending requires a known receipt.
     if (e.completion?.status === "failed") continue
     if (c?.phase !== "delivered" || c.receipt?.sessionId !== e.request.sessionId || c.receipt.workspaceId !== e.request.workspaceId) return invalid()
   }

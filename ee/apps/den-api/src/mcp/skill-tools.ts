@@ -4,19 +4,8 @@ import type { RemoteSkillDescriptor } from "./marketplace-capabilities.js"
 import { tokenize } from "./search.js"
 import { skillFileMimeType, skillFileText, skillFileUri, type SkillFileEntry } from "../skill-files.js"
 
-// Small images go back as image content, which models can see.
 const VIEWABLE_IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"])
 const VIEWABLE_IMAGE_MAX_BYTES = 1024 * 1024
-
-/**
- * Direct skill tools for the `/mcp/agent` endpoint.
- *
- * Skills stay reachable through `search_capabilities` (type `skills`) and
- * `execute_capability`, and through the `skill://` resources. These two tools
- * are the path that needs no keyword guessing: `list_skills` returns the
- * member's whole authorized catalog and `get_skill` returns one SKILL.md by
- * its name or exact capability.
- */
 
 export const LIST_SKILLS_TOOL_NAME = "list_skills"
 export const GET_SKILL_TOOL_NAME = "get_skill"
@@ -63,18 +52,11 @@ export const GET_SKILL_OUTPUT_SCHEMA = remoteSkillDescriptorSchema.extend({
 export type ListSkillsPayload = z.infer<typeof LIST_SKILLS_OUTPUT_SCHEMA>
 export type GetSkillPayload = z.infer<typeof GET_SKILL_OUTPUT_SCHEMA>
 
-/** Authorized SKILL.md source for one descriptor, or null once it is gone. */
-/**
- * The authorized SKILL.md, or why it is held back. A marketplace skill whose
- * plugin still needs a connection set up is listed but its text is withheld;
- * `blocked` carries the readiness hint and the action that unblocks it.
- */
 export type RemoteSkillSource =
   | { content: string; provenance?: string; files?: SkillFileEntry[] }
   | { blocked: { status: string; message: string; action: unknown } }
   | null
 
-/** Standard SKILL.md framing: normalized frontmatter, then the source body verbatim. */
 export function standardSkillMarkdown(skill: RemoteSkillDescriptor, source: string): string {
   const body = source.replace(/^---\r?\n[\s\S]*?\r?\n---\r?\n?/, "").replace(/^\s+/, "")
   return `---\nname: ${skill.name}\ndescription: ${JSON.stringify(skill.description)}\n---\n\n${body}`
@@ -92,7 +74,6 @@ function describeRemoteSkill(skill: RemoteSkillDescriptor): z.infer<typeof remot
   }
 }
 
-/** Resolve a skill by exact capability first, then by name or skill:// location. */
 export function findRemoteSkill(skills: RemoteSkillDescriptor[], reference: string): RemoteSkillDescriptor | undefined {
   const wanted = reference.trim()
   if (!wanted) return undefined
@@ -110,12 +91,6 @@ function plainSkillName(value: string): string {
     .join("/")
 }
 
-/**
- * Skills by the name a person or agent would use: the title without the
- * unique suffix list_skills adds ("task-management" for
- * task-management-w925wxnt), optionally qualified by plugin
- * ("productivity/task-management").
- */
 export function findRemoteSkillsByPlainName(skills: RemoteSkillDescriptor[], reference: string): RemoteSkillDescriptor[] {
   const wanted = plainSkillName(reference)
   if (!wanted) return []
@@ -125,7 +100,6 @@ export function findRemoteSkillsByPlainName(skills: RemoteSkillDescriptor[], ref
   })
 }
 
-/** Keep skills whose name, title, description, marketplace, or plugin contains every query token. */
 export function filterRemoteSkills(skills: RemoteSkillDescriptor[], query?: string): RemoteSkillDescriptor[] {
   const tokens = tokenize(query ?? "")
   if (tokens.length === 0) return skills
@@ -141,7 +115,6 @@ function jsonText(value: unknown): CallToolResult["content"] {
   return [{ type: "text", text: JSON.stringify(value, null, 2) }]
 }
 
-/** Tells the model which files came with the skill and how to read one; empty when there are none. */
 export function supportingFilesNote(skill: RemoteSkillDescriptor, files: readonly { path: string }[]): string {
   if (files.length === 0) return ""
   return [
@@ -159,11 +132,8 @@ function skillErrorResult(error: "unknown_skill" | "unknown_skill_file" | "skill
 
 export function registerAgentSkillCatalogTools(input: {
   server: McpServer
-  /** Every skill the calling member may use right now, built-in and marketplace alike. */
   listSkills: () => Promise<RemoteSkillDescriptor[]>
-  /** The authorized SKILL.md source for one listed skill, with its supporting files; `file` is set when the call reads one of them. */
   readSkill: (skill: RemoteSkillDescriptor, read: { file?: string }) => Promise<RemoteSkillSource>
-  /** One listed supporting file's contents, or null when they cannot be read. */
   readFile: (file: SkillFileEntry) => Promise<Uint8Array | null>
 }) {
   input.server.registerTool(
@@ -278,8 +248,6 @@ export function registerAgentSkillCatalogTools(input: {
         ...describeRemoteSkill(skill),
         ...(source.provenance ? { provenance: source.provenance } : {}),
         content: standardSkillMarkdown(skill, source.content),
-        // Many clients show the model structured content instead of the text,
-        // so the note rides here too; content stays the exact SKILL.md.
         ...(files.length > 0 ? { files, filesNote: supportingFilesNote(skill, files) } : {}),
       }
       const text = payload.filesNote ? `${payload.content}\n\n---\n${payload.filesNote}` : payload.content

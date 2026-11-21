@@ -156,7 +156,6 @@ export function registerGoogleDocumentEditorRoutes<T extends { Variables: OrgRou
       const playable = documentMediaKind(file.mimeType)
       return c.json({ ...common, kind: "preview", mimeType: file.mimeType, canEdit: false, ...(playable ? { media: playable } : {}), ...(file.mimeType === SLIDES ? { notice: "Preview only. Open in Google Slides to edit; changes stay in the original presentation." } : {}) })
     } catch (error) {
-      // A limited reader must not force an Office startup or hide the explicit Edit action.
       if (officeMimeTypes.has(file.mimeType)) return c.json({ ...common, kind: "preview", mimeType: file.mimeType })
       return failure(c, error instanceof Error ? error.message : "This file cannot be edited inline.")
     }
@@ -211,9 +210,7 @@ export function registerGoogleDocumentEditorRoutes<T extends { Variables: OrgRou
   app.get(`${base}/content`, description("readGoogleDriveDocumentContent", "Preview a Drive PDF or image, or play a video or audio file", z.unknown()), orgMemberRoute(), guard, paramValidator(params), queryValidator(z.object({ connectionId: connectionSchema })), async c => {
     const { fileId } = c.req.valid("param"); const auth = await authorize(c, c.req.valid("query").connectionId); if (!auth.ok) return auth.reply
     const meta = await metadata(c, auth.selected, fileId); if (!meta.ok) return meta.reply
-    // Google Slides previews as a PDF export; the presentation itself is never converted or copied.
     const slides = meta.file.mimeType === SLIDES
-    // Video and audio go to the browser's own player one byte range at a time, so it can start early and seek.
     const playable = documentMediaKind(meta.file.mimeType)
     if (playable) {
       const size = Number(meta.file.size)

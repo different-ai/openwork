@@ -6,7 +6,6 @@ export interface BrowserSpeechRecognition {
   onend: (() => void) | null
   onerror: ((event: { error: string }) => void) | null
   onresult: ((event: { results: ArrayLike<ArrayLike<{ transcript: string }>> }) => void) | null
-  /** Optional host-provided microphone meter; browsers need no second stream. */
   onlevel?: ((level: number) => void) | null
   onstatus?: ((status: "installing", progress?: number) => void) | null
   start(): void
@@ -41,7 +40,6 @@ export function createBrowserDictation(options: {
   selection: { start: number; end: number }
   language: string
   finalizationTimeoutMs?: number
-  /** Optional display pacing; recognition and finalization never wait on it. */
   resultFrames?: {
     request(callback: (time: number) => void): number
     cancel(id: number): void
@@ -87,14 +85,10 @@ export function createBrowserDictation(options: {
     const progress = Math.min(1, Math.max(0, (time - revealStartedAt) / 100))
     const tail = Array.from(graphemes.segment(latest.slice(revealFrom.length)), part => part.segment)
     const next = revealFrom + tail.slice(0, Math.ceil(tail.length * progress)).join("")
-    // A revision can shorten the undisplayed tail during this same window.
-    // Keep the visible prefix until the reveal catches up with it again.
     if (next.length >= displayed.length) publishText(next)
     if (displayed !== latest) frame = frames.request(reveal)
   }
   const publishResult = () => {
-    // Show the first words and revisions immediately. Only appended text is
-    // revealed over frames, coalescing new bursts into the same 100 ms window.
     if (!frames || !receivedResult || stopping || !latest.startsWith(displayed)) publish()
     else if (latest !== displayed && frame === undefined) {
       revealFrom = displayed
@@ -125,7 +119,7 @@ export function createBrowserDictation(options: {
     if (!live) return
     if (event.error !== "aborted") options.onError(speechError(event.error), event.error)
     endSession(true, false)
-    try { recognition.abort() } catch { /* Already ended. */ }
+    try { recognition.abort() } catch {}
   }
   recognition.onresult = event => {
     if (!live) return
@@ -144,7 +138,7 @@ export function createBrowserDictation(options: {
   function commit() {
     if (live) {
       endSession(true, false)
-      try { recognition.abort() } catch { /* Already ended. */ }
+      try { recognition.abort() } catch {}
     }
     return latest
   }
@@ -167,12 +161,11 @@ export function createBrowserDictation(options: {
       catch { options.onError("Couldn’t start dictation. Check microphone access."); endSession(true, false) }
     },
     stop,
-    /** Finalize before sending; errors and cancellation leave a draft to review. */
     finish() { stop(); return finished },
     cancel() {
       if (!live) return
       endSession(false, false)
-      try { recognition.abort() } catch { /* Already ended. */ }
+      try { recognition.abort() } catch {}
     },
     commit,
   }

@@ -8,7 +8,6 @@ type InventoryFetch = (url: string, init?: RequestInit) => Promise<Response>;
 const EVENTS = "/v1/inference-providers/inventory/events";
 const IDENTITY_HEADER = "x-openwork-provider-identity";
 
-/** This hash is an identity fence, not a bearer; it survives bridge/engine restarts. */
 export function providerSessionIdentity(session: CloudProviderDenSession): string {
   return createHash("sha256").update(JSON.stringify([session.baseUrl.replace(/\/+$/, ""), session.orgId, session.token])).digest("hex");
 }
@@ -27,11 +26,6 @@ function json(value: unknown, status = 200): Response {
   return Response.json(value, { status, headers: { "cache-control": "no-store" } });
 }
 
-/**
- * Scoped inventory/inference transport. Reusable Den and Gateway bearers never
- * leave the OpenWork server, even to another engine plugin. No catalog owner,
- * provider state/cache/writer, or background inventory polling.
- */
 export async function createV2ProviderSessionBridge(current: () => CloudProviderDenSession | null, options: { fetch?: InventoryFetch } = {}) {
   const token = randomBytes(32).toString("base64url");
   const inferenceSecret = randomBytes(32);
@@ -53,7 +47,6 @@ export async function createV2ProviderSessionBridge(current: () => CloudProvider
     const supplied = Buffer.from(request.headers.get("authorization")?.replace(/^Bearer /, "") ?? "");
     const expected = Buffer.from(token);
     if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) return json(null, 401);
-    // Do not forward caller methods, headers, URLs, request bodies, or redirects.
     if (request.headers.has("origin") || request.method !== "GET") return json(null, 404);
     const path = url.pathname + url.search;
     if (path === "/session") return json(session ? {
@@ -93,8 +86,6 @@ export async function createV2ProviderSessionBridge(current: () => CloudProvider
           release();
           return json({ error: "provider_inventory_unavailable" }, 502);
         }
-        // Canonical invalidations/heartbeats only: never relay arbitrary Den SSE
-        // payloads, cookies, auth headers, error text, or other response headers.
         const reader = upstream.body.getReader();
         const decoder = new TextDecoder();
         const encoder = new TextEncoder();
@@ -132,14 +123,10 @@ export async function createV2ProviderSessionBridge(current: () => CloudProvider
                 }
                 output.close();
               } catch {
-                // Host shutdown, client cancellation and identity replacement
-                // are ordinary EOFs. Do not turn their aborted upstream read
-                // into an unhandled HTTP streaming error; unexpected failures
-                // still error the response and trigger client reconciliation.
                 try {
                   if (signal.aborted || !sameIdentity()) output.close();
                   else output.error(new Error("Inventory stream ended"));
-                } catch { /* The downstream may already have cancelled. */ }
+                } catch {}
               } finally { inventoryListeners.delete(invalidate); void reader.cancel().catch(() => {}); release(); }
             })();
           },
@@ -147,8 +134,6 @@ export async function createV2ProviderSessionBridge(current: () => CloudProvider
         });
         return new Response(body, { status: upstream.status, headers: { "content-type": "text/event-stream", "cache-control": "no-store" } });
       }
-      // Inventory JSON is bounded and re-encoded. Never pass through arbitrary
-      // upstream response headers or a diagnostic echo of the Den credential.
       let text = "";
       if (upstream.body) {
         const reader = upstream.body.getReader();

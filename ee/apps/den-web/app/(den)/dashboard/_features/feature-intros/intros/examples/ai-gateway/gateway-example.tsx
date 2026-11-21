@@ -13,10 +13,8 @@ import {
 } from "./example-parts";
 import { gatewayExampleAudiences, gatewayExampleProviders, gatewayExampleTotal } from "./gateway-example-data";
 
-/** Neutral shades per audience; colour is kept for states that need attention (V2). */
 const SPEND_TONES = ["bg-gray-900", "bg-gray-500", "bg-gray-300"];
 
-/** Section example: providers in, teams out, spend at a glance. */
 export function AiGatewayExample() {
   const step = useExampleStep(gatewayExampleAudiences.length);
   const activeAudience = step === null ? null : gatewayExampleAudiences[step];

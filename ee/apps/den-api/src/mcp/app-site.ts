@@ -2,22 +2,12 @@ import { env } from "../env.js"
 import { isPublicMcpAppSite } from "../mcp-apps.js"
 import { NO_INDEX } from "../public-response-headers.js"
 
-/**
- * A browser opening an App's MCP URL: a GET that asks for HTML and carries no
- * credentials. MCP clients send POST, or GET for an event stream, so they
- * never match and keep getting the answers they got before.
- */
 export function wantsAppSite(request: Request): boolean {
   return request.method === "GET"
     && !request.headers.has("authorization")
     && (request.headers.get("accept") ?? "").includes("text/html")
 }
 
-/**
- * The page's script: a small MCP client and MCP Apps host. It talks to the
- * same URL it was served from, loads the App's HTML into a sandboxed frame,
- * and answers the frame's requests. It holds no App content itself.
- */
 const SITE_SCRIPT = `
 (() => {
   const root = document.documentElement
@@ -146,13 +136,6 @@ function escapeAttribute(value: string): string {
   return value.replace(/[&"<>]/gu, (char) => `&#${char.charCodeAt(0)};`)
 }
 
-/**
- * The frame has no `allow-same-origin`, so the App's HTML runs on an opaque
- * origin and cannot read this origin's cookies or the page's token. The page's
- * policy must allow inline scripts because a srcdoc frame inherits it; the
- * App's HTML then narrows itself with its own hash-only policy. Nothing
- * untrusted is written into this page.
- */
 const SITE_CSP = [
   "default-src 'none'",
   "script-src 'unsafe-inline'",
@@ -170,19 +153,8 @@ function sitePage(mode: "public" | "member"): string {
   return `<!doctype html><html lang="en" data-mode="${mode}" data-sign-in="${escapeAttribute(env.webUrl)}"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="robots" content="${NO_INDEX}"><title>OpenWork Artifact</title><style>html,body{margin:0;height:100%}body{font:15px system-ui,sans-serif;color-scheme:light dark}#app{display:block;width:100%;height:100%;border:0}#status{margin:0;padding:24px}</style></head><body><p id="status" role="status">Opening…</p><iframe id="app" title="Artifact" sandbox="allow-scripts allow-forms" hidden></iframe><script>${SITE_SCRIPT}</script></body></html>`
 }
 
-/** Sent by the page on its signed-in requests, so the App's server refuses an App that was not made a site. */
 export const APP_SITE_HEADER = "x-openwork-app-site"
 
-/**
- * The site page for a browser at an App's MCP URL, or null so the caller
- * answers as it did before.
- *
- * At the public URL the page is served only for an App that is public and a
- * site. At the signed-in URL nobody has signed in yet, so the App is not
- * looked up at all: every App id gets the same page, which says nothing about
- * whether the App exists. Once the visitor has signed in, the App's server
- * decides whether they may open it as a site.
- */
 export async function appSiteResponse(input: { appIdOrName: string; publicOnly: boolean }): Promise<Response | null> {
   if (!env.appMcpServersEnabled) return null
   if (input.publicOnly && !await isPublicMcpAppSite({ appIdOrName: input.appIdOrName })) return null

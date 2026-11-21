@@ -25,7 +25,6 @@ import { PluginsSetupIntro } from "./plugins-intro-facts";
 
 type PreviewItem = {
   detail: string;
-  /** The skill's folder on GitHub, shown when there is no manifest so it can be checked. */
   href: string | null;
   key: string;
   kind: "skill" | "mcp";
@@ -96,7 +95,6 @@ export function PluginImportScreen() {
       setGithubUrl(normalizedGithubUrl);
       setPreview(nextPreview);
       setSelectedServerKeys(nextPreview.servers.filter((server) => server.supported).map((server) => server.serverKey));
-      // Without a plugin manifest nothing is chosen for the person: they pick each skill.
       setSelectedSkillKeys(nextPreview.requiresSkillSelection
         ? []
         : nextPreview.skills.filter((skill) => skill.supported).map((skill) => skill.skillKey));

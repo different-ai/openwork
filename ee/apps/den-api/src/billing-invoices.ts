@@ -5,7 +5,6 @@ import {
   type BillingInvoicesResponse,
 } from "@openwork/types/den/billing-invoices"
 
-/** The Stripe invoice fields Billing shows; a subset of `Stripe.Invoice`. */
 export type StripeInvoiceFields = {
   id?: string | null
   number: string | null
@@ -31,7 +30,6 @@ function isoFromUnixSeconds(value: number | null | undefined): string | null {
   return typeof value === "number" && value > 0 ? new Date(value * 1000).toISOString() : null
 }
 
-/** Stripe's own links only: anything else is dropped rather than linked to. */
 function stripeUrl(value: string | null | undefined): string | null {
   if (!value) return null
   try {
@@ -61,10 +59,6 @@ export function serializeInvoice(invoice: StripeInvoiceFields): BillingInvoice |
   }
 }
 
-/**
- * Drafts are dropped, but the cursor is the last invoice Stripe returned, so
- * the next page continues after it even when it was a draft.
- */
 export function serializeInvoicePage(invoices: readonly StripeInvoiceFields[], hasMore: boolean): OrganizationInvoicePage {
   const last = invoices.at(-1)
   return {

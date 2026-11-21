@@ -4,7 +4,6 @@ import { useExampleStep } from "../use-example-step";
 import { apiKeysExampleRows } from "./api-keys-example-data";
 import { ExampleAvatar, ExampleCaption, ExampleRow, ExampleRows } from "./example-parts";
 
-/** Every member's AI Gateway API key: the tool it is for, who owns it and when it was last used. */
 export function ApiKeysExample() {
   const step = useExampleStep(apiKeysExampleRows.length, 3000);
   return (

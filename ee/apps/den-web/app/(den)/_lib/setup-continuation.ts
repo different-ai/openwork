@@ -1,4 +1,3 @@
-// Tab-scoped navigation intent, never a credential or a persisted membership flag.
 export const SETUP_CONTINUATION_KEY = "openwork.den.setup-continuation";
 export type SetupContinuation = {
   userId: string | null;

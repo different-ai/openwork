@@ -18,7 +18,6 @@ import { rowQuestionOptions } from "@/lib/remote-session-answers"
 import { remoteThreadSentence, remoteThreadView, type RemoteThreadView } from "@/react-app/domains/session/remote-threads/remote-thread-view"
 import { useUiStateStore } from "@/react-app/shell/ui-state-store"
 
-/** Opens a task's conversation beside the chat; it never opens by itself (DESIGN.md S5). */
 export function openRemoteThreadPanel(sessionId: string, workspaceId: string, start: RemoteThreadStart, label: string) {
   usePanelTabStore.getState().openTab(sessionId, {
     type: "remote-thread",
@@ -30,14 +29,6 @@ export function openRemoteThreadPanel(sessionId: string, workspaceId: string, st
   useUiStateStore.getState().setSidePanelState(sessionId, "panel")
 }
 
-/**
- * A task the agent started on another computer, shown like a helper: a sentence
- * names the task and where it runs, followed by its duration and last step.
- * The row opens it in the main pane (or beside a split chat);
- * its own Stop ends just that task. Its state
- * comes from the chat's one shared follower (remote-thread-store), never a
- * poll of its own.
- */
 export function RemoteThreadRunLine({ start, part, className }: { start: RemoteThreadStart; part: DynamicToolUIPart; className?: string }) {
   const { workspaceId, sessionId, readOnly, onOpenRemoteTask } = useMessageList()
   useFollowRemoteThread(start, { workspaceId, sessionId }, remoteToolCallStartedAt(part))
@@ -59,8 +50,6 @@ export function RemoteThreadRunLine({ start, part, className }: { start: RemoteT
     }).finally(() => setStopping(false))
   } : null
 
-  // A single-choice question's options sit under the row,
-  // unless read-only or the question needs a full card.
   const choices = entry && !readOnly && view.waitingFor === "question" ? rowQuestionOptions(entry.status?.pending) : null
   const withAnswers = (row: ReactNode, openTask: (() => void) | null) => {
     if (!entry || !choices) return row
@@ -72,8 +61,6 @@ export function RemoteThreadRunLine({ start, part, className }: { start: RemoteT
     )
   }
 
-  // Opens like a local helper: in the main pane where it can be steered,
-  // or beside the chat where this chat can't navigate (a split pane).
   const open = onOpenRemoteTask
     ? () => onOpenRemoteTask(start)
     : () => openRemoteThreadPanel(sessionId, workspaceId, start, view.title)
@@ -95,12 +82,6 @@ function RemoteThreadStopButton({ title, stopping, onStop }: { title: string; st
   )
 }
 
-/**
- * The row reads as one sentence, like a local
- * helper's (DESIGN.md C4): "Working on Studio computer · Check the release
- * notes ›" with the text shimmering while it runs (V6), then
- * "12m 4s, last ran: Read v1.1.md". Waiting is amber, everything else neutral.
- */
 export function RemoteThreadSentenceRow({ start, view, className, open, stop, stopping }: {
   start: RemoteThreadStart
   view: RemoteThreadView

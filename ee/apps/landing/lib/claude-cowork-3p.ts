@@ -7,7 +7,6 @@ export const CLAUDE_COWORK_3P_URL = `https://openworklabs.com${CLAUDE_COWORK_3P_
 
 export const claudeCowork3pHeading = "OpenWork vs Claude Cowork on 3P";
 
-/** Hero sub-line. Keep it under 20 words. */
 export const claudeCowork3pAnswer =
   "Keep Bedrock, Vertex, or Foundry. Add any model, and share skills and MCP servers with every teammate.";
 

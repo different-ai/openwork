@@ -1,8 +1,3 @@
-/**
- * Spanish translations (Español)
- * Professional terms (Skills, Plugins, Commands, Sessions, OpenCode, OpenPackage, OpenWork) are NOT translated
- */
-
 export default {
   "artifact.office_empty": "Este archivo no contiene texto legible. Ábrelo en otra aplicación para ver el original.",
   "artifact.office_empty_slide": "Esta diapositiva no contiene texto legible.",

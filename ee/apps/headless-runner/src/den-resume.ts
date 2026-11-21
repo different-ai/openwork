@@ -1,19 +1,11 @@
 import { z } from "zod"
 import { headlessModelAccessSchema, type HeadlessModelAccess } from "@openwork-ee/headless-protocol"
 
-/**
- * Den's resume-token exchange: a turn's resume grant for a fresh member-scoped MCP token for that turn (or one of its
- * tasks and reports). `POST {HEADLESS_DEN_API_URL}/v1/headless/resume-token`, authenticated with the runner's
- * callback token. Neither the grant nor the token is ever logged or reported.
- */
 export type ResumeExchangeInput = { grant: string; sessionId: string; messageId: string; model?: string; modelAccessRequired?: boolean }
 export type ResumeExchangeResult =
   | { ok: true; mcpToken: string; expiresAt: string; readOnly: boolean; modelAccess?: HeadlessModelAccess }
-  /** This grant will never work again (revoked, expired, member left, feature off): stop trying it. */
   | { ok: false; kind: "permanent"; code: string; status: number }
-  /** Den is busy or unreachable: try again later, not before `retryAfterMs` when Den says so. */
   | { ok: false; kind: "retryable"; code: string; status?: number; retryAfterMs?: number }
-  /** The runner's settings are wrong (callback token refused, endpoint not set up on Den): nothing will work. */
   | { ok: false; kind: "config"; code: string; status: number }
 export type ResumeExchange = (input: ResumeExchangeInput) => Promise<ResumeExchangeResult>
 
@@ -25,7 +17,6 @@ const issued = z.object({ mcpToken: z.string().min(1), expiresAt: z.string().min
 const refused = z.object({ error: z.string().regex(/^[A-Za-z0-9_.:-]{1,64}$/), retryAfterMs: z.number().nonnegative().optional() })
 
 export function denResumeClient(input: { url: string; token: string; fetch?: typeof fetch; timeoutMs?: number }): ResumeExchange {
-  // A native Workers fetch needs its global receiver.
   const send = input.fetch ?? ((request, init) => fetch(request, init))
   const timeoutMs = input.timeoutMs ?? DEFAULT_TIMEOUT_MS
   return async ({ grant, sessionId, messageId, model, modelAccessRequired }) => {
@@ -56,7 +47,6 @@ export function denResumeClient(input: { url: string; token: string; fetch?: typ
       return { ok: false, kind: "retryable", code: "rate_limited", status, ...(retryAfterMs !== undefined ? { retryAfterMs } : {}) }
     }
     if (status >= 500) return { ok: false, kind: "retryable", code: `den_http_${status}`, status }
-    // 403 with one of Den's grant codes, or anything else that a retry won't change (a 400 for this grant).
     return { ok: false, kind: "permanent", code: status === 403 && PERMANENT_CODES.has(code) ? code : status === 403 ? "forbidden" : code, status }
   }
 }

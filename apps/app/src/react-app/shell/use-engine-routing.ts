@@ -3,7 +3,6 @@ import { createOpenworkServerClient, type EngineV2PreviewStatus } from "../../ap
 import { selectedChatEngine } from "./engine-switch";
 import { resolveOpenworkConnection } from "./openwork-connection";
 
-/** Follow host-owned engine changes without exposing or controlling history migration. */
 export function startEngineRoutingPolling(options: {
   read: () => Promise<{ baseUrl: string; status: EngineV2PreviewStatus } | null>;
   changed: () => void;
@@ -26,7 +25,7 @@ export function startEngineRoutingPolling(options: {
         engines.set(instance, engine);
         if (previous && previous !== engine) options.changed();
       }
-    } catch { /* Startup and offline periods retry without changing routing. */ }
+    } catch {}
     if (!stopped) cancelPending = schedule(() => { void poll(); }, 3_000);
   };
   void poll();

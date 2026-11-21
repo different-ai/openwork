@@ -5,7 +5,6 @@ import { ExampleCaption, ExampleGroupLabel, ExampleRow, ExampleRows } from "../e
 import { useExampleStep } from "../use-example-step";
 import { deploymentsExample, deploymentsExampleChecks } from "./deployments-example-data";
 
-/** Deployments example: one install in the customer's own cloud, its version and the health checks it reports. */
 export function DeploymentsExample() {
   const step = useExampleStep(deploymentsExampleChecks.length);
 

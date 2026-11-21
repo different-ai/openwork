@@ -1,18 +1,3 @@
-/**
- * One-time baseline for databases that were previously managed with
- * `db:push` (state-based) and have no `__drizzle_migrations` table.
- *
- * Marks existing migrations as applied WITHOUT executing them, so a
- * subsequent `db:migrate` only runs migrations newer than the baseline.
- *
- * Usage:
- *   pnpm --filter @openwork-ee/den-db db:baseline              # dry run
- *   pnpm --filter @openwork-ee/den-db db:baseline -- --yes     # apply
- *   pnpm --filter @openwork-ee/den-db db:baseline -- --yes --through 0020_breezy_siren
- *
- * Connects with DATABASE_URL (mysql2) or DATABASE_HOST/DATABASE_USERNAME/
- * DATABASE_PASSWORD (PlanetScale HTTP driver) -- same as the rest of den-db.
- */
 import "../src/load-env.ts"
 import crypto from "node:crypto"
 import { readFileSync } from "node:fs"

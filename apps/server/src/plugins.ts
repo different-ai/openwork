@@ -91,8 +91,6 @@ export async function listPlugins(serverConfig: ServerConfig, workspaceId: strin
   };
 }
 
-// Runtime-managed plugins are engine-global: the injected engine config file
-// is rendered from the ENGINE_GLOBAL row only, so plugin writes target it.
 export async function addPlugin(serverConfig: ServerConfig, spec: string): Promise<boolean> {
   validatePluginSpec(spec);
   const runtimeConfig = await readGlobalRuntimeOpencodeConfig(serverConfig);

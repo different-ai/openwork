@@ -1,12 +1,5 @@
 import { deflateSync } from "node:zlib";
 
-/**
- * Builds small, valid PDFs for tests without a PDF library. Each entry becomes
- * one US-letter page: a string draws that text with Helvetica, `null` draws a
- * filled rectangle only (a page with no text layer, like a scan), and
- * `{ photo: true }` fills the page with a photo-like raster image (a scan of a
- * picture: no text layer, poor PNG compression).
- */
 export type TestPdfPage = string | null | { photo: true };
 
 function photoImage(width: number, height: number): Buffer {
@@ -75,7 +68,6 @@ export function buildTestPdf(pages: TestPdfPage[]): Buffer {
   return Buffer.concat(chunks);
 }
 
-/** A PDF whose cross-reference table points nowhere useful. */
 export function corruptTestPdf(): Buffer {
   return Buffer.from("%PDF-1.4\n1 0 obj << /Type /Catalog >> endobj\ntrailer << /Root 9 0 R >>\nstartxref\n999999\n%%EOF\n", "latin1");
 }

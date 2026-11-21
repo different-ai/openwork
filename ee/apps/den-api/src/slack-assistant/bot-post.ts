@@ -9,23 +9,12 @@ import {
 } from "./direct-message.js"
 import { isSandboxSlackToken, SlackApiError, slackClient, type SlackCall } from "./protocol.js"
 
-/**
- * Workbot posts in a Slack channel from the Slack app's own bot, on a member's behalf. Every post starts with a line
- * naming whose agent sent it (`<@U…>'s agent`), added here so no caller can leave it out. The bot posts only where it
- * is a member (its token has `chat:write`, not `chat:write.public`), and only in channels the member can read in
- * Slack themselves, checked with their own Slack token first: inviting the app to a private channel never lets
- * someone outside it post there.
- *
- * Installation and identity lookups are direct-message.ts's: the same installation and linked Slack user a DM uses.
- */
-
 export type WorkbotChannelPostFailure = WorkbotDirectMessageFailure | "bot_not_in_channel" | "channel_access_denied"
 
 export type WorkbotChannelPostResult =
   | { ok: true; channelId: string; messageTs: string; permalink?: string }
   | { ok: false; reason: WorkbotChannelPostFailure; code?: string; retryAfterMs?: number }
 
-/** Whether the member can read the channel in Slack themselves; null when that can't be checked now. */
 export type MemberChannelAccess = (input: {
   connectionId: DenTypeId<"externalMcpConnection">
   slackUserId: string
@@ -34,20 +23,17 @@ export type MemberChannelAccess = (input: {
 
 export type WorkbotChannelPostDeps = WorkbotDirectMessageDeps & { memberCanReadChannel: MemberChannelAccess }
 
-/** Slack's answers when the bot isn't in a channel (or, for a private one, can't see it). */
 const BOT_NOT_IN_CHANNEL_CODES = new Set(["not_in_channel", "channel_not_found"])
 
 async function memberCanReadChannel(
   input: { connectionId: DenTypeId<"externalMcpConnection">; slackUserId: string; channelId: string },
   slack: (token: string) => SlackCall = slackClient,
 ): Promise<boolean | null> {
-  // Loaded lazily, like direct-message.ts: the assistant's repository pulls in Connect and auth.
   const { getInstallation, resolveSlackActor } = await import("./repository.js")
   const installation = await getInstallation(input.connectionId)
   if (!installation) return null
   const actor = await resolveSlackActor(installation, input.slackUserId)
   if (!actor) return null
-  // A sandbox's sample app asks its sample Slack; the member's connector token came from there.
   let call = isSandboxSlackToken(installation.botToken) ? null : slack(actor.userToken)
   if (!call) {
     const { sandboxSlackApiBase } = await import("./sandbox-api.js")
@@ -66,12 +52,10 @@ async function memberCanReadChannel(
 
 export const defaultWorkbotChannelPostDeps: WorkbotChannelPostDeps = { ...defaultWorkbotDirectMessageDeps, memberCanReadChannel }
 
-/** The first line of every channel post: a Slack mention of the member whose agent sent it. */
 export function workbotAttributionLine(slackUserId: string) {
   return `<@${slackUserId}>'s agent`
 }
 
-/** Keeps @here, @channel, @everyone and user-group mentions in agent text from notifying anyone. */
 export function withoutSlackBroadcasts(text: string) {
   return text
     .replace(/<!(here|channel|everyone)(\|[^>]*)?>/gi, "@\u200b$1")
@@ -79,10 +63,6 @@ export function withoutSlackBroadcasts(text: string) {
     .replace(/@(here|channel|everyone)\b/gi, "@\u200b$1")
 }
 
-/**
- * Posts in a channel from the Workbot Slack app's bot on behalf of a member resolved with
- * resolveWorkbotDirectMessageTarget, with the attribution line first.
- */
 export async function postWorkbotChannelMessage(
   member: WorkbotSlackMember,
   message: { channelId: string; text: string; threadTs?: string },
@@ -118,7 +98,6 @@ export async function postWorkbotChannelMessage(
   }
 }
 
-/** A link to the posted message, when Slack gives one; the post already happened either way. */
 async function messagePermalink(slack: SlackCall, channelId: string, messageTs: string) {
   try {
     const result = z.object({ permalink: z.string().url() }).safeParse(await slack("chat.getPermalink", { channel: channelId, message_ts: messageTs }))

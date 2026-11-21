@@ -10,7 +10,6 @@ function modelName(modelId: string): string {
   return smartRouterExampleModels.find((model) => model.id === modelId)?.name ?? modelId;
 }
 
-/** One Smart model, three tagged models, and which one answered each sample prompt. */
 export function SmartRouterExample() {
   const step = useExampleStep(smartRouterExamplePrompts.length);
   const activePrompt = step === null ? null : smartRouterExamplePrompts[step];

@@ -8,41 +8,21 @@ import { env } from "../env.js"
 import { appLogger } from "../observability/logger.js"
 import { appendAuditEventInOwnTransaction, readEffectiveAuditPolicyWithRetry, auditOperationOutcome, auditUserPrincipalKey, currentAuditChangeCapture, currentAuditRequestId, logAuditOutcomeLost, type AuditChangeCapture } from "./request-capture.js"
 
-// Events about a USER (sessions, account security, failed sign-ins) that have
-// no single request tenant (attribution "user_memberships", src/audit/routes).
-// They are appended into the user's verified active memberships: every
-// membership (account fan-out, failed sign-ins) or the one organization a
-// session belongs to (`organizationId`). Each organization gets its own
-// operation and transaction (entitlement recheck + policy-current fence) and
-// shares the request id, so the organization sees the request reference.
-// Only organizations with deployment capture, an enabled policy (lazy default allowed; entitlement checked there) and the
-// event category store anything. A failure in one organization logs
-// [audit-outcome-lost] and never fails the user's request or other organizations.
-
 export type AuditUserMembership = Readonly<{ organizationId: string; memberId: string; userId: string }>
 export type UserMembershipsAuditInput = Readonly<{
   userId: string
-  /** Restrict to this organization (the session's); still requires an active membership in it. */
   organizationId?: string | null
   action: string
   kind: string
   category: AuditCategory
   outcome?: AuditEventInput["outcome"]
-  /**
-   * "member": the user with that organization's member id; "unknown":
-   * unauthenticated attempt; `{ system }`: a Den process acting on the user
-   * (credential revocation, bootstrap cleanup), never joined to a request operation.
-   */
   actor: "member" | "unknown" | Readonly<{ system: string }>
-  /** Operation scope (resource id); defaults to the user id. */
   scope?: string
   resources: (membership: AuditUserMembership) => AuditEventInput["resources"]
   changes?: AuditEventInput["changes"]
   reasonCode?: string
-  /** Defaults to the enclosing den-api request id. */
   requestId?: string | null
   origin?: AuditOrigin
-  /** Stable per-event discriminator; the idempotency key also carries the request id. */
   idempotencyDiscriminator?: string
 }>
 
@@ -58,7 +38,6 @@ function errorName(error: unknown) {
   return error instanceof Error ? error.name : typeof error
 }
 
-/** Active memberships (one query). */
 async function activeMemberships(userId: string, organizationId: string | null) {
   const user = normalizeDenTypeId("user", userId)
   const filters = [eq(MemberTable.userId, user), isNull(MemberTable.removedAt)]
@@ -72,12 +51,6 @@ function fanoutActor(actor: UserMembershipsAuditInput["actor"], membership: Audi
   return { actor: { type: "system", id: actor.system }, principalKey: `system:${actor.system}` }
 }
 
-/**
- * Own-operation capture in one organization for code outside its request
- * operation: null unless deployment capture, an enabled
- * policy (lazy default allowed) and the category hold. Throws on lookup errors
- * (callers log [audit-outcome-lost]).
- */
 export async function standaloneOrganizationAuditCapture(input: Readonly<{
   organizationId: string
   actor: AuditActor
@@ -102,7 +75,6 @@ export async function standaloneOrganizationAuditCapture(input: Readonly<{
   }
 }
 
-/** Returns the number of organizations that stored the event. Never throws. */
 export async function recordAuditForUserMemberships(input: UserMembershipsAuditInput): Promise<number> {
   if (!env.auditCaptureEnabled) return 0
   const userId = typeIdOrNull("user", input.userId)
@@ -122,8 +94,6 @@ export async function recordAuditForUserMemberships(input: UserMembershipsAuditI
     const membership: AuditUserMembership = { organizationId: row.organizationId, memberId: row.memberId, userId }
     const outcome = input.outcome ?? "succeeded"
     try {
-      // A request already captured for this organization (e.g. organization/set-active)
-      // keeps its single operation; otherwise a standalone user operation.
       const requestCapture = input.category === "change" && input.actor === "member" ? currentAuditChangeCapture(membership.organizationId) : null
       let capture: AuditChangeCapture | null = requestCapture
       if (!capture) {

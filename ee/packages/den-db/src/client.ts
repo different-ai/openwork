@@ -111,7 +111,6 @@ function isRetryableReadQuery(sql: string | null): boolean {
  * MariaDB) without touching every locking read.
  */
 export function rewriteShareLock(sql: string): string {
-  // Trim first so the match itself has no ambiguous trailing quantifiers.
   const statement = sql.trimEnd().replace(/;$/, "").trimEnd()
   const match = /\bfor\s+share$/i.exec(statement)
   return match ? `${statement.slice(0, match.index)}lock in share mode` : sql
@@ -127,7 +126,6 @@ function rewriteQueryInput(input: string | QueryOptions): string | QueryOptions 
 
 type QueryRunner = <T extends QueryResult>(sqlOrOptions: string | QueryOptions, values?: unknown) => Promise<[T, FieldPacket[]]>
 
-/** Drizzle runs transaction statements on a checked-out connection, so pooled connections need the same rewrite. */
 function rewriteConnectionQueries(connection: mysql.PoolConnection): mysql.PoolConnection {
   if (rewrittenConnections.has(connection)) return connection
   rewrittenConnections.add(connection)
@@ -180,8 +178,6 @@ function createMySqlPool(config: mysql.PoolOptions) {
     ...config,
     waitForConnections: true,
     connectionLimit: 10,
-    // mysql2 only closes idle connections above maxIdle, so maxIdle equal to
-    // connectionLimit kept every burst connection open forever.
     maxIdle: 2,
     idleTimeout: 60_000,
     queueLimit: 0,
@@ -233,12 +229,7 @@ export function createDenDb(input: {
   databaseUrl?: string | null
   mode?: DenDbMode
   planetscale?: PlanetScaleCredentials | null
-  /** Optional replica credentials for the same host; reads use the primary when absent. */
   readReplica?: ReadReplicaCredentials | null
-  /**
-   * Checked on every replica-routed read; returning true sends that read to the
-   * primary instead (e.g. once the current request has written).
-   */
   readFromPrimary?: () => boolean
   logger?: Logger
 }) {
@@ -271,7 +262,6 @@ export function createDenDb(input: {
   const readClient = readReplica
     ? createMySqlPool({ ...connection, user: readReplica.username, password: readReplica.password })
     : null
-  // Both drivers expose the same MySqlDatabase query surface; Den types `db` as the PlanetScale flavour.
   const primary = drizzle(client, { schema, mode: "default", logger: input.logger }) as unknown as DenPrimaryDb
   const replica = readClient
     ? (drizzle(readClient, { schema, mode: "default", logger: input.logger }) as unknown as DenPrimaryDb)

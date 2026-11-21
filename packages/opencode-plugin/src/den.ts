@@ -87,7 +87,6 @@ async function readJson(response: Response): Promise<unknown> {
 
 /** Unauthenticated JSON request (device authorization endpoints). */
 export async function postPublic(fetcher: Fetch, apiBaseUrl: string, path: string, body: unknown) {
-  // The device token arrives in this response, so the same transport rule applies.
   assertAllowedApiBaseUrl(apiBaseUrl)
   const response = await fetcher(`${normalizeBaseUrl(apiBaseUrl)}${path}`, {
     method: "POST",

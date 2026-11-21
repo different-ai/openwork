@@ -35,15 +35,6 @@ import {
 import { usePlugin } from "./plugin-data";
 import { useMcpAccountAuthorization } from "./use-mcp-account-authorization";
 
-/**
- * The member-facing half of MCP Connections. An admin publishes a
- * connection (its connector page, admin-only); every granted member
- * sees it here. For "per_member" connections this is where each person
- * connects their own account — after which their agent's
- * search_capabilities/execute_capability calls run as them.
- * Admins can also finish a shared-credential connection's OAuth here when
- * the org account was published but never authorized.
- */
 export function YourConnectionsScreen() {
   const { data: connections = [], isLoading, error, refetch } = useMcpConnections("usable");
   const { data: presets = [] } = useMcpConnectionPresets();
@@ -180,7 +171,6 @@ function YourConnectionRow({
   toolTesterRoute,
 }: {
   connection: ExternalMcpConnection;
-  /** `connections.manage`: finish setup, connect the org account, review OAuth and test tools. */
   canManageConnections: boolean;
   needsAdminSetup: boolean;
   setupTarget: { connectionId: string; pluginId: string } | null;
@@ -209,7 +199,6 @@ function YourConnectionRow({
   const needsMyConnect = !needsAdminSetup && !needsAdminRecovery && isPerMember && !connection.connectedForMe;
   const needsAdminConnect = !needsAdminSetup && !needsAdminRecovery && canManageConnections && !isPerMember && connection.authType === "oauth" && !connection.connectedForMe;
   const canDisconnect = !needsAdminSetup && canDisconnectMyConnectionAccount(connection);
-  // A saved personal key keeps one visible action (Replace key); removal lives in the row menu.
   const keyInMenu = canDisconnect && apiKeyStatus !== null && apiKeyStatus !== "missing";
   const isNativeProvider = isNativeProviderConnectionId(connection.id, connection.nativeProviderKey);
   const canTestTools = !needsAdminSetup && !needsAdminRecovery && canManageConnections
@@ -221,7 +210,6 @@ function YourConnectionRow({
   const checkConnection = useCheckMcpConnection();
   const readinessView = { checking: checkConnection.isPending };
   const state = connectorReadinessState(connection, readinessView);
-  // A shared account is reconnected by an admin; a personal one by its owner.
   const adminSignIn = state === "Sign in" && !isPerMember;
   const note = connectorReadinessNote(connection, readinessView);
   if (state) return (

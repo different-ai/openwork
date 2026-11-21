@@ -21,7 +21,6 @@ async function terminate(row: NativeSubscription, error = new NativeEventError(-
   })
 }
 
-/** One leased observation per watch. The state and pending occurrence commit together. */
 export async function observeNativeEvent() {
   const row = await db.transaction(async tx => {
     const [watch] = await tx.select().from(Subscription).where(and(eq(Subscription.status, "active"), lte(Subscription.availableAt, new Date()))).orderBy(asc(Subscription.availableAt)).limit(1).for("update", { skipLocked: true })
@@ -45,7 +44,6 @@ export async function observeNativeEvent() {
       const changed = observation !== live.observation
       const sequence = live.sequence + (changed && source.emit ? 1 : 0)
       if (changed && source.emit) {
-        // Finite watches bound retained traffic. Backpressure leaves the last observation unadvanced.
         if (sequence > 100) throw new NativeEventError(-32025, "Subscription event limit reached", { limit: "events", max: 100 })
         const id = randomBytes(24).toString("hex")
         await tx.insert(Delivery).values({ id, subscriptionId: row.id, organizationId: row.organizationId,

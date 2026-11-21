@@ -6,11 +6,8 @@ export * from "./gen/types.gen.js";
 export { DenClient };
 
 export type DenClientConfig = Config & {
-  /** Den user session token. Session-only operations require this credential. */
   token?: string;
-  /** Organization API key, sent verbatim in x-api-key. */
   apiKey?: string;
-  /** Organization context for organization-scoped operations. */
   orgId?: string;
   auditContext?: Readonly<{ correlationId: string }>;
 };
@@ -19,7 +16,6 @@ export function createDenClient(config: DenClientConfig = {}) {
   const { token, apiKey, orgId, auditContext, ...options } = config;
   const auditCorrelationId = auditContext?.correlationId;
   const client = createClient({ baseUrl: "https://api.openworklabs.com", ...options });
-  // Interceptors preserve all supported header forms and per-request overrides.
   client.interceptors.request.use((request) => {
     if (token && !request.headers.has("authorization")) request.headers.set("authorization", `Bearer ${token}`);
     if (apiKey && !request.headers.has("x-api-key")) request.headers.set("x-api-key", apiKey);

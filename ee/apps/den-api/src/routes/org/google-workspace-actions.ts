@@ -4,7 +4,6 @@ import type { OrgRouteVariables } from "./shared.js"
 
 export const GOOGLE_ACTION_MAX_BODY_BYTES = 6 * 1024 * 1024
 
-/** Bound decoded provider bytes before JSON parsing, including chunked responses. */
 export async function readGoogleActionJson(response: Response): Promise<unknown> {
   if (!response.body) return null
   const reader = response.body.getReader()
@@ -33,7 +32,6 @@ export type GoogleWorkspaceActionDependencies = {
   token: (input: {
     organizationId: NonNullable<OrgRouteVariables["organizationContext"]>["organization"]["id"]
     orgMembershipId: NonNullable<OrgRouteVariables["organizationContext"]>["currentMember"]["id"]
-    /** Omitted: the signed capability header or the default. null: always the default. */
     connectionId?: string | null
   }) => Promise<GoogleWorkspaceAccessToken>
   fetch: (input: Parameters<typeof fetch>[0], init?: RequestInit) => Promise<Response>
@@ -43,7 +41,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-/** Read Google's legacy `errors[]` and google.rpc `details[]` error shapes. */
 export function parseGoogleError(body: unknown): { reasons: Set<string>; status?: string; message?: string; service?: string } {
   const reasons = new Set<string>()
   if (!isRecord(body) || !isRecord(body.error)) return { reasons }
@@ -62,7 +59,6 @@ export function parseGoogleError(body: unknown): { reasons: Set<string>; status?
   }
 }
 
-/** Only a rejected or under-scoped token is fixed by reconnecting. */
 export function isGoogleAuthorizationFailure(status: number, reasons: ReadonlySet<string>): boolean {
   if (status === 401) return true
   return status === 403 && (reasons.has("authError") || reasons.has("insufficientPermissions") || reasons.has("ACCESS_TOKEN_SCOPE_INSUFFICIENT"))
@@ -84,7 +80,6 @@ function googleFailureMessage(status: number, google: ReturnType<typeof parseGoo
   return `Google returned HTTP ${status}${detail}${hint}${uncertain}`
 }
 
-/** Reuse the selected credential; require both account grants and current connector permissions. */
 export async function requestGoogleAction(
   c: Pick<Context<{ Variables: OrgRouteVariables }>, "get" | "json" | "req" | "header">,
   dependencies: GoogleWorkspaceActionDependencies,

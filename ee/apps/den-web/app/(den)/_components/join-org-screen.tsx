@@ -43,8 +43,6 @@ function InvitationDetails({
   account: AccountSummary;
   roleLabel: string;
 }) {
-  // The invited email is said once: the account row appears only when it
-  // differs, which is the one case where it changes what to do.
   const rows = [
         { label: "Workspace", value: <JoinWorkspaceValue name={preview.organization.name} /> },
         { label: "Invited as", value: preview.invitation.email },
@@ -307,11 +305,6 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
 
     acceptedInvitationResolutionRef.current = acceptedInvitationId;
 
-    // The ref above guarantees a single in-flight resolution per invitation,
-    // so every outcome below is applied unconditionally. Sign-in rehydration
-    // churns the user identity mid-flight; a cancellation guard here dropped
-    // the outcome and stranded users on the loading card in two real eval
-    // regressions (first the success redirect, then the 410 failure card).
     async function resolveAcceptedInvitation() {
       setAcceptedAutoResolveFailure(null);
 
@@ -343,7 +336,6 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
 
         router.replace("/install");
       } catch {
-        // Transient transport failure: allow a later effect run to retry.
         acceptedInvitationResolutionRef.current = null;
         setAcceptedAutoResolveFailure({ id: acceptedInvitationId, reason: "unknown" });
       }
@@ -381,9 +373,6 @@ export function JoinOrgScreen({ invitationId }: { invitationId: string }) {
       );
 
       if (response.status === 401) {
-        // No live session: it expired, was revoked, or was never created.
-        // Ask Den; a dead session drops the page back to the invite sign-in
-        // form instead of showing the raw "unauthorized" code (ENG-550).
         if (!(await revalidateSession())) {
           setSessionEnded(true);
           return;

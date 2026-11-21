@@ -10,7 +10,6 @@ import { ItemPanel, ItemRowsSkeleton } from "./item-list";
 const LegacyList = dynamic(() => import("./desktop-policies-screen").then((module) => module.DesktopPoliciesScreen));
 const LegacyEditor = dynamic(() => import("./desktop-policy-editor-screen").then((module) => module.DesktopPolicyEditorScreen));
 
-/** Retain legacy screens for an immediate, data-preserving rollback. */
 export function DesktopPolicyRoute({ editor = false, desktopPolicyId, setupRestricted = false }: { editor?: boolean; desktopPolicyId?: string; setupRestricted?: boolean }) {
   const { orgContext, orgSlug } = useOrgDashboard();
   if (!orgContext) return <ItemPanel><ItemRowsSkeleton label="Loading desktop settings" /></ItemPanel>;

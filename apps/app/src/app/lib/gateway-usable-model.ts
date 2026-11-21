@@ -2,11 +2,6 @@ import type { GatewayUsableModel } from "@openwork/types/den/gateway";
 
 const GATEWAY_MODEL_ID = /^gwm_[0-7][0-9a-hjkmnp-tv-z]{25}_[0-7][0-9a-hjkmnp-tv-z]{25}_[0-7][0-9a-hjkmnp-tv-z]{25}$/;
 
-/**
- * One Gateway model combination, or null when any identity field is missing or
- * its `gwm_` id does not encode its own model group and credential set. Pass
- * `credentialSetId` to also require the model to belong to that set.
- */
 export function parseGatewayUsableModel(value: unknown, credentialSetId?: unknown): GatewayUsableModel | null {
   if (!value || typeof value !== "object"
     || !("id" in value) || typeof value.id !== "string" || !GATEWAY_MODEL_ID.test(value.id)

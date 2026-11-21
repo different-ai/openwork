@@ -15,13 +15,10 @@ async function git(cwd: string, args: readonly string[]): Promise<string | undef
 
 export interface SourceCommit {
   sha: string;
-  /** Whether this checkout has the commit object, so it can be described and compared. */
   known: boolean;
   subject?: string;
-  /** This checkout's HEAD and branch: the world driver and recipes always run from here. */
   head?: string;
   branch?: string;
-  /** Files under the recipe paths that differ between this working tree and the commit. */
   recipeDrift?: string[];
 }
 

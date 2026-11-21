@@ -1,14 +1,3 @@
-/**
- * Registry of native OAuth providers — capability sources Den implements
- * itself against a classic OAuth2 authorization-code flow (as opposed to
- * external MCP connections, which are discovered dynamically at connect
- * time and never need a registry entry — see ../external-mcp/ ).
- *
- * Adding a new native provider is: one entry here, plus whatever capability
- * routes call `getValidAccessToken(providerId, ...)`. No new tables, no new
- * OAuth plumbing — `generic-oauth.ts` drives every provider the same way.
- */
-
 import { MICROSOFT_365_DEFAULT_FEATURES } from "@openwork/types/den/microsoft-365"
 import { env } from "../env.js"
 
@@ -18,24 +7,14 @@ export type NativeOAuthProviderConfig = {
   authorizeUrl: string
   tokenUrl: string
   userinfoUrl?: string
-  /** Display-only endpoint shown on connection cards. */
   websiteUrl: string
   defaultScopes: string[]
   defaultFeatures?: string[]
   optionalFeatures?: Record<string, string[]>
-  /** Google (and most modern providers) support PKCE even for confidential clients; harmless to always send. */
   usesPkce: boolean
-  /** Extra fixed authorize-url params beyond client_id/redirect_uri/response_type/scope/state/PKCE. */
   extraAuthorizeParams?: Record<string, string>
-  /** OrgOAuthClient.extra key used to bind authorize and token endpoints to one tenant. */
   tenantIdExtraKey?: string
-  /** Higher provider scopes that satisfy a narrower required scope. */
   scopeImplications?: Record<string, string[]>
-  /**
-   * Requested scopes the provider may leave out of the token response `scope`
-   * even when granted. They are still requested, but never decide whether a
-   * member must reconnect.
-   */
   unreportedScopes?: string[]
 }
 
@@ -118,8 +97,6 @@ export const NATIVE_OAUTH_PROVIDERS: Record<string, NativeOAuthProviderConfig> =
     },
     usesPkce: true,
     tenantIdExtraKey: "tenantId",
-    // Entra never lists offline_access in the token response (it answers with a
-    // refresh token instead) and may omit the OpenID Connect scopes.
     unreportedScopes: ["openid", "profile", "email", "offline_access"],
   },
 }

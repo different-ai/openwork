@@ -13,7 +13,6 @@ function record(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? Object.fromEntries(Object.entries(value)) : null
 }
 
-/** What the connection's cached discovery says about the authorization server. */
 export function authorizationServerFacts(connection: Pick<ExternalMcpConnectionRow, "oauthConfiguration">) {
   const configuration = connection.oauthConfiguration
   const metadata = record(record(configuration?.discovery)?.authorizationServerMetadata)
@@ -27,10 +26,6 @@ export function authorizationServerFacts(connection: Pick<ExternalMcpConnectionR
   }
 }
 
-/**
- * The outcome a member's sign-in start says about client registration, or null when it says nothing (an admin's own
- * OAuth app, or a failure at another step).
- */
 export function signInRegistrationOutcome(input: {
   registrationSource?: string | null
   diagnostic?: Diagnostic
@@ -46,7 +41,6 @@ export function signInRegistrationOutcome(input: {
 }
 
 async function registrationSource(connection: Pick<ExternalMcpConnectionRow, "id" | "organizationId">): Promise<string | null> {
-  // primary: the sign-in start that just ran may have registered this client.
   const [row] = await db.$primary.select({ extra: OrgOAuthClientTable.extra }).from(OrgOAuthClientTable)
     .where(and(eq(OrgOAuthClientTable.organizationId, connection.organizationId), eq(OrgOAuthClientTable.providerId, connection.id)))
     .limit(1)
@@ -54,15 +48,10 @@ async function registrationSource(connection: Pick<ExternalMcpConnectionRow, "id
   return typeof source === "string" ? source : null
 }
 
-/**
- * Records what a member's real sign-in start showed about OpenWork's client registration with this provider. Runs in
- * the background and never throws: reporting must not fail or slow a sign-in.
- */
 export function observeSignInRegistration(input: {
   connection: ExternalMcpConnectionRow
   diagnostic?: Diagnostic
   reference: string
-  /** Re-reads the connection, whose saved discovery can be newer than the request's copy. */
   reload?: () => Promise<ExternalMcpConnectionRow | null>
 }): void {
   void (async () => {
@@ -90,7 +79,6 @@ export function observeSignInRegistration(input: {
         reference: diagnostic?.referenceId ?? input.reference,
       })
     } catch {
-      // Best effort by design.
     }
   })()
 }

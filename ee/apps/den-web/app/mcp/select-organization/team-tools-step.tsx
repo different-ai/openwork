@@ -17,11 +17,6 @@ function parsePresets(payload: unknown): ExternalMcpPreset[] {
     && typeof preset.url === "string" && typeof preset.authType === "string");
 }
 
-/**
- * A person who just created their workspace from Workbot's sign-in never sees Den's setup, so before Workbot opens
- * they can add the tools their team uses, the same starter tools as Den's Tools step. Workbot then offers each one
- * to connect on its welcome screen. Skipping is always fine.
- */
 export function TeamToolsStep({ organizationId, request, onContinue }: {
   organizationId: string;
   request: Request;
@@ -32,7 +27,6 @@ export function TeamToolsStep({ organizationId, request, onContinue }: {
   const [added, setAdded] = useState<Set<string>>(new Set());
   const [adding, setAdding] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // Leave once: the sign-in continues from here, and its consent must not be sent twice.
   const left = useRef(false);
   const leave = () => {
     if (left.current) return;
@@ -48,7 +42,6 @@ export function TeamToolsStep({ organizationId, request, onContinue }: {
     return () => { cancelled = true; };
   }, [request]);
 
-  // Nothing to offer (or the list couldn't load): go straight on, as before.
   useEffect(() => {
     if (presets?.length === 0) leave();
   }, [presets]);

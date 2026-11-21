@@ -70,8 +70,6 @@ export function RecoveryView(props: RecoveryViewProps) {
                   variant="destructive"
                   size="sm"
                   onClick={() => void props.onResetAppConfigDefaults()}
-                  // TODO: Restore the conditional disabled state once this action is wired into the React settings route.
-                  // disabled={props.resetConfigBusy || props.anyActiveRuns}
                   disabled
                 >
                   {props.resetConfigBusy ? t("settings.resetting") : t("settings.reset_config_defaults")}
@@ -112,8 +110,6 @@ export function RecoveryView(props: RecoveryViewProps) {
               variant="secondary"
               size="sm"
               onClick={() => void props.onRepairOpencodeCache()}
-              // TODO: Restore the conditional disabled state once this action is wired into the React settings route.
-              // disabled={props.cacheRepairBusy || !isDesktopRuntime()}
               disabled
             >
               {props.cacheRepairBusy ? t("settings.repairing_cache") : t("settings.repair_cache")}
@@ -141,8 +137,6 @@ export function RecoveryView(props: RecoveryViewProps) {
                   variant="destructive"
                   size="sm"
                   onClick={() => void props.onCleanupOpenworkDockerContainers()}
-                  // TODO: Restore the conditional disabled state once this action is wired into the React settings route.
-                  // disabled={props.dockerCleanupBusy || props.anyActiveRuns || !isDesktopRuntime()}
                   disabled
                 >
                   {props.dockerCleanupBusy

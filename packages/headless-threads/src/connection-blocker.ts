@@ -24,7 +24,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** The JSON object in a tool result. The engine may wrap it in a plain error message. */
 function parseRecord(text: string | null | undefined): Record<string, unknown> | null {
   if (typeof text !== "string" || text.length > MAX_RESULT_LENGTH) return null;
   const trimmed = text.trim();
@@ -36,17 +35,11 @@ function parseRecord(text: string | null | undefined): Record<string, unknown> |
       const parsed: unknown = JSON.parse(candidate);
       if (isRecord(parsed)) return parsed;
     } catch {
-      // Not JSON as a whole; try the object inside it.
     }
   }
   return null;
 }
 
-/**
- * Reads one connection status. Only OpenWork Cloud's own statuses count (its
- * versioned connection action, or the connection card's payload), so a tool
- * that merely echoes similar JSON is not mistaken for one.
- */
 function blockerFrom(value: unknown): ConnectionBlocker | null {
   if (!isRecord(value)) return null;
   const fromCloud = (value.source === "openwork-cloud" && value.kind === "connection_action")
@@ -56,8 +49,6 @@ function blockerFrom(value: unknown): ConnectionBlocker | null {
   if (typeof connectionId !== "string" || !connectionId.trim()) return null;
   if (typeof connectionName !== "string" || !connectionName.trim()) return null;
   if (state !== "needs_connection" && state !== "reauth_required") return null;
-  // A tool result is not proof of where to go: callers link to OpenWork's own
-  // connections page by id rather than to any URL the result carries.
   return { connectionId: connectionId.slice(0, 240), connectionName: connectionName.trim().slice(0, MAX_NAME_LENGTH), state };
 }
 

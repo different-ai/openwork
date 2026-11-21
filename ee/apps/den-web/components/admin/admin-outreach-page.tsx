@@ -22,7 +22,6 @@ const count = (value: number) => new Intl.NumberFormat().format(value);
 const personName = (person: Person) => person.name?.trim() || person.email;
 const planLabel = (billing: OutreachItem["billing"]) => `${billing.plan === "enterprise" ? "Enterprise" : billing.plan === "team" ? "Team" : "Free"}${billing.modelsAddOn ? " + Models" : ""}${billing.paying ? " · Paying" : ""}`;
 
-/** One line per row, tab separated, so the list pastes into a sheet. */
 export function outreachRowsAsText(items: OutreachItem[]) {
   const cell = (value: string) => value.replace(/[\t\n\r]+/g, " ");
   return [
@@ -114,7 +113,6 @@ function Row({ item, busy, onOutcome }: { item: OutreachItem; busy: boolean; onO
 
 const WIN_BACK: OutreachPlay[] = ["shrinking", "quiet_paying", "lapsed_failed", "lapsed_limit", "lapsed"];
 
-/** What is waiting to be won back, and what happened to the accounts already contacted. */
 function Results({ data }: { data: AdminOutreach }) {
   const winBack = WIN_BACK.reduce((sum, play) => sum + data.totals[play], 0);
   const { results } = data;

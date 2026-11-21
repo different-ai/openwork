@@ -23,8 +23,6 @@ type Provider = "aws" | "gcp"
 const gcpReleaseSchema = releaseSchema.extend({ bundleUrl: gcpBundleUrlSchema, templateUrl: gcpBundleUrlSchema })
 const schemaFor = (provider: Provider) => provider === "gcp" ? gcpReleaseSchema : releaseSchema
 
-// Automatic promotion changes one complete coordinate set, never four separate
-// env fields. Executable artifacts remain pinned to immutable object versions.
 const awsVersionedUrl = httpsUrl.refine((value) => {
   const url = new URL(value)
   const versions = url.searchParams.getAll("versionId")
@@ -38,7 +36,6 @@ const atomicSchemaFor = (provider: Provider) => provider === "gcp"
   ? atomicCoordinates.extend({ templateUrl: gcpBundleUrlSchema, bundleUrl: gcpBundleUrlSchema })
   : atomicCoordinates.extend({ templateUrl: awsVersionedUrl, bundleUrl: awsVersionedUrl })
 
-/** Public release coordinates, not feature switches or credentials. */
 function releaseInput(provider: Provider, environment: NodeJS.ProcessEnv) {
   const prefix = `DEN_MANAGED_DEPLOYMENT_${provider.toUpperCase()}`
   return {
@@ -70,7 +67,6 @@ function atomicRelease(provider: Provider, environment: NodeJS.ProcessEnv) {
       available: release !== null,
       version: release?.version ?? null,
       reason: release ? "ready" : "invalid_configuration",
-      // Never return parser errors or values: URLs may contain private config.
       missingFields: [...(coordinates.success ? [] : [field]), ...(origin.success ? [] : ["DEN_API_PUBLIC_URL"])],
     },
   }
@@ -78,8 +74,6 @@ function atomicRelease(provider: Provider, environment: NodeJS.ProcessEnv) {
 
 export function releaseReadiness(provider: Provider, environment: NodeJS.ProcessEnv = process.env) {
   const atomic = atomicRelease(provider, environment)
-  // A present but invalid promotion is an error, not permission to resurrect an
-  // older release from legacy fields. Removing the key explicitly restores pins.
   if (atomic) return atomic.readiness
   const input = releaseInput(provider, environment)
   const fields = {

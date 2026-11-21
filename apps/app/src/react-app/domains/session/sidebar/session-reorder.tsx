@@ -9,7 +9,6 @@ const SessionDragContext = React.createContext<{
   setSession: (session: DraggedSession | null) => void;
 }>({ session: null, setSession: () => {} });
 
-/** The drop that produced a new order: `sourceId` now sits before or after `targetId`. */
 export type SessionReorderMove = { sourceId: string; targetId: string; after: boolean };
 
 const SessionReorderContext = React.createContext<{
@@ -25,9 +24,6 @@ export function SessionDragScope({ children }: { children: React.ReactNode }) {
 
 export const useDraggedSession = () => React.useContext(SessionDragContext);
 
-/** Native row dragging also supports dropping onto a group's header. Using the
- * same gesture for ordering avoids native drag cancelling Motion's pointer drag.
- */
 export function SessionReorderList({ sessionIds, orderIds, onReorder, children }: {
   sessionIds: string[];
   orderIds: string[];
@@ -60,7 +56,6 @@ export function useSessionReorderTarget(id: string, workspaceId: string, enabled
 
   return {
     dropPosition: accepts ? dropPosition : null,
-    /** This row is the one being dragged: it stays as a dimmed placeholder. */
     isDragging: drag.session?.id === id && drag.session.workspaceId === workspaceId,
     dragProps: {
       draggable: true,

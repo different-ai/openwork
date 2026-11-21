@@ -100,10 +100,6 @@ async function readBoundedResponseText(
   return new TextDecoder().decode(bytes);
 }
 
-/**
- * Runs the diagnostics request under one deadline that remains active until
- * the bounded response body has been consumed and parsed.
- */
 export async function requestAgentContextDiagnosticsPayload(options: {
   fetchImpl: AgentContextDiagnosticsFetch;
   url: string;

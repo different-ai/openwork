@@ -1,11 +1,8 @@
-/** Sample data only: no API calls (DESIGN.md I7). */
-
 export type LimitsExampleRow = {
   who: string;
   initials: string;
   amount: string;
   used: string;
-  /** Share of the limit used, 0–100. */
   percent: number;
   whenReached: "Pauses them" | "Only warns";
 };

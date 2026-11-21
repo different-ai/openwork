@@ -18,7 +18,6 @@ import { usePlatform } from "@/react-app/kernel/platform";
 import { useDenAuth } from "./den-auth-provider";
 import { gatewayUsageQueryPrefix } from "./gateway-usage-state";
 
-/** One titled group of rows in the Usage settings, as the limits above it. */
 export function UsageSettingsSection({ title, detail, children, testId }: { title: string; detail?: ReactNode; children: ReactNode; testId?: string }) {
   return (
     <section aria-label={title} data-testid={testId} className="flex flex-col gap-2.5">
@@ -31,11 +30,6 @@ export function UsageSettingsSection({ title, detail, children, testId }: { titl
   );
 }
 
-/**
- * The member's own past 30 days and the models they can use with listed prices,
- * from `GET /v1/gateway/usage/me`. Same scope and cleanup as the limits query.
- * Null when Den predates the route (404), so an older Den shows only the limits.
- */
 function useGatewayMemberUsage() {
   const auth = useDenAuth();
   const scope = useSyncExternalStore(subscribeGatewayUsageScope, readScope, readScope);
@@ -82,7 +76,6 @@ function priceLine(price: GatewayListedPrice): string {
   return `${usd(price.input)} in, ${usd(price.output)} out per 1M tokens`;
 }
 
-/** Past 30 days and model prices under the limits. */
 export function GatewayMemberUsageSections() {
   const platform = usePlatform();
   const { query, authorized, baseUrl } = useGatewayMemberUsage();

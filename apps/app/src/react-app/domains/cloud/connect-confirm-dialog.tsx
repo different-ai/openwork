@@ -21,7 +21,6 @@ export type ConnectConfirmDialogProps = {
   phase: ConnectConfirmPhase;
   claims: ConnectLinkClaims | null;
   transport: ConnectLinkTransport | null;
-  /** Host currently configured, when the app is already connected somewhere. */
   currentHost: string | null;
   error: { code: ConnectLinkVerifyErrorCode; message: string } | null;
   onConfirm: () => void;
@@ -58,11 +57,6 @@ function isHttpsUrl(value: string): boolean {
   }
 }
 
-/**
- * Confirmation step for a verified connect link. Nothing is written until the
- * user confirms here — the dialog shows exactly which organization and server
- * the app is about to be pointed at.
- */
 export function ConnectConfirmDialog({
   open,
   phase,

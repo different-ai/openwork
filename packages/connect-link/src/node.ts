@@ -1,9 +1,3 @@
-// Node-only signing/verification for connect-link tokens (compact JWS,
-// EdDSA/Ed25519 via node:crypto — no external JWT dependency). den-api signs
-// with this module; the Electron main process ships its own dependency-free
-// mirror of `verifyConnectLinkToken` (apps/desktop/electron/connect-link.mjs)
-// and this implementation is the reference the tests hold it to.
-
 import { Buffer } from "node:buffer"
 import { createPrivateKey, createPublicKey, generateKeyPairSync, sign, verify } from "node:crypto"
 import {
@@ -47,7 +41,6 @@ export type SignConnectLinkTokenInput = {
   claims: ConnectLinkClaims
   privateKeyPem: string
   kid: string
-  /** Permit non-https den/logo URLs (local development and evals only). */
   allowInsecureUrls?: boolean
 }
 
@@ -61,20 +54,15 @@ export function signConnectLinkToken(input: SignConnectLinkTokenInput): string {
   }
   const header = { alg: CONNECT_LINK_ALGORITHM, typ: "JWT", kid: input.kid }
   const signingInput = `${base64UrlEncode(JSON.stringify(header))}.${base64UrlEncode(JSON.stringify(claims))}`
-  // new Uint8Array(...) keeps the calls assignable across the @types/node
-  // versions in this workspace (Buffer's backing store is typed as
-  // ArrayBufferLike on older lib combinations).
   const signature = sign(null, new Uint8Array(Buffer.from(signingInput, "utf8")), createPrivateKey(input.privateKeyPem))
   return `${signingInput}.${signature.toString("base64url")}`
 }
 
 export type VerifyConnectLinkTokenInput = {
   token: string
-  /** kid → SPKI PEM public key. Only keys in this map are trusted. */
   publicKeys: Record<string, string>
   nowEpochSeconds?: number
   clockSkewSeconds?: number
-  /** Accept http URLs when every insecure target is loopback (dev only). */
   allowInsecureLoopback?: boolean
 }
 

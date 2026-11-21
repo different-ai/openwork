@@ -39,11 +39,6 @@ function disabled() {
     { status: 403, headers: { "cache-control": "no-store" } })
 }
 
-/**
- * Free Auto for signed-in members of unsubscribed organizations. They call the
- * regular OpenWork Models routes with their `ow_inf_` key; only the free model
- * is served, from the dedicated OpenAI key, within a weekly per-person allowance.
- */
 export function createFreeMemberHandler(dependencies: FreeMemberDependencies = defaults()) {
   const { config, store } = dependencies
   return async (c: Context, key: InferenceKeyRow): Promise<Response> => {
@@ -54,7 +49,6 @@ export function createFreeMemberHandler(dependencies: FreeMemberDependencies = d
       const path = c.req.path, method = c.req.method
       if (new URL(c.req.url).search) return freeError(400, "invalid_request")
       const journeyHash = freeAutoJourneyHash(c.req.header("x-openwork-free-journey"))
-      // A reported correlation ID is analytics evidence only; membership still comes from the authenticated key.
       if (journeyHash && method === "GET" && path === MEMBER_FREE_STATUS_PATH) await dependencies.linkGuest?.({ journeyHash, userId: principal.id, organizationId: principal.organizationId, now: new Date() })
         .catch(() => console.warn("[free-auto] signed-in journey could not be recorded"))
       if (method === "GET" && path === MEMBER_FREE_MODELS_PATH) {

@@ -50,10 +50,6 @@ export function resolveObservedMcpStatus(
   return resolveMcpStatusByIdentity(observed, identityAliases(entry));
 }
 
-/**
- * Owns the short hand-off from a successful OAuth producer response to the
- * engine's eventually-consistent MCP status snapshot.
- */
 export function createMcpStatusSynchronizer(options?: { maxPendingRefreshes?: number }) {
   const maxPendingRefreshes = options?.maxPendingRefreshes ?? 6;
   let workspaceKey = "";

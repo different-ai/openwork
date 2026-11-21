@@ -23,15 +23,10 @@ export type RoadmapProduct = {
   heading: [string, string];
   intro: string;
   items: Record<RoadmapStatus, string[]>;
-  /** The Ready items most people ask about, in order. The rest sit behind "Show more". */
   top?: string[];
-  /** Ready items in preview: the row links to an email asking for access. */
   preview?: string[];
 };
 
-/* One entry per product. The status is the column an item sits in, so a
- * reader never has to decode a badge. Keep this in step with
- * packages/docs/roadmap.mdx. */
 export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
   {
     id: "desktop",
@@ -321,7 +316,6 @@ export const ROADMAP_PRODUCTS: RoadmapProduct[] = [
   }
 ];
 
-/* Who a product is for. Every product sits under exactly one. */
 const ROADMAP_AUDIENCES: RoadmapAudience[] = [
   {
     id: "work",
@@ -360,7 +354,6 @@ const STATUS: Record<RoadmapStatus, { label: string; className: string; icon: Re
 
 const STATUS_ORDER: RoadmapStatus[] = ["ready", "building", "soon"];
 
-/** `label` replaces the status name where a page words the same state differently. */
 export function RoadmapStatusPill({ status, label }: { status: RoadmapStatus; label?: string }) {
   const details = STATUS[status];
   return (
@@ -500,8 +493,6 @@ function StatusColumns({ product }: { product: RoadmapProduct }) {
 
 type ShippedEntry = { date: string; name: string };
 
-/* Newest first. Each date is the release or rollout day in
- * packages/docs/changelog.mdx; entries older than 30 days come off the list. */
 export const ROADMAP_SHIPPED: ShippedEntry[] = [
   { date: "Nov 12", name: "AI Gateway in Cursor, Claude Code, and Codex" },
   { date: "Nov 12", name: "Smart Model Router" },
@@ -522,10 +513,8 @@ export const ROADMAP_SHIPPED: ShippedEntry[] = [
   { date: "Oct 13", name: "Self-hosted OpenWork Web" }
 ];
 
-/** Desktop releases in the same 30 days, v0.18.58 to v0.18.66. */
 const RELEASES_IN_WINDOW = 9;
 
-/** Shown before "Show more": enough to see the pace without a wall of rows. */
 const SHIPPED_SHOWN = 6;
 
 function ShippedList({ entries }: { entries: ShippedEntry[] }) {

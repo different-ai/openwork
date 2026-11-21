@@ -1,9 +1,5 @@
-// Text selected in a reply, quoted into the draft of a side chat.
-
-/** The longest selection carried into a draft; a longer one is cut with an ellipsis. */
 export const SELECTION_QUOTE_MAX_CHARS = 4_000;
 
-/** The selection as a Markdown quote, ready to type under. */
 export function quoteForDraft(text: string): string {
   const trimmed = text.trim();
   if (!trimmed) return "";
@@ -11,7 +7,6 @@ export function quoteForDraft(text: string): string {
   return `${kept.split(/\r?\n/).map((line) => (line ? `> ${line}` : ">")).join("\n")}\n\n`;
 }
 
-/** Add a quote under whatever the draft already says, so typed text is never replaced. */
 export function appendQuoteToDraft(draft: string, text: string): string {
   const quote = quoteForDraft(text);
   if (!quote) return draft;

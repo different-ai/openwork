@@ -2,14 +2,8 @@ import type { PreviewWorld } from "./index.ts";
 import { browserRecipe } from "./browser-recipe.ts";
 
 const NODE_VERSION = "v24.22.1";
-/** From https://nodejs.org/dist/v24.22.1/SHASUMS256.txt (node-v24.22.1-linux-x64.tar.xz). */
 const NODE_SHA256 = "6c172a9ab6718f7b801fb5a7bd486af2ee5e32758086a04b84fcce2aa77095e6";
 
-/**
- * The base image's Node stopped shipping corepack, so every fresh tools layer
- * failed at `corepack enable`. Install the pinned, checksummed Node 24 (as the
- * Daytona base does) unless the image already has exactly that version.
- */
 const NODE_RECIPE = `if [ "$(node --version 2>/dev/null)" != ${NODE_VERSION} ]; then
   DEBIAN_FRONTEND=noninteractive apt-get update
   DEBIAN_FRONTEND=noninteractive apt-get install -y --no-install-recommends ca-certificates curl xz-utils
@@ -22,7 +16,6 @@ fi
 test "$(node --version)" = ${NODE_VERSION}
 command -v corepack`;
 
-/** Workbot's VM runs Den on its own MySQL/Redis, the runner and Workbot: no desktop, browser or OpenCode. */
 const WORKBOT_TOOLS = `${NODE_RECIPE}
 corepack enable
 corepack prepare pnpm@11.4.0 --activate
@@ -103,7 +96,6 @@ ${world === "desktop" ? "pnpm --filter @openwork/desktop rebuild:electron-native
 ${ARCHIVE_COMPILED}`;
 }
 
-// Kept byte-for-byte as before: the compiled layer's cache key is a digest of this recipe text.
 const ARCHIVE_COMPILED = `# Archive generated workspace output only; runtime databases and credentials do not exist yet.
 node --input-type=module - <<'NODE'
 import { readdirSync, existsSync, writeFileSync } from 'node:fs';

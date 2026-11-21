@@ -1,9 +1,3 @@
-/**
- * Library is the single inventory for composer capabilities.
- * Configure from the + menu, and the agents / commands / skills lists,
- * all resolve through this module so settings routes cannot drift.
- */
-/** Unfiltered Library inventory. */
 export const LIBRARY_ROUTE_PATH = "";
 
 export const LIBRARY_COMPOSER_KINDS = ["agents", "commands", "skills"] as const;
@@ -19,14 +13,12 @@ export type ComposerSettingsSection =
   | "providers"
   | "permissions";
 
-/** Fallback when Configure has no + menu section (opens the full inventory). */
 export const COMPOSER_CONFIGURE_SECTION = "extensions" satisfies ComposerSettingsSection;
 
 export function isLibraryComposerKind(section: string): section is LibraryComposerKind {
   return (LIBRARY_COMPOSER_KINDS as readonly string[]).includes(section);
 }
 
-/** Map a composer + menu pane onto the Library settings section. */
 export function composerConfigureSectionForMenu(section: string): ComposerSettingsSection {
   if (section === "mcps") return "connections";
   if (
@@ -42,7 +34,6 @@ export function composerConfigureSectionForMenu(section: string): ComposerSettin
   return COMPOSER_CONFIGURE_SECTION;
 }
 
-/** URL tail under /extensions for a composer Configure destination. */
 export function libraryPathForSection(section: ComposerSettingsSection): string {
   if (section === "providers" || section === "extensions") return LIBRARY_ROUTE_PATH;
   return section;
@@ -156,7 +147,6 @@ export type ComposerConfigureDestination =
   | { kind: "library"; path: string }
   | { kind: "settings"; route: "/settings/ai" | "/settings/permissions" };
 
-/** Configure from the composer opens the matching Library filter, except providers. */
 export function composerConfigureDestination(
   section: ComposerSettingsSection,
 ): ComposerConfigureDestination {
@@ -188,7 +178,6 @@ export type LibraryAuthorableKind = Extract<LibraryAddKind, "skill" | "command" 
 
 const LIBRARY_ITEM_NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
-/** Kinds the current Library filter can create. Built-in apps are not user-authored. */
 export function libraryAddKindsForFilter(filter: string): LibraryAddKind[] {
   switch (filter) {
     case "all":
@@ -219,7 +208,6 @@ export type LibraryAddAction =
   | { type: "den-modal"; kind: LibraryAuthorableKind }
   | { type: "workspace-mcp" };
 
-/** Resolve Cloud authoring separately from local workspace MCP configuration. */
 export function libraryAddAction(
   addKind: LibraryAddKind,
   options: {
@@ -241,11 +229,6 @@ export type LibraryPluginComponentKind = "skill" | "command" | "agent" | "mcp";
 export type LibraryMcpAuthType = "oauth" | "apikey" | "none";
 export type LibraryMcpCredentialMode = "per_member" | "shared";
 
-/**
- * Connector setup captured while an MCP server is added to a plugin: the same
- * authentication questions Den's Connectors form asks. Owners and admins only;
- * Den refuses it from other members.
- */
 export type LibraryMcpConnectionForm = {
   authType: LibraryMcpAuthType;
   credentialMode: LibraryMcpCredentialMode;
@@ -255,7 +238,6 @@ export type LibraryMcpConnectionForm = {
   oauthClientSecret: string;
 };
 
-/** The `connection` body Den accepts on an mcp component of `POST /v1/plugins`. */
 export type LibraryMcpConnectionRequest = {
   authType: LibraryMcpAuthType;
   credentialMode: LibraryMcpCredentialMode;
@@ -268,7 +250,6 @@ export type LibraryPluginComponentDraft = {
   name: string;
   description: string;
   content: string;
-  /** MCP components only. */
   connection?: LibraryMcpConnectionForm;
 };
 
@@ -279,7 +260,6 @@ export type CreateLibraryItemInput = {
   orgWide?: boolean;
   marketplaceId?: string;
   components?: LibraryPluginComponentDraft[];
-  /** Connector setup for the `mcp` kind. */
   connection?: LibraryMcpConnectionForm;
 };
 
@@ -310,7 +290,6 @@ export function emptyLibraryMcpConnectionForm(): LibraryMcpConnectionForm {
   };
 }
 
-/** Switching away from OAuth drops the OAuth-only answers, as the Connectors form does. */
 export function withLibraryMcpAuthType(form: LibraryMcpConnectionForm, authType: LibraryMcpAuthType): LibraryMcpConnectionForm {
   return authType === "oauth"
     ? { ...form, authType }
@@ -321,7 +300,6 @@ export function libraryMcpConnectionFormIncomplete(form: LibraryMcpConnectionFor
   return form.authType === "apikey" && !form.apiKey.trim();
 }
 
-/** Sends only the answers that apply to the chosen authentication. */
 export function libraryMcpConnectionRequest(form: LibraryMcpConnectionForm): LibraryMcpConnectionRequest {
   const apiKey = form.apiKey.trim();
   const clientId = form.oauthClientId.trim();
@@ -336,7 +314,6 @@ export function libraryMcpConnectionRequest(form: LibraryMcpConnectionForm): Lib
   };
 }
 
-/** Reads the SKILL.md written by `skillMarkdown` back into its fields. */
 export function parseSkillMarkdown(raw: string): { name: string; description: string; body: string } {
   const match = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?([\s\S]*)$/.exec(raw);
   if (!match) return { name: "", description: "", body: raw.trim() };
@@ -398,7 +375,6 @@ export function denLibraryPluginComponentBody(component: LibraryPluginComponentD
   };
 }
 
-/** Same plugin bundle Den's create screen posts to `/v1/plugins`. */
 export function denLibraryPluginCreateRequest(
   kind: LibraryAuthorableKind,
   input: CreateLibraryItemInput,
@@ -444,7 +420,6 @@ export function libraryPluginFileDisplayName(file: LibraryPluginFileRef): string
   return file.title;
 }
 
-/** Prefer the same detail ids used by Library list rows so skills/commands/MCPs open their own view. */
 export function libraryPluginFilePreferredDetailId(file: LibraryPluginFileRef): string | null {
   const kind = libraryPluginFileKind(file.objectType);
   const name = libraryPluginFileDisplayName(file);
@@ -481,7 +456,6 @@ export function slugifyLibraryItemName(name: string, fallback: LibraryAuthorable
   return base;
 }
 
-/** Den can lag behind create; poll My Library until the new plugin is listed. */
 export async function waitForListedLibraryPlugin(
   listPlugins: () => Promise<Array<{ id: string }>>,
   pluginId: string,

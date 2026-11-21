@@ -5,7 +5,6 @@ import type { PreviewProviderOption } from "./preview-options.ts";
 export interface LaunchDependencies {
   readReview(id: string): Promise<{ gitSha: string } | null>;
   provider(id?: EvidenceProviderId): ReviewPreviewProvider;
-  /** Fresh server-side provider configuration and capabilities on every request/allocation. */
   options: () => Promise<readonly PreviewProviderOption[]>;
   schedule(task: () => Promise<void>): void;
 }
@@ -45,7 +44,6 @@ export function launchHandlers(deps: LaunchDependencies) {
   }
 
   async function POST(request: Request, { params }: Context): Promise<Response> {
-    // Vercel Authentication is unchanged. Cross-site requests cannot spend sandbox quota.
     if (!sameOrigin(request)) return Response.json({ error: "Launch the sandbox from its review page." }, { status: 403, headers });
     let world: PreviewWorld;
     let requested: EvidenceProviderId | undefined;
@@ -61,13 +59,12 @@ export function launchHandlers(deps: LaunchDependencies) {
     let provider = await resolveProvider(requested, world);
     if (provider instanceof Response) return provider;
     const providerId = provider.id;
-    // Neither the source revision nor the report association is accepted from browser input.
     const gitSha = report.gitSha;
     try {
       if (!await provider.hasSnapshot(gitSha, world)) {
         deps.schedule(async () => {
           const current = await resolveProvider(providerId, world);
-          if (current instanceof Response) return; // provider configuration was removed: do not allocate a builder
+          if (current instanceof Response) return;
           const started = Date.now();
           try {
             await current.buildSnapshot(gitSha, world);
@@ -78,7 +75,6 @@ export function launchHandlers(deps: LaunchDependencies) {
         });
         return Response.json({ state: "building", provider: providerId }, { status: 202, headers });
       }
-      // Recheck configuration immediately before spend; existing access expires independently.
       provider = await resolveProvider(providerId, world);
       if (provider instanceof Response) return provider;
       const preview = await provider.launchPreview({ gitSha, reportId: id, world });

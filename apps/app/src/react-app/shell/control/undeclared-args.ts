@@ -1,10 +1,3 @@
-/**
- * Names an agent passed that the action does not declare, as an error that
- * lists the valid ones. Without it a wrong name (`sessionId` on a query that
- * only reads the current chat, `limit` for `count`) is ignored and the agent
- * gets a plausible but wrong answer. Actions that declare no `args` are left
- * alone, since nothing says what they accept.
- */
 export function undeclaredArgsError(
   action: { id: string; args?: ReadonlyArray<{ name: string }> },
   args: unknown,

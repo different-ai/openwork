@@ -1,5 +1,3 @@
-// Leaf module (no imports) so coverage.ts and routes/existing.ts share one list
-// without an import cycle. coverage.ts re-exports these.
 export type ProviderCoveredRoute = Readonly<{ method: "POST" | "PATCH" | "DELETE"; path: string; step: string }>
 
 export const providerCoveredRoutes: readonly ProviderCoveredRoute[] = [

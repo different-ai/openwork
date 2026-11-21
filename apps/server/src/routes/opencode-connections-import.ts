@@ -13,13 +13,11 @@ import { addRoute, type RequestContext, type Route } from "./registry.js";
 
 export type OpencodeConnectionPreviewStatus = "new" | "already_present" | "invalid" | "blocked";
 
-/** One connection in the person's OpenCode config. Carries no arguments, environment, headers or credentials. */
 export type OpencodeConnectionPreviewItem = {
   name: string;
   kind?: OpencodeConnectionKind;
   target?: string;
   status: OpencodeConnectionPreviewStatus;
-  /** Why it cannot be imported, in words a person can act on. */
   reason?: string;
 };
 
@@ -31,17 +29,9 @@ export type OpencodeConnectionImportResult = {
   message?: string;
 };
 
-/**
- * How one workspace takes connections. The server wires these to the same
- * steps as adding a connection by hand, so validation, organization rules and
- * the running engine treat an imported connection exactly like a typed one.
- */
 export type OpencodeConnectionsImportTarget = {
-  /** Names OpenWork already has for this workspace. */
   existingNames(): Promise<Set<string>>;
-  /** Throws `organization_policy_denied` when the organization does not allow this connection. */
   checkPolicy(name: string): Promise<void>;
-  /** Saves one connection and registers it with the running engine. */
   add(name: string, config: Record<string, unknown>): Promise<void>;
 };
 
@@ -58,7 +48,6 @@ async function blockedByPolicy(target: OpencodeConnectionsImportTarget, name: st
   }
 }
 
-/** What importing would do, without changing anything. */
 export async function previewOpencodeConnections(
   target: OpencodeConnectionsImportTarget,
   paths: string[] = opencodeUserConfigPaths(),
@@ -79,12 +68,6 @@ export async function previewOpencodeConnections(
   return { source: source.status, items: items.sort((a, b) => a.name.localeCompare(b.name)) };
 }
 
-/**
- * Copy the chosen connections into OpenWork. A name OpenWork already has is
- * left as is, never overwritten: the person may have changed it here. Each
- * name gets one result, and one failure does not stop the rest. Results never
- * include error text from the save, which could quote a secret.
- */
 export async function importOpencodeConnections(
   target: OpencodeConnectionsImportTarget,
   names: string[],
@@ -126,9 +109,7 @@ interface RegisterOpencodeConnectionsImportRoutesOptions {
   routes: Route[];
   config: ServerConfig;
   targetFor: (ctx: RequestContext, workspace: WorkspaceInfo) => OpencodeConnectionsImportTarget;
-  /** Asks the person once for the whole import, as adding a connection by hand does. */
   requireApproval: (ctx: RequestContext, workspace: WorkspaceInfo, names: string[]) => Promise<void>;
-  /** Defaults to the person's own OpenCode config files on each request. */
   configPaths?: string[];
   jsonResponse: (data: unknown, status?: number) => Response;
   readJsonBody: (request: Request) => Promise<unknown>;
@@ -137,16 +118,6 @@ interface RegisterOpencodeConnectionsImportRoutesOptions {
   resolveWorkspace: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
 }
 
-/**
- * Import the connections a person set up in their own OpenCode config.
- *
- * - GET /workspace/:id/opencode-import/connections lists them and whether
- *   OpenWork has each one already.
- * - POST /workspace/:id/opencode-import/connections { names } copies the
- *   chosen ones into OpenWork and reports each result.
- *
- * The person's OpenCode files are read, never written.
- */
 export function registerOpencodeConnectionsImportRoutes(options: RegisterOpencodeConnectionsImportRoutesOptions): void {
   const { routes, config, targetFor, jsonResponse, readJsonBody, ensureWritable, requireClientScope, resolveWorkspace } = options;
   const paths = () => options.configPaths ?? opencodeUserConfigPaths();

@@ -4,7 +4,6 @@ export const ANONYMOUS_INFERENCE_PROVIDER_ID = DESKTOP_FREE_PROVIDER_ID;
 export const ANONYMOUS_INFERENCE_MODEL_ID = DESKTOP_FREE_MODEL_ID;
 export const ANONYMOUS_INFERENCE_PROVIDER_NAME = "OpenWork Models (Free)";
 export const LOCAL_ROUTE_PREFIX = "/anonymous-inference/v1";
-// Images make requests large; the Gateway accepts up to 32 MiB.
 export const REQUEST_BODY_LIMIT = 24 * 1024 * 1024;
 export const ERROR_BODY_LIMIT = 64 * 1024;
 export const SESSION_TIMEOUT_MS = 10_000;
@@ -29,9 +28,7 @@ export function resolveAnonymousInferenceOrigin(environment: NodeJS.ProcessEnv =
 
 export type RelaySettings = {
   origin: string;
-  /** Loopback Den is allowed only for developer and test runs. */
   allowLocalDen: boolean;
-  /** An environment switch can turn free Auto off for this device. */
   disabledByEnvironment: boolean;
 };
 export function readRelaySettings(environment: NodeJS.ProcessEnv = process.env): RelaySettings {

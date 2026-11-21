@@ -7,9 +7,7 @@ export type PluginImportServer = {
   url: string | null;
   supported: boolean;
   skippedReason: "headers_unsupported" | "invalid_config" | "invalid_url" | "local_unsupported" | "missing_url" | "native_connector" | "unsupported_auth" | null;
-  /** The provider OpenWork already knows for this connector (e.g. "Google Workspace"). */
   mapsToName: string | null;
-  /** The organization's existing connection the import will use. */
   reuseConnectionName: string | null;
 };
 
@@ -20,16 +18,13 @@ export type PluginImportSkill = {
   sourcePath: string;
   supported: boolean;
   skippedReason: "invalid_skill" | null;
-  /** Files in the skill's folder besides SKILL.md. */
   supportingFileCount: number | null;
 };
 
 export type PluginImportPreview = {
   repositoryFullName: string;
-  /** No plugin manifest: the person chooses each skill and confirms the source. */
   requiresSkillSelection: boolean;
   rootPath: string;
-  /** The commit the preview read, so the folders shown are the ones imported. */
   sourceRevisionRef: string;
   servers: PluginImportServer[];
   skills: PluginImportSkill[];
@@ -175,8 +170,6 @@ function parseStoredDraft(value: unknown): PluginImportDraft | null {
   if (!isRecord(value) || value.version !== 1 || typeof value.githubUrl !== "string" || !isRecord(value.preview)) {
     return null;
   }
-  // Current drafts store only allowlisted, non-sensitive option labels. Older
-  // version-one drafts used the internal field names or omitted the options.
   const options = storedImportOptions(value);
   if (!options) return null;
   if (!Array.isArray(value.selectedServerKeys) || !value.selectedServerKeys.every((entry) => typeof entry === "string")) return null;
@@ -200,7 +193,6 @@ function parseStoredDraft(value: unknown): PluginImportDraft | null {
   }
 }
 
-/** The skill's folder on GitHub at the previewed commit, for checking it before import. */
 export function pluginImportSkillFolderUrl(preview: PluginImportPreview, sourcePath: string): string | null {
   if (!preview.repositoryFullName || !preview.sourceRevisionRef) return null;
   const folder = [preview.rootPath, sourcePath.replace(/\/?SKILL\.md$/, "")].filter(Boolean).join("/");

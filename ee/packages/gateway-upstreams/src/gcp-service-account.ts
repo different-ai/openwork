@@ -1,6 +1,3 @@
-// Mints Google access tokens from a service-account JSON secret (plan §5.6,
-// org-level Vertex): RS256 JWT → token endpoint, cached per credential until
-// 60s before expiry. node:crypto only.
 import { createHash, createSign } from "node:crypto"
 import { createInferenceEgressFetch } from "@openwork-ee/gateway-upstreams/egress"
 import type { GatewayGcpServiceAccountSecret } from "@openwork/types/den/gateway"
@@ -95,8 +92,6 @@ export function createGcpServiceAccountTokenMinter(deps: { tokenFetch?: typeof f
   }
 
   return async (input) => {
-    // Exact allowlist before signing, cache lookup or HTTP. A public attacker
-    // endpoint must never receive a signed assertion either.
     if (input.serviceAccount.token_uri !== GOOGLE_TOKEN_URL) return { kind: "error", message: "service account token_uri is not permitted" }
     const revision = createHash("sha256").update(JSON.stringify(input.serviceAccount)).digest("hex")
     const key = `${input.credentialId}:${revision}`

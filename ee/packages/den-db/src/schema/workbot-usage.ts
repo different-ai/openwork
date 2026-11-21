@@ -18,10 +18,8 @@ export const WorkbotUsageDayTable = mysqlTable("workbot_usage_day", {
   day_start: timestamp("day_start", { fsp: 3 }).notNull(),
   org_membership_id: denTypeIdColumn("member", "org_membership_id").notNull(),
   surface: varchar("surface", { length: 32 }).$type<WorkbotUsageSurface>().notNull(),
-  /** The model that answered, as the gateway logged it; empty when it never learned one. */
   model: varchar("model", { length: 255 }).notNull().default(""),
   request_count: int("request_count").notNull().default(0),
-  /** Requests with no known cost; they add nothing to cost_micro_usd. */
   unpriced_request_count: int("unpriced_request_count").notNull().default(0),
   input_tokens: bigint("input_tokens", { mode: "number" }).notNull().default(0),
   output_tokens: bigint("output_tokens", { mode: "number" }).notNull().default(0),
@@ -29,6 +27,5 @@ export const WorkbotUsageDayTable = mysqlTable("workbot_usage_day", {
   cost_micro_usd: bigint("cost_micro_usd", { mode: "number" }).notNull().default(0),
   ...timestamps,
 }, (table) => [
-  // Also the read path: one organization's days in a range.
   uniqueIndex("workbot_usage_day_dimension").on(table.organization_id, table.day_start, table.org_membership_id, table.surface, table.model),
 ])

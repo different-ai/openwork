@@ -120,13 +120,6 @@ type InvitationRoleValidation =
 
 type PrivilegedInvitationRole = typeof ORGANIZATION_ADMIN_ROLE | typeof ORGANIZATION_SUPER_ADMIN_ROLE
 
-/**
- * Whether the caller may invite someone as an admin or super-admin (role-assignment rules). With the root
- * database it is the quick pre-transaction check, read once per request. With the invitation's
- * write transaction it decides again through it: the caller's permissions are re-resolved and the
- * Admin default set is re-read under share locks, so a concurrent Admin permissions edit
- * serializes with the write (roleAssignmentDenialInTransaction).
- */
 type AdminInvitationCheck = (database: PermissionDatabase, nextRole: PrivilegedInvitationRole) => Promise<RoleAssignmentDenial | null | "organization_not_found">
 
 function adminInvitationCheck(c: PermissionRouteContext): AdminInvitationCheck {
@@ -164,18 +157,6 @@ function adminInvitationCheck(c: PermissionRouteContext): AdminInvitationCheck {
 
 const BUILT_IN_INVITATION_ROLES: ReadonlySet<string> = new Set([ORGANIZATION_MEMBER_ROLE, ORGANIZATION_ADMIN_ROLE, ORGANIZATION_SUPER_ADMIN_ROLE])
 
-/**
- * Which role an invitation may carry. The route marker already requires
- * `invitations.manage`; any role other than `member` also needs
- * `members.update`, and with Permissions on an admin invitation needs every
- * Admin default permission (src/permissions/role-assignment.ts); a super-admin
- * invitation needs the owner or a super-admin. Only Member, Admin and Super
- * admin can be assigned. `database` is the open transaction, if any:
- * inside it `members.update` is re-checked against the caller's permissions
- * resolved through it, and the admin rule is decided through it too
- * (adminInvitationCheck), so a permission change committed after the route
- * check is seen before the invitation is written.
- */
 async function validateInvitationRole(c: PermissionRouteContext, input: {
   role: string
   availableRoles: ReadonlySet<string>
@@ -221,13 +202,6 @@ async function validateInvitationRole(c: PermissionRouteContext, input: {
 
 export type CreateInvitationInput = z.infer<typeof inviteMemberSchema>
 
-/**
- * POST /v1/invitations, callable with an in-process route context
- * (config-blob imports, src/config-blobs/areas/members-people.ts).
- * `sendEmail: false` saves the invitation without sending the invite email
- * (silent invitations for migrations); `memberId` reuses a known-free id for a
- * new placeholder member. Routes pass neither.
- */
 export async function createInvitationAction(
   c: InvitationActionContext,
   payload: ResourceOrganizationContext,
@@ -281,9 +255,6 @@ export async function createInvitationAction(
         .where(eq(OrganizationTable.id, payload.organization.id))
         .for("update")
 
-      // The route checked Invite people before the transaction; re-check it against the inviter's
-      // permissions resolved through the transaction, so a revocation committed since is seen
-      // before anything is written (new and refreshed invitations alike).
       const inviter = await resolvePermissionsForMember({ organizationId: payload.organization.id, memberId: payload.currentMember.id, database: tx })
       if (!inviter.has("invitations.manage")) {
         return { status: "role_error" as const, validation: { ok: false as const, error: "permission" as const, response: permissionDeniedResponse("invitations.manage") } }
@@ -302,8 +273,6 @@ export async function createInvitationAction(
         .for("update")
       const existingInvitation = existingInvitationRows.find((row) => row.status === "pending") ?? null
       const now = new Date()
-      // An expired invitation stops counting as a user; resending it makes it
-      // count again, so it needs a seat like a new invitation.
       const reactivatesExpiredInvitation = Boolean(existingInvitation && existingInvitation.expiresAt <= now)
 
       const existingMembers = await tx
@@ -321,8 +290,6 @@ export async function createInvitationAction(
         if (await invitationHasAdminTeam(tx, existingInvitation)) {
           const permission = await requirePermission(c, "teams.manage_admin")
           if (!permission.ok) return { status: "team_forbidden" as const, response: permission.response }
-          // Re-checked against the inviter resolved through this transaction (above), so a revocation
-          // committed after the request's permissions were read is seen before the refresh is written.
           if (!inviter.has("teams.manage_admin")) return { status: "team_forbidden" as const, response: permissionDeniedResponse("teams.manage_admin") }
         }
         const refreshRole = await validateInvitationRole(c, {
@@ -345,14 +312,9 @@ export async function createInvitationAction(
         }
       }
 
-      // The role was allowed before the transaction; validate it again through the transaction
-      // (members.update and, for admin, the role-assignment rule) so a permission or Admin
-      // permissions change committed since is seen before the invitation is written.
       const writeRole = await validateInvitationRole(c, { role: assignedRole, availableRoles, adminCheck, database: tx })
       if (!writeRole.ok) return { status: "role_error" as const, validation: writeRole }
 
-      // Validate the complete grant before saving or sending the invitation. Omitted
-      // teamId preserves a pending invitation's team when it is resent.
       const teamId = input.teamId === undefined ? existingInvitation?.teamId ?? null : input.teamId
       if (existingInvitation?.teamId && existingInvitation.teamId !== teamId && (await getScimManagedTeamIds(payload.organization.id, tx)).has(existingInvitation.teamId)) return { status: "invalid_team" as const }
       if (teamId || (existingInvitation?.teamId && input.teamId !== undefined)) {
@@ -435,8 +397,6 @@ export async function createInvitationAction(
         invitationOrgMemberId = memberId
       }
 
-      // Preserve the existing pending-member experience, atomically with the
-      // invitation instead of a second browser request after the email is sent.
       if (invitationOrgMemberId) {
         if (existingInvitation?.teamId && existingInvitation.teamId !== teamId) {
           await tx.delete(TeamMemberTable).where(and(eq(TeamMemberTable.teamId, existingInvitation.teamId), eq(TeamMemberTable.orgMembershipId, invitationOrgMemberId)))
@@ -447,7 +407,6 @@ export async function createInvitationAction(
         }
       }
 
-      // Organization row is already locked FOR UPDATE above; append last.
       const inviterId = normalizeDenTypeId("user", user.id)
       const auditEventIds = await appendDomainChanges(tx, capture, [invitationSavedEvent({
         organizationId: payload.organization.id,
@@ -535,7 +494,6 @@ export async function createInvitationAction(
     } = invitationWrite
     options.onSaved?.(invitationId)
 
-    // A new pending invitation, or a resent expired one, counts as a user again.
     const billingMemberId = createdOrgMemberId ?? (reactivatesExpiredInvitation ? invitationOrgMemberId : null)
     if (billingMemberId) {
       await runPostOrganizationMemberChangeHooks({ organizationId: payload.organization.id, memberId: billingMemberId, change: "added" })
@@ -575,10 +533,6 @@ export async function createInvitationAction(
       })
     } catch (error) {
       if (error instanceof DenEmailSendError) {
-        // The invitation row is already persisted (step above). Log at error
-        // level so operators can grep, and return a 502 so the caller can
-        // render a real failure instead of a silent success. The invitation
-        // id is included so the UI can correlate and offer a direct retry.
         logger.error("invite email failed", {
           organization_id: payload.organization.id,
           invitation_id: invitationId,
@@ -605,7 +559,6 @@ export async function createInvitationAction(
     return c.json({ invitationId, email, role: assignedRole, expiresAt, inviteToken, memberId: invitationOrgMemberId }, refreshed ? 200 : 201)
 }
 
-/** POST /v1/invitations/:invitationId/cancel, callable with an in-process route context (config-blob imports). */
 export async function cancelInvitationAction(c: InvitationActionContext, payload: ResourceOrganizationContext, rawInvitationId: string, capture: AuditChangeCapture | null) {
     let invitationId: InvitationId
     try {
@@ -637,9 +590,6 @@ export async function cancelInvitationAction(c: InvitationActionContext, payload
       if (invitation.status !== "pending") {
         return { status: "not_pending" as const, invitation }
       }
-      // The route checked Invite people (and, below, Manage Admin teams) against the request's
-      // permissions; re-check them against the caller resolved through this transaction before the
-      // invitation is canceled or its placeholder member removed.
       const canceler = await resolvePermissionsForMember({ organizationId: payload.organization.id, memberId: payload.currentMember.id, database: tx })
       if (!canceler.has("invitations.manage")) return { status: "team_forbidden" as const, response: permissionDeniedResponse("invitations.manage") }
       if (await invitationHasAdminTeam(tx, invitation)) {
@@ -692,7 +642,6 @@ export async function cancelInvitationAction(c: InvitationActionContext, payload
         organizationId: payload.organization.id,
         memberId: invitedMember.id,
         removedByOrgMemberId: payload.currentMember.id,
-        // Re-checked in the removal's own transaction too.
         requiredPermission: "invitations.manage",
       })
       if (!removed.ok && removed.error !== "member_not_found") {
@@ -791,9 +740,6 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
 
     const availableRoles = await listAssignableRoles(payload.organization.id)
     const adminCheck = adminInvitationCheck(c)
-    // Read, authorize and disclose under the organization row lock that team mutations take
-    // FOR UPDATE (withOrganizationTeamMutation): a concurrent Admin-team grant to this
-    // invitation either commits first and is seen here, or waits until the link is decided.
     const disclosure = await db.transaction(async (tx) => {
       await tx.select({ id: OrganizationTable.id }).from(OrganizationTable)
         .where(eq(OrganizationTable.id, payload.organization.id)).for("share")
@@ -814,8 +760,6 @@ export function registerOrgInvitationRoutes<T extends { Variables: OrgRouteVaria
       const invitation = invitationRows[0] ?? null
       if (!invitation) return { status: "not_found" as const }
 
-      // Resending returns the token to the caller, so reading the link needs exactly what a
-      // resend needs, re-checked against the caller's permissions resolved through this lock.
       const caller = await resolvePermissionsForMember({ organizationId: payload.organization.id, memberId: payload.currentMember.id, database: tx })
       if (!caller.has("invitations.manage")) {
         return { status: "permission" as const, invitation, response: permissionDeniedResponse("invitations.manage") }

@@ -21,7 +21,6 @@ import { useDefaultModelOptions, useDefaultModelSettings, useSaveDefaultModel } 
 import { ConflictLine, ReadOnlyNotice, SavedUndoLine, ScopeChip, SettingRow } from "./scoped-setting";
 import { EVERYONE_SCOPE, teamScopeOf, type TeamScope } from "./team-scope";
 
-/** The combobox value for "no model of its own": no default (Everyone) or use Everyone's (team). */
 const INHERIT_VALUE = "";
 const VALUE_SEPARATOR = "::";
 
@@ -43,7 +42,6 @@ function findOption(options: DefaultModelOptions | undefined, choice: DefaultMod
   return choice ? options?.options.find((option) => sameDefaultModel(option, choice)) ?? null : null;
 }
 
-/** "Claude Sonnet 4.5 (Anthropic)", or the bare model id when the organization no longer has it. */
 export function defaultModelName(options: DefaultModelOptions | undefined, choice: DefaultModelChoice | null): string | null {
   if (!choice) return null;
   const option = findOption(options, choice);
@@ -74,7 +72,6 @@ function comboboxOptions(input: {
     keywords: [option.providerName, option.modelId, DEFAULT_MODEL_SOURCE_LABELS[option.source]],
     icon: <ModelMark option={option} />,
   }));
-  // A saved model the organization no longer has stays visible as the current value.
   const missing = input.saved && !findOption(input.options, input.saved)
     ? [{ value: valueOf(input.saved), label: input.saved.modelId, description: "No longer available" }]
     : [];
@@ -86,20 +83,13 @@ type PickerProps = {
   label: string;
   canManage: boolean;
   settings: DefaultModelSettings | undefined;
-  /** The scope's saved model: Everyone's default, or the team's own. */
   saved: DefaultModelChoice | null;
   inherit: { label: string; description?: string; icon?: ReactNode };
-  /** On a team's page: its members who are also on a team with a different model. */
   conflictCount?: number;
   settingsError: unknown;
   onRetrySettings: () => void;
 };
 
-/**
- * One default model row: a searchable list of the organization's models, read
- * live, saved as soon as it is picked, with Undo. Shared by Org settings and
- * each team's Access tab.
- */
 function DefaultModelPicker({ scope, label, canManage, settings, saved, inherit, conflictCount = 0, settingsError, onRetrySettings }: PickerProps) {
   const { orgId: scopedOrgId, orgSlug } = useOrgDashboard();
   const orgId = scopedOrgId ?? "";
@@ -221,11 +211,9 @@ function DefaultModelPicker({ scope, label, canManage, settings, saved, inherit,
   );
 }
 
-/** The row's label under a "Default model" section title, on Everyone's page and on a team's. */
 const SCOPED_ROW_LABEL = "New desktop chats start on";
 
-/** Org settings › Default model: the model new desktop chats start with, for everyone. */
-export function OrgDefaultModelSection({ canManage, embedded = false }: { canManage: boolean; /** Under the "Default model" section title of Everyone › Models. */ embedded?: boolean }) {
+export function OrgDefaultModelSection({ canManage, embedded = false }: { canManage: boolean; embedded?: boolean }) {
   const orgId = useOrgDashboard().orgId ?? "";
   const settings = useDefaultModelSettings(orgId, true);
   return (
@@ -244,8 +232,7 @@ export function OrgDefaultModelSection({ canManage, embedded = false }: { canMan
   );
 }
 
-/** A team's Models tab › Default model: use Everyone's model or pick the team's own. */
-export function TeamDefaultModelSection({ team: shownTeam, canManage, embedded = false }: { team: { id: string; name: string }; canManage: boolean; /** Under a section title of the page's own (the team's Models tab). */ embedded?: boolean }) {
+export function TeamDefaultModelSection({ team: shownTeam, canManage, embedded = false }: { team: { id: string; name: string }; canManage: boolean; embedded?: boolean }) {
   const orgId = useOrgDashboard().orgId ?? "";
   const settings = useDefaultModelSettings(orgId, true);
   const options = useDefaultModelOptions(orgId, true);
@@ -262,7 +249,6 @@ export function TeamDefaultModelSection({ team: shownTeam, canManage, embedded =
         settings={settings.data}
         saved={team?.model ?? null}
         inherit={orgDefault ? {
-          // Following Everyone shows which model that is; the chip beside the picker says it is Everyone's.
           label: orgDefaultOption?.modelName ?? orgDefault.modelId,
           description: orgDefaultOption ? `Everyone's model, ${orgDefaultOption.providerName}` : "Everyone's model",
           icon: orgDefaultOption ? <ModelMark option={orgDefaultOption} /> : undefined,

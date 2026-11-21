@@ -2,7 +2,6 @@ import type { ManagedDeployment } from "@openwork/types/den/managed-deployments"
 
 export type DeploymentTone = "neutral" | "warning" | "danger";
 
-/** Settings are part of a customer-approved newer run, never a mutable handoff. */
 export function assistantSettingsState(deployment: ManagedDeployment, enabled: boolean, canManage: boolean): { editable: boolean; reason: string | null } {
   if (!enabled) return { editable: false, reason: "Gateway-managed runtimes aren't enabled for this workspace. Ask your OpenWork operator to enable them. Existing services and health reports are unchanged; new gateway-runtime approvals are blocked." };
   if (!canManage) return { editable: false, reason: "Read only. A workspace owner or someone with deployment management access can change the runtime profile or computers." };
@@ -22,7 +21,6 @@ export function providerName(provider: ProviderReadiness["provider"]) {
   return provider === "aws" ? "AWS" : provider === "gcp" ? "Google Cloud" : "Azure";
 }
 
-/** Configuration values and secrets never belong in readiness copy. */
 export function readinessMessage(entry: ProviderReadiness) {
   const name = providerName(entry.provider);
   if (entry.available) return `${name} is ready for customer approval.`;
@@ -34,13 +32,11 @@ export function readinessMessage(entry: ProviderReadiness) {
   }
 }
 
-/** Installation/update failures take precedence over the last known health. */
 export function deploymentStatus(deployment: ManagedDeployment): { label: string; tone: DeploymentTone } {
   const run = deployment.run;
   const installed = Boolean(deployment.installedVersion);
   if (run?.kind === "configure") {
     if (run.state === "awaiting_approval" && run.lastSeenAt) return { label: "AWS approval reserved", tone: "neutral" };
-    // A change nobody approved in time left the installation as it was, so its health is the status.
     if (run.state === "provisioning") return run.expired ? { label: "Configuration change stopped reporting", tone: "danger" } : { label: "Applying configuration change", tone: "neutral" };
     if (run.state === "failed") return { label: "Configuration change failed", tone: "danger" };
   }

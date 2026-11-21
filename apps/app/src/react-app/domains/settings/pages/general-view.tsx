@@ -81,7 +81,6 @@ function SettingsCard(props: {
 export function GeneralSettingsView(props: GeneralSettingsViewProps) {
   return (
     <div className="w-full max-w-3xl space-y-8">
-      {/* Workspace settings */}
       <div className="space-y-3">
         <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-dls-secondary">
           Workspace
@@ -99,7 +98,6 @@ export function GeneralSettingsView(props: GeneralSettingsViewProps) {
         </div>
       </div>
 
-      {/* Global settings */}
       <div className="space-y-3">
         <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-dls-secondary">
           Global
@@ -117,7 +115,6 @@ export function GeneralSettingsView(props: GeneralSettingsViewProps) {
         </div>
       </div>
 
-      {/* Feedback */}
       <div className="space-y-3">
         <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-dls-secondary">
           Help

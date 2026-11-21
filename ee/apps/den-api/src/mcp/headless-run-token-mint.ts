@@ -8,18 +8,12 @@ import { hashOpaqueMcpSecret } from "./auth.js"
 import { DEN_MCP_HEADLESS_RUN_CLIENT_ID, DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS } from "./headless-run-token.js"
 import { headlessRunTokenScopes } from "./workbot-turn-limits.js"
 
-/**
- * Mints a member-scoped MCP token for one headless run. Only trusted server
- * code that has already authorized the member for this run may call it; the
- * token is handed to the headless runner for that run and never stored.
- */
 export async function mintHeadlessRunMcpToken(input: { userId: string; organizationId: string; ttlMs?: number; readOnly?: boolean; scopes?: readonly string[] }) {
   const ttlMs = Math.min(input.ttlMs ?? DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS, DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS)
   const secret = crypto.randomBytes(32).toString("base64url")
   const now = new Date()
   const expiresAt = new Date(now.getTime() + ttlMs)
   const id = createDenTypeId("oauthAccessToken")
-  // Expired run tokens are useless; drop them so they don't accumulate.
   await db
     .delete(OAuthAccessTokenTable)
     .where(and(eq(OAuthAccessTokenTable.clientId, DEN_MCP_HEADLESS_RUN_CLIENT_ID), lt(OAuthAccessTokenTable.expiresAt, now)))

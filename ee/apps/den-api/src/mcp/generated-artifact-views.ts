@@ -92,7 +92,6 @@ function registerRenderTool(input: {
   revision: GeneratedArtifactView["revisions"][number]
   preview: boolean
   run?: boolean
-  /** A live draft OpenWork may offer to save; never while legacy views are read-only. */
   draft?: boolean
   loadData: (request: LoadDataRequest) => Promise<WorkflowArtifactLoadResult>
 }): RegisteredTool {
@@ -118,8 +117,6 @@ function registerRenderTool(input: {
         maxAgeMs: z.number().int().min(60_000).max(30 * 24 * 60 * 60_000).optional(),
       }),
       outputSchema: workflowArtifactPayloadSchema,
-      // The stable MCP Apps contract requires this link on the definition;
-      // returning a URI only after tools/call is too late for host preloading.
       _meta: {
         ui: {
           resourceUri: input.revision.resourceUri,
@@ -188,12 +185,6 @@ export function registerAgentGeneratedArtifactViews(input: {
   retire: (request: { artifactViewId: string }) => Promise<GeneratedArtifactView>
   readSource?: (request: { artifactViewId: string }) => Promise<{ view: GeneratedArtifactView; reactSource: string; cssSource: string }>
   notifyCatalogChanged: () => void
-  /**
-   * Legacy views are read-only where create_app is available: they render,
-   * run live data, and retire, but save and activation are refused. Where
-   * create_app is unavailable they stay writable, so no org loses a way to
-   * build apps.
-   */
   legacyViewsWritable?: boolean
 }) {
   const registeredResources = new Map<string, RegisteredResource>()
@@ -220,8 +211,6 @@ export function registerAgentGeneratedArtifactViews(input: {
   const syncView = (view: GeneratedArtifactView) => {
     const readyRevisions = view.revisions.filter((revision) =>
       revision.buildStatus === "ready" && revision.resourceDigest !== null && revision.retiredAt === null)
-    // Every immutable ready revision remains addressable by its exact URI so
-    // preview, audit, and rollback never depend on mutable resource bytes.
     for (const revision of readyRevisions) {
       if (!registeredResources.has(revision.resourceUri)) {
         registeredResources.set(

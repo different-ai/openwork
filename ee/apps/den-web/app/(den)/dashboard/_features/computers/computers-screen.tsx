@@ -30,16 +30,13 @@ const KIND_OPTIONS: Array<{ value: RemoteDeviceKind | "all"; label: string }> = 
   { value: "all", label: "All computers" },
   ...REMOTE_DEVICE_KINDS.map((kind) => ({ value: kind, label: KIND_LABELS[kind] })),
 ];
-/** Who can run a virtual computer: Workbot's own, then the ones a member registers. */
 const VIRTUAL_PROVIDERS: readonly RemoteDeviceProvider[] = ["workbot", ...REMOTE_DEVICE_REGISTERABLE_PROVIDERS];
 
-/** What a computer is, then what else its lanes do not say. Spaced apart rather than punctuated. */
 export function SecondLine({ parts }: { parts: ReadonlyArray<string | null | undefined | false> }) {
   const shown = parts.filter((part): part is string => Boolean(part));
   return <>{shown.map((part, index) => <span key={index} className="mr-2 last:mr-0">{part}</span>)}</>;
 }
 
-/** Team inventory stays in Den's organization scope; Desktop and Workbot keep their personal inventory. */
 export function ComputersScreen() {
   const { orgId, orgContext } = useOrgDashboard();
   if (!orgId || !orgContext) return <ComputersSkeleton />;
@@ -57,10 +54,8 @@ function ComputersSkeleton() {
   return <div aria-busy="true" aria-label="Computers"><DenSkeleton className="mb-8 h-6 w-32" /><RowListSkeleton rows={5} /></div>;
 }
 
-/** A computers page's title, one line of state under it, and how to add a computer. */
 export function ComputersPageHeader({ title, state, refreshing, onRefresh, onAdd }: {
   title: string;
-  /** Null while the list is loading. */
   state: string | null;
   refreshing: boolean;
   onRefresh: () => void;
@@ -69,23 +64,15 @@ export function ComputersPageHeader({ title, state, refreshing, onRefresh, onAdd
   return <DenPageHeader size="compact" title={title} className="mb-6"
     state={state ?? <DenSkeleton className="mt-1 h-3 w-24" />}
     action={<div className="flex items-center gap-1">
-      {/* The list is read when the page opens and after each change; this reads it again on request. */}
       <RefreshButton refreshing={refreshing} onRefresh={onRefresh} testId="computers-refresh" />
-      {/* On a phone the button keeps its plus and its name for assistive tech; the words come back when there is room. */}
       <DenButton size="sm" variant="secondary" icon={Plus} onClick={onAdd} aria-label="Add a computer" data-testid="computers-add"><span className="hidden sm:inline">Add a computer</span></DenButton>
     </div>} />;
 }
 
-/**
- * A team row's one control: the `…` menu when the viewer may act on the
- * computer; a lock with the reason on a connected desktop they could
- * disconnect with the permission; otherwise nothing.
- */
 export function TeamComputerControl({ device, set, canDisconnectComputers, actionsReported = true }: {
   device: OrganizationComputer;
   set: ComputerActionSet;
   canDisconnectComputers: boolean;
-  /** False while the API is one from before computers could be disconnected: there is no permission to point at yet. */
   actionsReported?: boolean;
 }) {
   if (set.actions.length) return <ComputerMenu set={set} idPrefix="computer" id={device.id} />;
@@ -93,13 +80,11 @@ export function TeamComputerControl({ device, set, canDisconnectComputers, actio
   return null;
 }
 
-/** The team's computers as rows: who owns each, its status, last contact and version, and what the viewer may do to it. */
 export function TeamComputerRows({ devices, now, openId, onToggle, action, detail }: {
   devices: readonly OrganizationComputer[];
   now: number;
   openId: string;
   onToggle: (deviceId: string) => void;
-  /** The row's control, in its fixed lane. */
   action: (device: OrganizationComputer) => ReactNode;
   detail: (device: OrganizationComputer) => ReactNode;
 }) {
@@ -129,7 +114,6 @@ export function TeamComputerRows({ devices, now, openId, onToggle, action, detai
   </RowList>;
 }
 
-/** Under the list: desktops left out because nobody has heard from them for 30 days, and the way to see them. */
 export function StaleComputersLine({ hidden, shown, onShow, onHide }: { hidden: number; shown: boolean; onShow: () => void; onHide: () => void }) {
   if (!shown && hidden <= 0) return null;
   return <p className={`mt-3 flex flex-wrap items-center gap-x-2 text-[12px] leading-4 ${secondaryText}`} data-testid="computers-stale">
@@ -182,7 +166,6 @@ function ComputersList({ orgId, canDisconnectComputers }: { orgId: string; canDi
   const toggle = (device: string) => apply({ device: filters.device === device ? "" : device });
   const pages = data ? devicePageCount(data.total, data.pageSize) : 1;
   const now = Date.now();
-  // The provider only narrows virtual computers; it stays visible while one is still applied from the address bar.
   const showProvider = filters.kind === "vm" || filters.provider !== "all";
 
   const actionsFor = (device: OrganizationComputer): ComputerActionSet => ({
@@ -192,7 +175,6 @@ function ComputersList({ orgId, canDisconnectComputers }: { orgId: string; canDi
     removeConfirm: removeConfirm(device.label),
     onDisconnect: async () => {
       const result: { signedOut: boolean | null } = { signedOut: null };
-      // A sensitive permission: a sign-in that is no longer fresh is confirmed first, then this runs again.
       await runReauthableAction("disconnect-computer", async () => {
         result.signedOut = (await disconnectOrganizationComputer(orgId, device.id)).signedOut;
       });
@@ -212,7 +194,6 @@ function ComputersList({ orgId, canDisconnectComputers }: { orgId: string; canDi
     <ComputersPageHeader title="Computers" state={data ? computersStateLine({ online: data.online, total: data.total, filtered }) : null}
       refreshing={query.isFetching} onRefresh={() => void refresh()} onAdd={() => setAdding(true)} />
     <AddComputerDialog open={adding} onClose={() => setAdding(false)} />
-    {/* The organization's limit on what other devices may do on members' computers; there whenever Den serves the setting. */}
     <RemoteAccessSetting orgId={orgId} />
     {query.error ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 text-[13px]"><p>{query.error.message}{data ? " Showing the last known list." : ""}</p><DenButton variant="secondary" size="sm" onClick={() => void query.refetch()}>Try again</DenButton></div> : null}
     <FeatureIntroGate introKey="computers" facts={data && !filtered ? { computers: data.total + data.staleHidden + data.instancesTotal } : null}>

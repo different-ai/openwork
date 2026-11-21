@@ -2,29 +2,11 @@ import { deviceShareOptionsSchema, deviceShareProviderName } from "@openwork/typ
 import type { CloudProviderDenSession } from "./cloud-provider-sync.js";
 import { ApiError } from "./errors.js";
 
-/**
- * Share an API key saved on this computer with the signed-in person's
- * organization.
- *
- * The person confirms in the app; the app then asks this server, which reads
- * the key from this computer's own credential store and sends it straight to
- * the Den it is signed in to. The key never passes through the app's window,
- * is never logged and is never returned.
- *
- * Den decides everything else: whether the person manages AI Gateway,
- * whether the provider can be served from one key and whether the organization
- * already has it. This server only asks first, so a
- * key is never sent when the answer would be no.
- */
-
 const REQUEST_TIMEOUT_MS = 15_000;
-// Provider ids as OpenCode and the model catalog write them. Organization-managed
-// ids (lpr_, ipr_, openwork…) are never keys of this computer.
 const DEVICE_PROVIDER_ID = /^[a-z0-9][a-z0-9._-]{0,127}$/;
 const ORGANIZATION_PROVIDER_ID = /^(?:lpr|ipr)_|^openwork(?:-|$)/;
 
 export type DeviceProviderShareResult = {
-  /** The organization's new AI Gateway provider. */
   inferenceProviderId: string;
   name: string;
 };
@@ -33,18 +15,14 @@ type Input = {
   session: CloudProviderDenSession;
   providerId: string;
   fetchImpl?: typeof globalThis.fetch;
-  /** The API key saved on this computer for a provider id, or null. */
   readApiKey: (providerId: string) => Promise<string | null>;
   signal?: AbortSignal;
-  /** A newer sign-in from the same person's browser verification. Never changes the destination or organization. */
   verifiedToken?: string;
-  /** Checked again before reading and before sending the key, after asynchronous work. */
   isCurrentSession?: () => boolean;
 };
 
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
 
-/** Den's error code from `{ error }` or `{ error: { code } }`. */
 function denErrorCode(body: unknown): string | null {
   if (!record(body)) return null;
   if (typeof body.error === "string") return body.error;
@@ -66,11 +44,9 @@ async function denRequest(input: Input, path: string, init: { method: "GET" | "P
       },
       ...(init.body === undefined ? {} : { body: JSON.stringify(init.body) }),
       signal: input.signal ? AbortSignal.any([input.signal, timeout]) : timeout,
-      // A key is only ever sent to the Den this computer is signed in to.
       redirect: "error",
     });
   } catch {
-    // A lost POST response is not evidence that the transaction rolled back.
     throw init.method === "POST"
       ? new ApiError(502, "share_unconfirmed", "OpenWork Cloud did not confirm the share. Check AI Providers before trying again.")
       : new ApiError(502, "den_unreachable", "Could not reach OpenWork Cloud. Nothing was shared.");
@@ -99,8 +75,6 @@ export async function shareDeviceProvider(input: Input): Promise<DeviceProviderS
     throw new ApiError(400, "invalid_provider", "A provider connected on this device is required");
   }
 
-  // A browser reauthentication token is not an authority to substitute another
-  // account. Verify both against the same Den before reading any device key.
   if (input.verifiedToken && input.verifiedToken !== input.session.token) {
     const verified = { ...input, session: { ...input.session, token: input.verifiedToken } };
     const [originalUser, verifiedUser] = await Promise.all([
@@ -129,7 +103,6 @@ export async function shareDeviceProvider(input: Input): Promise<DeviceProviderS
   if (provider?.status !== "shareable") throw new ApiError(409, "not_shareable", "This provider can't be shared from this device. Add it in AI Gateway instead.");
 
   if (options.data.verificationRequired) throw new ApiError(403, "verification_required", "Confirm it's you in your browser, then share.");
-  // Only now, with Den's yes and the same account/organization, read the key.
   assertCurrent();
   const apiKey = (await input.readApiKey(providerId))?.trim();
   if (!apiKey) throw new ApiError(409, "no_device_key", "No API key for this provider is saved on this device.");

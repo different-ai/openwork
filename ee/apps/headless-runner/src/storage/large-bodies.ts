@@ -5,27 +5,17 @@ import type { Message } from "../types.js"
 import { ByteCache } from "./cache.js"
 import { sha256Hex } from "./segments.js"
 
-/**
- * Large bodies: a tool result longer than HEADLESS_LARGE_BODY_BYTES goes to `sessions/<id>/bodies/<sha256>` in the
- * files bucket before the row that references it commits. The hot row stays a valid message: its output is the
- * start of the result plus a marker line, and `large_bodies (session_id, seq, part, …)` maps it to the object. Every
- * read and every model context restores the whole output; if it can't, it fails (LargeBodyUnavailableError) and
- * never shows the start as if it were the whole. An older runner (rollback) sees the start and the marker.
- */
 export type LargeBodyRef = { part: "output"; storageKey: string; bytes: number; sha256: string }
 
-/** How much of a large output stays in the hot row. */
 export const LARGE_BODY_PREVIEW_CHARS = 2_000
 const CACHE_BYTES = 32 * 1024 * 1024
 const CACHE_AGE_MS = 10 * 60_000
-/** Durable Object SQL binds at most 100 parameters per statement. */
 const SEQ_CHUNK = 90
 
 export const bodyKey = (sessionId: string, sha256: string) => `sessions/${sessionId}/bodies/${sha256}`
 export const bodyPrefix = (sessionId: string) => `sessions/${sessionId}/bodies/`
 export const largeBodyMarker = (bytes: number, sha256: string) => `\n[Full output kept separately (${bytes} bytes, sha256 ${sha256}); this is its start.]`
 
-/** A message's large part couldn't be read back: the step fails retryably instead of using the start alone. */
 export class LargeBodyUnavailableError extends Error {
   readonly code = "large_body_unavailable"
   constructor(message: string) {
@@ -43,20 +33,13 @@ export class LargeBodies {
   constructor(
     private readonly store: Store,
     private readonly blobs: BlobStore | null,
-    /** Null: new large bodies are off (HEADLESS_SEGMENTS=off); existing ones are still restored. */
     private readonly threshold: number | null,
     private readonly onUploadFailed: (error: unknown) => void = () => undefined,
-    /** Called before each upload: the store notes that it holds objects (orphan checks follow only then). */
     private readonly onStore: () => void = () => undefined,
   ) {
     this.cache = new ByteCache(CACHE_BYTES, CACHE_AGE_MS)
   }
 
-  /**
-   * The message as the hot row keeps it: a tool output over the threshold is uploaded first (content-addressed, so the
-   * same output twice is one object) and replaced by its start and a marker. An upload that fails keeps the whole
-   * output in the row (reported, never lost).
-   */
   async prepare(sessionId: string, message: Message): Promise<PreparedMessage> {
     if (this.threshold === null || !this.blobs || message.role !== "tool") return { message }
     const bytes = new Uint8Array(new TextEncoder().encode(message.output))
@@ -81,7 +64,6 @@ export class LargeBodies {
     return Promise.all(messages.map((message) => this.prepare(sessionId, message)))
   }
 
-  /** The large-body references of these rows (by seq). */
   refs(sessionId: string, seqs: number[]): Map<number, LargeBodyRef> {
     const found = new Map<number, LargeBodyRef>()
     for (let index = 0; index < seqs.length; index += SEQ_CHUNK) {
@@ -97,11 +79,6 @@ export class LargeBodies {
     return found
   }
 
-  /**
-   * The rows with every large output restored, fetched in parallel (cached briefly). Throws LargeBodyUnavailableError
-   * when one can't be read or doesn't match its checksum. A reference whose row no longer carries its marker (an
-   * older runner rewrote the row) is ignored: the row is whole.
-   */
   async restore(sessionId: string, rows: StoredMessage[]): Promise<StoredMessage[]> {
     if (rows.length === 0) return rows
     const refs = this.refs(sessionId, rows.map((row) => row.seq))
@@ -115,7 +92,6 @@ export class LargeBodies {
     )
   }
 
-  /** One large output, checked against its checksum. */
   async fetch(ref: LargeBodyRef): Promise<string> {
     const cached = this.cache.get(ref.storageKey)
     if (cached !== undefined) return cached

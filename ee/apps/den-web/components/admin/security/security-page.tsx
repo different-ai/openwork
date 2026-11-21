@@ -30,7 +30,6 @@ import {
 const SEVERITY_TONE: Record<SecuritySeverity, DenBadgeTone> = { high: "danger", medium: "warning", low: "info", clear: "success" };
 const SEVERITY_LABEL: Record<SecuritySeverity, string> = { high: "High", medium: "Medium", low: "Low", clear: "Clear" };
 const CATEGORY_LABEL: Record<SecurityCategory, string> = { access: "Sign-in and access", accounts: "Accounts", automation: "Bot-like use", credentials: "Credentials and admins", usage: "Usage" };
-/** Findings whose entity values are amounts of money. */
 const MONEY_FINDINGS = new Set(["spend-spikes", "instant-allowance"]);
 type CategoryFilter = "all" | SecurityCategory;
 const CATEGORY_OPTIONS: Array<{ value: CategoryFilter; label: string }> = [

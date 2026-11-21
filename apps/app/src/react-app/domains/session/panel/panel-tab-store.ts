@@ -24,7 +24,6 @@ export type AppPanelTab = { id: string; type: "app"; label: string; appId: strin
 
 export type McpAppPanelTab = { id: string; type: "mcp-app"; label: string; appId: string; updating?: boolean; part: DynamicToolUIPart; origin: McpAppOrigin };
 
-/** A task running on another computer, opened from its row in the chat. */
 export type RemoteThreadPanelTab = { id: string; type: "remote-thread"; label: string; threadKey: string; owner: { workspaceId: string; sessionId: string } };
 
 export const SIDE_CHAT_TAB_ID = "side-chat";
@@ -337,8 +336,6 @@ export const usePanelTabStore = create<PanelTabStore>()(
         }
 
         const currentActiveTab = session.tabs.find((tab) => tab.id === session.activeTabId);
-        // A null selection with retained tabs is the Files empty state, not
-        // permission for background browser updates to take over the panel.
         const shouldSyncActiveFromElectron =
           session.tabs.length === 0 || currentActiveTab?.type === "browser";
 

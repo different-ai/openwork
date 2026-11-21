@@ -19,13 +19,7 @@ import { IconTile } from "./access-rows";
 import { ItemMenu, ItemPanel, ItemRow, ItemRowsSkeleton, ItemSection } from "./item-list";
 import { usePermissionSets } from "./permissions-data";
 
-/**
- * Built-in roles and custom roles, each with who holds it. The rows come from
- * the organization's one role list (`roleList`), the same list the role
- * pickers show.
- * `showIntro` (Members › Roles) lets the custom roles intro take the empty list's place.
- */
-export function RolesTab({ action, showIntro = false, headerOwnsAction = false }: { action?: ReactNode; showIntro?: boolean; /** The page header holds Create role. */ headerOwnsAction?: boolean }) {
+export function RolesTab({ action, showIntro = false, headerOwnsAction = false }: { action?: ReactNode; showIntro?: boolean; headerOwnsAction?: boolean }) {
   const { orgContext, orgId, orgSlug } = useOrgDashboard();
   if (!orgContext) return null;
   const access = getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions);
@@ -33,7 +27,6 @@ export function RolesTab({ action, showIntro = false, headerOwnsAction = false }
   return <RolesTabContent orgId={orgId} orgSlug={orgSlug} canViewSets={access.canViewPermissions} action={action} showIntro={showIntro} headerOwnsAction={headerOwnsAction} />;
 }
 
-/** Whether the signed-in person can create a role (a team and its permission set). */
 export function canCreateRole(input: { canManageTeams: boolean; canManagePermissions: boolean }): boolean {
   return input.canManageTeams && input.canManagePermissions;
 }
@@ -56,20 +49,16 @@ function RolesTabContent({ orgId, orgSlug, canViewSets, action, showIntro, heade
   const roles = roleList({ sets });
   const builtInRoles = roles.flatMap((role) => role.kind === "built_in" && matches(role.label) ? [role] : []);
   const customRoles = roles.flatMap((role) => role.kind === "custom" && matches(role.label) ? [role] : []);
-  // Known, unfiltered count of custom roles for the intro; null while loading, filtering or not allowed.
   const customRoleCount = canViewSets && setsQuery.data && !filter.trim() ? roles.filter((role) => role.kind === "custom").length : null;
 
   const owner = orgContext.members.find((member) => member.isOwner);
   const directAdmins = orgContext.members.filter((member) => !member.isOwner && member.userId !== null && member.role === "admin").length;
   const superAdmins = orgContext.members.filter((member) => !member.isOwner && member.userId !== null && isSuperAdminRole(member.role)).length;
-  // Only teams and people still in the organization count.
   const teamNames = (teams: readonly { id: string }[]) => teams.flatMap((entry) => orgContext.teams.find((team) => team.id === entry.id)?.name ?? []);
   const peopleCount = (memberIds: readonly string[]) => memberIds.filter((id) => orgContext.members.some((member) => member.id === id)).length;
   const linked = (id: BuiltInRoleId) => roles.find((role) => role.kind === "built_in" && role.id === id);
-  // A team that holds Super admin is an Admin team too; it is listed once, under Super admin.
   const superAdminTeamIds = new Set((linked("super-admin")?.teams ?? []).map((team) => team.id));
   const adminTeams = orgContext.teams.filter((team) => team.grantsOrganizationAdmin && !superAdminTeamIds.has(team.id));
-  /** Who holds each built-in role. A new built-in role doesn't compile until it says who. */
   const heldBy: Record<BuiltInRoleId, string | undefined> = {
     member: "Everyone",
     admin: roleHeldByLabel(directAdmins, adminTeams.map((team) => team.name)),
@@ -102,7 +91,6 @@ function RolesTabContent({ orgId, orgSlug, canViewSets, action, showIntro, heade
         </ItemPanel>
       </ItemSection>
 
-      {/* With feature intros on and no custom roles yet, the intro replaces "No custom roles yet" (DESIGN.md I1). */}
       <RolesIntroGate enabled={showIntro} customRoles={customRoleCount}>
       <ItemSection title="Custom roles" testId="roles-custom">
         {!canViewSets ? (
@@ -142,7 +130,6 @@ function RolesIntroGate({ enabled, customRoles, children }: { enabled: boolean; 
   return <RolesIntro customRoles={customRoles}>{children}</RolesIntro>;
 }
 
-/** The box sits in the section list's gap, so it drops its own top margin. */
 function RolesIntro({ customRoles, children }: { customRoles: number | null; children: ReactNode }) {
   const intro = useFeatureIntro("members.roles", customRoles === null ? null : { customRoles });
   if (intro.size === "box") return <div className="-mt-6">{intro.element}</div>;

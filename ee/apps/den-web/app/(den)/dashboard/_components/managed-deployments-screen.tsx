@@ -158,13 +158,11 @@ export function ManagedDeploymentsScreen() {
     onResult: (deployment, next) => { replace(deployment); setLaunch(next); setCopied(false); setActionError(null); },
   } : null;
 
-  // Feature intro: full screen while the organization has no deployment (DESIGN.md I1, I2).
   const intro = useFeatureIntro(
     "deployments",
     enabled && access.canViewDeployments && !loading && !error && configuration ? { deployments: deployments.length, cloudReady: available } : null,
   );
 
-  // Feature intro action (DESIGN.md I5): ?new=1 opens Create deployment once, then leaves the address.
   const searchParams = useSearchParams();
   const newRequested = searchParams.get("new") === "1";
   useEffect(() => {
@@ -436,8 +434,6 @@ export function CreateDeploymentDialog({ open, onOpenChange, configuration, assi
   }
 
   return (
-    // Keep a configuration draft open when choosing portaled provider/region
-    // options. Close and Escape remain explicit dismissal paths.
     <Dialog.Root open={open} disablePointerDismissal onOpenChange={(next) => { if (!busy) onOpenChange(next); }}>
       <Dialog.Portal>
         <Dialog.Backdrop className="fixed inset-0 z-50 bg-black/30" />

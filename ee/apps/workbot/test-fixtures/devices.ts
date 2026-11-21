@@ -1,10 +1,5 @@
 import type { RemoteDevice } from "@openwork/types/den/remote-devices"
 
-/**
- * UI-only deterministic fixtures for the Devices page; no computer is contacted. `working`: the `remote` scenario, whose
- * remote tasks run on the Mac Studio (`fixture-studio` in remote-jobs.ts) while Workbot also works in its own chat.
- * The Mac Studio's owner allowed tasks there; the MacBook Air has not been allowed yet, so it takes none.
- */
 export function fixtureDevices(working: boolean): RemoteDevice[] {
   const now = Date.now()
   const at = (ago: number) => new Date(now - ago).toISOString()

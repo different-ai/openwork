@@ -1,7 +1,5 @@
 import type { ExampleProvider } from "./example-parts";
 
-/** Sample data only: no API calls (DESIGN.md I7). */
-
 export const OPENWORK_MODELS: ExampleProvider = { providerId: "openwork", name: "OpenWork Models" };
 export const ANTHROPIC: ExampleProvider = { providerId: "anthropic", name: "Anthropic" };
 export const OPENAI: ExampleProvider = { providerId: "openai", name: "OpenAI" };

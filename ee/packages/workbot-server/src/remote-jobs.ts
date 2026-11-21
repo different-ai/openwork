@@ -33,7 +33,6 @@ function parse(value: unknown): unknown {
   try { return JSON.parse(value) } catch { return null }
 }
 
-/** The runner stores the MCP result as JSON, including its text-block envelope. */
 function resultOf(value: unknown, depth = 0): Record<string, unknown> | null {
   if (depth > 3) return null
   const parsed: unknown = parse(value)
@@ -52,7 +51,6 @@ function resultOf(value: unknown, depth = 0): Record<string, unknown> | null {
 
 type Call = Extract<RunnerMessage, { role: "assistant" }>["toolCalls"][number]
 function capability(call: Call) {
-  // The runner's registered tool name, not a substring of an arbitrary third-party tool name.
   if (call.name !== "execute_capability") return null
   const name = text(call.input.name)
   const body: unknown = parse(call.input.body ?? call.input.arguments)
@@ -116,7 +114,6 @@ export function buildWorkbotRemoteJobs(snapshot: RunnerSnapshot): WorkbotRemoteJ
       const keys = invocation.name === "remote-session:status" && Array.isArray(invocation.body.threads)
         ? invocation.body.threads.flatMap(thread => record(thread) ? keysOf(thread) : [])
         : invocation.name === "remote-session:read" && text(invocation.body.commandId) ? keysOf(invocation.body) : []
-      // Reading a transcript or running other tools is real work, not a duplicate status-watcher.
       if (!keys.length || keys.some(key => !shown.has(key))) return false
       keys.forEach(key => watching.add(key))
       return true
@@ -147,7 +144,6 @@ export function applyWorkbotRemoteStatuses(
     if (status?.changed && status.target === expectedTarget) return { ...job, status, stale: false, checkedAt: now, unreachable: null }
     const before = options.lastKnown?.(job)
     if (before) return { ...job, status: before.status, stale: true, checkedAt: before.checkedAt, unreachable: null }
-    // Den answered but could not reach what runs it, and nothing was ever verified: say so plainly.
     const unreachable = status && !status.changed && status.stale === true
       ? (job.target === "cloud" ? "Can't reach your cloud computer right now." : "Can't reach the computer running this right now.")
       : null

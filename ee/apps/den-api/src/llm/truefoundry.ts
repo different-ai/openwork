@@ -1,23 +1,3 @@
-/**
- * TrueFoundry control-plane and gateway client, and the mapping from
- * TrueFoundry's data model to ours.
- *
- *   TrueFoundry gateway model (provider/model)  -> gateway_provider_models row
- *   models one person's token can reach          -> gateway_model_groups row (one per distinct set)
- *   TrueFoundry user (found by email)            -> gateway_truefoundry_users row
- *   personal access token created for the user   -> gateway_provider_credentials row (member subject)
- *
- * Every call is egress-guarded, time-boxed and never follows redirects.
- * Errors never echo keys or tokens.
- *
- * TrueFoundry rules this relies on, checked against a live tenant:
- * - Only a tenant-admin virtual account (not a personal access token) may
- *   create a personal access token for another user.
- * - An admin cannot list or delete another user's tokens; a token can list
- *   and delete itself.
- * - Each user may hold a few personal access tokens (a tenant setting, often 3),
- *   so OpenWork keeps exactly one per person and reuses it.
- */
 import { createHash, randomBytes } from "node:crypto"
 import { createInferenceEgressFetch, validateInferenceUrl } from "@openwork-ee/gateway-upstreams"
 import type { ModelsDevProvider } from "./models-dev.js"
@@ -27,9 +7,7 @@ type JsonRecord = Record<string, unknown>
 export type TrueFoundryFetch = typeof fetch
 
 export type TrueFoundryEndpoints = {
-  /** Control plane root, e.g. https://acme.truefoundry.cloud. Management routes live under /api/svc. */
   controlPlaneUrl: string
-  /** OpenAI-compatible gateway base the AI Gateway forwards to, e.g. https://acme.truefoundry.cloud/api/llm. */
   gatewayBaseUrl: string
 }
 
@@ -55,17 +33,10 @@ export class TrueFoundryError extends Error {
   }
 }
 
-/** Prefix of every token name OpenWork creates, so they are easy to recognize in TrueFoundry. */
 export const TRUEFOUNDRY_TOKEN_NAME_PREFIX = "openwork-"
-/**
- * Lifetime of the tokens OpenWork creates. TrueFoundry otherwise uses the tenant's maximum
- * (up to years), so a token OpenWork ever lost would hold one of the person's few token slots
- * for that long. An expired token is rejected, and the next sync or first use creates a new one.
- */
 export const TRUEFOUNDRY_TOKEN_LIFETIME_MS = 90 * 24 * 60 * 60 * 1000
 
 const REQUEST_TIMEOUT_MS = 15_000
-/** Model types that are not chat models. Models without a type are kept. */
 const CHAT_TYPES = new Set(["chat"])
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -97,12 +68,6 @@ function checkedBase(url: URL, label: string): string {
   return base
 }
 
-/**
- * Accepts the control plane root (the address people open TrueFoundry at),
- * with or without a trailing slash or path. The gateway defaults to
- * `<control plane>/api/llm`; tenants that run the gateway on another host
- * pass it explicitly, with or without a trailing `/v1` or `/chat/completions`.
- */
 export function normalizeTrueFoundryEndpoints(controlPlane: string, gateway?: string | null): TrueFoundryEndpoints {
   const root = validUrl(controlPlane)
   root.pathname = "/"
@@ -120,19 +85,12 @@ export function normalizeTrueFoundryEndpoints(controlPlane: string, gateway?: st
 }
 
 const TOKEN_NAME_MAX = 36
-/** Before readable names, OpenWork named tokens `openwork-<12 hex>`; any of those for a person is a token OpenWork lost. */
 const LEGACY_TOKEN_NAME = /^openwork-[0-9a-f]{12}$/
 
-/** Four hex characters naming one OpenWork provider, so OpenWork only ever cleans up its own tokens. */
 export function trueFoundryProviderTag(providerId: string): string {
   return createHash("sha256").update(providerId).digest("hex").slice(0, 4)
 }
 
-/**
- * A token name TrueFoundry accepts (3-36 lowercase letters, digits and dashes, starting with a
- * letter) that shows whose it is in TrueFoundry's token list, where owners aren't shown:
- * `openwork-<email, shortened>-<provider tag><2 random hex>`, e.g. `openwork-alice-example-com-3f9a1c`.
- */
 export function trueFoundryTokenName(input: { email: string; providerId: string }): string {
   const suffix = `${trueFoundryProviderTag(input.providerId)}${randomBytes(1).toString("hex")}`
   const room = TOKEN_NAME_MAX - TRUEFOUNDRY_TOKEN_NAME_PREFIX.length - suffix.length - 1
@@ -140,7 +98,6 @@ export function trueFoundryTokenName(input: { email: string; providerId: string 
   return `${TRUEFOUNDRY_TOKEN_NAME_PREFIX}${slug ? `${slug}-` : ""}${suffix}`
 }
 
-/** A token this provider created (or an older OpenWork created) for a person, which OpenWork may clean up. */
 export function isOpenWorkTrueFoundryToken(name: string, providerTag: string): boolean {
   return LEGACY_TOKEN_NAME.test(name) || name.startsWith(TRUEFOUNDRY_TOKEN_NAME_PREFIX) && new RegExp(`-${providerTag}[0-9a-f]{2}$`).test(name)
 }
@@ -174,7 +131,6 @@ export function createTrueFoundryClient(endpoints: TrueFoundryEndpoints, fetchIm
     throw new TrueFoundryError("bad_response", `TrueFoundry returned HTTP ${status} for ${path.split("?")[0]}${detail ? `: ${detail.slice(0, 200)}` : "."}`, status)
   }
 
-  /** Chat models this key may call, from the gateway's own access rules. */
   async function listModels(key: string): Promise<string[]> {
     const { status, body } = await request("/models", key, { base: "gateway" })
     if (status < 200 || status >= 300) fail("/models", status, body)
@@ -187,11 +143,6 @@ export function createTrueFoundryClient(endpoints: TrueFoundryEndpoints, fetchIm
     }))].sort()
   }
 
-  /**
-   * Proves the key can manage users: a dry-run registration needs tenant admin.
-   * Personal access tokens are refused up front, because TrueFoundry never lets
-   * them create tokens for other people.
-   */
   async function requireAdmin(adminKey: string): Promise<void> {
     if (adminKey.startsWith("tfy_pat_")) {
       throw new TrueFoundryError("personal_token", "This is a personal access token. Use a TrueFoundry virtual account token with the tenant admin role.")
@@ -204,7 +155,6 @@ export function createTrueFoundryClient(endpoints: TrueFoundryEndpoints, fetchIm
     fail(path, status, body)
   }
 
-  /** Exact, case-insensitive email match among active users. TrueFoundry's query is a search. */
   async function findUserByEmail(adminKey: string, email: string): Promise<TrueFoundryUser | null> {
     const wanted = email.trim().toLowerCase()
     const path = `/api/svc/v1/users?query=${encodeURIComponent(wanted)}&limit=100&offset=0`
@@ -216,10 +166,6 @@ export function createTrueFoundryClient(endpoints: TrueFoundryEndpoints, fetchIm
     return { id: readString(match.id) ?? "", email: readString(match.email) ?? wanted, active: match.active !== false }
   }
 
-  /**
-   * Adds the email to the tenant with TrueFoundry's default member role, without
-   * sending an invite email (people on SSO sign in through their identity provider).
-   */
   async function registerUser(adminKey: string, email: string): Promise<void> {
     const path = "/api/svc/v1/users/register"
     const { status, body } = await request(path, adminKey, { method: "POST", body: { email: email.trim(), sendInviteEmail: false, skipIfUserExists: true } })
@@ -228,11 +174,6 @@ export function createTrueFoundryClient(endpoints: TrueFoundryEndpoints, fetchIm
     fail(path, status, body)
   }
 
-  /**
-   * Creates a personal access token owned by the user, expiring after TRUEFOUNDRY_TOKEN_LIFETIME_MS.
-   * A tenant whose maximum token lifetime is shorter refuses that date, so the token then gets the
-   * tenant's maximum instead. Requires a tenant-admin virtual account.
-   */
   async function createUserToken(adminKey: string, input: { email: string; name: string; now?: Date }): Promise<string> {
     const path = "/api/svc/v1/personal-access-tokens/for-user"
     const base = { name: input.name, userEmail: input.email.trim() }
@@ -255,11 +196,6 @@ export function createTrueFoundryClient(endpoints: TrueFoundryEndpoints, fetchIm
     fail(path, status, body)
   }
 
-  /**
-   * The tokens of the user who owns `token` whose names contain `nameQuery`, read with the token
-   * itself: TrueFoundry lists only the caller's own tokens, so admins can't list other users'.
-   * Null when TrueFoundry no longer accepts the token.
-   */
   async function listOwnTokens(token: string, nameQuery: string): Promise<Array<{ id: string; name: string; createdAt: string | null }> | null> {
     const path = `/api/svc/v1/personal-access-tokens?nameSearchQuery=${encodeURIComponent(nameQuery)}&limit=100&offset=0`
     const { status, body } = await request(path, token)
@@ -273,15 +209,10 @@ export function createTrueFoundryClient(endpoints: TrueFoundryEndpoints, fetchIm
     })
   }
 
-  /** The id of a token, read with the token itself (admins cannot list other users' tokens). */
   async function ownTokenId(token: string, name: string): Promise<string | null> {
     return (await listOwnTokens(token, name))?.find((row) => row.name === name)?.id ?? null
   }
 
-  /**
-   * Deletes one of the user's tokens, authenticated as a token of the same user (often the token
-   * itself). A token TrueFoundry already rejects counts as deleted.
-   */
   async function deleteOwnToken(token: string, tokenId: string): Promise<void> {
     const path = `/api/svc/v1/personal-access-tokens/${encodeURIComponent(tokenId)}`
     const { status, body } = await request(path, token, { method: "DELETE" })
@@ -289,10 +220,6 @@ export function createTrueFoundryClient(endpoints: TrueFoundryEndpoints, fetchIm
     fail(path, status, body)
   }
 
-  /**
-   * Revokes every personal access token the user holds, OpenWork's and their own. TrueFoundry
-   * offers admins nothing narrower: they can't list or delete one user's tokens.
-   */
   async function revokeAllUserTokens(adminKey: string, email: string): Promise<void> {
     const path = "/api/svc/v1/personal-access-tokens/revoke/all"
     const { status, body } = await request(path, adminKey, { method: "DELETE", body: { email: email.trim() } })
@@ -307,13 +234,6 @@ export function createTrueFoundryClient(endpoints: TrueFoundryEndpoints, fetchIm
 
 export type TrueFoundryClient = ReturnType<typeof createTrueFoundryClient>
 
-/**
- * TrueFoundry's gateway lists chat model ids only. Each model keeps its id and
- * takes its name, capabilities and limits from the matching models.dev model
- * (see truefoundry-models.ts); unmatched models get the id as their name and
- * no limits. The public price is kept, but served only when the provider
- * tracks usage costs in OpenWork.
- */
 export function trueFoundryCatalogModels(modelIds: readonly string[], catalog: readonly ModelsDevProvider[] = []): TrueFoundryModel[] {
   return modelIds.map((id) => {
     const config = trueFoundryModelConfig(id, catalog.length ? matchTrueFoundryModel(id, catalog) : null)

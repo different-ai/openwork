@@ -1,4 +1,3 @@
-/** Lucide-shaped glyphs (V5): the state reads from shape as well as color. */
 export function StatusIcon({ state, size = 16 }: { state: string; size?: number }) {
   const key = state.toLowerCase();
   const path = key === "passed"

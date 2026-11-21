@@ -1,11 +1,3 @@
-/**
- * Transcript projection.
- *
- * A snapshot carries the thread exactly as OpenWork stores it. A transcript is
- * the flattened, comparable view of the same data: what each side said, what
- * it reasoned about, and which tools it called. Deriving it here keeps every
- * consumer from re-implementing part handling the way the desktop UI does.
- */
 import type {
   HeadlessThreadMessage,
   HeadlessThreadSnapshot,
@@ -17,8 +9,6 @@ import type {
 
 function joinPartText(message: HeadlessThreadMessage, type: string): string {
   return message.parts
-    // Synthetic and ignored parts are engine bookkeeping; the UI hides them
-    // and a transcript comparison must not see them either.
     .filter((part) => part.type === type && typeof part.text === "string" && part.synthetic !== true && part.ignored !== true)
     .map((part) => part.text)
     .join("")

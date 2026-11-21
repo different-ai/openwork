@@ -21,18 +21,6 @@ type Db = ReturnType<typeof createDenDb>["db"]
 
 export type TelemetryOrgId = (typeof TelemetryEventTable.$inferSelect)["org_id"]
 
-/**
- * Index hint for an org window scan of `telemetry_event`.
- *
- * Unfiltered, the scan must use the org window index: MySQL otherwise prefers
- * `(org_id, event_type, event_timestamp)`, which can only narrow by org, so the
- * scan walks the org's entire event history and looks up every matching row.
- *
- * With a session dimension filter, the cheaper plan starts from the filter's
- * sessions and probes `(org_id, session_id, event_timestamp)` per session. The
- * window index is hidden there, because MySQL picks it over that plan and then
- * runs the dimension check against every event in the window.
- */
 function orgWindowScan(filter: DimensionFilter | null) {
   return filter
     ? { ignoreIndex: TELEMETRY_EVENT_ORG_WINDOW_INDEX }
@@ -174,7 +162,6 @@ function bucketIndexExpression(
   bucketCount: number,
   eventTimestamp: SQL | SQL.Aliased | typeof TelemetryEventTable.event_timestamp,
 ): SQL<number> {
-  // Bind `start` exactly as the window's `event_timestamp >= ?` condition does.
   const startParam = sql.param(start, TelemetryEventTable.event_timestamp)
   const elapsedSeconds = sql`TIMESTAMPDIFF(SECOND, ${startParam}, ${eventTimestamp})`
   return sql<number>`LEAST(FLOOR(${elapsedSeconds} / ${sql.raw(String(bucketSeconds))}), ${sql.raw(String(bucketCount - 1))})`
@@ -271,8 +258,6 @@ export function selectWeeklyActiveMembers(db: Db, orgId: TelemetryOrgId, start: 
  * than once per event.
  */
 export function selectModelDimensionUsage(db: Db, orgId: TelemetryOrgId, since: Date, filter: DimensionFilter | null): PromiseLike<ModelDimensionUsageRow[]> {
-  // Aliases are unique across the join: drizzle renders a subquery's aliased
-  // fields without the subquery name.
   const windowSessions = db
     .selectDistinct({
       sessionId: sql<string | null>`${TelemetryEventTable.session_id}`.as("window_session_id"),

@@ -3,7 +3,6 @@ import { DotMatrixLoader } from "@/components/ui/dot-matrix-loader";
 import { t } from "../../../../i18n";
 import { isActiveWorkSessionStatus, isNeedsAttentionSessionStatus } from "../sidebar/utils";
 
-/** The side pane keeps its own status visible even when its latest tool is offscreen. */
 export function WorkbenchPaneStatus({ status, attentionLabel }: { status?: string; attentionLabel?: string }) {
   const waiting = isNeedsAttentionSessionStatus(status);
   const working = isActiveWorkSessionStatus(status);

@@ -129,8 +129,6 @@ export async function computeLocalSourceHash(cwd: string): Promise<string | unde
   const names = (await git(["ls-files", "--others", "--exclude-standard", "--full-name", "-z"])).split("\0").filter(Boolean).sort();
   for (const name of names) {
     hash.update(JSON.stringify(name));
-    // Git lists a nested repository (e.g. a worktree inside the checkout) as one
-    // `dir/` entry; fingerprint its own state instead of reading it as a file.
     if (name.endsWith("/")) hash.update(JSON.stringify(await computeLocalSourceHash(join(root, name)) ?? null));
     else hash.update(createHash("sha256").update(await readFile(join(root, name))).digest());
   }
@@ -269,17 +267,11 @@ export interface LaunchScriptWorldOptions {
   recipeHash?: string;
   invocationHash?: string;
   env?: NodeJS.ProcessEnv;
-  /**
-   * Keys the person selected with `--env`. Only these are recorded in the
-   * selection marker that launchers forward to apps; keys the CLI adds itself
-   * (sources, seeds, pinned refs) are not selections.
-   */
   selectedEnvKeys?: readonly string[];
   place?: string;
   os?: string;
   print: (line: string) => void;
   foregroundLog?: boolean;
-  /** The CLI view already renders outputs on ready; avoid printing them twice. */
   quietReady?: boolean;
   onSpawn?: (pid: number) => void;
 }
@@ -308,8 +300,6 @@ export async function launchScriptWorld(options: LaunchScriptWorldOptions): Prom
   else env.OPENWORK_WORLD_PLACE = options.place;
   if (options.os === undefined) delete env[OS_ENV];
   else env[OS_ENV] = options.os;
-  // Composed inputs are CLI-owned; never inherit an un-fingerprinted recipe
-  // from the operator's shell or a parent world.
   if (options.env?.[SOURCES_ENV] === undefined) delete env[SOURCES_ENV];
   if (options.env?.[SEEDS_ENV] === undefined) delete env[SEEDS_ENV];
   await assertNoRunningSnapshot(snapshotPath, stagedName);

@@ -73,16 +73,6 @@ import {
 import type { OrgRouteVariables } from "./shared.js"
 import { hasPermission, idParamSchema, memberPermissionsForRequest, permissionDeniedResponse, permissionFailureHeaders } from "./shared.js"
 
-/**
- * Permissions management endpoints (docs/permissions/overview.md, section 10).
- * Everything except the catalog needs permissions.view to read or
- * permissions.manage to write. A member may
- * always read their own effective permissions.
- *
- * Guard order: orgMemberRoute() (marker), then
- * requireOrgPermission(key).
- */
-
 type OrganizationId = typeof PermissionSetTable.$inferSelect.organizationId
 type PermissionSetId = typeof PermissionSetTable.$inferSelect.id
 type PermissionSetRow = typeof PermissionSetTable.$inferSelect
@@ -95,10 +85,6 @@ const describeNonMcpRoute = (options: NonMcpDescribeRouteOptions) => describeRou
 const MAX_REQUESTED_CHANGES = 500
 const DEFAULT_HISTORY_LIMIT = 50
 const MAX_HISTORY_LIMIT = 200
-
-// ---------------------------------------------------------------------------
-// Schemas
-// ---------------------------------------------------------------------------
 
 const permissionStatusSchema = z.enum(["allow", "deny"])
 const permissionSetKindSchema = z.enum(["member_default", "admin_default", "billing_manager_default", "super_admin_default", "team"])
@@ -356,10 +342,6 @@ const editForbiddenResponse = jsonResponse(
 const unauthorizedResponse = jsonResponse("The caller must be signed in.", unauthorizedSchema)
 const notFoundResponse = (description: string) => jsonResponse(description, permissionsNotFoundSchema)
 
-// ---------------------------------------------------------------------------
-// Serialization helpers
-// ---------------------------------------------------------------------------
-
 function setKind(defaultKey: PermissionDefaultSetKey | null): PermissionSetKind {
   if (defaultKey === "member") return "member_default"
   if (defaultKey === "admin") return "admin_default"
@@ -368,13 +350,6 @@ function setKind(defaultKey: PermissionDefaultSetKey | null): PermissionSetKind 
   return "team"
 }
 
-/**
- * Whether a set is given to people and teams by link, as a custom role is:
- * every custom role, plus the built-in sets that have no organization role
- * behind them (Billing manager) or can be given to a team (Super admin).
- * Member and Admin are never linked: they follow the organization role and
- * the Admin team switch.
- */
 function isAssignableSet(defaultKey: PermissionDefaultSetKey | null): boolean {
   return defaultKey === null || ASSIGNABLE_PERMISSION_DEFAULT_SET_KEYS.some((key) => key === defaultKey)
 }
@@ -422,11 +397,6 @@ function joinKeys(keys: readonly string[]): string | null {
   return keys.length > 0 ? keys.join(",") : null
 }
 
-// ---------------------------------------------------------------------------
-// Data access
-// ---------------------------------------------------------------------------
-
-/** One set of the organization, or null. */
 async function readPermissionSet(database: PermissionDatabase, organizationId: OrganizationId, permissionSetId: PermissionSetId): Promise<PermissionSetRow | null> {
   const [row] = await database.select().from(PermissionSetTable)
     .where(and(eq(PermissionSetTable.id, permissionSetId), eq(PermissionSetTable.organizationId, organizationId)))
@@ -436,7 +406,6 @@ async function readPermissionSet(database: PermissionDatabase, organizationId: O
 
 type TeamLink = { linkId: typeof PermissionSetTeamTable.$inferSelect.id; teamId: TeamId; teamName: string | null; removedAt: Date | null }
 
-/** Team links per set, newest first; the team name is null when the team row is gone. */
 async function readTeamLinks(database: PermissionDatabase, organizationId: OrganizationId, setIds: readonly PermissionSetId[]): Promise<Map<PermissionSetId, TeamLink[]>> {
   const links = new Map<PermissionSetId, TeamLink[]>()
   if (setIds.length === 0) return links
@@ -459,15 +428,10 @@ async function readTeamLinks(database: PermissionDatabase, organizationId: Organ
   return links
 }
 
-/** Every team the set applies to now (active links), oldest link first. */
 function activeTeams(links: readonly TeamLink[] | undefined): { id: TeamId; name: string | null }[] {
   return [...(links ?? [])].filter((link) => link.removedAt === null).reverse().map((link) => ({ id: link.teamId, name: link.teamName }))
 }
 
-/**
- * People each set is given to directly now: an active link to a member who is
- * still in the organization (pending invitations included), oldest link first.
- */
 async function readDirectMemberIds(database: PermissionDatabase, organizationId: OrganizationId, setIds: readonly PermissionSetId[]): Promise<Map<PermissionSetId, MemberId[]>> {
   const members = new Map<PermissionSetId, MemberId[]>()
   if (setIds.length === 0) return members
@@ -512,7 +476,6 @@ function isDirectAdmin(person: { role: string }) {
   return !roleIncludesOwner(person.role) && isEffectiveOrganizationAdmin({ directRole: person.role, adminTeamIds: [] })
 }
 
-/** The stored role names super-admin and not owner: the Super admin set applies. */
 function isDirectSuperAdmin(person: { role: string }) {
   return !roleIncludesOwner(person.role) && isOrganizationSuperAdminRole(person.role)
 }
@@ -530,7 +493,6 @@ async function countTeamMembers(organizationId: OrganizationId, teamIds: readonl
   return counts
 }
 
-/** People in any of the teams, each once, by name. */
 async function listTeamsMembers(organizationId: OrganizationId, teamIds: readonly TeamId[]) {
   if (teamIds.length === 0) return []
   const rows = await db.select({ memberId: MemberTable.id, name: AuthUserTable.name, email: AuthUserTable.email })
@@ -543,7 +505,6 @@ async function listTeamsMembers(organizationId: OrganizationId, teamIds: readonl
   return rows.filter((row) => (seen.has(row.memberId) ? false : (seen.add(row.memberId), true)))
 }
 
-/** Distinct people per team set: for each set, how many people are in any of its teams. */
 async function countPeoplePerSet(organizationId: OrganizationId, teamsBySet: ReadonlyMap<PermissionSetId, readonly TeamId[]>): Promise<Map<PermissionSetId, number>> {
   const allTeamIds = [...new Set([...teamsBySet.values()].flat())]
   const counts = new Map<PermissionSetId, number>()
@@ -569,12 +530,8 @@ async function listAdminTeams(organizationId: OrganizationId) {
   return teams.map((team) => ({ id: team.id, name: team.name, memberCount: counts.get(team.id) ?? 0 }))
 }
 
-/**
- * Active (non-archived) sets: built-in defaults, then team sets by name.
- */
 async function listActiveSets(organizationId: OrganizationId): Promise<PermissionSetRow[]> {
   const defaults = await ensureCurrentDefaultPermissionSets(organizationId)
-  // primary: the line above may have just created the default sets.
   const rows = await db.$primary.select().from(PermissionSetTable)
     .where(and(eq(PermissionSetTable.organizationId, organizationId), isNull(PermissionSetTable.archivedAt)))
     .orderBy(asc(PermissionSetTable.name), asc(PermissionSetTable.id))
@@ -587,7 +544,6 @@ async function listActiveSets(organizationId: OrganizationId): Promise<Permissio
 
 type ChangedByRow = { changedByOrgMembershipId: MemberId | null; changedByName: string | null; changedByEmail: string | null }
 
-/** Who made a change. The email follows the roster rule (mayViewRosters); the name is always returned. */
 function changedBy(row: ChangedByRow, includeEmail: boolean) {
   if (!row.changedByOrgMembershipId) return null
   return { memberId: row.changedByOrgMembershipId, name: row.changedByName, email: includeEmail ? row.changedByEmail : null }
@@ -616,23 +572,11 @@ function historyQuery(organizationId: OrganizationId, permissionSetId: Permissio
     ))
 }
 
-/**
- * Who a set applies to includes people's names and emails (team rosters, the
- * members with the admin role). Those are only returned to callers who may
- * see any team's members (teams.view, the one roster view permission);
- * everyone else holding permissions.view gets the counts. The same rule gates
- * the email of whoever changed a permission (detail and history).
- */
 async function mayViewRosters(c: PermissionRouteContext): Promise<boolean> {
   return (await callerPermissions(c))?.has("teams.view") ?? false
 }
 
-/**
- * After a write, call it through `loadPermissionSetDetailFromPrimary`: the
- * permission rows and team links it reads were usually just written.
- */
 async function loadPermissionSetDetail(organizationId: OrganizationId, set: PermissionSetRow, includeIdentities: boolean, database: PermissionDatabase = db) {
-  // Sequential: `database` may be a transaction, which runs one query at a time.
   const rows = await historyQuery(organizationId, set.id, undefined, database)
   const links = await readTeamLinks(database, organizationId, [set.id])
   const directMembers = set.archivedAt === null ? await readDirectMemberIds(database, organizationId, [set.id]) : new Map<PermissionSetId, MemberId[]>()
@@ -684,7 +628,6 @@ async function loadPermissionSetDetail(organizationId: OrganizationId, set: Perm
   }
 }
 
-/** A read-only transaction keeps every read on the primary, so the response shows the write just made. */
 function loadPermissionSetDetailFromPrimary(organizationId: OrganizationId, set: PermissionSetRow, includeIdentities: boolean) {
   return db.transaction((tx) => loadPermissionSetDetail(organizationId, set, includeIdentities, tx))
 }
@@ -694,7 +637,6 @@ async function auditStateFor(database: PermissionDatabase, set: PermissionSetRow
   return { set, teamId, teamIds, allowedKeys: [...allowedKeys(states.get(set.id))] }
 }
 
-/** Sets that currently apply to any of the teams. */
 async function activeSetIdsForTeams(database: PermissionDatabase, organizationId: OrganizationId, teamIds: readonly TeamId[]): Promise<PermissionSetId[]> {
   if (teamIds.length === 0) return []
   const rows = await database.select({ permissionSetId: PermissionSetTeamTable.permissionSetId }).from(PermissionSetTeamTable)
@@ -704,15 +646,6 @@ async function activeSetIdsForTeams(database: PermissionDatabase, organizationId
 
 type TeamRoleChanges = Map<PermissionSetId, { added: TeamId[]; removed: TeamId[] }>
 
-/**
- * Shared roles: gives each team `setId` (no custom role when null), replacing
- * the team's current custom role. An earlier link between the same set and
- * team is re-activated (one row per pair). A set left with no team is kept:
- * a role is only archived when it is deleted. Callers hold the organization
- * row (withOrganizationTeamMutation) and the teams' rows FOR UPDATE; the set
- * rows are locked here before their links, the order every permission set
- * write uses. Returns, per set, which teams it gained and lost.
- */
 async function assignTeamsToSet(tx: TeamMutationTransaction, input: {
   organizationId: OrganizationId
   teamIds: readonly TeamId[]
@@ -790,12 +723,9 @@ async function assignTeamsToSet(tx: TeamMutationTransaction, input: {
   return changes
 }
 
-/** One teams_changed audit event per set whose teams changed, with its teams before and after. */
 async function teamRoleChangeEvents(tx: TeamMutationTransaction, organizationId: OrganizationId, changes: TeamRoleChanges, before: ReadonlyMap<PermissionSetId, TeamLink[]>, options: { skip?: PermissionSetId } = {}) {
   const setIds = [...changes.keys()].filter((setId) => setId !== options.skip)
   if (setIds.length === 0) return []
-  // Sequential on purpose: a PlanetScale transaction runs one query at a time, and
-  // overlapping queries fail with "transaction ... in use" (an intermittent 500).
   const after = await readTeamLinks(tx, organizationId, setIds)
   const sets = await tx.select().from(PermissionSetTable).where(and(eq(PermissionSetTable.organizationId, organizationId), inArray(PermissionSetTable.id, setIds)))
   const events = []
@@ -814,7 +744,6 @@ async function teamRoleChangeEvents(tx: TeamMutationTransaction, organizationId:
   return events
 }
 
-/** Sets currently given directly to any of the people. */
 async function activeDirectSetIdsForMembers(database: PermissionDatabase, organizationId: OrganizationId, memberIds: readonly MemberId[]): Promise<PermissionSetId[]> {
   if (memberIds.length === 0) return []
   const rows = await database.select({ permissionSetId: PermissionSetMemberTable.permissionSetId }).from(PermissionSetMemberTable)
@@ -824,15 +753,6 @@ async function activeDirectSetIdsForMembers(database: PermissionDatabase, organi
 
 type MemberRoleChanges = Map<PermissionSetId, { added: MemberId[]; removed: MemberId[] }>
 
-/**
- * Gives each person `setId` directly (none when null), replacing the set they
- * were given directly before: a person holds at most one this way. An earlier
- * link between the same set and person is re-activated (one row per pair).
- * Callers hold the organization row (withOrganizationTeamMutation) and the
- * members' rows FOR UPDATE; the set rows are locked here before their links,
- * the order every permission set write uses. Returns, per set, which people
- * it gained and lost.
- */
 async function assignMembersToSet(tx: TeamMutationTransaction, input: {
   organizationId: OrganizationId
   memberIds: readonly MemberId[]
@@ -910,11 +830,9 @@ async function assignMembersToSet(tx: TeamMutationTransaction, input: {
   return changes
 }
 
-/** One members_changed audit event per set whose people changed, with its people before and after. */
 async function memberRoleChangeEvents(tx: TeamMutationTransaction, organizationId: OrganizationId, changes: MemberRoleChanges, before: ReadonlyMap<PermissionSetId, MemberId[]>, options: { skip?: PermissionSetId } = {}) {
   const setIds = [...changes.keys()].filter((setId) => setId !== options.skip)
   if (setIds.length === 0) return []
-  // Sequential on purpose: a transaction runs one query at a time.
   const after = await readDirectMemberIds(tx, organizationId, setIds)
   const sets = await tx.select().from(PermissionSetTable).where(and(eq(PermissionSetTable.organizationId, organizationId), inArray(PermissionSetTable.id, setIds)))
   const events = []
@@ -933,7 +851,6 @@ async function memberRoleChangeEvents(tx: TeamMutationTransaction, organizationI
   return events
 }
 
-/** The built-in sets a team currently holds by link (Billing manager, Super admin). */
 async function teamDefaultSetKeys(tx: TeamMutationTransaction, organizationId: OrganizationId, teamId: TeamId): Promise<PermissionDefaultSetKey[]> {
   const rows = await tx.select({ defaultKey: PermissionSetTable.defaultKey })
     .from(PermissionSetTeamTable)
@@ -947,29 +864,14 @@ async function teamDefaultSetKeys(tx: TeamMutationTransaction, organizationId: O
   return rows.flatMap((row) => (row.defaultKey ? [row.defaultKey] : []))
 }
 
-// ---------------------------------------------------------------------------
-// Request helpers
-// ---------------------------------------------------------------------------
-
 type PermissionRouteContext = Parameters<typeof memberPermissionsForRequest>[0] & {
   get(key: "memberPermissions"): MemberPermissions | undefined
 }
 
-/** The caller's effective permissions (set by requireOrgPermission; resolved once per request otherwise). */
 async function callerPermissions(c: PermissionRouteContext): Promise<MemberPermissions | null> {
   return c.get("memberPermissions") ?? await memberPermissionsForRequest(c)
 }
 
-/**
- * The editor of a permission set write, resolved through its transaction.
- * Writes run in withOrganizationTeamMutation, so they hold the organization
- * row FOR UPDATE before locking any permission_set row, like team and member
- * writes; the editor's share-locked reads (default sets, their team sets) can
- * then never wait on another permission set write holding a set row. The
- * route checked permissions.manage against the request's permissions (with
- * the recent sign-in); this re-check sees a revocation committed since, and
- * the edit is planned against these permissions, not the request's.
- */
 async function editorInTransaction(tx: TeamMutationTransaction, organizationId: OrganizationContext["organization"]["id"], memberId: OrganizationContext["currentMember"]["id"]): Promise<{ ok: true; editor: MemberPermissions } | { ok: false; error: "permission_revoked"; response: ReturnType<typeof permissionDeniedResponse> }> {
   const editor = await resolvePermissionsForMember({ organizationId, memberId, database: tx })
   return editor.has("permissions.manage") ? { ok: true, editor } : { ok: false, error: "permission_revoked", response: permissionDeniedResponse("permissions.manage") }
@@ -978,12 +880,6 @@ async function editorInTransaction(tx: TeamMutationTransaction, organizationId: 
 function organizationContext(c: { get(key: "organizationContext"): OrganizationContext | undefined }): OrganizationContext | null {
   return c.get("organizationContext") ?? null
 }
-
-// ---------------------------------------------------------------------------
-// Write actions: the bodies of the write routes below, callable with an
-// in-process route context (config-blob imports,
-// src/config-blobs/areas/members-roles.ts). Routes pass their own context.
-// ---------------------------------------------------------------------------
 
 export type CreatePermissionSetBody = z.infer<typeof createPermissionSetBodySchema>
 export type UpdatePermissionSetBody = z.infer<typeof updatePermissionSetBodySchema>
@@ -1001,23 +897,19 @@ export async function createPermissionSetAction(c: PermissionActionContext, payl
       const allowed = plan.changes.map((change) => change.key)
 
       if (!body.teamId) {
-        // A named role, given to zero or more teams now.
         const name = body.name
         if (!name) return c.json({ error: "invalid_request" as const, message: "Name the role.", details: [] }, 400)
         const teamIds = [...new Set((body.teamIds ?? []).map((value) => normalizeDenTypeId("team", value)))]
         const memberIds = [...new Set((body.memberIds ?? []).map((value) => normalizeDenTypeId("member", value)))]
-        // Giving the role to people is a role change: nobody changes their own.
         if (memberIds.includes(actorMemberId)) return c.json({ error: "own_role" as const, message: OWN_ROLE_CHANGE_MESSAGE, keys: [] }, 403)
 
         const created = await withOrganizationTeamMutation(organizationId, async (tx) => {
-          // Team rows before set rows, as every team set write takes them.
           const teams = teamIds.length > 0
             ? await tx.select({ id: TeamTable.id }).from(TeamTable)
               .where(and(eq(TeamTable.organizationId, organizationId), inArray(TeamTable.id, teamIds)))
               .for("update")
             : []
           if (teams.length !== teamIds.length) return { ok: false as const, error: "team_not_found" as const }
-          // Member rows after team rows and before set rows, as a role change takes them.
           const people = memberIds.length > 0
             ? await tx.select({ id: MemberTable.id }).from(MemberTable)
               .where(and(eq(MemberTable.organizationId, organizationId), inArray(MemberTable.id, memberIds), isNull(MemberTable.removedAt), eq(MemberTable.isSetupAgent, false)))
@@ -1026,7 +918,6 @@ export async function createPermissionSetAction(c: PermissionActionContext, payl
           if (people.length !== memberIds.length) return { ok: false as const, error: "member_not_found" as const }
           const live = await editorInTransaction(tx, organizationId, actorMemberId)
           if (!live.ok) return live
-          // Giving people a role directly changes their role, on top of making the role.
           if (memberIds.length > 0 && !live.editor.has("members.update")) return { ok: false as const, error: "permission_revoked" as const, response: permissionDeniedResponse("members.update") }
           const livePlan = planPermissionSetCreate({ permissions: body.permissions, editor: live.editor })
           if (!livePlan.ok) return { ok: false as const, error: "invalid_create" as const, problem: livePlan.problem }
@@ -1086,8 +977,6 @@ export async function createPermissionSetAction(c: PermissionActionContext, payl
       const teamId = normalizeDenTypeId("team", body.teamId)
 
       const result = await withOrganizationTeamMutation(organizationId, async (tx) => {
-        // The team row serializes concurrent creates for the same team. The
-        // set is new, so its rows need no notBefore.
         const [team] = await tx.select({ id: TeamTable.id, name: TeamTable.name }).from(TeamTable)
           .where(and(eq(TeamTable.id, teamId), eq(TeamTable.organizationId, organizationId)))
           .limit(1)
@@ -1130,7 +1019,6 @@ export async function createPermissionSetAction(c: PermissionActionContext, payl
           createdAt: now,
         })
 
-        // A brand-new set has no earlier link to this team to re-activate.
         await tx.insert(PermissionSetTeamTable).values({
           id: createDenTypeId("permissionSetTeam"),
           organizationId,
@@ -1243,19 +1131,15 @@ export async function setTeamPermissionSetAction(c: PermissionActionContext, pay
           if (!(await lockPermissionSet(tx, organizationId, setId))) return { ok: false as const, error: "permission_set_not_found" as const }
           set = await readPermissionSet(tx, organizationId, setId)
           if (!set) return { ok: false as const, error: "permission_set_not_found" as const }
-          // Member and Admin follow the organization role and the Admin team switch, never a link.
           if (!isAssignableSet(set.defaultKey)) return { ok: false as const, error: "default_permission_set" as const }
           if (set.archivedAt) return { ok: false as const, error: "permission_set_archived" as const }
         }
         const live = await editorInTransaction(tx, organizationId, actorMemberId)
         if (!live.ok) return live
-        // Giving a team Super admin, or taking it away, changes who holds every permission:
-        // like making or changing a super-admin, it needs the owner or a super-admin.
         const givesSuperAdmin = set?.defaultKey === "super-admin"
         const takesSuperAdmin = !givesSuperAdmin && (await teamDefaultSetKeys(tx, organizationId, team.id)).includes("super-admin")
         if ((givesSuperAdmin || takesSuperAdmin) && !hasOwnerAuthority(live.editor)) return { ok: false as const, error: "super_admin_role_requires_super_admin" as const }
         if (set) {
-          // Giving a role grants its permissions to everyone in the team: the editor must hold them all.
           const missing = [...allowedKeys((await readPermissionSetStates(tx, [set.id], { lock: "share" })).get(set.id))].filter((key) => !live.editor.has(key))
           if (missing.length > 0) return { ok: false as const, error: "invalid_assign" as const, problem: { error: "permission_not_held" as const, keys: missing } }
         }
@@ -1295,17 +1179,6 @@ export async function setTeamPermissionSetAction(c: PermissionActionContext, pay
       return c.json({ set: result.set ? await loadPermissionSetDetailFromPrimary(organizationId, result.set, await mayViewRosters(c)) : null })
 }
 
-/**
- * Gives one person a role directly, without a team: a custom role or Billing
- * manager, replacing the one they were given directly before, or none with
- * null. Their organization role (Member, Admin, Super admin) is changed
- * separately (POST /v1/members/:memberId/role).
- *
- * The same rules as a role change: nobody changes their own, and the caller
- * must hold members.update, re-checked inside the transaction. Giving a role
- * grants its permissions, so the caller must hold every one of them, as for
- * giving a role to a team or adding someone to a team that has one.
- */
 export async function setMemberPermissionSetAction(c: PermissionActionContext, payload: OrganizationContext, rawMemberId: string, requested: string | null, capture: AuditChangeCapture | null) {
       const organizationId = payload.organization.id
       const memberId = normalizeDenTypeId("member", rawMemberId)
@@ -1314,7 +1187,6 @@ export async function setMemberPermissionSetAction(c: PermissionActionContext, p
       if (memberId === actorMemberId) return c.json({ error: "own_role" as const, message: OWN_ROLE_CHANGE_MESSAGE, keys: [] }, 403)
 
       const result = await withOrganizationTeamMutation(organizationId, async (tx) => {
-        // The member row before set rows, as a role change takes them. Pending invitations can be given a role too.
         const [target] = await tx.select({ id: MemberTable.id, role: MemberTable.role }).from(MemberTable)
           .where(and(eq(MemberTable.id, memberId), eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt), eq(MemberTable.isSetupAgent, false)))
           .limit(1)
@@ -1326,14 +1198,12 @@ export async function setMemberPermissionSetAction(c: PermissionActionContext, p
           if (!(await lockPermissionSet(tx, organizationId, setId))) return { ok: false as const, error: "permission_set_not_found" as const }
           set = await readPermissionSet(tx, organizationId, setId)
           if (!set) return { ok: false as const, error: "permission_set_not_found" as const }
-          // Member, Admin and Super admin are organization roles for a person, never a link.
           if (set.defaultKey !== null && set.defaultKey !== "billing-manager") return { ok: false as const, error: "default_permission_set" as const }
           if (set.archivedAt) return { ok: false as const, error: "permission_set_archived" as const }
         }
         const actor = await resolvePermissionsForMember({ organizationId, memberId: actorMemberId, database: tx })
         if (!actor.has("members.update")) return { ok: false as const, error: "permission_revoked" as const, response: permissionDeniedResponse("members.update") }
         if (set) {
-          // Giving a role grants its permissions to the person: the caller must hold them all.
           const missing = [...allowedKeys((await readPermissionSetStates(tx, [set.id], { lock: "share" })).get(set.id))].filter((key) => !actor.has(key))
           if (missing.length > 0) return { ok: false as const, error: "invalid_assign" as const, problem: { error: "permission_not_held" as const, keys: missing } }
         }
@@ -1380,8 +1250,6 @@ export async function updatePermissionSetPermissionsAction(c: PermissionActionCo
       const permissionSetId = normalizeDenTypeId("permissionSet", rawPermissionSetId)
       const existing = await readPermissionSet(db, organizationId, permissionSetId)
       if (!existing) return c.json({ error: "permission_set_not_found" as const }, 404)
-      // A default set must hold a row for every default key before it is
-      // diffed, or reconciliation could later override an explicit deny.
       if (existing.defaultKey !== null) await ensureCurrentDefaultPermissionSets(organizationId)
 
       const actorMemberId = payload.currentMember.id
@@ -1391,8 +1259,6 @@ export async function updatePermissionSetPermissionsAction(c: PermissionActionCo
         const set = await readPermissionSet(tx, organizationId, permissionSetId)
         if (!set) return { ok: false as const, error: "permission_set_not_found" as const }
         if (set.archivedAt) return { ok: false as const, error: "permission_set_archived" as const }
-        // Planned against the editor resolved here: owner/effective-admin for Admin permissions and
-        // the hold-the-key rule both use the latest committed permissions.
         const live = await editorInTransaction(tx, organizationId, actorMemberId)
         if (!live.ok) return live
 
@@ -1483,7 +1349,6 @@ export async function archivePermissionSetAction(c: PermissionActionContext, pay
             .set({ removedAt: now, removedByOrgMembershipId: actorMemberId })
             .where(inArray(PermissionSetTeamTable.id, activeLinks.map((link) => link.linkId)))
         }
-        // People given the role directly lose it with the role.
         await tx.update(PermissionSetMemberTable)
           .set({ removedAt: now, removedByOrgMembershipId: actorMemberId })
           .where(and(eq(PermissionSetMemberTable.organizationId, organizationId), eq(PermissionSetMemberTable.permissionSetId, set.id), isNull(PermissionSetMemberTable.removedAt)))
@@ -1520,10 +1385,6 @@ export async function archivePermissionSetAction(c: PermissionActionContext, pay
 
       return c.body(null, 204)
 }
-
-// ---------------------------------------------------------------------------
-// Routes
-// ---------------------------------------------------------------------------
 
 export function registerOrgPermissionRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get(

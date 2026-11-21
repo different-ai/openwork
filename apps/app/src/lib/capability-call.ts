@@ -1,18 +1,8 @@
 import type { DynamicToolUIPart } from "ai"
 
-/**
- * Paper rendering rules — "Capability calls → sentences":
- * never render raw JSON. Map connection name → service ("Granola"),
- * tool name → verb ("Asking about…"), body.query → quoted plain text.
- * IDs and schema digests live under "Technical details", collapsed.
- */
-
 export type CapabilityCallSentence = {
-  /** Human service name, e.g. "Granola" or "OpenWork Cloud". */
   service: string | null
-  /** Present-tense line while the call runs. */
   present: string
-  /** Past-tense line once the call completed. */
   past: string
   failure?: string
 }
@@ -63,7 +53,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-/** Tool outputs arrive as objects or JSON strings depending on transport. */
 export function parseRecord(value: unknown): Record<string, unknown> | null {
   if (isRecord(value)) return value
   if (typeof value !== "string") return null
@@ -75,7 +64,6 @@ export function parseRecord(value: unknown): Record<string, unknown> | null {
   }
 }
 
-/** Brand names whose casing a plain title case would get wrong. */
 const BRAND_WORDS: Record<string, string> = { openwork: "OpenWork", github: "GitHub", gitlab: "GitLab", hubspot: "HubSpot" }
 
 function titleCase(slug: string): string {
@@ -86,20 +74,11 @@ function titleCase(slug: string): string {
     .join(" ")
 }
 
-/**
- * Connection namespaces carry routing ids ("openwork-direct-slack-c1ca24").
- * People should see the service ("Slack"), never the plumbing around it.
- */
 export function serviceNameFromSlug(slug: string): string {
   const cleaned = slug.replace(/^openwork-direct-/i, "").replace(/-[0-9a-f]{6}$/i, "")
   return titleCase(cleaned || slug)
 }
 
-/**
- * Tool actions often repeat their service and lead with a qualifier
- * ("web_search_exa"). Drop the repeated service word, and move a known verb
- * to the front so "web_search" reads as "search web".
- */
 function normalizeAction(action: string, serviceSlug: string): string {
   const serviceWords = new Set(serviceSlug.toLowerCase().split(/[-_.\s]+/))
   const words = action.split(/[-_.\s]+/).filter(Boolean)
@@ -110,7 +89,6 @@ function normalizeAction(action: string, serviceSlug: string): string {
   return kept.join("_")
 }
 
-/** "list_files" → "list files", for "Couldn't list files". */
 function baseVerbPhrase(action: string): string {
   return humanize(action).toLowerCase()
 }
@@ -123,13 +101,10 @@ function truncate(text: string, max: number): string {
   return text.length > max ? `${text.slice(0, max - 1)}…` : text
 }
 
-/** Pull a short human query out of a capability call input, if one exists. */
 function extractQuery(input: unknown, max = 80): string | null {
   if (!isRecord(input)) return null
   const direct = input.query ?? input.q ?? input.search ?? input.prompt
   if (typeof direct === "string" && direct.trim()) return truncate(direct.trim(), max)
-  // Arguments and bodies arrive as objects or as a JSON string, depending on
-  // how the capability was invoked; an API operation nests its body.
   const args = parseRecord(input.arguments)
   for (const body of [args, parseRecord(args?.body), parseRecord(input.body)]) {
     const nested = body?.query ?? body?.q ?? body?.search ?? body?.prompt ?? body?.question ?? body?.message ?? body?.text
@@ -138,15 +113,10 @@ function extractQuery(input: unknown, max = 80): string | null {
   return null
 }
 
-/**
- * Full natural-language ask behind a capability call, for the failed-call
- * card's quote block (Paper "Failed Call Card" · Query Quote).
- */
 export function getCapabilityCallQuote(part: DynamicToolUIPart): string | null {
   return extractQuery(part.input, 280)
 }
 
-/** "granola.ask-about-meetings" or "granola/ask_about_meetings" → parts. */
 function splitCapabilityName(name: string): { service: string; action: string } | null {
   const separator = name.includes(".") ? "." : name.includes("/") ? "/" : null
   if (!separator) return null
@@ -168,7 +138,6 @@ function verbPhrase(action: string, tense: "present" | "past"): string {
   return `${prefix} ${humanize(action)}`
 }
 
-/** Skill slug from a get_skill call: the name asked for, else the one returned. */
 function skillReference(part: DynamicToolUIPart): string | null {
   const input = parseRecord(part.input)
   const asked = typeof input?.name === "string" ? input.name.trim() : ""
@@ -176,14 +145,11 @@ function skillReference(part: DynamicToolUIPart): string | null {
   const raw = "output" in part ? part.output : undefined
   const output = parseRecord(raw)
   if (typeof output?.name === "string" && output.name.trim()) return output.name.trim()
-  // The text result is the SKILL.md itself; its frontmatter carries the slug.
   const frontmatter = typeof raw === "string" ? /^---\r?\n([\s\S]*?)\r?\n---/.exec(raw)?.[1] : undefined
   const name = frontmatter ? /^name:\s*(.+)$/m.exec(frontmatter)?.[1]?.trim() ?? "" : ""
-  // Den keeps marketplace skill names unique with an 8-character id suffix.
   return (asked.startsWith("plugin:") ? name.replace(/-[a-z0-9]{8}$/, "") : name) || null
 }
 
-/** Den keeps marketplace skill names unique with an 8-character id suffix. */
 function plainSkillName(name: string): string {
   return name.replace(/-(?=[a-z0-9]*\d)[a-z0-9]{8}$/, "")
 }
@@ -192,12 +158,6 @@ function sentence(service: string | null, present: string, past: string, failure
   return { service, present, past, failure }
 }
 
-/**
- * Code Mode's own engine tools (`tools.opencode.*`) arrive as
- * "opencode_<tool>". They are the agent working inside OpenWork, so they never
- * name the engine as a service (T2): a skill read names the skill, anything
- * else names the connection it read from.
- */
 function engineToolSentence(action: string, input: Record<string, unknown> | null): CapabilityCallSentence {
   const server = typeof input?.server === "string" && input.server.trim() ? serviceNameFromSlug(input.server.trim()) : null
   if (action === "read_mcp_resource") {
@@ -230,16 +190,10 @@ function engineToolSentence(action: string, input: Record<string, unknown> | nul
   return sentence(null, verbPhrase(action, "present"), verbPhrase(action, "past"), `Couldn't ${baseVerbPhrase(action)}`)
 }
 
-/** The engine names an MCP tool `<server>_<tool>`; OpenWork Connect's server is `openwork-cloud`. */
 const CONNECT_TOOL_PREFIX = "openwork-cloud_"
 
-/** Shows the sign-in card of the connection its input names. */
 export const CONNECT_STATUS_TOOL = `${CONNECT_TOOL_PREFIX}connection_status`
 
-/**
- * Connect's fixed tools. Every other tool on its server is one action of a
- * connection, Workflow, App or remote session, or one of OpenWork's operations.
- */
 const CONNECT_OWN_TOOLS = new Set([
   "search_capabilities",
   "execute_capability",
@@ -261,44 +215,36 @@ const CONNECT_OWN_TOOLS = new Set([
   "retire_artifact_view",
 ])
 
-/** `<namespace>_<tool>` when Connect lists this tool for one action, e.g. "linear_list_issues". */
 export function connectActionToolName(toolName: string): string | null {
   if (!toolName.startsWith(CONNECT_TOOL_PREFIX)) return null
   const action = toolName.slice(CONNECT_TOOL_PREFIX.length)
   return !action || CONNECT_OWN_TOOLS.has(action) || action.startsWith("run_artifact_") ? null : action
 }
 
-/** The first part of a connection's tool names, as Connect derives it from the connection's name. */
 export function connectToolNamespace(connectionName: string): string {
   const namespace = connectionName.toLowerCase().replace(/[^a-z0-9_]+/g, "_")
   if (!namespace) return "_"
   return /^[a-z_]/.test(namespace) ? namespace : `_${namespace}`
 }
 
-/** The connection's own tool name inside a Connect action tool, or null when the tool is not this connection's. */
 export function connectActionForConnection(action: string, connectionName: string): string | null {
   const namespace = connectToolNamespace(connectionName)
   if (!action.startsWith(`${namespace}_`)) return null
-  // Connect numbers a second connection of the same name ("linear_2").
   return action.slice(namespace.length + 1).replace(/^\d+_(?=.)/, "") || null
 }
 
-/** "create" for Connect's `remote-session.create` tool, and so on. */
 export function connectRemoteSessionAction(toolName: string): string | null {
   return /^openwork-cloud_remote-session_([a-z]+)$/.exec(toolName)?.[1] ?? null
 }
 
-/** One of OpenWork's own operations listed as a tool: `den.<operation>`, a namespace no connection can take. */
 export function connectDenOperation(toolName: string): string | null {
   return /^openwork-cloud_den_([A-Za-z0-9]+)$/.exec(toolName)?.[1] ?? null
 }
 
-/** A camelCase operation name's verb, its remaining words, and the native service those words name. */
 function operationParts(name: string): { verb: string | undefined; rest: string[]; service: string | null } {
   const words = name.split(/(?=[A-Z])|[-_.\s]+/).filter(Boolean)
   let rest = words.slice(1)
   if (/^capabilit(y|ies)$/i.test(rest[0] ?? "")) rest = rest.slice(1)
-  // "GoogleWorkspaceCalendarEvents" → service "Google Workspace", "calendar events".
   const service = /^GoogleWorkspace/.test(rest.join("")) ? "Google Workspace"
     : /^Microsoft365/.test(rest.join("")) ? "Microsoft 365" : null
   if (service) rest = rest.slice(service === "Google Workspace" ? 2 : 1)
@@ -307,14 +253,12 @@ function operationParts(name: string): { verb: string | undefined; rest: string[
 
 const HTTP_VERBS: Record<string, string> = { post: "create", put: "update", patch: "update" }
 
-/** "getCapabilitiesGoogleWorkspaceCalendarEvents" → "get_calendar_events"; other tool names are unchanged. */
 function operationAction(name: string): string {
   if (!/^[a-z]+[A-Z]/.test(name) || /[-_.\s]/.test(name)) return name
   const { verb, rest } = operationParts(name)
   return [verb ? HTTP_VERBS[verb] ?? verb : "", ...rest].filter(Boolean).join("_").toLowerCase() || name
 }
 
-/** A connection's own tool, named by the service the resolved connector gives it. */
 function connectionActionSentence(rawAction: string, service: string | null, quoted: string): CapabilityCallSentence {
   const action = normalizeAction(rawAction, service ?? "")
   if (service && /^(?:search|find|query)(?:_|$)/i.test(action)) {
@@ -332,7 +276,6 @@ function connectionActionSentence(rawAction: string, service: string | null, quo
     service,
     present: `${verbPhrase(action, "present")}${tail}${suffix}`,
     past: `${verbPhrase(action, "past")}${tail}${suffix}`,
-    // Without a known service there is nothing specific to say.
     ...(service ? { failure: `Couldn't ${baseVerbPhrase(action)}${tail}` } : {}),
   }
 }
@@ -384,8 +327,6 @@ export function getCapabilityCallSentence(
     return { service: null, present: "Looking through your skills…", past: "Looked through your skills" }
   }
 
-  // Code Mode's own catalog lookup is plumbing: say what it did, never echo
-  // the internal tool name it searched for.
   if (toolName === "search") {
     return {
       service: null,
@@ -407,8 +348,6 @@ export function getCapabilityCallSentence(
     }
   }
 
-  // A Den Code Mode script: the work happens inside the script, so name the
-  // place it ran rather than the plumbing tool ("execute capability script").
   if (toolName.endsWith("execute_capability_script")) {
     return {
       service: "OpenWork Cloud",
@@ -418,12 +357,9 @@ export function getCapabilityCallSentence(
     }
   }
 
-  // One of OpenWork's operations reads the same whether execute_capability
-  // ran it or Connect listed it as its own tool.
   const denOperation = connectDenOperation(toolName)
   if (toolName.endsWith("execute_capability") || denOperation) {
     const name = denOperation ?? (isRecord(part.input) && typeof part.input.name === "string" ? part.input.name : null)
-    // Reading the organization directory to find a person or team by name.
     if (name && /(?:^|:)getOrg$/.test(name)) {
       return {
         service: null,
@@ -443,17 +379,11 @@ export function getCapabilityCallSentence(
       }
     }
 
-    // Org MCP capabilities arrive as "mcp:<connection-id>:<tool_name>". The
-    // connection id is opaque, so the trailing tool name carries the meaning
-    // ("query_granola_meetings" → "Queried granola meetings").
     if (name?.startsWith("mcp:")) {
       const rawAction = name.split(":").filter(Boolean).at(-1)
-      // The connection id is opaque; the resolved connector names the service.
       if (rawAction) return connectionActionSentence(rawAction, options?.connectionName?.trim() || null, quoted)
     }
 
-    // "plugin:plg_…:cob_…" refs are opaque; the human name only exists in
-    // the output ({ kind: "skill", plugin: "Plan My Day", … }).
     if (name?.startsWith("plugin:")) {
       const output = parseRecord("output" in part ? part.output : undefined)
       const kind = typeof output?.kind === "string" ? output.kind : "plugin"
@@ -470,8 +400,6 @@ export function getCapabilityCallSentence(
       }
     }
 
-    // Native camelCase capabilities, e.g.
-    // "native:<connection>:getCapabilitiesGoogleWorkspaceCalendarEvents".
     if (name) {
       const { verb: first, rest, service: nativeService } = operationParts(name.replace(/^native:[^:]+:/, ""))
       const verbPast = first ? PAST_TENSE[first] : undefined
@@ -495,9 +423,6 @@ export function getCapabilityCallSentence(
     }
   }
 
-  // A connection's action listed as its own Connect tool
-  // ("openwork-cloud_linear_list_issues") reads like the same action run
-  // through execute_capability, once the connector that owns it is known.
   const connectAction = connectActionToolName(toolName)
   const connection = options?.connectionName?.trim()
   const ownAction = connectAction && connection ? connectActionForConnection(connectAction, connection) : null
@@ -507,15 +432,11 @@ export function getCapabilityCallSentence(
     return engineToolSentence(toolName.slice("opencode_".length), parseRecord(part.input))
   }
 
-  // Generic "{connection}_{tool}" MCP tools.
   const underscore = toolName.indexOf("_")
   if (underscore > 0) {
     const serviceSlug = toolName.slice(0, underscore)
     const service = serviceNameFromSlug(serviceSlug)
     const action = normalizeAction(toolName.slice(underscore + 1), serviceSlug)
-    // A bare search reads as "Searched Exa", not "Searched · Exa".
-    // Search qualifiers ("search_public_and_private", "web_search") add
-    // nothing a person needs; the query says what was searched.
     if (/^(?:search|find|query)(?:_|$)/i.test(action)) {
       const verb = action.split("_")[0]!.toLowerCase()
       const suffix = quoted ? ` for${quoted}` : ""

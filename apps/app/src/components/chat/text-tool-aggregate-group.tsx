@@ -25,7 +25,6 @@ function settledStatus(part: AnyToolPart): "running" | "failed" | "done" {
   return "done"
 }
 
-/** Identical settled reads of one file fold into one row; a thought between them keeps them apart. */
 function buildRows(parts: AnyToolPart[], thoughts: AggregateThought[]): TextAggregateRow[] {
   const rows: TextAggregateRow[] = []
   parts.forEach((part, index) => {
@@ -66,11 +65,6 @@ function editTexts(part: AnyToolPart): { removed: string | null; added: string |
   return null
 }
 
-/**
- * One local step, text-first: "Ran List the workspace files", "Read
- * brief.md", "Edited composer.tsx +11 −3". Opening a command shows the
- * command card; an edit shows its change; a failure shows Technical details.
- */
 function TextStepRow({ row, status, disclosureKey }: {
   row: TextAggregateRow
   status: TextStepStatus
@@ -120,13 +114,6 @@ function TextStepRow({ row, status, disclosureKey }: {
   )
 }
 
-/**
- * Consecutive local steps, text-first: one summary line ("Explored 2 files,
- * 1 search, ran 4 commands +11 −3 ›") that opens into one sentence per step.
- * While running, the summary is in the present tense ("Editing 2 files,
- * running 2 commands") and nothing else rides on the line; the step happening
- * now is one click away, and the Working line below is the one shimmer.
- */
 export function TextToolAggregateGroup({ parts, messageId, thoughts = [], className }: {
   parts: AnyToolPart[]
   messageId?: string
@@ -159,7 +146,6 @@ export function TextToolAggregateGroup({ parts, messageId, thoughts = [], classN
     </div>
   )
 
-  // One step and no thoughts is the step itself: nothing to summarise.
   const solo = rows.length === 1 && thoughts.length === 0 ? rows[0] : undefined
   if (solo) {
     return (

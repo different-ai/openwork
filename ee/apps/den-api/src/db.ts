@@ -10,7 +10,6 @@ export const { db, client, readClient } = createDenDb({
   mode: env.dbMode,
   planetscale: env.planetscale,
   readReplica: env.readReplica,
-  // Read-your-writes: once a request has written, its later reads use the primary.
   readFromPrimary: shouldReadFromPrimary,
   logger: {
     logQuery(query: string, params: unknown[]) {

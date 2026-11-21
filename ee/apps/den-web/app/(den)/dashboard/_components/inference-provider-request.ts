@@ -1,10 +1,3 @@
-/**
- * Pure helpers for the Den "Gateway providers" screens: response parsing,
- * request-body builders and label mapping. Kept free of React and fetch so
- * the request shapes can be unit-tested against den-api's
- * `inference-providers.ts` schemas.
- */
-
 import { isSupportedGatewayNpm, MICROSOFT_FOUNDRY_PROVIDER_ID } from "@openwork-ee/gateway-catalog";
 import { gatewayMemberSignInMethod, gatewayModelConfigurationError } from "@openwork/types/den/inference";
 import type {
@@ -51,7 +44,6 @@ export type DenInferenceProvider = {
   status: InferenceProviderStatus;
   updatedAt: string | null;
   providerConfig: Record<string, unknown>;
-  /** Empty follows the catalog; null means an older response omitted the policy. */
   modelIds: string[] | null;
   catalogWarning: string | null;
   settings: Record<string, string>;
@@ -59,7 +51,6 @@ export type DenInferenceProvider = {
   credentialStatus: InferenceCredentialStatus;
   access: { allMembers: boolean; memberIds: string[]; teamIds: string[] } | null;
   credentials: DenInferenceProviderCredential[] | null;
-  /** Org-owned Google OAuth client used in member mode (manage view only). */
   oauthClientId: string | null;
   hasOauthClientSecret: boolean;
   oauthCallbackUrl: string | null;
@@ -67,11 +58,8 @@ export type DenInferenceProvider = {
   credentialSets: GatewayCredentialSet[] | null;
   accessGrants: GatewayAccessGrant[] | null;
   authorizationRequests: GatewayAuthorizationRequest[];
-  /** LiteLLM providers only (manage view). */
   litellm: GatewayLiteLlmStatus | null;
-  /** TrueFoundry providers only (manage view). */
   truefoundry: GatewayTrueFoundryStatus | null;
-  /** Custom OpenAI-compatible providers only (manage view). */
   custom: GatewayCustomProviderStatus | null;
 };
 
@@ -132,7 +120,6 @@ const authorizationRequestSchema: z.ZodType<GatewayAuthorizationRequest> = z.obj
   credentialSetId: z.string(), name: z.string(), authUrl: z.string(),
 });
 
-/** Whether AI Gateway can proxy this models.dev `npm` package (the one list in @openwork-ee/gateway-catalog). */
 export { isSupportedGatewayNpm };
 
 export function isGoogleVertexNpm(npm: string | null): boolean {
@@ -147,31 +134,26 @@ export function isAzureNpm(npm: string | null): boolean {
   return npm === "@ai-sdk/azure";
 }
 
-/** Amazon Bedrock and Amazon Bedrock (OpenAI) share the region setting and AWS keys. */
 export function isAmazonBedrockNpm(npm: string | null): boolean {
   return npm === "@ai-sdk/amazon-bedrock" || npm === "@ai-sdk/amazon-bedrock/mantle";
 }
 
-/** Synthetic catalog provider for Claude on Microsoft Foundry. */
 export { MICROSOFT_FOUNDRY_PROVIDER_ID };
 
 export function isMicrosoftFoundryProvider(providerId: string | null): boolean {
   return providerId === MICROSOFT_FOUNDRY_PROVIDER_ID;
 }
 
-/** Providers only reachable through AI Gateway; Bring your own keys hides them. */
 export function isGatewayOnlyNpm(npm: string | null, providerId: string | null = null): boolean {
   return npm === "@ai-sdk/amazon-bedrock/mantle" || isMicrosoftFoundryProvider(providerId);
 }
 
-/** Mirrors `isAwsRegion` in @openwork-ee/gateway-upstreams (egress). */
 export function isAwsRegion(value: string): boolean {
   return value.length <= 32 && /^[a-z]{2}(?:-[a-z]+)+-\d{1,2}$/.test(value);
 }
 
 export type AwsKeysInput = { accessKeyId: string; secretAccessKey: string; sessionToken: string };
 
-/** Blank keys keep what is stored; a partial set is rejected rather than silently dropped. */
 export function getAwsKeysError(keys: AwsKeysInput): string | null {
   const accessKeyId = keys.accessKeyId.trim();
   const secretAccessKey = keys.secretAccessKey.trim();
@@ -181,10 +163,6 @@ export function getAwsKeysError(keys: AwsKeysInput): string | null {
   return null;
 }
 
-/**
- * How members sign in to a provider in credentialMode "member", mirroring den-api
- * (`unsupported_credential_mode` otherwise).
- */
 export function getMemberSignInMethod(providerId: string): GatewayMemberSignInMethod | null {
   return gatewayMemberSignInMethod(providerId);
 }
@@ -193,7 +171,6 @@ export function supportsMemberCredentialMode(providerId: string): boolean {
   return getMemberSignInMethod(providerId) !== null;
 }
 
-/** The account people sign in with, in their words. */
 export function getMemberSignInBrand(method: GatewayMemberSignInMethod): string {
   return method === "google" ? "Google" : method === "microsoft" ? "Microsoft" : "AWS";
 }
@@ -207,7 +184,6 @@ export const MEMBER_SIGN_IN_DOC_URLS: Record<GatewayMemberSignInMethod, string> 
 export type AwsSsoInput = GatewayAwsSsoSettings;
 export const EMPTY_AWS_SSO: AwsSsoInput = { startUrl: "", region: "", accountId: "", roleName: "" };
 
-/** Mirrors gatewayAwsSsoSettingsSchema in @openwork/types/den/inference. */
 export function getAwsSsoError(input: AwsSsoInput): string | null {
   let url: URL | null = null;
   try { url = new URL(input.startUrl.trim()); } catch { url = null; }
@@ -224,17 +200,14 @@ export function trimAwsSso(input: AwsSsoInput): AwsSsoInput {
   return { startUrl: input.startUrl.trim(), region: input.region.trim(), accountId: input.accountId.trim(), roleName: input.roleName.trim() };
 }
 
-/** Mirrors microsoftTenantIdSchema: the directory (tenant) ID GUID. */
 export function isMicrosoftTenantId(value: string): boolean {
   return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value.trim());
 }
 
-/** Redirect URI the org's Google OAuth client must allow; mirrors den-api's callback route. */
 export function getOauthCallbackPath() {
   return "/v1/inference-providers/oauth/callback";
 }
 
-/** Settings den-api requires for a given provider SDK (`invalid_settings` otherwise). */
 export function getRequiredSettingKeys(npm: string | null, providerId: string | null = null): string[] {
   if (isMicrosoftFoundryProvider(providerId)) return ["resourceName"];
   if (isGoogleVertexNpm(npm)) return ["project", "location"];
@@ -304,7 +277,6 @@ function asCredential(value: unknown): DenInferenceProviderCredential | null {
   };
 }
 
-/** A malformed custom block leaves the provider readable; the manage screen then says it can't load the settings. */
 function readCustomStatus(value: unknown): GatewayCustomProviderStatus | null {
   if (value === undefined || value === null) return null;
   const parsed = gatewayCustomProviderStatusSchema.safeParse(value);
@@ -384,7 +356,6 @@ export function readInferenceProviderDetails(payload: unknown, catalogPayload: u
   const provider = readInferenceProviderFromPayload(payload);
   if (!provider?.modelGroups || !provider.credentialSets || !provider.accessGrants) return null;
   const catalog = z.object({ catalogWarning: z.string().optional(), models: z.array(z.object({ id: z.string(), name: z.string(), config: z.record(z.string(), z.unknown()) })) }).parse(catalogPayload);
-  // Provider reads no longer refresh the catalog; the models endpoint does and carries the warning.
   return { ...provider, catalogWarning: provider.catalogWarning ?? catalog.catalogWarning ?? null, catalogModels: catalog.models, modelGroups: provider.modelGroups, credentialSets: provider.credentialSets, accessGrants: provider.accessGrants };
 }
 
@@ -393,8 +364,6 @@ export function readInferenceProvidersFromPayload(payload: unknown): DenInferenc
     ? payload.inferenceProviders.map(asInferenceProvider).filter((entry): entry is DenInferenceProvider => entry !== null)
     : [];
 }
-
-// --- Labels ---
 
 export function getCredentialModeLabel(mode: InferenceProviderCredentialMode) {
   return mode === "member" ? "Each member signs in" : "Organization key";
@@ -444,7 +413,6 @@ export type GatewayAudienceNames = {
   memberName: (memberId: string) => string | undefined;
 };
 
-/** One line for a list row: who this provider is shared with. */
 export function describeGatewayAccess(
   provider: Pick<DenInferenceProvider, "accessGrants">,
   names: GatewayAudienceNames,
@@ -494,35 +462,23 @@ export function readSavedGatewayResourceId(resource: GatewayResourceWrite["resou
   return isRecord(saved) ? asString(saved.id) : null;
 }
 
-// --- Request bodies ---
-
 export type InferenceProviderFormInput = {
   name: string;
   providerId: string;
   modelIds: string[];
   credentialMode: InferenceProviderCredentialMode;
   status: InferenceProviderStatus;
-  /** Required-setting values keyed by setting name; blank entries are dropped. */
   settings: Record<string, string>;
   previousSettings?: Record<string, string>;
-  /** Env var names the provider reads (from the catalog config). */
   envNames: string[];
-  /** Single API key when the provider reads one env var. */
   apiKey: string;
-  /** Per-env values when the provider reads several env vars. */
   apiKeyValues: Record<string, string>;
-  /** Pasted Google service-account JSON (Vertex org mode). */
   serviceAccountJson: string;
-  /** AWS access keys (Amazon Bedrock only); blank keeps the stored keys. */
   awsKeys?: AwsKeysInput;
-  /** Amazon Bedrock only: copy another Bedrock provider's saved keys server-side instead of entering keys. */
   reuseCredentialFrom?: string | null;
-  /** Org-owned Google OAuth client or Entra ID app registration (member mode). Blank secret keeps the stored one. */
   oauthClientId: string;
   oauthClientSecret: string;
-  /** Microsoft Foundry member mode: the Entra ID directory (tenant) ID. */
   oauthTenantId?: string;
-  /** Amazon Bedrock member mode: IAM Identity Center settings. */
   awsSso?: AwsSsoInput;
   access: { allMembers: boolean; memberIds: string[]; teamIds: string[] };
 };
@@ -555,14 +511,6 @@ function trimmedSettings(settings: Record<string, string>) {
   );
 }
 
-/**
- * Builds the POST/PATCH body for `/v1/inference-providers`. The credential is
- * only included when the admin typed one (blank = keep what is stored), and
- * never in member mode, where each member authorizes their own account through
- * the org's Google OAuth client (`oauthClientId` always sent, `oauthClientSecret`
- * only when typed so a blank keeps the stored secret).
- * `apiKeys` is used for multi-env providers exactly like the BYOK editor.
- */
 export function buildInferenceProviderRequestBody(input: InferenceProviderFormInput): InferenceProviderRequestBody {
   const body: InferenceProviderRequestBody = {
     name: input.name.trim(),
@@ -643,7 +591,6 @@ type MatrixSyncInput = {
   deleteResource: (resource: "access-grants", id: string) => Promise<void>;
 };
 
-/** Edit the first group and credential set, then reconcile grants for that pair only. */
 export async function syncInferenceProviderMatrix({
   provider, allowAllModels, modelIds, credentialMode, credentialBody, access, saveResource, deleteResource,
 }: MatrixSyncInput): Promise<void> {
@@ -710,10 +657,6 @@ export async function syncInferenceProviderMatrix({
   }
 }
 
-/**
- * Client-side check mirroring den-api's `invalid_settings` / `unsupported_provider` /
- * `unsupported_credential_mode` / `oauth_client_required` rules.
- */
 export function validateInferenceProviderForm(input: {
   npm: string | null;
   name: string;
@@ -724,7 +667,6 @@ export function validateInferenceProviderForm(input: {
   credentialMode: InferenceProviderCredentialMode;
   oauthClientId: string;
   oauthClientSecret: string;
-  /** True when den-api already stores a secret, so a blank field keeps it. */
   hasOauthClientSecret: boolean;
   awsKeys?: AwsKeysInput;
   oauthTenantId?: string;
@@ -779,10 +721,6 @@ export function validateInferenceProviderForm(input: {
   return null;
 }
 
-/**
- * Other Amazon Bedrock providers whose saved organization keys a new Bedrock
- * provider may reuse. den-api makes the final check and copies the keys itself.
- */
 export function getReusableAwsKeyProviders(
   providers: Pick<DenInferenceProvider, "id" | "name" | "status" | "credentialMode" | "credentialStatus" | "providerConfig">[],
 ): Array<{ id: string; name: string }> {

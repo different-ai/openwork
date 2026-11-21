@@ -23,7 +23,6 @@ function areaBlockedReason(area: ConfigAreaDescriptor): string | null {
   return null;
 }
 
-/** Settings › Config › Export: the whole organization (default) or chosen areas, downloaded after a recent sign-in. */
 export function ConfigExportSection() {
   const { orgId, activeOrg, orgContext } = useOrgDashboard();
   const personalSkillsEnabled = orgFeatureEnabled(orgContext, "personalSkillPortability");

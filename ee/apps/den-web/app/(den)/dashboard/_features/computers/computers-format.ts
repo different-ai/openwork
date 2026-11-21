@@ -21,7 +21,6 @@ import {
 export type OrganizationComputer = z.infer<typeof organizationComputerListResponseSchema>["devices"][number];
 export type OrganizationComputerEvent = z.infer<typeof organizationComputerDetailResponseSchema>["events"][number];
 
-/** Filters belong to the current organization, never a caller-supplied organization id. */
 export type ComputerFilters = {
   search: string;
   kind: RemoteDeviceKind | "all";
@@ -30,7 +29,6 @@ export type ComputerFilters = {
   page: number;
   instancePage: number;
   device: string;
-  /** Also list desktops nobody has heard from for 30 days (`stale=include`). */
   stale: boolean;
 };
 
@@ -90,12 +88,10 @@ export function devicePageCount(total: number, pageSize: number): number {
 
 const whole = new Intl.NumberFormat("en-US");
 
-/** "1 computer", "1,280 computers". */
 export function countLabel(count: number, singular: string, plural = `${singular}s`): string {
   return `${whole.format(count)} ${count === 1 ? singular : plural}`;
 }
 
-/** "Never", "Just now", "2 min ago", "3 hours ago", "3 days ago". A time ahead of this clock reads as just now. */
 export function relativeTime(iso: string | null, now = Date.now()): string {
   if (!iso) return "Never";
   const time = Date.parse(iso);
@@ -109,7 +105,6 @@ export function relativeTime(iso: string | null, now = Date.now()): string {
   return days === 1 ? "1 day ago" : `${whole.format(days)} days ago`;
 }
 
-/** The full local date and time, for a `title`. */
 export function absoluteTime(iso: string | null, locale?: string): string {
   if (!iso) return "";
   const time = new Date(iso);
@@ -119,44 +114,34 @@ export function absoluteTime(iso: string | null, locale?: string): string {
 export const SHARED_COMPUTER_LABEL = "Shared with your organization";
 export const FORMER_MEMBER_LABEL = "Former member";
 
-/** Whose computer it is, as the team list and the instances list both report an owner. */
 export type ComputerOwner = { owner: { memberId?: string | null; name: string | null; email: string | null; former?: boolean } | null; shared: boolean };
 
-/** A member who left keeps a placeholder address ending in `.invalid`; it is never shown as their name. */
 function placeholderEmail(email: string | null | undefined): boolean {
   return Boolean(email?.trim().toLowerCase().endsWith(".invalid"));
 }
 
-/** The owner has left the organization, or Den no longer knows who they were. */
 export function isFormerOwner(device: ComputerOwner): boolean {
   if (device.shared) return false;
   return !device.owner || device.owner.former === true || placeholderEmail(device.owner.email);
 }
 
-/** Who the computer belongs to: everyone, someone who has left, else their name, else their email. */
 export function ownerLabel(device: ComputerOwner): string {
   if (device.shared) return SHARED_COMPUTER_LABEL;
   if (isFormerOwner(device)) return FORMER_MEMBER_LABEL;
   return device.owner?.name?.trim() || device.owner?.email?.trim() || FORMER_MEMBER_LABEL;
 }
 
-/** The owner's address for a tooltip; nothing for a shared computer or a placeholder. */
 export function ownerEmail(device: ComputerOwner): string | undefined {
   if (device.shared || isFormerOwner(device)) return undefined;
   return device.owner?.email?.trim() || undefined;
 }
 
-/** "0.18.66 alpha" for a list; the full string belongs in a `title` or the detail. */
 export function versionLabel(version: string | null | undefined): string {
   return shortAppVersion(version) ?? "Not reported";
 }
 
 export const DISCONNECTED_HINT = "Sign in on it again to reconnect";
 
-/**
- * A computer's status lane. Disconnected wins over availability and stays
- * neutral: it was blocked on purpose, which is not a failure.
- */
 export function computerStatus(device: Pick<RemoteDevice, "availability" | "statusDetail" | "disconnectedAt">): {
   label: string;
   tone: DeviceTone;
@@ -172,7 +157,6 @@ export function computerStatus(device: Pick<RemoteDevice, "availability" | "stat
   };
 }
 
-/** "Added 3 Nov", with the year once it is not this one. */
 export function addedLabel(iso: string, now = Date.now()): string | null {
   const added = new Date(iso);
   if (!Number.isFinite(added.getTime())) return null;
@@ -180,11 +164,6 @@ export function addedLabel(iso: string, now = Date.now()): string | null {
   return added.getFullYear() === new Date(now).getFullYear() ? `Added ${day}` : `Added ${day} ${added.getFullYear()}`;
 }
 
-/**
- * What tells apart computers of one owner that share a name (an old install
- * beside the new one): when each was added. Keyed by computer id; a computer
- * whose name is its owner's only one has no entry.
- */
 export function duplicateNameNotes<T extends { id: string; label: string; createdAt: string }>(
   devices: readonly T[],
   ownerKey: (device: T) => string,
@@ -206,15 +185,10 @@ export function duplicateNameNotes<T extends { id: string; label: string; create
   return notes;
 }
 
-/** The team list's owner key: the member, or everyone for a shared computer. */
 export function teamOwnerKey(device: Pick<OrganizationComputer, "owner" | "shared">): string {
   return device.shared ? "shared" : device.owner?.memberId ?? "former";
 }
 
-/**
- * The one line of state under a page title: "6 of 17 online". An API from
- * before the online count existed sends none: then it is just "17 computers".
- */
 export function computersStateLine(input: { online?: number; total: number; filtered?: boolean }): string {
   if (input.total === 0) return input.filtered ? "No computers match" : "No computers yet";
   if (input.online === undefined) return countLabel(input.total, input.filtered ? "matching computer" : "computer");
@@ -222,14 +196,12 @@ export function computersStateLine(input: { online?: number; total: number; filt
   return `${whole.format(input.online)} of ${whole.format(input.total)} online`;
 }
 
-/** "3 not heard from in 30 days". */
 export function staleLine(count: number): string {
   return `${whole.format(count)} not heard from in 30 days`;
 }
 
 export type DeviceTone = "success" | "warning" | "danger" | "neutral";
 
-/** Green for online, amber for a computer that needs its owner; paused, offline and unchecked are normal and stay neutral. */
 export const AVAILABILITY_TONE: Record<RemoteDeviceAvailability, DeviceTone> = {
   online: "success",
   needs_setup: "warning",
@@ -273,7 +245,6 @@ export const readinessLabel = (readiness: RemoteDeviceComputerReadiness | null):
 export const readinessTone = (readiness: RemoteDeviceComputerReadiness | null): DeviceTone =>
   readiness === "ready" ? "success" : readiness === "setup-required" ? "warning" : "neutral";
 
-/** The fixed codes recorded with an event, as `[name, value]` pairs in the order they were stored. */
 export function eventDataEntries(data: OrganizationComputerEvent["data"]): Array<[string, string]> {
   if (!data) return [];
   return Object.entries(data).map(([key, value]) => [key, value === null ? "none" : String(value)]);

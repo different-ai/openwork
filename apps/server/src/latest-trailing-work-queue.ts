@@ -12,7 +12,6 @@ type ActiveWork<Value> = {
   trailing: WorkBatch<Value> | null;
 };
 
-/** Serializes work per key and coalesces arrivals during a pass into one latest-value trailing pass. */
 export class LatestTrailingWorkQueue<Key, Value> {
   private readonly activeByKey = new Map<Key, ActiveWork<Value>>();
   private readonly run: (value: Value) => Promise<void>;

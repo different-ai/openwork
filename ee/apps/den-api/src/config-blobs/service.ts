@@ -1,35 +1,3 @@
-/**
- * Config blobs: the change-request service (docs/features/config-blobs/
- * change-requests.md). Export, upload, analysis, decisions and inputs,
- * approval, apply, revert and cancel. Routes (routes/org/config-blobs.ts) and
- * the worker (./worker.ts) call these; the engine (./engine) stays pure and
- * the adapters (./areas) do the writes.
- *
- * Status flow, as implemented:
- * - submit → `uploaded` (202). Garbage (size, envelope, unknown areas) is a
- *   synchronous 400 and is never stored.
- * - analysis (worker) → `needs_review`, or `invalid` for request-level errors
- *   (unknown area, newer spec version, duplicate ids/keys). Invalid item specs
- *   only block their items. With `autoApply` and approvals still valid for the
- *   same plan hash it goes straight to `queued`.
- * - decisions / inputs re-plan synchronously; a new plan hash, or any secret
- *   value entered, drops approvals (PlanetScale rule; change-requests.md ›
- *   Secret inputs).
- * - approve records `{ memberId, at, apiKeyId? }` against the current plan
- *   hash → `approved` once enough approvals exist (one, or two with the
- *   org's "require a second approver"); `autoApply` or an explicit apply →
- *   `queued`.
- * - apply (worker, one per org) re-plans against the live org: a different
- *   plan hash means drift → `stale` (re-analyzed, approvals dropped). Then the
- *   before-snapshot, the adapters, aliases, secret purge → `applied` /
- *   `failed`; every other open request of the org goes `stale`.
- *
- * Transactions: most adapters call route handlers that open their own
- * organization-locked transactions (`ConfigArea.transactional: false`), so an
- * apply is NOT one database transaction. It stops at the first failing item
- * (later items are reported `skipped`); the before-snapshot is the recovery
- * path (revert).
- */
 import { and, eq, getTableConfig, MySqlTable, sql } from "@openwork-ee/den-db/drizzle"
 import * as denSchema from "@openwork-ee/den-db/schema"
 import { AuditEventResourceTable, AuthApiKeyTable, AuthUserTable, InvitationTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db/schema"
@@ -161,10 +129,6 @@ const APPLY_LEASE_MS = 600_000
 const APPLY_LEASE_EXTEND_EVERY_MS = 60_000
 const MAX_ANALYSIS_ATTEMPTS = 3
 
-// ---------------------------------------------------------------------------
-// Errors, callers
-
-/** A refusal with an HTTP status and JSON body the route sends as is. */
 export class ConfigBlobError extends Error {
   constructor(
     readonly status: 400 | 401 | 403 | 404 | 409 | 413 | 503,
@@ -176,29 +140,16 @@ export class ConfigBlobError extends Error {
   }
 }
 
-/** Who calls: the member (for an API key, its issuing member) and the key, if any. */
 export type ConfigCaller = ConfigActor & {
   apiKeyId: string | null
-  /** Holds `key` (no recent sign-in check: filtering only). */
   can: (key: PermissionKey) => boolean
-  /** Config token area limit; null = every area. */
   tokenAreas: readonly string[] | null
-  /**
-   * Enforces permissions for a write, including the recent sign-in of
-   * sensitive keys. Throws ConfigBlobError (the route's permission response).
-   */
   authorize: (keys: readonly PermissionKey[]) => Promise<void>
-  /**
-   * Approving and applying: passes for a config token (D3) and for a person
-   * who signed in recently (the organization's fresh-session window); throws
-   * ConfigBlobError (`reauth`) otherwise, whatever the areas.
-   */
   requireApprovalStepUp: () => void
 }
 
 export type ConfigOrganization = { id: OrganizationId; slug: string; name: string; features: FeatureMap }
 
-/** The area adapter, or null for a key this server doesn't implement (yet). */
 function registeredArea(key: ConfigAreaKey): ConfigArea | null {
   return CONFIG_AREAS.find((area) => area.key === key) ?? null
 }
@@ -217,18 +168,11 @@ function canView(caller: Pick<ConfigCaller, "can" | "tokenAreas">, area: ConfigA
   return definition !== null && caller.can(definition.viewPermission) && tokenAllows(caller.tokenAreas, area)
 }
 
-/**
- * Importing an area takes both of its permissions: a plan (dry run or
- * stored) shows the area's current items next to the blob's, so a caller who
- * may change an area but not view it (`prompts.manage` without
- * `prompts.view`, say) would otherwise read it through the plan.
- */
 function canImport(caller: Pick<ConfigCaller, "can" | "tokenAreas">, area: ConfigAreaKey): boolean {
   const definition = registeredArea(area)
   return definition !== null && caller.can(definition.managePermission) && caller.can(definition.viewPermission) && tokenAllows(caller.tokenAreas, area)
 }
 
-/** The view and manage permissions of `areas` the caller lacks. */
 function missingImportPermissions(caller: Pick<ConfigCaller, "can">, areas: readonly ConfigAreaKey[]): PermissionKey[] {
   return [...new Set(areas.flatMap((area) => {
     const definition = registeredArea(area)
@@ -236,11 +180,6 @@ function missingImportPermissions(caller: Pick<ConfigCaller, "can">, areas: read
   }))]
 }
 
-/**
- * A write over `areas` by this caller: every area within its config token's
- * area limit (a 403 otherwise, whatever the issuing member holds), then the
- * areas' manage permissions.
- */
 async function authorizeWrites(caller: ConfigCaller, areas: readonly ConfigAreaKey[]): Promise<void> {
   const outside = areas.filter((area) => !tokenAllows(caller.tokenAreas, area))
   if (outside.length > 0) {
@@ -274,12 +213,6 @@ function errorMessage(error: unknown): string {
 
 const STORED_ERROR_MAX = 500
 
-/**
- * An error as stored on the request (`errors`, report items): those columns
- * are not encrypted, and messages can quote blob or provider text. One line,
- * at most 500 characters, and withheld entirely when it looks like a
- * credential (the audit log's redaction, audit/domain/snapshot.ts).
- */
 export function storedError(message: string): string {
   const line = message.replace(/[\u0000-\u001f\u007f]+/g, " ").trim()
   const bounded = line.length > STORED_ERROR_MAX ? `${line.slice(0, STORED_ERROR_MAX - 1)}…` : line
@@ -289,9 +222,6 @@ export function storedError(message: string): string {
 function storedErrors(messages: readonly string[]): string[] {
   return messages.map(storedError)
 }
-
-// ---------------------------------------------------------------------------
-// Areas
 
 export function describeAreas(org: Pick<ConfigOrganization, "features">, caller: Pick<ConfigCaller, "can" | "tokenAreas">): ConfigAreasResponse {
   const deployment = configDeployment()
@@ -316,7 +246,6 @@ export function describeAreas(org: Pick<ConfigOrganization, "features">, caller:
   }
 }
 
-/** `?areas=a,b` → known keys in registry order; unknown names are a 400. */
 export function parseAreaList(value: string | undefined | null): ConfigAreaKey[] | null {
   if (!value || !value.trim()) return null
   const wanted = value.split(",").map((entry) => entry.trim()).filter(Boolean)
@@ -324,9 +253,6 @@ export function parseAreaList(value: string | undefined | null): ConfigAreaKey[]
   if (unknown.length > 0) throw new ConfigBlobError(400, { error: "unknown_area", message: `Unknown config area: ${unknown.join(", ")}.`, areas: unknown })
   return CONFIG_AREA_KEYS.filter((key) => wanted.includes(key))
 }
-
-// ---------------------------------------------------------------------------
-// Export
 
 function areaContext(organizationId: string, actor: ConfigActor, features: FeatureMap): ConfigAreaContext {
   const acting: ConfigActor = { userId: actor.userId, memberId: actor.memberId }
@@ -390,11 +316,6 @@ async function assembleBlob(org: Pick<ConfigOrganization, "id" | "slug" | "name"
   return blob
 }
 
-/**
- * Exports the requested areas (default: all) the caller may view. Others are
- * listed in `omitted`. Keeps a copy (`config_blob_export`) as the three-way
- * base for a later import of the same blob into this organization.
- */
 export async function exportBlob(org: ConfigOrganization, caller: ConfigCaller, areas: readonly ConfigAreaKey[] | null): Promise<ConfigBlob> {
   const deployment = configDeployment()
   const requested = areas ?? CONFIG_AREAS.map((area) => area.key)
@@ -402,7 +323,6 @@ export async function exportBlob(org: ConfigOrganization, caller: ConfigCaller, 
   const keys: ConfigAreaKey[] = []
   for (const key of requested) {
     const area = registeredArea(key)
-    // The reason travels in the file and is read on the importing side, where "here" would mean the wrong organization.
     const unsupported = area ? unsupportedReason(area, deployment, org.features)?.replace(/ here$/, ` in ${org.name}`) ?? null : "not available on this server"
     if (!area || unsupported) omitted.push({ area: key, reason: unsupported ?? "not available on this server" })
     else if (!tokenAllows(caller.tokenAreas, key)) omitted.push({ area: key, reason: "outside this config token's areas" })
@@ -414,14 +334,10 @@ export async function exportBlob(org: ConfigOrganization, caller: ConfigCaller, 
   }
   const exported = await exportAreas(areaContext(org.id, caller, org.features), keys)
   const blob = await assembleBlob(org, exported, omitted)
-  // The copy kept as the three-way base holds emails; `rev`s are the same either way (redaction keeps them).
   if (blob.baseHash) await recordExport({ organizationId: org.id, baseHash: blob.baseHash, areas: blob.scope, blob })
   const people = await peopleRedactorFor(org.id, caller)
   return people ? people.blob(blob) : blob
 }
-
-// ---------------------------------------------------------------------------
-// Members and settings
 
 async function loadActor(organizationId: OrganizationId, memberId: string | null): Promise<ConfigActor | null> {
   if (!memberId) return null
@@ -439,16 +355,10 @@ async function loadActor(organizationId: OrganizationId, memberId: string | null
   return row?.userId ? { memberId: row.id, userId: row.userId } : null
 }
 
-/** Normalized email → member id, for members and invited people (their placeholder member rows). */
 async function loadPeople(organizationId: OrganizationId): Promise<Map<string, string>> {
   return (await loadDirectory(organizationId)).people
 }
 
-/**
- * The organization's member rows, read once: `people` (normalized email →
- * member id, what a people reference resolves against) and `names` (member
- * id → their name, else their email) for the people who are in it now.
- */
 async function loadDirectory(organizationId: OrganizationId): Promise<{ people: Map<string, string>; names: Map<string, string> }> {
   const rows = await db.$primary
     .select({ id: MemberTable.id, userName: AuthUserTable.name, userEmail: AuthUserTable.email, inviteEmail: InvitationTable.email, removedAt: MemberTable.removedAt })
@@ -458,7 +368,6 @@ async function loadDirectory(organizationId: OrganizationId): Promise<{ people: 
     .where(eq(MemberTable.organizationId, organizationId))
   const people = new Map<string, string>()
   const names = new Map<string, string>()
-  // A current member wins over a removed row with the same email.
   for (const row of [...rows.filter((entry) => !entry.removedAt), ...rows.filter((entry) => entry.removedAt)]) {
     const email = (row.userEmail ?? row.inviteEmail)?.trim().toLowerCase()
     if (!email) continue
@@ -468,22 +377,10 @@ async function loadDirectory(organizationId: OrganizationId): Promise<{ people: 
   return { people, names }
 }
 
-/**
- * Who may read other members' emails and names in config blobs, plans and
- * reports: whoever may view the `members.people` area (its view permission,
- * within the config token's areas). Den has no separate directory
- * permission; this is the one config blobs already apply to people.
- */
 function canReadPeople(caller: Pick<ConfigCaller, "can" | "tokenAreas">): boolean {
   return canView(caller, PEOPLE_AREA_KEY)
 }
 
-/**
- * A plan as this caller may read it: people hidden from who may not read
- * them (`peopleRedactorFor`), and the organization's items a reference could
- * be pointed at (`refTargets`) only for the areas the caller may view. The
- * stored plan lists them for its author.
- */
 function planFor(plan: ConfigPlan, caller: Pick<ConfigCaller, "can" | "tokenAreas">, people: PeopleRedactor | null): ConfigPlan {
   const shown = people ? people.plan(plan) : plan
   if (!shown.refTargets) return shown
@@ -492,7 +389,6 @@ function planFor(plan: ConfigPlan, caller: Pick<ConfigCaller, "can" | "tokenArea
   return visible.length > 0 ? { ...rest, refTargets: visible } : rest
 }
 
-/** Null when the caller may read people; otherwise what hides them from what it is sent. */
 async function peopleRedactorFor(organizationId: OrganizationId, caller: Pick<ConfigCaller, "can" | "tokenAreas">): Promise<PeopleRedactor | null> {
   return canReadPeople(caller) ? null : createPeopleRedactor(await loadPeople(organizationId))
 }
@@ -534,15 +430,10 @@ export async function updateConfigBlobSettings(organizationId: OrganizationId, s
   return readSettings(metadata)
 }
 
-// ---------------------------------------------------------------------------
-// Summaries and reads
-
-/** A restore that never went ahead (withdrawn, refused or replaced): the change it restored can be restored again. */
 const WITHDRAWN_RESTORE_STATUSES: readonly ConfigChangeRequestStatus[] = ["cancelled", "invalid", "superseded"]
 
 async function summaries(organizationId: OrganizationId, rows: Parameters<typeof toChangeRequestSummary>[0][]): Promise<ConfigChangeRequestSummary[]> {
   const names = await loadMemberNames(organizationId, summaryMemberIds(rows))
-  // "Restored by a later change" only links a restore that is open or ran.
   const restoreIds = rows.flatMap((row) => (row.revertedByChangeRequestId ? [row.revertedByChangeRequestId] : []))
   const restoreStatuses = restoreIds.length > 0 ? await listChangeRequestStatuses(organizationId, restoreIds) : new Map<string, ConfigChangeRequestStatus>()
   return rows.map((row) => {
@@ -585,7 +476,6 @@ export async function listChangeRequestSummaries(organizationId: OrganizationId,
   return people ? out.map(people.summary) : out
 }
 
-/** A summary as the caller may see it (see `peopleRedactorFor`). */
 async function summaryFor(row: ConfigChangeRequestRow, caller: Pick<ConfigCaller, "can" | "tokenAreas">): Promise<ConfigChangeRequestSummary> {
   const summary = await summaryOf(row)
   const people = await peopleRedactorFor(row.organizationId, caller)
@@ -600,7 +490,6 @@ export async function getChangeRequestDetail(organizationId: OrganizationId, id:
   return { changeRequest: people ? people.summary(summary) : summary, report: runs[0] ?? null, runs }
 }
 
-/** One apply attempt of a visible change request, with its full report. */
 export async function getApplyRunDetail(organizationId: OrganizationId, id: string, runId: string, caller: Pick<ConfigCaller, "can" | "tokenAreas">): Promise<ConfigApplyRunResponse> {
   const row = await loadVisible(organizationId, id, caller)
   let applyRunId: ConfigApplyRunId
@@ -634,9 +523,6 @@ export async function getBeforeSnapshot(organizationId: OrganizationId, id: stri
   return people ? people.refs(row.beforeSnapshot) : row.beforeSnapshot
 }
 
-// ---------------------------------------------------------------------------
-// Submit
-
 export type SubmitInput = { blob: unknown; mode: ConfigImportMode; title?: string; autoApply: boolean }
 
 type ParsedEnvelope = { blob: ConfigBlob; areas: Partial<Record<ConfigAreaKey, ConfigBlobArea>> }
@@ -657,14 +543,7 @@ function blobBytes(blob: unknown): number {
   }
 }
 
-/**
- * Stores an upload as a change request (`uploaded`); the worker analyzes it.
- * Rejected synchronously: too large, not a blob, unknown areas, or areas the
- * caller can't import. D5: a newer upload from the same API key and scope
- * supersedes that key's older open ones.
- */
 function checkSubmission(caller: ConfigCaller, raw: unknown, options: { internal?: boolean } = {}): { blob: ConfigBlob; scope: ConfigAreaKey[] } {
-  // The size limit is for uploads. A revert's blob is this server's own before-snapshot, which a large organization can push past it.
   if (!options.internal && blobBytes(raw) > CONFIG_BLOB_MAX_BYTES) {
     throw new ConfigBlobError(413, { error: "blob_too_large", message: `Config files are limited to ${CONFIG_BLOB_MAX_BYTES / (1024 * 1024)} MB.` })
   }
@@ -688,12 +567,6 @@ function checkSubmission(caller: ConfigCaller, raw: unknown, options: { internal
 
 export type ConfigDryRunResult = { plan: ConfigPlan | null; errors: string[] }
 
-/**
- * `?dryRun=true`: the same checks and analysis as an upload, run at once and
- * stored nowhere (no change request, no supersede, no export copy). `errors`
- * are what would make the request `invalid`; blocking decisions show in
- * `plan.summary.blocking`. Secrets are never involved: no inputs exist yet.
- */
 export async function dryRunChangeRequest(org: ConfigOrganization, caller: ConfigCaller, input: Pick<SubmitInput, "blob" | "mode">): Promise<ConfigDryRunResult> {
   const { blob } = checkSubmission(caller, input.blob)
   const planned = await planChangeRequest({
@@ -712,14 +585,6 @@ export async function dryRunChangeRequest(org: ConfigOrganization, caller: Confi
   return { plan: planFor(planned.plan, caller, people), errors: people ? planned.fatal.map(people.text) : planned.fatal }
 }
 
-/**
- * The answers a new import of a source starts with: those of the last applied
- * import of the same source into this organization. What was matched, pointed
- * elsewhere, left out and renamed; an invitation is not repeated (the person
- * was invited then), and deletes, overwrites and invitation emails are
- * decided each time. The plan says they were reused, and the review can
- * change any of them.
- */
 async function earlierAnswers(org: ConfigOrganization, blob: ConfigBlob): Promise<ConfigDecisions | null> {
   if (!blob.source) return null
   const earlier = await latestAppliedFromSource(org.id, { instanceId: blob.source.instanceId, organizationId: blob.source.organization.id })
@@ -759,22 +624,13 @@ export async function submitChangeRequest(org: ConfigOrganization, caller: Confi
   return summaryFor(row, caller)
 }
 
-// ---------------------------------------------------------------------------
-// Planning (analysis, re-plans, the pre-apply check)
-
 type Planned = {
   plan: ConfigPlan
   execution: ExecutionPlan
-  /** Request-level errors: the request is `invalid`. */
   fatal: string[]
   ctx: ConfigAreaContext
 }
 
-/**
- * Areas the plan reads: the scope and every area a `$ref` points at. Nothing
- * else: an area that is neither written nor referenced is never exported
- * (`dependsOn` only orders the writes).
- */
 function neededAreas(scope: readonly ConfigAreaKey[], areas: Partial<Record<ConfigAreaKey, ConfigBlobArea>>): Set<ConfigAreaKey> {
   const needed = new Set<ConfigAreaKey>(scope)
   const visitRefs = (value: unknown) => {
@@ -792,9 +648,7 @@ function neededAreas(scope: readonly ConfigAreaKey[], areas: Partial<Record<Conf
 }
 
 type GroupedAliases = {
-  /** area → source id → local id (the engine's alias tier). */
   aliases: Map<ConfigAreaKey, Map<string, string>>
-  /** area → source id → the change request that wrote the alias (provenance shown in the plan). */
   provenance: Map<ConfigAreaKey, Map<string, string>>
 }
 
@@ -816,7 +670,6 @@ function groupAliases(rows: readonly ConfigAliasEntry[]): GroupedAliases {
   return { aliases, provenance }
 }
 
-/** M8: an alias match says which earlier import created it, so a reviewer can tell it from an id match. */
 function addAliasProvenance(plan: ConfigPlan, provenance: GroupedAliases["provenance"]): void {
   for (const area of plan.areas) {
     for (const item of area.items) {
@@ -828,15 +681,9 @@ function addAliasProvenance(plan: ConfigPlan, provenance: GroupedAliases["proven
   }
 }
 
-/**
- * What the planning member (within its config token's area limit) may do:
- * the areas it may view (references elsewhere lose their names in the plan)
- * and whether it may write `members.people` (only then are invitations planned).
- */
 async function planningAccessFor(organizationId: OrganizationId, actor: ConfigActor, apiKeyId: string | null): Promise<{ visibleAreas: Set<ConfigAreaKey>; mayInvite: boolean }> {
   const permissions = await resolvePermissionsForMember({ organizationId, memberId: normalizeDenTypeId("member", actor.memberId) })
   const token = apiKeyId ? await getApiKeySessionById(apiKeyId) : null
-  // A token that is gone sees nothing; an unrestricted one (null) sees what its member sees.
   const tokenAreas = apiKeyId ? (token ? token.configAreas : []) : null
   const people = registeredArea(PEOPLE_AREA_KEY)
   return {
@@ -858,16 +705,6 @@ async function baseSpecsFor(organizationId: OrganizationId, hash: string | null)
   return out
 }
 
-/** What planning reads from a request: a stored row, or an unsaved dry run. */
-/**
- * Items an earlier import of this source created or matched are recognised by
- * their saved link before anything else. An area's export leaves some items
- * out (a skill or plugin that only its creator can reach is personal, which
- * is what an imported item becomes when the people it was shared with are
- * left out), so the saved link would never see them and the item would be
- * created again. Read those by id and add them to the target items, for the
- * items of this file only: nothing else personal becomes visible to the plan.
- */
 async function addLinkedTargetItems(input: {
   ctx: ConfigAreaContext
   areas: Partial<Record<ConfigAreaKey, { items: readonly { id?: string | null }[] }>>
@@ -892,7 +729,6 @@ async function addLinkedTargetItems(input: {
 type PlanSource = Pick<ConfigChangeRequestRow, "organizationId" | "blob" | "mode" | "baseHash" | "createdByMemberId" | "approvals" | "decisions" | "secretInputs" | "apiKeyId">
   & Partial<Pick<ConfigChangeRequestRow, "sourceKind" | "revertsChangeRequestId">>
 
-/** The member a plan is computed for: the creator, else the last approver. Stable, so re-plans hash the same. */
 async function planningActor(row: PlanSource): Promise<ConfigActor | null> {
   return await loadActor(row.organizationId, row.createdByMemberId)
     ?? await loadActor(row.organizationId, row.approvals[row.approvals.length - 1]?.memberId ?? null)
@@ -945,7 +781,6 @@ async function planChangeRequest(row: PlanSource, overrides: { decisions?: Confi
     baseSpecs: sameOrganization ? await baseSpecsFor(row.organizationId, row.baseHash) : undefined,
     ctx,
   }
-  // A restore lists only what the restored change wrote: the snapshot's items and the items it created.
   const restoredId = row.sourceKind === "revert" ? restoredChangeRequestId(row.revertsChangeRequestId ?? null) : null
   if (restoredId) {
     const created = new Map<ConfigAreaKey, Set<string>>()
@@ -954,14 +789,12 @@ async function planChangeRequest(row: PlanSource, overrides: { decisions?: Confi
     }
     planInput.restore = { created }
   }
-  // Preflight: the areas look at the planned writes (reads only), then the plan is built again with their verdicts.
   let result = buildPlan(planInput)
   if (result.fatalErrors.length === 0) {
     const verdicts = await runPreflight(result.execution, CONFIG_AREAS, ctx)
     if (verdicts.size > 0) result = buildPlan({ ...planInput, preflight: verdicts })
   }
   if (grouped) addAliasProvenance(result.plan, grouped.provenance)
-  // Outside the areas the file carries, what a reference left open could be pointed at (display only).
   const refTargets = planRefTargets(result.plan, { scope, targetItems, members: directory.names, visibleAreas: access.visibleAreas })
   if (refTargets.length > 0) result.plan.refTargets = refTargets
   for (const entry of blob.omitted ?? []) {
@@ -980,9 +813,7 @@ function approvalsSatisfied(approvals: readonly ConfigChangeRequestApproval[], s
   return distinct.size >= (settings.requireSecondApprover ? 2 : 1)
 }
 
-/** The patch a fresh plan implies: status, plan, errors, and approvals dropped when the plan hash moved. */
 async function planPatch(row: ConfigChangeRequestRow, planned: Planned | { invalid: string[] }, options: { dropApprovals?: boolean } = {}): Promise<ChangeRequestPatch> {
-  // `invalid` is terminal: its secret inputs are deleted at once.
   if ("invalid" in planned) return { status: "invalid", errors: storedErrors(planned.invalid), approvals: [], approvedPlanHash: null, secretInputs: null, execution: null }
   if (planned.fatal.length > 0) {
     return { status: "invalid", plan: planned.plan, planHash: planned.plan.planHash, errors: storedErrors(planned.fatal), approvals: [], approvedPlanHash: null, secretInputs: null, execution: null }
@@ -1009,7 +840,6 @@ async function planPatch(row: ConfigChangeRequestRow, planned: Planned | { inval
   return patch
 }
 
-/** Worker: analyze one claimed request. */
 export async function analyzeClaimedChangeRequest(claim: ClaimedChangeRequest): Promise<ConfigChangeRequestStatus | null> {
   try {
     const patch = await planPatch(claim, await planChangeRequest(claim))
@@ -1025,9 +855,6 @@ export async function analyzeClaimedChangeRequest(claim: ClaimedChangeRequest): 
     return "invalid"
   }
 }
-
-// ---------------------------------------------------------------------------
-// Decisions and inputs
 
 const EDITABLE_STATUSES: readonly ConfigChangeRequestStatus[] = ["needs_review", "approved", "stale"]
 
@@ -1054,20 +881,17 @@ async function loadEditable(organizationId: OrganizationId, id: string, caller: 
 
 export async function updateDecisions(organizationId: OrganizationId, id: string, caller: ConfigCaller, decisions: ConfigDecisions) {
   const row = await loadEditable(organizationId, id, caller)
-  // Choosing to invite someone plans a `members.people` create: only for callers who may write people.
   const inviteKey = (entry: ConfigDecisions["refs"][number]) => `${entry.area}\u0000${entry.ref}\u0000${entry.path}`
   const invitedBefore = new Set((row.decisions?.refs ?? []).filter((entry) => "invite" in entry.resolution).map(inviteKey))
   if (decisions.refs.some((entry) => "invite" in entry.resolution && !invitedBefore.has(inviteKey(entry)))) await authorizeWrites(caller, [PEOPLE_AREA_KEY])
   return replan(row, caller, { decisions })
 }
 
-/** The organization the request's file was exported from, when the file says. */
 function sourceOrganizationId(row: Pick<ConfigChangeRequestRow, "blob">): string | null {
   const envelope = parseEnvelope(row.blob)
   return envelope.ok ? envelope.value.blob.source?.organization.id ?? null : null
 }
 
-/** The answers given on a request, as a file to keep next to the export (see `configDecisionsFileSchema`). */
 export async function getDecisionsFile(organizationId: OrganizationId, id: string, caller: Pick<ConfigCaller, "can" | "tokenAreas">): Promise<ConfigDecisionsFile> {
   const row = await loadVisible(organizationId, id, caller)
   const { matches, refs, skips, renames } = row.decisions ?? EMPTY_CONFIG_DECISIONS
@@ -1082,13 +906,6 @@ export async function getDecisionsFile(organizationId: OrganizationId, id: strin
   }
 }
 
-/**
- * Gives a request the answers of an earlier import. Only of the same source
- * into this organization: the ids in the answers are this organization's
- * items, and the handles are the source file's. The answers go through the
- * same planning as answers given by hand, so one the plan refuses (leaving
- * out a reference an item can't be imported without) is refused here too.
- */
 export async function replayDecisionsFile(organizationId: OrganizationId, id: string, caller: ConfigCaller, file: ConfigDecisionsFile) {
   if (file.target.organizationId !== organizationId) {
     throw new ConfigBlobError(409, { error: "decisions_other_organization", message: "These answers were given in another organization. Answers only carry over to a later import into the same organization." })
@@ -1100,10 +917,6 @@ export async function replayDecisionsFile(organizationId: OrganizationId, id: st
   return updateDecisions(organizationId, id, caller, { ...(row.decisions ?? EMPTY_CONFIG_DECISIONS), ...file.decisions, reusedFrom: file.changeRequestId })
 }
 
-/**
- * Merges secret inputs by path (write-only: values are stored encrypted on the
- * request and never returned). Entering a value always drops approvals.
- */
 export async function updateInputs(organizationId: OrganizationId, id: string, caller: ConfigCaller, inputs: readonly ConfigSecretInput[]) {
   const row = await loadEditable(organizationId, id, caller)
   const known = new Set<string>()
@@ -1128,15 +941,11 @@ export async function updateInputs(organizationId: OrganizationId, id: string, c
   return replan(row, caller, { secretInputs }, { dropApprovals: inputs.some((input) => input.decision === "value") })
 }
 
-// ---------------------------------------------------------------------------
-// Approve, apply, cancel
-
 function writeAreas(plan: ConfigPlan | null): ConfigAreaKey[] {
   if (!plan) return []
   return plan.areas.filter((area) => area.items.some((item) => item.op === "create" || item.op === "update" || item.op === "rename" || item.op === "delete")).map((area) => area.area)
 }
 
-/** L6: who queued the apply, kept for the apply's audit (it runs later, as the last approver). */
 function applyRequest(caller: Pick<ConfigCaller, "memberId" | "apiKeyId">): ConfigChangeRequestApplyRequest {
   return { memberId: caller.memberId, at: new Date().toISOString(), ...(caller.apiKeyId ? { apiKeyId: caller.apiKeyId } : {}) }
 }
@@ -1180,7 +989,6 @@ export async function approveChangeRequest(organizationId: OrganizationId, id: s
   return summaryFor(await approveRow(row, caller, planHash), caller)
 }
 
-/** Queues an approved request; with `planHash` a request in review is approved first (approve and apply in one call). */
 export async function requestApply(organizationId: OrganizationId, id: string, caller: ConfigCaller, planHash: string | undefined): Promise<ConfigChangeRequestSummary> {
   let row = await loadVisible(organizationId, id, caller)
   if (row.status === "queued" || row.status === "applying") return summaryFor(row, caller)
@@ -1218,18 +1026,6 @@ export async function cancelChangeRequest(organizationId: OrganizationId, id: st
   return summaryFor(updated, caller)
 }
 
-// ---------------------------------------------------------------------------
-// Revert
-
-/**
- * The blob a revert uploads: the before-snapshot, with
- * - each item's `rev` set to its state right after the apply (`afterRevs`),
- *   so the three-way diff sees "what the apply wrote" as the base: items
- *   nobody touched since revert cleanly, items changed since show as drift;
- * - secret placeholders turned into `keep` (when the source had a value) or
- *   `unset`. Old secret values were never stored, so a revert keeps the
- *   current ones; an item the apply deleted needs its secrets entered again.
- */
 function revertBlob(snapshot: unknown, afterRevs: Record<string, string>): unknown {
   const parsed = configBlobSchema.safeParse(snapshot)
   if (!parsed.success) throw new ConfigBlobError(409, { error: "before_snapshot_invalid", message: "The before-snapshot of this change can't be read." })
@@ -1260,14 +1056,6 @@ function revertBlob(snapshot: unknown, afterRevs: Record<string, string>): unkno
   return { ...parsed.data, areas: nestConfigAreas(areas), secrets: undefined }
 }
 
-/**
- * "Restore previous config" (API: revert) = a new change request (source
- * `revert`) from the before-snapshot, in `mirror` mode over the areas the
- * apply wrote, with the deletes of every item the original apply created
- * already ticked. It goes through the normal review. It restores
- * configuration only: what the apply set off (emails, revoked sign-ins,
- * replaced credentials) stays, and the plan says so (`restoreIssues`).
- */
 export async function revertChangeRequest(org: ConfigOrganization, id: string, caller: ConfigCaller): Promise<ConfigChangeRequestSummary> {
   const row = await loadVisible(org.id, id, caller)
   if (row.status !== "applied" && row.status !== "failed") {
@@ -1297,7 +1085,6 @@ export async function revertChangeRequest(org: ConfigOrganization, id: string, c
   return summary
 }
 
-/** Items any apply attempt created (a failed attempt's creates stay too), deduplicated: what a restore deletes. */
 function createdByRuns(runs: readonly { report: ConfigApplyReport }[]): Array<{ area: ConfigAreaKey; targetId: string }> {
   const created = new Map<string, { area: ConfigAreaKey; targetId: string }>()
   for (const run of runs) {
@@ -1317,10 +1104,6 @@ function restoredChangeRequestId(id: string | null): ConfigChangeRequestId | nul
   }
 }
 
-/**
- * Plan issues of a restore: what the original apply did that restoring can't
- * undo (from its runs' reports), and credentials that can't come back.
- */
 async function restoreIssues(organizationId: OrganizationId, changeRequestId: ConfigChangeRequestId, blobAreas: Partial<Record<ConfigAreaKey, ConfigBlobArea>>): Promise<ConfigPlan["issues"]> {
   const issues: ConfigPlan["issues"] = []
   const runs = await listApplyRuns(organizationId, changeRequestId, db.$primary)
@@ -1329,7 +1112,6 @@ async function restoreIssues(organizationId: OrganizationId, changeRequestId: Co
     for (const item of run.report.items) {
       if (item.irreversible.length === 0 || (item.status !== "applied" && item.steps.length === 0)) continue
       const label = CONFIG_AREAS.find((area) => area.key === item.area)?.label ?? item.area
-      // Effects are whole sentences: join them as written, ending with one period.
       const effects = item.irreversible.map((effect) => /[.!?]$/.test(effect) ? effect : `${effect}.`).join(" ")
       const message = `These can't be undone by restoring: ${label} "${item.name}": ${effects}`
       if (seen.has(message)) continue
@@ -1359,9 +1141,6 @@ async function restoreIssues(organizationId: OrganizationId, changeRequestId: Co
   return issues
 }
 
-// ---------------------------------------------------------------------------
-// Apply
-
 type TableWithId = { table: MySqlTable; column: ReturnType<typeof getTableConfig>["columns"][number] }
 let tablesByName: Map<string, TableWithId> | null = null
 
@@ -1378,41 +1157,21 @@ function tablesWithId(): Map<string, TableWithId> {
   return out
 }
 
-/**
- * D4 (M6): an id may be reused only when
- * - no row of the area's tables holds it, in any organization, and
- * - it never appeared in this organization's audit history (a deleted item's
- *   id must not come back as a different item under the same audit trail).
- *   Audit history is per organization, so this is one lookup on
- *   `audit_resource_lookup` (organization prefix, resource id; the resource
- *   type is skipped), as the audit log's own resource filter does.
- * Callers only ask for blobs from another instance (see `reusesSourceIds`).
- */
 async function isConfigIdFree(organizationId: OrganizationId, area: ConfigAreaKey, id: string): Promise<boolean> {
   for (const name of getConfigArea(area).tables) {
     const entry = tablesWithId().get(name)
     if (!entry) continue
-    // Raw comparison: an area's tables hold ids of several TypeID prefixes (a role's
-    // `permission_set_permission` rows are `psp_`), and a typed column's encoder
-    // throws on an id of another prefix instead of matching nothing.
     const rows = await db.$primary.select({ one: sql<number>`1` }).from(entry.table).where(sql`${entry.column} = ${id}`).limit(1)
     if (rows.length > 0) return false
   }
   const audited = await db.$primary
     .select({ one: sql<number>`1` })
     .from(AuditEventResourceTable)
-    // Plain `=` (not `binary`) so the index applies; a case-insensitive hit only means one id fewer reused.
     .where(and(eq(AuditEventResourceTable.organization_id, organizationId), eq(AuditEventResourceTable.resource_id, id)))
     .limit(1)
   return audited.length === 0
 }
 
-/**
- * Source ids are reused only for a blob from ANOTHER instance (cloud →
- * self-hosted → cloud). A blob from this instance (a clone into another
- * organization, a re-import after a delete) or with no source always gets new
- * ids plus aliases: its ids are, or were, this instance's own rows.
- */
 function reusesSourceIds(sourceInstanceId: string | null, instanceId: string): boolean {
   return sourceInstanceId !== null && sourceInstanceId !== instanceId
 }
@@ -1455,7 +1214,6 @@ function resolveSecretValues(execution: ExecutionPlan, inputs: readonly ConfigSe
   return { secrets, missing }
 }
 
-/** `rev` of every item the apply wrote, right after it (re-read by id): the three-way base of a restore. */
 async function afterRevsOf(ctx: ConfigAreaContext, items: readonly ConfigApplyReportItem[]): Promise<Record<string, string>> {
   const byArea = new Map<ConfigAreaKey, string[]>()
   for (const item of items) {
@@ -1470,7 +1228,6 @@ async function afterRevsOf(ctx: ConfigAreaContext, items: readonly ConfigApplyRe
   return out
 }
 
-/** An apply runs this long after its last approval at most; later, approvals are dropped and it needs review again (M5). */
 export const CONFIG_APPROVAL_MAX_AGE_MS = 24 * 60 * 60 * 1000
 const APPROVAL_EXPIRED_ERROR = "Approval expired: changes are applied within 24 hours of their last approval. Review and approve it again."
 const LEASE_LOST_ERROR = "Another worker took over this apply, so it stopped before its next change. Check the apply report, then fix and upload again, or restore the previous config."
@@ -1480,7 +1237,6 @@ function approvalExpired(approval: ConfigChangeRequestApproval, now = Date.now()
   return !Number.isFinite(at) || now - at > CONFIG_APPROVAL_MAX_AGE_MS
 }
 
-/** Whether `(source org, baseHash)` is an export this instance recorded (and still keeps). */
 async function isRecordedExport(sourceOrgId: string | null, hash: string | null): Promise<boolean> {
   if (!sourceOrgId || !hash) return false
   let organizationId: OrganizationId
@@ -1492,13 +1248,11 @@ async function isRecordedExport(sourceOrgId: string | null, hash: string | null)
   return (await findExportByBaseHash(organizationId, hash)) !== null
 }
 
-/** The member an apply runs as: the last approver (for a config token approval, its issuing member). */
 function applyingApproval(row: ConfigChangeRequestRow): ConfigChangeRequestApproval | null {
   const approvals = currentApprovals(row)
   return approvals[approvals.length - 1] ?? null
 }
 
-/** Thrown by the lease guard: another worker took the apply over, so this one stops before its next write. */
 class ConfigLeaseLostError extends Error {
   constructor() {
     super(LEASE_LOST_ERROR)
@@ -1506,7 +1260,6 @@ class ConfigLeaseLostError extends Error {
   }
 }
 
-/** A report failure for an error that is not a ConfigApplyItemError: the route's code and status when known, the message redacted. */
 function describeApplyError(error: unknown): ConfigApplyFailure {
   if (error instanceof ConfigLeaseLostError) return { code: CONFIG_APPLY_INTERRUPTED_CODE, message: LEASE_LOST_ERROR }
   if (error instanceof ConfigApplyError) {
@@ -1518,11 +1271,6 @@ function describeApplyError(error: unknown): ConfigApplyFailure {
   return { code: "error", message: storedError(errorMessage(error)) }
 }
 
-/**
- * A failure message read under its item (the report names the item): a
- * leading `Create "Docs": ` is dropped when the rest names the item again
- * (`Could not validate "Docs": …`), so the name is said once.
- */
 function itemFailureMessage(name: string, message: string): string {
   const separator = message.indexOf(": ")
   if (!name || separator <= 0) return message
@@ -1531,12 +1279,10 @@ function itemFailureMessage(name: string, message: string): string {
   return prefix.includes(name) && rest.includes(name) ? rest : message
 }
 
-/** A request error for a failed item: `MCP "Docs": <message>`, or `MCP: <message>` when the message names the item. */
 function itemFailureError(areaKey: ConfigAreaKey, name: string, message: string): string {
   return name && message.includes(name) ? `${areaLabel(areaKey)}: ${message}` : `${areaLabel(areaKey)} "${name}": ${message}`
 }
 
-/** Report items as stored: failure messages, step details and warnings bounded and redacted like `errors`. */
 function storedReportItems(items: readonly ConfigApplyReportItem[]): ConfigApplyReportItem[] {
   return items.map((item) => {
     const out: ConfigApplyReportItem = {
@@ -1552,17 +1298,10 @@ function storedReportItems(items: readonly ConfigApplyReportItem[]): ConfigApply
   })
 }
 
-/** The release patch of a request whose plan no longer holds: re-analyzed, approvals dropped. */
 function stalePatch(problems: readonly string[]): ChangeRequestPatch {
   return { status: "stale", approvals: [], approvedPlanHash: null, availableAt: new Date(), errors: storedErrors(problems.slice(0, 20)) }
 }
 
-/**
- * The execution plan to run and the features it was checked against. The
- * stored one (planned with the approved plan) when it is there: no area is
- * exported. Otherwise (requests planned before execution plans were stored,
- * or a stored plan that doesn't parse) a full re-plan whose hash must match.
- */
 async function applyExecution(claim: ClaimedChangeRequest): Promise<{ execution: ExecutionPlan; features: FeatureMap } | { stale: string[] }> {
   const stored = claim.planHash === claim.approvedPlanHash ? parseStoredExecution(claim.execution, claim.approvedPlanHash) : null
   if (stored) return { execution: stored, features: await getOrganizationFeatures(claim.organizationId) }
@@ -1571,7 +1310,6 @@ async function applyExecution(claim: ClaimedChangeRequest): Promise<{ execution:
   return { execution: planned.execution, features: planned.ctx.features }
 }
 
-/** Worker: apply one claimed request (the org's apply lock is the claim). */
 export async function applyClaimedChangeRequest(claim: ClaimedChangeRequest): Promise<ConfigChangeRequestStatus | null> {
   const organizationId = claim.organizationId
   const settings = await getConfigBlobSettings(organizationId)
@@ -1580,14 +1318,11 @@ export async function applyClaimedChangeRequest(claim: ClaimedChangeRequest): Pr
     await releaseClaim(claim, { status: "needs_review", approvals: [], approvedPlanHash: null, errors: ["The approval no longer matches this plan."] })
     return "needs_review"
   }
-  // M5: the apply runs as the last approver with a session counted as freshly signed in
-  // (areas/route-support.ts). That only holds while the approval itself is recent.
   if (approvalExpired(approval)) {
     await releaseClaim(claim, { status: "needs_review", approvals: [], approvedPlanHash: null, applyRequestedBy: null, errors: [APPROVAL_EXPIRED_ERROR] })
     return "needs_review"
   }
 
-  // The applying member must still be a member holding every area's manage permission (and a config token still usable).
   const actor = await loadActor(organizationId, approval.memberId)
   const refusal = async (message: string): Promise<ConfigChangeRequestStatus> => {
     await releaseClaim(claim, { status: "failed", errors: [storedError(message)], secretInputs: null })
@@ -1596,7 +1331,6 @@ export async function applyClaimedChangeRequest(claim: ClaimedChangeRequest): Pr
   if (!actor) return refusal("The person who approved this change is no longer a member of the organization.")
   if (approval.apiKeyId && !await apiKeyUsable(approval.apiKeyId)) return refusal("The config token that approved this change was revoked or expired.")
   if (approval.apiKeyId) {
-    // The token's area limit binds every area the apply writes, not just the scope it was uploaded with.
     const token = await getApiKeySessionById(approval.apiKeyId)
     const outside = writeAreas(claim.plan).filter((area) => !tokenAllows(token ? token.configAreas : [], area))
     if (outside.length > 0) return refusal(`The config token that approved this change can't change ${outside.map(areaLabel).join(", ")}.`)
@@ -1626,13 +1360,11 @@ export async function applyClaimedChangeRequest(claim: ClaimedChangeRequest): Pr
   const { secrets, missing } = resolveSecretValues(withInvites, claim.secretInputs ?? [])
   if (missing.length > 0) return refusal(`Nothing was applied: ${missing.join("; ")}.`)
 
-  // The applying token (if a config token approved) is the credential of audit events adapters record.
   const ctx = areaContext(organizationId, { ...actor, apiKeyId: approval.apiKeyId ?? null }, chosen.features)
   const org = await db.$primary.select({ id: OrganizationTable.id, slug: OrganizationTable.slug, name: OrganizationTable.name }).from(OrganizationTable).where(eq(OrganizationTable.id, organizationId)).limit(1)
   const target = org[0]
   if (!target) return refusal("The organization no longer exists.")
 
-  // Drift: re-read only the items this apply writes (and the targets its references point at).
   const checked = await checkWrittenItems(withInvites, CONFIG_AREAS, ctx)
   if (checked.problems.length > 0) {
     await releaseClaim(claim, stalePatch(checked.problems))
@@ -1640,8 +1372,6 @@ export async function applyClaimedChangeRequest(claim: ClaimedChangeRequest): Pr
   }
   const execution = checked.execution
 
-  // Before-snapshot: the written items as they are now; its scope is every area written
-  // (creates-only areas with no items: the restore deletes what was created). Never overwritten.
   if (claim.beforeSnapshot === null || claim.beforeSnapshot === undefined) {
     const writtenAreas = CONFIG_AREA_KEYS.filter((key) => execution.ops.some((op) => op.area === key))
     const snapshotAreas: ExportedArea[] = writtenAreas.map((key) => ({
@@ -1652,7 +1382,6 @@ export async function applyClaimedChangeRequest(claim: ClaimedChangeRequest): Pr
     if (!await releaseClaimKeepLease(claim, { beforeSnapshot })) return null
   }
 
-  // L6: who runs it (the last approver) and who queued it (explicit apply, or the approval that auto-applied).
   const auditActor: AuditActor = { type: "user", id: actor.userId, memberId: actor.memberId, ...(approval.apiKeyId ? { credentialId: approval.apiKeyId } : {}) }
   const requestedBy = claim.applyRequestedBy ?? { memberId: approval.memberId, at: approval.at, ...(approval.apiKeyId ? { apiKeyId: approval.apiKeyId } : {}) }
   const requester = requestedBy.memberId === actor.memberId ? actor : await loadActor(organizationId, requestedBy.memberId)
@@ -1680,7 +1409,6 @@ export async function applyClaimedChangeRequest(claim: ClaimedChangeRequest): Pr
     idempotencyKey: `config_change_request:${claim.id}:apply:${claim.attempts}:started`,
   })
 
-  // The run row: written now (every item not reached), after every item, and at the end.
   const names = await loadMemberNames(organizationId, [requestedBy.memberId, actor.memberId])
   const startedAt = new Date()
   const requestedByApiKeyName = requestedBy.apiKeyId ? await apiKeyName(requestedBy.apiKeyId) : null
@@ -1716,7 +1444,6 @@ export async function applyClaimedChangeRequest(claim: ClaimedChangeRequest): Pr
     }
   }
 
-  // M10: the claim is the org's apply lock. Lost (expired and taken over) → stop before the next write.
   let leaseLost = false
   const holdLease = async (): Promise<boolean> => {
     if (leaseLost) return false
@@ -1746,16 +1473,12 @@ export async function applyClaimedChangeRequest(claim: ClaimedChangeRequest): Pr
       onProgress: (items) => saveReport({ ...report, items: storedReportItems(items) }),
     }))
   } catch (error) {
-    // Unexpected (not an item failure): record it on the run, then let the worker's lease handling take over.
     await saveReport({ ...report, status: "failed", finishedAt: new Date().toISOString(), warnings: [...report.warnings, storedError(errorMessage(error))] })
     throw error
   } finally {
     clearInterval(keepAlive)
   }
 
-  // Aliases. Creates under a new id always get one. A confirmed match ("decision") only when the
-  // blob is from another instance or is an export this instance recorded: a hand-made blob claiming
-  // to be from here could otherwise pin any source id to any local item (M8).
   if (claim.sourceInstanceId && result.aliases.length > 0) {
     const created = new Set(result.created.map((entry) => `${entry.area}\u0000${entry.sourceId ?? ""}\u0000${entry.localId}`))
     const trusted = claim.sourceInstanceId !== instanceId || await isRecordedExport(claim.sourceOrgId, claim.baseHash)
@@ -1783,7 +1506,6 @@ export async function applyClaimedChangeRequest(claim: ClaimedChangeRequest): Pr
   if (leaseLost && !errors.includes(LEASE_LOST_ERROR)) errors.push(LEASE_LOST_ERROR)
   const released = await releaseClaim(claim, { status, secretInputs: null, appliedAt: new Date(), errors })
   if (!released) {
-    // Taken over: the new holder marked the request failed and this run interrupted; keep this run's errors on top.
     await updateChangeRequest(organizationId, claim.id, ["failed"], { secretInputs: null, errors: [...errors, CONFIG_APPLY_INTERRUPTED_ERROR] })
   }
   if (items.some((item) => item.status === "applied")) await markOtherOpenRequestsStale(organizationId, claim.id)
@@ -1812,7 +1534,6 @@ function memberIdOrNull(value: string): MemberId | null {
   }
 }
 
-/** Writes part of a claimed request without giving up its lease. */
 async function releaseClaimKeepLease(claim: ClaimedChangeRequest, patch: ChangeRequestPatch): Promise<boolean> {
   const updated = await updateChangeRequest(claim.organizationId, claim.id, ["applying"], patch)
   return updated !== null && updated.leaseOwner === claim.leaseOwner

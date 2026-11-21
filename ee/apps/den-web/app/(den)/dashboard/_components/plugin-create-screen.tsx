@@ -15,13 +15,11 @@ import { useMcpConnections } from "./mcp-connections-data";
 import { PluginCreateForm } from "./plugin-create-form";
 import { PluginsSetupIntro } from "./plugins-intro-facts";
 
-/** B1: a member makes a plugin for themselves. */
 export function LibraryPluginCreateScreen() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { orgSlug } = useOrgDashboard();
   const usable = useMcpConnections("usable");
-  // Members can bundle only connectors they added; Den returns access for exactly those.
   const ownConnections = (usable.data ?? []).filter((connection) => connection.access !== null && !connection.nativeProviderKey);
   const startWithSkill = searchParams.get("start") === "skill";
 
@@ -39,7 +37,6 @@ export function LibraryPluginCreateScreen() {
   );
 }
 
-/** D2: an admin makes a plugin, then chooses which teams get it. */
 export function AdminPluginCreateScreen() {
   const router = useRouter();
   const { orgSlug } = useOrgDashboard();

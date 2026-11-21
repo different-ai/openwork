@@ -113,7 +113,6 @@ function DirectoryFilter({ label, title, value, options, counts, onChange }: {
   );
 }
 
-/** The nearest ancestor that scrolls up and down (the dashboard's main column), or null for the window. */
 function scrollParent(element: HTMLElement): HTMLElement | null {
   for (let parent = element.parentElement; parent; parent = parent.parentElement) {
     const overflow = getComputedStyle(parent).overflowY;
@@ -125,9 +124,7 @@ function scrollParent(element: HTMLElement): HTMLElement | null {
 function DirectoryResults({ plugins, filtered }: { plugins: ReturnType<typeof usePluginDirectory>; filtered: boolean }) {
   const { orgSlug } = useOrgDashboard();
   const rows = plugins.data?.pages.flatMap((page) => page.items) ?? [];
-  // A row is as tall as every other list's (48px and its hairline).
   const rowHeight = 49;
-  // The page scrolls, as on every other list; only the rows near the window are drawn.
   const listRef = useRef<HTMLDivElement>(null);
   const resetScroll = useRef(true);
   const loadingPage = useRef(false);
@@ -138,8 +135,6 @@ function DirectoryResults({ plugins, filtered }: { plugins: ReturnType<typeof us
     const list = listRef.current;
     if (!listed || !list) return;
     const scroller = scrollParent(list);
-    // DirectoryResults is keyed by all filters. Reset once per filter, not when
-    // another page arrives, even when the next result has the same row count.
     if (resetScroll.current) {
       resetScroll.current = false;
       const top = scroller ? scroller.getBoundingClientRect().top + scroller.clientTop : 0;
@@ -155,11 +150,9 @@ function DirectoryResults({ plugins, filtered }: { plugins: ReturnType<typeof us
       const height = scroller ? scroller.clientHeight : window.innerHeight;
       const nextTop = Math.max(0, top - box.top);
       setView((current) => current.top === nextTop && current.height === height ? current : { top: nextTop, height });
-      // A failed page waits for the explicit retry button. The ref also guards
-      // multiple scroll/resize events before Query publishes its fetching state.
       if (!loadingPage.current && shouldAutoLoadPluginPage({ listBottom: box.bottom, viewportTop: top, viewportHeight: height, hasNextPage, isFetchingNextPage, isFetchNextPageError })) {
         loadingPage.current = true;
-        void fetchNextPage().catch(() => { /* Query displays the retry state. */ }).finally(() => { loadingPage.current = false; });
+        void fetchNextPage().catch(() => {}).finally(() => { loadingPage.current = false; });
       }
     };
     measure();
@@ -226,14 +219,10 @@ export function AdminPluginsScreen() {
   const legacyMember = orgContext?.members.find((member) => member.id === memberId);
   const empty = firstPage?.total === 0 && !q && !teamId && !memberId && !ownerId;
   const filtered = Boolean(q || teamId || memberId || ownerId);
-  // Feature intros: section facts from the unfiltered first page; a filtered list says nothing about setup.
-  // Built-in OpenWork extensions every org gets don't count as the team setting up plugins.
   const teamPlugins = firstPage ? firstPage.items.filter((item) => !item.builtIn) : [];
   const builtInCount = firstPage ? firstPage.items.length - teamPlugins.length : 0;
   const setUpById = firstPage ? pluginsSetUpById(teamPlugins, orgContext?.currentMember.id ?? null) : null;
   const setUpByMember = setUpById ? orgContext?.members.find((member) => member.id === setUpById) : undefined;
-  // Without `sharing.manage_all` the list holds only plugins shared with this person, so an empty one
-  // doesn't mean the organization has none (a teammate's private plugins are hidden).
   const seesAllPlugins = getOrgAccessFlags(
     orgContext?.currentMember.role ?? "member",
     orgContext?.currentMember.isOwner ?? false,
@@ -264,7 +253,6 @@ export function AdminPluginsScreen() {
 
   const page = (
     <ItemPage testId="admin-plugins" wide>
-      {/* The create action sits in the header, as on every other page. */}
       <DenPageHeader size="compact" title="Plugins" action={empty ? undefined : createAction} />
       {!empty ? <div className="flex flex-wrap items-center gap-2" data-testid="plugin-directory-toolbar">
         <FilterInput value={search} onChange={setSearch} className="w-64 max-w-full" />
@@ -277,7 +265,5 @@ export function AdminPluginsScreen() {
     </ItemPage>
   );
 
-  // With feature intros on, the Plugins intro replaces the whole page while there are none (DESIGN.md I1, I2);
-  // with the flag off, the page and PluginsEmpty render as before.
   return <FeatureIntroGate introKey="plugins" facts={introFacts}>{page}</FeatureIntroGate>;
 }

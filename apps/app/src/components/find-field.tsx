@@ -7,11 +7,9 @@ import { cn } from "@/lib/utils";
 
 type FindFieldProps = {
   inputRef: RefObject<HTMLInputElement | null>;
-  /** Names the field: its placeholder and accessible name. */
   label: string;
   query: string;
   onQueryChange: (query: string) => void;
-  /** "2/7", "No matches", or empty while the query is too short. */
   counterText: string;
   hasMatches: boolean;
   onNext: () => void;
@@ -19,11 +17,6 @@ type FindFieldProps = {
   onClose: () => void;
 };
 
-/**
- * The find control shared by "Find in conversation" and "Find on this page":
- * a field, a match counter, and previous / next / close. Enter moves to the
- * next match, Shift+Enter to the previous one, Escape closes.
- */
 export function FindField(props: FindFieldProps) {
   return (
     <div className="flex items-center gap-1 rounded-xl border border-dls-border bg-dls-surface/95 px-1.5 py-1 shadow-(--dls-card-shadow) backdrop-blur-md">

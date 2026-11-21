@@ -2,7 +2,6 @@ import { homeFaq, type FaqEntry } from "../lib/faq";
 
 type LandingFaqProps = {
   entries?: FaqEntry[];
-  /** "product" matches the medium-weight headings of the product pages. */
   tone?: "home" | "product";
 };
 

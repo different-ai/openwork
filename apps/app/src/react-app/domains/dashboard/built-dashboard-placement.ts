@@ -20,7 +20,6 @@ export function readBuiltDashboardApps(scope: string): string[] {
   }
 }
 
-/** Both the dashboard and artifact preview use the existing personal placements. */
 export function subscribeBuiltDashboardApps(scope: string, onChange: (ids: string[]) => void) {
   const changed = (event: Event) => {
     if (event instanceof PlacementChangedEvent && event.scope === scope) onChange(event.ids);
@@ -42,7 +41,6 @@ export function writeBuiltDashboardApps(scope: string, ids: string[]) {
   try {
     window.localStorage.setItem(scope, JSON.stringify(ids));
   } catch {
-    // Keep all mounted views in sync even when local storage is unavailable.
   }
   window.dispatchEvent(new PlacementChangedEvent(scope, ids));
 }

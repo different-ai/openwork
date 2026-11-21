@@ -18,25 +18,14 @@ import {
   LibrarySkillsExample,
 } from "./examples/library/tab-examples";
 
-/**
- * Facts My Library reports from data it already loads (`GET /v1/me/library`,
- * `GET /v1/inference-providers?scope=usable` and the viewer's own model keys
- * from `GET /v1/llm-providers`). Counts are what the viewer can use: shared
- * with them or made by them. A missing fact means "not loaded yet": the page
- * never gives way to an intro on a guess.
- */
 export type LibraryFacts = {
-  /** Everything in the Library, models and workflows included. */
   items?: number;
   connectors?: number;
-  /** Plugins made of one skill, which the Library lists as skills. */
   skills?: number;
   plugins?: number;
-  /** Models from the organization plus the viewer's own keys. */
   models?: number;
 };
 
-/** The Library's `?show=` tabs and their intros. "All" is the section itself. */
 export type LibraryTab = "connectors" | "skills" | "plugins" | "models";
 
 export const LIBRARY_TAB_INTROS: Record<LibraryTab, FeatureIntroKey> = {
@@ -53,10 +42,6 @@ const PATH = getLibraryRoute();
 const ADD_KEY_ROUTE = `${PATH}/model-providers/new`;
 const PRIVATE_NOTE = "Only you can use it until you share it.";
 
-/*
- * Docs: My Library has its own pages (overview, models and keys, sharing);
- * "Connect your services" covers the Library's connectors from a member's side.
- */
 const DOCS_LIBRARY = "my-library/overview";
 const DOCS_MODELS = "my-library/models-and-keys";
 const DOCS_CONNECT = "start-here/connect-your-stack/connect-services";
@@ -64,17 +49,10 @@ const DOCS_SKILLS = "start-here/do-work-with-it/publish-and-copy-a-skill";
 const DOCS_PLUGINS = "start-here/do-work-with-it/skills-plugins-and-mcp";
 const DOCS_SHARE = "my-library/share";
 
-/** A tab with nothing of its kind while the Library has other things shows its box; unknown shows nothing. */
 function tabState(count: number | undefined) {
   return count === undefined || count > 0 ? "done" : "none";
 }
 
-/*
- * Any member can add a connector for themselves (an app where each person
- * signs in, or one with no sign-in) and create skills and plugins, so these
- * have no locked variant. Someone who manages connections can add one for the
- * whole team from Manage instead.
- */
 const addConnectorCtas: readonly Cta[] = [
   { when: (ctx) => ctx.can("canManageConnections"), label: "Add a connector for your team", href: getAddConnectorRoute() },
   { when: () => true, label: "Add a connector", href: getLibraryAddConnectorRoute(), note: () => PRIVATE_NOTE },
@@ -104,7 +82,6 @@ export const libraryIntros = [
     },
     docsUrl: docsPage(DOCS_LIBRARY),
     ctas: addConnectorCtas,
-    // Full screen only once everything has loaded and the viewer has nothing at all.
     setupState: (ctx) => {
       if (ctx.facts.items === undefined) return "done";
       return librarySetUp(ctx) ? "done" : "none";
@@ -197,7 +174,6 @@ export const libraryIntros = [
     docsUrl: docsPage(DOCS_MODELS),
     ctas: [
       { when: (ctx) => ctx.can("canManageGatewayProviders"), label: "Add an AI provider for your team", href: getNewAiGatewayProviderRoute() },
-      // Any member can add a provider key for themselves (`POST /v1/llm-providers` needs no permission).
       { when: () => true, label: "Add your own key", href: ADD_KEY_ROUTE, note: () => "Only you can use your key." },
     ],
     setupState: (ctx) => tabState(ctx.facts.models),
@@ -206,7 +182,6 @@ export const libraryIntros = [
   defineFeatureIntro<LibraryFacts>({
     key: "library.connectors.add",
     version: 1,
-    // Never shown on its own: the catalog and setup checks are the setup step. It answers `?` there.
     match: { path: getLibraryAddConnectorRoute() },
     icon: Plus,
     title: "Add a connector",
@@ -221,7 +196,6 @@ export const libraryIntros = [
       alt: "Example: Google Workspace and Slack from everyone, signed in; Linear from Product, waiting for your sign-in; and Notion, which you added.",
     },
     docsUrl: docsPage(DOCS_CONNECT),
-    // The catalog on screen is the action; a link back to it would go nowhere.
     ctas: [],
     setupState: () => "done",
   }),
@@ -229,7 +203,6 @@ export const libraryIntros = [
   defineFeatureIntro<LibraryFacts>({
     key: "library.plugins.new",
     version: 1,
-    // Never shown on its own: the form is the setup step. It answers `?` there (`?start=skill` too).
     match: { path: getLibraryNewPluginRoute() },
     icon: FileText,
     title: "Create a skill or plugin",
@@ -251,7 +224,6 @@ export const libraryIntros = [
   defineFeatureIntro<LibraryFacts>({
     key: "library.models.key",
     version: 1,
-    // Never shown on its own: the form is the setup step. It answers `?` there and on the edit form.
     match: { path: ADD_KEY_ROUTE },
     icon: KeyRound,
     title: "Use your own key",
@@ -273,7 +245,6 @@ export const libraryIntros = [
   defineFeatureIntro<LibraryFacts>({
     key: "library.share",
     version: 1,
-    // Never shown on its own: the share form is the action. Matches connectors; the plugin share page registers it.
     match: { path: `${PATH}/connectors/:connectionId/share` },
     icon: Users,
     title: "Share with your team",

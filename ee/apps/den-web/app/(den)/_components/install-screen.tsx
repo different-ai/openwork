@@ -56,7 +56,6 @@ function installerOsFor(platform: InstallPlatform | null, detected: DetectedPlat
   return detected?.os ?? null;
 }
 
-/** Copy for opening the downloaded installer, per operating system. */
 function openGuidance(os: InstallerOs | null, fileName: string | null): OpenGuidance {
   const openFile = fileName
     ? `Double-click ${fileName} in Downloads.`
@@ -241,8 +240,6 @@ export function InstallScreen() {
 
   useEffect(() => {
     setIsMobile(isMobileUserAgent());
-    // Install pages once carried a one-off token; it is ignored now, so drop
-    // it from the address before anyone copies and shares it again.
     const url = new URL(window.location.href);
     if (url.searchParams.has("token")) {
       url.searchParams.delete("token");
@@ -420,7 +417,6 @@ export function InstallScreen() {
           ) : (
             <>
               <DownloadPlatformGrid groups={downloadGroups} variant="flat" stacked />
-              {/* Reload so the auth provider reads the desktop handoff parameters on mount. */}
               <SetupQuietButton className="self-center rounded-md px-2 py-1" onClick={() => window.location.assign(DESKTOP_SIGN_IN_PATH)}>
                 I already installed OpenWork
               </SetupQuietButton>

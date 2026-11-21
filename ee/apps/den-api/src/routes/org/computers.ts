@@ -32,7 +32,6 @@ const listQuerySchema = z.object({
   kind: z.enum(REMOTE_DEVICE_KINDS).optional(),
   provider: z.enum(REMOTE_DEVICE_PROVIDERS).optional(),
   availability: z.enum(REMOTE_DEVICE_AVAILABILITIES).optional(),
-  /** `include` also lists desktops nobody has heard from for 30 days; anything else leaves them out. */
   stale: z.string().max(16).optional(),
   page: z.string().regex(/^[1-9]\d{0,8}$/).optional(),
   instancePage: z.string().regex(/^[1-9]\d{0,8}$/).optional(),
@@ -49,7 +48,6 @@ const changeErrors = {
   403: jsonResponse("Disconnect team computers permission and a recent sign-in required.", forbiddenSchema),
 }
 
-/** Organization inventory is separate from the member's own/shared, usable computers. */
 export function registerOrgComputerRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get(base, describeComputerRead({
     tags: ["Devices"], operationId: "listOrganizationComputers", "x-mcp": true,

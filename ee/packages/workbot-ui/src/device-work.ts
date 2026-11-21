@@ -1,19 +1,9 @@
 import type { RemoteDevice } from "@openwork/types/den/remote-devices";
 import type { WorkbotRemoteJob } from "@openwork/types/workbot-remote-jobs";
 
-/**
- * What Workbot is doing on a computer in the Devices list: pure, so it is tested without a page.
- *
- * One of the person's own computers: the remote task this chat started that the computer took or waits for, matched
- * by the id both Den's list and the task's status name the computer by. Workbot's own computer: Den's word that
- * Workbot is working in the computer's chat, which does not prove the computer itself is in use, so the line says
- * where Workbot works rather than what it touches.
- */
-
 /** `needsYou`: the work waits on the person, so the row marks it as theirs to act on rather than as progress. */
 export type DeviceWork = { label: string; detail: string | null; needsYou: boolean };
 
-/** A task waiting on the person first, then one that is running, then one the computer has not taken yet. */
 const ORDER: Record<string, number> = { waiting: 0, running: 1, starting: 2 };
 
 /**

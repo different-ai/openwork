@@ -15,10 +15,6 @@ export function resolveVisibleAuthMode(input: {
     : input.authMode;
 }
 
-/**
- * Where sign-up is closed, an email with no account gets the password step like any other email: the panel never
- * offers to create an account, and does not say whether one exists.
- */
 export function emailFirstStepWhenSignUpClosed<Step extends string>(step: Step, signUpClosed: boolean): Step | "password" {
   return signUpClosed && step === "new_account" ? "password" : step;
 }

@@ -1,17 +1,3 @@
-// Translates an Auto request (OpenAI Chat Completions) to the Amazon Bedrock
-// Converse API, and the Converse response (JSON, or the AWS event stream for
-// converse-stream) back to Chat Completions, so a chat client can be answered
-// by any Bedrock model.
-//
-// The model id is part of the path (`model/<alias>/converse`); the gateway
-// rewrites the member's alias to the upstream model id. Tools must be
-// `{ toolSpec }` only, which is all this translator sends.
-//
-// Like Claude on the Messages API, Claude on Bedrock must see its signed
-// reasoning again to continue a tool-use turn with thinking on. The reasoning
-// blocks of a response are handed to `remember` keyed by the tool calls they
-// preceded and come back in `reasoning`; when they are missing, thinking is
-// turned off for that request instead of failing it.
 import type { AutoRouterThinkingLevel } from "@openwork/types/den/auto-router"
 import { readEventStreamFrames, type EventStreamFrame } from "@openwork-ee/gateway-protocols/usage/bedrock-converse"
 import { claudeTakesEffort } from "@openwork-ee/gateway-protocols/providers/anthropic"
@@ -36,7 +22,6 @@ function imageFormat(mediaType: string) {
   }
 }
 
-/** Converse document names must be unique within a request. */
 type DocumentNamer = () => string
 
 function createDocumentNamer(): DocumentNamer {
@@ -60,7 +45,6 @@ function userBlocks(content: unknown, nameDocument: DocumentNamer): JsonObject[]
       if (typeof url !== "string") continue
       const inline = parseDataUrl(url)
       const format = inline ? imageFormat(inline.mediaType) : null
-      // Converse takes image bytes (or S3), never a URL to fetch.
       if (inline && format) blocks.push({ image: { format, source: { bytes: inline.data } } })
       else blocks.push({ text: inline ? `[Image omitted: ${inline.mediaType} is not supported.]` : `[Image omitted: ${url}]` })
     } else if (part.type === "file" && isJsonObject(part.file) && typeof part.file.file_data === "string") {
@@ -91,7 +75,6 @@ type ConverseMessage = { role: "user" | "assistant"; content: JsonObject[] }
 function pushMessage(list: ConverseMessage[], role: "user" | "assistant", content: JsonObject[]) {
   if (!content.length) return
   const last = list[list.length - 1]
-  // Converse requires alternating roles; merge consecutive messages from the same side.
   if (last && last.role === role) last.content.push(...content)
   else list.push({ role, content })
 }
@@ -104,7 +87,6 @@ function toolResultContent(content: unknown, nameDocument: DocumentNamer): JsonO
         const parsed: unknown = JSON.parse(trimmed)
         if (isJsonObject(parsed)) return [{ json: parsed }]
       } catch {
-        // Not JSON; send it as text.
       }
     }
     return content ? [{ text: content }] : [{ text: "(no output)" }]
@@ -169,14 +151,11 @@ export function toConverseBody(body: JsonObject, input: {
   upstreamModel: string
   thinkingLevel: AutoRouterThinkingLevel
   maxOutputTokens: number | null
-  /** Reasoning state remembered for earlier tool calls, by tool call id. */
   reasoning?: ReadonlyMap<string, ReasoningPayload>
-  /** The levels the model allows; thinking is only ever turned off when `none` is among them. */
   thinkingLevels?: readonly AutoRouterThinkingLevel[]
 }): JsonObject {
   const system: JsonObject[] = []
   let list: ConverseMessage[] = []
-  // Tool calls of the current turn that have no signed reasoning to replay, and their names.
   let unsignedCalls = new Map<string, string>()
   const nameDocument = createDocumentNamer()
   const source = Array.isArray(body.messages) ? body.messages.filter(isJsonObject) : []
@@ -228,19 +207,12 @@ export function toConverseBody(body: JsonObject, input: {
   const next: JsonObject = { messages: list }
   if (system.length) next.system = system
 
-  // "none" omits the tools, unless the history holds tool blocks: Converse
-  // rejects toolUse/toolResult blocks without a toolConfig, so keep the specs
-  // then (without forcing a choice).
   const tools = toolSpecs(body)
   if (tools.length && body.tool_choice !== "none") next.toolConfig = { tools, toolChoice: toolChoiceOf(body.tool_choice) }
   else if (tools.length && historyUsesTools) next.toolConfig = { tools }
 
   const claude = isClaude(input.upstreamModel)
-  // Bedrock ids carry date stamps (`claude-3-7-sonnet-20250219-v1:0`) that read as a version.
   const effort = claude && claudeTakesEffort(input.upstreamModel.replace(/-\d{8}(?=-|$|:)/g, ""))
-  // A tool-use turn with thinking on must replay the signed reasoning. When it
-  // is missing, models that accept it think off; models that only take
-  // adaptive thinking get this turn's unsigned tool calls as plain text.
   const allowsDisabled = input.thinkingLevels?.includes("none") ?? false
   let level = input.thinkingLevel
   if (lastAssistantMissingThinking && effort) {
@@ -295,7 +267,6 @@ function chatUsage(usage: ConverseUsage) {
   }
 }
 
-/** Reasoning blocks Bedrock accepts back: signed text, or redacted content. */
 function isReplayable(block: JsonObject) {
   const reasoning = isJsonObject(block.reasoningContent) ? block.reasoningContent : null
   if (!reasoning) return false
@@ -357,7 +328,6 @@ export function converseErrorToChat(body: unknown, status: number): JsonObject {
 
 const encoder = new TextEncoder()
 const decoder = new TextDecoder()
-/** Converse frames are small; anything larger than this is a broken stream. */
 const MAX_FRAME_BYTES = 16 * 1024 * 1024
 
 function concat(left: Uint8Array, right: Uint8Array) {
@@ -380,7 +350,6 @@ export function converseStreamToChat(body: ReadableStream<Uint8Array>, route: Au
   let finished = false
   let stopReason: unknown = null
   const usage: ConverseUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
-  // Content block index -> tool call index / reasoning block being collected.
   const toolIndexByBlock = new Map<number, number>()
   const toolCallIds: string[] = []
   const reasoningByBlock = new Map<number, ReasoningBlock>()
@@ -462,7 +431,6 @@ export function converseStreamToChat(body: ReadableStream<Uint8Array>, route: Au
         return ""
       case "metadata":
         readUsage(payload.usage, usage)
-        // Metadata is the last event of a converse stream.
         return stopped ? finish() : ""
       default:
         return ""
@@ -499,7 +467,6 @@ export function converseStreamToChat(body: ReadableStream<Uint8Array>, route: Au
     },
     flush(controller) {
       if (finished) return
-      // A stream that ended without metadata still ends cleanly for the client.
       const out = started ? finish() : error("The provider ended the stream without a response.", "api_error")
       controller.enqueue(encoder.encode(out))
     },

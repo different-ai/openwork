@@ -28,8 +28,6 @@ import {
 import { MemberTable, OrganizationTable } from "./org"
 import { TeamTable } from "./teams"
 
-// Gateway providers: config + credential held server-side, calls routed through
-// ee/apps/gateway. Distinct from `llm_provider` (credential delivered to device).
 export const GatewayProviderTable = mysqlTable(
   "gateway_providers",
   {
@@ -41,12 +39,10 @@ export const GatewayProviderTable = mysqlTable(
     ).notNull(),
     provider_id: varchar("provider_id", { length: 255 }).notNull(),
     name: varchar("name", { length: 255 }).notNull(),
-    // Empty policy follows all supported catalog models; group membership stays explicit.
     model_ids: compatJsonColumn<string[]>("model_ids").notNull().default(sql`(JSON_ARRAY())`),
     pinned_model_ids: compatJsonColumn<string[]>("pinned_model_ids").notNull().default(sql`(JSON_ARRAY())`),
     provider_config: compatJsonColumn<Record<string, unknown>>("provider_config").notNull(),
     settings: compatJsonColumn<Record<string, unknown>>("settings").notNull(),
-    // Compatibility metadata only. Credential sets own mode and OAuth config.
     credential_mode: mysqlEnum("credential_mode", GATEWAY_PROVIDER_CREDENTIAL_MODES)
       .notNull()
       .default("org"),
@@ -121,7 +117,6 @@ export const GatewayApiKeyTable = mysqlTable(
     key_prefix: varchar("key_prefix", { length: 32 }).notNull(),
     status: mysqlEnum("status", GATEWAY_KEY_STATUSES).notNull().default("active"),
     last_used_at: timestamp("last_used_at", { fsp: 3 }),
-    /** The key stops working at this time; null never expires. */
     expires_at: timestamp("expires_at", { fsp: 3 }),
     revoked_at: timestamp("revoked_at", { fsp: 3 }),
     revoked_by_org_membership_id: denTypeIdColumn("member", "revoked_by_org_membership_id"),
@@ -171,8 +166,6 @@ export const GatewayCredentialSetTable = mysqlTable(
     credential_mode: mysqlEnum("credential_mode", GATEWAY_PROVIDER_CREDENTIAL_MODES).notNull(),
     oauth_client_id: varchar("oauth_client_id", { length: 255 }),
     oauth_client_secret: encryptedTextColumn("oauth_client_secret"),
-    // Non-secret member sign-in settings: Entra ID tenant (Microsoft Foundry) or
-    // IAM Identity Center instance, account and permission set (Amazon Bedrock).
     oauth_tenant_id: varchar("oauth_tenant_id", { length: 64 }),
     aws_sso: compatJsonColumn<GatewayAwsSsoSettings>("aws_sso"),
     status: mysqlEnum("status", GATEWAY_PROVIDER_STATUSES).notNull().default("active"),
@@ -191,8 +184,6 @@ export const GatewayProviderCredentialTable = mysqlTable(
     ).notNull(),
     credential_set_id: denTypeIdColumn("gatewayCredentialSet", "credential_set_id").notNull(),
     organization_id: denTypeIdColumn("organization", "organization_id").notNull(),
-    // "org" for the org-level credential, else the member typeid. Non-null so
-    // the unique index below is a real guarantee (MySQL treats NULLs as distinct).
     subject: varchar("subject", { length: 64 }).notNull(),
     org_membership_id: denTypeIdColumn("member", "org_membership_id"),
     kind: mysqlEnum("kind", GATEWAY_PROVIDER_CREDENTIAL_KINDS).notNull(),
@@ -228,7 +219,6 @@ export const GatewayProviderAccessTable = mysqlTable(
     ).notNull(),
     model_group_id: denTypeIdColumn("gatewayModelGroup", "model_group_id").notNull(),
     credential_set_id: denTypeIdColumn("gatewayCredentialSet", "credential_set_id").notNull(),
-    // Canonical organization | team:<id> | member:<id>, checked against the audience.
     audience_key: varchar("audience_key", { length: 80 }).notNull(),
     org_membership_id: denTypeIdColumn("member", "org_membership_id"),
     team_id: denTypeIdColumn("team", "team_id"),
@@ -502,7 +492,6 @@ export const gatewayProviderOauthState = GatewayProviderOauthStateTable
 export const gatewayLiteLlmIssuedKey = GatewayLiteLlmIssuedKeyTable
 export const gatewayTrueFoundryUser = GatewayTrueFoundryUserTable
 
-// Temporary source aliases, not parallel tables or legacy column mappings.
 export {
   GatewayProviderTable as InferenceProviderTable,
   GatewayProviderModelTable as InferenceProviderModelTable,

@@ -51,8 +51,6 @@ function DialogContent({
   return (
     <DialogPortal container={container}>
       <DialogOverlay />
-      {/* Dismissal hides the popup in the same frame: an exit animation would keep
-          the dialog (and its fields) on screen until Base UI unmounts it. */}
       <DialogPrimitive.Popup
         data-slot="dialog-content"
         className={cn(

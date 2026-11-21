@@ -1,18 +1,3 @@
-/**
- * AWS IAM Identity Center (SSO) for per-member Amazon Bedrock credentials.
- *
- * Den runs the OAuth device authorization flow against the organization's own
- * Identity Center instance (no client is registered ahead of time: each sign-in
- * registers a public OIDC client, as the AWS CLI does) and stores the resulting
- * refresh token. The Gateway renews the access token and exchanges it for
- * short-lived role credentials of the configured account and permission set,
- * which then sign Bedrock requests with SigV4. Only these AWS hosts are ever
- * reached, all derived from a validated region:
- *
- *   oidc.<region>.amazonaws.com          RegisterClient, StartDeviceAuthorization, CreateToken
- *   portal.sso.<region>.amazonaws.com    GetRoleCredentials, Logout
- *   sts.<region>.amazonaws.com           GetCallerIdentity (who signed in)
- */
 import { signAwsRequest, type AwsCredentials } from "@openwork-ee/gateway-upstreams/aws-sigv4"
 import { isAwsRegion } from "@openwork-ee/gateway-upstreams/egress"
 
@@ -48,7 +33,6 @@ export class AwsSsoError extends Error {
     this.status = status
   }
 
-  /** Worth retrying later with the same token: AWS or the network had a problem. */
   get transient() {
     return this.code === "aws_sso_unreachable" || this.code === "aws_sso_unavailable" || this.code === "aws_sso_slow_down"
   }
@@ -91,12 +75,10 @@ async function send(fetchImpl: FetchLike, url: string, init: RequestInit): Promi
   const text = await response.text().catch(() => "")
   let body: unknown = null
   try { body = text ? JSON.parse(text) : null } catch { body = null }
-  // AWS JSON errors name the exception in x-amzn-ErrorType ("Name:http://…") and/or the body.
   const errorType = response.headers.get("x-amzn-errortype")?.split(":")[0] ?? (isRecord(body) && typeof body.__type === "string" ? body.__type.split("#").pop() ?? null : null)
   return { status: response.status, body, errorType, text }
 }
 
-/** Map an OIDC (RegisterClient, StartDeviceAuthorization, CreateToken) error to a stable code. */
 function oidcError(result: { status: number; body: unknown; errorType: string | null }): AwsSsoError {
   const error = isRecord(result.body) && typeof result.body.error === "string" ? result.body.error : null
   const type = result.errorType ?? ""
@@ -195,7 +177,6 @@ export async function getAwsSsoRoleCredentials(input: { region: string; accessTo
   url.searchParams.set("account_id", input.accountId)
   const result = await send(input.fetchImpl, url.toString(), { method: "GET", headers: { accept: "application/json", "x-amz-sso_bearer_token": input.accessToken }, signal: input.signal })
   if (result.status === 401 || result.errorType === "UnauthorizedException") throw new AwsSsoError("aws_sso_unauthorized", "AWS no longer accepts this sign-in. Sign in again.", result.status)
-  // An account or permission set the person is not assigned reads as not found.
   if (result.status === 403 || result.status === 404 || result.errorType === "ForbiddenException" || result.errorType === "ResourceNotFoundException") {
     throw new AwsSsoError("aws_sso_role_forbidden", "Your AWS user is not assigned this permission set in this account. Ask your administrator to assign it in IAM Identity Center.", result.status)
   }

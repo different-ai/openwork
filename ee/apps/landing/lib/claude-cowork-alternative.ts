@@ -8,7 +8,6 @@ export const MIGRATION_GUIDE_PATH = "/docs/start-here/migrate-from-claude-cowork
 
 export const claudeCoworkAlternativeHeading = "The free, open-source alternative to Claude Cowork";
 
-/** Hero sub-line. Keep it under 20 words. */
 export const claudeCoworkAlternativeAnswer =
   "Any model, your own keys, files that stay on your machine. Free for macOS, Windows, and Linux.";
 

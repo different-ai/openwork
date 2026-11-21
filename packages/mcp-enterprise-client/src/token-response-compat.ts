@@ -68,7 +68,6 @@ function notifyTranslation(
   try {
     callback?.(translation)
   } catch {
-    // Compatibility diagnostics must never change the response seen by the SDK.
   }
 }
 

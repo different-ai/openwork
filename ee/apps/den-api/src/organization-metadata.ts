@@ -6,7 +6,6 @@ import { requestRead } from "./request-reads.js"
 
 type OrganizationId = typeof OrganizationTable.$inferSelect.id
 
-/** Holds an unfinished organization deletion's progress (routes/org/delete-organization.ts). Never shown to members. */
 export const ORGANIZATION_DELETION_METADATA_KEY = "deletionInProgress"
 
 export async function updateOrganizationMetadata(
@@ -28,11 +27,6 @@ export async function updateOrganizationMetadata(
   })
 }
 
-/**
- * The organization's metadata column, read fresh once per request and shared by
- * the request's later readers (a write in the request reads it again). Never
- * cached across requests, so an admin change applies to the next request.
- */
 export function readOrganizationMetadataColumn(organizationId: OrganizationId): Promise<{ metadata: typeof OrganizationTable.$inferSelect.metadata } | null> {
   return requestRead(`organization-metadata:${organizationId}`, async () => {
     const [organization] = await db

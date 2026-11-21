@@ -8,10 +8,8 @@ import { newWorkflowLanguage } from "./workflow-service.js"
 
 export type BuiltinSkillDefinition = {
   descriptor: RemoteSkillDescriptor
-  /** A function when the text depends on the organization's Workflow language. */
   source: string | ((language: CodemodeLanguage) => string)
   searchExtraTokens: string
-  /** Listed only while the tools it teaches exist on this deployment. */
   available?: () => boolean
 }
 
@@ -409,7 +407,6 @@ export function searchBuiltinSkillCapabilities(query: string, limit = 5): Builti
     .slice(0, Math.max(1, Math.min(20, Math.trunc(limit) || 5)))
 }
 
-/** The organization's Workflow language is read only for a skill whose text depends on it. */
 export async function executeBuiltinSkillCapability(name: string, organizationId: string): Promise<BuiltinSkillExecutePayload | null> {
   const skill = findBuiltinSkill(name)
   if (!skill) return null

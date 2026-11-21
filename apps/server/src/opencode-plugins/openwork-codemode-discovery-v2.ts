@@ -1,7 +1,6 @@
 import { tsPlugin } from "@sveltejs/acorn-typescript";
 import { Parser } from "acorn";
 
-// The engine transpiles scripts as TypeScript, so annotated scripts must parse here too.
 const ScriptParser = Parser.extend(tsPlugin());
 
 function record(value: unknown): value is Record<string, unknown> {
@@ -27,18 +26,12 @@ function isTools(value: unknown): boolean {
   return record(value) && value.type === "Identifier" && value.name === "tools";
 }
 
-/** The pinned engine has a bare search() intrinsic, but no tools.search alias.
- * Models also write a server's spelling, tools["openwork-cloud"].search, which
- * is rewritten only when that server has no tool of its own named search.
- * Rewrite syntax before execution, never retry a script that may have written.
- * Source ranges leave strings, comments, and unrelated tool paths unchanged. */
 export function nativeDiscoveryCode(code: string, serverHasSearch: (server: string) => boolean = () => false): string {
   if (!code.includes("search")) return code;
   let tree: unknown;
   try {
     tree = ScriptParser.parse(code, { ecmaVersion: "latest", locations: true, allowAwaitOutsideFunction: true, allowReturnOutsideFunction: true });
   } catch {
-    // Let the engine own syntax diagnostics.
     return code;
   }
   const ranges: Array<{ start: number; end: number }> = [];

@@ -10,7 +10,6 @@ function inside(child: string, parent: string): boolean {
   return child === parent || child.startsWith(`${parent}/`);
 }
 
-/** Authorized Folders is permission.external_directory, not ServerConfig.authorizedRoots. */
 export function sandboxMountGrants(workspace: string, externalDirectory: Readonly<Record<string, unknown>>, readOnly = false): MicrosandboxMount[] {
   if (process.platform === "win32") throw new Error("Local microsandbox mounts require macOS or Linux.");
   const root = resolve(workspace);
@@ -25,7 +24,6 @@ export function sandboxMountGrants(workspace: string, externalDirectory: Readonl
       rules.push({ path: "/", effect: value });
       continue;
     }
-    // The Authorized Folders editor writes absolute /folder/* entries. Arbitrary glob policies cannot become mounts.
     const path = pattern.endsWith("/*") ? pattern.slice(0, -2) : "";
     if (!path || !isAbsolute(path) || /[?*\[\]{}!]/.test(path) || path === "/" || posix.normalize(path) !== path) {
       throw new Error("The sandbox needs concrete Authorized Folders entries; this external-directory pattern cannot be mounted safely.");
@@ -43,14 +41,12 @@ export function sandboxMountGrants(workspace: string, externalDirectory: Readonl
     }
     folders.add(rule.path);
   }
-  // A bind mount of the workspace must not grant a denied child through an Authorized Folders exception either.
   if (rules.some(rule => rule.effect !== "allow" && rule.path !== "/" && inside(rule.path, root))) {
     throw new Error("The workspace contains a restricted subtree that cannot be enforced by a live bind mount.");
   }
   return [...folders].sort().map(path => ({ hostPath: path, guestPath: path, access: readOnly ? "ro" : "rw" }));
 }
 
-/** Resolve existing ancestors too, so a not-yet-created denied child retains its canonical parent. */
 async function canonicalCandidate(path: string): Promise<string> {
   try { return await realpath(path); }
   catch (error) {

@@ -5,13 +5,8 @@ import { Check, ChevronDown, LockKeyhole, Search } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { BUILT_IN_ROLES, type RoleOption } from "../../_lib/role-catalog";
 
-/** A picker row, as `roleOptions` builds it from the organization's one role list. */
 export type RolePickerOption = RoleOption;
 
-/**
- * One searchable role menu for people and teams. As wide as its button, and
- * never too narrow to read a role's one-line summary.
- */
 export function RolePicker({ value, onChange, options, label, trigger, disabled, footer, quiet = false, size = "md", open: controlledOpen, onOpenChange, testId = "member-role" }: {
   value: string;
   onChange: (value: string) => void;
@@ -20,9 +15,7 @@ export function RolePicker({ value, onChange, options, label, trigger, disabled,
   trigger?: string;
   disabled?: boolean;
   footer?: ReactNode;
-  /** In a list row: the role reads as text, and shows it is a control on hover and focus. */
   quiet?: boolean;
-  /** "sm" is the 32px field for settings rows. */
   size?: "md" | "sm";
   open?: boolean;
   onOpenChange?: (open: boolean) => void;

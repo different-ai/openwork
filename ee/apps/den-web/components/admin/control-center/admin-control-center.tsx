@@ -91,14 +91,12 @@ function ControlCenter({ onAccessDenied }: { onAccessDenied: (access: "signed-ou
   useEffect(() => { if (denied) onAccessDenied(denied); }, [denied, onAccessDenied]);
 
   const view = query.data;
-  // Stop watching once every section that can succeed has been recomputed since the request.
   useEffect(() => {
     if (!view || refreshRequestedAt === null) return;
     const done = Object.values(view.sections).every((section) => section.error !== null || (section.computedAt !== null && Date.parse(section.computedAt) >= refreshRequestedAt - 1_000));
     if (done) { setRefreshRequestedAt(null); setRefreshMessage(null); }
   }, [view, refreshRequestedAt]);
 
-  // A refusal or error is a passing note; a running refresh keeps its message until it finishes.
   useEffect(() => {
     if (!refreshMessage || refreshRequestedAt !== null) return;
     const timer = window.setTimeout(() => setRefreshMessage(null), 8_000);
@@ -122,7 +120,7 @@ function ControlCenter({ onAccessDenied }: { onAccessDenied: (access: "signed-ou
 
   const chooseRange = (value: ControlCenterRange) => {
     setRange(value);
-    try { window.localStorage.setItem(RANGE_KEY, value); } catch { /* Storage is optional. */ }
+    try { window.localStorage.setItem(RANGE_KEY, value); } catch {}
   };
   const newest = view ? Object.values(view.sections).map((section) => section.computedAt).filter((value): value is string => value !== null).sort().at(-1) ?? null : null;
   const staleCount = view ? Object.values(view.sections).filter((section) => section.stale).length : 0;
@@ -268,7 +266,6 @@ function ControlCenter({ onAccessDenied }: { onAccessDenied: (access: "signed-ou
   </div>;
 }
 
-// The first analytics series color, also the charts' primary series.
 const primary = SERIES_PALETTE[0] ?? "currentColor";
 const compactCount = (value: number) => new Intl.NumberFormat(undefined, { notation: "compact", maximumFractionDigits: 1 }).format(value);
 

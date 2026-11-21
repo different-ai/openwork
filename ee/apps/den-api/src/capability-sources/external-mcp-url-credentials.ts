@@ -1,12 +1,3 @@
-/**
- * Credentials an MCP server URL must not carry: a user name or password, or
- * a query parameter that holds a token or key. Shared by POST/PUT
- * /v1/mcp-connections (the route schema) and config-blob imports
- * (`connectors.mcp`), which write through the route's handlers without its
- * schema. Messages name the parameter, never its value.
- */
-
-/** Query parameters (compared lowercase) an MCP URL may not have. */
 export const EXTERNAL_MCP_SENSITIVE_URL_PARAMETERS: ReadonlySet<string> = new Set([
   "access_token",
   "api_key",
@@ -17,7 +8,6 @@ export const EXTERNAL_MCP_SENSITIVE_URL_PARAMETERS: ReadonlySet<string> = new Se
   "code_verifier",
 ])
 
-/** What an export puts in place of a credential found in a stored URL. */
 export const REDACTED_URL_CREDENTIAL = "[redacted]"
 
 function parse(value: string): URL | null {
@@ -28,7 +18,6 @@ function parse(value: string): URL | null {
   }
 }
 
-/** The plain-English problems with credentials in `value`; empty when it carries none or is not a URL. */
 export function externalMcpUrlCredentialProblems(value: string): string[] {
   const url = parse(value.trim())
   if (!url) return []
@@ -50,12 +39,6 @@ function decoded(value: string): string {
   }
 }
 
-/**
- * `value` with every credential replaced by `[redacted]`: the user name and
- * password, and the value of each sensitive query parameter. `found` lists
- * what held a real credential (a value that was not already `[redacted]`).
- * A value that is not a URL is returned unchanged.
- */
 export function redactExternalMcpUrlCredentials(value: string): { url: string; found: string[] } {
   const url = parse(value.trim())
   if (!url) return { url: value, found: [] }

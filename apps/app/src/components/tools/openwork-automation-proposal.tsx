@@ -59,11 +59,6 @@ function parseOutputValue(output: unknown): unknown {
   }
 }
 
-/**
- * Reads an `automation.propose` affordance result out of an openwork_execute
- * tool part. Returns null for every other affordance so the generic capability
- * line keeps rendering them.
- */
 export function parseAutomationProposal(output: unknown): AutomationProposal | null {
   const envelope = parseOutputValue(output)
   if (envelope === null || typeof envelope !== "object" || Array.isArray(envelope)) return null
@@ -116,9 +111,6 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
     retry: false,
   })
   const simplerReview = signedIn && automationsEnabled && !featuresQuery.isError && featuresQuery.data?.automationSimpleReview === true
-  // Offer the same places the Automations page does: this desktop and, when Den
-  // says Cloud can run agent Automations for this member, the cloud. An older
-  // Den answers null and the runtime's fixed placement stays.
   const targetsQuery = useQuery({
     queryKey: ["den", "automations", organizationId, "execution-targets"],
     queryFn: () => createDenClient({ baseUrl: settings.baseUrl, token }).listAutomationRunners(organizationId),
@@ -126,20 +118,15 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
     retry: false,
   })
   const placementChoices = automationPlacementChoices({ targets: targetsQuery.data, desktopRuntime: isDesktopRuntime(), desktopAllowed })
-  // Meetings-based schedules only run in the cloud, so they start there.
   const suggested: AutomationExecutionTarget = proposal?.schedule.kind === "calendar"
     ? "cloud"
     : proposal?.executionTarget ?? automationCreationPlacement()
-  // The same three choices as the Automations editor: this computer, the
-  // person's cloud computer, or the headless cloud that reaches only connected
-  // accounts. Without an answer from Den, keep the runtime's own placement.
   const canUseChoices = automationCanUseChoices(placementChoices, automationCloudOptions(targetsQuery.data))
   const suggestedCanUse = initialCanUse(resolveAutomationPlacement(suggested, placementChoices), proposal?.model, canUseChoices)
   const canUse = canUseChoices.length === 0
     ? null
     : picked && canUseChoices.includes(picked) ? picked : canUseChoices.includes(suggestedCanUse) ? suggestedCanUse : canUseChoices[0]
   const placement = canUse ? automationPlacementOf(canUse) : automationCreationPlacement()
-  // The headless cloud runs on the organization's one cloud model: nothing to resolve.
   const usesCloudDefault = canUse === "accounts"
   const providersQuery = useQuery({
     queryKey: ["den", "automations", organizationId, "models"],
@@ -180,9 +167,6 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
     return <Tool toolPart={part} title="Proposed an Automation" />
   }
 
-  // Pin the workspace of the pane this card renders in — renderer-owned state.
-  // The proposal's own workspaceId is agent-supplied and deliberately ignored:
-  // a manipulated agent must not be able to retarget the Automation.
   const pinnedWorkspaceId = workspaceContext?.workspaceId?.trim() || null
 
   const blocker = !automationsEnabled
@@ -212,9 +196,6 @@ export function OpenWorkAutomationProposalTool({ part }: { part: DynamicToolUIPa
             instructions: proposal.instructions,
             schedule: proposal.schedule,
             model,
-            // Pin the proposal's originating workspace, falling back to the pane
-            // this card renders in, so the Automation keeps running there instead
-            // of following whichever workspace is active at run time.
             ...(pinnedWorkspaceId ? { workspaceId: pinnedWorkspaceId } : {}),
           })
       featureAnalytics.automationCreated(placement)

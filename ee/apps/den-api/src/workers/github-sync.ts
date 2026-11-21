@@ -35,12 +35,8 @@ export { isTransientGithubSyncError } from "./github-sync-retry.js"
 const logger = appLogger.child({ component: "github_sync_worker" })
 const MAX_BACKOFF_MS = 15 * 60_000
 const ACTIVE_GITHUB_SYNC_EVENT_STATUSES = ["queued", "running"] as const
-// Every replica polls every few seconds, so one poll reads a small page, not the queue.
 export const GITHUB_SYNC_POLL_LIMIT = 25
-// A claimed event holds its target this long. A replica that stops mid-sync
-// (deploy, crash) never finishes it, so the event is put back afterwards.
 export const GITHUB_SYNC_RUNNING_LEASE_MS = 30 * 60_000
-// Events claimed before leases existed have none; one running this long was abandoned.
 const UNLEASED_RUNNING_STALE_MS = 24 * 60 * 60_000
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -86,12 +82,6 @@ export function computeGithubSyncBackoffMs(
   return Math.min(MAX_BACKOFF_MS, Math.round(jitteredMs))
 }
 
-/**
- * Puts back running events whose replica stopped before finishing them: their
- * lease expired, or they predate leases and have run for a day. Each one counts
- * as an attempt, and one out of attempts fails. Without this, an abandoned event
- * holds its target forever and every queued event behind it waits forever.
- */
 export async function reclaimStaleGithubSyncEvents(now = new Date()) {
   const staleWhere = and(
     eq(ConnectorSyncEventTable.status, "running"),
@@ -130,10 +120,6 @@ export async function reclaimStaleGithubSyncEvents(now = new Date()) {
 export async function processDueGithubSyncEvents(now = new Date()) {
   await reclaimStaleGithubSyncEvents(now)
 
-  // A page of due events whose target is not already syncing. Blocked events
-  // stay in the database instead of being read and skipped on every poll.
-  // Primary: a lagging replica would miss another replica's fresh claim and run
-  // a second sync of the same target.
   const events = await db.$primary
     .select({
       attemptCount: ConnectorSyncEventTable.attemptCount,
@@ -180,7 +166,6 @@ export async function processDueGithubSyncEvents(now = new Date()) {
       const message = error instanceof Error ? error.message : String(error)
       const attemptCount = event.attemptCount + 1
       const shouldRetry = isTransientGithubSyncError(error) && attemptCount < env.githubSync.maxAttempts
-      // Primary: keeps the summary the failed sync may have just written.
       const [current] = await db.$primary
         .select({ summaryJson: ConnectorSyncEventTable.summaryJson })
         .from(ConnectorSyncEventTable)
@@ -231,11 +216,6 @@ export async function processDueGithubSyncEvents(now = new Date()) {
   return { checked: events.length, claimed, superseded }
 }
 
-/**
- * A sync imports the target's branch as it is when the sync runs, whatever
- * event queued it, so it covers every event queued for that target before it
- * was claimed. Those are closed as ignored instead of each importing again.
- */
 async function supersedeQueuedGithubSyncEvents(
   connectorTargetId: NonNullable<(typeof ConnectorSyncEventTable.$inferSelect)["connectorTargetId"]>,
   claimedEventId: (typeof ConnectorSyncEventTable.$inferSelect)["id"],
@@ -274,15 +254,9 @@ function countField(summary: Record<string, unknown> | null, key: string): numbe
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : null
 }
 
-/**
- * `connector_sync.completed` once the event is terminal (job operation, jobRunId
- * = sync event id). Counts and status only: never repository names, paths,
- * file contents, plugin names or error messages. Never throws into the worker.
- */
 async function recordConnectorSyncCompleted(connectorSyncEventId: (typeof ConnectorSyncEventTable.$inferSelect)["id"]) {
   if (!env.auditCaptureEnabled) return
   try {
-    // Primary: called right after the event was marked terminal.
     const [event] = await db.$primary.select().from(ConnectorSyncEventTable).where(eq(ConnectorSyncEventTable.id, connectorSyncEventId)).limit(1)
     if (!event || !TERMINAL_SYNC_STATUSES.has(event.status) || !event.completedAt) return
     const summary = isRecord(event.summaryJson) ? event.summaryJson : null
@@ -314,10 +288,7 @@ async function recordConnectorSyncCompleted(connectorSyncEventId: (typeof Connec
   }
 }
 
-// A run claims a due target by moving its next probe this far ahead, so a run
-// that stops mid-probe (deploy, crash, timeout) leaves it due again shortly.
 export const GITHUB_RECONCILE_PROBE_LEASE_MS = 10 * 60_000
-// New targets get a reconcile row in pages of this size.
 export const GITHUB_RECONCILE_SEED_LIMIT = 200
 const GITHUB_RECONCILE_SEED_MAX_PAGES = 10
 const GITHUB_RECONCILE_RESUME_LIMIT = 200
@@ -333,12 +304,6 @@ function jsonNumberText(column: JsonConfigColumn, path: string) {
   return sql<string | null>`case when json_type(json_extract(${column}, ${path})) in ('INTEGER', 'UNSIGNED INTEGER', 'DOUBLE', 'DECIMAL') then cast(json_extract(${column}, ${path}) as char) end`
 }
 
-/**
- * Gives GitHub targets without a reconcile row one, in pages read from the
- * (connector_type, created_at, id) index. Only the page's own targets are read
- * for the state earlier releases kept in their config, by primary key, so no
- * query ever sorts target configs.
- */
 async function seedGithubReconcileRows(now: Date) {
   let seeded = 0
   for (let page = 0; page < GITHUB_RECONCILE_SEED_MAX_PAGES; page += 1) {
@@ -384,7 +349,6 @@ async function seedGithubReconcileRows(now: Date) {
   return seeded
 }
 
-/** Makes paused targets due again once their connector changed after the pause. */
 async function resumeEditedGithubReconcileTargets(now: Date) {
   const edited = await db
     .select({ id: ConnectorTargetReconcileTable.connectorTargetId })
@@ -428,11 +392,6 @@ type GithubReconcileTarget = {
   targetUpdatedAt: Date
 }
 
-/**
- * The fields a probe needs, for one page of targets: config values are read
- * with json_extract, never whole configs. Targets whose connector is no longer
- * active come back as ineligible; deleted ones do not come back.
- */
 async function loadGithubReconcileTargets(targetIds: ConnectorTargetId[]) {
   const rows = await db
     .select({
@@ -495,7 +454,6 @@ async function loadGithubReconcileTargets(targetIds: ConnectorTargetId[]) {
   return { eligible, ineligible }
 }
 
-/** Connector creators who are still joined members of the connector's organization. */
 async function activeConnectorCreatorKeys(targets: GithubReconcileTarget[]) {
   if (targets.length === 0) return new Set<string>()
   const rows = await db
@@ -520,16 +478,10 @@ async function writeGithubReconcileState(targetId: ConnectorTargetId, state: Git
   }).where(eq(ConnectorTargetReconcileTable.connectorTargetId, targetId))
 }
 
-/**
- * Queues a resync when the branch head moved past the last completed sync.
- * When the last sync of that head already failed, its error comes back so the
- * target backs off instead of queueing the same failing sync on every probe.
- */
 async function probeGithubConnectorTarget(target: GithubReconcileTarget, activeCreatorKeys: ReadonlySet<string>) {
   if (!target.repositoryFullName || !target.branch || !Number.isFinite(target.installationId) || target.installationId <= 0) {
     throw new GithubReconcilePermanentError("GitHub connector target is missing repository, branch, or installation metadata.")
   }
-  // Syncs import as the connector's creator, so without them every sync fails.
   if (!activeCreatorKeys.has(`${target.organizationId}:${target.createdByOrgMembershipId}`)) {
     throw new GithubReconcilePermanentError("Connector creator member not found.")
   }
@@ -584,7 +536,6 @@ async function probeGithubConnectorTarget(target: GithubReconcileTarget, activeC
   return { enqueued: true, failedSyncError }
 }
 
-/** One log line when a target starts failing, is paused again after an edit, or recovers. */
 function logGithubReconcileChange(
   connectorTargetId: string,
   previousStatus: GithubReconcileState["status"],
@@ -618,7 +569,6 @@ async function forEachWithConcurrency<T>(items: T[], concurrency: number, run: (
 export type GithubReconcileRunOptions = {
   batchSize?: number
   maxBatches?: number
-  /** Stops starting new batches after this long; a batch already started finishes. */
   budgetMs?: number
   probeConcurrency?: number
 }
@@ -637,14 +587,7 @@ export type GithubReconcileRunSummary = {
 
 type GithubReconcileBatchTotals = Pick<GithubReconcileRunSummary, "claimed" | "probed" | "enqueued" | "skippedSyncing" | "removed">
 
-/**
- * One page of due targets: read from the (connector_type, next_probe_at)
- * index, claimed, and probed a few at a time. Every row read is moved out of
- * the due range, whether it is probed, skipped or removed, so the next page
- * reads the next targets.
- */
 async function reconcileGithubBatch(now: Date, batchSize: number, probeConcurrency: number, totals: GithubReconcileBatchTotals) {
-  // Primary: a lagging replica would hand back rows this run already claimed.
   const due = await db.$primary
     .select({
       failureCount: ConnectorTargetReconcileTable.failureCount,
@@ -684,7 +627,6 @@ async function reconcileGithubBatch(now: Date, batchSize: number, probeConcurren
     await db.delete(ConnectorTargetReconcileTable).where(inArray(ConnectorTargetReconcileTable.connectorTargetId, gone))
     totals.removed += gone.length
   }
-  // An inactive connector is checked again after the usual interval.
   const minAgeMs = env.githubSync.reconcileMinAgeMs
   if (ineligible.size > 0) {
     await db.update(ConnectorTargetReconcileTable)
@@ -692,7 +634,6 @@ async function reconcileGithubBatch(now: Date, batchSize: number, probeConcurren
       .where(inArray(ConnectorTargetReconcileTable.connectorTargetId, [...ineligible]))
   }
 
-  // A target that is already syncing keeps its lease and is checked once it passes.
   totals.skippedSyncing += claimed.filter((row) => eligible.has(row.id) && syncingIds.has(row.id)).length
   const toProbe = claimed.flatMap((row) => {
     const target = eligible.get(row.id)
@@ -723,13 +664,6 @@ async function reconcileGithubBatch(now: Date, batchSize: number, probeConcurren
   return due.length
 }
 
-/**
- * Checks due GitHub targets against their branch heads and queues a resync for
- * the ones that moved. Run by a scheduled caller of POST
- * /internal/github/reconcile/run; overlapping runs are safe, since each target
- * is claimed by one run. Reads due targets in pages from connector_target_reconcile until
- * none are due, maxBatches pages were read, or budgetMs passed.
- */
 export async function reconcileGithubConnectorTargets(now = new Date(), options: GithubReconcileRunOptions = {}): Promise<GithubReconcileRunSummary> {
   const startedAtMs = Date.now()
   const batchSize = Math.max(1, Math.floor(options.batchSize ?? env.githubSync.reconcileBatchSize))
@@ -760,10 +694,6 @@ export async function reconcileGithubConnectorTargets(now = new Date(), options:
 let workerTickRunning = false
 let workerTickPromise: Promise<void> | null = null
 
-/**
- * Polls the sync queue every few seconds on every replica. The reconcile does
- * not run here: a scheduled caller runs it through POST /internal/github/reconcile/run.
- */
 export function startGithubSyncWorker(workerIntervalMs = env.githubSync.workerIntervalMs) {
   const runWorkerTick = () => {
     if (workerTickRunning) return

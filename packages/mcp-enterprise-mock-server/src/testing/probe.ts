@@ -312,7 +312,6 @@ async function expectOk(response: Response, phase: HandshakePhase): Promise<Resp
       if (message.includes("redirect URI is not an allowed destination")) category = "oauth_redirect_uri_whitelist"
     }
   } catch {
-    // Status and phase remain sufficient safe evidence.
   }
   throw new ProbeFailure(phase, category, message)
 }
@@ -324,7 +323,6 @@ async function safeHttpErrorMessage(response: Response, phase: HandshakePhase, c
     const errorBody = z.object({ error: z.string().optional(), error_description: z.string().optional(), message: z.string().optional() }).safeParse(parsed)
     if (errorBody.success) return errorBody.data.error_description ?? errorBody.data.message ?? errorBody.data.error ?? `HTTP ${response.status}`
   } catch {
-    // The HTTP status remains sufficient safe evidence.
   }
   return text.trim() || `HTTP ${response.status}`
 }
@@ -463,7 +461,6 @@ export async function probeEnterpriseMcpMockServer(options: ProbeEnterpriseMcpMo
         }, "SHUTDOWN", cleanupDeadline)
         await discardResponseBody(revocationResponse, "SHUTDOWN", "oauth_token")
       } catch {
-        // Cleanup never replaces the primary diagnostic failure.
       }
     }
     if (revocationEndpoint && refreshToken) {
@@ -479,7 +476,6 @@ export async function probeEnterpriseMcpMockServer(options: ProbeEnterpriseMcpMo
         }, "SHUTDOWN", cleanupDeadline)
         await discardResponseBody(revocationResponse, "SHUTDOWN", "oauth_token")
       } catch {
-        // Cleanup never replaces the primary diagnostic failure.
       }
     }
   }

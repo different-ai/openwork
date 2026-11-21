@@ -33,7 +33,6 @@ const updateMemberOpenWorkWebSchema = z.object({
 const memberOpenWorkWebResponseSchema = z.object({
   memberId: z.string(),
   openworkWeb: z.boolean(),
-  /** Members and pending invitations with OpenWork Web after the change: the Web quantity. */
   webUsers: z.number().int(),
 }).meta({ ref: "MemberOpenWorkWebResponse" })
 
@@ -42,10 +41,6 @@ const orgMemberParamsSchema = idParamSchema("memberId", "member")
 
 type MemberActionContext = ResourceActionContext
 
-/**
- * POST /v1/members/:memberId/role, callable with an in-process route context
- * (config-blob imports, src/config-blobs/areas/members-people.ts).
- */
 export async function updateMemberRoleAction(c: MemberActionContext, payload: ResourceOrganizationContext, rawMemberId: string, roleInput: string, capture: AuditChangeCapture | null) {
     let memberId: MemberId
     try {
@@ -77,9 +72,6 @@ export async function updateMemberRoleAction(c: MemberActionContext, payload: Re
       organizationId: payload.organization.id,
       memberId,
       nextRole: role,
-      // The target's role, the caller's permissions (members.update included) and the Admin default
-      // set may all have changed since the checks above; decide again on the locked row, reading
-      // through the transaction.
       authorize: (member, tx) => roleAssignmentDenialInTransaction({
         tx,
         organizationId: payload.organization.id,
@@ -116,7 +108,6 @@ export async function updateMemberRoleAction(c: MemberActionContext, payload: Re
     return c.json({ success: true })
 }
 
-/** DELETE /v1/members/:memberId, callable with an in-process route context (config-blob imports). */
 export async function removeMemberAction(c: MemberActionContext, payload: ResourceOrganizationContext, rawMemberId: string, capture: AuditChangeCapture | null) {
     let memberId: MemberId
     try {
@@ -196,8 +187,6 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
       if (!target) return c.json({ error: "member_not_found", message: "The organization member could not be found." }, 404)
 
       if (target.openworkWeb !== enabled) {
-        // Stripe can't bill zero people for Web, so the last one stays until
-        // the subscription is cancelled.
         if (!enabled && await organizationHasEligibleOpenWorkWebSubscription(organizationId)) {
           const { web } = await getOrganizationBillingQuantities(organizationId)
           if (web.quantity <= 1) {
@@ -208,12 +197,10 @@ export function registerOrgMemberRoutes<T extends { Variables: OrgRouteVariables
           }
         }
         await db.update(MemberTable).set({ openworkWeb: enabled }).where(memberCondition)
-        // The members list carries openworkWeb; clear it so the change shows at once.
         await cache.org.deleteMemberList(organizationId)
         try {
           await syncOrganizationBillingQuantities({ organizationId })
         } catch (error) {
-          // The change is saved; the next member change or the hourly job retries the quantity.
           appLogger.warn("openwork web quantity sync failed after member change", { organization_id: organizationId, member_id: memberId, error })
         }
       }

@@ -82,8 +82,6 @@ export function useDashboardTileGeometry(scopeKey: string, entryId: string, work
         reported = null;
         return;
       }
-      // A size callback can precede React's iframe height commit. Keep that
-      // report so the following resize can persist the committed dimensions.
       const iframe = node.querySelector("iframe");
       if (!iframe || Math.abs(iframe.getBoundingClientRect().height - measurement.frameHeight) > 1
         || size.outerHeight < measurement.frameHeight) return;

@@ -31,7 +31,6 @@ function clearWatermark(organizationId: string) {
   try {
     window.localStorage.removeItem(`${WATERMARK_KEY_PREFIX}${organizationId}`)
   } catch {
-    // Nothing to clear without storage.
   }
 }
 
@@ -39,18 +38,9 @@ function writeWatermark(organizationId: string, watermark: number) {
   try {
     window.localStorage.setItem(`${WATERMARK_KEY_PREFIX}${organizationId}`, String(watermark))
   } catch {
-    // Without storage a restart may announce a failure again; nothing else breaks.
   }
 }
 
-/**
- * Tells the owner once when one of their Automations fails or misses a run,
- * wherever they are in the app: a message that stays until it is dismissed,
- * and a system notification while the app is in the background. A failed
- * run's message opens the run; a missed run's offers to run it now or to move
- * its schedule to the cloud. Off unless the `automationFailureNotifications`
- * feature is on for the organization.
- */
 export function AutomationFailureNotifier() {
   const feature = useOrgFeatureState(AUTOMATION_FAILURE_NOTIFICATIONS_FEATURE)
   const enabled = feature.enabled
@@ -59,17 +49,12 @@ export function AutomationFailureNotifier() {
   const { client, organizationId, queryRoot } = context
   const queryClient = useQueryClient()
   const navigate = useNavigate()
-  // This app is one of the desktops a Desktop Automation runs on, unless the organization turned those off.
   const desktopAutomationsEnabled = useDesktopAutomationsEnabled()
   const onDesktop = isDesktopRuntime() && desktopAutomationsEnabled
 
-  // Once Den says the feature is off, forget the watermark: turning it back on
-  // starts fresh instead of announcing what failed meanwhile. A loading or
-  // unreachable flag keeps it, so failures while the app was closed are still announced.
   useEffect(() => {
     if (confirmedOff && organizationId) clearWatermark(organizationId)
   }, [confirmedOff, organizationId])
-  // Same key and request as the Automations page's list, so an open page adds no second poll.
   const listQuery = useQuery({
     queryKey: [...context.queryRoot, "list"],
     queryFn: () => client!.listAutomations(organizationId!, { limit: 100 }),
@@ -81,7 +66,6 @@ export function AutomationFailureNotifier() {
 
   useEffect(() => {
     if (!items || !organizationId || !client) return
-    // Read storage right before writing so another window's announcement is not repeated.
     const { notices, watermark } = automationFailureNotices(items, readWatermark(organizationId))
     writeWatermark(organizationId, watermark)
     if (notices.length === 0) return
@@ -97,7 +81,6 @@ export function AutomationFailureNotifier() {
       await queryClient.invalidateQueries({ queryKey: queryRoot })
       dispatchAutomationsStateChanged()
     }
-    /** `inCloud` runs this one occurrence in the cloud; otherwise it runs where the Automation does. */
     const runNow = async (notice: AutomationFailureNotice, inCloud: boolean, queued: string) => {
       try {
         const run = await client.runAutomationNow(organizationId, notice.automationId, inCloud ? { executionTarget: "cloud" } : {})
@@ -111,7 +94,6 @@ export function AutomationFailureNotifier() {
       try {
         await client.updateAutomation(organizationId, notice.automationId, { executionTarget: "cloud" })
         await refresh()
-        // Moving keeps the schedule; the run that was missed is still one click away.
         toast.success(`${notice.name} now runs in the cloud`, {
           description: "Its next runs start there, even when your desktop is offline.",
           action: { label: "Run now", onClick: () => void runNow(notice, false, `${notice.name} queued in the cloud`) },
@@ -129,7 +111,6 @@ export function AutomationFailureNotifier() {
       toast.warning(notice.title, {
         id: `automation-missed:${notice.runId}`,
         description: body,
-        // A choice to make, not news: it waits for an answer instead of timing out.
         duration: Infinity,
         action: offer.run
           ? { label: inCloud ? "Run in cloud" : "Run now", onClick: () => void runNow(notice, inCloud, inCloud ? `${notice.name} queued in the cloud` : `${notice.name} queued`) }
@@ -142,7 +123,6 @@ export function AutomationFailureNotifier() {
       if (notice.missed) continue
       notifyEvent({ kind: "system", severity: "error", title: notice.title, body: notice.body, dedupeKey: `automation-run:${notice.runId}` })
       notifyDesktopEvent({ type: "automation.failed", title: notice.title, body: notice.body })
-      // The bell lists only Activity, so this message is where the owner sees the failure: it stays until dismissed.
       toast.error(notice.title, {
         id: `automation-failed:${notice.runId}`,
         description: notice.body,
@@ -152,7 +132,6 @@ export function AutomationFailureNotifier() {
     }
     const missed = notices.flatMap((notice) => notice.missed ? [{ notice, desktopRunsAhead: notice.missed.desktopRunsAhead }] : [])
     if (missed.length === 0) return
-    // Whether the cloud can take the run is asked only now, with the same request the editor shares.
     void queryClient.fetchQuery({
       queryKey: [...queryRoot, "execution-targets"],
       queryFn: () => client.listAutomationRunners(organizationId),

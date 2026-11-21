@@ -1,9 +1,3 @@
-/**
- * Gateway provider writes shared by the inference provider routes and the
- * config-blob adapter (`config-blobs/areas/ai-gateway-providers.ts`). Each runs
- * inside the caller's transaction, after the caller locked the provider row and
- * re-checked Manage Gateway providers; audit capture stays with the caller.
- */
 import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"
 import { GatewayCredentialSetTable, GatewayLiteLlmIssuedKeyTable, GatewayTrueFoundryUserTable, GatewayModelGroupModelTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderModelTable, GatewayProviderOauthStateTable, GatewayProviderTable } from "@openwork-ee/den-db/schema"
 import { settleGatewayProviderUsageLimits } from "@openwork-ee/den-db/gateway-usage-limits"
@@ -22,7 +16,6 @@ import type { ModelsDevProvider } from "./models-dev.js"
 type GatewayCredential = typeof GatewayProviderCredentialTable.$inferSelect
 type GatewayModelRowId = typeof GatewayProviderModelTable.$inferSelect["id"]
 
-/** The documented non-secret destination settings of a Gateway provider. */
 export const gatewayProviderSettingsSchema = z.object({ project: z.string().trim().max(255).optional(), location: z.string().trim().max(63).optional(), resourceName: z.string().trim().max(63).optional(), apiVersion: z.string().trim().max(64).optional(), region: z.string().trim().max(63).optional(), upstreamBaseUrl: z.string().trim().max(2048).optional() }).strict()
 
 export function readProviderConfigName(config: Record<string, unknown>): string | null {
@@ -37,15 +30,6 @@ export type GatewayProviderPatch = {
   status?: (typeof GATEWAY_PROVIDER_STATUSES)[number]
 }
 
-/**
- * Name, model universe and status of a provider (PATCH /v1/inference-providers/:id).
- * Identity and destination are immutable. `trusted` is the provider's catalog,
- * loaded before the transaction (it may call models.dev).
- */
-/**
- * `options.syncModels: false` (config-blob imports changing only the name or status)
- * leaves the stored model rows as they are; otherwise they follow the catalog.
- */
 export async function patchGatewayProvider(tx: GatewayTx, existing: GatewayProvider, trusted: ModelsDevProvider | null, input: GatewayProviderPatch, options: { createModelIds?: ReadonlyMap<string, GatewayModelRowId>; syncModels?: boolean } = {}): Promise<GatewayProvider> {
   if (input.providerId !== undefined && input.providerId !== existing.provider_id) throw new GatewayWriteError(409, "provider_identity_immutable", "Create a separate provider rather than moving existing groups and credentials to another catalog provider.")
   if (!trusted || trusted.id !== existing.provider_id || trusted.npm !== readProviderConfigNpm(existing.provider_config)) throw new GatewayWriteError(400, "provider_requires_configuration")
@@ -63,7 +47,6 @@ export async function patchGatewayProvider(tx: GatewayTx, existing: GatewayProvi
   const catalog = resolveGatewayCatalog(trusted, modelIds, config, input.modelIds !== undefined)
   if (input.status === "disabled" && existing.status === "active") await tx.delete(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.gateway_provider_id, existing.id))
   const name = input.name ?? existing.name
-  // A custom provider's display name also lives in provider_config.name (what members and the desktop read).
   const providerConfig = isGatewayCustomProviderId(existing.provider_id) && name !== readProviderConfigName(config) ? { ...config, name } : config
   const provider: GatewayProvider = { ...existing, name, provider_config: providerConfig, model_ids: modelIds, status: input.status ?? existing.status, updated_at: new Date() }
   if (options.syncModels !== false || input.modelIds !== undefined) await writeGatewayModels(tx, provider, catalog.models, { createIds: options.createModelIds })
@@ -71,10 +54,6 @@ export async function patchGatewayProvider(tx: GatewayTx, existing: GatewayProvi
   return provider
 }
 
-/**
- * Deletes a credential set, its credentials and pending sign-ins. Referencing
- * grants must be gone first. Returns the credentials to revoke upstream after commit.
- */
 export async function removeGatewayCredentialSet(tx: GatewayTx, provider: GatewayProvider, id: typeof GatewayCredentialSetTable.$inferSelect["id"]): Promise<GatewayCredential[]> {
   const [set] = await tx.select().from(GatewayCredentialSetTable).where(and(eq(GatewayCredentialSetTable.id, id), eq(GatewayCredentialSetTable.gateway_provider_id, provider.id))).for("update")
   if (!set) throw new GatewayWriteError(404, "credential_set_not_found")
@@ -87,7 +66,6 @@ export async function removeGatewayCredentialSet(tx: GatewayTx, provider: Gatewa
   return rows.filter((row) => row.status !== "revoked")
 }
 
-/** Deletes a model group and its model links. Referencing grants must be gone first. */
 export async function removeGatewayModelGroup(tx: GatewayTx, provider: GatewayProvider, id: typeof GatewayModelGroupTable.$inferSelect["id"]): Promise<void> {
   const [group] = await tx.select().from(GatewayModelGroupTable).where(and(eq(GatewayModelGroupTable.id, id), eq(GatewayModelGroupTable.gateway_provider_id, provider.id)))
   if (!group) throw new GatewayWriteError(404, "model_group_not_found")
@@ -97,34 +75,18 @@ export async function removeGatewayModelGroup(tx: GatewayTx, provider: GatewayPr
   await tx.delete(GatewayModelGroupTable).where(eq(GatewayModelGroupTable.id, id))
 }
 
-/** Deletes exactly one access grant. Member credentials are retained; OAuth callbacks recheck remaining access. */
 export async function removeGatewayAccessGrant(tx: GatewayTx, provider: GatewayProvider, id: typeof GatewayProviderAccessTable.$inferSelect["id"]): Promise<void> {
   const [grant] = await tx.select().from(GatewayProviderAccessTable).where(and(eq(GatewayProviderAccessTable.id, id), eq(GatewayProviderAccessTable.gateway_provider_id, provider.id)))
   if (!grant) throw new GatewayWriteError(404, "access_grant_not_found")
-  // Callback reauthorization rejects lost set access while preserving consent through other grants.
   await tx.delete(GatewayProviderAccessTable).where(eq(GatewayProviderAccessTable.id, id))
   await pruneLiteLlmAssignments(tx, provider)
   if (isLiteLlmProviderId(provider.provider_id)) await pruneLiteLlmIssuedKeys(tx, provider)
   if (isTrueFoundryProviderId(provider.provider_id)) await pruneTrueFoundryMembers(tx, provider)
 }
 
-/**
- * Deletes the provider and everything under it. The caller holds the usage
- * organization lock (taken before any member row). Usage limits scoped to the
- * provider are settled by `choice` first (none: GatewayProviderUsageLimitsError
- * when such limits exist). LiteLLM keys OpenWork created are deleted in LiteLLM.
- * Returns the credentials to revoke upstream after commit.
- */
 export async function removeGatewayProvider(tx: GatewayTx, provider: GatewayProvider, actor: { organizationId: GatewayProvider["organization_id"]; memberId: GatewayProvider["created_by_org_membership_id"] }, choice: GatewayProviderRemovalLimitChoice | undefined): Promise<GatewayCredential[]> {
-  // Usage limits scoped to this provider are moved or archived first, so a missing choice
-  // stops the request before anything is deleted here or in LiteLLM.
   await settleGatewayProviderUsageLimits(tx, actor, provider.id, choice)
-  // Keys OpenWork created in LiteLLM go first, while the admin key is still stored. This runs
-  // inside the transaction, after the caller locked its member row and re-checked the
-  // permission, so a concurrent membership removal or revocation stops the request before
-  // any external key is deleted.
   if (isLiteLlmProviderId(provider.provider_id)) await deleteLiteLlmIssuedKeys(provider)
-  // TrueFoundry tokens delete themselves (admins cannot delete another user's tokens).
   if (isTrueFoundryProviderId(provider.provider_id)) await deleteTrueFoundryTokens(provider)
   await tx.delete(GatewayProviderOauthStateTable).where(eq(GatewayProviderOauthStateTable.gateway_provider_id, provider.id))
   await tx.delete(GatewayLiteLlmIssuedKeyTable).where(eq(GatewayLiteLlmIssuedKeyTable.gateway_provider_id, provider.id))
@@ -138,6 +100,5 @@ export async function removeGatewayProvider(tx: GatewayTx, provider: GatewayProv
   await tx.delete(GatewayModelGroupTable).where(eq(GatewayModelGroupTable.gateway_provider_id, provider.id))
   await tx.delete(GatewayProviderModelTable).where(eq(GatewayProviderModelTable.gateway_provider_id, provider.id))
   await tx.delete(GatewayProviderTable).where(eq(GatewayProviderTable.id, provider.id))
-  // Request logs and rollups deliberately retain historical resource IDs.
   return credentials.filter((row) => row.status !== "revoked")
 }

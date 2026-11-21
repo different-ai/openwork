@@ -9,7 +9,6 @@ import { settingsNavigationFromPathname } from "@/react-app/shell/workspace-rout
 
 import { browserSecretKindLabel } from "../panel/browser-secrets"
 
-/** "com.apple.TextEdit" reads as "TextEdit"; the agent's own purpose says the rest. */
 function appLabel(appId: string | undefined) {
   const name = appId?.split(".").filter(Boolean).at(-1)
   return name && name.length <= 48 ? name : "a Mac app"
@@ -17,10 +16,8 @@ function appLabel(appId: string | undefined) {
 
 const SCRIPT_APPS = { applescript: "AppleScript", jxa: "JavaScript for Automation", blender: "Blender" } as const
 
-/** Bidi controls, zero-width and other invisible characters change how code reads without changing what runs. */
 const HIDDEN_CHARACTERS = /[\u0000-\u0008\u000B-\u000C\u000E-\u001F\u007F-\u009F\u00AD\u061C\u115F-\u1160\u180E\u200B-\u200F\u2028-\u202E\u2060-\u206F\u3164\uFE00-\uFE0F\uFEFF\uFFA0\uFFF9-\uFFFB\u{E0000}-\u{E007F}]/gu
 
-/** Text with every hidden character shown as its code point, and how many there were. */
 function revealHidden(text: string): { parts: ReactNode[]; hidden: number } {
   const parts: ReactNode[] = []
   let last = 0
@@ -34,10 +31,6 @@ function revealHidden(text: string): { parts: ReactNode[]; hidden: number } {
   return { parts, hidden: (parts.length - 1) / 2 }
 }
 
-/**
- * The script exactly as it runs: every hidden character is shown as its code point,
- * and the text keeps its stored order instead of being reordered for right-to-left.
- */
 function ScriptCode({ code, label }: { code: string; label: string }) {
   const { parts, hidden } = revealHidden(code)
   return (
@@ -48,11 +41,6 @@ function ScriptCode({ code, label }: { code: string; label: string }) {
   )
 }
 
-/**
- * The agent wants to run an app script and the person's organization asks before each one.
- * Nothing runs until the person approves this exact code here; the broker checks the
- * answer against this request, and nothing is remembered.
- */
 function ScriptRequest({ sessionId, request, script }: { sessionId: string; request: ComputerRequest; script: NonNullable<ComputerRequest["script"]> }) {
   const name = SCRIPT_APPS[script.app]
   const [busy, setBusy] = useState<"allow" | "dismiss" | null>(null)
@@ -94,10 +82,6 @@ function ScriptRequest({ sessionId, request, script }: { sessionId: string; requ
   )
 }
 
-/**
- * An app's file panel or a web page is about to receive these files. Nothing is
- * handed over until the person approves this list; the broker checks the answer.
- */
 function FilesRequest({ sessionId, request, files }: { sessionId: string; request: ComputerRequest; files: NonNullable<ComputerRequest["files"]> }) {
   const [busy, setBusy] = useState<"allow" | "always" | "dismiss" | "remember" | null>(null)
   const [error, setError] = useState("")
@@ -116,11 +100,9 @@ function FilesRequest({ sessionId, request, files }: { sessionId: string; reques
   }
 
   const count = files.names.length
-  // A save names where the app will write a file: its name and folder, with the full path on hover.
   const saving = files.save === true && count === 1 ? files.names[0]! : null
   const savingName = saving?.slice(saving.lastIndexOf("/") + 1)
   const savingFolder = saving ? saving.slice(0, saving.lastIndexOf("/")).split("/").pop() || "/" : null
-  // Each name exactly as stored: hidden characters shown, no right-to-left reordering.
   const shown = files.names.map(revealHidden)
   const hidden = shown.reduce((sum, name) => sum + name.hidden, 0)
   return (
@@ -156,10 +138,6 @@ function FilesRequest({ sessionId, request, files }: { sessionId: string; reques
   )
 }
 
-/**
- * A password or one-time code is about to be typed on this exact site, or into this
- * app. Nothing is typed until the person confirms it; any other recipient asks again.
- */
 function CredentialRequest({ sessionId, request, credential }: { sessionId: string; request: ComputerRequest; credential: NonNullable<ComputerRequest["credential"]> }) {
   const [busy, setBusy] = useState<"allow" | "always" | "dismiss" | null>(null)
   const [error, setError] = useState("")
@@ -178,8 +156,6 @@ function CredentialRequest({ sessionId, request, credential }: { sessionId: stri
   }
 
   const site = credential.site?.replace(/^https:\/\//, "")
-  // A name can be copied by another app; the id cannot, so it is always shown. Both are
-  // shown exactly as stored: hidden characters visible, no right-to-left reordering.
   const name = !site && credential.app && credential.app !== credential.appId ? revealHidden(credential.app) : null
   const id = revealHidden(site ?? credential.appId ?? credential.app ?? "this app")
   const hidden = id.hidden + (name?.hidden ?? 0)
@@ -268,11 +244,6 @@ function SecretRequest({ sessionId, request, site, secret }: { sessionId: string
   )
 }
 
-/**
- * Shown above the composer while the agent waits for computer use. The tool
- * call carries on by itself once the person answers, so the agent never has
- * to ask them to go set it up and try again.
- */
 export function ComputerRequestPanel({ sessionId, request }: { sessionId: string; request: ComputerRequest }) {
   if (request.reason === "script" && request.script) return <ScriptRequest sessionId={sessionId} request={request} script={request.script} />
   if (request.reason === "files" && request.files) return <FilesRequest sessionId={sessionId} request={request} files={request.files} />
@@ -285,7 +256,6 @@ function SetupRequest({ sessionId, request }: { sessionId: string; request: Comp
   const remote = request.placement === "remote"
   const navigate = useNavigate()
   const { pathname } = useLocation()
-  // Setup lives in Settings; the agent keeps waiting and continues once the computer is ready.
   const openSetup = () => {
     const target = settingsNavigationFromPathname(pathname, "computer")
     navigate(target.to, { state: target.state })

@@ -1,15 +1,3 @@
-// Translates an Auto request (OpenAI Chat Completions) to the OpenAI Responses
-// API, and the Responses output (JSON or SSE) back to Chat Completions.
-//
-// OpenAI and Azure OpenAI models go through Responses because that is how the
-// desktop calls them (`@opencode/ai/providers/openai`, see reasoningVariants in
-// packages/opencode-plugin/src/providers.ts): `reasoning.effort` with
-// `summary: "auto"` and `include: ["reasoning.encrypted_content"]`. Chat
-// Completions rejects function tools with a reasoning effort on current models.
-//
-// Requests are stateless (`store: false`). The encrypted reasoning items a
-// response produced before its tool calls are handed to `remember` and
-// replayed ahead of those calls on the next request of the turn.
 import type { AutoRouterThinkingLevel } from "@openwork/types/den/auto-router"
 import { contentText, isJsonObject, type AutoRouteInfo, type JsonObject } from "@openwork-ee/gateway-protocols/chat"
 import type { AutoTranslator } from "@openwork-ee/gateway-protocols/protocol"
@@ -122,7 +110,6 @@ export function toResponsesBody(body: JsonObject, input: {
     next.reasoning = { effort, summary: "auto" }
     next.include = ["reasoning.encrypted_content"]
   } else {
-    // Sampling settings are only accepted when no reasoning effort is set.
     if (typeof body.temperature === "number") next.temperature = body.temperature
     if (typeof body.top_p === "number") next.top_p = body.top_p
   }
@@ -158,7 +145,6 @@ function finishReason(response: JsonObject, toolCalls: boolean) {
   return toolCalls ? "tool_calls" : "stop"
 }
 
-/** Encrypted reasoning items, stripped to what a stateless request may send back. */
 function replayableReasoning(items: JsonObject[]): JsonObject[] {
   return items.filter((item) => item.type === "reasoning" && typeof item.id === "string" && typeof item.encrypted_content === "string" && item.encrypted_content.trim())
     .map((item) => ({
@@ -237,7 +223,6 @@ export function responsesStreamToChat(body: ReadableStream<Uint8Array>, route: A
   let finished = false
   let sawReasoningSummary = false
   const usage: ResponsesUsage = { input: 0, output: 0, cached: 0, reasoning: 0 }
-  // Output item id (and output_index) -> chat tool call index.
   const toolIndexByItem = new Map<string, number>()
   const toolCallIds: string[] = []
   const reasoningItems: JsonObject[] = []
@@ -302,7 +287,6 @@ export function responsesStreamToChat(body: ReadableStream<Uint8Array>, route: A
         return typeof parsed.delta === "string" ? `${start()}${chunk({ content: parsed.delta })}` : ""
       case "response.reasoning_summary_text.delta": {
         if (typeof parsed.delta !== "string") return ""
-        // Separate summary parts the way the desktop renders them.
         const index = typeof parsed.summary_index === "number" ? parsed.summary_index : 0
         const separator = sawReasoningSummary && index !== summaryIndex ? "\n\n" : ""
         sawReasoningSummary = true
@@ -342,7 +326,6 @@ export function responsesStreamToChat(body: ReadableStream<Uint8Array>, route: A
         else if (line.startsWith("event:")) event = line.slice(6).trim()
         else if (line.startsWith("data:")) data.push(line.slice(5).replace(/^ /, ""))
       }
-      // Keep heartbeats flowing so proxies keep the connection open.
       if (comments.length && !data.length) controller.enqueue(encoder.encode(`${comments.join("\n")}\n\n`))
       const out = handle(event, data.join("\n"))
       if (out) controller.enqueue(encoder.encode(out))
@@ -358,7 +341,6 @@ export function responsesStreamToChat(body: ReadableStream<Uint8Array>, route: A
     flush(controller) {
       buffer += decoder.decode()
       drain(controller, true)
-      // A stream that ended without response.completed still ends cleanly for the client.
       if (started && !finished) controller.enqueue(encoder.encode(finish({})))
     },
   }))

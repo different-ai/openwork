@@ -7,20 +7,11 @@ import { getErrorMessage, requestJson } from "../../../_lib/den-flow";
 import { ORG_SCOPE_HEADER } from "../../../_lib/org-scope";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 
-/*
- * The organization's limit on what other devices may do on its members'
- * computers (`GET/PATCH /v1/org/remote-session-settings`). It is the only
- * remote-access call Den web makes: what applies on each computer arrives
- * with the computer itself, and Den web reads no sessions.
- */
-
 const settingsPath = "/v1/org/remote-session-settings";
 const REQUEST_TIMEOUT_MS = 35_000;
 
-/** A refusal with Den's code and status, and a sentence to show: Den's own, else the caller's fallback. */
 export class RemoteAccessSettingsError extends Error {
   readonly code: string;
-  /** The HTTP status Den answered with; null when no answer arrived. */
   readonly status: number | null;
   constructor(code: string, message: string, status: number | null = null) {
     super(message);
@@ -46,14 +37,12 @@ async function request(orgId: string, method: "GET" | "PATCH", body: unknown, fa
     ...(body === undefined ? {} : { body: JSON.stringify(body) }),
     ...(signal ? { signal } : {}),
   }, REQUEST_TIMEOUT_MS).catch((failure: unknown) => {
-    // The browser reports a dropped connection as a bare TypeError; say what happened instead.
     if (failure instanceof TypeError) throw new RemoteAccessSettingsError("network_error", "Couldn't reach OpenWork. Check your connection and try again.");
     throw failure;
   });
   const code = isRecord(payload) && typeof payload.error === "string" ? payload.error : null;
   if (response.ok && !code) return payload;
   const message = getErrorMessage(payload, response.status === 401 ? "Your session expired. Sign in again." : fallback);
-  // A bare code is not a sentence to show; the caller's fallback is.
   throw new RemoteAccessSettingsError(code ?? `http_${response.status}`, message === code ? fallback : message, response.status);
 }
 
@@ -97,7 +86,6 @@ export function useSaveRemoteAccessSettings(orgId: string) {
     },
     onSuccess: (saved) => {
       queryClient.setQueryData(remoteAccessSettingsQueryKey(orgId), saved);
-      // What applies on each computer follows the organization's limit: read the lists again.
       void queryClient.invalidateQueries({ queryKey: ["organization-computers", orgId] });
       void queryClient.invalidateQueries({ queryKey: ["my-computers", orgId] });
     },

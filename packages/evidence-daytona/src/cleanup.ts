@@ -37,9 +37,6 @@ export async function cleanupDaytonaEvidence(api = new DaytonaApi(), { dryRun = 
     images.find((s) => s.state === "active")?.name, worlds.find((s) => s.state === "active")?.name]);
   const inUse = (inventory: Sandbox[], id: string, name: string) => inventory.some((s) =>
     s.snapshot === id || s.snapshot === name || s.labels.checkpoint === name
-    // Protect the target as well as the parent. Known targets let cleanup free
-    // unrelated expired evidence while a quota-rejected builder waits. Unknown
-    // targets fail closed, including the interval before a fork is labelled.
     || (s.labels.kind === BUILDER_KIND && (!s.labels.layer || s.labels.layer === digest(name).slice(0, 24)))
     || (s.labels.kind === CAPTURE_KIND && (!s.labels.checkpoint || s.labels.checkpoint === name)));
   const expired = (s: typeof snapshots[number]) =>
@@ -53,7 +50,6 @@ export async function cleanupDaytonaEvidence(api = new DaytonaApi(), { dryRun = 
     if (snapshot.state !== "active" || !Number.isFinite(age(snapshot.createdAt))
       || protectedNames.has(snapshot.name) || !expired(snapshot) || inUse(sandboxes, snapshot.id, snapshot.name)) continue;
     if (!dryRun) {
-      // Re-read before mutation: a scheduled job's inventory can age while it runs.
       const current = await api.getSnapshot(snapshot.name);
       if (!current || current.id !== snapshot.id || current.state !== "active"
         || current.lastUsedAt !== snapshot.lastUsedAt || inUse(await api.listSandboxes(), snapshot.id, snapshot.name)) continue;
@@ -62,9 +58,6 @@ export async function cleanupDaytonaEvidence(api = new DaytonaApi(), { dryRun = 
     result.deletedSnapshots.push(snapshot.name);
   }
   for (const sandbox of sandboxes) {
-    // Access and a guest shutdown timer enforce the exact two-hour deadline.
-    // This independent controller also reclaims a still-active expired preview,
-    // including one whose guest shutdown was prevented or whose launcher died.
     if (sandbox.labels.kind === PREVIEW_KIND && Date.parse(sandbox.labels.expiresAt ?? "") <= now) {
       if (!dryRun) {
         const current = await api.getSandbox(sandbox.id);
@@ -75,8 +68,6 @@ export async function cleanupDaytonaEvidence(api = new DaytonaApi(), { dryRun = 
       result.deletedSandboxes.push(sandbox.name);
       continue;
     }
-    // Cold saves stop their builder before snapshotting. A stopped builder is
-    // not proof of abandonment; only its controller/provider TTL may remove it.
     if ([BUILDER_KIND, CAPTURE_KIND].includes(sandbox.labels.kind)) continue;
     if (!OWNED_KINDS.has(sandbox.labels.kind) || !TERMINAL_STATES.has(sandbox.state)
       || !(age(sandbox.lastActivityAt ?? sandbox.createdAt) > SANDBOX_MAX_AGE_MS)) continue;

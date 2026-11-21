@@ -1,4 +1,3 @@
-/** Telemetry is a closed code vocabulary, never arbitrary provider error types or text. */
 const CODES = new Set([
   "aborted", "superseded", "runner_error", "turn_timeout", "max_steps_exceeded", "stuck_repeating", "output_limit",
   "model_credentials_missing", "mcp_unavailable", "model_unreachable", "model_failed", "model_bad_response",

@@ -59,24 +59,10 @@ const softNoticeClass =
 const errorBannerClass =
   "rounded-xl border border-red-7/30 bg-red-1/40 px-3 py-2 text-xs text-red-11";
 
-/* ------------------------------------------------------------------ */
-/*  Main surface                                                      */
-/* ------------------------------------------------------------------ */
-
-/**
- * React port of the Solid `DenSignInSurface`
- * (`apps/app/src/app/cloud/den-signin-surface.tsx` on dev).
- *
- * Stateless presentation: all state + actions are driven by the parent
- * (ForcedSigninPage for the full-screen gate, or the Den settings panel
- * for the embedded "panel" variant). Matches the Solid contract 1:1 so
- * feature parity is obvious.
- */
 export function DenSignInSurface(props: DenSignInSurfaceProps) {
   const variant: DenSignInSurfaceVariant = props.variant ?? "panel";
   const appName = props.appName?.trim() || "OpenWork";
 
-  /* -- Panel content (reused by both variants) -- */
   const panelContent = (
     <div className={`${settingsPanelClass} space-y-4`}>
       <div className="flex flex-col gap-4 md:flex-row md:items-start md:justify-between">
@@ -213,21 +199,13 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
     </div>
   );
 
-  /* ---------------------------------------------------------------- */
-  /*  Fullscreen: two-column split layout                             */
-  /* ---------------------------------------------------------------- */
-
   if (variant === "fullscreen") {
-    // Paper first-load spec: same centered welcome card as WelcomePage.
-    // Forced sign-in only removes the "Use Without Cloud" option.
     return (
       <div ref={props.ref} className="relative min-h-dvh bg-background text-foreground">
-        {/* Pixel-dither mosaic background (dark:invert keeps it visible in dark mode) */}
         <div className="pointer-events-none absolute inset-0 z-0 overflow-hidden opacity-[0.1] dark:invert">
           <DitherBackdrop />
         </div>
 
-        {/* Titlebar drag region */}
         <PageTitlebarRegion />
 
         <div className="relative z-10 flex min-h-dvh items-center justify-center px-6 py-16">
@@ -260,9 +238,6 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
                 type="button"
                 size="lg"
                 className="h-12 w-full text-[15px] font-semibold"
-                // Opens on the sign-up tab (label stays "Sign in"): most
-                // people hitting this are new, and the web page's tabs let
-                // returning users switch to sign-in in one tap.
                 onClick={() => props.onOpenBrowserAuth("sign-up")}
                 disabled={props.authBusy || props.sessionBusy}
               >
@@ -291,7 +266,6 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
                 <div className={errorBannerClass}>{props.authError}</div>
               ) : null}
 
-              {/* Paste code disclosure */}
               <div className="space-y-3">
                 <button
                   type="button"
@@ -339,7 +313,6 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
                 ) : null}
               </div>
 
-              {/* Developer mode */}
               {props.developerMode ? (
                 <div className="space-y-3 rounded-xl border border-dls-border bg-dls-surface p-4">
                   <TextInput
@@ -387,10 +360,6 @@ export function DenSignInSurface(props: DenSignInSurfaceProps) {
       </div>
     );
   }
-
-  /* ---------------------------------------------------------------- */
-  /*  Panel variant (settings embed): unchanged                       */
-  /* ---------------------------------------------------------------- */
 
   return panelContent;
 }

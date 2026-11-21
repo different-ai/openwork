@@ -47,7 +47,6 @@ export function inferInstallerSource(provider: ManagedInstallerProvider, templat
   try { return installerSourceBaseUrl(provider, url.href) } catch { return null }
 }
 
-/** One deadline includes response headers and all streamed bodies. No redirects or ambient credentials. */
 export async function boundedReleaseGet(url: string, max: number, signal: AbortSignal, fetcher: typeof fetch = fetch, accept = "application/octet-stream") {
   const name = new URL(url).pathname.split("/").at(-1) ?? "release object"
   let response: Response
@@ -97,7 +96,6 @@ const repositories = {
   headless_runner: "ghcr.io/different-ai/openwork-headless-runner", workbot: "ghcr.io/different-ai/openwork-workbot", ai_gateway: "ghcr.io/different-ai/openwork-inference",
 }
 
-/** Inspect the publisher's regular-file archive without writing or executing its contents. */
 export function inspectInstallerBundle(provider: ManagedInstallerProvider, version: string, compressed: Buffer) {
   const tar = gunzipSync(new Uint8Array(compressed), { maxOutputLength: 64 * 1024 * 1024 })
   const files = new Map<string, Buffer>()

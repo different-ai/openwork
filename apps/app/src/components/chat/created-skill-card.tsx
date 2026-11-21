@@ -13,9 +13,7 @@ import {
 } from "@/lib/created-skill"
 
 export type CreatedSkillsContextValue = CreatedSkillsModel & {
-  /** Open the skill in Library. Absent where there is no Library (read-only views). */
   onOpenSkill?: (detailId: string) => void
-  /** Read the skill's current access without changing it. */
   onCheckSharing?: (pluginId: string) => Promise<void>
 }
 
@@ -37,7 +35,6 @@ export function useCreatedSkills() {
   return React.useContext(CreatedSkillsContext)
 }
 
-/** The 36px neutral tile every state shares, so the card never shifts as it fills in. */
 function KindTile() {
   return (
     <span aria-hidden="true" className="flex size-9 shrink-0 items-center justify-center rounded-[9px] bg-slate-4 text-muted-foreground">
@@ -48,11 +45,6 @@ function KindTile() {
 
 const OPEN_CLASS = "h-7 rounded-lg bg-background px-3 text-xs before:rounded-[inherit]"
 
-/**
- * The skill a turn produced, kept in view as the result even when the turn's
- * steps fold. Name and access come from validated results only; Open is an
- * explicit action that opens the existing Library detail, never on its own.
- */
 export function CreatedSkillCard({ card }: { card: CreatedSkillCardModel }) {
   const { onOpenSkill, onCheckSharing } = useCreatedSkills()
   const sharing = React.useContext(CreatedSkillSharingContext)

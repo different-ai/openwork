@@ -14,13 +14,11 @@ export const CHROME_BOTTOM = "--wb-chrome-bottom";
 export function observeFloatingChrome(frame: Frame, top: Element | null, bottom: Element | null) {
   const write = (name: string, box: Element | null) => {
     const value = `${box ? Math.ceil(box.getBoundingClientRect().height) : 0}px`;
-    // Only on change: a restyle of the frame lays the whole conversation out again.
     if (frame.style.getPropertyValue(name) !== value) frame.style.setProperty(name, value);
   };
   const measure = () => { write(CHROME_TOP, top); write(CHROME_BOTTOM, bottom); };
   measure();
   if (!top && !bottom) return { measure, dispose() {} };
-  // Safe areas, the keyboard, a growing message box, a context chip or the status line all change these heights.
   const observer = new ResizeObserver(measure);
   for (const box of [top, bottom]) if (box) observer.observe(box, { box: "border-box" });
   return { measure, dispose() { observer.disconnect(); } };

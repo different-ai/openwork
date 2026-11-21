@@ -1,20 +1,10 @@
 import type { ReactNode } from "react";
 
-/**
- * DenPageHeader
- *
- * Flat page header for dashboard pages that lead with content instead of the
- * gradient hero (`DashboardPageTemplate`): title and description on the left,
- * the page's primary action plus an optional caption on the right.
- */
 export type DenPageHeaderProps = {
   title: ReactNode;
   description?: ReactNode;
-  /** One muted line of state right under the title ("6 of 17 online"), instead of a description. */
   state?: ReactNode;
-  /** Right-aligned slot for the page's primary action. */
   action?: ReactNode;
-  /** Muted line under the action — pricing, counts, sync timestamps. */
   caption?: ReactNode;
   className?: string;
   size?: "default" | "compact";

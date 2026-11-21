@@ -32,13 +32,6 @@ const memberPath = (path: string) => path === DESKTOP_FREE_STATUS_PATH ? MEMBER_
   : path === DESKTOP_FREE_MODELS_PATH ? MEMBER_FREE_MODELS_PATH : path === DESKTOP_FREE_CHAT_PATH ? MEMBER_FREE_CHAT_PATH : path === DESKTOP_FREE_RESPONSES_PATH ? MEMBER_FREE_RESPONSES_PATH : path;
 const statusHttpCode = (state: DesktopFreeAccessStatus["state"]) => state === "update_required" ? 426 : state === "exhausted" ? 429 : 503;
 
-/**
- * The local end of free Auto. The engine talks to it on loopback with a
- * per-identity `owf_local_` token; it forwards to the Gateway as a signed-in
- * member (Den-issued `ow_inf_` key) or, signed out, as an open client with
- * OpenCode Zen's "public" key, which the Gateway limits by IP. It forwards
- * only while a task the user started from the app is live.
- */
 export class AnonymousInferenceService {
   private readonly settings: RelaySettings;
   private readonly enabled: boolean;
@@ -47,8 +40,6 @@ export class AnonymousInferenceService {
   private journey: Promise<string> | null = null;
   private analyticsEnabled: Promise<boolean> | null = null;
   private analyticsQueue: Promise<void> = Promise.resolve();
-  // The member credential the engine's relay token is bound to. Held only in memory, like the credential itself,
-  // and compared directly: it is an identity, not something to derive a digest from.
   private relayPrincipal: string | null = null;
   private relayPrincipalPending = false;
   private boundPort: number | null = null;
@@ -66,19 +57,15 @@ export class AnonymousInferenceService {
   private readonly activation: TaskActivation;
   private readonly selectedAutoSessions = new Set<string>();
   private preferenceQueue: Promise<void> = Promise.resolve();
-  /** Set by the server: reload the engine's providers after the relay credential it holds was replaced. */
   onEngineConfigChanged: (() => void) | null = null;
 
   constructor(private readonly config: ServerConfig, private readonly logger: Logger,
     environment: NodeJS.ProcessEnv = process.env, private readonly now: () => number = Date.now) {
     this.settings = readRelaySettings(environment);
     this.activation = new TaskActivation(now);
-    // The desktop host says whether this installation may offer Auto; OpenWork web and headless servers always may.
     this.host = config.anonymousInference?.desktop ?? null;
     this.enabled = !config.readOnly && !this.settings.disabledByEnvironment;
   }
-
-  // ── Identity ───────────────────────────────────────────────────────────
 
   setMemberSession(session: CloudProviderDenSession | null): Promise<void> {
     const next = session ? { ...session, baseUrl: session.baseUrl.replace(/\/+$/, "") } : null;
@@ -105,14 +92,12 @@ export class AnonymousInferenceService {
   }
 
   private rotateRelayCredential(): void {
-    // A new engine credential means a new identity: tasks the previous identity started are over.
     this.activation.close();
     this.selectedAutoSessions.clear();
     this.localAccessToken = freshLocalToken();
     this.cachedStatus = null;
     this.failures.clear();
     this.relayConfigUpdate = this.relayConfigUpdate.then(async () => {
-      // The running engine still holds the old credential until it reloads its providers.
       if (this.boundPort !== null && !this.stopped && await this.initialize(this.boundPort)) this.onEngineConfigChanged?.();
     }).catch(() => {
       this.relayConfigFailed = true;
@@ -137,7 +122,6 @@ export class AnonymousInferenceService {
     finally { if (this.memberCredentialPromise === pending) this.memberCredentialPromise = null; }
   }
 
-  /** Trades the Den session for the member's Auto key, then makes it the relay's principal. */
   private async exchangeMemberCredential(session: CloudProviderDenSession): Promise<string> {
     const signal = AbortSignal.any([this.identityController.signal, AbortSignal.timeout(SESSION_TIMEOUT_MS)]);
     try {
@@ -176,8 +160,6 @@ export class AnonymousInferenceService {
     }
   }
 
-  // ── Engine configuration and dispatch guard ────────────────────────────
-
   async initialize(boundPort: number): Promise<boolean> {
     this.boundPort = boundPort;
     this.cachedStatus = null;
@@ -208,9 +190,6 @@ export class AnonymousInferenceService {
     return changed;
   }
 
-  // ── The person's Auto on/off preference ────────────────────────────────
-
-  /** Whether Auto is turned on here, whether it could be, and whether it is registered right now. */
   async preferences(): Promise<AutoPreferences> {
     const runtime = await readGlobalRuntimeOpencodeConfig(this.config);
     const enabled = !runtimeDisabledProviderList(runtime).includes(ANONYMOUS_INFERENCE_PROVIDER_ID);
@@ -218,7 +197,6 @@ export class AnonymousInferenceService {
     return { enabled, available: enabled && canEnable && this.available && !this.relayConfigFailed, canEnable };
   }
 
-  /** Turns Auto on or off for this device; turning it off also retires the engine's relay credential. Calls run one at a time. */
   setEnabled(enabled: boolean): Promise<AutoPreferences> {
     const run = this.preferenceQueue.then(async () => {
       if (this.config.readOnly) throw new ApiError(403, "read_only", "This device is read-only.");
@@ -249,7 +227,6 @@ export class AnonymousInferenceService {
     };
   }
 
-  /** Throws unless the engine config, local policy and identity all still allow a call to leave the machine. */
   private async assertDispatchAllowed(): Promise<void> {
     const signal = this.identityController.signal;
     const token = this.localAccessToken;
@@ -271,15 +248,11 @@ export class AnonymousInferenceService {
     if (this.host && !this.host.eligible()) throw new Error("Desktop free inference is not available for this installation.");
   }
 
-  // ── Status and task activation ─────────────────────────────────────────
-
-  /** A person asked (preflight before a send, or Retry): ask the gateway again. */
   async preflight(): Promise<DesktopFreeAccessStatus> {
     return this.status(true);
   }
 
   async status(force = false): Promise<DesktopFreeAccessStatus> {
-    // A deployment opt-out uses the same quiet UI state as a switched-off gateway.
     if (this.settings.disabledByEnvironment) return this.unavailable("free_disabled");
     const signal = this.identityController.signal;
     try {
@@ -306,11 +279,6 @@ export class AnonymousInferenceService {
     }
   }
 
-  /**
-   * Runs on every task request the app sends through the OpenWork server. A
-   * send with Auto selected opens (or extends) the activation window that the
-   * engine's relayed model calls need; ending the session closes it.
-   */
   async assertTaskAccess(request: Request, path: string): Promise<void> {
     const route = taskRoute(request.method, path);
     if (!route) return;
@@ -321,7 +289,6 @@ export class AnonymousInferenceService {
     const free = isRecord(model) ? model.providerID === DESKTOP_FREE_PROVIDER_ID
       : typeof model === "string" && model.startsWith(`${DESKTOP_FREE_PROVIDER_ID}/`);
     if (route.kind === "model") {
-      // Bound memory even when sessions are abandoned. A fresh picker selection will re-register an evicted session.
       if (this.selectedAutoSessions.size >= 1000) this.selectedAutoSessions.clear();
       if (free) this.selectedAutoSessions.add(route.sessionID); else this.selectedAutoSessions.delete(route.sessionID);
       if (!free) this.activation.end(route.sessionID);
@@ -334,15 +301,10 @@ export class AnonymousInferenceService {
     this.activation.start(route.sessionID);
   }
 
-  // ── Analytics correlation, only with the app's analytics setting on ───
-
-  /** Records the app's analytics setting. Off also forgets the journey, so a later opt-in cannot be linked to it. */
   setAnalyticsEnabled(enabled: boolean): Promise<{ enabled: boolean }> {
     const pending = this.journey;
     this.analyticsEnabled = Promise.resolve(enabled);
     this.journey = null;
-    // Writes run one at a time so quick toggles persist in order. Persisting only carries the choice across
-    // restarts; the in-memory value above already applies to new requests.
     const run = this.analyticsQueue.then(async () => {
       await pending?.catch(() => undefined);
       await writeFreeAutoAnalyticsEnabled(this.config, enabled).catch(() => undefined);
@@ -352,18 +314,13 @@ export class AnonymousInferenceService {
     return run;
   }
 
-  /** The journey header, or nothing until the app has reported that analytics is on. */
   private async journeyHeaders(): Promise<Record<string, string>> {
     this.analyticsEnabled ??= readFreeAutoAnalyticsEnabled(this.config);
     const decision = this.analyticsEnabled;
-    // A setting change while this request waited wins over the value it read.
     if (!await decision || decision !== this.analyticsEnabled) return {};
     this.journey ??= readFreeAutoJourney(this.config);
-    // Scope the anonymous identifier to this Gateway origin; account changes keep the same journey.
     return { "x-openwork-free-journey": createHash("sha256").update(`${this.settings.origin}:${await this.journey}`).digest("hex") };
   }
-
-  // ── Gateway calls ──────────────────────────────────────────────────────
 
   private async remote(path: string, method: string, body: Uint8Array<ArrayBuffer>, requestSignal = AbortSignal.timeout(SESSION_TIMEOUT_MS), relayToken?: string): Promise<Response> {
     const signal = AbortSignal.any([requestSignal, this.identityController.signal]);
@@ -373,7 +330,6 @@ export class AnonymousInferenceService {
     const member = await this.memberAuthorization();
     if (relayToken) this.assertRelayIdentity(relayToken);
     signal.throwIfAborted();
-    // Signed out, like OpenCode Zen: no device identity, just the shared "public" key; the gateway limits it by IP.
     const authorization = member ?? `Bearer ${DESKTOP_FREE_OPEN_API_KEY}`;
     const actualPath = member ? memberPath(path) : path;
     const journey = await this.journeyHeaders();
@@ -392,8 +348,6 @@ export class AnonymousInferenceService {
     throw failure;
   }
 
-  // ── Engine-facing relay ────────────────────────────────────────────────
-
   async handle(request: Request, endpoint: "models" | "chat/completions" | "responses"): Promise<Response> {
     const supplied = Buffer.from(request.headers.get("authorization")?.match(/^Bearer\s+(.+)$/i)?.[1] ?? "");
     const relayToken = this.localAccessToken;
@@ -411,7 +365,6 @@ export class AnonymousInferenceService {
       this.assertRelayIdentity(relayToken);
       await this.assertDispatchAllowed();
       this.assertRelayIdentity(relayToken);
-      // Only the engine working on a task the user started from the app may spend the allowance.
       if (endpoint !== "models" && !this.activation.allows(request.headers.get("x-openwork-session-id"))) {
         return jsonError(403, "auto_not_activated", "Auto only runs for tasks started from OpenWork. Send a message with Auto selected to continue.");
       }
@@ -478,8 +431,6 @@ export class AnonymousInferenceService {
       return jsonError(503, "anonymous_unavailable", "OpenWork Free is temporarily unavailable. Try again later or use your own provider.");
     } finally { if (!streaming) cleanup(); }
   }
-
-  // ── Shutdown ───────────────────────────────────────────────────────────
 
   private disable(): void {
     this.available = false;

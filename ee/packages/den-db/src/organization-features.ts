@@ -18,13 +18,6 @@ import { AuthUserTable } from "./schema/auth"
 import { MemberTable, OrganizationTable } from "./schema/org"
 import { FeatureChangeTable, FeatureRolloutTable, FeatureUsageTable, MemberFeatureTable, OrganizationFeatureTable } from "./schema/organization-features"
 
-/**
- * Storage for feature state (on/off for everyone and kill switch per feature) and
- * per-organization overrides. The registry and resolution rules live in
- * @openwork/features; this module only reads and writes the rows. Read
- * features through here, never from organization metadata.
- */
-
 type Db = ReturnType<typeof createDenDb>["db"]
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0]
 export type FeatureDatabase = Db | Db["$primary"] | Tx
@@ -98,8 +91,6 @@ export async function readFeatures(
   environment: FeatureEnvironment,
   options: { lock?: "share"; userId?: string } = {},
 ): Promise<FeatureMap> {
-  // Sequential on purpose: callers may pass a transaction, and a PlanetScale
-  // transaction is one session that fails when two queries are in flight.
   const rollouts = await readFeatureRollouts(database)
   const overrides = organizationId ? await readOrganizationFeatureOverrides(database, organizationId, options) : {}
   const memberOverrides = organizationId && options.userId ? await readMemberFeatureOverrides(database, organizationId, options.userId, options) : {}
@@ -119,8 +110,6 @@ export async function lockFeatureForMutation(
   key: FeatureKey,
   environment: FeatureEnvironment,
 ): Promise<boolean> {
-  // Lock parents before member/provider writes, matching override writers even
-  // when no override exists yet. Call before taking member/provider locks.
   await database.select({ id: OrganizationTable.id }).from(OrganizationTable)
     .where(eq(OrganizationTable.id, normalizeDenTypeId("organization", organizationId))).for("share")
   await database.select({ id: MemberTable.id }).from(MemberTable).where(and(
@@ -178,7 +167,6 @@ export type FeatureChange = {
   scope: FeatureChangeScope
   action: FeatureChangeAction
   at: Date
-  /** Null when the change was made without a signed-in person (e.g. a deploy-time script) or the user was deleted. */
   by: { id: string; name: string; email: string } | null
 }
 
@@ -191,7 +179,6 @@ type FeatureChangeInput = {
   changedByUserId: string | null
 }
 
-/** Appends to the feature history. Call inside the transaction that made the change. */
 async function recordFeatureChanges(database: FeatureDatabase, changes: FeatureChangeInput[]): Promise<void> {
   if (changes.length === 0) return
   await database.insert(FeatureChangeTable).values(changes.map((change) => ({
@@ -204,7 +191,6 @@ async function recordFeatureChanges(database: FeatureDatabase, changes: FeatureC
   })))
 }
 
-/** What a stored override change does to the history: nothing when the value is the same. */
 function overrideChangeAction(previous: boolean | undefined, next: boolean | null): FeatureChangeAction | null {
   if (next === null) return previous === undefined ? null : "reset"
   return previous === next ? null : next ? "on" : "off"
@@ -220,7 +206,6 @@ function latestPerFeature(rows: Array<{
   user_email: string | null
 }>): Partial<Record<FeatureKey, FeatureChange>> {
   const latest: Partial<Record<FeatureKey, FeatureChange>> = {}
-  // Rows arrive newest first: the first one per key wins.
   for (const row of rows) {
     if (!isFeatureKey(row.feature_key) || latest[row.feature_key]) continue
     latest[row.feature_key] = {
@@ -333,7 +318,6 @@ export async function setOrganizationFeatureOverrides(
 
     const overrides = await readOrganizationFeatureOverrides(tx, organizationId)
     const metadata = parseMetadata(organization.metadata)
-    // The previous release also honored these flat aliases for Connect.
     delete metadata.connectEnabled
     delete metadata.mcpConnectionsEnabled
     if (Object.keys(overrides).length > 0) metadata.capabilities = { ...overrides }
@@ -437,7 +421,6 @@ export async function recordFeatureUsage(database: FeatureDatabase, input: {
       first_used_at: at, last_used_at: at, last_used_day: day, days_used: 1,
     })))
     .onDuplicateKeyUpdate({ set: {
-      // days_used reads the old last_used_day: the column is declared first, and drizzle assigns in column order.
       days_used: sql`${FeatureUsageTable.days_used} + if(${FeatureUsageTable.last_used_day} < values(${FeatureUsageTable.last_used_day}), 1, 0)`,
       last_used_day: sql`greatest(${FeatureUsageTable.last_used_day}, values(${FeatureUsageTable.last_used_day}))`,
       last_used_at: sql`greatest(${FeatureUsageTable.last_used_at}, values(${FeatureUsageTable.last_used_at}))`,

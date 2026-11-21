@@ -2,14 +2,6 @@ const IMAGE_COMPRESS_MAX_PX = 2048;
 const IMAGE_COMPRESS_QUALITY = 0.82;
 const IMAGE_COMPRESS_TARGET_BYTES = 1_500_000;
 
-/**
- * Re-encode oversized images as JPEG before upload / prompt inlining.
- *
- * Runs at send time (inside the async send pipeline, while attachment chips
- * show their uploading state) instead of at attach time, so dropping a large
- * photo into the composer shows its chip immediately rather than blocking the
- * UI on canvas work (#attachment-upload-ux).
- */
 export async function compressImageFile(file: File): Promise<File> {
   if (!file.type.startsWith("image/")) return file;
   if (file.type === "image/gif" || file.size <= IMAGE_COMPRESS_TARGET_BYTES) {

@@ -68,7 +68,6 @@ export const requireWorkbotSettingsRead: ReturnType<typeof requireOrgPermission>
   return requireOrgPermission("inference.view")(c, next)
 }
 
-/** Your agent needs Workbot on this deployment, the same capability that gates Workbot itself. */
 export const requireWorkbotDeployed: ReturnType<typeof requireOrgPermission> = async (c, next) => {
   if (workbotOrigin() === null) return c.json({ error: "feature_disabled" as const, feature: "workbot" }, 404)
   return next()
@@ -84,37 +83,26 @@ export const invalidHoursSchema = z.object({ error: z.literal("invalid_working_h
 export const INVALID_WORKING_HOURS_MESSAGE = "The workday must end after it starts."
 export const CONNECTION_NOT_FOUND_MESSAGE = "No such connection in this organization."
 
-/** A members'-agents policy as admins see it: the organization's, or one team's own (workbot-team-settings.ts). */
 export async function proactiveView(organizationId: DenTypeId<"organization">, settings: WorkbotProactiveSettings, template: AgentTemplateVersion, canViewConnections: boolean, briefOn: boolean, checkGateOn = false, sendCheckOn = false): Promise<WorkbotProactiveView> {
   const { versionId, version, responsibilities, instructions } = template
-  // What admins saved under `brief` is shown resolved (`brief` below), never raw.
   const { brief: _saved, ...policy } = settings
   return {
     settings: policy,
     ...(briefOn ? { brief: { ...resolveAgentBrief(settings, template), defaultText: DEFAULT_AGENT_BRIEF } } : {}),
-    // The gate decides whether the brief's check runs, so it is offered only with both features on.
     ...(briefOn && checkGateOn ? { checkGate: { model: agentEvaluationModelReady() } } : {}),
-    // The send check works on the brief's messages, so the same goes for it.
     ...(briefOn && sendCheckOn ? { sendCheck: { ready: agentEvaluationModelReady() } } : {}),
     template: { versionId, version, responsibilities, instructions },
     slackReady: await workbotSlackAppReady(organizationId),
     runnerReady: proactiveRunnerReady(),
-    // Connection names, URLs and counts only for callers who may view the organization's connections.
     sourceConnections: canViewConnections ? await sourceConnectionsView(organizationId, settings, briefOn) : null,
   }
 }
 
 async function sourceConnectionsView(organizationId: DenTypeId<"organization">, settings: WorkbotProactiveSettings, briefOn: boolean) {
   const [connections, connectedMembers] = await Promise.all([listOrganizationSourceConnections(organizationId), countConnectedMembers(organizationId)])
-  // With the brief on, every connection is listed (`any`); otherwise only services with reviewed read tools.
   return groupSourceConnections(connections, { policy: settings.sources, connectedMembers, mode: briefOn ? "any" : "reviewed" })
 }
 
-/**
- * PUT /v1/org/workbot-settings/proactive without the HTTP layer (also used by config-blob imports,
- * src/config-blobs/areas/workbot-proactive.ts): the brief gate, the sources check, the policy merge and the template
- * version, exactly as the route runs them. Permission and feature checks stay with the caller.
- */
 export async function saveWorkbotProactiveSettings(input: {
   organizationId: DenTypeId<"organization">
   memberId: DenTypeId<"member">
@@ -127,7 +115,6 @@ export async function saveWorkbotProactiveSettings(input: {
   const { organizationId, change } = input
   const briefOn = await agentBriefAllowed(organizationId, input.userId)
   if (change.brief && !briefOn) return { ok: false, error: "brief_off", message: "Your agent's brief isn't on for this organization." }
-  // Every id is one of the organization's connections, put where it can serve; an MCP only with reviewed read tools.
   const invalid = checkSourcesChange({
     change: change.sources,
     connections: await listOrganizationSourceConnections(organizationId),
@@ -146,15 +133,9 @@ export async function saveWorkbotProactiveSettings(input: {
   return { ok: true, settings: result.settings, template, briefOn }
 }
 
-/**
- * PUT /v1/org/workbot-settings without the HTTP layer (also used by config-blob imports,
- * src/config-blobs/areas/workbot-settings.ts): only the actor's servable models are accepted.
- * The model is saved in one locked metadata update.
- */
 export async function saveWorkbotDefaultModel(input: { organizationId: DenTypeId<"organization">; userId: string; model: string | null }) {
   const actor = { organizationId: input.organizationId, userId: input.userId }
   const catalog = await workbotModelCatalog(actor).catch(() => null)
-  // Selecting the managed starter means Default. Do not save a Workbot-only route as Slack/Automation policy.
   const model = isWorkbotManagedLuna(input.model) && input.model === catalog?.defaultModel ? null : input.model
   const choice = checkWorkbotModelChoice(model, catalog)
   if (choice !== "ok") return { choice, model: null, catalog }
@@ -162,36 +143,22 @@ export async function saveWorkbotDefaultModel(input: { organizationId: DenTypeId
   return { choice: "ok" as const, model: readWorkbotModel(metadata), catalog }
 }
 
-/** Why a change to the check gate's switch or threshold is refused, or null: the feature (with the brief) is off for the caller. */
 export function refusedCheckGateChange(requested: WorkbotProactiveSettingsInput, allowed: boolean): string | null {
   const touched = requested.checkGate !== undefined || requested.checkGateThreshold !== undefined
   return touched && !allowed ? "Skipping checks when nothing new arrived isn't on for this organization." : null
 }
 
-/**
- * Why a change to the send check's switch or threshold is refused, or null: the feature (with the brief) is off for
- * the caller, or it is being turned on where the deployment has no key for the evaluation model. With the feature on,
- * turning it off works whether or not the deployment has the key.
- */
 export function refusedSendCheckChange(requested: WorkbotProactiveSettingsInput, allowed: boolean, ready = agentEvaluationModelReady()): string | null {
   if (requested.sendCheck === undefined && requested.sendCheckThreshold === undefined) return null
   if (!allowed) return "Checking each message before sending isn't on for this organization."
   return requested.sendCheck && !ready ? "This deployment can't check messages yet. Ask your deployment administrator." : null
 }
 
-/**
- * What refuses an admin's change to a members'-agents policy before it is merged, with the answer to give (400):
- * the brief while its feature is off, or a sources change the organization's connections don't allow (every id is
- * one of the organization's connections, put where it can serve; an MCP only with reviewed read tools). The same
- * checks for the organization's policy and a team's own. Null when nothing refuses it.
- */
 export async function refusedProactiveChange(input: {
   organizationId: DenTypeId<"organization">
   requested: WorkbotProactiveSettingsInput
   briefOn: boolean
-  /** `workbotAgentCheckGate` for the caller; its switch is refused while the feature is off. */
   checkGateOn: boolean
-  /** `workbotAgentSendCheck` for the caller; its switch is refused while the feature is off. */
   sendCheckOn: boolean
 }): Promise<{ error: "invalid_request"; message: string; details: never[] } | { error: "invalid_request"; message: string } | null> {
   if (input.requested.brief && !input.briefOn) return { error: "invalid_request", message: "Your agent's brief isn't on for this organization.", details: [] }
@@ -207,10 +174,6 @@ export async function refusedProactiveChange(input: {
   return invalid ? { error: "invalid_request", message: invalid } : null
 }
 
-/**
- * One of the organization's connections with its tools as members' agents see them under `sources` (the
- * organization's policy, or a team's own); null when the connection isn't the organization's.
- */
 export async function agentConnectionTools<T extends { Variables: OrgRouteVariables }>(app: Hono<T>, env: unknown, input: {
   organizationId: DenTypeId<"organization">
   memberId: DenTypeId<"member">
@@ -233,10 +196,6 @@ export async function agentConnectionTools<T extends { Variables: OrgRouteVariab
   return unlistedConnectionToolsView(connection.id, probe?.ok && probe.connected ? "unavailable" : "needs_connection")
 }
 
-/**
- * Manage › Workbot: the organization's default model for its cloud agents (Workbot, the Slack assistant, and cloud
- * Automations set to the cloud default). Admins choose it from their AI Gateway models.
- */
 export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get(
     "/v1/org/workbot-settings/proactive",
@@ -434,7 +393,6 @@ export function registerOrgWorkbotSettingsRoutes<T extends { Variables: OrgRoute
       const context = c.get("organizationContext")
       const actor = { organizationId: context.organization.id, userId: context.currentMember.userId }
       const chosen = await readOrganizationDefaultModel(actor.organizationId)
-      // Gateway projections are live and actor-scoped; never put them in the deployment catalog cache.
       const catalog = await workbotModelCatalog(actor).catch(() => null)
       return c.json(workbotSettingsView(chosen, catalog))
     },

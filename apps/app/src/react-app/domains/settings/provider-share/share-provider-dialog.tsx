@@ -6,26 +6,15 @@ import { ProviderTile } from "../pages/provider-rows";
 import { shareConsentFacts, shareFailureMessage, shareNeedsReview, shareNeedsVerification, shareOutcomeFacts, shareOutcomeTitle, type SharedProviderArrival } from "./device-provider-share";
 
 export type ShareProviderDialogProps = {
-  /** The provider on this device being shared; null keeps the dialog closed. */
   provider: { id: string; name: string } | null;
   organizationName: string;
-  /** Den already said a recent sign-in comes first. */
   verificationRequired: boolean;
-  /** Shares it; `verifiedToken` is the newer sign-in after "Confirm it's you". Rejects with the server's error. */
   onShare: (providerId: string, verifiedToken?: string) => Promise<unknown>;
   onShared: (provider: { id: string; name: string }) => void;
   onClose: () => void;
-  /**
-   * The guided ending: after Den accepts the share the dialog stays open,
-   * confirms the provider is listed under the organization on this device,
-   * and asks which copy this device keeps. Absent, the dialog closes on accept.
-   */
   guided?: {
-    /** Refreshes this device and answers whether the shared provider is listed here. Safe to call again. */
     confirmArrival: (providerId: string) => Promise<SharedProviderArrival>;
-    /** Removes the person's own key from this device; rejects with a sentence to show. */
     useOrganizationCopy: (provider: { id: string; name: string }, arrival: SharedProviderArrival) => Promise<void>;
-    /** The dialog closed after a share; `kept` says whether the person's key is still on this device. */
     onFinished: (provider: { id: string; name: string }, result: { arrival: SharedProviderArrival; kept: boolean }) => void;
   };
 };
@@ -43,25 +32,16 @@ function FactRows({ facts }: { facts: ReadonlyArray<{ label: string; value: stri
   );
 }
 
-/**
- * The one confirmation before a key saved on this device goes to the
- * organization (DESIGN P9): who can use it, where the key goes, who pays and
- * how to undo it, as rows rather than prose (P6). Sharing is external and
- * hard to take back, so it confirms (P8).
- */
 export function ShareProviderDialog(props: ShareProviderDialogProps) {
   const { provider } = props;
   const [pending, setPending] = useState(false);
   const [verifying, setVerifying] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [unconfirmed, setUnconfirmed] = useState(false);
-  // Set once Den accepted the share: the dialog now reports where it is.
   const [arrival, setArrival] = useState<SharedProviderArrival | null>(null);
   const [checking, setChecking] = useState(false);
   const [removing, setRemoving] = useState(false);
   const submitting = useRef(false);
-  // A verified sign-in replaces this device's session when the dialog closes,
-  // so the settings page does not reload under a share that is still running.
   const commitSession = useRef<(() => void) | null>(null);
   const verifiedToken = useRef<string | null>(null);
 
@@ -113,8 +93,6 @@ export function ShareProviderDialog(props: ShareProviderDialogProps) {
     try {
       await props.onShare(provider.id, token);
       if (props.guided) {
-        // The button stays busy until this device has an answer: the next
-        // thing shown is the result, not a step of getting there (DESIGN P11).
         const next = await confirmArrival(provider.id);
         setPending(false);
         setVerifying(false);
@@ -127,7 +105,6 @@ export function ShareProviderDialog(props: ShareProviderDialogProps) {
       finish();
     } catch (cause) {
       setPending(false);
-      // Den asks once; after a fresh verification a refusal is a real failure.
       if (!token && shareNeedsVerification(cause)) setVerifying(true);
       else {
         setVerifying(false);

@@ -9,54 +9,35 @@ import { foldFleet, historyFromHours, historyHourKeys, hourKey, mergeHours, stor
 import { readComputerDetail, readComputerFleet, type ComputerDetailRead, type ComputerFleetClient } from "./reader.js"
 import { computerKey, notConfiguredComputerFleet, type ComputerConversation, type ComputerOwner, type ComputerReports } from "./state.js"
 
-/**
- * The computer fleet for the admin page, and the background job that records its history.
- *
- * Den holds no provider key and keeps no list of computers: the runner asks its providers (`GET /v1/computers`,
- * with the runner's own keys) and Den reads that, so the page works with the sandbox gateway, without it, or with
- * both, and needs no setting of its own. Den adds whose each computer is, from the conversations it knows.
- *
- * History lives in `admin_metric_snapshot` under its own metric key, one row per UTC hour, like the runner fleet's.
- */
 const logger = appLogger.child({ component: "computer_fleet" })
 const HISTORY_METRIC = "computer_fleet_history"
 const SAMPLER_LEASE = "computer_fleet_sampler"
-/** The providers are other people's APIs: the past is recorded every five minutes, into ten-minute squares. */
 const SAMPLE_INTERVAL_MS = 5 * 60_000
-/** A sampler that stops renewing is replaced after this long. */
 const SAMPLER_LEASE_MS = 12 * 60_000
 const FIRST_SAMPLE_DELAY_MS = 45_000
 const RETENTION_HOURS = 31 * 24
-/** Readers within this long of each other share one read of the runner's list. */
 const SHARE_MS = 15_000
-/** Which organization each conversation belongs to changes slowly, and reading it scans two tables. */
 const OWNERS_SHARE_MS = 5 * 60_000
 const OWNER_ROWS_LIMIT = 100_000
 const ORGANIZATION_CHUNK = 200
-/** A computer's page shows this many of the events Den was told about. */
 const DETAIL_EVENTS = 60
-/** A conversation newer than the shared index is looked for again, but not more often than this. */
 const OWNERS_REFRESH_MS = 30_000
 
 type OrganizationId = (typeof OrganizationTable.$inferSelect)["id"]
-/** `activeAt`: the conversation's last turn or open view; `turnRunning`: one is under way. As of the index's read. */
 type Conversation = { organizationId: OrganizationId; sessionId: string; activeAt: number | null; turnRunning: boolean }
 let ownerIndex: { at: number; byKey: Promise<Map<string, Conversation>> } | null = null
 
-/** Every conversation that can have a computer, as its computer's key, with its organization. Workbot alone gives one. */
 function conversationByKey(now: number, maxAgeMs = OWNERS_SHARE_MS): Promise<Map<string, Conversation>> {
   if (ownerIndex && now - ownerIndex.at < maxAgeMs) return ownerIndex.byKey
   const byKey = (async () => {
     const [sessions, devices] = await Promise.all([
       db.select({ sessionId: HeadlessSessionIndexTable.sessionId, organizationId: HeadlessSessionIndexTable.organizationId, updatedAt: HeadlessSessionIndexTable.updatedAt, activeTurnSince: HeadlessSessionIndexTable.activeTurnSince }).from(HeadlessSessionIndexTable)
         .where(and(eq(HeadlessSessionIndexTable.kind, "workbot"), isNull(HeadlessSessionIndexTable.deletedAt))).limit(OWNER_ROWS_LIMIT),
-      // A computer someone opened in Workbot is recorded here under its conversation's id.
       db.select({ sessionId: RemoteDeviceTable.externalId, organizationId: RemoteDeviceTable.organizationId, lastSeenAt: RemoteDeviceTable.lastSeenAt }).from(RemoteDeviceTable)
         .where(and(eq(RemoteDeviceTable.provider, "workbot"), isNull(RemoteDeviceTable.removedAt))).limit(OWNER_ROWS_LIMIT),
     ])
     const keys = new Map<string, Conversation>()
     for (const row of sessions) keys.set(computerKey(row.sessionId), { organizationId: row.organizationId, sessionId: row.sessionId, activeAt: row.updatedAt.getTime(), turnRunning: row.activeTurnSince !== null })
-    // A view someone has open is use too, and a computer's row can exist before its conversation is indexed.
     for (const row of devices) {
       const key = computerKey(row.sessionId)
       const known = keys.get(key)
@@ -89,13 +70,8 @@ async function loadComputerOwners(keys: readonly string[]): Promise<ReadonlyMap<
   return owners
 }
 
-/**
- * What Den knows of the computer with this key, read now: whose it is, its conversation's member and activity, what
- * Workbot's server last reported about it and what it saw happen to it. Never the conversation's name or content.
- */
 async function loadKnownComputer(key: string): Promise<{ owner: ComputerOwner | null; conversation: ComputerConversation | null; reports: ComputerReports } | null> {
   const now = Date.now()
-  // A conversation started since the shared index was read is not in it yet: look once more before giving up.
   const found = (await conversationByKey(now)).get(key) ?? (await conversationByKey(now, OWNERS_REFRESH_MS)).get(key)
   if (!found) return null
   const [[organization], [session], [device]] = await Promise.all([
@@ -139,7 +115,6 @@ function defaultClient(): (ComputerFleetClient & Pick<ReturnType<typeof createHe
 
 let shared: { at: number; list: Promise<RunnerResult<RunnerComputerFleet>> } | null = null
 
-/** One read of the runner's list, shared by admins watching at the same time and by the sampler. */
 function sharedList(client: ComputerFleetClient, now: number) {
   if (shared && now - shared.at < SHARE_MS) return shared.list
   const list = client.listComputers()
@@ -147,7 +122,6 @@ function sharedList(client: ComputerFleetClient, now: number) {
   return list
 }
 
-/** The fleet now, with whose each computer is; `organization` lists one organization's computers, or `unknown`. */
 export async function currentComputerFleet(organization: string | null = null): Promise<AdminComputerFleet> {
   const client = defaultClient()
   const now = () => new Date()
@@ -159,7 +133,6 @@ export async function currentComputerFleet(organization: string | null = null): 
   return readComputerFleet({ client, owners, now }, await sharedList(client, Date.now()), organization)
 }
 
-/** One computer in full, read now from its provider through the runner, with what Den knows about it. */
 export async function currentComputer(source: ComputerFleetSourceKind, id: string): Promise<ComputerDetailRead> {
   const known = (key: string) => loadKnownComputer(key).catch((error: unknown) => {
     logger.warn("computer fleet conversation unavailable", { error })
@@ -177,7 +150,6 @@ export async function readComputerFleetHistory(range: ComputerFleetHistoryRange,
 
 async function recordFleet(fleet: AdminComputerFleet, now: number) {
   const key = hourKey(now)
-  // Primary: the hour's row as last written, by this replica or the one that sampled before it.
   const [existing] = await db.$primary.select({ payload: AdminMetricSnapshotTable.payload }).from(AdminMetricSnapshotTable)
     .where(and(eq(AdminMetricSnapshotTable.metric_key, HISTORY_METRIC), eq(AdminMetricSnapshotTable.range_key, key))).limit(1)
   const payload = mergeHours(storedHour(existing?.payload), foldFleet(storedHour(null), fleet, now))
@@ -190,11 +162,6 @@ async function pruneHistory(now: number) {
     .where(and(eq(AdminMetricSnapshotTable.metric_key, HISTORY_METRIC), lt(AdminMetricSnapshotTable.range_key, hourKey(now - RETENTION_HOURS * 60 * 60_000))))
 }
 
-/**
- * Records the fleet's counts every five minutes so the page's grid has a past. One Den replica samples at a time
- * (a lease); another takes over when it stops. Off when the deployment has no headless runner, and nothing is
- * recorded while the runner has no computers configured.
- */
 export function startComputerFleetSampler() {
   const client = defaultClient()
   if (!client) return async () => undefined
@@ -205,9 +172,7 @@ export function startComputerFleetSampler() {
     const now = Date.now()
     try {
       if (!await dbSnapshotStore.claim(SAMPLER_LEASE, owner, new Date(now + SAMPLER_LEASE_MS), new Date(now), false)) return
-      // Counts only: whose each computer is isn't recorded, so the tables that say so aren't read here.
       const fleet = await readComputerFleet({ client, owners: async () => new Map(), now: () => new Date(now) }, await sharedList(client, now))
-      // Nothing to record without computers, or from a runner that predates its list (it answers 404).
       if (fleet.status === "not_configured" || fleet.runnerError === "http_404") return
       await recordFleet(fleet, now)
       if (prunedHour !== hourKey(now)) {
@@ -227,7 +192,6 @@ export function startComputerFleetSampler() {
     clearInterval(timer)
     clearTimeout(first)
     await running
-    // Hand the lease back so another replica samples at once.
     await dbSnapshotStore.release(SAMPLER_LEASE, owner, new Date()).catch(() => undefined)
   }
 }

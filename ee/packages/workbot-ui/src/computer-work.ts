@@ -1,10 +1,6 @@
 import type { LiveText, WorkbotPart, WorkbotStep } from "./data";
 
 /**
- * Where Workbot's computer cards go in a reply: pure, so it is tested without a page.
- */
-
-/**
  * What a step starting before it is stored is doing, after one more live `working` event for it. Where a call works
  * (`surface`) and what it does (`update`) arrive after its start; the same kind of work keeps them until a later event
  * says otherwise, so a card that knows it is the browser never goes back to not knowing.
@@ -41,9 +37,7 @@ export function surfaceOf(step: WorkbotStep): ComputerSurface {
 export function computerWork(parts: WorkbotPart[], { working, starting, lastIsLive }: { working: boolean; starting: LiveText["working"] | null; lastIsLive: boolean }) {
   const cards = new Map<ComputerSurface, { steps: WorkbotStep[]; first: number; last: number }>();
   let current: ComputerSurface | null = null;
-  // The kind of work it did last: after commands in the background, there is no screen to keep watching.
   let latest: ComputerSurface | null = null;
-  // Whether Workbot is showing each screen: the last `show` it gave there in this reply.
   const showing = new Map<ComputerSurface, boolean>();
   let starts: ComputerSurface | null = null;
   for (const [index, part] of parts.entries()) {
@@ -60,7 +54,6 @@ export function computerWork(parts: WorkbotPart[], { working, starting, lastIsLi
       if (lastIsLive && index === parts.length - 1) current = surface;
     }
   }
-  // A step starting before it is stored: commands in the background, or the screen the call says it works on.
   const startingOn: ComputerSurface | null = !working || !starting ? null : starting.background ? "background" : starting.surface ?? null;
   if (startingOn) {
     const surface = startingOn;
@@ -78,14 +71,11 @@ export function computerWork(parts: WorkbotPart[], { working, starting, lastIsLi
   if (working && current) live.add(current);
   if (watch) live.add(watch);
   const placed = new Map<number, ComputerSurface[]>();
-  // Browser work is one task per turn. Its card stays where it first started, including while live: narration and
-  // later browser calls update that object rather than moving it down the conversation (DESIGN P11).
   for (const [surface, card] of cards) {
     if (surface !== "browser" && live.has(surface)) continue;
     const index = surface === "browser" ? card.first : card.last;
     placed.set(index, [...(placed.get(index) ?? []), surface]);
   }
-  // Other computer work still follows its latest words: background work first, then the screen it is watched on.
   const trailing = [...live].filter((surface) => surface !== "browser").sort((a, b) => Number(a === watch) - Number(b === watch));
   return { cards, live, watch, shown, placed, trailing, starts };
 }
@@ -109,12 +99,10 @@ export function browserTask(
     title: string;
     status?: "queued" | "working" | "done" | "failed" | "stopped";
     error?: string | null;
-    /** What the work is called in a failure line: "browser task", or "computer task" for the rest of the computer. */
     what?: string;
   },
 ): BrowserTask {
   if (working) return { title, status: "working" };
-  // Step status stays running|done for old clients; done means ended, while the additive reason preserves failure.
   const failure = [...steps].reverse().find((step) => step.reason || step.status === "failed");
   const unfinished = steps.some((step) => step.status === "running");
   if (failure || unfinished || status === "failed" || status === "stopped") {

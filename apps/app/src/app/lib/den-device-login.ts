@@ -10,7 +10,6 @@ import { createDesktopDeviceLogin, DeviceLoginDiscoveryUnavailable, DeviceLoginR
 import { desktopFetchViaMain } from "./desktop";
 import { isDesktopRuntime } from "./runtime-env";
 
-/** Finite app-owned transport, also for packaged file:// renderers and alternate loopback ports. */
 export function fetchDenDeviceLogin(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
   return isDesktopRuntime() ? desktopFetchViaMain(input, { ...init, cancellable: true }, 10_000) : fetch(input, init);
 }
@@ -35,8 +34,6 @@ function assertDeviceLoginUrl(value: string) {
   )) throw new Error("Invalid device sign-in destination.");
 }
 
-// Credentials stay within the app's existing trusted renderer/main transport,
-// never the shell command, engine, project plugins, or public control projection.
 async function getJson(apiBaseUrl: string, path: string, signal: AbortSignal, token?: string): Promise<unknown> {
   const response = await fetchDenDeviceLogin(`${apiBaseUrl.replace(/\/+$/, "")}${path}`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -56,7 +53,6 @@ function discoveryPause(ms: number, signal: AbortSignal): Promise<void> {
   });
 }
 
-/** Retry only this anonymous read: at most 4.95s, below prepare/control deadlines. */
 export async function readDeviceLoginDeployment(apiBaseUrl: string, signal: AbortSignal): Promise<boolean> {
   assertDeviceLoginUrl(apiBaseUrl);
   const host = new URL(apiBaseUrl).host;
@@ -70,7 +66,6 @@ export async function readDeviceLoginDeployment(apiBaseUrl: string, signal: Abor
       });
     } catch {
       signal.throwIfAborted();
-      // Network errors and per-attempt timeouts are safe to retry for this GET.
     }
     signal.throwIfAborted();
     if (response && response.status < 500) {
@@ -82,13 +77,11 @@ export async function readDeviceLoginDeployment(apiBaseUrl: string, signal: Abor
       catch (error) {
         signal.throwIfAborted();
         if (error instanceof SyntaxError) throw new Error("Invalid device discovery response.");
-        // The same per-attempt deadline covers a stalled or interrupted body.
         readFailed = true;
       }
       signal.throwIfAborted();
       if (!readFailed) {
         if (!record(payload) || !record(payload.features) || typeof payload.features.remoteDesktopDeviceLogin !== "boolean") {
-          // Older/malformed Den fails closed, but is not an explicit deployment OFF.
           throw new Error("Invalid device discovery response.");
         }
         return payload.features.remoteDesktopDeviceLogin;
@@ -99,7 +92,6 @@ export async function readDeviceLoginDeployment(apiBaseUrl: string, signal: Abor
   throw new DeviceLoginDiscoveryUnavailable(host);
 }
 
-/** Renderer singleton: control actions receive only the public projection of this flow. */
 export const denDeviceLogin = createDesktopDeviceLogin({
   fetcher: fetchDenDeviceLogin,
   isSignedIn: () => Boolean(readDenSettings().authToken?.trim()),
@@ -116,7 +108,6 @@ export const denDeviceLogin = createDesktopDeviceLogin({
     });
     assertDeviceLoginUrl(destination.baseUrl);
     assertDeviceLoginUrl(destination.apiBaseUrl);
-    // Always live and anonymous, even for the configured server or --force.
     if (!await readDeviceLoginDeployment(destination.apiBaseUrl, signal)) return null;
     return destination;
   },
@@ -127,15 +118,11 @@ export const denDeviceLogin = createDesktopDeviceLogin({
     const approvedOrgId = payload.session.activeOrganizationId;
     if (typeof user.id !== "string" || !user.id || typeof user.email !== "string" || !user.email || typeof approvedOrgId !== "string" || !approvedOrgId) throw new Error("Invalid device identity.");
     const organizations = await getJson(destination.apiBaseUrl, "/v1/me/orgs", signal, token);
-    // /me/orgs can resolve a default org. It is not evidence of browser approval:
-    // require the exact active org already carried by the newly issued session.
     if (!record(organizations) || organizations.activeOrgId !== approvedOrgId || !Array.isArray(organizations.orgs)) throw new Error("Device organization changed.");
     const org: unknown = organizations.orgs.find((entry: unknown) => record(entry) && entry.id === approvedOrgId);
     if (!record(org) || typeof org.name !== "string" || !org.name) throw new Error("Approved organization is unavailable.");
     if (signal.aborted || !attempt.isCurrent()) throw new Error("Device sign-in superseded.");
     const organization = { id: approvedOrgId, name: org.name, slug: typeof org.slug === "string" ? org.slug : null };
-    // Expiry can arrive during an asynchronous bootstrap write, not only fetch.
-    // Feed it into the same transaction guard used by explicit cancellation.
     const cancelEnrollment = () => attempt.cancel();
     signal.addEventListener("abort", cancelEnrollment, { once: true });
     if (signal.aborted) cancelEnrollment();
@@ -151,7 +138,6 @@ export const denDeviceLogin = createDesktopDeviceLogin({
         safeErrors: true,
       });
       if (!committed.ok) throw new Error("Device enrollment failed.");
-      // Existing batched usage reporting only; never make a committed sign-in fail.
       try { markFeatureUsed("remoteDesktopDeviceLogin"); } catch {}
       return { email: user.email, org: { id: organization.id, name: organization.name } };
     } finally {

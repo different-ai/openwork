@@ -8,19 +8,12 @@ import type { LiveText, WorkbotStep, WorkbotTurn } from "./data";
 export type ConnectorApp = { name: string | null; site?: string; remote?: true; openwork?: true };
 export type ConnectorRow = { key: string; label: string; detail: string | null; times: number; app: ConnectorApp };
 export type ConnectorSummary = {
-  /** Workbot is working in an app right now (or still on what it found there, with nothing newer said or done). */
   live: boolean;
-  /** What it is doing now ("Searching Exa"), or what it did ("Used Exa"). */
   label: string;
-  /** "2 searches", "3 actions"; null for one. */
   count: string | null;
-  /** The apps used, in the order first used. */
   apps: ConnectorApp[];
-  /** The app of the latest step, for the leading logo. */
   latest: ConnectorApp;
-  /** A tool is actually outstanding now; null once it returns, even while Workbot is reading its results. */
   active: ConnectorApp | null;
-  /** Each tool that ran, in order; the same one again in a row is one row with `times`. */
   rows: ConnectorRow[];
 };
 
@@ -46,7 +39,6 @@ export function connectorSummary(turn: WorkbotTurn, live: LiveText | null): Conn
   const latestStep = steps.at(-1);
   if (!latestStep) return null;
   const working = turn.status === "working" || turn.status === "queued";
-  // Words being written after the app work, or work on its computer since, mean it has moved on.
   const current = working && live && live.step >= turn.modelSteps ? live : null;
   const writing = Boolean(current?.text.trim()) || Boolean(current?.working?.on === "computer");
   const last = turn.parts.at(-1);
@@ -68,7 +60,6 @@ export function connectorSummary(turn: WorkbotTurn, live: LiveText | null): Conn
   });
   const searches = steps.every((step) => step.label.startsWith("Searching "));
   const count = steps.length > 1 ? `${steps.length} ${searches ? "searches" : "actions"}` : null;
-  // Live: what it is doing now. Several of the same in a row are one line that counts them.
   const outstanding = working ? [...steps].reverse().find((step) => step.status === "running") : undefined;
   const running = outstanding ?? latestStep;
   const label = isLive ? running.label : `Used ${connectorNames(apps)}`;

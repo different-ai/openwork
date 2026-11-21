@@ -5,7 +5,6 @@ export type SharedDeviceProviderArrival =
   | { status: "arrived"; organizationProviderId: string; name: string }
   | { status: "pending" };
 
-/** Join live inventory propagation without treating the legacy provider list as Gateway evidence. */
 export async function confirmSharedGatewayProvider(input: {
   providerId: string;
   inferenceProviderId: string;

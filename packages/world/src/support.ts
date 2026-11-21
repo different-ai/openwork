@@ -26,8 +26,6 @@ export async function readWorldSupport(path: string): Promise<WorldSupport> {
     if (!provider || extra || (os !== undefined && os !== "host" && os !== "linux" && os !== "macos" && os !== "windows")) {
       throw new Error(`Invalid world target ${JSON.stringify(item)} in ${path}.`);
     }
-    // A local declaration may name another host OS; discovery runs on many
-    // developer machines. Only remote providers have a fixed OS catalog.
     if (!isWorldProvider(provider) || !os || (!isWorldOs(os) && os !== "host")
       || (os === "host" && provider !== "local")
       || (provider !== "local" && !providerOses(provider).includes(os === "host" ? hostOs() : os))) {

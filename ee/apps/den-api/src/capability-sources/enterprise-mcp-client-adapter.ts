@@ -61,11 +61,6 @@ function toEnterpriseConnection(
         configuration: {
           applicationType: "web",
           manualOAuthEndpoints: connection.oauthConfiguration?.manualOAuthEndpoints,
-          // CIMD client identifiers must be HTTPS URLs. Local HTTP development
-          // still exposes the document for inspection, but falls back to DCR
-          // or pre-registration instead of advertising a non-conforming ID.
-          // Client metadata has one fixed redirect URI, so scoped callback
-          // modes must use DCR or a pre-registered client bound to that URI.
           clientMetadataUrl: connection.oauthConfiguration?.callbackMode === "shared-v1"
             && new URL(metadataUrl).protocol === "https:"
             ? metadataUrl
@@ -119,12 +114,6 @@ function diagnosticPhase(event: EnterpriseMcpDiagnosticEvent): ExternalMcpDiagno
 
 function diagnosticSink(tracker: ExternalMcpDiagnosticTracker) {
   return (event: EnterpriseMcpDiagnosticEvent): void => {
-    // Den's diagnostic fetch owns HTTP/request classification, including
-    // authorization challenges and network causes. Package request events are
-    // still available to package consumers, but must not overwrite that richer
-    // Den evidence after a response settles.
-    // The persistence boundary logs committed invalidations, including SDK
-    // paths that do not emit the package event. Do not log them twice here.
     if (event.kind === "request" || event.kind === "credential-invalidation") return
     const phase = diagnosticPhase(event)
     if (event.outcome === "started") {
@@ -132,14 +121,8 @@ function diagnosticSink(tracker: ExternalMcpDiagnosticTracker) {
       return
     }
     if (event.outcome === "failed") {
-      // Preserve any richer HTTP/OAuth classification already recorded by
-      // Den's diagnostic fetch. Package-only failures are translated in the
-      // operation catch boundary below.
       return
     }
-    // A successful protocol negotiation reports the era it settled on; the
-    // final request phase differs by era (server/discover on the modern wire,
-    // initialize plus notifications/initialized on the legacy fallback).
     if (event.kind === "operation" && (
       event.protocolEra !== undefined
       || event.requestPhase === "mcp-discovery"
@@ -230,8 +213,6 @@ function createOperationClient(
   memberApiKey: MemberApiKeyCredential | undefined,
 ): EnterpriseMcpClient {
   const member = input.member
-  // Administrator request headers go on the innermost fetch, and only to the
-  // MCP URL itself, so OAuth servers, diagnostics and inspection never see them.
   const networkFetch = withExternalMcpRequestHeaders(
     guardedFetch,
     input.connection.url,
@@ -240,13 +221,10 @@ function createOperationClient(
   const fetchForCaller: typeof guardedFetch = memberApiKey && member
     ? async (resource, init) => {
       const credential = memberApiKey
-      // Authorization ran once for the operation; each request only re-reads
-      // the stored key, so a replaced or rejected key stops the operation here.
       if (!await memberApiKeyStillCurrent(input.connection, member.orgMembershipId, credential)) {
         throw new Error("Connect your personal API key in Your Connections.")
       }
       const request = new Request(resource, init)
-      // Never forward a personal token to a discovery URL or redirect target.
       if (request.url !== new URL(input.connection.url).href || request.headers.get("authorization") !== memberApiKeyAuthorization(credential.key, input.connection.apiKeyAuthScheme)) {
         throw new Error("Connection credentials or destination changed. Reconnect and retry.")
       }
@@ -256,8 +234,6 @@ function createOperationClient(
     }
     : input.connection.oauthConfiguration?.manualOAuthEndpoints
       ? async (resource, init) => {
-          // A saved static endpoint is exact: never forward a code, secret or
-          // bearer token to a redirect destination, even on the same host.
           const destination = resource instanceof Request ? resource.url : String(resource)
           const tokenEndpoint = input.connection.oauthConfiguration?.manualOAuthEndpoints?.tokenEndpoint
           if (destination !== new URL(input.connection.url).href && destination !== tokenEndpoint) {
@@ -296,14 +272,11 @@ async function runEnterpriseMcpOperation<T>(input: OperationInput & {
     credentialMode: input.connection.credentialMode,
   })
   try {
-    // A personal key is authorized and read once per operation; every request
-    // of the operation must then carry exactly that key to exactly this URL.
     let memberApiKey: MemberApiKeyCredential | undefined
     if (usesMemberApiKey(input.connection)) {
       if (!input.member) throw new Error("A member identity is required for this connection.")
       memberApiKey = await resolveMemberApiKey(input.connection, input.member.orgMembershipId)
     }
-    // A saved choice applies only while the feature is on, so turning the feature off restores the default sign-in.
     const requestSelectedScopesOnly = input.connection.oauthConfiguration?.requestSelectedScopesOnly === true
       && await organizationFeatureEnabled(input.connection.organizationId, "connectionSelectedScopesOnly")
     const client = createOperationClient(input, tracker, memberApiKey)
@@ -429,7 +402,6 @@ export function callExternalMcpTool(input: ExternalMcpToolCallInput) {
   return runExternalMcpToolCall(input)
 }
 
-/** Lists the provider's tools and calls one in a single session; beforeCall can refuse in between. */
 export function callListedExternalMcpTool(input: ExternalMcpToolCallInput & {
   beforeCall: (tools: Awaited<ReturnType<typeof listExternalMcpTools>>) => void | Promise<void>
 }) {
@@ -530,7 +502,6 @@ export function inspectExternalMcpToolCall(input: ExternalMcpToolCallInput) {
   return withExternalMcpToolCallInspection((inspector) => runExternalMcpToolCall(input, inspector))
 }
 
-/** Events use the same member credentials, guarded fetch and OAuth lifecycle as tools. */
 export function requestExternalMcpEvents(input: ExternalMcpResourceInput & {
   method: "events/list" | "events/subscribe" | "events/unsubscribe"
   params: Record<string, unknown>

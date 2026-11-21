@@ -2,23 +2,8 @@ import { createHash, randomBytes } from "node:crypto";
 import { chmod, mkdir, readdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { dirname, join, relative, resolve, sep } from "node:path";
 
-/**
- * Organization skills as real folders on this machine, so an agent can read a
- * skill's references and run its scripts the way it does with a local skill
- * (and the way Claude runs skills from their folder).
- *
- * A folder is built only for a skill a chat uses that has supporting files,
- * from bodies that matched the digests Den listed. It is named after the skill
- * and a key of every file's digest, so a new version gets a new folder, and it
- * is made read-only. Each use checks the folder again, file by file: anything
- * changed, added or removed since (by the person, a tool or a script) rebuilds
- * it from Den, so the agent always runs exactly what the organization
- * published. Older versions of the skill are removed when a new one is built.
- */
-
 export type CloudSkillFolderSpec = {
   name: string;
-  /** SKILL.md digest, `sha256:<hex>`. */
   digest: string;
   files: ReadonlyArray<{ path: string; digest: string }>;
 };
@@ -31,33 +16,28 @@ function sha256(bytes: Uint8Array | string): string {
   return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 }
 
-/** A supporting file path that stays inside the skill folder. */
 function safePath(path: string): boolean {
   if (!path || path.length > 255 || path === "SKILL.md" || path.includes("\\") || path.startsWith("/") || /[\u0000-\u001f]/.test(path)) return false;
   return path.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
 }
 
-/** The folder a version of a skill lives in: its name and a key of all its digests. */
 export function cloudSkillFolderName(spec: CloudSkillFolderSpec): string {
   const files = [...spec.files].sort((a, b) => a.path.localeCompare(b.path)).map((file) => [file.path, file.digest]);
   const key = createHash("sha256").update(JSON.stringify([spec.digest, files])).digest("hex").slice(0, 16);
   return `${spec.name}-${key}`;
 }
 
-/** Every file under `root`, as paths relative to it with `/` separators. */
 async function listFiles(root: string, base = root): Promise<string[]> {
   const entries = await readdir(root, { withFileTypes: true });
   const files: string[] = [];
   for (const entry of entries) {
     const full = join(root, entry.name);
     if (entry.isDirectory()) files.push(...await listFiles(full, base));
-    // Links, sockets and the like are never part of a skill: they fail the check.
     else files.push(entry.isFile() ? relative(base, full).split(sep).join("/") : "\u0000");
   }
   return files;
 }
 
-/** True when the folder holds exactly the skill's files with exactly its digests. */
 async function folderMatches(folder: string, spec: CloudSkillFolderSpec): Promise<boolean> {
   try {
     const expected = new Map([["SKILL.md", spec.digest], ...spec.files.map((file) => [file.path, file.digest] as const)]);
@@ -72,7 +52,6 @@ async function folderMatches(folder: string, spec: CloudSkillFolderSpec): Promis
   }
 }
 
-/** Gives the owner write access back throughout `folder`, so it can be removed (Windows refuses to delete read-only files). */
 async function makeWritable(folder: string): Promise<void> {
   const entries = await readdir(folder, { withFileTypes: true }).catch(() => []);
   await chmod(folder, 0o755).catch(() => undefined);
@@ -88,7 +67,6 @@ async function removeFolder(folder: string): Promise<void> {
   await rm(folder, { recursive: true, force: true });
 }
 
-/** Files read-only, then folders read-only from the deepest up. */
 async function makeReadOnly(folder: string): Promise<void> {
   for (const entry of await readdir(folder, { withFileTypes: true })) {
     const full = join(folder, entry.name);
@@ -100,12 +78,6 @@ async function makeReadOnly(folder: string): Promise<void> {
 
 const building = new Map<string, Promise<string | null>>();
 
-/**
- * The SKILL.md path of the skill's folder under `root`, built or rebuilt from
- * `read()` when it is missing or no longer matches. Null when the skill cannot
- * have a folder (an unsafe name or path) or its bodies could not be read and
- * verified; the caller then keeps serving the skill without one.
- */
 export async function ensureCloudSkillFolder(input: {
   root: string;
   spec: CloudSkillFolderSpec;
@@ -140,7 +112,6 @@ export async function ensureCloudSkillFolder(input: {
     } finally {
       await removeFolder(staging).catch(() => undefined);
     }
-    // Older versions of this skill are no longer listed by Den.
     for (const entry of await readdir(root, { withFileTypes: true })) {
       if (entry.isDirectory() && entry.name !== cloudSkillFolderName(spec) && entry.name.startsWith(`${spec.name}-`) && /^[a-f0-9]{16}$/.test(entry.name.slice(spec.name.length + 1))) {
         await removeFolder(join(root, entry.name)).catch(() => undefined);

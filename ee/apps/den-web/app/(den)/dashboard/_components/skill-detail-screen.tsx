@@ -14,7 +14,6 @@ import { pluginChatDeepLink, skillTitle } from "./plugin-page-screen";
 import { SkillInstructions } from "./skill-instructions";
 import { downloadSkillZip } from "./skill-zip-actions";
 
-/** Admin mode edits and removes; member mode (from My Library) only reads. */
 export function SkillDetailScreen({ pluginId, skillId, mode = "admin" }: { pluginId: string; skillId: string; mode?: "admin" | "member" }) {
   const router = useRouter();
   const { orgSlug } = useOrgDashboard();
@@ -25,7 +24,6 @@ export function SkillDetailScreen({ pluginId, skillId, mode = "admin" }: { plugi
   const pluginHref = mode === "admin" ? getPluginRoute(orgSlug, pluginId) : getLibraryPluginRoute(orgSlug, pluginId);
   const back = { href: pluginHref, label: plugin.data?.name ?? "Back to plugin" };
 
-  // The query waits for the workspace; until it answers, this is still loading.
   if (!skill && (isLoading || !error)) {
     return (
       <ItemPage>
@@ -94,7 +92,6 @@ export function SkillDetailScreen({ pluginId, skillId, mode = "admin" }: { plugi
   );
 }
 
-/** Title with its description directly beneath, so the two read as one unit. */
 function SkillHeader({ back, title, description, actions }: {
   back: { href: string; label: string };
   title: ReactNode;

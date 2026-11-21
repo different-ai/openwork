@@ -1,27 +1,15 @@
 import type { AuditOrigin } from "@openwork-ee/den-db/audit-log"
 import { AUDIT_ROUTE_EVENT_SUFFIXES, type AuditRouteClass } from "./routes/types.js"
 
-// Non-HTTP mutation paths (design §6): MCP tools that mutate organization state
-// without re-entering a den-api route. Each entry is recorded through
-// src/audit/mcp-service-audit.ts → runAuditedServiceAction with the MCP
-// principal (or the platform admin for admin tools). Tool calls that re-enter
-// den-api through invokeMcpOperation are recorded at the destination route and
-// never appear here. scripts/check-audit-route-coverage.ts validates the list
-// without requiring a generated report.
-
 export type AuditServiceActionClass = Extract<AuditRouteClass, "tenant_change" | "tenant_external" | "tenant_job">
 
 export type AuditServiceActionDeclaration = Readonly<{
-  /** Semantic stem; events are `${action}.${suffix}` with the class suffixes of route declarations. */
   action: string
   kind: string
   class: AuditServiceActionClass
-  /** Target resource type; `idFrom` names where the recorded id comes from (null: collection). */
   resource: Readonly<{ type: string; idFrom: string | null }>
   origin: Extract<AuditOrigin, "mcp" | "platform_admin">
-  /** MCP tools (or capability names) that reach this mutation. */
   tools: readonly string[]
-  /** `file:function` of each wrapped call site. */
   callSites: readonly string[]
   external?: string
   jobOutcome?: string
@@ -164,7 +152,6 @@ export function auditServiceActionEventTypesFor(declaration: AuditServiceActionD
   return AUDIT_ROUTE_EVENT_SUFFIXES[declaration.class].map((suffix) => `${declaration.action}.${suffix}`)
 }
 
-/** Tenant-visible event types of every service-layer action. */
 export function auditServiceActionEventTypes(): string[] {
   return [...new Set(auditServiceActionDeclarations.flatMap(auditServiceActionEventTypesFor))].sort()
 }

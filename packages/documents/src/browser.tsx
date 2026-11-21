@@ -14,23 +14,17 @@ import { DOCUMENT_INTENT_MS, DOCUMENTS_LIST_GC_MS, documentEditorPrefix, documen
 export type DocumentsBrowserProps = {
   provider: DocumentsProvider
   editor?: DocumentsEditor
-  /** Include the authenticated organization and person. Never reuse a cache across identities. */
   scope: readonly string[]
   enabled: boolean
-  /** Preview is always available; editing must be explicitly enabled by the host. */
   editingEnabled?: boolean
   connectionsHref?: string | null
-  /** A host's existing sign-in flow, opened separately so recovery stays mounted. */
   signInHref?: string | null
-  /** Freshly verify the authenticated identity still matches scope before revealing recovery. */
   verifyScope?(): Promise<boolean>
-  /** A retained host owner may be masked while its own sign-in is revalidated. */
   authorization?: "signin" | "blocked" | "disabled"
   renderConnect?(connectionId?: string, reconnect?: boolean): ReactNode
   onDirtyChange?(dirty: boolean): void
   onContextChange?(context: DocumentsViewContext | null): void
   openDocument?: DocumentOpenRequest
-  /** What became of `openDocument`: opened, couldn't be opened, or set aside because the person moved on first. */
   onOpenSettled?(requestId: string, outcome: DocumentOpenOutcome): void
 }
 
@@ -48,7 +42,6 @@ function size(value: number | null) {
 
 /** A host-independent browser; providers own metadata reads and safe file-opening URLs. */
 export function DocumentsBrowser(props: DocumentsBrowserProps) {
-  // A host must not accidentally carry drafts or cached authorization into another identity.
   return <ScopedDocumentsBrowser key={JSON.stringify([props.scope, props.provider.id])} {...props} />
 }
 
@@ -75,7 +68,6 @@ function ScopedDocumentsBrowser({ provider, editor, scope, enabled, editingEnabl
   const registerControls = useCallback<DocumentTabControlsChange>((id, controls) => { if (controls) closeControls.current.set(id, controls); else closeControls.current.delete(id) }, [])
   const [view, setView] = useState<"recent" | "folder">("recent")
   const [opened, setOpened] = useState<DocumentItem[]>([])
-  // Reordering editor DOM nodes can reload an iframe. Only reorder navigation.
   const [tabOrder, setTabOrder] = useState<string[]>([])
   const tabOrderRef = useRef(tabOrder)
   tabOrderRef.current = tabOrder
@@ -99,8 +91,6 @@ function ScopedDocumentsBrowser({ provider, editor, scope, enabled, editingEnabl
     getNextPageParam: page => page.nextCursor ?? undefined,
     enabled: enabled && !authorization,
     retry: false,
-    // Refreshed whenever it is shown again, but a folder the person comes back to shows its files at once instead
-    // of a skeleton. A listing read in the last few seconds (on hovering the Documents tab) is not read twice.
     staleTime: 5_000,
     refetchOnWindowFocus: true,
     gcTime: DOCUMENTS_LIST_GC_MS,
@@ -121,7 +111,6 @@ function ScopedDocumentsBrowser({ provider, editor, scope, enabled, editingEnabl
       return a.name.localeCompare(b.name, undefined, { numeric: true })
     })
   }, [query.data, order])
-  // A file the pointer rests on, or the keyboard reaches, is read ahead of the click so its tab opens with content.
   const queryClient = useQueryClient()
   const intentTimer = useRef<ReturnType<typeof setTimeout>>(undefined)
   useEffect(() => () => clearTimeout(intentTimer.current), [])
@@ -129,7 +118,6 @@ function ScopedDocumentsBrowser({ provider, editor, scope, enabled, editingEnabl
     if (!editor || item.kind !== "file" || !enabled || authorization || opened.some(file => file.id === item.id)) return
     void prefetchDocumentEditor(queryClient, { editor, scope, item, editingEnabled })
   }
-  // Resting on a row, not passing over it (or tabbing past it), is the intent: only then is the file read.
   const rest = (item: DocumentItem) => { clearTimeout(intentTimer.current); intentTimer.current = setTimeout(() => warm(item), DOCUMENT_INTENT_MS) }
   const intent = (item: DocumentItem) => ({
     onPointerEnter: () => rest(item),
@@ -138,7 +126,6 @@ function ScopedDocumentsBrowser({ provider, editor, scope, enabled, editingEnabl
     onFocus: () => rest(item),
     onBlur: () => clearTimeout(intentTimer.current),
   })
-  // A closed or discarded tab's content leaves memory with it; opening the file again reads it again.
   const scopeRef = useRef(scope)
   scopeRef.current = scope
   const release = useCallback((id: string) => queryClient.removeQueries({ queryKey: documentEditorPrefix(scopeRef.current, id) }), [queryClient])
@@ -151,7 +138,6 @@ function ScopedDocumentsBrowser({ provider, editor, scope, enabled, editingEnabl
       setOpened(current => current.some(file => file.id === item.id) ? current : [...current, item]); setTabOrder(current => current.includes(item.id) ? current : [...current, item.id]); setActiveTab(item.id) }
     else setSelected(item)
   }
-  // A requested document is only opened while it is still what the person is waiting for.
   const [handled, setHandled] = useState<string>()
   const handledRef = useRef(handled)
   const settle = (outcome: DocumentOpenOutcome) => {
@@ -172,7 +158,6 @@ function ScopedDocumentsBrowser({ provider, editor, scope, enabled, editingEnabl
     refetchOnWindowFocus: false,
   })
   const opening = pendingOpen && !alreadyOpen && !requested.isError
-  // The person choosing anything else in Documents sets a pending request aside, so a slow answer never pulls them back.
   const supersede = () => { if (pendingOpen) settle("superseded") }
   const pick = (item: DocumentItem) => { supersede(); open(item) }
   const selectTab = (id: string) => { supersede(); setActiveTab(id) }
@@ -181,7 +166,6 @@ function ScopedDocumentsBrowser({ provider, editor, scope, enabled, editingEnabl
     if (!pendingOpen || !openDocument) return
     if (alreadyOpen) { setActiveTab(alreadyOpen.id); settle("opened"); return }
     if (requested.data) { open(requested.data); settle("opened"); return }
-    // A failure stays pending so "Try again" can still open it; it is reported once per failed attempt.
     const failure = `${openDocument.requestId}:${requested.errorUpdatedAt}`
     if (requested.isError && reportedFailure.current !== failure) { reportedFailure.current = failure; onOpenSettled?.(openDocument.requestId, "failed") }
   })
@@ -190,8 +174,6 @@ function ScopedDocumentsBrowser({ provider, editor, scope, enabled, editingEnabl
   const accessFailure = !enabled ? "disabled" : authorization ?? queryFailure ?? recentFailure
   const failureToken = !enabled ? "disabled" : authorization ?? (queryFailure ? query.error : recentFailure ? recent.error : null)
   const [observedFailure, setObservedFailure] = useState<unknown>(null)
-  // Directory authorization is a fact, not the latest request's error state.
-  // No editors are needed for a denial to remain latched across later outages.
   const [denial, setDenial] = useState<ReturnType<typeof documentsAccessFailure>>(null)
   const [locks, setLocks] = useState<ReadonlyMap<string, number>>(new Map())
   const locksRef = useRef(locks)
@@ -210,7 +192,6 @@ function ScopedDocumentsBrowser({ provider, editor, scope, enabled, editingEnabl
   const activeFile = activeItem ? resources.get(activeTab) ?? activeItem : undefined
   const activeDirty = dirtyIds.has(activeTab)
   useEffect(() => {
-    // While a document opens, the previous one is no longer what the person is looking at.
     onContextChange?.(opening || !editorEnabled || locks.has(activeTab) ? null : activeFile
       ? { kind: "file", item: activeFile, unsaved: activeDirty }
       : accessLost || query.isError ? null : { kind: "files", view, folderId: folder.id, folderName: folder.name, query: search })
@@ -248,13 +229,10 @@ function ScopedDocumentsBrowser({ provider, editor, scope, enabled, editingEnabl
     setBusyIds(current => new Set([...current].filter(key => !discarded.has(key))))
     updateLocks(current => new Map([...current].filter(([key]) => !discarded.has(key))))
     setRecoveryError(undefined)
-    // release() drops only the discarded files' editor reads.
-    // Never clear the directory denial or another restored editor's cache here.
   }, [updateLocks, onDirtyChange, release])
   useEffect(() => {
     if (!accessFailure || failureToken === observedFailure) return
     setObservedFailure(failureToken); setDenial(accessFailure); setSelected(null)
-    // Keep owners mounted, with bounded recovery separately for each file.
     updateLocks(current => lockDocumentRecovery(current, opened.map(item => item.id)))
   }, [accessFailure, failureToken, observedFailure, opened, updateLocks])
   useEffect(() => {
@@ -269,7 +247,6 @@ function ScopedDocumentsBrowser({ provider, editor, scope, enabled, editingEnabl
     try {
       if (!verifyScope || !await verifyScope()) { setRecoveryError(identityNotice); return }
       const listings = await Promise.allSettled([query.refetch({ throwOnError: true }), recent.refetch({ throwOnError: true })])
-      // File reads are independent of directory availability and of each other.
       const candidates = opened.filter(item => id ? item.id === id : locks.has(item.id))
       const checked = await Promise.allSettled(candidates.map(async item => {
         const controls = closeControls.current.get(item.id)
@@ -279,7 +256,7 @@ function ScopedDocumentsBrowser({ provider, editor, scope, enabled, editingEnabl
       }))
       if (!await verifyScope()) { setRecoveryError(identityNotice); return }
       if (!policy.current.enabled || policy.current.authorization) { setRecoveryError("Document access is still blocked. Check your workspace sign-in or ask an admin."); return }
-      discardRecovery() // Expire only overdue files, never another restored draft.
+      discardRecovery()
       const restored = new Set(checked.flatMap(result => result.status === "fulfilled" && (locksRef.current.get(result.value) ?? 0) > Date.now() ? [result.value] : []))
       updateLocks(current => new Map([...current].filter(([key]) => !restored.has(key))))
       const [listing, sidebar] = listings
@@ -298,9 +275,7 @@ function ScopedDocumentsBrowser({ provider, editor, scope, enabled, editingEnabl
   const refreshFailed = !accessLost && !flagOff && (query.isError || recent.isError)
   const lockedResources = new Set(opened.filter(item => locks.has(item.id)).map(item => (resources.get(item.id) ?? item).id))
   const listedItems = items.filter(item => !lockedResources.has(item.id))
-  // Tabs appear once a document is open; until then the list is the whole page, with nothing to switch between.
   const visibleTabs = editorEnabled ? orderedTabs.filter(item => !locks.has(item.id)) : []
-  // Inside a folder the breadcrumbs say where you are; at the top level the Recent / My Drive switch already does.
   const nested = view === "folder" && folders.length > 1
   return <section className="ow-documents" aria-label="Documents">
     <div className="ow-documents-workspace">

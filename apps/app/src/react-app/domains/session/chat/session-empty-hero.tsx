@@ -61,40 +61,22 @@ const DEFAULT_SUGGESTIONS: HeroSuggestion[] = [
 
 export type SessionEmptyHeroProps = {
   providerCount: number;
-  /** Disable submission while a default workspace is being prepared. */
   busy?: boolean;
-  /** Called with the task prompt and attachments; the caller creates the session (and workspace if needed). */
   onRunTask: (
     prompt: string,
     attachments: ComposerAttachment[],
     handoff?: NewTaskComposerHandoff,
   ) => void | Promise<void>;
   onOpenProviderAuth?: () => void;
-  /** Workspace-scoped wiring for the full composer (skills, agents, models). */
   composer?: NewTaskComposerContext | null;
 };
 
-/**
- * Paper "first chat" empty state: the real session composer front and
- * center with suggestion cards below. Suggestions come from desktop
- * policies (organization onboarding prompts) when configured, with
- * built-in defaults otherwise.
- */
 export function SessionEmptyHero(props: SessionEmptyHeroProps) {
-  // The session is created on submit, so until then the prompt has no
-  // conversation to live in. Persist it under the workspace's reserved slot so
-  // opening another session (or restarting) does not lose it; the sidebar
-  // offers a Draft row for the same slot. The parent keys this component by
-  // draft owner, so the initial read is the only hydration needed.
   const persistedDraft = useNewTaskDraftState(props.composer?.draftScope, props.composer?.workspaceId, props.composer?.draftSessionId);
   const [prompt, setPromptState] = useState(() => (
     props.composer?.draftOwnerKey ? useComposerStateStore.getState().sessions[props.composer.draftOwnerKey]?.draft : undefined
   ) ?? persistedDraft.snapshot?.text ?? "");
   const promptRef = useRef(prompt);
-  // Once a send is in flight the composer has cleared the slot, and anything
-  // typed until its route lands is carried into the created session as the
-  // continuation. Persisting it here would pre-fill the next new task. On
-  // success this hero unmounts, so the flag only resets when the send fails.
   const sendInFlightRef = useRef(false);
   const [sendInFlight, setSendInFlight] = useState(false);
   const [composing, setComposing] = useState(false);
@@ -103,8 +85,6 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
   const hideIntroduction = hideEmptyHeroIntroduction(isMobile, composing, prompt, sendInFlight || Boolean(props.busy));
 
   useEffect(() => {
-    // A null blur target can be keyboard dismissal or a touch send. Only a
-    // deliberate interaction outside the dock ends composition, never blur.
     const leaveComposer = (event: Event) => {
       if (event.target instanceof Node && !composerDockRef.current?.contains(event.target)) {
         setComposing(false);
@@ -122,7 +102,6 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
     setPromptState(value);
     promptRef.current = value;
     if (sendInFlightRef.current) return;
-    // Attachment chips only exist in memory (File objects); the stored text drops their tokens.
     persistPrompt({ text: persistableComposerDraftText(value), mode: "prompt" });
   }, [persistPrompt]);
   const orgRestrictions = useOrgRestrictions();
@@ -140,8 +119,6 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
     return () => window.removeEventListener(openWorkModelsPromoChangedEvent, handlePromoChanged);
   }, []);
 
-  // A chat deep link (Den's connector "Chat" action) seeds the composer with
-  // the connector chip and its starter prompt; the person reviews and sends.
   useEffect(() => {
     const seed = () => {
       const draft = consumePendingChatSeed();
@@ -154,9 +131,6 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
     return () => window.removeEventListener(pendingChatSeedEvent, seed);
   }, []);
 
-  // Quiet inline lead to OpenWork Models: replaces the old startup dialog
-  // interrupt. Shown only while the session runs on the free starter model
-  // (the built-in `opencode` provider) and the hosted offering applies.
   const onFreeStarterModel = props.composer?.selectedModel.providerID === DEFAULT_MODEL.providerID;
   const showModelsHint =
     openWorkModelsPromoEligible &&
@@ -185,15 +159,11 @@ export function SessionEmptyHero(props: SessionEmptyHeroProps) {
     if ((!trimmedPrompt && !attachments.length) || props.busy) return;
     sendInFlightRef.current = true;
     setSendInFlight(true);
-    // Legacy callers may not establish a pending conversation. Clear only after
-    // their submit starts; the synchronous consume callback owns the new pipeline.
     try {
       const work = props.onRunTask(trimmedPrompt, attachments, handoff);
       persistedDraft.clear();
       await work;
     } catch (error) {
-      // The composer stays on this route, so whatever it holds now is once
-      // again the unsent new-task prompt and must stay reachable.
       sendInFlightRef.current = false;
       setSendInFlight(false);
       persistPrompt({ text: persistableComposerDraftText(promptRef.current), mode: "prompt" });

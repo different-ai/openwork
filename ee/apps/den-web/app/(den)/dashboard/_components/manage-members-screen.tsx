@@ -60,18 +60,12 @@ import { InviteModelAccessPreview } from "./invite-model-access-preview";
 
 type MembersTab = "members" | "teams" | "roles";
 
-/**
- * Copies text that is still being fetched. Safari only allows clipboard writes
- * started inside the click, so the pending text is handed to a ClipboardItem;
- * where that is unsupported, write it once it arrives.
- */
 async function copyTextWhenReady(text: Promise<string>) {
   try {
     await navigator.clipboard.write([
       new ClipboardItem({ "text/plain": text.then((value) => new Blob([value], { type: "text/plain" })) }),
     ]);
   } catch {
-    // Rethrows the fetch error when the text itself failed.
     await navigator.clipboard.writeText(await text);
   }
 }
@@ -128,7 +122,6 @@ export function ManageMembersScreen() {
   const [memberFilter, setMemberFilter] = useState("");
   const [teamFilter, setTeamFilter] = useState("");
 
-  // Admins choose who gets OpenWork Web (and is billed for it) where the organization has Web.
   const webPerMember = (orgContext?.capabilities.openworkWeb ?? false);
   const webMemberCount = (orgContext?.members ?? []).filter((member) => member.openworkWeb).length;
   const memberRoleLane = "flex w-36 @2xl:w-44";
@@ -137,7 +130,6 @@ export function ManageMembersScreen() {
   const visibleMembers = (orgContext?.members ?? []).filter((member) => `${member.user.name} ${member.user.email}`.toLocaleLowerCase().includes(memberFilter.trim().toLocaleLowerCase()));
   const visibleTeams = (orgContext?.teams ?? []).filter((team) => team.name.toLocaleLowerCase().includes(teamFilter.trim().toLocaleLowerCase()));
   const [pageError, setPageError] = useState<string | null>(null);
-  // Shown inside Add member and Create team, where the person is looking.
   const [formError, setFormError] = useState<string | null>(null);
   const [showInviteForm, setShowInviteForm] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
@@ -167,16 +159,12 @@ export function ManageMembersScreen() {
   );
   const canStartSeatCheckout = access.canStartSeatCheckout;
 
-  // Members gets a Roles tab (built-in roles and each team's custom role).
-
   const searchParams = useSearchParams();
   const introUnseen = useFeatureIntroUnseen();
   useEffect(() => {
-    // ?tab=roles or ?tab=teams opens that tab, e.g. coming back from Create role or from a feature intro.
     const tab = searchParams.get("tab");
     if (tab === "roles" || tab === "teams") setActiveTab(tab);
   }, [searchParams]);
-  // The tab is kept in the address, so `?` and a reload open the same tab.
   function chooseTab(tab: MembersTab) {
     setActiveTab(tab);
     const url = new URL(window.location.href);
@@ -185,17 +173,13 @@ export function ManageMembersScreen() {
     window.history.replaceState(null, "", url);
   }
   const shownTab: MembersTab = activeTab;
-  // custom roles show wherever roles do (people's rows, the invite picker, the Teams list).
 
   const toast = useDenToast();
   const organizationRoles = useOrganizationRoles(orgContext?.organization.id ?? null, access.canViewPermissions);
-  // The same list the Roles tab and the team picker show.
   const { roles } = organizationRoles;
   const { givePerson, giveTeam } = useGiveRole(orgContext?.organization.id ?? null);
   const setMemberRole = useSetMemberRole(orgContext?.organization.id ?? "");
-  // Giving anyone a role other than Member is a role change.
   const canChooseInviteRole = access.canManageRoles;
-  // A role can only be given by someone who holds everything it grants.
   const grantLocks = useRoleGrantLocks(orgContext?.organization.id ?? null, organizationRoles.sets, orgContext?.currentMember.permissions ?? [], orgContext?.currentMember.isOwner ?? false);
   const roleLocks = {
     roles,
@@ -213,7 +197,6 @@ export function ManageMembersScreen() {
   });
   const inviteTeamPicker = access.canManageTeams && (orgContext?.teams.length ?? 0) > 0;
   const [inviteTeamId, setInviteTeamId] = useState("");
-  // Teams lists Everyone first, and what each team changes from it.
   const agentPermissionsColumn = Boolean(orgContext && access.canViewAgentPermissions);
   const agentPolicies = useAgentPermissions(orgContext?.organization.id ?? "", agentPermissionsColumn && Boolean(orgContext?.organization.id));
   const teamListColumns = teamsListColumns({ agentPermissions: agentPermissionsColumn });
@@ -293,8 +276,6 @@ export function ManageMembersScreen() {
     setPageError(null);
     setInstallLinkShareUrl(null);
     setInstallLinkShareCopied(false);
-    // Some browsers deny programmatic clipboard access entirely; fall back to
-    // showing the address for a manual copy instead of a raw browser error.
     try {
       await navigator.clipboard.writeText(url);
       setInstallLinkCopied(true);
@@ -327,8 +308,6 @@ export function ManageMembersScreen() {
     }
   }, [access.canManageRoles]);
 
-  // Feature intro actions land here (DESIGN.md I5): ?invite=1 opens the invite form, ?newTeam=1 the
-  // Create team form and ?editTeam=<id> that team's form. Each is read once, then dropped from the address.
   const inviteRequested = searchParams.get("invite") === "1";
   const newTeamRequested = searchParams.get("newTeam") === "1";
   const editTeamRequested = searchParams.get("editTeam");
@@ -395,7 +374,6 @@ export function ManageMembersScreen() {
             event.preventDefault();
             setFormError(null);
             try {
-              // Member, Admin and Super admin travel with the invitation; any other role is given to the pending member.
               const chosen = roles.find((role) => role.value === (canChooseInviteRole ? inviteRole : "member"));
               const state = chosen ? memberRoleStateAfter(chosen) : { role: "member", setId: null };
               const memberId = await inviteMember({ email: inviteEmail, role: state.role, teamId: inviteTeamPicker ? inviteTeamId || null : undefined });
@@ -407,7 +385,6 @@ export function ManageMembersScreen() {
             } catch (error) {
               const paymentRequiredError = getOrgPaymentRequiredError(error);
               if (paymentRequiredError) {
-                // The plan dialog takes over; the typed email stays for the next try.
                 setShowInviteForm(false);
                 setSeatBillingDialogError(paymentRequiredError);
                 return;
@@ -449,7 +426,6 @@ export function ManageMembersScreen() {
           {inviteTeamPicker ? (
             <label className="grid gap-3">
               <span className="text-[14px] font-medium text-gray-700">Team</span>
-              {/* Each team shows the role it gives, on top of the person's own. */}
               <DenSelect aria-label="Team" value={inviteTeamId} onChange={(event) => setInviteTeamId(event.target.value)} menuWidth="trigger">
                 <option value="">No team</option>
                 {orgContext.teams.filter((team) => !team.managedByScim && (!team.grantsOrganizationAdmin || access.canManageAdminTeams)).map((team) => (
@@ -487,7 +463,6 @@ export function ManageMembersScreen() {
     </MembersFormDialog>
   );
 
-  /** The role on a person's row is the control: changing it takes effect at once, with Undo (S2, P8). */
   async function changeMemberRole(member: DenOrgMember, value: string) {
     const current = memberRoleState(member);
     const previous = memberRoleEntry(current, roles);
@@ -531,7 +506,6 @@ export function ManageMembersScreen() {
                   name: teamNameDraft,
                   memberIds: teamMemberDraft,
                 });
-                // The team's role is given once the team exists, the same way Change role gives it.
                 const chosen = roles.find((role) => role.value === teamRoleDraft);
                 if (chosen && chosen.value !== "member") {
                   if (!teamId) throw new Error(`${teamNameDraft} was created as Member. Give it ${chosen.label} from the team's Role tab.`);
@@ -558,7 +532,6 @@ export function ManageMembersScreen() {
             />
           </label>
 
-          {/* A new team gets its role here; an existing team's role is changed on its Role tab. */}
           {editingTeamId ? null : (
             <label className="grid gap-3">
               <span className="text-[14px] font-medium text-gray-700">Role</span>
@@ -575,7 +548,6 @@ export function ManageMembersScreen() {
                 Invite a member before assigning people to this team.
               </div>
             ) : (
-              // the same people rows and Add person picker as Create role.
               <PeopleField
                 people={orgContext.members.map((member) => ({ id: member.id, name: member.user.name || member.user.email, email: member.user.email }))}
                 chosenIds={teamMemberDraft}
@@ -600,7 +572,6 @@ export function ManageMembersScreen() {
     </MembersFormDialog>
   );
 
-  // Section facts for the Members intro (DESIGN.md I2), all from `GET /v1/org` and the roles already loaded.
   const membersIntroFacts: MembersFacts = {
     people: orgContext.members.length,
     pendingInvites: orgContext.invitations.filter((invitation) => invitation.status === "pending").length,
@@ -628,7 +599,6 @@ export function ManageMembersScreen() {
     />
   ) : null;
 
-  // The page's one create action sits in the header, as on Computers, and follows the open tab.
   const headerAction = shownTab === "members"
     ? <div className="flex items-center gap-1">
         {access.canInviteMembers && orgContext.capabilities.installLinks ? <ItemMenu label="Member list actions" entries={[{ label: installLinkCopied ? "Copied" : "Copy install link", onSelect: handleCopyInstallLink }]} /> : null}
@@ -701,7 +671,6 @@ export function ManageMembersScreen() {
         <RolesTab showIntro headerOwnsAction />
       ) : null}
 
-      {/* Dialogs: the list stays where it is while someone is added or a team is made. */}
       {inviteForm}
       {teamForm}
 
@@ -791,7 +760,6 @@ export function ManageMembersScreen() {
                 : isInvited
                   ? canResendInvitation || (access.canCancelInvitations && canManageMemberGrants)
                   : access.canManageTeams || access.canRemoveMembers || canTransferOwnershipToMember || canViewPermissions;
-              // Nobody changes their own role, the owner's moves by transfer, and an invitation keeps the role it was sent with.
               const canChangeRole = access.canManageRoles && !member.isOwner && !isInvited && member.id !== orgContext.currentMember.id;
 
               const memberActions = [
@@ -931,7 +899,6 @@ export function ManageMembersScreen() {
                           onClick={async () => {
                             setPageError(null);
                             try {
-                              // For each team, update its member list to add or remove this member.
                               for (const team of orgContext?.teams ?? []) {
                                 const wasInTeam = team.memberIds.includes(member.id);
                                 const shouldBeInTeam = memberTeamsDraft.has(team.id);
@@ -962,7 +929,6 @@ export function ManageMembersScreen() {
       ) : null}
 
       {activeTab === "teams" ? (
-        // With feature intros on and no teams yet, the Teams intro takes the list's place (DESIGN.md I1); Everyone stays above it.
         <MembersTeamsIntroSlot facts={teamFormOpen ? null : { teams: orgContext.teams.length }}>
           {(intro) => intro.size === "box" ? (
             <div data-testid="teams-intro">
@@ -1063,17 +1029,10 @@ export function ManageMembersScreen() {
     </DashboardPageTemplate>
   );
 
-  // The invite and team forms are the setup step itself, so they show even while the intro would.
   if (showInviteForm || teamFormOpen) return page;
-  // Nobody else here yet (no other members, invites or teams): the section intro replaces the page (DESIGN.md I2).
   return <FeatureIntroGate introKey="members" facts={membersIntroFacts}>{page}</FeatureIntroGate>;
 }
 
-/**
- * Add member and Create team: one dialog shell, as Den's other dialogs are
- * built, so the list underneath stays put (P11). Its content is mounted only
- * while open.
- */
 function MembersFormDialog({ open, title, onClose, testId, children }: { open: boolean; title: string; onClose: () => void; testId: string; children: ReactNode }) {
   return (
     <Dialog.Root open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
@@ -1091,12 +1050,10 @@ function MembersFormDialog({ open, title, onClose, testId, children }: { open: b
   );
 }
 
-/** Teams tab body: lets the Teams intro (box) take the list's place while there are no teams. */
 function MembersTeamsIntroSlot({ facts, children }: { facts: Pick<MembersFacts, "teams"> | null; children: (intro: FeatureIntroResolution) => ReactNode }) {
   return <>{children(useFeatureIntro("members.teams", facts))}</>;
 }
 
-/** A team's agent permissions in the Teams list: its own changes, or that it follows Everyone. */
 function TeamAgentPermissionsCell({ summary, failed }: { summary: string | null | undefined; failed: boolean }) {
   if (failed) return <TeamsListLane testId="team-row-agent-permissions" title="Couldn't load agent permissions" tone="muted">—</TeamsListLane>;
   if (summary === undefined) return <span role="status" aria-label="Loading agent permissions" data-testid="team-row-agent-permissions" className="hidden lg:block"><DenSkeleton className="h-3 w-24" /></span>;
@@ -1109,7 +1066,6 @@ function peopleCount(count: number): string {
   return `${count} ${count === 1 ? "member" : "members"}`;
 }
 
-/** What a team's members stop getting when it is deleted, for the confirmation (DESIGN.md P9). */
 function teamLosses({ agentPermissions }: { agentPermissions: boolean }): string {
   const parts = ["role", "access", agentPermissions ? "agent permissions" : null].filter((part): part is string => part !== null);
   return parts.length === 1 ? parts[0] ?? "" : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;

@@ -2,13 +2,11 @@ import type { UIMessage } from "ai";
 
 import { sessionErrorPresentationFromUIMessage } from "@/react-app/domains/session/sync/session-error";
 
-/** What the model answers when it has no clear next message to offer. */
 const NO_SUGGESTION = "NONE";
 const REQUEST_LIMIT = 1_500;
 const REPLY_LIMIT = 2_000;
 const MESSAGE_LIMIT = 8;
 const CONTEXT_LIMIT = 6_000;
-/** Longer answers are explanations or several steps, not one message to send. */
 const SUGGESTION_LIMIT = 120;
 
 const ASSISTANT_OFFER_OPENER = /^(would you like|do you want|want me to|what would you like|what should i do next|how can i help|is there anything|anything else|let me know)\b/i;
@@ -20,7 +18,6 @@ function messageText(message: UIMessage): string {
   return message.parts.flatMap((part) => part.type === "text" ? [part.text] : []).join("\n").trim();
 }
 
-/** Keep the result at the start and any correction at the end, not just a closing offer. */
 function boundedText(text: string, limit: number): string {
   if (text.length <= limit) return text;
   const omission = "\n[…]\n";
@@ -30,11 +27,6 @@ function boundedText(text: string, limit: number): string {
   return text.slice(0, start) + omission + text.slice(text.length - end);
 }
 
-/**
- * Recent conversation for a finished reply, including the user's earlier
- * intent and style. Null while the chat ends on anything else
- * (the person's own message, a failed turn, a reply with no text).
- */
 export function followUpExchange(messages: readonly UIMessage[]): FollowUpExchange | null {
   const last = messages.at(-1);
   if (!last || last.role !== "assistant" || sessionErrorPresentationFromUIMessage(last) || !messageText(last)) return null;
@@ -53,7 +45,6 @@ export function followUpExchange(messages: readonly UIMessage[]): FollowUpExchan
   return { replyId: last.id, messages: recent.reverse() };
 }
 
-/** Predict what the person would type, without turning an optional offer into a new task. */
 export function followUpPrompt(exchange: Pick<FollowUpExchange, "messages">): string {
   return [
     "Predict the next message this user is likely to type to the assistant in this conversation.",
@@ -69,7 +60,6 @@ export function followUpPrompt(exchange: Pick<FollowUpExchange, "messages">): st
   ].join("\n");
 }
 
-/** The suggestion in the model's answer, or null when it declined or did not give one sendable line. */
 export function parseFollowUpSuggestion(answer: string): string | null {
   const line = answer.trim().replace(/^["'“”‘’`]+|["'“”‘’`]+$/g, "").trim();
   if (!line || line.length > SUGGESTION_LIMIT || /[\r\n<>]/.test(line)) return null;

@@ -40,12 +40,10 @@ function canAsk(bucket: GatewayUsageBucket) {
   return bucket.allowRequestReset && bucket.canRequestReset && bucket.resetRequestStatus !== "pending" && exhausted(bucket);
 }
 
-/** The exhausted bucket that keeps a member blocked longest decides what the card says. */
 function longestBlock(buckets: GatewayUsageBucket[]) {
   return [...buckets].sort((a, b) => Date.parse(b.resetAt) - Date.parse(a.resetAt))[0];
 }
 
-/** The notice card above the composer: what is true, one line of detail, its actions, and an optional inline form. */
 export function ComposerNoticeCard({ icon, title, detail, actions, children, testId }: {
   icon: ReactNode; title: ReactNode; detail?: ReactNode; actions?: ReactNode; children?: ReactNode; testId?: string;
 }) {
@@ -90,13 +88,9 @@ export function GatewayIncreaseForm({ pending, error, onSubmit, onCancel }: {
 
 export function GatewayUsageNotice({ state, status, stale, providerName = null, canSwitchProvider = false, sessionId, messageSaved = false }: {
   state: "blocked" | "over_limit"; status: GatewayUsageStatus; stale: boolean;
-  /** Set when the selected model's provider has its own limit. */
   providerName?: string | null;
-  /** Another provider the member has still has room. */
   canSwitchProvider?: boolean;
-  /** The conversation whose model picker "Use another model" opens. */
   sessionId?: string;
-  /** A refused message is kept in the conversation. */
   messageSaved?: boolean;
 }) {
   const navigate = useNavigate();
@@ -147,7 +141,6 @@ export function GatewayUsageNotice({ state, status, stale, providerName = null, 
     );
   }
 
-  // The shared usage-limit card: admins raise the budget, members ask for more, everyone can switch models.
   return (
     <UsageLimitCard testId="gateway-usage-notice" kind="gateway_budget" saved={messageSaved}
       title={`You’ve used ${gatewayPeriodPossessives[bucket.timeframe]} ${formatGatewayMoney(bucket.allowanceMicroUsd)}${forProvider}`}
@@ -186,13 +179,11 @@ export function GatewayUsageApprovalNotice() {
   );
 }
 
-/** The account menu's quiet summary: how much of each limit is left. */
 export function GatewayUsageMenuItem() {
   const navigate = useNavigate();
   const usage = useGatewayUsage(true);
   if (!usage.authorized) return null;
   const groups = usage.data ? gatewayUsageLimitGroups(usage.data) : [];
-  // Only label the items when there is more than the default to tell apart.
   const labelled = groups.some((group) => group.providerName !== null);
   return (
     <DropdownMenuItem data-testid="gateway-usage-menu-item" className="flex-col items-stretch gap-0.5" onClick={() => navigate(GATEWAY_USAGE_SETTINGS_PATH)}>

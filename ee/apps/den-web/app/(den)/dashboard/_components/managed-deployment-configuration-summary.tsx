@@ -15,26 +15,20 @@ import {
 } from "./managed-deployment-configuration-state";
 
 export type ConfigurationChangeResult = z.infer<typeof deploymentConfigurationChangeResultSchema>;
-/** The approval handoff of a prepared change; the screen shows it as it shows an Update's. */
 export type ConfigurationLaunch = Extract<ConfigurationChangeResult, { outcome: "approval_required" }>;
 export type RunReauthableAction = (label: string, action: () => Promise<void>) => Promise<void>;
-/** What the Deployments screen hands the deployment detail when configuration changes are on. */
 export type ConfigurationControls = {
   onEdit: () => void;
   onResult: (deployment: ManagedDeployment, launch: ConfigurationLaunch | null) => void;
   runReauthableAction: RunReauthableAction;
-  /** The identity check is on screen; a dialog steps aside so it can be reached. */
   reauthDialogOpen: boolean;
-  /** Why someone who may not manage deployments finds these controls locked, and who can change that. */
   permissionReason: string;
 };
 
-/** The deployment changed after the page last loaded it, so the request was not applied. */
 export class DeploymentConfigurationChangedError extends Error {}
 
 const REQUEST_FAILED = "Couldn't prepare the configuration change. Try again.";
 
-/** Records the request in OpenWork. Nothing in AWS changes until its command is run there. */
 export async function requestConfigurationChange(deployment: EditableDeployment, configuration: AwsManagedDeploymentInput): Promise<ConfigurationChangeResult> {
   const result = await requestJson(`/v1/managed-deployments/${deployment.id}/configuration-changes`, {
     method: "POST", body: JSON.stringify({ expectedRevision: deployment.configuration.revision, configuration }),
@@ -46,7 +40,6 @@ export async function requestConfigurationChange(deployment: EditableDeployment,
   throw failure;
 }
 
-/** The deployment as the API has it now, or null when it can't be read. */
 export async function loadDeployment(id: string): Promise<ManagedDeployment | null> {
   try {
     const result = await requestJson("/v1/managed-deployments", { method: "GET" });
@@ -66,7 +59,6 @@ export function ConfigurationLockLine({ id, reason, testId, className = "" }: { 
   return <p id={id} className={`flex items-start gap-2 text-[13px] text-gray-500 ${className}`} data-testid={testId}><LockKeyhole aria-hidden className="mt-0.5 size-4 shrink-0" />{reason}</p>;
 }
 
-/** Before and after of each change; with `effects`, what each does to the running installation. */
 export function ConfigurationChangeList({ deployment, changes, effects = false }: { deployment: AwsDeployment; changes: DeploymentConfigurationChange[]; effects?: boolean }) {
   return (
     <ul className="divide-y divide-gray-100 text-[13px]" data-testid="deployment-configuration-changes">
@@ -90,10 +82,6 @@ export function ConfigurationChangeList({ deployment, changes, effects = false }
   );
 }
 
-/**
- * A requested change on the deployment detail: what was asked for, what is true
- * of it now, and what the person can do next. It renders nothing without one.
- */
 export function ManagedDeploymentConfigurationSummary({ deployment, canManage, commandShown, controls }: {
   deployment: ManagedDeployment; canManage: boolean; commandShown: boolean; controls: ConfigurationControls;
 }) {

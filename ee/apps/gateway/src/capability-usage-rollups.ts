@@ -1,8 +1,3 @@
-// Library usage rollups: the same fold as the gateway request logs (rollups.ts),
-// for capability_usage_event. Raw rows in closed UTC days older than the raw
-// retention fold straight into day rows (no hour tier) and are deleted in the
-// same transaction, so each use is visible in exactly one store. Retried runs
-// consume only remaining source ids.
 import { createHash } from "node:crypto"
 import {
   CapabilityUsageEventTable,
@@ -22,7 +17,6 @@ export type CapabilityUsageRollupDimensions = Pick<
   "organization_id" | "org_membership_id" | "kind" | "plugin_id" | "config_object_id" | "connection_id"
 >
 
-/** One (dimensions, source) group of claimed raw rows. */
 export type CapabilityUsageAggregate = CapabilityUsageRollupDimensions & {
   source: CapabilityUsageSource
   use_count: number
@@ -31,7 +25,6 @@ export type CapabilityUsageAggregate = CapabilityUsageRollupDimensions & {
   last_used_at: Date
 }
 
-// Statements that must run inside one batch's transaction.
 export type CapabilityUsageRollupStore = {
   aggregateRawDay(dayStart: Date, limit: number): Promise<{ ids: (typeof CapabilityUsageEventTable.$inferSelect.id)[]; groups: CapabilityUsageAggregate[] }>
   upsertRollups(rows: CapabilityUsageRollupRow[]): Promise<void>
@@ -62,15 +55,12 @@ const DAY_MS = 24 * 60 * 60 * 1000
 const DEFAULT_RAW_RETENTION_MS = 2 * DAY_MS
 const DEFAULT_MAX_BUCKETS_PER_RUN = 48
 const DEFAULT_MAX_SOURCE_ROWS_PER_BUCKET = 1000
-// A day bucket spans every organization, so one day can hold far more than one
-// batch. Keep consuming it, bounded per run; a later run picks up the rest.
 const DEFAULT_MAX_BATCHES_PER_RUN = 200
 
 function floorToDay(date: Date) {
   return new Date(Math.floor(date.getTime() / DAY_MS) * DAY_MS)
 }
 
-/** Stable hash of the rollup dimensions; JSON keeps null distinct from empty strings. */
 export function capabilityUsageRollupDimensionKey(dimensions: CapabilityUsageRollupDimensions): string {
   return createHash("sha256").update(JSON.stringify([
     "openwork-capability-usage-rollup-dimensions-v1",
@@ -83,7 +73,6 @@ export function capabilityUsageRollupDimensionKey(dimensions: CapabilityUsageRol
   ])).digest("hex")
 }
 
-/** Collapses per-source groups into one row per dimension combination, with uses per source in source_counts. */
 export function buildCapabilityUsageRollupRows(bucketStart: Date, groups: readonly CapabilityUsageAggregate[]): CapabilityUsageRollupRow[] {
   const rows = new Map<string, CapabilityUsageRollupRow & { source_counts: CapabilityUsageSourceCounts }>()
   for (const group of groups) {
@@ -138,10 +127,6 @@ function isCapabilityUsageSource(value: string): value is CapabilityUsageSource 
 const raw = CapabilityUsageEventTable
 const rollup = CapabilityUsageRollupTable
 
-/**
- * MySQL cannot add two JSON objects, so a duplicate bucket sums each known
- * source key. A key missing on either side counts as zero.
- */
 const mergeSourceCounts = sql`json_set(coalesce(${rollup.source_counts}, json_object()), ${sql.join(capabilityUsageSourceValues.map((source) =>
   sql`${`$.${source}`}, coalesce(json_extract(${rollup.source_counts}, ${`$.${source}`}), 0) + coalesce(json_extract(values(${sql.identifier("source_counts")}), ${`$.${source}`}), 0)`), sql`, `)})`
 
@@ -173,7 +158,6 @@ function createDbCapabilityUsageRollupStore(executor: DbTransaction): Capability
         .from(raw)
         .where(inArray(raw.id, ids))
         .groupBy(raw.organization_id, raw.org_membership_id, raw.kind, raw.plugin_id, raw.config_object_id, raw.connection_id, raw.source)
-      // An unknown source (a newer writer) still counts as use, credited to the agent.
       const groups = rows.map((row) => ({ ...row, source: isCapabilityUsageSource(row.source) ? row.source : "agent" as const }))
       return { ids, groups }
     },
@@ -201,16 +185,12 @@ function createDbCapabilityUsageRollupStore(executor: DbTransaction): Capability
 export function createDbCapabilityUsageRollupRepository(db: typeof import("./db.js").db): CapabilityUsageRollupRepository {
   return {
     async listCandidateDayBuckets(before, limit) {
-      // Bucket starts are derived server-side via UNIX_TIMESTAMP, which matches
-      // the JS epoch under the UTC session assumption drizzle's timestamp mapping makes.
       const bucket = sql<number>`floor(unix_timestamp(${raw.created_at}) / 86400)`.mapWith(Number)
       const rows = await db.select({ bucket }).from(raw).where(lt(raw.created_at, before)).groupBy(bucket).orderBy(bucket).limit(limit)
       return rows.map((row) => new Date(row.bucket * DAY_MS))
     },
     transaction(run) {
       return db.transaction(async (tx) => {
-        // Taken before any source lock, like gateway_rollup_lock: two runs never
-        // fold the same rows, and upserts never race a concurrent fold.
         await tx.insert(CapabilityUsageRollupLockTable).values({ id: 1 }).onDuplicateKeyUpdate({ set: { id: 1 } })
         return run(createDbCapabilityUsageRollupStore(tx))
       })
@@ -236,7 +216,6 @@ export async function runCapabilityUsageRollups(input: RunCapabilityUsageRollups
   const repository = input.repository ?? (await defaultRepository())
   const summary: CapabilityUsageRollupRunSummary = { dayBuckets: 0, batches: 0, rawRowsDeleted: 0 }
 
-  // Only closed days: the whole day must be older than the raw retention.
   const dayCutoff = floorToDay(new Date(now.getTime() - rawRetentionMs))
   for (const dayStart of await repository.listCandidateDayBuckets(dayCutoff, maxBucketsPerRun)) {
     if (summary.batches >= maxBatchesPerRun) break

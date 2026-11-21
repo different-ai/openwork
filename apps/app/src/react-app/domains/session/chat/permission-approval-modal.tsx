@@ -47,10 +47,6 @@ const metadataDetailKeys: Array<{ key: string; labelKey: string; multiline?: boo
   { key: "diff", labelKey: "session.permission_detail_diff", multiline: true },
 ];
 
-/**
- * Set by the host on every approval that sends a local file to a connected
- * account. All such tools share this card: the same choices and wording.
- */
 export type FileSendPrompt = { kind: string; remember: Array<"session" | "always"> };
 
 export function permissionFileSend(permission: PendingPermission): FileSendPrompt | null {
@@ -69,7 +65,6 @@ const fileSendTitleKeys: Record<string, string> = {
   outlook_create_draft_with_attachments: "session.file_send_title_outlook_draft",
 };
 
-/** What a send would share and with whom: files, destination, account. */
 function fileSendScope(metadata: Record<string, unknown>): string {
   const paths = Array.isArray(metadata.paths) ? metadata.paths.filter(path => typeof path === "string") : [];
   const files = paths.length ? paths.join(", ") : typeof metadata.path === "string" ? metadata.path : "";
@@ -239,7 +234,6 @@ export function permissionCanRemember(permission: PendingPermission): boolean {
 
 export function PermissionApprovalPanel(props: PermissionApprovalModalProps) {
   const fileSend = permissionFileSend(props.permission);
-  // A file send offers exactly what the host said it will remember.
   const canRemember = fileSend ? fileSend.remember.includes("session") : permissionCanRemember(props.permission);
   const canAlways = fileSend?.remember.includes("always") === true;
   const presentation = useMemo(() => describePermissionRequest(props.permission), [props.permission]);

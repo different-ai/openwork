@@ -27,10 +27,8 @@ import { clearQueuedSendContext } from "../sync/queued-send-context";
 import { isOrphanedInteraction, terminalToolCallIds } from "../sync/orphaned-interactions";
 import { applySessionArchived } from "../sync/session-sync";
 
-/** Archive or unarchive the open session: one toggle shared by the thread header, palette and shortcut. */
 export type SessionArchiveToggle = { archived: boolean; toggle: () => void };
 
-/** The agent conversation that asked, when the request came through the agent bridge. */
 export type ArchiveRequester = { sessionId: string; title: string | null };
 
 type ArchiveTarget = {
@@ -41,7 +39,6 @@ type ArchiveTarget = {
 export type ArchiveSessionOutcome =
   | { kind: "done" | "cancelled" }
   | { kind: "verification_failed" | "archive_outcome_unknown"; message: string }
-  /** Agent path: the warning goes back through the agent's conversation, never a dialog. */
   | { kind: "target_working" | "self_archive_while_working"; sessionId: string; title: string };
 
 export type ArchiveSessionRef = { workspaceId: string; sessionId: string };
@@ -51,11 +48,9 @@ type BatchEntry = { target: ArchiveTarget; undo?: { workspaceId: string; session
 export type ArchiveSessionOptions = {
   signal?: AbortSignal;
   requester?: { sessionId: string };
-  /** Agent path: a working target (or the requester's own tree) is refused instead of asking the person. */
   refuseWorking?: boolean;
 };
 
-/** Archive through the engine that owns the session; v1 keeps the desktop main-process transport. */
 function archiveClient(endpoint: ResolvedWorkspaceEndpoint, directory: string) {
   return isOpencodeV2BaseUrl(endpoint.opencodeBaseUrl)
     ? createClientV2(endpoint.opencodeBaseUrl, directory, { token: endpoint.token })
@@ -65,7 +60,6 @@ function archiveClient(endpoint: ResolvedWorkspaceEndpoint, directory: string) {
 export function useSessionArchive(input: {
   workspaces: RouteWorkspace[];
   sessionsByWorkspaceId: Record<string, RouteSession[]>;
-  /** The engine that owns the workspace's sessions: v2 (`/opencode2`) when its server routes chat there. */
   endpointForSessionWorkspace: (workspace: RouteWorkspace) => ResolvedWorkspaceEndpoint | null;
   selectedWorkspaceId: string;
   selectedSessionId: string | null;
@@ -172,8 +166,6 @@ export function useSessionArchive(input: {
     };
     const { workspace, endpoint, sessionId, draftScope } = target;
     const baseUrl = endpoint.opencodeBaseUrl;
-    // Finite archive verification must not queue behind retained renderer SSEs.
-    // Keep the same safety checks; only the desktop HTTP transport changes.
     const client = archiveClient(endpoint, workspace.path);
     const releases = new Map<string, () => void>();
     const controller = new AbortController();
@@ -227,8 +219,6 @@ export function useSessionArchive(input: {
     try {
       checkDeadline();
       const readTree = () => readSessionTree(client, sessionId, workspace.path, options);
-      // Native Stop reaches the root immediately, concurrent with discovery.
-      // Archive also accounts for older/background subtasks that would be hidden.
       let rootStop: Promise<void> | undefined;
       if (confirmed) {
         if (mounted.current) { setStopping(true); setError(null); }
@@ -238,8 +228,6 @@ export function useSessionArchive(input: {
         void rootStop.catch(() => {});
       }
       const ids = await bounded(readTree());
-      // The requester is running by construction (it is issuing this call), so
-      // archiving itself or an ancestor would stop its own turn mid-conclusion.
       if (!confirmed && request?.refuseWorking && target.requestedBy && ids.includes(target.requestedBy.sessionId)) {
         closeDialog(refusal("self_archive_while_working"));
         return;
@@ -268,8 +256,6 @@ export function useSessionArchive(input: {
           }
           if (idle) dispatchQueuedDrain(id, { type: "idle_reconciled", observedAt, terminalObserved });
           else dispatchQueuedDrain(id, { type: "busy_observed" });
-          // A request whose tool call already ended was abandoned by the engine
-          // without a rejection; nobody can answer it, so it is not open work.
           const terminal = terminalToolCallIds(messages);
           const unanswered = (request: { sessionID: string; tool?: { messageID: string; callID: string } }) =>
             request.sessionID === id && !isOrphanedInteraction(request.tool, terminal);
@@ -369,7 +355,6 @@ export function useSessionArchive(input: {
     return { workspace, endpoint, sessionId, title, draftScope: input.draftScope, requestedBy };
   }
 
-  // Explicit UI owner; the agent's existing archiveSession contract stays unchanged.
   function archiveSessionInWorkspace(workspaceId: string, sessionId: string, archived: boolean): Promise<ArchiveSessionOutcome> {
     if (!workspaceId) return Promise.resolve({ kind: "verification_failed", message: "The session's workspace is missing." });
     return archiveOwnedSession(sessionId, archived, undefined, workspaceId);

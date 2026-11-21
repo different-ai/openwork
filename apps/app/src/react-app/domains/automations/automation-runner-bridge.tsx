@@ -33,10 +33,8 @@ import { createAutomationRunnerConnectCoordinator } from "./automation-runner-co
 import { desktopRunnerId, organizationRunnerId } from "./automation-runner-identity"
 
 const RUNNER_TOKEN_REFRESH_MS = 30 * 60_000
-/** A disconnected computer asks Den again this often. A new sign-in asks at once. */
 const RUNNER_DISCONNECTED_RETRY_MS = 5 * 60_000
 
-/** Keeps this signed-in desktop registered as the owner's Automation runner when Den allows it. */
 export function AutomationRunnerBridge() {
   if (useEnterpriseActivationRequired()) return null
   return <ActivatedAutomationRunnerBridge />
@@ -87,21 +85,12 @@ function ActivatedAutomationRunnerBridge() {
               platform,
               concurrency: 1,
             })
-            // Older/self-hosted Den versions reject capabilities they do not
-            // know with a 400. Step down one capability set at a time so
-            // Automation delivery keeps working until that server upgrades.
             const recoveryCapabilities: AutomationDesktopRunnerCapability[] = [
               AUTOMATION_MODEL_ATTENTION_CAPABILITY,
               REMOTE_SESSION_DESKTOP_RUNNER_CAPABILITY,
               REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY,
               REMOTE_SESSION_RECOVERY_RUNNER_CAPABILITY,
             ]
-            // Den sends answer requests only to runners that say they take them,
-            // lets other devices open sessions started here only on runners
-            // that honour the owner's session access choice, and under an
-            // organization's opt-in allows only runners whose owner can choose.
-            // Released Dens take fewer capabilities, so every set they accept
-            // today follows, in the order they were introduced.
             const answerCapabilities: AutomationDesktopRunnerCapability[] = [
               ...recoveryCapabilities,
               REMOTE_SESSION_ANSWER_RUNNER_CAPABILITY,
@@ -144,10 +133,6 @@ function ActivatedAutomationRunnerBridge() {
           try {
             runner = await mintRunner(runnerId)
           } catch (error) {
-            // An older Den answers 404 for remote session targets when that
-            // organization never had them turned on (or the route predates
-            // them). Nothing to connect: wait for the next refresh quietly
-            // instead of retrying every few seconds.
             if (!deploymentEnabled && error instanceof DenApiError && error.status === 404) {
               if (!isCurrent()) return
               await disconnect()
@@ -157,10 +142,6 @@ function ActivatedAutomationRunnerBridge() {
               throw error
             }
             if (!isCurrent()) return
-            // Only a Den from before runner rows were scoped refuses an install
-            // already registered in another organization. Use an id derived
-            // for this organization rather than replacing the install's id,
-            // which left a stale runner behind on every switch.
             runnerId = organizationRunnerId(runnerId, organizationId)
             runner = await mintRunner(runnerId)
           }
@@ -173,15 +154,11 @@ function ActivatedAutomationRunnerBridge() {
           })
         } catch (error) {
           if (!isCurrent()) throw error
-          // This computer was disconnected from the organization. Only a new
-          // sign-in reconnects it, so asking again right away cannot help.
           if (error instanceof DenApiError && error.status === 403 && error.code === COMPUTER_DISCONNECTED_ERROR) {
             markThisComputerDisconnected(signIn)
             await disconnect()
             return "disconnected"
           }
-          // The sign-in itself was refused: check it, which signs out when it
-          // is gone, instead of minting against it again.
           if (isDenSessionRevokedError(error)) {
             void refresh()
             return
@@ -193,12 +170,8 @@ function ActivatedAutomationRunnerBridge() {
     })
 
     const requestConnect = () => void coordinator.request().catch(() => undefined)
-    // While Den refuses this computer, only a different sign-in is worth an attempt before the long interval.
     const handleSettingsChanged = () => { if (!thisComputerStillDisconnected()) requestConnect() }
     window.addEventListener(denSettingsChangedEvent, handleSettingsChanged)
-    // Rejoining a network mints a fresh credential immediately instead of
-    // leaving this desktop unreachable until the next refresh, which is long
-    // enough for a scheduled occurrence to come due and be missed.
     window.addEventListener("online", handleSettingsChanged)
     const unsubscribeCredentialRejected = window.__OPENWORK_ELECTRON__.automationRunner
       ?.onCredentialRejected?.((rejection) => {
@@ -208,7 +181,6 @@ function ActivatedAutomationRunnerBridge() {
         }
         markThisComputerDisconnected(denSignInKey(readDenSettings()))
         coordinator.computerDisconnected()
-        // A disconnect usually ends this sign-in too: find out now, not at the next request.
         void refresh()
       })
     const unsubscribeRunLifecycle = window.__OPENWORK_ELECTRON__.automationRunner

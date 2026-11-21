@@ -1,15 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk"
 import { SKILL_ZIP_MAX_BYTES } from "./skill-zip.js"
 
-/**
- * Reads a team's custom Agent Skills from Anthropic's Skills API, so they can
- * move to OpenWork in one step. The person's Anthropic API key is used for the
- * request it arrives with and is never stored or logged; it reaches only
- * api.anthropic.com. A skill version downloads as a ZIP whose top folder is
- * the skill's name, which skill-zip.ts reads.
- */
-
-/** Skills one listing or import handles. */
 export const ANTHROPIC_SKILLS_MAX = 100
 
 export type AnthropicSkillSummary = {
@@ -26,11 +17,9 @@ export class AnthropicSkillsError extends Error {
 }
 
 function client(apiKey: string) {
-  // Always Anthropic's own API: never a base URL from the environment.
   return new Anthropic({ apiKey, baseURL: "https://api.anthropic.com", maxRetries: 2, timeout: 60_000 })
 }
 
-/** A sentence a person can act on for an error from Anthropic's API. */
 export function anthropicSkillsFailure(error: unknown): AnthropicSkillsError {
   if (error instanceof AnthropicSkillsError) return error
   if (error instanceof Anthropic.AuthenticationError) return new AnthropicSkillsError(400, "anthropic_key_rejected", "Anthropic did not accept that API key. Check it in the Claude Console and try again.")
@@ -42,7 +31,6 @@ export function anthropicSkillsFailure(error: unknown): AnthropicSkillsError {
   throw error
 }
 
-/** The workspace's custom skills (not Anthropic's built-in ones), at most ANTHROPIC_SKILLS_MAX. */
 export async function listAnthropicCustomSkills(apiKey: string): Promise<{ skills: AnthropicSkillSummary[]; truncated: boolean }> {
   const skills: AnthropicSkillSummary[] = []
   try {
@@ -56,7 +44,6 @@ export async function listAnthropicCustomSkills(apiKey: string): Promise<{ skill
   return { skills, truncated: false }
 }
 
-/** One skill's latest version as a ZIP archive, refused past the archive limit. */
 export async function downloadAnthropicSkill(apiKey: string, skillId: string): Promise<{ displayName: string; zip: Buffer }> {
   try {
     const anthropic = client(apiKey)

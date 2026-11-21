@@ -72,11 +72,6 @@ type AttributionStepProps = {
   onSkip: () => void;
 };
 
-/**
- * Self-reported attribution survey shown once during onboarding.
- * When the user picks "AI assistant" we ask which prompt led them
- * here — first-party data on how answer engines describe OpenWork.
- */
 export function AttributionStep({ ref, onSubmit, onSkip }: AttributionStepProps) {
   const [aiSelected, setAiSelected] = useState(false);
   const [aiPrompt, setAiPrompt] = useState("");

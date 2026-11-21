@@ -17,17 +17,9 @@ export type QuestionPanelProps = {
   questions: QuestionInfo[];
   busy: boolean;
   onReply: (answers: string[][]) => unknown;
-  /** Declines the whole request without answering. Hidden when omitted. */
   onDismiss?: () => void;
-  /**
-   * Feature `questionMinimize`: the person can collapse the pending question
-   * to one line above the composer and reopen it with everything they picked
-   * or typed. Off, the panel is unchanged.
-   */
   collapsible?: boolean;
-  /** Identifies the pending request, so its draft survives leaving the chat and coming back. */
   requestId?: string;
-  /** Whether this panel answers the collapse chord; one pane at a time. */
   shortcutActive?: boolean;
   variant?: "composer" | "thread";
 };
@@ -135,11 +127,6 @@ function optionLabels(question: QuestionInfo | undefined): string[] {
 
 type QuestionDraft = { state: QuestionState; collapsed: boolean };
 
-/**
- * What the person picked or typed for a question still pending, by request,
- * kept while the app runs so leaving the chat and coming back restores it.
- * Only written while the panel is collapsible.
- */
 const questionDrafts = new Map<string, QuestionDraft>();
 const QUESTION_DRAFT_LIMIT = 50;
 
@@ -151,7 +138,6 @@ function saveQuestionDraft(requestId: string, draft: QuestionDraft) {
   if (!oldest.done) questionDrafts.delete(oldest.value);
 }
 
-/** Test seam: forget every kept draft. */
 export function clearQuestionDrafts() {
   questionDrafts.clear();
 }
@@ -170,7 +156,6 @@ export function QuestionPanel(props: QuestionPanelProps) {
   const [collapsed, setCollapsed] = useState(() => (draftKey ? questionDrafts.get(draftKey)?.collapsed === true : false));
   const loadedDraftKey = useRef(draftKey && questionDrafts.has(draftKey) ? draftKey : undefined);
   const loadingDraft = useRef(false);
-  // An answered or dismissed request must not be saved again by a late state change.
   const settledDraftKey = useRef<string | undefined>(undefined);
 
   const advanceTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -185,10 +170,8 @@ export function QuestionPanel(props: QuestionPanelProps) {
       dispatch({ type: "reset", questionCount: props.questions.length });
       return clearAdvanceTimer;
     }
-    // A request already on screen keeps its answers; a new one opens expanded.
     if (loadedDraftKey.current === draftKey) return clearAdvanceTimer;
     loadedDraftKey.current = draftKey;
-    // The state still on screen belongs to the previous request; save after it is replaced.
     loadingDraft.current = true;
     const draft = questionDrafts.get(draftKey);
     if (draft) dispatch({ type: "restore", state: draft.state });

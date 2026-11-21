@@ -8,7 +8,6 @@ import { workbotHost } from "./host";
 import { readConnectionResult } from "./connect-result";
 
 const startedSchema = z.object({ authorizeUrl: z.string().url().nullable(), callbackOrigin: z.string().url() });
-/** What the flow needs from an everyday connection or an app on the profile's Apps list. */
 type Connectable = Pick<WorkbotConnection, "id" | "connectMode" | "connectUrl">;
 type Attempt = { id: string; requestId: string; inline: boolean; popup: Window | null; callbackOrigin: string | null; result: boolean | null; startedAt: number; closedReads: number };
 const buttonClass = "h-8 shrink-0 rounded-full px-3.5 text-[13px] font-medium text-[var(--wb-text)] shadow-[0_0_0_1px_var(--wb-ring)] transition-colors duration-150 hover:bg-[var(--wb-chip)] disabled:opacity-50 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]";
@@ -21,7 +20,6 @@ export function useWorkbotConnect() {
   const [error, setError] = useState<{ id: string; message: string } | null>(null);
   const [sameTabUrl, setSameTabUrl] = useState<string | null>(null);
   const connections = useWorkbotConnections({ enabled: true, waiting: pendingId !== null });
-  // The same request: apps beyond the everyday ones (profile) are ready when Den says so there.
   const apps = useWorkbotApps({ enabled: true, waiting: pendingId !== null });
   const refresh = (resources = false) => {
     void client.invalidateQueries({ queryKey: ["workbot", "connections"] });
@@ -80,7 +78,6 @@ export function useWorkbotConnect() {
       return;
     }
     const requestId = crypto.randomUUID();
-    // Open while handling the click, before the network request, so browser popup blocking is predictable.
     const popup = window.open("", `workbot-connect-${requestId}`, "popup,width=520,height=720");
     const current: Attempt = { id: connection.id, requestId, inline: true, popup, callbackOrigin: null, result: null, startedAt: Date.now(), closedReads: 0 };
     attempt.current = current;

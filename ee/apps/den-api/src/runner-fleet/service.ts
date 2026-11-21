@@ -12,26 +12,17 @@ import { foldFleet, historyFromHours, historyHourKeys, hourKey, mergeHours, stor
 import { readRunnerFleet } from "./reader.js"
 import { notConfiguredFleet } from "./state.js"
 
-/**
- * The live fleet for the admin page, and the background job that records its history.
- *
- * History lives in `admin_metric_snapshot` under its own metric key, one row per UTC hour (`range_key` is the hour),
- * beside the Control Center's snapshots and out of their way: those are read by their own range keys.
- */
 const logger = appLogger.child({ component: "runner_fleet" })
 const HISTORY_METRIC = "runner_fleet_history"
 const SAMPLER_LEASE = "runner_fleet_sampler"
 const SAMPLE_INTERVAL_MS = 60_000
-/** A sampler that stops renewing is replaced after this long. */
 const SAMPLER_LEASE_MS = 150_000
 const FIRST_SAMPLE_DELAY_MS = 20_000
 const RETENTION_HOURS = 31 * 24
-/** Readers within this long of each other share one read of the nodes. */
 const SHARE_MS = 4_000
 
 let shared: { at: number; fleet: Promise<AdminRunnerFleet> } | null = null
 
-/** The fleet now. Admins watching at the same time, and the sampler, share one read of the nodes. */
 export function currentRunnerFleet(): Promise<AdminRunnerFleet> {
   const config = runnerFleetConfig()
   if (!config) return Promise.resolve(notConfiguredFleet(new Date()))
@@ -39,16 +30,10 @@ export function currentRunnerFleet(): Promise<AdminRunnerFleet> {
   if (shared && now - shared.at < SHARE_MS) return shared.fleet
   const fleet = readRunnerFleet(config, { resolve: resolve4, fetch, now: () => new Date() })
   shared = { at: now, fleet }
-  // A failed read is not kept: the next reader tries again.
   fleet.catch(() => { if (shared?.fleet === fleet) shared = null })
   return fleet
 }
 
-/**
- * Whose each cell in memory is. Den's conversations are read from its session index (shared for five minutes, and
- * read again sooner when a cell in memory has no name yet: a conversation started since). Each cell name is turned
- * into its id by the runner once, and kept: a name's id never changes.
- */
 const RESIDENTS_METRIC = "runner_fleet_residents"
 const RESIDENTS_KEY = "current"
 const NAMES_SHARE_MS = 5 * 60_000
@@ -60,7 +45,6 @@ const ORGANIZATION_NAMES_LIMIT = 5_000
 const ORGANIZATION_CHUNK = 200
 
 let names: { at: number; byName: Promise<Map<string, KnownCell>> } | null = null
-/** Cell name to short cell id; an empty id for a name the runner does not take as a cell's. */
 const idByName = new Map<string, string>()
 let known: { names: Map<string, KnownCell>; ids: number; byId: Map<string, KnownCell> } | null = null
 const organizationNames = new Map<string, string>()
@@ -76,7 +60,6 @@ function knownNames(now: number, maxAgeMs: number): Promise<Map<string, KnownCel
   return byName
 }
 
-/** The ids of names not asked about yet. Returns why it could not ask, or null. */
 async function resolveIds(client: Pick<ReturnType<typeof createHeadlessRunnerClient>, "cellIds">, byName: Map<string, KnownCell>): Promise<string | null> {
   const missing = [...byName.keys()].filter((name) => !idByName.has(name))
   for (let start = 0; start < missing.length; start += NAMES_PER_CALL) {
@@ -106,7 +89,6 @@ async function cellDirectory(inMemory: ReadonlySet<string>, now: number): Promis
   let byName = await knownNames(now, NAMES_SHARE_MS)
   let error = await resolveIds(client, byName)
   let cells = byId(byName)
-  // A cell with no name may be a conversation started since the index was read: look once more, not every reading.
   if (error === null && [...inMemory].some((id) => !cells.has(id)) && names && now - names.at >= NAMES_REFRESH_MS) {
     byName = await knownNames(now, NAMES_REFRESH_MS)
     error = await resolveIds(client, byName)
@@ -128,7 +110,6 @@ async function cellDirectory(inMemory: ReadonlySet<string>, now: number): Promis
   return { byId: cells, organizations: organizationNames, error }
 }
 
-/** First sightings on this replica, and the ones the sampler keeps for every replica (read at most every 30 seconds). */
 let memorySeen: Record<string, number> = {}
 let keptSeen: { at: number; seen: Promise<Record<string, number>> } | null = null
 
@@ -144,10 +125,6 @@ function sampledSeen(now: number): Promise<Record<string, number>> {
 
 let described: { source: Promise<AdminRunnerFleet>; fleet: Promise<AdminRunnerFleet> } | null = null
 
-/**
- * The fleet now with each cell in memory described: the organization and kind of conversation it belongs to, and
- * since when it has been in memory. What Den knows is a help: when it cannot be read the nodes are still shown.
- */
 export function describedRunnerFleet(): Promise<AdminRunnerFleet> {
   const source = currentRunnerFleet()
   if (described?.source === source) return described.fleet
@@ -168,7 +145,6 @@ export function describedRunnerFleet(): Promise<AdminRunnerFleet> {
   return fleet
 }
 
-/** Keeps, for every replica, when each cell now in memory was first seen there. One row, replaced each minute. */
 async function recordResidents(fleet: AdminRunnerFleet, now: number) {
   const [existing] = await db.$primary.select({ payload: AdminMetricSnapshotTable.payload }).from(AdminMetricSnapshotTable)
     .where(and(eq(AdminMetricSnapshotTable.metric_key, RESIDENTS_METRIC), eq(AdminMetricSnapshotTable.range_key, RESIDENTS_KEY))).limit(1)
@@ -186,7 +162,6 @@ export async function readRunnerFleetHistory(range: RunnerFleetHistoryRange, now
 
 async function recordFleet(fleet: AdminRunnerFleet, now: number) {
   const key = hourKey(now)
-  // Primary: the hour's row as last written, by this replica or the one that sampled before it.
   const [existing] = await db.$primary.select({ payload: AdminMetricSnapshotTable.payload }).from(AdminMetricSnapshotTable)
     .where(and(eq(AdminMetricSnapshotTable.metric_key, HISTORY_METRIC), eq(AdminMetricSnapshotTable.range_key, key))).limit(1)
   const payload = mergeHours(storedHour(existing?.payload), foldFleet(storedHour(null), fleet, now))
@@ -199,10 +174,6 @@ async function pruneHistory(now: number) {
     .where(and(eq(AdminMetricSnapshotTable.metric_key, HISTORY_METRIC), lt(AdminMetricSnapshotTable.range_key, hourKey(now - RETENTION_HOURS * 60 * 60_000))))
 }
 
-/**
- * Records the fleet once a minute so the page's grids have a past. One Den replica samples at a time (a lease);
- * another takes over when it stops. Off when the fleet is not configured.
- */
 export function startRunnerFleetSampler() {
   if (!runnerFleetConfig()) return async () => undefined
   const owner = defaultOwner()
@@ -233,7 +204,6 @@ export function startRunnerFleetSampler() {
     clearInterval(timer)
     clearTimeout(first)
     await running
-    // Hand the lease back so another replica samples at once.
     await dbSnapshotStore.release(SAMPLER_LEASE, owner, new Date()).catch(() => undefined)
   }
 }

@@ -33,9 +33,7 @@ export const designNoteSchema = z.object({
   detail: z.string().max(1_000),
   source: z.enum(["layout", "vision"]),
   region: z.object({ x: fraction, y: fraction, width: fraction, height: fraction }).optional(),
-  /** Where in the code: DOM hooks such as `[data-library-row="docs-helper"]`. */
   anchors: z.array(z.string().max(200)).max(3).optional(),
-  /** Class lists of the boxes involved, as grep targets. */
   classes: z.array(z.string().max(160)).max(3).optional(),
 });
 export type DesignNote = z.infer<typeof designNoteSchema>;
@@ -73,7 +71,6 @@ export const screenChangeSchema = z.object({
 /** An element the test verified just before the screenshot. */
 export const evidenceFocusSchema = z.object({ label: z.string().max(120), box: evidenceBoxSchema });
 
-/** The step a screenshot or check line belongs to: the claim it shows or proves. */
 const step = z.string().max(500).optional();
 
 export const reviewSchema = z
@@ -119,18 +116,14 @@ export const reviewSchema = z
           description: z.string(),
           judgments: z.array(judgment),
           checkpoint: checkpointSchema.optional(),
-          // "exact": the screen did not change while the checkpoint was captured.
           checkpointMatch: z.enum(["exact", "approximate"]).optional(),
           checkpointError: z.string().max(200).optional(),
           designNotes: z.array(designNoteSchema).max(20).optional(),
           step,
-          /** Pixel size of the image, so marks line up when a thumbnail crops it. */
           size: z.object({ width: z.number().int().positive(), height: z.number().int().positive() }).optional(),
           change: screenChangeSchema.optional(),
           focus: z.array(evidenceFocusSchema).max(8).optional(),
-          /** false when the screen was still changing at capture. */
           settled: z.boolean().optional(),
-          /** Taken by the harness at the moment a step failed. */
           failure: z.boolean().optional(),
         }),
       ]),

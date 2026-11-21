@@ -28,7 +28,6 @@ import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-e
 import { codemodeCodeDigest, parseCodemodeToolCalls } from "./workflow-runs.js"
 import { db } from "./db.js"
 
-/** `db` (replica reads) or `db.$primary` when a read must see a write made just before. */
 type WorkflowReader = typeof db.$primary
 import { snapshotReadAccess, workflowSnapshotStateRows } from "./workflow-snapshot-state.js"
 import { keysetAfter, keysetPage, type KeysetCursor } from "./list-pagination.js"
@@ -113,9 +112,6 @@ async function workflowResource(
       eq(ConfigObjectTable.status, "active"),
       isNull(ConfigObjectTable.deletedAt),
     ))
-    // A Workflow may be assigned to more than one Plugin. Keep memberships in
-    // a stable order so the first one visible to this member becomes the
-    // execution/provenance context.
     .orderBy(asc(PluginConfigObjectTable.createdAt), asc(PluginConfigObjectTable.id))
   if (!rows[0]) throw new Error("workflow_not_found")
   await requirePluginArchResourceRole({
@@ -132,9 +128,6 @@ async function workflowResource(
     })
     if (pluginRole) return row
   }
-  // Direct Workflow grants are intentionally independent from Plugin access.
-  // In that case retain the deterministic oldest membership as its execution
-  // context; capability execution separately enforces the Workflow grant.
   return rows[0]
 }
 
@@ -188,7 +181,6 @@ function serializeSnapshot(row: WorkflowRunRow, automationTrigger: AutomationRun
   }
 }
 
-/** The caller's automations that run a saved Workflow, with the Workflow each one runs. */
 async function savedScriptAutomations(context: PluginArchActorContext) {
   const rows = await db.select({ automation: AutomationTable, revision: AutomationRevisionTable })
     .from(AutomationTable)
@@ -278,7 +270,6 @@ async function snapshotRows(
     .orderBy(desc(WorkflowRunTable.finished_at), desc(WorkflowRunTable.id)).limit(limit)
 }
 
-/** One page of artifact snapshots ordered by (finished_at desc, id desc); the cursor is the last row's sort key. */
 export async function workflowSnapshotPage(
   organizationId: DenTypeId<"organization">,
   configObjectId: ConfigObjectId,
@@ -304,12 +295,6 @@ type SnapshotFacts = {
   contentDeletedAt: Date | string | null
 }
 
-/**
- * The snapshot a Workflow treats as current, its newest readable success, and
- * their freshness. Snapshots are newest first. Deleted content remains in
- * history, but must not stay selected as the current readable artifact after
- * an explicit deletion.
- */
 function workflowSnapshotState<T extends SnapshotFacts>(
   snapshots: readonly T[],
   readable: (snapshot: T) => boolean,
@@ -333,7 +318,6 @@ function workflowSnapshotState<T extends SnapshotFacts>(
   }
 }
 
-/** The same resource/version gate as detail, without source, graphs, automations or receipts. */
 export async function getWorkflowAccess(input: {
   context: PluginArchActorContext
   configObjectId: string
@@ -344,8 +328,6 @@ export async function getWorkflowAccess(input: {
     resourceId: resource.configObject.id,
     resourceKind: "config_object",
   })
-  // A malformed newest version does not hide an older valid version. Do not
-  // replace this with an existence check or a latest-version-only check.
   const versions = await db.select({ payload: ConfigObjectVersionTable.normalizedPayloadJson })
     .from(ConfigObjectVersionTable).where(and(
       eq(ConfigObjectVersionTable.organizationId, input.context.organizationContext.organization.id),
@@ -363,7 +345,6 @@ export async function getWorkflowDetail(input: {
   context: PluginArchActorContext
   configObjectId: string
   maxAgeMs?: number
-  /** Pass `db.$primary` right after writing this Workflow. */
   database?: WorkflowReader
 }): Promise<WorkflowDetail> {
   const database = input.database ?? db
@@ -410,12 +391,6 @@ export type WorkflowCardFacts = {
   latestSuccessfulAt: string | null
 }
 
-/**
- * What a library card shows for each Workflow, as getWorkflowDetail derives
- * it, with the versions and the caller's automations read once for all of
- * them. Workflows without a valid version are omitted. Callers resolve access
- * first.
- */
 export async function listWorkflowCardFacts(context: PluginArchActorContext, configObjectIds: ConfigObjectId[]) {
   const facts = new Map<ConfigObjectId, WorkflowCardFacts>()
   if (configObjectIds.length === 0) return facts
@@ -548,7 +523,6 @@ export async function getWorkflowSnapshot(input: {
   receiptId: string
 }) {
   const resource = await workflowResource(input.context, input.configObjectId, "viewer")
-  // primary: read right after a run writes it or deleteWorkflowSnapshotContent clears it.
   const rows = await db.$primary.select({ receipt: WorkflowRunTable, automationTrigger: AutomationRunTable.trigger })
     .from(WorkflowRunTable)
     .leftJoin(AutomationRunTable, eq(AutomationRunTable.id, WorkflowRunTable.automation_run_id))
@@ -592,7 +566,6 @@ export async function testWorkflowDraft(input: {
   }
 }
 
-/** Manifest entries keyed by the dotted name Code Mode records for each call. */
 function manifestByCallName(entries: readonly CodemodeManifestEntry[]): Map<string, CodemodeManifestEntry> {
   return new Map(entries.map((entry) => [codemodeCallName(entry.scriptPath), entry]))
 }
@@ -615,7 +588,6 @@ export async function createWorkflowVersion(input: {
   const scriptInputDigest = artifactDigest(input.draft.exampleInput ?? null)
   const inputSchemaDigest = optionalArtifactDigest(payload.parsed.inputSchema)
   const outputSchemaDigest = optionalArtifactDigest(payload.parsed.outputSchema)
-  // primary: the test run that wrote this receipt usually finished moments ago.
   const receipts = await db.$primary.select().from(WorkflowRunTable).where(and(
     eq(WorkflowRunTable.id, parseReceiptId(input.receiptId)),
     eq(WorkflowRunTable.organization_id, resource.configObject.organizationId),
@@ -649,7 +621,6 @@ export async function createWorkflowVersion(input: {
   )).limit(1)
   if (consumed[0]) throw new Error("workflow_test_receipt_already_used")
 
-  // executeWorkflow checks again at run time that each capability is still available.
   const built = await input.buildTools()
   const manifest = manifestByCallName(built.manifest)
   for (const required of payload.parsed.requiredCapabilities) {
@@ -723,7 +694,6 @@ export async function deleteWorkflowSnapshotContent(input: {
       .where(eq(AutomationRunTable.id, receipt.automation_run_id)).limit(1)
     const automationId = automationRuns[0]?.automationId
     if (automationId) {
-      // primary: must not see the content cleared above as still retained.
       const retained = await db.$primary.select({ receipt: WorkflowRunTable, run: AutomationRunTable })
         .from(WorkflowRunTable)
         .innerJoin(AutomationRunTable, eq(AutomationRunTable.id, WorkflowRunTable.automation_run_id))
@@ -755,7 +725,6 @@ export async function validateWorkflowAutomationAction(input: {
   const configObjectVersionId = normalizeDenTypeId("configObjectVersion", input.action.script.configObjectVersionId)
   const member = await resolveOrganizationMemberAuthority({ organizationId, memberId: ownerMemberId })
   if (!member) throw new Error("automation_owner_inactive")
-  // The owner's effective permissions (direct role, Admin teams, permission sets).
   const ownerPermissions = await resolvePermissionsForMember({ organizationId, memberId: member.id })
   if (!ownerPermissions.has("sharing.manage_all")) {
     const [teams, configObjectGrants, pluginGrants] = await Promise.all([
@@ -783,9 +752,6 @@ export async function validateWorkflowAutomationAction(input: {
       )),
     ])
     const grantInput = { memberId: ownerMemberId, teamIds: teams.map((team) => team.id) }
-    // Scheduling a Workflow executes it, so the owner needs run access — the
-    // same editor-or-manager bar the detail response reports as `canRun`. A
-    // viewer may read results but must not gain scheduled execution.
     const roles = [
       resolvePluginArchGrantRole({ ...grantInput, grants: configObjectGrants }),
       resolvePluginArchGrantRole({ ...grantInput, grants: pluginGrants }),
@@ -888,7 +854,6 @@ export async function saveWorkflow(input: {
     throw new Error("workflow_authoring_receipt_required")
   }
   const codeDigest = codemodeCodeDigest(code)
-  // primary: the test run that wrote this receipt usually finished moments ago.
   const receipts = await db.$primary.select().from(WorkflowRunTable).where(and(
     eq(WorkflowRunTable.organization_id, organizationId),
     eq(WorkflowRunTable.org_membership_id, ownerMemberId),
@@ -917,7 +882,6 @@ export async function saveWorkflow(input: {
   }
   if (!receipt) throw new Error("workflow_recent_receipt_required")
 
-  // executeWorkflow checks again at run time that each capability is still available.
   const built = await input.buildTools()
   const manifest = manifestByCallName(built.manifest)
   const requiredCapabilities: Array<{ capabilityName: string; scriptPath: string }> = []
@@ -1018,9 +982,6 @@ export async function saveWorkflow(input: {
       )).limit(1).for("update")
     const configObjectId = linked[0]?.object.id ?? createDenTypeId("configObject")
     if (linked[0]) {
-      // Saving the same name creates a new immutable version of the existing
-      // Workflow. Plugin edit access can widen the audience, but it must never
-      // grant authority to replace another Workflow manager's executable code.
       if (!input.context) throw new Error("saved_workflow_manager_context_required")
       await requirePluginArchResourceRole({
         context: input.context,

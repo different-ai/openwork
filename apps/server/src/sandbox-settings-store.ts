@@ -27,11 +27,9 @@ function parseSettings(json: string): SandboxSettings {
 const ENGINE_GLOBAL = "__openwork_engine_global__";
 const store = createWorkspaceKvStore<SandboxSettings>({
   tableName: "runtime_sandbox_settings", valueColumn: "settings_json",
-  // A corrupt explicit preference must not grant host access.
   parse: parseSettings,
   serialize: value => JSON.stringify(sandboxSettingsSchema.parse(value)),
 });
-/** This setting is host-owned. Never import it from a workspace file or engine config. */
 export async function readSandboxSettings(config: ServerConfig): Promise<SandboxSettings> {
   return await store.get(config, ENGINE_GLOBAL) ?? { useSandbox: false, forceSandbox: false };
 }
@@ -41,7 +39,6 @@ export async function writeSandboxSettings(config: ServerConfig, value: SandboxS
 }
 
 const updates = new WeakMap<ServerConfig, Promise<unknown>>();
-/** Merge partial choices against the latest saved row, including concurrent saves. */
 export function updateSandboxSettings(config: ServerConfig, update: Partial<SandboxSettings>) {
   const pending = (updates.get(config) ?? Promise.resolve()).catch(() => undefined).then(async () => {
     const previous = await readSandboxSettings(config);
@@ -60,13 +57,9 @@ const appliedStore = createWorkspaceKvStore<SandboxSettings>({
   parse: parseSettings,
   serialize: value => JSON.stringify(sandboxSettingsSchema.parse(value)),
 });
-/** Local policy installed for current tasks. Never use desired intent to revoke
- * an active turn's local permission; organization rules remain independently live. */
 export async function readAppliedSandboxSettings(config: ServerConfig): Promise<SandboxSettings> {
   return await appliedStore.get(config, ENGINE_GLOBAL) ?? await readSandboxSettings(config);
 }
-/** Only the engine owner may advance applied policy: before cold startup or
- * after the old process and all native jobs have passed the idle boundary. */
 export async function applySandboxSettings(config: ServerConfig): Promise<void> {
   await appliedStore.set(config, ENGINE_GLOBAL, await readSandboxSettings(config));
 }
@@ -78,9 +71,6 @@ const requirementStore = createWorkspaceKvStore<boolean>({
 function authorityKey(baseUrl: string, organizationId: string): string {
   return createHash("sha256").update(`${new URL(baseUrl).origin}\n${organizationId}`).digest("hex");
 }
-/** Persist only restrictive knowledge, scoped to a verified control plane and
- * org. It can never grant host execution. A fresh policy removes a stale deny.
- * Deliberately conservative across members of the same org after offline restart. */
 export async function readSandboxRequirement(config: ServerConfig, baseUrl: string, organizationId: string): Promise<boolean> {
   return await requirementStore.get(config, authorityKey(baseUrl, organizationId)) ?? false;
 }

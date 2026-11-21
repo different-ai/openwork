@@ -1,17 +1,3 @@
-/**
- * How a feature from ./flags resolves. One function for
- * every feature and every place it is checked (den-api, Den web, the desktop):
- *
- *   1. not part of this deployment      → off    ("unavailable")
- *   2. kill switch                      → off    ("killed")      the revert, no deploy
- *   3. operator lock (DEN_FEATURE_*)    → as set ("lock")
- *   4. member override (/admin)         → as set ("member")
- *   5. organization override (/admin)   → as set ("override")
- *   6. on or off for everyone (/admin)  → as set ("everyone")
- *
- * Pure functions with no I/O, safe in browsers.
- */
-
 import { z } from "zod"
 import {
   FEATURE_CATEGORIES,
@@ -31,88 +17,50 @@ import {
  */
 export const RETIRED_FEATURE_KEYS = [
   "gatewayDashboard", "workflows", "codemodeScripts", "remoteMcpApps", "appMcpServers", "cloud",
-  // Generally available (2026-10): always on, the flag and its checks are gone.
   "auditLogs", "auditLogsCompact", "litellm", "gatewayCloudSignIn", "opencodePlugin", "remoteSessionTargets",
   "installLinks", "mcpConnections", "simplifiedOnboarding", "connectorReadiness", "driveResumableUploads",
   "implicitCloudSkills", "platformAuditReads",
-  // Folded into another feature (2026-10): analyticsIntegrated → libraryUsage; the rest → workbot.
   "analyticsIntegrated", "workbotCalendar", "workbotSideChats", "workbotDefaultModel",
-  // Generally available (2026-10, second pass). calendarPolish is always on in Workbot.
   "denFlatPageHeaders", "dashboardActivity", "libraryIntegrated", "libraryUsage", "modelsAnalytics",
   "headlessAutomations", "calendarPolish",
-  // Removed (2026-10): organization Dashboards and copy-only Workbot sharing
   "orgManagedDashboards", "workbotSharing",
-  // Removed (2026-10): desktop Calendar; Workbot Calendar and meeting triggers remain separate.
   "automationCalendar",
-  // Generally available (2026-10, third pass): always on, on cloud and self-hosted.
   "agentPermissions", "appBuildProgress", "backgroundShellTasks", "desktopPolicyScreenRemoval",
   "gatewayProviderUsageLimits", "googleDocumentTools", "inviteLinkVerifiesEmail", "lastTurnModelFooter",
   "mcpSkillsExtension", "memberListToolbars", "modelRemovalRecovery", "nativeCloudSkills", "orgDefaultModel",
   "permissions", "rememberLastOrganization", "sharedRoles", "slackWorkbotReplies", "teamAccessRows",
   "teamMembershipCache", "teamPageTabs", "teamRoles", "workbot", "workbotLunaDefault",
-  // Folded into managedDeployments (2026-10), which stays off: Google Cloud and agent tools follow it.
   "managedDeploymentsGcp", "managedDeploymentsMcp",
-  // Replaced by Settings › Diagnostics (2026-10): always on, the checks are advisory and never block work.
   "serviceReadiness",
-  // Generally available (2026-10, fourth pass): always on, on cloud and self-hosted.
   "cloudAgentGateway", "secureSecretFields", "slackAssistant", "workbotFirstRun", "workbotInlineConnect",
   "headlessSessionIndex",
-  // Generally available (2026-10): durable step turns and per-chat cells are always on.
   "headlessDurableTurns", "headlessSessionCells",
-  // Folded (2026-10): workbotGuidedNavigation → workbotWorkspaceAssistant,
-  // headlessStepTurns → headlessDurableTurns.
   "workbotGuidedNavigation", "headlessStepTurns",
-  // Generally available (2026-10): automatic OpenCode v2 migration is not optional.
   "engineV2Upgrade", "engineV2ForceUpgrade",
-  // Removed (2026-10): Workbot team settings links, remote session events, and the deprecated
-  // Models and Task analytics screens.
   "workbotTeamLinks", "remoteSessionEvents", "modelsAnalyticsUi", "taskAnalyticsUi",
-  // Compact App errors are standard on v2; the separate offline indicator was removed.
   "offlineRecovery",
-  // Folded into connectStandardTools (2026-10): one rollout for schemas and all supported clients.
   "connectToolShapes", "desktopConnectStandardTools",
-  // Generally available (2026-10): completed desktop, Workbot and organization rollouts.
   "localProviderMirror", "organizationAutomationSettings", "agentConnectionRemoval",
   "workbotCommandPalette", "usageLimitUpgrade", "removeOpencodeZen",
   "desktopSignInReturn", "claudeHistoryImport", "orgPrompts",
-  // Removed (2026-10): an organization's plan and seats are set in one place in /admin (Billing);
-  // Stripe-billed Enterprise is a plain /admin control and organization grants are gone.
   "enterprisePlan", "organizationGrants",
-  // Billing without flags (2026-10): Team checkout is always sold where Stripe seat billing is set up,
-  // and Enterprise is only set in /admin (no card purchase, no Stripe Enterprise subscriptions).
   "teamPlan", "selfServeEnterprise",
-  // Generally available (2026-10): completed rollouts. Sandbox organizations remain cloud-only.
   "libraryDetailBreadcrumbs", "nativeAffordanceCodeMode", "libraryConnectorNavigation", "mcpAppLibraries",
   "gatewayProviderTest", "mermaidZoom", "sandboxOrgs", "slackSendAsBot", "liveProviderSync",
   "browserFloatingView", "remoteSessionSubagents", "remoteSessionThreadView", "remoteSessionAnswers",
   "activationChecklist", "gatewayProviderAuthErrors", "providerCredentialStatus", "sessionTokenHashing",
   "customConnectorSetup", "expandedMcpPresets", "analyticsDailyTrends", "gatewayProviderRemovalLimits",
   "guidedSlackSetup", "libraryConnectorOrgSetup",
-  // Generally available (2026-10): included models and permission-aware recovery; entitlement still applies.
   "workbotIncludedModels", "workbotUsageRecovery",
-  // Generally available (2026-10): live reply model, composer Agents list, text-first activity, list-first Artifacts.
   "liveReplyModel", "composerSubagentTracker", "textActivityRail", "artifactsListFirst",
-  // Generally available (2026-10): every-few-hours and before/after-meetings schedules are always on;
-  // Desktop or Cloud placement, calendar scope and the headless runner stay enforced without a flag.
   "automationIntervalSchedules", "automationCalendarTriggers",
-  // Folded (2026-10): Your agent includes health and Library; browser use includes
-  // its live view; computer use includes background interaction on supported Macs.
   "workbotAgentHealthView", "workbotAgentLibrary", "browserLiveView", "computerUseBackground",
-  // Generally available (2026-10): remembered sign-in and helper-style tasks on other computers.
   "lastUsedSignIn", "remoteSessionHelperView",
-  // Removed, not graduated (2026-10): early restart and its download-progress window.
   "desktopUpdateDownloadWindow",
-  // Generally available (2026-11): Den feature intros, Auth & Security (with session settings and the
-  // SSO requirement on the SSO page), several SSO connections, config import and export, and AI Gateway
-  // member API keys, custom OpenAI-compatible providers and Smart Model Router (which was cloud only).
-  // Always on, on cloud and self-hosted.
   "featureIntros", "authSecuritySettings", "sessionSecuritySettings", "ssoSettingsOnSsoPage",
   "multipleSsoConnections", "configBlobs", "gatewayMemberApiKeys", "gatewayCustomProviders",
   "autoRouter",
-  // Generally available (2026-11): TrueFoundry in AI Gateway, always on, on cloud and self-hosted.
   "truefoundryGateway",
-  // Generally available (2026-11): completed default-on rollouts. Their gates are gone.
-  // Browser recovery and sample Microsoft 365 remain cloud-only, without rollout switches.
   "googleCalendarRecurrence", "googleDrivePdfText", "plainFreeModel",
   "settledSessions", "appToolRepair", "publicApps",
   "appSites", "composerBackgroundTasks", "agentQuestions",
@@ -126,21 +74,15 @@ export const RETIRED_FEATURE_KEYS = [
   "computerSessionHistory", "parallelComputerUse", "browserUse",
   "remoteSessionPush", "sandboxMicrosoft365", "standardCodeMode",
   "outlookAttachments",
-  // Generally available (2026-11): deployment-wide rollouts graduate even when the
-  // old registry default lagged behind. Actual settings, entitlements and consent remain enforced.
   "claudeAgentProvider", "webPerMember", "localModelsPolicy",
   "shareDeviceProvider", "singleOpenWorkModelsRow", "passwordSignInGoogle",
   "signInEmailSync", "ssoOidcSetupCheck", "denPageConsistency",
   "nativeDictation", "workbotScrollToBottom", "workbotApps",
   "workbotProactive", "workbotTeamSettings", "workbotUsageAnalytics",
   "fileSendPermissions", "remoteDevices", "remoteSessionAccess",
-  // Removed (2026-11): team settings use the existing top tabs.
   "teamSettingsSidebar",
-  // Generally available (2026-11): Workbot settings tabs; sample Slack stays cloud-sandbox-only.
   "workbotSettingsTabs", "sandboxSlack",
-  // Generally available (2026-11): choosing a new sandbox's models; stays cloud-sandbox-only.
   "sandboxModelChoice",
-  // Generally available (2026-11): Cmd/Ctrl+F finds text on the open settings page.
   "settingsFind",
 ] as const
 
@@ -209,7 +151,6 @@ export function featureLockEnvName(key: FeatureKey): string {
 export function mapFeatures<V>(fn: (key: FeatureKey) => V): Record<FeatureKey, V> {
   const result: Partial<Record<FeatureKey, V>> = {}
   for (const key of FEATURE_KEYS) result[key] = fn(key)
-  // Every key in FEATURE_KEYS was assigned above; TypeScript cannot follow the loop.
   return result as Record<FeatureKey, V>
 }
 
@@ -228,15 +169,12 @@ export function featureRollout(key: FeatureKey, rollouts: FeatureRollouts): Feat
 
 export type FeatureEnvironment = {
   deployment: FeatureDeployment
-  /** Operator locks from DEN_FEATURE_* (Helm `config.features`). */
   locks: FeatureOverrides
 }
 
 export type FeatureContext = FeatureEnvironment & {
   rollouts: FeatureRollouts
-  /** Stored overrides for the organization being resolved; empty when there is none (signed out). */
   overrides: FeatureOverrides
-  /** Overrides for the authenticated member, scoped to this organization. */
   memberOverrides?: FeatureOverrides
 }
 
@@ -246,12 +184,10 @@ export type ResolvedFeature = {
   key: FeatureKey
   enabled: boolean
   source: FeatureSource
-  /** The deployment-wide on/off state. */
   everyone: boolean
   killed: boolean
   lock: boolean | null
   override: boolean | null
-  /** A per-organization override would take effect (available, not killed, not locked). */
   overrideApplies: boolean
 }
 

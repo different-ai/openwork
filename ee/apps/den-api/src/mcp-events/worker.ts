@@ -35,7 +35,6 @@ export async function dispatchMcpEvent() {
       await stopSubscription(receipt.subscriptionId)
       await finishEvent(receipt.id, "skipped")
     } else if (error instanceof NativeEventError) {
-      // The publisher sends its termination notice separately; never retry a now-forbidden occurrence.
       await finishEvent(receipt.id, "skipped")
     } else {
       await retryEvent(receipt.id, receipt.attempts)
@@ -52,7 +51,7 @@ export function startMcpEventWorker() {
     if (running || stopped) return
     running = (async () => {
       if (Date.now() - lastPrune > 60_000) { await pruneEvents(); lastPrune = Date.now() }
-      for (let i = 0; i < 20 && !stopped && await dispatchMcpEvent(); i++) { /* Bounded drain, leases shared by replicas. */ }
+      for (let i = 0; i < 20 && !stopped && await dispatchMcpEvent(); i++) {}
     })().catch(() => { appLogger.warn("MCP event queue unavailable", { component: "mcp_events" }) }).finally(() => { running = null })
   }
   const timer = setInterval(tick, 1000)

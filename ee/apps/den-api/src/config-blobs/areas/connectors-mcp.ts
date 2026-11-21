@@ -1,39 +1,3 @@
-/**
- * `connectors.mcp`: external MCP connections (Connectors › MCP), the
- * organization's built-in provider connections (Google Workspace, Microsoft
- * 365, …) and who can use them.
- *
- * Exported per connection: URL, auth type, credential mode, direct exposure,
- * API-key transport, OAuth settings (issuer, scopes, manual endpoints) and the
- * administrator's pre-registered OAuth client (client id, token endpoint auth
- * method), plus direct access grants (org-wide, teams, people by email).
- *
- * Secrets become placeholders: the shared API key, each request header value
- * and the pre-registered client's secret. Never exported at all: the
- * org-shared OAuth tokens (runtime sign-in state; people sign in again),
- * per-member credentials, SDK-registered (dynamic) OAuth clients and cached
- * discovery, readiness and health state.
- *
- * A built-in provider connection (kind `native_provider`) carries `native`:
- * its provider, and the organization's OAuth app for it (client id, selected
- * optional features, tenant; the client secret is a placeholder). Its URL and
- * sign-in settings are the provider's own and are never written. The sample
- * Microsoft 365 of a sandbox organization is not exported, nor is a built-in
- * connection that has no OAuth app. Each person's sign-in stays behind, as for
- * every connection.
- *
- * Not in v1: the tool policy, and grants that come from marketplace plugin
- * bindings (those follow the plugin). An apply never changes them.
- *
- * Applies through the same handlers as POST/PUT/DELETE /v1/mcp-connections
- * (`createExternalConnectionResponse`, `replaceExternalConnectionResponse`,
- * `deleteExternalConnection`): API-key and no-auth connections are probed
- * before they are saved (a failed probe fails the item), and OAuth discovery
- * is checked. Built-in provider connections go through the handlers of the
- * dashboard's own setup: `createNativeProviderConnectionResponse` (POST
- * /v1/mcp-connections with kind `native_provider`), the same replace handler
- * for name and access, and `saveOrgOAuthProviderClient` for the OAuth app.
- */
 import { manualOAuthEndpointSchema } from "@openwork/mcp-enterprise-client"
 import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { ExternalMcpConnectionAccessGrantTable, ExternalMcpConnectionTable, OrgOAuthClientTable } from "@openwork-ee/den-db/schema"
@@ -96,26 +60,17 @@ const AREA = "connectors.mcp"
 
 const tokenEndpointAuthMethodSchema = z.enum(["client_secret_basic", "client_secret_post"])
 
-/** Same rule as the route's manual sign-in addresses (HTTPS, no URL credentials or credential-like query parameters). */
 const manualOAuthEndpointUrlSchema = z.string().trim().url().max(2048).refine(
   (value) => manualOAuthEndpointSchema.safeParse(value).success,
   "Use HTTPS (HTTP is allowed only on localhost), without URL credentials, fragments or credential-like query parameters.",
 )
 
 const specSchema = z.object({
-  /**
-   * The MCP server address. It can't carry credentials (a user name or
-   * password, or `access_token`, `api_key`, `token`… in the query): use the
-   * API key or a request header instead. An export shows any found in a stored
-   * URL as `[redacted]`.
-   */
   url: z.string().trim().url().max(2048),
   authType: z.enum(["oauth", "apikey", "none"]),
   credentialMode: z.enum(["shared", "per_member"]),
   exposeDirectly: z.boolean(),
-  /** How the shared or personal API key is sent. Only meaningful for apikey connections. */
   apiKeyAuthScheme: z.enum(["bearer", "token"]),
-  /** The shared API key (apikey + shared only; otherwise null). */
   apiKey: specSecretSchema.nullable(),
   requestHeaders: z.array(z.object({
     name: z.string().trim().min(1).max(256),
@@ -128,7 +83,6 @@ const specSchema = z.object({
       authorizationEndpoint: manualOAuthEndpointUrlSchema,
       tokenEndpoint: manualOAuthEndpointUrlSchema,
     }).strict().nullable(),
-    /** The administrator's pre-registered client. null: Den registers one itself when someone signs in. */
     client: z.object({
       clientId: z.string().trim().min(1).max(512),
       tokenEndpointAuthMethod: tokenEndpointAuthMethodSchema.nullable(),
@@ -136,20 +90,11 @@ const specSchema = z.object({
     }).strict().nullable(),
   }).strict().nullable(),
   access: specAudienceSchema.extend({ orgWide: z.boolean() }).strict(),
-  /**
-   * Only on a built-in provider connection (Google Workspace, Microsoft 365, …).
-   * Its `url`, `authType`, `credentialMode` and the fields after them are the
-   * provider's own: exported for people reading the file, never written.
-   */
   native: z.object({
-    /** The provider key, e.g. `google-workspace`. It can't change once the connection exists. */
     provider: z.string().trim().min(1).max(64),
-    /** The organization's own OAuth app for this connection. */
     client: z.object({
       clientId: z.string().trim().min(1).max(512),
-      /** Optional permission features the members are asked for. null leaves the provider's defaults (or the stored selection). */
       features: z.array(z.string().trim().min(1).max(128)).nullable(),
-      /** Microsoft Entra tenant, for providers bound to one tenant. */
       tenantId: z.string().trim().min(1).max(253).nullable(),
       clientSecret: specSecretSchema,
     }).strict(),
@@ -158,7 +103,6 @@ const specSchema = z.object({
 
 type NativeSpec = NonNullable<z.infer<typeof specSchema>["native"]>
 
-/** The plain fields of `native` at apply time. The client secret is read separately. */
 const applyNativeSchema = z.object({
   provider: z.string(),
   client: z.object({
@@ -178,7 +122,6 @@ function readFeatures(extra: Record<string, unknown> | null): string[] | null {
   return value.filter((feature): feature is string => typeof feature === "string").sort()
 }
 
-/** The fields a built-in provider connection takes from its provider: an import can't set them. */
 const NATIVE_FIXED_FIELDS = ["url", "authType", "credentialMode", "exposeDirectly", "apiKeyAuthScheme", "apiKey", "requestHeaders", "oauth"]
 
 type OAuthSpec = NonNullable<z.infer<typeof specSchema>["oauth"]>
@@ -191,7 +134,6 @@ function sameStrings(left: readonly string[], right: readonly string[]): boolean
   return left.length === right.length && [...left].sort().every((value, index) => value === [...right].sort()[index])
 }
 
-/** The plain (non-secret) fields of a spec at apply time. Refs and secrets are read separately. */
 const applySpecSchema = specSchema.omit({ apiKey: true, requestHeaders: true, oauth: true, access: true }).extend({
   oauth: z.object({
     authorizationServerIssuer: z.string().nullable(),
@@ -236,7 +178,6 @@ function readClientSecret(spec: JsonObject) {
   return client ? resolvedSecret(client.clientSecret, "oauth.client.clientSecret") : null
 }
 
-/** A manual sign-in address that fails the route's rule only because of its user name, password or query string. */
 function manualEndpointCredentials(value: string): boolean {
   if (manualOAuthEndpointSchema.safeParse(value).success) return false
   let url: URL
@@ -262,11 +203,6 @@ function redactManualEndpoint(value: string): string {
   return url.toString()
 }
 
-/**
- * Credentials in the connection's URL or manual sign-in addresses, replaced
- * before anything plans with them (format.md › Secrets: values never travel
- * in a blob). The problems name the field, never the value.
- */
 export function redactConnectionCredentials(spec: ConfigSpec): { spec: ConfigSpec; problems: string[] } {
   const problems: string[] = []
   let next: ConfigSpec = spec
@@ -294,7 +230,6 @@ export function redactConnectionCredentials(spec: ConfigSpec): { spec: ConfigSpe
   return { spec: next, problems }
 }
 
-/** The route's own rule, for the URL an op would save: no credentials, redacted ones included. */
 function urlCredentialBlock(url: unknown, name: string, current: boolean): string | null {
   if (typeof url !== "string") return null
   const problems = externalMcpUrlCredentialProblems(url)
@@ -320,7 +255,6 @@ export const connectorsMcpArea = defineConfigArea({
     label: "URL",
     get: (item) => nativeProviderOf(item.spec) === null && typeof item.spec.url === "string" ? normalizeExternalMcpIdentityUrl(item.spec.url) : null,
   }, {
-    // One built-in connection per provider on both sides: the same one. More than one falls back to key, then name.
     label: "provider",
     get: (item) => nativeProviderOf(item.spec),
   }],
@@ -330,7 +264,6 @@ export const connectorsMcpArea = defineConfigArea({
   transactional: false,
   externalEffects: true,
 
-  // POST/PUT /v1/mcp-connections refuse a URL with credentials; so does an import, before it runs.
   async preflight(_ctx, op) {
     if (op.kind === "delete") return null
     const provider = nativeProviderOf(op.item.spec)
@@ -475,8 +408,6 @@ async function applyConnection(ctx: ConfigAreaContext, op: ConfigApplyOp, log: C
               },
             } : {}),
             ...(spec.oauth.manualOAuthEndpoints ? { manualOAuthEndpoints: spec.oauth.manualOAuthEndpoints } : {}),
-            // Both always sent, also when empty: left out, a known server gets its default issuer and scopes
-            // here, which the source does not have, and the next import of the same file would plan to remove them.
             authorizationServerIssuer: spec.oauth.authorizationServerIssuer,
             requestedScopes: spec.oauth.requestedScopes,
           }
@@ -498,7 +429,6 @@ async function applyConnection(ctx: ConfigAreaContext, op: ConfigApplyOp, log: C
   if (connection.kind !== "external_mcp") {
     throw new ConfigApplyError("immutable_field", `"${connection.name}" is a built-in provider connection; an import can't turn it into an MCP connection.`, 400, "native")
   }
-  // Same checks as PUT /v1/mcp-connections/:connectionId before it replaces.
   const canUpdateAnyConnection = await hasPermission(c, "connections.update")
   if (!canUpdateAnyConnection && connection.createdByOrgMembershipId !== payload.currentMember.id) {
     throw new ConfigApplyError("forbidden", `Only people allowed to edit any connection, or its creator, can edit "${connection.name}".`, 403)
@@ -510,12 +440,8 @@ async function applyConnection(ctx: ConfigAreaContext, op: ConfigApplyOp, log: C
   }
   if (apiKeySecret?.decision === "unset") warnings.push("A saved shared API key can't be cleared by an import; it was kept.")
 
-  // The PUT handler replaces the connection, so every part the plan does not change is sent
-  // as stored: updateExternalMcpConnection then writes only what differs (row fields, the
-  // OAuth client, and access grants as a diff).
   const name = inScope("name") ? op.item.name : connection.name
   const url = inScope("url") ? spec.url : connection.url
-  // The route's schema refuses this URL on PUT; the handler called here has no schema of its own.
   const urlBlock = urlCredentialBlock(url, connection.name, !inScope("url"))
   if (urlBlock) throw new ConfigApplyError("invalid_mcp_url", urlBlock)
   const authType = inScope("authType") ? spec.authType : connection.authType
@@ -564,7 +490,6 @@ async function applyConnection(ctx: ConfigAreaContext, op: ConfigApplyOp, log: C
     ...(headersInScope
       ? { requestHeaders: headers.flatMap((header) => header.value === null ? [] : [header.value === undefined ? { name: header.name } : { name: header.name, value: header.value }]) }
       : {}),
-    // Unchanged OAuth settings are not resent: a marketplace-bound connection refuses them even when equal.
     ...(oauth && client && clientChanged ? {
       oauthClient: {
         clientId: client.clientId,
@@ -604,7 +529,6 @@ async function applyConnection(ctx: ConfigAreaContext, op: ConfigApplyOp, log: C
   ]
   const [first, ...rest] = steps
   if (!first) return { localId: connection.id, warnings }
-  // One PUT: all of these are written in one transaction, or none.
   await log.run(first, async () => {
     await expectRouteOk(await replaceExternalConnectionResponse(c, payload, body, connection, canUpdateAnyConnection, c.get("session"), requestId), `Update "${op.item.name}"`)
   })
@@ -612,7 +536,6 @@ async function applyConnection(ctx: ConfigAreaContext, op: ConfigApplyOp, log: C
   return { localId: connection.id, warnings }
 }
 
-/** Create or update of a built-in provider connection: name, access and the organization's OAuth app. */
 async function applyNativeConnection(
   ctx: ConfigAreaContext,
   op: Exclude<ConfigApplyOp, { kind: "delete" }>,
@@ -668,7 +591,6 @@ async function applyNativeConnection(
   if (connection.nativeProviderKey !== provider.providerId) {
     throw new ConfigApplyError("immutable_field", "A built-in connection's provider can't change; create one for the other provider instead.", 400, "native.provider")
   }
-  // Same checks as PUT /v1/mcp-connections/:connectionId before it replaces.
   const canUpdateAnyConnection = await hasPermission(c, "connections.update")
   if (!canUpdateAnyConnection && connection.createdByOrgMembershipId !== payload.currentMember.id) {
     throw new ConfigApplyError("forbidden", `Only people allowed to edit any connection, or its creator, can edit "${connection.name}".`, 403)
@@ -702,7 +624,6 @@ async function applyNativeConnection(
   ]
   const [firstRowStep, ...otherRowSteps] = rowSteps
   if (firstRowStep) {
-    // One PUT with the row's own URL and sign-in settings: only the name and the access grants differ.
     const body: UpdateConnectionBody = {
       expectedUpdatedAt: connection.updatedAt.toISOString(),
       name,
@@ -719,7 +640,6 @@ async function applyNativeConnection(
 
   const decided = secretWrite(clientSecret)
   const previousClient = isJsonObject(op.previous.spec.native) && isJsonObject(op.previous.spec.native.client) ? op.previous.spec.native.client : null
-  // "unset" of a secret that is not stored writes nothing.
   const secret = decided === null && !secretIsSet(previousClient?.clientSecret) ? undefined : decided
   const clientBody: SaveOrgOAuthProviderClientBody = {
     ...(inScope("native.client.clientId") ? { clientId: native.client.clientId } : {}),
@@ -735,11 +655,9 @@ async function applyNativeConnection(
   ]
   const [firstClientStep, ...otherClientSteps] = clientSteps
   if (firstClientStep) {
-    // Same permission as POST /v1/oauth-providers/:providerId/client.
     if (!(await hasPermission(c, "oauth_clients.manage"))) {
       throw new ConfigApplyError("forbidden", `Only people allowed to manage OAuth apps can change the OAuth app of "${connection.name}".`, 403)
     }
-    // One save: the route writes all of these in one upsert of the client row.
     await log.run(firstClientStep, async () => {
       await expectRouteOk(await saveOrgOAuthProviderClient(c, payload, connection.id, clientBody), `Save the OAuth app of "${connection.name}"`)
     })
@@ -753,7 +671,6 @@ function headerNames(value: unknown): string[] {
   return value.flatMap((header) => isJsonObject(header) && typeof header.name === "string" ? [header.name] : [])
 }
 
-/** One step per request header added, removed, given a new value or unset. */
 function headerSteps(previous: unknown, next: HeaderDecision[]): ConfigApplyStep[] {
   const before = new Set(headerNames(previous))
   const after = new Set(next.filter((header) => header.value !== null).map((header) => header.name))
@@ -810,7 +727,6 @@ async function readConnections(ctx: ConfigAreaContext, ids: readonly string[] | 
     let native: NativeSpec | null = null
     if (row.kind === "native_provider") {
       const provider = row.nativeProviderKey ? getNativeOAuthProvider(row.nativeProviderKey) : null
-      // Not portable: a provider this server doesn't know, a connection nobody gave an OAuth app, a sandbox's sample.
       if (!provider || !client || isSandboxMicrosoftClient(clientExtra)) return []
       native = {
         provider: provider.providerId,
@@ -853,7 +769,6 @@ async function readConnections(ctx: ConfigAreaContext, ids: readonly string[] | 
       key: row.externalKey,
       name: row.name,
       spec: {
-        // A URL saved before the route refused credentials in it: never exported, nor shown in a plan.
         url: redactExternalMcpUrlCredentials(row.url).url,
         authType: row.authType,
         credentialMode: row.credentialMode,

@@ -578,7 +578,6 @@ async function startSentry(state: RuntimeState) {
       if (event.contexts?.trace?.op === SCIM_DIAGNOSTIC_OP) {
         hint.attachments = []
         if (sanitized) {
-          // Reattach only trusted deployment config, never inherited scope data.
           sanitized.release = release
           sanitized.environment = environment
           sanitized.dist = dist

@@ -3,18 +3,12 @@ import { mcpAppToolNameSchema } from "@openwork/types/mcp-app"
 import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
-/** Den's reason on a refusal only an editor updating the App can fix, with the App tool it names. */
 const MCP_APP_NEEDS_UPDATE = "app_needs_update"
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-/**
- * The App tool a failed call says changed at its provider, or null. Only the
- * tool the App just called counts, so a provider's own error text cannot name
- * another one.
- */
 export function changedMcpAppTool(result: unknown, calledTool: string): string | null {
   if (!isRecord(result) || result.isError !== true || !Array.isArray(result.content)) return null
   if (!mcpAppToolNameSchema.safeParse(calledTool).success) return null
@@ -24,18 +18,15 @@ export function changedMcpAppTool(result: unknown, calledTool: string): string |
       const payload: unknown = JSON.parse(item.text)
       if (isRecord(payload) && payload.reason === MCP_APP_NEEDS_UPDATE && payload.tool === calledTool) return calledTool
     } catch {
-      // Not OpenWork's JSON error.
     }
   }
   return null
 }
 
-/** The request a new conversation starts with, to update an App whose tool changed. */
 export function mcpAppToolRepairPrompt({ appId, title, tool }: { appId: string; title: string; tool: string }): string {
   return `Fix the existing artifact “${title}” (artifact ID: ${appId}). Its tool “${tool}” changed at its provider since the artifact was published, so OpenWork blocks its calls to it. Follow the build-an-app skill: read the artifact with read_app using this artifact ID, find what the tool takes and returns now, then save the fix with update_app under this same artifact ID, changing its code where the tool changed. Do not create a copy. Tell me what you changed.`
 }
 
-/** Shown above an App whose tool changed, to someone who can update the App. */
 export function McpAppChangedToolPrompt({ tool, onFix, className }: {
   tool: string
   onFix: (tool: string) => Promise<void>

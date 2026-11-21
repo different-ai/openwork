@@ -34,11 +34,8 @@ export type AgentSourceId = AgentCoreSource | (string & {})
 /** Restraint, applied in the person's own time zone. */
 export type ProactivePolicy = {
   workingDays: "weekdays" | "everyday"
-  /** First working hour, 0–23. */
   startHour: number
-  /** Hour the working day ends, 1–24, after `startHour`. */
   endHour: number
-  /** Messages per person per local day. */
   dailyCap: number
 }
 
@@ -47,13 +44,9 @@ const HOUR_MS = 3_600_000
 const DAY_MS = 24 * HOUR_MS
 
 export const AGENT_TIMING = {
-  /** The scheduled check, inside working hours. */
   checkEveryMs: 3 * HOUR_MS,
-  /** How often Den looks at the calendar for events that wake the agent early. */
   calendarPollMs: 5 * MINUTE_MS,
-  /** A pass that could not run (runner or model outage) is tried again after this. */
   retryMs: 15 * MINUTE_MS,
-  /** The calendar window events are read in: now until the end of tomorrow. */
   horizonMs: 2 * DAY_MS,
 }
 
@@ -68,12 +61,10 @@ export function isValidTimeZone(timeZone: string | null | undefined): timeZone i
 }
 
 export type ZonedClock = {
-  /** Local calendar date, `YYYY-MM-DD`. */
   date: string
   year: number
   month: number
   day: number
-  /** 0 = Sunday … 6 = Saturday. */
   weekday: number
   hour: number
   minute: number
@@ -172,13 +163,10 @@ export function nextWorkingStart(policy: ProactivePolicy, at: number, timeZone: 
   return at + DAY_MS
 }
 
-/** When today's working day opened (its start hour), in the person's zone. */
 function workdayStart(policy: ProactivePolicy, at: number, timeZone: string) {
   const c = zonedClock(at, timeZone)
   return zonedInstant(timeZone, c.year, c.month, c.day, policy.startHour)
 }
-
-// ---- The schedule: the guarantee --------------------------------------------------------------------------------------
 
 /** The first pass of a working day is the morning pass (it carries the morning brief). */
 export function isMorningPass(policy: ProactivePolicy, lastPassAt: number | null, at: number, timeZone: string): boolean {
@@ -196,8 +184,6 @@ export function nextScheduledPass(policy: ProactivePolicy, passAt: number, timeZ
   return nextWorkingStart(policy, Math.max(next, zonedDayStart(passAt, timeZone, 1)), timeZone)
 }
 
-// ---- The delivery step: plain code, after the turn ends ----------------------------------------------------------------
-
 /**
  * One thing a message is about, named by the agent: the source it came from and a stable id there (a Slack message
  * permalink or channel and timestamp, a Gmail thread id, a calendar event id, an issue id), and the preset it falls
@@ -212,14 +198,8 @@ export function agentLedgerKey(item: Pick<AgentItem, "source" | "id">) {
 
 export type AgentDeliveryDecision =
   | { kind: "deliver"; items: AgentItem[] }
-  /** Nothing new to say: every item was turned off, muted or already told. */
   | { kind: "drop"; reason: "nothing_new" }
-  /** Not now, and not later either: the items are recorded so a stale message never goes out. */
   | { kind: "drop"; reason: "daily_limit"; items: AgentItem[] }
-  /**
-   * Outside working hours, snoozed, or inside the member's quiet window without being urgent: nothing is recorded,
-   * the agent may raise it again when it still matters.
-   */
   | { kind: "drop"; reason: "quiet_hours" | "snoozed" }
   | { kind: "drop"; reason: "quiet_window"; items: AgentItem[] }
 
@@ -229,9 +209,7 @@ export type AgentDeliveryDecision =
  */
 export function decideAgentDelivery(input: {
   items: readonly AgentItem[]
-  /** Sources the agent read this pass: an item from anywhere else is dropped. */
   sources: ReadonlySet<string>
-  /** Presets the organization turned on, and the ones the member muted. */
   enabled: ReadonlySet<AgentResponsibility>
   muted: ReadonlySet<AgentResponsibility>
   told: ReadonlySet<string>
@@ -240,7 +218,6 @@ export function decideAgentDelivery(input: {
   at: number
   timeZone: string
   snoozedUntil: number | null
-  /** The member's hours when only urgent messages go out, and whether the agent marked this one urgent. */
   quietWindow?: AgentHourWindow | null
   urgent?: boolean
 }): AgentDeliveryDecision {
@@ -262,13 +239,10 @@ export function decideAgentDelivery(input: {
   return { kind: "deliver", items }
 }
 
-// ---- The turn: instructions, the wake prompt, and the answer ------------------------------------------------------------
-
 /** Starts every wake prompt, so the model (and anyone reading the transcript) knows the person did not write it. */
 export const AGENT_WAKE_MARKER = "[wake]"
 /** The whole reply when there is nothing worth a message. */
 export const AGENT_QUIET_REPLY = "NO_REPLY"
-/** Where the agent keeps its own notes, inside its session's scratch files. */
 const AGENT_NOTES_DIR = "memory/"
 
 /**
@@ -338,11 +312,6 @@ export function formatWhen(at: number, now: number, timeZone: string) {
   return `${label} at ${formatClock(at, timeZone)}`
 }
 
-/**
- * One calendar event, for the prompt. Only facts Google or the person controls: the event id, times and counts. No
- * title, description or organizer name: those are written by whoever sent the invite, and the agent reads them itself,
- * as data, with its tools.
- */
 function describeWake(wake: CalendarWake, now: number, timeZone: string) {
   const event = wake.event
   const when = event.start !== null ? formatWhen(event.start, now, timeZone) : "soon"
@@ -361,17 +330,9 @@ function describeMove(wake: Extract<CalendarWake, { change: "moved" }>, moved: s
   return `${moved}${was} (source calendar, id ${wake.ref}, preset calendar_changes)`
 }
 
-/**
- * The short prompt Den starts each pass with: why it woke, when it last looked at each source, and what it is
- * responsible for. Calendar facts are summaries; the agent reads details itself.
- */
 /** The member's own words and quiet window, as the wake prompt carries them. */
 export type AgentPersonWishes = { preferences: AgentPreferences; quietWindow: AgentHourWindow | null }
 
-/**
- * What the person told their agent, as data they wrote: it shapes what to tell them, when and how. It never widens
- * what the agent may do (it still only reads), and it is the person's own text, so it is not treated like email.
- */
 function describeWishes(wishes: AgentPersonWishes): string {
   const lines = AGENT_PREFERENCE_FIELDS.flatMap((field) => {
     const text = wishes.preferences[field].trim()
@@ -393,15 +354,10 @@ export type AgentPromptService = "google-workspace" | "microsoft-365" | "slack"
 
 /** One source the agent may read this pass, as the wake prompt lists it. */
 export type AgentPromptSource = {
-  /** `calendar`, or a connection id: what items name as their source. */
   id: string
-  /** "Calendar", "Slack", "Granola". */
   name: string
-  /** A connection whose service is known, so the prompt can say what to read there and how to search since the last read. */
   service?: AgentPromptService
-  /** The connections it reads through: "Google Calendar", "Slack". */
   via: readonly string[]
-  /** The member's instruction for this source, in their own words. */
   instruction: string
   lastReadAt: number | null
 }
@@ -409,7 +365,6 @@ export type AgentPromptSource = {
 /** A source the member turned on that can't be read now, so the agent doesn't try and doesn't guess. */
 export type AgentPromptUnavailable = { name: string; why: string }
 
-/** What a source reads by default, so the agent knows where to look without being told how. */
 const SOURCE_SCOPE: Record<AgentCoreSource | AgentPromptService, string> = {
   calendar: "their meetings today and tomorrow",
   "google-workspace": "their inbox first, then anything else there the brief asks for",
@@ -417,7 +372,6 @@ const SOURCE_SCOPE: Record<AgentCoreSource | AgentPromptService, string> = {
   slack: "DMs to them, mentions of them and threads they're in",
 }
 
-/** Search hints that make "since the last read" exact where a provider supports it. */
 function sinceHint(source: AgentPromptSource, at: number) {
   if (source.service === "google-workspace") return ` (${new Date(at).toISOString()}; Gmail search after:${Math.floor(at / 1000)})`
   if (source.service === "slack") return ` (Slack search after:${new Date(at - 86_400_000).toISOString().slice(0, 10)}, then skip anything older than ${new Date(at).toISOString()})`
@@ -443,13 +397,11 @@ export function describeSource(source: AgentPromptSource, now: number, timeZone:
 export function agentWakePrompt(input: {
   reasons: readonly AgentWakeReason[]
   sources: readonly AgentPromptSource[]
-  /** Sources that are on but can't be read now. */
   unavailable?: readonly AgentPromptUnavailable[]
   responsibilities: readonly AgentResponsibility[]
   instructions: string
   now: number
   timeZone: string
-  /** The member's own proactive instructions. */
   wishes?: AgentPersonWishes | null
 }): string {
   const { now, timeZone } = input
@@ -478,15 +430,12 @@ export function agentWakePrompt(input: {
 }
 
 const itemIdSchema = z.string().trim().min(1).max(300)
-/** Presets are optional: an item without one is "anything else worth catching". An unknown preset is ignored. */
 const itemPresetSchema = z.unknown().transform((value) => {
   const parsed = agentResponsibilitySchema.safeParse(value)
   return parsed.success ? parsed.data : null
 })
 const sourceItemSchema = z.object({ source: z.string().trim().min(1).max(64), id: itemIdSchema, preset: itemPresetSchema.optional() })
-/** Items as agents wrote them before sources (responsibility + ref); read so a long-lived session's habit still parses. */
 const legacyItemSchema = z.object({ responsibility: agentResponsibilitySchema, ref: itemIdSchema })
-/** `email` names no source any more: Den resolves it to the connection that reads mail when that is one of the check's sources, and drops the item otherwise. */
 const LEGACY_SOURCE: Record<AgentResponsibility, string> = {
   morning_brief: "calendar",
   meeting_prep: "calendar",
@@ -500,7 +449,6 @@ const replyItemSchema = z.union([sourceItemSchema, legacyItemSchema]).transform(
 const agentReplySchema = z.object({
   message: z.string().trim().min(1).max(1_500),
   items: z.array(replyItemSchema).min(1).max(8),
-  /** Only asked for inside the member's quiet window; anything but `true` is not urgent. */
   urgent: z.unknown().optional(),
 })
 
@@ -558,7 +506,6 @@ export function parseAgentReply(text: string): AgentReply {
   return parsed.data.urgent === true ? { ...reply, urgent: true } : reply
 }
 
-/** Hosts a message may always link to: the person's own Google workspace, never an address found in an email. */
 const SAFE_LINK_HOSTS = new Set(["mail.google.com", "docs.google.com", "drive.google.com", "calendar.google.com", "meet.google.com"])
 
 /**
@@ -580,10 +527,6 @@ export function safeProactiveLink(url: string | null | undefined, domains: reado
 
 const MAX_TOKEN = 2_000
 
-/**
- * Slack's `<…>` tokens: special mentions (`<!here>`, `<!subteam^…>`), user and channel mentions go; links stay only
- * when they point at the person's own Google workspace (else their label stays). Scanned, never backtracked.
- */
 function withoutSlackTokens(text: string, domains: readonly string[]): string {
   let out = ""
   let at = 0
@@ -608,7 +551,6 @@ function withoutSlackTokens(text: string, domains: readonly string[]): string {
   return out + text.slice(at)
 }
 
-/** Markdown links `[label](url)`: kept as Slack links to safe hosts, otherwise only the label. */
 function withoutUnsafeMarkdownLinks(text: string, domains: readonly string[]): string {
   let out = ""
   let at = 0
@@ -630,7 +572,6 @@ function withoutUnsafeMarkdownLinks(text: string, domains: readonly string[]): s
   return out + text.slice(at)
 }
 
-/** Bare URLs outside `<…>`: only safe ones stay. */
 function withoutUnsafeUrls(text: string, domains: readonly string[]): string {
   return text
     .split(/(\s+)/)
@@ -665,16 +606,6 @@ export function cleanAgentMessage(text: string, options: { limit?: number; linkD
   const cleaned = kept.join("\n").trim()
   return cleaned.length <= limit ? cleaned : `${cleaned.slice(0, limit - 1).trimEnd()}…`
 }
-
-// =====================================================================================================================
-// Google Calendar events: speed-ups that wake the agent early
-// =====================================================================================================================
-
-/**
- * Pure: Den reads `events.list` (primary calendar, `singleEvents`, `showDeleted`) as the person every few minutes
- * and hands the raw response here. The diff against the last checkpoint decides whether anything is worth waking the
- * agent for. The scheduled pass would find the same things later; this only makes it sooner.
- */
 
 const googlePersonSchema = z.object({
   email: z.string().optional(),
@@ -714,28 +645,17 @@ export type CalendarAttendee = { email: string; external: boolean }
 export type CalendarEventFacts = {
   id: string
   status: "confirmed" | "tentative" | "cancelled"
-  /** Timed events only; all-day events have null. */
   start: number | null
   end: number | null
   allDay: boolean
   created: number | null
-  /** Google's `updated`, verbatim: a change's ref. */
   updated: string
   organizerSelf: boolean
   declined: boolean
-  /** The person said yes, or organizes it. Not answered, maybe and no do not count. */
   accepted: boolean
-  /**
-   * The invite's title, written by whoever sent it. Kept for rules a person
-   * writes ("titles containing…") and as data in a run; the agent's wake
-   * prompt never includes it.
-   */
   title: string | null
-  /** The meeting's Google Meet link, else its Calendar page, else null. */
   link: string | null
-  /** A real meeting (Google's `default` type), not focus time, out of office or a working location. */
   meeting: boolean
-  /** Everyone else invited, without rooms and resources. */
   others: CalendarAttendee[]
 }
 
@@ -798,8 +718,6 @@ export function projectGoogleCalendarEvents(raw: unknown, selfEmail?: string | n
   return { timeZone: response.data.timeZone ?? null, events }
 }
 
-// ---- Checkpoint: what the last look saw ----------------------------------------------------------------------------
-
 const checkpointEventSchema = z.object({
   u: z.string(),
   s: z.number().nullable(),
@@ -816,8 +734,6 @@ export type CalendarCheckpoint = z.infer<typeof calendarCheckpointSchema>
 
 const CHECKPOINT_MAX_EVENTS = 250
 
-// ---- Wakes -----------------------------------------------------------------------------------------------------------
-
 export type CalendarWake =
   | { kind: "meeting_soon"; ref: string; event: CalendarEventFacts }
   | { kind: "calendar_change"; ref: string; change: "added"; event: CalendarEventFacts }
@@ -829,7 +745,6 @@ export function wakeResponsibility(wake: CalendarWake): AgentResponsibility {
   return wake.kind === "meeting_soon" ? "meeting_prep" : "calendar_changes"
 }
 
-/** Someone from outside the company is invited. */
 function hasOutsiders(event: CalendarEventFacts) {
   return event.others.some((other) => other.external)
 }
@@ -903,48 +818,21 @@ export function nextCalendarPoll(input: { now: number; events: CalendarEventFact
   return withinWorkingHours(policy, next, timeZone) ? next : nextWorkingStart(policy, next, timeZone)
 }
 
-// ---- The agent's own state, kept by the host between passes -----------------------------------------------------------
-
 const agentStateSchema = z.object({
   v: z.literal(1),
-  /** The calendar as the event source last saw it. */
   calendar: calendarCheckpointSchema.nullable(),
-  /** When a completed pass last read each source, by source id (`calendar`, `email`, `chat`, a connection id). */
   lastLook: z.preprocess(renamedLooks, z.record(z.string(), z.number())),
   lastPassAt: z.number().nullable(),
-  /** When the next scheduled pass is due; null means now. */
   nextPassAt: z.number().nullable(),
-  /** Calendar wakes already handed to the agent, newest last, so one event never wakes it twice. */
   woke: z.array(z.string()).max(100),
-  /**
-   * Connections the member was told they need to connect or reconnect, by connection id, with when: told once, and
-   * forgotten once the connection works again so a later failure is told again.
-   */
   notices: z.record(z.string(), z.number()).default({}),
-  /**
-   * `workbotAgentBrief`: extra checks the agent asked for with request_check, soonest first (proactive-brief.ts). Kept
-   * after they run, for two days, so the day's cap and "Already set" still count them.
-   */
   requests: z.array(z.object({ at: z.number(), why: z.string().max(200), requestedAt: z.number(), done: z.boolean().optional() })).max(40).optional(),
-  /**
-   * `workbotAgentBrief`: what Den sent the member in the last day and a half (when, what about, the lead), so the next
-   * check knows what was told rather than only what it reported. Member content, encrypted with the rest of the state.
-   */
   sent: z.array(z.object({ at: z.number(), about: z.array(z.string().max(400)).max(8), lead: z.string().max(240) })).max(40).optional(),
-  /**
-   * `workbotAgentBrief`: the last findings report the check handed the messenger, so a finding the messenger held for
-   * later is reported again instead of lost (the next check reads only what's new). Member content, encrypted.
-   */
   lastReport: z.object({ at: z.number(), text: z.string().max(4_000) }).nullable().optional(),
-  /**
-   * `workbotAgentCheckGate`: scheduled checks skipped in a row because nothing that could matter had arrived. A check
-   * that runs sets it back to 0, so the gate can only skip a few before the agent looks for itself.
-   */
   skips: z.number().int().min(0).max(100).optional(),
 })
 export type AgentState = z.infer<typeof agentStateSchema>
 
-/** Last looks stored before sources had ids: Gmail is `email`, Google Calendar is `calendar`. */
 function renamedLooks(value: unknown): unknown {
   if (typeof value !== "object" || value === null || Array.isArray(value)) return value
   const looks: Record<string, unknown> = {}

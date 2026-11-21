@@ -86,7 +86,6 @@ type ComposerProps = {
   editing?: boolean;
   stopping?: boolean;
   steering: boolean;
-  /** What Enter does while the agent is working; Cmd/Ctrl+Enter does the other. Defaults to queue. */
   followUpDefault?: "queue" | "steer";
   submissionPreparing: boolean;
   submissionPreparingLabel?: string;
@@ -102,7 +101,6 @@ type ComposerProps = {
   modelPickerOpen: boolean;
   selectedModel: ModelRef;
   modelOptions?: readonly ModelOption[];
-  /** When set, the full model picker opened from here targets this session. */
   sessionId?: string;
   openWorkModelsEntitled?: boolean;
   openWorkModelsSyncing?: boolean;
@@ -110,18 +108,15 @@ type ComposerProps = {
   onModelPickerOpenChange: (open: boolean) => void;
   onModelChange: (model: ModelRef, variant?: string | null) => void;
   attachments: ComposerAttachment[];
-  /** `draftOffset` is the caret position in the draft; omitted, the chips are appended. */
   onAttachFiles: (files: File[], draftOffset?: number) => void;
   onRemoveAttachment: (id: string) => void;
   attachmentsEnabled: boolean;
-  /** True while the draft's attachments are being compressed/uploaded during a send; chips show a spinner overlay. */
   attachmentsUploading?: boolean;
   attachmentsDisabledReason: string | null;
   modelVariantLabel: string;
   modelVariant: string | null;
   modelBehaviorOptions?: { value: string | null; label: string }[];
   onModelVariantChange: (value: string | null) => void;
-  /** Wait for an existing session's engine-bound model before editing its effort. */
   modelSelectionPending?: boolean;
   agentLabel: string;
   selectedAgent: string | null;
@@ -140,9 +135,7 @@ type ComposerProps = {
   recentFiles: string[];
   searchFiles: (query: string) => Promise<string[]>;
   onInsertMention: (kind: ComposerMentionKind, value: string, draft?: string) => void;
-  /** Sent-prompt history (oldest first) recalled with ArrowUp/ArrowDown (#2012). */
   inputHistory?: string[];
-  /** A suggested next message, shown in gray while the message box is empty; Tab fills it in (feature `followUpSuggestions`). */
   followUpSuggestion?: string | null;
   onPasteText: (text: string, draftOffset?: number) => void;
   onUnsupportedFileLinks: (links: string[]) => void;
@@ -151,7 +144,6 @@ type ComposerProps = {
   onRemovePastedText: (id: string) => void;
   draftScopeKey?: string;
   compactTopSpacing?: boolean;
-  /** Render inline in a page (new-task hero): no sticky dock chrome or inner max-width, aligning with sibling content. */
   flush?: boolean;
   topAccessory?: ReactNode;
   runModeControl?: ReactNode;
@@ -161,11 +153,6 @@ type ComposerProps = {
 
 const FLUSH_PROMPT_EVENT = "openwork:flushPromptDraft";
 const FOCUS_PROMPT_EVENT = "openwork:focusPrompt";
-/**
- * The composer the person last typed in. With a side window open, "focus the
- * prompt" (after a palette pick, a dialog, a model change) returns to that one
- * instead of whichever composer registered last.
- */
 let lastFocusedComposerRoot: HTMLElement | null = null;
 const DEFAULT_AGENT_NAME = "openwork";
 
@@ -173,14 +160,6 @@ function isNonDefaultAgent(agent: Agent) {
   return agent.name !== DEFAULT_AGENT_NAME;
 }
 
-/**
- * Extract external file/URL drops from a clipboard. Only used when the user
- * drag-drops a file reference from another app (Finder / browser), which sets
- * the text/uri-list MIME type explicitly. Plain text pastes — even ones that
- * contain absolute paths like "/Users/..." — are NEVER treated as links here
- * because that intercepted real text pastes and made composer paste feel
- * broken. Plain text goes straight into the editor via Lexical's default.
- */
 function parseClipboardUriList(clipboard: DataTransfer) {
   const raw = clipboard.getData("text/uri-list") ?? "";
   if (!raw.trim()) return [];
@@ -256,10 +235,8 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   const [activeMentionQuery, setActiveMentionQuery] = useState<string | null>(null);
   const [mentionOpen, setMentionOpen] = useState(false);
   const [activeSessionTrigger, setActiveSessionTrigger] = useState<{ query: string; offset: number } | null>(null);
-  // Draft offset of the `#` whose list was dismissed.
   const [sessionMenuDismissedAt, setSessionMenuDismissedAt] = useState<number | null>(null);
   const sessionReferences = useSessionReferencesMaybe();
-  // Outside a page that can resolve tasks, `#` is plain text.
   const sessionReferencesEnabled = Boolean(sessionReferences);
   const [menuIndex, setMenuIndex] = useState(0);
   const menuItemRefs = useRef<Array<HTMLButtonElement | null>>([]);
@@ -285,12 +262,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   const [mcpLoading, setMcpLoading] = useState(false);
   const [dropzoneActive, setDropzoneActive] = useState(false);
   const editorRef = useRef<LexicalPromptEditorHandle | null>(null);
-  // The `/` and `@` suggestion lists are anchored to the composer panel.
   const panelRef = useRef<HTMLDivElement | null>(null);
-  // IME composition guard: while an IME composition is active, we must not
-  // treat Enter as a submit. Three signals keep this reliable across WebKit,
-  // Chrome, and Safari: event.isComposing, event.keyCode === 229, and the
-  // compositionstart/compositionend events below.
   const imeComposingRef = useRef(false);
   const rootRef = useRef<HTMLDivElement | null>(null);
   const speechDictation = useDesktopSpeechDictation();
@@ -329,12 +301,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     draftRef.current = props.draft;
   }, [props.draft]);
 
-  // Follow-up message UX (only relevant while the agent is busy):
-  // - Enter queues the message until the agent finishes.
-  // - Cmd/Ctrl+Enter sends immediately (the agent adjusts mid-task, aka "steer").
-  // - Settings › Preferences can swap the two (`followUpDefault`).
-  // - Escape arms a "Hit Escape again to stop the agent" prompt for 3s;
-  //   a second Escape within that window stops the agent.
   const [escapeArmed, setEscapeArmed] = useState(false);
   const escapeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -346,7 +312,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     setEscapeArmed(false);
   }, []);
 
-  // Reset the escape-to-stop prompt whenever the agent stops being busy.
   useEffect(() => {
     if (!props.busy) disarmEscape();
   }, [props.busy, disarmEscape]);
@@ -370,10 +335,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     }
   }, [props.onRefreshOrganizationModels, refreshingOrganizationModels]);
 
-  // Input history recall (#2012): ArrowUp on an empty composer recalls the
-  // previous sent prompt; repeated ArrowUp/ArrowDown walk the history.
-  // Editing the recalled text exits recall mode, and ArrowDown past the
-  // newest entry restores whatever was typed before recall started.
   const historyPosRef = useRef<number | null>(null);
   const historyExpectedRef = useRef<string | null>(null);
   const historyStashRef = useRef("");
@@ -390,14 +351,12 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     if (escapeTimerRef.current) clearTimeout(escapeTimerRef.current);
   }, []);
 
-  // Editor submit (Enter, or Cmd/Ctrl+Enter when `queue` is set).
   const handleEditorSubmit = useCallback(async (options: { queue: boolean }) => {
     const current = await prepareVoiceSubmission();
     if (!current) return;
     const action = resolveComposerSubmit({
       hasContent: current.draft.trim().length > 0 || current.attachments.length > 0,
       disabled: current.disabled,
-      // A helper's conversation sends right away; it cannot queue or steer.
       busy: current.busy && !current.childConversation,
       editing: Boolean(current.editing),
       stopping: Boolean(current.stopping),
@@ -430,10 +389,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     setMenuIndex(0);
   }, [mentionOpenNext, mentionQuery]);
 
-  // The task list stays open while the caret is in a `#query`, through spaces
-  // and queries with no match, until a task is picked, Escape is pressed, or
-  // the person presses outside the list. Dismissed, it stays closed for that
-  // `#` and opens again for the next one.
   const handleSessionTriggerChange = useCallback((next: { query: string; offset: number } | null) => {
     setActiveSessionTrigger((current) => (
       current?.query === next?.query && current?.offset === next?.offset ? current : next
@@ -762,7 +717,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     if (!mentionQuery) return mentionItems.slice(0, 8);
     return fuzzysort.go(mentionQuery, mentionItems, { keys: ["label"], limit: 8 }).map((entry) => entry.obj);
   }, [mentionItems, mentionOpen, mentionQuery]);
-  // Read on each query so titles and new tasks are current while the list is open.
   const sessionFiltered = useMemo(() => {
     if (!sessionMenuOpen || !sessionReferences) return [];
     return filterSessionReferenceCandidates(sessionReferences.candidates(), sessionQuery, { excludeSessionId: props.sessionId });
@@ -771,7 +725,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     () => props.pastedText.map((item) => ({ label: item.label, lines: item.lines, text: item.text })),
     [props.pastedText],
   );
-  // Stable tokens keep streaming renders from re-running Lexical's draft sync.
   const attachmentTokens = useMemo<ComposerAttachmentToken[]>(
     () => props.attachments.map((attachment) => ({
       id: attachment.id,
@@ -790,7 +743,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     props.onExpandPastedText(target.id);
   }, [props.onExpandPastedText, props.pastedText]);
 
-  // Draft image chip clicked: show it full-size so it can be inspected before sending.
   const [expandedAttachmentId, setExpandedAttachmentId] = useState<string | null>(null);
   const expandedAttachment = props.attachments.find((attachment) => attachment.id === expandedAttachmentId);
 
@@ -1089,8 +1041,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   ));
   useEffect(() => {
     if (!focusRequested || props.disabled) return;
-    // Wait for the editor to mount and the creating menu to close. Keep the
-    // request until this session is ready, even when its snapshot loads slowly.
     const frame = requestAnimationFrame(() => {
       if (useComposerStateStore.getState().pendingFocusSessionId !== props.sessionId) return;
       const editable = rootRef.current?.querySelector<HTMLElement>("[contenteditable='true']");
@@ -1101,9 +1051,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     return () => cancelAnimationFrame(frame);
   }, [focusRequested, props.disabled, props.sessionId]);
 
-  // Listen for cross-app focus + draft flush events. The Solid shell uses
-  // these from deep-link handlers, the command palette, and the browser
-  // pagehide/beforeunload cycle so no in-flight draft is lost.
   useEffect(() => {
     const handleFocus = () => {
       const root = rootRef.current;
@@ -1113,10 +1060,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       editable?.focus({ preventScroll: window.matchMedia("(max-width: 1023px)").matches });
     };
     const handleFlush = () => {
-      // onDraftChange always runs synchronously on every keystroke, so this
-      // listener is effectively a hook for the shell to signal "we're about
-      // to unmount, commit any debounced state". Re-fire with the current
-      // draft so downstream stores can checkpoint it.
       props.onDraftChange(draftRef.current);
     };
     window.addEventListener(FOCUS_PROMPT_EVENT, handleFocus);
@@ -1131,13 +1074,11 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     };
   }, [props.onDraftChange]);
 
-  // Shown only where the usual placeholder would be: an empty, usable message box.
   const followUpSuggestion = props.followUpSuggestion && !props.draft && props.attachments.length === 0 && !props.disabled
     ? props.followUpSuggestion
     : null;
 
   const handleKeyDownCapture: React.KeyboardEventHandler<HTMLDivElement> = (event) => {
-    // IME composition guard — block Enter while IME is mid-character.
     const imeActive =
       imeComposingRef.current ||
       (event.nativeEvent as KeyboardEvent).isComposing === true ||
@@ -1145,8 +1086,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     if (event.key === "Enter" && imeActive) {
       return;
     }
-    // Tab in the empty message box takes the suggested follow-up as the draft,
-    // to edit or send. Elsewhere in the composer Tab still moves focus.
     if (
       event.key === "Tab" && followUpSuggestion && !imeActive
       && !event.shiftKey && !event.altKey && !event.metaKey && !event.ctrlKey
@@ -1158,9 +1097,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       props.onDraftChange(followUpSuggestion);
       return;
     }
-    // Escape-to-stop while the agent is busy. Only when no menu is open so
-    // Escape can still close menus. First press arms a confirmation prompt
-    // for 3s; a second Escape within that window stops the agent.
     const anyMenuOpen = agentMenuOpen || toolMenuOpen || props.modelPickerOpen || Boolean(activeMenu);
     if (event.key === "Escape" && dictation.localRecording && !anyMenuOpen) {
       event.preventDefault();
@@ -1184,11 +1120,8 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       }
       return;
     }
-    // The agent menu handles its own keys.
     if (agentMenuOpen) return;
 
-    // The + menu renders in a portal, but its key events still bubble through this
-    // React tree; the menu handles its own keys.
     const fromComposerDom = event.target instanceof Node && Boolean(rootRef.current?.contains(event.target));
     if (toolMenuOpen && event.key === "Escape" && fromComposerDom) {
       event.preventDefault();
@@ -1207,8 +1140,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       return;
     }
 
-    // Input history recall (#2012). Only when no menu is consuming the
-    // arrow keys and IME composition is not active.
     if (
       (event.key === "ArrowUp" || event.key === "ArrowDown") &&
       !imeActive &&
@@ -1246,7 +1177,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       }
     }
 
-    // Escape closes even an empty menu without navigating out of the child.
     if (activeMenu && event.key === "Escape") {
       event.preventDefault();
       if (activeMenu === "session") dismissSessionMenu();
@@ -1273,8 +1203,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     }
   };
 
-  // Attachment chips are raw Lexical token DOM, so their uploading overlay is
-  // synced by attribute whenever the uploading flag or the chip set changes.
   useEffect(() => {
     const root = rootRef.current;
     if (!root) return;
@@ -1288,10 +1216,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       return;
     }
 
-    // No client-side size cap: oversized files are rejected upstream (upload
-    // endpoint or provider) with their own errors instead of a composer rule.
-    // Oversized images are compressed at send time (see image-compression.ts)
-    // so the chip appears instantly instead of blocking on canvas work here.
     props.onAttachFiles(inputFiles, draftOffset);
   };
 
@@ -1311,8 +1235,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
               tabIndex={-1}
               title={command.description || undefined}
               className={composerSuggestionRowClass(index === menuIndex)}
-              // Move, not enter: rows sliding under a resting cursor (the list
-              // opening or scrolling) must not steal the keyboard highlight.
               onMouseMove={() => setMenuIndex(index)}
               onMouseDown={(event) => {
                 event.preventDefault();
@@ -1463,7 +1385,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       }}
     >
       <div className={props.flush ? "" : "max-w-[800px] mx-auto"}>
-        {/* Main composer panel */}
         <div
           ref={panelRef}
           className="@container/composer relative overflow-visible rounded-[18px] border border-dls-border bg-dls-surface transition-all"
@@ -1473,14 +1394,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
           {renderMentionMenu()}
           {renderSlashMenu()}
           {renderSessionMenu()}
-
-          {/*
-            The pasted-text chip used to render twice — once inline inside
-            the Lexical editor (via ComposerPastedTextNode) and again as a
-            separate rail here above the composer. Keep only the inline
-            chip; its pill already shows label + line count, and the user
-            removes it with backspace like any other inline token.
-          */}
 
           {dropzoneActive ? (
             <div className="pointer-events-none absolute inset-3 z-20 flex items-center justify-center rounded-[20px] border-2 border-dashed border-dls-accent bg-[color:color-mix(in_oklab,var(--dls-accent)_10%,transparent)]">
@@ -1492,7 +1405,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
           ) : null}
 
           <div className="px-4 pt-3 pb-2">
-            {/* Editor */}
             <LexicalPromptEditor
               ref={editorRef}
               value={props.draft}
@@ -1512,15 +1424,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
               onRemoveAttachment={props.onRemoveAttachment}
               onPasteText={props.onPasteText}
               onPaste={(event) => {
-                // Paste policy:
-                // 1. Actual files on the clipboard -> attach them.
-                // 2. Explicit text/uri-list (drag from Finder / browser) -> insert links.
-                // 3. Plain text -> DO NOTHING. Let Lexical's PlainTextPlugin
-                //    handle the paste natively so newlines render correctly
-                //    and no content is silently dropped. Previous behavior
-                //    hijacked pastes that merely contained absolute paths
-                //    like "/Users/..." or pastes longer than 10 lines, which
-                //    was the root cause of "paste into composer is broken".
                 const files = Array.from(event.clipboardData?.files ?? []);
                 if (files.length) {
                   event.preventDefault();
@@ -1537,12 +1440,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                   return;
                 }
 
-                // Plain text paste display is owned by PasteChipPlugin inside
-                // the Lexical editor: text collapses when it would exceed the
-                // editor's current width and maximum height, unless the whole
-                // string is a standalone HTTP(S) URL. Text that fits, or is
-                // expanded from a chip, renders like normal text. Do NOT
-                // duplicate that here.
               }}
               onDragOver={(event) => {
                 if (event.dataTransfer?.files?.length) {
@@ -1571,7 +1468,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
               onChange={() => props.onModelPickerOpenChange(true)}
               onSwitchBack={(model) => props.onModelChange(model, null)}
             />
-            {/* Respond to the pane width, including desktop split views. */}
             {props.busy && !props.stopping && escapeArmed ? (
               <div data-composer-stop-confirmation role="status" className="mt-2 text-[12px] font-medium text-gray-10">
                 {t("composer.escape_to_stop")}
@@ -1624,10 +1520,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                 </div>
 
                 <div data-composer-settings className="col-span-2 row-start-1 flex min-w-0 flex-wrap items-center gap-1 border-b border-dls-border pb-2 max-lg:flex-1 max-lg:flex-nowrap max-lg:border-0 max-lg:pb-0 @min-[560px]/composer:flex-1 @min-[560px]/composer:border-0 @min-[560px]/composer:pb-0">
-                {/* Agent picker (#2101/#1971). Only shown once a non-default
-                    agent is selected. Switching back to Default agent lives in
-                    this menu and in the + tools menu. Selection configures
-                    subsequent submissions without interrupting the running turn. */}
                 <div className={showAgentPicker ? "relative min-w-0 max-w-full shrink-0 max-lg:max-w-[40%] max-lg:shrink" : "hidden"}>
                   <DropdownMenu open={agentMenuOpen} onOpenChange={setAgentMenuOpen}>
                     <DropdownMenuTrigger
@@ -1703,19 +1595,12 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
 
               </div>
 
-              {/*
-                Action area: one circular control.
-                - Idle or editing: send arrow.
-                - Busy follow-up: stop icon in that same slot (Enter still queues;
-                  Cmd/Ctrl+Enter still steers).
-              */}
               <div data-composer-actions className="col-start-2 row-start-2 ml-auto flex shrink-0 items-center gap-1.5">
                 <NativeDictationControl dictation={dictation} disabled={props.disabled} text={props.draft} />
                 <ComposerSendButton
                   mode={props.stopping ? "stopping" : showStop ? "stop" : sendPreparing ? "preparing" : "send"}
                   ready={(canSend || canSubmitVoice) && !props.disabled}
                   onPointerDown={(event) => {
-                    // Preserve focus until submission succeeds; rejected sends keep the keyboard.
                     if (event.pointerType === "touch" && window.matchMedia("(max-width: 1023px)").matches) event.preventDefault();
                   }}
                   onClick={
@@ -1749,7 +1634,6 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
 
       </div>
     </div>
-    {/* Sibling of the composer root so Escape closes the lightbox without arming stop. */}
     {expandedAttachment?.previewUrl ? (
       <ImageLightbox
         src={expandedAttachment.previewUrl}

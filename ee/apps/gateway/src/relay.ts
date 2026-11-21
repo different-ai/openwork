@@ -1,5 +1,3 @@
-// Shared helpers for relaying upstream responses (OpenRouter route + org
-// provider gateway).
 import { createHash } from "node:crypto"
 
 export type StreamHooks = {
@@ -28,9 +26,7 @@ export type UpstreamFetchFailure = {
   outcome: "client_aborted" | "upstream_unreachable"
   status: 502 | 504
   code: "request_cancelled" | "upstream_timeout" | "upstream_unreachable"
-  /** Plain words for the person who sent the request. */
   message: string
-  /** The network error code (ECONNRESET, ENOTFOUND, ...), for logs. */
   cause: string | undefined
 }
 
@@ -64,10 +60,6 @@ function networkErrorCode(error: unknown): string | undefined {
   return undefined
 }
 
-/**
- * A provider that cannot be reached is the provider's problem, not ours: describe it
- * to the caller in plain words instead of reporting it as a Gateway error.
- */
 export function describeUpstreamFetchFailure(error: unknown, input: { clientAborted: boolean; timedOut: boolean; target: string }): UpstreamFetchFailure {
   const cause = networkErrorCode(error) ?? (error instanceof Error && error.name !== "Error" ? error.name : undefined)
   if (input.clientAborted && !input.timedOut) {
@@ -143,7 +135,7 @@ export function isEventStreamContentType(contentType: string | null) {
 export function trackStream(body: ReadableStream<Uint8Array>, hooks: StreamHooks, lifetime?: ReturnType<typeof upstreamLifetime>) {
   const reader = body.getReader()
   let ended = false
-  const observe = (run: () => void) => { try { run() } catch { /* Accounting must never interrupt bytes. */ } }
+  const observe = (run: () => void) => { try { run() } catch {} }
   const finish = (failed: boolean) => {
     if (ended) return
     ended = true
@@ -154,7 +146,6 @@ export function trackStream(body: ReadableStream<Uint8Array>, hooks: StreamHooks
   let streamController: ReadableStreamDefaultController<Uint8Array>
   const abort = () => {
     finish(true)
-    // A caller that went away reads nothing. Erroring its stream would only make the HTTP server log a crash.
     if (lifetime?.timedOut) streamController.error(new Error("Inference upstream timed out"))
     else streamController.close()
     void reader.cancel().catch(() => {})
@@ -184,7 +175,6 @@ export function trackStream(body: ReadableStream<Uint8Array>, hooks: StreamHooks
       }
     },
     async cancel(reason) {
-      // Mark cancellation before observers classify the completed request.
       lifetime?.signal.removeEventListener("abort", abort)
       lifetime?.abort()
       finish(true)

@@ -57,9 +57,6 @@ const DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 const GOOGLE_WORKSPACE_API_TIMEOUT_MS = 30_000
 const MAX_DRIVE_FILE_CONTENT_BYTES = 64 * 1024
 const PDF_MIME_TYPE = "application/pdf"
-// Largest PDF downloaded to extract its text; only the text, never the bytes, reaches the model.
-// The whole file is held while pdf.js reads it (the cross-reference table is at the end), and parsing
-// needs up to ~5x the file size in the worst case measured, in a worker with its own heap limit.
 const DRIVE_PDF_MAX_BYTES = 50 * 1024 * 1024
 const DRIVE_PDF_TEXT_TIMEOUT_MS = 15_000
 
@@ -97,7 +94,6 @@ function pdfTextUnavailable(file: GoogleWorkspaceDriveFile, reason: DrivePdfText
   }
 }
 const DRIVE_TEXT_CHARACTER_LIMIT = 200_000
-// UTF-8 needs at most four bytes per character.
 const DRIVE_TEXT_BYTE_LIMIT = DRIVE_TEXT_CHARACTER_LIMIT * 4
 const DIRECT_UPLOAD_MAX_BYTES = 4 * 1024 * 1024
 const DIRECT_UPLOAD_BODY_MAX_BYTES = DIRECT_UPLOAD_MAX_BYTES + (256 * 1024)
@@ -370,20 +366,16 @@ function gmailApiBase(): string {
 }
 
 function calendarApiBase(): string {
-  // Calendar and Drive normally share www.googleapis.com; one env knob keeps Google API tests simple.
   return (env.googleApiBaseUrl ?? "https://www.googleapis.com").replace(/\/+$/, "")
 }
 
 function driveApiBase(): string {
-  // Calendar and Drive normally share www.googleapis.com; one env knob keeps Google API tests simple.
   return (env.googleApiBaseUrl ?? "https://www.googleapis.com").replace(/\/+$/, "")
 }
 
 export function missingScope(account: ConnectedAccountRow, anyOf: string[]): boolean {
   const scopes = account.scopes
   if (!Array.isArray(scopes) || scopes.length === 0) {
-    // Some legacy connections predate recorded scopes. Preserve their existing behavior;
-    // general Drive retrieval uses the stricter, fail-closed check below.
     return false
   }
   const provider = getNativeOAuthProvider("google-workspace")
@@ -427,14 +419,11 @@ async function googleWorkspaceToken(input: {
     memberId: input.orgMembershipId,
   })
   const teamIds = memberTeams.map((team) => team.id)
-  // Gmail multipart hosts select via payload, never via Den's signed internal headers.
   const requestedConnectorId = input.connectionId === undefined
     ? readInternalCapabilityConnectorId(getContext().req.raw.headers)
     : input.connectionId
   let credentialProviderId: string | null
   if (requestedConnectorId) {
-    // This exact lookup also handles the synthetic google-workspace legacy
-    // entry. An explicit selection must never use the default resolver.
     const entries = await listNativeProviderUsableEntries({
       organizationId: input.organizationId,
       orgMembershipId: input.orgMembershipId,
@@ -480,12 +469,6 @@ export type MemberCalendarRead =
   | { kind: "ok"; json: unknown }
   | { kind: "needs_connection" | "policy_blocked" | "missing_scope" | "google_api_error" }
 
-/**
- * Reads a member's primary Google Calendar for their agent's event source (calendar changes that wake it early),
- * outside any request: one read-only `GET`, expanded recurring events and cancelled ones (`showDeleted`), so a
- * cancellation can be told from a move. With `connectionId` (members' agents) it reads through exactly that Google
- * Workspace connection, never one of the member's other Google accounts; without it, the member's default connection.
- */
 export async function readMemberGoogleCalendar(input: {
   organizationId: DenTypeId<"organization">
   orgMembershipId: DenTypeId<"member">
@@ -512,12 +495,6 @@ export type MemberMailArrivals =
   | { kind: "ok"; messages: { from: string; subject: string; snippet: string; labels: string[] }[]; more: boolean }
   | { kind: "needs_connection" | "policy_blocked" | "missing_scope" | "google_api_error" }
 
-/**
- * What reached a member's Gmail since `since`, for their agent's check gate (is this check worth running?), outside
- * any request: one read-only list, then each message's headers, first words and labels. Never a body, and never the
- * member's own sent mail, drafts, chats, spam or trash. Through exactly `connectionId`, as the calendar read above.
- * `more` says there were more than `limit`.
- */
 export async function readMemberGmailArrivals(input: {
   organizationId: DenTypeId<"organization">
   orgMembershipId: DenTypeId<"member">
@@ -560,7 +537,6 @@ function googleErrorReasons(text: string): Set<string> {
   try {
     return parseGoogleError(JSON.parse(text)).reasons
   } catch {
-    // Non-JSON provider errors retain the ordinary upstream-error path.
     return new Set()
   }
 }
@@ -822,12 +798,6 @@ async function executeGmailDraft(
   return { status: 200, body: result }
 }
 
-/**
- * Native Google Workspace capabilities, executed by Den with the calling
- * member Den-brokered credential (getValidAccessToken). Tagged
- * "Capability Sources" so search_capabilities/execute_capability discover
- * them — the agent path needs no MCP server and no extra wiring.
- */
 export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.use("/v1/capabilities/google-workspace/*", contextStorage())
   app.use("/v1/direct-uploads/google-workspace/*", contextStorage())
@@ -1044,7 +1014,6 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     },
   )
 
-  // Singular by-id route segments keep structuralShorten from colliding with the plural list tool names.
   app.get(
     "/v1/capabilities/google-workspace/gmail-message/:messageId",
     describeRoute({
@@ -1355,7 +1324,6 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
         return c.json({ error: token.kind, message: token.message }, token.kind === "policy_blocked" ? 403 : 409)
       }
       const permissionMessage = driveReadPermissionMessage(token.account)
-      // A previously granted Google scope is not permission after the admin removes it from this connector.
       const enabledRead = token.enabledScopes.some((scope) => scope === DRIVE_READ_SCOPE || scope === DRIVE_FULL_SCOPE)
       if (permissionMessage || !enabledRead) {
         return c.json({ error: "needs_connection", message: permissionMessage ?? "An organization admin must enable Read all Drive files in connector setup, then reconnect Google Workspace." }, 409)
@@ -1451,7 +1419,6 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       }
 
       const isGoogleAppsFile = file.mimeType.startsWith("application/vnd.google-apps")
-      // A PDF is read as its text, so the binary model-safety limit does not apply to it.
       const readPdfText = file.mimeType === PDF_MIME_TYPE
       if (
         !isGoogleAppsFile
@@ -1494,7 +1461,6 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       if (readPdfText) {
         const pdf = await readBytesWithin(contentResponse, DRIVE_PDF_MAX_BYTES)
         if (!pdf) return c.json(pdfTextUnavailable(file, "file_too_large"))
-        // Extraction takes ownership of the bytes, so keep what a small PDF's fallback needs first.
         const smallPdfBase64 = pdf.byteLength <= MAX_DRIVE_FILE_CONTENT_BYTES ? Buffer.from(pdf).toString("base64") : null
         const extracted = await extractPdfText(pdf, { maxCharacters: DRIVE_TEXT_CHARACTER_LIMIT, timeoutMs: DRIVE_PDF_TEXT_TIMEOUT_MS })
         if (extracted.kind === "text") {
@@ -1511,7 +1477,6 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
           })
         }
         if (extracted.kind === "timed_out") return c.json(pdfTextUnavailable(file, "extraction_timed_out"))
-        // A small PDF without readable text still comes back as base64 for the client to handle, as before.
         if (smallPdfBase64 !== null) {
           return c.json({
             ok: true,
@@ -1528,7 +1493,6 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
         return c.json(pdfTextUnavailable(file, extracted.kind === "no_text" ? "no_extractable_text" : "file_too_large"))
       }
 
-      // Never hold more than the text limit could need: a large text file is cut, not buffered whole.
       const { bytes, truncated } = await readBoundedBytes(contentResponse, DRIVE_TEXT_BYTE_LIMIT)
       if (isGoogleAppsFile || (truncated && isDeclaredTextFile(file.mimeType))) {
         const content = truncateText(decodeTruncatedText(bytes, false), DRIVE_TEXT_CHARACTER_LIMIT)
@@ -1547,7 +1511,6 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
 
       let content: ReturnType<typeof decodeFileContent>
       if (truncated) {
-        // Past the text limit: readable UTF-8 is returned cut off; anything else is too large for inline content.
         try {
           content = { kind: "text", content: truncateText(decodeTruncatedText(bytes, true), DRIVE_TEXT_CHARACTER_LIMIT).text, truncated: true }
         } catch {

@@ -20,7 +20,6 @@ import {
 
 type AcceptedPlan = Extract<DraftPlan, { ok: true }>["plan"];
 
-/** Current values, what can never change, and the one place a change starts. */
 export function ConfigurationChangeForm({ deployment, draft, onDraft, planned, assistantsAvailable, busy = false, error = null, onReview }: {
   deployment: EditableDeployment; draft: AwsManagedDeploymentInput; onDraft: (draft: AwsManagedDeploymentInput) => void; planned: DraftPlan;
   assistantsAvailable: boolean; busy?: boolean; error?: string | null; onReview: () => void;
@@ -34,7 +33,6 @@ export function ConfigurationChangeForm({ deployment, draft, onDraft, planned, a
   const gatewayLock = recordedGateway ? null : gatewayLockReason(deployment, assistantsAvailable);
   const changed = planned.ok && planned.plan.changes.length > 0;
   const planLock = planned.ok && changed ? planLockReason(deployment, planned.plan, assistantsAvailable) : null;
-  // A value still to enter is why Review changes is locked, not something that went wrong.
   const missing = !error && !planned.ok && planned.incomplete ? planned.message : null;
   const message = error ?? (planned.ok || planned.incomplete ? null : planned.message);
   const setAssistants = (assistants: AwsManagedDeploymentInput["target"]["assistants"]) => onDraft({ ...draft, target: { ...draft.target, assistants } });
@@ -93,7 +91,6 @@ export function ConfigurationChangeForm({ deployment, draft, onDraft, planned, a
   );
 }
 
-/** Before and after, what each change does, and the approval the person gives. */
 export function ConfigurationChangeReview({ deployment, plan, consent, onConsent, busy = false, error = null, onBack, onSubmit }: {
   deployment: EditableDeployment; plan: AcceptedPlan; consent: boolean; onConsent: (consent: boolean) => void;
   busy?: boolean; error?: string | null; onBack: () => void; onSubmit: () => void;
@@ -120,8 +117,6 @@ export function ConfigurationChangeReview({ deployment, plan, consent, onConsent
 function ConfigurationChangeEditor({ deployment, assistantsAvailable, busy, onBusy, controls, onClose }: {
   deployment: EditableDeployment; assistantsAvailable: boolean; busy: boolean; onBusy: (busy: boolean) => void; controls: ConfigurationControls; onClose: () => void;
 }) {
-  // The values the person is editing against. The page keeps polling, but the
-  // draft moves to newer values only when the API says it is out of date.
   const [base, setBase] = useState(deployment);
   const [draft, setDraft] = useState(() => configurationDraft(deployment));
   const [step, setStep] = useState<"form" | "review">("form");
@@ -130,7 +125,6 @@ function ConfigurationChangeEditor({ deployment, assistantsAvailable, busy, onBu
   const container = useRef<HTMLDivElement>(null);
   const planned = planConfigurationDraft(base, draft);
 
-  /** The pressed button leaves with its step, so focus moves to the step that replaced it. */
   function show(next: "form" | "review") {
     if (next === step) return;
     flushSync(() => { setStep(next); setConsent(false); setError(null); });
@@ -168,19 +162,12 @@ function ConfigurationChangeEditor({ deployment, assistantsAvailable, busy, onBu
   );
 }
 
-/**
- * Edit an installed deployment's configuration: the form, then the review. A
- * prepared change is handed back to the Deployments screen, which shows the
- * AWS CloudShell command; nothing in AWS changes until that command is run.
- */
 export function ManagedDeploymentConfigurationDialog({ deployment, open, onOpenChange, assistantsAvailable, controls }: {
   deployment: ManagedDeployment | null; open: boolean; onOpenChange: (open: boolean) => void; assistantsAvailable: boolean; controls: ConfigurationControls;
 }) {
   const [busy, setBusy] = useState(false);
   if (!deployment || !hasConfiguration(deployment)) return null;
   return (
-    // Steps aside for the identity check, which would open underneath, and keeps
-    // the draft mounted meanwhile so the pending request resumes into it.
     <Dialog.Root open={open && !controls.reauthDialogOpen} disablePointerDismissal onOpenChange={(next) => { if (!busy) onOpenChange(next); }}>
       <Dialog.Portal keepMounted={open}>
         <Dialog.Backdrop className="fixed inset-0 z-50 bg-black/30" />

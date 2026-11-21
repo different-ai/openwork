@@ -8,8 +8,6 @@ const titles = {
   online: "Dictate message · Windows online speech recognition transcribes it",
 } as const;
 
-/** The desktop reports a speech helper only when this build ships one (and, on
- * macOS, the speech permission text); otherwise system dictation stays. */
 export function useDesktopSpeechDictation() {
   const query = useQuery({
     queryKey: ["desktop", "speech-dictation"],
@@ -21,8 +19,6 @@ export function useDesktopSpeechDictation() {
   return query.data ? { recognition: DesktopSpeechRecognition, recognitionTitle: titles[query.data], local: query.data === "local" } : {};
 }
 
-/** Web Speech-shaped adapter over the desktop recognizer, so the composer's
- * dictation session keeps owning insertion, revisions and late-result fencing. */
 export class DesktopSpeechRecognition implements BrowserSpeechRecognition {
   lang = "en-US";
   continuous = true;

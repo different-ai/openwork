@@ -1,11 +1,3 @@
-// Smart Model Router: a desktop sends an OpenAI chat
-// request with model `openwork-smart-<router id>`. The gateway asks Jev to
-// score the latest prompt against the router's tasks, picks the model whose
-// tasks score highest in total at the thinking level Jev suggests, rewrites
-// the request for that model's protocol under the member's own Gateway alias,
-// and hands it to
-// the normal Gateway pipeline, which authorizes, meters and forwards it as if
-// the member had picked that model. Responses go back as Chat Completions.
 import { createHash } from "node:crypto"
 import { createGatewayModelAlias } from "@openwork-ee/gateway-catalog"
 import {
@@ -48,9 +40,7 @@ export type AutoRouterDependencies = {
   catalog: ProviderCatalog
   askJev: AskJev
   reasoningStore: ReasoningStore
-  /** False when this gateway has no TypeSafe key: Auto is then off, as Den reports to admins. */
   routingConfigured: boolean
-  /** The normal Gateway pipeline for a rewritten request. */
   forward: (target: AutoTarget) => Promise<Response>
   onJevError?: (error: unknown) => void
 }
@@ -62,7 +52,6 @@ export type RoutedCandidate = AutoCandidate & {
   translator: AutoTranslator
 }
 
-/** The translator for a provider's protocol family, or null when Auto cannot reach it. */
 export function translatorFor(family: ProtocolFamily, npm: string | null): AutoTranslator | null {
   switch (family) {
     case "anthropic":
@@ -70,15 +59,12 @@ export function translatorFor(family: ProtocolFamily, npm: string | null): AutoT
     case "microsoft_foundry":
       return anthropicTranslator
     case "openai":
-      // The desktop calls OpenAI through Responses (reasoning effort, summaries,
-      // encrypted reasoning); Chat Completions rejects tools with an effort.
       return openAiResponsesTranslator({ rest: "responses" })
     case "openai_compatible":
       return openAiChatTranslator({ rest: "chat/completions", reasoningStyle: npm === "@openrouter/ai-sdk-provider" ? "openrouter" : "reasoning_effort" })
     case "mistral":
       return openAiChatTranslator({ rest: "chat/completions", reasoningStyle: "none" })
     case "azure":
-      // Azure OpenAI's v1 API takes the deployment as `model`; the desktop uses its Responses API too.
       return openAiResponsesTranslator({ rest: "v1/responses" })
     case "bedrock_mantle":
       return openAiChatTranslator({ rest: "chat/completions", reasoningStyle: "reasoning_effort" })
@@ -107,7 +93,6 @@ const AUTO_ROUTER_ERRORS = {
   unavailable: { status: 404, code: "auto_router_unavailable", message: "This Smart model isn't available to you anymore. Choose another model." },
 } as const
 
-/** Why a Smart model can't be used, as a Chat Completions error. */
 export function autoRouterError(kind: keyof typeof AUTO_ROUTER_ERRORS) {
   const error = AUTO_ROUTER_ERRORS[kind]
   return autoError(error.status, error.code, error.message)
@@ -123,7 +108,6 @@ export function maxOutputTokens(row: GatewayMemberAccessRow) {
   return typeof limit === "number" && Number.isInteger(limit) && limit > 0 ? Math.min(limit, 128_000) : null
 }
 
-/** The router's models this member can use right now, each tied to one of the member's access rows. */
 export function autoCandidates(config: AutoRouterConfig, rows: GatewayMemberAccessRow[], catalog: ProviderCatalog): RoutedCandidate[] {
   const candidates: RoutedCandidate[] = []
   config.models.forEach((route, modelIndex) => {
@@ -174,7 +158,6 @@ export function withRouteHeaders(response: Response, route: AutoRouteInfo, body:
   return new Response(body, { status: response.status, statusText: response.statusText, headers })
 }
 
-/** The turn's chosen route in the shared reasoning store, keyed by a hash of the turn. */
 function sharedTurns(store: ReasoningStore, organizationId: string): SharedTurnChoices {
   const key = (turnKey: string) => `turn:${createHash("sha256").update(turnKey).digest("base64url")}`
   return {
@@ -191,7 +174,6 @@ function sharedTurns(store: ReasoningStore, organizationId: string): SharedTurnC
   }
 }
 
-/** "Smart chose Claude Opus 5.5 · Medium thinking", so every error names the model that was asked. */
 export function autoRouteNote(route: AutoRouteInfo) {
   const name = route.name ?? route.model
   return route.thinking === "default" ? `Smart chose ${name}.` : `Smart chose ${name} · ${AUTO_ROUTER_THINKING_LABELS[route.thinking]} thinking.`
@@ -203,7 +185,6 @@ export function annotateChatError(body: JsonObject, route: AutoRouteInfo): JsonO
   return { ...body, error: { ...body.error, message: `${message} (${autoRouteNote(route)})` }, openwork_route: route }
 }
 
-/** Appends the routed model to every error event of a Chat Completions SSE stream. */
 export function annotateChatStreamErrors(body: ReadableStream<Uint8Array>, route: AutoRouteInfo): ReadableStream<Uint8Array> {
   const decoder = new TextDecoder()
   const encoder = new TextEncoder()
@@ -235,10 +216,6 @@ async function readJson(response: Response): Promise<unknown> {
   return response.json().catch(() => null)
 }
 
-/**
- * An upstream response as Chat Completions. Smart responses (`smart`, the default) also name the
- * routed model in headers and on every error; other callers get the translated response alone.
- */
 export async function translateResponse(response: Response, translator: AutoTranslator, input: TranslateResponseInput, options: { smart: boolean } = { smart: true }): Promise<Response> {
   const contentType = response.headers.get("content-type")
   const { route } = input
@@ -260,7 +237,6 @@ export async function translateResponse(response: Response, translator: AutoTran
   }
   if (isJsonContentType(contentType)) {
     const body = await readJson(response)
-    // Google streams a JSON array without alt=sse; translators accept it as a body.
     if (input.stream && Array.isArray(body)) {
       return respond(stream(translator.streamToChat(new Response(`data: ${body.map((item) => JSON.stringify(item)).join("\n\ndata: ")}\n\n`).body ?? new ReadableStream(), input)), "text/event-stream; charset=utf-8")
     }
@@ -272,7 +248,6 @@ export async function translateResponse(response: Response, translator: AutoTran
 export async function handleAutoRequest(input: {
   request: Request
   body: JsonObject
-  /** From the model id, `openwork-smart-<router id>`. */
   routerId: string
   identity: GatewayContext
   dependencies: AutoRouterDependencies

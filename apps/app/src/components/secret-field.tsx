@@ -8,44 +8,28 @@ import { InputGroup, InputGroupAddon, InputGroupButton, InputGroupInput, InputGr
 import { cn } from "@/lib/utils"
 
 export type SecretFieldHandle = {
-  /** Reads the entered value once and clears the field. The caller must not keep it. */
   take: () => string
   clear: () => void
   focus: () => void
 }
 
-/**
- * A private, host-owned input for one secret. The value never enters React
- * state, props, telemetry or the transcript: the parent takes it once to send
- * it and the field clears. It is shown only while the person is typing and
- * asks to see it; leaving the field hides it again.
- *
- * `multiline` is for pasted JSON keys (service accounts): the text stays
- * masked the same way until revealed.
- */
 export function SecretField({ id, label, labelHidden = false, labelClassName, description, error, disabled, onSubmit, onValueChange, handleRef, autoFocus = false, multiline: multilineRequested = false, placeholder, testId, className }: {
   id: string
   label: string
-  /** The surrounding title already names the secret; keep the label for assistive tech only. */
   labelHidden?: boolean
-  /** Styles the visible label to match the surrounding form. */
   labelClassName?: string
   description?: string
   error?: string | null
   disabled?: boolean
   onSubmit?: () => void
-  /** Whether the field holds anything; the value itself is never passed. */
   onValueChange?: (hasValue: boolean) => void
   handleRef?: Ref<SecretFieldHandle>
   autoFocus?: boolean
   multiline?: boolean
   placeholder?: string
-  /** `data-testid` on the input itself, for journey specs. */
   testId?: string
-  /** Extra classes for the input box, to match the surrounding screen's fields. */
   className?: string
 }) {
-  // Only where the browser can mask a textarea; otherwise a password input.
   const multiline = useMultilineSecretSupported() && multilineRequested
   const input = useRef<HTMLInputElement>(null)
   const area = useRef<HTMLTextAreaElement>(null)
@@ -69,7 +53,6 @@ export function SecretField({ id, label, labelHidden = false, labelClassName, de
     clear,
     focus: () => element()?.focus(),
   }))
-  // Unmounting never leaves a value in a detached input.
   useEffect(() => () => {
     if (input.current) input.current.value = ""
     if (area.current) area.current.value = ""
@@ -110,7 +93,6 @@ export function SecretField({ id, label, labelHidden = false, labelClassName, de
               {...shared}
               rows={4}
               maxLength={65_536}
-              // Masked like a password field until the person asks to see it.
               className={cn("font-mono", !areaReveal.revealed && "[-webkit-text-security:disc]")}
               onChange={(event) => changed(event.currentTarget.value)}
               onBlur={areaReveal.fieldProps.onBlur}

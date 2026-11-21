@@ -155,7 +155,6 @@ export function parseDesktopPolicyList(payload: unknown) {
   };
 }
 
-/** Names the organization on screen on a request, as the dashboard's other data hooks do. */
 export function orgScopeHeaders(orgId: string | null | undefined): Record<string, string> {
   return orgId ? { [ORG_SCOPE_HEADER]: orgId } : {};
 }

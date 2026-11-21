@@ -4,23 +4,11 @@ import type { McpAppToolBinding, McpAppToolDeclaration, PrepareMcpAppInput, Prep
 import { generatedAppLibrariesNextStep } from "../generated-app-libraries.js"
 import { runsWithoutClick } from "./app-tool-access.js"
 
-/**
- * OpenWork's opinionated App starters. prepare_app returns the one that fits
- * the verified tools, already calling them with inputs built from their
- * schemas; the same three are readable as resources. Each covers the host
- * rules (theme, reads that load on open, one click per change, approval,
- * blocked) and every state, so
- * the author only replaces the presentation.
- */
 export type AppStarterPattern = "lookup" | "action" | "standalone"
 
 export const APP_STARTER_RESOURCE_ROOT = "openwork://apps/starters"
 export const appStarterResourceUri = (pattern: AppStarterPattern) => `${APP_STARTER_RESOURCE_ROOT}/${pattern}.json`
 
-/**
- * A preparation never runs a tool or saves an App. It lists the built-in
- * libraries that may be imported in an MCP App.
- */
 export function appAuthoringStarter(input: PrepareMcpAppInput, tools: McpAppToolBinding[]): PrepareMcpAppOutput {
   const starter = appStarter(tools)
   return {
@@ -48,7 +36,6 @@ type StarterTool = { name: string; label: string; fields: StarterField[]; live: 
 const MAX_FIELDS = 6
 const MAX_OPTIONS = 20
 
-/** The pattern a set of verified tools calls for. */
 export function appStarterPattern(tools: McpAppToolBinding[]): AppStarterPattern {
   if (tools.length === 0) return "standalone"
   return tools.some((tool) => !runsWithoutClick(tool)) ? "action" : "lookup"
@@ -113,7 +100,6 @@ function starterTool(tool: McpAppToolBinding): StarterTool {
   }
 }
 
-/** Labeled inputs for an object schema's simple top-level properties. */
 function schemaFields(schema: Record<string, unknown>, placement?: "path" | "query"): StarterField[] {
   const required = Array.isArray(schema.required) ? schema.required.filter((key) => typeof key === "string") : []
   return Object.entries(record(schema.properties)).flatMap(([name, value]): StarterField[] => {
@@ -137,7 +123,6 @@ function schemaFields(schema: Record<string, unknown>, placement?: "path" | "que
   })
 }
 
-/** "create_invoice" → "Create invoice"; a read with no verb gets "Find" or "Refresh". */
 function actionLabel(tool: McpAppToolBinding): string {
   const label = humanize(tool.name)
   if (!runsWithoutClick(tool)) return label
@@ -184,9 +169,6 @@ function jsPrimitive(value: Primitive): string {
   return typeof value === "string" ? jsString(value) : String(value)
 }
 
-// The App compiler reads source text before parsing it, so schema text such as
-// an "import" key or a "<" in a title must never form what it refuses. Risky
-// words are split across a join, which no compiler step folds back together.
 const RISKY_TEXT = /import|require|export|eval|Function|setTimeout|setInterval|dangerouslySetInnerHTML|__openworkSafeReact|@jsx/gu
 
 function jsString(text: string): string {
@@ -835,7 +817,6 @@ function sampleDeclaration(tool: McpAppToolBinding): McpAppToolDeclaration {
   return { name: tool.name, description: tool.description, capability: tool.capability, ...(tool.mode === "live" ? { mode: "live" as const } : {}) }
 }
 
-/** The three starters as read-only resources any MCP client can read before building. */
 export function registerAppStarterResources(server: McpServer) {
   for (const sample of STARTER_SAMPLES) {
     const uri = appStarterResourceUri(sample.pattern)

@@ -85,7 +85,6 @@ export const SHARED_AUTOMATION_PAGE_MAX = 200
 
 type SharedAutomationQuery = { automationId?: string; cursor?: KeysetCursor; limit?: number }
 
-/** Definition-only read: never reconciles or loads the source's runs or results. Newest share first. */
 export function listSharedAutomations(scope: Scope, query: SharedAutomationQuery = {}): Promise<{ items: SharedAutomation[]; nextCursor: string | null }> {
   return withPrimaryReads(() => readSharedAutomations(scope, query))
 }
@@ -97,8 +96,6 @@ async function readSharedAutomations(scope: Scope, query: SharedAutomationQuery)
   if (automationId && !isDenTypeId("automation", automationId)) return { items: [], nextCursor: null }
   if (cursor && !isDenTypeId("automation", cursor.id)) return { items: [], nextCursor: null }
   const teams = await listTeamsForMember(caller)
-  // The cursor time is bound with the share column's own encoding (UTC), as
-  // the aggregate has no column to encode it.
   const afterCursor = (sharedAt: typeof grants.sharedAt, after: KeysetCursor) => {
     const at = sql.param(after.at, AutomationShareTable.created_at)
     return or(lt(sharedAt, at), and(eq(sharedAt, at), lt(AutomationTable.id, normalizeDenTypeId("automation", after.id))))

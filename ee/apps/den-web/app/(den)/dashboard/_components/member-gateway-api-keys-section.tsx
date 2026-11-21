@@ -32,24 +32,16 @@ import {
   useRevokeGatewayApiKey,
 } from "./gateway-api-keys-data";
 
-/**
- * Library › Models: the viewer's own AI Gateway API keys for 3rd party
- * tools, a way to create one, and the docs on setting a tool up. Shown while the organization allows
- * member keys, or while the viewer still holds keys after it stopped, so they can revoke them.
- */
 export function MemberGatewayApiKeysSection() {
   const keys = useMyGatewayApiKeys();
   const revoke = useRevokeGatewayApiKey("mine");
   const [creating, setCreating] = useState(false);
-  /** The key "Set up" was chosen for: the tool choice again, without the key, which can't be shown twice. */
   const [settingUp, setSettingUp] = useState<GatewayApiKey | null>(null);
   const router = useRouter();
   const searchParams = useSearchParams();
   const createRequested = searchParams.get(CREATE_GATEWAY_API_KEY_PARAM) === "1";
   const allowed = keys.data?.enabled === true;
 
-  // "Create your own key now" (AI Gateway › API Keys) lands here with ?create-key=1: open the dialog once,
-  // then drop the parameter so a reload or Back does not open it again.
   useEffect(() => {
     if (!createRequested || !keys.data) return;
     if (allowed) setCreating(true);
@@ -179,7 +171,6 @@ function CreateGatewayApiKeyDialog({ open, baseUrl, onClose }: { open: boolean; 
           data-ph-no-capture
           className="fixed left-1/2 top-1/2 z-50 max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-[600px] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-gray-100 bg-white p-5 outline-none"
         >
-          {/* Mounted only while open: a closed dialog forgets the key it showed. */}
           {open ? <CreateGatewayApiKeyForm baseUrl={baseUrl} onClose={onClose} /> : null}
         </Dialog.Popup>
       </Dialog.Portal>
@@ -200,11 +191,9 @@ function CreateGatewayApiKeyForm({ baseUrl, onClose }: { baseUrl: string; onClos
     try {
       setCreated(await create.mutateAsync({ name: trimmed, expiresAt: expiryFromDays(expiryDays) }));
     } catch {
-      // Shown below from the mutation's error.
     }
   }
 
-  // "Start using this key", a tool, then that tool's steps.
   if (created) {
     return (
       <GatewayToolFlow
@@ -268,10 +257,6 @@ function CreateGatewayApiKeyForm({ baseUrl, onClose }: { baseUrl: string; onClos
   );
 }
 
-/**
- * A tool, then its steps. Right after creation `apiKey` is the key; from
- * "Set up" it is null, since a key is shown once, and the steps leave a place for it.
- */
 function GatewayToolFlow({ title, subtitle, keyBlock, apiKey, baseUrl, onClose }: {
   title: string;
   subtitle: string;
@@ -309,7 +294,6 @@ function GatewayToolFlow({ title, subtitle, keyBlock, apiKey, baseUrl, onClose }
   );
 }
 
-/** "Set up" from a key's menu: the same tool choice, for a key that already exists. */
 function SetUpGatewayApiKeyDialog({ apiKey, baseUrl, onClose }: { apiKey: GatewayApiKey | null; baseUrl: string; onClose: () => void }) {
   return (
     <Dialog.Root open={apiKey !== null} onOpenChange={(next) => { if (!next) onClose(); }}>

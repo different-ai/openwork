@@ -59,17 +59,11 @@ export type ConnectionReadiness = {
   checkedAt: string;
   lastSuccessfulAt: string | null;
   reason: string | null;
-  /** Why it did not pass. Absent from older servers and older checks. */
   failure?: ConnectionReadinessFailure | null;
 };
 
 const READINESS_CHECKS_BATCH_LIMIT = 50;
 
-/**
- * Admin list: bring connectors with no stored status up to date in one call.
- * The server copies a member's still-valid Ready check or checks the
- * connector itself; connectors nobody can check stay not checked.
- */
 export function useRefreshUncheckedConnections() {
   const { orgId } = useOrgDashboard();
   const queryClient = useQueryClient();
@@ -97,15 +91,12 @@ export function useCheckMcpConnection() {
       if (!response.ok) throw getRequestError(payload, response, "Could not check this connection. Try again.");
       return z.object({ readiness: z.object({ status: z.enum(["ready", "could_not_verify"]), checkedAt: z.string(), reason: z.string().nullable() }) }).parse(payload).readiness;
     },
-    // A failed request may still have recorded a result; always show what is stored.
     onSettled: () => queryClient.invalidateQueries({ queryKey: mcpConnectionQueryKeys.all }),
   });
 }
 
 export type ExternalMcpConnection = {
-  /** The signed-in member's own last check. Absent from older servers; null means not checked for them. */
   readiness?: ConnectionReadiness | null;
-  /** Admin list only: whether the connector itself works (any member's Ready for per-member connectors). Null means nobody checked it yet. */
   organizationReadiness?: ConnectionReadiness | null;
   id: string;
   name: string;
@@ -113,18 +104,13 @@ export type ExternalMcpConnection = {
   authType: ExternalMcpAuthType;
   credentialMode: ExternalMcpCredentialMode;
   apiKeyAuthScheme: ExternalMcpApiKeyAuthScheme;
-  /** Names of the admin's custom request headers. Values are never returned. Absent from older servers. */
   requestHeaderNames?: string[];
-  /** True when granted members may use this connection as a standard MCP server with its own tool catalog. */
   exposeDirectly: boolean;
   connected: boolean;
   connectedAt: string | null;
   createdByName?: string | null;
-  /** Whether the signed-in member added it; they can always edit or remove it. */
   createdByYou?: boolean;
-  /** Org membership id of whoever added it (with createdByName). Older servers omit it. */
   createdByOrgMembershipId?: string | null;
-  /** The server's answer to whether the signed-in member can remove it now. Older servers omit it. */
   canRemove?: boolean;
   updatedAt: string | null;
   connectedForMe: boolean;
@@ -158,7 +144,6 @@ export type ExternalMcpConnection = {
   manualOAuthEndpoints?: { authorizationEndpoint: string; tokenEndpoint: string } | null;
   authorizationServerIssuer?: string | null;
   requestedScopes?: string[];
-  /** Sign-in asks for requestedScopes alone, leaving out any others the server asks for. */
   requestSelectedScopesOnly?: boolean;
 };
 
@@ -321,13 +306,9 @@ export type ExternalMcpPreset = {
   requiresOAuthClient?: boolean;
   defaultOAuthClientId?: string;
   supportedAuthTypes?: ExternalMcpAuthType[];
-  /** The scopes OpenWork asks for when the preset is added; a provider app must allow every one. */
   defaultOAuthScopes?: string[];
-  /** Extra scopes the provider offers; requested only after an admin explicitly chooses them. */
   optionalOAuthScopes?: string[];
-  /** Presets that need a pre-registered OAuth app: the exact redirect URL to register in it. */
   oauthCallbackUrl?: string;
-  /** What OpenWork last learned about signing in to this provider. */
   registrationStatus?: McpRegistrationStatus;
 };
 
@@ -441,9 +422,6 @@ export function useUpdateMcpConnectionToolPolicy(connectionId: string) {
   });
 }
 
-// The den-api tool run is bounded by its 150s MCP tool lifecycle deadline;
-// give the request a little headroom so the server's structured failure
-// arrives instead of a client-side timeout.
 const RUN_TOOL_REQUEST_TIMEOUT_MS = 160000;
 
 export function useRunMcpConnectionTool(connectionId: string) {
@@ -487,9 +465,6 @@ export function useRunMcpConnectionTool(connectionId: string) {
         referenceId: payload.referenceId,
         durationMs: payload.durationMs,
         result: payload.result,
-        // A missing or unparseable inspection must not fail a tool run that
-        // succeeded (for example across a den-api/den-web deploy skew); the
-        // runner simply renders without the inspector panel.
         inspection: parseToolCallInspection(payload.inspection),
       };
     },
@@ -524,13 +499,6 @@ export class McpOAuthConfigurationRequiredError extends McpOAuthStartError {
 const MCP_OAUTH_START_UNREADABLE_MESSAGE =
   "OpenWork could not read the answer from its API when starting the sign-in. The browser blocked the response or the request never completed. Try again; if it keeps happening, tell your workspace admin the time of this attempt.";
 
-/**
- * The browser refused to hand the page a response: a network failure, or an
- * error answer (often from a proxy) without CORS headers. Without a readable
- * status the sign-in tab would show only the browser's own text ("Failed to fetch"),
- * so wrap what is known into structured details. Den's own timeout, cancel and
- * re-authentication errors keep their existing meaning.
- */
 function mcpOAuthStartUnreadableError(error: unknown): McpOAuthStartError {
   const browserError = error instanceof Error ? `${error.name}: ${error.message}` : String(error);
   return new McpOAuthStartError(MCP_OAUTH_START_UNREADABLE_MESSAGE, {
@@ -728,7 +696,6 @@ export function mcpConnectionPresetsQueryOptions() {
       const record = payload as { presets?: ExternalMcpPreset[] };
       return record.presets ?? [];
     },
-    // The catalog is fixed for a Den deploy, so one load per session is enough.
     staleTime: Infinity,
     gcTime: Infinity,
   });
@@ -744,7 +711,6 @@ export type McpConnectionAccessInput = {
   teamIds: string[];
 };
 
-/** A custom header sent with every request to the MCP server. */
 export type McpRequestHeaderInput = { name: string; value: string };
 
 export type CreateMcpConnectionInput = {
@@ -809,11 +775,6 @@ export type McpConnectionResolution = {
   };
 };
 
-/**
- * Smart resolution for the add-connection flow: sends whatever the admin
- * typed (URL, bare host, or product name) and gets back a matched preset or
- * a probed endpoint with its requirements discovery inline.
- */
 export function useResolveMcpConnection() {
   const { orgId } = useOrgDashboard();
   return useMutation({
@@ -863,7 +824,6 @@ export function useDiscoverMcpConnectionRequirements() {
           if (response.ok && response.body && response.headers.get("content-type")?.includes("text/event-stream")) {
             return await readDiscoveryStream(response.body, onCheck, controller.signal);
           }
-          // A kill switch or an older API restores ordinary discovery. Never invent live check results.
           if (response.status !== 404) throw new Error(DISCOVERY_STREAM_ERROR);
           await response.body?.cancel();
         }
@@ -1086,10 +1046,6 @@ export function useStartMcpConnectionOAuth() {
   });
 }
 
-/**
- * Saves the caller's own key on a per-member API-key connection. gcTime 0 and
- * the dialog's reset() drop the key from mutation state once the form closes.
- */
 export function useSaveMyMcpCredential() {
   const queryClient = useQueryClient();
   const { orgId } = useOrgDashboard();
@@ -1102,7 +1058,6 @@ export function useSaveMyMcpCredential() {
         { method: "PUT", headers: getOrgScopeHeaders(requireOrgId(orgId)), body: JSON.stringify({ apiKey: input.apiKey }) },
         15000,
       ).then(({ response }) => response, () => null);
-      // Never surface server text: a provider or proxy may echo the submitted key.
       if (!response?.ok) throw new Error(memberApiKeyFailureMessage(response?.status));
     },
     onSuccess: () => Promise.all([
@@ -1229,11 +1184,6 @@ function parseNativeProviderClient(payload: unknown): NativeProviderClient {
   return { providerId, configured, clientId, tenantId, features, scopes, redirectUri };
 }
 
-/**
- * Native providers are configured with an org OAuth
- * client instead of a server URL. Saving one makes the provider appear in
- * the usable connections list for every granted member.
- */
 export function useSaveNativeProviderClient() {
   const queryClient = useQueryClient();
   const { orgId, runReauthableAction } = useOrgDashboard();
@@ -1328,7 +1278,6 @@ function parseGoogleApiCheck(payload: unknown): GoogleApiCheck {
   return { checked: payload.checked, apis };
 }
 
-/** Whether each Google API the connector's saved permissions call is turned on; checked on request. */
 export function useGoogleApiCheck(providerId: string) {
   const { orgId, runReauthableAction } = useOrgDashboard();
 

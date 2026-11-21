@@ -103,12 +103,6 @@ function toArrayBuffer(bytes: Uint8Array): ArrayBuffer {
   return copy.buffer;
 }
 
-/**
- * Rows of the first sheet as a dense grid anchored at A1, so cell positions
- * survive a save. Values are the stored values: numbers as written, booleans
- * as TRUE/FALSE, date-formatted serials as ISO dates, formulas by their last
- * calculated result.
- */
 export async function parseSpreadsheet(input: { name: string; content: Data }): Promise<SpreadsheetRows> {
   const ext = extension(input.name);
 
@@ -125,13 +119,6 @@ export async function parseSpreadsheet(input: { name: string; content: Data }): 
   return sheetGridRows(sheet);
 }
 
-/**
- * Writes the edited grid back. Delimited files stay text; workbooks become a
- * single-sheet .xlsx whose cells keep their value types (canonical numbers,
- * TRUE and FALSE) instead of turning every value into text. Text is never
- * turned into a formula: the editor cannot tell typed formulas from imported
- * text, so nothing saved here is executable.
- */
 export async function serializeSpreadsheet(name: string, rows: SpreadsheetRows): Promise<Data> {
   const ext = extension(name);
 

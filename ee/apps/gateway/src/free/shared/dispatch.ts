@@ -15,7 +15,6 @@ const log = gatewayLog.child({ component: "free-auto" })
 const UPSTREAM_ERROR_BODY_BYTES = 16 * 1024
 const UPSTREAM_ERROR_BODY_TIMEOUT_MS = 2_000
 
-/** Reads a bounded slice of OpenAI's error body for its type and code, then aborts the request. */
 async function readUpstreamError(response: Response, controller: AbortController): Promise<UpstreamErrorDetails> {
   const timeout = setTimeout(() => controller.abort(), UPSTREAM_ERROR_BODY_TIMEOUT_MS)
   const reader = response.body?.getReader()
@@ -43,16 +42,10 @@ function errorCode(error: unknown) {
   return typeof code === "string" && /^[\w.-]{1,64}$/.test(code) ? code : undefined
 }
 
-/**
- * Check the allowance, send one request to OpenAI with the dedicated free key, and charge
- * the reported cost afterwards, as paid Models does. Guests and members only differ in
- * which store (and so which tables) holds their allowance.
- */
 export async function dispatchFreeCompletion(input: {
   config: AutoConfig; store: FreeAllowanceStore; fetch: typeof fetch;
   principal: FreePrincipal; prepared: { body: string; stream: boolean; choices?: number; protocol?: FreeProtocol };
   signal: AbortSignal; controller: AbortController;
-  /** Members only: write-ahead Gateway usage log so Auto shows in the organization's usage. Guests are never logged. */
   startUsageLog?: (requestId: string, stream: boolean) => RequestLogRecorder;
 }) {
   const { config, store, principal, prepared, signal, controller } = input
@@ -61,8 +54,6 @@ export async function dispatchFreeCompletion(input: {
   const admission = await store.admit(principal)
   if (!admission.ok) {
     const response = freeError(admission.code === "free_principal_rejected" ? 403 : 429, admission.code)
-    // Keep desktop error bodies compatible. These headers distinguish a signed-in
-    // person's exhausted allowance from temporary capacity and guest limits.
     if (principal.kind === "member" && admission.code === "anonymous_limit_exceeded") {
       response.headers.set("X-OpenWork-Error-Code", "free_allowance_exhausted")
       response.headers.set("X-OpenWork-Usage-State", "blocked")
@@ -78,7 +69,6 @@ export async function dispatchFreeCompletion(input: {
   )
   const usageLog = input.startUsageLog?.(requestId, prepared.stream) ?? null
   const startedAt = Date.now()
-  // One line per failure, with what is needed to find it at OpenAI. Never the prompt, output, keys, or OpenAI's message text.
   const logFailure = (level: "info" | "error", message: string, fields: Record<string, string | number | undefined>) => log[level](message, {
     request_id: requestId, route: principal.kind === "member" ? "openwork_free" : "anonymous_free", safety_identifier: freeSafetyIdentifier(principal),
     organization_id: principal.kind === "member" ? principal.organizationId : undefined,
@@ -88,7 +78,6 @@ export async function dispatchFreeCompletion(input: {
   const upstreamFields = (details: UpstreamErrorDetails) => ({
     upstream_error_type: details.type, upstream_error_code: details.code,
   })
-  // Like every Gateway route: no durable accounting record, no upstream call.
   if (usageLog && await usageLog.whenStarted?.() === false) {
     return freeError(503, "request_log_unavailable", `${REQUEST_LOG_UNAVAILABLE_MESSAGE} No allowance was consumed.`)
   }
@@ -108,7 +97,6 @@ export async function dispatchFreeCompletion(input: {
     logFailure(reason === "client_cancelled" ? "info" : "error", "free Auto request did not reach OpenAI", {
       reason, error_name: error instanceof Error ? error.name : undefined, error_code: errorCode(error),
     })
-    // The request may have reached OpenAI, so the estimate is charged.
     controller.abort()
     await charge(null)
     await usageLog?.finish({ status: null, outcome: "upstream_unreachable", errorCode: "free_inference_upstream_error" }).catch(() => undefined)
@@ -118,7 +106,6 @@ export async function dispatchFreeCompletion(input: {
   const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase()
   const upstreamRequestId = response.headers.get("x-request-id")?.slice(0, 128)
   if (!response.ok) {
-    // OpenAI does not bill a request it answers with an error.
     const details = await readUpstreamError(response, controller)
     logFailure("error", "free Auto upstream request failed", {
       reason: "upstream_status", http_status_code: response.status, upstream_request_id: upstreamRequestId, ...upstreamFields(details),
@@ -127,7 +114,6 @@ export async function dispatchFreeCompletion(input: {
     return freeError(503, "free_inference_upstream_unavailable", "Auto is temporarily unavailable. No allowance was consumed.")
   }
   if (!response.body || contentType !== (prepared.stream ? "text/event-stream" : "application/json")) {
-    // A successful but unreadable response may have been billed, just like a broken stream.
     logFailure("error", "free Auto upstream response was unreadable", {
       reason: "invalid_response", http_status_code: response.status, upstream_request_id: upstreamRequestId, content_type: contentType?.slice(0, 80),
     })

@@ -40,7 +40,6 @@ function RequestBucketContext({ request }: { request: GatewayUsageResetRequest }
   </div>;
 }
 
-/** The lanes a request list adds after the person: a column label and each row's cell. */
 type RequestLane = { key: string; label: string; lane: string; render: (request: GatewayUsageResetRequest) => ReactNode };
 
 const MUTED = "text-[color:var(--dls-text-secondary)]";

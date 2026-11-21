@@ -1,33 +1,3 @@
-/**
- * Config-blob area `workbot.team-settings` (Members › Teams › a team ›
- * Workbot, the `workbotTeamSettings` feature): a team's own Workbot settings
- * on top of the organization's (`workbot.settings`), one item per team that
- * has any (`workbot_team_setting`).
- *
- * - `team` references `members.teams`; items match across organizations by
- *   the team's name (lowercased), like `members.default-models`.
- * - `settings` holds only what the team overrides, as stored
- *   (packages/types/src/den/workbot-team-settings.ts): `model` (an AI Gateway
- *   alias or managed model id; null is the deployment's default), `name`
- *   and `enabled`. A key that is absent means the team uses the
- *   organization's value. Stored keys a server doesn't know yet are not
- *   carried.
- * - `provider` and `gatewayModel`: when the team's model is an AI Gateway
- *   alias, the provider serving it (a reference) and what the alias names
- *   in words, as in `workbot.settings`: an import into an organization whose
- *   provider rows have other ids rebuilds the alias from them, and the model
- *   is compared by them (areas/gateway-model-ref.ts). Absent otherwise.
- * - `maxSteps` is in files exported while teams had a step limit. It is read
- *   so those files still import; never applied and no longer exported.
- * - Apply goes through PUT /v1/org/workbot-settings/teams/:teamId's own
- *   functions (`checkWorkbotTeamModel`, `saveWorkbotTeamSettingsChange`): the
- *   applier's own servable models only, the managed Luna starter saved as the
- *   default, and only the keys the plan changes. A delete removes the team's
- *   row, so the team uses the organization's settings again.
- * - A model the applier can't use here yet (typically: its provider was
- *   imported without its key) is left out with a warning, so the rest of the
- *   import still runs; importing again once the model is usable sets it.
- */
 import { and, asc, eq, inArray } from "@openwork-ee/den-db/drizzle"
 import { TeamTable, WorkbotTeamSettingTable } from "@openwork-ee/den-db/schema"
 import { denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -72,28 +42,21 @@ const SETTING_KEYS = ["model", "name", "enabled"] as const
 type SettingKey = (typeof SETTING_KEYS)[number]
 
 const settingsSchema = z.strictObject({
-  /** The team's own default model; null is the deployment's default model. */
   model: workbotTeamModelSchema.optional(),
-  /** The team's own Workbot name. */
   name: workbotTeamNameSchema.optional(),
-  /** Whether Workbot is on for the team's members. */
   enabled: z.boolean().optional(),
-  /** From files exported while teams had a step limit: read, never applied. */
   maxSteps: z.unknown().optional(),
 })
 
 const specSchema = z.object({
   team: configRefSchema,
   settings: settingsSchema,
-  /** The AI Gateway provider serving `settings.model`; informational, names where the model is found on import. */
   provider: configRefSchema.nullable().optional(),
-  /** What an AI Gateway `settings.model` names (group, credential set, catalog model id), so it is found again where ids differ. */
   gatewayModel: gatewayModelHintSchema.nullable().optional(),
 }).strict()
 
 type TeamSettings = z.infer<typeof settingsSchema>
 
-/** The readable overrides of a stored row, in the spec's key order. */
 function exportedSettings(stored: WorkbotTeamStoredSettings): TeamSettings {
   return {
     ...(stored.model !== undefined ? { model: stored.model } : {}),
@@ -123,7 +86,6 @@ async function readRows(ctx: ConfigAreaContext, ids?: string[]): Promise<ConfigI
   const items: ConfigItem[] = []
   for (const row of rows) {
     const settings = exportedSettings(readWorkbotTeamSettings(row.settings))
-    // A row with nothing readable overrides nothing (the routes show it as the organization's).
     if (Object.keys(settings).length === 0) continue
     const gateway = await describeGatewayModel(ctx, settings.model)
     items.push({
@@ -169,12 +131,6 @@ function describe(key: SettingKey, settings: TeamSettings, modelLabel?: string):
   return String(value)
 }
 
-/**
- * The change to write: each key the plan names whose value differs from the target's, as the route's write
- * (`{ inherit: true }` when the team should use the organization's again). Keys whose feature is off here are
- * left out with a warning; a set model is checked against the applier's own models first, and one they can't use
- * here (yet) is left out with a warning too. `next.model` is already the alias as this organization names it.
- */
 async function buildChange(ctx: ConfigAreaContext, op: ConfigApplyOp, next: TeamSettings, current: TeamSettings, teamName: string, modelLabel: string) {
   const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
   const warnings: string[] = []
@@ -214,7 +170,6 @@ export const workbotTeamSettingsArea = defineConfigArea({
   idPrefix: denTypeIdPrefixes.workbotTeamSetting,
   specVersion: 1,
   specSchema,
-  // A team's model is an AI Gateway alias or a managed model: imported after the providers that serve it.
   dependsOn: ["members.teams", PROVIDERS_AREA],
   deployments: ["cloud", "self_hosted"],
   viewPermission: "inference.view",
@@ -224,23 +179,14 @@ export const workbotTeamSettingsArea = defineConfigArea({
   uniqueFields: [{ label: "team", get: scopeUniqueKey }],
   informationalName: true,
   secretFields: [],
-  // The settings are a team's: there is nothing to write without it.
   requiredRefs: ["team"],
-  // `gatewayModel` only explains the model, which is compared as written (see workbot-settings).
   informationalFields: ["provider", "gatewayModel"],
-  // The model check reads the applier's Gateway catalog; saves use the global db.
   transactional: false,
   irreversible: () => [],
 
   exportItems: (ctx) => readRows(ctx),
   readItems: (ctx, ids) => readRows(ctx, ids),
 
-  /**
-   * Plan time: an item that would write nothing is skipped with the reason,
-   * and a model that will be left out is said before approval. The model is
-   * only judged when its provider already exists here: one this same plan
-   * creates has no models to look at yet, so the apply reports it.
-   */
   async preflight(ctx, op, info) {
     if (op.kind === "delete") return null
     const spec = specObject(op.item.spec)
@@ -277,8 +223,6 @@ export const workbotTeamSettingsArea = defineConfigArea({
         const current = await currentRow(ctx, scope.teamId)
         if (!current) return { localId: op.targetId, steps }
         const step: ConfigApplyStep = { action: "delete", target: scope.teamName, detail: "uses the organization's Workbot settings" }
-        // Only what this area carries goes back to the organization's. A team's own members'-agents policy is not
-        // part of it and stays; a row left with nothing is removed by the save.
         await saveWorkbotTeamSettingsChange({
           organizationId: normalizeDenTypeId("organization", ctx.organizationId),
           teamId: normalizeDenTypeId("team", scope.teamId),
@@ -295,7 +239,6 @@ export const workbotTeamSettingsArea = defineConfigArea({
       const scope = await resolveItemScope(ctx, spec)
       if (scope.kind !== "team") applyFailure({ code: "invalid_spec", message: "Workbot settings per team need a team.", field: "team" })
       const written = parseSettings(spec)
-      // An AI Gateway alias from another organization is rebuilt against the provider it resolved to here.
       const hint = readGatewayModelHint(spec.gatewayModel)
       const modelLabel = typeof written.model === "string" ? gatewayModelLabel(written.model, spec.provider, hint) : "default"
       const next: TeamSettings = typeof written.model === "string" && touches(op, "settings.model")
@@ -316,8 +259,6 @@ export const workbotTeamSettingsArea = defineConfigArea({
         }
         const { change, written: keys, warnings } = await buildChange(ctx, op, next, {}, scope.teamName, modelLabel)
         if (keys.length === 0) {
-          // Everything the item sets was left out with a reason (a model the applier can't use here yet): nothing
-          // is created, the report says why, and importing again once it can be set creates it.
           if (warnings.length) return { localId: op.item.sourceId ?? scope.teamId, steps, warnings }
           applyFailure({ code: "invalid_spec", message: `Nothing in ${scope.teamName}'s Workbot settings can be set here: no setting given.`, field: "settings" })
         }
@@ -340,7 +281,6 @@ export const workbotTeamSettingsArea = defineConfigArea({
       const done: ConfigApplyStep[] = keys.map((key) => ({ action: "set", target: `settings.${key}`, detail: describe(key, next, modelLabel) }))
       await save(change).catch((error: unknown) => applyFailure({ code: "write_failed", message: errorMessage(error), step: done[0] }))
       steps.push(...done)
-      // Every override cleared: the route removed the row, and the team uses the organization's settings.
       const after = await currentRow(ctx, scope.teamId)
       return { localId: after?.id ?? current.id, steps, ...(warnings.length ? { warnings } : {}) }
     } catch (error) {

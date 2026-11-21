@@ -63,7 +63,6 @@ type AuthorizedFolderItemProps = {
 };
 
 function getFolderName(folder: string) {
-  // Split on POSIX "/" and Windows "\" separators, then use the last path segment as the folder name.
   return folder.split(/[\/\\]/).filter(Boolean).pop() || folder;
 }
 
@@ -326,7 +325,6 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
         </SettingsNotice>
       ) : (
         <>
-          {/* Folder list */}
           {visibleAuthorizedFolders.length > 0 ? (
             <ul className="flex flex-col gap-2">
               {visibleAuthorizedFolders.map((folder) => (
@@ -370,7 +368,6 @@ export function AuthorizedFoldersPanel(props: AuthorizedFoldersPanelProps) {
             </Empty>
           )}
 
-          {/* Status / error */}
           {authorizedFoldersStatus ? (
             <SettingsNotice>{authorizedFoldersStatus}</SettingsNotice>
           ) : null}

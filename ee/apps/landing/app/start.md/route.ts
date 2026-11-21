@@ -165,9 +165,6 @@ export function GET() {
   return new Response(startMarkdown, {
     headers: {
       "content-type": "text/markdown; charset=utf-8",
-      // Agent fetch/crawl tools cached earlier broken copies of this file. Keep
-      // the live start guide uncacheable so install instructions can be fixed
-      // immediately without waiting on crawler/CDN TTLs.
       "cache-control": "no-store, max-age=0"
     }
   });

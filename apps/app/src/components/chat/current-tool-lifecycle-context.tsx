@@ -60,7 +60,6 @@ export function useCurrentToolLifecycleResolver(): (
   )
 }
 
-/** The App spans tools, so waiting belongs to the session, not its last tool. */
 export function useCurrentSessionActivityStatus(): SessionActivityStatus | null {
   return React.useContext(CurrentToolLifecycleContext)?.activityStatus ?? null
 }

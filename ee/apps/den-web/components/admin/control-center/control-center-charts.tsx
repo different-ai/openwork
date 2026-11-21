@@ -6,7 +6,6 @@ import type { ControlCenterLifecycle, ControlCenterPulse, ControlCenterRevenue, 
 import { SERIES_PALETTE } from "../../../app/(den)/dashboard/_features/analytics/series-colors";
 import { compact, count, decimal, percent, shortDate, weekLabel } from "./control-center-model";
 
-// Fixed slots from the analytics series palette, checked for color-vision separation.
 const blue = SERIES_PALETTE[0] ?? "currentColor";
 const orange = SERIES_PALETTE[1] ?? "currentColor";
 const violet = SERIES_PALETTE[3] ?? "currentColor";

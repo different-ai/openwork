@@ -21,12 +21,6 @@ import { markdownMath } from "./markdown-math";
 import { parseSessionReference } from "@/components/chat/session-reference";
 import { containsInlineHtml, markUnsafeReferenceTokens, stripSessionReferenceAttributes, renderSessionReferenceText, sessionReferenceHtml, type ResolveSessionReference } from "./session-reference-html";
 
-/**
- * `remote` is chat prose written somewhere we do not trust (a task on another
- * computer): raw HTML is dropped, images and video links render as plain links
- * and links carry no favicon, so viewing it never makes the browser fetch a
- * URL the remote side chose (localhost, private network, tracking pixels).
- */
 export type MarkdownPresentation = "chat" | "surface" | "remote";
 type RawHtmlMode = "passthrough" | "shiki-only";
 type ShikiThemeConfig =
@@ -77,15 +71,7 @@ function escapeAttribute(value: string) {
   return escapeHtml(value).replace(/`/g, "&#96;");
 }
 
-/**
- * The file an inline code span names, or null when it should stay plain code.
- * Only spans that read as one file reference with a known file extension are
- * clickable; the shared path reader removes `:line[:col]` and quotes and turns
- * away anything that is not a local path (URLs, `~user/`, `../` escapes), so a
- * span that could never open is never shown as a link.
- */
 export function inlineCodeArtifactPath(value: string): string | null {
-  // Code is literal text: a `file://` span is a URL to read, not a link to follow.
   if (/^\s*(?:https?|wss?|ftp|mailto|tel|file):/i.test(value)) return null;
   const reference = parseLocalPathReference(value);
   if (!reference) return null;
@@ -94,7 +80,6 @@ export function inlineCodeArtifactPath(value: string): string | null {
 
   const normalized = path.replace(/[\\]+/g, "/");
   const withoutDrive = normalized.replace(/^[A-Za-z]:\//, "/");
-  // Leftover colons mean code (`a:b.ts`), not a path with a line suffix.
   if (withoutDrive.slice(1).includes(":")) return null;
 
   const filename = localPathName(normalized);
@@ -151,13 +136,8 @@ function codeLanguageClass(lang: string | undefined) {
   return normalized ? ` class="language-${escapeAttribute(normalized)}"` : "";
 }
 
-// GitHub's shortcode list (":tada:", ":fire:", ":+1:"): one emoji per name, and no
-// plain words or bare numbers, so text like ":home:" or "14:18:07" stays as written.
 const emojiAliases = Object.fromEntries(gemoji.flatMap(({ emoji, names }) => names.map((name) => [name, emoji])));
 
-// emojilib names include numbers ("18" is 🔞), so a shortcode glued to a letter or
-// digit, like the ":18:" in "14:18:07", is part of the surrounding text and stays
-// as written.
 const SHORTCODE_NEIGHBOR = /[A-Za-z0-9]/;
 
 function emojiShortcodes(): MarkedExtension<string, string> {
@@ -220,8 +200,6 @@ function chatCodeBlockHtml(text: string, lang: string | undefined) {
   );
 }
 
-// A quote is often a draft meant to be pasted elsewhere: it copies its own
-// Markdown, bullets included.
 function chatBlockquoteHtml(html: string, copyText: string | null) {
   const button = copyText === null ? "" : copyButton(`data-openwork-quote-copy="${escapeAttribute(copyText)}"`, COPY_LABELS.quote.copy);
   const padding = copyText === null ? "pr-4" : "pr-11";
@@ -314,9 +292,6 @@ function sanitizeMarkdownHtml(value: string) {
   }
 
   return DOMPurify.sanitize(value, {
-    // KaTeX wraps its MathML branch in <semantics>/<annotation>, neither of which is
-    // in DOMPurify's default MathML allowlist. Without these the accessible MathML
-    // (and copy-as-TeX) half of every formula is stripped.
     ADD_TAGS: ["annotation", "semantics"],
     ADD_ATTR: [
       "controls",
@@ -409,7 +384,6 @@ function markdownProfileForPresentation(presentation: MarkdownPresentation): Mar
 
 function renderVideo(href: string, label: string, fallbackHtml: string, decode = true) {
   if (!/\.(?:mp4|webm|mov|m4v|ogv)(?:[?#].*)?$/i.test(href)) return null;
-  // Only the workspace can stream a video; a home-folder file stays a reference that reveals it.
   if (/^~[\\/]/.test(href)) return null;
   if (/^[a-z][a-z0-9+.-]*:/i.test(href) && !/^(?:https?|file):/i.test(href) && !/^[A-Za-z]:[\\/]/.test(href)) return null;
   const remote = /^https?:/i.test(href);
@@ -417,10 +391,6 @@ function renderVideo(href: string, label: string, fallbackHtml: string, decode =
   const fileLink = remote
     ? `href="${escapeAttribute(safeHref(href))}" target="_blank" rel="noopener noreferrer"`
     : `href="#" data-openwork-inline-code-path="${escapeAttribute(href)}" data-openwork-path-decode="${decode}"`;
-  // A block-level box: inside a sentence, an inline-block video left the rest
-  // of the sentence floating beside its top edge. When the video cannot load
-  // (a bare file name, a deleted file) the box is swapped for the hidden
-  // inline fallback, so the sentence reads as if no player had been tried.
   return `<span data-openwork-video="" class="my-3 flex w-full max-w-lg flex-col items-start gap-1.5"><video data-openwork-video-path="${escapeAttribute(href)}" data-openwork-path-decode="${decode}"${source} controls playsinline preload="metadata" aria-label="${escapeAttribute(label)}" class="block max-h-80 w-full rounded-lg border border-border/70 bg-black"></video><a ${fileLink} class="text-sm text-indigo-10">${escapeHtml(label)}</a><span data-openwork-video-fallback="" hidden>${fallbackHtml}</span></span>`;
 }
 
@@ -437,8 +407,6 @@ function renderLinkHtml(profile: MarkdownProfile, href: string, title: string | 
     const originalHref = escapeAttribute(href);
     const isFilePath = !/^(https?|wss?|ftp|mailto|tel):/i.test(href);
 
-    // A destination that is neither a web address nor a local file (`#top`,
-    // `javascript:`, a network share) keeps its words but is not a link.
     if (isFilePath && (href.trim().startsWith("#") || !parseLocalPathReference(href, { decode: true }))) {
       const directory = directoryReference(href, true);
       const context = directory ? ` data-openwork-directory-path="${escapeAttribute(directory)}"` : "";
@@ -472,14 +440,10 @@ function renderImage(profile: MarkdownProfile, href: string, title: string | nul
 
   if (profile.imagePresentation === "chat") {
     const fallback = renderLinkHtml(profile, href, title, escapeHtml(text || href));
-    // A local file has no address the window can load: the chat reads it into the
-    // image once it can, and shows the file reference until then (or for good).
     if (!/^https?:/i.test(href.trim())) {
       if (!parseLocalPathReference(href, { decode: true })) return fallback;
       return `<span data-openwork-image=""><span data-openwork-image-loaded="" hidden><button type="button" data-openwork-image-preview="" class="my-4 inline-block max-w-full cursor-zoom-in align-top text-left transition-opacity hover:opacity-90" aria-label="Expand ${escapeAttribute(text)}"><img data-openwork-image-path="${escapeAttribute(href)}" data-openwork-path-decode="true" alt="${escapeAttribute(text)}"${titleAttr} decoding="async" class="block h-auto w-auto rounded-lg border border-border/70 object-contain" style="max-height: ${MARKDOWN_IMAGE_PREVIEW_MAX_HEIGHT}px; max-width: ${MARKDOWN_IMAGE_PREVIEW_MAX_WIDTH}px"></button></span><span data-openwork-image-fallback="">${fallback}</span></span>`;
     }
-    // An image that cannot load (a page URL, a dead or blocked link) falls
-    // back to its plain link instead of an empty broken-image box.
     return `<span data-openwork-image=""><button type="button" data-openwork-image-preview="" class="my-4 inline-block max-w-full cursor-zoom-in align-top text-left transition-opacity hover:opacity-90" aria-label="Expand ${escapeAttribute(text)}"><img src="${safe}" alt="${escapeAttribute(text)}"${titleAttr} loading="lazy" decoding="async" class="block h-auto w-auto rounded-lg border border-border/70 object-contain" style="max-height: ${MARKDOWN_IMAGE_PREVIEW_MAX_HEIGHT}px; max-width: ${MARKDOWN_IMAGE_PREVIEW_MAX_WIDTH}px"></button><span data-openwork-image-fallback="" hidden>${fallback}</span></span>`;
   }
 
@@ -496,8 +460,6 @@ function createMarkedOptions(profile: MarkdownProfile, presentation: MarkdownPre
   const inline = (tokens: Token[], render: () => string) => containsInlineHtml(tokens) ? withoutReferences(render) : render();
   return {
     async: isAsync,
-    // Chat text is written line by line, so a single newline stays a line break.
-    // File previews keep CommonMark wrapping for hard-wrapped Markdown files.
     breaks: presentation !== "surface",
     gfm: true,
     pedantic: false,
@@ -528,14 +490,12 @@ function createMarkedOptions(profile: MarkdownProfile, presentation: MarkdownPre
         return `<${tag}${start} class="${profile.listClassName(token.ordered)}">${token.items.map((item) => this.listitem(item)).join("")}</${tag}>`;
       },
       listitem(item) {
-        // Marked includes the task checkbox in item.tokens; render it only once.
         return `<li class="my-1">${this.parser.parse(item.tokens)}</li>`;
       },
       blockquote({ tokens, text }) {
         quoteDepth++;
         let html: string;
         try { html = this.parser.parse(tokens); } finally { quoteDepth--; }
-        // Only the outermost quote gets a copy button; a nested one is copied with it.
         return profile.blockquoteHtml(html, quoteDepth === 0 ? text.trim() : null);
       },
       code({ text, lang }) {
@@ -571,8 +531,6 @@ function createMarkedOptions(profile: MarkdownProfile, presentation: MarkdownPre
         if (resolveReference && parseSessionReference(href)) {
           const reference = !suppressReferences && !unsafeReferenceTokens.has(token) ? resolveReference(href) : undefined;
           if (reference) return sessionReferenceHtml(reference);
-          // A recognized but unavailable internal destination must not fall
-          // through to file handling or the browser. Keep its original label.
           const label = this.parser.parseInline(tokens, new TextRenderer());
           return `<span title="Task reference unavailable">${new Renderer().text({ type: "text", raw: label, text: label })}</span>`;
         }
@@ -667,8 +625,6 @@ function createMarkdownParsers(presentation: MarkdownPresentation, resolveRefere
     emojiShortcodes(),
     markdownMath(),
   );
-  // Math must be registered on both parsers, otherwise formulas would flicker away
-  // when a message containing a fenced code block upgrades to the Shiki render.
   const highlightedMarkdownParser = new Marked<string, string>(createMarkedOptions(profile, presentation, true, resolveReference, new WeakSet<object>(), generatedHtmlTokens)).use(
     emojiShortcodes(),
     markdownMath(),
@@ -682,12 +638,9 @@ const chatParsers = createMarkdownParsers("chat");
 const surfaceParsers = createMarkdownParsers("surface");
 const remoteParsers = createMarkdownParsers("remote");
 
-// One parser pair per inventory revision, shared by all message blocks. Never
-// mutate the global parsers with a workspace/user resolver.
 const referenceParsers = new WeakMap<ResolveSessionReference, ReturnType<typeof createMarkdownParsers>>();
 function parsersForPresentation(presentation: MarkdownPresentation, resolveReference?: ResolveSessionReference) {
   if (presentation === "surface") return surfaceParsers;
-  // Untrusted prose never resolves local session references.
   if (presentation === "remote") return remoteParsers;
   if (!resolveReference) return chatParsers;
   let parsers = referenceParsers.get(resolveReference);
@@ -707,17 +660,10 @@ export function renderMarkdownHtml(text: string, presentation: MarkdownPresentat
   return sanitizeMarkdownHtml(markdownParser.parse(text, { async: false }));
 }
 
-/**
- * `dangerouslySetInnerHTML` payload for one top-level markdown block. The same
- * object is returned for as long as that block's source is unchanged, so React
- * leaves its DOM alone while later blocks keep streaming in.
- */
 export type MarkdownBlockHtml = { readonly __html: string };
 
 export type StreamingMarkdownRenderer = {
-  /** Sanitized HTML for every top-level block of `text`, in document order. */
   render: (text: string) => MarkdownBlockHtml[];
-  /** Drop the retained tokens once the message has settled. */
   reset: () => void;
 };
 
@@ -727,27 +673,12 @@ type StreamingMarkdownState = {
   blocks: MarkdownBlockHtml[];
 };
 
-/**
- * Blocks re-lexed on every append: the one still growing plus its predecessor,
- * because a growing block can retroactively reshape the block before it (lazy
- * list continuation, a setext underline, a table delimiter row).
- */
 const STREAMING_RELEX_TAIL = 2;
 
 function hasReferenceDefinition(tokens: Token[]) {
   return tokens.some((token) => token.type === "def");
 }
 
-/**
- * Incremental markdown renderer for a message that is still streaming. A full
- * `renderMarkdownHtml` re-lexes, re-parses, and re-sanitizes the whole answer
- * for every token that arrives, so each frame costs as much as the text so far.
- * This keeps the previous frame's top-level tokens and re-lexes only the tail
- * of an appended source; settled blocks reuse their previous HTML payload.
- *
- * Reference-style link definitions resolve across blocks, so a source that
- * contains one always takes the full lex.
- */
 export function createStreamingMarkdownRenderer(presentation: MarkdownPresentation = "chat", resolveReference?: ResolveSessionReference): StreamingMarkdownRenderer {
   const { markdownParser, unsafeReferenceTokens } = parsersForPresentation(presentation, resolveReference);
   let state: StreamingMarkdownState | null = null;
@@ -789,8 +720,6 @@ export function createStreamingMarkdownRenderer(presentation: MarkdownPresentati
 
   return {
     render(text) {
-      // Marked normalizes line endings before lexing; mirror it so token raw
-      // lengths index into `source`.
       const source = text.replace(/\r\n|\r/g, "\n");
       if (state?.source === source) return state.blocks;
 

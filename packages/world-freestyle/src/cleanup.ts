@@ -13,19 +13,14 @@ export interface CleanupItem { id: string; slug: string; reason: string }
 export interface CleanupOptions { now: number; inUse: ReadonlySet<string> }
 
 const HOUR = 3600_000;
-/** Anything touched this recently may belong to a build or launch in flight. */
 const RECENT = 2 * HOUR;
-/** A preview snapshot nobody has launched for a day is rebuilt on demand if needed. */
 const PREVIEW_IDLE = 24 * HOUR;
-/** Superseded cache layers are kept this long in case an older commit rebuilds. */
 const LAYER_IDLE = 24 * HOUR;
-/** Checkpoints carry a 12-hour TTL; this only catches ones the provider missed. */
 const CHECKPOINT_MAX_AGE = 14 * HOUR;
 
 const WORLDS: PreviewWorld[] = ["app-web", "acme-web", "desktop", "workbot"];
 const PREVIEW = /^openwork-[a-z-]+-v\d+-[0-9a-f]{40}$|^openwork-web-v\d+-[0-9a-f]{40}$/;
 const LAYER = /^ow-(tools|deps|build|warm)-v1-(app-web|acme-web|desktop|workbot)-[0-9a-f]{40}$|^ow-evidence-image-v1-[0-9a-f]{40}$/;
-/** Replaced by the warm dev image (ow-evidence-image-*). */
 const RETIRED_LAYER = /^ow-evidence-(tools|deps)-v1-[0-9a-f]{40}$/;
 const TEMPLATE = /^ow-evidence-web-v\d+-[0-9a-f]{40}$/;
 const CHECKPOINT = /^ow-evidence-v1-[0-9a-f]{32}$|^ow-checkpoint-probe-[a-z0-9-]+$/;
@@ -64,7 +59,6 @@ export function planCleanup(snapshots: CleanupSnapshot[], options: CleanupOption
     }
   }
   for (const group of layers.values()) {
-    // Keep the most recently used layer of each kind: it is what the next build reuses.
     const [, ...older] = [...group].sort((a, b) => touched(b) - touched(a));
     for (const snapshot of older) {
       if (options.now - touched(snapshot) > LAYER_IDLE) plan.push({ id: snapshot.id, slug: snapshot.slug ?? "", reason: "superseded cache layer" });

@@ -1,7 +1,3 @@
-// AWS Signature Version 4 request signer. Implemented with node:crypto only;
-// signs the final request after any body rewrite because the payload hash is
-// part of the canonical request. Shared by the Gateway (Bedrock) and Den
-// (STS GetCallerIdentity when a member signs in with IAM Identity Center).
 import { createHash, createHmac } from "node:crypto"
 
 export type AwsCredentials = {
@@ -31,7 +27,6 @@ function sha256Hex(value: string | Uint8Array | ArrayBuffer) {
 }
 
 function hmac(key: Uint8Array | string, value: string) {
-  // Copy into a plain Uint8Array: Buffer's typing is not accepted as a key.
   return new Uint8Array(createHmac("sha256", key).update(value, "utf8").digest())
 }
 
@@ -39,7 +34,6 @@ function hex(bytes: Uint8Array) {
   return Array.from(bytes, (byte) => byte.toString(16).padStart(2, "0")).join("")
 }
 
-// RFC 3986 encoding with AWS's rules (upper-case hex, `~` unreserved).
 export function awsUriEncode(value: string) {
   let encoded = ""
   for (const char of value) {
@@ -58,8 +52,6 @@ export function amzDate(now: Date) {
   return now.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z")
 }
 
-// Non-S3 services expect each already-encoded path segment to be encoded once
-// more in the canonical URI (what @smithy/signature-v4 does with uriEscapePath).
 function canonicalUri(pathname: string) {
   const path = (pathname || "/").replace(/\/{2,}/g, "/")
   return path.split("/").map((segment) => awsUriEncode(segment)).join("/")
@@ -101,8 +93,6 @@ export function deriveSigningKey(secretAccessKey: string, date: string, region: 
   return hmac(kService, "aws4_request")
 }
 
-// Mutates `headers`: sets x-amz-date (+ x-amz-security-token) and
-// Authorization. `host` is signed from the URL; fetch sends it itself.
 export function signAwsRequest(input: SignAwsRequestInput) {
   const dateTime = amzDate(input.now)
   const date = dateTime.slice(0, 8)

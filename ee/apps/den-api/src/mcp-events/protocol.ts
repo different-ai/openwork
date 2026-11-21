@@ -37,7 +37,6 @@ export const subscribedSchema = z.object({
   truncated: z.boolean(),
 })
 
-/** Standard Webhooks: authenticate the original bytes, never reserialized JSON. */
 export function verifyWebhook(secret: string, headers: Headers, bytes: Uint8Array, now = Date.now()): boolean {
   const id = headers.get("webhook-id")
   const timestamp = headers.get("webhook-timestamp")
@@ -59,7 +58,6 @@ export function canonicalArguments(value: unknown): string {
   return JSON.stringify(value) ?? "null"
 }
 
-/** The runner durably deduplicates a turn by messageId, including after an ambiguous network failure. */
 export const eventMessageId = (subscriptionId: string, eventId: string) => `wb_event_${createHash("sha256").update(JSON.stringify([subscriptionId, eventId])).digest("base64url")}`
 
 export function eventPrompt(instruction: string, source: { connectionId: string | null; name: string }, event: McpEventDelivery): string {

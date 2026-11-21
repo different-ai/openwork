@@ -87,7 +87,6 @@ export const AutomationRevisionTable = mysqlTable(
     model_variant: varchar("model_variant", { length: 60 }),
     action: encryptedJsonColumn<AutomationAction>("action"),
     execution_target: mysqlEnum("execution_target", ["desktop", "cloud"]).notNull().default("desktop"),
-    /** Pinned target workspace; null keeps the legacy run-time active-workspace fallback. */
     workspace_id: varchar("workspace_id", { length: 240 }),
     maximum_runtime_ms: int("maximum_runtime_ms").notNull(),
     digest: varchar("digest", { length: 128 }).notNull(),
@@ -111,17 +110,12 @@ export const AutomationRunnerTable = mysqlTable(
     platform: mysqlEnum("platform", ["darwin", "win32", "linux"]).notNull(),
     concurrency: int("concurrency").notNull(),
     last_seen_at: timestamp("last_seen_at", { fsp: 3 }).notNull(),
-    /** Latest computer, workspace and model report; null until the desktop sends one. */
     inventory: compatJsonColumn<DesktopRunnerInventory>("inventory"),
     inventory_updated_at: timestamp("inventory_updated_at", { fsp: 3 }),
-    /** Which sessions the owner lets other devices reach, as last reported; null until the computer reports. */
     session_access: varchar("session_access", { length: 16 }).$type<RemoteSessionAccessMode>(),
-    /** The computer's latest session list, reported only while its access is `all`. */
     sessions: compatJsonColumn<RunnerReportedSession[]>("sessions"),
     sessions_updated_at: timestamp("sessions_updated_at", { fsp: 3 }),
-    /** The install's own id, as its runner credential carries it; null on rows registered before it was kept. */
     install_id: varchar("install_id", { length: 160 }),
-    /** The sign-in session the desktop last registered or reported with, so disconnecting the computer can end it. */
     auth_session_id: denTypeIdColumn("session", "auth_session_id"),
     ...timestamps,
   },
@@ -160,7 +154,6 @@ export const AutomationRunTable = mysqlTable(
     result_summary: text("result_summary"),
     codemode_receipt_id: denTypeIdColumn("workflowRun", "codemode_receipt_id"),
     validated_result: encryptedJsonColumn<unknown>("validated_result"),
-    /** The meeting a calendar-triggered run is about; null for clock and manual runs. */
     trigger_context: encryptedJsonColumn<AutomationRunTriggerContext>("trigger_context"),
     usage: compatJsonColumn<AutomationUsage>("usage").notNull(),
     cancel_requested_at: timestamp("cancel_requested_at", { fsp: 3 }),

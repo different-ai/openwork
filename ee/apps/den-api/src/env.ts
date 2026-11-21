@@ -32,15 +32,9 @@ const EnvSchema = z.object({
   DEN_MCP_RESOURCE_URL: z.string().optional(),
   DEN_MCP_ADDITIONAL_RESOURCES: z.string().optional(),
   DEN_BETTER_AUTH_COOKIE_DOMAIN: z.string().optional(),
-  /**
-   * The prefix of Den's sign-in cookies (default "openwork-den"). Browsers share cookies across every port of one
-   * host, so several Dens on 127.0.0.1 (local worlds, dev stacks) would otherwise read each other's sign-in. Each
-   * local world sets its own ("openwork-den-<id>"); den-web forwards any "openwork-den-" cookie already.
-   */
   DEN_AUTH_COOKIE_PREFIX: z.string().regex(/^openwork-den(-[a-z0-9]{1,32})?$/).optional(),
   DEN_BETTER_AUTH_TRUSTED_ORIGINS: z.string().optional(),
   DEN_TRUSTED_PROXIES: z.string().optional(),
-  /** Shared with Den Web, which signs the person's address with it when it forwards a request. */
   DEN_WEB_CLIENT_IP_SECRET: z.string().optional(),
   DEN_WEB_APP_HOSTS: z.string().optional(),
   GITHUB_CLIENT_ID: z.string().optional(),
@@ -134,26 +128,18 @@ const EnvSchema = z.object({
   CLOUD_UNREACHABLE_GRACE_MS: z.string().optional(),
   CLOUD_STOP_FLUSH_TIMEOUT_MS: z.string().optional(),
   PROVISIONER_MODE: z.enum(["stub", "render", "daytona"]).optional(),
-  // Preferred name for the sandbox host that runs OpenWork Cloud instances;
-  // PROVISIONER_MODE remains accepted as an alias.
   CLOUD_RUNTIME_PROVIDER: z.enum(["stub", "render", "daytona"]).optional(),
   WORKER_URL_TEMPLATE: z.string().optional(),
   WORKER_ACTIVITY_BASE_URL: z.string().optional(),
   DEN_AUTOMATIONS_ENABLED: z.string().optional(),
-  // Sandbox organizations: the fictional workplace service their connectors use,
-  // and the AI Gateway provider each sandbox gets (the key is a secret).
   DEN_SANDBOX_WORKPLACE_URL: z.string().optional(),
   DEN_SANDBOX_GATEWAY_PROVIDER: z.string().optional(),
   DEN_SANDBOX_GATEWAY_MODELS: z.string().optional(),
   DEN_SANDBOX_GATEWAY_API_KEY: z.string().optional(),
-  // With DEN_SANDBOX_GATEWAY_PROVIDER=openrouter and no shared key, each sandbox gets its own OpenRouter key
-  // (minted with OPENROUTER_MANAGEMENT_API_KEY) capped at this many US dollars unless the admin picks another cap.
   DEN_SANDBOX_CREDIT_USD: z.string().optional(),
   DEN_DASHBOARDS_ENABLED: z.string().optional(),
-  // Default-on deployment kill switches.
   DEN_AUDIT_CAPTURE_ENABLED: z.enum(["true", "false"]).default("true"),
   DEN_AUDIT_VISIBILITY_ENABLED: z.enum(["true", "false"]).default("true"),
-  // Explicit installation entitlement, separate from feature availability and capture preference.
   DEN_AUDIT_SELF_HOSTED_ENABLED: z.enum(["true", "false"]).default("false"),
   DEN_OPENWORK_WEB_ENABLED: z.string().optional(),
   DEN_AUTOMATIONS_RUNTIME_ENABLED: z.string().optional(),
@@ -286,7 +272,6 @@ const EnvSchema = z.object({
 const gatewayDeployment = parseGatewayDeploymentEnv(process.env)
 const parsed = EnvSchema.parse({
   ...process.env,
-  // Deprecated deployment alias; an explicitly set canonical value wins.
   GATEWAY_PROXY_BASE_URL: process.env.GATEWAY_PROXY_BASE_URL ?? process.env.INFERENCE_PROXY_BASE_URL,
 })
 
@@ -301,8 +286,6 @@ function uniqueStrings(values: readonly string[]) {
   return Array.from(new Set(values.filter(Boolean)))
 }
 
-// Lease and deadline math must never see NaN or a non-positive interval, so a
-// malformed tuning value falls back to the default instead of poisoning it.
 function automationTuning(value: string | undefined, fallback: number) {
   const tuned = Number(value)
   return Number.isSafeInteger(tuned) && tuned > 0 ? tuned : fallback
@@ -371,7 +354,6 @@ export function parseSingleOrgAllowPublicSignup(value: string | undefined, orgMo
   throw new Error("DEN_SINGLE_ORG_ALLOW_PUBLIC_SIGNUP must be true or false")
 }
 
-/** Requests per minute each new API key may make. Blank keeps the default. */
 export function parseApiKeyRateLimitMax(value: string | undefined): number {
   const trimmed = value?.trim()
   if (!trimmed) return DEN_API_KEY_RATE_LIMIT_MAX_DEFAULT
@@ -531,23 +513,11 @@ const planGatingEnabled =
 
 const initialAdminBootstrapCode = optionalString(parsed.DEN_INITIAL_ADMIN_BOOTSTRAP_CODE)
   ?? readOptionalSecretFile("DEN_INITIAL_ADMIN_BOOTSTRAP_CODE_FILE", parsed.DEN_INITIAL_ADMIN_BOOTSTRAP_CODE_FILE)
-// Generated custom views require the matching desktop MCP Apps host release.
-// Keep the Den capability fail-closed so a Den deployment cannot advertise
-// bridge-dependent resources to older published desktop builds.
 const generatedArtifactViewsEnabled =
   (parsed.DEN_GENERATED_ARTIFACT_VIEWS_ENABLED ?? "false").trim().toLowerCase() === "true"
 
-// Apps built through Connect are served as their own MCP servers, and older
-// Workflow-bound views become read-only. On by default, including when set
-// empty; false, 0, off, or no (or any other value) restores the previous
-// behavior: no App servers, writable Workflow-bound views.
 const appMcpServersEnabled = parseBooleanFlag(optionalString(parsed.DEN_APP_MCP_SERVERS_ENABLED) ?? "true")
 
-// Automations are on by default. Organizations turn Desktop or Cloud
-// Automations off in their organization settings. An explicit
-// DEN_AUTOMATIONS_ENABLED=false remains the operator's complete
-// shutdown unless a mixed-version deployment explicitly keeps the
-// compatibility runtime on. A disabled runtime always forces availability off.
 const automationsRuntimeEnabled = parseBooleanFlag(
   parsed.DEN_AUTOMATIONS_RUNTIME_ENABLED
     ?? parsed.DEN_AUTOMATIONS_ENABLED
@@ -557,10 +527,6 @@ const automationsEnabled = automationsRuntimeEnabled
   && parseBooleanFlag(parsed.DEN_AUTOMATIONS_ENABLED ?? "true")
 const dashboardsEnabled = parseBooleanFlag(parsed.DEN_DASHBOARDS_ENABLED ?? "false")
 
-// Which product this install is (DEN_DEPLOYMENT, default self_hosted so a
-// misconfigured customer install never picks up cloud-only features) and the
-// operator's feature locks (DEN_FEATURE_*, rendered from Helm config.features).
-// See packages/features/src/registry.ts.
 const featureEnvironment = parseFeatureEnvironment(process.env)
 const fatalFeatureProblems = featureEnvironment.problems.filter((problem) => problem.fatal)
 if (fatalFeatureProblems.length > 0) {
@@ -570,14 +536,9 @@ for (const problem of featureEnvironment.problems) {
   console.warn(`[features] ${problem.variable} ${problem.message}`)
 }
 
-// An edge that already answers CORS (reflecting the caller's origin) in front
-// of den-api makes den-api's own headers duplicates, which browsers reject.
-// The allowlist still feeds proxy-trust decisions; only header emission stops.
 const corsHandledByEdge = parseBooleanFlag(parsed.DEN_CORS_HANDLED_BY_EDGE ?? "false")
 const openworkWebEnabled = parseBooleanFlag(parsed.DEN_OPENWORK_WEB_ENABLED ?? "false")
 
-// Config-blob `env` secrets: only `OPENWORK_IMPORT_` names can be allowlisted
-// (config-blobs/env-secrets.ts). Other entries are dropped, with a warning.
 const configSecretEnvAllowlist = partitionConfigSecretEnvAllowlist(splitCsv(parsed.DEN_CONFIG_BLOB_SECRET_ENV_ALLOWLIST))
 for (const { entry, problem } of configSecretEnvAllowlist.ignored) {
   console.warn(`[config-blobs] DEN_CONFIG_BLOB_SECRET_ENV_ALLOWLIST entry "${entry}" is ignored: ${problem}`)
@@ -586,13 +547,10 @@ for (const { entry, problem } of configSecretEnvAllowlist.ignored) {
 const devMode = (parsed.OPENWORK_DEV_MODE ?? "0").trim() === "1"
 const port = Number(parsed.PORT ?? "8790")
 const botIdProtectionEnabled = (parsed.DEN_BOTID_PROTECTION_ENABLED ?? "0").trim() === "1"
-// Bearer token for scheduled maintenance callers (POST /internal/*). Unset hides those routes (404).
 const maintenanceToken = optionalString(parsed.DEN_MAINTENANCE_TOKEN)
 if (maintenanceToken && maintenanceToken.length < 24) {
   throw new Error("DEN_MAINTENANCE_TOKEN must contain at least 24 characters.")
 }
-// Bearer token the headless runner presents to exchange a resume grant (POST /v1/headless/resume-token). Unset hides
-// that route (404). Must differ from DEN_HEADLESS_RUNNER_TOKEN, which Den presents to the runner.
 const headlessRunnerCallbackToken = optionalString(parsed.DEN_HEADLESS_RUNNER_CALLBACK_TOKEN)
 if (headlessRunnerCallbackToken && headlessRunnerCallbackToken.length < 32) {
   throw new Error("DEN_HEADLESS_RUNNER_CALLBACK_TOKEN must contain at least 32 characters.")
@@ -600,7 +558,6 @@ if (headlessRunnerCallbackToken && headlessRunnerCallbackToken.length < 32) {
 if (headlessRunnerCallbackToken && headlessRunnerCallbackToken === optionalString(parsed.DEN_HEADLESS_RUNNER_TOKEN)) {
   throw new Error("DEN_HEADLESS_RUNNER_CALLBACK_TOKEN must differ from DEN_HEADLESS_RUNNER_TOKEN.")
 }
-// Unset: a forwarded address from Den Web is never trusted, and addresses come from the proxy chain alone.
 const webClientIpSecret = optionalString(parsed.DEN_WEB_CLIENT_IP_SECRET)
 if (webClientIpSecret && webClientIpSecret.length < CLIENT_IP_SECRET_MIN_LENGTH) {
   throw new Error(`DEN_WEB_CLIENT_IP_SECRET must contain at least ${CLIENT_IP_SECRET_MIN_LENGTH} characters.`)
@@ -654,28 +611,16 @@ const publicUrlTrustedOrigins = Array.from(new Set([
   ...corsOrigins,
   ...betterAuthTrustedOrigins,
 ])).filter((origin) => origin !== "*")
-// Den Web serves this API under /api/den on the better-auth origin, so a
-// request forwarded from that origin is first-party by construction. Hosted
-// deployments proxy browser and desktop calls server-side and never need that
-// origin in CORS_ORIGINS, so deriving public routes from the CORS allowlist
-// alone silently drops the one origin clients actually call.
 const publicProxyTrustedOrigins = Array.from(new Set([
   betterAuthUrl,
   ...publicUrlTrustedOrigins,
 ]))
 const orgMode = parseDenOrgMode(parsed.DEN_ORG_MODE)
-// SSRF guard for External MCP Connection URLs: on hosted (multi-tenant)
-// deployments, Den must not fetch private/reserved addresses on behalf of
-// users. Self-hosted deployments whose MCP servers legitimately live on a
-// private network can opt out with DEN_ALLOW_PRIVATE_MCP_URLS=1; local dev
-// (OPENWORK_DEV_MODE=1) is exempt automatically so evals against a local
-// stand-in server keep working.
 const allowPrivateMcpUrls = devMode || (parsed.DEN_ALLOW_PRIVATE_MCP_URLS ?? "0").trim() === "1"
 const allowInsecureInternalRedis = parseBooleanFlag(parsed.DATABASE_REDIS_ALLOW_INSECURE_INTERNAL)
 const requireEmailVerification = parsed.DEN_REQUIRE_EMAIL_VERIFICATION === undefined
   ? orgMode === "multi_org" && !devMode
   : parsed.DEN_REQUIRE_EMAIL_VERIFICATION.trim().toLowerCase() !== "false"
-// Fail-closed even in dev mode: offline rigs opt out explicitly via DEN_PASSWORD_BREACH_SCREENING_ENABLED=false.
 const passwordBreachScreeningEnabled = parsed.DEN_PASSWORD_BREACH_SCREENING_ENABLED === undefined
   ? true
   : parsed.DEN_PASSWORD_BREACH_SCREENING_ENABLED.trim().toLowerCase() !== "false"
@@ -693,15 +638,12 @@ const planetscaleCredentials =
       }
     : null
 
-// Optional read-replica credentials; reads stay on the primary without both.
 const readReplicaCredentials = readReplicaCredentialsFromEnv(parsed)
 
-// OpenWork Cloud's sandboxes use OpenWork's public workshop service unless configured otherwise.
 const sandboxWorkplaceUrl = optionalString(parsed.DEN_SANDBOX_WORKPLACE_URL)
   ?? (featureEnvironment.deployment === "cloud" ? "https://open-workplace-workshop.onrender.com" : null)
 const sandboxGatewayApiKey = optionalString(parsed.DEN_SANDBOX_GATEWAY_API_KEY)
 const sandboxGatewayProvider = optionalString(parsed.DEN_SANDBOX_GATEWAY_PROVIDER) ?? (sandboxGatewayApiKey ? "openai" : "openrouter")
-// One OpenRouter key per sandbox, capped, instead of one shared key: needs a management key and no shared key.
 const sandboxMintsOpenRouterKeys = !sandboxGatewayApiKey && sandboxGatewayProvider === "openrouter" && Boolean(optionalString(parsed.OPENROUTER_MANAGEMENT_API_KEY))
 const sandboxDefaultModels = sandboxGatewayProvider === "openrouter"
   ? "openai/gpt-6.1-sol,anthropic/claude-sonnet-5.5,deepseek/deepseek-v4.1-flash"
@@ -721,11 +663,6 @@ export const env = {
   trustedProxies: splitCsv(parsed.DEN_TRUSTED_PROXIES),
   webClientIpSecret,
   webUrl: normalizePublicWebOrigin(betterAuthUrl),
-  // SECURITY: `redis://` carries cached auth-session material in plaintext.
-  // Non-local redis:// is rejected by default. Hosted platforms such as Render
-  // may provide a private, non-public internal Redis URL without TLS; operators
-  // must explicitly opt in with DATABASE_REDIS_ALLOW_INSECURE_INTERNAL=1 after
-  // confirming the endpoint is only reachable inside a trusted private network.
   databaseRedisUrl: normalizeRedisUrl(parsed.DATABASE_REDIS_URL, allowInsecureInternalRedis),
   databaseRedisAllowInsecureInternal: allowInsecureInternalRedis,
   mcpResourceUrl: mcpResourceUrl
@@ -735,9 +672,6 @@ export const env = {
       : undefined,
   mcpAdditionalResources,
   betterAuthTrustedOrigins: betterAuthTrustedOrigins.length > 0 ? betterAuthTrustedOrigins : corsOrigins,
-  // Extra hostnames that serve the den-web frontend (and therefore expose
-  // the Den API behind the /api/den proxy path). Entries starting with "."
-  // are treated as suffix matches, e.g. ".example.com".
   webAppHosts: uniqueStrings([
     ...derivedWebOrigins.map((origin) => new URL(origin).hostname.toLowerCase()),
     ...splitCsv(parsed.DEN_WEB_APP_HOSTS).map((host) => host.toLowerCase()),
@@ -746,16 +680,10 @@ export const env = {
   botIdProtectionEnabled,
   allowPrivateMcpUrls,
   configBlobs: {
-    // Environment variables a config-blob import may read for a `$secret`
-    // (`env` decision). Self-hosted only; empty means none. Comma-separated
-    // names, a trailing `*` matches a prefix (`OPENWORK_IMPORT_*`). Only
-    // entries inside the `OPENWORK_IMPORT_` namespace are kept.
     secretEnvAllowlist: configSecretEnvAllowlist.allowed,
   },
   maintenanceToken,
   headlessRunnerCallbackToken,
-  // Vercel AI Gateway key for the evaluation model behind Your agent's check gate and send check. Unset: the gate
-  // skips a check only when nothing arrived, and the send check never runs.
   agentEvaluationApiKey: optionalString(parsed.DEN_AGENT_EVALUATION_API_KEY),
   gatewayKey: optionalString(parsed.DEN_GATEWAY_KEY),
   gatewayOrigin: normalizeOptionalHttpsOrigin("DEN_GATEWAY_ORIGIN", parsed.DEN_GATEWAY_ORIGIN),
@@ -763,22 +691,15 @@ export const env = {
   generatedArtifactViewsEnabled,
   appMcpServersEnabled,
   scimMaintenanceIntervalMs: Number(parsed.SCIM_MAINTENANCE_INTERVAL_MS ?? "300000"),
-  // Lifecycle reminder emails (claim reminder, team nudge). Off unless
-  // LIFECYCLE_EMAILS_ENABLED=1 so self-hosted deployments opt in explicitly.
   lifecycleEmails: {
     enabled: parsed.LIFECYCLE_EMAILS_ENABLED?.trim() === "1",
     intervalMs: Number(parsed.LIFECYCLE_EMAILS_INTERVAL_MS ?? "900000"),
   },
-  // Admin Control Center snapshots (admin-metrics/worker.ts): today's and 7-day KPIs on the fast tier,
-  // cohorts, sharing, revenue and accounts on the heavy tier. ADMIN_METRICS_REFRESH_ENABLED=0 turns it off.
   adminMetrics: {
     enabled: parsed.ADMIN_METRICS_REFRESH_ENABLED?.trim() !== "0",
     fastIntervalMs: Math.max(60_000, Number(parsed.ADMIN_METRICS_FAST_INTERVAL_MS ?? "300000") || 300_000),
     heavyIntervalMs: Math.max(300_000, Number(parsed.ADMIN_METRICS_HEAVY_INTERVAL_MS ?? "1800000") || 1_800_000),
   },
-  // Scheduled check of which preset MCP providers let OpenWork register (mcp-registration/probe.ts). Off unless
-  // MCP_REGISTRATION_PROBE_ENABLED=1; registering a test client with providers is a further opt-in, so self-hosted
-  // installs never create registrations with third parties on their own.
   mcpRegistrationProbe: {
     enabled: parsed.MCP_REGISTRATION_PROBE_ENABLED?.trim() === "1",
     tryRegistration: parsed.MCP_REGISTRATION_PROBE_TRY_REGISTRATION?.trim() === "1",
@@ -804,8 +725,6 @@ export const env = {
     maxAttempts: Number(parsed.GITHUB_SYNC_MAX_ATTEMPTS ?? "5"),
     reconcileBatchSize: Number(parsed.GITHUB_RECONCILE_BATCH_SIZE ?? "25"),
     reconcileMinAgeMs: Number(parsed.GITHUB_RECONCILE_MIN_AGE_MS ?? "21600000"),
-    // One reconcile run reads at most maxBatches pages of batchSize due targets,
-    // and starts no new page after budgetMs.
     reconcileMaxBatches: Number(parsed.GITHUB_RECONCILE_MAX_BATCHES ?? "20"),
     reconcileRunBudgetMs: Number(parsed.GITHUB_RECONCILE_RUN_BUDGET_MS ?? "45000"),
     reconcileProbeConcurrency: Number(parsed.GITHUB_RECONCILE_PROBE_CONCURRENCY ?? "4"),
@@ -816,8 +735,6 @@ export const env = {
   },
   email: {
     from: optionalString(parsed.EMAIL_FROM),
-    // Where invitation replies and abuse reports go. OpenWork Cloud falls back
-    // to the OpenWork team; self-hosted installs fall back to the inviter.
     supportAddress: optionalString(parsed.EMAIL_SUPPORT_ADDRESS),
   },
   resend: {
@@ -851,8 +768,6 @@ export const env = {
   port,
   corsOrigins,
   documentsOffice: {
-    // `fixed` uses one operator-run editor; `cloud-worker` runs it in each
-    // member's Cloud worker. Unset keeps the fixed editor when one is configured.
     mode: parsed.DEN_DOCUMENTS_EDITOR ?? (optionalString(parsed.DEN_DOCUMENTS_COLLABORA_URL) ? "fixed" : null),
     workerPort: Number(parsed.DEN_DOCUMENTS_WORKER_EDITOR_PORT ?? "9980"),
     serverUrl: optionalString(parsed.DEN_DOCUMENTS_COLLABORA_URL),
@@ -867,18 +782,12 @@ export const env = {
   publicUrlTrustedOrigins,
   publicProxyTrustedOrigins,
   installerArtifactsDir: optionalString(parsed.OPENWORK_INSTALLER_ARTIFACTS_DIR),
-  // Standard desktop release assets: the release tag to download from,
-  // defaulting to the pinned app release this den-api build shipped with.
   installerReleaseTag: optionalString(parsed.OPENWORK_INSTALLER_RELEASE_TAG) ?? `v${denApiAppVersion.latestAppVersion}`,
   installerReleaseTagExplicit: optionalString(parsed.OPENWORK_INSTALLER_RELEASE_TAG) !== undefined,
   installerReleaseRepo: optionalString(parsed.OPENWORK_INSTALLER_RELEASE_REPO) ?? "different-ai/openwork",
   installerCacheDir: optionalString(parsed.OPENWORK_INSTALLER_CACHE_DIR) ?? path.join(os.tmpdir(), "openwork-desktop-artifacts"),
-  // Desktop-release endpoint overrides for evals/self-host testing. Static mode
-  // keeps air-gapped deployments on the committed release snapshot.
   desktopReleasesBaseUrl: optionalString(parsed.DEN_DESKTOP_RELEASES_BASE_URL),
   desktopReleasesMode: parsed.DEN_DESKTOP_RELEASES_MODE ?? "github",
-  // Native-provider endpoint overrides for evals/self-host testing. Unset in
-  // production so Google, Microsoft Entra, and Graph use their public APIs.
   googleOAuthAuthorizeUrl: optionalString(parsed.DEN_GOOGLE_OAUTH_AUTHORIZE_URL),
   googleOAuthTokenUrl: optionalString(parsed.DEN_GOOGLE_OAUTH_TOKEN_URL),
   googleOAuthUserinfoUrl: optionalString(parsed.DEN_GOOGLE_OAUTH_USERINFO_URL),
@@ -893,9 +802,6 @@ export const env = {
   initialAdminBootstrapCode,
   provisionerMode: parsed.CLOUD_RUNTIME_PROVIDER ?? parsed.PROVISIONER_MODE ?? "stub",
   workerProvisioningReconcileIntervalMs: Number(parsed.WORKER_PROVISIONING_RECONCILE_INTERVAL_MS ?? "60000"),
-  // Live provisioning owners heartbeat `updated_at` every 30 seconds, so this
-  // staleness only fires after several missed beats. Keep it several multiples
-  // of `provisioningHeartbeatIntervalMs`.
   workerProvisioningReconcileStaleMs: Number(parsed.WORKER_PROVISIONING_RECONCILE_STALE_MS ?? "180000"),
   workerProvisioningReconcileBatchSize: Number(parsed.WORKER_PROVISIONING_RECONCILE_BATCH_SIZE ?? "10"),
   cloudProvisionDeadlineMs: Number(parsed.CLOUD_PROVISION_DEADLINE_MS ?? "900000"),
@@ -903,14 +809,8 @@ export const env = {
   cloudIdleStopMs: Number(parsed.CLOUD_IDLE_STOP_MINUTES ?? "30") * 60_000,
   cloudIdleLoopIntervalMs: Number(parsed.CLOUD_IDLE_LOOP_SECONDS ?? "60") * 1000,
   cloudIdleStopBatchSize: Number(parsed.CLOUD_IDLE_STOP_BATCH_SIZE ?? "10"),
-  // Den asks a running instance whether it is busy before stopping or
-  // restarting it. A busy instance can be slow, so this is longer than the
-  // 2.5 second signed-preview health probe.
   cloudActivityProbeTimeoutMs: Number(parsed.CLOUD_ACTIVITY_PROBE_TIMEOUT_MS ?? "10000"),
-  // How long a running instance must answer nothing at all before Den treats
-  // it as dead and restarts it; a slow health probe alone never restarts.
   cloudUnreachableGraceMs: Number(parsed.CLOUD_UNREACHABLE_GRACE_MS ?? "60000"),
-  // Bound for the best-effort checkpoint flush before Den stops a running instance.
   cloudStopFlushTimeoutMs: Number(parsed.CLOUD_STOP_FLUSH_TIMEOUT_MS ?? "20000"),
   workerUrlTemplate: parsed.WORKER_URL_TEMPLATE,
   workerActivityBaseUrl:
@@ -922,16 +822,9 @@ export const env = {
     pollIntervalMs: automationTuning(parsed.DEN_AUTOMATIONS_POLL_INTERVAL_MS, 15_000),
     batchSize: automationTuning(parsed.DEN_AUTOMATIONS_BATCH_SIZE, 25),
     maxConcurrency: automationTuning(parsed.DEN_AUTOMATIONS_MAX_CONCURRENCY, 4),
-    // Headless runs hold no computer, only a turn on the shared runner, so
-    // they get their own, larger pool instead of the OpenWork Web slots.
     headlessMaxConcurrency: automationTuning(parsed.DEN_HEADLESS_AUTOMATIONS_MAX_CONCURRENCY, 16),
     leaseMs: automationTuning(parsed.DEN_AUTOMATIONS_LEASE_MS, 60_000),
     runTimeoutMs: automationTuning(parsed.DEN_AUTOMATIONS_RUN_TIMEOUT_MS, 900_000),
-    // How long a desktop occurrence stays claimable. A desktop is a laptop
-    // that sleeps, restarts, and changes networks, so this is a recovery
-    // window rather than a liveness check: a desktop that returns inside it
-    // still runs the occurrence, and only a genuinely absent desktop misses.
-    // Runs never stay claimable past their own next occurrence.
     runnerClaimDeadlineMs: automationTuning(parsed.DEN_AUTOMATIONS_RUNNER_CLAIM_DEADLINE_MS, 900_000),
   },
   dashboardsEnabled,
@@ -941,9 +834,7 @@ export const env = {
       ? {
           providerId: sandboxGatewayProvider,
           modelIds: (optionalString(parsed.DEN_SANDBOX_GATEWAY_MODELS) ?? sandboxDefaultModels).split(",").map(value => value.trim()).filter(Boolean),
-          /** The key every sandbox shares, or null when each sandbox gets its own capped OpenRouter key. */
           apiKey: sandboxGatewayApiKey ?? null,
-          /** Default cap for a sandbox's own key; null with a shared key. */
           creditUsd: sandboxMintsOpenRouterKeys ? (Number.isFinite(sandboxCreditUsd) && sandboxCreditUsd > 0 ? sandboxCreditUsd : 50) : null,
         }
       : null,
@@ -956,11 +847,9 @@ export const env = {
   openworkWebEnabled,
   inferenceFree: readFreeInferenceConfig(process.env),
   inferenceProxyBaseUrl: optionalString(parsed.GATEWAY_PROXY_BASE_URL) ?? "http://127.0.0.1:8791",
-  // Keep known public Models destinations even when Gateway management is off.
   modelsPublicBaseUrl: gatewayDeployment.modelsPublicBaseUrl ?? optionalString(parsed.GATEWAY_PROXY_BASE_URL) ?? "http://127.0.0.1:8791",
   gatewayEnabled: gatewayDeployment.enabled,
   gatewayProxyBaseUrl: gatewayDeployment.proxyBaseUrl,
-  // Existing member payloads retain their legacy destination until explicitly configured.
   gatewayPublicBaseUrl: gatewayDeployment.publicBaseUrl ?? optionalString(parsed.GATEWAY_PROXY_BASE_URL) ?? "http://127.0.0.1:8791",
   openRouterManagementApiKey: optionalString(parsed.OPENROUTER_MANAGEMENT_API_KEY),
   openRouterWorkspaceId: optionalString(parsed.OPENROUTER_WORKSPACE_ID),
@@ -978,7 +867,6 @@ export const env = {
     apiKey: parsed.RENDER_API_KEY,
     ownerId: parsed.RENDER_OWNER_ID,
     workerRepo:
-      // TODO(ent): require RENDER_WORKER_REPO for hosted/customer Render deployments instead of using OpenWork's public repo default.
       parsed.RENDER_WORKER_REPO ?? "https://github.com/different-ai/openwork",
     workerBranch: parsed.RENDER_WORKER_BRANCH ?? "dev",
     workerRootDir:

@@ -4,21 +4,14 @@ import { defineFeatureIntro, type FeatureIntroContext } from "../types";
 import { docsPage } from "./docs";
 import { DeploymentsExample } from "./examples/settings/deployments-example";
 
-/**
- * Facts Manage › Deployments reports from data it already loads
- * (`GET /v1/managed-deployments` and `/configuration`). Only reported while the
- * `managedDeployments` feature is on and the viewer can see deployments.
- */
 export type DeploymentsFacts = {
   deployments?: number;
-  /** AWS or Google Cloud has a published, configured installer (`providers[].available`). */
   cloudReady?: boolean;
 };
 
 type Ctx = FeatureIntroContext<DeploymentsFacts>;
 
 const PATH = getDeploymentsRoute();
-/** `?new=1` opens the Create deployment form (DESIGN.md I5). */
 export const DEPLOYMENTS_NEW_ROUTE = `${PATH}?new=1`;
 
 export const deploymentsIntros = [

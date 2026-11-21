@@ -21,7 +21,6 @@ function parseSettings(payload: unknown): OrgPromptSettings | null {
   return parsed.success ? parsed.data : null;
 }
 
-/** The prompt for everyone and each team's own prompt. */
 export function usePromptSettings(orgId: string, enabled = true) {
   return useQuery({
     queryKey: promptsQueryKey(orgId),
@@ -43,7 +42,6 @@ export function usePromptSettings(orgId: string, enabled = true) {
 
 export type SavePromptInput = { teamId: string | null; content: string };
 
-/** Sets the prompt for everyone (teamId null) or one team; the first save creates it. */
 export function useSavePrompt(orgId: string) {
   const queryClient = useQueryClient();
   const { runReauthableAction } = useOrgDashboard();
@@ -71,7 +69,6 @@ export function useSavePrompt(orgId: string) {
   });
 }
 
-/** Removes the prompt for everyone (teamId null) or one team. */
 export function useRemovePrompt(orgId: string) {
   const queryClient = useQueryClient();
   const { runReauthableAction } = useOrgDashboard();

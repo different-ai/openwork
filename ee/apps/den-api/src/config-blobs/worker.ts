@@ -1,10 +1,3 @@
-/**
- * The config change request worker: a table-as-queue loop (as in
- * slack-assistant / github-sync). Each tick analyzes what was uploaded or went
- * stale, then applies what is queued, one request per organization at a time
- * (`claimNextApply` holds the org's apply lock through the claim's lease; a
- * long apply extends it).
- */
 import { appLogger } from "../observability/logger.js"
 import { captureException } from "../observability/runtime.js"
 import { withPrimaryReads } from "../read-routing.js"
@@ -13,24 +6,14 @@ import { analyzeClaimedChangeRequest, applyClaimedChangeRequest } from "./servic
 
 const logger = appLogger.child({ component: "config_blob_worker" })
 const DEFAULT_INTERVAL_MS = 1_000
-/** Bounds one tick so a burst of uploads never starves the applies behind it. */
 const MAX_PER_TICK = 10
-/** Secret-input expiry runs at most this often (one small indexed query), at most EXPIRE_BATCH requests each time. */
 const EXPIRE_EVERY_MS = 60_000
 const EXPIRE_BATCH = 50
 let lastExpiryAt = 0
 
 export type ConfigBlobWorkerTick = { analyzed: number; applied: number; expired: number }
 
-/**
- * One pass: secret-input expiry (once a minute), then up to MAX_PER_TICK
- * analyses, then up to MAX_PER_TICK applies. Exposed for tests.
- */
 export function runConfigBlobWorkerOnce(options: { now?: Date } = {}): Promise<ConfigBlobWorkerTick> {
-  // An analysis plans against what the organization holds now, and an apply
-  // reads back what it just wrote (through the areas' route handlers and
-  // stores): neither may see a lagging replica. The worker runs outside a
-  // request, so nothing else routes its reads to the primary.
   return withPrimaryReads(() => runTick(options))
 }
 
@@ -46,7 +29,6 @@ async function runTick(options: { now?: Date }): Promise<ConfigBlobWorkerTick> {
       captureException(error, { component: "config_blob_worker" })
     }
   }
-  // A failing claim query (deadlock, lost connection) ends that loop for this tick; applies still get their turn.
   for (let index = 0; index < MAX_PER_TICK; index += 1) {
     let claim: Awaited<ReturnType<typeof claimNextAnalysis>>
     try {
@@ -60,7 +42,6 @@ async function runTick(options: { now?: Date }): Promise<ConfigBlobWorkerTick> {
     try {
       if (await analyzeClaimedChangeRequest(claim)) tick.analyzed += 1
     } catch (error) {
-      // The analysis lease expires and the request is analyzed again.
       logger.error("config change request analysis crashed", { change_request_id: claim.id, organization_id: claim.organizationId, error })
       captureException(error, { component: "config_blob_worker" })
     }
@@ -78,7 +59,6 @@ async function runTick(options: { now?: Date }): Promise<ConfigBlobWorkerTick> {
     try {
       if (await applyClaimedChangeRequest(claim)) tick.applied += 1
     } catch (error) {
-      // The lease expires; the next claim marks the request failed and its run interrupted, never applies it twice.
       logger.error("config change request apply crashed", { change_request_id: claim.id, organization_id: claim.organizationId, error })
       captureException(error, { component: "config_blob_worker" })
     }

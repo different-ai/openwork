@@ -1,6 +1,3 @@
-// Usage parser for Gemini generateContent (Google AI Studio and Vertex).
-// Every chunk may carry `usageMetadata`; the last one is authoritative. Also
-// accepts the non-SSE JSON-array streaming form (array of chunks).
 import { captureResponseIdentity, createJsonBodyUsageParser, createSseUsageParser, emptyUsage, hasUsage, isRecord, readNumber } from "@openwork-ee/gateway-protocols/usage/shared"
 import type { ParsedUsage, UsageParser } from "@openwork-ee/gateway-protocols/usage/shared"
 

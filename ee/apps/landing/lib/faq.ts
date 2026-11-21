@@ -135,7 +135,6 @@ export const cloudFaq: FaqEntry[] = [
   }
 ];
 
-/** schema.org FAQPage for a page's visible FAQ. */
 export function faqSchema(entries: FaqEntry[]) {
   return {
     "@context": "https://schema.org",

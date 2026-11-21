@@ -19,7 +19,6 @@ export type AdminFeatureState = {
   killed: boolean;
   override: boolean | null;
   overrideApplies: boolean;
-  /** Latest change that could affect this organization or member; absent from organization lists and older servers. */
   lastChange?: AdminFeatureChange | null;
 };
 export type AdminOrganizationFeatures = Record<FeatureKey, AdminFeatureState>;
@@ -34,7 +33,6 @@ function parseAdminFeatureSource(value: unknown): AdminFeatureState["source"] {
   return ADMIN_FEATURE_SOURCES.find((source) => source === value) ?? "everyone";
 }
 
-/** Server featureStates, falling back to the effective capabilities map from older servers. */
 export function parseAdminOrganizationFeatures(featureStates: unknown, capabilities: unknown): AdminOrganizationFeatures {
   const states = isRecord(featureStates) ? featureStates : {};
   const effective = isRecord(capabilities) ? capabilities : {};
@@ -56,7 +54,6 @@ export function parseAdminOrganizationFeatures(featureStates: unknown, capabilit
   });
 }
 
-/** "2026-10-23" → "23 Oct 2026", read as a calendar day (no time zone shift). */
 function formatAddedDay(added: string): string {
   return new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${added}T00:00:00Z`));
 }
@@ -72,7 +69,6 @@ function describeSource(state: AdminFeatureState): string {
   }
 }
 
-/** Features this deployment has, in registry order. */
 function visibleKeys(features: AdminOrganizationFeatures): FeatureKey[] {
   return FEATURE_KEYS.filter((key) => features[key].source !== "unavailable");
 }
@@ -85,7 +81,6 @@ const SETTINGS_GROUPINGS = [
 
 const newestFirst = (keys: readonly FeatureKey[]) => [...keys].sort((a, b) => FEATURES[b].added.localeCompare(FEATURES[a].added));
 
-/** Newest: the last two weeks, then each earlier month. Author: by handle, newest first within. Category: registry order. */
 export function groupFeatureKeys(keys: readonly FeatureKey[], grouping: FeatureSettingsGrouping, now = Date.now()): FeatureKeyGroup[] {
   if (grouping === "category") return featuresByCategory(keys).map(({ category, keys: inCategory }) => ({ id: category, label: FEATURE_CATEGORIES[category].label, keys: inCategory }));
   const groups = new Map<string, FeatureKeyGroup>();
@@ -102,7 +97,6 @@ export function groupFeatureKeys(keys: readonly FeatureKey[], grouping: FeatureS
 }
 
 export type FeatureAddedWindow = "any" | "7" | "30" | "90" | "older";
-/** `author` is a GitHub handle from the registry; null shows every author. */
 export type FeatureSettingsFilter = { author: string | null; added: FeatureAddedWindow };
 export const NO_FEATURE_SETTINGS_FILTER: FeatureSettingsFilter = { author: null, added: "any" };
 const ANY_AUTHOR = "*";
@@ -118,12 +112,10 @@ function addedWithin(key: FeatureKey, added: FeatureAddedWindow, now: number): b
   return added === "older" ? age >= 90 * DAY_MS : age < Number(added) * DAY_MS;
 }
 
-/** Keeps the features by one author, added in one window; both apply together. */
 export function filterFeatureKeys(keys: readonly FeatureKey[], filter: FeatureSettingsFilter, now = Date.now()): FeatureKey[] {
   return keys.filter((key) => (filter.author === null || FEATURES[key].author === filter.author) && addedWithin(key, filter.added, now));
 }
 
-/** Authors of these features with how many each owns, by handle. */
 export function featureAuthors(keys: readonly FeatureKey[]): { author: string; count: number }[] {
   const counts = new Map<string, number>();
   for (const key of keys) counts.set(FEATURES[key].author, (counts.get(FEATURES[key].author) ?? 0) + 1);

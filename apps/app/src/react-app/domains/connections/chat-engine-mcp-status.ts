@@ -6,19 +6,9 @@ type StatusClient = Pick<OpenworkServerClient, "getMcpStatus" | "getChatEngineMc
   getEngineV2PreviewStatus: () => Promise<Pick<EngineV2PreviewStatus, "enabled" | "chatRouting">>;
 };
 
-/**
- * Connection states as reported by the engine that runs chats.
- *
- * On a v2 desktop the older engine still answers status requests, and it
- * loads connections from the person's own OpenCode config that the chat
- * engine never registers. Asking it made Settings show "Connected" for a
- * connection no chat could use. A connection the chat engine does not know
- * has no entry here, which Settings shows as offline.
- */
 export async function readChatEngineMcpStatus(client: StatusClient, workspaceId: string): Promise<McpStatusMap> {
   const v2 = await client.getEngineV2PreviewStatus().then(
     (status) => status.enabled && status.chatRouting,
-    // An older server has no such route: it only has the one engine.
     (error: unknown) => {
       if (error instanceof OpenworkServerError && error.status === 404) return false;
       throw error;

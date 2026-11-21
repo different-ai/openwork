@@ -101,8 +101,6 @@ function LockedSection({ id, title, scope, permission }: { id: string; title: st
   );
 }
 
-// ── Desktop app ────────────────────────────────────────────────────────────
-
 const DESKTOP_SUMMARY_BADGES: Record<DesktopSummaryState, { label: string; tone: DiagnosticsTone }> = {
   no_data: { label: DESKTOP_COPY.noData, tone: "neutral" },
   healthy: { label: DESKTOP_COPY.healthy, tone: "success" },
@@ -175,7 +173,6 @@ export function DesktopSection({ report, now }: SectionProps) {
         </DiagnosticsRow>
       )}
       {desktop.failures.map((failure) => {
-        // Attention items point at the step; the first row for each step is its anchor.
         const anchor = anchoredSteps.has(failure.step) ? undefined : diagnosticsRowId("desktop", failure.step);
         anchoredSteps.add(failure.step);
         return (
@@ -202,9 +199,6 @@ export function DesktopSection({ report, now }: SectionProps) {
   );
 }
 
-// ── AI providers ───────────────────────────────────────────────────────────
-
-/** States where the endpoint stopped working, so "Last worked" is the useful fact. */
 const FAILING_PROVIDER_STATES: ReadonlySet<ProviderCheckState> = new Set(["key_rejected", "unreachable", "misconfigured"]);
 
 function providerHref(provider: ProviderCheck, orgSlug: string | null): string {
@@ -290,8 +284,6 @@ function ProviderRows({ providers, ...props }: { providers: ProvidersDiagnostics
   );
 }
 
-// ── Connectors ─────────────────────────────────────────────────────────────
-
 function connectorMetric(connector: ConnectorCheck, now: number): string {
   if (connector.kind === "google_workspace") {
     return connector.apis.filter((api) => api.status === "enabled").map((api) => api.name).join(", ");
@@ -351,8 +343,6 @@ function ConnectorRows({ connectors, ...props }: { connectors: ConnectorsDiagnos
     </DiagnosticsSection>
   );
 }
-
-// ── Installation ───────────────────────────────────────────────────────────
 
 export function InstallationSection({ report, now }: SectionProps) {
   const installation = report.installation;

@@ -57,7 +57,6 @@ function clearOpenworkLocalStorage(mode: ResetOpenworkMode) {
     }
     window.localStorage.removeItem("openwork_mode_pref");
   } catch {
-    // ignore
   }
 }
 

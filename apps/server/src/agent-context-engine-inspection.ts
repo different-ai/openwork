@@ -120,11 +120,6 @@ function parseMcps(value: unknown): EffectiveEngineSnapshot["mcps"] | null {
   return mcps;
 }
 
-/**
- * Reduce the live engine responses to a strict, bounded allowlist before the
- * analyzer uses them. Raw config, prompts, errors, and credential values never
- * cross into the diagnostics report.
- */
 export function validateEffectiveEngineSnapshot(
   payload: AgentDiagnosticsEngineInspectionPayload,
 ): EffectiveEngineSnapshot | null {
@@ -154,9 +149,6 @@ function wildcardMatch(value: string, pattern: string): boolean {
   }
 }
 
-/** Mirrors OpenCode's tool-visibility rule: the last matching permission wins,
- * and only a whole-resource (`pattern: "*"`) deny removes a tool from context.
- */
 export function effectiveToolDecision(
   rules: EffectiveEnginePermissionRule[],
   toolId: string,
@@ -174,7 +166,6 @@ async function cancelResponse(response: Response): Promise<void> {
   try {
     await response.body?.cancel();
   } catch {
-    // Cancellation is best effort; callers receive only a stable safe error.
   }
 }
 
@@ -216,7 +207,6 @@ async function bufferBoundedResponse(response: Response, maxBytes: number): Prom
   });
 }
 
-/** A dedicated fetch wrapper for the two diagnostics engine reads. */
 export function createAgentDiagnosticsEngineFetch(
   fetchImpl: typeof fetch,
   maxBytes = MAX_ENGINE_RESPONSE_BYTES,

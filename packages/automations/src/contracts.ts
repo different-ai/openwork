@@ -34,11 +34,6 @@ export function automationRevisionDigest(
 export interface AutomationOccurrenceIdentityInput {
   automationId: string
   scheduledFor: number | null
-  /**
-   * Manual runs: a fresh id per request. Calendar triggers: the occurrence's
-   * stable key, which identifies it on its own (two meetings can share an
-   * instant, and a moved offset must not run the same meeting again).
-   */
   nonce?: string
 }
 

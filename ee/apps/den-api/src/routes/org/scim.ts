@@ -111,11 +111,6 @@ function serializeHealth(health: Awaited<ReturnType<typeof getOrganizationScimHe
 type ScimConnection = NonNullable<Awaited<ReturnType<typeof getOrganizationScimConnection>>>
 type ScimOrganizationPayload = NonNullable<OrgRouteVariables["organizationContext"]>
 
-/**
- * PATCH /v1/scim's write: the group mapping mode with its audit trail
- * (scim.manage re-checked inside the transaction). Also used by config-blob
- * imports (config-blobs/areas/settings-auth-security.ts).
- */
 export async function updateScimGroupMappingMode(input: {
   payload: ScimOrganizationPayload
   connection: ScimConnection
@@ -294,8 +289,6 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
         organizationId: payload.organization.id,
         headers: c.req.raw.headers,
       })
-      // better-auth wrote the token on its own adapter: the after-snapshot (no
-      // token, rotation marker only) is appended in a fresh transaction.
       const capture = auditChangeCapture(c)
       const auditEventIds = await appendDomainChangesAfterCommit(capture, "scim_connection.token_rotated", async () => [
         scimTokenRotatedEvent(payload.organization.id, rotated.previous, rotated.connection),
@@ -356,7 +349,6 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
       }
 
       const [updated, health, ssoReady] = await Promise.all([
-        // primary: reads back the mode written above.
         getOrganizationScimConnection(payload.organization.id, db.$primary),
         getOrganizationScimHealth(payload.organization.id),
         hasEnabledOrganizationSsoConnection(payload.organization.id),
@@ -419,7 +411,6 @@ export function registerOrgScimRoutes<T extends { Variables: OrgRouteVariables }
     async (c) => {
       const payload = c.get("organizationContext")
       const result = await reconcileOrganizationScimDrift(payload.organization.id)
-      // Repairs are individual autocommit writes; the run summary is appended after them.
       const capture = auditChangeCapture(c)
       const auditEventIds = await appendDomainChangesAfterCommit(capture, "scim_connection.reconciled", async () => [
         capture ? scimReconciledEvent(capture, await getOrganizationScimConnection(payload.organization.id), result) : null,

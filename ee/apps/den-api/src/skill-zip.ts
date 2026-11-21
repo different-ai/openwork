@@ -8,22 +8,9 @@ import {
   type SkillFileBody,
 } from "./skill-files.js"
 
-/**
- * A skill as a ZIP archive, in the layout Anthropic's Agent Skills use: one
- * top-level folder named after the skill with SKILL.md inside, or SKILL.md at
- * the root. Reading never touches disk and checks every declared size before
- * inflating anything, so a crafted archive cannot expand past the skill
- * limits. Writing produces the folder layout, so an exported skill uploads to
- * Claude as it is.
- *
- * Kept free of database and environment imports so it can be unit tested.
- */
-
 const MiB = 1024 * 1024
-/** The archive itself: room for a full skill even when nothing compresses. */
 export const SKILL_ZIP_MAX_BYTES = 40 * MiB
 const SKILL_MARKDOWN_MAX_BYTES = 1 * MiB
-/** Entries looked at, junk included (folders, __MACOSX). */
 const ZIP_MAX_ENTRIES = SKILL_FILES_MAX_COUNT * 4
 
 export class SkillZipError extends Error {}
@@ -34,7 +21,6 @@ const CRC_TABLE = Array.from({ length: 256 }, (_, index) => {
   return value >>> 0
 })
 
-/** The CRC-32 a ZIP entry records for its uncompressed bytes. */
 function crc32(bytes: Uint8Array): number {
   let crc = 0xffffffff
   for (const byte of bytes) crc = CRC_TABLE[(crc ^ byte) & 0xff]! ^ (crc >>> 8)
@@ -80,7 +66,6 @@ function listEntries(bytes: Buffer): CentralEntry[] {
       size: bytes.readUInt32LE(offset + 24),
       externalAttributes: bytes.readUInt32LE(offset + 38),
       localOffset: bytes.readUInt32LE(offset + 42),
-      // Windows tools sometimes write backslashes despite the format.
       name: bytes.toString("utf8", offset + 46, offset + 46 + nameLength).replaceAll("\\", "/"),
     })
     offset += 46 + nameLength + extraLength + commentLength
@@ -99,7 +84,6 @@ function readEntry(bytes: Buffer, entry: CentralEntry): Uint8Array {
   if (entry.method === 0) contents = new Uint8Array(data)
   else if (entry.method === 8) {
     try {
-      // Never more than the size the archive declared, which was checked against the limits.
       contents = new Uint8Array(inflateRawSync(new Uint8Array(data), { maxOutputLength: Math.max(1, entry.size) }))
     } catch {
       throw new SkillZipError(`${entry.name} in this ZIP archive is damaged.`)
@@ -122,11 +106,6 @@ function isSkillMarkdown(path: string): boolean {
   return path.slice(path.lastIndexOf("/") + 1).toLowerCase() === "skill.md"
 }
 
-/**
- * The skill inside an archive: its SKILL.md text and supporting files, with
- * paths relative to the skill folder. Throws SkillZipError with a sentence a
- * person can act on.
- */
 export function readSkillZip(bytes: Buffer): { skillMarkdown: string; files: SkillFileBody[]; folder: string | null } {
   if (bytes.length > SKILL_ZIP_MAX_BYTES) throw new SkillZipError(`A skill archive can be at most ${SKILL_ZIP_MAX_BYTES / MiB} MB.`)
   const entries = listEntries(bytes).filter((entry) => !isJunk(entry.name))
@@ -146,7 +125,6 @@ export function readSkillZip(bytes: Buffer): { skillMarkdown: string; files: Ski
   const others = entries.filter((entry) => entry !== skillEntry)
   if (others.length > SKILL_FILES_MAX_COUNT) throw new SkillZipError(`A skill can carry at most ${SKILL_FILES_MAX_COUNT} supporting files.`)
 
-  // Every size is checked as declared before anything is inflated.
   if (skillEntry.size > SKILL_MARKDOWN_MAX_BYTES) throw new SkillZipError("SKILL.md can be at most 1 MB.")
   let total = 0
   for (const entry of others) {
@@ -162,13 +140,10 @@ export function readSkillZip(bytes: Buffer): { skillMarkdown: string; files: Ski
   return { skillMarkdown, files: checked.files, folder }
 }
 
-// Fixed timestamp (1980-01-01, the earliest ZIP date) so the same skill always
-// produces the same archive.
 const DOS_TIME = 0
 const DOS_DATE = (0 << 9) | (1 << 5) | 1
 const UTF8_NAMES = 1 << 11
 
-/** A skill as a ZIP archive: `<folder>/SKILL.md` and each supporting file under `<folder>/`. */
 export function writeSkillZip(input: { folder: string; skillMarkdown: string; files: readonly SkillFileBody[] }): Buffer {
   return buildZip([
     { name: `${input.folder}/SKILL.md`, bytes: new Uint8Array(Buffer.from(input.skillMarkdown, "utf8")) },
@@ -176,12 +151,10 @@ export function writeSkillZip(input: { folder: string; skillMarkdown: string; fi
   ])
 }
 
-/** The same bytes as a plain Uint8Array (this @types/node does not treat Buffer as one). */
 function view(buffer: Buffer): Uint8Array {
   return new Uint8Array(buffer.buffer, buffer.byteOffset, buffer.byteLength)
 }
 
-/** A ZIP archive of these entries, deflated where that makes them smaller. `mode` is the Unix file mode (regular 0644 by default). */
 export function buildZip(entries: ReadonlyArray<{ name: string; bytes: Uint8Array; mode?: number }>): Buffer {
   const locals: Uint8Array[] = []
   const centrals: Uint8Array[] = []
@@ -208,7 +181,7 @@ export function buildZip(entries: ReadonlyArray<{ name: string; bytes: Uint8Arra
 
     const central = Buffer.alloc(46)
     central.writeUInt32LE(0x02014b50, 0)
-    central.writeUInt16LE((3 << 8) | 20, 4) // made by Unix, so the file mode below applies
+    central.writeUInt16LE((3 << 8) | 20, 4)
     central.writeUInt16LE(20, 6)
     central.writeUInt16LE(UTF8_NAMES, 8)
     central.writeUInt16LE(stored ? 0 : 8, 10)

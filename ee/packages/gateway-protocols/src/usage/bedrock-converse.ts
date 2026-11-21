@@ -1,9 +1,3 @@
-// Usage parser for Amazon Bedrock Converse (`/model/{id}/converse[-stream]`).
-// JSON: `usage.{inputTokens,outputTokens,totalTokens,cacheRead/WriteInputTokens}`.
-// Stream: AWS event-stream binary frames (not SSE); usage arrives on the
-// `metadata` event. Frame layout (big-endian):
-//   total length (4) | headers length (4) | prelude CRC (4) | headers | payload | message CRC (4)
-// Headers: name length (1) | name | value type (1) | value. CRCs are not verified.
 import { captureResponseIdentity, defaultMaxBufferLength, emptyUsage, hasUsage, isRecord, readNumber } from "@openwork-ee/gateway-protocols/usage/shared"
 import type { ParsedUsage, UsageParser } from "@openwork-ee/gateway-protocols/usage/shared"
 
@@ -38,7 +32,6 @@ export function parseBedrockConverseJsonUsage(body: unknown): ParsedUsage {
 
 export type EventStreamFrame = { headers: Map<string, string>; payload: Uint8Array }
 
-// Value lengths by header type; string/bytes (6, 7) carry a 2-byte length prefix.
 function headerValueLength(type: number, view: DataView, offset: number) {
   switch (type) {
     case 0:
@@ -83,8 +76,6 @@ function parseHeaders(bytes: Uint8Array) {
   return headers
 }
 
-// Pulls complete frames off the front of `buffer`; returns the leftover bytes
-// or null when the stream is malformed.
 export function readEventStreamFrames(buffer: Uint8Array, onFrame: (frame: EventStreamFrame) => void): Uint8Array | null {
   let rest = buffer
   while (rest.byteLength >= preludeLength) {

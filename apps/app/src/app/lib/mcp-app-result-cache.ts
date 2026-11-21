@@ -4,16 +4,9 @@ import type { OpenworkMcpAppResource } from "./openwork-server";
 import { createDashboardTileCacheStore, MCP_APP_RESULTS_STORAGE_KEY } from "./dashboard-cache-storage";
 import { mcpAppPresentationScope } from "./mcp-app-presentation-cache";
 
-/**
- * An App asks for "read" (this person's last result for a tool and its
- * arguments, answered from storage without calling anything) or "store"
- * (call the tool and keep its result if the server marked it read-only).
- */
 export const MCP_APP_CACHE_REQUEST_META = "openwork/cache";
 export const MCP_APP_CACHED_RESULT_META = "openwork/cached";
 export const MCP_APP_CACHED_AT_META = "openwork/cachedAt";
-// Set by the OpenWork server, never by the App or provider: the tool's
-// annotations, and a hash of the verified server the result came from.
 const READ_ONLY_RESULT_META = "openwork/readOnly";
 const PROVIDER_IDENTITY_META = "openwork/providerIdentity";
 
@@ -46,7 +39,6 @@ function parse(value: unknown, now: number): Map<string, Entry> {
   return entries;
 }
 
-// Oldest entries go first once the budget is exceeded; reads move an entry to the end.
 function serialize(entries: Map<string, Entry>, now: number): string | null {
   for (const [key, entry] of entries) if (now - entry.cachedAt > TTL_MS) entries.delete(key);
   let raw = JSON.stringify({ v: 1, entries: [...entries] });
@@ -61,7 +53,6 @@ function serialize(entries: Map<string, Entry>, now: number): string | null {
 
 const store = createDashboardTileCacheStore(parse, serialize);
 
-/** Arguments with their keys sorted, so the same call has one key however the App spells it. */
 export function canonicalMcpAppArguments(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonicalMcpAppArguments);
   if (!isRecord(value)) return value;
@@ -73,10 +64,6 @@ async function digest(value: string): Promise<string> {
   return Array.from(new Uint8Array(bytes), byte => byte.toString(16).padStart(2, "0")).join("");
 }
 
-/**
- * One entry per signed-in account and deployment, workspace, App revision,
- * tool and arguments. Nothing is kept while signed out, and the key is a hash.
- */
 async function entryKey(origin: McpAppOrigin, app: OpenworkMcpAppResource, name: string, args: Record<string, unknown>) {
   const scope = await mcpAppPresentationScope(origin);
   if (!scope) return null;
@@ -84,10 +71,6 @@ async function entryKey(origin: McpAppOrigin, app: OpenworkMcpAppResource, name:
   return { key, current: scope.current };
 }
 
-/**
- * This person's last read-only result for the call and the server it came
- * from, or null. Calls no tool; the caller must match the server first.
- */
 export async function cachedMcpAppResult(
   origin: McpAppOrigin, app: OpenworkMcpAppResource, name: string, args: Record<string, unknown>,
 ): Promise<{ providerIdentity: string; result: CallToolResult } | null> {
@@ -110,13 +93,11 @@ export async function cachedMcpAppResult(
   }
 }
 
-/** The verified server a result came from, when it may be kept: it succeeded and the OpenWork server marked its tool read-only. */
 export function keptMcpAppResultIdentity(result: CallToolResult): string | null {
   const identity = result._meta?.[PROVIDER_IDENTITY_META];
   return !result.isError && result._meta?.[READ_ONLY_RESULT_META] === true && typeof identity === "string" ? identity : null;
 }
 
-/** Keeps a successful result only when the OpenWork server marked its tool read-only. */
 export async function rememberMcpAppResult(
   origin: McpAppOrigin, app: OpenworkMcpAppResource, name: string, args: Record<string, unknown>, result: CallToolResult,
 ): Promise<void> {
@@ -127,7 +108,6 @@ export async function rememberMcpAppResult(
     if (!entries) return;
     const providerIdentity = keptMcpAppResultIdentity(result);
     if (!providerIdentity) {
-      // A failed or non-read-only answer must not leave an older value behind.
       if (entries.delete(entry.key)) store.schedule(STORAGE_KEY);
       return;
     }
@@ -142,11 +122,9 @@ export async function rememberMcpAppResult(
     entries.set(entry.key, kept);
     store.schedule(STORAGE_KEY);
   } catch {
-    // Storage is a convenience; the call's result is unaffected.
   }
 }
 
-/** Drops every kept result, for when this person may no longer see them. */
 export function clearMcpAppResults(): void {
   try {
     const entries = store.read(STORAGE_KEY);
@@ -154,11 +132,9 @@ export function clearMcpAppResults(): void {
     entries.clear();
     store.schedule(STORAGE_KEY);
   } catch {
-    // Storage is a convenience.
   }
 }
 
-/** Drops a kept result, e.g. when its call is no longer allowed. */
 export async function forgetMcpAppResult(
   origin: McpAppOrigin, app: OpenworkMcpAppResource, name: string, args: Record<string, unknown>,
 ): Promise<void> {
@@ -167,6 +143,5 @@ export async function forgetMcpAppResult(
     const entries = entry ? store.read(STORAGE_KEY) : null;
     if (entry && entries?.delete(entry.key)) store.schedule(STORAGE_KEY);
   } catch {
-    // Storage is a convenience.
   }
 }

@@ -4,7 +4,6 @@ import { DenBadge, type DenBadgeTone } from "../../_components/ui/badge";
 import { DenButton } from "../../_components/ui/button";
 import { DenSkeleton } from "../../_components/ui/skeleton";
 
-/** Normal states stay neutral; colour marks what needs attention (DESIGN.md V2, C5). */
 const STATUS_BADGES: Record<BillingInvoiceStatus, { label: string; tone: DenBadgeTone }> = {
   paid: { label: "Paid", tone: "neutral" },
   void: { label: "Void", tone: "neutral" },
@@ -17,18 +16,11 @@ export type BillingInvoiceRowProps = {
   number: string | null;
   amount: string;
   status: BillingInvoiceStatus;
-  /** Stripe's hosted invoice page (view, pay, download). Omitted in the intro example. */
   href?: string | null;
-  /** The intro example's gentle highlight. */
   active?: boolean;
-  /** `example` drops the list's 24px inset to sit inside the intro example's frame. */
   inset?: "list" | "example";
 };
 
-/**
- * One invoice: date and number left, amount and status right, one action (S2).
- * Stripe's page holds the PDF and receipt downloads, so a single link covers them.
- */
 export function BillingInvoiceRow({ date, number, amount, status, href, active = false, inset = "list" }: BillingInvoiceRowProps) {
   const badge = STATUS_BADGES[status];
   const actionLabel = status === "open" ? "Pay" : "View";
@@ -66,7 +58,6 @@ export function BillingInvoiceRow({ date, number, amount, status, href, active =
   );
 }
 
-/** Loading keeps the list's layout (DESIGN.md States). */
 export function BillingInvoiceRowSkeleton() {
   return (
     <li className="flex min-h-12 items-center gap-4 px-6 py-2.5" aria-hidden="true">

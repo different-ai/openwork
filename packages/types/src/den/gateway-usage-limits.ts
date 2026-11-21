@@ -49,7 +49,6 @@ export const GATEWAY_DEFAULT_USAGE_SCOPE = ""
 export const gatewayUsagePolicyWriteSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
-    /** Omit or null for a default limit; an organization Gateway provider id for a provider limit. */
     providerId: z.string().min(1).max(64).nullable().optional(),
     hardLimit: z.boolean().default(true),
     allowRequestReset: z.boolean().default(true),
@@ -89,12 +88,7 @@ export type GatewayUsageLimitPolicy = {
   hardLimit: boolean
   allowRequestReset: boolean
   revision: number
-  /** Null for a default limit; the organization Gateway provider this limit applies to otherwise. */
   providerId?: string | null
-  /**
-   * Null for a default limit. "removed" when providerId names a provider that no
-   * longer exists in the organization: the limit then applies to no requests.
-   */
   providerStatus?: GatewayUsagePolicyProviderStatus | null
   limits: { timeframe: GatewayUsageTimeframe; costLimitMicroUsd: number }[]
   assignments: { id: string; memberId: string | null; teamId: string | null; organization: boolean }[]
@@ -167,7 +161,6 @@ export type GatewayUsageBucket = {
   allowRequestReset: boolean
   canRequestReset: boolean
   resetRequestStatus: GatewayUsageResetStatus | null
-  /** Null or absent for default buckets; the provider for provider-limit buckets. */
   providerId?: string | null
 }
 export type GatewayUsageState = "unlimited" | "within_limit" | "over_limit" | "blocked"
@@ -202,9 +195,7 @@ export type GatewayUsageStatus = {
     lastSettlementRequestId?: string | null
     settlementReady?: boolean
   }
-  /** Default limits: govern every provider the member has no provider limit for. */
   buckets: GatewayUsageBucket[]
-  /** Provider limits, present only when per-provider limits are on and assigned to the member. */
   providers?: GatewayProviderUsage[]
 }
 export type GatewayUsageResetRequest = {

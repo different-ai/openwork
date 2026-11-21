@@ -92,7 +92,6 @@ export function htmlTitle(html: string): string | null {
 
 /** The name a card and the panel show: an app's <title> when known, otherwise the file name without its extension. */
 export function artifactTitle(file: Pick<WorkbotAttachment, "name"> & { mediaType?: string }, html?: string | null): string {
-  // An OpenWork App's name is its title as written: "Budget v2.0" has no extension to drop.
   if (file.mediaType === OPENWORK_APP_MEDIA_TYPE) return file.name;
   const fromHtml = html ? htmlTitle(html) : null;
   if (fromHtml) return fromHtml;
@@ -112,12 +111,9 @@ export const THUMBNAIL_CSP = "default-src 'none'; style-src 'unsafe-inline'; img
  */
 export function staticAppHtml(html: string, parser: { parseFromString(source: string, type: "text/html"): Document } | null = typeof DOMParser === "undefined" ? null : new DOMParser()): string | null {
   if (!parser) return null;
-  // A parsed document is inert (no scripts, no loads); renaming every address-bearing attribute first keeps it so
-  // even if a parser ever fetched. Inline `data:` values are put back below.
   const renamed = html.replace(/([\s/"'])(src|srcset|href|xlink:href|poster|background|data|action|formaction|ping)(\s*=)/gi, "$1data-wb-inert-$2$3");
   const doc = parser.parseFromString(renamed, "text/html");
   for (const node of doc.querySelectorAll("script, noscript, template, iframe, frame, frameset, object, embed, applet, link, base, meta, portal, form")) node.remove();
-  // Styles keep their look but load nothing: imports and non-inline url()s go (the policy blocks them too).
   const inertCss = (css: string) => css.replace(/@import[^;]*;?/gi, "").replace(/url\(\s*(?!['"]?\s*data:)[^)]*\)/gi, "none");
   for (const style of doc.querySelectorAll("style")) style.textContent = inertCss(style.textContent ?? "");
   for (const element of doc.querySelectorAll("[style]")) element.setAttribute("style", inertCss(element.getAttribute("style") ?? ""));
@@ -146,7 +142,6 @@ export function staticAppHtml(html: string, parser: { parseFromString(source: st
   return `<!doctype html>${doc.documentElement.outerHTML}`;
 }
 
-/** The only types a file opens under in its own tab, by extension: documents and media that can't run as a page. */
 const TAB_TYPES: Readonly<Record<string, string>> = {
   pdf: "application/pdf", png: "image/png", jpg: "image/jpeg", jpeg: "image/jpeg", gif: "image/gif", webp: "image/webp",
   mp4: "video/mp4", m4v: "video/mp4", webm: "video/webm", mov: "video/quicktime",

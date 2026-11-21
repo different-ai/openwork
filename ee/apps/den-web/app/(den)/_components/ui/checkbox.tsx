@@ -7,7 +7,6 @@ export type DenCheckboxProps = Omit<Checkbox.Root.Props, "className"> & {
   className?: string;
 };
 
-/** Shared checkbox with Base UI keyboard, label and native form semantics. */
 export function DenCheckbox({ className, ...props }: DenCheckboxProps) {
   return (
     <Checkbox.Root

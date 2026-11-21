@@ -207,7 +207,6 @@ function tlsOptions(url: URL, rejectUnauthorized: boolean, version?: "TLSv1.2" |
     options.minVersion = version;
     options.maxVersion = version;
   }
-  // SNI forbids IP literals; Node throws ERR_INVALID_ARG_VALUE if servername is an IP address.
   if (isIP(host) === 0) options.servername = host;
   return options;
 }

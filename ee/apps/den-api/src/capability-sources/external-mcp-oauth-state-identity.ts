@@ -55,11 +55,6 @@ function connectionIdentityFields(source: ExternalMcpOAuthStateIdentitySource): 
   return legacyConnectionIdentityFields(source)
 }
 
-/**
- * Binds signed OAuth state to connection identity fields without embedding
- * them in the state. The deployment-stable state-signing secret makes URL
- * query values opaque even when they have low entropy.
- */
 export function createExternalMcpIdentityBinding(
   source: ExternalMcpOAuthStateIdentitySource,
   secret: string,
@@ -70,16 +65,10 @@ export function createExternalMcpIdentityBinding(
     .digest("base64url")
 }
 
-/**
- * Accepts the SHA-256 and reversible bindings emitted before keyed binding.
- * Call only after the containing OAuth state token's signature is verified.
- */
 export function matchesLegacyExternalMcpOAuthStateIdentityBinding(
   source: ExternalMcpOAuthStateIdentitySource,
   signedStateBinding: string,
 ): boolean {
-  // Manual endpoint tuples did not exist in either legacy binding format.
-  // They must use the keyed v2 binding, never the unkeyed compatibility hash.
   if (source.oauthConfiguration?.manualOAuthEndpoints) return false
   const serializedIdentity = JSON.stringify(legacyConnectionIdentityFields({
     id: source.id,

@@ -2,13 +2,6 @@ import { z } from "zod";
 
 import type { HeadlessThreadAnswer, HeadlessThreadPending } from "./types.js";
 
-/**
- * Pending questions and permissions, read from the engine's own request lists
- * and mapped to plain text the person decides on: v1 lists questions and
- * permissions per workspace, v2 per session, with questions as forms answered
- * by field key, each value in the field's own type. Bounds match the remote-session wire.
- */
-
 const QUESTIONS_MAX = 10;
 const OPTIONS_MAX = 50;
 /** Open requests listed at once; the rest follow as these are answered. */
@@ -26,7 +19,6 @@ const v1QuestionSchema = z.object({
     custom: z.boolean().optional(),
   }).passthrough()).min(1),
 }).passthrough();
-// Only what every form has is required: an unexpected extra never hides a form the thread waits on.
 const v2FormSchema = z.object({
   id: z.string().min(1),
   sessionID: z.string().optional(),
@@ -49,7 +41,6 @@ const v2WhenSchema = z.array(z.object({ key: z.string(), op: z.enum(["eq", "neq"
 const permissionSchema = z.object({
   id: z.string().min(1),
   sessionID: z.string().optional(),
-  // v1 names the tool `permission` with `patterns`; v2 `action` with `resources`.
   permission: z.string().optional(),
   patterns: z.array(z.string()).optional(),
   action: z.string().optional(),
@@ -62,20 +53,16 @@ export type FormValue = string | number | boolean | string[];
 /** A pending v2 form: how each answer maps back to its field, in the order the questions are asked. */
 export type PendingFormField = {
   key: string;
-  /** How the person's words become the field's value. */
   type: "text" | "boolean" | "number" | "integer";
   multiple: boolean;
   values: Map<string, string>;
   minimum?: number;
   maximum?: number;
-  /** The field applies only while every condition holds for the answers before it. */
   when: Array<{ key: string; equal: boolean; value: string | number | boolean }>;
 };
 export type PendingForm = {
   fields: PendingFormField[];
-  /** Fields that are not asked and take their default. */
   preset: Record<string, FormValue>;
-  /** False for a form that has a step no remote surface can take, such as opening a link. */
   answerable: boolean;
 };
 export type PendingRead = PendingForm & { pending: HeadlessThreadPending | null };
@@ -231,7 +218,6 @@ export function answerRefusal(pending: Extract<HeadlessThreadPending, { kind: "q
   return null;
 }
 
-/** The engine's own rule: a field with conditions applies only while each holds for the answers before it. */
 function applies(field: PendingFormField, values: Record<string, FormValue>): boolean {
   return field.when.every((condition) => {
     const value = values[condition.key];

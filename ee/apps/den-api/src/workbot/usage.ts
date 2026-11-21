@@ -48,14 +48,8 @@ const foldedSums = {
   cost_micro_usd: total("cost_micro_usd"),
 }
 
-// The UTC day as days since the epoch, matching the JS epoch under the UTC session drizzle's timestamps assume.
 const rawDay = sql<number>`floor(unix_timestamp(${raw.started_at}) / 86400)`.mapWith(Number)
 
-/**
- * What Workbot spent on models over the last 30 UTC days (packages/types/src/den/workbot-usage.ts): the days the
- * gateway's rollup already folded (workbot_usage_day) plus the tagged request logs it has not consumed yet. The
- * rollup deletes a log in the transaction that folds it, so a request is in exactly one of the two.
- */
 export async function readWorkbotUsage(organizationId: OrganizationId, now = new Date()): Promise<WorkbotUsageResponse> {
   const start = workbotUsageWindowStart(now, WORKBOT_USAGE_DAYS)
   const folded = and(eq(day.organization_id, organizationId), gte(day.day_start, start))
@@ -74,7 +68,6 @@ export async function readWorkbotUsage(organizationId: OrganizationId, now = new
 
   const slices: WorkbotUsageSlice[] = [
     ...foldedSlices.map((row) => ({ day: workbotUsageDay(row.day), surface: workbotUsageSurface(row.surface), model: row.model, ...sums(row) })),
-    // The same rule the fold applies: only an accepted conversation id counts, and the surface comes from it.
     ...rawSlices.flatMap((row) => parseHeadlessSessionHeader(row.session) ? [{
       day: workbotUsageDay(new Date(row.day * WORKBOT_USAGE_DAY_MS)),
       surface: workbotUsageSurfaceOfSession(row.session),
@@ -89,7 +82,6 @@ export async function readWorkbotUsage(organizationId: OrganizationId, now = new
       .from(MemberTable).leftJoin(AuthUserTable, eq(MemberTable.userId, AuthUserTable.id))
       .where(and(eq(MemberTable.organizationId, organizationId), inArray(MemberTable.id, listed as (typeof MemberTable.$inferSelect.id)[])))
     : []
-  // A member who left keeps their spend in the totals but is no longer named.
   const names = new Map(people.filter((person) => !person.removedAt).map((person) => [person.id as string, { name: person.name, email: person.email }]))
 
   const firstRaw = slices.reduce<string | null>((earliest, slice) => earliest === null || slice.day < earliest ? slice.day : earliest, null)

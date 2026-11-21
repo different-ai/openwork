@@ -11,11 +11,9 @@ export const desktopFreeAccessStatusSchema = z.object({
   modelID: z.string(),
   allowance: z.object({ resetsAt: z.string(), limitUsd: z.number().finite().nonnegative(), usedUsd: z.number().finite().nonnegative(), remainingUsd: z.number().finite().nonnegative(), unlimited: z.boolean().optional() }).nullable(),
   defaultPinned: z.boolean().optional(),
-  // The desktop server has already verified the version floor for guests; signed-in members have none.
 }).refine((status) => status.state !== "ready" || Boolean(status.allowance), "Ready Auto access requires a verified allowance");
 export type DesktopFreeAccessStatus = z.infer<typeof desktopFreeAccessStatusSchema>;
 export const autoAccessWallSchema = z.object({ state: z.enum(["limit", "update", "unavailable", "sync", "not_offered"]), resetsAt: z.string().optional(), minimumVersion: z.string().optional(), code: z.string().optional(),
-  /** The gateway's own words, shown only under Technical details. */
   message: z.string().max(2000).optional() });
 export type AutoAccessWall = z.infer<typeof autoAccessWallSchema>;
 export function messageAutoAccessWall(metadata: unknown) {
@@ -41,24 +39,15 @@ export function autoAccessWall(status: DesktopFreeAccessStatus): AutoAccessWall 
     resetsAt: status.allowance?.resetsAt, minimumVersion: status.minimumVersion ?? undefined, code: status.code ?? undefined };
 }
 
-/**
- * Free Auto is switched off for the whole service, not merely down. Until an operator turns it on, the app shows no
- * trace of Auto: no picker row, no Settings row, no first-use caption.
- */
 export function freeAutoSwitchedOff(status: { code?: string | null } | null | undefined): boolean {
   return status?.code === "free_disabled" || status?.code === "inference_disabled";
 }
 
 const NOT_OFFERED_CODES = ["free_not_enrolled", "free_not_offered", "admin_disabled", "not_eligible", "member_free_policy_denied", "managed_models_disabled_for_dpa", "desktop_build_unverified"];
-/** Auto is running, but not for this account or organization. The row stays visible and says why. */
 export function autoNotOffered(status: { code?: string | null } | null | undefined): boolean {
   return typeof status?.code === "string" && NOT_OFFERED_CODES.includes(status.code);
 }
 const QUIET_CODES = ["desktop_build_unverified", "desktop_update_required"];
-/**
- * Auto is not served to this client, but there is nothing the person can do about it. The picker, footer and
- * first-use caption stay as if Auto were fine; only a send says so, in the chat.
- */
 export function autoQuietlyUnavailable(status: { code?: string | null } | null | undefined): boolean {
   return typeof status?.code === "string" && QUIET_CODES.includes(status.code);
 }
@@ -71,7 +60,6 @@ function notOfferedCopy(code?: string | null) {
   }
 }
 
-/** New tasks cannot inherit a switched-off starter; saved conversation identities stay intact. */
 export function modelForNewTask(model: ModelRef | null, status: { code?: string | null } | null | undefined, pending = false): ModelRef | null {
   return model && isAutoModel(model) && (pending || freeAutoSwitchedOff(status) || autoNotOffered(status)) ? null : model;
 }
@@ -92,16 +80,11 @@ export function autoAccessWallFromError(value: unknown, model?: ModelRef | null,
     const minimumVersion = Reflect.get(value, "minimumVersion");
     return typeof minimumVersion === "string" && minimumVersion.trim() ? { state: "update", minimumVersion, ...known } : { state: "update", ...known };
   }
-  // `anonymous_new_identity_capped` came from gateways that capped new machines per IP; it reads as the free limit.
   if (["anonymous_limit_exceeded", "free_allowance_exhausted", "anonymous_new_identity_capped"].includes(code)) return { state: "limit", ...known };
   if (["anonymous_capacity_exceeded", "anonymous_unavailable", "free_auto_busy"].includes(code)) return { state: "unavailable", ...known };
-  // These codes also come from other providers, so they are Auto's only when the send is known to be on Auto.
   if (model && isAutoModel(model)) {
-    // Our capacity or an upstream hiccup, including a member key swapped mid-send when an organization's trial or
-    // subscription ends (the app fetches a new one on its own): Auto is busy, try again in a bit.
     if (["free_member_unavailable", "free_inference_upstream_error", "free_inference_upstream_unavailable", "request_log_unavailable",
       "managed_models_policy_unavailable", "invalid_api_key"].includes(code)) return { state: "unavailable", ...known };
-    // Turned off for this person after the send started: reads as the free limit, like any other switch-off.
     if (["inference_disabled", "free_principal_rejected", "free_disabled"].includes(code)) return { state: "not_offered", ...known };
   }
   if (code === "model_sync_pending") return { state: "sync", ...known };
@@ -127,7 +110,6 @@ export async function preflightAutoSubmission(input: {
 }
 
 export type AutoPickerState = "ready" | "exhausted" | "update_required" | "unavailable" | "sync" | "not_offered";
-/** "v0.18.51 or newer" when the gateway told us the lowest version it accepts. */
 export function autoUpdateTarget(minimumVersion?: string | null) {
   const version = minimumVersion?.trim().replace(/^v/, "");
   return version ? `OpenWork v${version} or newer` : "OpenWork";
@@ -148,7 +130,6 @@ export function autoPickerCopy(state: AutoPickerState, signedIn: boolean, minimu
   }
 }
 
-/** "in 3 hours", "in 20 minutes", "on Monday": when a free window ends, from the gateway's resetsAt. */
 export function autoResetPhrase(resetsAt: string | undefined, now = Date.now()): string | null {
   const at = resetsAt ? Date.parse(resetsAt) : NaN;
   if (!Number.isFinite(at) || at <= now) return null;
@@ -160,7 +141,6 @@ export function autoResetPhrase(resetsAt: string | undefined, now = Date.now()):
 }
 
 const NEXT_STEP = "Pick another model to keep going.";
-/** Codes with their own words; anything else that keeps Auto from this person reads as the free limit. */
 function limitCopy(wall: AutoAccessWall, signedIn: boolean, now: number) {
   const back = wall.state === "limit" ? autoResetPhrase(wall.resetsAt, now) : null;
   const more = signedIn ? "" : " Sign in for more free use, or pick another model.";
@@ -170,10 +150,6 @@ function limitCopy(wall: AutoAccessWall, signedIn: boolean, now: number) {
   };
 }
 
-/**
- * What the chat says when Auto refuses a send. Calm, short, one next step; never "not processed" or anything about
- * builds, versions, budgets or configuration. The gateway's code and message stay under Technical details.
- */
 export function autoWallCopy(wall: AutoAccessWall, signedIn: boolean, now = Date.now()) {
   const technicalDetails = [wall.code ? `Code: ${wall.code}` : null, wall.message ? `Message: ${wall.message}` : null,
     wall.resetsAt ? `Resets: ${wall.resetsAt}` : null, wall.minimumVersion ? `Minimum version: ${wall.minimumVersion}` : null]

@@ -175,7 +175,6 @@ import { isKeyboardFocus } from "./session-title-marquee";
 import { getSessionOrder } from "./session-order";
 import { SESSION_DRAG_TYPE, SessionDragScope, SessionReorderList, useDraggedSession, useSessionReorderTarget, type SessionReorderMove } from "./session-reorder";
 
-/** Paper Desktop: unread #2FBE54, needs-action #E8933A (14px artboard → ~8px app). */
 const OUTCOME_DOT_UNREAD = "#2FBE54";
 const OUTCOME_DOT_NEEDS_ACTION = "#E8933A";
 
@@ -199,14 +198,6 @@ export function SidebarReorderScope({ children }: { children: React.ReactNode })
   );
 }
 
-/**
- * Rendered inside the scrolling sidebar list. Motion projects every row at its
- * previous position for at least one frame before a layout animation starts,
- * even with a zero duration, so rows below an expanding workspace or group
- * briefly overlap the newly revealed ones. Blocking the list's projection tree
- * skips those animations entirely, the same way Motion blocks the row being
- * dragged; a reorder gesture lifts the block so siblings still glide aside.
- */
 function SidebarLayoutAnimationGate() {
   const reorder = React.useContext(SidebarReorderContext);
   const { visualElement } = React.useContext(MotionContext);
@@ -226,7 +217,6 @@ function SidebarReorderItem(props: React.ComponentProps<typeof Reorder.Item>) {
   const ownsGesture = React.useRef(false);
   if (!reorder) throw new Error("SidebarReorderItem requires SidebarReorderScope");
 
-  // Removing a row mid-drag must not leave expansion animations enabled.
   React.useEffect(() => () => {
     if (ownsGesture.current) reorder.setIsReordering(false);
   }, [reorder.setIsReordering]);
@@ -234,9 +224,6 @@ function SidebarReorderItem(props: React.ComponentProps<typeof Reorder.Item>) {
   return (
     <Reorder.Item
       {...props}
-      // Reorder's drag prop measures layout on every update regardless of
-      // layoutDependency; SidebarLayoutAnimationGate decides whether the
-      // measured shift animates.
       layout="position"
       dragElastic={0}
       onDragStart={() => {
@@ -299,7 +286,6 @@ interface SessionStatusIndicatorProps {
   isActiveWork: boolean;
   isStarting?: boolean;
   isUnread: boolean;
-  /** Names the delegated child asking, e.g. "Needs permission: Audit four open PRs". */
   attentionLabel?: string;
   attentionSource?: "child" | "descendant";
 }
@@ -325,7 +311,6 @@ function ShowMoreSessionsButton({
   );
 }
 
-/** Activity and outcomes share the fixed glyph slot before the session title. */
 function SessionStatusIndicator({ status, isActiveWork, isStarting, isUnread, attentionLabel, attentionSource }: SessionStatusIndicatorProps) {
   return (
     <SidebarGlyphSlot>
@@ -340,7 +325,6 @@ function SessionStatusIndicator({ status, isActiveWork, isStarting, isUnread, at
   );
 }
 
-/** Orange = needs you, green = unread result, none = read/idle. */
 function SessionOutcomeIndicator({ status, isUnread, attentionLabel, attentionSource }: Omit<SessionStatusIndicatorProps, "isActiveWork">) {
   if (isNeedsAttentionSessionStatus(status)) {
     const title = attentionLabel
@@ -373,9 +357,6 @@ function SessionOutcomeIndicator({ status, isUnread, attentionLabel, attentionSo
 }
 
 function useCanManageSession() {
-  // Pin and group actions come from the Zustand store (always available).
-  // Rename/delete/archive depend on wired callbacks but the menu should
-  // always render so pin/group remain accessible.
   return true;
 }
 
@@ -412,8 +393,6 @@ function useSessionMenuActions({
   const assignedGroupId = assignments[sessionId] ?? null;
   const selectedActions = useSelectedSessionsMenuActions({ workspaceId, sessionId }, groups);
 
-  // Sidebar rows are the vertical tabs: any session can be opened beside the
-  // primary session, including one owned by another workspace.
   const primary = useWorkbenchStore((state) => state.primary);
   const secondary = useWorkbenchStore((state) => state.secondary);
   const sessionRef = { workspaceId, sessionId };
@@ -550,7 +529,6 @@ function SessionSelectionBar() {
   );
 }
 
-/** One quiet More menu in a fixed trailing slot: visible on hover, keyboard focus, touch, or while open. */
 function SessionRowMenu({ className, sessionId, workspaceId, sessionTitle, workspaceTitle, isPinned, isArchived }: SessionRowMenuProps) {
   const actions = useSessionMenuActions({ sessionId, workspaceId, sessionTitle, workspaceTitle, isPinned, isArchived });
   if (!useCanManageSession()) return null;
@@ -677,7 +655,6 @@ export type AppSidebarProps = {
   sessionAttentionLabelById?: Record<string, string>;
   sessionAttentionSourceById?: Record<string, "child" | "descendant">;
   sessionAttentionKindById?: Record<string, SessionWaitingKind>;
-  /** List side chats and sessions the agent started under the session they came from. */
   sessionTreeEnabled?: boolean;
   sessionMultiSelectEnabled?: boolean;
   connectingWorkspaceId: string | null;
@@ -704,9 +681,7 @@ export type AppSidebarProps = {
   dashboardActive?: boolean;
   dashboardLabel?: string;
   onOpenDashboard?: () => void;
-  /** Opens the cross-session message search dialog (Cmd/Ctrl+Shift+F). */
   onOpenSessionSearch?: () => void;
-  /** Back/forward across recently viewed conversations, rendered at the top of the sidebar. */
   conversationHistory?: ConversationHistoryControls;
   onReorderWorkspaces?: (workspaceIds: string[]) => void;
   onStartResize?: React.PointerEventHandler<HTMLButtonElement>;
@@ -714,7 +689,6 @@ export type AppSidebarProps = {
   onOpenExtensions: () => void;
   mobileChatActions?: React.ReactNode;
   extensionsActive?: boolean;
-  /** Live app status, shown inside the footer account menu. */
   status: Omit<AccountStatusMenuProps, "onOpenAccountSettings">;
 };
 
@@ -724,9 +698,6 @@ function isSessionActivityStatus(status: string | undefined): status is SessionA
 
 export function AppSidebar(props: AppSidebarProps) {
   const { open, isMobile } = useSidebar();
-  // Lives in the UI store (not component state) so the open/closed state of
-  // each workspace group survives this sidebar unmounting, e.g. while the
-  // user is in Settings.
   const expandedWorkspaceIdList = useUiStateStore((state) => state.expandedWorkspaceIds);
   const expandWorkspace = useUiStateStore((state) => state.expandWorkspace);
   const toggleWorkspaceExpanded = useUiStateStore((state) => state.toggleWorkspaceExpanded);
@@ -744,8 +715,6 @@ export function AppSidebar(props: AppSidebarProps) {
     [props.sessionNumberShortcuts.targets],
   );
 
-  // Green unread dots: agent finished while the user was on another session. Work starting or finishing also
-  // counts as the session's last activity, which orders the Feed.
   React.useEffect(() => {
     const statuses = props.sessionStatusById ?? {};
     const previous = previousSessionStatusRef.current;
@@ -754,7 +723,6 @@ export function AppSidebar(props: AppSidebarProps) {
 
     for (const [sessionId, status] of Object.entries(statuses)) {
       const prior = previous[sessionId];
-      // Includes the open session: chatting in it brings it back to the top of the Feed.
       if (isActiveWorkSessionStatus(status) !== isActiveWorkSessionStatus(prior)) store.noteActivity(sessionId);
       if (sessionId === selectedId) {
         store.clearUnread(sessionId);
@@ -790,7 +758,6 @@ export function AppSidebar(props: AppSidebarProps) {
   const sessionTrees = React.useMemo(() => {
     const trees = new Map<string, SessionTree>();
     if (!props.sessionTreeEnabled) return trees;
-    // Pinned sessions live in Pinned, so they are never listed under their parent.
     const standaloneIds = new Set(pinnedIds);
     for (const group of props.workspaceSessionGroups) {
       const tree = buildSessionTree(group.sessions, { standaloneIds });
@@ -965,8 +932,6 @@ export function AppSidebar(props: AppSidebarProps) {
             {pinnedSessions.length > 0 ? (
               <GlobalPinnedSessions entries={pinnedSessions} />
             ) : null}
-            {/* A flex item of the scrolling list: without shrink-0 it collapses to its
-                button's height once the list overflows, shifting every row up. */}
             <div className={cn("group/workspaces-header flex h-6 shrink-0 items-center mt-4", SIDEBAR_SECTION_LANE)}>
               <SidebarViewSwitch
                 view={feedView ? "feed" : "workspaces"}
@@ -1082,7 +1047,6 @@ const SIDEBAR_VIEWS: SidebarView[] = ["workspaces", "feed"];
 
 const SIDEBAR_HEADER_ICON_BUTTON = "flex size-5 items-center justify-center rounded text-muted-foreground/60 transition-colors hover:bg-sidebar-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-50 data-popup-open:bg-sidebar-accent data-popup-open:text-foreground";
 
-/** Replaces the Workspaces label: the tree, or every workspace's sessions in one feed. */
 function SidebarViewSwitch({ view, onChange }: { view: SidebarView; onChange: (view: SidebarView) => void }) {
   return (
     <div role="tablist" aria-label={t("workspace_list.sidebar_view")} className="-ms-1.5 flex items-center gap-0.5">
@@ -1127,7 +1091,6 @@ const FEED_SORT_BY_LABEL: Record<FeedSortBy, () => string> = {
   created: () => t("workspace_list.feed_sort_created"),
 };
 
-/** How the Feed groups and orders its sessions, remembered on the device. */
 function FeedOrderMenu() {
   const groupBy = useSessionManagementStore((state) => state.feedGroupBy);
   const sortBy = useSessionManagementStore((state) => state.feedSortBy);
@@ -1201,7 +1164,6 @@ function FeedOrderMenu() {
   );
 }
 
-/** Every workspace's sessions in one Feed, or null outside the Feed view. */
 function useSessionFeed(groups: WorkspaceSessionGroup[], { enabled, statusById, selectedSessionId, treeFor }: {
   enabled: boolean;
   statusById: Record<string, string> | undefined;
@@ -1236,7 +1198,6 @@ function useSessionFeed(groups: WorkspaceSessionGroup[], { enabled, statusById, 
   }), [attachedSideChatKeys, enabled, feedFolders, groupBy, groups, groupsByWorkspace, now, pinnedIdList, placementById, selectedSessionId, sortBy, statusById, treeFor, unreadIdList, workedAtById]);
 }
 
-/** The workspace, and the group when it has one, stands in for the project on each Feed row. */
 function useFeedSubtitle() {
   const groupsByWorkspace = useSessionManagementStore((state) => state.groupsByWorkspace);
   return React.useCallback(({ group, session }: FeedEntry) => {
@@ -1258,7 +1219,6 @@ function FeedSessionRow({ entry, subtitleFor, draggable = false }: {
       session={entry.session}
       workspaceId={entry.group.workspace.id}
       workspaceName={workspaceLabel(entry.group.workspace)}
-      // A nested row sits under its parent, which already names the workspace: say what it is instead.
       feedRow={{ subtitle: entry.nested ? sessionTreeKindLabel(entry.nested.kind) : subtitleFor(entry) }}
       draggable={draggable && !entry.nested}
       nested={entry.nested}
@@ -1266,10 +1226,6 @@ function FeedSessionRow({ entry, subtitleFor, draggable = false }: {
   );
 }
 
-/**
- * The scrolling part of the Feed: the chosen sections, last interacted with first, with waiting sessions in place.
- * Sorted by last activity, any row can be dragged to a new spot; it stays there until it has new activity.
- */
 function SessionFeedList({ feed }: { feed: SessionFeed }) {
   const subtitleFor = useFeedSubtitle();
   const orderIds = React.useMemo(
@@ -1277,7 +1233,6 @@ function SessionFeedList({ feed }: { feed: SessionFeed }) {
     [feed.sections],
   );
   const onReorder = React.useCallback((_ids: string[], move: SessionReorderMove) => {
-    // Neighbours come from the target's own section, so a drop never borrows a key from another section.
     const section = feed.sections.find(({ entries }) => entries.some((entry) => entry.session.id === move.targetId));
     if (!section) return;
     const ids = section.entries.map((entry) => entry.session.id).filter((id) => id !== move.sourceId);
@@ -1331,10 +1286,6 @@ function SessionFeedList({ feed }: { feed: SessionFeed }) {
   );
 }
 
-/**
- * Pinned folders and Archived, fixed below the scrolling Feed so they stay apart from live work. One shelf
- * opens at a time and scrolls on its own.
- */
 function FeedShelfDock({ feed, archived, groups }: {
   feed: SessionFeed;
   archived: GlobalArchivedSessionEntry[];
@@ -1391,7 +1342,6 @@ function FeedShelfDock({ feed, archived, groups }: {
   );
 }
 
-/** A collapsed shelf below the Feed: a pinned folder or Archived. Open, it shows about three rows. */
 function FeedShelf({ shelf, icon, label, detail, attention = null, action, entries, subtitleFor, expanded, onExpandedChange }: {
   shelf: string;
   icon: React.ReactNode;
@@ -1433,7 +1383,6 @@ function FeedShelf({ shelf, icon, label, detail, attention = null, action, entri
             }
           />
           <CollapsibleContent>
-            {/* Three two-line rows (48px each, 2px apart); the rest scroll inside the shelf. */}
             <div data-feed-shelf-rows className="no-scrollbar max-h-37 overflow-x-hidden overflow-y-auto overscroll-contain">
               <SidebarMenu>
                 <SidebarMenuItem>
@@ -1563,8 +1512,6 @@ function WorkspaceHeader({
 }: WorkspaceHeaderProps) {
   const ctx = useSidebarContext();
   const label = workspaceLabel(workspace);
-  // Same reveal pattern as task rows: the name fades only where text is
-  // hidden and scrolls into view on mouse hover or keyboard focus.
   const [isTitleHovered, setIsTitleHovered] = React.useState(false);
   const [isTitleFocused, setIsTitleFocused] = React.useState(false);
   const titleIntent = isTitleFocused ? "focus" : isTitleHovered ? "hover" : null;
@@ -1592,9 +1539,6 @@ function WorkspaceHeader({
         type="button"
         data-sidebar-workspace-drag-handle
         data-sidebar-workspace-title
-        // `items-stretch` (not `items-start`) so the title viewport spans the
-        // row up to the reserved action padding instead of shrinking to its
-        // text, which put the fade on the last letters of every name.
         className="min-w-0 flex h-full flex-1 cursor-grab touch-none flex-col items-stretch justify-center border-0 bg-transparent p-0 text-left text-inherit active:cursor-grabbing pr-8 group-hover/workspace-header:pr-20 group-has-[[data-workspace-actions]:focus-within]/workspace-header:pr-20 group-has-data-popup-open/workspace-header:pr-20"
         aria-label={statusLabel ? `${label}, ${statusLabel}` : label}
         onPointerDown={onTitlePointerDown}
@@ -1673,8 +1617,6 @@ function WorkspaceSidebarGroup({
     () => partitionArchivedSessions(group.sessions),
     [group.sessions],
   );
-  // Pinned sessions live in the global Pinned section, and a session started from another is
-  // listed under it, so neither gets a row of its own in the group lists.
   const nestedIds = ctx.sessionTreeFor(workspace.id).nestedIds;
   const hiddenRootIds = React.useMemo(
     () => nestedIds.size === 0 ? pinnedIds : new Set([...pinnedIds, ...nestedIds]),
@@ -2091,8 +2033,6 @@ function SessionGroupSeparator({ label, count, expanded, onToggle, group, groups
   workspaceId?: string;
   onTitlePointerDown?: React.PointerEventHandler<HTMLSpanElement>;
 }) {
-  // Dragging the title to reorder releases on this same header, which the
-  // browser reports as a click. Only a press that stayed put toggles.
   const pressedAt = React.useRef<{ x: number; y: number } | null>(null);
 
   return (
@@ -2136,7 +2076,6 @@ function SessionGroupSeparator({ label, count, expanded, onToggle, group, groups
   );
 }
 
-/** Drop zone wrapping a group's header + sessions. Dropping a session anywhere in the zone assigns it to this group. */
 function GroupDropZone({ groupId, workspaceId, children }: {
   groupId: string | null;
   workspaceId: string;
@@ -2163,7 +2102,6 @@ function GroupDropZone({ groupId, workspaceId, children }: {
         }
       }}
       onDragLeave={(e) => {
-        // Only clear when leaving this container, not when entering a child.
         if (!(e.relatedTarget instanceof Node) || !e.currentTarget.contains(e.relatedTarget)) {
           setDragOver(false);
         }
@@ -2184,7 +2122,6 @@ function GroupDropZone({ groupId, workspaceId, children }: {
   );
 }
 
-/** Renders sessions partitioned by group. Empty groups always show. Ungrouped sessions render at the end. */
 export function GroupedSessionList({ sessionRows, groups, assignments, pinnedIds, workspaceId, store, orderIds }: {
   sessionRows: FlattenedSessionRow[];
   groups: SessionGroupDefinition[];
@@ -2386,13 +2323,10 @@ type SessionMenuItemProps = {
   isPinned?: boolean;
   draggable?: boolean;
   workspaceName?: string;
-  /** Feed rows: a quiet second line naming the workspace and group. */
   feedRow?: { subtitle: string };
-  /** Set when this row is listed under the session it was started from. */
   nested?: { depth: number; kind: SessionLinkKind };
 };
 
-/** Feed rows: Archive (or Unarchive) one click away, just before the More menu, on hover or focus. */
 function FeedArchiveButton({ sessionId, workspaceId, isArchived, hidden }: { sessionId: string; workspaceId: string; isArchived: boolean; hidden: boolean }) {
   const ctx = useSidebarContext();
   if (!ctx.onArchiveSession || ctx.archiveDisabledReason) return null;
@@ -2419,7 +2353,6 @@ function FeedArchiveButton({ sessionId, workspaceId, isArchived, hidden }: { ses
   );
 }
 
-/** The shortcut lane is always reserved, so the badge appearing never moves the title. */
 function SessionNumberShortcutSlot({ digit, children, sharedWithMenu = false }: { digit: number | undefined; children?: React.ReactNode; sharedWithMenu?: boolean }) {
   const ctx = useSidebarContext();
   const label = digit === undefined ? null : sessionNumberShortcutLabel(ctx.sessionNumberShortcutOs, digit);
@@ -2433,7 +2366,6 @@ function SessionNumberShortcutSlot({ digit, children, sharedWithMenu = false }: 
       )}
     >
       {label === null ? children : (
-        // Mounted only once the hold delay has passed; fades in, and unmounts on release.
         <kbd
           aria-hidden="true"
           data-session-shortcut-badge={digit}
@@ -2450,7 +2382,6 @@ function SessionNumberShortcutSlot({ digit, children, sharedWithMenu = false }: 
 }
 
 const NO_NESTED_ROWS: ReturnType<SessionTree["descendantsOf"]> = [];
-/** Half the 16px glyph slot: the rail runs down the middle of the parent's glyph lane. */
 const SESSION_TREE_RAIL_OFFSET_PX = 8;
 
 export function SessionMenuItem({
@@ -2463,7 +2394,6 @@ export function SessionMenuItem({
   nested,
 }: SessionMenuItemProps) {
   const ctx = useSidebarContext();
-  // The Feed lists nested sessions as rows of its own list; elsewhere this row renders them.
   const nestedRows = nested ? NO_NESTED_ROWS : ctx.sessionTreeFor(workspaceId).descendantsOf(session.id);
   const attachedAsSideChat = useWorkbenchStore((state) => Object.values(state.sideChats).some((chat) =>
     isSameWorkbenchSession(chat, { workspaceId, sessionId: session.id })));
@@ -2539,14 +2469,11 @@ export function SessionMenuItem({
 
   const rowButtonStyle = { paddingInlineStart: sidebarRowPaddingInlineStart(nested?.depth ?? 0) };
   const waitingKind = isNeedsAttentionSessionStatus(sessionActivityStatus) ? ctx.sessionAttentionKindById?.[session.id] : undefined;
-  // Feed rows name only a decision the person owes, quietly; the leading dot already marks it.
   const decisionLabel = !feedRow || !isNeedsAttentionSessionStatus(sessionActivityStatus) ? null
     : waitingKind === "permission" ? t("common.permission")
     : waitingKind === "question" ? t("common.question")
     : null;
 
-  // Pinned/archived rows identify their workspace via the tooltip title
-  // only — no workspace color dot in these sections.
   const leading = (
     <SessionStatusIndicator
       status={sessionActivityStatus}
@@ -2589,7 +2516,6 @@ export function SessionMenuItem({
       data-session-tree-kind={nested?.kind}
     >
       {nested ? (
-        // One hairline down the parent's glyph lane ties the nested rows to the session above them.
         <span
           aria-hidden="true"
           data-session-tree-rail
@@ -2626,7 +2552,6 @@ export function SessionMenuItem({
               SESSION_ROW_BUTTON_CLASS,
               "w-full text-start",
               isMultiSelected && "bg-sidebar-accent text-sidebar-accent-foreground hover:bg-sidebar-accent",
-              // Calm Feed: 48px two-line row, 12px × 6px padding, every lane fixed.
               feedRow && "h-12 translate-x-0 items-start gap-2 rounded-md px-3 pe-3 py-1.5 rtl:translate-x-0",
             )}
             style={feedRow && !nested ? undefined : rowButtonStyle}
@@ -2639,7 +2564,6 @@ export function SessionMenuItem({
                     <SessionTitle intent={titleIntent} title={displayTitle} tooltip={itemTitle} />
                   </span>
                   <span className="flex h-4 min-w-0 items-center gap-2 text-[11px] leading-4 text-muted-foreground" data-session-feed-subtitle>
-                    {/* me-1 keeps the text clear of the Archive button that shares this lane on hover. */}
                     {decisionLabel ? (
                       <span className="me-1 min-w-0 flex-1 truncate" data-session-decision={waitingKind} title={feedRow.subtitle}>{decisionLabel}</span>
                     ) : (
@@ -2671,7 +2595,6 @@ export function SessionMenuItem({
     </SidebarMenuSubItem>
   );
 
-  // A nested row, or a row with sessions listed under it, is part of the tree and always shows.
   if (!nested && nestedRows.length === 0 && shouldHideAttachedSideChat(attachedAsSideChat, isSelected, sessionActivityStatus)) return null;
   if (feedRow) return item;
   const nestedItems = nestedRows.map((child) => (

@@ -9,21 +9,11 @@ import { DenNotice } from "../../_components/ui/notice";
 import { permissionLockReason } from "../../_lib/den-org";
 import { scopeChipState, scopeConflictLine, type TeamScope } from "./team-scope";
 
-/*
- * The parts of a per-team control (see "Per-team controls" in this app's
- * AGENTS.md): a row, the chip that says where its value comes from, the way
- * back to Everyone's value, and the lines of state around it.
- */
-
-/** One setting: its label on the left, its chip and one control on the right, an optional line of state under it. */
 export function SettingRow({ label, labelId, aside, stateLine, children, flush = false }: {
   label: string;
   labelId: string;
-  /** No side padding, for a row that sits straight on the page beside flat lists rather than in a panel. */
   flush?: boolean;
-  /** Shown beside the label. */
   aside?: ReactNode;
-  /** One line of state under the row, only while it is true. */
   stateLine?: ReactNode;
   children: ReactNode;
 }) {
@@ -41,10 +31,8 @@ export function SettingRow({ label, labelId, aside, stateLine, children, flush =
   );
 }
 
-/** Where a team's value comes from. Renders nothing on Everyone's page: Everyone's values are the default. */
 export function ScopeChip({ scope, changed }: {
   scope: TeamScope;
-  /** On a team's page: the team has its own value. */
   changed: boolean;
 }) {
   const state = scopeChipState(scope, { changed });
@@ -56,9 +44,7 @@ export function ScopeChip({ scope, changed }: {
   );
 }
 
-/** Puts a team back on Everyone's value. Show it only while the team has its own; it needs no confirmation. */
 export function UseEveryonesButton({ settingLabel, disabled = false, onClick }: {
-  /** The row's label, for assistive tech ("Use Everyone's setting for Default model"). */
   settingLabel: string;
   disabled?: boolean;
   onClick: () => void;
@@ -76,11 +62,6 @@ export function UseEveryonesButton({ settingLabel, disabled = false, onClick }: 
   );
 }
 
-/**
- * After a row saved on change: what is now true, and the way back. Leave
- * `onUndo` out when the previous value can no longer be chosen: the line then
- * only says what is true, rather than offering an Undo that cannot succeed.
- */
 export function SavedUndoLine({ message, pending = false, onUndo }: { message: string; pending?: boolean; onUndo?: () => void }) {
   return (
     <div role="status" className="flex min-h-8 items-center justify-between gap-3 px-1 text-[13px] text-gray-600">
@@ -94,13 +75,11 @@ export function SavedUndoLine({ message, pending = false, onUndo }: { message: s
   );
 }
 
-/** The one notice at the top of a panel the viewer can read but not change. Its controls stay visible, disabled. */
 export function ReadOnlyNotice({ permission, id }: { permission: PermissionKey; id?: string }) {
   return <DenNotice tone="neutral" icon={LockKeyhole} message={<span id={id}>Read only. {permissionLockReason(permission)}</span>} />;
 }
 
-/** Under a team's rows, only while some of its members are on another team that disagrees. */
-export function ConflictLine({ count, setting, testId, flush = false }: { count: number; setting: string; testId?: string; /** No side padding, as `SettingRow`'s `flush`. */ flush?: boolean }) {
+export function ConflictLine({ count, setting, testId, flush = false }: { count: number; setting: string; testId?: string; flush?: boolean }) {
   if (count <= 0) return null;
   return <div className={`${flush ? "" : "px-6 "}py-3 text-[13px] text-[var(--dls-text-secondary)]`} data-testid={testId}>{scopeConflictLine(count, setting)}</div>;
 }

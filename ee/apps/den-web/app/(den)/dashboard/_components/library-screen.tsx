@@ -58,7 +58,6 @@ import { FeatureIntroGate, useFeatureIntroRuntime, useFeatureIntroUnseen } from 
 import { LIBRARY_TAB_INTROS } from "../_features/feature-intros/intros/library";
 import { libraryIntroFacts } from "./library-intro-facts";
 
-/** Show the name filter once a Library holds more than this many items. */
 const FILTER_AFTER = 10;
 
 function itemHref(orgSlug: string | null, item: LibraryItem): string {
@@ -67,10 +66,6 @@ function itemHref(orgSlug: string | null, item: LibraryItem): string {
   return `/dashboard/library/workflows/${encodeURIComponent(item.id)}`;
 }
 
-/**
- * A saved workflow whose last run failed says so in its description slot: one
- * red word and the reason, never a tinted panel (DESIGN V2, T2).
- */
 function WorkflowFailedDescription({ reason }: { reason: string | null }) {
   const summary = workflowFailureSummary(reason);
   return (
@@ -140,7 +135,6 @@ function LibraryItemRow({ item, mine, signIn }: {
         ? <ConnectorLogo name={item.name} url={item.url} size="sm" />
         : item.type === "workflow" || libraryFilterOf(item) === "skills"
           ? <LibraryKindIcon kind={item.type === "workflow" ? "workflow" : "skill"} />
-          // A plugin wears the same tile as on Manage › Plugins and on its own page.
           : <PluginLogo name={item.name} />}
       name={item.name}
       description={workflowLastRunFailed(item)
@@ -153,7 +147,6 @@ function LibraryItemRow({ item, mine, signIn }: {
   );
 }
 
-/** No saved workflows yet: say where they come from, in the person's words. */
 function WorkflowsEmpty() {
   return (
     <ItemPanel>
@@ -180,9 +173,6 @@ function LibraryEmpty({ onAdd }: { onAdd: () => void }) {
   );
 }
 
-// The boundary useSearchParams needs for the static build sits inside this module, not the
-// page: a boundary above the module would show its empty fallback while the module loads,
-// and React keeps a fallback up for at least 300ms.
 export function LibraryScreen() {
   return (
     <Suspense fallback={null}>
@@ -206,7 +196,6 @@ function LibraryContent() {
   const filter = parseLibraryFilter(searchParams.get("show"));
   const introsEnabled = useFeatureIntroRuntime().enabled;
   const introUnseen = useFeatureIntroUnseen();
-  // With feature intros on, the viewer's own keys load on every tab: they count toward "anything in my Library".
   const personal = useOrgLlmProviders(filter === "models" || introsEnabled ? orgContext?.organization.id ?? null : null);
   const personalProviders = personal.llmProviders.filter(provider => provider.source !== "openwork" && provider.createdByOrgMembershipId === orgContext?.currentMember.id);
   const addKeyHref = `${getLibraryRoute(orgSlug)}/model-providers/new`;
@@ -247,17 +236,13 @@ function LibraryContent() {
     ? (models.data ?? []).filter((provider) => matchesModelQuery(provider, query) && (!onlyNeedsSignIn || provider.state === "needs_signin"))
     : [];
   const hasModels = (models.data ?? []).length > 0;
-  // With feature intros on, the viewer's own keys still loading count as loading (never "empty" on a guess).
   const personalPending = introsEnabled && !personal.loaded && !personal.error;
   const empty = !library.isLoading && !library.error && items.length === 0 && !models.isLoading && !hasModels && personalProviders.length === 0 && !personalPending;
-  // Feature intros: null while anything is loading or failed, so the page shows as before.
   const introFacts = introsEnabled && !library.error && !models.error && !personal.error && personal.loaded
     ? libraryIntroFacts({ items: library.data, models: models.data?.length, personalModels: personalProviders.length })
     : null;
-  // A short Library is read at a glance; the filter earns its place once the list runs long.
   const showFilter = items.length + (models.data ?? []).length + personalProviders.length > FILTER_AFTER || query !== "";
 
-  // What waits on you first, then one section per kind.
   const mineKeys = new Set(groups.mine.map((item) => `${item.type}:${item.id}`));
   const visible = [...groups.mine, ...groups.received].sort((left, right) => left.name.localeCompare(right.name));
   const kindSections: { key: string; title: string; match: (item: LibraryItem) => boolean }[] = [
@@ -364,7 +349,5 @@ function LibraryContent() {
     </ItemPage>
   );
 
-  // With feature intros on, the Library intro replaces the page while the viewer has nothing at all, and each
-  // tab with nothing of its kind shows its box (DESIGN.md I1, I2); with the flag off the page renders as before.
   return <FeatureIntroGate introKey="library" facts={introFacts}>{page}</FeatureIntroGate>;
 }

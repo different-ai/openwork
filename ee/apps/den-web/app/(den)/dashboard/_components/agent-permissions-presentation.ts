@@ -11,17 +11,13 @@ import {
   type AgentPermissionSettings,
 } from "@openwork/types/den/agent-permissions";
 
-/** "all" is the single Agents tab; teamPageTabs moves websites to "browser". */
 export type AgentPermissionsArea = "all" | "agents" | "browser";
 
 const BROWSER_KEYS: readonly string[] = ["websites", "browserUploads"];
-/** Rows that blocking computer use blocks too, shown with its lock. */
 const BLOCKED_WITH_COMPUTER_USE: readonly string[] = ["computerFiles", "computerClipboard", "appScripting"];
 
-/** Rows the host refuses while tools may not run on the computer (sandbox-only). */
 const BLOCKED_WITH_HOST_EXECUTION: readonly string[] = ["computerUse", "computerFiles", "computerClipboard", "appScripting", "localMcpServers"];
 
-/** What the editor shows beyond the definitions: rollouts it reads from the organization. */
 export type AgentPermissionEditorFeatures = {
   sandboxTools: boolean;
 };
@@ -34,11 +30,6 @@ function requires(setting: AgentPermissionSettings[keyof AgentPermissionSettings
   return setting?.decision === "deny";
 }
 
-/**
- * Stored and inherited requirements stay visible even after the rollout ends
- * (P4). A switch that was turned back off is not a requirement: once the
- * rollout is off it leaves the editor again.
- */
 export function sandboxRequirementVisibility(features: AgentPermissionEditorFeatures, settings: AgentPermissionSettings, everyone: AgentPermissionSettings | null) {
   return {
     hostExecution: features.sandboxTools || requires(settings.hostExecution) || requires(everyone?.hostExecution),
@@ -103,12 +94,10 @@ export function agentPermissionChoiceValue(definition: AgentPermissionDefinition
   return agentPermissionMemberDecides(definition.key) ? decision ?? "inherit" : effective;
 }
 
-/** Preserve an explicit Ask/Allow of a member-decided permission: they differ from the member-controlled default. */
 export function storedAgentPermissionDecision(definition: AgentPermissionDefinition, team: string | null, decision: AgentPermissionDecision | undefined): AgentPermissionDecision | undefined {
   return team === null && !agentPermissionMemberDecides(definition.key) && decision === AGENT_PERMISSION_DEFAULT_DECISION ? undefined : decision;
 }
 
-/** Keep the dependent control visible, with the same neutral lock as commands (DESIGN.md P4, C5). */
 export function agentPermissionBlockedBy(key: string, settings: AgentPermissionSettings, everyone: AgentPermissionSettings | null, features?: AgentPermissionEditorFeatures): { key: string; reason: string } | null {
   const sandboxRequired = forceRequired(settings, everyone);
   if (key === "sandboxOptOut" && sandboxRequired) {

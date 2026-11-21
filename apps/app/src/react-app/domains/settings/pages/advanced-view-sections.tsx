@@ -696,10 +696,6 @@ export function AdvancedDeveloperSection(props: AdvancedDeveloperSectionProps) {
   );
 }
 
-/**
- * Lets screen recordings show the agent's cursor, frame and pill on this Mac, for demos.
- * Main keeps the choice until OpenWork quits; it applies to the next app the agent starts using.
- */
 function ComputerUseRecordingItem() {
   const shown = isElectronRuntime() && isMacPlatform();
   const [enabled, setEnabled] = useState<boolean | null>(null);

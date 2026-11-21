@@ -1,36 +1,3 @@
-/**
- * `plugins.plugins`: plugins (Plugins › Plugins), what they contain, who can
- * use them, which collections list them and which MCP connection serves each
- * MCP server they declare.
- *
- * Exported per plugin: description, whether it is archived, its components
- * (`{ $ref: "plugins.skills/<id>" }`), access by role (everyone, teams,
- * people by email), its collections (`{ $ref:
- * "settings.advanced.collections/<id>" }`; this area owns
- * `marketplace_plugin`) and its MCP requirement bindings (component + server
- * name → `{ $ref: "connectors.mcp/<id>" }`). Nothing here is secret: the
- * connections' credentials stay with `connectors.mcp`.
- *
- * Informational only: the GitHub repository / format it was imported from,
- * `managedBy: "source"` when a source in Plugins › Sources maps into it, and
- * `builtIn` for the plugins earlier Den builds seeded into the OpenWork
- * Marketplace and someone has since filled in (matched by name, never deleted
- * by an import).
- *
- * Which plugins: org-shared ones (see plugins-support.ts); personal plugins
- * (only their creator can reach them, e.g. each member's "Workflows") are not
- * exported and never touched. Components a source syncs into a plugin
- * (`membership_source = connector`) are left out: the source owns them, so a
- * source-managed plugin is exported as its shell (description, access,
- * collections, bindings) and the sync fills it.
- *
- * Applies through the plugin-system store, as the plugin routes do:
- * `createPlugin`, `updatePlugin`, `setPluginLifecycle`,
- * `attachConfigObjectToPlugin` / `removeConfigObjectFromPlugin`,
- * `attachPluginToMarketplace` / `removePluginFromMarketplace`, the access-grant
- * calls, and the binding upsert + access re-sync the plugin bundle route uses.
- * A delete archives the plugin (the dashboard has no hard delete).
- */
 import { and, eq, inArray, isNull, ne } from "@openwork-ee/den-db/drizzle"
 import {
   ConfigObjectTable,
@@ -94,12 +61,10 @@ import {
 const AREA = "plugins.plugins"
 
 const mcpConnectionSchema = z.object({
-  /** The MCP component (a `plugins.skills` item of type mcp) declaring the server. */
   component: specRefSchema,
   serverName: z.string().trim().min(1).max(255),
   connection: specRefSchema,
   requiredAuthType: z.enum(externalMcpAuthTypeValues).nullable().default(null),
-  /** The connection was created for this plugin and is removed with it. */
   ownedByPlugin: z.boolean().default(false),
 }).strict()
 
@@ -112,7 +77,6 @@ const specSchema = z.object({
   access: accessByRoleSchema.default(emptyAccess),
   collections: z.array(specRefSchema).max(500).default([]),
   mcpConnections: z.array(mcpConnectionSchema).max(500).default([]),
-  // Informational (see informationalFields).
   sourceRepositoryUrl: z.string().max(1024).nullable().default(null),
   sourceFormat: z.string().max(64).nullable().default(null),
   managedBy: z.enum(["manual", "source"]).default("manual"),
@@ -132,7 +96,6 @@ function bindingKey(componentId: string, serverName: string): string {
   return `${componentId}\n${serverName}`
 }
 
-/** Bindings of a resolved spec (refs carry local ids). */
 function resolvedBindings(value: unknown): Binding[] {
   if (!Array.isArray(value)) return []
   return value.flatMap((entry, index): Binding[] => {
@@ -152,7 +115,6 @@ function resolvedBindings(value: unknown): Binding[] {
   })
 }
 
-/** Bindings of an exported (target) spec: ids are in the refs. */
 function exportedBindings(value: unknown): Binding[] {
   if (!Array.isArray(value)) return []
   return value.flatMap((entry): Binding[] => {
@@ -202,7 +164,6 @@ async function readPlugins(ctx: ConfigAreaContext, ids: readonly string[] | null
         ne(PluginConfigObjectTable.membershipSource, "connector"),
         isNull(ConfigObjectTable.deletedAt),
         ne(ConfigObjectTable.status, "deleted"),
-        // Workflows and scripts are not plugins.skills items (Library › Workflows).
         inArray(ConfigObjectTable.objectType, ["skill", "agent", "command", "tool", "mcp", "hook", "context", "custom", "app"]),
       )),
     loadGrants(ctx.db, "plugin", organizationId, pluginIds),
@@ -222,11 +183,9 @@ async function readPlugins(ctx: ConfigAreaContext, ids: readonly string[] | null
       .where(and(
         eq(PluginMcpRequirementBindingTable.organizationId, organizationId),
         inArray(PluginMcpRequirementBindingTable.pluginId, pluginIds),
-        // Bindings to built-in provider connections are not carried: plugins bind them by provider, not by connection.
         eq(ExternalMcpConnectionTable.kind, "external_mcp"),
       )),
   ])
-  // Authored MCP Apps are not plugins.skills items either.
   const appIds = memberships.filter((entry) => entry.object.objectType === "app").map((entry) => entry.object.id)
   const appVersions = appIds.length > 0 ? await latestConfigObjectVersions(appIds, organizationId) : new Map()
   const components = memberships.filter((entry) => {
@@ -320,7 +279,6 @@ async function removeBinding(input: { ctx: ConfigAreaContext; pluginId: string; 
   })
 }
 
-/** Adds and removes set members: components or collections. `previous` are target-local ids. */
 async function applySet(input: {
   target: "components" | "collections"
   desired: readonly string[]
@@ -377,15 +335,12 @@ export const pluginsPluginsArea = defineConfigArea({
   assignedKeys: true,
   ensureKeys: (ctx, items) => ensureItemKeys("plugin", ctx.organizationId, items),
   naturalKeys: [{
-    // Built-in plugins have one copy per organization, named the same everywhere.
     label: "built-in plugin name",
     get: (item) => item.spec.builtIn === true ? `builtin:${normalizeText(item.name)}` : null,
   }, {
-    // First contact, for plugins that have no key in common yet: the same name is the same plugin.
     label: "name",
     get: (item) => item.spec.builtIn === true ? null : normalizeText(item.name) || null,
   }],
-  // createPlugin refuses a second active plugin of the same name by the same person: an import's creates are all one person's.
   uniqueAmongCreates: [{ label: "the name", get: (item) => item.name.trim() || null }],
   similarity: (blob, target) => {
     const reasons: string[] = []
@@ -410,7 +365,6 @@ export const pluginsPluginsArea = defineConfigArea({
   secretFields: [],
   arrayKeys: { components: "$ref", collections: "$ref" },
   informationalFields: ["sourceRepositoryUrl", "sourceFormat", "managedBy", "builtIn"],
-  // A binding ties a skill's MCP server to a connection: without either there is no binding.
   requiredRefs: ["mcpConnections[].component", "mcpConnections[].connection"],
   transactional: false,
   protectedFromDelete: (item) => {
@@ -434,7 +388,6 @@ export const pluginsPluginsArea = defineConfigArea({
 
   async preflight(ctx, op) {
     if (op.kind !== "create") return ownManagerAccessPreflight(ctx, op)
-    // The same check createPlugin makes, before approval instead of in the middle of the apply.
     const name = op.item.name.trim()
     const [existing] = await ctx.db.select({ id: PluginTable.id }).from(PluginTable).where(and(
       eq(PluginTable.organizationId, normalizeDenTypeId("organization", ctx.organizationId)),
@@ -501,7 +454,6 @@ export const pluginsPluginsArea = defineConfigArea({
         return { localId: pluginId, warnings }
       }
 
-      // update: only the parts the plan changes.
       pluginId = normalizeDenTypeId("plugin", op.targetId)
       const id = normalizeDenTypeId("plugin", pluginId)
       const renamed = name !== op.previous.name
@@ -516,7 +468,6 @@ export const pluginsPluginsArea = defineConfigArea({
         )
       }
       if (touches(op.changes, "archived") && op.previous.spec.archived !== spec.archived) {
-        // Restore first so the other writes see an active plugin; archive last.
         if (!spec.archived) await log.run({ action: "set", target: "archived", detail: "false" }, () => setPluginLifecycle({ context: actor, pluginId: id, action: "restore" }))
       }
       if (touches(op.changes, "components")) {

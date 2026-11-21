@@ -20,10 +20,6 @@ async function hasActiveGatewayProvider(organizationId: string): Promise<boolean
   return Boolean(provider)
 }
 
-/**
- * Den refuses Workbot turns when the organization has no active AI Gateway provider. Members
- * cannot list providers, so Den web reads this content-free answer before sending someone to Workbot.
- */
 export function registerOrgWorkbotReadinessRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get(
     "/v1/org/workbot-readiness",
@@ -45,7 +41,6 @@ export function registerOrgWorkbotReadinessRoutes<T extends { Variables: OrgRout
       const { organization, currentMember, features } = c.get("organizationContext")
       const organizationId = organization.id
       const chosen = readWorkbotModel(organization.metadata)
-      // The caller's own default model and on/off switch: their team's when it sets one (workbotTeamSettings).
       const workbot = await resolveMemberWorkbotSettings({ organizationId, memberId: currentMember.id, userId: currentMember.userId, organization })
       const mine = workbot.model
       const managedLuna = workbotUsesManagedDefault(mine)
@@ -53,7 +48,6 @@ export function registerOrgWorkbotReadinessRoutes<T extends { Variables: OrgRout
       const gatewayRequired = !managedLuna
       const organizationGatewayRequired = !await workbotOrganizationManagedDefaultRoutable(organizationId, chosen)
       const hasGatewayProvider = (gatewayRequired || organizationGatewayRequired) && await hasActiveGatewayProvider(organizationId)
-      // Only said when off, so the answer is unchanged for everyone else.
       return c.json({ gatewayRequired, hasGatewayProvider, organizationGatewayRequired, ...(workbot.enabled ? {} : { enabled: false }) })
     },
   )

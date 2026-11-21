@@ -2,12 +2,6 @@ import type { ORGANIZATION_AUDIT_ACTIONS } from "../audit-events.js"
 
 type LegacyOrganizationAuditAction = typeof ORGANIZATION_AUDIT_ACTIONS[keyof typeof ORGANIZATION_AUDIT_ACTIONS]
 
-/**
- * Single-writer bridge: when tenant capture is active for a request the domain
- * emitter appends the operation change event on the right instead of the legacy
- * audit_event row; otherwise the legacy row is written unchanged. Historical
- * legacy rows are never backfilled or counted.
- */
 export const LEGACY_ACTION_BRIDGE: Readonly<Record<LegacyOrganizationAuditAction, string>> = {
   "organization.benefit_setting.updated": "organization.benefit_setting.updated",
   "organization.benefit_grant.created": "organization.benefit_grant.created",

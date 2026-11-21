@@ -1,12 +1,6 @@
-// Anthropic Messages for Claude Code. Claude Code only speaks the
-// Messages API. A model whose provider speaks it too gets the request as it is; every other model
-// goes through the Gateway's translators, which speak Chat Completions on the client side. So a
-// Messages request is read as a chat request, and the Chat Completions answer is written back as a
-// Messages object (JSON) or Messages event stream (SSE).
 import { randomUUID } from "node:crypto"
 import { isJsonObject, type JsonObject } from "@openwork-ee/gateway-protocols/chat"
 
-/** The fewest output tokens every translated provider accepts. */
 const MIN_OUTPUT_TOKENS = 16
 
 function textOf(content: unknown): string {
@@ -15,7 +9,6 @@ function textOf(content: unknown): string {
   return content.flatMap((block) => isJsonObject(block) && block.type === "text" && typeof block.text === "string" ? [block.text] : []).join("\n")
 }
 
-/** An Anthropic image block as a Chat Completions image part. */
 function imagePart(block: JsonObject): JsonObject | null {
   const source = isJsonObject(block.source) ? block.source : null
   if (!source) return null
@@ -26,7 +19,6 @@ function imagePart(block: JsonObject): JsonObject | null {
   return null
 }
 
-/** A tool result's content as text (Chat Completions tool messages take text). */
 function toolResultText(content: unknown): string {
   if (typeof content === "string") return content
   if (!Array.isArray(content)) return ""
@@ -76,7 +68,6 @@ export function messagesToChat(body: JsonObject): JsonObject {
     if (parts.length) messages.push({ role: "user", content: parts.every((part) => part.type === "text") ? parts.map((part) => String(part.text)).join("\n") : parts })
   }
   const chat: JsonObject = { model: body.model, messages, stream: body.stream === true }
-  // Claude Code checks a model it switches to with max_tokens: 1; OpenAI refuses fewer than 16.
   if (typeof body.max_tokens === "number") chat.max_tokens = Math.max(MIN_OUTPUT_TOKENS, body.max_tokens)
   if (typeof body.temperature === "number") chat.temperature = body.temperature
   if (typeof body.top_p === "number") chat.top_p = body.top_p
@@ -251,7 +242,7 @@ export function chatStreamToMessages(body: ReadableStream<Uint8Array>, model: st
     try {
       const parsed: unknown = JSON.parse(data)
       if (isJsonObject(parsed)) chunk(controller, parsed)
-    } catch { /* A malformed line is skipped. */ }
+    } catch {}
   }
   return body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
     transform(bytes, controller) {

@@ -13,7 +13,6 @@ export const LifecycleEmailTable = mysqlTable(
     kind: varchar("kind", { length: 64 }).notNull(),
     subjectKey: varchar("subject_key", { length: 255 }).notNull(),
     recipient: varchar("recipient", { length: 255 }).notNull(),
-    // sending -> sent | failed; unsubscribe rows are written as "recorded".
     status: varchar("status", { length: 32 }).notNull().default("sending"),
     error: varchar("error", { length: 255 }),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),

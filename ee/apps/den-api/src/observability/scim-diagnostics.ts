@@ -26,8 +26,6 @@ type DiagnosticFields = {
 type DiagnosticContext = { organizationId: string; fields: DiagnosticFields }
 const diagnosticContext = new AsyncLocalStorage<DiagnosticContext>()
 
-// Re-read on admission AND sampling. Invalid configuration disables only this
-// opt-in feature; it must never prevent authentication or API startup.
 export function readScimDebugOrgIds(env: DebugEnv = process.env, now = Date.now()): string[] {
   if ((env.SENTRY_DEBUG_ORG_IDS?.length ?? 0) > 12_900) return []
   const ids = env.SENTRY_DEBUG_ORG_IDS?.split(",").map((id) => id.trim()) ?? []
@@ -50,8 +48,6 @@ export function sampleScimDiagnosticTrace(context: {
       && context.attributes["organization.id"] === verified.organizationId
       && readScimDebugOrgIds().includes(verified.organizationId) ? 1 : 0
   }
-  // Match the original tracesSampleRate precedence. SDK 10.64's
-  // inheritOrSampleWith instead prioritizes DSC rates over parent decisions.
   return context.parentSampled === undefined ? baseline : Number(context.parentSampled)
 }
 
@@ -60,8 +56,6 @@ function correlationFields(request: Request, requestId: unknown) {
   return {
     api_request_id: typeof requestId === "string" && /^req_[0-9a-hjkmnp-tv-z]{26}$/u.test(requestId)
       ? requestId : undefined,
-    // A proxy reference is client-controlled correlation, NEVER authority. Even
-    // syntactically valid arbitrary text is hashed rather than exported verbatim.
     proxy_request_id: reference && /^[A-Za-z0-9_-]{1,128}$/u.test(reference)
       ? `sha256:${createHash("sha256").update(reference).digest("hex")}` : undefined,
   }
@@ -78,8 +72,6 @@ function requestOperation(request: Request) {
   return operation ? `${match[1]}.${operation}` : null
 }
 
-// Existing logger calls inside the diagnostic boundary must not leak error
-// messages or SQL via innocently named fields. Only our constructed fields pass.
 export function currentScimDiagnosticFields() {
   const current = diagnosticContext.getStore()
   return current ? { ...current.fields } : undefined
@@ -109,8 +101,6 @@ export function sanitizeScimDiagnosticLog<L extends { message: string; attribute
 ): L | null {
   const current = diagnosticContext.getStore()
   if (!current) return log
-  // SDK v10 merges scope attributes AFTER beforeSendLog. Even their names can
-  // contain PII, so fail closed instead of trying to redact only their values.
   if (hasScopeAttributes || !readScimDebugOrgIds().includes(current.organizationId)) return null
   log.message = log.message === SCIM_DIAGNOSTIC_MESSAGE ? log.message : "SCIM diagnostic request activity"
   log.attributes = { ...current.fields }
@@ -143,8 +133,6 @@ export function sanitizeScimDiagnosticEvent<E extends Event>(event: E): E | null
   const outcome = data?.scim_outcome
   if (typeof outcome === "string" && /^(success|conflict|rejected|server_error|exception)$/u.test(outcome)) fields.scim_outcome = outcome
 
-  // Rebuild, rather than blacklist: this also discards future SDK fields,
-  // inherited request data, breadcrumbs, SQL child spans, and dynamic baggage.
   const safe: Event = {
     type: "transaction",
     event_id: event.event_id,
@@ -174,8 +162,6 @@ export function createScimDiagnosticsMiddleware(input: {
     const token = /^Bearer\s+(.+)$/iu.exec(c.req.header("authorization")?.trim() ?? "")?.[1]?.trim()
     if (!token) return next()
 
-    // This is an observability probe, not a replacement auth gate. On lookup
-    // failure or invalid tokens, let the original handler decide the response.
     const provider = await input.resolveProvider(token).catch(() => null)
     if (!provider?.organizationId || !readScimDebugOrgIds().includes(provider.organizationId)) return next()
     const organizationId = provider.organizationId
@@ -195,8 +181,6 @@ export function createScimDiagnosticsMiddleware(input: {
           scope.clear()
           scope.addEventProcessor((event, hint) => {
             hint.attachments = []
-            // Completion logs carry safe outcomes. Do not export raw exceptions
-            // captured by dependencies within this separate diagnostic trace.
             return event.contexts?.trace?.op === SCIM_DIAGNOSTIC_OP
               ? sanitizeScimDiagnosticEvent(event) : null
           })
@@ -219,9 +203,7 @@ export function createScimDiagnosticsMiddleware(input: {
               fields.duration_ms = Math.round((performance.now() - startedAt) * 100) / 100
               span.setAttributes(fields)
               if (readScimDebugOrgIds().includes(organizationId)) {
-                // No response cloning: do not consume, buffer, or delay streams.
-                // Status alone cannot identify a conflict's underlying cause.
-                try { input.logger.warn(SCIM_DIAGNOSTIC_MESSAGE, fields) } catch { /* Telemetry cannot change a SCIM response. */ }
+                try { input.logger.warn(SCIM_DIAGNOSTIC_MESSAGE, fields) } catch {}
               }
             }
           }))

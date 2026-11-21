@@ -40,10 +40,6 @@ import {
   OPENWORK_WEB_ACCESS_REQUIRED_MESSAGE,
   type OpenWorkWebRuntimeAccessResolver,
 } from "../openwork-web-runtime-access.js"
-// The automation repository is the presence source of truth. Importing the
-// automation service instead would pull the codemode execution graph (and
-// its `effect` dependency) into every spec that imports this module, which
-// the evals layer rules forbid.
 import { automationRepository, automationRunnerRowId } from "../automations/repository.js"
 import { COMPUTER_DISCONNECTED_SESSION_MESSAGE, computerDisconnected, runnerDisconnected } from "../computer-disconnect.js"
 import { cloudHostingAvailable } from "../capability-sources/cloud-hosting.js"
@@ -89,12 +85,6 @@ import {
 import { listedTargets } from "../remote-sessions/targets.js"
 import { readRemoteSessionStatus, type RemoteSessionStatusSources } from "./remote-session-status.js"
 import { scoreText, tokenize, type CapabilityMatch } from "./search.js"
-
-/**
- * Remote sessions over the capability gateway: create and drive a native
- * OpenWork session on the member's OpenWork Cloud worker or connected
- * desktop — from any MCP client.
- */
 
 export const REMOTE_SESSION_CAPABILITY_PREFIX = "remote-session:"
 export const REMOTE_SESSION_ACTIONS = ["create", "send", "read", "stop", "list", "targets", "status", "answer", "attach"] as const
@@ -176,13 +166,11 @@ const readBodySchema = z.object({
   }
 })
 
-/** The person's answer to an open question or permission of a session, or a question dismissed. Never "always". */
 const answerBodySchema = z.object({
   sessionId: z.string().trim().min(1),
   workspaceId: desktopWorkspaceSchema,
 }).and(remoteSessionAnswerInputSchema)
 
-/** The same arguments as the capabilities, for the member routes that call them. */
 export {
   answerBodySchema as remoteSessionAnswerBodySchema,
   readBodySchema as remoteSessionReadBodySchema,
@@ -391,11 +379,6 @@ const REMOTE_SESSION_DEFINITIONS: RemoteSessionDefinition[] = [
 
 export type RemoteSessionCapabilityMatch = CapabilityMatch & { kind: "remote_session" }
 
-/** Every remote-session capability with its summary and arguments schema, as search returns them. */
-/**
- * Answers and attaches are restricted to an agent chat with the person, never
- * background scripts; attach also needs the organization's remoteSessionAccess.
- */
 type RemoteSessionCapabilityOptions = { answer?: boolean; attach?: boolean }
 
 function definitionAvailable(action: RemoteSessionAction, options: RemoteSessionCapabilityOptions): boolean {
@@ -472,20 +455,15 @@ export type RemoteSessionThreadClient = Pick<AgentSessionClient, "createThread" 
   & Partial<Pick<AgentSessionClient, "abortThread">>
   & Partial<Pick<HeadlessThreadClient, "getThreadWaitingFor" | "getThreadPending" | "getThreadPendingItems" | "answerThread">>
 
-/** One of the member's desktops that can take remote sessions, with its latest inventory. */
 export type RemoteSessionDesktopRecord = {
   computerId: string
   platform: "darwin" | "win32" | "linux"
   appVersion: string
   lastSeenAt: number
   inventory: DesktopRunnerInventory | null
-  /** Negotiated durable offload protocol; not an Automation eligibility signal. */
   registered?: boolean
-  /** What the runner registered; absent reads as none of the newer capabilities. */
   capabilities?: readonly string[]
-  /** Which sessions the owner lets other devices reach there, as last reported; null until it reports. */
   sessionAccess?: RemoteSessionAccessMode | null
-  /** The sessions it last reported, read only for callers that list or attach sessions. */
   sessions?: RunnerReportedSession[] | null
   sessionsUpdatedAt?: number | null
 }
@@ -500,20 +478,15 @@ type DesktopRunnerState = {
   controlCapable: boolean
   registered?: boolean
   answerCapable?: boolean
-  /** The runner honours session access: attaches and dismissals. */
   accessCapable?: boolean
-  /** The runner's owner can turn remote access off or leave it unchosen, and its reports say which. */
   choiceCapable?: boolean
   sessionAccess?: RemoteSessionAccessMode | null
-  /** The computer was disconnected from the organization: nothing reaches it until someone signs in on it again. */
   disconnected?: boolean
-  /** The install has no registration: it is gone, not a computer whose owner has yet to choose. */
   missing?: boolean
 }
 
 export type RemoteSessionExecuteDeps = {
   getOpenWorkWebAccess: OpenWorkWebRuntimeAccessResolver
-  /** readyBudgetMs bounds how long a starting runtime is awaited; 0 checks once. */
   resolveRuntime: (scope: { organizationId: DenTypeId<"organization">; userId: string; provisionIfMissing?: boolean; readyBudgetMs?: number }) => Promise<RemoteSessionRuntimeResult>
   createClient: (runtime: RemoteSessionRuntime) => RemoteSessionThreadClient
   commandStore: RemoteSessionCommandStore
@@ -522,38 +495,28 @@ export type RemoteSessionExecuteDeps = {
     userId: string
   }) => Promise<{ connected: boolean; ownerMemberId: string | null }>
   requestStore: RemoteSessionRequestStore
-  /** Whether the runner that owns a desktop session is connected and can answer requests. */
   desktopRunner: (scope: {
     organizationId: string
     ownerMemberId: string
     runnerId: string
   }) => Promise<DesktopRunnerState>
-  /** How long a desktop request is awaited before returning its requestId. */
   requestWait?: { timeoutMs: number; pollMs: number }
-  /**
-   * Links a queued desktop command to the run that created it (a Slack thread),
-   * so the outcome is posted there. Resolves true when linked.
-   */
   linkDesktopCommand?: (input: {
     commandId: string
     organizationId: DenTypeId<"organization">
     userId: string
     runTokenId: string
   }) => Promise<boolean>
-  /** The member's desktops and their inventories; defaults to the runner table. `sessions` also reads what each reported. */
   desktopTargets?: (scope: {
     organizationId: DenTypeId<"organization">
     userId: string
     sessions?: boolean
   }) => Promise<RemoteSessionDesktopTargets>
-  /** Which sessions the organization lets other devices reach, for the caller; defaults to remote-sessions/access.ts. */
   sessionAccess?: (scope: {
     organizationId: DenTypeId<"organization">
     userId: string
   }) => Promise<RemoteSessionAccessPolicy>
-  /** Whether this deployment can run cloud remote sessions; defaults to the deployment config. */
   cloudAvailable?: () => boolean
-  /** Whether a computer the member names, and no longer has, was disconnected; defaults to computer-disconnect.ts. */
   computerDisconnected?: (scope: { organizationId: string; ownerMemberId: string; computerId: string }) => Promise<boolean>
 }
 
@@ -652,8 +615,6 @@ async function defaultResolveRuntime(
     })
     if (access.status === "missing") {
       if (scope.provisionIfMissing) {
-        // Load on first use to avoid a startup cycle through the route and MCP
-        // registries. Browser and MCP creation share one store and in-flight map.
         const { ensureMemberCloudWorker } = await import("../routes/cloud/index.js")
         await ensureMemberCloudWorker({
           orgId: scope.organizationId,
@@ -736,11 +697,8 @@ async function activeMemberId(scope: {
   return members[0]?.id ?? null
 }
 
-/** Desktops listed by remote-session:targets; a member rarely has more than a few. */
 const DESKTOP_TARGET_LIMIT = 50
 
-// Keep older numeric reports readable even when their time is outside today's
-// ingestion bounds. Public session responses render those stored times as null.
 const reportedSessionsSchema = z.array(runnerReportedSessionSchema.extend({ updatedAt: z.number() }))
 
 async function defaultDesktopTargets(scope: {
@@ -760,8 +718,6 @@ async function defaultDesktopTargets(scope: {
   return {
     ownerMemberId,
     computers: rows.map((row) => {
-      // Stored reports were validated on the way in; a row that no longer
-      // parses (an older shape) reads as a desktop that reported nothing.
       const inventory = row.inventory ? desktopRunnerInventorySchema.safeParse(row.inventory) : null
       const sessions = row.sessions ? reportedSessionsSchema.safeParse(row.sessions) : null
       return {
@@ -800,7 +756,6 @@ async function defaultDesktopRunner(scope: {
   runnerId: string
 }): Promise<DesktopRunnerState> {
   const runner = await automationRepository.desktopRunnerById(scope)
-  // A disconnected computer has no registration; say so rather than "update" or "offline".
   if (!runner) return { connected: false, controlCapable: false, missing: true, disconnected: await runnerDisconnected(scope) }
   return {
     connected: desktopRunnerConnected({ lastSeenAt: runner.lastSeenAt, now: Date.now() }),
@@ -824,7 +779,6 @@ export const DEFAULT_REMOTE_SESSION_DEPS: RemoteSessionExecuteDeps = {
   desktopPresence: defaultDesktopPresence,
   requestStore: databaseRemoteSessionRequestStore,
   desktopRunner: defaultDesktopRunner,
-  // Loaded lazily: the Slack module pulls in the assistant repository.
   linkDesktopCommand: async (input) =>
     (await import("../slack-assistant/desktop-handoff.js")).linkDesktopCommandToSlack(input),
   desktopTargets: defaultDesktopTargets,
@@ -846,10 +800,7 @@ function targetsPayload(
       appVersion: computer.inventory?.computer.appVersion ?? computer.appVersion,
       online: computerOnline(computer, options.now),
       lastSeenAt: computer.lastSeenAt,
-      // What other devices may do there right now; `off` takes no task.
       access: sessionAccessOf(computer, options.policy).effectiveAccess,
-      // Null means this desktop has not reported its workspaces (an older
-      // app version); it can still take untargeted remote sessions.
       workspaces: computer.inventory
         ? computer.inventory.workspaces.map((workspace) => ({
           workspaceId: workspace.workspaceId,
@@ -871,11 +822,6 @@ type DesktopTargetResolution =
 
 const TARGETS_HINT = "Call remote-session:targets to list your computers and workspaces."
 
-/**
- * Checks a desktop create's computerId, workspaceId and model against the
- * member's latest desktop inventories. A workspaceId without a computerId
- * resolves to the most recently seen online desktop that has it.
- */
 export function resolveDesktopTarget(
   body: { computerId?: string; workspaceId?: string; model?: { providerId: string; modelId: string } },
   computers: readonly RemoteSessionDesktopRecord[],
@@ -942,9 +888,6 @@ function threadErrorStatus(error: unknown): number | null {
 
 function threadErrorResult(action: RemoteSessionAction, sessionId: string | null, error: unknown): RemoteSessionToolResult {
   const status = threadErrorStatus(error)
-  // The worker binds HTTP before its managed engine finishes starting. Only
-  // retry creation when the session endpoint itself rejected the request;
-  // a later prompt failure may already have created a session.
   if (action === "create" && status === 400 && isRecord(error)
     && error.code === "opencode_unconfigured" && typeof error.path === "string"
     && error.path.endsWith("/opencode/session")) {
@@ -979,17 +922,14 @@ function modelInput(model: z.infer<typeof modelSchema> | undefined): HeadlessThr
   }
 }
 
-/** The caller reached this session through an attach that no longer connects them to it. */
 function sessionDisconnected(identity: Record<string, unknown>): RemoteSessionToolResult {
   return errorResult({ target: "desktop", ...identity, error: "session_unavailable", message: DETACHED_MESSAGE, retryable: false })
 }
 
-/** The computer was disconnected from the organization. Retrying cannot help: someone has to sign in on it again. */
 function computerDisconnectedResult(identity: Record<string, unknown>): RemoteSessionToolResult {
   return errorResult({ target: "desktop", ...identity, error: COMPUTER_DISCONNECTED_ERROR, message: COMPUTER_DISCONNECTED_SESSION_MESSAGE, retryable: false })
 }
 
-/** A computer the member names that is not among theirs: null unless it is one of theirs that was disconnected. */
 async function disconnectedTargetRefusal(
   deps: RemoteSessionExecuteDeps,
   input: Pick<RemoteSessionExecuteInput, "organizationId">,
@@ -1001,7 +941,6 @@ async function disconnectedTargetRefusal(
   return disconnected ? computerDisconnectedResult({ computerId }) : null
 }
 
-/** `attached`: the request went through an attach command rather than one that started the session. */
 function desktopRequestResult(request: RemoteSessionRequest, options: { attached: boolean }): RemoteSessionToolResult {
   const identity = {
     target: "desktop",
@@ -1028,8 +967,6 @@ function desktopRequestResult(request: RemoteSessionRequest, options: { attached
   }
   if (request.status === "failed" || !request.outcome) {
     const error = request.error ?? { code: "desktop_request_failed", message: "The desktop could not complete the request." }
-    // The computer no longer holds this attach's receipt, so the request store
-    // detached the command: attaching again is what reaches the session.
     if (options.attached && error.code === UNKNOWN_RECEIPT_ERROR_CODE) return sessionDisconnected({ ...identity, action: request.action })
     return errorResult({
       ...identity,
@@ -1038,9 +975,7 @@ function desktopRequestResult(request: RemoteSessionRequest, options: { attached
       message: error.message,
       retryable: !["unknown_session", "unknown_receipt", "invalid_cursor", "cursor_unavailable", "message_conflict", "session_conflict", "ambiguous_creation", "ambiguous_send",
         "stale_request", "invalid_answer", "answer_unsupported", "ambiguous_answer",
-        // The computer's own refusals of a session its owner no longer shares, or that is gone.
         "session_access_denied", "session_unavailable", REMOTE_ACCESS_OFF_ERROR,
-        // Disconnecting the computer failed the request.
         COMPUTER_DISCONNECTED_ERROR].includes(error.code),
     })
   }
@@ -1072,10 +1007,6 @@ function bodySessionLocation(body: unknown): { sessionId: string; workspaceId?: 
   }
 }
 
-/**
- * A session created through a desktop command belongs to the runner that
- * delivered it. Anything else keeps the Cloud path unchanged.
- */
 async function findDesktopSession(
   input: RemoteSessionExecuteInput,
   body: unknown,
@@ -1129,7 +1060,6 @@ async function executeDesktopSessionAction(
   if (input.action !== "read" && input.action !== "send" && input.action !== "stop" && input.action !== "answer") {
     throw new Error("remote_session_desktop_action_invariant")
   }
-  // Dismissing a question arrived with session access: a runner without it would misread the answer.
   const dismissal = input.action === "answer" && answerBodySchema.parse(body).kind === "dismiss"
   if (input.action === "answer" && runner.controlCapable && (!runner.answerCapable || (dismissal && !runner.accessCapable))) {
     return errorResult({
@@ -1195,26 +1125,18 @@ export type RemoteSessionExecuteInput = {
   userId: string
   hasWriteScope: boolean
   body: unknown
-  /** Set when the call is made with a headless-run token Den minted (for example for a Slack run). */
   headlessRunTokenId?: string | null
-  /** Ends a waiting status call when the caller goes away. */
   signal?: AbortSignal
 }
 
-/** The desktop took the command but its local OpenWork server or engine did not answer. */
 const DESKTOP_RUNTIME_UNREACHABLE_CODE = "openwork_unreachable"
 const desktopRuntimeUnreachableFields = {
   retryable: false,
   note: "OpenWork is not running on that desktop, so the task did not start. Tell the person to make sure OpenWork is running there; do not create the same task again until they say it is.",
 }
 
-/** After a desktop reported OpenWork unreachable, new desktop tasks for it fail at once for this long instead of queueing. */
 const DESKTOP_UNREACHABLE_HOLD_MS = 2 * 60_000
 
-/**
- * The owner's latest settled command failed because OpenWork was not running on the desktop, and nothing has
- * delivered since: queueing again would fail the same way. A delivered command (or its progress) clears it.
- */
 async function recentDesktopUnreachable(
   deps: RemoteSessionExecuteDeps,
   input: RemoteSessionExecuteInput,
@@ -1240,13 +1162,11 @@ async function recentDesktopUnreachable(
   })
 }
 
-/** Added to a desktop create that a Slack run made: Den posts the outcome there, so the run should not wait. */
 const postedInThreadFields = {
   resultPostedInThread: true,
   note: "OpenWork will post the result in this Slack thread when the desktop finishes, fails, or needs approval. Tell the person that, then end your turn; for status questions later, use remote-session:read with this commandId.",
 }
 
-/** Never fails the create: the command is already queued, only the thread report is lost. */
 async function linkToOriginatingRun(
   deps: RemoteSessionExecuteDeps,
   input: RemoteSessionExecuteInput,
@@ -1267,7 +1187,6 @@ async function linkToOriginatingRun(
   }
 }
 
-/** Status reads scoped to the caller: their commands, their computers, their Cloud. */
 function remoteSessionStatusSources(input: RemoteSessionExecuteInput, deps: RemoteSessionExecuteDeps): RemoteSessionStatusSources {
   const scope = { organizationId: input.organizationId, userId: input.userId }
   return {
@@ -1281,7 +1200,6 @@ function remoteSessionStatusSources(input: RemoteSessionExecuteInput, deps: Remo
       if (!(await deps.getOpenWorkWebAccess(input.organizationId, { userId: input.userId })).hasAccess) {
         return { error: { code: OPENWORK_WEB_ACCESS_REQUIRED_CODE, message: OPENWORK_WEB_ACCESS_REQUIRED_MESSAGE } }
       }
-      // A status read never waits for a waking workspace: the caller asks again.
       const runtime = await deps.resolveRuntime({ ...scope, readyBudgetMs: 0 })
       if (runtime.ok) return { client: deps.createClient(runtime.runtime) }
       return runtime.retryable ? null : { error: { code: runtime.error, message: runtime.message } }
@@ -1289,7 +1207,6 @@ function remoteSessionStatusSources(input: RemoteSessionExecuteInput, deps: Remo
   }
 }
 
-/** Compact, read-only event observation. Reuse access checks without queuing desktop read requests. */
 export async function readRemoteSessionEventStatus(
   scope: { organizationId: DenTypeId<"organization">; userId: string },
   reference: { commandId?: string; sessionId?: string },
@@ -1322,18 +1239,10 @@ function sessionAccessDenied(message: string, identity: Record<string, unknown>)
   return errorResult({ target: "desktop", ...identity, error: "session_access_denied", message, retryable: false })
 }
 
-/** Nothing reaches the computer: its owner, or the organization, does not take tasks from other devices there. */
 function remoteAccessOff(message: string, identity: Record<string, unknown>): RemoteSessionToolResult {
   return errorResult({ target: "desktop", ...identity, error: REMOTE_ACCESS_OFF_ERROR, message, retryable: false })
 }
 
-/**
- * Why a session on one of the caller's computers may not be reached right now.
- * A computer that is off refuses every session there. A session reached
- * through an attach was started on the computer itself: it also needs the
- * organization and the computer's owner to both allow every session. A
- * computer with no registration is not off; it is offline or gone.
- */
 async function desktopSessionRefusal(
   deps: RemoteSessionExecuteDeps,
   scope: CallerScope,
@@ -1352,12 +1261,6 @@ async function desktopSessionRefusal(
   return denial ? sessionAccessDenied(denial, identity) : null
 }
 
-/**
- * The same check for a command read by its commandId or through one of its
- * requests: what a session returned is told only while that session may still
- * be reached. A command that reached no session has only its own outcome,
- * which is always told.
- */
 async function commandRefusal(
   deps: RemoteSessionExecuteDeps,
   input: RemoteSessionExecuteInput,
@@ -1378,11 +1281,6 @@ const ATTACH_OFFLINE_MESSAGE = "That computer is not connected. Start OpenWork t
 const ATTACH_DEFAULT_TITLE = "Session"
 const ATTACH_TITLE_MAX_LENGTH = 120
 
-/**
- * Attach the caller to a session that was started on one of their own
- * computers. Den checks everything it can before anything is queued; the
- * computer checks again when it takes the command.
- */
 async function attachDesktopSession(
   input: RemoteSessionExecuteInput,
   body: RemoteSessionAttachRequest,
@@ -1393,10 +1291,8 @@ async function attachDesktopSession(
   const organizationOff = remoteAccessOffReason(policy, null)
   if (organizationOff) return remoteAccessOff(organizationOff, {})
   const targets = await (deps.desktopTargets ?? defaultDesktopTargets)({ ...scope, sessions: true })
-  // Only the caller's own computers are ever read, so someone else's is as unknown as one that does not exist.
   const computer = targets.computers.find((candidate) => candidate.computerId === body.computerId)
   const identity = { computerId: body.computerId, workspaceId: body.workspaceId, sessionId: body.sessionId }
-  // A computer that takes nothing says so before anything about which sessions may be reached.
   const access = computer ? sessionAccessOf(computer, policy) : null
   const off = remoteAccessOffReason(policy, access)
   if (off) return remoteAccessOff(off, identity)
@@ -1406,7 +1302,6 @@ async function attachDesktopSession(
   if (!targets.ownerMemberId || !computer || !access) {
     return errorResult({ error: "unknown_computer", message: `No computer "${body.computerId}" can take remote sessions for your account. ${TARGETS_HINT}`, retryable: false })
   }
-  // Reaching a session that was started on the computer takes an app that can refuse one.
   if (!runnerAccessCapabilities(computer.capabilities).accessCapable || !computer.registered || computer.capabilities?.includes(REMOTE_SESSION_CONTROL_RUNNER_CAPABILITY) !== true) {
     return errorResult({ target: "desktop", ...identity, error: "desktop_update_required", message: ATTACH_UPDATE_REQUIRED_MESSAGE, retryable: false })
   }
@@ -1440,7 +1335,6 @@ async function attachDesktopSession(
   return jsonResult({ target: "desktop", state: "queued", commandId: command.id, ...identity, expiresAt: sessionTimestampIso(command.expiresAt) })
 }
 
-/** The member's computers that take nothing from other devices right now, each with why, most recently seen first. */
 function computersOff(computers: readonly RemoteSessionDesktopRecord[], policy: RemoteSessionAccessPolicy): Map<string, string> {
   const off = new Map<string, string>()
   for (const computer of computers) {
@@ -1450,7 +1344,6 @@ function computersOff(computers: readonly RemoteSessionDesktopRecord[], policy: 
   return off
 }
 
-/** `GET /v1/sessions`: the caller's own sessions across their computers. */
 export async function listMemberRemoteSessions(
   scope: CallerScope,
   deps: RemoteSessionExecuteDeps = DEFAULT_REMOTE_SESSION_DEPS,
@@ -1469,10 +1362,6 @@ function reportedSessionStatus(session: RunnerReportedSession): "running" | "idl
   return session.working ? "running" : "idle"
 }
 
-/**
- * `remote-session:list`: the sessions the caller reaches through a delivered
- * command, then the ones their computers report that they could attach to.
- */
 async function listCallerSessions(
   input: RemoteSessionExecuteInput,
   body: z.infer<typeof listBodySchema>,
@@ -1489,16 +1378,13 @@ async function listCallerSessions(
     }),
     sessionAccessPolicy(deps, scope),
   ])
-  // Nothing on anyone's computer is reached while the organization has it off.
   if (remoteAccessOffReason(policy, null)) return jsonResult({ target: body.target, sessions: [] })
-  // What each computer reported is read only where sessions started on them can be reached at all.
   const computers = (await (deps.desktopTargets ?? defaultDesktopTargets)({ ...scope, sessions: policy.ceiling === "all" })).computers
   const covered = new Set<string>()
   const reachable = delivered.flatMap((session) => {
     const runner = { organizationId: input.organizationId, ownerMemberId: session.ownerMemberId, runnerId: session.runnerId }
     const computer = commandComputer({ ...runner, claimedByRunnerId: session.runnerId, targetComputerId: null }, computers)
     const access = computer ? sessionAccessOf(computer, policy).effectiveAccess : null
-    // A computer that is off shares nothing; its sessions are listed again once it is allowed.
     if (access === "off") return []
     if (session.kind === "attach" && access !== "all") return []
     if (computer) covered.add(coveredSessionKey(computer, session.workspaceId, session.sessionId))
@@ -1507,7 +1393,6 @@ async function listCallerSessions(
       workspaceId: session.workspaceId,
       commandId: session.commandId,
       title: session.title,
-      // Null until the desktop first reports progress (older desktops never do).
       status: session.status,
       updatedAt: session.updatedAt,
       origin: session.kind === "attach" ? "local" : "remote",
@@ -1534,7 +1419,6 @@ async function listCallerSessions(
   })
 }
 
-/** `send` only continues an existing session; a send with no sessionId was meant to start a task. */
 function newTaskSentToExistingSessionHint(action: RemoteSessionAction, body: unknown): { hint?: string } {
   if (action !== "send") return {}
   const normalized = normalizeToolBody(body)
@@ -1586,7 +1470,6 @@ async function executeRemoteSession(
         createdByUserId: input.userId,
       })
       if (!request) return errorResult({ error: "unknown_request", retryable: false })
-      // A result from an attached session is handed over only while that session may still be reached.
       const command = await deps.commandStore.get({ commandId: request.commandId, organizationId: input.organizationId, createdByUserId: input.userId })
       const refusal = command ? await commandRefusal(deps, input, command) : null
       return refusal ?? desktopRequestResult(request, { attached: command?.kind === "attach" })
@@ -1604,7 +1487,6 @@ async function executeRemoteSession(
         commandId: command.id,
         target: "desktop",
         state: command.status,
-        // The computer that took the command, or the one it waits for.
         computerId: command.claimedByRunnerId
           ? automationRunnerRowId({
             organizationId: command.organizationId,
@@ -1638,11 +1520,7 @@ async function executeRemoteSession(
     }))
   }
 
-  // Registered clients are an OpenWork offload surface, not an entitlement to
-  // a Cloud worker. Keep Cloud and legacy desktop access rules unchanged.
   const registeredCreate = input.action === "create" && createBodySchema.parse(parsedBody.data).target === "registered"
-  // Resolve ownership and runner presence once for this call, including a miss.
-  // Registered clients bypass Web access; legacy desktops still check it first.
   let desktop: { session: RemoteSessionDesktopSession; runner: Awaited<ReturnType<RemoteSessionExecuteDeps["desktopRunner"]>> } | null = null
   if (input.action === "read" || input.action === "send" || input.action === "stop" || input.action === "answer") {
     const session = await findDesktopSession(input, parsedBody.data, deps)
@@ -1652,7 +1530,6 @@ async function executeRemoteSession(
       if (runner.disconnected) return computerDisconnectedResult(identity)
       const refusal = await desktopSessionRefusal(deps, callerScope(input), runner, session.kind, identity)
       if (refusal) return refusal
-      // Access is fine but this attach was let go of: nothing is sent through it.
       if (session.kind === "attach" && session.detached) return sessionDisconnected(identity)
       desktop = { session, runner }
       if (runner.registered) {
@@ -1677,8 +1554,6 @@ async function executeRemoteSession(
       const targets = await (deps.desktopTargets ?? defaultDesktopTargets)({ organizationId: input.organizationId, userId: input.userId })
       const disconnected = body.computerId === undefined ? null : await disconnectedTargetRefusal(deps, input, targets, body.computerId)
       if (disconnected) return disconnected
-      // Registered admission has separate access rules. Never let that alias
-      // select a legacy desktop that still requires Web access.
       const computers = body.target === "registered"
         ? targets.computers.filter((computer) => computer.registered === true)
         : targets.computers
@@ -1691,7 +1566,6 @@ async function executeRemoteSession(
           message: "No desktop is connected for your account. Open the OpenWork desktop app and try again.",
         })
       }
-      // A computer that takes nothing is refused when it is named, and never chosen when none is.
       const off = computersOff(computers, policy)
       const named = body.computerId === undefined ? undefined : off.get(body.computerId)
       if (named) return remoteAccessOff(named, { computerId: body.computerId })
@@ -1707,7 +1581,6 @@ async function executeRemoteSession(
         : body
       const resolved = resolveDesktopTarget(selection, candidates, Date.now())
       if (!resolved.ok) {
-        // The workspace is only on a computer that takes nothing.
         const holder = resolved.error === "unknown_workspace"
           ? computers.find((computer) => off.has(computer.computerId) && computer.inventory?.workspaces.some((workspace) => workspace.workspaceId === body.workspaceId))
           : undefined
@@ -1731,8 +1604,6 @@ async function executeRemoteSession(
         targetComputerId: resolved.computerId,
         ...(resolved.workspaceId === null ? {} : { targetWorkspaceId: resolved.workspaceId }),
       })
-      // A Slack run that picked a computer hands off the same way as one that didn't: the result is posted to
-      // its thread, so the run can end instead of waiting for the desktop.
       const postsToThread = await linkToOriginatingRun(deps, input, command.id, body.prompt !== undefined)
       return jsonResult({
         target: body.target,
@@ -1757,8 +1628,6 @@ async function executeRemoteSession(
       const presence = env.automations.runtimeEnabled
         ? await deps.desktopPresence({ organizationId: input.organizationId, userId: input.userId })
         : { connected: false, ownerMemberId: null }
-      // Any of the member's desktops may take an unaddressed task. While some of them take nothing,
-      // the task is addressed to one that does, so it cannot land on the others.
       const taker = off.size > 0
         ? targets.computers.find((computer) => !off.has(computer.computerId) && computerOnline(computer, Date.now()))
         : undefined
@@ -1895,9 +1764,7 @@ async function executeRemoteSession(
       : snapshot.messages
     const transcript = toTranscript({ ...snapshot, messages: currentMessages })
     const limit = body.limit ?? READ_DEFAULT_MESSAGE_LIMIT
-    // Only a running session can wait on anyone; an unreadable list leaves pending out.
     const waiting = isRunning(snapshot.status)
-    // Every open request where the worker lists them, so any can be answered by its requestId; null where it lists one.
     const pendingItems = !client.getThreadPendingItems
       ? null
       : waiting ? await client.getThreadPendingItems(body.sessionId).catch(() => undefined) : []
@@ -1917,7 +1784,6 @@ async function executeRemoteSession(
         completedAt: message.completedAt,
         text: message.text.slice(0, READ_MESSAGE_TEXT_LIMIT),
         toolCalls: message.toolCalls.map((tool) => ({ id: tool.partId, name: tool.name, status: tool.status })),
-        // The same ordered steps a desktop runner sends, so readers render one shape.
         parts: cloudTranscriptParts(message, READ_MESSAGE_TEXT_LIMIT),
       }))),
       finalAssistantText: body.messageId

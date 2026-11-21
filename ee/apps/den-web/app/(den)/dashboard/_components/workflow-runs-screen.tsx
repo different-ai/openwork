@@ -25,7 +25,6 @@ function formatDuration(durationMs: number): string {
   return durationMs < 1_000 ? `${durationMs} ms` : `${(durationMs / 1_000).toFixed(1)} s`;
 }
 
-/** Fixed lanes for the runs list, so rows line up like Computers. Literal classes, so Tailwind generates each one. */
 const RUN_LANE = {
   status: "flex w-28",
   duration: "hidden w-20 tabular-nums @md:block",
@@ -84,7 +83,6 @@ export function WorkflowRunsScreen() {
       return getWorkflowRuns(payload);
     },
   });
-  // Feature intro: a box replaces "No workflow runs yet".
   const intro = useFeatureIntro("analytics.workflow-runs", entitled ? workflowRunsIntroFacts(runs) : null);
 
   return <div className={analyticsPageClass}>

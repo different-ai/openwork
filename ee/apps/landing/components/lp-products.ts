@@ -6,14 +6,11 @@ export type LpProduct = {
   key: LpProductKey;
   name: string;
   href: string;
-  /** Short fact shown on the right of the header menu row. */
   fact: string;
-  /** One line shown under the name in the homepage product tabs. */
   line: string;
   icon: LucideIcon;
 };
 
-/** Header menu order. */
 export const LP_PRODUCTS: LpProduct[] = [
   {
     key: "mcp-gateway",
@@ -49,5 +46,4 @@ export const LP_PRODUCTS: LpProduct[] = [
   }
 ];
 
-/** Homepage tab order: the app first, then the gateways, then Cloud. */
 export const LP_PRODUCT_TAB_ORDER: LpProductKey[] = ["desktop-app", "mcp-gateway", "ai-gateway", "cloud-app"];

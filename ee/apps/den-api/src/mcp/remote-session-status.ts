@@ -12,23 +12,8 @@ import {
 import { automationRunnerRowId } from "../automations/repository.js"
 import type { RemoteSessionCommand } from "../remote-sessions/commands.js"
 
-/**
- * `remote-session:status`: the compact status of every remote session a
- * caller follows, in one call, whatever runs it.
- *
- * Cost is the point. A desktop or registered client's command is one indexed
- * read for all of them (its runner already reports progress to Den). A Cloud
- * session is a small worker read: the last few messages, the run state and,
- * only while it runs, its pending requests. Callers send back each version
- * they hold, so an unchanged thread answers with its ref and version only, and
- * `waitMs` holds the call, re-checking quietly, until one changes. Settled
- * threads end the wait at once: nothing is coming.
- */
-
-/** Re-checks while a call waits: a desktop task is one indexed read, a Cloud task a few worker requests. */
 const COMMAND_RECHECK_MS = 2_000
 const CLOUD_RECHECK_MS = 10_000
-/** Enough of the tail to see the latest reply and whether it failed. */
 const CLOUD_TAIL_MESSAGES = 6
 const RETRY_STARTING_MS = 2_000
 const RETRY_ACTIVE_MS = 5_000
@@ -37,16 +22,13 @@ const UNAVAILABLE_VERSION = "unavailable"
 export type RemoteSessionStatusCloudClient = Pick<HeadlessThreadClient, "getThreadSnapshot">
   & Partial<Pick<HeadlessThreadClient, "getThreadWaitingFor" | "getThreadPending">>
 
-/** Cloud for this caller: a client, a lasting reason it cannot be read, or null while it is waking or unreachable. */
 export type RemoteSessionStatusCloud =
   | { client: RemoteSessionStatusCloudClient }
   | { error: { code: string; message: string } }
   | null
 
-/** What the status read needs, already scoped to the caller. */
 export type RemoteSessionStatusSources = {
   commands: (commandIds: readonly string[]) => Promise<RemoteSessionCommand[]>
-  /** Display names of the caller's computers by computerId; read once, and only when a desktop thread changed. */
   computerLabels: () => Promise<ReadonlyMap<string, string>>
   cloud: () => Promise<RemoteSessionStatusCloud>
 }
@@ -70,11 +52,6 @@ function preview(text: string | null | undefined): string | null {
     : trimmed
 }
 
-/**
- * The status line's short form of what a session waits on: the first question's
- * text and option labels, or the permission's title. Its requestId is part of
- * the projection, so a new request changes the version.
- */
 export function pendingSummary(pending: RemoteSessionPending | null | undefined): RemoteSessionPendingSummary | null {
   if (!pending) return null
   if (pending.kind === "permission") return { kind: "permission", requestId: pending.requestId, title: pending.title }
@@ -92,7 +69,6 @@ export function pendingSummary(pending: RemoteSessionPending | null | undefined)
 }
 
 function known(projection: Projection, extra?: unknown): Observation {
-  // A heartbeat that only re-confirms the same state is not a change.
   return { kind: "known", projection, version: versionOf({ ...projection, observedAt: undefined, extra }) }
 }
 
@@ -125,7 +101,6 @@ export function commandProjection(command: RemoteSessionCommand): Projection {
     state,
     waitingFor: state === "waiting" ? session?.waitingFor ?? null : null,
     title: command.title,
-    // The computer that took it, or the one it waits for.
     computerId: command.claimedByRunnerId
       ? automationRunnerRowId({ organizationId: command.organizationId, ownerMemberId: command.ownerMemberId, runnerId: command.claimedByRunnerId })
       : command.targetComputerId,
@@ -133,7 +108,6 @@ export function commandProjection(command: RemoteSessionCommand): Projection {
     workspaceId: command.workspaceId,
     messageCount: session?.messageCount ?? null,
     preview: state === "idle" ? preview(session?.finalText) : null,
-    // What it ran last only means something while it works.
     latestStep: state === "running" || state === "waiting" ? session?.latestStep ?? null : null,
     error,
     observedAt: session?.observedAt ?? command.updatedAt,
@@ -158,8 +132,6 @@ async function observeCloudThread(client: RemoteSessionStatusCloudClient, sessio
   try {
     const snapshot = await client.getThreadSnapshot(sessionId, { limit: CLOUD_TAIL_MESSAGES, signal })
     const running = isRunning(snapshot.status)
-    // Two small reads, only while it runs: a settled thread waits on nobody.
-    // The pending request itself where the client can read it, so the row can offer its options.
     const pending = running && client.getThreadPending
       ? await client.getThreadPending(sessionId, { signal }).catch(() => null)
       : null
@@ -171,7 +143,6 @@ async function observeCloudThread(client: RemoteSessionStatusCloudClient, sessio
     while (lastUser >= 0 && snapshot.messages[lastUser]?.role !== "user") lastUser -= 1
     const replied = snapshot.messages.slice(lastUser + 1).some((message) => message.role === "assistant")
     const terminalError = !running && replied ? transcript.terminalError : null
-    // Idle with no reply yet is the moment between accepting a prompt and starting it.
     const state: RemoteSessionThreadState = terminalError ? "error" : waitingFor ? "waiting" : running || !replied ? "running" : "idle"
     const last = snapshot.messages.at(-1)
     return known({
@@ -188,8 +159,6 @@ async function observeCloudThread(client: RemoteSessionStatusCloudClient, sessio
       error: terminalError ? { code: terminalError.name || "session_error", message: terminalError.message || "The task stopped with an error." } : null,
       observedAt: now,
       pending: state === "waiting" ? pendingSummary(pending) : null,
-    // A new message changes the version, so an open transcript knows to refresh;
-    // a reply still streaming does not, or every check would be a change.
     }, last?.id ?? null)
   } catch (error) {
     if (typeof error === "object" && error !== null && "status" in error && error.status === 404) {
@@ -244,8 +213,6 @@ export async function readRemoteSessionStatus(
   const threads = [...byKey.values()]
   const commands = threads.filter((thread) => thread.kind === "command")
   const clouds = threads.filter((thread) => thread.kind === "cloud")
-  // Reuse ready access and lasting errors, but retry a waking workspace on
-  // the next Cloud check so a long poll can observe it becoming available.
   let cloudAccess: Promise<RemoteSessionStatusCloud> | null = null
   const cloud = () => cloudAccess ??= sources.cloud().then((access) => {
     if (access === null) cloudAccess = null

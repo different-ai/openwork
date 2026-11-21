@@ -19,11 +19,6 @@ import { diagnosticsRowId, formatAgo, formatDuration, formatUptime } from "../di
 import { DiagnosticsBadge, DiagnosticsCode, DiagnosticsFacts, DiagnosticsLead, DiagnosticsRow } from "../diagnostics/diagnostics-row";
 import { serviceDisplayState, serviceRows, serviceStateLabel } from "./service-readiness-data";
 
-/**
- * Installation rows shared by Settings › Diagnostics (installation
- * administrators) and Admin › Services, so both read the same.
- */
-
 const SERVICE_ICONS: Record<ServiceId, LucideIcon> = {
   database: Database,
   gateway: Waypoints,
@@ -32,7 +27,6 @@ const SERVICE_ICONS: Record<ServiceId, LucideIcon> = {
   email: Mail,
 };
 
-/** The mail transport reads as the row's sub; other notes are details. */
 const SUB_NOTES: ReadonlySet<ServiceNote> = new Set(["email_smtp", "email_resend"]);
 
 function serviceTone(service: DeploymentServiceStatus): DiagnosticsTone {
@@ -102,7 +96,6 @@ function ServerRow({ server, now }: { server: DenServerFacts; now: number }) {
   );
 }
 
-/** The answering server first, then every service slot (missing ones read as not checked). */
 export function InstallationRows({ readiness, server, now }: { readiness: DeploymentServiceReadiness | null; server?: DenServerFacts | null; now: number }) {
   const facts = server ?? readiness?.server ?? null;
   return (

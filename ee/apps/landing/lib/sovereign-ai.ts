@@ -18,24 +18,18 @@ export const sovereigntyModelOptions: { value: SovereigntyModels; label: string;
 ];
 
 export const sovereigntyDefaultSetup: SovereigntySetup = { hosting: "self", models: "eu" };
-/** The setup that answers the most checks. */
 export const sovereigntyBestSetup: SovereigntySetup = { hosting: "self", models: "own" };
 
-/** One thing the framework asks of the workspace layer. */
 export type SovereigntyCheck = {
   label: string;
-  /** Hosting choices that answer the check. Omitted means any. */
   hosting?: SovereigntyHosting[];
-  /** Model choices that answer the check. Omitted means any. */
   models?: SovereigntyModels[];
-  /** Set when no setup answers the check today: what is open on OpenWork's side. */
   gap?: string;
 };
 
 export type SovereigntyObjective = {
   code: string;
   name: string;
-  /** Share of the sovereignty score, in percent (Cloud Sovereignty Framework v1.2.1, section 5). */
   weight: number;
   asks: string;
   setBy: string;
@@ -171,7 +165,6 @@ export const sovereigntyObjectives: SovereigntyObjective[] = [
 
 export type SovereigntyCheckStatus = "answered" | "setup" | "open";
 
-/** "open" is a gap on OpenWork's side; "setup" is answered by a different hosting or model choice. */
 export function sovereigntyCheckStatus(check: SovereigntyCheck, setup: SovereigntySetup): SovereigntyCheckStatus {
   if (check.gap) return "open";
   if (check.hosting && !check.hosting.includes(setup.hosting)) return "setup";
@@ -179,7 +172,6 @@ export function sovereigntyCheckStatus(check: SovereigntyCheck, setup: Sovereign
   return "answered";
 }
 
-/** What a check that is not answered in this setup needs instead, in words. */
 export function sovereigntyCheckNeeds(check: SovereigntyCheck, setup: SovereigntySetup): string {
   const parts: string[] = [];
   if (check.hosting && !check.hosting.includes(setup.hosting)) {
@@ -194,15 +186,10 @@ export function sovereigntyCheckNeeds(check: SovereigntyCheck, setup: Sovereignt
 }
 
 export type SovereigntyCoverage = {
-  /** Answered checks per objective, weighted as the framework weights its objectives. 0 to 100. */
   percent: number;
   objectives: { code: string; answered: number; total: number }[];
 };
 
-/**
- * OpenWork's own count of the workspace checks answered in a setup.
- * It is not a SEAL level or a Sovereignty Score: those are assigned to a whole service by a buyer or an auditor.
- */
 export function sovereigntyCoverage(setup: SovereigntySetup): SovereigntyCoverage {
   const objectives = sovereigntyObjectives.map((objective) => ({
     code: objective.code,

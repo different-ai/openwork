@@ -4,14 +4,6 @@ import { runScript, type BuildOptions } from "./builder.ts";
 import { toolsRecipe, dependencyRecipe, checkoutRecipe } from "./build-recipes.ts";
 import { digest, sourceTree, dependencyFingerprint, ensureLayer, type SourceEntry } from "./cache.ts";
 
-/**
- * Files that never execute inside the evidence VM. Anything not listed here is a
- * runtime input: changing it rebuilds the world. Keep this list conservative;
- * a missing exclusion only costs a rebuild, a wrong one reuses stale code.
- * Controller files that do enter the VM are digested separately. Shared with
- * the Daytona builder, so both providers rebuild for the same changes. The
- * UI-guardrail checker/baseline run only in CI, never inside the guest runtime.
- */
 const INERT_PATH = /^(?:\.github\/|\.opencode\/|\.warden\/|docs\/|packages\/docs\/|evals\/(?:specs|worlds|scripts|bin|results)\/|apps\/review\/|packages\/review\/|packages\/world-freestyle\/|packages\/evidence-daytona\/|ee\/apps\/(?:landing|headless-runner)\/|scripts\/(?:(?:prove|prepare|publish|verify|soak)-[^/]+|check-ui-guardrails(?:\.test)?\.mjs|ui-guardrails-baseline\.json)$)|(?:^|\/)(?:test|tests|__tests__)\/|\.(?:test|spec|e2e\.test)\.[cm]?[jt]sx?$|\.mdx?$/;
 
 /** Bump the version when the template layout changes; cleanup reclaims older ones. */
@@ -68,12 +60,6 @@ export async function ensureEvidenceImage(devSha: string, api = client(), option
     prepare: (vm) => runScript(vm, "evidence-image", `${EVIDENCE_TOOLS_RECIPE}\n${checkoutRecipe(devSha)}\n${EVIDENCE_DEPENDENCIES_RECIPE}`, options) }, api);
 }
 
-/**
- * Changes the running world applies without a rebuild. Vite (app) and Next
- * (Den web) serve the checked-out sources; den-api runs once from source, so it
- * is restarted. Extend this only together with the reload or restart that
- * applies the new kind of change; anything else takes the full build.
- */
 const HOT_RULES: { path: RegExp; restart?: "den-api" }[] = [
   { path: /^apps\/app\/(?:src|public)\// },
   { path: /^ee\/apps\/den-web\/(?:app|components|lib|src|public|styles|hooks)\// },
@@ -107,7 +93,6 @@ export function fastPathDecision(changes: string[]): { fast: boolean; restart: s
  */
 export async function ensureEvidenceSnapshot(sha: string, api = client(), options: EvidenceBuildOptions = {}): Promise<EvidenceTemplate> {
   if (!/^[a-f0-9]{40}$/.test(sha)) throw new Error("A full pushed source SHA is required");
-  // Read this commit's and dev's file lists in parallel; dev's is only awaited if a build is needed.
   const devShaPromise = options.imageSha ? Promise.resolve(options.imageSha) : devHead(options.sourceFetch);
   const devEntriesPromise = devShaPromise.then((devSha) => devSha === sha ? null : sourceTree(devSha, options.sourceFetch));
   devEntriesPromise.catch(() => undefined);
@@ -117,7 +102,6 @@ export async function ensureEvidenceSnapshot(sha: string, api = client(), option
   const controller = await Promise.all(files.map(readAsset));
   const templateSlug = (fingerprint: string) => `${EVIDENCE_TEMPLATE_PREFIX}${digest(EVIDENCE_TOOLS_RECIPE + EVIDENCE_DEPENDENCIES_RECIPE + controller.join("\n") + fingerprint)}`;
   const runtimeFingerprint = evidenceRuntimeFingerprint(entries);
-  // Set by parent(), read by prepare() and the fallback below.
   const state: { mode: "fast" | "full"; restart: string[] } = { mode: "full", restart: [] };
   let dev: { sha: string; entries: SourceEntry[] } | undefined;
   const devTree = async () => {
@@ -141,9 +125,6 @@ export async function ensureEvidenceSnapshot(sha: string, api = client(), option
     },
     prepare: async (vm) => {
       if (state.mode === "fast") {
-        // dev's world already has these controller files (they are in its key)
-        // and its installed and built files. Fetch commit metadata only; checkout
-        // then downloads just the files that differ from dev.
         await runScript(vm, "evidence-world-fast", `cd /workspace
 git config remote.origin.promisor true
 git config remote.origin.partialclonefilter blob:none
@@ -183,8 +164,6 @@ systemctl start openwork-evidence-gateway
   try {
     template = await build();
   } catch (error) {
-    // The fast path is an optimisation: if applying the change to dev's running
-    // world fails, build the world in full instead of failing the PR.
     if (state.mode !== "fast") throw error;
     observe({ stage: "fast path failed; building in full", durationMs: 0, reason: error instanceof Error ? error.message : String(error) });
     allowFast = false;

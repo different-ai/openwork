@@ -36,10 +36,8 @@ import type { OrgRouteVariables } from "./shared.js"
 import { hasPermission, idParamSchema, orgAccessFailureStatus, permissionFailureHeaders, requirePermission } from "./shared.js"
 
 const agentPermissionPolicySchema = z.object({
-  /** The team the policy applies to, or null for everyone. */
   teamId: z.string().nullable(),
   name: z.string(),
-  /** Team members, or null for everyone. */
   memberCount: z.number().int().nullable(),
   settings: agentPermissionSettingsSchema,
   updatedAt: z.string().datetime().nullable(),
@@ -48,7 +46,6 @@ const agentPermissionPolicySchema = z.object({
 const agentPermissionPolicyListSchema = z.object({
   everyone: agentPermissionPolicySchema,
   teams: z.array(agentPermissionPolicySchema),
-  /** Whether the caller can change them (agent_permissions.manage). */
   canEdit: z.boolean(),
 }).meta({ ref: "AgentPermissionPolicyList" })
 
@@ -66,12 +63,10 @@ function serializeDate(value: Date | null) {
   return value ? value.toISOString() : null
 }
 
-/** Appends the scope's before → after change event inside the save's transaction. */
 function auditPolicyChange(capture: AuditChangeCapture | null, organizationId: string, scope: AgentPermissionAuditScope): AgentPermissionPolicyChange {
   return (tx, { before, after }) => appendDomainChanges(tx, capture, [agentPermissionPolicyChangedEvent(organizationId, scope, before, after)])
 }
 
-/** Which member-decided permissions the calling editor says it can show. */
 type EditorSupport = { browserUploads: boolean; fileSends: boolean; sandboxOnly: boolean; sandboxModes: boolean }
 function editorSupport(c: { req: { header(name: string): string | undefined } }): EditorSupport {
   return {
@@ -82,7 +77,6 @@ function editorSupport(c: { req: { header(name: string): string | undefined } })
   }
 }
 
-/** Old editors cannot replace permissions they do not understand. */
 function policyVisibility(supports: EditorSupport) {
   const preserveKeys: AgentPermissionKey[] = []
   if (!supports.browserUploads) preserveKeys.push("browserUploads")
@@ -128,7 +122,6 @@ async function savePolicy(
   try {
     saved = await save()
   } catch (error) {
-    // A concurrent first save of the same scope created the policy; replace it.
     if (!isDuplicateEntry(error)) throw error
     saved = await save()
   }

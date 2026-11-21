@@ -1,21 +1,3 @@
-// The model catalog in models.dev's experimental v2 shape, published at
-// models.openworklabs.com/experimental/v2.0/api.json. OpenCode v2 engines read
-// this path first; a v1-only mirror makes them retry /api.json and convert it,
-// which loses what only v2 can say (several APIs per model, @opencode/ai
-// entry points, MIME modalities, v2-only models).
-//
-//   base-v2.json         the models.dev v2 snapshot (Update Models workflow),
-//                        published unchanged
-//   providers/*.json     custom providers, converted from their v1 files
-//   openwork-models.json the OpenWork provider, converted from v1
-//
-// Only our own providers are converted, and the conversion is the same one
-// OpenCode applies to a v1 catalog (packages/core/src/models-dev/v1.ts), plus
-// the fields the v2 schema requires (packages/core/src/schema-v2.ts in
-// models.dev). So the engine sees the same OpenWork models through either path.
-//
-// Node runs this file directly with type stripping (scripts/build-models.mjs),
-// so it may only use erasable TypeScript and node: built-ins.
 import { readFileSync } from "node:fs"
 import path from "node:path"
 import {
@@ -30,15 +12,8 @@ import {
 
 export const OPENWORK_PROVIDER_DOC = "https://openworklabs.com/docs/ai-gateway/openwork-models"
 
-/** Where the v2 API's first (default) entry sends a model, by the v1 provider's `npm`. */
 type ApiRoute = { readonly protocol: string; readonly aisdk: string; readonly opencodeai: string }
 
-/**
- * The route models.dev v2 gives a chat model for each SDK package a custom
- * provider (or the OpenWork provider) may use. Matches what the engine picks
- * when it converts the v1 catalog, and what models.dev itself publishes for
- * most providers with that package.
- */
 export const V2_ROUTES: Readonly<Record<string, ApiRoute>> = {
   "@ai-sdk/openai-compatible": { protocol: "chat-completions", aisdk: "@ai-sdk/openai-compatible", opencodeai: "@opencode/ai/providers/openai-compatible" },
   "@ai-sdk/openai": { protocol: "responses", aisdk: "@ai-sdk/openai", opencodeai: "@opencode/ai/providers/openai/responses" },
@@ -69,7 +44,6 @@ function readJson(filePath: string): unknown {
   return JSON.parse(readFileSync(filePath, "utf8"))
 }
 
-/** Drops keys whose value is undefined, so the published JSON has no nulls or holes. */
 function compact(record: Record<string, unknown>): JsonRecord {
   const out: JsonRecord = {}
   for (const [key, value] of Object.entries(record)) if (value !== undefined) out[key] = value
@@ -84,7 +58,6 @@ export function readBaseCatalogV2(sourceDir: string = MODELS_SOURCE_DIR): Models
   return catalog
 }
 
-/** Families models.dev v2 already uses: `family` is a closed list there, so others are left out. */
 export function knownFamilies(baseV2: ModelsCatalog): Set<string> {
   const families = new Set<string>()
   for (const provider of Object.values(baseV2)) {
@@ -96,7 +69,6 @@ export function knownFamilies(baseV2: ModelsCatalog): Set<string> {
   return families
 }
 
-/** v1 `pdf` is a MIME type in v2; text, image, audio and video stay as broad kinds. */
 function modalitiesV2(value: unknown): JsonRecord {
   const list = (items: unknown) =>
     Array.isArray(items) ? [...new Set(items.filter(isNonEmptyString).map((item) => (item === "pdf" ? "application/pdf" : item)))] : []
@@ -127,11 +99,6 @@ function cacheV2(read: unknown, write: unknown): JsonRecord | undefined {
   return Object.keys(cache).length > 0 ? cache : undefined
 }
 
-/**
- * v1 cost (USD per 1M tokens) as v2 text prices. Context tiers become
- * `context > size` overrides; `context_over_200k` is used only without tiers,
- * as it says the same thing in older files.
- */
 function costV2(value: unknown): JsonRecord | undefined {
   if (!isRecord(value) || !isNumber(value.input) || !isNumber(value.output)) return undefined
   const tiers: { size: number; prices: JsonRecord }[] = []
@@ -180,14 +147,11 @@ function interleavedField(value: unknown): string | undefined {
 }
 
 export type ModelV2Context = {
-  /** The v1 provider the model belongs to: its `npm` and `api` pick the route. */
   readonly provider: JsonRecord
   readonly families: ReadonlySet<string>
-  /** A description for models whose v1 entry has none (v2 requires one). */
   readonly describe?: (modelId: string) => string | undefined
 }
 
-/** One v1 model as a v2 chat model. Throws for a provider package with no v2 route. */
 export function modelToV2(model: JsonRecord, context: ModelV2Context): JsonRecord {
   const npm = String(context.provider.npm)
   const route = V2_ROUTES[npm]
@@ -231,11 +195,6 @@ export function modelToV2(model: JsonRecord, context: ModelV2Context): JsonRecor
   })
 }
 
-/**
- * One v1 provider (a custom provider file or the OpenWork provider) as a v2
- * provider. v2 providers never name an SDK package: OpenCode reads any
- * provider with `npm` as a sign the whole catalog is v1.
- */
 export function providerToV2(
   provider: JsonRecord,
   context: { readonly families: ReadonlySet<string>; readonly doc?: string; readonly describe?: (modelId: string) => string | undefined },
@@ -255,7 +214,6 @@ export function providerToV2(
   }
 }
 
-/** Looks up a description in a v2 provider's models, for OpenWork models served through OpenRouter. */
 function describeFrom(provider: JsonRecord | undefined) {
   return (modelId: string) => {
     const model = provider && isRecord(provider.models) ? provider.models[modelId] : undefined
@@ -263,11 +221,6 @@ function describeFrom(provider: JsonRecord | undefined) {
   }
 }
 
-/**
- * Problems with one published v2 provider: the fields the models.dev v2 schema
- * requires and OpenCode decodes. Used on our converted providers; base-v2.json
- * is published as models.dev serves it.
- */
 export function validateProviderV2(providerId: string, provider: unknown): string[] {
   const problems: string[] = []
   const where = `v2 ${providerId}`
@@ -321,11 +274,6 @@ export function validateProviderV2(providerId: string, provider: unknown): strin
   return problems
 }
 
-/**
- * The published v2 catalog (models-site/models/experimental/v2.0/api.json):
- * base-v2.json, custom providers, then OpenWork, in the same order as the v1
- * catalog.
- */
 export function readPublishedCatalogV2(openworkApi: string, sourceDir: string = MODELS_SOURCE_DIR): ModelsCatalog {
   const baseV2 = readBaseCatalogV2(sourceDir)
   const families = knownFamilies(baseV2)

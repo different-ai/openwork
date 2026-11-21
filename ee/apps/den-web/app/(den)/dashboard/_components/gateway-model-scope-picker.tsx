@@ -16,10 +16,6 @@ function Radio({ testId, checked, label, disabled, onSelect }: { testId: string;
   );
 }
 
-/**
- * The Models choice shared by AI providers: every model, or only the ones the
- * admin picks from a filterable list.
- */
 export function GatewayModelScopePicker({
   allLabel, allowAll, onAllowAll, onPick, models, selected, onSelectedChange, icon, loading = false, unavailable = false, disabled = false,
 }: {
@@ -31,9 +27,7 @@ export function GatewayModelScopePicker({
   selected: string[];
   onSelectedChange: (modelIds: string[]) => void;
   icon: (model: GatewayScopeModel) => ReactNode;
-  /** The model list is still loading. */
   loading?: boolean;
-  /** The model list could not be loaded. */
   unavailable?: boolean;
   disabled?: boolean;
 }) {

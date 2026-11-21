@@ -13,14 +13,9 @@ import {
 } from "@/components/ui/alert-dialog";
 import { t } from "../../../../i18n";
 
-/**
- * Deleting something the member made. It names who else loses it and, when
- * it is shared, offers the gentler Stop sharing instead.
- */
 export function LibraryDeleteDialog(props: {
   open: boolean;
   name: string;
-  /** e.g. "Support", or null when nobody else has it. */
   audienceName: string | null;
   audiencePeople: number;
   onCancel: () => void;

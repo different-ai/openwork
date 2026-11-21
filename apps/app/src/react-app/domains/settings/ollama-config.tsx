@@ -159,7 +159,6 @@ async function pullOllamaModel(
             return false;
           }
         } catch {
-          // ignore malformed lines
         }
       }
     }
@@ -215,11 +214,6 @@ function usePullOllamaModel(options: { onSuccess?: (model: string) => void } = {
   return { pullModel, isPulling, progress };
 }
 
-/**
- * Local models turned off by the organization: the page stays, with a lock and
- * who changes it, and talks to nothing (DESIGN P4, C5). Ollama is not even
- * probed on this computer.
- */
 export function LocalModelsBlocked({ organizationName }: { organizationName?: string }) {
   return (
     <Card variant="outline" size="sm" data-testid="local-models-blocked">
@@ -283,7 +277,6 @@ export function OllamaConfig(props: OllamaConfigProps) {
     try {
       await pullModel(model);
     } catch {
-      // The mutation hook owns error progress display.
     }
   };
 
@@ -315,14 +308,12 @@ export function OllamaConfig(props: OllamaConfigProps) {
 
   const working = props.busy || checkingCapabilities;
 
-  /** Makes OpenWork's Ollama models match what Ollama has now, with fresh capabilities. */
   const handleSync = () => {
     setLastAction("sync");
     void (async () => {
       setCheckingCapabilities(true);
       try {
         const input = await fetchOllamaSyncInput();
-        // Show the list that was synced, including models pulled or removed outside OpenWork.
         void refetch();
         if (input) await props.onSync(input);
       } finally {
@@ -412,7 +403,6 @@ export function OllamaConfig(props: OllamaConfigProps) {
           </AlertDescription>
         </Alert>
 
-        {/* Model selection */}
         {status === "running" && (data?.models?.length ?? 0) > 0 ? (
           <div className="flex flex-col gap-2">
             <FieldSet className="gap-3">
@@ -451,7 +441,6 @@ export function OllamaConfig(props: OllamaConfigProps) {
           </div>
         ) : null}
 
-        {/* No models */}
         {status === "running" && (data?.models?.length ?? 0) === 0 && !isPulling && !progress ? (
           <Empty className="flex-none p-6" variant="ghost">
             <EmptyHeader>

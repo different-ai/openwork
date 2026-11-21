@@ -3,24 +3,11 @@ import type { CodemodeLanguage } from "./codemode-script-object.js"
 
 export const BUILTIN_BUILD_AN_APP_CAPABILITY = "skill:build-an-app"
 
-/**
- * Which forms run one item at a time. OpenWork's dialect awaits an async
- * callback in forEach, filter or reduce; standard JavaScript never does. The
- * language rules themselves are stated once, in execute_capability_script's
- * description (workflowCodeRules).
- */
 const SERIAL_FORMS: Record<CodemodeLanguage, string> = {
   "codemode-js": "A for...of loop that awaits each item, or an async forEach, filter, or reduce callback, runs one item at a time.",
   ecmascript: "A for...of loop that awaits each item runs one item at a time, and forEach, filter, and reduce never await an async callback, so pass async callbacks only to map.",
 }
 
-/**
- * The one place agents learn how OpenWork builds artifacts: when to build one, the
- * order of calls, source and tool-call rules, and what a good artifact looks like.
- * Server instructions and the concise builder tool descriptions route here
- * for the detailed rules the compiler and host enforce. Only the Workflow code
- * forms depend on the organization's Workflow language.
- */
 export function buildAnAppSkillSource(language: CodemodeLanguage): string {
   return `---
 name: build-an-app

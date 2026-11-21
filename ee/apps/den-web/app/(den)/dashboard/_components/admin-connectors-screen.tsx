@@ -24,7 +24,6 @@ import { useConnectorsIntroFacts } from "./connectors-intro-facts";
 import { connectorSetupUnfinished, finishSetupHref } from "./admin-connectors";
 import { type ExternalMcpConnection, isNativeProviderConnectionId, useDeleteMcpConnection, useMcpConnections } from "./mcp-connections-data";
 
-/** Show the name filter once more than this many connectors are listed. */
 const FILTER_AFTER = 10;
 
 function ConnectorsEmpty({ orgSlug }: { orgSlug: string | null }) {
@@ -47,7 +46,6 @@ function ConnectorsEmpty({ orgSlug }: { orgSlug: string | null }) {
   );
 }
 
-/** C1 and C5: every connector the organization manages, and who has each one. */
 export function AdminConnectorsScreen() {
   const toast = useDenToast();
   const { orgSlug, orgContext } = useOrgDashboard();
@@ -65,8 +63,6 @@ export function AdminConnectorsScreen() {
   const empty = !connections.isLoading && !connections.error && all.length === 0;
   const introFacts = useConnectorsIntroFacts(useFeatureIntroRuntime().enabled);
 
-  // Connectors with no stored status are brought up to date once per visit:
-  // a member's Ready check is copied, or the connector is checked now.
   const refreshUnchecked = useRefreshUncheckedConnections();
   const requested = useRef(new Set<string>());
   const [firstChecks, setFirstChecks] = useState<ReadonlySet<string>>(new Set());
@@ -81,7 +77,6 @@ export function AdminConnectorsScreen() {
     });
   }, [canCheck, connections.data]);
 
-  // Check again runs per row, so one slow service never blocks the others.
   const [rechecking, setRechecking] = useState<ReadonlySet<string>>(new Set());
   function checkAgain(connection: ExternalMcpConnection) {
     setRechecking((current) => new Set([...current, connection.id]));
@@ -131,15 +126,12 @@ export function AdminConnectorsScreen() {
       : readinessState === "Sign in" && connection.credentialMode === "shared" ? <LinkButton size="xs" href={href}>Reconnect</LinkButton>
       : unfinished ? <LinkButton size="xs" href={finishSetupHref(orgSlug, connection)}>Finish</LinkButton>
       : menu;
-    // What an admin must act on. A per-person connector the admin hasn't signed in to
-    // themselves is not an organization problem.
     const attention = unfinished || readinessState === "Couldn't verify" || readinessState === "Not checked" || readinessState === "Set up"
       || (readinessState === "Sign in" && connection.credentialMode === "shared");
     const personalSignInPending = readinessState === "Sign in" && connection.credentialMode !== "shared";
     return { href, readinessView, readinessState, status, signInNote, action, attention, personalSignInPending, menu };
   }
 
-  // A short list is read at a glance; the filter earns its place once it runs long.
   const showFilter = all.length > FILTER_AFTER || query !== "";
   const needsAttention = visible.filter((connection) => rowFor(connection).attention);
   const working = visible.filter((connection) => !rowFor(connection).attention);
@@ -171,7 +163,6 @@ export function AdminConnectorsScreen() {
       <div className="flex flex-wrap items-center justify-between gap-x-6 gap-y-3" data-testid="connectors-compact-toolbar">
         <h1 className="text-xl font-semibold tracking-tight text-[var(--dls-text-primary)]">Connectors</h1>
         {empty ? null : (
-          // One toolbar: find and add sit together on the title's row (DESIGN P6, S2).
           <div className="flex w-full items-center gap-2 sm:w-auto">
             {showFilter && !connections.error ? <FilterInput value={query} onChange={setQuery} className="min-w-0 flex-1 sm:w-56 sm:flex-none" /> : null}
             <DenButton size="sm" variant="secondary" icon={Plus} href={getAddConnectorRoute(orgSlug)} onPointerEnter={prefetchCatalog} onFocus={prefetchCatalog}>Add</DenButton>
@@ -201,7 +192,6 @@ export function AdminConnectorsScreen() {
                 {working.map(compactRow)}
               </LibraryCompactSection>
             ) : null}
-            {/* With nothing to fix there is one group, so it needs no heading or count. */}
             {working.length > 0 && needsAttention.length === 0 ? (
               <div className="flex flex-col" data-testid="connectors-section-connected">{working.map(compactRow)}</div>
             ) : null}
@@ -214,7 +204,5 @@ export function AdminConnectorsScreen() {
     </ItemPage>
   );
 
-  // With feature intros on, the Connectors intro replaces the whole page while there are none (DESIGN.md I1, I2);
-  // with the flag off, the page and ConnectorsEmpty render as before.
   return <FeatureIntroGate introKey="connectors" facts={introFacts}>{page}</FeatureIntroGate>;
 }

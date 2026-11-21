@@ -6,7 +6,6 @@ import { getOrgAccessFlags, permissionLockReason } from "../../../_lib/den-org";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { useConfigBlobSettings, useUpdateConfigBlobSettings } from "./config-blobs-data";
 
-/** Settings › Config › Changes, at the top: who has to approve a change before it is applied. */
 export function ConfigSettingsSection() {
   const { orgId, orgContext } = useOrgDashboard();
   const settings = useConfigBlobSettings(orgId);

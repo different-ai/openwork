@@ -112,11 +112,6 @@ export type CloudEngineRegistrationStatus =
   | "needs-client-registration"
   | "not-recorded";
 
-/**
- * Cached engine-side evidence for the exact managed OpenWork Cloud entry.
- * This is a comparison input for the differential verdict; it never gates
- * whether the independent runtime probe is allowed to run.
- */
 export type CloudEngineRegistrationEvidence = {
   status: CloudEngineRegistrationStatus;
   source: "transport_failure" | "engine_status" | null;
@@ -131,20 +126,12 @@ export type CloudRuntimeEngineDifferential =
   | "runtime_probe_not_performed"
   | "engine_evidence_stale_or_unavailable";
 
-/**
- * Which allowlist entry authorized the credentialed request, or why none did.
- * Reported instead of the origin itself so an administrator can distinguish
- * "this install is not enterprise activated" from "it is activated, but
- * against a different origin than the configured Cloud MCP" — a real
- * misconfiguration — without the report ever carrying a hostname.
- */
 export type CloudEndpointTrustSource =
   | "builtin-cloud"
   | "loopback"
   | "administrator-env"
   | "enterprise-activation"
   | "untrusted"
-  /** The endpoint was absent or structurally invalid, so trust never applied. */
   | "not-evaluated";
 
 export type CloudCatalogProbe = {
@@ -190,20 +177,10 @@ export type ProbeOpenworkCloudCatalogInput = {
   requestId: string;
   fetchImpl?: CloudCatalogProbeFetch;
   clock?: () => number;
-  /** Backward-compatible name used by the analyzer dependency seam. */
   now?: () => number;
-  /** Test seam; production callers cannot extend the 12-second ceiling. */
   timeoutMs?: number;
-  /** Overall diagnostics deadline; aborting it prevents or cancels egress. */
   signal?: AbortSignal;
-  /** Test seam for proxy and extra-CA presence detection. */
   env?: Record<string, string | undefined>;
-  /**
-   * Exact origin of the enterprise/on-prem Den control plane this install is
-   * activated against, resolved by the caller from administrator-provisioned
-   * desktop activation state. Null when the install is not enterprise
-   * activated; never a renderer- or request-supplied value.
-   */
   activatedEnterpriseOrigin?: string | null;
 };
 
@@ -255,7 +232,6 @@ type ProbeBaseFacts = {
   engineEvidenceAgeMs: number | null;
 };
 
-/** Classifies which allowlist entry authorized this exact endpoint origin. */
 function resolveTrustSource(
   endpoint: URL,
   activatedEnterpriseOrigin?: string | null,
@@ -294,18 +270,8 @@ function isLoopbackHostname(hostname: string): boolean {
   return Number(match[1]) === 127 && match.slice(1).every((part) => Number(part) <= 255);
 }
 
-/**
- * Origins the credentialed diagnostic request may reach: built-in OpenWork
- * Cloud origins plus exact administrator-configured diagnostic origins. An
- * enterprise/on-prem Den origin must be provisioned through the same explicit
- * administrator setting; the desktop bootstrap's Den activation state is not
- * visible to this server process, so it can never widen this list implicitly.
- */
 function configuredTrustedOrigins(activatedEnterpriseOrigin?: string | null): Set<string> {
   const origins = new Set(DEFAULT_TRUSTED_ORIGINS);
-  // The activated enterprise/on-prem control-plane origin is administrator
-  // provisioned (written only after a signed activation claim verifies), so
-  // it joins the allowlist as an exact origin without an explicit override.
   if (activatedEnterpriseOrigin) origins.add(activatedEnterpriseOrigin);
   const configured = process.env.OPENWORK_AGENT_DIAGNOSTICS_TRUSTED_ORIGINS ?? "";
   for (const entry of configured.split(",")) {
@@ -318,7 +284,6 @@ function configuredTrustedOrigins(activatedEnterpriseOrigin?: string | null): Se
       if (raw !== url.origin) continue;
       origins.add(url.origin);
     } catch {
-      // Invalid administrator entries fail closed.
     }
   }
   return origins;
@@ -333,9 +298,6 @@ function safeCatalogEndpoint(rawValue: unknown): URL | null {
     const url = new URL(raw);
     if (url.username || url.password || url.search || url.hash) return null;
     if (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopbackHostname(url.hostname))) return null;
-    // Deployments can mount Den below an origin-specific prefix, but the MCP
-    // route itself must be the final two path segments. The report therefore
-    // describes this as terminal-path evidence, not a canonical full URL.
     if (!url.pathname.endsWith(REQUIRED_TERMINAL_PATH) || url.pathname.endsWith(REQUIRED_TERMINAL_PATH + "/")) return null;
     if (url.origin !== raw.slice(0, raw.length - url.pathname.length)) return null;
     return url;
@@ -356,13 +318,6 @@ function authorizationHeader(config: Record<string, unknown>): { value: string |
   return { value, duplicate: false };
 }
 
-/**
- * Eligibility is deliberately independent of cached OpenCode registration
- * state and of agent tool policy: the probe exists to diagnose engine-side
- * failures, and tool visibility is a separate diagnostic dimension reported
- * by its own check. Only structural, trust, credential, and privacy
- * boundaries can skip the probe.
- */
 function prepare(input: ProbeOpenworkCloudCatalogInput): PreparedProbe | CloudCatalogProbeCode {
   if (input.runtimeConfigAvailable === false) return "runtime_config_unavailable";
   if (!isRecord(input.config)) return "cloud_mcp_missing";
@@ -395,14 +350,10 @@ function createDeadline(timeoutMs: number, parentSignal?: AbortSignal): ProbeDea
   const deadlinePromise = new Promise<never>((_, reject) => {
     rejectDeadline = reject;
   });
-  // A parent can abort in the tiny window before the first race is installed.
-  // Mark the promise handled while preserving its rejection for every race.
   void deadlinePromise.catch(() => undefined);
   const expire = () => {
     if (expired || disposed) return;
     expired = true;
-    // Settle the deadline before aborting the underlying operation so an
-    // abort-aware fetch/stream cannot win the race with a generic error.
     rejectDeadline?.(new ProbeTimeout());
     controller.abort();
   };
@@ -430,7 +381,6 @@ async function cancelBody(response: Response, deadline?: ProbeDeadline): Promise
     const cancellation = response.body?.cancel();
     if (cancellation) await (deadline ? deadline.race(cancellation) : cancellation);
   } catch {
-    // Cancellation is best effort and its error is never reported.
   }
 }
 
@@ -462,12 +412,8 @@ async function readBoundedBody(
     }
   } catch (error) {
     if (error instanceof SafeProbeFailure) throw error;
-    // Invoke cancellation even after the deadline has fired. Do not await it:
-    // a hostile stream can ignore both AbortSignal and cancellation.
     void reader.cancel().catch(() => undefined);
     if (error instanceof ProbeTimeout || deadline.timedOut()) throw new ProbeTimeout();
-    // Mid-body transport failures keep their original cause so the outer
-    // classifier can attribute them to the network layer, not the protocol.
     throw error;
   }
   const bytes = new Uint8Array(size);
@@ -556,11 +502,6 @@ function validateCatalog(rpcResult: Record<string, unknown>): { toolIds: string[
     if (seen.has(tool.name)) throw new SafeProbeFailure("invalid_catalog");
     seen.add(tool.name);
   }
-  // Additional provider tools are forward-compatible and allowed, but never
-  // reflect provider-controlled catalog names into the diagnostic report. In
-  // particular, a compromised trusted endpoint must not be able to echo the
-  // bearer token back as a syntactically valid tool identifier. Only the
-  // expected allowlisted IDs and the aggregate count are exported.
   const missing = REQUIRED_TOOL_IDS.filter((toolId) => !seen.has(toolId));
   if (missing.length > 0) throw new CatalogRequiredToolsFailure(rpcResult.tools.length);
   return { toolIds: [...REQUIRED_TOOL_IDS], totalToolCount: rpcResult.tools.length };
@@ -610,12 +551,6 @@ function networkStageFor(networkCode: CloudCatalogProbeNetworkCode): CloudCatalo
   return "tls";
 }
 
-/**
- * Retryability is derived only from the closed code sets, never from raw
- * error message text: transient DNS, timeouts, resets, rate limits, gateway
- * availability, and local probe-capacity exhaustion are retryable; TLS
- * validation, credential, route, protocol, and catalog failures are not.
- */
 function retryableFor(code: CloudCatalogProbeCode, networkCode: CloudCatalogProbeNetworkCode | null): boolean {
   if (networkCode === "EAI_AGAIN" || networkCode === "ETIMEDOUT" || networkCode === "UND_ERR_CONNECT_TIMEOUT" || networkCode === "ECONNRESET") {
     return true;
@@ -706,8 +641,6 @@ async function postJsonRpc(
   if (deadline.timedOut()) throw new ProbeTimeout();
   return deadline.race(fetchImpl(prepared.endpoint, {
     method: "POST",
-    // Manual mode applies to every handshake phase so credentials and MCP
-    // session headers never reach a redirect target.
     redirect: "manual",
     headers,
     body: JSON.stringify(body),
@@ -739,11 +672,6 @@ async function readJsonRpcPayload(
   return mediaType === "text/event-stream" ? parseSse(body) : parseJson(body);
 }
 
-/**
- * Bounded best-effort termination of the diagnostic MCP session. Failure here
- * is reported but never converts a successful availability observation into
- * a failed one.
- */
 async function terminateSession(
   prepared: PreparedProbe,
   session: ProbeSession,
@@ -974,11 +902,6 @@ async function performProbe(
   };
 }
 
-/**
- * Compares the independent runtime observation with the engine's cached
- * registration evidence for the same managed entry, so a report can implicate
- * the correct runtime boundary instead of collapsing both into one failure.
- */
 export function differentialCloudVerdict(
   probe: CloudCatalogProbe,
   engineReachableNow: boolean,
@@ -986,10 +909,6 @@ export function differentialCloudVerdict(
   if (!probe.performed) return "runtime_probe_not_performed";
   if (probe.engineRegistrationStatus === "not-recorded") return "engine_evidence_stale_or_unavailable";
   const engineConnected = probe.engineRegistrationStatus === "connected";
-  // A connected record is the engine's standing state and ages naturally
-  // between syncs, so it stays trustworthy. Only a failure record the
-  // reachable engine could already have refreshed is downgraded, mirroring
-  // the mcp_registration_stale_failure rule on the sync check.
   if (
     !engineConnected
     && engineReachableNow
@@ -1005,15 +924,6 @@ export function differentialCloudVerdict(
   return "runtime_and_engine_failed";
 }
 
-/**
- * Performs one credential-safe direct verification of the exact
- * runtime-managed OpenWork Cloud entry supplied by the caller, running the
- * complete bounded MCP handshake (initialize, initialized notification,
- * tools/list, best-effort session termination) on the OpenWork runtime's own
- * fetch stack. This function never discovers another MCP, follows redirects,
- * calls a tool, mutates configuration, or returns endpoint, credential,
- * header, response-body, or caught-error values.
- */
 export async function probeOpenworkCloudCatalog(
   input: ProbeOpenworkCloudCatalogInput,
 ): Promise<CloudCatalogProbe> {

@@ -27,20 +27,13 @@ export type OpencodeSessionErrorPresentation = {
   description: string | null;
   technicalDetails: string;
   recoveryPrompt: string | null;
-  /**
-   * `gateway-auth-required` only: the OpenWork Gateway's OAuth start URL for
-   * this member (`error.auth_url` in the 401 body). Null when the body omitted
-   * it — the renderer then deep-links to Settings > AI providers. Additive.
-   */
   connectUrl?: string | null;
   gatewayUsage?: GatewayUsageErrorEvidence;
-  /** The organization used its OpenWork Models allowance: a limit until a reset, not a rate limit. Additive. */
   openworkModelsLimit?: OpenWorkModelsLimit;
   autoAccessWall?: AutoAccessWall;
   providerId?: string | null;
 };
 
-/** Error code the OpenWork inference gateway returns when the member's own sign-in is missing or revoked. */
 export const GATEWAY_AUTH_REQUIRED_ERROR_CODE = "openwork_auth_required";
 export const GATEWAY_AUTH_REQUIRED_TITLE = "Sign in to keep using this model";
 
@@ -104,8 +97,6 @@ function sessionErrorKind(
   if (/\bSqlError\b|\bSQLITE_(?:IOERR|CANTOPEN|CORRUPT)\b/i.test(searchable)) {
     return "database-error";
   }
-  // Explicit user cancellation wins. A timeout may contain the word "aborted"
-  // too, but it must not be presented as a deliberate Stop.
   if (name === "MessageAbortedError") return "aborted";
   if (name === "TimeoutError" || code === "ETIMEDOUT" || /aborted due to timeout/i.test(searchable)) return "provider-timeout";
   if (name === "ContextOverflowError") return "conversation-too-long";
@@ -114,9 +105,7 @@ function sessionErrorKind(
   if (/file part media type.*not supported/i.test(searchable)) return "attachment-unsupported";
   if (name === "ProviderAuthError" || (name === "APIError" && status === 401)) return "provider-credentials";
   const transport = [code, message].filter(Boolean).join(" ");
-  // OpenCode v2 names a missing or retired model with its internal ids.
   if (/^Model unavailable:/i.test(message ?? "")) return "model-unavailable";
-  // v2 also reports provider HTTP failures as text, not as an APIError status.
   const httpStatus = Number(/Provider request failed with HTTP (\d{3})\b/i.exec(message ?? "")?.[1] ?? NaN);
   if (Number.isFinite(httpStatus)) {
     if (httpStatus === 429) return "rate-limited";
@@ -125,8 +114,6 @@ function sessionErrorKind(
     if (httpStatus >= 500 && httpStatus < 600) return "provider-unavailable";
   }
   if (name === "APIError" && /\bENOTFOUND\b|\bEAI_AGAIN\b|^fetch failed$/i.test(transport)) return "network-unavailable";
-  // OpenCode v2 reports provider transport failures as plain messages (an
-  // UnknownError carrying Bun's fetch text), not as APIError codes.
   if (/\bgetaddrinfo\s+(?:ENOTFOUND|EAI_AGAIN|ETIMEOUT)\b/i.test(transport)) return "network-unavailable";
   if (/\bConnectionRefused\b|\bECONNREFUSED\b|Unable to connect\. Is the computer able to access the url/i.test(transport)
     && !/127\.0\.0\.1|localhost|\[::1\]/.test(transport)) return "provider-unreachable";
@@ -146,7 +133,6 @@ function sessionErrorKind(
     return "provider-timeout";
   }
   if (/upstream_(?:incomplete|interrupted|malformed_stream|malformed_response|timeout)|connection reset by server/i.test(searchable)) return "provider-incomplete";
-  // v2 reports a provider reply it could not parse as "Decode error (200 POST <url>)".
   if (/^Decode error \(\d{3} [A-Z]+ /i.test(message ?? "")) return "provider-incomplete";
   if (responseBody?.includes("FreeUsageLimitError") || message?.includes("FreeUsageLimitError")) {
     return "free-model-limit";
@@ -228,13 +214,6 @@ function errorDescription(kind: OpencodeSessionErrorKind, gatewayAuth: GatewayAu
 
 type GatewayAuthRequired = { connectUrl: string | null; message: string | null };
 
-/**
- * Detects the gateway's in-band `401 { error: { code: "openwork_auth_required",
- * message, auth_url?, provider_id } }`. The body reaches us as a string on
- * whichever field the SDK error exposes (message / responseBody / cause), so
- * match the code and message tolerantly. URLs from upstream errors are never
- * authorization targets; the Connect action navigates to provider Settings.
- */
 function detectGatewayAuthRequired(error: unknown, fields: { message: string | null; code: string | null; responseBody: string | null }): GatewayAuthRequired | null {
   const haystack = [fields.message, fields.responseBody, safeStringify(error)].filter(Boolean).join("\n");
   if (!haystack.includes(GATEWAY_AUTH_REQUIRED_ERROR_CODE)) return null;
@@ -251,7 +230,6 @@ function detectGatewayAuthRequired(error: unknown, fields: { message: string | n
         message: firstStringValue([body], ["message"]),
       };
     } catch {
-      // Not a clean JSON body: retain only the error classification below.
     }
   }
   return {
@@ -290,7 +268,7 @@ function detectGatewayProviderAuthFailure(fields: ReturnType<typeof sessionError
         kind: code === "provider_authentication_failed" ? "gateway-provider-authentication-failed" : "gateway-provider-permission-denied",
         message: firstStringValue([body], ["message"]),
       };
-    } catch { /* Ignore malformed or non-gateway error bodies. */ }
+    } catch {}
   }
   return null;
 }
@@ -328,7 +306,7 @@ function firstGatewayRequestId(records: unknown[]) {
         const error = recordValue(parsed, "error");
         const requestId = safeRequestId(recordValue(error, "request_id"));
         if (requestId) return requestId;
-      } catch { /* The response body is not JSON. */ }
+      } catch {}
     }
     const headers = recordValue(record, "responseHeaders");
     if (headers instanceof Headers) {
@@ -389,7 +367,6 @@ function sessionErrorFields(error: unknown, fallback: string) {
 
 function providerCredentialCopy(fields: ReturnType<typeof sessionErrorFields>) {
   const evidence: unknown[] = [fields.message, fields.code];
-  // Inspect only known fields in a bounded JSON body, never arbitrary nested text.
   if (fields.responseBody && fields.responseBody.length <= 16_384) {
     try {
       const body: unknown = JSON.parse(fields.responseBody);
@@ -399,7 +376,6 @@ function providerCredentialCopy(fields: ReturnType<typeof sessionErrorFields>) {
         }
       }
     } catch {
-      // Malformed or non-JSON responses provide no credential-specific evidence.
     }
   }
   const signals = evidence.filter((value): value is string => typeof value === "string" && value.length <= 256)
@@ -416,16 +392,12 @@ function providerCredentialCopy(fields: ReturnType<typeof sessionErrorFields>) {
   return null;
 }
 
-/** Inference authentication evidence only; access policy, quotas and Gateway
- * member sign-in failures must not poison an upstream provider's key status. */
 export function isProviderCredentialRejection(error: unknown): boolean {
   const fields = sessionErrorFields(error, "");
   const presentation = presentOpencodeSessionError(error);
   const credentialSignal = providerCredentialCopy(fields) !== null;
   if (presentation.kind !== "provider-credentials" && presentation.kind !== "generic" && !(presentation.kind === "provider-access-denied" && credentialSignal)) return false;
   if (presentation.autoAccessWall || presentation.gatewayUsage || presentation.openworkModelsLimit) return false;
-  // Gateway authentication is a client/session problem, not evidence that
-  // the organization's upstream provider rejected its credential.
   if (/\bOpenWork (?:Gateway|Models) (?:API )?key\b/i.test([fields.message, fields.responseBody].filter(Boolean).join(" "))) return false;
   if (fields.status === 429 || (fields.status !== null && fields.status >= 500)) return false;
   return (fields.name === "APIError" && fields.status === 401)

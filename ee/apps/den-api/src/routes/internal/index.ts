@@ -11,13 +11,6 @@ import { captureException } from "../../observability/runtime.js"
 import { jsonResponse } from "../../openapi.js"
 import { reconcileGithubConnectorTargets } from "../../workers/github-sync.js"
 
-// Scheduled maintenance endpoints, called by a cron (Helm CronJob
-// `den-audit-usage`; Render cron jobs `den-audit-usage` and
-// `den-github-reconcile`) with
-// `Authorization: Bearer $DEN_MAINTENANCE_TOKEN`. Same shape as the Gateway's
-// POST /internal/rollups/run: 404 when the token is not configured, 401 on a
-// wrong token. Tagged Internal, so the published API document excludes them.
-
 const logger = appLogger.child({ component: "internal_maintenance" })
 const errorSchema = z.object({ error: z.enum(["not_found", "unauthorized", "refresh_failed", "reconcile_failed"]) })
 const githubReconcileSchema = z.object({

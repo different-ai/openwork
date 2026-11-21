@@ -1,6 +1,3 @@
-// Usage parser for the Anthropic Messages API (direct and via Vertex).
-// Stream: `message_start.message.usage` carries input + cache counters and
-// the model; `message_delta.usage.output_tokens` carries the final output.
 import { captureResponseIdentity, createSseUsageParser, emptyUsage, hasUsage, isRecord, readNumber } from "@openwork-ee/gateway-protocols/usage/shared"
 import type { ParsedUsage, UsageParser } from "@openwork-ee/gateway-protocols/usage/shared"
 

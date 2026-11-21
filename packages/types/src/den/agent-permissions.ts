@@ -78,18 +78,12 @@ export const agentPermissionSections: readonly { id: AgentPermissionSection; lab
 type AgentPermissionDefinitionEntry = {
   key: string;
   section: AgentPermissionSection;
-  /** What the agent does, as the row's label. */
   label: string;
-  /** One sentence, shown as the row's tooltip. */
   description: string;
   action: AgentPermissionAction;
-  /** `choice` is a picklist of decisions; `toggle` is a switch. */
   control: "choice" | "toggle";
-  /** By default a toggle allows when on; a requirement denies when on. */
   toggleMeans?: "allows" | "requires";
-  /** The patterns its lists hold, or null when it has no lists. */
   patterns: AgentPermissionPatternKind | null;
-  /** What one pattern names, for "Always block a command". */
   patternNoun: string | null;
 };
 
@@ -302,22 +296,16 @@ export const agentPermissionPatternPlaceholders: Record<AgentPermissionPatternKi
   website: "docs.example.com",
 };
 
-// ---------------------------------------------------------------------------
-// Patterns
-// ---------------------------------------------------------------------------
-
 type WebsitePattern =
   | { kind: "any" }
   | { kind: "site"; scheme: "http" | "https" | null; host: string; subdomains: boolean; port: string | null; path: string };
 
-/** The pattern's scheme, null when it names none, or undefined when it is not a website's. */
 function websiteScheme(value: string | undefined): "http" | "https" | null | undefined {
   if (value === undefined) return null;
   const scheme = value.toLowerCase();
   return scheme === "http" || scheme === "https" ? scheme : undefined;
 }
 
-/** `example.com.` is the same site as `example.com`. */
 function withoutTrailingDot(host: string): string {
   return host.endsWith(".") ? host.slice(0, -1) : host;
 }
@@ -332,7 +320,6 @@ function parseWebsitePattern(input: string): WebsitePattern | null {
   const rest = schemeMatch ? value.slice(schemeMatch[0].length) : value;
   const slash = rest.indexOf("/");
   const authority = slash === -1 ? rest : rest.slice(0, slash);
-  // A trailing `/*` or `/` adds nothing: paths match as prefixes.
   let path = slash === -1 ? "" : rest.slice(slash);
   if (path.endsWith("/*")) path = path.slice(0, -2);
   while (path.endsWith("/")) path = path.slice(0, -1);
@@ -347,11 +334,9 @@ function parseWebsitePattern(input: string): WebsitePattern | null {
     return null;
   }
   if (parsed.pathname !== "/" || parsed.username || parsed.password) return null;
-  // `:08080` is port 8080, as an address would write it.
   const portNumber = /:(\d{1,5})$/.exec(hostAndPort)?.[1];
   const explicitPort = portNumber === undefined ? null : String(Number(portNumber));
   if (explicitPort !== null && Number(explicitPort) > 65535) return null;
-  // A port the pattern names, even its scheme's default, limits it to that port.
   return {
     kind: "site",
     scheme,
@@ -420,12 +405,6 @@ function globMatches(pattern: string, value: string): boolean {
   return patternIndex === pattern.length;
 }
 
-/**
- * A path as a server may route it: encoded letters, digits, `-._~` and
- * separators (%2F, %5C) decoded, other encodings in upper case, dot segments
- * resolved and repeated slashes collapsed, so `/priv%61te`, `/private%2Fsecret`
- * or `/a/%2E%2E/private` compare as `/private/...`.
- */
 function canonicalWebsitePath(path: string): string {
   const decoded = path
     .replace(/%([0-9a-f]{2})/gi, (encoded, hex: string) => {
@@ -433,7 +412,6 @@ function canonicalWebsitePath(path: string): string {
       if (char === "/" || char === "\\") return "/";
       return /^[A-Za-z0-9._~-]$/.test(char) ? char : encoded.toUpperCase();
     })
-    // Collapse repeated slashes first: a path starting with `//` would resolve as another host.
     .replace(/\/{2,}/g, "/");
   try {
     return new URL(decoded, "http://host").pathname;
@@ -481,11 +459,8 @@ export function websitePatternEngineResources(pattern: string, effect: AgentPerm
   if (!website) return [];
   if (website.kind === "any") return ["*"];
   const host = `${website.subdomains ? "*." : ""}${website.host}`;
-  // A pattern without a port matches every port: its allow resources cover
-  // addresses that name one, while its deny resources leave them to the plugin.
   const ports = website.port ? [`:${website.port}`] : effect === "deny" ? [""] : ["", ":*"];
   return (website.scheme ? [website.scheme] : ["https", "http"]).flatMap((scheme) => {
-    // An address leaves out its scheme's default port, so allowing it covers addresses without one.
     const defaultPort = website.port === (scheme === "https" ? "443" : "80");
     return (effect !== "deny" && defaultPort ? [...ports, ""] : ports).flatMap((port) => {
       const site = `${scheme}://${host}${port}${website.path}`;
@@ -493,10 +468,6 @@ export function websitePatternEngineResources(pattern: string, effect: AgentPerm
     });
   });
 }
-
-// ---------------------------------------------------------------------------
-// Settings: what an admin saves for everyone or for one team
-// ---------------------------------------------------------------------------
 
 export const agentPermissionSettingSchema = z
   .object({
@@ -633,16 +604,11 @@ export function normalizeAgentPermissionSettings(value: unknown): AgentPermissio
   return settings;
 }
 
-// ---------------------------------------------------------------------------
-// Rules: what a member's apps receive and enforce
-// ---------------------------------------------------------------------------
-
 /** One delivered rule, checked strictly where it is enforced (Den sends them in `DenDesktopConfig.agentPermissions`). */
 export const agentPermissionRuleSchema = z.object({
   action: z.enum(AGENT_PERMISSION_ACTIONS),
   resource: z.string().min(1).max(500),
   effect: z.enum(AGENT_PERMISSION_DECISIONS),
-  /** Who set it: "Everyone" or a team's name. */
   source: z.string().min(1).max(255),
 });
 
@@ -681,13 +647,11 @@ export function withoutSandboxOptOutRules(rules: readonly AgentPermissionRule[])
 export function resolveSandboxRequirement(rules: readonly AgentPermissionRule[] | undefined): {
   use: boolean;
   force: boolean;
-  /** Who requires Use ("Everyone" or a team's name), or null. */
   useSource: string | null;
   forceSource: string | null;
 } {
   const forceRule = matchingAgentPermissionRule(rules, "host_execution", "*");
   const useRule = matchingAgentPermissionRule(rules, "sandbox_opt_out", "*");
-  // Both are switches: anything but Allow from the organization requires the mode.
   const force = forceRule !== null && forceRule.effect !== "allow";
   const ownUse = useRule !== null && useRule.effect !== "allow";
   return {
@@ -705,11 +669,6 @@ export function agentPermissionRulesRequireSandbox(rules: readonly AgentPermissi
 
 export const AGENT_SANDBOX_ONLY_UPDATE_REQUIRED_SOURCE = "Sandbox-only policy requires an updated OpenWork app";
 
-/**
- * Actions a desktop without sandbox-only support already enforces. Blocking
- * them is how a required sandbox fails closed there: that desktop cannot run
- * the sandbox, so it must not run agents' tools on the computer instead.
- */
 const SANDBOX_ONLY_LEGACY_BLOCKED_ACTIONS = ["shell", "edit", "external_directory", "computer", "computer_files", "computer_clipboard", "script", "mcp", "webfetch"] as const satisfies readonly AgentPermissionAction[];
 
 /**
@@ -725,17 +684,13 @@ export function agentPermissionRulesForClient(
   supports: { browserUploads: boolean; fileSends: boolean; sandboxOnly: boolean; sandboxModes?: boolean },
 ): AgentPermissionRule[] {
   let delivered: AgentPermissionRule[] = [...rules];
-  // Requiring Use restricts nothing a desktop could do: one that cannot read it keeps working as before.
   if (!supports.sandboxModes) delivered = withoutSandboxOptOutRules(delivered);
   if (!supports.browserUploads) delivered = withoutBrowserUploadRules(delivered);
   if (!supports.fileSends) delivered = withoutFileSendRules(delivered);
   if (!supports.sandboxOnly) delivered = withoutHostExecutionRules(delivered);
-  // Published clients drop unknown actions. Refuse browsing conservatively
-  // rather than silently dropping an active managed upload permission.
   if (!supports.browserUploads && rules.some((rule) => rule.action === "browser_upload")) {
     delivered.push({ action: "webfetch", resource: "*", effect: "deny", source: "Browser upload policy requires an updated OpenWork app" });
   }
-  // Last, so no allowed pattern reopens host execution on a desktop without the sandbox.
   if (!supports.sandboxOnly && agentPermissionRulesRequireSandbox(rules)) {
     for (const action of SANDBOX_ONLY_LEGACY_BLOCKED_ACTIONS) {
       delivered.push({ action, resource: "*", effect: "deny", source: AGENT_SANDBOX_ONLY_UPDATE_REQUIRED_SOURCE });
@@ -750,13 +705,10 @@ export function agentPermissionRulesForClient(
  * organization's Block, and a member's Block stands when the organization allows.
  */
 export function resolveHostExecution(input: {
-  /** The member's own setting; true is the default. */
   localAllow: boolean;
-  /** The organization's delivered rules, or undefined when signed out. */
   rules: readonly AgentPermissionRule[] | undefined;
 }): { decision: "allow" | "deny"; managed: boolean; source: string | null } {
   const rule = matchingAgentPermissionRule(input.rules, "host_execution", "*");
-  // host_execution is a switch: anything but Allow from the organization blocks.
   const organization: AgentPermissionDecision = rule && rule.effect !== "allow" ? "deny" : "allow";
   const decision = stricterAgentPermissionDecision(input.localAllow ? "allow" : "deny", organization);
   const managed = organization === "deny";
@@ -766,7 +718,6 @@ export function resolveHostExecution(input: {
 export const AGENT_PERMISSION_EVERYONE = "Everyone";
 
 export type AgentPermissionPolicySettings = {
-  /** "Everyone" or the team's name, shown wherever a rule decides. */
   source: string;
   settings: AgentPermissionSettings;
 };
@@ -780,7 +731,6 @@ export function stricterAgentPermissionDecision(left: AgentPermissionDecision, r
 export type ResolvedAgentPermission = {
   definition: AgentPermissionDefinition;
   decision: AgentPermissionDecision;
-  /** Who set the decision, or null when only the permission's default applies. */
   decisionSource: string | null;
   allow: { pattern: string; source: string }[];
   block: { pattern: string; source: string }[];
@@ -846,9 +796,6 @@ export function agentPermissionRules(resolved: readonly ResolvedAgentPermission[
   const rules = resolved.flatMap(({ definition, decision, decisionSource, allow, block }) => {
     const action = definition.action;
     const restricted = decision !== "allow" && decisionSource !== null;
-    // Unlike engine permissions, an explicit Allow of a member-decided
-    // permission is authority to skip the member's prompt. An unset Ask has
-    // no admin source or base rule.
     const memberDecides = actionMemberDecides(action);
     const explicit = decisionSource !== null && (restricted || memberDecides);
     return [
@@ -857,13 +804,10 @@ export function agentPermissionRules(resolved: readonly ResolvedAgentPermission[
       ...block.map(({ pattern, source }) => ({ action, resource: pattern, effect: "deny" as const, source })),
     ];
   });
-  // Any command can change files, so blocking file edits blocks commands too.
-  // Last, so no allowed command pattern reopens it.
   const edits = resolved.find((entry) => entry.definition.action === "edit");
   if (edits?.decision === "deny" && edits.decisionSource !== null) {
     rules.push({ action: "shell", resource: "*", effect: "deny", source: edits.decisionSource });
   }
-  // Files, the clipboard and app scripts all act in apps, so blocking computer use blocks them last.
   const computer = resolved.find((entry) => entry.definition.action === "computer");
   if (computer?.decision === "deny" && computer.decisionSource !== null) {
     for (const action of AGENT_COMPUTER_USE_DEPENDENT_ACTIONS) rules.push({ action, resource: "*", effect: "deny", source: computer.decisionSource });
@@ -907,7 +851,6 @@ export function matchingAgentPermissionRule(
 
 export type AgentPermissionDecisionResult = {
   effect: AgentPermissionDecision;
-  /** The rule that decided, or null when only the action's default applies. */
   rule: AgentPermissionRule | null;
   resource: string;
 };

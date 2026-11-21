@@ -1,44 +1,3 @@
-/**
- * Config-blob area `settings.auth-security` (Settings › Auth & Security).
- * One area, three kinds of item, told apart by `spec.kind`:
- *
- * - `session` (exactly one; id = organization id): Require SSO, Restrict this
- *   domain to our SSO, session length, maximum session length and fresh admin
- *   sessions. Stored in `organization.metadata`; applied through PATCH
- *   /v1/org's own function (routes/org/core.ts updateOrganizationAction).
- * - `sso-connection` (one per connection; id = `sso_connection.id`): name,
- *   protocol, IdP issuer, email domains, enabled, and the non-secret parts of
- *   the provider's encrypted `oidc_config` / `saml_config`, read field by field
- *   through an allowlist. The OIDC client secret is a `$secret` placeholder.
- *   Applied through the SSO routes' own functions (routes/org/sso.ts
- *   registerConnection / enableConnection / disableConnection /
- *   deleteConnection, sso.ts renameOrganizationSsoConnection).
- * - `scim` (at most one; id = `scim_provider.id`): the group mapping mode.
- *   The SCIM bearer token is never exported and can't be carried: it only
- *   exists as a hash-like encrypted value on the source and the identity
- *   provider holds the plaintext. A target without SCIM gets a warning to
- *   generate a token after the import. The IdP's groups and the teams they
- *   created are exported for reading only (`groups`): the IdP pushes them.
- *
- * Never carried: domain verification (DNS proof belongs to the target; a new
- * connection starts unverified unless the target already verified its
- * domains), connection tests and the enabled state of a new connection
- * (enabling needs a real IdP test), redirect / ACS URLs (per instance; listed
- * in the warnings for the IdP admin), SCIM tokens, SSO identities.
- *
- * Guard rails against locking people out:
- * - Require SSO / Restrict domain can only be turned on when the target
- *   already has a ready SSO connection (enabled + verified domain).
- *   The route's own rule also applies: only a session
- *   signed in through this organization's SSO may turn it on, which an import
- *   never has, so the import reports how to finish it by hand.
- * - The last ready connection can't be disabled, deleted or reconfigured
- *   (which disables it until tested again) while SSO is required.
- *
- * Better Auth registers SSO providers only for a signed-in session, so a
- * configuration write runs under a short-lived session of the applying
- * member, deleted right after (`withActorAuthHeaders`).
- */
 import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"
 import { OrganizationTable, ScimGroupTable, ScimProviderTable, SsoConnectionTable, SsoProviderTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { isDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -87,20 +46,12 @@ const SCIM_ITEM_NAME = "SCIM provisioning"
 type SsoConnection = typeof SsoConnectionTable.$inferSelect
 type SsoProvider = typeof SsoProviderTable.$inferSelect
 
-// ---------------------------------------------------------------------------
-// Spec
-
 const sessionSpecSchema = z.object({
   kind: z.literal("session"),
-  /** Members must sign in with this organization's SSO to open it. */
   requireSso: z.boolean().default(false),
-  /** every email on the verified SSO domain must sign in with this organization's SSO. */
   restrictDomainToSso: z.boolean().default(false),
-  /** Hours a sign-in lasts without activity. */
   sessionLengthHours: z.literal(SESSION_LENGTH_HOURS).default(DEFAULT_SESSION_LENGTH_HOURS),
-  /** Days a sign-in lasts at most. */
   maxSessionLengthDays: z.literal(MAX_SESSION_LENGTH_DAYS).default(DEFAULT_MAX_SESSION_LENGTH_DAYS),
-  /** Minutes since sign-in before sensitive changes ask again; 0 is off. */
   adminReauthMinutes: z.literal(ADMIN_REAUTH_MINUTES).default(DEFAULT_ADMIN_REAUTH_MINUTES),
 }).strict()
 
@@ -108,7 +59,6 @@ const oidcSpecSchema = z.object({
   clientId: z.string().trim().min(1).max(512),
   clientSecret: specSecretSchema,
   scopes: z.array(z.string().trim().min(1).max(200)).max(50).default([]),
-  /** false: endpoints are discovered from the issuer at apply time. */
   skipDiscovery: z.boolean().default(true),
   authorizationEndpoint: z.string().url().max(2048).nullable().default(null),
   tokenEndpoint: z.string().url().max(2048).nullable().default(null),
@@ -119,13 +69,10 @@ const oidcSpecSchema = z.object({
 
 const samlSpecSchema = z.object({
   entryPoint: z.string().url().max(2048),
-  /** The identity provider's public signing certificate (PEM). Never a private key. */
   cert: z.string().trim().min(1).max(20_000).nullable().default(null),
-  /** SP entity id; null uses this instance's default (its web origin). */
   audience: z.string().trim().min(1).max(2048).nullable().default(null),
 }).strict()
 
-/** Per-instance setup state, exported for reading only (never compared or applied). */
 const ssoSetupSchema = z.object({
   domainVerified: z.boolean(),
   testStatus: z.string().max(32),
@@ -137,10 +84,8 @@ const ssoSetupSchema = z.object({
 const ssoConnectionSpecSchema = z.object({
   kind: z.literal("sso-connection"),
   protocol: z.enum(["oidc", "saml"]),
-  /** OIDC issuer URL, or the SAML identity provider's entity id. */
   issuer: z.string().url().max(2048),
   domains: z.array(z.string().trim().toLowerCase().min(1).max(253)).min(1).max(20),
-  /** Applied on an existing connection only; a new one always starts disabled until tested. */
   enabled: z.boolean().default(false),
   oidc: oidcSpecSchema.nullable().default(null),
   saml: samlSpecSchema.nullable().default(null),
@@ -149,18 +94,15 @@ const ssoConnectionSpecSchema = z.object({
 
 const scimGroupInfoSchema = z.object({
   displayName: z.string().max(255),
-  /** The team the IdP group created (create_teams), by name; null when none. */
   team: z.string().max(255).nullable(),
 }).strict()
 
 const scimSpecSchema = z.object({
   kind: z.literal("scim"),
   groupMappingMode: z.enum(["metadata_only", "create_teams"]).default("metadata_only"),
-  /** The identity provider's groups, for reading only: the IdP pushes them on the target. */
   groups: z.array(scimGroupInfoSchema).max(2_000).optional(),
 }).strict()
 
-/** At apply time the placeholder carries a decision (keep / value / unset) instead: read by `resolvedSecret`. */
 const ssoConnectionApplySchema = ssoConnectionSpecSchema.extend({
   oidc: oidcSpecSchema.extend({ clientSecret: z.unknown() }).nullable().default(null),
 })
@@ -171,9 +113,6 @@ type SessionSpec = z.infer<typeof sessionSpecSchema>
 type SsoConnectionSpec = z.infer<typeof ssoConnectionApplySchema>
 type SessionField = Exclude<keyof SessionSpec, "kind">
 const SESSION_FIELDS: readonly SessionField[] = ["requireSso", "restrictDomainToSso", "sessionLengthHours", "maxSessionLengthDays", "adminReauthMinutes"]
-
-// ---------------------------------------------------------------------------
-// Small helpers
 
 function specKind(spec: unknown): string | null {
   return isJsonObject(spec) && typeof spec.kind === "string" ? spec.kind : null
@@ -201,7 +140,6 @@ function stringOrNull(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null
 }
 
-/** First segment of a change path: "oidc.clientId" → "oidc", "domains[1]" → "domains". */
 function topField(path: string): string {
   const match = /^[^.[\]]+/.exec(path)
   return match ? match[0] : path
@@ -211,7 +149,6 @@ function changedTopFields(changes: readonly ConfigFieldChange[]): Set<string> {
   return new Set(changes.map((change) => topField(change.path)))
 }
 
-/** Parses an item's spec at apply time; a mismatch is an item failure naming the field. */
 function parseSpec<T>(schema: z.ZodType<T>, value: unknown): T {
   const parsed = schema.safeParse(specObject(value))
   if (parsed.success) return parsed.data
@@ -224,7 +161,6 @@ function failure(code: string, message: string, options: { field?: string; step?
   return new ConfigApplyItemError({ code, message, ...options }, stepsDone)
 }
 
-/** Re-throws a route error (ConfigApplyError) as an item failure that names the step and what was already written. */
 async function step<T>(stepsDone: ConfigApplyStep[], current: ConfigApplyStep, field: string | undefined, run: () => Promise<T>): Promise<T> {
   try {
     const result = await run()
@@ -246,18 +182,10 @@ async function heldPermissions(ctx: ConfigAreaContext) {
   })
 }
 
-/** The route's permission marker (orgPermissionRoute), which the in-process call does not run. */
 async function requireActorPermission(ctx: ConfigAreaContext, key: PermissionKey) {
   if (!(await heldPermissions(ctx)).has(key)) throw failure("forbidden", permissionDeniedMessage(key), { status: 403 })
 }
 
-/**
- * Runs `run` with request headers carrying a real session of the applying
- * member. Better Auth's SSO plugin only registers providers for a signed-in
- * session (it reads the user and checks their membership itself); an apply
- * runs from a worker with no browser session. The session is created for
- * this call only and deleted afterwards.
- */
 async function withActorAuthHeaders<T>(ctx: ConfigAreaContext, run: (headers: Headers) => Promise<T>): Promise<T> {
   const authContext = await auth.$context
   const session = await authContext.internalAdapter.createSession(normalizeDenTypeId("user", ctx.actor.userId), true)
@@ -269,9 +197,6 @@ async function withActorAuthHeaders<T>(ctx: ConfigAreaContext, run: (headers: He
     await authContext.internalAdapter.deleteSession(session.token).catch(() => undefined)
   }
 }
-
-// ---------------------------------------------------------------------------
-// Reads
 
 type SessionState = { spec: SessionSpec; metadataRequireSso: boolean; metadataRestrictDomain: boolean }
 
@@ -297,14 +222,12 @@ function sessionItem(ctx: ConfigAreaContext, spec: SessionSpec): ConfigItem {
   return { id: ctx.organizationId, key: null, name: SESSION_ITEM_NAME, spec }
 }
 
-/** The audience Den uses when none was entered: this instance's own, so it is never carried. */
 function portableAudience(value: unknown): string | null {
   const audience = stringOrNull(value)
   if (!audience) return null
   return normalizeIssuer(audience) === normalizeIssuer(env.betterAuthUrl) ? null : audience
 }
 
-/** A public certificate only; anything that looks like key material is never exported. */
 function portableCertificate(value: unknown): string | null {
   const cert = stringOrNull(value)
   if (!cert || /PRIVATE KEY/i.test(cert)) return null
@@ -322,8 +245,6 @@ function ssoConnectionItem(connection: SsoConnection, provider: SsoProvider | nu
     issuer: connection.issuer,
     domains: parseSsoDomains(connection.domain).sort(),
     enabled: isOrganizationSsoReady({ connection, provider }),
-    // Allowlist: everything else in the encrypted configuration (secrets,
-    // attribute mapping, PKCE, callback URLs, cached metadata) stays behind.
     oidc: protocol === "oidc" ? {
       clientId: stringOrNull(oidcConfig?.clientId) ?? "",
       clientSecret: secretPlaceholder(AREA, connection.id, "oidc.clientSecret", Boolean(stringOrNull(oidcConfig?.clientSecret))),
@@ -400,10 +321,6 @@ async function readItemsById(ctx: ConfigAreaContext, ids: readonly string[] | nu
   return items
 }
 
-// ---------------------------------------------------------------------------
-// Lock-out guard
-
-/** Whether turning off / replacing / removing this connection would leave an organization that requires SSO with no way in. */
 async function wouldLockOut(ctx: ConfigAreaContext, connection: SsoConnection): Promise<string | null> {
   const state = await readSessionState(ctx)
   if (!state.metadataRequireSso && !state.metadataRestrictDomain) return null
@@ -419,9 +336,6 @@ async function wouldLockOut(ctx: ConfigAreaContext, connection: SsoConnection): 
   if (!thisReady || readyOthers > 0) return null
   return "This is the organization's only working SSO connection and SSO is required: members could no longer sign in. Turn off \"Require SSO\" (and \"Restrict this domain to our SSO\") first, then import again."
 }
-
-// ---------------------------------------------------------------------------
-// Apply: session settings
 
 async function applySession(ctx: ConfigAreaContext, op: Exclude<ConfigApplyOp, { kind: "delete" }>): Promise<ConfigApplyResult> {
   await requireActorPermission(ctx, "organization.update")
@@ -440,7 +354,6 @@ async function applySession(ctx: ConfigAreaContext, op: Exclude<ConfigApplyOp, {
     throw failure("sso_not_ready", "SSO can't be required yet: this organization has no enabled SSO connection with a verified domain. Set up, verify, test and enable a connection, then turn on \"Require SSO\".", { field: enabling[0], step: steps.find((entry) => entry.target === enabling[0]) })
   }
 
-  // Imports carry approval authority, not an SSO-authenticated browser session.
   if (enabling.length > 0) {
     throw failure("sso_session_required", "Requiring SSO must be turned on by an admin signed in through this organization's SSO, so nobody is locked out. Sign in with SSO and turn it on in Settings › Auth & Security; nothing was changed.", { field: enabling[0], status: 409 })
   }
@@ -464,9 +377,6 @@ async function applySession(ctx: ConfigAreaContext, op: Exclude<ConfigApplyOp, {
   }
   return { localId, warnings, steps }
 }
-
-// ---------------------------------------------------------------------------
-// Apply: SSO connections
 
 function registrationBody(spec: SsoConnectionSpec, name: string, clientSecret: string | null): { kind: "oidc" | "saml"; body: JsonObject } {
   const common = { issuer: spec.issuer, domains: spec.domains, name }
@@ -499,7 +409,6 @@ function registrationBody(spec: SsoConnectionSpec, name: string, clientSecret: s
   }
 }
 
-/** The client secret to register with: a new value, or (keep) the one this connection already stores. */
 function clientSecretFor(spec: SsoConnectionSpec, decision: ResolvedConfigSecret | null, stored: SsoProvider | null): string | null {
   if (spec.protocol !== "oidc") return null
   if (decision?.decision === "value") return decision.value
@@ -556,7 +465,6 @@ async function createSsoConnection(ctx: ConfigAreaContext, op: Extract<ConfigApp
   const route = await configRouteContext(ctx)
   const existing = await listOrganizationSsoConnections(route.payload.organization.id, ctx.db)
   const createStep: ConfigApplyStep = { action: "create", target: "connection", detail: `${kind.toUpperCase()} ${spec.domains.join(", ")}` }
-  // Same target as the dashboard: the first connection through /v1/sso/<kind>, more through /v1/sso/connections/<kind>.
   const connection = await step([], createStep, undefined, () => register(ctx, route, kind, body, existing.length === 0 ? undefined : null))
   const provider = await getSsoProviderForConnection(connection, ctx.db.$primary)
   return { localId: connection.id, warnings: setupWarnings(connection, provider, spec.enabled), steps: [createStep] }
@@ -603,7 +511,6 @@ async function updateSsoConnection(ctx: ConfigAreaContext, op: Extract<ConfigApp
   if (enabledChange) {
     const fresh = await loadConnection(ctx, connection.id)
     if (spec.enabled) {
-      // Enabling needs a verified domain and a successful test of the current configuration.
       const enabled = await enableConnection(route.payload, fresh, auditChangeCapture(route.c))
       if (enabled.ok) steps.push({ action: "set", target: "enabled", detail: "true" })
       else warnings.push(`The connection was not enabled: ${enabled.message}`)
@@ -629,10 +536,6 @@ async function deleteSsoConnection(ctx: ConfigAreaContext, op: Extract<ConfigApp
   return { localId: connection.id, steps: [deleteStep] }
 }
 
-// ---------------------------------------------------------------------------
-// Apply: SCIM
-
-/** What an admin does by hand when the target has no SCIM provisioning to write to. */
 function scimSetupGuidance(mode: "create_teams" | "metadata_only"): string[] {
   return [
     "SCIM provisioning isn't set up here and its token can't be carried over: once an SSO connection is enabled, generate a SCIM token in Settings › Auth & Security and give it and the SCIM URL to the identity provider.",
@@ -646,8 +549,6 @@ async function applyScim(ctx: ConfigAreaContext, op: Exclude<ConfigApplyOp, { ki
   const route = await configRouteContext(ctx)
   const [provider] = await ctx.db.select().from(ScimProviderTable).where(eq(ScimProviderTable.organizationId, route.payload.organization.id)).limit(1)
   if (!provider) {
-    // Nothing to write: a SCIM connection only exists once its token is generated (needs an enabled SSO connection).
-    // The plan already skips this (`scimPreflight`); this answers a provider removed since.
     return { localId: op.item.sourceId ?? ctx.organizationId, warnings: scimSetupGuidance(next.groupMappingMode), steps: [] }
   }
   const current = provider.groupMappingMode === "create_teams" ? "create_teams" : "metadata_only"
@@ -661,10 +562,6 @@ async function applyScim(ctx: ConfigAreaContext, op: Exclude<ConfigApplyOp, { ki
   return { localId: provider.id, steps: [modeStep] }
 }
 
-// ---------------------------------------------------------------------------
-// Preflight
-
-/** The SSO switches this op turns on, as the session apply would compute them. */
 function enabledSwitches(op: Exclude<ConfigApplyOp, { kind: "delete" }>): Array<"requireSso" | "restrictDomainToSso"> {
   const next = sessionSpecSchema.safeParse(op.item.spec)
   if (!next.success) return []
@@ -697,22 +594,13 @@ async function ssoConnectionPreflight(ctx: ConfigAreaContext, op: Exclude<Config
     if (op.kind === "create" && decision === "keep") return { block: "A new connection has no stored client secret to keep: enter the OIDC client secret." }
   }
   if (!spec.data.enabled) return null
-  // Said before approval, not only by the run: a file carries neither a verified domain nor a successful test.
   if (op.kind === "create") return { warnings: ["The connection is enabled in the source but will start disabled here: test it and enable it in Settings › Auth & Security."] }
   return ssoEnablePreflight(ctx, op)
 }
 
-/**
- * An update that turns the connection on. Enabling needs a verified domain and
- * a successful test of the current configuration, neither of which a file
- * carries: a connection an import created keeps planning "enable" until an
- * admin has done both. When that is the only difference there is nothing to
- * apply; next to other changes the plan says the connection stays disabled.
- */
 async function ssoEnablePreflight(ctx: ConfigAreaContext, op: Extract<ConfigApplyOp, { kind: "update" }>): Promise<ConfigPreflightResult | null> {
   const changed = changedTopFields(op.changes)
   if (!changed.has("enabled")) return null
-  // A new configuration disables the connection until it is tested again: `ssoIrreversible` says so on the plan.
   if ([...changed].some((field) => CONFIG_FIELDS.has(field)) || op.secretPaths.length > 0) return null
   const connection = await loadConnection(ctx, op.targetId)
   const blocker = ssoConnectionEnableBlocker(connection, await getSsoProviderForConnection(connection, ctx.db))
@@ -721,7 +609,6 @@ async function ssoEnablePreflight(ctx: ConfigAreaContext, op: Extract<ConfigAppl
   return { warnings: [`The connection will stay disabled. ${blocker}`] }
 }
 
-/** SCIM provisioning the target doesn't have can't be written: the plan says what to do instead of an apply that changes nothing. */
 async function scimPreflight(ctx: ConfigAreaContext, op: Exclude<ConfigApplyOp, { kind: "delete" }>): Promise<ConfigPreflightResult | null> {
   const next = scimSpecSchema.safeParse(op.item.spec)
   if (!next.success) return null
@@ -729,9 +616,6 @@ async function scimPreflight(ctx: ConfigAreaContext, op: Exclude<ConfigApplyOp, 
     .where(eq(ScimProviderTable.organizationId, normalizeDenTypeId("organization", ctx.organizationId))).limit(1)
   return provider ? null : { skip: scimSetupGuidance(next.data.groupMappingMode).join(" ") }
 }
-
-// ---------------------------------------------------------------------------
-// Irreversible effects
 
 function sessionIrreversible(op: ConfigApplyOp): string[] {
   if (op.kind === "delete") return []
@@ -769,20 +653,16 @@ function scimIrreversible(op: ConfigApplyOp): string[] {
   ]
 }
 
-// ---------------------------------------------------------------------------
-
 export const settingsAuthSecurityArea = defineConfigArea({
   key: AREA,
   label: "Auth & Security",
   path: ["Settings", "Auth & Security"],
   specVersion: 1,
   specSchema: authSecuritySpecSchema,
-  // No references: SCIM groups and their teams are pushed by the identity provider (see `groups`).
   dependsOn: [],
   deployments: ["cloud", "self_hosted"],
   viewPermission: "sso.view",
   managePermission: "sso.manage",
-  // organization.metadata (requireSso, restrictDomainToSso, session settings) is shared with settings.general's `organization`.
   tables: ["sso_connection", "sso_provider", "scim_provider"],
   naturalKeys: [
     { label: "setting", get: (item) => {
@@ -798,7 +678,6 @@ export const settingsAuthSecurityArea = defineConfigArea({
   secretFields: ["oidc.clientSecret"],
   informationalFields: ["setup", "groups"],
   transactional: false,
-  // OIDC discovery at the issuer; the IdP must be updated with this instance's URLs.
   externalEffects: true,
   protectedFromDelete: (item) => {
     const kind = specKind(item.spec)

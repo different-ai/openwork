@@ -44,12 +44,6 @@ type LiveReconnectCard = {
   continueAfterConnection?: (toolCallId: string) => void
 }
 
-/**
- * The cards on screen for each connection. A sign-in finishes long after the
- * click, and by then the card may sit on a newer tool call: the outcome is
- * delivered through whichever card is mounted, never through the closure of
- * the one that was clicked.
- */
 const liveCards = new Map<string, Map<string, { current: LiveReconnectCard | null }>>()
 
 function liveCardsFor(connectionKey: string): LiveReconnectCard[] {
@@ -135,8 +129,6 @@ export function useChatToolReconnect(
     }
     attemptSequence += 1
     const attemptId = attemptSequence
-    // The sign-in stays current until it settles or someone skips it; the card
-    // that started it unmounting is not a reason to stop waiting.
     const isCurrent = () => useChatMcpReconnectStore.getState().attempts[connectionKey]?.id === attemptId
     const settle = (settled: { phase: "connected" | "failed"; error: string | null }) => {
       const cards = liveCardsFor(connectionKey)
@@ -157,7 +149,6 @@ export function useChatToolReconnect(
       }, isCurrent)
       if (!isCurrent()) return
       const cards = settle({ phase: result, error: null })
-      // The question may have been asked, or the card moved, after the click.
       const bound = cards.flatMap(card => {
         const binding = card.decision()
         return binding?.isPending() ? [{ card, binding }] : []
@@ -168,14 +159,12 @@ export function useChatToolReconnect(
             outcome: "connected", continuation: "review_remaining_work", repeatCompletedWrites: false,
           })
         } catch (error) {
-          // Signed in, but the answer did not reach the agent: the card offers Continue.
           setRecord(bound.card.reconnectKey, {
             ...chatMcpReconnectRecord(bound.card.reconnectKey),
             error: error instanceof Error ? error.message : "Could not deliver the decision.",
           })
         }
       } else if (!cards.some(card => card.candidateDecision())) {
-        // The turn ended on this card rather than waiting on a question: carry it on.
         const card = cards.find(entry => entry.reconnectKey === reconnectKey) ?? cards.at(-1)
         card?.continueAfterConnection?.(card.toolCallId)
       }

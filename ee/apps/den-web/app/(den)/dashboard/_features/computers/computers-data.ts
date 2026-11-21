@@ -30,14 +30,6 @@ async function fetchComputers(orgId: string, path: string, signal: AbortSignal) 
   return payload;
 }
 
-/*
- * Den web and the Den API deploy separately, so for a few minutes this page
- * can talk to an API from before computers could be disconnected. That API
- * sends no `canDisconnect`, `canRemove`, `disconnectedAt`, `owner.former`,
- * `online` or `staleHidden`. The contract defaults them, and a team
- * computer's `canRemove` is filled in here as well, so the page shows what it
- * knows and offers nothing it could not do.
- */
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -47,21 +39,17 @@ function withoutMissingActions(device: unknown): unknown {
 }
 
 export type OrganizationComputerList = OrganizationComputerListResponse & {
-  /** The API said, per computer, whether it can be disconnected. False for an API from before that existed. */
   actionsReported: boolean;
 };
 
-/** The team list as Den sent it, or null when it is not one. Tolerates an API without the newer fields. */
 export function parseComputerList(payload: unknown): OrganizationComputerList | null {
   const devices = isRecord(payload) && Array.isArray(payload.devices) ? payload.devices : null;
   const result = organizationComputerListResponseSchema.safeParse(devices && isRecord(payload) ? { ...payload, devices: devices.map(withoutMissingActions) } : payload);
   if (!result.success) return null;
-  // With no computers there is nothing to tell an older API by, and nothing to offer either way.
   const actionsReported = !devices || devices.length === 0 || devices.some((device) => isRecord(device) && typeof device.canDisconnect === "boolean");
   return { ...result.data, actionsReported };
 }
 
-/** One computer's detail, with the same tolerance. */
 export function parseComputerDetail(payload: unknown): OrganizationComputerDetailResponse | null {
   const result = organizationComputerDetailResponseSchema.safeParse(isRecord(payload) ? { ...payload, device: withoutMissingActions(payload.device) } : payload);
   return result.success ? result.data : null;
@@ -91,14 +79,6 @@ export function useComputer(orgId: string, deviceId: string, enabled = true) {
   });
 }
 
-/*
- * Disconnect and remove need the "Disconnect team computers" permission. It
- * is a sensitive one: a sign-in that is no longer fresh is answered with a
- * re-authentication request, which requestJson throws for the dashboard's
- * runReauthableAction to handle.
- */
-
-/** `POST /v1/org/computers/:deviceId/disconnect`: Den stops accepting the desktop and, where it can, signs it out. */
 export async function disconnectOrganizationComputer(orgId: string, deviceId: string): Promise<OrganizationComputerDisconnectResponse> {
   const { response, payload } = await requestJson(`${computerDetailPath(deviceId)}/disconnect`, {
     method: "POST", headers: { [ORG_SCOPE_HEADER]: orgId }, cache: "no-store",
@@ -109,7 +89,6 @@ export async function disconnectOrganizationComputer(orgId: string, deviceId: st
   return result.data;
 }
 
-/** `DELETE /v1/org/computers/:deviceId`: takes the entry off the list; nothing happens to the computer. */
 export async function removeOrganizationComputer(orgId: string, deviceId: string): Promise<void> {
   const { response, payload } = await requestJson(computerDetailPath(deviceId), {
     method: "DELETE", headers: { [ORG_SCOPE_HEADER]: orgId }, cache: "no-store",

@@ -1,7 +1,3 @@
-// The Gateway's reasoning store: shared by every gateway instance through the
-// database (auto_router_reasoning, encrypted), with the in-memory store from
-// @openwork-ee/gateway-protocols in front so the common same-instance case
-// skips a read.
 import { and, eq, inArray, lt } from "@openwork-ee/den-db/drizzle"
 import { AutoRouterReasoningTable } from "@openwork-ee/den-db"
 import { createMemoryReasoningStore, isReasoningToolCallId, parseReasoningPayload, REASONING_TTL_MS, type ReasoningStore } from "@openwork-ee/gateway-protocols"
@@ -47,7 +43,6 @@ export function createDbReasoningStore(): ReasoningStore {
             .values({ organizationId, toolCallId, payload: serialized, expiresAt })
             .onDuplicateKeyUpdate({ set: { payload: serialized, expiresAt } })
         }
-        // Expired rows are swept a little at a time by the writers.
         if (++writes % 50 === 0) {
           await db.delete(AutoRouterReasoningTable).where(lt(AutoRouterReasoningTable.expiresAt, new Date())).limit(500)
         }

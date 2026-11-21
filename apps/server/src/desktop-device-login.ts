@@ -9,7 +9,6 @@ import { z } from "zod";
 const discoverySchema = z.object({ baseUrl: z.string().url(), token: z.string().min(1) });
 const receiptSchema = z.object({ ok: z.boolean(), code: z.string().optional(), result: z.unknown().optional() });
 const verificationUrlSchema = z.string().refine((value) => {
-  // Validate the original text: URL parsers may silently remove line breaks.
   if (!/^https?:\/\//i.test(value) || /[\u0000-\u0020\u007f-\u009f]/.test(value) || !URL.canParse(value)) return false;
   const url = new URL(value);
   return !url.username && !url.password;
@@ -34,7 +33,6 @@ function requestFailureMessage(value: unknown): string | undefined {
   const failure = requestFailureSchema.safeParse(value);
   if (!failure.success) return undefined;
   const host = failure.data.host;
-  // Only a host (optionally with a port), never a URL, userinfo or terminal text.
   if (host.length > 300 || !/^(?:[a-z0-9.-]+|\[[a-f0-9:.]+\])(?::[0-9]{1,5})?$/i.test(host)
     || !URL.canParse(`http://${host}`)) return undefined;
   const url = new URL(`http://${host}`);
@@ -48,7 +46,6 @@ class DesktopSetupError extends Error {
   constructor(readonly reason: "unavailable" | "unsafe" | "not_ready" | "permission") { super(reason); }
 }
 
-/** Read metadata only before dispatch. Never retry a potentially executed start. */
 async function readyDesktopBridge(signal: AbortSignal) {
   const deadline = Date.now() + 20_000;
   let available = false;
@@ -85,9 +82,7 @@ function startDesktopMessage(): string {
     : "Cannot reach the local OpenWork app. Start OpenWork, then run this command again.";
 }
 
-/** Only the existing local bridge credential crosses this boundary, never a Den credential. */
 async function desktopBridge() {
-  // POSIX custody can be verified without guessing inherited Windows ACLs.
   if (!process.getuid) throw new DesktopSetupError("unsafe");
   const uid = process.getuid();
   const appData = process.platform === "darwin"
@@ -125,7 +120,6 @@ async function desktopBridge() {
         return bridge;
       } finally { await handle.close(); }
     } catch (error) {
-      // Never fall through from an explicit profile to another desktop.
       const missing = error instanceof Error && "code" in error && error.code === "ENOENT";
       throw new DesktopSetupError(missing ? "unavailable" : "unsafe");
     }
@@ -137,10 +131,7 @@ function printable(value: string): string {
   return value.replace(/[\u0000-\u001f\u007f-\u009f]/g, "");
 }
 
-/** Shell adapter only: the running desktop owns start, polling, tokens and durable enrollment. */
 export async function runDesktopDeviceLogin(argv: string[]): Promise<number> {
-  // Public correlation only, not a credential. A stale command must never
-  // observe or cancel the newer invocation that superseded it.
   const requestId = randomUUID();
   const args: { requestId: string; baseUrl?: string; apiBaseUrl?: string; force?: boolean } = { requestId };
   for (let i = 0; i < argv.length; i++) {
@@ -184,8 +175,6 @@ export async function runDesktopDeviceLogin(argv: string[]): Promise<number> {
       return receipt;
     }
     stop.signal.throwIfAborted();
-    // Arm cleanup before dispatch: losing the receipt must not leave a live
-    // authorization running. Only an explicit conflict is safe to retry.
     cancel = async () => {
       const deadline = Date.now() + 20_000;
       let receipt = await request("command", "auth.device-login.cancel", { requestId }, true);
@@ -196,8 +185,7 @@ export async function runDesktopDeviceLogin(argv: string[]): Promise<number> {
     };
     const start = await request("command", "auth.device-login.start", args);
     if (!start.ok) {
-      cancel = undefined; // An explicit refusal did not start a new flow.
-      // A local missing/unsupported action is not an explicit Den OFF result.
+      cancel = undefined;
       console.error(start.code === "unsupported" || start.code === "not_found"
         ? "OpenWork is not ready for device sign-in. Start or update OpenWork, then run this command again."
         : "Device sign-in could not start. Check the OpenWork app and try again.");
@@ -244,7 +232,6 @@ export async function runDesktopDeviceLogin(argv: string[]): Promise<number> {
     console.error(stop.signal.aborted ? "Device sign-in cancelled." : "Device sign-in expired.");
     return stop.signal.aborted ? 130 : 3;
   } catch (error) {
-    // Never print raw control receipts, HTTP bodies, paths or errors containing credentials.
     console.error(stop.signal.aborted ? "Device sign-in cancelled."
       : error instanceof DesktopSetupError ? error.reason === "unavailable" ? startDesktopMessage()
         : error.reason === "not_ready" ? "OpenWork is not ready for device sign-in. Start or update OpenWork, then run this command again."

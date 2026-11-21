@@ -83,6 +83,5 @@ export function writeOpenworkEnvPendingChanges(value: boolean, runtimeKey?: stri
       sessionStorage?.removeItem(PENDING_CHANGES_KEY);
     }
   } catch {
-    // ignore persistence failures
   }
 }

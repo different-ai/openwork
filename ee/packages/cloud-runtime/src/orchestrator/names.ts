@@ -30,7 +30,6 @@ function opaqueInstanceName(prefix: string, input: InstanceNameInput, version: s
   const imageTag = version ? `-v${hash(version, 8)}` : ""
   const recoveryTag = recoverySuffix === undefined ? "" : `-r${hash(recoverySuffix, 8)}`
   const tail = `${identity}${imageTag}${recoveryTag}`
-  // Only the prefix may shrink; the full worker hash and lifecycle tags must survive.
   const safePrefix = slug(prefix).slice(0, 63 - tail.length - 1).replace(/-$/, "")
   return safePrefix ? `${safePrefix}-${tail}` : tail
 }
@@ -43,7 +42,6 @@ export function instanceNameForImageVersion(prefix: string, input: InstanceNameI
   return opaqueInstanceName(prefix, input, version)
 }
 
-// Preserve the original computations only for finding already-created instances.
 function legacyBaseInstanceName(prefix: string, input: InstanceNameInput) {
   return slug(`${prefix}-${input.name}-${workerHint(input.workerId)}`).slice(0, 63)
 }

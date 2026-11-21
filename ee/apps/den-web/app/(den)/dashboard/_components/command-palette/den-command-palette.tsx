@@ -56,7 +56,6 @@ type PaletteEntry = {
 type DenCommandPaletteProps = {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** Returns true when it handled the navigation itself (the Workbot entry while it is blocked). */
   interceptNavigation?: (href: string) => boolean;
 };
 
@@ -129,7 +128,6 @@ export function DenCommandPalette({ open, onOpenChange, interceptNavigation }: D
   ), [orgContext?.currentMember.role, orgContext?.currentMember.isOwner, orgContext?.currentMember.permissions]);
   const capabilities = orgContext?.capabilities ?? EMPTY_CAPABILITIES;
 
-  // Plugin results open the admin plugin page, which needs `sharing.manage_all`.
   const pluginsQuery = usePluginSummaries({ enabled: open && access.canManageAllShared });
   const automationsQuery = useAutomations({ enabled: open && capabilities.workflows });
 
@@ -247,7 +245,6 @@ export function DenCommandPalette({ open, onOpenChange, interceptNavigation }: D
     try {
       localStorage.setItem(RECENTS_STORAGE_KEY, JSON.stringify(nextRecentIds));
     } catch {
-      // Navigation should still work when browser storage is unavailable.
     }
     onOpenChange(false);
     if (interceptNavigation?.(entry.href)) return;
