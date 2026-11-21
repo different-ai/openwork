@@ -31,7 +31,7 @@
     "@openwork-ee/workbot-server": "workspace:*",
     "@openwork-ee/workbot-ui": "workspace:*",
     "@openwork/types": "workspace:*",
-    "@sentry/node": "10.64.0",
+    "@sentry/node": "11.14.0",
     "@tanstack/react-query": "^5.96.2",
     "hono": "4.13.16",
     "react": "catalog:",
