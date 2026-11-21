@@ -1,5 +1,6 @@
 import type { DenExternalMcpConnection } from "@/app/lib/den";
 import type { McpServerEntry, McpStatus, McpStatusMap } from "@/app/types";
+import type { PlusMenuConnector } from "./composer-plus-menu-model";
 import { canMemberAuthorizeConnection, connectionNeedsReconnect } from "@/react-app/domains/connections/native-provider-connections";
 import {
   isOrgMcpConnectionReady,
@@ -79,4 +80,41 @@ export function composerConnectionSignIn(input: {
     return { connectionId, reconnect: true };
   }
   return null;
+}
+
+export function mcpEntryStatus(entry: McpServerEntry, statuses: McpStatusMap | undefined): McpStatus | undefined {
+  if (!statuses) return undefined;
+  if (entry.id && statuses[entry.id]) return statuses[entry.id];
+  return statuses[entry.name];
+}
+
+export type ComposerConnectorEntry = PlusMenuConnector & {
+  connected: boolean;
+};
+
+export function composerConnectorEntries(input: {
+  servers: readonly McpServerEntry[];
+  statuses: McpStatusMap | undefined;
+  orgConnections: readonly DenExternalMcpConnection[];
+  connectingId: string | null;
+  noteFor: (status: McpStatus | undefined) => string | null;
+}): ComposerConnectorEntry[] {
+  return input.servers.map((server) => {
+    const status = mcpEntryStatus(server, input.statuses);
+    const connection = input.orgConnections.find((entry) => entry.id === server.orgMcpConnectionId);
+    const signIn = composerConnectionSignIn({ server, status, connection });
+    return {
+      key: server.id ?? server.name,
+      name: server.name,
+      serviceUrl: server.config.type === "remote" ? server.config.url : undefined,
+      signIn,
+      connecting: Boolean(signIn && input.connectingId === signIn.connectionId),
+      note: signIn ? null : input.noteFor(status),
+      connected: status?.status === "connected",
+    };
+  });
+}
+
+export function connectedFirst<T extends { connected: boolean }>(entries: readonly T[]): T[] {
+  return [...entries.filter((entry) => entry.connected), ...entries.filter((entry) => !entry.connected)];
 }

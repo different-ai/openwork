@@ -21,7 +21,7 @@ import { autoRouterReplyRoutes } from "@openwork/types/den/auto-router";
 import { perfNow, recordPerfLog } from "@/app/lib/perf-log";
 import { isGeneratedSessionTitle } from "@/app/lib/session-title";
 import { normalizeEvent } from "@/app/utils";
-import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX, type OpencodeEvent, type PendingPermission, type PendingQuestion } from "@/app/types";
+import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX, type MessageTokens, type OpencodeEvent, type PendingPermission, type PendingQuestion } from "@/app/types";
 import {
   attachmentNoteToUIParts,
   textPartToUIPart,
@@ -44,6 +44,7 @@ import type { OpenworkSessionHistory, OpenworkSessionSnapshot } from "@/app/lib/
 import type { LatestSessionHistory } from "../surface/session-render-state";
 import { applyRevertCursor, reconcileTranscriptMessages } from "./transcript-reconcile";
 import { messageCreated, upsertMessageByChronology } from "./message-merge";
+import { readUsageMeasured, useMeasuredUsageStore } from "./measured-usage-store";
 import { isOrphanedInteraction, isTerminalToolPart, terminalToolCallIds, terminalTranscriptToolCallIds } from "./orphaned-interactions";
 import {
   useSessionActivityStore,
@@ -1296,7 +1297,10 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
 
   if (event.type === "session.next.compaction.ended" || event.type === "session.compacted") {
     const sessionId = sessionIdFromProperties(event.properties);
-    if (sessionId) useSessionActivityStore.getState().setCompacting(workspaceId, sessionId, false);
+    if (sessionId) {
+      useSessionActivityStore.getState().setCompacting(workspaceId, sessionId, false);
+      useMeasuredUsageStore.getState().clear(workspaceId, sessionId);
+    }
     return;
   }
 
@@ -1397,9 +1401,17 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
     return;
   }
 
+  if (event.type === "session.usage.measured") {
+    const usage = readUsageMeasured(event.properties);
+    if (usage && isTrackedSession(entry, usage.sessionID)) {
+      useMeasuredUsageStore.getState().record(workspaceId, usage.sessionID, { messageId: usage.messageID, tokens: usage.tokens });
+    }
+    return;
+  }
+
   if (event.type === "message.updated") {
     const props = (event.properties ?? {}) as {
-      info?: { id?: string; role?: UIMessage["role"] | string; sessionID?: string; parentID?: string; time?: { created?: number; completed?: number } };
+      info?: { id?: string; role?: UIMessage["role"] | string; sessionID?: string; parentID?: string; time?: { created?: number; completed?: number }; tokens?: MessageTokens; summary?: unknown };
     };
     const info = props.info;
     if (!info?.id || !info.sessionID || (info.role !== "user" && info.role !== "assistant" && info.role !== "system")) {
@@ -1425,6 +1437,11 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       });
     }
     if (!isTrackedSession(entry, info.sessionID)) return;
+    if (info.role === "assistant" && info.summary === true) {
+      useMeasuredUsageStore.getState().clear(workspaceId, info.sessionID);
+    } else if (info.role === "assistant" && info.tokens) {
+      useMeasuredUsageStore.getState().record(workspaceId, info.sessionID, { messageId: info.id, tokens: info.tokens });
+    }
     const created = info.time?.created;
     const completed = info.time?.completed;
     const next = {
