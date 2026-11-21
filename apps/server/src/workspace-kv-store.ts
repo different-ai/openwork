@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
 import { existsSync } from "node:fs";
 import { stat } from "node:fs/promises";
-import { importNodeSqlite, openRuntimeSqliteDatabase, runtimeDbPath, type RuntimeSqliteDatabase } from "./runtime-db.js";
+import { configureRuntimeSqliteReader, importNodeSqlite, openRuntimeSqliteDatabase, runtimeDbPath, type RuntimeSqliteDatabase } from "./runtime-db.js";
 import type { ServerConfig } from "./types.js";
 
 type WorkspaceKvSchemaVersionColumn = {
@@ -276,6 +276,7 @@ export function createWorkspaceKvStore<T>(options: WorkspaceKvStoreOptions<T>) {
         ? new (await import("bun:sqlite")).Database(path, { readonly: true, create: false })
         : new (await importNodeSqlite()).DatabaseSync(path, { readOnly: true });
       try {
+        configureRuntimeSqliteReader(sqlite);
         const table = sqlite.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = ? COLLATE NOCASE").get(config.tableName);
         if (!table) return undefined;
         const row = rowFromUnknown(sqlite.prepare(config.selectSql).get(workspaceId), config.tableName, workspaceId);
