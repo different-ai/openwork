@@ -207,6 +207,26 @@ export function isLiveGatewaySetConnected(provider: GatewayConnectProvider, prov
   return live.models.length > 0;
 }
 
+export function resolvePendingGatewaySignIns(input: {
+  signedIn: boolean;
+  liveGatewayProviders: readonly LiveGatewayProvider[] | null;
+  skippedProviders: Parameters<typeof resolveGatewayConnectProviders>[0];
+}): GatewayConnectProvider[] {
+  if (!input.signedIn) return [];
+  return input.liveGatewayProviders !== null
+    ? resolveLiveGatewayConnectProviders(input.liveGatewayProviders)
+    : resolveGatewayConnectProviders(input.skippedProviders);
+}
+
+export function isPendingGatewaySignInConnected(
+  provider: GatewayConnectProvider,
+  snapshot: { liveGatewayProviders: readonly LiveGatewayProvider[] | null; importedCloudProviders: Record<string, CloudImportedProvider> },
+) {
+  return snapshot.liveGatewayProviders === null
+    ? isGatewaySetConnected(provider, snapshot.importedCloudProviders)
+    : isLiveGatewaySetConnected(provider, snapshot.liveGatewayProviders);
+}
+
 export function pendingGatewayModelOptions(providers: readonly GatewayConnectProvider[]): ModelOption[] {
   return providers.flatMap((provider) => (provider.models ?? []).flatMap((model) => {
     if (!provider.credentialSetId || model.credentialSetId !== provider.credentialSetId) return [];

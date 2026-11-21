@@ -2626,6 +2626,12 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     ].join("::");
   };
 
+  const refreshLiveGatewaySignIns = async () => {
+    if (disposed || state.liveGatewayProviders === null) return;
+    const contextKey = getCloudProviderSyncContextKey();
+    await refreshLiveGatewayProviders(() => !disposed && contextKey === getCloudProviderSyncContextKey());
+  };
+
   const hasCloudProviderSyncPrerequisites = () => {
     const settings = readDenSettings();
     const workspaceTarget =
@@ -3612,6 +3618,7 @@ export function createProviderAuthStore(options: CreateProviderAuthStoreOptions)
     refreshCloudOrgProviders,
     refreshImportedCloudProviders: (input?: { strict?: boolean }) => refreshImportedCloudProviders({ strict: input?.strict }),
     runCloudProviderSync,
+    refreshLiveGatewaySignIns,
     startGatewayProviderOAuth,
     shareDeviceProvider,
     syncSharedDeviceProvider,
