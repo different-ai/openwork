@@ -5,4 +5,4 @@
  */
 export const OPENWORK_BENCH_REPO = "https://github.com/different-ai/openwork-bench";
 /** Has the openwork-desktop harness (`owb run --openwork-url`) and `owb world serve --http`. */
-export const OPENWORK_BENCH_REVISION = "7535d06c7f805c42813cc99fe40d7e6b06b68fca";
+export const OPENWORK_BENCH_REVISION = "10ca10aacd65adbb4338a559f66bdab556881756";
