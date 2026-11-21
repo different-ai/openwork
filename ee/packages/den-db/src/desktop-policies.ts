@@ -63,8 +63,6 @@ export async function readDesktopPolicyForOrgMember(database: Database, input: {
     adminTeamsOnly: true,
   })
   const teamIds = teams.map((team) => team.id)
-  // Admin assignments follow effective admin status: a direct admin role or
-  // an Admin team, with the same SCIM projection rule as den-api's authority.
   const matchingRoles = memberRole
     ? matchingDesktopPolicyAssignmentRoles(memberRole, { adminViaTeam: adminTeams.length > 0 })
     : []

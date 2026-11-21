@@ -68,20 +68,16 @@ const basePriceSchema = z.object({
 })
 /** A listed price in USD per 1M tokens, which is also micro-USD per token. */
 export const gatewayListedPriceSchema = basePriceSchema.extend({
-  /** Prices that apply once a request's context is above `above` tokens, lowest first. */
   contextTiers: z.array(basePriceSchema.extend({ above: countSchema })),
 })
 export type GatewayListedPrice = z.infer<typeof gatewayListedPriceSchema>
 
 export const gatewayMemberModelSchema = z.object({
-  /** The Gateway model alias the member picks (`gwm_…`). */
   id: z.string().min(1),
   name: z.string().min(1),
   providerName: z.string().min(1),
-  /** The catalog provider, such as `anthropic`. */
   providerId: z.string().min(1),
   upstreamModelId: z.string().min(1),
-  /** The usage series this model reports under, to match it with spend. */
   seriesId: z.string().min(1),
   price: gatewayListedPriceSchema.nullable(),
 })
@@ -127,7 +123,6 @@ export function readGatewayListedPrice(config: unknown): GatewayListedPrice | nu
       if (above !== null && Number.isSafeInteger(above) && price) contextTiers.push({ above, ...price })
     }
   } else if (isRecord(cost.context_over_200k)) {
-    // Older catalog snapshots predate the explicit tier threshold.
     const price = readBasePrice({ ...cost, ...cost.context_over_200k })
     if (price) contextTiers.push({ above: 200_000, ...price })
   }
@@ -172,7 +167,6 @@ export type GatewayMemberSeriesTotal = {
   label: string
   costMicroUsd: number
   tokens: number
-  /** Some of this series' cost is not known (requests without a price). */
   unpriced: boolean
 }
 
@@ -194,9 +188,7 @@ export function gatewayMemberSeriesTotals(usage: GatewayUsageResponse["usage"]):
 }
 
 export type GatewayMemberUsageMetrics = {
-  /** Recorded spend, or null when nothing has a price yet but requests were made. */
   spendMicroUsd: number | null
-  /** Requests without a price are left out of spend; null when older records can't tell. */
   unpricedRequests: number | null
   requests: number | null
   tokens: number
@@ -206,7 +198,6 @@ export type GatewayMemberUsageMetrics = {
 /** The key figures at the top of My Usage. */
 export function gatewayMemberUsageMetrics(usage: GatewayUsageResponse["usage"]): GatewayMemberUsageMetrics {
   const totals = gatewayMemberSeriesTotals(usage)
-  // Never present unobserved cost as free: $0 with requests missing a price is unknown.
   const unknownSpend = usage.totalCostMicroUsd === 0 && usage.unpricedRequests !== 0 && (usage.requestCount ?? usage.totalTokens) > 0
   return {
     spendMicroUsd: unknownSpend ? null : usage.totalCostMicroUsd,
@@ -219,17 +210,13 @@ export function gatewayMemberUsageMetrics(usage: GatewayUsageResponse["usage"]):
 
 export type GatewayModelCostRow = {
   model: GatewayMemberModel
-  /** What the member's measured tokens would have cost on this model; null without a listed price. */
   estimateMicroUsd: number | null
-  /** The member used this model in the period. */
   inUse: boolean
-  /** Recorded spend on this model in the period. */
   spentMicroUsd: number
 }
 
 export type GatewayModelCostComparison = {
   mix: GatewayMemberTokenMix
-  /** Requests whose tokens were not reported, so the estimate leaves them out. */
   unmeasuredRequests: number | null
   rows: GatewayModelCostRow[]
 }
@@ -245,7 +232,6 @@ export function gatewayModelCostComparison(response: GatewayMemberUsageResponse)
   const seen = new Set<string>()
   const rows: GatewayModelCostRow[] = []
   for (const model of response.models) {
-    // The same upstream model can reach a member through several groups.
     const key = `${model.providerName}\u001f${model.seriesId}`
     if (seen.has(key)) continue
     seen.add(key)
@@ -270,11 +256,6 @@ export function gatewayModelCostComparison(response: GatewayMemberUsageResponse)
     rows,
   }
 }
-
-/*
- * Spend-limit copy, shared by the desktop Usage settings and Den Web's My Usage
- * so both surfaces describe a limit the same way.
- */
 
 export function formatGatewayMoney(microUsd: number): string {
   return new Intl.NumberFormat(undefined, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 6 }).format(microUsd / 1_000_000)
@@ -325,7 +306,6 @@ export function gatewayCanAskForMore(bucket: GatewayUsageBucket): boolean {
 
 export type GatewayUsageLimitGroup = {
   key: string
-  /** Null for the default limit; the provider's name for a provider limit. */
   providerName: string | null
   buckets: GatewayUsageBucket[]
 }

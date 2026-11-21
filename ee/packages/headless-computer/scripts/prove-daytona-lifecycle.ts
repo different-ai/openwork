@@ -1,4 +1,3 @@
-/** Opt-in live microVM proof. Owns only its random conversation, clone and snapshot; cleanup in finally. */
 import assert from "node:assert/strict"
 import { randomUUID } from "node:crypto"
 import { setTimeout as delay } from "node:timers/promises"
@@ -37,7 +36,6 @@ try {
   timings.createMs = Date.now() - began
   const actual = await api.get(first.name ?? first.ref.ref.sandboxId ?? "")
   assert.equal(actual.snapshot, config.snapshot)
-  // Provider state, rather than local timers, is the idle backstop under test.
   const raw = await fetch(`${config.apiUrl.replace(/\/$/, "")}/sandbox/${encodeURIComponent(actual.id)}`, { headers: { Authorization: `Bearer ${config.apiKey}` } }).then(r => r.json())
   assert.equal(raw.sandboxClass, "linux-vm")
   assert.equal(raw.autoPauseInterval, 2)
@@ -69,8 +67,6 @@ try {
   timings.restoreMs = Date.now() - began
   assert.deepEqual(await read(clone), original)
   log("hot-snapshot-restores-live-process-on-independent-microvm")
-  // Web preview traffic needs explicit activity. Keep this VM active past its
-  // two-minute idle interval without issuing a guest command or resuming it.
   await blocks.activity(first, { timeoutMs: 10_000 })
   for (let n = 0; n < 5; n++) {
     await delay(25_000)
@@ -79,7 +75,6 @@ try {
   }
   assert.equal((await api.get(actual.id)).state, "started")
   log("active-preview-heartbeat-prevents-unwanted-pause")
-  // No local idle timer is armed. Do not issue toolbox requests while waiting.
   for (let n = 0; n < 6; n++) { await delay(25_000); log("waiting-for-provider-auto-pause") }
   assert.equal((await api.get(actual.id)).state, "paused")
   await blocks.activity(first, { timeoutMs: 10_000 })

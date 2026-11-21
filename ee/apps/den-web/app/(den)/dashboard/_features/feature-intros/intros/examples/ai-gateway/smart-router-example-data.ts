@@ -1,8 +1,6 @@
 import type { ExampleProvider } from "./example-parts";
 import { ANTHROPIC, GOOGLE } from "./gateway-example-data";
 
-/** Sample data only: no API calls (DESIGN.md I7). */
-
 export const smartRouterExampleName = "Smart: Engineering";
 
 export type SmartRouterExampleModel = { id: string; name: string; provider: ExampleProvider; tasks: readonly string[] };

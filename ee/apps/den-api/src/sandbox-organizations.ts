@@ -48,12 +48,7 @@ const createJoinToken = customAlphabet("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcd
 
 export class SandboxInputError extends Error {}
 
-/**
- * Organization metadata key holding what joiners become (member, admin or super-admin). New sandboxes store
- * super-admin; a missing value means admin, what sandboxes created before then did.
- */
 const SANDBOX_JOIN_ROLE_KEY = "sandboxJoinRole"
-/** Organization metadata key holding the end date of the Enterprise grant the sandbox made. */
 const SANDBOX_PLAN_ENDS_KEY = "sandboxPlanEndsAt"
 
 function metadataRecord(metadata: unknown): Record<string, unknown> {
@@ -69,7 +64,6 @@ function readJoinRole(metadata: unknown): SandboxJoinRole {
   return stored === "member" || stored === "super-admin" ? stored : "admin"
 }
 
-/** Stored roles below each join role, which joining or choosing that role raises to it. Owners are never touched. */
 const ROLES_BELOW_JOIN_ROLE: Record<SandboxJoinRole, string[]> = {
   member: [],
   admin: ["member"],
@@ -81,20 +75,12 @@ function readPlanTier(metadata: unknown): NonNullable<Sandbox["planTier"]> {
   return plan.tier === "team" || plan.tier === "enterprise" ? plan.tier : "free"
 }
 
-/** Sandboxes are Enterprise for as long as they run: every Enterprise feature unlocked, seats matching the sandbox. */
 async function setSandboxPlan(organizationId: DenTypeId<"organization">, memberLimit: number, expiresAt: Date) {
   const endsAt = utcDate(expiresAt)
   await setOrganizationPlanByAdmin(organizationId, { tier: "enterprise", seatLimit: memberLimit, endsAt })
-  // Remember which grant is the sandbox's, so ending the sandbox never removes a plan an admin set by hand.
   await updateOrganizationMetadata(organizationId, current => ({ ...current, [SANDBOX_PLAN_ENDS_KEY]: endsAt }))
 }
 
-/**
- * Ends the sandbox's Enterprise grant when it closes or expires: the plan goes back to Free with the same seats, so
- * Enterprise-gated pages and endpoints stop. Only the grant the sandbox made is removed: a plan an admin set by hand
- * (another tier, or an end date other than the sandbox's) is left alone, so converting a sandbox to a real plan is
- * never undone. Extending the sandbox grants Enterprise again.
- */
 async function endSandboxPlan(row: Pick<SandboxRow, "organizationId" | "memberLimit">) {
   const [org] = await db.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable).where(eq(OrganizationTable.id, row.organizationId)).limit(1)
   if (!org) return
@@ -105,7 +91,6 @@ async function endSandboxPlan(row: Pick<SandboxRow, "organizationId" | "memberLi
   await setOrganizationPlanByAdmin(row.organizationId, { tier: "free", seatLimit: row.memberLimit })
 }
 
-/** What closing takes away, after the row is marked closed: the Enterprise grant and the sandbox's own model key. */
 async function endSandboxAccess(row: SandboxRow) {
   await endSandboxPlan(row).catch((error: unknown) => {
     appLogger.error("sandbox plan end failed", { sandbox_id: row.id, error: error instanceof Error ? error.message : "unknown" })
@@ -121,10 +106,6 @@ function affectedRows(result: unknown): number {
   return 0
 }
 
-/**
- * Turns the sandbox's own model key on or off at OpenRouter so a closed or expired sandbox stops spending. Best
- * effort: a failure is logged and the sandbox still closes (the key's cap still bounds what it can spend).
- */
 async function setModelKeyEnabled(row: Pick<SandboxRow, "id" | "modelKeyHash">, enabled: boolean) {
   if (!row.modelKeyHash || !env.openRouterManagementApiKey) return
   await updateSandboxModelKey(row.modelKeyHash, { disabled: !enabled }).catch((error: unknown) => {
@@ -136,10 +117,6 @@ async function writeJoinRole(organizationId: DenTypeId<"organization">, joinRole
   await updateOrganizationMetadata(organizationId, current => ({ ...current, [SANDBOX_JOIN_ROLE_KEY]: joinRole }))
 }
 
-/**
- * Raises people who joined with a lower role to the join role (members to admin; members and admins to super-admin),
- * through the normal role change (audit, caches, key rotation). Never demotes and never touches the owner.
- */
 async function promoteJoinedMembers(organizationId: DenTypeId<"organization">, joinRole: SandboxJoinRole, onlyUserId?: DenTypeId<"user">) {
   const lower = ROLES_BELOW_JOIN_ROLE[joinRole]
   if (lower.length === 0) return
@@ -167,8 +144,6 @@ export function sandboxConnectorUrls(baseUrl: string) {
   return SANDBOX_WORKPLACE_APPS.map(app => ({ ...app, url: `${root}/${app.key}/mcp` }))
 }
 
-// Admin tooling only, and every caller has just written (create, extend, close, expiry
-// sweep...): read the sandbox rows and their summaries from the primary.
 async function serialize(rows: SandboxRow[], now = new Date()): Promise<Sandbox[]> {
   if (rows.length === 0) return []
   const ids = rows.map(row => row.organizationId)
@@ -195,7 +170,6 @@ async function serialize(rows: SandboxRow[], now = new Date()): Promise<Sandbox[
     .innerJoin(SlackAssistantInstallationTable, eq(SlackAssistantInstallationTable.connectionId, ExternalMcpConnectionTable.id))
     .where(and(inArray(ExternalMcpConnectionTable.organizationId, ids), eq(ExternalMcpConnectionTable.externalKey, SANDBOX_SLACK_EXTERNAL_KEY)))
   const withSlack = new Set(slackRows.map(row => row.organizationId))
-  // What is left on each open sandbox's own key, read live from OpenRouter (null when it cannot be reached).
   const credit = new Map(await Promise.all(rows.map(async row => {
     const live = row.modelKeyHash && sandboxState(row, now) === "open" && env.openRouterManagementApiKey ? await readSandboxModelKey(row.modelKeyHash) : null
     return [row.id, live?.remainingUsd ?? null] as const
@@ -223,13 +197,6 @@ async function serialize(rows: SandboxRow[], now = new Date()): Promise<Sandbox[
   }))
 }
 
-/**
- * Records sandboxes whose time ran out as closed and ends their Enterprise grant and model key. Free Auto already
- * stops at expiry without this (Den API and the Gateway check the sandbox row: sandboxFreeAutoStopped). Membership,
- * connectors and data stay; extending the sandbox reopens it. Runs hourly (startSandboxExpiryLoop) and whenever
- * sandboxes are listed or joined. Closed rows are reconciled too: a transient plan or OpenRouter failure must not
- * turn revocation into a one-shot attempt. Both revocations are idempotent; reopening removes the row from this set.
- */
 export async function closeExpiredSandboxes(now = new Date()) {
   const rows = await db.select().from(SandboxOrganizationTable).where(or(isNotNull(SandboxOrganizationTable.closedAt), lte(SandboxOrganizationTable.expiresAt, now)))
   for (const row of rows) {
@@ -252,11 +219,6 @@ export async function sandboxDefaults(): Promise<SandboxDefaults> {
   }
 }
 
-/**
- * The models a platform admin can choose for a new sandbox, for the New sandbox form. Null when the deployment
- * has no sandbox model key, so there is nothing to choose.
- * A catalog that cannot be read is not an error here: the form still takes typed ids, checked on create.
- */
 export async function sandboxModelOptions(): Promise<SandboxModelOptions | null> {
   if (!sandboxGatewayConfigured()) return null
   const providerId = env.sandbox.gateway?.providerId
@@ -281,20 +243,6 @@ export async function getSandbox(id: DenTypeId<"sandboxOrganization">): Promise<
   return (await serialize(rows))[0] ?? null
 }
 
-/**
- * Creates an ordinary organization owned by the admin, then makes it a sandbox: the Enterprise plan until it
- * ends, included models on (Workbot defaults to them), Free Auto until the sandbox closes or expires, AI Gateway
- * models for everyone (from the sandbox's own capped OpenRouter key when the deployment mints them, else the
- * shared sandbox key; the deployment's list, or `modelIds` when the admin chose them), one per-person OAuth connector for each fictional workplace app, and a join link. Every
- * member connects their own account, so each person's workplace data stays separate.
- *
- * On cloud deployments, Outlook, Calendar and Drive come as one Microsoft 365 connector signed in at the
- * workplace (so Workbot's chat, Calendar, Documents and first hello can read them); `callbackBaseUrl` is Den's public
- * API address the workplace sends people back to. If the workplace can't offer it, the separate connectors are used.
- *
- * On Cloud, the sandbox also gets the workplace's sample Slack with the Workbot Slack app installed
- * (sandbox-slack.ts), so Proactive Mode can message people there. If the workplace can't offer it, it is left out.
- */
 export async function createSandbox(actor: UserId, input: SandboxCreateInput, options: { callbackBaseUrl?: string | null } = {}): Promise<Sandbox> {
   const connectors = input.connectorBaseUrl ? sandboxConnectorUrls(input.connectorBaseUrl) : []
   if (!env.allowPrivateMcpUrls) {
@@ -304,7 +252,6 @@ export async function createSandbox(actor: UserId, input: SandboxCreateInput, op
     }
   }
   if (env.orgMode === "single_org") throw new SandboxInputError("This deployment has one organization; sandboxes need multi-organization mode.")
-  // Chosen models are checked before the organization exists: a mistyped id must not leave a sandbox without models.
   if (input.modelIds) {
     if (!sandboxGatewayConfigured()) throw new SandboxInputError("This deployment has no sandbox model key, so a sandbox's models cannot be chosen.")
     try { await assertSandboxGatewayModels(input.modelIds) }
@@ -317,7 +264,6 @@ export async function createSandbox(actor: UserId, input: SandboxCreateInput, op
   const organizationId = await createOrganizationForUser({ userId: actor, name: input.name })
   const expiresAt = new Date(Date.now() + input.days * DAY_MS)
   const id = createDenTypeId("sandboxOrganization")
-  // Record the sandbox first so a later failure still leaves it visible (and closable) in /admin.
   await db.insert(SandboxOrganizationTable).values({
     id, organizationId, joinToken: createJoinToken(), connectorBaseUrl: input.connectorBaseUrl,
     memberLimit: input.memberLimit, expiresAt, createdByUserId: actor,
@@ -328,12 +274,9 @@ export async function createSandbox(actor: UserId, input: SandboxCreateInput, op
     await db.update(OrganizationTable).set({ allowedEmailDomains: [...new Set(input.allowedEmailDomains)] }).where(eq(OrganizationTable.id, organizationId))
   }
 
-  // primary: the organization and its owner were created just above.
   const [owner] = await db.$primary.select({ id: MemberTable.id }).from(MemberTable)
     .where(and(eq(MemberTable.organizationId, organizationId), eq(MemberTable.userId, actor), isNull(MemberTable.removedAt))).limit(1)
   if (!owner) throw new Error("sandbox_owner_missing")
-  // Models through the AI Gateway for everyone, from the deployment's sandbox key. A failure leaves the sandbox on
-  // its included models and is visible as zero model providers in /admin.
   await addSandboxModels({ id, organizationId, ownerMemberId: owner.id, name: input.name, creditUsd: input.creditUsd, modelIds: input.modelIds }).catch((error: unknown) => {
     appLogger.error("sandbox gateway provider failed", { organization_id: organizationId, error: error instanceof Error ? error.message : "unknown" })
   })
@@ -374,10 +317,6 @@ export async function createSandbox(actor: UserId, input: SandboxCreateInput, op
   return created
 }
 
-/**
- * Gives the sandbox its AI Gateway models. When the deployment mints keys, the sandbox gets its own OpenRouter key
- * capped at the chosen credit; its hash is recorded before the provider is added so closing can always disable it.
- */
 async function addSandboxModels(input: { id: DenTypeId<"sandboxOrganization">; organizationId: DenTypeId<"organization">; ownerMemberId: DenTypeId<"member">; name: string; creditUsd?: number; modelIds?: string[] }) {
   if (!sandboxMintsModelKeys()) {
     await addSandboxGatewayProvider({ organizationId: input.organizationId, ownerMemberId: input.ownerMemberId, modelIds: input.modelIds })
@@ -389,7 +328,6 @@ async function addSandboxModels(input: { id: DenTypeId<"sandboxOrganization">; o
   await addSandboxGatewayProvider({ organizationId: input.organizationId, ownerMemberId: input.ownerMemberId, apiKey: key.key, modelIds: input.modelIds })
 }
 
-/** Sets the cap on the sandbox's own model key (the total, not an increment). Null when the sandbox is missing; throws when it has no key of its own. */
 export async function setSandboxCredit(id: DenTypeId<"sandboxOrganization">, creditUsd: number) {
   const [row] = await db.select().from(SandboxOrganizationTable).where(eq(SandboxOrganizationTable.id, id)).limit(1)
   if (!row) return null
@@ -399,10 +337,6 @@ export async function setSandboxCredit(id: DenTypeId<"sandboxOrganization">, cre
   return getSandbox(id)
 }
 
-/**
- * Deleting a sandbox's organization deletes its own model key at OpenRouter, so no live key outlives the
- * organization. Best effort: a failure is logged (the key stays capped and, if the sandbox was closed, disabled).
- */
 export async function deleteSandboxModelKeyForOrganization(organizationId: DenTypeId<"organization">) {
   const [row] = await db.select({ id: SandboxOrganizationTable.id, modelKeyHash: SandboxOrganizationTable.modelKeyHash }).from(SandboxOrganizationTable)
     .where(eq(SandboxOrganizationTable.organizationId, organizationId)).limit(1)
@@ -412,10 +346,6 @@ export async function deleteSandboxModelKeyForOrganization(organizationId: DenTy
   })
 }
 
-/**
- * Changes what people who join become. Choosing admin or super-admin also raises everyone who already joined with a
- * lower role to it; choosing a lower role demotes nobody.
- */
 export async function setSandboxJoinRole(id: DenTypeId<"sandboxOrganization">, joinRole: SandboxJoinRole) {
   const [row] = await db.select({ organizationId: SandboxOrganizationTable.organizationId }).from(SandboxOrganizationTable).where(eq(SandboxOrganizationTable.id, id)).limit(1)
   if (!row) return null
@@ -431,7 +361,6 @@ export async function rotateSandboxLink(id: DenTypeId<"sandboxOrganization">) {
   return getSandbox(id)
 }
 
-/** Adds days from now, or from the current end if it is later, and reopens a closed or expired sandbox. */
 export async function extendSandbox(id: DenTypeId<"sandboxOrganization">, days: number) {
   const [row] = await db.select().from(SandboxOrganizationTable).where(eq(SandboxOrganizationTable.id, id)).limit(1)
   if (!row) return null
@@ -443,10 +372,6 @@ export async function extendSandbox(id: DenTypeId<"sandboxOrganization">, days: 
   return getSandbox(id)
 }
 
-/**
- * Stops new joins and Free Auto now (sandboxFreeAutoStopped), ends the Enterprise grant and disables the sandbox's
- * own model key. The organization, its members and their data are kept.
- */
 export async function closeSandbox(id: DenTypeId<"sandboxOrganization">) {
   const [row] = await db.select().from(SandboxOrganizationTable).where(eq(SandboxOrganizationTable.id, id)).limit(1)
   if (!row) return null
@@ -489,10 +414,6 @@ export type SandboxJoinResult =
   | { status: "not_found" | "closed" | "expired" | "full" | "removed" | "email_verification_required" }
   | { status: "domain_not_allowed"; allowedEmailDomains: string[] }
 
-/**
- * Joins the signed-in person with the sandbox's join role (super-admin for new sandboxes, or what a platform admin chose; never owner). Idempotent for existing members. The sandbox row is
- * locked while seats are counted and the membership is written, so concurrent joins cannot exceed the seat limit.
- */
 export async function joinSandbox(input: { token: string; userId: string; email: string; emailVerified: boolean }): Promise<SandboxJoinResult> {
   const found = await findByToken(input.token)
   if (!found) return { status: "not_found" }
@@ -511,23 +432,19 @@ export async function joinSandbox(input: { token: string; userId: string; email:
     const [org] = await tx.select({ allowedEmailDomains: OrganizationTable.allowedEmailDomains, metadata: OrganizationTable.metadata }).from(OrganizationTable).where(eq(OrganizationTable.id, row.organizationId)).limit(1)
     if (!org) return { status: "not_found" }
     if (!isEmailAllowedForOrganization(org.allowedEmailDomains, input.email)) return { status: "domain_not_allowed", allowedEmailDomains: org.allowedEmailDomains ?? [] }
-    // A domain limit is only as strong as the email proof behind it.
     if ((org.allowedEmailDomains?.length ?? 0) > 0 && !input.emailVerified) return { status: "email_verification_required" }
     if (members.filter(member => member.removedAt === null).length >= row.memberLimit) return { status: "full" }
 
     const memberId = createDenTypeId("member")
-    // The sandbox's join role: super-admin unless a platform admin chose admin or member. Never owner.
     await tx.insert(MemberTable).values({ id: memberId, organizationId: row.organizationId, userId, role: readJoinRole(org.metadata), joinedAt: new Date() })
     return { status: "added", organizationId: row.organizationId, memberId }
   })
   if (result.status === "expired") await closeExpiredSandboxes()
   if (result.status === "joined" && result.alreadyMember) {
-    // Someone who joined with a lower role before the sandbox's join role was raised is promoted when they open the link again.
     const [org] = await db.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable).where(eq(OrganizationTable.id, result.organizationId)).limit(1)
     if (org) await promoteJoinedMembers(result.organizationId, readJoinRole(org.metadata), userId)
   }
   if (result.status !== "added") return result
-  // Same effects as any other join, after the membership commits: caches, billing quantities and the member's gateway key.
   await cache.org.deleteMemberList(result.organizationId)
   await cache.org.deleteMembership({ organizationId: result.organizationId, userId })
   await runPostOrganizationMemberChangeHooks({ organizationId: result.organizationId, memberId: result.memberId, change: "added" })
@@ -537,10 +454,6 @@ export async function joinSandbox(input: { token: string; userId: string; email:
 
 const SANDBOX_EXPIRY_INTERVAL_MS = 60 * 60 * 1000
 
-/**
- * Closes sandboxes whose time ran out even when nobody opens /admin or a join link, so their Enterprise grant and
- * model key end within the hour. Off when the deployment cannot have sandboxes (single-organization mode).
- */
 export function startSandboxExpiryLoop(intervalMs = SANDBOX_EXPIRY_INTERVAL_MS) {
   if (env.orgMode === "single_org") return async () => undefined
   let running: Promise<void> | null = null
@@ -559,10 +472,6 @@ export function startSandboxExpiryLoop(intervalMs = SANDBOX_EXPIRY_INTERVAL_MS) 
   }
 }
 
-/**
- * Adds the sample Microsoft 365 connector to an existing open sandbox (one created before `sandboxMicrosoft365` was
- * on for it). Its separate Outlook, Calendar and Drive connectors are left for an admin to remove.
- */
 export async function addMicrosoft365ToSandbox(id: DenTypeId<"sandboxOrganization">, callbackBaseUrl: string) {
   const [row] = await db.select().from(SandboxOrganizationTable).where(eq(SandboxOrganizationTable.id, id)).limit(1)
   if (!row) return null
@@ -582,10 +491,6 @@ export async function addMicrosoft365ToSandbox(id: DenTypeId<"sandboxOrganizatio
   return getSandbox(id)
 }
 
-/**
- * Adds the sample Slack (connector and Workbot Slack app) to an existing open sandbox, one created before
- * sample Slack was included by default. Does nothing when it is already there.
- */
 export async function addSlackToSandbox(id: DenTypeId<"sandboxOrganization">) {
   const [row] = await db.select().from(SandboxOrganizationTable).where(eq(SandboxOrganizationTable.id, id)).limit(1)
   if (!row) return null

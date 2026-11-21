@@ -93,7 +93,6 @@ export function clearGithubInstallationTokenCache() {
   githubInstallationTokenRequests.clear()
 }
 
-// Overridable so @openwork/testkit specs can point the connector at a mock GitHub witness.
 function githubApiBase(): string {
   const override = process.env.GITHUB_CONNECTOR_API_BASE?.trim()
   return override ? override.replace(/\/+$/, "") : "https://api.github.com"
@@ -530,7 +529,6 @@ async function detectRepositoryManifest(input: { fetchFn?: GithubFetch; ownerAnd
         return { manifestKind: "agent-plugin", marketplacePluginCount: null }
       }
     } catch {
-      // A malformed root plugin.json is not a supported manifest marker.
     }
   }
 
@@ -608,14 +606,12 @@ export async function fetchGithubImportFilesWithRevisionGuard(input: {
       const file = input.files[index]
       if (file.lastSeenSourceRevisionRef !== null
         && (file.lastSeenSourceRevisionRef === file.sourceFileRevisionRef || file.lastSeenSourceRevisionRef === file.sourceRevisionRef)) {
-        // The bound source file already matches this revision: skip the contents API call entirely.
         results[index] = { status: "skipped_unchanged" }
         continue
       }
       try {
         results[index] = { rawSourceText: await input.fetchFile(file.path), status: "fetched" }
       } catch (error) {
-        // One file failing must not abort the others; the caller decides how to surface it.
         results[index] = { error, status: "failed" }
       }
     }
@@ -624,11 +620,6 @@ export async function fetchGithubImportFilesWithRevisionGuard(input: {
   return results
 }
 
-/**
- * Resolve the current head commit SHA of a branch with a single commits API
- * call. Used as a cheap staleness probe for the discovery cache: a branch
- * name alone says nothing about content (#1871).
- */
 export async function getGithubRepositoryHeadSha(input: {
   branch: string
   config: GithubConnectorAppConfig

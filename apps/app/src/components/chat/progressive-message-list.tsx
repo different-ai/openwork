@@ -34,8 +34,6 @@ const ESTIMATED_HEIGHT = 240
 const MAX_CACHED_VIEWPORTS = 12
 const MAX_CACHED_GROUPS = 2048
 const heightCache = new Map<string, Map<string, number>>()
-// Existing reading-anchor and session controllers own scroll writes. TanStack
-// observes their actual offset; its initial connection must not restore it again.
 const observeOnlyScroll = () => {}
 type ThreadVirtualizer = Virtualizer<HTMLDivElement, HTMLDivElement>
 type Segment = { key: string; index: number; height: number; placeholder: boolean }
@@ -102,8 +100,6 @@ function VirtualGroups<T>(props: ProgressiveMessageListProps<T>) {
       const width = instance.scrollElement?.clientWidth ?? rect.width
       const changed = previous?.width !== width || previous?.height !== rect.height
       previous = { width, height: rect.height }
-      // A transient zero-size layout is not an empty transcript. Keep the last
-      // window and refresh its origin/offset on reveal, even at the same width.
       if (width <= 0 || rect.height <= 0) return
       setWidth(width)
       callback(rect)

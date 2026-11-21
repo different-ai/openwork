@@ -26,7 +26,6 @@ export function ModelSourceIcon({ model }: { model: ModelRef & { source?: ModelO
 }
 
 function ProviderMark({ model, description, retained = false }: { model: ModelRef & { title?: string }; description?: string; retained?: boolean }) {
-  // The maker's logo when the name says who made it; the provider is named in text beside it.
   const maker = retained ? null : modelMakerId(model);
   return <div data-slot="model-provider-mark" className="flex size-4 shrink-0 items-center justify-center">
     {isAutoRouterModel(model) ? <Sparkles aria-hidden="true" strokeWidth={1.5} className="size-4 text-dls-accent dark:text-foreground" />
@@ -34,15 +33,11 @@ function ProviderMark({ model, description, retained = false }: { model: ModelRe
   </div>;
 }
 
-/** Search results, ranked in one unlabeled list. */
 const SEARCH_GROUP = "Search results";
-/** Groups shown without a label: search results, and Smart Routers, which name themselves. */
 const UNLABELED_GROUPS = new Set([SEARCH_GROUP, AUTO_ROUTER_GROUP]);
-/** Groups that list several providers' models together; rows there name their provider. */
 const MIXED_GROUPS = new Set(["Pinned", "Recent", "OpenWork Models", SEARCH_GROUP]);
 
 function ModelLoadingRows({ rows = 3, label = "Loading models", still = false }: { rows?: number; label?: string; still?: boolean }) {
-  // `still`: the rest of the list did not load; placeholders hold its place without suggesting it is loading.
   return <div role="status" aria-label={label} data-testid={still ? "model-catalog-unloaded" : "model-catalog-loading"} className={still ? "px-2 pb-2 [&_[data-slot=skeleton]]:animate-none [&_[data-slot=skeleton]]:bg-gray-4" : "px-2 pb-2"}>
     {Array.from({ length: rows }, (_, index) => index).map((index) => <div key={index} className="flex h-9 items-center gap-2.5 px-2"><Skeleton className="size-4 rounded" /><Skeleton className={`h-2.5 rounded ${index % 2 ? "w-28" : "w-36"}`} /></div>)}
   </div>;
@@ -53,11 +48,9 @@ export type ModelPickerListProps = {
   current: ModelRef;
   query: string;
   onQueryChange: (value: string) => void;
-  /** `behavior.variant` is set when the search named options such as "fast" or "high" that this model offers. */
   onSelect: (option: ModelOption, behavior?: { variant: string | null }) => void;
   focusAlternative?: boolean;
   footer?: ReactNode;
-  /** Shown before the search field, e.g. the command palette's back button. */
   leading?: ReactNode;
   searchInputRef?: Ref<HTMLInputElement>;
   autoFocusSearch?: boolean;
@@ -66,7 +59,6 @@ export type ModelPickerListProps = {
   onConnectProvider?: () => void;
   onOpenProviderSettings?: () => void;
   onSetWorkspaceDefault?: (model: ModelRef, variant?: string | null) => void | boolean | Promise<void | boolean>;
-  /** Effort currently applied to `current`; kept when that model becomes the workspace default. */
   currentBehaviorValue?: string | null;
   openWorkModelsSyncing?: boolean;
   onReloadWorkspace?: () => void | Promise<unknown>;
@@ -83,11 +75,9 @@ function AutoStatusModelPickerList(props: ModelPickerListProps) {
   const status = snapshot?.data;
   const switchedOff = freeAutoSwitchedOff(status);
   const blockedByPolicy = props.retainedSelection !== undefined && props.retainedSelection.reason !== "unavailable" && isAutoModel(props.current);
-  // The free model is a normal row; limits are explained when a send is refused.
   return <ModelPickerRows {...props} retainedSelection={switchedOff && isAutoModel(props.current) ? undefined : props.retainedSelection} options={withAutoDefaultPin(switchedOff ? props.options.filter((option) => !isAutoModel(option)) : props.options, status)} openWorkModelsSyncing={!switchedOff && !blockedByPolicy && props.openWorkModelsSyncing} />;
 }
 
-/** Context-menu rows show the chord that triggers the same command (DESIGN S6). */
 function menuChord(label: string, chord: string) {
   return <><span className="min-w-0 flex-1">{label}</span><kbd className="ml-4 font-sans text-xs text-muted-foreground">{chord}</kbd></>;
 }
@@ -97,13 +87,11 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
 }: ModelPickerListProps) {
   const favorites = useModelCollectionsStore((state) => state.favorites);
   const recent = useModelCollectionsStore((state) => state.recent);
-  // A model bound to a saved shortcut in Settings shows its key on the row.
   const modelShortcuts = useModelShortcutsStore((state) => state.shortcuts);
   const shortcutLabels = useMemo(() => {
     const os = resolveShortcutOs(undefined, typeof navigator === "undefined" ? "" : navigator.platform);
     return new Map(modelShortcuts.map((shortcut) => [modelRefKey({ providerID: shortcut.action.providerID, modelID: shortcut.action.modelID }), formatChord(shortcut.keys, os)]));
   }, [modelShortcuts]);
-  // Searching ranks every model in one list (best first); browsing keeps the groups.
   const searching = query.trim().length > 0;
   const providerFilterSyncFix = useDesktopFeature("providerFilterSyncFix");
   const [providerId, setProviderId] = useState("");
@@ -113,7 +101,6 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
       const models = available.filter((option) => option.providerID === id);
       return { id, name: models[0]?.description?.trim() || id, source: models[0] ? MODEL_SOURCE_LABELS[modelSource(models[0])] : "", count: models.length };
     });
-    // Two connections to the same provider (a device key and the organization's copy) are told apart by where they run.
     return listed.map((provider) => ({
       ...provider,
       label: provider.source && listed.some((other) => other.id !== provider.id && other.name === provider.name) ? `${provider.name} · ${provider.source}` : provider.name,
@@ -122,7 +109,6 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
   const selectedProvider = providerFilterSyncFix ? providers.find((provider) => provider.id === providerId) : undefined;
   const scopedOptions = useMemo(() => {
     if (!providerFilterSyncFix) return options;
-    // Rows and group headings carry the same label as the selector, so twin providers stay distinguishable in results.
     const labels = new Map(providers.filter((provider) => provider.label !== provider.name).map((provider) => [provider.id, provider.label]));
     const scoped = selectedProvider ? options.filter((option) => option.providerID === selectedProvider.id) : options;
     return labels.size ? scoped.map((option) => labels.has(option.providerID) ? { ...option, description: labels.get(option.providerID) } : option) : scoped;
@@ -142,7 +128,6 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
   const [retryBusy, setRetryBusy] = useState(false);
   const [retryFailed, setRetryFailed] = useState(false);
   const canSelect = (option: ModelOption) => !option.disabled && options.some((item) => modelRefKey(item) === modelRefKey(option) && !item.disabled);
-  // Options typed in the search ("fast", "high") come along; a model that lacks one is still chosen.
   const select = (option: ModelOption) => {
     if (!canSelect(option)) return;
     const variant = search ? resolveSearchIntent(option, search.intent).variant : undefined;
@@ -185,7 +170,6 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
   const retainedVisible = retained && (!selectedProvider || retained.model.providerID === selectedProvider.id) && (!query.trim() || `${retainedName} ${retained.description ?? ""}`.toLowerCase().includes(query.trim().toLowerCase()));
   const retainedState = retainedCopy?.subtitle;
   const retainedSubtitle = [retained && !isAutoModel(retained.model) ? retained.description?.trim() : null, retainedState].filter(Boolean).join(" · ");
-  // A saved model that was pinned stays where the person pinned it, at the top of Pinned.
   const retainedPinned = Boolean(retained && favorites.some((favorite) => modelRefKey(favorite) === modelRefKey(retained.model)));
   const retainedLabel = retainedPinned ? "Pinned" : "Saved selection";
   const mergedLabel = retainedVisible && retainedPinned && groups[0]?.value === "Pinned" ? "Pinned" : null;
@@ -216,7 +200,6 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
           </SelectContent>
         </Select>
       </div> : null}
-      {/* The list sizes to its rows so placeholders after it stay in view; this panel does the scrolling. */}
       <CommandPanel className="min-h-0 flex-1 overflow-y-auto overscroll-y-contain [scrollbar-width:thin] [&>[data-slot=scroll-area]]:h-auto">
         {retainedVisible ? <div data-testid="retained-selected-model" aria-disabled="true" aria-label={`${retainedName}, current model, ${retainedSubtitle}`} className="px-2 pt-2">
           <p className="flex h-7 items-center px-2 text-xs text-muted-foreground">{retainedLabel}</p>
@@ -248,12 +231,9 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
               const active = modelRefKey(current) === key;
               const blocked = !canSelect(option);
               const subtitle = active && failed ? `${modelSubtitle(option)}${modelSubtitle(option) ? " · " : ""}availability not verified` : modelSubtitle(option);
-              // The name always wins the row. One quiet line under it carries where the model
-              // comes from (only where a group mixes providers) and what is true about it now.
               const meta = isAutoRouterModel(option) ? subtitle
                 : [MIXED_GROUPS.has(group.value) ? option.description?.trim() : null, modelStateLabel(option),
                   active && failed ? "Availability not verified" : null].filter(Boolean).join(" · ");
-              // Options typed in the search show only where they apply; the line above the list says the rest.
               const applies = search ? searchIntentTag(option, search.intent) : null;
               const pinLabel = pinned.has(key) ? "Unpin" : "Pin to top";
               const actions: MenuAction[] = [
@@ -277,7 +257,6 @@ function ModelPickerRows({ options, current, query, onQueryChange, onSelect, foc
                 </span>
                 {applies ? <span data-testid="model-search-applies" className="shrink-0 text-xs text-muted-foreground">{applies}</span> : null}
                 {shortcutLabels.get(key) ? <kbd data-testid="model-shortcut-key" className="shrink-0 rounded border border-border/70 bg-muted/40 px-1.5 py-0.5 font-mono text-[10px] leading-none text-muted-foreground">{shortcutLabels.get(key)}</kbd> : null}
-                {/* Fixed trailing slots keep checks aligned; pin shows on pointer or focus (keyboard: ⇧P). */}
                 <span className="flex size-6 shrink-0 items-center justify-center">{!fixed && !blocked ? <Button type="button" variant="ghost" size="icon-sm" aria-label={`${pinLabel}: ${name}`} title={pinLabel}
                   className="size-6 text-muted-foreground opacity-0 transition-opacity duration-150 hover:text-foreground focus:opacity-100 group-hover/model:opacity-100 group-focus-within/model:opacity-100"
                   onPointerDown={(event) => { event.preventDefault(); event.stopPropagation(); }} onKeyDown={(event) => event.stopPropagation()}

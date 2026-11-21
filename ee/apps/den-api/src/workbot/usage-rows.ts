@@ -7,10 +7,7 @@ import {
   type WorkbotUsageSurface,
 } from "@openwork/types/den/workbot-usage"
 
-// Pure shaping of Workbot usage (packages/types/src/den/workbot-usage.ts); the reads are in usage.ts.
-
 export const WORKBOT_USAGE_DAY_MS = 86_400_000
-/** People and models listed, most expensive first; totals always cover everyone. */
 export const WORKBOT_USAGE_MEMBER_LIMIT = 50
 export const WORKBOT_USAGE_MODEL_LIMIT = 20
 
@@ -21,7 +18,6 @@ export function workbotUsageDay(date: Date): string {
   return date.toISOString().slice(0, 10)
 }
 
-/** The first UTC day of a window of `days` whole days that ends with today. */
 export function workbotUsageWindowStart(now: Date, days: number): Date {
   return new Date(Math.floor(now.getTime() / WORKBOT_USAGE_DAY_MS) * WORKBOT_USAGE_DAY_MS - (days - 1) * WORKBOT_USAGE_DAY_MS)
 }
@@ -40,7 +36,6 @@ function sumBy<K extends string>(slices: readonly WorkbotUsageSlice[], key: (sli
   return sums
 }
 
-/** Sums per member across sources (the folded days and the request logs not folded yet). */
 export function mergeWorkbotUsageMembers(rows: readonly WorkbotUsageMemberSums[]): WorkbotUsageMemberSums[] {
   const members = new Map<string, WorkbotUsageMemberSums>()
   for (const row of rows) {
@@ -56,7 +51,6 @@ export function summarizeWorkbotUsage(input: {
   days: number
   since: string | null
   slices: readonly WorkbotUsageSlice[]
-  /** Everyone with usage in the window, most expensive first (mergeWorkbotUsageMembers). */
   members: readonly WorkbotUsageMemberSums[]
   names: ReadonlyMap<string, { name: string | null; email: string | null }>
 }): WorkbotUsageResponse {

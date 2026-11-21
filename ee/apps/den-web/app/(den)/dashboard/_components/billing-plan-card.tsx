@@ -23,11 +23,6 @@ import { planUsageLabel } from "../../_lib/plan-display";
 
 const TIER_NAMES: Record<BillingPlanSummary["tier"], string> = { free: "Free", team: "Team", enterprise: "Enterprise" };
 
-/**
- * The workspace's plan, first on Billing: which plan it is on, the people it
- * counts, and starting Team for every person at $10.
- * Add-ons such as OpenWork Models stay separate purchases below.
- */
 export function BillingPlanCard({
   plan,
   plans,
@@ -43,14 +38,12 @@ export function BillingPlanCard({
 }: {
   plan: BillingPlanSummary;
   plans: BillingPlans;
-  /** Quantity on the active plan subscription, when there is one. */
   seatQuantity: number | null;
   seatInterval: string;
   canManageBilling: boolean;
   canOpenPortal: boolean;
   requestedAddPeople: number | null;
   busy: "plan-checkout" | "portal" | null;
-  /** The last Start Team answered 503 billing_not_configured. */
   notSold: boolean;
   onStartTeam: (addPeople: number) => void;
   onOpenPortal: () => void;

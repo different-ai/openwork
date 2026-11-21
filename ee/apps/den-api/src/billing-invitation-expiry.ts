@@ -4,15 +4,6 @@ import { appLogger } from "./observability/logger.js"
 import { captureException } from "./observability/runtime.js"
 import { syncOrganizationBillingQuantities } from "./stripe-billing.js"
 
-/**
- * Pending invitations stop counting as users when they expire, which happens
- * without any request. This loop finds organizations whose invitations expired
- * recently and brings their Stripe quantities down to match.
- *
- * Runs hourly and looks back a day, so a missed run or a restart still catches
- * every expiry. Re-checking an organization is cheap and safe: quantities that
- * are already right are not sent to Stripe again.
- */
 const BILLING_INVITATION_EXPIRY_INTERVAL_MS = 60 * 60 * 1000
 const BILLING_INVITATION_EXPIRY_LOOKBACK_MS = 26 * 60 * 60 * 1000
 

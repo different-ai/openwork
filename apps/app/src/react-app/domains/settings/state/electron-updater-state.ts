@@ -56,7 +56,6 @@ type UseElectronUpdaterStateOptions = {
   onReleaseChannelChange: (next: ReleaseChannel) => void;
   updateAutoCheck: boolean;
   updateAutoDownload: boolean;
-  /** False until the organization's update policy can be honoured (activation done, desktop config resolved). */
   allowedVersionsKnown: boolean;
   desktopConfig: DenDesktopConfig | null | undefined;
   refreshDesktopConfig: () => Promise<DenDesktopConfig>;
@@ -335,8 +334,6 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       return;
     }
 
-    // Subscribe to incremental progress events from the main process so
-    // the UI updates in real time instead of staying stuck at 0 bytes.
     let unsubProgress: (() => void) | null = null;
     if (bridge.onDownloadProgress) {
       unsubProgress = bridge.onDownloadProgress((data) => {
@@ -384,7 +381,6 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       }
       availableReleaseChannelRef.current = null;
       downloadedReleaseChannelRef.current = releaseChannelResolution.channel;
-      // An install waiting on this download reads readiness before the next render.
       if (updateStatusRef.current) updateStatusRef.current = { ...updateStatusRef.current, state: "ready" };
       setUpdateStatus((current) => ({
         ...(current ?? {}),
@@ -579,8 +575,6 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     }
   }, [appVersion, downloadUpdate, onReleaseChannelChange, refreshDesktopConfig, releaseChannel, resolvePolicyReleaseChannel, setError, updateAutoDownload]);
 
-  // Ask the feed whether an allowed build newer than the staged one has shipped,
-  // without disturbing the staged download. Resolves null once superseded.
   const findNewerThanStaged = useCallback(async (
     stagedVersion: string | undefined,
     isCurrentRequest: () => boolean,
@@ -686,12 +680,6 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     }
   }, [appVersion, findNewerThanStaged, markStagedUpdateLost]);
 
-  // A release can ship after an update was downloaded. Replace the staged build
-  // with the newest allowed one so a single restart lands on it, instead of a
-  // second "Restart to update" right after the first. A failed lookup keeps the
-  // staged build; at install time so does an unconfirmed stage, which the
-  // install's own update-not-downloaded recovery handles. Resolves whether an
-  // update is still ready to install.
   const refreshStagedUpdate = useCallback(async (mode: "background" | "install") => {
     const staged = updateStatusRef.current;
     if (staged?.state !== "ready") return false;
@@ -763,9 +751,6 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
       const state = status?.state;
       if (autoCheckInFlightRef.current || state === "checking" || state === "downloading") return;
       if (state !== "ready" && status?.checkError) return;
-      // A failed install needs the person: the update was already downloaded,
-      // so a background re-check would only re-download it and re-offer the
-      // same restart. Keep the failure (and Settings' Check now) until they retry.
       if (status?.state === "error" && status.failedAction === "install") return;
       if (autoCheckKeyRef.current === key && Date.now() - lastAutoCheckAtRef.current < interval) return;
       autoCheckKeyRef.current = key;
@@ -792,8 +777,6 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
     };
   }, [appVersion, policyReleaseChannel, refreshStagedUpdate, runCheckForUpdates, updateAutoCheck, updateEnv?.supported, allowedVersionsKnown]);
 
-  // Run a check when the native "Check for Updates..." menu item was used.
-  // A request made before the policy is known stays queued until it is.
   const updateCheckRequestedAt = useUpdateCheckRequestStore((state) => state.requestedAt);
   useEffect(() => {
     if (!allowedVersionsKnown || updateCheckRequestedAt == null || updateEnv?.supported === false) return;
@@ -802,8 +785,6 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
   }, [checkForUpdates, updateCheckRequestedAt, updateEnv?.supported, allowedVersionsKnown]);
 
   const installUpdateAndRestart = useCallback(async () => {
-    // Restart onto the newest allowed build, fetching it first if one shipped
-    // after the staged download.
     if (!(await refreshStagedUpdate("install"))) return;
     const releaseChannelRequestId = releaseChannelRequestRef.current;
     const stagedUpdateRevision = stagedUpdateRevisionRef.current;
@@ -831,12 +812,6 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
           return;
         }
       }
-      // The download was allowed by the policy in force at check time; the
-      // organization may have revoked that version since, so re-run the policy
-      // allow decision against a fresh desktop config before installing. An
-      // absent allowlist still means unrestricted. Offline, the refresh fails:
-      // fall back to the last known config rather than block an approved
-      // install purely on a network error.
       const downloadedVersion = updateStatusRef.current?.version;
       if (downloadedVersion) {
         const currentDesktopConfig = await refreshDesktopConfig()
@@ -869,8 +844,6 @@ export function useElectronUpdaterState(options: UseElectronUpdaterStateOptions)
         setError(message);
         if (result?.reason === "update-not-downloaded") {
           updateAnalytics.failed(appVersion, "install");
-          // The main-side staged download was invalidated; re-check so the UI
-          // returns to a working stable-targeted download/install flow.
           downloadedReleaseChannelRef.current = null;
           availableReleaseChannelRef.current = null;
           await runCheckForUpdates(undefined, true);

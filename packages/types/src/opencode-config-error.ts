@@ -23,7 +23,6 @@ function issueText(issue: unknown): string | null {
 }
 
 function jsonErrorText(message: string): string {
-  // The engine embeds the whole file; keep only its list of parse errors.
   const errors = /--- Errors ---\n([\s\S]*?)(?:\n--- End ---|$)/.exec(message)?.[1];
   const lines = (errors ?? message).split("\n").map((line) => line.trim()).filter(Boolean);
   return [...new Set(lines)].join("; ") || "The file is not valid JSON.";

@@ -56,12 +56,6 @@ export type BuiltCodemodeTools = {
 
 export type RequiredCapability = Pick<CodemodeManifestEntry, "capabilityName">
 
-/**
- * Builds the tools a script can call. A saved Workflow passes the capabilities
- * it declared, so a run waits only on the connections it uses. With none
- * passed, every connection is listed, which saving a Workflow needs to resolve
- * the tools it calls.
- */
 export type BuildCodemodeTools = (required?: readonly RequiredCapability[]) => Promise<BuiltCodemodeTools>
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -128,8 +122,6 @@ function textParts(value: unknown): string[] {
 }
 
 function toolResultValue(value: unknown): unknown {
-  // Den routes attach their untruncated payload for scripts; the model-visible
-  // `content` is capped per string and would silently cut long files.
   if (isRecord(value) && "payload" in value) return value.payload
   if (isRecord(value) && value.structuredContent !== undefined) return value.structuredContent
   const text = textParts(value)
@@ -150,7 +142,6 @@ function toolResultError(value: unknown): string {
 const NATIVE_CAPABILITY_PATH_PREFIXES = Object.keys(NATIVE_OAUTH_PROVIDERS)
   .map((providerKey) => `/v1/capabilities/${providerKey}/`)
 
-/** Native provider routes are callable only through a credential-bound connection namespace. */
 export function isCredentialBoundNativeOperation(operation: Pick<McpToolOperation, "path">): boolean {
   return NATIVE_CAPABILITY_PATH_PREFIXES.some((pathPrefix) => operation.path.startsWith(pathPrefix))
 }
@@ -205,10 +196,6 @@ export function buildNativeProviderManifest(input: {
     return nativeOperations(input.catalog, connection.nativeProviderKey).map((operation) => ({
       scriptPath: codemodeScriptPath(namespace, operation.name),
       capabilityName: buildNativeCapabilityName(connection.id, operation.name),
-      // Native providers are Den-implemented routes (invokeMcpOperation, just
-      // credential-bound to a connection), so they carry the same authority and
-      // read-only classification as the plain catalog. Without this, every
-      // native capability would be rejected by the unattended-run gate.
       readOnly: operation.method === "GET",
       authority: "den" as const,
     }))
@@ -223,7 +210,6 @@ export async function buildNativeProviderToolTree(input: {
   organizationId: string
   member: McpMemberIdentity | null
   namespaceContext?: CodemodeConnectionNamespaceContext
-  /** What starts these calls, recorded with each Library usage event. */
   usageSource: CapabilityUsageSource
 }): Promise<BuiltCodemodeTools> {
   if (!input.member) return { tools: {}, manifest: [] }
@@ -300,7 +286,6 @@ function isListedExternalConnection(value: ListedExternalConnection | undefined)
   return value !== undefined
 }
 
-/** The connections to list: all of them, or only those the required capabilities name. */
 export function connectionsRequiredBy<Connection extends { id: string }>(connections: Connection[], required: readonly RequiredCapability[] | undefined): Connection[] {
   if (!required) return connections
   const ids = new Set(required.flatMap(({ capabilityName }) => parseExternalCapabilityName(capabilityName)?.connectionId ?? []))
@@ -314,7 +299,6 @@ export async function buildExternalMcpToolTree(input: {
   redirectUriBase: string
   namespaceContext?: CodemodeConnectionNamespaceContext
   required?: readonly RequiredCapability[]
-  /** What starts these calls, recorded with each Library usage event. */
   usageSource: CapabilityUsageSource
 }): Promise<BuiltCodemodeTools> {
   if (!input.member) return { tools: {}, manifest: [] }
@@ -323,7 +307,6 @@ export async function buildExternalMcpToolTree(input: {
     organizationId: input.organizationId,
     member: memberIdentity,
   })
-  // Namespaces stay computed from every connection, so script paths do not change.
   const connections = connectionsRequiredBy(namespaceContext.codemodeExternalMcpConnections, input.required)
   const deadline = createExternalMcpLifecycleDeadline(EXTERNAL_MCP_TOOL_LIFECYCLE_TIMEOUT_MS)
   const listed = (await mapConcurrent(connections, EXTERNAL_MCP_SEARCH_CONCURRENCY, async (connection) => {
@@ -376,7 +359,6 @@ export async function buildExternalMcpToolTree(input: {
         .map((tool) => ({
           scriptPath: codemodeScriptPath(namespace, tool.name),
           capabilityName: buildExternalCapabilityName(connection.id, tool.name),
-          // Descriptive only: external dispatch always requires the caller's write scope.
           readOnly: providerMarksReadOnly(tool.annotations),
           authority: "external" as const,
         }))

@@ -23,9 +23,7 @@ import {
 
 export type MermaidZoomDiagram = {
   key: string;
-  /** Slot inside the diagram's markup that React owns; the enhancer never writes into it. */
   slot: HTMLElement;
-  /** Sanitized SVG from the Mermaid renderer. */
   svg: string;
 };
 
@@ -74,12 +72,6 @@ function ToolbarButton(props: {
   );
 }
 
-/**
- * One rendered Mermaid diagram that can be zoomed (buttons, +/-/0 keys,
- * Cmd/Ctrl+scroll, trackpad pinch, double-click) and panned (drag or arrow
- * keys once zoomed). Inline it keeps the page scrolling normally; in the
- * full-screen dialog plain scrolling pans.
- */
 export function MermaidZoomViewport(props: {
   svg: string;
   variant: Variant;
@@ -94,15 +86,12 @@ export function MermaidZoomViewport(props: {
   const dragRef = useRef<{ pointerId: number; x: number; y: number } | null>(null);
   const svgHtml = useMemo(() => ({ __html: props.svg }), [props.svg]);
   const zoomed = view.scale !== 1 || view.x !== 0 || view.y !== 0;
-  // Inline, a diagram at its fitted size lets drags and scrolls reach the page.
   const canPan = variant === "dialog" || zoomed;
 
-  // A new rendering (theme change, edited message) starts fitted again.
   useEffect(() => {
     setView(DIAGRAM_VIEW_RESET);
   }, [props.svg]);
 
-  // Native listener: React's wheel handler is passive and cannot stop the page zooming or scrolling.
   useEffect(() => {
     const frame = frameRef.current;
     if (!frame) return;
@@ -289,7 +278,6 @@ function MermaidZoomDiagramView(props: { svg: string }) {
   );
 }
 
-/** Mounts the interactive view into each rendered diagram's React-owned slot. */
 export function MermaidZoomPortals(props: { diagrams: readonly MermaidZoomDiagram[] }) {
   return props.diagrams.map((diagram) => createPortal(<MermaidZoomDiagramView svg={diagram.svg} />, diagram.slot, diagram.key));
 }

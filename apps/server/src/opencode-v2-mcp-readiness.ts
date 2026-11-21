@@ -15,7 +15,6 @@ export function mcpBindingsReady(current: readonly McpPublishedTool[], server: s
   return desired.every(id => published.has(id)) && previous.every(id => wanted.has(id) || !published.has(id));
 }
 
-/** SDK-independent observation; the native adapter supplies its owned registry. */
 export async function waitForMcpBindings(
   registry: McpReadinessRegistry, server: string, desired: readonly string[], previous: readonly string[], signal: AbortSignal,
 ): Promise<void> {
@@ -39,7 +38,6 @@ export async function waitForMcpBindings(
   const observe = () => {
     if (closed || queued) return;
     queued = true;
-    // Read after the complete synchronous replay, never recursively inside it.
     queueMicrotask(() => {
       queued = false;
       if (closed) return;

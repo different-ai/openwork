@@ -13,7 +13,6 @@ const accessResponses = {
   401: jsonResponse("Authentication required.", unauthorizedSchema),
   403: jsonResponse("Platform admin access required.", forbiddenSchema),
 }
-/** Open live streams per admin on this replica: a few tabs, not a leak. */
 const MAX_STREAMS = 3
 const streams = new Map<string, number>()
 

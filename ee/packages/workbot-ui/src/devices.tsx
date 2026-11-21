@@ -11,17 +11,9 @@ import { remoteJobActive, useWorkbotRemoteJobs } from "./remote-jobs";
 /** The screen owns the same-chat/side-chat and unsaved-draft guards for every Devices surface. */
 export const DeviceComputerNavigationContext = createContext<((chat: string) => (() => void) | null) | undefined>(undefined);
 
-/**
- * Devices: the computers the person can reach through OpenWork, read-only. Their own computers
- * running OpenWork Desktop, then the cloud ones (Workbot's computer for a chat, registered virtual computers). Each row
- * says what it is, whether it can be reached and what Workbot is doing there now; Workbot's own computers open in the
- * Computer view. Naming and removing a computer happen in OpenWork Desktop.
- */
-
 const row = "flex min-h-14 items-center gap-3 border-b border-[var(--wb-row-line)] py-2.5 last:border-b-0";
 const openButton = "h-8 shrink-0 rounded-full px-3.5 text-[13px] font-medium text-[var(--wb-text)] shadow-[0_0_0_1px_var(--wb-ring)] transition-colors duration-150 hover:bg-[var(--wb-chip)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]";
 
-/** Green while it can be reached, amber where the person has something to set up, quiet otherwise (C5). */
 const AVAILABILITY_DOT: Record<RemoteDeviceAvailability, string> = {
   online: "bg-[var(--wb-status-online)]",
   needs_setup: "bg-[var(--wb-status-attention)]",
@@ -38,7 +30,6 @@ export function deviceGroups(devices: readonly RemoteDevice[]): Array<{ id: "des
   ].filter(group => group.devices.length > 0);
 }
 
-/** "5 minutes ago", "2 hours ago", "3 days ago", then the date. */
 function agoLabel(at: number, now: number) {
   const minutes = Math.floor((now - at) / 60_000);
   if (minutes < 1) return "Just now";
@@ -80,7 +71,6 @@ function DeviceRow({ device, work, onOpen }: { device: RemoteDevice; work: Devic
         {device.access === "shared" ? <span>Shared with your organization</span> : null}
         {taskLine ? <span data-workbot-device-tasks={device.remoteAccess?.effective === "off" ? "off" : "on"}>{taskLine}</span> : null}
       </span>
-      {/* What Workbot is doing there now: the breathing dot the chat uses for live work, amber when it waits on the person. */}
       {work ? <span className="flex min-w-0 items-center gap-1.5 pt-0.5 text-[12px] leading-4 text-[var(--wb-text)]" data-workbot-device-work={work.needsYou ? "needs-you" : "working"} title={work.detail ?? undefined}>
         <span aria-hidden className={`size-1.5 shrink-0 rounded-full ${work.needsYou ? "bg-[var(--wb-status-attention)]" : "workbot-presence-dot"}`} />
         <span className="truncate">{work.label}{work.detail ? ` · ${work.detail}` : ""}</span>
@@ -94,7 +84,6 @@ function DeviceRow({ device, work, onOpen }: { device: RemoteDevice; work: Devic
   </li>;
 }
 
-/** Three rows shaped like the list: an icon, a name over its kind, and its state on the right. */
 function DevicesSkeleton() {
   return <ul aria-label="Loading your computers" aria-busy="true" data-workbot-devices-loading>{[0, 1, 2].map(index => <li key={index} className={row}>
     <span className="size-4 shrink-0 rounded bg-[var(--wb-chip)]" />
@@ -110,8 +99,6 @@ function DevicesSkeleton() {
 export function WorkbotDevices({ computerFor }: { computerFor?: (workbotChat: string) => (() => void) | null }) {
   const host = workbotHost();
   const devices = useWorkbotDevices();
-  // What Workbot is doing on each computer (`workbotDeviceActivity`), from the read the header and the profile already
-  // share: this chat's remote tasks, to say which computer each is on. Off: rows are as they were, and nothing is read.
   const activity = host.deviceActivity === true;
   const remote = useWorkbotRemoteJobs(activity);
   const active = (remote.data?.jobs ?? []).filter(remoteJobActive);

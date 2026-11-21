@@ -9,7 +9,6 @@ import { z } from "zod";
  * key at the Gateway at once; the keys are kept and work again when it is turned back on.
  */
 export const organizationAiGatewaySettingsSchema = z.object({
-  /** Members may create their own API keys and use the Gateway from 3rd party tools and harnesses. */
   memberApiKeys: z.boolean(),
 });
 
@@ -33,7 +32,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function metadataRecord(metadata: unknown): Record<string, unknown> | null {
   if (isRecord(metadata)) return metadata;
   if (typeof metadata !== "string") return null;
-  // Some readers hand back the stored JSON column text.
   try {
     const parsed: unknown = JSON.parse(metadata);
     return isRecord(parsed) ? parsed : null;
@@ -75,11 +73,9 @@ export function gatewayApiKeyExpired(expiresAt: string | Date | null, now: numbe
 export const gatewayApiKeySchema = z.object({
   id: z.string(),
   name: z.string(),
-  /** The first characters of the key, to tell keys apart. */
   prefix: z.string(),
   createdAt: z.string().datetime(),
   lastUsedAt: z.string().datetime().nullable(),
-  /** When the key stops working; null never expires. A past time means the key has expired. */
   expiresAt: z.string().datetime().nullable(),
 });
 
@@ -99,7 +95,6 @@ export type OrganizationGatewayApiKey = z.infer<typeof organizationGatewayApiKey
 
 export const createdGatewayApiKeySchema = z.object({
   apiKey: gatewayApiKeySchema,
-  /** The full key. Shown once; Den keeps only a digest. */
   key: z.string(),
 });
 
@@ -107,9 +102,7 @@ export type CreatedGatewayApiKey = z.infer<typeof createdGatewayApiKeySchema>;
 
 /** What a member needs to set up a tool: whether they may use keys, and where to point it. */
 export const memberGatewayApiKeysViewSchema = z.object({
-  /** The organization allows member keys (the admin setting). */
   enabled: z.boolean(),
-  /** The Gateway URL tools call, e.g. https://gateway.example.com/api/v1. */
   baseUrl: z.string(),
   apiKeys: z.array(gatewayApiKeySchema),
 });

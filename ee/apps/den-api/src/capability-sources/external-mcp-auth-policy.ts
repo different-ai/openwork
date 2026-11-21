@@ -21,7 +21,6 @@ export function matchExternalMcpPresetForUrl(
   return presets.find((candidate) => normalizedRemoteMcpUrl(candidate.url) === normalizedUrl) ?? null
 }
 
-/** Public, pre-registered app identifiers only; never preset client secrets. */
 export function externalMcpPresetOAuthClient(url: string): { clientId: string; tokenEndpointAuthMethod: "none" } | undefined {
   const clientId = matchExternalMcpPresetForUrl(url)?.defaultOAuthClientId
   return clientId ? { clientId, tokenEndpointAuthMethod: "none" } : undefined
@@ -56,8 +55,6 @@ export function requiredPluginMcpAuthType(input: {
   return preset?.authType ?? null
 }
 
-// Stored connections predate preset setup allowlists; only a required auth type
-// can disqualify them. New configuration must also pass the preset allowlist.
 export function existingPluginMcpAuthTypeCompatible(input: {
   authType: PluginMcpAuthType
   requiredAuthType: PluginMcpAuthType | null

@@ -32,53 +32,20 @@ export type LocalUIState = {
 
 export type LocalPreferences = {
   showThinking: boolean;
-  /** Set once the one-time reset of Show model reasoning to off has run. */
   showThinkingResetToOff: boolean;
   modelVariant: string | null;
   defaultModel: ModelRef | null;
-  /**
-   * Name of the opencode agent used for new prompts (null = the server's
-   * default, usually "build"). Persisted so a reload does not silently
-   * fall back to the default agent (#2101).
-   */
   selectedAgent: string | null;
-  /**
-   * Release channel the desktop app is subscribed to. Defaults to
-   * "stable". Alpha is only honored on macOS; the updater helper falls
-   * back to stable elsewhere.
-   */
   releaseChannel: ReleaseChannel;
   featureFlags: {
     workspaceRunMode: boolean;
   };
-  /**
-   * Set to true after the user completes the welcome/onboarding flow
-   * (creates or connects their first workspace). When false and the
-   * workspace list is empty, the app redirects to /welcome.
-   */
   hasCompletedOnboarding: boolean;
-  /**
-   * Anonymous product analytics (PostHog). On by default with a visible
-   * opt-out in Settings -> Preferences. Never includes message content.
-   */
   analyticsEnabled: boolean;
-  /**
-   * Native OS notifications from the desktop app. Off by default so upgrading
-   * users are not surprised by system popups.
-   */
   desktopNotifications: DesktopNotificationPreference;
   linkOpenDestination: LinkOpenDestination;
   askBeforeOpeningLinks: boolean;
-  /**
-   * Desktop only: stop the computer sleeping while an agent is working.
-   * On by default so long tasks are not cut off when the computer sleeps.
-   */
   keepAwake: boolean;
-  /**
-   * What Enter does with a message typed while the agent is working: wait for
-   * it to finish (`queue`) or send right away (`steer`). Cmd/Ctrl+Enter does
-   * the other one.
-   */
   followUpDefault: FollowUpDefault;
 };
 
@@ -143,7 +110,6 @@ function writePersisted(key: string, value: unknown) {
   try {
     window.localStorage.setItem(key, JSON.stringify(value));
   } catch {
-    // ignore quota errors
   }
 }
 
@@ -172,7 +138,6 @@ export function LocalProvider({ children }: LocalProviderProps) {
         return { ...persisted, defaultModel: readStoredDefaultModel() };
       }
     } catch {
-      // Retain the preferences migration when storage is unavailable.
     }
     if (persisted.defaultModel) return persisted;
     return {
@@ -230,7 +195,6 @@ export function LocalProvider({ children }: LocalProviderProps) {
         writeStoredDefaultModel(prefsRef.current.defaultModel);
       }
     } catch {
-      // Storage may be unavailable.
     }
     updateDefaultModel();
     return () => window.removeEventListener(storedDefaultModelChangedEvent, updateDefaultModel);
@@ -241,12 +205,9 @@ export function LocalProvider({ children }: LocalProviderProps) {
     if (migratedThinkingRef.current) return;
     migratedThinkingRef.current = true;
 
-    // The legacy value predates the one-time reset of Show model reasoning to
-    // off, so it is discarded rather than applied.
     try {
       window.localStorage.removeItem(THINKING_PREF_KEY);
     } catch {
-      // ignore
     }
   }, []);
 

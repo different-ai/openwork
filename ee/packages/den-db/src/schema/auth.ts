@@ -59,9 +59,6 @@ export const AuthAccountTable = mysqlTable(
   },
   (table) => [
     index("account_user_id").on(table.userId),
-    // provider_id leads so provider-only lookups (Better Auth SCIM user list,
-    // SSO linked-account checks) can seek instead of scanning the table. The
-    // OAuth lookup filters on both columns, so it still uses the full index.
     index("account_provider_id_account_id").on(sql`${table.providerId}(191)`, sql`${table.accountId}(191)`),
   ],
 )
@@ -69,8 +66,6 @@ export const AuthAccountTable = mysqlTable(
 export const AuthVerificationTable = mysqlTable(
   "verification",
   {
-    // Better Auth uses both generated IDs and deterministic 43-character
-    // SHA-256 reservations here (for example, SAML assertion replay guards).
     id: varchar("id", { length: 64 }).notNull().primaryKey(),
     identifier: varchar("identifier", { length: 255 }).notNull(),
     value: text("value").notNull(),
@@ -288,8 +283,6 @@ export const OAuthResourceTable = mysqlTable(
   (table) => [uniqueIndex("oauth_resource_identifier").on(table.identifier)],
 )
 
-// `id` is `${client_id}::${resource identifier}`, built by the oauth-provider
-// plugin so the primary key enforces composite client/resource uniqueness.
 export const OAuthClientResourceTable = mysqlTable(
   "oauthClientResource",
   {
@@ -305,24 +298,17 @@ export const OAuthClientResourceTable = mysqlTable(
   ],
 )
 
-// JTI replay cache for private_key_jwt client assertions; `id` is a truncated
-// base64url SHA-256 digest supplied by the oauth-provider plugin.
 export const OAuthClientAssertionTable = mysqlTable("oauthClientAssertion", {
   id: varchar("id", { length: 64 }).notNull().primaryKey(),
   expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),
 })
 
-// OAuth 2.0 Device Authorization Grant (RFC 8628) codes for the Better Auth
-// device-authorization plugin. `organization_id` is Den-owned: the approving
-// person picks the organization the device session starts in.
 export const DeviceCodeTable = mysqlTable(
   "deviceCode",
   {
     id: denTypeIdColumn("deviceCode", "id").notNull().primaryKey(),
     deviceCode: varchar("device_code", { length: 128 }).notNull(),
-    // Exact SSO proof held by the approving browser, never inferred at redemption.
     ssoProviderId: varchar("sso_provider_id", { length: 255 }),
-    // When that proof was earned, so the device session inherits its age.
     ssoAuthenticatedAt: timestamp("sso_authenticated_at", { fsp: 3 }),
     userCode: varchar("user_code", { length: 32 }).notNull(),
     userId: denTypeIdColumn("user", "user_id"),
@@ -426,7 +412,6 @@ export const SsoConnectionTable = mysqlTable(
     id: denTypeIdColumn("ssoConnection", "id").notNull().primaryKey(),
     organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
     providerId: varchar("provider_id", { length: 255 }).notNull(),
-    /** What sign-in buttons and the SSO page call it ("Okta"); null shows a name derived from the issuer. */
     name: varchar("name", { length: 120 }),
     kind: varchar("kind", { length: 16 }).notNull(),
     issuer: varchar("issuer", { length: 2048 }).notNull(),

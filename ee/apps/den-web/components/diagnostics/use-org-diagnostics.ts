@@ -6,7 +6,6 @@ import type { OrgDiagnostics } from "@openwork/types/den/diagnostics";
 import { DIAGNOSTICS_POLL_LIMIT_MS, DIAGNOSTICS_POLL_MS, isChecking, shouldPollDiagnostics } from "./diagnostics-data";
 import { readOrgDiagnostics, startOrgDiagnosticsCheck, type DiagnosticsFailure } from "./diagnostics-transport";
 
-/** Used when a 429 arrives without a usable Retry-After. */
 const DEFAULT_COOLDOWN_SECONDS = 30;
 
 export class DiagnosticsRequestError extends Error {
@@ -25,15 +24,9 @@ function failureOf(error: unknown): DiagnosticsFailure | null {
   return error instanceof DiagnosticsRequestError ? error.failure : "error";
 }
 
-/**
- * Settings › Diagnostics data: one cached report per organization, Check now,
- * then a GET every 2 s while checks run (at most 30 s), and the server's
- * Retry-After as a cooldown.
- */
 export function useOrgDiagnostics(orgId: string, enabled: boolean) {
   const queryClient = useQueryClient();
   const queryKey = orgDiagnosticsQueryKey(orgId);
-  // When polling stops even if the server still reports checking.
   const [pollUntil, setPollUntil] = useState<number | null>(null);
   const [cooldown, setCooldown] = useState<{ until: number; seconds: number } | null>(null);
 
@@ -45,7 +38,6 @@ export function useOrgDiagnostics(orgId: string, enabled: boolean) {
     queryFn: async ({ signal }): Promise<OrgDiagnostics> => {
       const result = await readOrgDiagnostics(orgId, signal);
       if (!result.ok) throw new DiagnosticsRequestError(result.failure, result.status);
-      // A check someone else started also gets a bounded polling window.
       const checking = isChecking(result.data);
       setPollUntil((current) => (checking ? current ?? Date.now() + DIAGNOSTICS_POLL_LIMIT_MS : null));
       return result.data;
@@ -67,7 +59,6 @@ export function useOrgDiagnostics(orgId: string, enabled: boolean) {
         setCooldown({ until: Date.now() + seconds * 1_000, seconds });
       }
       if (result.data) {
-        // The check answers with the current report; polling picks up from there.
         queryClient.setQueryData(queryKey, result.data);
         if (isChecking(result.data)) setPollUntil(Date.now() + DIAGNOSTICS_POLL_LIMIT_MS);
         return;

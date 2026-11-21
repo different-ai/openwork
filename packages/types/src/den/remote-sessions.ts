@@ -7,28 +7,10 @@ import {
   type RemoteSessionAccessMode,
 } from "@openwork/types/automations"
 
-/**
- * Sessions across a member's computers, governed by organization policy and per-device consent.
- *
- * A remote caller (another computer, Den, Workbot, an agent acting for the
- * person) reaches a session on a computer only through a remote-session
- * command the same person owns. Two things decide which sessions that covers:
- *
- * - The owner's choice on each computer: `created` (only sessions started
- *   remotely) or `all` (also sessions started on the computer itself, once
- *   attached). Stored and enforced on the computer.
- * - The organization's ceiling, set by an owner or admin in Den. `created`
- *   unless they raise it, so reaching local sessions needs both to opt in.
- *
- * Nothing here grants one member access to another member's sessions: every
- * route is scoped to the signed-in member's own computers.
- */
-
 /** Organization metadata key holding the ceiling. */
 export const ORGANIZATION_REMOTE_SESSION_SETTINGS_KEY = "remoteSessions"
 
 export const organizationRemoteSessionSettingsSchema = z.object({
-  /** The widest access a member may choose for their own computers. `off`: nobody's computer takes anything from other devices. */
   access: remoteSessionAccessModeSchema,
 }).meta({ ref: "OrganizationRemoteSessionSettings" })
 export type OrganizationRemoteSessionSettings = z.infer<typeof organizationRemoteSessionSettingsSchema>
@@ -44,7 +26,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function metadataRecord(metadata: unknown): Record<string, unknown> | null {
   if (isRecord(metadata)) return metadata
   if (typeof metadata !== "string") return null
-  // Some readers hand back the stored JSON column text.
   try {
     const parsed: unknown = JSON.parse(metadata)
     return isRecord(parsed) ? parsed : null
@@ -71,40 +52,26 @@ export function withOrganizationRemoteSessionSettings(
 /** `GET` and `PATCH /v1/org/remote-session-settings`. */
 export const organizationRemoteSessionSettingsResponseSchema = z.object({
   settings: organizationRemoteSessionSettingsSchema,
-  /** Whether the caller may change it (organization owners and admins). */
   canEdit: z.boolean(),
-  /** Compatibility capability: current servers always offer `all`; policy and per-device consent still decide actual access. */
   allowsAll: z.boolean().default(true),
-  /** A computer whose owner has not chosen takes nothing (feature `remoteTasksOptIn`). Absent from older servers. */
   optIn: z.boolean().default(false),
 }).meta({ ref: "OrganizationRemoteSessionSettingsResponse" })
 export type OrganizationRemoteSessionSettingsResponse = z.infer<typeof organizationRemoteSessionSettingsResponseSchema>
 
 const idSchema = z.string().trim().min(1).max(240)
-// Public Den responses use RFC 3339; the runner protocol keeps its epoch milliseconds.
 const timestampSchema = z.string().datetime({ offset: true })
 
 /** One of the member's own computers that can run or reach sessions. */
 export const memberSessionComputerSchema = z.object({
-  /** The id `remote-session:targets` and attach use. */
   computerId: z.string().max(160),
   label: z.string().max(240),
   platform: z.enum(["darwin", "win32", "linux"]).nullable(),
   online: z.boolean(),
   lastSeenAt: timestampSchema.nullable(),
-  /** The app on this computer understands session access; older apps only ever allow `created`. */
   supportsAccess: z.boolean(),
-  /**
-   * What applies there before the organization's ceiling: the owner's choice
-   * as last reported, or, until they choose, `off` with the organization's
-   * opt-in and `created` without it.
-   */
   access: remoteSessionAccessModeSchema,
-  /** The owner has chosen on that computer. False: `access` is only the default. Absent from older servers. */
   chosen: z.boolean().default(true),
-  /** The choice capped by the organization's ceiling: what applies right now. */
   effectiveAccess: remoteSessionAccessModeSchema,
-  /** When the computer last reported its sessions; null if it never did. */
   sessionsUpdatedAt: timestampSchema.nullable(),
 }).meta({ ref: "MemberSessionComputer" })
 export type MemberSessionComputer = z.infer<typeof memberSessionComputerSchema>
@@ -123,7 +90,6 @@ export const memberSessionStateSchema = z.enum(["starting", "running", "waiting"
 export type MemberSessionState = z.infer<typeof memberSessionStateSchema>
 
 export const memberSessionSchema = z.object({
-  /** Stable within the list. */
   key: z.string().max(700),
   computerId: z.string().max(160).nullable(),
   computerLabel: z.string().max(240).nullable(),
@@ -131,14 +97,11 @@ export const memberSessionSchema = z.object({
   workspaceName: z.string().max(120).nullable(),
   sessionId: idSchema.nullable(),
   title: z.string().max(240).nullable(),
-  /** `remote`: started from another device. `local`: started on the computer itself. */
   origin: z.enum(["remote", "local"]),
   reach: memberSessionReachSchema,
-  /** The command status, read, send, stop and answer go through; null until attached. */
   commandId: z.string().max(160).nullable(),
   state: memberSessionStateSchema,
   waitingFor: remoteSessionWaitingForSchema.nullable(),
-  /** While waiting: the first open question or permission. Read the session for all of them. */
   pending: remoteSessionPendingSummarySchema.nullable(),
   latestStep: z.string().max(240).nullable(),
   updatedAt: timestampSchema.nullable(),
@@ -149,9 +112,7 @@ export const MEMBER_SESSION_LIST_LIMIT = 200
 
 /** `GET /v1/sessions`: the member's own sessions across their computers, newest first. */
 export const memberSessionListResponseSchema = z.object({
-  /** The organization's ceiling. */
   ceiling: remoteSessionAccessModeSchema,
-  /** A computer whose owner has not chosen takes nothing. Absent from older servers. */
   optIn: z.boolean().default(false),
   computers: z.array(memberSessionComputerSchema),
   sessions: z.array(memberSessionSchema).max(MEMBER_SESSION_LIST_LIMIT),
@@ -168,7 +129,6 @@ export type RemoteSessionAttachRequest = z.infer<typeof remoteSessionAttachReque
 
 export const remoteSessionAttachResponseSchema = z.object({
   target: z.literal("desktop"),
-  /** `attached`: already reachable through this command. `queued`: follow the command with status. */
   state: z.enum(["queued", "attached"]),
   commandId: z.string().max(160),
   computerId: z.string().max(160),

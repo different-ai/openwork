@@ -25,9 +25,7 @@ export type ConnectedProvider = {
 };
 
 export type AiSettingsViewProps = {
-  /** Claude Code sign-in; absent when the person cannot use it. Its row shows only once connected. */
   claudeAgent?: ClaudeAgentSetupState;
-  /** Opens Connect a provider on the Claude Code step, to sign in again. */
   onOpenClaudeAgent?: () => void | Promise<void>;
   busy: boolean;
   runtimeWorkspaceId?: string | null;
@@ -46,11 +44,9 @@ export type AiSettingsViewProps = {
   onOpenProviderAuth: () => void | Promise<void>;
   onDisconnectProvider: (providerId: string) => void | Promise<void>;
   canDisconnectProvider: (provider: ConnectedProvider) => boolean;
-  /** Providers hidden by Disconnect (disabled_providers); each can be enabled again. */
   disabledProviders?: { id: string; name: string }[];
   enablingProviderId?: string | null;
   onEnableProvider?: (providerId: string) => void | Promise<void>;
-  /** The Gateway reports free Auto switched off: no OpenWork Models row for it. */
   autoSwitchedOff?: boolean;
   canAddProviders: boolean;
   signedIn?: boolean;
@@ -69,16 +65,12 @@ export type AiSettingsViewProps = {
   autoBusy?: boolean;
   autoError?: string | null;
   onSetAutoEnabled?: (enabled: boolean) => void | Promise<void>;
-  /** False when OpenWork Models is listed once, under the organization, instead of here. */
   showOpenWorkModelsDeviceRow?: boolean;
   organizationProviderIds?: ReadonlySet<string>;
-  /** Providers on this device the engine chat runs on cannot use, from the server's skipped list. */
   localProviderStates?: ReadonlyMap<string, LocalProviderEngineState>;
   onOpenDen?: () => void;
-  /** Device provider sharing: which keys on this device can be shared with the organization, or already are. */
   shareRows?: ReadonlyMap<string, DeviceProviderShareRow>;
   onShareProvider?: (provider: { id: string; name: string }) => void;
-  /** Opens the Ollama page. Ollama is then always listed on this device, with Configure. */
   onConfigureOllama?: () => void;
 };
 
@@ -127,7 +119,6 @@ export function AiSettingsView(props: AiSettingsViewProps) {
   const error = props.providerLoadState.error;
   const signedIn = props.signedIn ?? Boolean(props.organizationName);
   const managed = (provider: ConnectedProvider) => provider.id !== AUTO_PROVIDER_ID && (isCloudManagedProviderKey(provider.id) || props.cloudProviderIds?.has(provider.id) || props.gatewayProviderIds?.has(provider.id));
-  // Keyless built-in Zen is offered under "Available to add" in Connect a provider, not listed as connected.
   const local = props.connectedProviders.filter((provider) => provider.id !== CLAUDE_AGENT_PROVIDER_ID && !managed(provider) && provider.id !== AUTO_PROVIDER_ID && !isKeylessZenProvider(provider));
   const organization = props.connectedProviders.filter(managed);
   const disabled = props.onEnableProvider ? props.disabledProviders ?? [] : [];
@@ -141,7 +132,6 @@ export function AiSettingsView(props: AiSettingsViewProps) {
   const rowsBusy = props.busy || props.providerAuthBusy || props.disconnectingProviderId !== null;
   const organizationLabel = props.organizationName || "your organization";
   const shareState = (providerId: string) => props.shareRows?.get(providerId)?.state ?? null;
-  // Ollama is set up on its own page: its row is always listed and Configure opens that page.
   const isOllama = (providerId: string) => Boolean(props.onConfigureOllama) && providerId.toLowerCase() === OLLAMA_PROVIDER_CONFIG.providerId;
   const configureOllamaButton = <Button variant="ghost" data-testid="configure-provider-ollama" onClick={props.onConfigureOllama}>Configure</Button>;
   const showOllamaSetupRow = Boolean(props.onConfigureOllama) && ready

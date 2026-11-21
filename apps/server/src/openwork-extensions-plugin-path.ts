@@ -45,8 +45,6 @@ export const openworkGatewayQuotaPluginPath = () => openworkPluginPath("openwork
 export const openworkGatewayQuotaV2PluginPath = () => openworkPluginPath("openwork-gateway-quota-v2");
 export const openworkProviderSyncV2PluginPath = () => {
   const path = openworkPluginPath("openwork-provider-sync-v2");
-  // The provider-only entry belongs to the shared plugin package. Bundle it
-  // alongside server plugins for packaged apps; load its source in Bun dev.
   return path.endsWith(".ts")
     ? join(dirname(fileURLToPath(import.meta.url)), "../../../packages/opencode-plugin/server.ts")
     : path;

@@ -5,7 +5,6 @@ import { ExampleCaption, ExampleGroupLabel } from "../example-parts";
 import { useExampleStep } from "../use-example-step";
 import { analyticsExampleDaily, analyticsExampleModels, analyticsExampleStats } from "./analytics-example-data";
 
-/** Section example: this week's adoption, daily active people and sessions by model, laid out like the real cards. */
 export function AnalyticsExample() {
   const step = useExampleStep(analyticsExampleModels.length);
   const maxDay = Math.max(...analyticsExampleDaily);

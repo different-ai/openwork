@@ -1,20 +1,8 @@
-// Translates an Auto request (OpenAI Chat Completions) to the Anthropic
-// Messages API, and the Messages response (JSON or SSE) back to Chat
-// Completions, so a chat client can be answered by a Claude model.
-//
-// Chat Completions cannot carry Claude's signed thinking blocks back to the
-// gateway, so the response's blocks are handed to `remember` (the reasoning
-// store) keyed by the tool call they preceded, and the caller passes them back
-// in `reasoning` for the next request. Claude requires them to continue a
-// tool-use turn with thinking on; when they are missing, thinking is turned
-// off for that request instead of failing it.
 import type { AutoRouterThinkingLevel } from "@openwork/types/den/auto-router"
 import { contentText, isJsonObject, type AutoRouteInfo, type JsonObject } from "@openwork-ee/gateway-protocols/chat"
 import type { ReasoningPayload, RememberReasoning } from "@openwork-ee/gateway-protocols/reasoning"
 import type { AutoTranslator } from "@openwork-ee/gateway-protocols/protocol"
 import { objectToolSchema } from "@openwork-ee/gateway-protocols/tool-schema"
-
-/** Receives reasoning state to keep for the tool calls it preceded. */
 
 function parseDataUrl(url: string) {
   const match = /^data:([^;,]+);base64,(.*)$/s.exec(url)
@@ -63,7 +51,6 @@ export type AnthropicMessage = { role: "user" | "assistant"; content: JsonObject
 function pushMessage(list: AnthropicMessage[], role: "user" | "assistant", content: JsonObject[]) {
   if (!content.length) return
   const last = list[list.length - 1]
-  // Messages must alternate; merge consecutive messages from the same side.
   if (last && last.role === role) last.content.push(...content)
   else list.push({ role, content })
 }
@@ -76,7 +63,6 @@ function toolResultContent(content: unknown): string | JsonObject[] {
 
 /** Whether a Claude model takes adaptive thinking with an effort (Claude 4.6 and later). */
 export function claudeTakesEffort(rawModel: string) {
-  // Snapshot dates (claude-3-7-sonnet-20250219) are not versions.
   const model = rawModel.replace(/[-@]\d{8}(?=$|[-@:.])/g, "")
   const familyFirst = /(?:claude-)?(opus|sonnet|haiku)-(\d+)(?:[.-](\d+))?/i.exec(model)
   const versionFirst = /claude-(\d+)(?:[.-](\d+))?-(opus|sonnet|haiku)/i.exec(model)
@@ -90,16 +76,13 @@ export function toAnthropicBody(body: JsonObject, input: {
   upstreamModel: string
   thinkingLevel: AutoRouterThinkingLevel
   maxOutputTokens: number | null
-  /** Reasoning state remembered for earlier tool calls, by tool call id. */
   reasoning?: ReadonlyMap<string, ReasoningPayload>
-  /** The levels the model allows; thinking is only ever turned off when `none` is among them. */
   thinkingLevels?: readonly AutoRouterThinkingLevel[]
 }): JsonObject {
   const system: JsonObject[] = []
   const list: AnthropicMessage[] = []
   const source = Array.isArray(body.messages) ? body.messages.filter(isJsonObject) : []
   let lastAssistantMissingThinking = false
-  // Tool calls of the current turn that have no signed thinking to replay, and their names.
   let unsignedCalls = new Map<string, string>()
   for (const message of source) {
     switch (message.role) {
@@ -167,11 +150,6 @@ export function toAnthropicBody(body: JsonObject, input: {
     else next.tool_choice = { type: "auto" }
   }
 
-  // A tool-use turn with thinking on must replay the signed thinking. When it
-  // is missing (the turn started on another model, or the state expired):
-  // models that accept it think off for this request; models that only take
-  // adaptive thinking ("thinking.type.disabled is not supported") get this
-  // turn's unsigned tool calls as plain text instead, so thinking stays on.
   const effortModel = claudeTakesEffort(input.upstreamModel)
   const allowsDisabled = input.thinkingLevels?.includes("none") ?? false
   let level = input.thinkingLevel
@@ -312,7 +290,6 @@ export function anthropicStreamToChat(body: ReadableStream<Uint8Array>, route: A
   let finished = false
   let stopReason: unknown = null
   const usage: AnthropicUsage = { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 }
-  // Content block index -> tool call index / thinking block being collected.
   const toolIndexByBlock = new Map<number, number>()
   const toolCallIds: string[] = []
   const thinkingBlocks: JsonObject[] = []
@@ -403,7 +380,6 @@ export function anthropicStreamToChat(body: ReadableStream<Uint8Array>, route: A
   }
 
   const drain = (controller: TransformStreamDefaultController<Uint8Array>, flush: boolean) => {
-    // Normalize CRLF and split complete events on blank lines.
     buffer = buffer.replace(/\r\n/g, "\n")
     let boundary = buffer.indexOf("\n\n")
     while (boundary >= 0 || (flush && buffer.trim())) {
@@ -417,7 +393,6 @@ export function anthropicStreamToChat(body: ReadableStream<Uint8Array>, route: A
         else if (line.startsWith("event:")) event = line.slice(6).trim()
         else if (line.startsWith("data:")) data.push(line.slice(5).replace(/^ /, ""))
       }
-      // Keep heartbeats flowing so proxies keep the connection open.
       if (comments.length && !data.length) controller.enqueue(encoder.encode(`${comments.join("\n")}\n\n`))
       const out = handle(event, data.join("\n"))
       if (out) controller.enqueue(encoder.encode(out))
@@ -433,7 +408,6 @@ export function anthropicStreamToChat(body: ReadableStream<Uint8Array>, route: A
     flush(controller) {
       buffer += decoder.decode()
       drain(controller, true)
-      // A stream that ended without message_stop still ends cleanly for the client.
       if (started && !finished) controller.enqueue(encoder.encode(finish()))
     },
   }))

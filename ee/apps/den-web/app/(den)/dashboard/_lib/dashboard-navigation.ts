@@ -62,14 +62,10 @@ export type DashboardNavItem = {
   label: string;
   icon: LucideIcon;
   badge?: string;
-  /** Quiet dot beside the label when something here is waiting on the viewer. */
   attention?: string;
-  /** Quiet lock beside the label when someone else has to unblock this entry (DESIGN.md P4, C5). */
   locked?: string;
   testId?: string;
-  /** Extra pathname prefixes that select this entry. */
   matchHrefs?: string[];
-  /** Grouped entries link to their own href and expand on parent or child pages. */
   children?: DashboardNavChild[];
 };
 
@@ -93,20 +89,13 @@ export type BuildDashboardNavSectionsInput = {
   capabilities: DenOrgCapabilities;
   orgMode: DenOrgMode;
   runtimeConfigLoaded: boolean;
-  /** How many Library items wait on the viewer's sign-in. */
   libraryNeedsSignIn?: number;
-  /** The managedDeployments feature is on for this organization. */
   managedDeployments?: boolean;
   desktopPolicyScreenRemoved?: boolean;
-  /** Workbot's settings are on Members › Teams › Everyone for this viewer, so Manage has no Workbot entry. */
   workbotSettingsInTeams?: boolean;
-  /** Explicit server capability, independent of organization role permissions. */
   canManageDeploymentServices?: boolean;
-  /** What clicking Workbot does; an entry without a provider stays visible with a marker, one turned off is hidden. */
   workbotEntry?: WorkbotEntry;
-  /** The workspace on screen, so the Workbot entry opens Workbot for it. */
   organizationId?: string | null;
-  /** The member's own agent is available to them (see myAgentAvailable). */
   myBot?: boolean;
 };
 
@@ -126,7 +115,6 @@ export function buildDashboardNavSections({
 }: BuildDashboardNavSectionsInput): DashboardNavSection[] {
   const workflowsEnabled = capabilities.workflows;
   const showWeb = runtimeConfigLoaded && capabilities.openworkWeb;
-  // Workbot turned off for the viewer: no Workbot and no My bot in the menu.
   const workbotOff = workbotEntry.kind === "off";
   const workItems: DashboardNavItem[] = [
     ...(capabilities.workbot && !workbotOff
@@ -146,11 +134,9 @@ export function buildDashboardNavSections({
     ...(workflowsEnabled && orgSlug
       ? [{ href: getAutomationsRoute(orgSlug), label: "My Automations", icon: CalendarClock }]
       : []),
-    // Every member sees their own and shared computers; the team-wide list is Manage › Computers.
     ...(orgSlug
       ? [{ href: getMyComputersRoute(orgSlug), label: "My Computers", icon: MonitorSmartphone, testId: "dashboard-nav-my-computers" }]
       : []),
-    // Every member's own usage; needs no permission.
     ...(orgSlug
       ? [{ href: getMyUsageRoute(orgSlug), label: "My Usage", icon: Gauge, testId: "dashboard-nav-my-usage" }]
       : []),
@@ -159,7 +145,6 @@ export function buildDashboardNavSections({
       : []),
   ];
 
-  // Admin-area entries appear only where the member holds the page's permission.
   const canOpen = (href: string) => canOpenAdminRoute(href, access, canManageDeploymentServices);
   const manageItems: DashboardNavItem[] = orgSlug
     ? [
@@ -229,17 +214,14 @@ export function buildDashboardNavSections({
   ];
 }
 
-/** Roles live under Members, with a Settings entry only when Members is unavailable. */
 function permissionsNavChildren(orgSlug: string, access: DenOrgAccessFlags, membersOpen: boolean): DashboardNavChild[] {
   return access.canViewPermissions && !membersOpen ? [{ href: getPermissionsRoute(orgSlug), label: "Roles" }] : [];
 }
 
-/** SSO and SCIM: one Auth & Security entry, shown when either tab is visible. */
 function authSecurityNavChildren(orgSlug: string, access: DenOrgAccessFlags): DashboardNavChild[] {
   return access.canViewSso || access.canViewScim ? [{ href: getAuthSecurityRoute(orgSlug), label: "Auth & Security" }] : [];
 }
 
-// Alias order is ranking priority in the command palette.
 const PAGE_KEYWORDS: Record<string, string[]> = {
   Advanced: ["marketplace", "collections", "branding", "brand appearance"],
   "AI Gateway": ["llm", "provider", "gateway", "inference", "usage"],
@@ -257,7 +239,6 @@ const PAGE_KEYWORDS: Record<string, string[]> = {
   Dashboards: ["boards", "apps"],
   Diagnostics: ["health", "status", "services", "readiness", "debug", "troubleshooting", "desktop startup"],
   General: ["organization", "workspace"],
-  // Agent permissions live on Members › Teams (Everyone and each team's Agents tab).
   Members: ["people", "users", "invite", "teams", "roles", "agent permissions", "commands", "websites", "allow list", "block list", "desktop", "prompt suggestions"],
   Models: ["llm", "provider", "byok", "api key"],
   Permissions: ["access", "roles", "teams", "admin", "rbac"],

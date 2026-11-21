@@ -6,7 +6,6 @@ export const demonstrationStepSchema = z.object({
   id: z.number().int().positive(),
   kind: z.enum(["navigate", "click", "fill", "select", "key", "extract", "note"]),
   target: demonstrationTargetSchema.optional(),
-  // Drop addresses from recovered drafts as well as fresh recorder replies.
   url: z.string().max(2048).transform(() => undefined).optional(),
   key: z.enum(["Enter", "Tab", "Escape"]).optional(),
   parameter: z.string().regex(/^[a-z][a-z0-9_]{0,63}$/).optional(),
@@ -62,7 +61,6 @@ export type DemonstrationStepGroup = { label: string; steps: DemonstrationStep[]
 
 function repeatsStep(previous: DemonstrationStep, step: DemonstrationStep) {
   if (previous.kind !== step.kind || !["click", "fill", "select", "key"].includes(step.kind) || previous.key !== step.key) return false
-  // Unnamed controls can be different controls: they stay separate lines.
   if (step.kind !== "key" && !step.target?.name) return false
   return previous.target?.name === step.target?.name && previous.target?.role === step.target?.role && previous.target?.tag === step.target?.tag
 }
@@ -100,7 +98,6 @@ export function browserSkillInputs(demo: BrowserDemonstration) {
       const automatic = /^input_\d+$/.test(step.parameter)
       if (automatic && shared) { shared.names.push(step.parameter); continue }
       const named = automatic ? step.target?.name || `Value for step ${step.id}` : browserInputLabel(step.parameter)
-      // Two inputs for one field name say which step each belongs to.
       const input: Input = { name: step.parameter, names: [step.parameter], label: labels.has(named) ? `${named} (step ${step.id})` : named, kind: "text" }
       labels.add(named)
       inputs.set(step.parameter, input)
@@ -156,7 +153,7 @@ export function readBrowserSkillRunPrompt(message: string) {
   if (!message.startsWith(`${RUN_PREFIX}\n`)) return message
   const at = message.indexOf(RUN_MARKER)
   if (at < 0) return message
-  try { if (skillRunSchema.safeParse(JSON.parse(message.slice(RUN_PREFIX.length + 1, at))).success) return message.slice(at + RUN_MARKER.length) } catch { /* Ordinary chat stays unchanged. */ }
+  try { if (skillRunSchema.safeParse(JSON.parse(message.slice(RUN_PREFIX.length + 1, at))).success) return message.slice(at + RUN_MARKER.length) } catch {}
   return message
 }
 

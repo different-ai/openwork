@@ -70,7 +70,6 @@ function permissionGroupName(feature: string) {
   return GOOGLE_WORKSPACE_PERMISSION_GROUPS.find((group) => group.permissions.some((permission) => permission.key === feature))?.name;
 }
 
-/** Each permission calls a Google API that must be turned on in the OAuth client's Cloud project. */
 function GoogleApiStatus({ providerId, unsaved }: { providerId: string; unsaved: boolean }) {
   const check = useGoogleApiCheck(providerId);
   const off = check.data?.apis.filter((api) => api.status === "disabled").length ?? 0;
@@ -110,11 +109,6 @@ function GoogleApiStatus({ providerId, unsaved }: { providerId: string; unsaved:
   );
 }
 
-/**
- * The org OAuth app and permissions for Google Workspace or Microsoft 365.
- * `create` adds a new Google Workspace connection; otherwise it saves the
- * client for `clientProviderId` (a connection id or the provider alias).
- */
 export function NativeProviderSettings({ providerKey, clientProviderId, create, onSaved, footer }: {
   providerKey: NativeProviderKey;
   clientProviderId: string;
@@ -292,7 +286,6 @@ export function NativeProviderSettings({ providerKey, clientProviderId, create, 
   );
 }
 
-/** Add Google Workspace or Microsoft 365 as a full page: one OAuth app, then each person signs in. */
 export function NativeProviderSetupScreen({ providerKey, returnToAgent = false }: { providerKey: NativeProviderKey; returnToAgent?: boolean }) {
   const router = useRouter();
   const toast = useDenToast();

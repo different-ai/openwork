@@ -51,7 +51,6 @@ export function BillingInvoicesScreen() {
     if (cursor) query.set("cursor", cursor);
     const path = `/v1/billing/stripe/invoices${cursor ? `?${query.toString()}` : ""}`;
     const result: { page: InvoicePage | null } = { page: null };
-    // Invoices need the View invoices permission, which asks for a recent sign-in.
     await runReauthableAction("billing-invoices", async () => {
       const { response, payload } = await requestJson(path, { method: "GET", headers: { [ORG_SCOPE_HEADER]: expectedOrgId } }, 15000);
       if (!response.ok) throw getRequestError(payload, response, "Stripe didn't return your invoices.");
@@ -85,7 +84,6 @@ export function BillingInvoicesScreen() {
     try {
       const page = await fetchPage(state.nextCursor);
       if (requestIdRef.current !== requestId || !page) return;
-      // Keep the rows already on screen and add the older ones below (P11).
       setState((current) => current.kind === "ready"
         ? { kind: "ready", invoices: [...current.invoices, ...page.invoices], nextCursor: page.nextCursor }
         : current);
@@ -146,7 +144,6 @@ export function BillingInvoicesScreen() {
                     ))}
               </ul>
               {state.kind === "ready" && state.invoices.length === 0 ? (
-                // Shown only when feature intros are off; otherwise the intro box replaces the list (I1).
                 <p className="px-6 py-5 text-[13px] text-gray-500">No invoices yet. Stripe sends one when a paid plan starts.</p>
               ) : null}
               {state.kind === "ready" && state.nextCursor ? (

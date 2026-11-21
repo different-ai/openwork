@@ -4,7 +4,6 @@ export const denDropdownFieldBaseClass = [
   "outline-hidden transition-[border-color,box-shadow] focus:border-gray-300 focus:ring-2 focus:ring-gray-900/5",
 ].join(" ");
 
-/** The same field at toolbar and settings-row height. */
 export const denDropdownFieldCompactClass = [
   "w-full border border-gray-200 bg-white",
   "h-8 px-3 pr-9 text-[13px] leading-5 text-gray-900",

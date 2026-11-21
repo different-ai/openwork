@@ -25,16 +25,11 @@ function writeAnnounced(announcement: LowStorageAnnouncement | null) {
     if (announcement) window.localStorage.setItem(ANNOUNCED_KEY, JSON.stringify(announcement))
     else window.localStorage.removeItem(ANNOUNCED_KEY)
   } catch {
-    // Without storage (it may be the full disk itself) the warning can repeat after a restart; nothing else breaks.
   }
 }
 
-/** Free space on this computer, or null when the app is talking to a server somewhere else. */
 async function readLocalDiskSpace(): Promise<OpenworkDiskSpace | null> {
   const connection = await resolveOpenworkConnection()
-  // The server is on this computer when it is the desktop app's own, or is
-  // reached at a loopback address. A remote worker's disk is not this
-  // person's to free up.
   const onThisComputer = connection.source === "desktop-runtime" || isLoopbackOpenworkServerUrl(connection.normalizedBaseUrl)
   if (!onThisComputer) return null
   return createOpenworkServerClient({
@@ -44,13 +39,6 @@ async function readLocalDiskSpace(): Promise<OpenworkDiskSpace | null> {
   }).diskSpace()
 }
 
-/**
- * Tells the person when the computer running OpenWork is almost out of disk
- * space, before saving starts to fail: a message that stays until it is
- * dismissed, says how much is left, and goes away by itself once there is
- * room again. Checked every few minutes and right after a save fails for lack
- * of space. Off unless the `lowStorageWarning` feature is on.
- */
 export function LowStorageNotifier() {
   const enabled = useDesktopFeature(LOW_STORAGE_FEATURE)
   const saveFailed = useRef(false)
@@ -79,7 +67,6 @@ export function LowStorageNotifier() {
       if (shown.current) toast.dismiss(LOW_STORAGE_TOAST_ID)
       shown.current = false
     }
-    // Turning the feature off takes the message with it.
     if (!enabled) return dismiss()
     if (!status) return
     if (status.level === "ok") {
@@ -96,7 +83,6 @@ export function LowStorageNotifier() {
     markFeatureUsed(LOW_STORAGE_FEATURE)
     shown.current = true
     const show = notice.level === "critical" ? toast.error : toast.warning
-    // A state to act on, not news: it stays until dismissed or until there is room again.
     show(notice.title, { id: LOW_STORAGE_TOAST_ID, description: notice.description, duration: Infinity })
   }, [enabled, status, dataUpdatedAt])
 

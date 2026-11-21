@@ -36,7 +36,6 @@ export type WorkflowLibraryItem = {
   state: "ready" | "needs_signin" | "needs_admin_setup"
   resultState: "never_run" | "fresh" | "stale" | "needs_attention"
   latestSuccessfulAt: string | null
-  /** Why the latest run failed, when resultState is needs_attention. */
   failureReason: string | null
   viewState: "default" | "custom_active" | "build_failed" | "retired"
   activeViewTitle: string | null
@@ -224,7 +223,6 @@ async function workflowItem(input: WorkflowCard & {
   }
 }
 
-/** Library cards for many Workflows, read in batches instead of one detail load per Workflow. */
 async function workflowLibraryItems(input: {
   context: PluginArchActorContext
   connections: MemberUsableConnectionFacts[]
@@ -347,8 +345,5 @@ export async function getWorkflowLibraryDetail(input: {
     connections,
   })
   if (!workflow) throw new Error("workflow_not_found")
-  // A readable Workflow already permits manual REST/MCP execution using the
-  // caller's live tools. Do not project the stricter scheduling permission onto
-  // this library action; scheduling and manager-only editing keep their checks.
   return { workflow, script: { ...script, canRun: true }, views }
 }

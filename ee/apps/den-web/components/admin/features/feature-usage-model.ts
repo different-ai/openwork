@@ -1,10 +1,5 @@
 import { FEATURE_KEYS, isFeatureKey, type FeatureKey } from "@openwork/features";
 
-/**
- * /admin › Features: parsing GET /v1/admin/feature-usage(/:key) and the words the page shows. Pure, so the copy
- * and ordering are tested without a browser. Counts only: the API sends no names, titles or message text.
- */
-
 export type FeatureUsageRange = "7d" | "30d";
 export const FEATURE_USAGE_RANGES: ReadonlyArray<{ value: FeatureUsageRange; label: string }> = [{ value: "7d", label: "7 days" }, { value: "30d", label: "30 days" }];
 
@@ -112,7 +107,6 @@ function parseRow(value: unknown): FeatureUsageRow | null {
 
 const rangeOf = (value: unknown): FeatureUsageRange => (value === "30d" ? "30d" : "7d");
 
-/** GET /v1/admin/feature-usage; features this build does not know (a newer server) are dropped. */
 export function parseFeatureUsageReport(payload: unknown): FeatureUsageReport | null {
   if (!isRecord(payload) || !Array.isArray(payload.features)) return null;
   return {
@@ -123,7 +117,6 @@ export function parseFeatureUsageReport(payload: unknown): FeatureUsageReport | 
   };
 }
 
-/** GET /v1/admin/feature-usage/:key. */
 export function parseFeatureUsageDetail(payload: unknown): FeatureUsageDetail | null {
   if (!isRecord(payload)) return null;
   const row = parseRow(payload.feature);
@@ -155,23 +148,19 @@ const NOUNS: Record<FeatureOutcomeUnit, [string, string]> = {
   message: ["message", "messages"],
 };
 
-/** "1 meeting", "14 runs". */
 export function unitCount(value: number, unit: FeatureOutcomeUnit): string {
   return `${value.toLocaleString("en-US")} ${NOUNS[unit][value === 1 ? 0 : 1]}`;
 }
 
-/** Messages from the bot are sent or refused; nothing skips them. */
 export function showsSkips(unit: FeatureOutcomeUnit): boolean {
   return unit !== "message";
 }
 
-/** A column or total heading: "Runs", "Meetings", "Checks", "Messages". */
 export function unitHeading(unit: FeatureOutcomeUnit): string {
   const plural = NOUNS[unit][1];
   return `${plural.charAt(0).toUpperCase()}${plural.slice(1)}`;
 }
 
-/** The plain health label (DESIGN.md C1, P1): "Healthy", "Most meetings skipped", "2 hit the limit", "Not used". */
 export function healthLabel(health: FeatureHealth, unit: FeatureOutcomeUnit = "run"): string {
   switch (health.status) {
     case "healthy": return "Healthy";
@@ -183,7 +172,6 @@ export function healthLabel(health: FeatureHealth, unit: FeatureOutcomeUnit = "r
   }
 }
 
-/** Red only for failures (C5); amber marks what needs a look; everything else stays neutral (V2). */
 export function healthTone(health: FeatureHealth): "failure" | "attention" | "neutral" | "quiet" {
   if (health.status === "failing") return "failure";
   if (health.status === "limited" || health.status === "mostly_skipped") return "attention";
@@ -191,7 +179,6 @@ export function healthTone(health: FeatureHealth): "failure" | "attention" | "ne
   return "neutral";
 }
 
-/** Reason codes in words a platform admin acts on; unknown codes read as a sentence. */
 const REASONS: Record<string, string> = {
   execution_runtime_unavailable: "Turned off for the organization",
   model_access_lost: "Model no longer available",
@@ -226,7 +213,6 @@ export function reasonLabel(reason: string): string {
 
 const ATTENTION: readonly FeatureHealthStatus[] = ["failing", "limited", "mostly_skipped", "healthy", "in_use", "not_used"];
 
-/** What needs a look first, then the most used; registry order breaks ties. */
 export function sortFeatureUsage(features: readonly FeatureUsageRow[]): FeatureUsageRow[] {
   const order = new Map(FEATURE_KEYS.map((key, index) => [key, index]));
   return [...features].sort((a, b) =>
@@ -237,13 +223,11 @@ export function sortFeatureUsage(features: readonly FeatureUsageRow[]): FeatureU
     || (order.get(a.key) ?? 0) - (order.get(b.key) ?? 0));
 }
 
-/** The later of the last recorded use and the last run. */
 export function lastActivity(row: { lastUsedAt: string | null; outcomes: { lastRunAt: string | null } | null }): string | null {
   const times = [row.lastUsedAt, row.outcomes?.lastRunAt ?? null].filter((value): value is string => value !== null);
   return times.sort((a, b) => Date.parse(b) - Date.parse(a))[0] ?? null;
 }
 
-/** Bar heights as a share of the busiest day, at least a sliver for any day that ran, with its failed share. */
 export function dayBars(days: readonly FeatureOutcomeDay[]): Array<FeatureOutcomeDay & { height: number; failedHeight: number }> {
   const most = Math.max(0, ...days.map((day) => day.runs));
   return days.map((day) => {
@@ -252,7 +236,6 @@ export function dayBars(days: readonly FeatureOutcomeDay[]): Array<FeatureOutcom
   });
 }
 
-/** "Last 24 hours only", "Failures since 14 Oct", or null when the counts cover the whole range. */
 export function coverageLabel(coverage: FeatureOutcomes["coverage"], format: (iso: string) => string, now = Date.now()): string | null {
   if (!coverage) return null;
   if (coverage.counts === "failed") return `Failures since ${format(coverage.from)}`;

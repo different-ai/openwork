@@ -19,9 +19,7 @@ export const denGoogleCalendarEventSchema = z.object({
   summary: z.string(),
   description: z.string(),
   location: z.string(),
-  /** RFC 3339 date-time with offset, or a bare YYYY-MM-DD date for all-day events. */
   start: z.string(),
-  /** Exclusive end; a bare date for all-day events. */
   end: z.string(),
   status: z.string(),
   htmlLink: z.string(),
@@ -41,7 +39,6 @@ export const denMicrosoftCalendarEventSchema = z.object({
   id: z.string(),
   subject: z.string(),
   preview: z.string(),
-  /** Graph wall time without an offset, e.g. 2026-10-05T16:00:00.0000000; read with startTimeZone. */
   start: z.string(),
   startTimeZone: z.string(),
   end: z.string(),
@@ -61,7 +58,6 @@ export const denMicrosoftCalendarEventsResponseSchema = z.object({
 })
 
 export type DenCalendarRangeQuery = {
-  /** RFC 3339 instant; send UTC `Z` (Microsoft rejects offsets). */
   timeMin: string
   timeMax: string
   maxResults?: number

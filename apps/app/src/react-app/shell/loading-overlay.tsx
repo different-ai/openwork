@@ -23,11 +23,6 @@ async function loadRecoveryPolicy(
   ]);
 }
 
-/**
- * Quiet, opaque boot overlay. Solid surface fill so nothing bleeds through.
- * A minimal typographic beat plus a small dot ticker. Fades once both the
- * boot hook and the first route load are ready.
- */
 export function LoadingOverlay() {
   const { pathname } = useLocation();
   const permissionsOnScreen = /^(?:\/workspace\/[^/]+)?\/settings\/permissions(?:\/|$)/.test(pathname);

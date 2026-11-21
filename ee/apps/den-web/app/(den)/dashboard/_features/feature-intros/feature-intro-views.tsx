@@ -7,18 +7,12 @@ import { buttonVariants } from "../../../_components/ui/button";
 import { DenChip } from "../../../_components/ui/chip";
 import type { FeatureIntro, FeatureIntroCta, FeatureIntroExampleSpec } from "./types";
 
-/*
- * Feature intro surfaces (DESIGN.md I2, I3, I7). Flat (S1), tokens only, no
- * gradients or illustrations (V7). Content always comes from the registry (I10).
- */
-
 export type FeatureIntroActionProps = {
   cta: FeatureIntroCta | null;
   note: string | null;
   onCtaClick: () => void;
 };
 
-/** "Read the docs" with a book icon; every intro has one (I8). */
 export function FeatureIntroDocsLink({ href }: { href: string }) {
   return (
     <a
@@ -34,7 +28,6 @@ export function FeatureIntroDocsLink({ href }: { href: string }) {
   );
 }
 
-/** No permission: a neutral lock and why, never a button the person cannot use (P4, C5, I6). */
 export function FeatureIntroLockedAction({ reason }: { reason: string }) {
   return (
     <span className="inline-flex min-h-10 items-center gap-1.5 text-[13px] text-gray-600" data-testid="feature-intro-locked">
@@ -46,7 +39,6 @@ export function FeatureIntroLockedAction({ reason }: { reason: string }) {
 
 function FeatureIntroCtaControl({ cta, onCtaClick, size = "md" }: { cta: FeatureIntroCta; onCtaClick: () => void; size?: "md" | "compact" }) {
   if (cta.locked) return <FeatureIntroLockedAction reason={cta.locked.reason} />;
-  // Another site (e.g. Enterprise sales) opens in a new tab so the dashboard stays put.
   if (/^https?:\/\//.test(cta.href)) {
     return (
       <a href={cta.href} target="_blank" rel="noreferrer" onClick={onCtaClick} data-testid="feature-intro-cta" className={buttonVariants({ variant: "primary", size })}>
@@ -73,11 +65,6 @@ function FeatureIntroActions({ cta, note, onCtaClick, docsUrl, size = "md" }: Fe
   );
 }
 
-/**
- * Frame for a live example on sample data (I7): "Example" chip, the render is
- * hidden from assistive tech and pointer input, `alt` is read instead, and
- * motion stops under prefers-reduced-motion.
- */
 export function FeatureIntroExample({ alt, children, className = "", bare = false }: { alt: string; children: ReactNode; className?: string; bare?: boolean }) {
   const frame = bare ? "" : "overflow-hidden rounded-[16px] border border-gray-200 bg-white p-4";
   return (
@@ -132,11 +119,6 @@ function Highlights({ items }: { items: FeatureIntro["highlights"] }) {
   );
 }
 
-/**
- * Full screen (I2, I3): replaces the page content while nothing in the section
- * is set up. Left: icon, title, value line, paragraph or highlights, one
- * action, docs. Right (~40%): live example. One column under 900px.
- */
 export function FeatureIntroFullscreen({ intro, ...actions }: { intro: FeatureIntro } & FeatureIntroActionProps) {
   return (
     <section
@@ -150,7 +132,6 @@ export function FeatureIntroFullscreen({ intro, ...actions }: { intro: FeatureIn
   );
 }
 
-/** Shared by the full screen and the `?` dialog: the whole intro, two columns. */
 export function FeatureIntroContent({
   intro,
   headingLevel = "h2",
@@ -177,7 +158,6 @@ export function FeatureIntroContent({
   );
 }
 
-/** Box (I2, I3): a tab or sub-page not set up while its section is; max 600px, where the list would be. */
 export function FeatureIntroBox({ intro, showExample = true, ...actions }: { intro: FeatureIntro; showExample?: boolean } & FeatureIntroActionProps) {
   const example = showExample ? intro.example : undefined;
   return (
@@ -205,7 +185,6 @@ export function FeatureIntroBox({ intro, showExample = true, ...actions }: { int
   );
 }
 
-/** Banner (I2, I3): page partly set up. One line, action, docs, dismiss for 30 days. Max 300px tall. */
 export function FeatureIntroBanner({ intro, onDismiss, ...actions }: { intro: FeatureIntro; onDismiss: () => void } & FeatureIntroActionProps) {
   const { cta, onCtaClick } = actions;
   return (

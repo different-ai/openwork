@@ -211,11 +211,6 @@ function useDenClient() {
   };
 }
 
-/**
- * When an agent-first install prepared this desktop, read the non-secret
- * prepared summary so the onboarding payoff can greet the
- * user with "Setup complete" instead of a generic resource list.
- */
 type PreparedBootstrapSummary = {
   orgName: string;
   skillTitle: string;
@@ -252,8 +247,6 @@ function PreparedWorkspacePage({ prepared }: { prepared: PreparedBootstrapSummar
   const [signInError, setSignInError] = useState<string | null>(null);
 
   const submitSignInCode = useCallback(async () => {
-    // The claim page hands over a full `openwork://den-auth?grant=…` link;
-    // accept that as well as a bare code, like the main sign-in page does.
     const parsed = parseManualAuthInput(signInCode);
     if (!parsed || signInBusy) {
       if (!parsed) setSignInError("Paste a valid one-time sign-in code.");
@@ -267,7 +260,6 @@ function PreparedWorkspacePage({ prepared }: { prepared: PreparedBootstrapSummar
     try {
       const result = await exchangeHandoffAndSignIn(parsed.grant, {
         baseUrl: settings.baseUrl,
-        // A pasted one-time code is a desktop-initiated sign-in.
         desktopInitiated: true,
       });
       if (!result.ok) setSignInError(result.error);
@@ -387,17 +379,9 @@ function markProvidersSeen(providers: ReadonlyArray<{ id: string }>) {
   } catch {}
 }
 
-/**
- * Full-screen onboarding page shown after sign-in + org selection.
- * Fetches all org resources (providers, marketplaces, skills)
- * and shows them so the user knows what their org provides.
- *
- * Route: /onboarding
- */
 export function OrgOnboardingPage() {
   const navigate = useNavigate();
   const { authToken, denClient, orgId, settings } = useDenClient();
-  // The organization this visit started in; finishing in another one is a switch.
   const [startingOrgId] = useState(orgId);
   const { markRouteReady } = useBootState();
   const prepared = usePreparedBootstrap();
@@ -410,8 +394,6 @@ export function OrgOnboardingPage() {
   );
   const [autoSelectFailedOrgId, setAutoSelectFailedOrgId] = useState<string | null>(null);
   const autoSelectingOrgIdRef = useRef<string | null>(null);
-  // A desktop-initiated sign-in parks the exchange-reported org here instead
-  // of committing it; the chooser pre-highlights it as its default.
   const [suggestedOrgId] = useState(() => readOrgSelectionPending().suggestion?.id ?? "");
   const cancelSwitch = orgId && readOrgSelectionPending().pending
     ? () => {
@@ -456,8 +438,6 @@ export function OrgOnboardingPage() {
     queryKey: ["den-org-onboarding", settings.baseUrl, "orgs"],
     enabled: Boolean(authToken),
     refetchOnMount: "always",
-    // A request that timed out while the app was busy starting recovers by
-    // itself; Retry stays on screen meanwhile.
     refetchInterval: (query) => (query.state.status === "error" ? 10_000 : false),
     queryFn: () => denClient.listOrgs(),
   });
@@ -470,8 +450,6 @@ export function OrgOnboardingPage() {
     orgSelectionPending: readOrgSelectionPending().pending,
     autoContinueResources,
     autoSelectFailedOrgId,
-    // An explicit switch must never auto-commit stale cached single-org data
-    // before the directory refetch discovers newly available organizations.
     allowAutoSelect: !cancelSwitch && isFetchedAfterMount && !error,
   });
   const autoSelectOrg = postListStep.kind === "auto-select-single-org"
@@ -626,7 +604,6 @@ export function ResourceSelectionPage({ autoContinue = false, previousOrgId = ""
   const [brandingRestart, setBrandingRestart] = useState<BrandingRestartState | null>(null);
   const autoContinueAttemptedRef = useRef(false);
 
-  // Redirect if no auth or no org — can't show onboarding without them
   useEffect(() => {
     markRouteReady();
   }, [markRouteReady]);
@@ -668,15 +645,12 @@ export function ResourceSelectionPage({ autoContinue = false, previousOrgId = ""
 
   const finishOnboarding = useCallback((optionsArg?: { requestReload?: boolean }) => {
     captureOnboardingEvent("onboarding_resources_completed", { choice: autoContinue ? "automatic" : "manual", model_selected: Boolean(selectedDefault) });
-    // If user picked a default model, write it
     if (selectedDefault) {
       writeStoredDefaultModel({
         providerID: selectedDefault.providerId,
         modelID: selectedDefault.modelId,
       });
     }
-    // Mark all providers shown on this page as "seen" so the global
-    // toast doesn't re-fire for them on the next sync interval.
     markProvidersSeen([...providers, ...gatewayProviders]);
     try {
       window.sessionStorage.removeItem(DEN_HANDOFF_AUTO_CONTINUE_KEY);
@@ -686,10 +660,7 @@ export function ResourceSelectionPage({ autoContinue = false, previousOrgId = ""
         window.localStorage.setItem(RELOAD_AFTER_ONBOARDING_KEY, "1");
       } catch {}
     }
-    // A sign-in started from a conversation returns there.
     if (!completeSignInReturn(navigate)) navigate("/session", { replace: true });
-    // Stores and caches across the app still hold the previous organization's
-    // providers, skills and connections. Start over at the route above.
     if (previousOrgId && previousOrgId !== orgId) window.location.reload();
   }, [autoContinue, gatewayProviders, navigate, orgId, previousOrgId, providers, selectedDefault]);
 
@@ -885,7 +856,6 @@ export function ResourceSelectionPage({ autoContinue = false, previousOrgId = ""
       <PageTitlebarRegion />
 
       <PageContainer>
-        {/* Header */}
         <PageHeader>
           {prepared ? (
             <div
@@ -991,7 +961,6 @@ export function ResourceSelectionPage({ autoContinue = false, previousOrgId = ""
                     </Section>
                   ) : null}
 
-                  {/* Marketplaces */}
                   {marketplaces.length > 0 ? (
                     <Section
                       icon={<Square3Stack3DIcon className="size-5 text-foreground/60" />}
@@ -1008,7 +977,6 @@ export function ResourceSelectionPage({ autoContinue = false, previousOrgId = ""
                 </Accordion>
               </ScrollAreaViewport>
             </ScrollArea>
-            {/* Selected default indicator */}
             {selectedDefault ? (
               <div className="rounded-xl border border-green-6/30 bg-green-2/30 px-4 py-3 text-center text-sm text-green-11">
                 <Check size={14} className="mr-1 inline" />
@@ -1019,7 +987,6 @@ export function ResourceSelectionPage({ autoContinue = false, previousOrgId = ""
         )}
 
         <PageFooter>
-          {/* Footer hint */}
           {!loading && !error && hasResources ? (
             <p className="text-center text-xs text-muted-foreground text-balance leading-relaxed tracking-wide">
               Available providers appear in AI Providers; some may require sign-in. Collections are available from Cloud settings.
@@ -1083,10 +1050,6 @@ function MarketplaceCard({ marketplace }: MarketplaceCardProps) {
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  Section wrapper                                                    */
-/* ------------------------------------------------------------------ */
-
 interface SectionProps {
   icon: React.ReactNode;
   title: string;
@@ -1118,10 +1081,6 @@ function Section({ icon, title, description, count, children }: SectionProps) {
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  Provider card with "Use as default" option                         */
-/* ------------------------------------------------------------------ */
-
 interface ProviderCardProps {
   provider: DenOrgLlmProvider;
   selectedDefault: { providerId: string; modelId: string } | null;
@@ -1133,7 +1092,6 @@ interface ProviderCardProps {
 }
 
 function ProviderCard({ provider, selectedDefault, onSelectDefault }: ProviderCardProps) {
-  // The local provider ID matches the cloud provider's org-level ID
   const localProviderId = provider.id.trim();
   const firstModel = provider.models[0] ?? null;
   const isSelected = selectedDefault?.providerId === localProviderId;

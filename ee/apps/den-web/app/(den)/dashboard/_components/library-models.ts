@@ -3,13 +3,6 @@ import { z } from "zod";
 import type { GatewayMemberConnection } from "./gateway-member-connections-data";
 import { getProviderIconSlug } from "./llm-provider-data";
 
-/**
- * The Models tab of My Library. Den knows the models the organization gives
- * a person through the AI Gateway, grouped by provider. The web cannot see
- * models that only live on someone's computer, so every row here comes from
- * the organization.
- */
-
 const usableModelSchema = z.object({
   id: z.string(),
   name: z.string(),
@@ -50,11 +43,8 @@ export type LibraryModelProvider = {
   iconSlug: string;
   state: LibraryModelState;
   models: LibraryModel[];
-  /** The credential set this person signs in to, when the provider uses their own account. */
   signInSet: GatewayMemberConnection | null;
-  /** The account in use, once signed in. */
   account: string | null;
-  /** The person's own credential sets for this provider; empty when the organization signs in for everyone. */
   memberSets: GatewayMemberConnection[];
   modelGroups: string[];
 };
@@ -69,7 +59,6 @@ const VENDORS: readonly { test: RegExp; vendor: string; slug: string }[] = [
   { test: /grok/i, vendor: "xAI", slug: "x" },
 ];
 
-/** Who made a model, from its upstream id or name, so a Claude model on Google Cloud still shows Anthropic. */
 export function modelVendor(model: { upstreamModelId: string; name: string }, provider: { name: string; providerId: string }): LibraryModel {
   const lastSegment = model.upstreamModelId.split("/").pop() ?? model.upstreamModelId;
   const match = VENDORS.find((entry) => entry.test.test(lastSegment) || entry.test.test(model.name));
@@ -80,7 +69,6 @@ export function modelVendor(model: { upstreamModelId: string; name: string }, pr
   };
 }
 
-/** Real company logos for the providers people know by name. */
 export function providerIconSlug(providerKey: string): string {
   if (providerKey.startsWith("google-vertex")) return "googlecloud";
   if (providerKey === "mistral") return "mistralai";
@@ -135,7 +123,6 @@ export function buildLibraryModelProviders(providers: readonly UsableProvider[],
   }).sort((left, right) => left.name.localeCompare(right.name));
 }
 
-/** "Gemini 2.5 Pro, Gemini 2.5 Flash, Claude Sonnet 4.5 and 9 more". */
 export function modelNamesSummary(models: readonly LibraryModel[], shown = 3): string {
   if (models.length === 0) return "No models yet";
   const names = models.slice(0, shown).map((model) => model.name).join(", ");
@@ -147,10 +134,6 @@ export function modelCount(count: number): string {
   return count === 1 ? "1 model" : `${count} models`;
 }
 
-/**
- * The brand people sign in with: Google (Vertex), AWS (Bedrock) or Microsoft (Foundry). A provider whose sign-in
- * depends on how it is set up (LiteLLM with Microsoft sign-in) is named by the person's own credential set.
- */
 export function signInBrand(provider: Pick<LibraryModelProvider, "providerKey"> & Partial<Pick<LibraryModelProvider, "memberSets">>): string {
   const method = gatewayMemberSignInMethod(provider.providerKey) ?? provider.memberSets?.[0]?.signInMethod ?? null;
   return method === "google" ? "Google" : method === "aws_sso" ? "AWS" : method === "microsoft" ? "Microsoft" : "your account";

@@ -33,12 +33,7 @@ const instructionMetadata = z.object({
   }).passthrough(),
 }).passthrough();
 
-/** Core 2.2.6 retains the initial instruction catalog independently of the tool
- * snapshot. Its supported request hooks identify generated sources explicitly;
- * never scrub arbitrary user/policy text merely for mentioning a host tool. */
 function removeHostCatalog(event: SandboxInferenceEvent) {
-  // The pinned core opencode-tools plugin appends this separate, unkeyed
-  // SystemPart even after its session_move tool was removed by a transform.
   const worktreeGuidance = "When you create a worktree outside the current working directory and intend to use it as your primary working directory, consider using `execute` to call `tools.opencode.session_move` and make the worktree the session's working directory.";
   for (let index = event.system.length - 1; index >= 0; index--) {
     const part = event.system[index]!;
@@ -86,20 +81,11 @@ export type SandboxPluginDependencies = {
   status(): Promise<SandboxToolMode>;
   prewarm?(): Promise<void>;
   assertHostExecution?(): Promise<void>;
-  /** Process-start fact supplied by the trusted native entrypoint. */
   projectConfigDisabled?: boolean;
   execute(name: SandboxToolName, input: unknown, call: SandboxToolCall): Promise<SandboxEngineResult>;
 };
 
-/** In required mode the supported catalog is exactly the six guest primitives.
- * Unknown/custom tools (including patch, browser and file-transfer helpers) are
- * denied by default, rather than guessed safe by name or a broad namespace.
- * Host APIs have their own server-side guards; this is not an OS process jail.
- */
 export async function setupSandboxTools(context: SandboxPluginContext, dependencies: SandboxPluginDependencies) {
-  // Plugin setup failures may be logged rather than abort engine startup. An
-  // unknown initial mode therefore installs the restrictive catalog and MCP
-  // guards; its context/tool calls still fail until authority can be verified.
   let mode: SandboxToolMode;
   try { mode = modeSchema.parse(await dependencies.status()); }
   catch { mode = "only"; }
@@ -117,17 +103,12 @@ export async function setupSandboxTools(context: SandboxPluginContext, dependenc
   if (mode === "only" && !hooksAvailable) throw new Error("OpenWork couldn’t enforce your sandbox setting. Restart OpenWork and try again.");
   let mcpMode = mode;
   const guard = await context.tool.hook?.("execute.before", async event => {
-    // Primitive implementations are individually guarded (guest and retained
-    // host snapshots). Everything outside that bounded set, including Code
-    // Mode's execute/fetch interpreter, needs fresh host authority.
     if (SANDBOX_TOOL_NAMES.some(name => event.tool === name)) return;
     if (dependencies.assertHostExecution) return dependencies.assertHostExecution();
     if (modeSchema.parse(await dependencies.status()) === "only") {
       throw new Error("This tool can’t run with your sandbox setting. Use the sandbox tools instead.");
     }
   });
-  // Disable every MCP transport in the deliberately bounded first required-mode
-  // catalog. In particular local/stdio commands never spawn before tool hooks.
   const servers = await context.mcp?.transform(editor => {
     if (mode !== "only") return;
     for (const [name, value] of editor.list()) {
@@ -136,8 +117,6 @@ export async function setupSandboxTools(context: SandboxPluginContext, dependenc
     }
   });
   const definitions = SANDBOX_TOOL_NAMES.map(name => ({ name, input: z.toJSONSchema(sandboxToolSchemas[name]) }));
-  // A replacement schema must never silently disappear and leave a host tool
-  // behind. Validate all schemas before making a single catalog modification.
   for (const definition of definitions) {
     const problems = providerSchemaProblems(definition.input);
     if (problems.length) throw new Error(`Unsafe sandbox tool schema for ${definition.name}: ${problems.join(", ")}`);
@@ -147,9 +126,6 @@ export async function setupSandboxTools(context: SandboxPluginContext, dependenc
     if (catalogMode === "only") {
       for (const tool of editor.list()) editor.remove(tool.id);
     } else {
-      // Guard original implementations too: an inference snapshot made before
-      // revocation may retain a host shell/read callable with the same id as
-      // its new guest replacement. A name-only before hook cannot tell them apart.
       for (const original of editor.list()) {
         const execute = original.execute;
         if (!execute || !original.name || original.description === undefined || !original.input) throw new Error("OpenWork couldn’t check its tools. Update OpenWork and try again.");
@@ -168,14 +144,10 @@ export async function setupSandboxTools(context: SandboxPluginContext, dependenc
         name: catalogMode === "only" ? name : `sandbox_${name}`,
         description: sandboxToolDescriptions[name],
         input: definition.input,
-        // Guest operations are direct tools in both modes. Code Mode's host-side
-        // interpreter must never be required to reach the local microVM.
         options: { codemode: false },
         async execute(input, call) {
           call.signal.throwIfAborted();
           if (closed) throw new Error("The sandbox has closed. Reopen OpenWork and try again.");
-          // A captured sandbox tool can finish after a catalog change. The
-          // server still checks rollout, folder grants, and current authority.
           if (await readMode() === "only") assertProjectIsolation();
           call.signal.throwIfAborted();
           const parsed = sandboxToolSchemas[name].parse(input);
@@ -210,9 +182,6 @@ export async function setupSandboxTools(context: SandboxPluginContext, dependenc
     await registration.dispose();
     throw error;
   }
-  // Code Mode synthesizes execute plus browser namespaces after tool transforms.
-  // Filter the final per-inference catalog too: its host-side fetch interpreter
-  // must neither be advertised nor be required to reach the guest primitives.
   const inference: Registration[] = [];
   for (const name of ["context", "generate", "compaction"] satisfies ("context" | "generate" | "compaction")[]) {
     inference.push(await context.session.hook(name, async event => {
@@ -221,11 +190,6 @@ export async function setupSandboxTools(context: SandboxPluginContext, dependenc
       assertProjectIsolation();
       removeHostCatalog(event);
       for (const id of Object.keys(event.tools)) if (!SANDBOX_TOOL_NAMES.some(name => id === name)) delete event.tools[id];
-      // OpenCode 2.2.6's built-in patch hook removes edit/write for gpt-* on
-      // all three request kinds. Restore only our validated guest descriptors,
-      // never host patch or execute. Core matches these names to this request's
-      // executable registry snapshot, so a tool absent from that snapshot
-      // (e.g. denied by agent permissions) is still unavailable, not invented.
       for (const definition of definitions) event.tools[definition.name] = {
         description: sandboxToolDescriptions[definition.name], input: definition.input,
       };
@@ -239,7 +203,6 @@ export async function setupSandboxTools(context: SandboxPluginContext, dependenc
   };
 }
 
-/** Trusted options come from the server; no environment flags or model-supplied endpoint. */
 export default {
   id: "openwork.sandbox",
   async setup(context: SandboxPluginContext) {

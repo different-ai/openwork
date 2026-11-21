@@ -45,8 +45,6 @@ touch ${root}.ready
   await startBuildUnit(vm, stage, options.diagnostic);
   const deadline = Date.now() + deadlineMs;
   while (Date.now() < deadline) {
-    // Poll files directly: spawning a shell for every check can be interrupted
-    // while a restored guest settles, even when the build itself is healthy.
     const [failed, ready] = await Promise.all([vm.fs.exists(`${root}.failed`), vm.fs.exists(`${root}.ready`)]);
     const state = failed ? "failed" : ready ? "ready" : "building";
     if (state === "ready") return;
@@ -81,8 +79,6 @@ export async function ensureSnapshot(sha: string, api = client(), log: (message:
       prepare: async (vm) => runScript(vm, "tools", tools, options),
     }, api)).id,
     prepare: async (vm) => {
-      // Remove application source before installing the shared layer. Only
-      // fingerprinted inputs and immutable registry dependencies may affect it.
       const inputs = entries.filter((entry) => entry.type === "blob" && dependencyInput(entry.path)).map((entry) => entry.path);
       await vm.fs.writeTextFile("/opt/openwork-preview/dependency-inputs.json", JSON.stringify(inputs));
       await runScript(vm, "dependencies", `${checkoutRecipe(sha)}
@@ -171,15 +167,11 @@ mark boot-and-verify
       }
     },
   }, api);
-  // Per-commit worlds are built on first launch and rarely reopened. Storage is
-  // billed until deletion, so keep them two days at most and one day unused.
   return ensureLayer({ slug, stage: "world", observe, metadata: buildLabel(sha, world), ttlSeconds: 2 * 86400, autoDeleteSeconds: 86400,
     parent: async () => running.id,
     prepare: async (vm) => {
       log(`Refreshing ${world} at ${sha} from an isolated running template`);
       const start = performance.now();
-      // Keep the isolated database and running processes. Only tracked frontend
-      // source (or inert docs/CI files) may differ from this immutable template.
       await runScript(vm, "refresh", `${checkoutRecipe(sha).replace("git clean -ffdx -e node_modules/", "")}
 node /opt/openwork-preview/refresh.mjs ${sha}`, options);
       observe({ stage: "source-refresh", durationMs: Math.round(performance.now() - start) });

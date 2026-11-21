@@ -1,8 +1,3 @@
-/**
- * Small service marks for product previews. Simplified shapes in each
- * service's colours so a person recognises the tool at 16-20px (DESIGN.md V5).
- */
-
 type MarkProps = {
   className?: string;
 };
@@ -76,7 +71,6 @@ export function MicrosoftMark({ className }: MarkProps) {
   );
 }
 
-/** "aws" with the smile, set in the page face so it stays legible at 16-20px. */
 export function AwsMark({ className }: MarkProps) {
   return (
     <svg viewBox="0 0 24 24" className={className} aria-hidden="true">
@@ -132,7 +126,6 @@ export function TerminalMark({ className }: MarkProps) {
   );
 }
 
-/** OpenCode's logo (opencode-logo-light-square.svg from its brand files). */
 export function OpenCodeMark({ className }: MarkProps) {
   return (
     <svg viewBox="0 0 240 300" className={className} aria-hidden="true">
@@ -156,7 +149,6 @@ export function SkillMark({ className }: MarkProps) {
   );
 }
 
-/** LiteLLM's monogram, from its dashboard's logo assets. */
 export function LiteLlmMark({ className }: MarkProps) {
   return (
     <svg viewBox="0 0 372.14 371.53" className={className} aria-hidden="true" fill="#0117BE">
@@ -171,7 +163,6 @@ export function LiteLlmMark({ className }: MarkProps) {
   );
 }
 
-/** TrueFoundry's logo mark (the favicon on docs.truefoundry.com). */
 export function TrueFoundryMark({ className }: MarkProps) {
   return (
     <svg viewBox="0 0 28 28" className={className} aria-hidden="true">

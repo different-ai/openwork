@@ -5,8 +5,6 @@ function validRect(rect: DOMRect) {
     && rect.width >= 0 && rect.height >= 0;
 }
 
-// A native WebContentsView is not a DOM child: CSS overflow/visibility cannot
-// clip it. Only give it the visible rectangle owned by this mounted container.
 export function computeBrowserBounds(el: HTMLElement): BrowserBounds | null {
   const win = el.ownerDocument.defaultView;
   if (!el.isConnected || !win || ![win.innerWidth, win.innerHeight].every(Number.isFinite)
@@ -34,8 +32,6 @@ export function computeBrowserBounds(el: HTMLElement): BrowserBounds | null {
     if (!validRect(parent)
       || (clipX && ![node.offsetWidth, node.clientLeft, node.clientWidth].every(value => Number.isFinite(value) && value >= 0))
       || (clipY && ![node.offsetHeight, node.clientTop, node.clientHeight].every(value => Number.isFinite(value) && value >= 0))) return null;
-    // Client bounds exclude borders/scrollbars; the ratios account for CSS
-    // scaling. Electron zoom is applied later, exactly once, by the host.
     const scaleX = node.offsetWidth > 0 ? parent.width / node.offsetWidth : 1;
     const scaleY = node.offsetHeight > 0 ? parent.height / node.offsetHeight : 1;
     if (clipX) {
@@ -53,7 +49,6 @@ export function computeBrowserBounds(el: HTMLElement): BrowserBounds | null {
   return { x: left, y: top, width: right - left, height: bottom - top };
 }
 
-/** The window that measured the bounds, when it is not the app window. */
 export type BrowserBoundsTarget = "window" | undefined;
 
 type BrowserBoundsBridge = {
@@ -122,8 +117,6 @@ export function createBrowserBoundsSync(
         failedShow = null;
         return;
       }
-      // DPR is only a zoom-change hint for fast local dedup, never a scale factor.
-      // Preload still stamps the actual webFrame zoom alongside the CSS bounds.
       if (showInFlight || sameGeometry(lastGeometry, bounds, pixelRatio)
         || (!shown && sameGeometry(failedShow, bounds, pixelRatio))) return;
       const geometry = { bounds, pixelRatio };

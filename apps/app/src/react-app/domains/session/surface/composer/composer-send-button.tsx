@@ -1,13 +1,8 @@
 import type { PointerEventHandler } from "react";
 import { ArrowUp, LoaderCircle, Square } from "lucide-react";
 
-/** What the composer's one round control does right now (DESIGN.md T5). */
 export type ComposerSendButtonMode = "send" | "stop" | "stopping" | "preparing";
 
-/**
- * The composer's single round send/stop control. Shared by the chat composer
- * and the follow-up box of a task on another computer, so both read the same.
- */
 export function ComposerSendButton({
   mode,
   label,
@@ -17,10 +12,8 @@ export function ComposerSendButton({
   onPointerDown,
 }: {
   mode: ComposerSendButtonMode;
-  /** Accessible name and tooltip, e.g. "Run task" or "Stop". */
   label: string;
   disabled: boolean;
-  /** Send mode only: there is something to send, so the button shows as active. */
   ready: boolean;
   onClick?: () => void;
   onPointerDown?: PointerEventHandler<HTMLButtonElement>;

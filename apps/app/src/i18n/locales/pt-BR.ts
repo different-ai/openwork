@@ -1,8 +1,3 @@
-/**
- * Traduções para português do Brasil
- * Termos profissionais (Skills, Plugins, Commands, Sessions, OpenCode, OpenPackage, OpenWork) NÃO são traduzidos
- */
-
 export default {
   "artifact.office_empty": "Não há texto legível neste arquivo. Abra-o em outro aplicativo para ver o original.",
   "artifact.office_empty_slide": "Não há texto legível neste slide.",

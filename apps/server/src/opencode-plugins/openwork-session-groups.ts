@@ -1,10 +1,6 @@
 import { z } from "zod";
 import { strictArgsSchema } from "./openwork-provider-adapters.js";
 
-// Sidebar groups live in the OpenWork server's workspace store, so the agent
-// changes them there directly. Nothing here needs the desktop window: the app
-// follows these writes through its session-group event feed.
-
 export const SESSION_GROUP_COMMAND_IDS = ["session.group.create", "session.group.move", "session.group.remove"] as const;
 export const SESSION_GROUP_AFFORDANCE_IDS: readonly string[] = ["session.group.list", ...SESSION_GROUP_COMMAND_IDS];
 
@@ -40,13 +36,11 @@ type SessionGroup = SessionGroupState["groups"][number];
 export type SessionGroupHost = {
   get(path: string): Promise<unknown>;
   send(method: "POST" | "PATCH" | "DELETE", path: string, body?: Record<string, unknown>): Promise<unknown>;
-  /** Root session titles by id, or null when the full list could not be read. */
   liveSessions(workspaceId: string): Promise<Map<string, string> | null>;
 };
 
 type Failure = { ok: false; error: string };
 
-// Bounds the cleanup done alongside one command; the rest goes on the next one.
 const STALE_PRUNE_LIMIT = 50;
 
 function groupsPath(workspaceId: string, suffix = ""): string {
@@ -63,7 +57,6 @@ function describeGroups(state: SessionGroupState): string {
     : "none yet; create one with session.group.create";
 }
 
-/** An exact id wins; otherwise one case-insensitive label match. */
 function resolveGroup(state: SessionGroupState, ref: string): SessionGroup | Failure {
   const byId = state.groups.find((group) => group.id === ref);
   if (byId) return byId;
@@ -83,11 +76,6 @@ function staleSessionIds(state: SessionGroupState, live: Map<string, string> | n
   return Object.keys(state.assignments).filter((sessionId) => !live.has(sessionId));
 }
 
-/**
- * Drop assignments whose session no longer exists, one key at a time so a
- * concurrent sidebar edit is never overwritten. Skipped when the session list
- * is incomplete: an unknown session is not proof that it was deleted.
- */
 async function pruneStaleAssignments(host: SessionGroupHost, workspaceId: string, state: SessionGroupState, live: Map<string, string> | null): Promise<number> {
   const stale = staleSessionIds(state, live).slice(0, STALE_PRUNE_LIMIT);
   for (const sessionId of stale) {
@@ -109,7 +97,6 @@ export async function listSessionGroups(host: SessionGroupHost, workspaceId: str
     ok: true as const,
     workspaceId,
     groups: state.groups.map((group) => ({ id: group.id, label: group.label, sessions: sessionsByGroup.get(group.id) ?? [] })),
-    // Sessions not listed under any group are ungrouped.
     ...(stale.size ? { staleAssignments: stale.size } : {}),
     ...(live ? {} : { note: "Session titles are unavailable; deleted sessions may still be listed." }),
   };
@@ -118,7 +105,6 @@ export async function listSessionGroups(host: SessionGroupHost, workspaceId: str
 export async function createSessionGroup(host: SessionGroupHost, workspaceId: string, label: string) {
   const [state, live] = await Promise.all([readState(host, workspaceId), host.liveSessions(workspaceId)]);
   const pruned = await pruneStaleAssignments(host, workspaceId, state, live);
-  // Retried or repeated requests reuse the group instead of adding a twin.
   const existing = state.groups.find((group) => group.label.trim().toLowerCase() === label.toLowerCase());
   if (existing) return { ok: true as const, workspaceId, groupId: existing.id, label: existing.label, created: false, ...(pruned ? { pruned } : {}) };
   const after = sessionGroupStateSchema.parse(await host.send("POST", groupsPath(workspaceId), { label })).state;
@@ -138,7 +124,6 @@ export async function moveSessionToGroup(host: SessionGroupHost, workspaceId: st
     groupsPath(workspaceId, `/assignments/${encodeURIComponent(sessionId)}`),
     group ? { groupId: group.id } : {},
   )).state;
-  // The server ignores unknown groups, so confirm the saved assignment.
   if ((after.assignments[sessionId] ?? null) !== (group?.id ?? null)) {
     return { ok: false as const, error: `Session ${sessionId} could not be moved; read session.group.list and retry` };
   }

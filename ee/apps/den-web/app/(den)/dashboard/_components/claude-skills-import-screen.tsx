@@ -15,7 +15,6 @@ type ImportResult =
   | { skillId: string; name: string; ok: true; pluginId: string }
   | { skillId: string; name: string | null; ok: false; message: string };
 
-/** Downloads can take a while for large skills; imports run one skill at a time. */
 const IMPORT_TIMEOUT_MS = 10 * 60_000;
 
 function parseSkills(payload: unknown): { skills: ClaudeSkill[]; truncated: boolean } {
@@ -34,12 +33,6 @@ function parseResults(payload: unknown): ImportResult[] {
   return Array.isArray(results) ? results.filter((entry): entry is ImportResult => typeof (entry as ImportResult)?.skillId === "string") : [];
 }
 
-/**
- * Brings a team's custom skills over from Claude: the person enters an
- * Anthropic API key from the workspace that holds them, picks skills, and each
- * becomes a private OpenWork skill with all its files. The key stays in this
- * page's memory and is sent only with these two requests; OpenWork never stores it.
- */
 export function ClaudeSkillsImportScreen() {
   const { orgSlug, runReauthableAction } = useOrgDashboard();
   const [apiKey, setApiKey] = useState("");
@@ -83,7 +76,6 @@ export function ClaudeSkillsImportScreen() {
         payload = result.payload;
       });
       setResults(parseResults(payload));
-      // Nothing more needs the key.
       setApiKey("");
     } catch (importError) {
       setError(importError instanceof Error ? importError.message : "Your skills could not be imported.");

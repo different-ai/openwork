@@ -98,7 +98,6 @@ import ConnectionsModals from "@/react-app/domains/connections/modals";
 import { AiSettingsView } from "@/react-app/domains/settings/pages/ai-view";
 import { ORG_OPENWORK_MODELS_PROVIDER_ID, planOpenWorkModelsRow } from "@/react-app/domains/settings/pages/openwork-models-row";
 import { deviceProviders, useLocalProviderEngineStates } from "@/react-app/domains/connections/provider-auth/local-provider-engine-state";
-// Side-effect imports: register extension config components into the registry.
 import { LocalModelsBlocked, OllamaConfig } from "@/react-app/domains/settings/ollama-config";
 import "@/react-app/domains/settings/browser-extension-config";
 import { useSettingsExtensionController } from "@/react-app/domains/settings/settings-extension-controller";
@@ -401,7 +400,6 @@ function writeStoredBoolean(key: string, value: boolean) {
   try {
     window.localStorage.setItem(key, value ? "1" : "0");
   } catch {
-    // ignore persistence failures
   }
 }
 
@@ -520,8 +518,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const [workspaceConnectionOverrides, setWorkspaceConnectionOverrides] = useState<Record<string, WorkspaceConnectionState>>({});
   const [legacySelectedWorkspaceId, setLegacySelectedWorkspaceId] = useState(() => navigationWorkspaceId ?? readActiveWorkspaceId() ?? "");
   const selectedWorkspaceId = routeWorkspaceId || legacySelectedWorkspaceId;
-  // The standalone Library takeover is not a settings surface; the
-  // `allowControlSettings` policy only governs the settings shell.
   const settingsTabBlocked = !props.standaloneExtensions
     && !isSettingsTabAllowed({ tab: route.tab, checkRestriction: checkDesktopRestriction });
 
@@ -678,8 +674,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     });
   };
   const selectedWorkspaceEndpoint = useWorkspaceServerClient(selectedWorkspace, { baseUrl, token });
-  // A member who signed in before creating a workspace still has the local
-  // server's managed engine; reach it directly so AI providers work.
   const engineRootEndpoint = useMemo(
     () => (isDesktopRuntime() && !loading && workspaces.length === 0
       ? resolveEngineRootEndpoint({ baseUrl, token })
@@ -730,9 +724,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     () =>
       createOpenworkServerStore({
         startupPreference: () => {
-          // In desktop mode, loopback URLs are ephemeral local runtime details.
-          // Only non-loopback stored URLs indicate an explicit manual server
-          // connection preference.
           if (!isDesktopRuntime()) return "server";
           const stored = readOpenworkServerSettings();
           const storedUrl = stored.urlOverride?.trim() ?? "";
@@ -768,9 +759,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   refreshMcpServersRef.current = connectionsStore.refreshMcpServers;
   notifyMcpReloadingRef.current = connectionsStore.notifyMcpReloading;
   pollMcpServersAfterReloadRef.current = connectionsStore.pollMcpServersAfterReload;
-  // Stable identity: McpView reloads opencode.json whenever this prop changes,
-  // so an inline lambda would refetch the config on every settings re-render
-  // (store snapshots tick every few seconds while idle on the Library page).
   const readMcpConfigFile = useCallback(
     (scope: "project" | "global") => connectionsStore.readMcpConfigFile(scope),
     [connectionsStore],
@@ -851,8 +839,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const providerAuthSnapshot = useProviderAuthStoreSnapshot(providerAuthStore);
   useEffect(() => { providerAuthStore.syncFromOptions(); }, [providerAuthStore]);
   const cloudSession = useCloudSession();
-  // With live provider sync the engine delivers Gateway providers and the
-  // server sync stops reporting them, so Settings lists them from Den instead.
   const liveGatewayProviders = cloudSession.isSignedIn ? providerAuthSnapshot.liveGatewayProviders : null;
   const settingsImportedCloudProviders = useMemo(
     () => liveGatewayProviders === null
@@ -933,22 +919,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const openworkServerStatusForMcp = openworkServerSnapshot.openworkServerStatus;
   useEffect(() => {
     if (openworkServerStatusForMcp !== "connected") return;
-    // The first MCP read races the openwork-server store's initial health
-    // check (a fresh store always starts "disconnected"), so it falls back
-    // to config files where server-runtime (config.remote) entries — notably
-    // the cloud control MCP — don't exist. Without this re-read the built-in
-    // cards show "Tap to connect" until the next full remount even though
-    // the entries are configured and healthy.
     void connectionsStore.refreshMcpServers();
   }, [connectionsStore, openworkServerStatusForMcp]);
 
   useEffect(() => {
     if (openworkServerStatusForMcp !== "connected") return;
-    // Same race for the Cloud Providers rows: the provider-auth store's
-    // start() read fires while this store still reports "disconnected", so
-    // it takes the legacy (empty) config read and the rows sit on "Syncing"
-    // even though the server's /cloud-provider-sync/status already lists the
-    // providers as synced. Re-derive from the server once it is reachable.
     void providerAuthStore.refreshImportedCloudProviders();
   }, [openworkServerStatusForMcp, providerAuthStore]);
 
@@ -957,9 +932,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     const workspaceId = routeStateRef.current.runtimeWorkspaceId?.trim() ?? "";
     const orgId = settings.activeOrgId?.trim() ?? "";
     if (!client || !workspaceId || !orgId) return;
-    // Settings only has a safe, exact OpenCode client/directory for the active
-    // workspace here, so sign-out cleanup is intentionally scoped to that
-    // workspace instead of guessing across every configured worker.
     await cleanupOpenworkCloudMcpAfterSignOut({
       context: {
         denBaseUrl: settings.baseUrl,
@@ -1001,7 +973,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       setConnectCapabilitiesError(null);
       return;
     }
-    // Paint what the app already fetched, then revalidate behind it.
     const cached = readCachedConnectCapabilities(connectScope);
     if (cached) setConnectCapabilities(cached);
     setConnectCapabilitiesLoading(!cached);
@@ -1025,13 +996,9 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     }
   }, [cloudSession.client, cloudSession.isSignedIn, connectScope]);
 
-  // Not gated on the Extensions tab: the inventory should be warm before the
-  // user gets there, and the fetch is deduped by the shared cloud cache.
   useEffect(() => {
     void refreshConnectCapabilities({ force: true });
   }, [refreshConnectCapabilities]);
-  // Deleting or restoring a Library plugin can retire the connections it owns;
-  // re-read them so a deleted plugin's connector does not linger as its own row.
   const refreshOrgMcpConnections = orgMcpConnections.refresh;
   useEffect(() => {
     const refresh = () => {
@@ -1048,8 +1015,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       Object.values(providerAuthSnapshot.importedCloudProviders ?? {}).some(isOpenWorkCloudProvider),
     [providerAuthSnapshot.cloudOrgProviders, providerAuthSnapshot.importedCloudProviders],
   );
-  // Entitled = Den/import says OpenWork Models is included. Available = local
-  // engine actually exposes selectable openwork models.
   const openWorkModelsEntitled = cloudSession.isSignedIn && hasOpenWorkCloudProvider;
   const openWorkModelsAvailable = hasOpenWorkModelsAvailable({
     providerConnectedIds,
@@ -1066,8 +1031,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   }, [cloudSession.baseUrl, platform]);
   const autoClient = isDesktopRuntime() && openworkServerSnapshot.openworkServerClient && isLoopbackOpenworkServerUrl(openworkServerSnapshot.openworkServerClient.baseUrl) ? openworkServerSnapshot.openworkServerClient : null;
   const [autoPreferences, setAutoPreferences] = useState<DesktopFreePreferences | null>(null);
-  // Until an operator switches free Auto on, Settings shows no OpenWork Models row for it.
-  // Settings has no workspace context: read status from the same local client as preferences.
   const { query: autoAccessQuery } = useAutoAccess(Boolean(autoPreferences), {
     openworkServerClient: autoClient, workspaceId: selectedWorkspaceId ?? "",
   });
@@ -1109,8 +1072,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       if (generation === autoGeneration.current) setAutoBusy(false);
     }
   }, [autoClient, autoBusy, providerAuthStore]);
-  // OpenWork Models is listed once: under the organization when it pays for
-  // it (with Turn off / Turn on there), else as the free row on this device.
   const openWorkModelsRow = planOpenWorkModelsRow({
     fromOrganization: openWorkModelsEntitled,
     managedByOrganization: checkDesktopRestriction({ restriction: "allowCustomProviders" }),
@@ -1122,27 +1083,21 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     if (openWorkModelsBusy) return;
     setOpenWorkModelsBusy(true);
     try {
-      // The free row is hidden while the organization's row is shown, so
-      // switch it with the organization's: Turn off leaves no OpenWork Models.
       if (enabled) await providerAuthStore.enableProvider(ORG_OPENWORK_MODELS_PROVIDER_ID);
       else await providerAuthStore.disableProvider(ORG_OPENWORK_MODELS_PROVIDER_ID);
       if (autoPreferences && autoPreferences.enabled !== enabled && (!enabled || autoPreferences.canEnable)) await setAutoEnabled(enabled);
       setConfigActionStatus(enabled ? "OpenWork Models turned on" : "OpenWork Models turned off");
     } catch {
-      // The store publishes the error as providerAuthError.
     } finally {
       setOpenWorkModelsBusy(false);
     }
   }, [openWorkModelsBusy, providerAuthStore, autoPreferences, setAutoEnabled]);
-  // Once the organization manages models, only admins decide: a turn-off a
-  // member saved earlier no longer applies, so turn it back on once.
   const clearingStaleOpenWorkModelsTurnOff = useRef(false);
   useEffect(() => {
     if (!openWorkModelsRow.clearStaleTurnOff || clearingStaleOpenWorkModelsTurnOff.current) return;
     clearingStaleOpenWorkModelsTurnOff.current = true;
     void providerAuthStore.enableProvider(ORG_OPENWORK_MODELS_PROVIDER_ID)
       .catch(() => {
-        // The store publishes the error as providerAuthError.
       })
       .finally(() => {
         clearingStaleOpenWorkModelsTurnOff.current = false;
@@ -1167,7 +1122,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
 
   useEffect(() => {
     if (!activeClient || !selectedWorkspaceId) return;
-    // Org policy may force Zen off. Never force it back on — that races user Disconnect.
     if (!checkDesktopRestriction({ restriction: "allowZenModel" })) return;
 
     void providerAuthStore
@@ -1210,7 +1164,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         return openworkClient.importOpencodeConnections(runtimeWorkspaceId, names);
       },
       onImported: () => {
-        // The engine starts each connection after it is saved; read once now and once it has had time to settle.
         void refreshMcpServersRef.current?.();
         window.setTimeout(() => void refreshMcpServersRef.current?.(), 4_000);
       },
@@ -1281,7 +1234,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const handleModelPickerOpen = useCallback(() => {
     void providerAuthStore.runCloudProviderSync("model_picker_open");
   }, [providerAuthStore]);
-  // Model lists here come from the engine chat runs on, so they match the chat's picker.
   const chatEngine = useChatEngineClient({
     endpoint: selectedWorkspaceEndpoint,
     workspaceRoot: selectedWorkspaceRoot,
@@ -1306,8 +1258,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     opencodeBaseUrl: chatEngine.baseUrl,
     localRuntime: isDesktopRuntime(),
   }));
-  // Settings can retain the navigation state after a workspace switch. Never
-  // diagnose the new workspace using the originating workspace's conversation.
   const connectSessionId = navigationWorkspaceId === selectedWorkspaceId ? navigationSessionId : null;
   const connectSessionModel = useSessionModelStore((state) =>
     connectSessionId ? state.bySessionId[connectSessionId]?.model ?? null : null);
@@ -1332,14 +1282,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       setCloudMcpHealthResult(null);
       return null;
     }
-    // probe: the Advanced page refresh should verify the Cloud endpoint
-    // directly (outside the engine), not just report the engine's cached state.
     const health = await client.getOpenworkCloudMcpHealth(workspaceId, currentCloudMcpModel ?? undefined, { probe: true });
     if (routeStateRef.current.runtimeWorkspaceId?.trim() !== workspaceId) return null;
     setCloudMcpHealthResult({ workspaceId, health });
     return health;
   }, [currentCloudMcpModel, openworkClient, runtimeWorkspaceId, selectedWorkspaceEndpoint]);
-  // Same report as the command palette's "Copy diagnostics", plus the Cloud check shown on the Advanced page.
   const copyDiagnosticsReport = useCallback(async () => {
     try {
       const report = await buildDiagnosticsBundleJson({
@@ -1364,7 +1311,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     }),
     [developerMode, setCommandPaletteOpen, toggleDeveloperMode],
   );
-  // The same find as Cmd/Ctrl+F and the header button, from the command palette.
   const settingsFindPaletteItem = useMemo<PaletteItem>(() => ({
     id: "settings-find.open",
     title: SETTINGS_FIND_LABEL,
@@ -1385,8 +1331,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     if (!workspaceId) { navigate("/session"); return; }
     openNewSessionDraft({ workspaceId }, navigate);
   }, [navigate, selectedWorkspaceId]);
-  // Settings refreshes provider auth whenever the picker opens (the session
-  // route does not need this; its provider state is kept fresh elsewhere).
   useEffect(() => {
     if (!modelPicker.open) return;
     void providerAuthStore.refreshProviders();
@@ -1414,7 +1358,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     return () => { cancelled = true; };
   }, [openworkClient]);
 
-  /** Writes a local provider patch, reloads the engine, and reports the outcome in the provider's settings. */
   const applyLocalProviderPatch = useCallback(async (
     patch: Parameters<OpenworkServerClient["patchConfig"]>[1],
     done: { status: string; defaultModel?: { providerID: string; modelID: string } },
@@ -1439,13 +1382,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       try {
         await reloadEngineOrRestartDesktop(client, workspaceId);
       } catch {
-        // The reload toast still lets the user retry if the immediate reload fails.
       }
       await refreshProviderListQueries(getReactQueryClient());
       try {
         window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
       } catch {
-        // ignore browser event dispatch failures
       }
       setLocalProviderStatus(done.status);
     } catch (error) {
@@ -1455,8 +1396,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     }
   }, [local, openworkClient, reloadCoordinator, runtimeWorkspaceId, selectedWorkspaceEndpoint]);
 
-  // A provider hidden with Disconnect stays hidden until it is enabled again, so
-  // adding or syncing its models on the Ollama page brings it back first.
   const enableLocalProviderIfHidden = useCallback(async (providerId: string) => {
     const id = providerId.trim().toLowerCase();
     if (!disabledProviders.some((entry) => entry.trim().toLowerCase() === id)) return true;
@@ -1694,11 +1633,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     try {
       window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
     } catch {
-      // ignore browser event dispatch failures
     }
 
-    // OpenCode reconnects MCPs async after dispose — the store polls until
-    // statuses settle so users don't have to collapse/expand the card.
     void pollMcpServersAfterReloadRef.current?.();
 
     return true;
@@ -1771,8 +1707,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     if (openworkClient) {
       reconnectAttemptedWorkspaceIdRef.current = "";
     }
-    // Same gate as the session route: reconnect must not probe the local
-    // server while desktop runtime bootstrap is still starting it.
     if (
       !shouldAttemptDesktopLocalReconnect({
         desktopRuntime: isDesktopRuntime(),
@@ -1797,7 +1731,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       allWorkspaces: workspaces,
     }).catch((error) => {
       const message = error instanceof Error ? error.message : describeRouteError(error);
-      // Background auto-reconnect: alert + persistent center entry.
       notifyAlert({
         kind: "system",
         title: t("notifications.reconnect_failed"),
@@ -1808,9 +1741,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   }, [bootPhase, bootRouteReady, loading, openworkClient, selectedWorkspace, workspaces]);
 
   useEffect(() => {
-    // A workspace-route change must invalidate the previous refresh even if
-    // it is still waiting on that workspace's runtime. The superseded attempt
-    // can finish its network calls, but it can no longer write Settings state.
     setDiscoveryDeadlineReached(false);
     const deadline = window.setTimeout(() => setDiscoveryDeadlineReached(true), SETTINGS_DISCOVERY_TIMEOUT_MS);
     void refreshRouteState({ supersede: true });
@@ -1824,7 +1754,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     };
   }, [refreshRouteState, discoveryRetry]);
 
-  // Load auto-compaction state from OpenCode config on workspace change.
   useEffect(() => {
     if (!openworkClient || !selectedWorkspaceId) return;
     const workspaceId = routeStateRef.current.runtimeWorkspaceId?.trim() || selectedWorkspaceId;
@@ -1895,13 +1824,8 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   }), [extensionsStore]);
   useControlAction(refreshMarketplaceAction);
 
-  // Periodically reconcile workspace-imported cloud providers from Den while
-  // signed in (dev #1509 "auto-sync cloud providers"). Mounted here because
-  // the settings route owns the provider-auth store.
   useCloudProviderAutoSync(providerAuthStore.runCloudProviderSync);
 
-  // Keep the Den cloud MCP configured with a fresh first-party token while
-  // signed in: connects on sign-in, re-mints on org switch and before expiry.
   useCloudProviderAutoSync(() => connectionsStore.syncCloudControlMcp());
 
   useEffect(() => {
@@ -1978,14 +1902,10 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const disabledProviderIdSet = new Set(
     disabledProviders.map((id) => id.trim().toLowerCase()).filter(Boolean),
   );
-  // Read the engine's view again whenever the provider list is read again,
-  // including when v1's list did not change.
   const localProviderStates = useLocalProviderEngineStates(
     selectedWorkspaceEndpoint?.client ?? openworkClient,
     `${providerAuthSnapshot.providerLoadState.status}\n${providerConnectedIds.join("\n")}`,
   );
-  // While chat runs on v2, v1's list can lag the engine (it caches per folder):
-  // a provider the engine mirrored or skipped stays listed with its state.
   const connectedProviders = deviceProviders({
     connected: providers.flatMap((provider) =>
       providerConnectedIdSet.has(provider.id) &&
@@ -2001,14 +1921,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     hidden: disabledProviderIdSet,
     nameFor: (id) => providers.find((provider) => provider.id === id)?.name ?? PROVIDER_LABELS[id.toLowerCase()] ?? id,
   });
-  // Disconnect hides built-in/config providers through disabled_providers, and
-  // the engine then omits them everywhere. List them so they can come back.
   const hiddenProviders = [...new Set(disabledProviders.map((id) => id.trim()).filter(Boolean))].flatMap((id) =>
     isDesktopProviderBlocked({ providerId: id, checkRestriction: checkDesktopRestriction }) || openWorkModelsRow.hideFromDisabledList.has(id)
       ? []
       : [{ id, name: providers.find((provider) => provider.id === id)?.name ?? PROVIDER_LABELS[id.toLowerCase()] ?? id }],
   );
-  // Device provider sharing: a key saved here can go to the organization in one confirmation.
   const deviceShare = useDeviceProviderShareFlow({
     providers: selectedWorkspace && selectedWorkspace.workspaceType !== "local" ? [] : connectedProviders,
     runtimeWorkspaceId,
@@ -2017,7 +1934,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     guided: providerFilterSyncFixEnabled ? {
       confirmArrival: providerAuthStore.syncSharedDeviceProvider,
       removeDeviceKey: async (providerId, organizationProviderId) => {
-        // A default model on the key being removed moves to the same model from the organization.
         const current = local.prefs.defaultModel;
         if (current?.providerID === providerId) {
           const name = providers.find((provider) => provider.id === providerId)?.models?.[current.modelID]?.name?.trim().toLowerCase();
@@ -2025,7 +1941,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
           const match = name ? Object.values(organizationModels).find((model) => model.name?.trim().toLowerCase() === name) : undefined;
           if (match) local.setPrefs((previous) => ({ ...previous, defaultModel: { providerID: organizationProviderId, modelID: match.id } }));
         }
-        // The closing toast reports the removal; the status line would repeat it.
         await providerAuthStore.disconnectProvider(providerId);
       },
       showOrganizationProviders: () => {
@@ -2033,11 +1948,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       },
     } : undefined,
   });
-  // Someone who cannot manage AI Gateway already has "My model connections";
-  // a second link to an admin-only page would only bounce them (DESIGN P4).
   const openProviderCloudPage = deviceShare.resolved && !deviceShare.canShare ? undefined : openProvidersInDen;
-  // "Share" in Get set up lands here with ?share=1: open the confirmation for a
-  // key on this device, or AI Gateway's own form when nothing here is one key.
   const shareRequested = route.tab === "ai" && new URLSearchParams(location.search).get("share") === "1";
   useEffect(() => {
     if (!shareRequested || loading || !activeClient || providerAuthSnapshot.providerLoadState.status !== "ready" || !deviceShare.resolved) return;
@@ -2049,7 +1960,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     (server) => server.name === "openwork-cloud",
   )?.config.url ?? null;
 
-  // Build enablement context from all available runtime state.
   const enablementContext = useMemo<EnablementContext>(() => {
     const mcpConfigured = new Set(connectionsSnapshot.mcpServers.map((s) => s.name));
     const connectedProviders = new Set(providerConnectedIds);
@@ -2060,7 +1970,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       mcpConfigured,
       connectedProviders,
       configuredEnvKeys,
-      // Toggle state reader for extensions with defaultEnabled / explicit toggle.
       isToggleEnabled: (ref: string) => {
         const catalog = connectionsStore.quickConnect;
         const match = catalog.find((e: { id?: string; serverName?: string }) => (e.id ?? e.serverName) === ref);
@@ -2113,9 +2022,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     }),
     [connectionsSnapshot.mcpServers, enablementContext, extensionController.isConnected, extensionsSnapshot, extensionsStore, orgMcpConnections.connections, quickConnectCatalog],
   );
-  // Every connection the organization provisioned for this member, connected
-  // or not: one that still needs the member's sign-in is the whole reason the
-  // "Needs your attention" group exists, so it must not be filtered out here.
   const orgMcpConnectionItems = extensionItems.orgMcpConnectionItems;
   const librarySkills = useMemo(
     () => [
@@ -2259,8 +2165,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
       preferSidecar: true,
       runtime: "direct",
       workspacePaths,
-      // The user env file is read when the local server process spawns, so a
-      // healthy engine must be replaced, not reused, for new values to apply.
       forceRestart: true,
     });
     const reconnected = await openworkServerStore.reconnectOpenworkServer();
@@ -2366,9 +2270,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   }
 
   if (!props.embedded && settingsTabBlocked) {
-    // Organization policy hides desktop settings. Library deep links keep
-    // working through the standalone Library surface; everything else lands on
-    // the Cloud account tab, which explains the active policy.
     const target = route.tab === "extensions"
       ? selectedWorkspaceId
         ? workspaceExtensionsRoute(selectedWorkspaceId, extensionsPathForRoute(route))
@@ -2464,7 +2365,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 const message = await providerAuthStore.enableProvider(providerId);
                 if (message.trim()) setConfigActionStatus(message);
               } catch {
-                // The store publishes the error as providerAuthError.
               } finally {
                 setEnablingProviderId(null);
               }
@@ -2601,9 +2501,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
               navigateSettingsPath(path);
             }}
             onRefresh={() => {
-              // Force-sync the cloud MCP first (re-mint token + rewrite
-              // config, bypassing the freshness marker) so Refresh really
-              // means "make everything current now", then refresh the rest.
               void connectionsStore.syncCloudControlMcp({ force: true }).then(() => {
                 void connectionsStore.refreshMcpServers();
               });
@@ -2949,12 +2846,6 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         submitting={providerAuthSnapshot.providerAuthBusy}
         error={providerAuthSnapshot.providerAuthError}
         preferredProviderId={providerAuthSnapshot.providerAuthPreferredProviderId}
-        // Hide any provider the org blocks at the desktop layer so users
-        // can't connect a forbidden one (dev #1505). Same helper covers
-        // opencode-provider gating via the `allowZenModel` restriction.
-        // We also strip the matching key from `authMethods` because the
-        // modal builds its entry list from `Object.keys(authMethods)`,
-        // not from `providers`.
         providers={providerAuthSnapshot.providerAuthProviders.filter(
           (provider) =>
             !isDesktopProviderBlocked({

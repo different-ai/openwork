@@ -29,12 +29,10 @@ import { FeatureIntroGate, useFeatureIntroRuntime, useFeatureIntroUnseen, type F
 import type { TeamDetailFacts } from "../_features/feature-intros/intros/team-detail";
 import { useAiGatewayIntroFacts } from "./ai-gateway-intro-facts";
 
-/** The role lane of the team's Members list. */
 const TEAM_MEMBER_ROLE_LANE = "flex w-40 @2xl:w-56";
 
 export type TeamDetailTab = "role" | "overview" | "access" | "agents" | "browser" | "models" | "workbot" | "prompts" | "desktop";
 
-/** Each tab's feature intro, for `?` and its unseen dot (DESIGN.md I9). Everyone's page shares them. */
 export const TEAM_DETAIL_TAB_INTROS: Record<TeamDetailTab, FeatureIntroKey> = {
   role: "team-detail.role",
   overview: "team-detail.members",
@@ -47,7 +45,6 @@ export const TEAM_DETAIL_TAB_INTROS: Record<TeamDetailTab, FeatureIntroKey> = {
   desktop: "team-detail.desktop",
 };
 
-/** A tab's body behind its feature intro: a box replaces it while the tab has nothing set up. */
 export function TeamTabIntro({ tab, facts, children }: { tab: TeamDetailTab; facts: TeamDetailFacts | null; children: ReactNode }) {
   return <FeatureIntroGate introKey={TEAM_DETAIL_TAB_INTROS[tab]} facts={facts}>{children}</FeatureIntroGate>;
 }
@@ -61,24 +58,17 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
   const viewerAccess = orgContext
     ? getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions)
     : null;
-  // Revoking a team's plugin grant needs manager access to the plugin (`sharing.manage_all`).
   const canRevokeAccess = viewerAccess?.canManageAllShared ?? false;
-  // Members list each person's team roles the same way the Members page does.
   const organizationRoles = useOrganizationRoles(orgId, Boolean(orgContext) && (viewerAccess?.canViewPermissions ?? false));
-  // The team's Agents tab holds what it changes from Everyone.
   const showAgents = agentsTabVisible(orgContext);
-  // Open websites moves from Agents to its own Browser tab, and
-  // the team's AI providers, spend limits and default model get a Models tab.
 
   const showBrowser = showAgents;
   const showDesktop = desktopPolicyScreenRemoved(orgContext);
   const showModels = modelsTabVisible(orgContext);
   const showPrompts = promptsTabVisible(orgContext);
-  // What the team changes from Everyone's Workbot settings, with settings per team on.
   const showWorkbot = workbotTabVisible(orgContext);
   const [chosenTab, setChosenTab] = useState<TeamDetailTab | null>(initialTab);
   const defaultTab: TeamDetailTab = "role";
-  // The tab is in the address (?tab=agents), so a reload or a shared link opens it again.
   const setActiveTab = (tab: TeamDetailTab) => {
     setChosenTab(tab);
     const url = new URL(window.location.href);
@@ -102,24 +92,19 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
     return member ? [member] : [];
   });
   const memberCount = team?.memberIds.length ?? 0;
-  // The team's name and people are edited in the same form as on Members › Teams.
   const canEditTeam = Boolean(team && viewerAccess?.canManageTeams && !team.managedByScim && (!team.grantsOrganizationAdmin || viewerAccess.canManageAdminTeams));
   const editTeamLockedReason = team?.managedByScim
     ? "Managed by your identity provider. Ask your identity provider administrator to change this team."
     : team?.grantsOrganizationAdmin && !viewerAccess?.canManageAdminTeams
       ? permissionLockReason("teams.manage_admin")
       : permissionLockReason("teams.manage");
-  // Facts the tabs' intros read; tab-specific ones are added where each tab loads them.
   const teamFacts: TeamDetailFacts | null = team && orgContext
     ? { teamMembers: team.memberIds.length, managedByScim: team.managedByScim, adminTeam: team.grantsOrganizationAdmin }
     : null;
-  // The Models intro reads the same providers and OpenWork Models as the AI Gateway's, only on that tab.
   const modelsFacts = useAiGatewayIntroFacts(introsEnabled && activeTab === "models");
-  // Same query (and request) as the tab's "Can use" list: how many providers this team can use.
   const providerAccess = useGatewayAccessProviders(orgId ?? "", introsEnabled && activeTab === "models" && Boolean(orgId) && Boolean(teamModelsAccess(orgContext ?? null)?.providers));
   const sharedProviders = providerAccess.data ? directoryAccess(providerAccess.data, { type: "team", teamId }).length : undefined;
 
-  // "Add people to this team" from the Members tab intro opens this team's edit form on Members › Teams (DESIGN.md I5).
   const addPeopleRequested = searchParams.get("addPeople") === "1";
   useEffect(() => {
     if (addPeopleRequested) router.replace(`${getMembersRoute(orgSlug)}?tab=teams&editTeam=${encodeURIComponent(teamId)}`);
@@ -167,7 +152,6 @@ export function TeamDetailScreen({ teamId, initialTab = null }: { teamId: string
                   const name = member.user.name || member.user.email;
                   const flags = getOrgAccessFlags(member.role, member.isOwner);
                   const role = flags.isOwner ? BUILT_IN_ROLES.owner.label : flags.isSuperAdmin ? BUILT_IN_ROLES["super-admin"].label : flags.canonicalRole === "admin" ? BUILT_IN_ROLES.admin.label : BUILT_IN_ROLES.member.label;
-                  // Roles the person holds through other teams sit under the row, as on the Members page.
                   const viaTeams = orgContext
                     ? <MemberTeamRoles member={member} teams={orgContext.teams} setIdByTeam={organizationRoles.setIdByTeam} roles={organizationRoles.roles} exceptTeamId={teamId} />
                     : null;

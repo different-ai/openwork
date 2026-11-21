@@ -2,12 +2,9 @@ import { createHash } from "node:crypto"
 import type { SessionCheck } from "./desktop.ts"
 
 export interface SessionPollListener {
-  /** One local check with this Location's transport. Every listener on a key gets the same answer. */
   readonly check: (signal: AbortSignal) => Promise<SessionCheck>
-  /** Every check's result, whoever asked for it. */
   readonly receive: (check: SessionCheck) => void
   readonly intervalMs: number
-  /** Aborting releases this listener; the last one stops the poll. */
   readonly signal: AbortSignal
 }
 
@@ -23,11 +20,6 @@ interface SessionPollHub {
   readonly join: (endpoint: string, capability: string | undefined, listener: SessionPollListener) => () => Promise<SessionCheck>
 }
 
-// OpenCode creates one plugin instance per Location, each in its own ESM graph.
-// Without sharing, N open Locations each check the local session every second,
-// which is what makes those checks time out under load. Like the inventory
-// hubs, only an immutable join capability is global; the capability and the
-// Locations' transports stay in this closure.
 declare global {
   var __openworkDesktopSessionPolls: SessionPollHub | undefined
 }
@@ -44,7 +36,6 @@ function createSessionPollHub(): SessionPollHub {
     if (!owner) return Promise.resolve(UNKNOWN)
     const result = owner.check(entry.controller.signal).catch((): SessionCheck => UNKNOWN).then(check => {
       entry.inflight = null
-      // Fan out to every Location still listening, including ones that joined mid-check.
       for (const listener of entry.listeners.values()) {
         if (!listener.signal.aborted) { try { listener.receive(check) } catch {} }
       }
@@ -82,7 +73,6 @@ function createSessionPollHub(): SessionPollHub {
       if (current.timer) clearInterval(current.timer)
       current.controller.abort()
     }, { once: true })
-    // Check now, or join the check already in flight; the result reaches everyone.
     return () => listener.signal.aborted ? Promise.resolve(UNKNOWN) : run(current)
   }
 

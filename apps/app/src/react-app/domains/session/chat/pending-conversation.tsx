@@ -39,8 +39,6 @@ export function PendingConversationView({ conversation, composer }: { conversati
       </div>
     </div>
     <div className="shrink-0 px-0 pb-2 pt-2 max-lg:pb-0" inert>
-      {/* Keep the ordinary dock visible without giving a local identity to a
-          session API or letting this read-only shell reclaim the source draft. */}
       <NewTaskComposer draft="" onDraftChange={noop} onRunTask={noop} busy flush={false}
         context={composer ? { ...composer, draftOwnerKey: undefined, draftScope: null,
           draftSessionId: undefined, destination: undefined, client: null, workspaceId: null } : null} />

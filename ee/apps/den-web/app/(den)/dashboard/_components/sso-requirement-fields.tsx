@@ -9,7 +9,6 @@ export function ssoRequirementDescription() {
   return "SSO is offered first at sign-in. Choose whether this organization, or your whole email domain, requires it.";
 }
 
-/** The SSO requirement rows, on Org settings or the SSO page. */
 export function SsoRequirementFields(props: {
   draft: SsoSettings;
   disabled: boolean;

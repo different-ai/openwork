@@ -8,17 +8,6 @@ import type { DeliveryResult } from "./deliver.js"
 import type { AgentInstanceRow } from "./repository.js"
 import { connectionService, readableConnections, stoppedSources, withConnectionState, type MemberConnection, type MemberSourceChoice, type ResolvedSource } from "./sources.js"
 
-/**
- * What both ways of waking a member's agent share (today's, wake.ts, and the brief's, wake-brief.ts): the one calendar
- * read that learns their time zone and whether Google still answers, the one message for a source that can't be read,
- * and naming the sources a check was about. Kept apart so either wake can go without the other.
- */
-
-/**
- * One read-only calendar GET as the member through the Google connection their calendar source reads, for their time
- * zone (and, for today's agent, its events). A refusal marks only that connection: a lost sign-in holds up everything
- * it serves, a missing calendar permission only the calendar.
- */
 export async function readMemberCalendar(input: {
   sources: ResolvedSource[]
   read: (connectionId: string) => Promise<MemberCalendarRead>
@@ -32,8 +21,6 @@ export async function readMemberCalendar(input: {
     read = await input.read(connection.id)
     if (read.kind === "ok") break
     appLogger.info("workbot_agent_google_unavailable", { member_id: input.memberId, reason: read.kind })
-    // Google refused just now, whatever the stored state says: this connection only. A lost sign-in holds up all it
-    // serves; a missing calendar permission only the calendar.
     if (read.kind === "needs_connection") sources = withConnectionState(sources, connection.id, "reconnect")
     if (read.kind === "missing_scope") sources = withConnectionState(sources, connection.id, "reconnect", ["calendar"])
   }
@@ -48,16 +35,11 @@ export type CheckRecordInput = {
   message?: AgentMemberCheckMessage | null
 }
 
-/**
- * A source that is on but can't be read: one message with the action that fixes it ("Reconnect Google Workspace"),
- * once until it works again. Returns the notices to keep in the agent's state.
- */
 export async function noticeUnreadableSources(input: {
   row: AgentInstanceRow
   organizationId: DenTypeId<"organization">
   userId: DenTypeId<"user">
   unreadable: { connection: MemberConnection; sources: { id: string; name: string }[] }[]
-  /** Some other source can still be read: "I've paused checking it and kept reading the rest". */
   othersReadable: boolean
   told: Readonly<Record<string, number>>
   now: number
@@ -99,24 +81,16 @@ export async function noticeUnreadableSources(input: {
   return notices
 }
 
-/** The agent's state keeps a stopped source's notice under its own key, apart from a connection's. */
 function stoppedNoticeKey(sourceId: string) {
   return `stopped:${sourceId}`
 }
 
-/**
- * A source the agent read lately that is no longer on for the member (`workbotAgentStoppedSources`): one message for
- * the ones they can turn back on and one for the ones an admin turned off, once, each with a check that names what it
- * stopped reading. Returns the notices to keep in the agent's state; one is forgotten when its source is on again.
- * The feature is asked only when there is something to tell, and while it is off nothing is told or kept.
- */
 export async function noticeStoppedSources(input: {
   row: AgentInstanceRow
   organizationId: DenTypeId<"organization">
   userId: DenTypeId<"user">
   sources: readonly ResolvedSource[]
   choices: Readonly<Record<string, MemberSourceChoice>>
-  /** Some source can still be read; otherwise the message says nothing is left to check. */
   othersReadable: boolean
   told: Readonly<Record<string, number>>
   now: number
@@ -173,14 +147,12 @@ export async function noticeStoppedSources(input: {
   return notices
 }
 
-/** For the check's prompt: the service behind a connection source, so the agent knows what to read there (its mail, its chats). */
 export function sourcePromptService(source: ResolvedSource): { service?: "google-workspace" | "microsoft-365" | "slack" } {
   const connection = source.kind === "other" ? readableConnections(source)[0] : undefined
   const service = connection ? connectionService(connection) : null
   return service ? { service } : {}
 }
 
-/** The sources a message's items came from, named as the member knows them ("Slack", "Google Calendar"). */
 export function checkSources(items: readonly AgentItem[], sources: readonly ResolvedSource[]): AgentMemberCheckSource[] {
   return items.flatMap((item) => {
     const source = sources.find((entry) => entry.id === item.source)
@@ -190,14 +162,12 @@ export function checkSources(items: readonly AgentItem[], sources: readonly Reso
   })
 }
 
-/** "Gmail and Google Calendar". */
 export function joinNames(names: readonly string[]) {
   const unique = [...new Set(names)]
   if (unique.length <= 1) return unique[0] ?? "source"
   return `${unique.slice(0, -1).join(", ")} and ${unique.at(-1)}`
 }
 
-/** A Den provider's connection as the member knows it in the Library ("Google Workspace"). */
 export function connectionName(connection: MemberConnection) {
   if (connection.native === "google-workspace") return "Google Workspace"
   if (connection.native === "microsoft-365") return "Microsoft 365"

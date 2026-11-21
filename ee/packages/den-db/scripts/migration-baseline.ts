@@ -42,7 +42,6 @@ export function loadMigrationPlan(folder: string) {
     const migration = migrations[index]
     if (!migration || migration.folderMillis !== entry.when) throw new MigrationSafetyError("Migration journal/SQL mismatch")
     const snapshotPath = path.join(folder, "meta", `${entry.tag.slice(0, 4)}_snapshot.json`)
-    // Canonical, repository-owned Drizzle v5 snapshots, not input from the database.
     const snapshot: Snapshot | undefined = existsSync(snapshotPath)
       ? JSON.parse(readFileSync(snapshotPath, "utf8")) : undefined
     if (snapshot && (snapshot.version !== "5" || snapshot.dialect !== "mysql"
@@ -98,9 +97,6 @@ function columnShape(type: string, nullable: boolean, value: unknown, extra: str
 }
 
 function checkExpression(value: string) {
-  // Normalize MySQL's serialization of the one matrix CHECK, keeping the OR
-  // grouping intact (stripping all parentheses would accept a weaker check).
-  // INFORMATION_SCHEMA on MySQL 8.4 escapes the known string delimiters.
   let text = value.replace(/_utf8mb4\\'(member:|team:|organization)\\'/g, "'$1'")
     .replace(/`(?:gateway_provider_access|gateway_usage_bucket|gateway_usage_consumption_event|gateway_usage_limit_assignment|gateway_usage_limit_entry|gateway_usage_tracking)`\./g, "").replace(/`|\s/g, "")
     .split(/('[^']*')/).map((part, index) => index % 2 ? part : part.toLowerCase()).join("")
@@ -171,8 +167,6 @@ function preservedDashboardShape(plan: MigrationPlan): Map<string, string> {
         if (createHash("sha256").update(JSON.stringify(tables)).digest("hex") !== definitionHash) throw changed()
       } else if (tables.some(Boolean)) throw changed()
     }
-    // Only 0078 owns these tables. A later SQL change needs a new, reviewed
-    // physical expectation even if a logical snapshot still omits the pair.
     if (number !== 78 && entry.sql.some((sql) => /\b(?:dashboard|dashboard_access_grant)\b/i.test(sql.replace(/^\s*--[^\n]*$/gm, "")))) throw changed()
   }
   const tables: Snapshot["tables"] = {}
@@ -187,9 +181,6 @@ export function physicalSchemaShape(plan: MigrationPlan, applied: number, layout
   const entry = plan[applied - 1]
   if (!entry?.snapshot) throw new MigrationSafetyError(`No known snapshot for the recorded history prefix. ${recovery}`)
   const shape = snapshotShape(entry.snapshot)
-  // 0147 deliberately preserves the SQL tables but drops them from logical
-  // snapshots. A historical replay still requires their complete definitions.
-  // Current-schema bootstrap is a separate complete layout, not optional tables.
   if (Number(entry.tag.slice(0, 4)) >= 147 && layout === "historical-replay") {
     for (const [key, value] of preserved) shape.set(key, value)
   }
@@ -267,8 +258,6 @@ export function planAuthLookupIndexRepairs(plan: MigrationPlan, actual: Map<stri
   const expected = snapshotShape(snapshot)
   const differences = schemaDifferences(expected, actual)
   if (differences.length === 0) return []
-  // This is a repair plan, not a matcher exception. Only these non-unique
-  // prefix indexes may be added, and the resulting schema must match 0096.
   const allowed = [
     { tag: "0073_young_scrambler", table: "account", name: "account_account_id_provider_id", columns: ["account_id", "provider_id"] },
     { tag: "0046_messy_reaper", table: "oauthAccessToken", name: "oauth_access_token_token", columns: ["token"] },
@@ -291,7 +280,6 @@ export function recognizeBaseline(plan: MigrationPlan, actual: Map<string, strin
   if ([...actual.keys()].some((key) => key.startsWith("table:gateway_"))) {
     throw new MigrationSafetyError(`Gateway tables exist without migration receipts (already pushed or partial 0097). Explicit recovery is required; consolidated 0097 cannot be stamped onto an old deployment. ${recovery}`)
   }
-  // Never baseline the matrix migration, even if a future snapshot matches.
   for (let index = plan.length - 1; index >= 0; index--) {
     const entry = plan[index]
     if (Number(entry.tag.slice(0, 4)) > 96 || !entry.snapshot) continue
@@ -319,8 +307,6 @@ export async function foundationSql(plan: MigrationPlan) {
   const owned = new Set([...sql.matchAll(/CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+`([^`]+)`|RENAME\s+TABLE\s+`[^`]+`\s+TO\s+`([^`]+)`/gi)].map((match) => match[1] || match[2]))
   for (const [name, table] of Object.entries(foundation.tables)) {
     if (owned.has(name)) { delete foundation.tables[name]; continue }
-    // The migration chain starts after auth/system existed. Seed only those
-    // tables, excluding columns/indexes that the real replay adds later.
     for (const match of sql.matchAll(/ALTER\s+TABLE\s+`([^`]+)`\s+ADD(?:\s+COLUMN)?\s+`([^`]+)`/gi)) {
       if (match[1] === name) delete table.columns[match[2]]
     }

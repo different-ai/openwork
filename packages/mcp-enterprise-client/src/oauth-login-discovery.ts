@@ -21,13 +21,11 @@ export function createOAuthLoginDiscoveryFetch(input: {
     const initial = firstResourcePost && url === resource && init?.method === "POST"
     if (!initial) return input.fetch(rawUrl, init)
     firstResourcePost = false
-    // Do not follow even a same-origin redirect, or leak a body/credential to it.
     const response = await input.fetch(rawUrl, { ...init, redirect: "manual" })
     if (new Headers(init.headers).has("authorization")) return response
     const html = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase() === "text/html"
     if (!(response.status >= 300 && response.status < 400) && !(response.status === 200 && html)) return response
     await response.body?.cancel()
-    // An administrator already pinned the sign-in endpoints; no discovery is needed.
     if (input.manual) return new Response(null, { status: 401, headers: { "www-authenticate": "Bearer" } })
 
     const path = input.serverUrl.pathname === "/" ? "" : input.serverUrl.pathname
@@ -45,7 +43,6 @@ export function createOAuthLoginDiscoveryFetch(input: {
           continue
         }
         const parsed = OAuthProtectedResourceMetadataSchema.safeParse(await metadata.json())
-        // RFC 9728 §§3.3, 6: exact string equality, not an origin/prefix/host alias.
         if (!parsed.success || parsed.data.resource !== resource) continue
         verified = { url: metadataUrl, body: JSON.stringify(parsed.data) }
         return new Response(null, {
@@ -54,7 +51,6 @@ export function createOAuthLoginDiscoveryFetch(input: {
         })
       } catch (error) {
         if (init.signal?.aborted) throw error
-        // A missing, malformed or unavailable candidate can fall back to the root.
       }
     }
     throw new EnterpriseMcpOAuthContractError(

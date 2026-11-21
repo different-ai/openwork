@@ -1,12 +1,5 @@
 import { createHash } from "node:crypto"
 
-/**
- * The prepared computer every conversation's VM boots from: Ubuntu (Freestyle's base snapshot) plus the tools
- * an assistant reaches for on real files. The snapshot's slug is derived from this script, so changing the
- * tool list names a new snapshot; build it with `pnpm --filter @openwork-ee/headless-computer snapshot:build`.
- */
-
-/** `background <name> <command>`: runs a long command detached, so it outlives the 5-minute command limit. */
 const BACKGROUND_HELPER = `#!/bin/bash
 # background <name> <command...>: run a long command in the background.
 # Output goes to /workspace/.jobs/<name>.log; the last line is [exit N] when it finishes.
@@ -21,11 +14,6 @@ setsid nohup bash -c 'cd /workspace; bash -c "$1"; code=$?; echo "[exit $code]";
 echo "Started $name in the background. Follow it with: tail -n 20 $log"
 `
 
-/**
- * `sudo openwork-install <package>...`: the only administrative step the agent's shell can take.
- * Plain package names from the image's own repositories; no apt options, sources, files or versions,
- * so it cannot be turned into a general root shell.
- */
 const INSTALL_HELPER = `#!/bin/sh
 set -eu
 usage() { echo "usage: sudo openwork-install <package> [package...] (up to 20 package names)" >&2; exit 2; }

@@ -23,7 +23,6 @@ function hasContent(value: unknown): boolean {
 
 function textBlock(text: string): ToolResultBlock {
   try {
-    // Parsing is for display only. The original response stays untouched.
     const parsed: unknown = JSON.parse(text);
     return { kind: "json", text: JSON.stringify(parsed, null, 2) ?? text };
   } catch {
@@ -31,7 +30,6 @@ function textBlock(text: string): ToolResultBlock {
   }
 }
 
-/** Select the MCP answer, never server metadata or binary content, for the first viewport. */
 export function toolResultPresentation(result: unknown): ToolResultPresentation {
   const isError = isRecord(result) && result.isError === true;
   if (isRecord(result) && hasContent(result.structuredContent)) {
@@ -50,7 +48,6 @@ export function toolResultPresentation(result: unknown): ToolResultPresentation 
   ));
   if (blocks.length > 0) return { blocks, isError, emptyMessage: null };
 
-  // Locally generated failures have an error message rather than an MCP content array.
   if (isRecord(result) && typeof result.error === "string" && result.error.trim()) {
     return { blocks: [textBlock(result.error)], isError: true, emptyMessage: null };
   }

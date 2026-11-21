@@ -23,14 +23,10 @@ import {
 } from "../surface/composer/composer-pills";
 import { decodeComposerMentionValue } from "../surface/composer/mention-encoding";
 
-/** Pasted text reaches the model as the user's words and stays collapsed in the transcript. */
 function pastedTextPart(text: string): TextPartInput {
   return { type: "text", text, metadata: { openworkPastedText: true } };
 }
 
-// All workspace-scoped server URLs/clients/tokens come from
-// `resolveWorkspaceEndpoint` in apps/app/src/app/lib/workspace-endpoint.ts.
-// Don't compose `<baseUrl>/workspace/<id>` here.
 export async function draftToParts(
   draft: ComposerDraft,
   workspaceRoot: string,
@@ -55,7 +51,6 @@ export async function draftToParts(
     return segments[segments.length - 1] ?? "file";
   };
 
-  /** Where the next visible text starts in the prompt the person sees. */
   const visibleOffset = () => parts.reduce((total, part) => {
     if (part.type === "text") return part.synthetic ? total : total + part.text.length;
     if (part.type === "agent") return total + part.name.length + 1;
@@ -63,11 +58,6 @@ export async function draftToParts(
     return total;
   }, 0);
 
-  /**
-   * An `@file` mention: the file itself, plus OpenCode's standard file source
-   * naming the `@` text it came from. Engines that take one prompt string use
-   * the source to keep the mention (and its chip) instead of dropping it.
-   */
   const fileMentionPart = (absolute: string, mentionPath: string): FilePartInput => {
     const value = `@${mentionPath}`;
     const start = visibleOffset();
@@ -100,8 +90,6 @@ export async function draftToParts(
     }
   }
 
-  // Prefer draft.text token order so attachment chips stay inline with surrounding text
-  // (same positions as the composer), instead of dumping every file part at the end.
   const hasAttachmentTokens = /\[attachment [^\]]+\]/.test(draft.text);
   if (hasAttachmentTokens || attachmentFileById.size > 0) {
     const pasteByLabel = new Map(

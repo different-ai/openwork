@@ -9,7 +9,6 @@ import {
   collectionsExampleRows,
 } from "./collections-example-data";
 
-/** Collections example: the built-in collection plus two of the organization's own, with who gets each. */
 export function CollectionsExample() {
   const step = useExampleStep(collectionsExampleRows.length);
 
@@ -36,7 +35,6 @@ export function CollectionsExample() {
   );
 }
 
-/** A collection's Plugins tab once filled: each plugin, what's inside, and one audience for all of them. */
 export function CollectionPluginsExample() {
   const step = useExampleStep(collectionPluginsExampleRows.length);
 

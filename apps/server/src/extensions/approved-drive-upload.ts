@@ -11,17 +11,11 @@ import { OPENWORK_CLOUD_UPLOADS_EXTENSION_ID } from "./cloud-upload-constants.js
 
 export type DriveUploadArgs = { path: string; folderId?: string; connectionId?: string };
 
-/** Host-only preflight. No bytes are read until the calling chat approves.
- * Absolute paths may name one file outside the workspace; relative paths keep
- * the existing workspace resolution. This never adds an authorized root.
- */
 export async function prepareDriveUploadFile(config: ServerConfig, args: DriveUploadArgs, context: Record<string, unknown>) {
   if (config.readOnly) throw new ApiError(403, "read_only", "This server is read-only; nothing was uploaded.");
   const path = isAbsolute(args.path)
     ? await realpath(args.path)
     : await resolveAuthorizedFile(config, context, args.path, GOOGLE_DRIVE_UPLOAD_MAX_BYTES);
-  // Fast rejection of devices/pipes; the nonblocking open and post-open proof
-  // below are still required because a path can change after this check.
   if (!(await stat(path)).isFile()) throw new ApiError(400, "invalid_file", "The upload file is not a regular file.");
   const opened = await openWorkspaceFileForReading(dirname(path), path, "The upload file");
   try {
@@ -36,9 +30,6 @@ export async function prepareDriveUploadFile(config: ServerConfig, args: DriveUp
   }
 }
 
-/** A single-use capability, retained only in this process across the prompt.
- * Uploads read the checked handle, never reopen a model-supplied pathname.
- */
 export class PreparedDriveUploadFile {
   readonly args: Readonly<DriveUploadArgs>;
   private used = false;
@@ -61,15 +52,12 @@ export class PreparedDriveUploadFile {
       throw new ApiError(409, "file_changed", "The file changed while awaiting upload approval. Nothing was uploaded; ask again for the current file.");
     }
   }
-  /** Content-version scope without reading bytes or exposing inode metadata. */
   approvalIdentity() {
     return createHash("sha256").update([this.baseline.dev, this.baseline.ino, this.baseline.size, this.baseline.mtimeNs, this.baseline.ctimeNs].join(":")).digest("hex");
   }
   close() { return this.file.close(); }
 }
 
-// Only the native bridge's in-process host dispatch can attach this capability.
-// JSON args/context, HTTP headers and engine credentials cannot mint one.
 const approvedRequests = new WeakMap<Request, PreparedDriveUploadFile>();
 export function attachApprovedDriveUpload(request: Request, file: PreparedDriveUploadFile) {
   approvedRequests.set(request, file);
@@ -82,16 +70,11 @@ export function takeApprovedDriveUpload(request: Request) {
 
 export type PrepareDriveUpload = (args: DriveUploadArgs, context: Record<string, unknown>, signal: AbortSignal) => Promise<{
   path: string;
-  /** A verified file version; embeddings without one cannot remember consent. */
   approvalIdentity?: string;
   upload(): Promise<unknown>;
   close(): Promise<void>;
 }>;
 
-/** The native host's preflight/dispatch contract. Approval has its own bound;
- * transfer duration is governed by bounded chunk requests, not a total timer
- * that would cancel a healthy large upload. The caller's Stop signal remains.
- */
 export function createDriveUploadPreflight(config: ServerConfig, hostRequest: (
   path: string, init: RequestInit, file: PreparedDriveUploadFile,
 ) => Promise<unknown>): PrepareDriveUpload {

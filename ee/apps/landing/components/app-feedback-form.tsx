@@ -22,8 +22,6 @@ type Props = {
 
 type SubmitState = "idle" | "loading" | "success" | "error";
 
-/* What the page says. "roadmap" is the feedback form opened from /roadmap:
- * it is sent as ordinary feedback, and asks what to build rather than what broke. */
 type Variant = "feedback" | "roadmap" | "contact";
 
 type Copy = {
@@ -95,7 +93,6 @@ export function AppFeedbackForm(props: Props) {
   const [state, setState] = useState<SubmitState>("idle");
   const [errorMessage, setErrorMessage] = useState("");
 
-  /* Only what the app link really carried: the contact page and the roadmap have nothing to show. */
   const contextItems = useMemo(
     () => variant !== "feedback" ? [] : [
       { label: "App version", value: props.prefill.appVersion },

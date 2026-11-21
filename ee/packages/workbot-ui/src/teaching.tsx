@@ -46,7 +46,6 @@ function dismissGuide() {
   try {
     window.localStorage.setItem(GUIDE_KEY, "hidden");
   } catch {
-    // Storage off: the guide shows again after a reload, which is harmless.
   }
 }
 
@@ -79,7 +78,6 @@ export function WorkbotTeaching({ open, onOpenChange, onTakeControl, onTeachingC
   const host = workbotHost();
   const [demo, setDemo] = useState<BrowserDemonstration | null>(null);
   const [listed, setTabs] = useState<Array<{ id: string; origin: string }>>([]);
-  // Empty: the tab on screen, or the browser's most recent one.
   const [chosen, setTab] = useState("");
   const [tabPickerOpen, setTabPickerOpen] = useState(false);
   const tabSurface = useRetainedSurface(tabPickerOpen && !suspended && host.browserDemonstrations === true);
@@ -95,7 +93,6 @@ export function WorkbotTeaching({ open, onOpenChange, onTakeControl, onTeachingC
   const [purpose, setPurpose] = useState("");
   const [saved, setSaved] = useState<SkillCreatedPayload | null>(null);
   const [savedMarkdown, setSavedMarkdown] = useState("");
-  // Editing a skill after it was saved: back in review, and the next save is that skill's next version.
   const [revising, setRevising] = useState(false);
   const [ran, setRan] = useState(false);
   const [openGroups, setOpenGroups] = useState<ReadonlySet<number>>(new Set());
@@ -116,7 +113,6 @@ export function WorkbotTeaching({ open, onOpenChange, onTakeControl, onTeachingC
   const labelOf = (step: DemonstrationStep) => groups.find(group => group.steps.includes(step))?.label ?? demonstrationStepLabel(step);
   const focusedLabel = focused ? labelOf(focused) : "Task instructions";
   const done = saved !== null && !revising;
-  // The browser lists tabs most recently used first; the strip keeps them where they opened.
   const strip = new Map(liveTabs?.tabs.map((item, index) => [item.id, { label: item.label, place: index }]));
   const tabs = liveTabs ? [...listed].sort((a, b) => (strip.get(a.id)?.place ?? Infinity) - (strip.get(b.id)?.place ?? Infinity)) : listed;
   const tabLabel = (item: { id: string; origin: string }, index: number) => {
@@ -142,9 +138,8 @@ export function WorkbotTeaching({ open, onOpenChange, onTakeControl, onTeachingC
     void host.requestJson("/v1/workbot/teaching", { method: "POST", body: JSON.stringify({ action: "read" }), signal: controller.signal }, 30_000).then(({ response, payload }) => {
       if (!mounted.current || controller.signal.aborted || revision !== changes.current || !response.ok) return;
       const reply = accept(payload);
-      // A demonstration already under way opens its window again.
       if (reply.demonstration) openChange.current(true);
-    }).catch(() => { /* Opening an older desktop keeps the explicit Teach control available. */ });
+    }).catch(() => {});
     return () => controller.abort();
   }, [host, accept, suspended]);
   const chooseStep = (step: DemonstrationStep) => {
@@ -167,7 +162,6 @@ export function WorkbotTeaching({ open, onOpenChange, onTakeControl, onTeachingC
     finally { inFlight.current = false; if (mounted.current) setBusy(false); }
   };
   const enabled = host.browserDemonstrations === true && !host.documentAuthorization && !suspended;
-  // Opening the window shows it whole; with nothing being taught, it lists the tabs to choose from.
   useEffect(() => {
     if (!open) return;
     setCollapsed(false);
@@ -192,14 +186,12 @@ export function WorkbotTeaching({ open, onOpenChange, onTakeControl, onTeachingC
     timer = setTimeout(() => void poll(), 3000);
     return () => { disposed = true; controller.abort(); clearTimeout(timer); };
   }, [open, host, accept, demo?.id, suspended]);
-  // While recording, keep the newest step in view as it arrives.
   useEffect(() => {
     const container = body.current, row = container?.querySelector<HTMLElement>("[data-latest-step]");
     if (!container || !row || demo?.phase !== "recording" || stepId !== null) return;
     const bottom = row.offsetTop + row.offsetHeight - container.clientHeight + 12;
     if (container.scrollTop < bottom) container.scrollTop = bottom;
   }, [demo?.steps.length, demo?.phase, stepId, collapsed]);
-  // Finishing moves on to naming the skill, which sits below the steps in a short window.
   const nameInput = useRef<HTMLInputElement>(null);
   const lastPhase = useRef(demo?.phase);
   useEffect(() => {
@@ -216,7 +208,6 @@ export function WorkbotTeaching({ open, onOpenChange, onTakeControl, onTeachingC
       if (!mounted.current) return;
       const reply = saveSchema.parse(payload);
       setSaved(reply.saved); setSavedMarkdown(reply.markdown); setRevising(false); setRan(false); setStepId(null);
-      // The saved view starts at trying the skill, not where the review was scrolled to.
       if (body.current) body.current.scrollTop = 0;
     } catch (error) { if (mounted.current) setError(error instanceof Error ? error.message : "Couldn't confirm the save."); }
     finally { inFlight.current = false; if (mounted.current) setBusy(false); }
@@ -245,7 +236,6 @@ export function WorkbotTeaching({ open, onOpenChange, onTakeControl, onTeachingC
   const inputs = demo && done ? browserSkillInputs(demo) : [];
   const row = (step: DemonstrationStep, label: string) => {
     const text = <span className="min-w-0 flex-1"><span className="line-clamp-2 break-words">{label}</span>{step.explanation ? <span className="block truncate text-[12px] text-[var(--wb-muted)]">{step.explanation.split("\n").at(-1)}</span> : null}</span>;
-    // A saved skill's steps are for reading; Edit skill makes them selectable again.
     return done ? <div className="flex min-h-7 items-start gap-2 px-3 py-1 text-[13px]" title={label}><span className={stepNumber}>{step.id}.</span>{text}</div>
       : <Button className={`${stepRow} ${stepId === step.id ? "bg-[var(--wb-chip)]" : ""}`} aria-pressed={stepId === step.id} title={label} onClick={() => chooseStep(step)}><span className={stepNumber}>{step.id}.</span>{text}</Button>;
   };
@@ -286,7 +276,6 @@ export function WorkbotTeaching({ open, onOpenChange, onTakeControl, onTeachingC
         <span className="truncate">{label}</span>
       </li>)}
     </ol>}
-    {/* Keep the ARIA target mounted while collapsed, but unmount its contents as before. */}
     <div id={bodyId} ref={body} hidden={collapsed} className={collapsed ? "hidden" : "relative flex min-h-0 flex-col gap-2.5 overflow-y-auto border-t border-[var(--wb-hairline)] p-3"}>
       {!collapsed && <>
       {error && <p role="alert" className="text-[13px]">{error}</p>}
@@ -355,7 +344,6 @@ export function WorkbotTeaching({ open, onOpenChange, onTakeControl, onTeachingC
       </>}
       </>}
     </div>
-    {/* The step's main action stays in reach however long the review grows. */}
     {!collapsed && (guiding ? <div className={footer}>
       <Button className={`${button} px-2 text-[var(--wb-muted)]`} onClick={() => closeGuide(true)}>Don't show again</Button>
       {guideCard < GUIDE.length - 1 && <Button className={`${button} ml-auto`} onClick={() => closeGuide(false)}>Show later</Button>}

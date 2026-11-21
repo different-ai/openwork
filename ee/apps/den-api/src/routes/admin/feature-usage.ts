@@ -23,7 +23,6 @@ const featureUsageMemberSchema = z.object({
   memberId: z.string(),
   name: z.string().nullable(),
   email: z.string().nullable(),
-  /** Whether the feature is on for this member now; a member can have used it before it was turned off. */
   enabled: z.boolean(),
   firstUsedAt: z.iso.datetime(),
   lastUsedAt: z.iso.datetime(),
@@ -32,14 +31,10 @@ const featureUsageMemberSchema = z.object({
 
 const featureUsageSchema = z.object({
   key: featureKeySchema,
-  /** Active members the feature is on for now. */
   enabledMembers: z.number().int(),
-  /** Members who used it in the last 7 and 30 days. */
   usedLast7Days: z.number().int(),
   usedLast30Days: z.number().int(),
-  /** Latest change that could affect this organization (its override or the deployment-wide state), or null when it was never changed in /admin. */
   lastChange: adminFeatureChangeSchema.nullable(),
-  /** Everyone who ever used it, most recent first. */
   members: z.array(featureUsageMemberSchema),
 })
 
@@ -55,7 +50,6 @@ const rangeQuerySchema = z.object({ range: rangeSchema.default("7d") })
 const outcomeUnitSchema = z.enum(["run", "meeting", "check", "message"])
 
 const featureHealthSchema = z.object({
-  /** not_used, in_use (no outcomes to judge), healthy, failing (count failed), limited (count members at a limit), mostly_skipped. */
   status: z.enum(["not_used", "in_use", "healthy", "failing", "limited", "mostly_skipped"]),
   count: z.number().int().nullable(),
 })
@@ -65,31 +59,23 @@ const outcomeTotalsSchema = z.object({
   succeeded: z.number().int(),
   failed: z.number().int(),
   skipped: z.number().int(),
-  /** Of the runs, messages that reached the member; null when the feature's store does not say. */
   delivered: z.number().int().nullable(),
-  /** Members held back by a limit; null when the feature has none. */
   limited: z.number().int().nullable(),
   lastRunAt: z.iso.datetime().nullable(),
 })
 
 const featureOutcomesSchema = outcomeTotalsSchema.extend({
-  /** What one run is: run, meeting (one per meeting), check or message. */
   unit: outcomeUnitSchema,
-  /** Every UTC day of the range, oldest first. */
   days: z.array(z.object({ day: z.string(), runs: z.number().int(), failed: z.number().int() })),
-  /** Set when the store keeps less than the range: from when, and whether that limits all counts or only failures. */
   coverage: z.object({ from: z.iso.datetime(), counts: z.enum(["all", "failed"]) }).nullable(),
 })
 
 const featureReportSchema = z.object({
   key: featureKeySchema,
-  /** Organizations the feature is on for now. */
   organizationsOn: z.number().int(),
-  /** Active members who used it in the range (feature_usage). */
   membersUsing: z.number().int(),
   lastUsedAt: z.iso.datetime().nullable(),
   health: featureHealthSchema,
-  /** Null when the feature has no outcome reader: adoption only. */
   outcomes: featureOutcomesSchema.nullable(),
 })
 
@@ -97,7 +83,6 @@ const rangeFields = {
   range: rangeSchema,
   from: z.iso.datetime(),
   to: z.iso.datetime(),
-  /** Every organization on the deployment. */
   organizations: z.number().int(),
 }
 
@@ -110,12 +95,10 @@ const featureOutcomesResponseSchema = z.object({
 const featureOutcomeDetailResponseSchema = z.object({
   ...rangeFields,
   feature: featureReportSchema.extend({
-    /** Failed and skipped runs by reason code, most first. */
     reasons: z.array(z.object({ reason: z.string(), outcome: z.enum(["failed", "skipped"]), count: z.number().int() })),
     byOrganization: z.array(z.object({
       organizationId: z.string(),
       name: z.string(),
-      /** Whether the feature is on for the organization now. */
       enabled: z.boolean(),
       membersUsing: z.number().int(),
       lastUsedAt: z.iso.datetime().nullable(),
@@ -165,8 +148,6 @@ function featureJson(feature: FeatureReport) {
 }
 
 export function registerAdminFeatureUsageRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
-  // Operational diagnostics outlive the rollout. Slack messages still record
-  // success, refusal reasons and rate limits in their existing store.
   app.get(
     "/v1/admin/slack-send-as-bot/outcomes",
     describeRoute({

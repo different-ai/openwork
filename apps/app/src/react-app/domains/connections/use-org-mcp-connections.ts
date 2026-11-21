@@ -14,11 +14,6 @@ import { connectPollOutcome, type ConnectionSignInProblem } from "./connection-s
 import { connectionNeedsReconnect, isNativeProviderConnectionId } from "./native-provider-connections";
 import { openMemberApiKeyDialog } from "./member-api-key-dialog";
 
-// Mirrors the poll-until-connected pattern used for local MCP OAuth
-// (mcp-auth-modal.tsx) — the external server's redirect completes on a
-// background browser tab/window, so the desktop app finds out by polling
-// Den for the connection's `connectedForMe` flag rather than any callback
-// into the app itself.
 const CONNECT_POLL_INTERVAL_MS = 2_000;
 const CONNECT_TIMEOUT_MS = 90_000;
 
@@ -64,7 +59,6 @@ export type OrgMcpConnectOptions = {
   forceFreshAuthorization?: boolean;
 };
 
-/** A sign-in that came back to Den but did not connect, with Den's reason. */
 export type OrgMcpConnectFailureDetail = ConnectionSignInProblem & { connectionId: string };
 
 export type OrgMcpConnectionCardState = {
@@ -94,13 +88,6 @@ export function isOrgMcpPollScopeCurrent(
   return scope.generation === currentGeneration && scope.organizationId === activeOrganizationId;
 }
 
-/**
- * Pure projection from a raw Den connection to what the card should show.
- * A `shared`-credential connection is set up once by an admin — the member
- * never "connects" it themselves, so it's shown as managed, not actionable.
- * A `per_member` connection needs the CALLING member's own OAuth, tracked by
- * `connectedForMe` rather than the connection-wide `connected` flag.
- */
 export function resolveOrgMcpConnectionCardState(
   connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe" | "needsReconnect" | "missingFeatures">
     & Partial<Pick<DenExternalMcpConnection, "authType" | "credentialHealth">>,
@@ -136,15 +123,7 @@ export function resolveOrgMcpConnectionCardState(
   };
 }
 
-/**
- * Org-level External MCP Connections (Den's `/v1/mcp-connections`) usable by
- * the signed-in member. The settings catalog projects them into Marketplace
- * or My Extensions; they execute through Den's `search_capabilities` /
- * `execute_capability` surface, not local per-workspace `mcpServers` entries.
- */
 export function useOrgMcpConnections() {
-  // Settings remounts every time the extensions panel opens, so start from
-  // whatever the app already fetched instead of an empty list.
   const prefetched = readCloudInventoryScope();
   const [connections, setConnectionsState] = useState<DenExternalMcpConnection[]>(
     () => (prefetched ? readCachedOrgMcpConnections(prefetched) ?? [] : []),
@@ -326,7 +305,6 @@ export function useOrgMcpConnections() {
             setConnectingId(null);
           }
         } catch {
-          // Transient — keep polling until the timeout above gives up.
         }
       }, CONNECT_POLL_INTERVAL_MS);
     } catch (connectError) {

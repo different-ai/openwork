@@ -1,8 +1,3 @@
-/**
- * Tiếng Việt translations
- * Thuật ngữ chuyên môn KHÔNG dịch: Skills, Plugins, Commands, Sessions, OpenCode, OpenPackage, OpenWork, MCPs, OAuth, MCP
- */
-
 export default {
   "artifact.office_empty": "Tệp này không có văn bản đọc được. Hãy mở bằng ứng dụng khác để xem bản gốc.",
   "artifact.office_empty_slide": "Trang chiếu này không có văn bản đọc được.",

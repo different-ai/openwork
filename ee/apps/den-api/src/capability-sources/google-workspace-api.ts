@@ -219,8 +219,6 @@ export function extractGmailThreadReplyContext(json: unknown): { lastMessageId: 
 function formatGmailQuoteDate(value: string, timeZone?: string): string {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
-  // RFC 5322 dates carry their own offset. Never default to the server's zone.
-  // Intl accepts fixed offsets as well as IANA zones on the shipping Node runtime.
   const offset = value.match(/([+-]\d{2})(\d{2})(?:\s*\([^)]*\))?\s*$/)
   const obsoleteZone = value.match(/\b(UT|GMT|[ECMP][SD]T)\s*$/i)?.[1]?.toUpperCase()
   const namedOffsets: Record<string, string> = { UT: "+00:00", GMT: "+00:00", EST: "-05:00", EDT: "-04:00", CST: "-06:00", CDT: "-05:00", MST: "-07:00", MDT: "-06:00", PST: "-08:00", PDT: "-07:00" }
@@ -253,8 +251,6 @@ export function buildGmailQuote(input: { from: string; date: string; body: strin
   const attributionHtml = sender ? `${escapeQuoteHtml(prefix)}${senderHtml} wrote:` : "Original message:"
   const truncated = input.body.length > GMAIL_QUOTE_BODY_LIMIT
   const body = input.body.slice(0, GMAIL_QUOTE_BODY_LIMIT).replace(/\r\n?/g, "\n")
-  // Sanitize before cutting, then parse the cut fragment again to close any open
-  // elements. An oversized original must not swallow the rest of the draft.
   const safeHtml = input.html ? sanitizeGmailQuoteHtml(input.html) || undefined : undefined
   const html = safeHtml === undefined ? undefined : sanitizeGmailQuoteHtml(safeHtml.slice(0, GMAIL_QUOTE_BODY_LIMIT)) + (safeHtml.length > GMAIL_QUOTE_BODY_LIMIT ? "<div>[message trimmed]</div>" : "")
   return { attribution, attributionHtml, body: truncated ? `${body}\n[message trimmed]` : body, html }
@@ -328,10 +324,6 @@ export function extractGmailMessage(payloadJson: unknown): GoogleWorkspaceGmailM
   }
 }
 
-/**
- * Gmail's attachments.get returns base64url data. Normalize to standard
- * base64 so callers can decode the bytes locally with any base64 decoder.
- */
 export function extractGmailAttachmentData(json: unknown): GoogleWorkspaceAttachmentData | null {
   const root = isRecord(json) ? json : {}
   const data = readString(root, "data")

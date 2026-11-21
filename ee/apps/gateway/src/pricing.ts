@@ -1,6 +1,3 @@
-// Cost snapshot from models.dev pricing (src/models/base.json) plus the custom
-// providers in src/models/providers. Prices are USD per 1M tokens, so
-// micro-USD per token equals the listed price.
 import type { GatewayRequestProtocol } from "@openwork/types/den/gateway"
 import { withBedrockMantleProvider, withMicrosoftFoundryProvider } from "@openwork-ee/gateway-catalog"
 import { readProviderCatalog } from "./models/catalog.js"
@@ -37,7 +34,6 @@ function readPrice(value: unknown) {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null
 }
 
-/** Price from one models.dev-shaped model config (USD per 1M tokens), or null. */
 export function readModelPrice(model: unknown): ModelPrice | null {
   if (!isRecord(model) || !isRecord(model.cost)) return null
   const input = readPrice(model.cost.input)
@@ -52,7 +48,6 @@ export function readModelPrice(model: unknown): ModelPrice | null {
       if (above !== null && price) contextTiers.push({ above, price })
     }
   } else if (isRecord(model.cost.context_over_200k)) {
-    // Older catalog snapshots predate the explicit tier threshold.
     const price = readModelPrice({ cost: { ...model.cost, ...model.cost.context_over_200k, context_over_200k: undefined } })
     if (price) contextTiers.push({ above: 200_000, price })
   }
@@ -84,10 +79,6 @@ export function createPricingCatalog(raw: unknown): PricingCatalog {
   }
 }
 
-/**
- * One model's price, for providers whose prices live on the synced model row
- * (LiteLLM) rather than in the models.dev snapshot.
- */
 export function fixedModelPricing(providerId: string, modelId: string, price: ModelPrice): PricingCatalog {
   return { getModelPrice: (provider, model) => provider === providerId && model === modelId ? price : null }
 }
@@ -109,8 +100,6 @@ function tokens(value: number | null) {
 export function estimateCostMicroUsd(input: CostEstimateInput, catalog: PricingCatalog = loadPricingCatalogFromFile()): number | null {
   let price = catalog.getModelPrice(input.providerId, input.modelId)
   if (!price) return null
-  // Optional detail counters may be absent, but partial primary usage must not
-  // become an apparently complete (and under-priced) cost.
   if (input.inputTokens === null || input.outputTokens === null
     || Object.values(input).some((value) => typeof value === "number" && (!Number.isFinite(value) || value < 0))) return null
   const disjointCache = input.protocol === "anthropic_messages" || input.protocol === "bedrock_converse"
@@ -120,8 +109,6 @@ export function estimateCostMicroUsd(input: CostEstimateInput, catalog: PricingC
   const uncachedInput = input.inputTokens - (disjointCache ? 0 : cache)
   if (uncachedInput < 0) return null
   for (const tier of price.contextTiers ?? []) if (contextTokens > tier.above) price = tier.price
-  // Only Gemini reports thoughts separately from output. Anthropic and OpenAI
-  // already include reasoning in their output counters.
   const separateReasoning = input.protocol === "google_generate_content"
   const microUsd =
     uncachedInput * price.input +

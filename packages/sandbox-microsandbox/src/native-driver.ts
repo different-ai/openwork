@@ -20,7 +20,6 @@ function labelsOf(config: Record<string, unknown>): Record<string, string> {
   return result
 }
 
-/** The SDK can also drive microsandbox's hosted service; this adapter is only ever the computer it runs on. */
 function requireLocal(backendKind: "local" | "cloud", name: string) {
   if (backendKind !== "local") throw new MicrosandboxDriverError("notLocal", `Sandbox ${name} is not on this computer`)
 }
@@ -40,12 +39,10 @@ function hasCode(error: unknown, code: string) {
  */
 export function createNativeDriver(load: () => Promise<Microsandbox> = () => import("microsandbox")): MicrosandboxDriver {
   let loaded: Promise<Microsandbox> | undefined
-  // The SDK's backend is process-wide and can be switched to the hosted service by the environment.
   const sdk = () => (loaded ??= load().then(m => {
     m.setDefaultBackend("local")
     return m
   }))
-  /** One connection attempt per sandbox id, shared by concurrent calls. A failed call drops only its own entry. */
   const connections = new Map<string, Promise<Sandbox>>()
 
   async function lookup(guest: GuestIdentity): Promise<SandboxHandle> {
@@ -77,18 +74,15 @@ export function createNativeDriver(load: () => Promise<Microsandbox> = () => imp
       const domains = config.network.egress === "allow-list" ? [...config.network.domains] : []
       let result = builder
         .policy(domains.length ? deny.egress(rule => rule.tcp().ports([80, 443]).allowDomains(domains)) : deny)
-        // An allowed name must not become a way to reach this computer's own network.
         .dns(dns => dns.rebindProtection(true))
       for (const port of config.ports) result = result.portBind(LOOPBACK, port.hostPort, port.guestPort)
       return result
     }
   }
-  /** A sandbox that failed to start keeps its name; without this the next create would find a broken one. */
   async function removeFailed(m: Microsandbox, name: string, owner: string) {
     try {
       const handle = await m.Sandbox.get(name)
       requireLocal(handle.backendKind, handle.name)
-      // Another creator may have claimed this name while our request was failing.
       if (labelsOf(handle.config())[CREATE_OWNER] !== owner) return
       await handle.destroy({ force: true, timeoutMs: REMOVE_TIMEOUT_MS })
     } catch (error) {
@@ -114,10 +108,8 @@ export function createNativeDriver(load: () => Promise<Microsandbox> = () => imp
       for (const mount of config.mounts) {
         builder = builder.volume(mount.guestPath, (volume: Mount) => mount.access === "ro" ? volume.bind(mount.hostPath).readonly() : volume.bind(mount.hostPath))
       }
-      // No interface at all is the strongest form of "no network"; published ports need one.
       if (config.network.egress === "none" && !config.ports.length) builder = builder.disableNetwork()
       else builder = builder.network(network(m, config))
-      // Host names in an allow-list are only enforceable on HTTPS when the host can read the request authority.
       if (config.network.egress === "allow-list") builder = builder.interceptTls()
       let calledOff = false
       let finished = false
@@ -129,7 +121,7 @@ export function createNativeDriver(load: () => Promise<Microsandbox> = () => imp
             if (finished || calledOff) break
             onProgress(event)
           }
-        })().catch(() => undefined) // Telemetry must never gate creation.
+        })().catch(() => undefined)
         timer = setTimeout(() => {
           calledOff = true
           creation.cancel()

@@ -8,15 +8,10 @@ const requestSchema = z.object({
   name: z.string().min(1),
   input: z.unknown(),
   sessionId: z.string().min(1),
-  /** A subagent's chat, from the engine's session tree. */
   rootSessionId: z.string().min(1).max(256).optional(),
-  /** That subagent's short description or agent name, for its cursor. */
   agentName: z.string().min(1).max(200).optional(),
 });
 
-/** Only the existing conversation-scoped browser and computer tools, with
- * their usual approval and policy checks. This credential does not authorize
- * app commands or the read bridge; the desktop's credential stays in the host. */
 export async function createV2BrowserBridge(assertHostExecution: () => Promise<void> = async () => {}) {
   const token = randomBytes(32).toString("base64url");
   const tools = { ...(await browserTools()).tool, ...(await computerTools()).tool };

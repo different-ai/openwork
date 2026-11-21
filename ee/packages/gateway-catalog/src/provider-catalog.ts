@@ -1,7 +1,3 @@
-// A models.dev-shaped catalog exposed as npm/api/env per provider id, with the
-// derived Bedrock Mantle, Microsoft Foundry, LiteLLM and TrueFoundry providers
-// and the synthetic custom-provider entry. The Gateway classifies protocols
-// from `npm`; it reads the catalog file itself (ee/apps/gateway/src/provider-catalog.ts).
 import { BEDROCK_MANTLE_PROVIDER_ID, bedrockMantleApiPathsFromCatalog, withBedrockMantleProvider } from "@openwork-ee/gateway-catalog/bedrock-mantle"
 import { withLiteLlmProvider } from "@openwork-ee/gateway-catalog/litellm"
 import { MICROSOFT_FOUNDRY_PROVIDER_ID, withMicrosoftFoundryProvider } from "@openwork-ee/gateway-catalog/microsoft-foundry"
@@ -12,9 +8,7 @@ export type CatalogProvider = {
   npm: string | null
   api: string | null
   env: string[]
-  /** Upstream API path per model id (Bedrock Mantle serves models under /v1 or /openai/v1). */
   modelApiPaths?: ReadonlyMap<string, string>
-  /** A protocol family the SDK package alone does not identify (Claude on Microsoft Foundry speaks @ai-sdk/anthropic). */
   family?: "microsoft_foundry"
 }
 
@@ -48,8 +42,6 @@ function readCatalogProvider(value: unknown): CatalogProvider | null {
 export function createProviderCatalog(raw: unknown): ProviderCatalog {
   const providers = new Map<string, CatalogProvider>()
   if (isRecord(raw)) {
-    // Same derivation as Den's catalog, so both see one amazon-bedrock-mantle and
-    // one microsoft-foundry provider, and synthetic, modelless litellm and truefoundry providers.
     for (const [id, value] of Object.entries(withTrueFoundryProvider(withLiteLlmProvider(withMicrosoftFoundryProvider(withBedrockMantleProvider(raw)))))) {
       const provider = readCatalogProvider(value)
       if (!provider) continue
@@ -57,7 +49,6 @@ export function createProviderCatalog(raw: unknown): ProviderCatalog {
         : id === MICROSOFT_FOUNDRY_PROVIDER_ID ? { ...provider, family: "microsoft_foundry" } : provider)
     }
   }
-  // A real upstream entry with this id never replaces the synthetic one: its address would bypass the custom-provider rules.
   providers.set(GATEWAY_CUSTOM_PROVIDER_ID, gatewayCustomCatalogProvider)
   return {
     getCatalogProvider(providerId) {

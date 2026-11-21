@@ -37,7 +37,6 @@ function Mark() {
   return <DenBrandMark name="TrueFoundry" serviceUrl={TRUEFOUNDRY_DOC_URL} className="h-8 w-8 rounded-[8px]" imageClassName="h-4 w-4" />;
 }
 
-/** Which TrueFoundry models people get: all of them, or only the ones the admin picks. Saving syncs. Keyed by the saved pick, so a save or sync starts it again from what is saved. */
 function TrueFoundryModelsCard({ status, busy, saving, onSave }: { status: GatewayTrueFoundryStatus; busy: boolean; saving: boolean; onSave: (modelIds: string[] | null) => void }) {
   const [allowAll, setAllowAll] = useState(status.selectedModelIds === null);
   const [modelIds, setModelIds] = useState(() => trueFoundryPickedModels(status));
@@ -69,7 +68,6 @@ function TrueFoundryModelsCard({ status, busy, saving, onSave }: { status: Gatew
   );
 }
 
-/** The "Create missing users in TrueFoundry" setting, shared by setup and the saved provider. */
 function MissingUsersSetting({ checked, disabled, onChange }: { checked: boolean; disabled: boolean; onChange: (checked: boolean) => void }) {
   return (
     <div className="mt-3 flex items-start gap-3 border-t border-gray-100 pt-3">
@@ -82,7 +80,6 @@ function MissingUsersSetting({ checked, disabled, onChange }: { checked: boolean
   );
 }
 
-/** The "Track usage costs in OpenWork" setting, shared by setup and the saved provider. */
 function UsageCostsSetting({ checked, disabled, onChange }: { checked: boolean; disabled: boolean; onChange: (checked: boolean) => void }) {
   return (
     <div className="mt-3 flex items-start gap-3 border-t border-gray-100 pt-3">
@@ -97,10 +94,6 @@ function UsageCostsSetting({ checked, disabled, onChange }: { checked: boolean; 
 
 type AttentionEntry = GatewayTrueFoundryStatus["attention"][number];
 
-/**
- * Confirms "Reset tokens" for a person at TrueFoundry's token limit. TrueFoundry can't list or
- * delete only the tokens OpenWork made, so the reset revokes every token the person holds.
- */
 function ResetTokensDialog({ entry, busy, onCancel, onConfirm }: { entry: AttentionEntry | null; busy: boolean; onCancel: () => void; onConfirm: (entry: AttentionEntry) => void }) {
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const who = entry?.name ?? entry?.email ?? "this person";
@@ -127,7 +120,6 @@ function ResetTokensDialog({ entry, busy, onCancel, onConfirm }: { entry: Attent
   );
 }
 
-/** Setup for a new TrueFoundry provider: address, admin key, missing users, and who gets a key. */
 export function TrueFoundrySetupScreen({ embedded = false }: { embedded?: boolean }) {
   const Heading = embedded ? "h2" : "h1";
   const router = useRouter();
@@ -198,7 +190,6 @@ export function TrueFoundrySetupScreen({ embedded = false }: { embedded?: boolea
   );
 }
 
-/** A saved TrueFoundry provider: sync state, admin key, missing users, people needing attention and access. */
 export function TrueFoundryProviderScreen({ provider, reload, embedded = false }: { provider: DenInferenceProviderDetails; reload: () => Promise<void>; embedded?: boolean }) {
   const Heading = embedded ? "h2" : "h1";
   const router = useRouter();
@@ -271,14 +262,12 @@ export function TrueFoundryProviderScreen({ provider, reload, embedded = false }
     const context = createAuditOperationContext();
     await saveGatewayResource(provider.id, null, { resource: "access-grants", body: { audience, modelGroupId: accessGroupId, credentialSetId: set.id } }, context);
     if (audience.type === "organization") for (const grant of grants) if (grant.audience.type !== "organization") await deleteGatewayResource(provider.id, "access-grants", grant.id, context);
-    // Create the new people's keys now rather than at the next sync.
     return `Access saved. ${trueFoundrySyncSummary((await syncTrueFoundryProvider(provider.id, context)).sync)}`;
   });
   const removeGrant = (audience: Audience) => run("access", "remove-truefoundry-access", async () => {
     const grant = grants.find((entry) => JSON.stringify(entry.audience) === JSON.stringify(audience));
     const context = createAuditOperationContext();
     if (grant) await deleteGatewayResource(provider.id, "access-grants", grant.id, context);
-    // They stop being served at once; the sync deletes their keys in TrueFoundry.
     return `Access removed. ${trueFoundrySyncSummary((await syncTrueFoundryProvider(provider.id, context)).sync)}`;
   });
 

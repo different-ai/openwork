@@ -84,7 +84,6 @@ export function validateRecurrenceChoice(input: { recurrence?: unknown; rrule?: 
   if (input.recurrence !== undefined && input.rrule !== undefined) ctx.addIssue({ code: "custom", path: ["rrule"], message: "Use recurrence or rrule, not both." })
 }
 
-// Google may reorder rule parts, weekdays or exception lines in its confirmation.
 export function calendarRecurrenceMatches(expected: string[], actual: string[] | null | undefined): boolean {
   const normalize = (lines: string[]) => lines.map((line) => {
     if (line.startsWith("RRULE:")) return "RRULE:" + line.slice(6).split(";").map((part) => {

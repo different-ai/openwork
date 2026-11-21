@@ -1,8 +1,3 @@
-/**
- * English translations
- * Professional terms (Skills, Plugins, Commands, Sessions, OpenCode, OpenPackage, OpenWork) are NOT translated
- */
-
 export default {
   "artifact.office_empty": "No readable text in this file. Open it in another app to see the original.",
   "artifact.office_empty_slide": "No readable text on this slide.",

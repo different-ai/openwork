@@ -7,7 +7,6 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { GuidedDeploymentPage, GuidedDeploymentsList } from "./managed-deployments-guided";
 import { ManagedDeploymentsScreen } from "./managed-deployments-screen";
 
-/** Manage › Deployments: the list, or one deployment's own page. */
 export function DeploymentsRoute({ deploymentId }: { deploymentId?: string }) {
   const { orgContext, orgSlug } = useOrgDashboard();
   const router = useRouter();

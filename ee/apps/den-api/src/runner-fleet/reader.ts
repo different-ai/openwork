@@ -2,20 +2,13 @@ import { RUNNER_FLEET_NODE_LIMIT, type AdminRunnerFleet, type RunnerFleetNode } 
 import type { RunnerFleetConfig } from "./config.js"
 import { fleetFromNodes, nodeFromState, unreachableNode } from "./state.js"
 
-/**
- * Asks every runner node for its own state, directly: each configured name is resolved to the nodes behind it and
- * each node answers `GET /state` on celld's internal listener. One read is a few small private-network requests, so
- * the page can follow the fleet live; nothing is written and nothing but `/state` is ever requested.
- */
 export type RunnerFleetReaderDeps = {
-  /** Every IPv4 address behind a name. */
   resolve: (host: string) => Promise<string[]>
   fetch: typeof fetch
   now: () => Date
 }
 
 const STATE_TIMEOUT_MS = 2_500
-/** A state report lists each cell in memory a few times over; far beyond this it is not a state report. */
 const MAX_STATE_CHARS = 16 * 1024 * 1024
 const IPV4 = /^(?:\d{1,3}\.){3}\d{1,3}$/
 
@@ -25,7 +18,6 @@ async function readNode(address: Address, id: string, limitBytes: number | null,
   try {
     const response = await deps.fetch(`http://${address.ip}:${address.port}/state`, {
       headers: { accept: "application/json" },
-      // A node never redirects its state; following one would send Den somewhere it was not told to go.
       redirect: "error",
       signal: AbortSignal.timeout(STATE_TIMEOUT_MS),
     })
@@ -58,7 +50,6 @@ export async function readRunnerFleet(config: RunnerFleetConfig, deps: RunnerFle
     }
   }))
   const addresses = [...found.values()].sort((a, b) => a.ip.localeCompare(b.ip) || a.port - b.port).slice(0, RUNNER_FLEET_NODE_LIMIT)
-  // A node is known by its address; the port joins the name only where two nodes share an address.
   const shared = new Set(addresses.map((address) => address.ip)).size < addresses.length
   const nodes = await Promise.all(addresses.map((address) => readNode(address, shared ? `${address.ip}:${address.port}` : address.ip, config.nodeMemoryBytes, deps)))
   return fleetFromNodes(nodes, deps.now(), addresses.length === 0 ? (failed > 0 ? "dns_failed" : "no_nodes") : null)

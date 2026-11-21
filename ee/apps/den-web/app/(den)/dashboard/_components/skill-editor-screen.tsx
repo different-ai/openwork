@@ -63,7 +63,6 @@ export function SkillEditorScreen({ pluginId, skillId }: { pluginId: string; ski
         : await createSkill.mutateAsync(draft);
       router.push(getPluginSkillRoute(orgSlug, pluginId, saved.id));
     } catch {
-      // React Query exposes the request error in the form below.
     } finally {
       submittingRef.current = false;
     }

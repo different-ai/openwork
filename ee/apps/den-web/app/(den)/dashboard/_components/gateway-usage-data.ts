@@ -46,7 +46,6 @@ export function useGatewayUsage(orgId: string, groupBy: GatewayUsageGroupBy, fil
     staleTime: 0,
     retry: false,
     refetchOnWindowFocus: false,
-    // Only filter options use this placeholder, never counts or chart data.
     placeholderData: (previous, previousQuery) =>
       previousQuery?.queryKey[1] === orgId && previous?.groupBy === groupBy ? previous : undefined,
     queryFn: async ({ signal }) => {
@@ -74,7 +73,6 @@ export function useGatewayUsage(orgId: string, groupBy: GatewayUsageGroupBy, fil
       const seriesIds = new Set(usage.series.map((series) => series.id));
       const from = Date.parse(`${usage.from}T00:00:00Z`);
       const daily = [...usage.daily].sort((a, b) => a.date.localeCompare(b.date));
-      // Reject incomplete days or mismatched stacks rather than inventing zeros or totals.
       if (usage.groupBy !== groupBy || usage.days !== 31 || daily.length !== usage.days
         || (usage.requestCount !== undefined && (
           (usage.unreportedRequests !== null && usage.unreportedRequests > usage.requestCount)
@@ -105,7 +103,6 @@ export function useGatewayUsage(orgId: string, groupBy: GatewayUsageGroupBy, fil
 
 export type GatewayUsageTotal = { id: string; label: string; costMicroUsd: number; tokens: number; unpriced: boolean };
 
-/** Totals per series over the whole period, highest cost first. */
 export function gatewayUsageTotals(usage: GatewayUsageResponse["usage"]): GatewayUsageTotal[] {
   return usage.series.map((series) => {
     let costMicroUsd = 0;
@@ -122,7 +119,6 @@ export function gatewayUsageTotals(usage: GatewayUsageResponse["usage"]): Gatewa
     .sort((a, b) => b.costMicroUsd - a.costMicroUsd || b.tokens - a.tokens || a.label.localeCompare(b.label));
 }
 
-/** The upstream provider id encoded in a model series id (`model:<hex family>:<hex model>`). */
 export function gatewayUsageModelFamily(seriesId: string): string | null {
   const [kind, familyHex] = seriesId.split(":");
   if (kind !== "model" || !familyHex || !/^[0-9A-Fa-f]*$/.test(familyHex) || familyHex.length % 2) return null;

@@ -25,31 +25,22 @@ import { MICROSANDBOX_PROVIDER_ID, isPortInUse, microsandboxError } from "./erro
 import { createNativeDriver } from "./native-driver.js"
 
 export type MicrosandboxProviderOptions = {
-  /** OCI image new sandboxes boot. Pin a digest where the configuration is trusted to choose one. */
   image: string
-  /** Required: the adapter never grants network access implicitly. */
   network: MicrosandboxNetwork
-  /** The only host directories the guest can see. Give real paths: a path through a symlink is refused. */
   mounts?: readonly MicrosandboxMount[]
 }
 
 export type MicrosandboxProviderDeps = {
   driver?: MicrosandboxDriver
   now?: () => number
-  /** A free port on this computer's loopback interface for one published guest port. */
   allocatePort?: () => Promise<number>
 }
 
-/** Host port a guest port is published on, recorded at create because microsandbox fixes it then. */
 const PORT_LABEL = "openwork.sandbox.port."
 const MAX_NAME_BYTES = 128
-/** Lets the guest's own timeout, which ends the process, win over the adapter's deadline. */
 const RUN_GRACE_MS = 5_000
-/** Lets the driver call a slow creation off and clean up before the adapter's deadline reports an unknown outcome. */
 const CREATE_GRACE_MS = 20_000
-/** A free port can be taken between choosing it and the sandbox binding it. */
 const PORT_ATTEMPTS = 3
-/** A dotted name whose last label starts with a letter, so an IP address is not mistaken for a host name. */
 const HOSTNAME = /^(?=.{1,253}$)([a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]([a-z0-9-]{0,61}[a-z0-9])?$/
 const ENV_NAME = /^[A-Za-z_][A-Za-z0-9_]*$/
 
@@ -58,7 +49,6 @@ const STATES: Readonly<Record<GuestStatus, SandboxState>> = {
   starting: "starting",
   running: "running",
   draining: "stopping",
-  // `start` resumes memory; the pause block is what tells a pause from a cold stop.
   paused: "stopped",
   stopped: "stopped",
   crashed: "error",
@@ -87,7 +77,6 @@ function allocateLoopbackPort(): Promise<number> {
   })
 }
 
-/** Written one way only, so two spellings of a path cannot slip past a check made on the text. */
 function isPlainGuestPath(path: string) {
   return path.startsWith("/") && path !== "/" && posix.normalize(path) === path && !path.endsWith("/")
 }
@@ -96,7 +85,6 @@ function isPlainHostPath(path: string) {
   return isAbsolute(path) && resolve(path) === path && parse(path).root !== path
 }
 
-/** Reject configuration that could widen access by accident; nothing is repaired or defaulted. */
 function validateOptions(options: MicrosandboxProviderOptions) {
   if (!options.image.trim()) invalid("microsandbox requires an image")
   const guestPaths = new Set<string>()
@@ -148,7 +136,6 @@ export function createMicrosandboxProvider(options: MicrosandboxProviderOptions,
       })])
     } finally { if (timer) clearTimeout(timer) }
   }
-  /** The sandbox this handle was issued for, never a later one that reused its name. */
   async function current(h: SandboxHandle): Promise<GuestInfo> {
     const wanted = guest(h)
     const info = await mapped(() => driver.get(wanted.name))
@@ -158,7 +145,6 @@ export function createMicrosandboxProvider(options: MicrosandboxProviderOptions,
   function matches(info: GuestInfo, labels: SandboxQuery["labels"]) {
     return Object.entries(labels ?? {}).every(([key, value]) => info.labels[key] === value)
   }
-  /** Everything about a sandbox except the host ports its previews are published on. */
   function guestBase(spec: SandboxSpec): { config: Omit<GuestConfig, "ports" | "labels">; guestPorts: number[] } {
     const name = spec.idempotencyKey
     if (!name.trim() || Buffer.byteLength(name) > MAX_NAME_BYTES) unsupported(`names that are empty or longer than ${MAX_NAME_BYTES} bytes`)
@@ -185,7 +171,6 @@ export function createMicrosandboxProvider(options: MicrosandboxProviderOptions,
         env: spec.env,
         mounts: options.mounts ?? [],
         network: options.network,
-        // Zero means the sandbox is never stopped for being idle, which is what no timer does.
         ...(idleMinutes ? { idleTimeoutSeconds: Math.round(idleMinutes * 60) } : {}),
         ephemeral: spec.ephemeral === true,
       },

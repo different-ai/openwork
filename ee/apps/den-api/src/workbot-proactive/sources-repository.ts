@@ -15,13 +15,6 @@ import { listExternalMcpToolsThroughSearchCache, probeExternalConnectionStatus }
 import { listTeamsForMember } from "../member-teams.js"
 import type { MemberConnection } from "./sources.js"
 
-/**
- * Database reads behind a member's agent's sources: the connections the member can use and whether their own account
- * on each is ready, the organization's connections for the admin, and how many members connected each. No provider is
- * called.
- */
-
-/** The member's usable connections (Den's own and MCP), each with whether their account is ready to read. */
 export async function listMemberConnections(input: { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member"> }): Promise<MemberConnection[]> {
   const teamIds = (await listTeamsForMember({ organizationId: input.organizationId, memberId: input.memberId })).map((team) => team.id)
   const member = { orgMembershipId: input.memberId, teamIds }
@@ -47,11 +40,6 @@ export async function listMemberConnections(input: { organizationId: DenTypeId<"
 
 type OrganizationSourceConnection = AgentSourceConnection & { native: string | null }
 
-/**
- * Every connection in the organization, for "What agents read": Den's own providers and MCP connections. That includes
- * a provider set up before connections had rows (its OAuth client saved under the provider's own key), which members'
- * agents read too (listNativeProviderUsableEntries), so an admin can pick or leave it out like any other.
- */
 export async function listOrganizationSourceConnections(
   organizationId: DenTypeId<"organization">,
   deps: {
@@ -73,12 +61,6 @@ export async function listOrganizationSourceConnections(
 
 type CountedConnection = { id: string; kind: string; authType: string; credentialMode: string }
 
-/**
- * How many active members connected their own account on each of the organization's connections, by connection id:
- * Den's own providers (including one set up before connections had rows, whose accounts are saved under the provider's
- * key) and MCP connections where each member signs in. A connection everyone shares one credential for (or that needs
- * no sign-in) is left out: who uses it isn't known. Picks each core source's automatic default.
- */
 export async function countConnectedMembers(
   organizationId: DenTypeId<"organization">,
   deps: {
@@ -97,7 +79,6 @@ export async function countConnectedMembers(
   return counts
 }
 
-/** Active members with a saved access token (or personal API key), per provider id, in one organization. */
 async function countConnectedAccounts(organizationId: DenTypeId<"organization">): Promise<{ providerId: string; members: number }[]> {
   return db
     .select({ providerId: ConnectedAccountTable.providerId, members: count() })
@@ -112,14 +93,8 @@ async function countConnectedAccounts(organizationId: DenTypeId<"organization">)
     .groupBy(ConnectedAccountTable.providerId)
 }
 
-/** How long listing one connection's tools may take for a check or a page; the tool cache answers most at once. */
 export const CONNECTION_TOOLS_DEADLINE_MS = 8_000
 
-/**
- * `workbotAgentBrief`: an MCP connection's tools as this member's account sees them, through Den's tool cache (the
- * same listing Connect's search uses), without the tools an admin turned off for the connection everywhere. Null when
- * it isn't one of the organization's MCP connections or its server didn't answer in time.
- */
 export async function listConnectionToolsForMember(input: {
   organizationId: DenTypeId<"organization">
   memberId: DenTypeId<"member">

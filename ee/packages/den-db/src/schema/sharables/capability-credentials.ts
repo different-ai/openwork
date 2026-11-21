@@ -41,14 +41,6 @@ export const OrgOAuthClientTable = mysqlTable(
     providerId: varchar("provider_id", { length: 255 }).notNull(),
     clientId: varchar("client_id", { length: 512 }).notNull(),
     clientSecret: encryptedTextColumn("client_secret"),
-    /**
-     * Free-form provider-specific extras: for MCP-SDK-driven external
-     * connections this holds the dynamically-registered client metadata
-     * (client_id_issued_at, registration_access_token, etc.) and cached
-     * discovery state (authorization server URLs) so the SDK's `auth()`
-     * doesn't have to re-discover on every call. For native providers this
-     * is typically empty.
-     */
     extra: compatJsonColumn<Record<string, unknown>>("extra"),
     createdByOrgMembershipId: denTypeIdColumn(
       "member",
@@ -73,20 +65,11 @@ export type ExternalMcpReadinessCheck = {
   status: "ready" | "could_not_verify"
   checkedAt: string
   lastSuccessfulAt: string | null
-  /** Server-written copy only; never provider text. */
   reason: string | null
-  /**
-   * Why a check did not pass, so clients can tell a rejected sign-in from an
-   * outage without parsing copy. Absent on checks recorded before 2026-10-22.
-   */
   failure?: ExternalMcpReadinessFailure | null
-  /** Diagnostic code of a failed check or sign-in attempt. Never returned. */
   code?: string | null
-  /** Diagnostic reference of a failed check or sign-in attempt, for support. */
   referenceId?: string | null
-  /** Validated link to the provider page where the named setting is changed. */
   providerSettingsUrl?: string | null
-  /** Binds the probe to the configuration and credential it actually checked. Never returned. */
   fingerprint: string
 }
 
@@ -98,30 +81,17 @@ export const ConnectedAccountTable = mysqlTable(
       "organization",
       "organization_id",
     ).notNull(),
-    /**
-     * Mandatory single owner. Unlike LLM provider keys (legitimately
-     * org-shared), a connected account's credential belongs to one human's
-     * grant (their inbox, their Drive, their MCP session) — it is never
-     * org-wide or team-shared.
-     */
     orgMembershipId: denTypeIdColumn("member", "org_membership_id").notNull(),
     providerId: varchar("provider_id", { length: 255 }).notNull(),
     externalAccountId: varchar("external_account_id", { length: 255 }),
     scopes: compatJsonColumn<string[]>("scopes"),
-    /** OAuth access token, or an opaque personal MCP API key with tokenType="api_key" (never refreshed as OAuth). */
     accessToken: encryptedTextColumn("access_token"),
     refreshToken: encryptedTextColumn("refresh_token"),
     tokenType: varchar("token_type", { length: 64 }),
     expiresAt: timestamp("expires_at", { fsp: 3 }),
-    /**
-     * Transient PKCE code verifier, present only between connect/start and
-     * connect/callback for a given (org, member, provider). Cleared once
-     * tokens are saved.
-     */
     pendingCodeVerifier: encryptedTextColumn("pending_code_verifier"),
     credentialHealth: compatJsonColumn<ExternalMcpCredentialHealth>("credential_health"),
     readinessCheck: compatJsonColumn<ExternalMcpReadinessCheck>("readiness_check"),
-    /** Rotated on API-key replacement or a new OAuth grant, never routine refresh. */
     readinessCredentialBinding: varchar("readiness_credential_binding", { length: 64 }),
     connectedAt: timestamp("connected_at", { fsp: 3 }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { fsp: 3 })
@@ -153,19 +123,9 @@ export type ExternalMcpOAuthConfiguration = {
   version: 1
   authorizationServerIssuer: string | null
   requestedScopes: string[]
-  /**
-   * Sign-in asks for `requestedScopes` alone, leaving out any others the
-   * server's sign-in challenge names. Absent means the challenge's are kept.
-   */
   requestSelectedScopesOnly?: boolean
   callbackMode: ExternalMcpOAuthCallbackMode
-  /** Explicit administrator-pinned endpoints; absent on discovery-based connections. */
   manualOAuthEndpoints?: { authorizationEndpoint: string; tokenEndpoint: string }
-  /**
-   * SDK-owned discovery state. Den validates it before reuse and never exposes
-   * it through the connection API. Keeping it with the connection allows
-   * issuer/resource discovery to be cached before a client registration exists.
-   */
   discovery?: Record<string, unknown>
 }
 
@@ -208,87 +168,24 @@ export const ExternalMcpConnectionTable = mysqlTable(
     externalKey: varchar("external_key", { length: 128 }),
     url: varchar("url", { length: 2048 }).notNull(),
     authType: mysqlEnum("auth_type", externalMcpAuthTypeValues).notNull(),
-    /**
-     * How Den supplies the connection's capabilities. "external_mcp" rows
-     * are discovered dynamically and handshake over MCP; "native_provider"
-     * rows carry credentials for a capability set Den implements itself, so
-     * they never perform a tools/list handshake. `native_provider_key` points
-     * at the NATIVE_OAUTH_PROVIDERS registry entry in
-     * ee/apps/den-api/src/capability-sources/provider-registry.ts and is NULL
-     * for external MCP rows.
-     */
     kind: mysqlEnum("kind", externalMcpConnectionKindValues).notNull().default("external_mcp"),
-    /**
-     * Stable registry key selecting the native OAuth provider implementation.
-     * Only populated when kind = "native_provider".
-     */
     nativeProviderKey: varchar("native_provider_key", { length: 64 }),
-    /**
-     * Versioned OAuth policy for this MCP resource. Existing rows remain null
-     * and are classified lazily so manually registered legacy callbacks keep
-     * working until an administrator migrates them.
-     */
     oauthConfiguration: compatJsonColumn<ExternalMcpOAuthConfiguration>("oauth_configuration"),
     toolPolicy: compatJsonColumn<ExternalMcpToolPolicy>("tool_policy"),
-    /**
-     * When true, granted members may reach this connection as a standard MCP
-     * server through Den's per-connection endpoint: the provider's own tool
-     * catalog is listed and callable directly instead of only through the
-     * bounded search_capabilities/execute_capability pair. Access grants and
-     * the tool policy still apply on every request. Defaults to false so
-     * existing connections keep the bounded surface.
-     */
     exposeDirectly: boolean("expose_directly").notNull().default(false),
-    /**
-     * How the connection's credential relates to people:
-     * - "shared": one org-level credential (this row's token columns, or
-     *   apiKey). Everyone granted access acts as that single account —
-     *   right for service-account/bot-style integrations.
-      * - "per_member": the connection (and any OAuth client) is org-level,
-      *   but each member authorizes their own account or enrolls their own
-      *   API key. Credentials live in ConnectedAccountTable keyed by
-     *   (orgMembershipId, providerId = this row's id). The agent then acts
-     *   as the calling member, preserving the provider's own ACLs and audit
-     *   trail — right for Notion/Linear-style personal-permission SaaS.
-     */
     credentialMode: mysqlEnum("credential_mode", externalMcpCredentialModeValues).notNull().default("shared"),
-    /** Only set for authType="apikey", credentialMode="shared". Never a personal-key fallback. Sent as a Bearer token. */
     apiKey: encryptedTextColumn("api_key"),
-    /** Administrator-selected transport only; the member supplies the raw key. */
     apiKeyAuthScheme: mysqlEnum("api_key_auth_scheme", ["bearer", "token"]).notNull().default("bearer"),
-    /**
-     * Administrator-configured request headers sent with every MCP request,
-     * stored encrypted as a JSON string of `[{ name, value }]` (at most four).
-     * Values are never returned by the API; only names are exposed.
-     */
     requestHeaders: encryptedTextColumn("request_headers"),
-    /**
-     * OAuth tokens for authType = "oauth". Unlike ConnectedAccountTable,
-     * this is deliberately org-level, not per-member: an external MCP
-     * connection (Notion, Linear, ...) is a shared org integration, like an
-     * LLM provider key, not one person's personal grant. Populated by the
-     * MCP SDK's own OAuthClientProvider machinery (client/auth.ts), which
-     * also handles silent refresh via StreamableHTTPClientTransport.
-     */
     accessToken: encryptedTextColumn("access_token"),
     refreshToken: encryptedTextColumn("refresh_token"),
     tokenType: varchar("token_type", { length: 64 }),
     scope: text("scope"),
     expiresAt: timestamp("expires_at", { fsp: 3 }),
-    /**
-     * Transient PKCE code verifier, present only between connect/start and
-     * connect/callback. Cleared once tokens are saved.
-     */
     pendingCodeVerifier: encryptedTextColumn("pending_code_verifier"),
     credentialHealth: compatJsonColumn<ExternalMcpCredentialHealth>("credential_health"),
     readinessCheck: compatJsonColumn<ExternalMcpReadinessCheck>("readiness_check"),
-    /** Rotated on API-key replacement or a new OAuth grant, never routine refresh. */
     readinessCredentialBinding: varchar("readiness_credential_binding", { length: 64 }),
-    /**
-     * Set when live discovery no longer matches the selected OAuth issuer.
-     * The mismatch remains fail-closed until an administrator explicitly
-     * confirms one of the issuers currently advertised by the resource.
-     */
     oauthIssuerReviewRequiredAt: timestamp("oauth_issuer_review_required_at", { fsp: 3 }),
     connectedAt: timestamp("connected_at", { fsp: 3 }),
     createdByOrgMembershipId: denTypeIdColumn(

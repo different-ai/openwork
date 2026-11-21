@@ -31,21 +31,15 @@ type Context = Omit<CloudSkillContext, "session"> & {
   };
 };
 
-/** Why the host refused a call, so the model can correct the call instead of guessing from a status code. */
 async function refusalReason(response: Response): Promise<string> {
   const body: unknown = await response.json().catch(() => null);
   const reason = body && typeof body === "object" && "error" in body && typeof body.error === "string" ? body.error.trim() : "";
   return reason ? `: ${reason.slice(0, 500)}` : "";
 }
 
-// Separate credentials authorize app reads, sidebar group changes, inert
-// automation proposals, Drive file transfers and Gmail or Outlook drafts the
-// person approves, and conversation-scoped browser and computer operations.
-// Neither grants arbitrary host APIs or other OpenWork app commands.
 export default {
   id: "openwork.context",
   async setup(context: Context) {
-    // The host asks the person in this tool call's chat before a Drive change or a Gmail or Outlook draft.
     const driveCall = async (name: string, input: unknown, call: ToolCall, failure: string) => {
       const response = await fetch(context.options.url, {
         method: "POST", redirect: "error", signal: call.signal,
@@ -59,10 +53,6 @@ export default {
       return { content: [{ type: "text" as const, text }] };
     };
     const browser = context.options.browser;
-    // A subagent's computer work belongs to the chat that started it: that chat's Stop, Take
-    // over, computer and output folder. The engine's session tree says which; model input never does.
-    // A subagent's cursor says who it is: its short description (the child session's
-    // title), or else its agent's name.
     const roots = new Map<string, { rootSessionId: string; agentName?: string }>();
     const rootOf = async (sessionID: string, agent?: string) => {
       const known = roots.get(sessionID);
@@ -105,7 +95,6 @@ export default {
               headers: { Authorization: `Bearer ${context.options.token}`, "Content-Type": "application/json" },
               body: JSON.stringify({
                 name, input, sessionId: call.sessionID,
-                // A command that asks first shows its approval at this call in the chat.
                 ...(name === "openwork_execute" && context.location?.directory && call.messageID && call.id ? {
                   caller: { directory: context.location.directory, messageId: call.messageID, callId: call.id, ...(call.agent ? { agent: call.agent } : {}) },
                 } : {}),

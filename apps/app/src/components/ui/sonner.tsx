@@ -197,18 +197,13 @@ function ToastCard({ id, type, title, description, action, cancel, notification 
 interface UndoToastOptions {
   id?: string | number
   duration?: number
-  /** Glyph for the action that was just taken, e.g. an archive box. */
   icon?: LucideIcon
-  /** Reverses the action; the toast dismisses as soon as it is chosen. */
   undo: ToastAction
-  /** Optional secondary action that leaves the change in place, e.g. "View". */
   view?: ToastAction
-  /** Quiet second half of the line, e.g. who else is affected. */
   detail?: React.ReactNode
   closeLabel?: string
 }
 
-/** Reversible actions stay quiet for long enough to change your mind. */
 const UNDO_TOAST_DURATION_MS = 10_000
 
 interface UndoToastCardProps extends Omit<UndoToastOptions, "id" | "duration"> {
@@ -216,16 +211,7 @@ interface UndoToastCardProps extends Omit<UndoToastOptions, "id" | "duration"> {
   title: React.ReactNode
 }
 
-/**
- * One-line confirmation for a reversible action, dropped in from the top of
- * the window: icon, what happened, then "View" / "Undo" / close. The wrapper
- * spans sonner's toast width so the pill itself can hug its content and stay
- * centered under the title bar.
- */
 function UndoToastCard({ id, title, icon: Icon, undo, view, detail, closeLabel }: UndoToastCardProps) {
-  // Sonner keeps a dismissed toast mounted through its exit animation. Once an
-  // action is chosen the pill has done its job, so hide it at once instead of
-  // letting "Undo" linger for another few hundred milliseconds.
   const [chosen, setChosen] = React.useState(false)
   const choose = (action?: ToastAction) => {
     setChosen(true)

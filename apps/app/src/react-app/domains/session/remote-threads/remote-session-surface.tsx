@@ -18,26 +18,13 @@ import { useFollowRemoteThread, useRemoteThread, type RemoteThreadEntry } from "
 import { remoteThreadView } from "./remote-thread-view"
 import { useRemoteThreadConversation } from "./use-remote-thread-conversation"
 
-/**
- * A task on another computer opened in the main
- * pane, the way a local helper opens (#6590). Enter steers it, the round
- * button stops it while it runs, and Esc or the breadcrumb return to the chat
- * that started it at the same pane, scroll position and row, with the draft
- * here kept for next time. The route is `remote:<threadKey>`; nothing about
- * it touches the local engine.
- */
-
-/** Where a task's route returns to, shared by the header and the pane. */
 export type RemoteHelperNavigation = {
-  /** `child-navigation.ts` scope of the chat pane it was opened from. */
   scope: string
-  /** Opens the chat that started the task. */
   openParent: (sessionId: string) => void
 }
 
 function useRemoteHelper(threadKey: string) {
   const [origin] = useState<RemoteHelperOrigin | null>(() => remoteHelperOrigin(threadKey))
-  // Like an open panel, the open task keeps itself followed.
   useFollowRemoteThread(origin?.start ?? null, origin?.owner ?? { workspaceId: "", sessionId: "" }, null)
   const entry = useRemoteThread(threadKey)
   return { origin, entry }
@@ -52,7 +39,6 @@ function useReturnToParent(threadKey: string, origin: RemoteHelperOrigin | null,
   }
 }
 
-/** The page header for a task: `Parent chat / Task title`, where it runs, Open beside and Stop as text. */
 export function RemoteSessionHeader({ threadKey, navigation }: { threadKey: string; navigation: RemoteHelperNavigation }) {
   const { origin, entry } = useRemoteHelper(threadKey)
   const returnToParent = useReturnToParent(threadKey, origin, navigation)
@@ -63,7 +49,6 @@ export function RemoteSessionHeader({ threadKey, navigation }: { threadKey: stri
   return (
     <div className="flex min-w-0 items-center gap-2 text-[13px]" data-remote-session-header={threadKey}>
       <nav className="flex min-w-0 items-center gap-1" aria-label={view.title}>
-        {/* Plain text, no button padding: the breadcrumb starts on the header's own left edge. */}
         <button
           type="button"
           className="max-w-48 shrink-0 cursor-pointer truncate rounded-sm text-muted-foreground transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none titlebar-no-drag"
@@ -83,7 +68,6 @@ export function RemoteSessionHeader({ threadKey, navigation }: { threadKey: stri
         className="shrink-0 titlebar-no-drag"
         data-remote-session-open-beside=""
         onClick={() => {
-          // The side panel belongs to the chat that started the task.
           returnToParent()
           openRemoteThreadPanel(origin.owner.sessionId, origin.owner.workspaceId, origin.start, view.title)
         }}
@@ -131,7 +115,6 @@ function RemoteSessionConversation({ entry, origin, navigation }: { entry: Remot
   const brief = entry.start.prompt?.trim() ?? ""
   const [briefOpen, setBriefOpen] = useState(false)
 
-  // Leaving by any path (Esc, breadcrumb, sidebar) keeps the draft for next time.
   const { draftRef } = conversation
   useLayoutEffect(() => registerChildDraftPersistence(navigation.scope, remoteSessionRouteId(threadKey), () => saveRemoteHelperDraft(threadKey, draftRef.current)),
     [navigation.scope, threadKey, draftRef])
@@ -141,7 +124,6 @@ function RemoteSessionConversation({ entry, origin, navigation }: { entry: Remot
     const handler = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing) return
       if (event.key !== "Escape" && !(event.metaKey && event.key === "[")) return
-      // An open menu or dialog takes Esc first, as in a local helper.
       if ([...document.querySelectorAll<HTMLElement>('[role="dialog"], [role="menu"], [role="listbox"], [data-composer-menu-open="true"]')]
         .some(element => element.getClientRects().length > 0 && !element.hasAttribute("data-closed")
           && element.getAttribute("data-state") !== "closed")) return
@@ -158,7 +140,6 @@ function RemoteSessionConversation({ entry, origin, navigation }: { entry: Remot
       <RemoteThreadTranscriptBody entry={entry} conversation={conversation}>
         {brief ? (
           <Collapsible open={briefOpen} onOpenChange={setBriefOpen} className="mx-auto w-full max-w-3xl px-2 text-sm text-muted-foreground md:px-10" data-remote-session-brief="">
-            {/* Text first, chevron after it (one left edge with the replies below). */}
             <CollapsibleTrigger className="flex max-w-full min-w-0 cursor-pointer items-center gap-1 text-start hover:text-foreground">
               <span className="min-w-0 truncate">{t("session.remote_task_brief", { brief })}</span>
               <ChevronRight aria-hidden="true" className={cn("size-3.5 shrink-0 text-muted-foreground/70 transition-transform duration-150 ease-out motion-reduce:transition-none", briefOpen && "rotate-90")} />
@@ -168,7 +149,6 @@ function RemoteSessionConversation({ entry, origin, navigation }: { entry: Remot
         ) : null}
       </RemoteThreadTranscriptBody>
 
-      {/* The task's question or permission, answered from here. */}
       {view.waitingFor && conversation.page?.pending?.kind === view.waitingFor ? (
         <div className="mx-auto w-full max-w-3xl shrink-0 px-3" data-remote-session-question-slot="">
           <RemoteThreadAnswerCard pending={conversation.page.pending} computer={view.computer} collapsible={questionMinimizeEnabled} onAnswer={(answer) => answerRemoteThread(entry, answer)} />

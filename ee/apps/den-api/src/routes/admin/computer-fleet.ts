@@ -8,11 +8,9 @@ import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, un
 import type { AuthContextVariables } from "../../session.js"
 
 const historyQuerySchema = z.object({ range: computerFleetHistoryRangeSchema.default("24h") })
-/** An organization's id, or `unknown` for computers whose organization Den cannot name. */
 const fleetQuerySchema = z.object({ organization: z.string().trim().min(1).max(64).regex(/^[A-Za-z0-9_-]+$/).optional() })
 const computerParamsSchema = z.object({ source: computerFleetSourceKindSchema, id: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}$/) })
 const unavailableSchema = z.object({ error: z.literal("computer_unavailable"), code: z.string(), message: z.string() })
-/** A read code as words: `provider_http_503` reads "provider http 503". */
 const unavailableMessage = (code: string) => /^http_4\d\d$/.test(code) ? `The headless runner in use did not take this request (${code.replaceAll("_", " ")}). A runner from before it could read one computer answers this way: the page works once a current runner is deployed.`
   : code === "not_configured" ? "This deployment has no headless runner."
   : `The computer could not be read (${code.replaceAll("_", " ")}).`

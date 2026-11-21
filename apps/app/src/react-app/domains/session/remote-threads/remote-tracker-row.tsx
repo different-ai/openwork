@@ -9,15 +9,8 @@ import { stopRemoteThread } from "./remote-thread-actions"
 import { useFollowRemoteThread, useRemoteThread, type RemoteThreadOwner } from "./remote-thread-store"
 import { remoteThreadView } from "./remote-thread-view"
 
-/** How the composer's Agents list counts a row; the same kinds as a local helper. */
 export type RemoteTrackerKind = AgentTrackerKind
 
-/**
- * In the composer's Agents list: a task the turn
- * started on another computer, drawn by the same row as a local helper, with
- * the same words, time, Review, Stop and Open. Name = where it runs, task =
- * its title.
- */
 export function RemoteTrackerRow({ start, owner, startedAt, onKind, onOpen }: {
   start: RemoteThreadStart
   owner: RemoteThreadOwner
@@ -29,7 +22,6 @@ export function RemoteTrackerRow({ start, owner, startedAt, onKind, onOpen }: {
   const entry = useRemoteThread(start.key)
   const [stopping, setStopping] = useState(false)
   const [stoppedHere, setStoppedHere] = useState(false)
-  // The time ticks like a local helper's while the task works.
   const [now, setNow] = useState(() => Date.now())
   const view = remoteThreadView(start, entry, now, stoppedHere)
   useEffect(() => {

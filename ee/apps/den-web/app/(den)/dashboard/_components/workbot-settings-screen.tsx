@@ -83,7 +83,6 @@ export function WorkbotSettingsScreen() {
   const query = useWorkbotSettings(orgId, Boolean(orgId));
   const save = useSaveWorkbotModel(orgId);
   const modelTest = useTestWorkbotDefaultModel(orgId);
-  // With settings per team on, the page says how many teams changed Workbot's settings for their members.
   const teamSettings = useWorkbotTeamSettings(orgId, true);
   const teamsOverriding = teamSettings.data ? workbotTeamsOverridingCount(teamSettings.data) : 0;
   const resetTest = modelTest.reset;
@@ -104,16 +103,12 @@ export function WorkbotSettingsScreen() {
   }, [orgId, current, draft, resetTest]);
 
   const name = workbotDisplayName(parseOrganizationMetadata(orgContext?.organization.metadata ?? null)?.brandAppName);
-  // Members' agents ride on Workbot: shown only when Workbot is deployed here.
   const proactive = orgContext?.capabilities.workbot === true;
-  // Tabs split Workbot's own settings from members' agents and what they read, where there are agents to show.
   const tabs = proactive;
-  // Whether members' agents read the calendar: the calendar setting of Everyone's policy, as a row on General.
   const agentPolicy = useWorkbotProactive(orgId, proactive && Boolean(orgId));
   const saveAgentPolicy = useSaveWorkbotProactive(orgId);
   const [tab, setTab] = useState<WorkbotSettingsTab>("general");
   const parts = workbotSettingsParts(tabs, tab);
-  // "See the last 7 days" on Everyone's page links to a section under Members' agents.
   useEffect(() => {
     const linked = workbotSettingsTabForHash(window.location.hash, AGENT_HEALTH_ANCHOR);
     if (linked) setTab(linked);
@@ -299,7 +294,5 @@ export function WorkbotSettingsScreen() {
     </div>
   );
 
-  // With feature intros on, the Workbot intro replaces the page while Workbot has nothing to answer with
-  // (DESIGN.md I1, I2); with the flag off, the page renders as before.
   return <FeatureIntroGate introKey="workbot" facts={introFacts}>{page}</FeatureIntroGate>;
 }

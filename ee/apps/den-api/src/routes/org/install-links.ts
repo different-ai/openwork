@@ -26,7 +26,6 @@ const INSTALL_RATE_LIMIT_WINDOW_MS = 1000 * 60 * 60
 const INSTALL_CONFIG_RATE_LIMIT_MAX = 60
 const INSTALL_ARTIFACT_RATE_LIMIT_MAX = 20
 
-// Kept so older clients that still send it get a 200 rather than a 400.
 const createInstallLinkBodySchema = z.object({
   rotate: z.boolean().optional().describe("Ignored. Install pages carry no token, so there is nothing to rotate."),
 }).meta({ ref: "CreateInstallLinkRequest" })
@@ -210,18 +209,10 @@ async function resolveInstallConfigForOrganization(input: {
   }
 }
 
-/** The normal install page: signed-in members get their active organization's setup. */
 function installPageUrl() {
   return new URL("/install", env.betterAuthUrl).toString()
 }
 
-/**
- * Public deployment setup for desktop builds that still resolve pasted
- * `/install?token=…` links here. The token is ignored and nothing about any
- * organization is returned (not even a single-org deployment's name, logo or
- * version policy): only the server addresses and that sign-in is required.
- * The desktop then signs in normally.
- */
 async function resolvePublicInstallConfig(request: Request) {
   return {
     config: buildInstallConfig({

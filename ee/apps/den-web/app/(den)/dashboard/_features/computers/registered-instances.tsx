@@ -10,28 +10,23 @@ const STATUS_LABELS: Record<OrganizationRegisteredInstance["status"], string> = 
   provisioning: "Provisioning", healthy: "Healthy", failed: "Failed", stopped: "Stopped",
 };
 
-/** A stored healthy status does not establish a live connection. Heartbeat remains a separate fact. */
 export function registeredInstanceStatus(instance: Pick<OrganizationRegisteredInstance, "status">): string {
   return STATUS_LABELS[instance.status];
 }
 
-/** What it is and where it runs: "Cloud instance, cloud, test-region". Nothing is invented for what was not reported. */
 export function registeredInstanceLine(instance: Pick<OrganizationRegisteredInstance, "destination" | "provider" | "region">): string {
   return [instance.destination === "local" ? "Local instance" : "Cloud instance", instance.provider?.trim(), instance.region?.trim()].filter(Boolean).join(", ");
 }
 
-/** The owner as the computers' lane shows one: a member's name, or that none was reported. */
 function InstanceOwner({ instance }: { instance: OrganizationRegisteredInstance }) {
   const named = instance.owner?.name?.trim() || instance.owner?.email?.trim();
   if (!named) return <RowLane lane={LANE.owner} className={`items-center ${secondaryText}`}><span className="truncate">Not reported</span></RowLane>;
   return <OwnerLane device={{ owner: instance.owner, shared: false }} />;
 }
 
-/** Registered OpenWork worker hosts, in the same rows as computers. Read-only: status is what was stored, not a live check. */
 export function RegisteredInstances({ instances, total, filtered = false, page, pageSize, busy, onPage, now }: {
   instances: OrganizationRegisteredInstance[];
   total: number;
-  /** The page is narrowed by a search: an empty section then says nothing matches instead of leaving. */
   filtered?: boolean;
   page: number;
   pageSize: number;
@@ -40,7 +35,6 @@ export function RegisteredInstances({ instances, total, filtered = false, page, 
   now: number;
 }) {
   const pages = devicePageCount(total, pageSize);
-  // An organization with no instances has no section about them.
   if (total === 0 && instances.length === 0 && !filtered) return null;
   return <div className="mt-10 min-w-0">
     <ItemSection variant="rule" title="OpenWork instances" meta={total.toLocaleString("en-US")} testId="registered-instances">

@@ -38,7 +38,6 @@ export const CapabilityUsageEventTable = mysqlTable("capability_usage_event", {
   kind: varchar("kind", { length: 32 }).$type<CapabilityUsageKind>().notNull(),
   plugin_id: denTypeIdColumn("plugin", "plugin_id"),
   config_object_id: denTypeIdColumn("configObject", "config_object_id"),
-  /** An external_mcp_connection id, or a provider key for legacy Google Workspace / Microsoft 365 connections. */
   connection_id: varchar("connection_id", { length: 64 }),
   source: varchar("source", { length: 32 }).$type<CapabilityUsageSource>().notNull().default("agent"),
   outcome: varchar("outcome", { length: 32 }).$type<CapabilityUsageOutcome>(),
@@ -52,8 +51,6 @@ export const CapabilityUsageEventTable = mysqlTable("capability_usage_event", {
   index("capability_usage_plugin").on(table.organization_id, table.plugin_id, table.created_at),
 ])
 
-// A permanent singleton record: INSERT ... ON DUPLICATE KEY UPDATE holds an
-// InnoDB exclusive lock through commit, so two rollup runs never fold the same day.
 export const CapabilityUsageRollupLockTable = mysqlTable("capability_usage_rollup_lock", {
   id: int("id").notNull().primaryKey(),
 })
@@ -65,7 +62,6 @@ export const CapabilityUsageRollupLockTable = mysqlTable("capability_usage_rollu
 export const CapabilityUsageRollupTable = mysqlTable("capability_usage_rollups", {
   id: denTypeIdColumn("capabilityUsageRollup", "id").notNull().primaryKey(),
   bucket_start: timestamp("bucket_start", { fsp: 3 }).notNull(),
-  /** capabilityUsageRollupDimensionKey of the dimensions below. */
   dimension_key: varchar("dimension_key", { length: 64 }).notNull(),
   organization_id: denTypeIdColumn("organization", "organization_id").notNull(),
   org_membership_id: denTypeIdColumn("member", "org_membership_id").notNull(),

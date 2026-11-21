@@ -14,19 +14,12 @@ const CONNECT_DISCOVERY_INSTRUCTION = "Org-connected services, remote skills, Wo
 export const OPENWORK_V2_INSTRUCTION_KEY = "openwork.context";
 export const OPENWORK_V2_CONFIGURED_INSTRUCTION_KEY = "openwork.configured-instructions";
 
-/**
- * The pinned OpenCode 2.0.26 accepts the config `instructions` array but never
- * loads it; 2.0.30 does (anomalyco/opencode#55539). After that pin bump the
- * server only deletes this entry, clearing it from sessions that carried it.
- */
 export const ENGINE_IGNORES_CONFIGURED_INSTRUCTIONS = constants.opencodeV2Version === "2.0.26";
 
-// Leaves room for JSON escaping under the engine's 256 KiB entry limit.
 const CONFIGURED_INSTRUCTIONS_MAX_BYTES = 192 * 1024;
 
 const execFileAsync = promisify(execFile);
 
-// Bun's node:fs glob never matches dot paths such as `.opencode/AGENTS.md`.
 async function matchFiles(pattern: string, cwd: string) {
   const matches: string[] = [];
   const found = typeof process.versions.bun === "string"
@@ -41,14 +34,11 @@ function insideRoot(root: string, path: string) {
   return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
 
-// Instruction documents only, never a file the engine asks before any agent
-// reads (its default `*.env` and `*.env.*` read rules, `.env.example` aside).
 function instructionDocument(path: string) {
   const name = basename(path);
   return /\.(?:md|mdc|markdown|txt)$/i.test(name) && !/\.env(?:$|\.(?!example$))/i.test(name);
 }
 
-/** The paths git ignores; none outside a repository or without git. Tracked files are never ignored. */
 async function gitIgnored(cwd: string, paths: string[]) {
   if (paths.length === 0) return new Set<string>();
   try {
@@ -57,8 +47,6 @@ async function gitIgnored(cwd: string, paths: string[]) {
     const { stdout } = await run;
     return new Set(stdout.split("\0").filter(Boolean));
   } catch (error) {
-    // Exit 1: nothing ignored. Without a repository there are no ignore rules;
-    // a checkout git cannot read, or any other failure, throws.
     const { code, stderr } = error as { code?: unknown; stderr?: unknown };
     if (code === 1) return new Set<string>();
     if (code === 128 && typeof stderr === "string" && /not a git repository/i.test(stderr)) return new Set<string>();
@@ -67,13 +55,6 @@ async function gitIgnored(cwd: string, paths: string[]) {
   }
 }
 
-/**
- * The workspace config's `instructions` files rendered the way OpenCode does,
- * or null when none load. A workspace's config may come from someone else, so
- * it can only send instruction documents that are part of the workspace:
- * Markdown or text files inside it that git does not ignore. Local files such
- * as `.env` or ignored notes, URLs and paths outside the workspace never load.
- */
 export async function readConfiguredInstructions(workspaceRoot: string): Promise<string | null> {
   const sources = new Set<string>();
   for (const path of workspaceOpencodeConfigCandidates(workspaceRoot)) {
@@ -88,17 +69,14 @@ export async function readConfiguredInstructions(workspaceRoot: string): Promise
   for (const source of sources) {
     if (/^https?:\/\//i.test(source)) continue;
     const expanded = source.startsWith("~/") ? join(homedir(), source.slice(2)) : source;
-    // Bun's glob ignores absolute patterns, so every match starts from the workspace.
     const pattern = (isAbsolute(expanded) ? relative(workspaceRoot, expanded) : expanded).split(sep).join("/");
     if (pattern === ".." || pattern.startsWith("../")) continue;
     for (const match of await matchFiles(pattern, workspaceRoot)) {
       const path = resolve(workspaceRoot, match);
       const real = await realpath(path).catch(() => null);
       if (!real || seen.has(real) || !insideRoot(root, real)) continue;
-      // A link is judged by both its own name and the file it points to.
       if (!instructionDocument(path) || !instructionDocument(real)) continue;
       seen.add(real);
-      // Git judges the file itself: a link's own path may cross a linked folder.
       files.push({ path, real, name: relative(root, real) });
     }
   }
@@ -118,15 +96,8 @@ export async function readConfiguredInstructions(workspaceRoot: string): Promise
   return blocks.length > 0 ? blocks.join("\n\n") : null;
 }
 
-/**
- * Discover remote skills on demand through Connect; native skills are workspace
- * files. `organizationPrompts` is the member's organization Prompts text,
- * appended to the operating instructions.
- */
 export function buildOpenWorkV2Instructions(connectReady: boolean, organizationPrompts?: string) {
   return {
-    // Both Connect views work in native Code Mode; never require a tool that
-    // disappears when an organization opts into the individual-tool catalog.
     operatingInstructions: appendOrganizationPrompts(
       OPENWORK_AGENT_PROMPT.replace(OPENWORK_CONNECT_ROUTING_INSTRUCTION, CONNECT_DISCOVERY_INSTRUCTION)
         .replaceAll("openwork-cloud_", "openwork-cloud."),

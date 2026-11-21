@@ -37,10 +37,6 @@ export function canonicalizeAnonymousAddress(input: string): string | null {
   return groups.map((part) => part.toString(16).padStart(4, "0")).join(":")
 }
 function quotaAddress(address: string) { return address.includes(":") ? `${address.split(":").slice(0, 4).join(":")}::/64` : address }
-/**
- * Trusted proxies are exact addresses or CIDR ranges ("10.0.0.0/8"): hosts such as Render reach the Gateway from
- * addresses that change, inside a private range. Any malformed entry disables trust altogether (fails closed).
- */
 export function trustedProxyMatcher(entries: readonly string[]): ((address: string) => boolean) | null {
   if (entries.length === 0) return null
   const list = new BlockList()
@@ -75,7 +71,6 @@ export function resolveAnonymousClientAddress(c: Context, config: AutoConfig) {
   return address ? quotaAddress(address) : null
 }
 export function anonymousIpHash(address: string, config: AutoConfig) { return hashIdentity(config, "ip", address) }
-/** The allowance follows the machine, so reinstalling or clearing app data does not reset it. */
 export function createAnonymousIdentities(proof: Pick<DesktopFreeBinding, "machineId">, address: string, config: AutoConfig): AnonymousIdentities {
   return { installationHash: hashIdentity(config, "installation", `machine:${proof.machineId}`),
     ipHash: anonymousIpHash(address, config), globalHash: hashIdentity(config, "global", "openwork-free-allowance") }

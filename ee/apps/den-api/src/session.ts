@@ -34,7 +34,6 @@ type SessionRequestContext = {
 }
 
 export type AuthContextVariables = {
-  /** Set only when authentication resolved a persisted Den sign-in session. */
   signInSessionId: AuthSessionValue["signInSessionId"]
   user: AuthSessionValue["user"] | null
   session: AuthSessionValue["session"] | null
@@ -44,8 +43,6 @@ export type AuthContextVariables = {
 const INTERNAL_MCP_PRINCIPAL_HEADER = "x-den-internal-mcp-principal"
 const INTERNAL_MCP_PRINCIPAL_TTL_MS = 60_000
 export const INTERNAL_CAPABILITY_CONNECTOR_HEADER = "x-den-internal-capability-connector"
-// With its own cookie prefix (a local world), this Den reads only its own cookies, never another Den's on the
-// same host; the legacy names are for the default prefix only.
 const BETTER_AUTH_SESSION_COOKIE_NAMES = env.authCookiePrefix === "openwork-den"
   ? [
     "openwork-den.session_token",
@@ -56,18 +53,12 @@ const BETTER_AUTH_SESSION_COOKIE_NAMES = env.authCookiePrefix === "openwork-den"
   ]
   : [`${env.authCookiePrefix}.session_token`, `__Secure-${env.authCookiePrefix}.session_token`]
 
-// Per-process secret used exclusively to sign the internal MCP principal header.
-// It is generated fresh at startup, lives only in memory, and is never derived
-// from betterAuthSecret. This binds the header to in-process callers: even an
-// attacker who learns betterAuthSecret cannot forge a valid principal from an
-// external request, closing the impersonation trust boundary.
 const INTERNAL_MCP_PRINCIPAL_SECRET = new Uint8Array(randomBytes(32))
 
 type InternalMcpPrincipal = {
   userId: string
   organizationId: string
   expiresAt: number
-  /** MCP grant/client/run-token identifier (`grant:<id>` …) for audit attribution; never token material. */
   credentialId?: string
 }
 
@@ -130,10 +121,6 @@ export function createInternalCapabilityConnectorHeader(input: {
   return `${payload}.${signCapabilityConnectorPayload(payload)}`
 }
 
-// Verifies and parses the internal MCP principal header WITHOUT any DB access.
-// Returns the principal only when the signature (per-process secret) and TTL are
-// valid. Exported for unit testing of the trust boundary. Returns null for any
-// missing, malformed, forged, or expired header.
 export function verifyInternalMcpPrincipalHeader(header: string | null): InternalMcpPrincipal | null {
   if (!header) {
     return null
@@ -158,15 +145,10 @@ export function verifyInternalMcpPrincipalHeader(header: string | null): Interna
   return parsed
 }
 
-/**
- * The request is a Connect capability call: an agent acting for the member (in Slack or Workbot chat), not the
- * member's own browser. Only Den signs this header, so a caller cannot claim it.
- */
 export function cameThroughConnect(headers: Headers): boolean {
   return verifyInternalMcpPrincipalHeader(headers.get(INTERNAL_MCP_PRINCIPAL_HEADER)) !== null
 }
 
-/** The MCP credential identifier carried by a verified internal principal header (audit attribution only). */
 export function readInternalMcpPrincipalCredentialId(headers: Headers): string | null {
   const credentialId = verifyInternalMcpPrincipalHeader(headers.get(INTERNAL_MCP_PRINCIPAL_HEADER))?.credentialId
   return typeof credentialId === "string" && credentialId ? credentialId : null
@@ -360,14 +342,11 @@ async function getSessionFromToken(token: string, requestContext?: SessionReques
     return bearerSessionValue(row)
   }
 
-  // Extending reads the person's session limits (Auth & Security › General), so
-  // shorter ones set by any of their organizations apply here too.
   let nextExpiresAt: Date
   try {
     const { userSessionExpiresAt } = await import("./session-security-lifetime.js")
     nextExpiresAt = await userSessionExpiresAt(row.session.userId, now, row.session.createdAt)
   } catch (error) {
-    // The session stays valid until its current expiry; a later request extends it.
     logger.error("session length could not be read", { auth_session_source: "den_session_middleware", request_id: requestContext?.requestId, error })
     return bearerSessionValue(row)
   }
@@ -381,7 +360,6 @@ async function getSessionFromToken(token: string, requestContext?: SessionReques
       .where(and(
         sessionTokenMatches(token),
         gt(AuthSessionTable.expiresAt, now),
-        // Not already extended by a concurrent request.
         eq(AuthSessionTable.updatedAt, row.session.updatedAt),
       ))
   } catch (error) {
@@ -419,20 +397,16 @@ export async function revokeBearerSession(headers: Headers) {
     return false
   }
 
-  // primary: a session created moments ago must still have its cached id revoked.
   const rows = await db.$primary
     .select({ id: AuthSessionTable.id, userId: AuthSessionTable.userId, expiresAt: AuthSessionTable.expiresAt, activeOrganizationId: AuthSessionTable.activeOrganizationId })
     .from(AuthSessionTable)
     .where(sessionTokenMatches(token))
     .limit(1)
   await db.delete(AuthSessionTable).where(sessionTokenMatches(token))
-  // Sign-out/revocation is the authoritative point that invalidates cached auth.
   await cache.auth.revokeSession(token)
   const session = rows[0]
   if (session) {
     await cache.auth.revokeSessionId(normalizeDenTypeId("session", session.id))
-    // Direct delete (desktop bearer sign-out): no better-auth hook fires.
-    // Lazy import keeps session.ts free of an audit import cycle at load time.
     const { recordSessionRevoked } = await import("./audit/domain/sessions.js")
     await recordSessionRevoked(session, "sign_out").catch(() => undefined)
   }
@@ -461,12 +435,6 @@ export async function getRequestSession(headers: Headers, context?: Context): Pr
   return getSessionFromToken(bearerToken, sessionRequestContext(context))
 }
 
-/**
- * MCP access tokens are JWTs or opaque `ow_mcp_at_` tokens, and verifyMcpRequest
- * authenticates them. Den session tokens are 32 letters and digits, so no session
- * row can match either shape: skip the lookup rather than pay for a miss on every
- * MCP request (misses are not cached).
- */
 function isMcpAccessToken(token: string) {
   return token.includes(".") || token.startsWith(DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX)
 }
@@ -474,8 +442,6 @@ function isMcpAccessToken(token: string) {
 export function shouldSkipRequestSession(request: Request) {
   const method = request.method.toUpperCase()
   const path = new URL(request.url).pathname
-  // Browser readiness reads its signed cookie and live session directly. Polling
-  // must not renew sessions or accept a bearer in place of browser authentication.
   return (method === "POST" && path === "/api/auth/sign-out")
     || (method === "GET" && path === "/v1/inference-providers/oauth/browser-status")
 }

@@ -42,7 +42,6 @@ const setupSchema = z.object({
 });
 export const slackAssistantQueryKey = (orgId: string | null | undefined, connectionId: string) => ["slack-assistant", orgId, connectionId];
 
-/** The connection's OpenWork in Slack setup: eligibility, runner, install state. */
 export function useSlackAssistantSetupQuery(connectionId: string | null, enabled: boolean) {
   const { orgContext } = useOrgDashboard();
   const orgId = orgContext?.organization.id;
@@ -57,7 +56,6 @@ export function useSlackAssistantSetupQuery(connectionId: string | null, enabled
   });
 }
 
-/** Deep link into this section from Slack connector setup. */
 export const SLACK_ASSISTANT_SECTION_ID = "slack-assistant";
 
 export function SlackAssistantSetup({ connection }: { connection: ExternalMcpConnection }) {
@@ -82,7 +80,6 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
   const query = useSlackAssistantSetupQuery(connection.id, isSlack);
   const loaded = Boolean(query.data);
   useEffect(() => {
-    // Arriving from Slack setup's "Set up @openwork next": bring this section into view once it has loaded.
     if (!loaded || window.location.hash !== `#${SLACK_ASSISTANT_SECTION_ID}`) return;
     document.getElementById(SLACK_ASSISTANT_SECTION_ID)?.scrollIntoView({ block: "start" });
   }, [loaded]);
@@ -248,7 +245,6 @@ export function SlackAssistantSetup({ connection }: { connection: ExternalMcpCon
           ) : data.models.length > 0 ? (
             <label className="block text-sm">
               Model
-              {/* Name the control explicitly; the implicit label would also read out the selected model. */}
               <select
                 aria-label="Model"
                 value={data.model ?? ""}

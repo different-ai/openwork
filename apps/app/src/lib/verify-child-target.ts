@@ -2,7 +2,6 @@ import type { UIMessage } from "ai";
 import { agentInventory } from "./agent-inventory";
 import { taskChildSessionId } from "./build-in-tools";
 
-/** Check both the observed association and current native ancestry before Stop. */
 export async function verifyChildTarget(
   parentId: string,
   childId: string,

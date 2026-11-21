@@ -12,7 +12,6 @@ const SESSION_ACTION_KEYWORDS: Record<string, string[]> = {
   delete: ["delete", "remove"],
 };
 
-/** Adapt the same human actions used by sidebar/native menus, never raw mutations. */
 export function sessionMenuActionsToPalette(actions: readonly MenuAction[], title: string, onClose: () => void): PaletteItem[] {
   return actions.flatMap((action): PaletteItem[] => {
     if (action.type !== "item" || !SESSION_ACTION_IDS[action.id]) return [];

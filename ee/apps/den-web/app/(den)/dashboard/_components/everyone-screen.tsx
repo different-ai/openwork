@@ -23,26 +23,19 @@ import { TEAM_DETAIL_TAB_INTROS, TeamTabIntro } from "./team-detail-screen";
 
 export type EveryoneTab = "role" | "agents" | "browser" | "models" | "workbot" | "prompts" | "desktop";
 
-/**
- * Members › Teams › Everyone: every member, including people in no team.
- * Its Agents tab is the base every team's Agents tab changes.
- */
 export function EveryoneScreen({ initialTab }: { initialTab: EveryoneTab | null }) {
   const { orgContext, orgId, orgSlug } = useOrgDashboard();
   const access = orgContext
     ? getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions)
     : null;
   const showAgents = agentsTabVisible(orgContext);
-  // Browser and Models hold the organization's defaults, as each team's page does.
 
   const showBrowser = showAgents;
   const showDesktop = desktopPolicyScreenRemoved(orgContext);
   const showModels = modelsTabVisible(orgContext);
   const showPrompts = promptsTabVisible(orgContext);
-  // Workbot holds Everyone's settings (on or off, model, name), which a team's Workbot tab can change for its members.
   const showWorkbot = workbotTabVisible(orgContext);
   const [chosenTab, setChosenTab] = useState<EveryoneTab | null>(initialTab);
-  // The tab is in the address, so a reload or a shared link opens it again.
   const chooseTab = (tab: EveryoneTab) => {
     setChosenTab(tab);
     const url = new URL(window.location.href);
@@ -56,7 +49,6 @@ export function EveryoneScreen({ initialTab }: { initialTab: EveryoneTab | null 
       : chosenTab === "prompts" && showPrompts ? "prompts"
         : chosenTab === "desktop" && showDesktop ? "desktop" : "role";
   const memberCount = orgContext?.members.length ?? 0;
-  // Everyone shares the team tabs' intros (DESIGN.md I10); only Models and Prompts can show a box here.
   const introUnseen = useFeatureIntroUnseen();
   const introsEnabled = useFeatureIntroRuntime().enabled;
   const introFacts: TeamDetailFacts | null = orgContext ? {} : null;

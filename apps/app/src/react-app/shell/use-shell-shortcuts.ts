@@ -1,6 +1,3 @@
-// Shell panel open-state (command palette, session search, terminal) plus the
-// global keyboard shortcuts that toggle them. Extracted verbatim from
-// session-route.tsx.
 import { useEffect, useEffectEvent, useRef, useState } from "react";
 import { usePlatform } from "../kernel/platform";
 import {
@@ -31,7 +28,6 @@ import { isArchiveSessionShortcut } from "./archive-session-shortcut";
 const NO_SESSION_NUMBER_TARGETS: readonly SessionNumberShortcutTarget[] = [];
 
 export type UseShellShortcutsInput = {
-  /** Same action as the command palette's "New session". */
   onCreateNewSession: () => void;
   onNextSessionTab?: () => void;
   onPrevSessionTab?: () => void;
@@ -39,7 +35,6 @@ export type UseShellShortcutsInput = {
   onCycleFavoriteModel?: () => void;
   onCycleModelSource?: () => void;
   onToggleFastMode?: () => void;
-  /** Archive the open session, or unarchive it when it is already archived. */
   onToggleArchiveSession?: () => void;
 };
 
@@ -80,7 +75,6 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
   const [sessionNumberTargets, setSessionNumberTargets] = useState<SessionNumberShortcutTarget[]>([]);
   const sessionNumberCancelledRef = useRef(false);
   const sessionNumberModifierHeldRef = useRef(false);
-  // Shortcuts work as soon as the modifier is down; only the sidebar hints wait.
   const [sessionNumberHintsVisible, setSessionNumberHintsVisible] = useState(false);
   const [sessionNumberHintReveal] = useState(() => createSessionNumberHintReveal({
     onChange: setSessionNumberHintsVisible,
@@ -121,20 +115,6 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
     return targets;
   });
 
-  // Global shortcuts:
-  //   Cmd/Ctrl+N        -> new session (handleNewSessionKeyDown, capture phase)
-  //   Cmd/Ctrl+K        -> toggle command palette
-  //   Cmd/Ctrl+J        -> toggle terminal panel (matches VS Code)
-  //   Cmd/Ctrl+F        -> find in current conversation (handled by session surface)
-  //   Cmd/Ctrl+Shift+F  -> search every session (titles + messages)
-  //   Cmd/Ctrl+T        -> next session tab
-  //   Cmd/Ctrl+Shift+T  -> previous session tab
-  //   Ctrl+T / Ctrl+Shift+T (macOS) -> next / previous thinking mode
-  //   Ctrl+Alt+T / Ctrl+Alt+Shift+T (Windows/Linux) -> next / previous thinking mode
-  //   Ctrl+Shift+M      -> next favorite model
-  //   Ctrl+Shift+F (macOS) / Ctrl+Alt+F (Windows/Linux) -> toggle Fast
-  //   Cmd/Ctrl+Shift+E  -> archive or unarchive the open session
-  //   Cmd/Ctrl+1–9      -> matching visible sidebar session
   const handleGlobalShortcut = useEffectEvent((event: KeyboardEvent) => {
     if (event.defaultPrevented) return;
     if (isCycleModelSourceShortcut(event)) {
@@ -191,8 +171,6 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
     }
   });
 
-  // Cmd/Ctrl+N must work while the composer (or any text field) has focus,
-  // which is nearly always. An open modal dialog keeps the key.
   const handleNewSessionKeyDown = useEffectEvent((event: KeyboardEvent) => {
     if (event.defaultPrevented) return;
     if (!isNewSessionShortcut(event, sessionNumberOs)) return;
@@ -253,8 +231,6 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => handleNewSessionKeyDown(event);
-    // Capture first so editor keydown handlers cannot consume Cmd/Ctrl+N
-    // before the shell sees it (same as the Cmd/Ctrl+1–9 session jump).
     window.addEventListener("keydown", handler, true);
     return () => window.removeEventListener("keydown", handler, true);
   }, []);
@@ -285,8 +261,6 @@ export function useShellShortcuts(input: UseShellShortcutsInput) {
       }
     });
 
-    // Capture first so text fields and open select/menu popovers cannot consume
-    // the global session jump before the shell sees it.
     window.addEventListener("keydown", keyDown, true);
     window.addEventListener("keyup", keyUp);
     window.addEventListener("mousemove", mouseMove, { passive: true });

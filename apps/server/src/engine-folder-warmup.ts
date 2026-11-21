@@ -1,13 +1,5 @@
 import { loopbackFetch } from "./server-fetch.js";
 
-/**
- * The v1 engine sets a folder up (config, plugins, provider catalog) on the
- * first request that names it, and every other first request for that folder
- * waits on the same setup. Measured on desktop launches, that setup took
- * 4.7–5.9 s when the window's first reads triggered it, and 0.18 s when the
- * server asked before the window was ready. Asking early takes that wait off
- * the model picker.
- */
 export const ENGINE_FOLDER_WARMUP_TIMEOUT_MS = 15_000;
 
 export type EngineFolderWarmupTarget = {
@@ -19,12 +11,6 @@ export type EngineFolderWarmupResult =
   | { ok: true; durationMs: number }
   | { ok: false; durationMs: number; status?: number; error?: string };
 
-/**
- * Set a folder up on the engine by reading its connected providers, the
- * cheapest read that loads both the folder and its provider state (~30 KB).
- * Never throws: warming is an optimisation, and a failure leaves the folder
- * to be set up on the first real request, as before.
- */
 export async function warmEngineFolder(input: {
   target: EngineFolderWarmupTarget;
   directory: string;
@@ -48,7 +34,6 @@ export async function warmEngineFolder(input: {
       headers: input.target.authHeader ? { Authorization: input.target.authHeader } : {},
       signal: input.signal ? AbortSignal.any([input.signal, timeout]) : timeout,
     });
-    // Drain the body so the connection is released; the content is not needed.
     await response.arrayBuffer().catch(() => undefined);
     if (!response.ok) return { ok: false, durationMs: durationMs(), status: response.status };
     return { ok: true, durationMs: durationMs() };

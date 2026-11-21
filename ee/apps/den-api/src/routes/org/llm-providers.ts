@@ -96,8 +96,6 @@ const llmProviderWriteSchema = z.object({
   apiKeys: z.record(z.string().trim().min(1).max(255), z.string().trim().max(65535)).optional(),
   memberIds: z.array(denTypeIdSchema("member")).max(500).optional().default([]),
   teamIds: z.array(denTypeIdSchema("team")).max(500).optional().default([]),
-  // Grants the whole organization (current and future members) access via a
-  // single org-wide access row instead of materialized member ids.
   allMembers: z.boolean().optional().default(false),
 }).superRefine((value, ctx) => {
   if (value.source === "models_dev") {
@@ -256,13 +254,6 @@ function isRouteFailure(value: unknown): value is RouteFailure {
   return typeof value === "object" && value !== null && "status" in value && "error" in value
 }
 
-/**
- * The provider's creator may always change it. Anyone else needs `key`; holders
- * of `key` (sensitive) also need a recent sign-in, even for their own provider.
- * Admins always need a recent sign-in, as before Permissions: an admin creator
- * whose Admin set lacks `key` still steps up. Non-admin creators do not.
- * Returns the failure response, or null when allowed.
- */
 async function authorizeLlmProviderChange(
   c: ResourceActionContext,
   payload: ResourceOrganizationContext,
@@ -392,7 +383,6 @@ function resolveCredentialColumn(input: {
       apiKey: input.apiKey,
       apiKeys: input.apiKeys,
     })
-    // Only a credential change is checked, so unrelated edits still save.
     const credentialChanged = input.apiKey !== undefined || input.apiKeys !== undefined
     const settingsError = credentialChanged ? bedrockCredentialError(input.providerConfig, value) : null
     if (settingsError) throw new ProviderCredentialError(settingsError)
@@ -445,11 +435,6 @@ async function upsertMemberCredential(input: {
   orgMembershipId: MemberId
   secret: string
   createdBy: LlmProviderMemberCredentialRow["createdBy"]
-  /**
-   * A blocked binding is admin-owned: member self-service must not overwrite
-   * it back to active. Admin provisioning passes true, which is the explicit
-   * unblock path.
-   */
   allowBlockedOverwrite: boolean
   externalPrincipalId?: string
   externalCredentialId?: string
@@ -550,9 +535,6 @@ async function normalizeLlmProviderInput(
 
     const requestedModelIds = [...new Set(input.modelIds ?? [])]
     const modelsById = new Map(provider.models.map((model) => [model.id, model]))
-    // Azure model lists come from the resource's *deployments*, which admins
-    // can name anything — accept ids outside the models.dev catalog for
-    // Azure providers instead of rejecting the save.
     const allowDeploymentIds = provider.npm === "@ai-sdk/azure"
     const models = requestedModelIds.map((modelId) => {
       const model = modelsById.get(modelId)
@@ -617,7 +599,6 @@ async function loadLlmProviders(input: {
   currentMemberId: MemberId
   memberTeams: Array<{ id: TeamId }>
   isAdmin: boolean
-  /** Holds llm_providers.update: sees every provider's stored configuration. */
   canUpdateAll: boolean
   scope: "usable" | "manageable"
 }) {
@@ -741,7 +722,6 @@ async function loadLlmProviders(input: {
     teamAccessByProviderId.set(row.access.llmProviderId, existing)
   }
 
-  // Org-wide grants: one access row per provider with neither member nor team.
   const everyoneAccessRows = await db
     .select({
       llmProviderId: LlmProviderAccessTable.llmProviderId,
@@ -766,14 +746,6 @@ async function loadLlmProviders(input: {
     accessibleViaByProviderId.set(row.llmProviderId, existing)
   }
 
-  // Custom provider configurations keep arbitrary fields, so they can carry inline
-  // credentials. Only callers who can edit the provider (llm_providers.update or its
-  // creator) or who are granted it (and so already receive the full configuration from
-  // /connect) see it as stored. View-only callers get configRedacted: true, the minimal
-  // view (provider id/name/npm, model id/name/limit) and nothing else derived from the
-  // stored configuration or credential: no env names, no credential status.
-  // Who has access (people's names and emails) is only returned to callers who can
-  // manage the provider; everyone else gets the grant count without identities.
   const accessibleProviderIdSet = new Set(accessibleProviderIds)
   const mayManage = (provider: LlmProviderRow) => input.canUpdateAll || provider.createdByOrgMembershipId === input.currentMemberId
   const mayReadStoredConfig = (provider: LlmProviderRow) => mayManage(provider) || accessibleProviderIdSet.has(provider.id)
@@ -833,7 +805,6 @@ async function loadLlmProviders(input: {
 
 export type LlmProviderWriteInput = z.infer<typeof llmProviderWriteSchema>
 
-/** `preferredId`: reuse this id for the new row (config-blob imports; the caller checked it is free). */
 export async function createLlmProvider(c: ResourceActionContext, payload: ResourceOrganizationContext, input: z.infer<typeof llmProviderWriteSchema>, externalKey?: string, preferredId?: LlmProviderId) {
 
   try {
@@ -882,7 +853,6 @@ export async function createLlmProvider(c: ResourceActionContext, payload: Resou
 
       const accessRows = input.allMembers
         ? [
-            // One org-wide grant plus the creator's protected direct row.
             {
               id: createDenTypeId("llmProviderAccess"),
               llmProviderId,
@@ -950,10 +920,6 @@ export async function createLlmProvider(c: ResourceActionContext, payload: Resou
   }
 }
 
-/**
- * `scope` (config-blob imports) leaves the models or the access list as stored;
- * routes write both. Both are written as a diff either way.
- */
 export async function updateLlmProvider(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string, input: z.infer<typeof llmProviderWriteSchema>, scope: { models?: boolean; access?: boolean } = {}) {
   const writeModels = scope.models ?? true
   const writeAccess = scope.access ?? true
@@ -1012,8 +978,6 @@ export async function updateLlmProvider(c: ResourceActionContext, payload: Resou
           .where(eq(LlmProviderMemberCredentialTable.llmProviderId, provider.id))
       }
 
-      // Models and access are written as a diff: rows that stay keep their id and createdAt,
-      // so an edit to one model or one grant touches only that row.
       const storedModels = writeModels ? await tx.select().from(LlmProviderModelTable).where(eq(LlmProviderModelTable.llmProviderId, provider.id)) : []
       const wantedModels = new Map((writeModels ? normalized.models : []).map((model) => [model.id, model]))
       const keptModels = new Set<string>()
@@ -1045,7 +1009,6 @@ export async function updateLlmProvider(c: ResourceActionContext, payload: Resou
       }
 
       const wantedAccess = !writeAccess ? [] : input.allMembers
-        // One org-wide grant plus the creator's protected direct row.
         ? [{ orgMembershipId: null, teamId: null }, { orgMembershipId: provider.createdByOrgMembershipId, teamId: null }]
         : [
             ...protectedMemberIds.map((orgMembershipId) => ({ orgMembershipId, teamId: null })),
@@ -1195,12 +1158,6 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
       }
       const { externalKey } = c.req.valid("param")
       const input = c.req.valid("json")
-      // A blank scalar credential from a provisioning client is almost always
-      // an unresolved secret, not intent: it would otherwise "succeed" and
-      // leave (or make) the provider unusable. Omit apiKey to keep the stored
-      // value; clear it explicitly with apiKeys. The dashboard's create form
-      // legitimately sends a blank key for keyless providers, so this check
-      // stays on the declarative route only.
       if (input.apiKey === "") {
         return c.json({
           error: "invalid_api_keys",
@@ -1216,9 +1173,6 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
         return await createLlmProvider(c, payload, input, externalKey)
       } catch (error) {
         if (!isDuplicateEntry(error)) throw error
-        // A concurrent creator can win between lookup and insert. Retry against
-        // its identity instead of creating a second resource. Primary: the winner
-        // committed moments ago.
         const [winner] = await db.$primary.select().from(LlmProviderTable).where(and(
         eq(LlmProviderTable.organizationId, payload.organization.id),
         eq(LlmProviderTable.externalKey, externalKey),
@@ -1375,9 +1329,6 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
       const payload = c.get("organizationContext")
       const memberTeams = c.get("memberTeams") ?? []
 
-      // Desktop entitlement is based on this list. If org inference is enabled
-      // but this member's OpenWork provider/key was deleted, re-provision before
-      // listing so Subscribe CTAs don't lie about an already-enabled org.
       if (query.scope === "usable") {
         try {
           await repairMemberInferenceAccessIfNeeded({
@@ -1385,7 +1336,6 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
             memberId: payload.currentMember.id,
           })
         } catch {
-          // Keep listing other providers even if OpenWork re-provision fails.
         }
       }
 
@@ -1472,7 +1422,6 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
           await assertOrganizationManagedModelsAllowed(payload.organization.id)
         } catch (error) {
           if (!(error instanceof ManagedModelsPolicyError)) throw error
-          // A list/connect race must not abort older desktops' entire BYOK sync.
           return c.json({
             llmProvider: {
               ...provider,
@@ -1511,15 +1460,6 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
           : { apiKey: null, apiKeys: null }
       }
 
-      // This route must stay 200 for granted callers: published desktop builds
-      // fail the entire sync on non-OK connect responses, while null credentials
-      // already make those clients skip only this provider.
-      // Decode the stored credential so the wire format stays additive: legacy
-      // single-secret providers keep returning `apiKey`, multi-env providers
-      // return `apiKeys` with `apiKey: null` so old clients fail with their
-      // missing-credential error instead of applying a JSON blob as the key.
-      // Catalog providers leave Den under provider-scoped env names (see
-      // toRuntimeProviderEnv); the stored row keeps the catalog's names.
       const runtime = toRuntimeProviderEnv({ ...provider, apiKeys: credential.apiKeys })
       return c.json({
         llmProvider: {
@@ -1645,8 +1585,6 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
         return c.json({ error: "not_per_member" }, 400)
       }
 
-      // A blocked binding is admin-owned: deleting it here would let the
-      // member re-create an active one, bypassing the block.
       const deleted = await db.transaction(async (tx) => {
         const rows = await tx
           .select({ id: LlmProviderMemberCredentialTable.id, state: LlmProviderMemberCredentialTable.state })
@@ -1742,7 +1680,6 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
       },
     }),
     orgPermissionRoute("llm_provider_credentials.manage"),
-    // Provisioning scripts authenticate with an API key; the agent never sends keys.
     refuseMachineSecrets(["apiKey", "apiKeys"], { allowApiKeys: true }),
     paramValidator(orgLlmProviderMemberCredentialParamsSchema),
     jsonValidator(adminMemberCredentialWriteSchema),
@@ -1821,7 +1758,6 @@ export function registerOrgLlmProviderRoutes<T extends { Variables: OrgRouteVari
       const provider = await getLlmProvider({ organizationId: payload.organization.id, llmProviderId })
       if (!provider) return c.json({ error: "llm_provider_not_found" }, 404)
 
-      // Primary: the next version is computed from this row.
       const rows = await db.$primary
         .select()
         .from(LlmProviderMemberCredentialTable)

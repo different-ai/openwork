@@ -44,10 +44,6 @@ export function pluginComponentBody(component: PluginDraftComponent): Record<str
   };
 }
 
-/**
- * The plugin's name. A plugin holding one skill or command may leave it blank
- * and take that item's name, so "Create a skill" needs only the skill's name.
- */
 export function pluginDraftName(name: string, components: readonly PluginDraftComponent[]): string {
   const typed = name.trim();
   if (typed) return typed;
@@ -56,7 +52,6 @@ export function pluginDraftName(name: string, components: readonly PluginDraftCo
   return only.name.trim().replace(/^\//, "").trim();
 }
 
-/** The first problem with a draft, in words a person can act on. */
 export function pluginDraftProblem(name: string, components: readonly PluginDraftComponent[]): string | null {
   if (components.length === 0) return "Add a skill, a command or a connector.";
   for (const component of components) {
@@ -132,10 +127,6 @@ function ConnectorChoice({ connections, value, takenIds, onChange, addConnectorH
   );
 }
 
-/**
- * B1 and D2: one form for a member's plugin and an admin's. New plugins start
- * just for their maker; sharing happens on the plugin's page.
- */
 export function PluginCreateForm({ connections, startWith, cancelHref, addConnectorHref, onCreated, footnote = "Only you can use it until you share it." }: {
   connections: readonly ExternalMcpConnection[];
   startWith?: PluginComponentKind;
@@ -200,7 +191,6 @@ export function PluginCreateForm({ connections, startWith, cancelHref, addConnec
     }
   }
 
-  // With one skill or command, a blank plugin name takes that item's name.
   const onlyItem = components.length === 1 && components[0].kind !== "mcp" ? components[0] : null;
   const namePlaceholder = onlyItem
     ? pluginDraftName("", components) || `Optional, uses the ${onlyItem.kind}'s name`

@@ -1,10 +1,3 @@
-/**
- * Brand logo candidates for an LLM provider, tried in order and advanced on
- * `img` onError. Providers should almost always show their real logo, so the
- * monogram in `ProviderIcon` is the last resort rather than the default look.
- */
-
-/** Providers whose Simple Icons slug differs from their OpenCode provider id. */
 const SIMPLE_ICON_SLUGS: Record<string, string> = {
   google: "googlegemini",
   "google-vertex": "googlegemini",
@@ -21,7 +14,6 @@ const SIMPLE_ICON_SLUGS: Record<string, string> = {
   meta: "meta",
 };
 
-/** Simple Icons has no icon for these, so skip straight to the favicon step. */
 const SIMPLE_ICON_MISSES = new Set([
   "openai",
   "azure",
@@ -38,7 +30,6 @@ const SIMPLE_ICON_MISSES = new Set([
   "openwork",
 ]);
 
-/** Apex domains for providers whose id does not resolve to their own domain. */
 const PROVIDER_DOMAINS: Record<string, string> = {
   openai: "openai.com",
   anthropic: "anthropic.com",
@@ -65,10 +56,6 @@ const PROVIDER_DOMAINS: Record<string, string> = {
   abacus: "abacus.ai",
 };
 
-/**
- * Long-tail catalog ids are slugified domains ("abliteration-ai", "302ai"),
- * so unslugging them recovers a real favicon instead of a monogram.
- */
 function domainFromSlug(id: string): string | undefined {
   const dashed = id.match(/^(.+)-([a-z]{2,})$/);
   if (dashed) return `${dashed[1]}.${dashed[2]}`;
@@ -115,7 +102,6 @@ export function providerLogoCandidates(input: {
     try {
       candidates.push(faviconUrl(apexDomain(new URL(baseUrl).hostname)));
     } catch {
-      // Ignore unparseable base URLs — the monogram still covers this provider.
     }
   }
 

@@ -16,10 +16,6 @@ export function desktopDeviceAccessDenied(): APIError {
   return new APIError("FORBIDDEN", { error: "access_denied", error_description: DESKTOP_DEVICE_DISABLED_MESSAGE })
 }
 
-/** Uncached, primary reads. Hold the rollout row through the protected write:
- * readFeatures locks org/member overrides, but not the deployment rollout.
- * Kill/disable and session insertion thus have an explicit commit ordering.
- */
 export async function desktopDeviceLoginEnabled(database: FeatureDatabase, input?: { organizationId: string; userId: string }): Promise<boolean> {
   await database.select({ key: FeatureRolloutTable.feature_key }).from(FeatureRolloutTable)
     .where(eq(FeatureRolloutTable.feature_key, "remoteDesktopDeviceLogin")).for("share")
@@ -46,9 +42,6 @@ type DesktopDeviceClaim = {
 type DesktopDeviceRequest = { desktop: boolean; claim: DesktopDeviceClaim | null; insertStarted: boolean; closed: boolean }
 const desktopDeviceRequest = new AsyncLocalStorage<DesktopDeviceRequest>()
 
-/** The public auth proxy owns this scope. Nested/overlapping requests get
- * different stores; even async work surviving a response loses its claim.
- */
 export function withDesktopDeviceClaimRequest<T>(run: () => Promise<T>): Promise<T> {
   const state: DesktopDeviceRequest = { desktop: false, claim: null, insertStarted: false, closed: false }
   return desktopDeviceRequest.run(state, async () => {
@@ -90,12 +83,6 @@ function approvedDesktopClaim(row: unknown): DesktopDeviceClaim {
   }
 }
 
-/** Capture only the successful atomic claim, never a pre-read of a code that
- * may still be pending. Better Auth deletes that row before createSession.
- * The adapter-only projection includes Den's EXISTING columns; it adds no DB
- * fields or protocol inputs and does not change the legacy staging path.
- * Session insertion still locks rollout/member policy and hashes its token.
- */
 export function guardDesktopDeviceSessions(factory: AdapterFactory, transactionFactory: (database: FeatureDatabase) => AdapterFactory): AdapterFactory {
   return (options) => {
     const adapter = factory({

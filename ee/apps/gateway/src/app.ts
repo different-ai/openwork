@@ -21,8 +21,6 @@ const shouldServeLocalModelCatalog = !isVercelRuntime && (process.env.NODE_ENV !
 
 const app = new Hono();
 
-// Nothing here belongs in a search index (Google: block indexing with the X-Robots-Tag response header).
-// A WebSocket upgrade is left as it is: it is not a document, and its response cannot be rebuilt.
 app.use("*", async (c, next) => {
   await next();
   if (c.res.status !== 101) c.header("X-Robots-Tag", "noindex, nofollow, noarchive");
@@ -68,8 +66,6 @@ if (env.corsOrigins.length > 0) {
 
 app.get("/health", (c) => c.json({ ok: true, service: "gateway" }));
 
-// Auto Model Routing readiness for Den: whether this gateway has its TypeSafe
-// (Jev) key. A boolean only; the key itself never leaves the gateway.
 app.get("/auto-router/status", (c) => {
   c.header("cache-control", "no-store");
   return c.json({ routingConfigured: Boolean(env.autoRouter.typesafeApiKey) });
@@ -86,8 +82,6 @@ app.get("/ready", async (c) => {
 });
 
 if (shouldServeLocalModelCatalog) {
-  // The v1 catalog and the v2 one OpenCode v2 engines read first. Like the
-  // published static files, both ignore `?type=`.
   const catalogFiles = {
     "/models/api.json": path.join(modelsSiteDir, "api.json"),
     "/models/experimental/v2.0/api.json": path.join(modelsSiteDir, "experimental", "v2.0", "api.json"),

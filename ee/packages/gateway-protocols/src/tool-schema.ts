@@ -1,17 +1,3 @@
-// Tool parameter schemas reshaped for providers that only take a plain object
-// at the root of a tool's input schema.
-//
-// Clients send whatever JSON Schema their tools declare (MCP servers, app
-// connectors and plugins often use a union of argument sets at the root, or
-// older drafts). Anthropic, and Claude on Bedrock, reject a tool unless its
-// schema has `type: "object"` at the root, no `anyOf` / `oneOf` / `allOf`
-// there, and is valid JSON Schema draft 2020-12; one bad tool fails the whole
-// request. Gemini drops a root without properties. `objectToolSchema` keeps
-// the tool usable instead of dropping it: a root union becomes one object
-// with every branch's properties (required only when every branch requires
-// them) and the argument sets named in its description, `allOf` is merged,
-// local `$ref`s at the root are inlined, and draft-04/07 keywords nested
-// anywhere are rewritten to their draft 2020-12 form.
 import { isJsonObject, type JsonObject } from "@openwork-ee/gateway-protocols/chat"
 
 const MAX_DEPTH = 32
@@ -34,7 +20,6 @@ export function toDraft2020(value: unknown, depth = 0): unknown {
   if (Array.isArray(value)) return value.map((item) => toDraft2020(item, depth + 1))
   if (!isJsonObject(value) || depth > MAX_DEPTH) return value
   const out: JsonObject = { ...value }
-  // Draft 03 `required: true` on a property → the parent's required list.
   if (isJsonObject(out.properties)) {
     const required = new Set(stringList(out.required))
     const properties: JsonObject = {}
@@ -59,14 +44,12 @@ export function toDraft2020(value: unknown, depth = 0): unknown {
   for (const key of SCHEMA_VALUES) {
     if (isJsonObject(out[key])) out[key] = toDraft2020(out[key], depth + 1)
   }
-  // Draft 2019 and earlier tuples: items: [...] (+ additionalItems) → prefixItems (+ items).
   if (Array.isArray(out.items)) {
     out.prefixItems = out.items.map((child) => toDraft2020(child, depth + 1))
     delete out.items
     if (isJsonObject(out.additionalItems) || typeof out.additionalItems === "boolean") out.items = toDraft2020(out.additionalItems, depth + 1)
     delete out.additionalItems
   }
-  // Draft 04 boolean exclusive bounds → numeric ones.
   const bounds: ReadonlyArray<readonly [string, string]> = [["exclusiveMinimum", "minimum"], ["exclusiveMaximum", "maximum"]]
   for (const [exclusive, inclusive] of bounds) {
     if (typeof out[exclusive] !== "boolean") continue
@@ -93,7 +76,6 @@ function resolveLocalRef(ref: string, root: JsonObject): JsonObject | null {
   return isJsonObject(target) ? target : null
 }
 
-/** A root-level schema with its own local `$ref` inlined (refs further down stay; `$defs` stays at the root). */
 function inlineRootRef(schema: JsonObject, root: JsonObject, seen: Set<string>): JsonObject {
   let current = schema
   while (typeof current.$ref === "string" && !seen.has(current.$ref)) {
@@ -110,14 +92,12 @@ function sameSchema(a: unknown, b: unknown) {
   return JSON.stringify(a) === JSON.stringify(b)
 }
 
-/** Property schemas merged across branches: one schema when they agree, `anyOf` when they differ. */
 function mergeProperty(existing: unknown, next: unknown): unknown {
   if (existing === undefined || sameSchema(existing, next)) return next
   const options = isJsonObject(existing) && Array.isArray(existing.anyOf) && Object.keys(existing).length === 1 ? existing.anyOf : [existing]
   return options.some((option) => sameSchema(option, next)) ? existing : { anyOf: [...options, next] }
 }
 
-/** The one value a property schema allows (`const`, or a one-value `enum`), following local refs. */
 function fixedValue(schema: unknown, root: JsonObject): unknown {
   if (!isJsonObject(schema)) return undefined
   const resolved = inlineRootRef(schema, root, new Set())
@@ -125,10 +105,6 @@ function fixedValue(schema: unknown, root: JsonObject): unknown {
   return Array.isArray(resolved.enum) && resolved.enum.length === 1 ? resolved.enum[0] : undefined
 }
 
-/**
- * How an argument set is named in the description: its title, else its required arguments (with the
- * value of an argument that has only one, which is usually what tells the sets apart).
- */
 function branchLabel(branch: JsonObject, root: JsonObject) {
   if (typeof branch.title === "string" && branch.title.trim()) return branch.title.trim()
   const properties = isJsonObject(branch.properties) ? branch.properties : {}
@@ -148,7 +124,6 @@ function isObjectBranch(branch: JsonObject) {
 
 const COMBINATORS = ["allOf", "anyOf", "oneOf"]
 
-/** The root reduced to one plain object schema; see the file comment. */
 function flattenRoot(input: JsonObject, root: JsonObject, depth: number, seen: Set<string>): JsonObject {
   const schema = inlineRootRef(input, root, seen)
   if (depth > MAX_DEPTH) {
@@ -162,7 +137,6 @@ function flattenRoot(input: JsonObject, root: JsonObject, depth: number, seen: S
   const branchesOf = (list: unknown) => Array.isArray(list)
     ? list.filter(isJsonObject).map((branch) => inlineRootRef(branch, root, new Set(seen))).filter(isObjectBranch).map((branch) => flattenRoot(branch, root, depth + 1, new Set(seen)))
     : []
-  // A union whose branches are unions again (discriminated unions nest them) is one flat list of argument sets.
   const alternativesOf = (list: unknown, level: number): JsonObject[] => {
     if (!Array.isArray(list) || level > MAX_DEPTH) return []
     return list.filter(isJsonObject).map((branch) => inlineRootRef(branch, root, new Set(seen))).filter(isObjectBranch).flatMap((branch) => {
@@ -178,7 +152,6 @@ function flattenRoot(input: JsonObject, root: JsonObject, depth: number, seen: S
     }
   }
 
-  // allOf: every part applies, so properties and required add up.
   for (const part of branchesOf(allOf)) {
     defsOf(part)
     if (isJsonObject(part.properties)) {
@@ -191,7 +164,6 @@ function flattenRoot(input: JsonObject, root: JsonObject, depth: number, seen: S
     }
   }
 
-  // anyOf / oneOf: one argument set applies; offer every property and require only what all sets require.
   const alternatives = [...alternativesOf(anyOf, 0), ...alternativesOf(oneOf, 0)]
   if (alternatives.length) {
     const requiredSets = alternatives.map((branch) => new Set(stringList(branch.required)))
@@ -234,7 +206,6 @@ export function objectToolSchema(parameters: unknown): JsonObject {
   if (!hasCombinator && schema.type === "object" && typeof schema.$ref !== "string") return schema
   const types = typeof schema.type === "string" ? [schema.type] : stringList(schema.type)
   if (types.length && !types.includes("object")) {
-    // A scalar or array root cannot carry named arguments.
     return { type: "object", properties: {}, ...(typeof schema.description === "string" ? { description: schema.description } : {}) }
   }
   return flattenRoot(schema, schema, 0, new Set())

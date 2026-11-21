@@ -37,7 +37,6 @@ export const workbotModelRecoverySchema = z.object({
   purchaseEligible: z.boolean().default(false),
   managedLuna: z.boolean().default(false),
   hasModelsSubscription: z.boolean().default(false),
-  /** Existing member access, or the managed Luna route activated by Models checkout. */
   paidContinuation: z.enum(["unavailable", "after_upgrade", "authorized"]).default("unavailable"),
   upgradeBlockedReason: z.literal("paid_workbot_route_unavailable").nullable().default("paid_workbot_route_unavailable"),
   canManageModels: z.boolean(),
@@ -61,19 +60,12 @@ export const workbotModelOptionSchema = z.object({ id: z.string(), name: z.strin
 export type WorkbotModelOption = z.infer<typeof workbotModelOptionSchema>
 
 export const workbotSettingsSchema = z.object({
-  /** The model the admin chose; null uses the explicit Luna default for Workbot. */
   model: z.string().nullable(),
-  /** The effective default for Workbot; legacy mode returns the runner's default or null when unreachable. */
   defaultModel: z.string().nullable(),
-  /** The models the runner can serve. Empty when the runner can't be reached. */
   models: z.array(workbotModelOptionSchema),
-  /** False when a saved model is no longer offered. The explicit Luna rollout refuses new Workbot turns instead of falling back. */
   modelAvailable: z.boolean(),
-  /** The runner answered; when false, the model list is unknown. */
   runnerReachable: z.boolean(),
-  /** The catalog is scoped to this member’s usable model access, including managed Luna and AI Gateway assignments. */
   gatewayModels: z.boolean().optional(),
-  /** Present only during the explicit Luna rollout. Catalog readiness is not a paid completion probe. */
   defaultReadiness: z.enum(["available", "unavailable", "unverified"]).optional(),
 })
 export type WorkbotSettings = z.infer<typeof workbotSettingsSchema>
@@ -91,26 +83,14 @@ export type WorkbotModelTest = z.infer<typeof workbotModelTestSchema>
  * Den web checks this before sending people to Workbot. A provider existing does not mean every member has a usable model.
  */
 export const workbotReadinessSchema = z.object({
-  /** Workbot’s selected default requires the organization’s AI Gateway; managed Luna needs no custom provider. */
   gatewayRequired: z.boolean(),
-  /**
-   * The organization has at least one active AI Gateway provider. Checked only when gatewayRequired or
-   * organizationGatewayRequired is true.
-   */
   hasGatewayProvider: z.boolean(),
-  /**
-   * The same question for the workspace rather than the caller: whether Workbot needs a custom provider for
-   * members in general, ignoring the caller's own allowance or team policy. Setup screens use it so one
-   * admin's own entitlement doesn't decide what the workspace has set up. Absent from older servers.
-   */
   organizationGatewayRequired: z.boolean().optional(),
-  /** False when an admin turned Workbot off for the caller (Workbot settings per team). Absent means on. */
   enabled: z.boolean().optional(),
 })
 export type WorkbotReadiness = z.infer<typeof workbotReadinessSchema>
 
 export const workbotSettingsInputSchema = z.strictObject({
-  /** A model id from `models`, or null for the runner's default. */
   model: z.string().trim().min(1).max(255).nullable(),
 })
 export type WorkbotSettingsInput = z.infer<typeof workbotSettingsInputSchema>

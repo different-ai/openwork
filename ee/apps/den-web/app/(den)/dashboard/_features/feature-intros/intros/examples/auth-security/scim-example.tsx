@@ -4,7 +4,6 @@ import { useExampleStep } from "../use-example-step";
 import { ExampleAvatar, ExampleCaption, ExampleGroupLabel, ExampleRow, ExampleRows, ExampleServiceMark } from "../example-parts";
 import { OKTA, scimExampleLog } from "./auth-security-example-data";
 
-/** SCIM tab example: the sync log from the identity provider. */
 export function ScimExample() {
   const step = useExampleStep(scimExampleLog.length);
 

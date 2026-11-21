@@ -1,7 +1,3 @@
-/**
- * Images Workbot can show and read. Only these four get a picture in the page and reach the model as an image
- * (headless-runner `tool-files.ts`); anything else is a file Workbot has to open on its computer.
- */
 const IMAGE_TYPES = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
 export const isImage = (mediaType: string) => IMAGE_TYPES.has(mediaType);
 
@@ -12,13 +8,8 @@ export function isHeic(file: File) {
   return file.type === "image/heic" || file.type === "image/heif" || HEIC_NAME.test(file.name);
 }
 
-/** Longest side of a converted photo: plenty for reading a screenshot, and keeps the upload small. */
 const MAX_SIDE = 4096;
 
-/**
- * The photo as a JPEG, decoded by the browser itself (Safari, where nearly all HEIC files come from, decodes HEIC).
- * Null when this browser can't decode it: the original is then sent as it is.
- */
 async function heicToJpeg(file: File): Promise<File | null> {
   const url = URL.createObjectURL(file);
   try {

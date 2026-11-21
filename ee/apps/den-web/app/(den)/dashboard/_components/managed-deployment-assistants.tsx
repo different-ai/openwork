@@ -7,7 +7,6 @@ import { DenSelect } from "../../_components/ui/select";
 export function ManagedDeploymentAssistants({ value, profile, onChange, onUpgrade, enabled, disabled = false, lockReason, openByDefault = false, viaConfiguration = false }: {
   value: AwsAssistants; profile: AwsRuntimeProfile; onChange: (value: AwsAssistants) => void; onUpgrade?: () => void;
   enabled: boolean; disabled?: boolean; lockReason?: string; openByDefault?: boolean;
-  /** The gateway runtime is added with Edit configuration on this deployment, not by waiting for an Update. */
   viaConfiguration?: boolean;
 }) {
   const locked = !enabled || disabled;

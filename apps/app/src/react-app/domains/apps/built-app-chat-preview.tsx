@@ -24,7 +24,6 @@ export function BuiltAppChatPreview({ part, compact = false }: { part: DynamicTo
   if (!app) return null;
   return (
     <div
-      // Compact sits on a rail row: same line, same small type as the row.
       className={compact ? "flex shrink-0 items-center" : "mt-2 flex items-center gap-2 text-sm"}
       data-built-app-result={app.appId}
     >
@@ -58,18 +57,8 @@ export function BuiltAppChatPreview({ part, compact = false }: { part: DynamicTo
   );
 }
 
-/**
- * Builds that already opened the pane in this window, so switching sessions
- * and back never reopens one the person closed.
- */
 const autoOpened = new Set<string>();
 
-/**
- * History is a baseline. A new successful builder result opens the pane, as
- * does one from the turn still running when the chat mounts. An App the agent
- * starts changing is marked Updating but never opened for it: opening runs
- * the App, which needs the person's own click.
- */
 export function BuiltAppPreviewSync({
   messages,
   active,
@@ -93,7 +82,6 @@ export function BuiltAppPreviewSync({
         const appId = part.input && typeof part.input === "object" ? Reflect.get(part.input, "appId") : null;
         if (typeof appId === "string") updating.add(appId);
       }
-      // The agent read an App and is writing its change before update_app exists.
       for (const run of appCreationRuns(latestTurn, true)) {
         const read = run.intent?.kind === "edit" ? appRead(run.intent.part) : null;
         if (read) updating.add(read.appId);
@@ -114,8 +102,6 @@ export function BuiltAppPreviewSync({
         )
           pending.current.add(part.toolCallId);
       }
-    // Nothing counts as seen until it can open: a build that lands before the
-    // App host is known still opens once it is.
     if (!mcpAppOrigin) return;
     const parts = latestBuiltAppParts(messages);
     const previous = seen.current;
@@ -142,7 +128,6 @@ export function BuiltAppPreviewSync({
           (active && turnCalls.has(part.toolCallId)));
       pending.current.delete(part.toolCallId);
       if (tab || (fresh && !readOnly)) {
-        // Updating the same tab keeps the panel in place; closing it stays respected.
         const activeTabId =
           usePanelTabStore.getState().sessions[panelSessionId]?.activeTabId ?? null;
         usePanelTabStore

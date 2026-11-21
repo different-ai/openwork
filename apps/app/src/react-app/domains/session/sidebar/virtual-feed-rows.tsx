@@ -2,12 +2,10 @@ import * as React from "react";
 import { defaultRangeExtractor, useVirtualizer, type Range, type Virtualizer } from "@tanstack/react-virtual";
 import { useDraggedSession } from "./session-reorder";
 
-const ROW_HEIGHT = 50; // 48px row + the existing 2px gap.
+const ROW_HEIGHT = 50;
 
 export function feedRowRange(range: Range, draggedIndex: number, focusedIndex: number): number[] {
   const indexes = new Set(defaultRangeExtractor(range));
-  // Keep the drag source alive while scrolling, and preserve native Tab order
-  // at the viewport edge (the focused row and its immediate neighbours).
   if (draggedIndex >= 0 && draggedIndex < range.count) indexes.add(draggedIndex);
   if (focusedIndex >= 0 && focusedIndex < range.count) {
     for (let i = Math.max(0, focusedIndex - 1); i <= Math.min(range.count - 1, focusedIndex + 1); i++) indexes.add(i);
@@ -15,19 +13,12 @@ export function feedRowRange(range: Range, draggedIndex: number, focusedIndex: n
   return [...indexes].sort((a, b) => a - b);
 }
 
-/**
- * How far the list's top has scrolled past the top of the sidebar's viewport, in px.
- * Negative while the list starts below it. Read from live geometry rather than
- * scrollTop plus a remembered offset, so it stays right when Pinned, the view
- * switch or an earlier section changes height without a scroll event.
- */
 export function feedListOffset(scrollerTop: number, listTop: number): number {
   return scrollerTop - listTop;
 }
 
 type FeedVirtualizer = Virtualizer<HTMLDivElement, Element>;
 
-/** Bound the mounted row/menu/title-observer count, not the available history. */
 export function VirtualFeedRows({ ids, children }: {
   ids: readonly string[];
   children: (index: number) => React.ReactNode;
@@ -42,9 +33,6 @@ export function VirtualFeedRows({ ids, children }: {
   const rangeExtractor = React.useCallback((range: Range) => feedRowRange(range, draggedIndex, focusedIndex), [draggedIndex, focusedIndex]);
   const getItemKey = React.useCallback((index: number) => ids[index] ?? index, [ids]);
 
-  // Sections share the sidebar's scroller with Pinned, the view switch and
-  // earlier sections, so the virtualizer's offset is this list's own position
-  // in that scroller, re-read on scroll, on any resize and on every render.
   const observeElementOffset = React.useCallback((instance: FeedVirtualizer, cb: (offset: number, isScrolling: boolean) => void) => {
     const scroller = instance.scrollElement;
     const list = root.current;
@@ -80,9 +68,6 @@ export function VirtualFeedRows({ ids, children }: {
     };
   }, []);
 
-  // The virtualizer's offsets are relative to this list, so turn a requested
-  // offset into the matching scroll of the shared scroller (a no-op when it
-  // already matches, as on mount).
   const scrollToFn = React.useCallback((offset: number, { adjustments = 0, behavior }: { adjustments?: number; behavior?: ScrollBehavior }, instance: FeedVirtualizer) => {
     const scroller = instance.scrollElement;
     const list = root.current;

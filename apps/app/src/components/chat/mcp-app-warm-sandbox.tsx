@@ -7,12 +7,6 @@ const NO_APP: OpenworkMcpAppResource = {
 };
 const EMPTY_DOCUMENT = "<!doctype html><html><head></head><body></body></html>";
 
-/**
- * Sandboxed Apps run in their own browser process, which closes with the last
- * document in it, so the next App starts that process again. One empty document
- * keeps it open and an App starts in less than half the time. It holds no App,
- * data or lease, and nothing it could leak: only this constant ever loads here.
- */
 export function McpAppWarmSandbox({ client }: { client: OpenworkServerClient }) {
   const frame = useRef<HTMLIFrameElement>(null);
   useEffect(() => {

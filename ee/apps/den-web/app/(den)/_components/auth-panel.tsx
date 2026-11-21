@@ -29,14 +29,9 @@ type LoginOption = {
   offerGoogleOnPassword: boolean;
   signInPath: string | null;
   signInUrl: string | null;
-  /**
-   * ssoPerOrganization: SSO is offered first and this is the usual step, one
-   * click away. Absent: SSO is the only way in.
-   */
   alternativeStep: AlternativeLoginStep | null;
   ssoRequired: boolean;
   organizationName: string | null;
-  /** The identity providers that sign in this email; several get one button each. */
   ssoProviders: SsoProviderOption[];
 };
 
@@ -135,12 +130,6 @@ function SocialButton({
   );
 }
 
-/**
- * Email-first steps ask for the password on a separate form. Password managers
- * only save a credential when the password form also carries the account name,
- * so the password step repeats the email in a visually hidden, read-only
- * username field (Chrome and Safari both look for autocomplete="username").
- */
 function HiddenUsernameField({ email }: { email: string }) {
   return (
     <input
@@ -217,7 +206,6 @@ export function DesktopHandoffAction({
   organizationName: string | null;
   helperText?: string;
   buttonClassName?: string;
-  /** When true, always show the pasteable openwork:// link (signed-in desktop handoff). */
   showCopyLinkByDefault?: boolean;
 }) {
   const { status, timedOut } = useDesktopHandoffStatus(grant);
@@ -309,27 +297,13 @@ export function AuthPanel({
   resolveEmailFirstOnPrefill?: boolean;
   eyebrow?: string;
   hideIntro?: boolean;
-  // When true the panel renders without its own `den-frame`/padding, so a parent
-  // (the unified split auth card) can own the surface. Defaults to a self-framed
-  // card for standalone callers (invite, workspace-claim).
   bare?: boolean;
   signUpContent?: Partial<PanelContent>;
   signInContent?: Partial<PanelContent>;
   verificationContent?: Partial<PanelContent>;
-  /** Title and helper for the email step of the email-first flow. */
   emailStepContent?: Partial<PanelContent>;
-  /**
-   * One-page flows (agent sign-in, device and claim codes, connection links)
-   * lead with Google and GitHub above the email field, and show the helper
-   * copy under the form instead of an intro paragraph.
-   */
   socialFirst?: boolean;
-  /** Which providers a social-first panel offers. */
   socialProviders?: readonly ("google" | "github")[];
-  /**
-   * Signs existing accounts in and offers no way to create one (the OpenWork phone app). The person gives their
-   * email first, so Google and GitHub are offered only to an account that already uses them.
-   */
   signInOnly?: boolean;
 }) {
   const router = useRouter();
@@ -343,8 +317,6 @@ export function AuthPanel({
   const [loginOption, setLoginOption] = useState<LoginOption | null>(null);
   const [loginOptionBusy, setLoginOptionBusy] = useState(false);
   const [loginOptionError, setLoginOptionError] = useState<string | null>(null);
-  // The method a password or social sign-in left in a long-lived cookie.
-  // "pending" until the browser cookie is read after hydration.
   const [rememberedMethod, setRememberedMethod] = useState<LastSignInMethod | null | "pending">("pending");
   const [rememberedDismissed, setRememberedDismissed] = useState(false);
   const [rememberedPasswordOpen, setRememberedPasswordOpen] = useState(false);
@@ -383,12 +355,10 @@ export function AuthPanel({
   const isSingleOrgMode = runtimeConfigLoaded && runtimeConfig.orgMode === "single_org";
   const isSingleOrgSsoMode = isSingleOrgMode && runtimeConfig.singleOrgSsoConfigured;
   const isSingleOrgPrivateSignup = isSingleOrgSignupDisabled(runtimeConfig, runtimeConfigLoaded);
-  // Closed by this deployment's setting, or because the caller only signs existing accounts in.
   const signUpClosed = isSingleOrgPrivateSignup || signInOnly;
   const singleOrgName = runtimeConfig.singleOrgName || "OpenWork";
   const singleOrgSlug = runtimeConfig.singleOrgSlug.trim();
   const emailFirstInvite = emailFirstInvitationId?.trim() ?? "";
-  // An invitation still creates its account where sign-up is otherwise closed.
   const noNewAccounts = signUpClosed && !emailFirstInvite;
   const visibleAuthMode = signInOnly && noNewAccounts ? "sign-in" : resolveVisibleAuthMode({ authMode, runtimeConfig, runtimeConfigLoaded });
 
@@ -458,10 +428,6 @@ export function AuthPanel({
   const ssoContinueLabel = loginOption?.organizationName ? `Continue with ${loginOption.organizationName} SSO` : "Continue with SSO";
   const canRememberSignIn = emailFirstFlow && !prefilledEmail?.trim() && !lockEmail && !hideSocialAuth && !emailFirstInvite;
 
-  // Read the remembered method once. setAuthMode is a new function on every
-  // provider render, so without this guard any later render (a session check,
-  // typing the email) re-ran this effect, closed the email form the person had
-  // just opened from "Continue with email", and cleared sign-in errors.
   const rememberedMethodReadRef = useRef(false);
   useEffect(() => {
     if (!canRememberSignIn) {
@@ -557,9 +523,6 @@ export function AuthPanel({
   const titleClass = bare ? "text-[24px] font-semibold leading-tight tracking-[-0.03em] text-[var(--dls-text-primary)]" : "den-title-lg";
   const shellClass = (gap: string, padding: string) =>
     bare ? `grid ${gap}` : `den-frame grid ${gap} ${padding}`;
-  // The segmented tabs are the primary sign-in/sign-up switch. Hide them for the
-  // focused sub-flows (email verification, password reset) where switching mode
-  // mid-step would be confusing.
   const showModeTabs = !emailFirstFlow && !isSingleOrgSsoMode && !signUpClosed && !verificationRequired && !isPasswordResetRequest;
   const showSingleOrgSso = isSingleOrgMode && Boolean(singleOrgSlug) && !verificationRequired && !isPasswordResetRequest && (!hideSocialAuth || isSingleOrgSsoMode);
   const showSingleOrgSsoDivider = showSingleOrgSso && !isSingleOrgSsoMode;
@@ -589,11 +552,6 @@ export function AuthPanel({
     }
 
     resolvedLoginOptionPrefillRef.current = key;
-    // This lookup is superseded only when a different email takes over, which the
-    // ref above already tracks. Tying it to effect cleanup instead would latch
-    // loginOptionBusy on any unrelated re-render: the cleanup discards the
-    // in-flight reply, the re-run returns early because it sees the busy flag,
-    // and the invite screen checks the sign-in method forever.
     const superseded = () => resolvedLoginOptionPrefillRef.current !== key;
 
     async function resolvePrefilledLoginOption() {
@@ -634,8 +592,6 @@ export function AuthPanel({
     }
 
     void resolvePrefilledLoginOption();
-    // loginOption and loginOptionBusy are read above only to skip redundant work.
-    // Listing them here would re-run this effect on its own state writes.
   }, [emailFirstFlow, emailFirstInvite, prefillKey, prefilledEmail, resolveEmailFirstOnPrefill, setAuthMode, setAuthName, setEmail, setPassword]);
 
   const switchMode = (mode: AuthMode) => {
@@ -659,7 +615,6 @@ export function AuthPanel({
     window.location.assign(nextUrl.toString());
   };
 
-  /** Start SSO at the organization's sign-in page; with a provider id, that identity provider (several to choose from). */
   const startEmailFirstSso = (providerId?: string) => {
     const target = loginOption?.signInPath ?? loginOption?.signInUrl;
     if (!target) {
@@ -679,7 +634,6 @@ export function AuthPanel({
     window.location.assign(nextUrl.toString());
   };
 
-  /** ssoPerOrganization: leave the suggested SSO for the usual step (password, Google, a new account). */
   const chooseAlternativeLoginStep = () => {
     const alternativeStep = loginOption?.alternativeStep;
     if (!loginOption || !alternativeStep) return;
@@ -731,7 +685,6 @@ export function AuthPanel({
       router.replace(oauthRoute);
       return;
     }
-    // In-place pages re-render with the new session and continue their own step.
     if (next && signsInInPlace(pathname)) {
       return;
     }
@@ -776,12 +729,6 @@ export function AuthPanel({
     }
   };
 
-  /* ------------------------------------------------------------------ */
-  /*  Already signed in + desktop handoff: simplified view               */
-  /* ------------------------------------------------------------------ */
-  // Gate on the session user (not authInfo feedback). Otherwise a hydrated
-  // desktop session still renders the email-first form underneath the Open
-  // OpenWork button.
   const isSignedInWithDesktopHandoff = Boolean(desktopAuthRequested && user && !setupPending);
   const signedInEmail = user?.email?.trim() || "";
   const emailFirstPanelActive = emailFirstFlow && !isSingleOrgSsoMode && !verificationRequired && !isPasswordResetRequest;
@@ -1415,8 +1362,6 @@ export function AuthPanel({
         ) : null}
 
         {showEmailPasswordAuth && !verificationRequired && !isPasswordResetRequest && !hideEmailField ? (
-          // Always rendered (invisible in sign-up) so switching modes never
-          // changes the card height.
           <div className={`-mt-2 flex justify-end ${visibleAuthMode === "sign-in" ? "" : "invisible"}`}>
             <button
               type="button"

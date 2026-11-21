@@ -222,7 +222,6 @@ export function getGlobalSettingsTabs(
   capabilities: Pick<PlatformCapabilities, "autoUpdate">,
   options: { desktop?: boolean } = {},
 ): SettingsTab[] {
-  // Ollama opens from a button on AI Providers, not from the sidebar.
   const tabs: SettingsTab[] = ["ai", "appearance", "shortcuts", "environment"];
   if (options.desktop) tabs.push("computer");
   if (capabilities.autoUpdate) tabs.push("updates");
@@ -240,7 +239,6 @@ export function isSettingsTabBeta(_tab: SettingsTab) {
 }
 
 export function isSettingsTabActive(activeTab: SettingsTab, tab: SettingsTab) {
-  // The Ollama page is reached from AI Providers, which stays highlighted there.
   if (activeTab === "ollama") return tab === "ai";
   return activeTab === tab;
 }
@@ -274,12 +272,6 @@ export type SettingsNavGroups = {
   cloud: SettingsTab[];
 };
 
-/**
- * Every settings navigation surface (sidebar + compact section menu) reads its
- * tabs from here so platform capabilities, preview flags, and the
- * `allowControlSettings` desktop policy cannot drift between them. When the
- * organization blocks settings control, only the Cloud group remains.
- */
 export function useSettingsNavGroups(developerMode: boolean): SettingsNavGroups {
   const platform = usePlatform();
   const checkRestriction = useCheckDesktopRestriction();
@@ -389,7 +381,6 @@ export function SettingsSidebar(props: SettingsSidebarProps) {
         </SidebarMenu>
       </SidebarHeader>
       <SidebarContent>
-        {/* Top-level hub entry */}
         {groups.hub.length > 0 ? (
           <SidebarGroup>
             <SidebarGroupContent>

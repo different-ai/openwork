@@ -7,7 +7,6 @@ import { listTeamsForMember } from "../../orgs.js"
 import { invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 
-/** A checklist for the person's own screens; agents have no use for it. */
 type ActivationRouteOptions = DescribeRouteOptions & { "x-mcp": false }
 const describeActivationRoute = (options: ActivationRouteOptions) => describeRoute(options)
 

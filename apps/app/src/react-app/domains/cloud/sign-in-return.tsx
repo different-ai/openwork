@@ -21,23 +21,17 @@ import { toast } from "@/components/ui/sonner";
 import { usePlatform } from "@/react-app/kernel/platform";
 
 export type CloudSignInRequest = {
-  /** A message the person sent is waiting to be resent after sign-in. */
   pendingTurn?: boolean;
-  /** The browser link to open; defaults to Den's sign-up/sign-in page. */
   url?: string;
-  /** The entry point's behavior when its route cannot support a return. */
   fallback?: () => void;
-  /** The conversation on screen when the route does not name it. */
   workspaceId?: string | null;
   sessionId?: string | null;
 };
 
 function defaultAuthUrl() {
-  // Label stays "Sign in"; opens the sign-up tab so new users aren't defaulted into sign-in.
   return buildDenAuthUrl(readDenBootstrapConfig().baseUrl, "sign-up");
 }
 
-/** Starts sign-in in the browser, keeping the current task on screen. */
 export function useCloudSignIn() {
   const platform = usePlatform();
   return useCallback((request: CloudSignInRequest = {}): BeginSignInResult => {
@@ -56,11 +50,6 @@ export function useCloudSignIn() {
   }, [platform]);
 }
 
-/**
- * A code pasted from the account menu completes in place and returns to this
- * route too. It completes a browser sign-in already
- * waiting rather than replacing it, and a failed paste leaves nothing behind.
- */
 export function useRecordSignInReturnForPaste() {
   return useCallback((): (() => void) | undefined => {
     const waiting = readSignInReturnTarget();
@@ -79,11 +68,6 @@ export function useSignInReturnTarget(): SignInReturnTarget | null {
   return useMemo(() => parseSignInReturnTarget(raw, Date.now()), [raw]);
 }
 
-/**
- * Opens the route sign-in started from, once, with "Signed in to {org}".
- * Returns false when there is nothing to return to (the caller then uses
- * its default landing).
- */
 export function completeSignInReturn(navigate: NavigateFunction): boolean {
   const target = claimSignInReturnRoute();
   if (!target) return false;

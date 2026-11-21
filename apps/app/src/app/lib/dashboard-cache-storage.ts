@@ -112,7 +112,6 @@ export function createDashboardTileCacheStore<T>(
   };
 }
 
-/** Every stored scope of saved tiles, whichever account or organization wrote it. */
 export function dashboardTileScopeKeys(): string[] {
   const storage = currentStorage();
   if (!storage) return [];

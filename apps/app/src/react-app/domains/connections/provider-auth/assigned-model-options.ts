@@ -15,13 +15,6 @@ export function filterCloudManagedModelOptions<T extends Pick<ModelOption, "prov
     : options.filter((option) => !isCloudManagedProviderKey(option.providerID));
 }
 
-/**
- * A granted provider can only serve requests when a credential exists for
- * the calling member: the organization's shared key, the member's own
- * per-member binding, or no credential declared at all. A grant without a
- * credential (for example a per-member LiteLLM key the member removed) must
- * not be offered as a selectable model — the engine will never connect it.
- */
 export function hasUsableCloudProviderCredential(
   provider: Pick<DenOrgLlmProvider, "providerConfig" | "hasApiKey" | "hasMyCredential">,
 ): boolean {
@@ -62,7 +55,6 @@ export function assignedModelOptions(
   });
 }
 
-/** Only models in the ready list are selectable; pending sign-ins stay separate. */
 export function assignedGatewayModelOptions(
   providers: readonly DenOrgUsableGatewayProvider[],
 ): ModelOption[] {

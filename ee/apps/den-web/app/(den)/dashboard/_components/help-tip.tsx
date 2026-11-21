@@ -4,10 +4,6 @@ import { Info } from "lucide-react";
 import { useState } from "react";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../_components/ui/tooltip";
 
-/**
- * An "i" beside a setting's label: one or two sentences on what the setting does. It opens on hover, on keyboard
- * focus and on a click or tap (people click an "i"), and closes on leaving it, Escape or a click elsewhere.
- */
 export function HelpTip({ label, children }: { label: string; children: string }) {
   const [open, setOpen] = useState(false);
   return (

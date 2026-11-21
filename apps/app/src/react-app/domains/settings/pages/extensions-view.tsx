@@ -18,7 +18,6 @@ export type ExtensionsSection =
   | "needs-admin-setup"
   | "ready";
 
-/** Sections are the URL spelling of the inventory filters. */
 export function filterForSection(section: ExtensionsSection | undefined): ExtensionInventoryFilter {
   switch (section) {
     case "apps":
@@ -86,7 +85,6 @@ type SuggestedPlugin = {
 
 export type ExtensionsViewProps = {
   busy: boolean;
-  /** Hide the view's own description line (the settings shell already shows the tab description in-pane). */
   hideDescription?: boolean;
   selectedWorkspaceRoot: string;
   canEditPlugins: boolean;
@@ -94,7 +92,6 @@ export type ExtensionsViewProps = {
   accessHint?: string | null;
   suggestedPlugins: SuggestedPlugin[];
   extensions: PluginsExtensionsStore;
-  /** The MCP view (quick-connect grid + configured servers). Skills are injected into it. */
   mcpView: (routing: {
     initialFilter: ExtensionInventoryFilter;
     onFilterChange: (filter: ExtensionInventoryFilter) => void;
@@ -124,7 +121,6 @@ export function ExtensionsView(props: ExtensionsViewProps) {
     initialFilter,
     onFilterChange: setFilterRoute,
     initialState,
-    // OpenCode plugins keep their own disclosure under the Plugins category.
     pluginsContent: pluginCount > 0 ? (
       <details className="group" open>
         <summary className="flex cursor-pointer items-center gap-2 rounded-lg px-1 py-2 text-sm font-medium text-dls-secondary transition-colors hover:text-dls-text">

@@ -17,12 +17,10 @@ import { workbotSettingsQueryKey } from "./workbot-settings-data";
 const teamSettingsPath = "/v1/org/workbot-settings/teams";
 const everyoneSettingsPath = "/v1/org/workbot-settings/everyone";
 
-/** Under Everyone's Workbot settings, so saving Everyone's model refreshes what teams follow. */
 export function workbotTeamSettingsQueryKey(orgId: string): string[] {
   return [...workbotSettingsQueryKey(orgId), "teams"];
 }
 
-/** Everyone's Workbot settings (on or off, model, name, and whether members' agents are on while they are available) and what each team changed . */
 export function useWorkbotTeamSettings(orgId: string, enabled = true) {
   return useQuery({
     queryKey: workbotTeamSettingsQueryKey(orgId),
@@ -43,7 +41,6 @@ export function useWorkbotTeamSettings(orgId: string, enabled = true) {
   });
 }
 
-/** After a save: show the answer at once, then read it again. The viewer's own Workbot entry may have changed too. */
 function settleSave(queryClient: QueryClient, orgId: string) {
   return {
     onSuccess: (saved: WorkbotTeamSettingsView | null) => {
@@ -58,7 +55,6 @@ function settleSave(queryClient: QueryClient, orgId: string) {
 
 export type SaveWorkbotTeamSettingsInput = { teamId: string; change: WorkbotTeamSettingsWrite };
 
-/** Changes one team's Workbot settings; a setting left out of the change is kept. */
 export function useSaveWorkbotTeamSettings(orgId: string) {
   const queryClient = useQueryClient();
   const { runReauthableAction } = useOrgDashboard();
@@ -84,7 +80,6 @@ export function useSaveWorkbotTeamSettings(orgId: string) {
     onSuccess: settle.onSuccess,
     onSettled: (_saved, _error, input) => Promise.all([
       settle.onSettled(),
-      // Back to Everyone's policy for members' agents: read the team's policy and its tools again before the save settles.
       ...(input.change.agent ? [
         queryClient.invalidateQueries({ queryKey: agentPolicyQueryKey(orgId, { kind: "team", teamId: input.teamId }) }),
         queryClient.invalidateQueries({ queryKey: agentToolsRootQueryKey(orgId) }),
@@ -93,7 +88,6 @@ export function useSaveWorkbotTeamSettings(orgId: string) {
   });
 }
 
-/** Turns Workbot on or off for Everyone. Everyone's model is saved with Manage › Workbot's own hook. */
 export function useSaveWorkbotEveryoneSettings(orgId: string) {
   const queryClient = useQueryClient();
   const { runReauthableAction } = useOrgDashboard();

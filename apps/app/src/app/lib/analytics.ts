@@ -1,19 +1,3 @@
-/**
- * Product analytics for the OpenWork desktop app (PostHog, zero-dependency).
- *
- * Principles (mirrors `den-telemetry.ts`):
- * - Never send message content, file paths, code, or prompts. Only event
- *   names, counts, lengths, durations, and coarse context (workspace type,
- *   provider/model id). Sole exception: answers the user types directly
- *   into an explicit survey field (e.g. the onboarding attribution survey).
- * - Fire-and-forget: analytics must never break or slow the app.
- * - Respect the user: a single `analyticsEnabled` preference (Settings ->
- *   Preferences) turns everything off; an explicitly blank PostHog key means
- *   no network.
- * - Every capture is mirrored into the local app inspector
- *   (`window.__openwork.record("analytics.<event>")`) so coded evals can
- *   assert instrumentation without any analytics backend.
- */
 import { denSessionUpdatedEvent, denSettingsChangedEvent, type DenSessionUpdatedDetail } from "./den-session-events";
 import { readDenSettings } from "./den";
 import { readDesktopDistributionInfo } from "./desktop";
@@ -27,9 +11,6 @@ const ENV_APP_VERSION = String(import.meta.env.VITE_OPENWORK_APP_VERSION ?? "").
 
 const DEFAULT_POSTHOG_HOST = "https://us.i.posthog.com";
 
-// Packaged releases use the default publishable key; dev builds stay silent
-// unless VITE_OPENWORK_POSTHOG_KEY is set. Set it to "" to disable analytics
-// in any build. The inspector mirror still records events locally either way.
 const POSTHOG_KEY = resolvePosthogKey(import.meta.env.VITE_OPENWORK_POSTHOG_KEY, import.meta.env.DEV);
 const POSTHOG_HOST = (ENV_POSTHOG_HOST || DEFAULT_POSTHOG_HOST).replace(/\/+$/, "");
 
@@ -105,10 +86,6 @@ function baseProperties(): AnalyticsProperties {
   };
 }
 
-/**
- * Queue an analytics event. Always mirrored to the local inspector;
- * only sent over the network when enabled and a key is configured.
- */
 export function captureAnalyticsEvent(event: string, properties: AnalyticsProperties = {}) {
   try {
     const eventProperties = { ...baseProperties(), ...properties };
@@ -125,10 +102,6 @@ export function captureAnalyticsEvent(event: string, properties: AnalyticsProper
   }
 }
 
-/**
- * Link the anonymous distinct id to the signed-in Den user so DAU and
- * retention survive sign-in. Sends only the user id — no email or name.
- */
 function identify(denUserId: string) {
   if (!POSTHOG_KEY || !isAnalyticsEnabled()) return;
   queue.push({
@@ -170,14 +143,9 @@ export async function flushAnalytics(): Promise<void> {
       }),
     });
   } catch {
-    // Network failure — drop silently. Analytics must never surface errors.
   }
 }
 
-// Task run duration tracking: sendDraft marks the start, the session.idle
-// sync event takes it. Also acts as a dedupe guard so idle events that do
-// not correspond to an instrumented run (or arrive from a second workspace
-// sync) emit nothing.
 const taskRunStarts = new Map<string, number>();
 
 export function markTaskRunStart(sessionId: string) {
@@ -191,10 +159,6 @@ export function takeTaskRunStart(sessionId: string): number | null {
   return startedAt;
 }
 
-/**
- * One-time setup: flush loop, unload flush, and cloud sign-in listener.
- * Mounted from AppRoot.
- */
 export function initAnalytics() {
   if (initialized || typeof window === "undefined") return;
   initialized = true;

@@ -3,20 +3,12 @@
 import type { ReactNode } from "react";
 
 export type DenStickyActionBarProps = {
-  /** Live summary of what will be saved (icon + name, counts, access). */
   summary?: ReactNode;
-  /** Action buttons, rendered on the right. */
   children: ReactNode;
-  /** Keep action-only rows in normal flow when there is no draft to save. */
   sticky?: boolean;
   testId?: string;
 };
 
-/**
- * A save bar that sticks to the bottom of the viewport while the page
- * scrolls, so long forms never require scrolling back up to save. It masks
- * the content scrolling under it with the dashboard's canvas colour.
- */
 export function DenStickyActionBar({ summary, children, sticky = true, testId }: DenStickyActionBarProps) {
   return (
     <div

@@ -20,9 +20,6 @@ export function checkDesktopAppRestriction(input: {
   config: DenDesktopConfig | null | undefined;
   restriction: DesktopAppRestrictionKey;
 }) {
-  // OpenCode Zen is retired, including signed-out and offline use. Reuse the
-  // restriction every surface already honors (model list, Connect, Automations
-  // and the engine's disabled providers), regardless of organization policy.
   if (input.restriction === "allowZenModel") {
     return true;
   }
@@ -34,28 +31,16 @@ export function checkDesktopAppRestriction(input: {
 
 const RETIRED_OPENCODE_ZEN_TERMS = "opencode zen big pickle free";
 
-/**
- * Whether Connect a provider shows OpenCode Zen as retired where it used to be
- * listed: only while Zen itself is missing from the list, and for an empty
- * search or one a person looking for Zen would type.
- */
 export function showsRetiredOpencodeZen(input: { providerIds: readonly string[]; query: string }) {
   if (input.providerIds.some((id) => id.trim().toLowerCase() === DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID)) return false;
   const query = input.query.trim().toLowerCase();
   return !query || RETIRED_OPENCODE_ZEN_TERMS.includes(query);
 }
 
-/** Catalog copy explaining why the organization blocked a capability. */
 export function desktopRestrictionNotice(restriction: DesktopAppRestrictionKey) {
   return desktopPolicyUserNotices[restriction];
 }
 
-/**
- * Settings tabs that stay reachable when `allowControlSettings` is blocked.
- * Members can still see their Cloud account, switch organizations, and use
- * Cloud features that are not desktop settings; every other tab is hidden and
- * redirected.
- */
 const SETTINGS_TABS_WITHOUT_CONTROL = new Set<SettingsTab>(["cloud-account", "usage", "devices"]);
 
 export const SETTINGS_TAB_WITHOUT_CONTROL: SettingsTab = "cloud-account";
@@ -78,7 +63,6 @@ export function isDesktopProviderBlocked(input: {
   if (providerId === DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID) {
     return input.checkRestriction({ restriction: "allowZenModel" });
   }
-  // Ollama and LM Studio follow the organization's local models switch.
   if (isLocalModelProviderId(providerId)) {
     return input.checkRestriction({ restriction: "allowLocalModels" });
   }

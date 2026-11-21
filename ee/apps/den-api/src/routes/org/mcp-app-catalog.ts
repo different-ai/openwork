@@ -36,12 +36,6 @@ const builtMcpAppListResponseSchema = z.object({
   apps: z.array(builtMcpAppSchema),
 }).meta({ ref: "BuiltMcpAppListResponse" })
 
-/**
- * Apps built in OpenWork that the signed-in member can use, for example on a
- * personal Dashboard, in the same element shape connection MCP Apps use. Each
- * element opens the App through its own MCP server, where the desktop finds it
- * by App id.
- */
 export function registerOrgMcpAppCatalogRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get(
     "/v1/mcp-apps",
@@ -70,8 +64,6 @@ export function registerOrgMcpAppCatalogRoutes<T extends { Variables: OrgRouteVa
         .from(PluginTable)
         .where(and(eq(PluginTable.organizationId, payload.organization.id), inArray(PluginTable.id, pluginIds)))
       const pluginNames = new Map(plugins.map((plugin) => [plugin.id, plugin.name]))
-      // Only already-accessible objects enter this query. Return a boolean, not
-      // another member's identity, and keep access decisions in the App host.
       const appIds = apps.map((entry) => normalizeDenTypeId("configObject", entry.appId))
       const owned = appIds.length === 0 ? [] : await db.select({ id: ConfigObjectTable.id })
         .from(ConfigObjectTable)
@@ -97,7 +89,6 @@ export function registerOrgMcpAppCatalogRoutes<T extends { Variables: OrgRouteVa
             pluginName: pluginNames.get(normalizeDenTypeId("plugin", entry.pluginId)) ?? entry.title,
             isOwner: ownedIds.has(normalizeDenTypeId("configObject", entry.appId)),
             canDelete: roles.get(normalizeDenTypeId("configObject", entry.appId)) === "manager",
-            // open_app takes only optional launch input and runs no other tools.
             requiresInput: false,
             requiredInputKeys: [],
             requiresApproval: false,

@@ -64,7 +64,6 @@ export function ConfigImportSection() {
   const check = file?.check ?? null;
   const titleMissing = title.trim() === "";
   const showTitleError = titleTouched && titleMissing;
-  // The title's own message says what's missing once the field was left empty; the button doesn't repeat it.
   const uploadBlockedReason = !file ? "Choose a config file to upload." : !check?.ok || showTitleError ? null : titleMissing ? "Enter a title to upload." : null;
 
   return (

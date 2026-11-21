@@ -13,7 +13,6 @@ const toneClasses: Record<DenBadgeTone, string> = {
 
 const sizeClasses: Record<DenBadgeSize, string> = {
   md: "gap-1.5 px-2.5 py-1 text-[12px]",
-  // The compact pill beside a name or label, e.g. Admin / Invited in Members.
   sm: "gap-1 px-2 py-0.5 text-[11px]",
 };
 

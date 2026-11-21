@@ -13,7 +13,6 @@ type Provider = typeof GatewayProviderTable.$inferSelect
 type Credential = typeof GatewayProviderCredentialTable.$inferSelect
 type CredentialSet = typeof GatewayCredentialSetTable.$inferSelect
 
-/** Caller holds all member fences. States precede credentials for the entire batch. */
 export async function revokeInferenceCredentialsForMembers(tx: Tx, memberIds: MemberId[]) {
   if (!memberIds.length) return []
   await tx.delete(GatewayProviderOauthStateTable).where(inArray(GatewayProviderOauthStateTable.org_membership_id, memberIds))
@@ -30,11 +29,6 @@ export async function revokeInferenceCredentialsForMembers(tx: Tx, memberIds: Me
   return credentials.filter((credential) => credential.status !== "revoked")
 }
 
-/**
- * Best-effort upstream cleanup after local credentials are erased: revokes Google
- * grants and ends IAM Identity Center sessions. Entra ID has no per-token
- * revocation for confidential clients; erasing the refresh token is the revocation.
- */
 export async function revokeUpstreamCredentials(credentials: Credential[]) {
   const signal = AbortSignal.timeout(5_000)
   const awsFetch = credentials.some((credential) => credential.kind === "aws_sso") ? createInferenceEgressFetch({ allowedOrigins: new Set() }) : null
@@ -63,7 +57,6 @@ export async function revokeMemberGatewayCredentials(input: { organizationId: Pr
     const [member] = await tx.select({ organizationId: MemberTable.organizationId }).from(MemberTable)
       .where(eq(MemberTable.id, input.memberId)).for("update")
     if (member && member.organizationId !== input.organizationId) return []
-    // The trusted deletion hook also calls after the membership row is physically gone.
     return revokeInferenceCredentialsForMembers(tx, [input.memberId])
   })
   await revokeUpstreamCredentials(credentials)
@@ -75,7 +68,6 @@ export async function memberGatewayTeams(database: Tx | typeof db | typeof db.$p
     .where(and(eq(TeamMemberTable.orgMembershipId, memberId), eq(TeamTable.organizationId, organizationId)))
 }
 
-/** Enumerate explicit group/set choices, not raw-model automatic resolution. Distinct granted sets stay selectable. */
 export function effectiveGatewayGrants(grants: Array<typeof GatewayProviderAccessTable.$inferSelect>, memberId: MemberId, teamIds: string[]) {
   const priority = (grant: typeof GatewayProviderAccessTable.$inferSelect) => grant.org_membership_id
     ? grant.org_membership_id === memberId && grant.team_id === null ? 3 : 0
@@ -87,16 +79,13 @@ export function effectiveGatewayGrants(grants: Array<typeof GatewayProviderAcces
     .filter((grant, index, rows) => rows.findIndex((other) => other.model_group_id === grant.model_group_id && other.credential_set_id === grant.credential_set_id) === index)
 }
 
-/** Lock order: member, provider, set, group/access, state, credential. Never hold locks during HTTP. */
 export async function lockMemberOAuthAuthorization(tx: Tx, provider: Provider, set: CredentialSet, memberId: MemberId, expectedUserId?: string) {
   const [member] = await tx.select().from(MemberTable)
     .where(and(eq(MemberTable.id, memberId), eq(MemberTable.organizationId, provider.organization_id), isNull(MemberTable.removedAt))).for("update")
   if (!member?.userId || expectedUserId !== undefined && member.userId !== expectedUserId) return false
   const [current] = await tx.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.id, provider.id)).for("update")
-  // Member sets: each member's own Google, Microsoft or AWS sign-in, their own LiteLLM key, or the TrueFoundry token OpenWork created for them.
   if (!current || current.status !== "active" || !(providerMemberSignInMethod(current) || isLiteLlmProviderId(current.provider_id) || isTrueFoundryProviderId(current.provider_id))
     || current.organization_id !== provider.organization_id || current.provider_id !== provider.provider_id
-    // The API scope members' Microsoft tokens are for is part of the sign-in configuration the caller checked.
     || providerMemberSignInScope(current) !== providerMemberSignInScope(provider)) return false
   const [currentSet] = await tx.select().from(GatewayCredentialSetTable).where(eq(GatewayCredentialSetTable.id, set.id)).for("update")
   if (!currentSet || currentSet.gateway_provider_id !== provider.id || currentSet.status !== "active" || currentSet.credential_mode !== "member"
@@ -109,7 +98,6 @@ export async function lockMemberOAuthAuthorization(tx: Tx, provider: Provider, s
   return effectiveGatewayGrants(rows.map((row) => row.grant), memberId, teams.map((team) => team.id)).some((grant) => grant.credential_set_id === set.id)
 }
 
-/** Fence team changes against callbacks; callbacks reauthorize the selected set without canceling unrelated consent. */
 export async function invalidateTeamInferenceOAuth(tx: Tx, teamId: typeof TeamTable.$inferSelect.id) {
   const grants = await tx.select({ id: GatewayProviderAccessTable.gateway_provider_id }).from(GatewayProviderAccessTable)
     .where(eq(GatewayProviderAccessTable.team_id, teamId))

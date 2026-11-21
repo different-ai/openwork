@@ -1,12 +1,3 @@
-/**
- * Stable keys of plugins and config objects (skills, agents, commands…).
- *
- * A key is unique per organization and travels with the item in a
- * configuration export, so an import finds the same item again whatever it is
- * called by then. It gets a readable default (a slug of the name) the first
- * time the item is created, exported or imported, and is stored from then on:
- * it is never recomputed and never follows a rename. Admins can change it.
- */
 import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { ConfigObjectTable, PluginTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -19,7 +10,6 @@ export type KeyedItem = { kind: KeyedKind; organizationId: string; id: string }
 const KEY_MAX = 128
 const SUFFIX_TRIES = 20
 
-/** A readable key from a name: `Field notes (v2)` → `field-notes-v2`. Never empty. */
 export function externalKeyFromName(name: string): string {
   const slug = name.normalize("NFKD").replace(/[̀-ͯ]/g, "").toLowerCase()
     .replace(/[^a-z0-9._-]+/g, "-")
@@ -59,10 +49,6 @@ async function readKey(item: KeyedItem): Promise<string | null> {
   return row?.externalKey ?? null
 }
 
-/**
- * Set exactly this key (or clear it with null). False when another item of
- * the organization already has it; nothing is written then.
- */
 export async function setExternalKey(item: KeyedItem, key: string | null, options: { onlyWhenUnset?: boolean } = {}): Promise<boolean> {
   try {
     await writeKey(item, key, options.onlyWhenUnset === true)
@@ -73,11 +59,6 @@ export async function setExternalKey(item: KeyedItem, key: string | null, option
   }
 }
 
-/**
- * Give an item without a key its default: a slug of the name, with a suffix
- * when another item already has it. Returns the key the item has afterwards
- * (its existing one when it already had a key).
- */
 export async function assignDefaultExternalKey(item: KeyedItem, name: string): Promise<string | null> {
   const base = externalKeyFromName(name)
   for (let attempt = 1; attempt <= SUFFIX_TRIES + 3; attempt += 1) {

@@ -128,7 +128,6 @@ export async function searchNativeCapabilities(input: {
   catalog: readonly McpToolOperation[]
   limit: number
   namespaceContext?: CodemodeConnectionNamespaceContext
-  /** A member's background agent's token: only show what it may read. */
   scopes?: ReadonlySet<string>
 }): Promise<NativeCapabilityMatch[]> {
   const agent = input.scopes ? agentReadAllowlist(input.scopes) : null
@@ -191,7 +190,6 @@ async function resolveNativeCapability(input: {
 type NativeCapabilityToolResult = {
   isError?: boolean
   content: AgentToolContentPart[]
-  /** Untruncated route payload; set only when the caller passes includePayload (Code Mode). */
   payload?: unknown
 }
 
@@ -207,7 +205,6 @@ export async function executeNativeCapability(input: {
   query?: unknown
   body?: unknown
   includePayload?: boolean
-  /** What started this call, recorded with its Library usage event. */
   usageSource: CapabilityUsageSource
 }): Promise<NativeCapabilityToolResult | null> {
   const parsed = parseNativeCapabilityName(input.name)
@@ -235,7 +232,6 @@ export async function executeNativeCapability(input: {
       }],
     }
   }
-  // A member's background agent reads only its sources that are on (agent-read-sources.ts).
   const agent = agentReadAllowlist(input.principal.scopes)
   if (agent && !agentMayUseNative(agent, resolved.connection.id, resolved.operation)) {
     return { isError: true, content: [{ type: "text", text: JSON.stringify({ error: "policy_blocked", message: AGENT_SOURCE_BLOCKED_MESSAGE }) }] }
@@ -253,7 +249,6 @@ export async function executeNativeCapability(input: {
       body: normalizeToolBody(input.body),
     },
   })
-  // Library usage: one row per Google Workspace / Microsoft 365 call, ok or error.
   if (input.member) {
     recordConnectorCall(call, {
       organizationId: input.organizationId,

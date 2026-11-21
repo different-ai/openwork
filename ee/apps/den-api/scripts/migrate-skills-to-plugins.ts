@@ -1,27 +1,3 @@
-/**
- * One-time data migration for removing the legacy Skill Hub / skill tables.
- *
- * Run this BEFORE applying the drop-tables migration. It reads plaintext rows
- * from the legacy `skill` tables and writes encrypted plugin-arch config object
- * versions, so it requires DATABASE_URL or DATABASE_HOST/DATABASE_USERNAME/
- * DATABASE_PASSWORD plus DEN_DB_ENCRYPTION_KEY. The den-db-migrate GitHub
- * workflow cannot run this script because it does not have the encryption key
- * secret; this is a manual pre-deploy step.
- *
- * Usage:
- *   pnpm --filter @openwork-ee/den-api migrate:skills-to-plugins        # dry run
- *   pnpm --filter @openwork-ee/den-api migrate:skills-to-plugins -- --yes
- *
- * Incident recovery after the legacy tables have already been dropped:
- *   1. Restore a PlanetScale backup to a branch.
- *   2. Copy skill, skill_hub, skill_hub_skill, and skill_hub_member into main
- *      under a prefix such as recovered_ (for example, recovered_skill).
- *   3. Run against production using the PlanetScale serverless driver over HTTPS
- *      (DATABASE_URL is NOT reachable externally):
- *      DATABASE_HOST=... DATABASE_USERNAME=... DATABASE_PASSWORD=... DEN_DB_ENCRYPTION_KEY=... \
- *        pnpm --filter @openwork-ee/den-api migrate:skills-to-plugins -- --table-prefix recovered_ --yes
- *   4. Drop the recovered_* tables after verifying the migrated plugins.
- */
 import { createDenDb, type DenDbMode } from "@openwork-ee/den-db"
 import { and, asc, eq, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {

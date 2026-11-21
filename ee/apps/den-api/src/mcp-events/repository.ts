@@ -14,21 +14,18 @@ export async function findSubscription(id: string) {
 
 export async function acceptEvent(subscription: EventSubscription, event: McpEvent) {
   await db.transaction(async (tx) => {
-    // Serialize receipt admission with unsubscribe and never acknowledge an event for a retired watch.
     const [live] = await tx.select({ status: Subscription.status }).from(Subscription).where(and(eq(Subscription.id, subscription.id), gt(Subscription.expiresAt, new Date()))).for("update").limit(1)
     if (live?.status !== "active") throw new Error("Subscription stopped")
     const id = eventMessageId(subscription.id, event.eventId)
     const [existing] = await tx.select({ id: Receipt.id }).from(Receipt).where(eq(Receipt.id, id)).limit(1)
     if (existing) return
     const [total] = await tx.select({ count: sql<number>`count(*)` }).from(Receipt).where(eq(Receipt.subscriptionId, subscription.id))
-    // Bounded first rollout: backpressure, never acknowledge and silently drop overflow.
     if (Number(total?.count) >= 100) throw new Error("Subscription delivery limit reached")
     if (event.cursor !== undefined) await tx.update(Subscription).set({ cursor: event.cursor }).where(eq(Subscription.id, subscription.id))
     await tx.insert(Receipt).values({ id, subscriptionId: subscription.id, organizationId: subscription.organizationId, payload: JSON.stringify(event), status: "pending" })
   })
 }
 
-/** Control notices share the durable delivery channel but never execute the watch's event action. */
 export async function acceptControl(subscription: EventSubscription, control: McpEventControl, deliveryId: string) {
   await db.transaction(async (tx) => {
     const [live] = await tx.select().from(Subscription).where(and(eq(Subscription.id, subscription.id), gt(Subscription.expiresAt, new Date()))).for("update").limit(1)
@@ -80,14 +77,8 @@ export async function pruneEvents() {
   await db.delete(Subscription).where(lt(Subscription.expiresAt, before))
 }
 
-/**
- * Unsubscribe and flag changes serialize with the bounded runner handoff. Once cancellation returns,
- * no pending receipt can enqueue a new turn; a turn already accepted follows the runner's Stop control.
- * The idempotent message id covers a network success followed by a transaction/response failure.
- */
 export async function handOffEvent(receiptId: string, subscription: EventSubscription, send: () => Promise<void>, terminated = false) {
   return db.transaction(async (tx) => {
-    // Lock order matches stopSubscription: subscription, then receipt.
     const [watch] = await tx.select({ status: Subscription.status, expiresAt: Subscription.expiresAt }).from(Subscription).where(eq(Subscription.id, subscription.id)).for("update").limit(1)
     const [receipt] = await tx.select({ status: Receipt.status }).from(Receipt).where(eq(Receipt.id, receiptId)).for("update").limit(1)
     if (!receipt || receipt.status !== "pending") return false

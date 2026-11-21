@@ -95,7 +95,6 @@ export async function ensureUsableBuckets(organizationId: string) {
     const policies = await tx.select().from(InferenceOrgLimitPolicyTable)
       .where(eq(InferenceOrgLimitPolicyTable.organization_id, orgId))
       .orderBy(asc(InferenceOrgLimitPolicyTable.window_type)).for("update")
-    // This timestamp owns attribution, including time spent waiting for provider credentials.
     const admittedAt = new Date()
     const effectiveLimits = await getEffectiveLimits(tx, orgId)
     if (!effectiveLimits) {

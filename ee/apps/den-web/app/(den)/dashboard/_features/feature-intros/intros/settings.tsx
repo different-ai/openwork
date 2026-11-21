@@ -13,20 +13,10 @@ import { defineFeatureIntro, type FeatureIntroContext } from "../types";
 import { docsPage } from "./docs";
 import { InvoicesExample } from "./examples/billing/invoices-example";
 
-/** Invoices on the first page of `GET /v1/billing/stripe/invoices`; missing until it loads. */
 export type BillingInvoicesFacts = { invoices?: number };
 
-/*
- * Settings pages that are forms or reports, with nothing to set up: they never
- * take over the page and never get a dot (`helpOnly`), but `?` always has
- * something to say (DESIGN.md I1, I8). No live example: those are for the full
- * screen and box sizes (I7).
- */
-
-/** The Allowed email domains card on General (`id` in org-settings-screen). */
 export const ORG_SETTINGS_EMAIL_DOMAINS_ANCHOR = "#allowed-email-domains";
 
-/** Desktop policy management is part of Enterprise (`entitlements.desktopPolicies`). */
 function desktopPoliciesNotIncluded(ctx: FeatureIntroContext): boolean {
   return !ctx.orgContext.entitlements.desktopPolicies;
 }
@@ -69,7 +59,6 @@ export const settingsIntros = [
       { title: "Copy a report.", text: "Share every result in one message when you ask for help." },
     ],
     docsUrl: docsPage("self-host/diagnostics"),
-    // Nothing to set up: the page itself is the action ("Check now").
     ctas: [],
     setupState: () => "done",
   }),
@@ -88,7 +77,6 @@ export const settingsIntros = [
       { title: "Enterprise.", text: "SCIM, audit logs, required single sign-on and desktop policies, invoiced by OpenWork." },
     ],
     docsUrl: docsPage("cloud/billing"),
-    // Plans are bought on this page itself; Enterprise is invoiced, not bought here.
     ctas: [],
     setupState: () => "done",
   }),
@@ -111,12 +99,10 @@ export const settingsIntros = [
       alt: "Example: three monthly invoices. 1 November, $60, due; 1 October, $60, paid; 1 September, $50, paid.",
     },
     docsUrl: docsPage("cloud/billing"),
-    // Invoices start with a paid plan, which is bought on Billing.
     ctas: [
       { when: (ctx) => ctx.can("canManageBilling"), label: "Choose a plan", href: getBillingRoute() },
       { when: () => true, label: "Choose a plan", href: getBillingRoute(), locked: { reason: permissionLockReason("billing.manage") } },
     ],
-    // A box in place of the empty list; never on a guess before the list loads.
     setupState: (ctx) => (ctx.facts.invoices === 0 ? "none" : "done"),
   }),
 
@@ -128,7 +114,6 @@ export const settingsIntros = [
     icon: Laptop,
     title: "Desktop policies",
     summary: "Choose what the OpenWork desktop app lets members and teams do.",
-    // Most policy enforcement is suspended (DESKTOP_POLICY_ENFORCEMENT_ENABLED): never promise more than model access.
     highlights: [
       { title: "A default for everyone.", text: "The default policy covers every member. Give some members or teams their own." },
       { title: "Model access works today.", text: "Turn off Custom providers to stop members adding their own AI providers." },

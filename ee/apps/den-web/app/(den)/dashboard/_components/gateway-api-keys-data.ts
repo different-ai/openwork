@@ -16,10 +16,6 @@ import { getLibraryRoute } from "../../_lib/den-org";
 import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
-/**
- * AI Gateway API keys for 3rd party tools: the organization setting,
- * the viewer's own keys (Library › Models) and every key in the organization (AI Gateway › API Keys).
- */
 export const gatewayApiKeyQueryKeys = {
   all: ["gateway-api-keys"] as const,
   mine: (orgId: string | null) => ["gateway-api-keys", "mine", orgId] as const,
@@ -30,7 +26,6 @@ const settingsViewSchema = z.object({ settings: organizationAiGatewaySettingsSch
 
 async function request<T>(orgId: string, path: string, init: RequestInit, schema: z.ZodType<T>, fallback: string): Promise<T> {
   const { response, payload } = await requestJson(path, { ...init, headers: { ...init.headers, [ORG_SCOPE_HEADER]: orgId } }, 15_000);
-  // A reauth error stays one, so runReauthableAction can open the sign-in dialog and retry.
   if (!response.ok) throw getRequestError(payload, response, fallback);
   const parsed = schema.safeParse(payload);
   if (!parsed.success) throw new Error(fallback);
@@ -54,7 +49,6 @@ export function useSaveAiGatewaySettings() {
     mutationFn: async (input: Partial<OrganizationAiGatewaySettings>) =>
       (await request(requireOrg(orgId), "/v1/org/ai-gateway-settings", { method: "PUT", body: JSON.stringify(input) }, settingsViewSchema, "Could not save AI Gateway settings.")).settings,
     onSuccess: (settings) => {
-      // The API Keys tab reads the setting from its key list; show the saved value before the refetch lands.
       queryClient.setQueryData<OrganizationGatewayApiKeysView>(gatewayApiKeyQueryKeys.organization(orgId), (current) => current ? { ...current, enabled: settings.memberApiKeys } : current);
       void queryClient.invalidateQueries({ queryKey: gatewayApiKeyQueryKeys.mine(orgId) });
       void queryClient.invalidateQueries({ queryKey: gatewayApiKeyQueryKeys.organization(orgId) });
@@ -62,7 +56,6 @@ export function useSaveAiGatewaySettings() {
   });
 }
 
-/** The viewer's own keys, whether the organization allows them, and the URL tools call. */
 export function useMyGatewayApiKeys() {
   const { orgId } = useOrgDashboard();
   return useQuery({
@@ -85,7 +78,6 @@ export function useCreateGatewayApiKey() {
   });
 }
 
-/** Revokes a key: the viewer's own, or with `scope: "organization"` any member's (admins). */
 export function useRevokeGatewayApiKey(scope: "mine" | "organization") {
   const { orgId } = useOrgDashboard();
   const queryClient = useQueryClient();
@@ -112,7 +104,6 @@ export function useOrganizationGatewayApiKeys() {
   });
 }
 
-/** "3 hours ago", "Never" — when a key was last used. */
 export function formatLastUsed(value: string | null, now: number = Date.now()): string {
   if (!value) return "Never used";
   const time = new Date(value).getTime();
@@ -136,7 +127,6 @@ function shortDate(value: string): string {
   return new Date(value).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
 }
 
-/** "Expires Feb 7, 2027", "Expired Nov 2, 2026", "Never expires". */
 export function formatExpiry(value: string | null, now: number = Date.now()): string {
   if (!value) return "Never expires";
   const time = new Date(value).getTime();
@@ -144,7 +134,6 @@ export function formatExpiry(value: string | null, now: number = Date.now()): st
   return time <= now ? `Expired ${shortDate(value)}` : `Expires ${shortDate(value)}`;
 }
 
-/** The expiry for a choice of days from now; null never expires. */
 export function expiryFromDays(days: number | null, now: number = Date.now()): string | null {
   return days === null ? null : new Date(now + days * 86_400_000).toISOString();
 }
@@ -155,13 +144,10 @@ export function expiryChoiceLabel(days: number | null): string {
   return `${days} days`;
 }
 
-/** Query parameter that opens "Create an API key" once on Library › Models. */
 export const CREATE_GATEWAY_API_KEY_PARAM = "create-key";
 
-/** Library › Models with the create dialog already open, for "Create your own key now". */
 export function createOwnGatewayApiKeyRoute(orgSlug?: string | null): string {
   return `${getLibraryRoute(orgSlug)}?show=models&${CREATE_GATEWAY_API_KEY_PARAM}=1`;
 }
 
-/** The public docs page on calling AI Gateway from 3rd party tools. */
 export const GATEWAY_API_KEYS_DOCS_URL = "https://openworklabs.com/docs/ai-gateway/third-party-tools";

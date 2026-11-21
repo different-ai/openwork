@@ -66,9 +66,6 @@ function tokenExpiration(tokens: StoredOAuthTokens, now: number): number | undef
   return assertFiniteEpoch(now + tokens.expires_in * 1_000, "token expiration")
 }
 
-// Google does not advertise `offline_access` and issues a refresh token only for
-// `access_type=offline` on a fresh consent. Values a configured sign-in address
-// already sets are kept.
 function withGoogleOfflineAccess(authorizationUrl: URL): URL {
   if (authorizationUrl.hostname !== "accounts.google.com") return authorizationUrl
   const url = new URL(authorizationUrl)
@@ -77,11 +74,6 @@ function withGoogleOfflineAccess(authorizationUrl: URL): URL {
   return url
 }
 
-// The SDK always adds the scopes a server's sign-in challenge names to the
-// administrator's selection. Some servers name every scope they support there,
-// so an administrator can choose to ask for their own selection alone.
-// `offline_access` is kept when the SDK added it: it lets access renew and
-// grants nothing on the server.
 function withSelectedScopesOnly(authorizationUrl: URL, selectedScopes: readonly string[]): URL {
   if (selectedScopes.length === 0) return authorizationUrl
   const computed = authorizationUrl.searchParams.get("scope")?.split(/\s+/).filter(Boolean) ?? []
@@ -199,10 +191,6 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
     }
   }
 
-  // Some providers serve one MCP endpoint from several hosts and declare a
-  // single canonical resource, such as a regional API host. Tokens are always
-  // sent to the configured URL, so beyond the SDK's same-origin rule only a
-  // listed host alias, with the same scheme, port and path, is accepted.
   async validateResourceURL(serverUrl: string | URL, resource?: string): Promise<URL | undefined> {
     if (!resource) return undefined
     const declared = new URL(resource)
@@ -287,8 +275,6 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
 
   private hasCurrentMetadataVerification(state: OAuthDiscoveryState, selectedIssuer: string): boolean {
     const verification = (state as VerifiedOAuthDiscoveryState).openworkMetadataVerification
-    // The stamp records the canonical metadata issuer; the selected issuer may
-    // be its equivalent root trailing-slash alias (RFC 8414's one tolerance).
     return verification?.version === 1
       && isEquivalentOAuthDiscoveryAlias(verification.issuer, selectedIssuer)
       && state.authorizationServerUrl === verification.issuer
@@ -330,8 +316,6 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
     const state = await this.normalizeDiscoveryState(persistedState)
     if (state) {
       this.assertDiscoveryBinding(state)
-      // normalizeDiscoveryState returns the same object when nothing needed
-      // verification or repair; only a rebuilt state warrants a re-save.
       if (persistedState && state !== persistedState) {
         await this.persistence.discovery?.save({ context: this.context(), state })
       }
@@ -348,8 +332,6 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
       if (!normalizedState) throw new Error("OAuth discovery state was unavailable.")
       this.assertDiscoveryBinding(normalizedState)
     } catch (error) {
-      // Only a proven binding violation invalidates persisted discovery and
-      // flags issuer review; a transient metadata outage must stay retryable.
       if (error instanceof EnterpriseMcpOAuthContractError) {
         await this.persistence.discovery?.invalidate({
           context: this.context(),
@@ -453,7 +435,6 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
     const validated = this.storedTokens(tokens, context)
     const authorization = this.authorizationHandle
     const source = authorization ? "authorization-code" : "refresh"
-    // refreshExclusively already committed these tokens while it held the credential.
     if (source === "refresh" && this.committedRefreshAccessToken === validated.access_token) {
       this.committedRefreshAccessToken = undefined
       this.loadedCredential = undefined
@@ -490,10 +471,6 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
     this.loadedCredential = undefined
   }
 
-  /**
-   * Sends refresh-token grants through `credentials.refreshExclusively` when the
-   * persistence adapter provides it; every other request passes through.
-   */
   exclusiveRefreshFetch(fetch: EnterpriseMcpFetch): EnterpriseMcpFetch {
     return async (url, init) => {
       const credentials = this.persistence.credentials
@@ -517,8 +494,6 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
       })
       this.loadedCredential = undefined
       if (outcome.status === "superseded") {
-        // Another request already rotated this refresh token: answer with the
-        // credential it saved instead of presenting the old token again.
         this.committedRefreshAccessToken = outcome.credential?.tokens.access_token
         return supersededRefreshResponse(outcome.credential, this.clock.now())
       }
@@ -615,9 +590,6 @@ export class EnterpriseMcpOAuthProvider implements OAuthClientProvider {
   }
 
   async invalidateCredentials(scope: "all" | "client" | "tokens" | "verifier" | "discovery"): Promise<void> {
-    // Persistence may refuse to discard an administrator-supplied client. The
-    // rejected credentials are still cleared, then the refusal is surfaced so
-    // the SDK neither retries the exchange nor registers a replacement client.
     let retainedClient: EnterpriseMcpOAuthContractError | undefined
     if (scope === "all" || scope === "client") {
       try {
@@ -684,9 +656,7 @@ function supersededRefreshResponse(credential: EnterpriseMcpOAuthCredential | un
   }), { status: 200, headers })
 }
 
-// Configured host -> hosts it may declare as its protected resource.
 const TRUSTED_RESOURCE_HOST_ALIASES: Readonly<Record<string, readonly string[]>> = {
-  // ElevenLabs documents the global host, which declares its US host.
   "api.elevenlabs.io": ["api.us.elevenlabs.io"],
 }
 

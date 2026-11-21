@@ -8,19 +8,11 @@ import { ConfirmDialog, ItemMenu, type ItemMenuEntry } from "../../_components/i
 import { secondaryText } from "./computer-parts";
 import type { ComputerAction, ConfirmCopy } from "./computer-actions";
 
-/*
- * The controls for what a person can do to one computer: the row's `…` menu,
- * the same actions as buttons on an open detail, and the rename dialog.
- * Disconnect and Remove always ask first, in words that say what happens.
- */
-
 export type ComputerActionSet = {
-  /** In menu order; empty renders no menu. */
   actions: readonly ComputerAction[];
   name: string;
   disconnectConfirm: ConfirmCopy;
   removeConfirm: ConfirmCopy;
-  /** Each resolves when done and throws the line to show when refused. */
   onDisconnect: () => Promise<void>;
   onRemove: () => Promise<void>;
   onRename?: (label: string) => Promise<void>;
@@ -28,7 +20,6 @@ export type ComputerActionSet = {
 
 const LABELS: Record<ComputerAction, string> = { rename: "Rename", disconnect: "Disconnect", remove: "Remove from list" };
 
-/** The menu's entries: what is offered, with what it asks before doing it. `idPrefix` is `computer` or `my-computer`. */
 export function computerMenuEntries(set: ComputerActionSet, input: { idPrefix: string; id: string; onRename: () => void }): ItemMenuEntry[] {
   return set.actions.map((action): ItemMenuEntry => {
     const testId = `${input.idPrefix}-${action}-${input.id}`;
@@ -38,7 +29,6 @@ export function computerMenuEntries(set: ComputerActionSet, input: { idPrefix: s
   });
 }
 
-/** The row's `…` menu. Renders nothing when there is nothing the person can do. */
 export function ComputerMenu({ set, idPrefix, id }: { set: ComputerActionSet; idPrefix: string; id: string }) {
   const [renaming, setRenaming] = useState(false);
   if (set.actions.length === 0) return null;
@@ -48,7 +38,6 @@ export function ComputerMenu({ set, idPrefix, id }: { set: ComputerActionSet; id
   </>;
 }
 
-/** Disconnect and Remove as buttons, for the top of an open detail. */
 export function ComputerActionButtons({ set, idPrefix, id }: { set: ComputerActionSet; idPrefix: string; id: string }) {
   const [confirming, setConfirming] = useState<"disconnect" | "remove" | null>(null);
   const offered = set.actions.filter((action): action is "disconnect" | "remove" => action !== "rename");
@@ -97,7 +86,6 @@ function RenameForm({ name, onRename, onClose }: { name: string; onRename: (labe
   </form>;
 }
 
-/** The owner's own name for a computer. */
 export function RenameComputerDialog({ open, name, onRename, onClose }: {
   open: boolean;
   name: string;
@@ -108,14 +96,12 @@ export function RenameComputerDialog({ open, name, onRename, onClose }: {
     <Dialog.Portal>
       <Dialog.Backdrop className="fixed inset-0 z-50 bg-gray-950/20" />
       <Dialog.Popup data-testid="computer-rename-dialog" className={popupClass}>
-        {/* Mounted per opening, so the field always starts from the current name. */}
         {open ? <RenameForm name={name} onRename={onRename} onClose={onClose} /> : null}
       </Dialog.Popup>
     </Dialog.Portal>
   </Dialog.Root>;
 }
 
-/** How a computer gets onto these lists. Den adds none itself: it says where to do it. */
 export function AddComputerDialog({ open, onClose }: { open: boolean; onClose: () => void }) {
   return <Dialog.Root open={open} onOpenChange={(next) => { if (!next) onClose(); }}>
     <Dialog.Portal>

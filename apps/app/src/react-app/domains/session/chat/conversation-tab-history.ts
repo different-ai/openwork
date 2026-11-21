@@ -1,8 +1,3 @@
-/**
- * Browser-like navigation history for the workbench. Each entry records the
- * primary session plus the split-pane session (if any) so back/forward can
- * restore the exact layout the user was looking at.
- */
 export type ConversationHistoryEntry = {
   sessionId: string;
   splitSessionId: string | null;

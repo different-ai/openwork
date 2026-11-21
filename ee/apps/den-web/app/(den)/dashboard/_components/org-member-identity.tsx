@@ -16,7 +16,6 @@ export function OrgMemberIdentity({
 }: {
   member: DenOrgMember;
   inverted?: boolean;
-  /** Role and invitation state already have their own columns in the members list. */
   compact?: boolean;
 }) {
   const access = getOrgAccessFlags(member.role, member.isOwner);

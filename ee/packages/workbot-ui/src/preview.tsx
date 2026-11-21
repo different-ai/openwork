@@ -11,16 +11,8 @@ import { FileBadge } from "./files";
 import { WorkbotMarkdown } from "./markdown";
 import { OpenWorkApp } from "./openwork-app";
 
-/** The Office reader (and its XML parser) loads only when an Office file is previewed, not with every page. */
 const officeReader = () => import("@openwork/workbook");
 
-/**
- * A file opened beside the conversation: it shows the file itself, read in the browser, never a list of
- * properties. Slides and documents show the PDF Workbot's computer rendered from them, or their text when
- * there is none. Opened only by the person (DESIGN S5); docked on wide screens, a sheet on small ones.
- */
-
-/** True for a few seconds after the open file gets a new version, to say so in the header. */
 function useJustUpdated(version: number | undefined) {
   const [first] = useState(version);
   const [updated, setUpdated] = useState(false);
@@ -64,13 +56,8 @@ export function ArtifactView({ file, onClose, expanded = false, onExpand }: { fi
   );
 }
 
-/** Kinds a new tab shows by itself; the rest would only download, which Download already does. */
 const TAB_KINDS: ReadonlySet<ArtifactKind> = new Set(["html", "pdf", "image", "video", "audio"]);
 
-/**
- * A file in its own tab. The tab opens at once (a popup blocker allows it only now), then fills in. An app still runs
- * in an opaque-origin frame there, never with this page's origin.
- */
 async function openInNewTab(file: WorkbotAttachment, title: string, chat: string | null) {
   const tab = window.open("", "_blank");
   if (!tab) return;
@@ -78,8 +65,6 @@ async function openInNewTab(file: WorkbotAttachment, title: string, chat: string
   try {
     const kind = artifactKind(file);
     if (kind !== "html") {
-      // The tab shows the file under a type chosen here from a short list that never runs code (no SVG, no
-      // HTML/XML): a stored or uploaded type could otherwise run as a page with this site's origin.
       const type = tabType(file.name);
       if (!type) throw new Error("No safe way to show this file in a tab.");
       const url = await fetchWorkbotFileUrl(file.id, chat, false, type);
@@ -124,7 +109,6 @@ function ArtifactMenu({ file, title, expanded, onExpand }: { file: WorkbotAttach
       if (navigator.canShare?.({ files: [shared] })) await navigator.share({ files: [shared], title });
       else await navigator.share({ title, url: artifactLink(file.id) });
     } catch {
-      // Dismissed, or nothing to share with: nothing changed.
     }
   };
   return (
@@ -150,7 +134,6 @@ function ArtifactMenu({ file, title, expanded, onExpand }: { file: WorkbotAttach
                 Open in new tab
               </Menu.Item>
             ) : null}
-            {/* An OpenWork App is not a file: there is nothing to download or hand to another app. */}
             {kind === "app" ? null : (
               <Menu.Item className={itemClass} onClick={() => void downloadWorkbotFile(file, chat)}>
                 <Download size={16} strokeWidth={1.5} aria-hidden className="text-[var(--wb-muted)]" />
@@ -215,25 +198,19 @@ function ImagePreview({ file }: { file: WorkbotAttachment }) {
   const url = useWorkbotImageUrl(file.id, file.updatedAt);
   if (!url) return <Loading />;
   return (
-    // A definite height (h-full, not min-h-full): otherwise max-h-full has nothing to resolve against and a tall photo
-    // or phone screenshot renders at its own size, wider and taller than the panel.
     <div className="flex h-full min-h-0 items-center justify-center p-6" data-workbot-image-preview>
-      {/* Blob URL from our own API; next/image cannot optimize it. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={url} alt={file.name} className="block h-auto max-h-full w-auto max-w-full rounded-lg object-contain shadow-[var(--wb-card-shadow)]" />
     </div>
   );
 }
 
-/** The browser's own PDF viewer, without its toolbar, pages fitted to the panel's width. */
 function PdfFrame({ url, title }: { url: string; title: string }) {
   return <iframe src={`${url}#toolbar=0&navpanes=0&view=FitH`} title={title} className="block h-full min-h-[70vh] w-full border-0 bg-[var(--wb-bg)]" />;
 }
 
-/** PDFs show as pages like slides; without a rendering, the browser's own viewer. */
 function PdfPreview({ file }: { file: WorkbotAttachment }) {
   const preview = useWorkbotPreview(file.id, file.updatedAt);
-  // Shown in a frame on this page: always as a PDF, whatever type the file was stored with.
   const url = useWorkbotFileUrl(preview.isSuccess && !preview.data ? file.id : null, file.updatedAt, "application/pdf");
   if (preview.data) return <Pages file={file} preview={preview.data} kind="document" />;
   if (url.isError) return <NoPreview file={file} reason="This file couldn't load." />;
@@ -252,7 +229,6 @@ function MediaPreview({ file, kind }: { file: WorkbotAttachment; kind: "video" |
   );
 }
 
-/** Slides and documents: the pages its computer rendered when there are some, else the text, slide by slide. */
 function OfficePreview({ file, kind }: { file: WorkbotAttachment; kind: "slides" | "document" }) {
   const preview = useWorkbotPreview(file.id, file.updatedAt);
   const bytes = useWorkbotFileBytes(preview.isSuccess && !preview.data ? file.id : null, file.updatedAt);
@@ -276,7 +252,6 @@ function OfficePreview({ file, kind }: { file: WorkbotAttachment; kind: "slides"
   return kind === "slides" ? <SlidesOutline text={text} /> : <DocumentText text={text} />;
 }
 
-/** Rendered pages, one under the other like a deck in presenter view, each at its true proportions. */
 function Pages({ file, preview, kind }: { file: WorkbotAttachment; preview: WorkbotPreview; kind: "slides" | "document" }) {
   return (
     <ol className={`mx-auto flex flex-col gap-5 px-6 py-6 ${kind === "document" ? "max-w-[720px]" : ""}`} aria-label={`${file.name}, ${preview.pages} ${kind === "slides" ? "slides" : "pages"}`}>
@@ -295,7 +270,6 @@ function PageImage({ fileId, page, version, ratio }: { fileId: string; page: num
   return (
     <div className="overflow-hidden rounded-[10px] bg-[var(--wb-surface)] shadow-[var(--wb-page-shadow)]" style={{ aspectRatio: ratio }}>
       {url.data ? (
-        // Blob URL from our own API; next/image cannot optimize it.
         // eslint-disable-next-line @next/next/no-img-element
         <img src={url.data} alt={`Page ${page}`} className="workbot-fade-in block h-full w-full object-contain" />
       ) : (
@@ -305,7 +279,6 @@ function PageImage({ fileId, page, version, ratio }: { fileId: string; page: num
   );
 }
 
-/** `extractOfficeText` marks each slide's text with its part name; notes parts are left out. */
 function slidesFrom(text: string) {
   return text
     .split(/^\[(ppt\/[^\]]+)\]\n/m)
@@ -347,7 +320,6 @@ function DocumentText({ text }: { text: string }) {
   );
 }
 
-/** Files read straight from their bytes: text, markdown, CSV, Excel and HTML. */
 function BytesPreview({ file, kind }: { file: WorkbotAttachment; kind: Exclude<ArtifactKind, "image" | "pdf" | "video" | "audio" | "slides" | "document" | "app" | "other"> }) {
   const bytes = useWorkbotFileBytes(file.id, file.updatedAt);
   if (bytes.isError) return <NoPreview file={file} reason="This file couldn't load." />;
@@ -362,7 +334,6 @@ function BytesPreview({ file, kind }: { file: WorkbotAttachment; kind: Exclude<A
     );
   }
   if (kind === "csv") return <Grid rows={parseDelimited(text, extensionOf(file.name) === "tsv" ? "\t" : ",")} />;
-  // Untrusted HTML runs only in an opaque-origin frame: scripts, but no access to this page (never allow-same-origin).
   if (kind === "html") return <iframe srcDoc={text} sandbox="allow-scripts" title={file.name} className="block min-h-0 w-full flex-1 border-0 bg-white" />;
   return <pre className="whitespace-pre-wrap break-words p-6 font-mono text-[12px] leading-5 text-[var(--wb-text)]">{text}</pre>;
 }
@@ -420,7 +391,6 @@ function SheetPreview({ file, bytes }: { file: WorkbotAttachment; bytes: Uint8Ar
   );
 }
 
-/** A read-only grid: a sticky header row, hairlines, tabular numbers, and a row cap so huge sheets stay quick. */
 function Grid({ rows }: { rows: string[][] }) {
   const [header = [], ...body] = rows.slice(0, 1_000);
   const columns = Math.max(header.length, ...body.map((row) => row.length));
@@ -448,7 +418,6 @@ function Grid({ rows }: { rows: string[][] }) {
   );
 }
 
-/** CSV/TSV with quoted cells and escaped quotes (the desktop app's artifact parser). */
 function parseDelimited(content: string, delimiter: string): string[][] {
   const rows: string[][] = [];
   let row: string[] = [];

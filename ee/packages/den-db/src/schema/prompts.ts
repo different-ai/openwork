@@ -13,7 +13,6 @@ export const OrgPromptTable = mysqlTable(
     id: denTypeIdColumn("orgPrompt", "id").notNull().primaryKey(),
     organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
     name: varchar("name", { length: 255 }).notNull(),
-    /** Encrypted at rest, like config objects' source text. */
     content: encryptedMediumTextColumn("content").notNull(),
     createdByOrgMemberId: denTypeIdColumn("member", "created_by_org_member_id"),
     updatedByOrgMemberId: denTypeIdColumn("member", "updated_by_org_member_id"),

@@ -12,7 +12,6 @@ export type DenSwitchProps = {
   testId?: string;
 };
 
-/** A compact switch control for toggling a boolean setting. */
 export function DenSwitch({
   checked,
   onChange,

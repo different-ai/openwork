@@ -45,12 +45,6 @@ import { readActivationState, recordActivationEvent } from "../activation.js"
 import { remoteDeviceListResponseSchema, remoteDeviceWorkbotReportSchema } from "@openwork/types/den/remote-devices"
 import { listMemberRemoteDevices, reportWorkbotComputer } from "../remote-devices.js"
 
-/**
- * What Den tells the Workbot app (ee/apps/workbot) about a signed-in person. Workbot calls these server-to-server
- * with the access token it got when the person signed in through Den (an OAuth token for `/mcp/agent`), so Den stays
- * the one place that decides who may use Workbot and what its turns can reach. Nothing else in Den accepts these
- * tokens on a REST route.
- */
 type WorkbotRouteOptions = DescribeRouteOptions & { "x-mcp": false }
 const describeWorkbotRoute = (options: WorkbotRouteOptions) => describeRoute(options)
 
@@ -58,129 +52,69 @@ const sessionSchema = z.object({
   user: z.object({ id: z.string(), name: z.string().nullable(), email: z.string() }),
   organization: z.object({ id: z.string(), name: z.string(), brandAppName: z.string().nullable() }),
   memberId: z.string(),
-  /** Workbot is on for this member: false when an admin turned it off for everyone or for their team (`workbotTeamSettings`). */
   enabled: z.boolean(),
-  /** Workbot may set up recurring work: the organization runs Automations on the headless runner. */
   canSchedule: z.boolean(),
-  /** Workbot may use the native apps on its cloud computer. */
   computer: z.boolean().optional(),
-  /** Workbot may use the browser on its cloud computer; off on older Dens, which gave the browser with `computer`. */
   browser: z.boolean().optional(),
   browserDemonstrations: z.boolean().optional(),
-  /** Read-only browser recovery and blocker guidance; default off. */
   browserRecovery: z.boolean().optional(),
-  /** Compatibility for older clients: equals browser access. Remove when those clients are unsupported. */
   browserLiveView: z.boolean().optional(),
-  /** Workbot's computers run through the runner's sandbox gateway instead of its own provider; off on older Dens. */
   sandboxGateway: z.boolean().optional(),
-  /** Workbot shows its Calendar tab: Workbot is on. Older Dens omit it. */
   calendar: z.boolean().optional(),
-  /** Connected document browsing; off on older Dens. */
   documents: z.boolean().optional(),
   documentEditing: z.boolean().optional(),
   nativeDictation: z.boolean().optional(),
   workspaceAssistant: z.boolean().optional(),
-  /** Offers to open mentioned documents and keeps the chat beside them: on with the workspace assistant. */
   guidedNavigation: z.boolean().optional(),
-  /** Workbot is told how to read PDFs, Office and large files from Drive (`workbotDriveFiles`); older Dens omit it: off. */
   driveFiles: z.boolean().optional(),
   usageRecovery: z.boolean().optional(),
-  /** The Get set up checklist (`GET /v1/workbot/activation`); older Dens omit it: off. */
   activationChecklist: z.boolean().optional(),
-  /** The person can start side chats next to their main chat (while Workbot is on). */
   sideChats: z.boolean(),
-  /** The header avatar opens the account menu with Sign out (`workbotAccountMenu`); older Dens omit it: off. */
   accountMenu: z.boolean().optional(),
-  /** Work in progress shows in the header and task sheet, not the chat (`workbotWorkingStatus`); older Dens omit it: off. */
   workingStatus: z.boolean().optional(),
-  /** Brief acknowledgment before tools (`workbotQuickReply`); older Dens omit it: off. */
   quickReply: z.boolean().optional(),
-  /** The conversation stays docked beside the Browser and Computer views (`workbotBrowserChat`); older Dens omit it: off. */
   browserChat: z.boolean().optional(),
-  /** Chats open on the newest page kept on the device (`workbotInstantOpen`); older Dens omit it: off. */
   instantOpen: z.boolean().optional(),
-  /** Reading earlier messages keeps its place, with a return-to-latest button (`workbotScrollToBottom`); older Dens omit it: off. */
   scrollToBottom: z.boolean().optional(),
-  /** Tapping Workbot's name opens its profile: tasks, permissions, memory (`workbotProfileSheet`); older Dens omit it: off. */
   profileSheet: z.boolean().optional(),
-  /** Centre avatar and expanded profile, separately reversible from the original sheet. */
   centeredProfile: z.boolean().optional(),
-  /** Inline live thumbnail; never automatically opens the full browser. */
   browserPreview: z.boolean().optional(),
-  /** Read-only remote task status (`workbotRemoteTasks`); older Dens omit it: off. */
   remoteTasks: z.boolean().optional(),
-  /** Navigation lists only pages; Files and Apps live in the profile (`workbotProfileNav`); older Dens omit it: off. */
   profileNav: z.boolean().optional(),
   profileComputers: z.boolean().optional(),
-  /** Devices rows say what Workbot is doing on each computer (`workbotDeviceActivity`); older Dens omit it: off. */
   deviceActivity: z.boolean().optional(),
-  /** Apps built in OpenWork show as cards and open beside the chat (`workbotApps`); older Dens omit it: off. */
   openworkApps: z.boolean().optional(),
-  /** Meetings own the calendar grid, runs are quiet dots (`workbotQuietCalendar`); older Dens omit it: off. */
   quietCalendar: z.boolean().optional(),
-  /** The calm chat look (`workbotCalmChat`); older Dens omit it: off. */
   calmChat: z.boolean().optional(),
-  /** The Devices page and reports about Workbot's computers (`remoteDevices`); older Dens omit it: off. */
   devices: z.boolean().optional(),
-  /** Always true for older Workbot clients; the command palette is available by default. */
   commandPalette: z.boolean().optional(),
-  /**
-   * The model Workbot's turns run on: the organization's default model. Null, and
-   * omitted by older Dens, means the headless runner's default.
-   */
   model: z.string().nullable().optional(),
-  /** Require an authenticated runner catalog before new turns; older Dens omit this. Reads remain available. */
   verifyModel: z.boolean().optional(),
-  /** Den authorizes the member’s scoped model access for every turn; no deployment catalog precheck. */
   gatewayModels: z.boolean().optional(),
-  /**
-   * Saved step turns (the wire field keeps its older name): Workbot sends turns to run one step at a time
-   * (`execution: "steps"`) and follows them over the runner's WebSocket, so a runner deploy doesn't cut a step off. The
-   * server also mints the turns' resume grants. Workbot reads it as off from older Dens.
-   */
   stepTurns: z.boolean(),
-  /**
-   * Per-chat session cells: Workbot creates new chats in their own session cells (`hs_c_…` ids, memory shared
-   * through the owner) and asks the runner to split the person's existing chats out. Workbot reads it as off from
-   * older Dens.
-   */
   sessionCells: z.boolean(),
-  /** The person can use Workbot from the OpenWork phone app (the workbotMobile feature). */
   mobile: z.boolean(),
 }).meta({ ref: "WorkbotSession" })
 
 const runTokenSchema = z.object({
   token: z.string(),
   expiresAt: z.iso.datetime(),
-  /**
-   * When the request names the turn (`sessionId` and `messageId`): a resume grant the
-   * headless runner can exchange for fresh tokens for this turn, so it continues on its own after a restart.
-   */
   resumeGrant: z.string().optional(),
-  /** Server-to-server only; never returned in Workbot's browser session or transcript. */
   modelAccess: headlessModelAccessSchema.optional(),
-  /**
-   * When the request names the session: a capability the headless runner presents to report that conversation's
-   * content-free sizes and state to Den's session index. Server-to-server only.
-   */
   indexCapability: z.string().optional(),
 }).meta({ ref: "WorkbotRunToken" })
 const runTokenRequestSchema = z.object({
   ttlMs: z.number().int().min(60_000).max(DEN_MCP_HEADLESS_RUN_TOKEN_MAX_TTL_MS).optional(),
   readOnly: z.boolean().optional(),
-  /** The headless runner session and message the turn is sent as; both are needed for a resume grant. */
   sessionId: z.string().min(1).max(128).optional(),
   messageId: z.string().min(1).max(128).optional(),
-  /** A retry may name its original model. Den rechecks this member's current access to that exact alias. */
   model: z.string().min(1).max(512).optional(),
-  /** Recover an existing managed turn across rollout rollback; Den verifies its persisted owner and model. */
   modelAccessRequired: z.boolean().optional(),
 })
 const signedOutSchema = z.object({ error: z.string(), message: z.string().optional() })
 const insufficientScopeSchema = z.object({ error: z.literal("insufficient_scope") })
 const workbotOffSchema = z.object({ error: z.literal("workbot_not_enabled"), message: z.string() })
 
-/** Plenty for one person's turns (each send and resume needs one); stops a runaway client minting in a loop. */
 const RUN_TOKENS_PER_WINDOW = 120
 const RUN_TOKEN_WINDOW_MS = 10 * 60_000
 
@@ -191,11 +125,9 @@ type Resolved = {
   user: { id: string; name: string | null; email: string }
   organization: Pick<typeof OrganizationTable.$inferSelect, "id" | "name" | "metadata">
   memberId: string
-  /** MCP grant/client id of the Workbot token (never token material). */
   credentialId: string | null
 }
 
-/** What a ranged file answer says about its bytes, for a media player that asked for a range. */
 function rangeHeaders(headers: Headers): Record<string, string> {
   return Object.fromEntries(["content-length", "content-range", "accept-ranges"].flatMap((name) => {
     const value = headers.get(name)
@@ -203,11 +135,8 @@ function rangeHeaders(headers: Headers): Record<string, string> {
   }))
 }
 
-/** The person with their features and effective Workbot settings (their teams' when `workbotTeamSettings` is on). */
 type Member = Resolved & { features: FeatureMap; workbot: MemberWorkbotSettings }
-/** What a route answers a member whose Workbot is off. */
 type WorkbotOff = { status: 403 | 404; error: string; message: string }
-/** The answers Den gave while Workbot was off for a whole workspace, now given per member. */
 const WORKBOT_OFF: WorkbotOff = { status: 403, error: "workbot_not_enabled", message: "Workbot is off for you in this workspace." }
 const WORKBOT_CALENDAR_OFF: WorkbotOff = { status: 403, error: "workbot_calendar_not_enabled", message: "Workbot's Calendar is off for you in this workspace." }
 const WORKBOT_DOCUMENTS_OFF: WorkbotOff = { status: 403, error: "workbot_documents_not_enabled", message: "Documents is off for this workspace." }
@@ -223,19 +152,10 @@ const workbotConnectionsSchema = z.object({
     nativeProviderKey: z.string().nullable().optional(),
     connectMode: z.enum(["inline", "external", "admin"]).optional(),
   })),
-  /**
-   * Every connector this member can use, connected or not, for the Apps list on Workbot's profile: Connected first,
-   * then Needs sign-in, Not connected and Needs attention. Names, status, sign-in type and who manages it only.
-   */
   apps: z.array(workbotAppSchema).optional(),
-  /**
-   * Every connection this member may use, everyday app or not: its id, the name admins gave it and its website (host
-   * name only, never the URL), so Workbot can say "Searching Exa" with Exa's logo instead of a capability id.
-   */
   connectors: z.array(z.object({ id: z.string(), name: z.string(), site: z.string().nullable() })),
 })
 
-/** A connection's website for its logo: the MCP server's host without "mcp." or "api.", never its path or query. */
 export function connectorSite(url: string): string | null {
   try {
     const host = new URL(url).hostname.toLowerCase().replace(/^(mcp|api|www|server)\./, "")
@@ -245,10 +165,6 @@ export function connectorSite(url: string): string | null {
   }
 }
 
-/**
- * Which everyday app a connection is, for Workbot's welcome: Gmail (or Google Workspace), Slack, Microsoft 365, or
- * any other app the admins set up ("other", shown by its own name).
- */
 function everydayApp(fact: { name: string; url: string; nativeProviderKey: string | null }): "gmail" | "googleCalendar" | "slack" | "microsoft" | "other" {
   const key = fact.nativeProviderKey?.toLowerCase() ?? ""
   const text = `${fact.name} ${fact.url}`.toLowerCase()
@@ -259,7 +175,6 @@ function everydayApp(fact: { name: string; url: string; nativeProviderKey: strin
   return "other"
 }
 
-/** The person behind a Workbot access token: a live Den grant, an active member of the token's organization. */
 async function resolve(headers: Headers): Promise<Resolved | Response> {
   const verified = await verifyMcpRequest(headers, DEN_MCP_OAUTH_RESOURCE)
   if (verified instanceof Response) return verified
@@ -293,7 +208,6 @@ async function resolve(headers: Headers): Promise<Resolved | Response> {
   }
 }
 
-/** One cached feature read; the member's teams are read only while `workbotTeamSettings` is on. */
 async function withWorkbotSettings(resolved: Resolved): Promise<Member> {
   const features = await getOrganizationFeatures(resolved.organization.id, { userId: resolved.user.id })
   const workbot = await resolveMemberWorkbotSettings({
@@ -305,22 +219,14 @@ async function withWorkbotSettings(resolved: Resolved): Promise<Member> {
   return { ...resolved, features, workbot }
 }
 
-/**
- * Where every member-facing route starts, except the session (which reports the switch) and telemetry (which
- * still records): the person behind the token, with Workbot on for them. An admin can turn Workbot off for
- * everyone or for a team (`workbotTeamSettings`); the route then answers `off` and does nothing else. With the
- * feature off nobody is refused and no team is read.
- */
 async function resolveMember(c: Context, off: WorkbotOff = WORKBOT_OFF): Promise<Member | Response> {
   const resolved = await resolve(c.req.raw.headers)
   if (resolved instanceof Response) return resolved
   const member = await withWorkbotSettings(resolved)
   if (member.workbot.enabled) return member
-  // A refusal of a known member is attributed like the route's other refusals.
   return await attributeWorkbot(c, resolved) ?? Response.json({ error: off.error, message: off.message }, { status: off.status, headers: { "cache-control": "no-store" } })
 }
 
-/** Verified Workbot token + active membership: the token's organization and member are the audit tenant/actor. */
 async function attributeWorkbot(c: Context, resolved: Resolved) {
   const credentialId = resolved.credentialId
   const audited = await attributeAuditRequest(c, {
@@ -332,32 +238,20 @@ async function attributeWorkbot(c: Context, resolved: Resolved) {
 }
 
 const ID = "[A-Za-z0-9_-]{1,160}"
-/**
- * The Den routes Workbot's Calendar may reach, as the signed-in member: their own Automations and runs, the
- * Pause / Resume / Run now actions, editing an Automation's schedule, instructions or model, creating a Cloud
- * Automation, the models they may pick (names only), and their native Google and Outlook calendar reads.
- * Nothing else is forwarded.
- */
 const WORKBOT_CALENDAR_ROUTES: ReadonlyArray<{ method: "GET" | "POST" | "PATCH"; path: RegExp; write: boolean }> = [
   { method: "GET", path: /^\/v1\/automations$/, write: false },
   { method: "GET", path: /^\/v1\/automation-runs$/, write: false },
   { method: "GET", path: new RegExp(`^/v1/automations/${ID}/runs$`), write: false },
   { method: "GET", path: new RegExp(`^/v1/automation-runs/${ID}$`), write: false },
   { method: "GET", path: /^\/v1\/capabilities\/(google-workspace|microsoft-365)\/calendar-events$/, write: false },
-  // The models the member may pick, trimmed below to names and IDs.
   { method: "GET", path: /^\/v1\/llm-providers$/, write: false },
   { method: "GET", path: /^\/v1\/org\/workbot-settings$/, write: false },
   { method: "POST", path: new RegExp(`^/v1/automations/${ID}/(activate|deactivate|run)$`), write: true },
-  // Creating from the Calendar: always a Cloud Automation (Workbot has no desktop), validated by the route itself.
   { method: "POST", path: /^\/v1\/cloud-automations$/, write: true },
   { method: "PATCH", path: new RegExp(`^/v1/automations/${ID}$`), write: true },
 ]
 export const WORKBOT_CALENDAR_PREFIX = "/v1/workbot/calendar"
 
-/**
- * What Workbot's Calendar may change: the schedule, name, instructions and model. Never where it runs (Workbot
- * has no desktop) or its action; the destination route validates each value.
- */
 const calendarEditSchema = z.object({
   name: z.unknown().optional(),
   schedule: z.unknown().optional(),
@@ -365,7 +259,6 @@ const calendarEditSchema = z.object({
   model: z.unknown().optional(),
 }).strict().refine((value) => Object.keys(value).length > 0)
 
-/** A usable provider as Workbot's model picker needs it: no configuration, keys or access lists. */
 const providerNamesSchema = z.object({
   llmProviders: z.array(z.object({
     id: z.string(),
@@ -440,7 +333,6 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       const auditBlocked = await attributeWorkbot(c, resolved)
       if (auditBlocked) return auditBlocked
       const event = c.req.valid("json")
-      // Completion records even if the originating session has already ended.
       await recordWorkbotTelemetry({ organizationId: resolved.organization.id, memberId: resolved.memberId }, event, async () => {
         const organizationContext = await getOrganizationContextForUser({ userId: normalizeDenTypeId("user", resolved.principal.userId), organizationId: resolved.organization.id })
         if (!organizationContext) return null
@@ -474,13 +366,10 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       if (auditBlocked) return auditBlocked
       const { organization, user, memberId } = resolved
       const canSchedule = (await cloudAutomationRuntime(organization.id).catch(() => "web")) === "headless"
-      // The member's own default model, Workbot name and on/off switch: their team's when it sets one (workbotTeamSettings).
       const { features, workbot } = await withWorkbotSettings(resolved)
-      // Off for this member: the answer Workbot got while it was off for a whole workspace.
       const on = workbot.enabled
       const chosen = workbot.model
       const managed = workbotUsesManagedDefault(chosen) ? await workbotIncludedDefaultModel({ organizationId: organization.id, userId: user.id }, chosen) : null
-      // Keep history readable during access failures. Starting a turn reauthorizes the exact model in Den.
       const model = managed
         ?? chosen ?? (await cloudAgentModelCatalog({ organizationId: organization.id, userId: user.id }).catch(() => null))?.defaultModel ?? WORKBOT_DEFAULT_MODEL_ID
       return c.json({
@@ -488,12 +377,10 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         organization: { id: organization.id, name: organization.name, brandAppName: workbot.name },
         memberId,
         enabled: on,
-        // Workbot's browser and other native apps share remote-computer availability.
         computer: features.remoteComputers,
         browser: features.remoteComputers,
         browserRecovery: env.features.deployment === "cloud",
         browserDemonstrations: features.browserDemonstrations && features.remoteComputers,
-        // Compatibility for older Workbot clients: the page stream now follows browser access.
         browserLiveView: features.remoteComputers,
         sandboxGateway: features.sandboxGateway,
         canSchedule,
@@ -503,7 +390,6 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         nativeDictation: true,
         workspaceAssistant: on && features.workbotWorkspaceAssistant,
         guidedNavigation: on && features.workbotWorkspaceAssistant,
-        // Fixed response-only values for independently released Workbot clients.
         driveFiles: true,
         accountMenu: true,
         workingStatus: true,
@@ -516,7 +402,6 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
         remoteTasks: true,
         profileNav: true,
         quietCalendar: true,
-        // The limit card and model recovery links: included models need them as much as upgrades do.
         usageRecovery: true,
         activationChecklist: true,
         sideChats: on,
@@ -536,7 +421,6 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
     },
   )
 
-  /** The member's Get set up checklist, for Workbot's header. Same facts and rules as `GET /v1/me/activation`. */
   const activationFor = async (c: Context, write: boolean) => {
     c.header("Cache-Control", "no-store")
     const resolved = await resolveMember(c)
@@ -587,7 +471,6 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
     },
   )
 
-  /** The member behind a Workbot token with Devices on for them; `feature_disabled` otherwise, as on the member routes. */
   const devicesFor = async (c: Context, write: boolean) => {
     c.header("Cache-Control", "no-store")
     const resolved = await resolveMember(c)
@@ -667,13 +550,11 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       const inline = Boolean(workbotOrigin())
       const connections = facts.flatMap((fact) => {
         const app = everydayApp(fact)
-        // Set up by an admin but not finished there: not something the member can do anything about yet.
         if (fact.setupRequired === true && !inline) return []
         const ready = fact.connectedForMe && !fact.needsReconnect
         const connectMode: "admin" | "inline" | "external" = fact.setupRequired === true ? "admin" : inline ? "inline" : "external"
         return [{ id: fact.id, name: fact.name, app, ready, connectUrl: ready ? null : openworkYourConnectionsUrl(fact.id), nativeProviderKey: fact.nativeProviderKey, connectMode }]
       }).sort((a, b) => Number(a.app === "other") - Number(b.app === "other"))
-      // What Workbot's steps in each connection are called ("Searching Exa"), for everyone.
       const connectors = facts.map((fact) => ({ id: fact.id, name: fact.name, site: connectorSite(fact.url) }))
       const apps = workbotApps(facts, { inline, canManage: permissions.has("connections.manage"), connectUrl: openworkYourConnectionsUrl })
       return c.json({ connections, apps, connectors })
@@ -812,19 +693,14 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       const headers = new Headers({ accept: "application/json", "x-den-internal-mcp-principal": createInternalMcpPrincipalHeader({ userId: resolved.principal.userId, organizationId: resolved.principal.organizationId, credentialId: resolved.credentialId }) })
       let body: string | undefined
       if (!read) {
-        // The destination's bodyLimit is also authoritative, including for a forged Content-Length.
         if (Number(c.req.header("content-length")) > 2 * 1024 * 1024) return c.json({ error: "file_too_large" }, 413)
         body = await c.req.text()
         if (Buffer.byteLength(body) > 2 * 1024 * 1024) return c.json({ error: "file_too_large" }, 413)
         headers.set("content-type", "application/json")
       }
-      // A media player asks for a file's bytes in ranges; the range and its answer pass through unchanged.
       const range = editor?.[1] === "content" ? c.req.header("range") : undefined
       if (range) headers.set("range", range)
       const response = await app.fetch(new Request(new URL(`${inner}${url.search}`, "http://den-api.local"), { method: c.req.method, headers, body }))
-      // Den reports a Google refusal (for example a Google API turned off for the
-      // connector) as 502. The tunnel in front of Den replaces 502 bodies with its
-      // own page, so Workbot lost the reason. 424 carries the same body intact.
       const status = response.status === 502 ? 424 : response.status
       return new Response(response.body, { status, headers: { "content-type": response.headers.get("content-type") ?? "application/json", "cache-control": "no-store", "x-content-type-options": "nosniff", ...(editor?.[1] === "content" ? { "content-security-policy": "default-src 'none'; sandbox", ...rangeHeaders(response.headers) } : {}) } })
     },
@@ -865,14 +741,10 @@ export function registerWorkbotRoutes<T extends { Variables: object }>(app: Hono
       let model = requestedModel
       try {
         const features = resolved.features
-        // Only a turn without a pinned model needs the member's default (their team's when it sets one).
         const chosen = model ? null : resolved.workbot.model
         if (!model && workbotUsesManagedDefault(chosen)) {
           model = await workbotIncludedDefaultModel(principal, chosen) ?? undefined
         }
-        // Credential minting still reauthorizes the exact model for this member on every turn.
-        // "Not allowed" in the admin's Workbot settings covers the chat as well as Workbot's own checks.
-        // The member's own policy: their team's when it has one (already resolved with their Workbot settings).
         const scopes = workbotTurnLimitScopes(memberAgentSettings(resolved.workbot, organization.metadata).sources)
         const { token, resumeGrant, modelAccess, indexCapability } = await mintHeadlessTurnCredentials({
           ...principal, ttlMs, readOnly, sessionId, messageId, model, indexKind: "workbot", memberId: resolved.memberId,

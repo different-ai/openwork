@@ -1,30 +1,7 @@
-// Desktop sign-in intent and pending organization selection.
-//
-// The desktop handoff exchange always reports an organization: den-api
-// hydrates the browser session's active organization server-side whenever it
-// is empty, so the payload cannot distinguish "the user chose this org
-// remotely" from "the server defaulted one". The reliable discriminator is
-// who initiated the sign-in:
-//
-// - Remotely-initiated handoffs (install/invite links, enterprise bootstrap,
-//   "Open in desktop" from the Cloud dashboard) carry the org the user is
-//   actually working in — connect straight through.
-// - Desktop-initiated sign-ins restore a remembered choice only after the
-//   destination verifies the returning account's membership and rollout.
-//   Without that, they must not silently adopt a server-resolved org when the
-//   account has several; the exchange org is only a chooser suggestion.
-//
-// This module owns the short-lived "the desktop started this sign-in" marker
-// and the "organization selection pending" state the routing and auth layers
-// consult between token exchange and the user's explicit choice.
-
 const DESKTOP_SIGN_IN_STARTED_AT_KEY = "openwork.den.desktopSignInStartedAt";
 const ORG_SELECTION_PENDING_KEY = "openwork.den.orgSelectionPendingAt";
 const ORG_SELECTION_SUGGESTION_KEY = "openwork.den.orgSelectionSuggestion";
 
-/** Comfortably outlives the 5-minute handoff grant plus the browser round
- * trip, without leaving a stale marker that reclassifies a much later,
- * unrelated remote handoff. */
 export const DESKTOP_SIGN_IN_INTENT_TTL_MS = 15 * 60 * 1000;
 
 export type SignInOrgRef = {
@@ -42,7 +19,6 @@ function storage(): Storage | null {
   }
 }
 
-/** Record that the desktop app itself started a sign-in flow. */
 export function markDesktopSignInInitiated(now: number = Date.now()) {
   storage()?.setItem(DESKTOP_SIGN_IN_STARTED_AT_KEY, String(now));
 }
@@ -55,7 +31,6 @@ export function hasActiveDesktopSignInIntent(now: number = Date.now()): boolean 
   return isDesktopSignInIntentActive(storage()?.getItem(DESKTOP_SIGN_IN_STARTED_AT_KEY) ?? null, now);
 }
 
-/** Pure form of the marker check for tests and reuse. */
 export function isDesktopSignInIntentActive(startedAtRaw: string | null, now: number): boolean {
   if (!startedAtRaw) return false;
   const startedAt = Number.parseInt(startedAtRaw, 10);
@@ -122,22 +97,10 @@ export type HandoffOrgPlan =
   | { kind: "commit"; organization: SignInOrgRef | null }
   | { kind: "await-user-selection"; suggestion: SignInOrgRef | null };
 
-/**
- * Decide what a successful handoff exchange does with the organization.
- *
- * - An explicitly scoped org (install/invite link, enterprise bootstrap) is
- *   always committed — the link itself is the remote selection.
- * - A desktop-initiated sign-in restores a verified remembered choice, if
- *   supplied. Otherwise the exchange org is only a chooser suggestion and
- *   onboarding decides (silently auto-selecting single-org accounts).
- * - A remotely-initiated handoff commits the exchange-reported org — it is
- *   the organization the user's Cloud session is actually working in.
- */
 export function resolveHandoffOrgPlan(input: {
   explicitActiveOrg: SignInOrgRef | null;
   exchangeOrganization: SignInOrgRef | null;
   desktopInitiated: boolean;
-  /** Already membership-validated and allowed by the destination's live rollout. */
   rememberedOrganization?: SignInOrgRef | null;
 }): HandoffOrgPlan {
   if (input.explicitActiveOrg?.id?.trim()) {

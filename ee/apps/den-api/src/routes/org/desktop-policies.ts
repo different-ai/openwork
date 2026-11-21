@@ -167,7 +167,6 @@ async function loadDesktopPolicies(organizationId: typeof DesktopPolicyTable.$in
 
 export type DesktopPolicyWriteInput = z.infer<typeof desktopPolicyWriteSchema>
 
-/** `preferredId`: reuse this id for the new row (config-blob imports; the caller checked it is free). */
 export async function createDesktopPolicy(c: ResourceActionContext, payload: ResourceOrganizationContext, input: z.infer<typeof desktopPolicyWriteSchema>, externalKey?: string, preferredId?: DesktopPolicyId) {
   const entitlement = checkEntitlement(payload.organization.metadata, "desktopPolicies")
   if (!entitlement.ok) {
@@ -231,7 +230,6 @@ export async function createDesktopPolicy(c: ResourceActionContext, payload: Res
       }
     })
 
-    // primary: reads back the policy created above.
     const [desktopPolicy] = await loadDesktopPolicies(payload.organization.id, db.$primary)
       .then((policies) => policies.filter((policy) => policy.id === desktopPolicyId))
     return c.json({ desktopPolicy }, 201)
@@ -242,11 +240,6 @@ export async function createDesktopPolicy(c: ResourceActionContext, payload: Res
   }
 }
 
-/**
- * `scope` (config-blob imports) limits the write to the policy row's fields or
- * to its assignments; routes write both. Assignments are written as a diff:
- * only assignments that are added or removed touch a row.
- */
 export async function updateDesktopPolicy(c: ResourceActionContext, payload: ResourceOrganizationContext, rawId: string, input: z.infer<typeof desktopPolicyWriteSchema>, replace = false, scope: { fields?: boolean; assignments?: boolean } = {}) {
   const writeFields = scope.fields ?? true
   const writeAssignments = scope.assignments ?? true
@@ -262,7 +255,6 @@ export async function updateDesktopPolicy(c: ResourceActionContext, payload: Res
     return c.json({ error: "desktop_policy_not_found" }, 404)
   }
 
-  // primary: the update merges into the stored policy, and declarative applies run back to back.
   const rows = await db.$primary
     .select()
     .from(DesktopPolicyTable)
@@ -342,7 +334,6 @@ export async function updateDesktopPolicy(c: ResourceActionContext, payload: Res
       }
     })
 
-    // primary: reads back the policy updated above.
     const [desktopPolicy] = await loadDesktopPolicies(payload.organization.id, db.$primary)
       .then((policies) => policies.filter((policy) => policy.id === existing.id))
     return c.json({ desktopPolicy })
@@ -361,7 +352,6 @@ export async function deleteDesktopPolicy(c: ResourceActionContext, payload: Res
     return c.json({ error: "desktop_policy_not_found" }, 404)
   }
 
-  // primary: the update merges into the stored policy, and declarative applies run back to back.
   const rows = await db.$primary
     .select()
     .from(DesktopPolicyTable)
@@ -441,7 +431,6 @@ export function registerOrgDesktopPolicyRoutes<T extends { Variables: OrgRouteVa
       }
       const { externalKey } = c.req.valid("param")
       const input = { ...c.req.valid("json"), priority: c.req.valid("json").priority ?? 0, isEnabled: c.req.valid("json").isEnabled ?? true }
-      // primary: declarative applies run back to back; a stale miss would create a duplicate.
       const [existing] = await db.$primary.select().from(DesktopPolicyTable).where(and(
         eq(DesktopPolicyTable.organizationId, payload.organization.id),
         eq(DesktopPolicyTable.externalKey, externalKey), isNull(DesktopPolicyTable.deletedAt),
@@ -451,8 +440,6 @@ export function registerOrgDesktopPolicyRoutes<T extends { Variables: OrgRouteVa
         return await createDesktopPolicy(c, payload, input, externalKey)
       } catch (error) {
         if (!isDuplicateEntry(error)) throw error
-        // A concurrent creator can win between lookup and insert. Retry against
-        // its identity instead of creating a second resource.
         const [winner] = await db.$primary.select().from(DesktopPolicyTable).where(and(
         eq(DesktopPolicyTable.organizationId, payload.organization.id),
         eq(DesktopPolicyTable.externalKey, externalKey), isNull(DesktopPolicyTable.deletedAt),
@@ -476,7 +463,6 @@ export function registerOrgDesktopPolicyRoutes<T extends { Variables: OrgRouteVa
     async (c) => {
       const payload = c.get("organizationContext")
       const { externalKey } = c.req.valid("param")
-      // primary: declarative applies run back to back; a stale miss would create a duplicate.
       const [existing] = await db.$primary.select().from(DesktopPolicyTable).where(and(
         eq(DesktopPolicyTable.organizationId, payload.organization.id),
         eq(DesktopPolicyTable.externalKey, externalKey), isNull(DesktopPolicyTable.deletedAt),

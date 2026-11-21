@@ -32,9 +32,7 @@ type DraftComponent = {
   kind: ComponentKind;
   name: string;
   description: string;
-  /** Markdown body for skills/commands. */
   content: string;
-  /** Existing organization connector selected for MCP; unused for skills and commands. */
   connectionId: string;
 };
 
@@ -237,8 +235,6 @@ export function PluginEditorScreen() {
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
 
-  // Publishing is the happy path for non-technical creators: pre-select the
-  // requested marketplace, or the first marketplace when opened elsewhere.
   useEffect(() => {
     if (marketplaceTouched || marketplaceId || marketplaces.length === 0) return;
     const requestedMarketplaceId = searchParams.get("marketplaceId");
@@ -250,8 +246,6 @@ export function PluginEditorScreen() {
     const draft = loadPluginImportDraft();
     if (!draft) return;
     setImportDraft(draft);
-    // A GitHub import starts private and unpublished: what it brings in comes
-    // from outside the organization, so the creator chooses who sees it.
     setShareOrgWide(false);
     setMarketplaceTouched(true);
     setMarketplaceId("");

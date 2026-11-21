@@ -5,7 +5,6 @@ import { ExampleAvatar, ExampleCaption, ExampleGroupLabel, ExampleServiceMark } 
 import { useExampleStep } from "../use-example-step";
 import { webExampleChat } from "./web-example-data";
 
-/** `?` example: a chat in the browser using the team's connectors, step by step. */
 export function WebExample() {
   const step = useExampleStep(webExampleChat.steps.length);
 

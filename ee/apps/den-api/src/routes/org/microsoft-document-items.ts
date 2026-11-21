@@ -3,11 +3,6 @@ import { documentIdSchema } from "@openwork/documents/model"
 
 export const graphIdSchema = z.string().regex(/^[A-Za-z0-9!._-]{1,256}$/)
 
-/**
- * Documents names a OneDrive item by its drive and item ids together, because shared
- * and recent files live in other people's drives. The pair is base64url so it fits the
- * same opaque file id every Documents route and proxy already accepts.
- */
 export function encodeMicrosoftDocumentId(driveId: string, itemId: string): string {
   return Buffer.from(`${driveId}\n${itemId}`, "utf8").toString("base64url")
 }
@@ -46,7 +41,6 @@ export const documentItemSchema = z.object({
 type DocumentItem = z.infer<typeof documentItemSchema>
 export const listingResponseSchema = z.object({ files: z.array(documentItemSchema), nextCursor: z.string().nullable() })
 
-/** Only Microsoft's own OneDrive and SharePoint pages become "Open in OneDrive" links. */
 export function officeUrl(value: string | undefined): string | null {
   if (!value) return null
   try {
@@ -56,13 +50,12 @@ export function officeUrl(value: string | undefined): string | null {
   } catch { return null }
 }
 
-/** Shared and recent entries describe the real file in `remoteItem`, in the owner's drive. */
 export function microsoftDocumentItem(raw: z.infer<typeof graphListingSchema>["value"][number]): DocumentItem | null {
   const item = raw.remoteItem ?? raw
   const driveId = item.parentReference?.driveId ?? raw.parentReference?.driveId
   if (!driveId || !graphIdSchema.safeParse(item.id).success || !graphIdSchema.safeParse(driveId).success) return null
   const kind = item.folder ? "folder" : item.file ? "file" : null
-  if (!kind) return null // OneNote notebooks and other packages have no file content.
+  if (!kind) return null
   return {
     id: encodeMicrosoftDocumentId(driveId, item.id),
     name: item.name ?? raw.name ?? "Untitled",

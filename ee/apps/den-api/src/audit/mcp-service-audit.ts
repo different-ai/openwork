@@ -6,20 +6,13 @@ import { auditRequestOutcome, auditResourceId, currentAuditRequestId, writePlatf
 import { AuditUnavailableError, runAuditedServiceAction } from "./service-capture.js"
 import { auditServiceActionDeclaration, type AuditServiceActionName } from "./service-actions.js"
 
-// MCP adapters for runAuditedServiceAction (design §6). Tenant attribution comes
-// only from the verified MCP principal (token organization claim + resolved
-// member); platform-admin tools attribute to an organization they verified exists.
-
 export { AuditUnavailableError }
 
-/** The verified MCP caller; credentialId is a grant/client identifier, never token material. */
 export type McpAuditPrincipal = Readonly<{ organizationId: string; userId: string; memberId: string; credentialId: string | null }>
 export type PlatformAdminAuditActor = Readonly<{ userId: string; credentialId: string | null }>
 
 type FailureClassifier<T> = Readonly<{
-  /** HTTP-equivalent status (>= 400) for a returned failure result, or null when it succeeded. */
   result?: (value: T) => number | null
-  /** Status for a thrown error; null leaves the error's own `status` (else 500). */
   error?: (error: unknown) => number | null
 }>
 
@@ -48,7 +41,6 @@ export function mcpAuditPrincipal(input: { organizationId: string; userId: strin
   }
 }
 
-/** Validated typeid-like id from tool arguments, or null (collection) when absent. */
 export function serviceAuditResourceId(value: unknown): string | null {
   return typeof value === "string" && value ? auditResourceId(value) : null
 }
@@ -81,11 +73,6 @@ async function runClassified<T>(start: (fn: (capture: AuditChangeCapture | null)
   }
 }
 
-/**
- * Records one declared MCP service action for the verified MCP caller. Throws
- * AuditUnavailableError before `fn` runs when the intent cannot be recorded;
- * callers return it as an MCP tool error.
- */
 export function runMcpServiceAction<T>(
   name: AuditServiceActionName,
   principal: McpAuditPrincipal,
@@ -102,10 +89,6 @@ export function runMcpServiceAction<T>(
   }, wrapped), fn, classify)
 }
 
-/**
- * Platform-admin MCP tools: the admin may target any organization, so the
- * caller must pass an organization it has verified exists.
- */
 export function runPlatformAdminServiceAction<T>(
   name: AuditServiceActionName,
   admin: PlatformAdminAuditActor,
@@ -124,14 +107,6 @@ export function runPlatformAdminServiceAction<T>(
   }, wrapped), fn, classify)
 }
 
-/**
- * Deployment-wide platform-admin MCP tools (den_set_feature_rollout) change no
- * organization's data, so they are platform evidence only: one
- * platform_audit_event after the tool runs (method SERVICE, route
- * service:<action>, the admin as actor, the changed resource as target),
- * written while deployment capture is on. A failed insert is logged
- * [platform-audit-lost] and never fails the tool.
- */
 export async function runPlatformAdminPlatformAction<T>(
   action: string,
   admin: PlatformAdminAuditActor,
@@ -159,7 +134,6 @@ export async function runPlatformAdminPlatformAction<T>(
   return result
 }
 
-/** Status for an MCP tool result carrying `{ error }` JSON (isError results). */
 export function toolErrorStatus(code: string | null): number {
   if (!code) return 424
   if (code === "insufficient_mcp_scope" || code === "forbidden" || code === "membership_required" || code === "mcp_membership_revoked" || code.endsWith("_access_required")) return 403
@@ -174,7 +148,6 @@ function recordOf(value: unknown): Record<string, unknown> | null {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? Object.fromEntries(Object.entries(value)) : null
 }
 
-/** The `error` code of an isError MCP tool result (structuredContent or JSON text), else null. */
 export function toolResultErrorCode(result: Readonly<{ isError?: boolean; content?: readonly unknown[]; structuredContent?: unknown }>): string | null {
   const structured = recordOf(result.structuredContent)
   if (structured && typeof structured.error === "string") return structured.error
@@ -191,12 +164,10 @@ export function toolResultErrorCode(result: Readonly<{ isError?: boolean; conten
   return null
 }
 
-/** Failure classifier for MCP tool results: isError maps through toolErrorStatus. */
 export function toolResultStatus(result: Readonly<{ isError?: boolean; content?: readonly unknown[]; structuredContent?: unknown }>): number | null {
   return result.isError === true ? toolErrorStatus(toolResultErrorCode(result)) : null
 }
 
-/** Status for errors thrown by service functions: their own status, `*_not_found` messages as 404. */
 export function serviceErrorStatus(error: unknown): number | null {
   const record = recordOf(error)
   if (record && typeof record.status === "number") return null

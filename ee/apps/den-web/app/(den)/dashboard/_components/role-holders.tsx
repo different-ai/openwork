@@ -8,15 +8,9 @@ export type RoleHolderRow = {
   id: string;
   name: string;
   detail: string;
-  /** Why this row can't be removed here, or null when it can. */
   lockReason?: string | null;
 };
 
-/**
- * Who a role is given to: people and teams as rows with Remove, then Add
- * person and Add team. The same block on a role's page (changes apply at
- * once) and on Create role (a draft), so a role is given the same way in both.
- */
 export function RoleHolders({ title, people, teams, addablePeople, addableTeams, onAddPeople, onAddTeams, onRemovePerson, onRemoveTeam, peopleLockReason, teamsLockReason, empty = "Nobody yet.", testId }: {
   title: string;
   people: readonly RoleHolderRow[];
@@ -27,14 +21,11 @@ export function RoleHolders({ title, people, teams, addablePeople, addableTeams,
   onAddTeams: (ids: string[]) => void;
   onRemovePerson: (id: string) => void;
   onRemoveTeam: (id: string) => void;
-  /** Why the signed-in person can't give this role to people, or null when they can. */
   peopleLockReason?: string | null;
-  /** Why the signed-in person can't give this role to teams, or null when they can. */
   teamsLockReason?: string | null;
   empty?: string;
   testId?: string;
 }) {
-  // One line says why: both pickers locked for the same reason read once.
   const lockReasons = peopleLockReason && peopleLockReason === teamsLockReason
     ? [peopleLockReason]
     : [peopleLockReason ? `Add person: ${peopleLockReason}` : null, teamsLockReason ? `Add team: ${teamsLockReason}` : null].flatMap((reason) => reason ?? []);
@@ -68,7 +59,6 @@ export function RoleHolders({ title, people, teams, addablePeople, addableTeams,
             testId="role-holder-team"
           />
         ))}
-        {/* Locked, with why (P4, C5): the pickers stay where they are. */}
         <div className="flex flex-wrap items-center gap-2 px-5 py-3" data-testid="role-holders-add">
           <span title={peopleLockReason ?? undefined}><AddPicker kind="person" options={addablePeople} disabled={Boolean(peopleLockReason)} onAdd={onAddPeople} /></span>
           <span title={teamsLockReason ?? undefined}><AddPicker kind="team" options={addableTeams} disabled={Boolean(teamsLockReason)} onAdd={onAddTeams} /></span>

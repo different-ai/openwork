@@ -6,7 +6,6 @@ export type WebhookSubscription = { id: string; name: string; connectionId: stri
 export type WebhookDeps<S extends WebhookSubscription> = {
   find: (id: string) => Promise<S | null>
   enabled: (subscription: S) => Promise<boolean>
-  /** Commit the receipt before resolving. A unique subscription/event key makes retries harmless. */
   accept: (subscription: S, event: McpEvent) => Promise<void>
   acceptControl: (subscription: S, control: McpEventControl, deliveryId: string) => Promise<void>
   now?: () => number
@@ -37,7 +36,6 @@ export async function receiveMcpEvent<S extends WebhookSubscription>(request: Re
     try { body = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(bytes)) } catch { return reply(400) }
     const verification = verificationSchema.safeParse(body)
     if (verification.success) return Response.json({ challenge: verification.data.challenge })
-    // The server can race its subscribe response. Ask it to retry after the remote identity is committed.
     if (subscription.status === "pending") return reply(503)
     if (request.headers.get("x-mcp-subscription-id") !== subscription.remoteId) return reply(400)
     if (typeof body === "object" && body !== null && "type" in body) {
@@ -51,12 +49,10 @@ export async function receiveMcpEvent<S extends WebhookSubscription>(request: Re
     if (subscription.status === "terminated") return reply(410)
     const event = eventSchema.safeParse(body)
     if (!event.success || event.data.name !== subscription.name || request.headers.get("x-mcp-subscription-id") !== subscription.remoteId) return reply(400)
-    // Do not acknowledge an event the thread harness can never admit. Include the saved instruction and envelope.
     if (eventPrompt(subscription.instruction, subscription, event.data).length > HEADLESS_MAX_PROMPT_CHARS) return reply(413)
     await deps.accept(subscription, event.data)
     return reply(202)
   } catch {
-    // No body, secret or provider exception goes into a response/log. A failed durable write must be retried.
     return reply(503)
   }
 }

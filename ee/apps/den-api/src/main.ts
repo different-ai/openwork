@@ -1,13 +1,8 @@
-// Dev scripts install the condition before tsx watch and set this marker so
-// the watched process imports the server directly, rather than hiding its
-// dependencies in an untracked child process.
 const DEVELOPMENT_CONDITIONS_REEXEC = "OPENWORK_DEN_DEVELOPMENT_CONDITIONS_REEXEC"
 
 export {}
 
 async function runWithDevelopmentConditions() {
-  // Clean dev/eval checkouts may not have workspace-package dist artifacts.
-  // Re-exec once so package exports resolve their TypeScript source entries.
   const { spawn } = await import("node:child_process")
   const child = spawn(
     process.execPath,

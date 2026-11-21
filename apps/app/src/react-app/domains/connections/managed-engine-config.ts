@@ -48,12 +48,6 @@ export type ReadManagedDisabledProvidersOptions = {
   directory?: string;
 };
 
-/**
- * The providers hidden through `disabled_providers` (for example a
- * disconnected OpenCode Zen). OpenCode v1 reports them in its config. OpenCode
- * v2 keeps engine config private, so read the same shared list from the
- * OpenWork server instead of treating it as empty and overwriting it.
- */
 export async function readManagedDisabledProviders(
   options: ReadManagedDisabledProvidersOptions,
 ): Promise<string[]> {
@@ -69,9 +63,6 @@ export async function readManagedDisabledProviders(
   const config = unwrap(await client.config.get(options.directory ? { directory: options.directory } : undefined));
   const fromConfig = disabledProvidersFromConfig(config);
   if (!managedRuntime) return fromConfig;
-  // updateManagedDisabledProviders writes this list on the server. v1 only
-  // reads it after an engine reload, which v2 chat routing never runs, so its
-  // config alone misses a provider that was just disabled (ENG-994).
   const fromRuntime = await readRuntime().catch(() => []);
   return normalizeDisabledProviders([...fromConfig, ...fromRuntime]);
 }

@@ -45,7 +45,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-/** The SDK a model is called with: its own override, else its provider's. */
 function modelNpm(providerConfig: Record<string, unknown>, modelConfig: Record<string, unknown>) {
   const override = isRecord(modelConfig.provider) && typeof modelConfig.provider.npm === "string" ? modelConfig.provider.npm : null
   return override ?? readProviderConfigNpm(providerConfig)
@@ -59,11 +58,6 @@ function modelKey(providerId: string, modelId: string) {
   return `${providerId}\u0000${modelId}`
 }
 
-/**
- * Who can use each AI Gateway model through its access grants, keyed by
- * provider and catalog model id: grants on an active model group containing
- * the model, with an active credential set.
- */
 async function readModelAccess(providerIds: string[]): Promise<Map<string, AutoRouterModelAccess>> {
   const access = new Map<string, AutoRouterModelAccess>()
   if (providerIds.length === 0) return access
@@ -89,12 +83,6 @@ async function readModelAccess(providerIds: string[]): Promise<Map<string, AutoR
   return access
 }
 
-/**
- * Every AI Gateway model a Smart Router can send prompts to: each active
- * provider's catalog models that sit in at least one active model group and
- * whose protocol the gateway can translate a Smart request to, with who can
- * use each through the gateway's grants.
- */
 export async function listAutoRouterOptions(organizationId: OrganizationId): Promise<AutoRouterModelOption[]> {
   if (gatewayManagementUnavailable()) return []
   const providers = await db.select().from(GatewayProviderTable)
@@ -135,8 +123,6 @@ export async function listAutoRouterOptions(organizationId: OrganizationId): Pro
 }
 
 async function readRouters(database: Database, organizationId: OrganizationId): Promise<AutoRouter[]> {
-  // Sequential on purpose: callers may run inside a transaction, and a
-  // PlanetScale transaction runs one query at a time.
   const routers = await database.select().from(AutoRouterTable).where(eq(AutoRouterTable.organizationId, organizationId))
   if (routers.length === 0) return []
   const access = await database.select().from(AutoRouterAccessTable).where(eq(AutoRouterAccessTable.organizationId, organizationId))
@@ -171,8 +157,6 @@ async function readRouters(database: Database, organizationId: OrganizationId): 
     })
 }
 
-/** Every Smart Router of the organization, oldest first, and every task by name. */
-/** `primary` reads the routers a save or delete just wrote. */
 export async function listAutoRouters(organizationId: OrganizationId, options: { primary?: boolean } = {}): Promise<{ routers: AutoRouter[]; tasks: string[] }> {
   const reader = options.primary ? db.$primary : db
   const routers = await readRouters(reader, organizationId)
@@ -190,11 +174,9 @@ export async function readAutoRouter(organizationId: OrganizationId, routerId: s
 export type AutoRouterWriteProblem = {
   error: "unknown_model" | "unknown_team" | "unknown_member"
   message: string
-  /** The model's index in `models`, for unknown_model. */
   model?: number
 }
 
-/** Checks every model against the organization's options. */
 export function checkAutoRouterWrite(input: AutoRouterWrite, options: AutoRouterModelOption[]): AutoRouterWriteProblem | null {
   for (const [index, model] of input.models.entries()) {
     if (!options.some((option) => option.providerId === model.providerId && option.modelId === model.modelId)) {
@@ -204,7 +186,6 @@ export function checkAutoRouterWrite(input: AutoRouterWrite, options: AutoRouter
   return null
 }
 
-/** Checks every assignee against the organization's teams and members. */
 export async function checkAutoRouterAssignment(organizationId: OrganizationId, assignment: AutoRouterAssignment): Promise<AutoRouterWriteProblem | null> {
   const teamIds = [...new Set(assignment.teamIds)]
   if (teamIds.length > 0) {
@@ -223,12 +204,10 @@ export async function checkAutoRouterAssignment(organizationId: OrganizationId, 
   return null
 }
 
-/** Serializes Smart Router writes of one organization, so shared tasks are created and removed consistently. */
 async function lockOrganization(tx: Database, organizationId: OrganizationId) {
   await tx.select({ id: OrganizationTable.id }).from(OrganizationTable).where(eq(OrganizationTable.id, organizationId)).for("update")
 }
 
-/** Removes tasks no router model uses anymore. */
 async function deleteUnusedTasks(tx: Database, organizationId: OrganizationId) {
   const tasks = await tx.select({ id: AutoRouterTaskTable.id }).from(AutoRouterTaskTable).where(eq(AutoRouterTaskTable.organizationId, organizationId))
   if (tasks.length === 0) return
@@ -250,7 +229,6 @@ async function deleteRouterContents(tx: Database, routerId: AutoRouterId) {
   await tx.delete(AutoRouterAccessTable).where(eq(AutoRouterAccessTable.autoRouterId, routerId))
 }
 
-/** The task rows for these names, creating the missing ones; keyed by `autoRouterTaskKey`. */
 async function ensureTasks(tx: Database, organizationId: OrganizationId, names: string[]) {
   const wanted = new Map<string, string>()
   for (const name of names) {
@@ -271,19 +249,11 @@ async function ensureTasks(tx: Database, organizationId: OrganizationId, names: 
   return ids
 }
 
-/**
- * Creates a router (no id; it applies to nobody yet) or replaces one's name,
- * models and their tasks, in one transaction. Who it applies to is kept; set
- * it with saveAutoRouterAssignment. Tasks are shared across the organization:
- * new names are created, and names no model uses anymore are removed. Returns
- * the router id, or null when `routerId` is not one of the organization's.
- */
 export async function saveAutoRouter(input: {
   organizationId: OrganizationId
   memberId: MemberId
   routerId?: string
   write: AutoRouterWrite
-  /** For a create: use this id (a config-blob import reusing its source id); the caller checked it is free. */
   createId?: AutoRouterId
 }): Promise<AutoRouterId | null> {
   return db.transaction(async (tx) => {
@@ -333,13 +303,6 @@ export async function saveAutoRouter(input: {
   })
 }
 
-/**
- * Replaces who a router applies to. Making it apply to everyone needs
- * `canShareWithEveryone` unless it already does; that is decided against the
- * assignment read under the router's row lock, so a concurrent change cannot
- * slip an org-wide grant past the check. Returns `not_found` when `routerId`
- * is not one of the organization's routers.
- */
 export async function saveAutoRouterAssignment(input: {
   organizationId: OrganizationId
   memberId: MemberId
@@ -375,7 +338,6 @@ function assignmentRows(organizationId: OrganizationId, routerId: AutoRouterId, 
   ]
 }
 
-/** Deletes a router and the tasks only it used; false when it is not one of the organization's. */
 export async function deleteAutoRouter(organizationId: OrganizationId, routerId: string): Promise<boolean> {
   if (!isDenTypeId("autoRouter", routerId)) return false
   return db.transaction(async (tx) => {
@@ -391,12 +353,10 @@ export async function deleteAutoRouter(organizationId: OrganizationId, routerId:
   })
 }
 
-/** Removes a team's router assignments inside the transaction that deletes the team. */
 export async function deleteTeamAutoRouterAccess(database: Database, teamId: TeamId): Promise<void> {
   await database.delete(AutoRouterAccessTable).where(eq(AutoRouterAccessTable.teamId, teamId))
 }
 
-/** Removes every Smart Router of an organization inside the transaction that deletes it. */
 export async function deleteOrganizationAutoRouters(database: Database, organizationId: OrganizationId): Promise<void> {
   await database.delete(AutoRouterModelTaskTable).where(eq(AutoRouterModelTaskTable.organizationId, organizationId))
   await database.delete(AutoRouterTaskTable).where(eq(AutoRouterTaskTable.organizationId, organizationId))
@@ -405,11 +365,6 @@ export async function deleteOrganizationAutoRouters(database: Database, organiza
   await database.delete(AutoRouterTable).where(eq(AutoRouterTable.organizationId, organizationId))
 }
 
-/**
- * The routers that apply to a member and that they can use: assigned to them
- * (everyone, one of their teams, or them), with at least one model their
- * AI Gateway grants reach through an active group and credential set.
- */
 export async function memberAutoRouters(organizationId: OrganizationId, memberId: MemberId): Promise<AutoRouter[]> {
   if (gatewayManagementUnavailable()) return []
   const routers = await readRouters(db, organizationId)
@@ -434,11 +389,6 @@ export async function memberAutoRouters(organizationId: OrganizationId, memberId
 const ROUTING_CACHE_MS = { known: 60_000, unknown: 10_000 } as const
 let routingCache: { state: AutoRouterRoutingState; expires: number } | null = null
 
-/**
- * Asks the AI Gateway whether it has its TypeSafe (Jev) key. Only the gateway
- * holds the key, so Den reads a boolean from its `/auto-router/status`.
- * Cached briefly; `unknown` when the gateway cannot be reached.
- */
 export async function readAutoRouterRouting(fetcher: typeof fetch = fetch, now = Date.now()): Promise<AutoRouterRoutingState> {
   if (routingCache && routingCache.expires > now) return routingCache.state
   let state: AutoRouterRoutingState = "unknown"
@@ -459,7 +409,6 @@ export async function readAutoRouterRouting(fetcher: typeof fetch = fetch, now =
   return state
 }
 
-/** Test hook. */
 export function clearAutoRouterRoutingCache() {
   routingCache = null
 }

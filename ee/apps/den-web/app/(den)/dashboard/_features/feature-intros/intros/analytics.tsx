@@ -15,47 +15,30 @@ import { LibraryUsageExample } from "./examples/analytics/library-usage-example"
 import { WorkflowRunsExample } from "./examples/analytics/workflow-runs-example";
 import { MEMBERS_INVITE_ROUTE } from "./members";
 
-/** Which Analytics page reported the facts. Each view loads its own data. */
 export type AnalyticsPage = "usage" | "library" | "workflow-runs";
-/** The Plugins & connectors view the person is looking at (`?view=`). */
 export type AnalyticsLibraryView = "plugins" | "skills" | "connectors";
 
-/**
- * Facts the Analytics pages report from data they already load
- * (`GET /v1/telemetry/analytics`, `GET /v1/library-usage/:kind`,
- * `GET /v1/workflow-runs`, `entitlements.analytics` from `GET /v1/org`).
- * A missing fact means "not loaded yet": nothing takes over the page on a guess.
- */
 export type AnalyticsFacts = {
   page?: AnalyticsPage;
-  /** Usage & adoption is in the organization's plan (Enterprise when plan gating is on). */
   included?: boolean;
-  /** Any active person, session or task in the last 30 days, across all projects. */
   activity?: boolean;
-  /** People in the organization and invitations still open (`members`, `pendingInvites`). */
   members?: number;
   pendingInvites?: number;
   libraryView?: AnalyticsLibraryView;
-  /** Plugins, skills or connectors in this view, used or not. */
   libraryItems?: number;
-  /** Any use of them has been recorded (`trackingSince` or a use in the window). */
   libraryUsageRecorded?: boolean;
-  /** Runs on the Workflow runs page (`GET /v1/workflow-runs`). */
   workflowRuns?: number;
 };
 
 type Ctx = FeatureIntroContext<AnalyticsFacts>;
 type Cta = FeatureIntroCta<AnalyticsFacts>;
 
-/** Usage only shows up once someone uses the OpenWork app, so the install page is the action that creates data. */
 export const OPENWORK_INSTALL_ROUTE = "/install";
 
-/* Docs: one Analytics page, a section per tab. */
 const DOCS_ANALYTICS = "cloud/analytics#usage-and-adoption";
 const DOCS_LIBRARY = "cloud/analytics#plugins-and-connectors";
 const DOCS_WORKFLOWS = "cloud/analytics#workflow-runs";
 
-/** Only the person in the organization so far: inviting people comes before usage. */
 function alone(ctx: Ctx): boolean {
   return (ctx.facts.members ?? 0) <= 1 && (ctx.facts.pendingInvites ?? 0) === 0;
 }
@@ -82,7 +65,6 @@ export const analyticsIntros = [
     },
     docsUrl: docsPage(DOCS_ANALYTICS),
     ctas: [
-      // Enterprise is sold by talking to us, like SCIM; billing has no Enterprise checkout.
       { when: (ctx) => ctx.facts.included === false && ctx.can("canManageBilling"), label: "Talk to us about Enterprise", href: ENTERPRISE_CONTACT_URL, note: () => "Usage analytics is part of the Enterprise plan." },
       {
         when: (ctx) => ctx.facts.included === false,
@@ -93,8 +75,6 @@ export const analyticsIntros = [
       { when: (ctx) => alone(ctx) && ctx.can("canInviteMembers"), label: "Invite your team", href: MEMBERS_INVITE_ROUTE, note: () => USAGE_NOTE },
       { when: () => true, label: "Download OpenWork", href: OPENWORK_INSTALL_ROUTE, note: () => USAGE_NOTE },
     ],
-    // Takes over Usage & adoption only (tabs stay): Plugins & connectors works on every plan, and
-    // workflow runs also come from AI tools connected through OpenWork MCP, so neither is "nothing".
     setupState: (ctx) => {
       if (ctx.facts.page !== "usage") return "done";
       if (ctx.facts.included === false) return "none";
@@ -130,11 +110,9 @@ export const analyticsIntros = [
         href: getAddConnectorRoute(),
         locked: { reason: permissionLockReason("connections.manage") },
       },
-      // Any member can create a plugin (`plugin.create` needs no permission), so there is no locked variant.
       { when: (ctx) => ctx.facts.libraryItems === 0, label: "Create a plugin", href: getNewPluginRoute() },
       { when: () => true, label: "Download OpenWork", href: OPENWORK_INSTALL_ROUTE },
     ],
-    // Box while this view has nothing in it; banner while it has items nobody has used yet.
     setupState: (ctx) => {
       if (ctx.facts.libraryItems === undefined || ctx.facts.libraryUsageRecorded === undefined) return "done";
       if (ctx.facts.libraryItems === 0) return "none";
@@ -149,7 +127,6 @@ export const analyticsIntros = [
     match: { path: getWorkflowRunsRoute() },
     icon: ScrollText,
     title: "Workflow runs",
-    // Personal: `/v1/workflow-runs` lists only the viewer's own runs, so the copy and setup state are about them.
     summary: "See each run of your saved workflows and one-off tasks, and whether it worked.",
     highlights: [
       { title: "Worked or failed.", text: "Each run with its result and when it finished." },

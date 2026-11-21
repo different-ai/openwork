@@ -27,8 +27,6 @@ const exists = (query: { getSQL(): SQL }) => sql`exists ${query}`
 export async function exportPersonalSkills(context: PluginArchActorContext): Promise<PersonalSkillsBundle> {
   const { organization: { id: orgId }, currentMember: { id: memberId } } = context.organizationContext
 
-  // Compose the privacy check and payload read into one statement, so a share,
-  // attachment or version change cannot fall between the two.
   const latestVersion = db.select({ id: Version.id }).from(Version).where(and(
     eq(Version.configObjectId, ObjectRow.id), eq(Version.organizationId, orgId),
   )).orderBy(desc(Version.createdAt), desc(Version.id)).limit(1)
@@ -88,7 +86,6 @@ export async function importPersonalSkills(context: PluginArchActorContext, bund
   await requirePluginArchCapability(context, "config_object.create")
   await requirePluginArchCapability(context, "plugin.create")
 
-  // Validate every SKILL.md with the standard store rules before any write.
   const skills = bundle.skills.map(({ source }) => {
     if (Buffer.byteLength(source, "utf8") > PERSONAL_SKILL_SOURCE_MAX_BYTES) {
       throw new PluginArchRouteFailure(400, "invalid_skill_source", "Each SKILL.md must fit within 1 MiB.")
@@ -98,8 +95,6 @@ export async function importPersonalSkills(context: PluginArchActorContext, bund
   })
 
   for (const { title, value } of skills) {
-    // Private Cloud skills live in plugins in My Library. A fresh name avoids
-    // matching, reusing or writing to any existing plugin, including on retry.
     await createPluginBundle({
       context,
       name: `${title} (copy ${createDenTypeId("plugin").slice(-10)})`,

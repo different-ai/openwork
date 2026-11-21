@@ -14,8 +14,6 @@ import { getElectronBrowser } from "./utils";
 export function useSidePanelTabs(sessionId: string) {
   const syncBrowserTabs = usePanelTabStore((state) => state.syncBrowserTabs);
 
-  // Every conversation only sees the tabs it opened (plus shared tabs): the
-  // native browser is one surface, but ownership decides what each panel shows.
   const applyBrowserState = React.useCallback((browserState: BrowserStatePayload) => {
     const tabs = browserTabsForSession(browserState.tabs ?? [], sessionId);
     const activeTabId = activeBrowserTabIdForSession(browserState, sessionId, tabs);

@@ -26,10 +26,6 @@ type ArtifactCodeViewProps = {
 export function ArtifactCodeView({ name, path, content, editable = false, onChange }: ArtifactCodeViewProps) {
   const onChangeRef = useRef(onChange);
   onChangeRef.current = onChange;
-  // Once Pierre's editor attaches it owns the document; `content` only seeds
-  // the initial doc. Re-renders must not push parent state (the autosave
-  // draft) back into the editor, or the caret would reset mid-typing.
-  // The component instance survives switching files, so reseed per path.
   const initialContentRef = useRef(content);
   const lastPathRef = useRef(path);
   if (lastPathRef.current !== path) {

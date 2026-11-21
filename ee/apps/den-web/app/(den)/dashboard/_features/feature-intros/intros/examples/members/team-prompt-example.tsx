@@ -4,7 +4,6 @@ import { useExampleStep } from "../use-example-step";
 import { ExampleCaption } from "../example-parts";
 import { teamPromptExampleRows } from "./team-prompt-example-data";
 
-/** Prompts example: the prompt for everyone, then a team's, as the Prompts tab shows them. */
 export function TeamPromptExample() {
   const step = useExampleStep(teamPromptExampleRows.length, 3200);
 

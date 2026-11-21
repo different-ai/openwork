@@ -1,15 +1,5 @@
 import { Parser } from "htmlparser2";
 
-/**
- * Bounded OOXML package primitives shared by the Office attachment normalizer,
- * the spreadsheet tools, and the artifact spreadsheet preview: a defensive ZIP
- * reader, a minimal ZIP writer, and DTD-free XML text helpers. Everything here
- * is platform-neutral (Uint8Array, DataView, TextEncoder, and the Web Streams
- * compression API), so the same code runs in Node, Bun, and Chromium. Every
- * limit protects the host process from hostile workbooks; callers must not
- * bypass them.
- */
-
 const ZIP_LOCAL_FILE_HEADER = 0x04034b50;
 const ZIP_CENTRAL_DIRECTORY_HEADER = 0x02014b50;
 const ZIP_END_OF_CENTRAL_DIRECTORY = 0x06054b50;
@@ -97,8 +87,6 @@ async function readStreamBounded(stream: ReadableStream<Uint8Array>, limit: numb
 }
 
 function byteStream(data: Uint8Array): ReadableStream<BufferSource> {
-  // Copy into a plain ArrayBuffer-backed view: callers may pass Node Buffers or
-  // views over shared memory, which the streams API does not accept.
   const chunk = new Uint8Array(data.byteLength);
   chunk.set(data);
   return new ReadableStream<BufferSource>({
@@ -135,12 +123,6 @@ function rejectUnsafeZipFlags(flags: number, name: string): void {
   if ((flags & ZIP_FLAG_STRONG_ENCRYPTION) !== 0) throw new Error(`ZIP entry ${name} uses strong encryption.`);
 }
 
-/**
- * Excel, Google Sheets exports, and streaming writers set the data-descriptor
- * flag and leave the local header sizes at zero. The validated central
- * directory is authoritative for every bound, so a local header may either
- * repeat those sizes or omit them; anything else is a corrupt archive.
- */
 function localSizeMatches(localFlags: number, localSize: number, centralSize: number): boolean {
   if (localSize === centralSize) return true;
   return (localFlags & ZIP_FLAG_DATA_DESCRIPTOR) !== 0 && localSize === 0;
@@ -263,8 +245,6 @@ export async function buildZip(files: ZipFileInput[]): Promise<Uint8Array> {
     totalUncompressed += file.data.byteLength;
     if (totalUncompressed > MAX_TOTAL_UNCOMPRESSED_BYTES) throw new OfficeSizeLimitError("ZIP archive exceeds total uncompressed limit.");
     const deflated = await deflateRaw(file.data);
-    // Store an entry that would compress past the reader's ratio bound, so a
-    // workbook this writer produces is always one this reader accepts.
     const useDeflate = deflated.byteLength < file.data.byteLength
       && file.data.byteLength / Math.max(1, deflated.byteLength) <= MAX_ZIP_COMPRESSION_RATIO;
     const stored = useDeflate ? deflated : file.data;

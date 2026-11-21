@@ -7,7 +7,6 @@ import { cn } from "@/lib/utils"
 import { ProviderIcon } from "@/react-app/design-system/provider-icon"
 import { findAutomationModelOption, type AutomationModelOption } from "./automation-model-options"
 
-/** The provider's logo, model name and provider for an Automation's model; shared by the editor's button and read-only rows. */
 export function AutomationModelSummary(props: { model: AutomationModel; options: readonly AutomationModelOption[]; size?: "sm" | "default" }) {
   const option = findAutomationModelOption(props.options, props.model)
   const small = props.size === "sm"
@@ -35,7 +34,6 @@ export function AutomationModelSummary(props: { model: AutomationModel; options:
   )
 }
 
-/** Opens the model picker; shows the current model with its provider's logo. */
 export function AutomationModelButton(props: {
   id?: string
   model: AutomationModel

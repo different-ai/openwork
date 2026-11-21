@@ -210,8 +210,6 @@ export function createExtensionsStore(options: {
   let cloudOrgMarketplacesLoaded = false;
   let skillsRoot = "";
   let cloudOrgMarketplacesLoadKey = "";
-  /** Plugin IDs the user has already been notified about. Prevents repeated
-   *  "new extension available" notifications across sync cycles. */
 
   let state: MutableState = {
     skillsContextKey: "",
@@ -395,13 +393,10 @@ export function createExtensionsStore(options: {
       const previousPending = snapshot.pendingCloudPluginChanges;
       setStateField("pendingCloudPluginChanges", pending);
 
-      // Installation drift is not activity history or evidence of an admin
-      // removal. Ask the member-scoped observer to verify usable resources.
       if (Object.entries(pending).some(([id, change]) => previousPending[id] !== change)) {
         requestMemberActivityRefresh();
       }
     } catch {
-      // keep previous pending state on failure
     }
   };
 
@@ -581,8 +576,6 @@ export function createExtensionsStore(options: {
         cloudOrgMarketplacesStatus: null,
       }));
 
-      // Activity uses grant-scoped inventories, not this broader marketplace
-      // management view (which can include admin-only resources).
       requestMemberActivityRefresh();
 
       cloudOrgMarketplacesLoaded = true;
@@ -604,8 +597,6 @@ export function createExtensionsStore(options: {
     }
   }
 
-  // Only manual local changes enter these handlers. Assigned Cloud inventory
-  // continues to reconcile through its separate refresh/sync paths.
   function extensionMutationDenied() {
     if (!options.checkDesktopAppRestriction({ restriction: "allowManageExtensions" })) return false;
     options.setError(desktopRestrictionNotice("allowManageExtensions"));
@@ -1602,7 +1593,6 @@ export function createExtensionsStore(options: {
 
   const start = () => {
     if (started) return;
-    // StrictMode double-mount re-arms after dispose.
     disposed = false;
     started = true;
 

@@ -9,7 +9,6 @@ import { previewSkillSteps, skillTitle } from "./skill-preview-model";
 
 export { skillTitle } from "./skill-preview-model";
 
-/** A skill's description and steps; long steps open with "Show all steps". */
 export function SkillSteps({ skill, editHref }: { skill: PluginSkill; editHref?: string }) {
   const [expanded, setExpanded] = useState(false);
   const preview = previewSkillSteps(skill.body ?? "");
@@ -39,10 +38,6 @@ export function SkillSteps({ skill, editHref }: { skill: PluginSkill; editHref?:
   );
 }
 
-/**
- * Native disclosure keeps keyboard, focus and open state without a second page.
- * `showKind` is off where every row is a skill, so "Skill" would only repeat.
- */
 export function SkillPreview({ skill, editHref, showKind = true }: { skill: PluginSkill; editHref?: string; showKind?: boolean }) {
   return (
     <details className="group/skill" data-skill-preview={skill.id}>

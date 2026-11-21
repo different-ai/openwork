@@ -38,8 +38,6 @@ async function memberStates(organizationId: string, memberId: string, userId: st
     const context = { ...env.features, rollouts, overrides }
     const inherited = resolveFeature(key, context)
     const state = resolveFeature(key, { ...context, memberOverrides })
-    // The reusable editor's reset target is the organization setting; its
-    // override is the selected member's, not the organization's stored row.
     return { ...state, everyone: inherited.enabled, override: memberOverrides[key] ?? null, lastChange: serializeFeatureChange(changes[key]) }
   })
 }

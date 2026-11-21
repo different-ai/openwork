@@ -1,4 +1,3 @@
-/** A failed handoff retains its created session; concurrent submits share the work. */
 export function createDraftFirstSend<T>() {
   const entries = new Map<string, { created?: T; pending?: Promise<void> }>();
   return {

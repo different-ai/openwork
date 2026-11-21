@@ -22,15 +22,9 @@ function reportClient(client: V2Client): SessionReportClient {
   };
 }
 
-/**
- * Reports finished sessions the agent started to the session that started
- * them, for the workspace this window follows live. Renders nothing.
- */
 export function SessionReportBridge({ sessions, statuses, engine }: {
   sessions: readonly SessionListItem[];
-  /** Each session's own live status, not the sidebar's roll-up of the sessions under it. */
   statuses: Readonly<Record<string, string>> | undefined;
-  /** The workspace's v2 engine; null while chats there run on an engine that keeps no links. */
   engine: { baseUrl: string; directory: string | undefined; token: string | undefined } | null;
 }) {
   const client = useMemo(
@@ -38,13 +32,9 @@ export function SessionReportBridge({ sessions, statuses, engine }: {
     [engine?.baseUrl, engine?.directory, engine?.token],
   );
   const memory = useRef({
-    /** Candidate keys already looked at. */
     seen: new Set<string>(),
-    /** The run end reported for each session. */
     handled: new Map<string, number>(),
-    /** Sessions this window saw running since their last report. */
     sawRunning: new Set<string>(),
-    /** When reports started each parent's turn. */
     wakes: new Map<string, number[]>(),
   });
 
@@ -54,7 +44,6 @@ export function SessionReportBridge({ sessions, statuses, engine }: {
     const now = Date.now();
     const { settled, running } = sessionReportCandidates({ sessions, statuses, now });
     for (const entry of running) state.sawRunning.add(entry.childId);
-    // Forgetting what was looked at only costs one repeated read per session.
     if (state.seen.size > 2_000) state.seen.clear();
     for (const candidate of settled) {
       if (state.seen.has(candidate.key)) continue;
@@ -77,7 +66,6 @@ export function SessionReportBridge({ sessions, statuses, engine }: {
         if (result.woke) state.wakes.set(candidate.parentId, [...(state.wakes.get(candidate.parentId) ?? []).filter((at) => now - at < 60 * 60 * 1000), now]);
         if (result.added) markFeatureUsed("sessionTree");
       }).catch(() => {
-        // The engine was unreachable: look again at this session's next change.
         state.seen.delete(candidate.key);
       });
     }

@@ -93,7 +93,6 @@ function isDiffText(value: unknown): value is string {
   )
 }
 
-/** Tools like apply_patch carry the diff in their input (patchText). */
 function getInputDiff(input: unknown): string | null {
   if (isDiffText(input)) {
     return input
@@ -185,7 +184,6 @@ const Tool = ({
       setCopied(true)
       window.setTimeout(() => setCopied(false), 2000)
     } catch {
-      // Clipboard access can be unavailable outside a secure browser context.
     }
   }, [resultText])
 

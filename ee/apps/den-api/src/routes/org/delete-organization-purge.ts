@@ -30,7 +30,6 @@ import { db } from "../../db.js"
 
 type OrganizationId = typeof OrganizationTable.$inferSelect.id
 
-/** Rows one purge statement deletes: each statement commits on its own and holds its row locks briefly. */
 export const ORGANIZATION_PURGE_BATCH_SIZE = 1000
 
 function affectedRows(result: unknown): number {
@@ -41,7 +40,6 @@ function affectedRows(result: unknown): number {
   return 0
 }
 
-/** Repeats a bounded delete until one deletes fewer rows than the batch size, and returns how many rows went. */
 async function deleteInBatches(deleteBatch: (limit: number) => Promise<unknown>, batchSize = ORGANIZATION_PURGE_BATCH_SIZE): Promise<number> {
   let deleted = 0
   for (;;) {
@@ -51,7 +49,6 @@ async function deleteInBatches(deleteBatch: (limit: number) => Promise<unknown>,
   }
 }
 
-/** Deletes parent rows a page at a time, each page's child rows first. */
 async function deleteParentsInBatches<Id>(
   readPage: (limit: number) => Promise<Id[]>,
   deletePage: (ids: Id[]) => Promise<unknown>,
@@ -70,7 +67,6 @@ function isMissingTable(error: unknown): boolean {
   return "cause" in error && isMissingTable(error.cause)
 }
 
-/** Tables added by later migrations hold nothing before those migrations run. */
 async function unlessTableMissing(work: () => Promise<unknown>): Promise<void> {
   try {
     await work()
@@ -79,13 +75,6 @@ async function unlessTableMissing(work: () => Promise<unknown>): Promise<void> {
   }
 }
 
-/**
- * Deletes an organization's history (request logs, usage, telemetry and audit rows) in bounded batches before the
- * transaction that deletes the organization. These tables grow with use, and PlanetScale ends any transaction after
- * 20 seconds, so they cannot be deleted inside it. Every statement filters on an indexed column and commits on its
- * own, so a failed deletion keeps what it deleted and a retry deletes the rest. Rows written meanwhile are deleted
- * by the final transaction.
- */
 export async function purgeOrganizationHistory(organizationId: OrganizationId): Promise<void> {
   const memberIds = (await db
     .select({ id: MemberTable.id })
@@ -94,10 +83,8 @@ export async function purgeOrganizationHistory(organizationId: OrganizationId): 
     .map((member) => member.id)
 
   if (memberIds.length > 0) {
-    // Usage events have no organization index; charges have no organization column.
     const events = and(inArray(GatewayUsageEventTable.memberId, memberIds), eq(GatewayUsageEventTable.organizationId, organizationId))
     await deleteParentsInBatches(
-      // primary: each page must not include the rows the previous page just deleted.
       async (limit) => (await db.$primary.select({ id: GatewayUsageEventTable.id }).from(GatewayUsageEventTable).where(events).limit(limit)).map((row) => row.id),
       async (ids) => {
         await db.delete(GatewayUsageChargeTable).where(inArray(GatewayUsageChargeTable.eventId, ids))
@@ -106,7 +93,6 @@ export async function purgeOrganizationHistory(organizationId: OrganizationId): 
     )
   }
   await deleteParentsInBatches(
-    // primary: each page must not include the rows the previous page just deleted.
     async (limit) => (await db.$primary
       .select({ id: InferenceUsageLedgerEntryTable.id })
       .from(InferenceUsageLedgerEntryTable)

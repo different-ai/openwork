@@ -32,7 +32,6 @@ function Option({ testId, checked, title, description, onSelect, children }: {
 
 export function GatewayWhoCanUseModels() {
   const { orgId, orgContext, runReauthableAction, reauthDialogOpen } = useOrgDashboard();
-  // Model access is a desktop policy: owners by default. Others see it, locked with why (DESIGN P4).
   const canChange = orgContext
     ? getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions).canManageDesktopPolicies
     : false;

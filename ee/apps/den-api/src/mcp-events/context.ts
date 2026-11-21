@@ -25,7 +25,6 @@ export async function bindEventTurn(input: { tokenId: string; resumeGrantId?: st
   })
 }
 
-/** Restore only an explicitly bound grant. Its tasks inherit the same chat, as with the initial MCP token. */
 export async function rebindEventTurn(input: { tokenId: string; resumeGrantId: string; organizationId: string; userId: string; memberId: string; sessionId: string; expiresAt: Date }) {
   const [binding] = await db.$primary.select().from(McpEventTurnTable).where(and(
     eq(McpEventTurnTable.resumeGrantId, normalizeDenTypeId("headlessResumeGrant", input.resumeGrantId)), eq(McpEventTurnTable.organizationId, normalizeDenTypeId("organization", input.organizationId)),
@@ -47,7 +46,6 @@ export async function eventThreadForPrincipal(principal: McpPrincipal): Promise<
 }
 
 type Actor = Pick<EventThread, "organizationId" | "memberId" | "userId" | "sessionId">
-/** Recheck current membership, rollout, Workbot policy, grants and connected credentials at every use. */
 export async function eventAccess(actor: Actor, originalScopes: readonly string[]) {
   const [member] = await db.$primary.select({ id: MemberTable.id }).from(MemberTable).where(and(
     eq(MemberTable.id, actor.memberId), eq(MemberTable.organizationId, actor.organizationId), eq(MemberTable.userId, actor.userId), isNull(MemberTable.removedAt),
@@ -75,7 +73,6 @@ export function eventRunner(actor: Actor, scopes: readonly string[]) {
   })
 }
 
-/** A client cannot turn an arbitrary run-token session id into a subscription target. The runner owns this check. */
 export async function requireEventThread(actor: Actor, scopes: readonly string[]) {
   const runner = eventRunner(actor, scopes)
   const snapshot = await runner.readSession(actor.sessionId, { expectedOwner: workbotOwner(actor.organizationId, actor.memberId), turns: 1, limit: 1, outputs: "none" })

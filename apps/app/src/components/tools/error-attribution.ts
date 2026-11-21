@@ -36,12 +36,6 @@ const OPENWORK_CLOUD_CAPABILITY_TOOLS = new Set([
   "openwork_connection_action",
 ])
 
-/**
- * The tool name an App's own call result is read as. An App built in OpenWork is
- * served by the desktop's private OpenWork Connect host, and each of its tools
- * runs one OpenWork Cloud capability, so its failures carry the same connection
- * cards as execute_capability. Any other App's results stay its own.
- */
 export function appToolResultConnectionToolName(app: { serverName: string; resourceUri: string }, toolName: string): string {
   return parseMcpAppResourceUri(app.resourceUri) && app.serverName.startsWith("openwork-app-host-connect-")
     ? "openwork-cloud_execute_capability"
@@ -77,7 +71,6 @@ function parseResultRecord(result: unknown): Record<string, unknown> | null {
       const parsed: unknown = JSON.parse(candidate)
       if (isRecord(parsed)) return parsed
     } catch {
-      // The engine may wrap the MCP JSON in a plain error message.
     }
   }
   return null
@@ -113,16 +106,10 @@ const CONNECTION_ACTION_LABELS = {
   contact_openwork: "Contact OpenWork support",
 }
 
-/** OpenWork Cloud's own capability tools, whose results the host may present natively. */
 export function isOpenworkCloudCapabilityTool(toolName: string): boolean {
   return isConnectionTool(toolName)
 }
 
-/**
- * Tools whose result may report a connection: the capability tools, and what
- * Connect lists when every action is its own tool (`linear_list_issues`,
- * `connection_status`), which answers as execute_capability does.
- */
 function isConnectionTool(toolName: string): boolean {
   return OPENWORK_CLOUD_CAPABILITY_TOOLS.has(toolName)
     || /^openwork(?:-cloud)?_run_artifact_[A-Za-z0-9_-]+$/.test(toolName)
@@ -130,11 +117,6 @@ function isConnectionTool(toolName: string): boolean {
     || connectActionToolName(toolName) !== null
 }
 
-/**
- * Ordinary discovery (`search_capabilities` without `intent: "connect"`) stays
- * quiet in the transcript. `allowDiscovery` lets a caller that already holds a
- * pending native connection question read the same blocker from such a result.
- */
 export type ChatConnectionTargetOptions = { allowDiscovery?: boolean }
 
 function chatConnectionTarget(toolName: string, result: unknown, input?: unknown, options?: ChatConnectionTargetOptions) {
@@ -200,11 +182,6 @@ export function connectionCardPayloadFromChatToolResult(
   return chatConnectionTarget(toolName, result, input, options)?.connection ?? null
 }
 
-/**
- * The one connection an MCP tool result reports, read from the result itself,
- * its structured content, its metadata, or the JSON in its text parts, with
- * the part it was found in for the card to render.
- */
 export function connectionCardFromMcpToolResult(
   toolName: string,
   value: unknown,
@@ -234,7 +211,6 @@ export function reconnectActionFromChatToolResult(
   const { connection } = target
   if (connection.actor !== "member" || connection.action?.surface !== "openwork_your_connections"
     || !(target.memberPersonalKey
-      // A member-held key only ever uses the credential action, never an OAuth connect or reconnect.
       ? connection.action.type === "update_credentials" && (connection.state === "needs_connection" || connection.state === "reauth_required")
       : (connection.state === "needs_connection" && connection.action.type === "connect")
         || (connection.state === "reauth_required" && connection.action.type === "reconnect"))) return null
@@ -264,10 +240,6 @@ export function connectionResultFromChatToolPart(part: DynamicToolUIPart, option
   return chatConnectionTarget(part.toolName, combined, part.input, options) ? combined : undefined
 }
 
-/**
- * The connection a chat tool part reports, if any. Ordinary discovery is
- * excluded unless `allowDiscovery` is set.
- */
 export function connectionFromChatToolPart(part: DynamicToolUIPart, options?: ChatConnectionTargetOptions): {
   connection: ConnectionActionPayload
   action: ChatToolReconnectAction | null
@@ -341,7 +313,6 @@ export function attributeChatToolError(errorText: string): ToolErrorAttribution 
   return null
 }
 
-/** End-user copy; attribution and raw provider payloads belong in details. */
 export function describeChatToolFailure(errorText: string): string {
   const attribution = attributeChatToolError(errorText)
   if (attribution?.label === "Blocked by OpenWork") return "This action is blocked by your workspace settings."

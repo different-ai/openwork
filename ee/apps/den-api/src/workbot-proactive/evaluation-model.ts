@@ -1,14 +1,3 @@
-/**
- * The fast evaluation model Your agent's check gate and send check ask (typesafe-ai/jev through Vercel AI Gateway). It
- * answers yes-or-no questions about a state with probabilities and writes nothing: what to do with an answer is plain
- * code in @openwork/automations/proactive-brief. One attempt, no retries, no redirects, a short time limit, and the
- * request asks the provider to keep nothing. Every failure (no answer in time, a refused request, an unreadable body)
- * is `answers: null`, which both callers treat as "carry on as without me".
- *
- * Wire contract: POST {state, questions, providerOptions} with the evaluation headers below, as @ai-sdk/gateway 4.0.87
- * sends it (GatewayEvaluationModel.doEvaluate); a boolean answer is {type: "boolean", probability}.
- */
-
 const ENDPOINT = "https://ai-gateway.vercel.sh/v4/ai/evaluation-model"
 const MODEL = "typesafe-ai/jev"
 const RESPONSE_BYTE_LIMIT = 64 * 1024
@@ -16,7 +5,6 @@ const DEFAULT_TIMEOUT_MS = 4_000
 
 export type EvaluationRequest = { state: unknown; questions: Record<string, { type: "boolean"; instructions: string }> }
 export type EvaluationAnswer = {
-  /** The model's answers by question id, unvalidated; null when it gave no usable answer. */
   answers: Record<string, unknown> | null
   durationMs: number
   inputTokens: number | null
@@ -84,7 +72,6 @@ export function createEvaluationModel(options: { apiKey: string; fetch?: typeof 
         inputTokens: typeof usage === "number" && Number.isSafeInteger(usage) && usage >= 0 ? usage : null,
       }
     } catch {
-      // Never the provider's error text: it can quote the request.
       return { answers: null, durationMs: Math.round(performance.now() - started), inputTokens: null }
     }
   }

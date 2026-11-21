@@ -42,7 +42,6 @@ function Mark({ size = "md" }: { size?: "sm" | "md" }) {
   return <DenBrandMark name="LiteLLM" serviceUrl={LITELLM_DOC_URL} className={size === "sm" ? "h-7 w-7 rounded-[7px]" : "h-8 w-8 rounded-[8px]"} imageClassName={size === "sm" ? "h-3.5 w-3.5" : "h-4 w-4"} />;
 }
 
-/** People and teams picker shared by setup and the saved provider (LiteLLM and TrueFoundry). */
 export function AccessList({ title, value, onAdd, onRemove, onEveryone, busy, idPrefix = "litellm" }: {
   title: string; value: AccessValue; busy: boolean; idPrefix?: string;
   onAdd: (audience: Audience) => void; onRemove: (audience: Audience) => void; onEveryone: (checked: boolean) => void;
@@ -111,10 +110,6 @@ export function removeAudience(value: AccessValue, audience: Audience): AccessVa
   return audience.type === "team" ? { ...value, teamIds: value.teamIds.filter((id) => id !== audience.teamId) } : { ...value, memberIds: value.memberIds.filter((id) => id !== audience.memberId) };
 }
 
-/**
- * Microsoft sign-in for a proxy that takes sign-in tokens instead of LiteLLM keys: the organization's Entra app
- * registration, the one API scope LiteLLM accepts tokens for, and the models people may use.
- */
 function LiteLlmEntraFields({ value, onChange, disabled = false, secretSaved = false }: {
   value: LiteLlmEntraInput; onChange: (value: LiteLlmEntraInput) => void; disabled?: boolean; secretSaved?: boolean;
 }) {
@@ -139,7 +134,6 @@ function LiteLlmEntraFields({ value, onChange, disabled = false, secretSaved = f
   );
 }
 
-/** Setup for a new LiteLLM provider: proxy URL, key mode, key, and who gets access. */
 export function LiteLlmSetupScreen({ embedded = false }: { embedded?: boolean }) {
   const Heading = embedded ? "h2" : "h1";
   const router = useRouter();
@@ -238,7 +232,6 @@ export function LiteLlmSetupScreen({ embedded = false }: { embedded?: boolean })
   );
 }
 
-/** A saved LiteLLM provider: sync state, key, groups and access. */
 export function LiteLlmProviderScreen({ provider, reload, embedded = false }: { provider: DenInferenceProviderDetails; reload: () => Promise<void>; embedded?: boolean }) {
   const Heading = embedded ? "h2" : "h1";
   const router = useRouter();
@@ -265,7 +258,6 @@ export function LiteLlmProviderScreen({ provider, reload, embedded = false }: { 
     memberIds: grants.flatMap((grant) => grant.audience.type === "member" ? [grant.audience.memberId] : []),
   };
   const modelGroups = provider.modelGroups.filter((group) => group.id !== accessGroupId || uiMode === "org" || entraMode);
-  // Microsoft sign-in: what is saved, and the admin's unsaved edits to it (the client secret is never read back).
   const savedEntra: LiteLlmEntraInput = {
     tenantId: set?.oauthTenantId ?? "", clientId: set?.oauthClientId ?? "", clientSecret: "", scope: status?.entraScope ?? "",
     models: provider.catalogModels.map((model) => model.id).join("\n"),

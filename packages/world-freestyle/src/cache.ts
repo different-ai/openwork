@@ -29,7 +29,6 @@ export function manifestFingerprints(value: unknown) {
 }
 
 function worldSource(path: string, world: PreviewWorld) {
-  // app-web runs the hosted Den proxy, never the local Den/Gateway or eval runtime.
   if (world === "desktop") return !/^(ee\/apps\/(den-web|den-api|gateway)\/|worlds\/|packages\/world\/|evals\/(?!packages\/cdp\/))/.test(path);
   return world !== "app-web" || !/^(ee\/apps\/(den-web|den-api|gateway)\/|evals\/|worlds\/acme-web\.)/.test(path);
 }
@@ -46,7 +45,6 @@ export function dependencyFingerprint(entries: SourceEntry[]): string {
   return digest(JSON.stringify(inputs.map(({ path, sha, installSha }) => [path, installSha ?? sha])));
 }
 
-/** Public GitHub reads retry transient network failures; HTTP errors are returned as-is. */
 function retrying(request: typeof fetch): typeof fetch {
   return async (input, init) => {
     for (let attempt = 1; ; attempt++) {
@@ -79,7 +77,6 @@ export async function sourceTree(sha: string, baseRequest: typeof fetch = fetch)
   });
   const result: SourceEntry[] = [...entries];
   const manifests = entries.filter((entry) => entry.type === "blob" && /(^|\/)package\.json$/.test(entry.path));
-  // Bound concurrent public reads. Only JSON is parsed; PR code never executes here.
   let next = 0;
   await Promise.all(Array.from({ length: Math.min(24, manifests.length) }, async () => {
     while (next < manifests.length) {
@@ -98,9 +95,7 @@ export async function sourceTree(sha: string, baseRequest: typeof fetch = fetch)
 export async function ensureLayer(input: {
   slug: string; stage: string; parent: () => Promise<string>;
   prepare: (vm: Vm) => Promise<void>; observe: ObserveBuild; ttlSeconds?: number;
-  /** Delete after this long with no VM created from it. Defaults to 7 days. */
   autoDeleteSeconds?: number;
-  /** Extra builder VM metadata, e.g. which commit/world build started it. */
   metadata?: Record<string, string>;
 }, api: Freestyle) {
   const start = performance.now();
@@ -135,7 +130,7 @@ export async function ensureLayer(input: {
           if (isMissing(cause)) return null;
           throw cause;
         });
-        if (!completed) throw error; // Capacity conflict, not another builder.
+        if (!completed) throw error;
         input.observe({ stage: input.stage, durationMs: Math.round(performance.now() - start), cacheHit: true });
         return completed;
       }
@@ -147,8 +142,6 @@ export async function ensureLayer(input: {
       const prepareStart = performance.now();
       await input.prepare(created.vm);
       input.observe({ stage: `${input.stage}-prepare`, durationMs: Math.round(performance.now() - prepareStart) });
-      // Keep running application memory, release filesystem cache left by builds.
-      // The provider otherwise materializes gigabytes of unused cached file pages.
       await execChecked(created.vm, "sync && echo 3 > /proc/sys/vm/drop_caches");
       const snapshotStart = performance.now();
       const result = await created.vm.snapshot({ slug: input.slug, displayName: `OpenWork ${input.stage}`,
@@ -158,8 +151,6 @@ export async function ensureLayer(input: {
       return result.snapshot;
     } finally {
       const cleanupStart = performance.now();
-      // The snapshot is materialized before this point. Deletion must not hold up
-      // the next layer. The builder's provider TTL also covers host termination.
       void created.vm.delete().catch(() => undefined).then(() => {
         input.observe({ stage: `${input.stage}-cleanup`, durationMs: Math.round(performance.now() - cleanupStart) });
       });

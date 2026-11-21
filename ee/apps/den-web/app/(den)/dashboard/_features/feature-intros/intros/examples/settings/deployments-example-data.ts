@@ -1,8 +1,3 @@
-/**
- * Sample data only: no API calls (DESIGN.md I7). Status and check names are the
- * ones the Deployments page shows (`deploymentStatus`, CHECK_LABELS); details are
- * shortened to fit the example column.
- */
 export const deploymentsExample = {
   name: "Production",
   address: "openwork.acme.com",

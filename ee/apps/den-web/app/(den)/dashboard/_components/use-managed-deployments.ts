@@ -20,7 +20,6 @@ async function loadDeployments() {
   return managedDeploymentListSchema.parse(list.payload).deployments;
 }
 
-/** The organization's deployments, kept fresh, and the steps a person takes on one. */
 export function useManagedDeployments() {
   const { orgId, orgContext, runReauthableAction } = useOrgDashboard();
   const access = getOrgAccessFlags(orgContext?.currentMember.role ?? "member", orgContext?.currentMember.isOwner ?? false, orgContext?.currentMember.permissions);
@@ -93,10 +92,6 @@ export function useManagedDeployments() {
     }
   }
 
-  /**
-   * Fetches the approval a person already prepared, so its link is there when
-   * they come back to the page. The same run; false when it can't be fetched.
-   */
   async function reopen(deployment: ManagedDeployment): Promise<boolean> {
     const run = deployment.run;
     if (!run || run.kind === "configure") return false;
@@ -127,7 +122,6 @@ export function useManagedDeployments() {
     }
   }
 
-  /** Saves or removes how the organization signs in to AWS; every AWS link is then issued again. */
   async function saveAwsSignIn(awsSignIn: AwsSignIn | null) {
     const current = generation.current;
     await runReauthableAction(awsSignIn ? "Save AWS sign-in" : "Remove AWS sign-in", async () => {

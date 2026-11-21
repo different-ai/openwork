@@ -1,8 +1,3 @@
-/**
- * Stored TrueFoundry state (gateway_providers.settings.truefoundry) and the
- * catalog derived from it. Kept free of gateway-matrix imports so the matrix
- * can resolve TrueFoundry catalogs without an import cycle.
- */
 import { z } from "zod"
 import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, GatewayProviderCredentialTable, GatewayTrueFoundryUserTable, MemberTable } from "@openwork-ee/den-db/schema"
@@ -14,23 +9,13 @@ import type { ModelsDevProvider } from "./models-dev.js"
 const storedModelSchema = z.object({ id: z.string().min(1).max(255), name: z.string().min(1).max(255), config: z.record(z.string(), z.unknown()) })
 const settingsSchema = z.object({
   version: z.literal(1),
-  /** Control plane root, e.g. https://acme.truefoundry.cloud. The gateway base is settings.upstreamBaseUrl. */
   controlPlaneUrl: z.string().min(1).max(2048),
   credentialSetId: z.string().min(1),
-  /** Add allowed people missing from TrueFoundry as TrueFoundry users before creating their token. */
   createMissingUsers: z.boolean().default(false),
-  /**
-   * "Track usage costs in OpenWork": serve each model's public price, so the AI Gateway prices
-   * requests and applies people's usage limits. Off: TrueFoundry alone budgets them.
-   */
   trackUsageCosts: z.boolean().default(false),
-  /** Models served to people: the upstream chat models, narrowed to selectedModelIds when an admin picked some, priced only when usage costs are tracked. */
   catalog: z.array(storedModelSchema).max(500),
-  /** Every chat model the admin key saw at the last sync. Missing on providers synced before models could be picked: catalog was all of them. */
   upstream: z.array(storedModelSchema).max(500).optional(),
-  /** Models an admin picked ("Only the ones I pick"), or null for every upstream model. Picked models that leave TrueFoundry are kept and served again if they return. */
   selectedModelIds: z.array(z.string().min(1).max(255)).max(500).nullable().default(null),
-  /** Stable key -> model group id: "signin" is the access group, "models:<hash>" one group per model set. */
   groups: z.record(z.string(), z.string()),
   lastSyncedAt: z.string().nullable(),
   lastSyncError: z.string().nullable(),
@@ -42,19 +27,16 @@ export function readTrueFoundrySettings(settings: Record<string, unknown>): True
   return parsed.success ? parsed.data : null
 }
 
-/** Every chat model TrueFoundry listed at the last sync, picked or not. */
 export function trueFoundryUpstreamModels(settings: Pick<TrueFoundrySettings, "catalog" | "upstream">): TrueFoundrySettings["catalog"] {
   return settings.upstream ?? settings.catalog
 }
 
-/** The models people are served: all upstream models, or only the picked ones that TrueFoundry still lists. */
 export function selectTrueFoundryModels<T extends { id: string }>(upstream: readonly T[], selectedModelIds: readonly string[] | null): T[] {
   if (selectedModelIds === null) return [...upstream]
   const picked = new Set(selectedModelIds)
   return upstream.filter((model) => picked.has(model.id))
 }
 
-/** Catalog provider for the gateway matrix, from the last successful sync. */
 export function trueFoundryCatalogProvider(provider: { settings: Record<string, unknown> }): ModelsDevProvider {
   return {
     id: TRUEFOUNDRY_PROVIDER_ID, name: TRUEFOUNDRY_PROVIDER_NAME, npm: TRUEFOUNDRY_NPM, env: [...TRUEFOUNDRY_ENV], doc: TRUEFOUNDRY_DOC_URL, api: null,
@@ -69,7 +51,6 @@ function attentionReason(status: string): GatewayTrueFoundryAttentionReason | nu
   return TRUEFOUNDRY_ATTENTION_STATUSES.find((reason) => reason === status) ?? null
 }
 
-/** Read-only management view. Never includes keys or tokens. */
 export async function trueFoundryStatus(provider: { id: typeof GatewayTrueFoundryUserTable.$inferSelect.gateway_provider_id; provider_id: string; settings: Record<string, unknown> }, primary = false): Promise<GatewayTrueFoundryStatus | undefined> {
   const settings = isTrueFoundryProviderId(provider.provider_id) ? readTrueFoundrySettings(provider.settings) : null
   if (!settings) return undefined

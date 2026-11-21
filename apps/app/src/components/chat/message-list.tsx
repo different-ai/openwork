@@ -167,19 +167,11 @@ import { resolveConnectorToolIdentity } from "@/react-app/domains/connections/co
 
 const SEARCH_HIGHLIGHT_MARK_CLASS = "rounded px-0.5 bg-amber-4/70 text-current"
 
-/** A finished turn with at least this many step rows folds into one summary line (T1). */
 const COLLAPSED_STEP_RUN_MIN_ROWS = 1
 
 const AppCreationPartsContext = React.createContext<ReadonlySet<string>>(new Set())
-/**
- * While an App is being built, its panel is the one live
- * thing in the chat: thinking and plain tool rows fold away and the panel
- * shows the latest of them. Approvals, connection cards, questions and
- * sub-agents still show.
- */
 const AppPanelLiveContext = React.createContext(false)
 const AppPanelFoldContext = React.createContext(false)
-/** Remote task rows a folded turn shows below its fold; inside it they render nothing. */
 const NO_PINNED_REMOTE_THREADS: ReadonlySet<string> = new Set()
 const PinnedRemoteThreadsContext = React.createContext<ReadonlySet<string>>(NO_PINNED_REMOTE_THREADS)
 const NO_PINNED_QUESTIONS: ReadonlySet<string> = new Set()
@@ -210,13 +202,6 @@ interface ToolMessageProps {
   part: ToolUIPart | DynamicToolUIPart
 }
 
-/**
- * Error boundary around tool-part rendering. Tool inputs from streamed or
- * interrupted runs can violate their type contracts (partial/undefined
- * input); without this boundary a single bad part unmounts the entire app
- * (white screen). Seen in production on v0.15.3 via a todowrite part with
- * missing input.todos.
- */
 class ToolMessage extends React.Component<ToolMessageProps, { failed: boolean }> {
   state = { failed: false }
 
@@ -238,12 +223,6 @@ class ToolMessage extends React.Component<ToolMessageProps, { failed: boolean }>
   }
 }
 
-/**
- * Tool calls in the current assistant turn that present as the native
- * connection card. One card per connection: the latest report wins, and a
- * pending native question pins the card to the call it is bound to. Earlier
- * reports for the same connection stay quiet sentence lines.
- */
 const ConnectionCardPartsContext = React.createContext<ReadonlySet<string>>(new Set())
 
 function connectionCardPartIds(
@@ -266,7 +245,6 @@ function connectionCardPartIds(
   return new Set([...latest.entries()].map(([connectionId, toolCallId]) => bound.get(connectionId) ?? toolCallId).concat([...bound.values()]))
 }
 
-/** The reserved native connection question is answered through the card, never as a tool row. */
 function isReservedConnectionQuestionPart(part: ToolUIPart | DynamicToolUIPart): boolean {
   return part.type === "dynamic-tool" && /(?:^|_)question$/.test(part.toolName) && isReservedConnectionQuestion(part.input)
 }
@@ -276,7 +254,6 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
   const pinnedRemoteThreads = React.useContext(PinnedRemoteThreadsContext)
   const pinnedQuestions = React.useContext(PinnedQuestionsContext)
   const pinnedProposals = React.useContext(PinnedAutomationProposalsContext)
-  // The agent following up on a task the chat shows makes it run again.
   useReviveRemoteThread(part.type === "dynamic-tool" ? part : null)
   const parentActive = React.useContext(ParentRunActiveContext)
   const resolveLifecycle = useCurrentToolLifecycleResolver()
@@ -298,10 +275,8 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
   const proposals = proposalCalls.filter((call) => !pinnedProposals.has(call.toolCallId))
   if (foldTool && !remoteStart && remoteStarts.length === 0 && proposals.length === 0) return null
 
-  // Delegated work has its own lifecycle, even after a parent follow-up/error.
   if (isTaskToolPart(part)) return <SubagentRunLine part={part} parentActive={parentActive} />
 
-  // So does a task started on another computer: it reads as a sub-agent.
   if (remoteStart && part.type === "dynamic-tool") {
     return pinnedRemoteThreads.has(part.toolCallId) ? null : <RemoteThreadRunLine start={remoteStart} part={part} />
   }
@@ -321,13 +296,11 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
     }
     if (calls) {
       const script = <CodeModeTool part={part} calls={calls} lifecycle={lifecycle} connectors={connectorIdentities} />
-      // A key the script's Den call asked for is entered in the host's private field.
       return promptCall ? <>{script}<CredentialPromptCard part={promptCall} continueToolCallId={part.toolCallId} /></> : script
     }
   }
 
   if (lifecycle === "waiting") {
-    // Text-first: waiting on the person is one amber sentence; the decision itself sits above the composer (T4).
     return (
       <div className="flex min-h-6.5 items-center text-sm" data-tool-lifecycle="waiting" role="status">
         <TextSentenceLine verb={t("text_activity.waiting_for_you")} tone="waiting" />
@@ -402,19 +375,14 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
     return pinnedProposals.has(part.toolCallId) ? null : <OpenWorkAutomationProposalTool part={part} />
   }
 
-  // OpenWork's own connection reports render as the native card: the host is
-  // the presentation; the Den App remains for external hosts.
   if (part.type === "dynamic-tool" && connectionCardParts.has(part.toolCallId)) {
     return <ConnectionCard part={part} allowDiscovery={Boolean(getConnectionDecision?.(part.toolCallId))} />
   }
 
-  // A key an agent asked for is entered in the host's private field, never in chat.
   if (part.type === "dynamic-tool" && promptCall) {
     return <CredentialPromptCard part={promptCall} continueToolCallId={part.toolCallId} />
   }
 
-  // Failed calls use the same sentence line with the "failures are
-  // instructions" treatment (inline Reconnect/Retry).
   if (part.type === "dynamic-tool") {
     return (
       <CapabilityCallLine
@@ -438,12 +406,6 @@ const ToolMessageInner = ({ part }: ToolMessageProps) => {
 
 const isEmptyMessage = (message: UIMessage): boolean => message.parts.length === 0
 
-/**
- * A finished catalog lookup (what OpenWork offers, which Cloud capabilities
- * exist) did no work the person asked for (T2), the same rule Code Mode
- * scripts follow. A lookup that reports a connection to set up stays: that
- * is something the person can act on.
- */
 function isSilentAppLookup(part: DynamicToolUIPart): boolean {
   if (part.state !== "output-available") return false
   if (part.toolName === "openwork_context") return true
@@ -451,11 +413,6 @@ function isSilentAppLookup(part: DynamicToolUIPart): boolean {
   return catalogSearch && connectionFromChatToolPart(part, { allowDiscovery: true }) === null
 }
 
-/**
- * A finished turn folds only when nothing in it needs the person: a failed
- * step stays inline with its fix (T2), and a key, connection or question the
- * agent is waiting on is never hidden behind "Worked for…".
- */
 function stepsNeedAttention(items: UIMessageWithIndex[], connectionCards: ReadonlySet<string>): boolean {
   return items.some(({ message }) => message.role === "assistant" && !isSessionErrorMessage(message) && message.parts.some((part) => {
     if (!isToolUIPart(part)) return false
@@ -473,7 +430,6 @@ function withoutSilentSteps(messages: UIMessage[]): UIMessage[] {
   let changed = false
   const next = messages.flatMap((message) => {
     if (message.role !== "assistant") return [message]
-    // With tasks on other computers shown live, the agent's own checks on them are plumbing.
     const parts = message.parts.filter((part) => !(part.type === "dynamic-tool"
       && (isSilentCodeModePart(part) || isSilentAppLookup(part) || isRemoteThreadStatusCheck(part))))
     if (parts.length === message.parts.length) return [message]
@@ -646,7 +602,6 @@ function CopyMessageButton({ messages }: CopyMessageButtonProps) {
       setCopied(true)
       window.setTimeout(() => setCopied(false), 2000)
     } catch {
-      // ignore clipboard failures
     }
   }, [text])
 
@@ -673,7 +628,6 @@ type AssistantMessageProps = {
   isLastMessage: boolean
   isStreaming: boolean
   isLastStep: boolean
-  /** Set when the turn's collapsed step run shows this reasoning instead. */
   hideReasoning?: boolean
 }
 
@@ -698,10 +652,6 @@ const AssistantMessage = React.memo(
         <div className="group flex w-full flex-col gap-0 space-y-2">
           {assistantRenderGroups.map((group, index) => {
             if (group.kind === "text") {
-              // The answer lines up with the activity rail: the same leading
-              // 20px lane the step rows and the "Worked for…" summary use, so
-              // the reply's text starts where their labels do instead of 28px
-              // to the rail's left (DESIGN.md T1 — one quiet rail).
               return (
                 <div key={`text-${index}`} className="flex min-w-0 items-start gap-2">
                   <MessageContent
@@ -771,7 +721,6 @@ function fileBytes(part: FileUIPart) {
   return typeof bytes === "number" ? bytes : undefined
 }
 
-/** The chip a sent text part is drawn as: the same one the composer drew. */
 function renderSentTokenChip(part: UIMessage["parts"][number], key: string) {
   const token = sentTextPartToken(part)
   if (!token) return null
@@ -854,10 +803,8 @@ function renderPlainTextWithSessionReferences(text: string, highlightQuery: stri
   return nodes
 }
 
-// Bare URL, excluding trailing punctuation that usually ends a sentence.
 const PLAIN_URL_RE = /https?:\/\/[^\s<>"')\]]+[^\s<>"')\].,;:!?]/g
 
-/** User bubbles are plain text, so bare https:// URLs need explicit anchors. */
 function renderPlainTextWithLinks(text: string, highlightQuery: string | undefined, keyPrefix: string, references: SessionReferences | undefined) {
   const nodes: React.ReactNode[] = []
   let cursor = 0
@@ -998,7 +945,6 @@ const UserMessage = React.memo(
       onOpenTarget(target)
     }
     const messageText = React.useMemo(() => getMessagesText([message]), [message])
-    // Edit puts every chip back in the composer as the same chip.
     const editMessage = () => {
       const draft = composerDraftFromSentParts(message.parts)
       onEditUserMessage(message.id, draft.text, draft)
@@ -1008,7 +954,6 @@ const UserMessage = React.memo(
       [message.parts],
     )
     const hasContent = inlineParts.length > 0
-    // Same actions, in the same order, as the buttons below the bubble.
     const menuActions: MenuAction[] = []
     if (messageText) menuActions.push(
       { type: "item", id: "copy", label: "Copy", icon: <Copy className="size-4" />, onSelect: () => navigator.clipboard.writeText(messageText) },
@@ -1028,7 +973,6 @@ const UserMessage = React.memo(
             tabIndex={0}
             actions={menuActions}
             contentClassName="w-56"
-            // Override Trigger's select-none so user bubbles stay copyable.
             className="!select-text"
             render={
               <div
@@ -1053,12 +997,6 @@ const UserMessage = React.memo(
                         )
                       }
                       if (isFileUIPart(part)) {
-                        // An attachment is identified by its position among the
-                        // message's files, not by its URL or filename: a sent image
-                        // first shows the composer's blob: preview, then the server's
-                        // recompressed data: copy. Keeping one element lets the
-                        // browser swap the bitmap in place instead of remounting an
-                        // <img> that has to decode before it can paint.
                         const attachmentIndex = inlineParts.slice(0, index).filter(isFileUIPart).length
                         return (
                           <span
@@ -1173,7 +1111,6 @@ const MessageComponent = React.memo(
   }
 )
 
-/** The organization used its OpenWork Models allowance: one usage-limit card. */
 function TranscriptOpenWorkModelsLimit({ limit }: { limit: OpenWorkModelsLimit }) {
   const { sessionId } = useMessageList()
   return <div className="mx-auto w-full max-w-3xl px-2 py-2 md:px-10"><OpenWorkModelsLimitCard limit={limit} sessionId={sessionId} /></div>
@@ -1193,19 +1130,14 @@ type WorkingModel = { label: string; providerId?: string }
 const LoadingMessage = React.memo(({ elapsedSeconds, starting, model = null }: {
   elapsedSeconds: number
   starting: boolean
-  /** The model writing this turn, shown on hover after the timer. */
   model?: WorkingModel | null
 }) => {
   return (
     <Message className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10">
       <div role={starting ? "status" : undefined} data-loading-message={starting ? "starting" : "working"} className="group/working py-1 text-sm text-muted-foreground">
-        {/* One shimmer sweeps the whole line, so Working and the count move as
-            one. A count the connection cannot confirm stays outside it, still. */}
         <span className="ow-text-shimmer tabular-nums">
           {starting ? "Starting…" : `Working ${formatElapsedSeconds(elapsedSeconds)}`}
         </span>
-        {/* Hover the Working line to see which model is writing this turn. It
-            sits right after the timer, outside the shimmer, on the same line. */}
         {model ? (
           <span
             data-working-model=""
@@ -1213,10 +1145,6 @@ const LoadingMessage = React.memo(({ elapsedSeconds, starting, model = null }: {
           >
             <span aria-hidden="true"> · </span>
             <span className="sr-only">{t("session.reply_model_live_prefix")}</span>
-            {/* The name is plain text on the line's own baseline, level with
-                "Working"; only the logo is nudged, to sit centered on the
-                capitals. Boxing the pair took its baseline from the logo: the
-                name dropped a pixel and the line grew once the model was known. */}
             {model.providerId ? <span aria-hidden="true" data-working-model-logo="" className="mr-1 inline-flex size-3 items-center justify-center align-[-0.125em]"><ProviderIcon providerId={model.providerId} size={12} /></span> : null}
             {model.label}
           </span>
@@ -1228,8 +1156,6 @@ const LoadingMessage = React.memo(({ elapsedSeconds, starting, model = null }: {
 
 LoadingMessage.displayName = "LoadingMessage"
 
-// Show when the run was last validated once the gap is long enough to matter;
-// a short blip needs no timestamp archaeology.
 const RECONNECTING_LAST_CONFIRMED_AFTER_MS = 120_000
 
 export function reconnectingLastConfirmedLabel(
@@ -1241,18 +1167,9 @@ export function reconnectingLastConfirmedLabel(
   return new Date(lastConfirmedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })
 }
 
-/**
- * The honest replacement for the ticking "Working" row while a live run can
- * no longer be validated: the engine may still be working, but nothing has
- * confirmed it recently, so the timer stops instead of counting unverified
- * time. Recovery is automatic — the sync layer keeps revalidating and the
- * row settles from authoritative status, never from elapsed time.
- */
 const ReconnectingMessage = React.memo(({ lastConfirmedAt }: { lastConfirmedAt: number | null }) => {
   const [now, setNow] = React.useState(() => Date.now())
   React.useEffect(() => {
-    // The health store stops changing once its failure counter caps, so keep
-    // a slow local tick to let the "last update" hint appear over time.
     const interval = window.setInterval(() => setNow(Date.now()), 30_000)
     return () => window.clearInterval(interval)
   }, [])
@@ -1278,18 +1195,10 @@ ReconnectingMessage.displayName = "ReconnectingMessage"
 interface ErrorMessageProps {
   error: string | null
   description?: string | null
-  /** Keep safety guidance visible without expanding ordinary interruption rows. */
   showDescriptionOnResume?: boolean
-  /** Set only for interrupted runs that can resume. */
   resumePrompt?: string | null
   canRetry?: boolean
-  /** Error type, status, provider, code, response body — for bug reports and support. */
   technicalDetails?: string | null
-  /**
-   * Set (possibly null) only when the OpenWork Gateway rejected the request
-   * because the member must sign in: a URL opens the grant in the browser,
-   * null deep-links to Settings > AI providers instead.
-   */
   gatewayConnectUrl?: string | null
   gatewaySelectionRequired?: boolean
   changeModel?: boolean
@@ -1351,8 +1260,6 @@ const RetryMessage = React.memo(({ status }: RetryMessageProps) => {
   const action = status.action
   const freeModelLimit = action?.reason === "free_tier_limit"
   const presentation = presentOpencodeSessionError({ name: "APIError", data: { message: status.message } })
-  // Transport failures are the engine reconnecting, not a failure yet: say so
-  // and show progress instead of echoing the raw fetch error.
   const reconnecting = !freeModelLimit && !action
     && ["network-unavailable", "provider-unreachable", "provider-connection-dropped"].includes(presentation.kind)
   const progress = seconds > 0 ? `Attempt ${status.attempt}, next try in ${seconds}s` : `Attempt ${status.attempt}`
@@ -1387,21 +1294,6 @@ function getRenderableMessage(message: UIMessage) {
   return parts.length > 0 ? { ...message, parts } : null;
 }
 
-/**
- * While a turn runs, the chat never gets shorter. When the
- * live turn shrinks (a step folds its detail before the next row arrives) the
- * room it gave up moves here, to the very end of the list, below the Working
- * line; whatever arrives next fills it before anything moves. Nothing above is
- * held open, so no gap can open between steps, and the scroll position stays.
- * Measured from the last turn's top, so history placeholders swapping above
- * do not count. A shrink the person causes (collapsing a row) is not held.
- * Released when the turn ends, where the steps fold anyway.
- *
- * The reserve never empties the screen. A message the person sends starts a
- * new last group with nothing held below it: inheriting the earlier turn's
- * room pushed the new message up out of sight over blank space. And at most
- * half the view is held, so the turn's latest row always stays on screen.
- */
 function LiveTurnReserve({ active }: { active: boolean }) {
   const ref = React.useRef<HTMLDivElement>(null)
   React.useLayoutEffect(() => {
@@ -1416,13 +1308,9 @@ function LiveTurnReserve({ active }: { active: boolean }) {
     const measure = () => {
       const groups = list.querySelectorAll(":scope > [data-thread-group], :scope > [data-thread-placeholder]")
       const last = groups[groups.length - 1]
-      // Scrolled far into history: the turn is not mounted, keep what is reserved.
       if (!last || last.hasAttribute("data-thread-placeholder")) return
       const box = spacer.getBoundingClientRect()
       const span = box.top - last.getBoundingClientRect().top
-      // A new last group (a message just sent) starts with nothing held below
-      // it, so it lands at the bottom instead of rising over blank space. The
-      // same group remounting keeps its room.
       const group = last.getAttribute("data-thread-group")
       if (group !== anchor) {
         tallest = span
@@ -1446,19 +1334,11 @@ function LiveTurnReserve({ active }: { active: boolean }) {
       spacer.style.height = ""
     }
   }, [active])
-  // -mt-2 cancels the list's gap, so an empty reserve adds no space.
   return <div ref={ref} aria-hidden="true" data-live-turn-reserve="" className="-mt-2 shrink-0" style={{ overflowAnchor: "none" }} />
 }
 
-/**
- * A finished turn's steps collapse to a single "Worked for 1m 19s" line
- * that expands back into the full run. Only live turns show their steps
- * unprompted; once the answer is in, the reasoning is available but out
- * of the way.
- */
 function CompletedStepRun({ label, count, children }: { label: string; count?: string | null; children: React.ReactNode }) {
   const [open, setOpen] = React.useState(false)
-  // Text-first: "Worked for 43m 29s ›", no step count beside it.
 
   return (
     <Collapsible open={open} onOpenChange={setOpen} className="flex w-full flex-col gap-2">
@@ -1483,7 +1363,6 @@ interface AssistantMessageGroupProps {
   items: UIMessageWithIndex[]
   isLastGroup: boolean
   isStreaming: boolean
-  /** Newline-joined tool call ids of each built App's newest card in the conversation. */
   newestAppCallIds: string
 }
 
@@ -1494,7 +1373,6 @@ function isMcpAppFramePart(part: UIMessage["parts"][number]): part is DynamicToo
     && !isNativeConnectionAppLaunch(part)
 }
 
-/** Tasks a group's steps started on other computers, directly or from a script. */
 function collectRemoteThreadStarts(items: UIMessageWithIndex[]) {
   const starts = new Map<string, { start: RemoteThreadStart; part: DynamicToolUIPart }>()
   for (const item of items) {
@@ -1531,11 +1409,6 @@ function collectMcpAppParts(items: UIMessageWithIndex[]): DynamicToolUIPart[] {
   return [...parts.values()]
 }
 
-/**
- * Every card of an App built in OpenWork opens the App's current revision, so
- * only its newest card in the conversation stays live; earlier ones would load
- * the same App again. A string keeps memoized groups stable while text streams.
- */
 function newestBuiltAppCallIds(messages: UIMessage[]): string {
   const newest = new Map<string, string>()
   for (const message of messages) {
@@ -1559,9 +1432,6 @@ function MessageGroup({
   const connectionCardParts = React.useMemo(() => connectionCardPartIds(items, getConnectionDecision), [items, getConnectionDecision])
   const newestAppCalls = React.useMemo(() => new Set(newestAppCallIds.split("\n")), [newestAppCallIds])
   const lastItem = items[items.length - 1]
-  // Branch/revert must target a real server-side message id. Synthetic
-  // client-side messages (e.g. session errors) don't exist on the server and
-  // silently corrupt fork/revert boundaries.
   const lastRealItem = items.findLast((item) => !isSessionErrorMessage(item.message))
   const parentActive = React.useContext(ParentRunActiveContext)
   const panelLive = React.useContext(AppPanelLiveContext) && isLastGroup
@@ -1576,7 +1446,6 @@ function MessageGroup({
   const remoteThreadStarts = React.useMemo(() => collectRemoteThreadStarts(items), [items])
   const computerHistory = React.useMemo(() => collectComputerSessionHistory(items.map(item => item.message), { thinking: showThinking }), [items, showThinking])
   const computerWorking = useComputerSessionHistoryStore(state => Boolean(state.working[sessionId]))
-  // The newest turn's card lists the chat's agents on its computer; a row opens that agent's live view.
   const crewMembers = useComputerCrew(sessionId, isLastGroup && isElectronRuntime() && !readOnly)
   const crew = React.useMemo(() => crewMembers.length ? { members: crewMembers, onOpen: (member: { sessionId: string }) => {
     const history = useComputerSessionHistoryStore.getState()
@@ -1585,11 +1454,6 @@ function MessageGroup({
   } } : undefined, [crewMembers, sessionId])
   const savedFileActions = React.useMemo(() => isElectronRuntime() && !readOnly ? desktopSavedFileActions(sessionId) : undefined, [readOnly, sessionId])
   const watchingComputer = useComputerSessionHistoryStore(state => Boolean(state.watching[sessionId]))
-  // A running turn keeps its parts in arrival order (no
-  // steps/answer split until it finishes) and reserves room only at the list's
-  // end (LiveTurnReserve).
-  // The skill this turn produced stays in view as its result, even when the
-  // steps fold; later updates and shares change this card, not add another.
   const { cards: createdSkillCards } = useCreatedSkills()
   const groupSkillCards = React.useMemo(() => {
     const ids = new Set(items.flatMap((item) => item.message.parts.flatMap((part) => part.type === "dynamic-tool" ? [part.toolCallId] : [])))
@@ -1602,8 +1466,6 @@ function MessageGroup({
 
   const renderableItems = getRenderableMessages(items)
   const lastTextMessage = items.findLast(item => getLastTextPart(item.message))
-  // Same actions, in the same order, as the buttons below the reply, and only
-  // once those buttons show (a finished reply with text).
   const replyText = getMessagesText(renderableItems.map((item) => item.message))
   const replyMenuActions: MenuAction[] = []
   if (lastTextMessage && !isStreaming) {
@@ -1614,28 +1476,17 @@ function MessageGroup({
       { type: "item", id: "branch", label: forkingMessageId === lastRealItem.message.id ? "Branching..." : "Branch in new chat", icon: <Split className="size-4 rotate-90" />, disabled: Boolean(forkingMessageId), onSelect: () => onForkAtMessage(lastRealItem.message.id) },
     )
   }
-  // Native turns can end with a metadata-free completion marker. Keep the
-  // latest known model within this turn rather than losing the answer's name.
   const replyModelMessage = items.findLast(item => item.message.role === "assistant" && replyModelLabel(item.message, resolveReplyModelTitle, autoRoutes, resolveAutoRouteName))?.message
   const resolvedReplyModel = replyModelMessage ? replyModelLabel(replyModelMessage, resolveReplyModelTitle, autoRoutes, resolveAutoRouteName) : null
   const replyModelProviderId = replyModelMessage ? replyModelProvider(replyModelMessage, autoRoutes) : undefined
   const mcpAppParts = collectMcpAppParts(items)
 
-  // Leading messages without prose (tool/reasoning steps) render inline and
-  // rely on the transcript's one scroll container. Tool activity must never
-  // create a nested scrollbar while it grows.
   let stepCount = 0
   while (stepCount < items.length && !getRenderableMessage(items[stepCount].message)) {
     stepCount += 1
   }
   let stepItems = items.slice(0, stepCount)
   let proseItems = items.slice(stepCount)
-  // OpenCode delivers a whole turn as one assistant message with steps and
-  // the answer interleaved in its parts. Split the first prose message so
-  // its leading steps fold with the rest instead of pinning the run open.
-  // While the turn runs, the split waits: it keys off
-  // the latest text, so every new text moved rows between the steps area and
-  // the answer and the chat jumped or kept a gap. The App panel keeps its fold.
   const firstProse = proseItems[0]
   const splitAtAnswer = !(isLiveGroup && !panelLive)
   if (splitAtAnswer && firstProse && firstProse.message.role === "assistant" && !isSessionErrorMessage(firstProse.message)) {
@@ -1655,14 +1506,9 @@ function MessageGroup({
         : builtAppSummary(part) ? null : <McpAppFrame part={part} />}
     </Message>
   )
-  // How long the turn spent working, from the first step to when the answer
-  // finished (or started, for older history without a completed timestamp).
-  // Server timestamps, so this survives a reload.
   const stepsStartedAt = stepItems.length > 0 ? getMessageCreated(stepItems[0].message) : null
   const stepsEndedAt = getMessageCompleted(lastItem.message) ?? getMessageCreated(lastItem.message)
 
-  // The answer message's own thinking belongs to the work, not the answer, so
-  // a collapsed run shows it and the message below renders text only.
   const proseReasoning = proseItems.flatMap((item) =>
     item.message.role === "assistant" && !isSessionErrorMessage(item.message)
       ? getAssistantRenderGroups(item.message.parts, showThinking).flatMap((group, groupIndex) =>
@@ -1672,8 +1518,6 @@ function MessageGroup({
       )
       : []
   )
-  // An aggregate line counts each call it absorbed: it reads as one row but
-  // stands for that much work, and folding should key off the work done.
   const stepRowCount =
     stepItems.reduce(
       (total, item) =>
@@ -1692,12 +1536,9 @@ function MessageGroup({
       : stepRowCount === 1
         ? "1 step"
         : `${stepRowCount} steps`
-  // A short finished run reads fine as a list, so only long ones fold away.
   const collapseSteps =
     !isLiveGroup && stepItems.length > 0 && stepRowCount >= COLLAPSED_STEP_RUN_MIN_ROWS
     && !stepsNeedAttention(stepItems, connectionCardParts)
-  // A task on another computer outlives the turn that started it and may still
-  // need the person, so its row stays in view below a folded run.
   const pinnedRemoteThreads = collapseSteps ? remoteThreadStarts : []
   const pinnedRemoteIds = pinnedRemoteThreads.length > 0 ? new Set(pinnedRemoteThreads.map(({ part }) => part.toolCallId)) : NO_PINNED_REMOTE_THREADS
   const answeredQuestions = collapseSteps ? collectAnsweredQuestions(stepItems) : []
@@ -1727,8 +1568,6 @@ function MessageGroup({
     const isLastMessage = isLastGroup && item.index === lastItem.index
 
     return (
-      // A message whose parts all render nothing (empty reasoning, step
-      // markers, hidden steps) must not take a slot in the list's spacing.
       <div key={item.message.id} className="[&:not(:has(:is(span,p,img,svg,button,pre,a,li,iframe,video,canvas,input,textarea,hr,table)))]:hidden">
         <MessageComponent
           message={item.message}
@@ -1741,15 +1580,11 @@ function MessageGroup({
     )
   }
 
-  // Consecutive step messages that contain nothing but command/edit/read/
-  // search tool calls merge into one aggregate line (Paper "Recurring
-  // actions"); any prose, reasoning, or other tool breaks the run.
   const renderItems = (slice: UIMessageWithIndex[], offset: number, hideReasoning?: boolean) => {
     const nodes: React.ReactNode[] = []
     let run: { parts: AnyToolPart[]; key: string } | null = null
     const flush = () => {
       if (!run) return
-      // Plain command, read and search runs fold into the App panel while it is live.
       if (panelLive) {
         run = null
         return
@@ -1794,14 +1629,9 @@ function MessageGroup({
       <ActionContextMenu
         actions={replyMenuActions}
         contentClassName="w-56"
-        // Override Trigger's select-none so replies stay selectable and copyable.
         className="!select-text"
         render={<div className="flex flex-col gap-2 group/message-group !select-text" style={{ userSelect: "text" }} />}
       >
-      {/* The scroll area keeps the same 8px rhythm the parts inside a single
-          message use, so a step row is spaced identically whether or not a
-          message boundary happens to fall between it and the previous row. */}
-      {/* A finished turn kept open (it needs the person, T2) still reports its work duration. */}
       {!isLiveGroup && resolvedReplyModel && !collapseSteps && replySummaryLabel ? <div data-testid="completed-work-rail" data-completed-work-rail="open" className="mx-auto flex w-full max-w-3xl px-2 md:px-10">
         <div className="flex min-h-6 items-center gap-2 text-xs text-muted-foreground">
           <span>{replyWorkedLabel ?? replySummaryLabel}</span>
@@ -1820,8 +1650,6 @@ function MessageGroup({
           </CompletedStepRun>
         ) : (
           <div data-live-steps="" className="flex flex-col gap-2">
-            {/* Do not hold folded tool content open. Scroll stabilization belongs
-                to LiveTurnReserve, below the Working line. */}
             {renderItems(stepItems, 0, panelLive)}
           </div>
         )
@@ -1884,8 +1712,6 @@ function MessageGroup({
           </MessageActions>
            <MessageTimestamp message={lastItem.message} />
           </div>
-          {/* Keep caption ink readable (DESIGN.md V1/V2); hierarchy comes from size,
-              not compounded opacity. Hidden actions retain their layout slot. */}
           {!isLiveGroup && resolvedReplyModel ? <span
             data-testid="reply-model"
             className="inline-flex min-w-0 items-center gap-1 text-[11px] text-muted-foreground dark:text-foreground/70 opacity-0 transition-opacity duration-150 ease-out motion-reduce:transition-none group-hover/message-group:opacity-100 group-focus-within/message-group:opacity-100 pointer-coarse:opacity-100"
@@ -1896,7 +1722,6 @@ function MessageGroup({
             </span>
             <span className="truncate">{resolvedReplyModel}</span>
           </span> : null}
-          {/* <MessageSources messages={items.map((item) => item.message)} /> */}
         </div>
       )}
       </ActionContextMenu>
@@ -1935,11 +1760,6 @@ const StandaloneMessage = React.memo(function StandaloneMessage(props: Standalon
   return <MessageComponent {...props} />
 })
 
-/**
- * Liveness of the run behind this transcript, derived from the workspace
- * sync layer's continuous status revalidation. While `degraded` is true the
- * busy state cannot be confirmed, so working indicators must stop ticking.
- */
 export interface RunSyncHealth {
   degraded: boolean
   lastConfirmedAt: number | null
@@ -1953,18 +1773,10 @@ interface MessageListProps {
   retryStatus?: RetryStatus | null
   syncHealth?: RunSyncHealth
   viewport?: MessageListViewport
-  /** The turn's error is explained elsewhere (a confirmed usage block); do not render it again. */
   sessionErrorHandled?: boolean
   trailing?: React.ReactNode
 }
 
-/**
- * The turn's "Working 12s" line stays on screen for the whole run, including
- * while a tool row shows its own live step: the row says what is happening
- * now, the line says the turn is still going and how long it has been working,
- * including follow-ups sent mid-run. Hiding it between steps made the chat
- * look finished.
- */
 export function shouldShowMessageListLoading(status: ThreadStatus, messageCount: number) {
   return status === "streaming" || (status === "submitted" && messageCount > 0)
 }
@@ -1976,7 +1788,6 @@ export function shouldShowRunReconnecting(status: ThreadStatus, syncDegraded: bo
 
 export function MessageList({ messages, messageIdReplacements, status, activityStatus, retryStatus, syncHealth, viewport, sessionErrorHandled = false, trailing }: MessageListProps) {
   const { workspaceId, sessionId, onStopSubagentSession, resolveReplyModelTitle, autoRoutes, resolveAutoRouteName } = useMessageList()
-  // Only this turn's reply: before it starts there is no model to show, never the previous turn's.
   const workingModel = React.useMemo<WorkingModel | null>(() => {
     const lastUser = messages.findLastIndex((message) => message.role === "user")
     const reply = messages.slice(lastUser + 1).findLast((message) => message.role === "assistant")
@@ -1993,8 +1804,6 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
     .filter(isToolUIPart).filter(isTaskToolPart).map(taskChildSessionId).filter((id): id is string => Boolean(id)))], [messages])
   const runningHelperIds = useRunningSubagentIds(workspaceId, delegatedIds)
   const backgroundCount = runningHelperIds.length
-  // The run is paused while it, or a helper it waits on, asks the person for
-  // an approval or answer. Background helpers do not hold up the run.
   const foregroundHelperIds = React.useMemo(() => [...new Set(messages.flatMap(message => message.parts)
     .filter(isToolUIPart).filter(isTaskToolPart).filter(part => part.input?.background !== true)
     .map(taskChildSessionId).filter((id): id is string => Boolean(id)))], [messages])
@@ -2016,16 +1825,11 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
   const isStreaming = status === "streaming" || status === "retrying"
   const runActive = status === "streaming" || status === "retrying"
   const appRunActive = runActive || activityStatus === "thinking" || activityStatus === "responding" || activityStatus === "compacting" || activityStatus === "waiting"
-  // The App panel replaces the Working line and the thinking rows while it builds.
   const appPanelLive = React.useMemo(() => (appRunActive || status === "submitted") && appBuildInProgress(messages), [appRunActive, status, messages])
   const syncDegraded = syncHealth?.degraded === true
   const activityActive = runActive || tasks.length > 0
   const runStartedAtRef = React.useRef<number | null>(null)
   const [runElapsedSeconds, setRunElapsedSeconds] = React.useState(0)
-  // Anchor the counter to the user message that started the run (server
-  // timestamp), so switching sessions and back doesn't reset it to 0 on
-  // remount, and a follow-up sent mid-run doesn't restart it. Optimistic
-  // messages without metadata fall back to first-mount wall clock.
   const runStartedAt = React.useMemo(() => runActive ? getRunStartedAt(messages) : null, [messages, runActive])
   React.useEffect(() => {
     if (!activityActive) {
@@ -2035,16 +1839,11 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
     }
     if (runStartedAt !== null) runStartedAtRef.current = runStartedAt
     else if (runStartedAtRef.current === null) runStartedAtRef.current = Date.now()
-    // While liveness is unconfirmed the counter must not tick: elapsed time
-    // is only presented as work while something is validating that work is
-    // still happening. The anchor is kept, so a confirmed recovery resumes
-    // the true task age instead of restarting at zero.
     if (syncDegraded) return
     const waits = runWaits.flat()
     const updateElapsed = () => {
       const startedAt = runStartedAtRef.current
       if (startedAt === null) return
-      // Time spent waiting for the person's approval or answer is not work.
       const now = Date.now()
       setRunElapsedSeconds(Math.max(0, Math.floor((now - startedAt - getWaitedMs(waits, startedAt, now)) / 1000)))
     }
@@ -2053,12 +1852,8 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
     return () => window.clearInterval(interval)
   }, [activityActive, runStartedAt, syncDegraded, runWaits])
   const latestUserMessageId = React.useMemo(() => messages.findLast((message) => message.role === "user")?.id, [messages])
-  // Steps that render nothing are removed before layout, so they leave no gap.
   const visibleMessages = React.useMemo(() => dedupeRenderedTurnErrors(joinRecoveredReplies(withoutSilentSteps(messages))), [messages]);
   const items = React.useMemo(() => groupMessages(visibleMessages, status), [visibleMessages, status]);
-  // groupMessages indexes the visible transcript. Comparing those positions
-  // with the unfiltered transcript marks the live turn historical as soon as
-  // a silent script or duplicate error is removed.
   const lastVisibleIndex = visibleMessages.length - 1;
   const error = useSessionErrorMessage();
   const hasSessionErrorMessage = React.useMemo(() => messages.some(isSessionErrorMessage), [messages])
@@ -2072,15 +1867,11 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
     active: activityActive && activityStatus !== "error", waiting, retrying: status === "retrying" || Boolean(retryStatus),
     disconnected: syncDegraded, lastProgressAt, now: Date.now(),
   })
-  // Silence alone never hides the line: a slow first token or a quiet tool is
-  // still a busy run. The effect below re-checks status in the background, and
-  // Reconnecting takes over only when the run can no longer be confirmed.
   const showLoading = !waiting && !showReconnecting
     && shouldShowMessageListLoading(status, messages.length)
   const baseUrl = workspace?.opencodeBaseUrl
   React.useEffect(() => {
     if (!noNewActivity || !baseUrl) return
-    // Revalidate existing state only. Silence never aborts or resubmits work.
     void revalidateWorkspaceSessionSync({ workspaceId, baseUrl })
   }, [noNewActivity, workspaceId, sessionId, baseUrl])
   const currentToolCallIds = React.useMemo(
@@ -2137,7 +1928,6 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
       >
         {!runActive && backgroundCount > 0 && <div data-background-agents className="mx-auto flex w-full max-w-3xl items-center gap-3 px-2 py-2 text-sm text-muted-foreground md:px-10">
           <span>{syncDegraded ? "Background activity — reconnecting…" : `${backgroundCount} ${backgroundCount === 1 ? "agent" : "agents"} running`}</span>
-          {/* Stops only the background helpers; the chat itself is already idle. */}
           {onStopSubagentSession && !syncDegraded ? (
             <button
               type="button"
@@ -2153,10 +1943,6 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
             </button>
           ) : null}
         </div>}
-        {/* One rule for commands left running in the background: while the turn
-            runs, the count joins its Working line; otherwise it takes that
-            line's place on its own. One line either way, so the chat does not
-            move when the turn ends and the count stays. */}
         {showLoading && !appPanelLive && <LoadingMessage elapsedSeconds={runElapsedSeconds} starting={status === "submitted"} model={workingModel} />}
         {showReconnecting && <ReconnectingMessage lastConfirmedAt={syncHealth?.lastConfirmedAt ?? null} />}
         {retryStatus ? <RetryMessage status={retryStatus} /> : null}
@@ -2172,16 +1958,11 @@ export function MessageList({ messages, messageIdReplacements, status, activityS
   )
 }
 
-/** Same model, same object: text streaming must not re-render every group's cards. */
 function sameCreatedSkills(left: CreatedSkillsModel, right: CreatedSkillsModel): boolean {
   return JSON.stringify([left.cards, [...left.shareLabels], [...left.savedNames]])
     === JSON.stringify([right.cards, [...right.shareLabels], [...right.savedNames]])
 }
 
-/**
- * Created skills for the whole conversation, plus what the person learned by
- * checking (read-only) after a share went unconfirmed.
- */
 function useCreatedSkillsModel(messages: UIMessage[], live: boolean): CreatedSkillsContextValue {
   const { onOpenLibraryDetail } = useMessageList()
   const [checked, setChecked] = React.useState<ReadonlyMap<string, ConfirmedSkillAccess>>(() => new Map())
@@ -2192,12 +1973,10 @@ function useCreatedSkillsModel(messages: UIMessage[], live: boolean): CreatedSki
       cards: collected.cards.map((card) => {
         const access = card.kind === "ready" ? checked.get(card.pluginId) : undefined
         if (!access || card.kind !== "ready") return card
-        // A check answers an unconfirmed share; anything still running stays as it is.
         return { ...card, access, pending: card.pending?.state === "unverified" ? null : card.pending }
       }),
     }
   }, [messages, live, checked])
-  // Keep the previous object while nothing changed (derived state, not a ref).
   const [stable, setStable] = React.useState<CreatedSkillsModel>(next)
   const unchanged = stable === next || sameCreatedSkills(stable, next)
   if (!unchanged) setStable(next)

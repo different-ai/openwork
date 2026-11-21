@@ -4,7 +4,6 @@ import { ShareBar } from "../../../../../_components/gateway-spend-breakdown";
 import { ExampleAvatar, ExampleCaption, ExampleGroupLabel, ExampleRow, ExampleRows } from "./example-parts";
 import { overviewExampleDaily, overviewExampleTopPeople, overviewExampleTotal } from "./overview-example-data";
 
-/** Team spend over time and the people using the most. */
 export function OverviewExample() {
   const maxDay = Math.max(...overviewExampleDaily);
   const maxPerson = overviewExampleTopPeople[0]?.value ?? 0;

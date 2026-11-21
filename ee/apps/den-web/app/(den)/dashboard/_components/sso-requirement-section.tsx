@@ -15,7 +15,6 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { EnterprisePlanNotice } from "./enterprise-plan-notice";
 import { SsoRequirementFields, ssoRequirementDescription } from "./sso-requirement-fields";
 
-/** SSO › Authentication: whether members must sign in with this organization's SSO. */
 export function SsoRequirementSection() {
   const { orgContext, mutationBusy, updateOrganizationSettings } = useOrgDashboard();
   const [draft, setDraft] = useState<SsoSettings>({ requireSso: false, restrictDomainToSso: false });

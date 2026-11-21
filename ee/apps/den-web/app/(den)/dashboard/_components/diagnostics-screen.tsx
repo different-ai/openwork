@@ -12,7 +12,6 @@ const CLOCK_MS = 30_000;
 export function DiagnosticsScreen() {
   const { orgContext, orgSlug } = useOrgDashboard();
   const orgId = orgContext?.organization.id ?? "";
-  // A different organization gets a fresh view and never another organization's report.
   return <DiagnosticsContent key={orgId} orgId={orgId} orgSlug={orgSlug} />;
 }
 

@@ -10,7 +10,6 @@ function sourceLabel(source: PluginsExampleRow["source"]): string {
   return source.kind === "here" ? "Made here" : `From ${source.repo}`;
 }
 
-/** Section example: three shared plugins, then one of them at work in someone's chat. */
 export function PluginsExample() {
   const step = useExampleStep(pluginsExampleChat.steps.length);
 

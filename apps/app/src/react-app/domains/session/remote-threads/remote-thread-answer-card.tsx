@@ -10,15 +10,6 @@ import { questionAnswer, questionAnswerReady } from "@/lib/remote-session-answer
 import { cn } from "@/lib/utils"
 import { isQuestionCollapseChord, QUESTION_COLLAPSE_PANEL_CLASS, questionCollapseChordLabel } from "@/react-app/domains/session/modals/question-collapse"
 
-/**
- * The question or permission a task on another computer waits on, answered
- * where the person already is: above the panel's follow-up box (DESIGN.md T4).
- * Text only, no icons; everything from the other computer is plain text.
- * Number keys choose, Enter advances, ⌘Enter allows a permission once.
- * With `collapsible` (feature `questionMinimize`) a question can be minimized
- * to one line and reopened with its answers kept; ⌘⇧M does the same.
- */
-
 type Failure = { code: string; message: string; retryable: boolean }
 export type RemoteAnswerSubmit = (answer: RemoteSessionAnswerInput) => Promise<Failure | null>
 
@@ -38,7 +29,6 @@ export function RemoteThreadAnswerCard({ pending, computer, onAnswer, collapsibl
     else setAnswered(answer.requestId)
   }
 
-  // Once answered it stays hidden until the task waits on something new.
   if (answered === pending.requestId) return null
 
   const footerError = error ? (

@@ -1,12 +1,3 @@
-/**
- * Member Entra ID sign-in: authorization code + PKCE with the organization's
- * own confidential app registration. The Gateway renews the access token with
- * the stored refresh token (see gateway credentials/oauth-refresh).
- *
- * `apiScope` is the API the access token is for: null is Azure Cognitive
- * Services (Microsoft Foundry); a LiteLLM provider with member Microsoft Entra
- * sign-in names a scope of the organization's own app registration.
- */
 import { createHmac } from "node:crypto"
 import { createRemoteJWKSet, errors, jwtVerify, type JWTVerifyGetKey } from "jose"
 import { classifyMicrosoftTokenError, isMicrosoftAccessTokenForApp, microsoftAuthorizeUrl, microsoftIssuer, microsoftJwksUrl, microsoftSignInScopes, microsoftTokenUrl, readMicrosoftTokens, type MicrosoftTokens } from "@openwork-ee/gateway-upstreams"
@@ -28,7 +19,6 @@ export function buildMicrosoftAuthorizeUrl(input: { tenantId: string; clientId: 
   url.searchParams.set("response_type", "code")
   url.searchParams.set("response_mode", "query")
   url.searchParams.set("scope", microsoftSignInScopes(input.apiScope ?? null))
-  // Always show the account picker so "Switch account" can choose another work account.
   url.searchParams.set("prompt", "select_account")
   url.searchParams.set("code_challenge", input.codeChallenge)
   url.searchParams.set("code_challenge_method", "S256")
@@ -90,7 +80,6 @@ function tenantKeys(tenantId: string): JWTVerifyGetKey {
 
 export type MicrosoftIdentity = { tenantId: string; objectId: string; userName: string | null; clientId: string }
 
-/** Verifies the ID token was issued by the configured tenant to this app for this sign-in attempt. */
 export async function verifyMicrosoftIdentity(input: { idToken: string; tenantId: string; clientId: string; nonce: string; keyResolver?: JWTVerifyGetKey }): Promise<MicrosoftIdentity> {
   const tenantId = input.tenantId.toLowerCase()
   const resolveKey: JWTVerifyGetKey = async (...args) => {

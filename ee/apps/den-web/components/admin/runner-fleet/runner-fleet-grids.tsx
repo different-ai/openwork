@@ -23,12 +23,8 @@ import {
   type HistoryMetric,
 } from "./runner-fleet-model";
 
-/** The page's squares: a node's history as a contribution grid, and the cells each node holds, one square each. */
-
 const SQUARE = "h-[11px] w-[11px] rounded-[2px]";
-/** Memory against the cell host's lines: green below them, amber above the reopen line, red at the ceiling. */
 const MEMORY_SHADE: Record<Exclude<GridLevel, "down">, string> = { 0: "bg-slate-100", 1: "bg-emerald-200", 2: "bg-emerald-400", 3: "bg-amber-400", 4: "bg-orange-500", 5: "bg-red-600" };
-/** Counts, light to dark like a contribution grid. */
 const COUNT_SHADE: Record<Exclude<GridLevel, "down">, string> = { 0: "bg-slate-100", 1: "bg-sky-200", 2: "bg-sky-400", 3: "bg-sky-600", 4: "bg-sky-800", 5: "bg-sky-800" };
 const WAITING_SHADE: Record<Exclude<GridLevel, "down">, string> = { 0: "bg-slate-100", 1: "bg-emerald-200", 2: "bg-emerald-200", 3: "bg-emerald-200", 4: "bg-emerald-200", 5: "bg-red-600" };
 const DOWN_SHADE = "bg-slate-400";
@@ -42,11 +38,9 @@ export const STATE_FILL: Record<RunnerFleetNodeState, string> = {
   unreachable: "bg-slate-300",
 };
 
-/** A cell in memory: green, faded when it has just arrived and solid once it has been there for hours. */
 const CELL_SQUARE = "h-[13px] w-[13px] rounded-[3px]";
 const CELL_SHADE: Record<CellAge, string> = { 0: "bg-emerald-200", 1: "bg-emerald-300", 2: "bg-emerald-500", 3: "bg-emerald-600", 4: "bg-emerald-800" };
 
-/** One cell as a square; pointing at it, or reaching it with the keyboard, says whose it is and how long it has been there. */
 function CellSquare({ cell, now, unnamed }: { cell: RunnerFleetCell; now: number; unnamed: boolean }) {
   const note = cellNote(cell, unnamed);
   return (
@@ -98,7 +92,6 @@ function Legend({ metric, proportional }: { metric: HistoryMetric; proportional:
 
 function NodeHistoryGrid({ id, label, buckets, range, metric, max, now, proportional }: {
   id: string;
-  /** Shown in place of the id: the whole-fleet grid has a name, not an address. */
   label?: string;
   buckets: AdminRunnerFleetHistory["nodes"][number]["buckets"];
   range: RunnerFleetHistoryRange;
@@ -122,7 +115,6 @@ function NodeHistoryGrid({ id, label, buckets, range, metric, max, now, proporti
         <span className="text-[12px] text-gray-600">{summary}{closedBuckets > 0 ? `, closed in ${closedBuckets} ${closedBuckets === 1 ? "square" : "squares"}` : ""}</span>
       </figcaption>
       <div className="overflow-x-auto pb-1">
-        {/* Room on the right for the last column's label, which is wider than its square. */}
         <div className="inline-flex gap-2 pr-10" role="img" aria-label={`${METRIC_NAME[metric]} of ${label ? label.toLowerCase() : `node ${id}`} over ${RANGE_NAME[range]}, ${summary}.`}>
           <div className="grid gap-[2px] pt-[18px] text-right text-[11px] leading-[11px] text-gray-600" style={{ gridTemplateRows: `repeat(${grid.rows}, 11px)` }} aria-hidden="true">
             {grid.rowLabels.map((label, index) => <span key={index}>{label}</span>)}
@@ -144,14 +136,10 @@ function NodeHistoryGrid({ id, label, buckets, range, metric, max, now, proporti
   );
 }
 
-/** Every node's history for a range, nodes that are running now first. */
 export function HistoryGrids({ history, metric, liveIds, now }: { history: AdminRunnerFleetHistory; metric: HistoryMetric; liveIds: readonly string[]; now: number }) {
   const fleet = useMemo(() => fleetBuckets(history.nodes), [history]);
-  // Counts are shaded against the fleet's own peak, which is at least any one node's.
   const max = useMemo(() => fleet.reduce((highest, bucket) => Math.max(highest, bucketValue(bucket, metric)), 0), [fleet, metric]);
-  // Without the machine's size there are no lines to shade memory against, so it is shaded against the page's peak.
   const proportional = metric === "memory" && history.nodes.every((node) => node.buckets.every((bucket) => bucket.ratio === null));
-  // Nodes running now, in the order the page lists them (fullest first); then the ones that are gone.
   const running = liveIds.flatMap((id) => history.nodes.find((node) => node.id === id) ?? []);
   const earlier = history.nodes.filter((node) => !liveIds.includes(node.id));
   const grids = (nodes: AdminRunnerFleetHistory["nodes"]) => (
@@ -179,7 +167,6 @@ export function HistoryGrids({ history, metric, liveIds, now }: { history: Admin
   );
 }
 
-/** Who owns the fleet's cells, as one bar, and each node's cells in memory, one square each. */
 export function CellDistribution({ nodes, now, unnamed = false }: { nodes: readonly RunnerFleetNode[]; now: number; unnamed?: boolean }) {
   const shares = useMemo(() => ownershipShares(nodes), [nodes]);
   const total = shares.reduce((sum, node) => sum + node.cells, 0);
@@ -230,7 +217,6 @@ export function CellDistribution({ nodes, now, unnamed = false }: { nodes: reado
                   {node.cells.inMemory.map((cell) => <CellSquare key={cell.id} cell={cell} now={now} unnamed={unnamed} />)}
                 </div>
               ) : node.cells.residents.length > 0 ? (
-                // A server from before cells were described: the squares, without whose they are.
                 <div className="flex flex-wrap gap-[2px]" role="img" aria-label={`${node.cells.resident.toLocaleString("en-US")} cells in memory on ${node.id}`}>
                   {node.cells.residents.map((cell) => <span key={cell} title={`Cell ${cell}`} className={`${SQUARE} ${STATE_FILL[node.state]}`} />)}
                 </div>

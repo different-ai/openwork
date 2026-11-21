@@ -16,7 +16,6 @@ const SUPPORTED_PANEL_PREVIEWS = new Set(["markdown", "code", "sheet", "slides",
 
 type LinkActionMenuProps = {
   target: OpenTarget;
-  /** The link or chevron the menu was opened from. */
   anchor: HTMLElement;
   onOpenTarget: (target: OpenTarget, options?: OpenTargetOptions) => void;
   onClose: () => void;
@@ -27,7 +26,6 @@ export function LinkActionMenu({ target, anchor, onOpenTarget, onClose }: LinkAc
   const [apps, setApps] = useState<DesktopApplication[] | null>(null);
   const [appsLoading, setAppsLoading] = useState(false);
   const { workspaceRoot, isLocalWorkspace, client, workspaceId, sessionId } = useOpenTargets();
-  // `~/` links name a file in the home folder; the menu can reveal them once it is known.
   const [homeDir, setHomeDir] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -36,8 +34,6 @@ export function LinkActionMenu({ target, anchor, onOpenTarget, onClose }: LinkAc
     }
     return () => { cancelled = true; };
   }, [isLocalWorkspace]);
-  // A chat link may be relative to a project subfolder. Resolve it through the
-  // same workspace search the click path uses before offering native actions.
   const [resolvedTarget, setResolvedTarget] = useState<OpenTarget | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -53,13 +49,9 @@ export function LinkActionMenu({ target, anchor, onOpenTarget, onClose }: LinkAc
   const native = isLocalWorkspace && platform.capabilities.revealInFileManager && effectiveTarget.kind === "file"
     ? nativeFileAction(workspaceRoot, effectiveTarget.resolvedPath ?? effectiveTarget.value, { homeDir }) : null;
   const canOpenExternally = native !== null;
-  // Named-app launches bypass the chat opener: offer them only for a file the
-  // owning workspace has verified, never a guessed root + bare filename.
   const canLaunch = native?.action === "open" && effectiveTarget.exists === true;
   const nativePath = native?.path;
 
-  // Follow the link while the chat scrolls; a streamed re-render can replace
-  // the link element, so keep its last position instead of jumping to 0,0.
   const [openedRect] = useState(() => anchor.getBoundingClientRect());
   const positionAnchor = useMemo(() => ({
     contextElement: anchor,
@@ -101,8 +93,6 @@ export function LinkActionMenu({ target, anchor, onOpenTarget, onClose }: LinkAc
   };
 
   const handleCopyPath = async () => {
-    // If the person copies immediately, wait for the workspace search instead of
-    // copying the unresolved relative reference or a guessed workspace-root path.
     let current = effectiveTarget;
     if (current.exists !== true && client && workspaceId) {
       try {
@@ -112,7 +102,6 @@ export function LinkActionMenu({ target, anchor, onOpenTarget, onClose }: LinkAc
           setResolvedTarget(found);
         }
       } catch {
-        // Keep the reference as written when the workspace cannot answer.
       }
     }
     try {
@@ -129,8 +118,6 @@ export function LinkActionMenu({ target, anchor, onOpenTarget, onClose }: LinkAc
 
   const handleOpenWithApp = (app: DesktopApplication) => {
     if (!canLaunch) return;
-    // Re-resolve on activation, just like default open/reveal. A verified menu
-    // snapshot may already be stale by the time a person chooses an app.
     onOpenTarget(effectiveTarget, { external: true, appPath: app.appPath });
     onClose();
   };

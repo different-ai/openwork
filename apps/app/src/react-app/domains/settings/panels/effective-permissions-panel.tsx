@@ -56,7 +56,6 @@ export type EffectivePermissionsPanelProps = {
   openworkServerStatus: OpenworkServerStatus;
   openworkServerCapabilities: OpenworkServerCapabilities | null;
   runtimeWorkspaceId: string | null;
-  /** Bump to re-read after a permission-affecting change elsewhere in Settings. */
   refreshToken?: number;
 };
 

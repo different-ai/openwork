@@ -1,27 +1,3 @@
-/**
- * Config-blob area `ai-gateway.limits`: AI Gateway spend limits
- * (Manage › AI Gateway › Limits): each active policy with its per-period
- * allowances and who it applies to.
- *
- * - Spec: the provider it limits (`$ref` to `ai-gateway.providers`, null for a
- *   default limit), hard/soft, whether members may ask for more, the USD
- *   allowance per period, and its assignments (everyone, team refs, people
- *   refs). Runtime accounting (buckets, events, increase requests, audit) is
- *   never exported.
- * - Archived policies are not exported; "delete" archives, exactly as the
- *   dashboard does (there is no hard delete), so a revert can restore it.
- * - Policy ids are plain UUIDs, not TypeIDs, so the engine never offers a
- *   source id to reuse (no `idPrefix`); a create always gets a fresh id. Nothing
- *   outside the runtime accounting references a policy id.
- * - Apply goes through the same service the limit routes use
- *   (`createGatewayUsageLimits`: savePolicy / assign / unassign /
- *   archivePolicy), so revision checks, entitlement locks, provider validation,
- *   expiry of stale increase requests and the usage audit stay identical.
- *   Only what the plan's changes name is written.
- * - People who have not accepted their invitation yet hold a limit like anyone
- *   else: their member row already exists and keeps its id when they join, so
- *   the people a run invites are assigned in that same run.
- */
 import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { createGatewayUsageLimits, GatewayUsageError, type GatewayUsageScope } from "@openwork-ee/den-db/gateway-usage-limits"
 import { GatewayProviderTable, GatewayUsageAssignmentTable, GatewayUsageLimitTable, GatewayUsagePolicyTable } from "@openwork-ee/den-db/schema"
@@ -39,9 +15,6 @@ import { audienceRefs, ConfigApplyError, isJsonObject, loadMemberEmails, loadTea
 const AREA = "ai-gateway.limits" as const
 const PROVIDERS_AREA = "ai-gateway.providers"
 
-// ---------------------------------------------------------------------------
-// Spec
-
 const usdSchema = z.string().max(32).superRefine((value, ctx) => {
   try {
     gatewayUsdToMicroUsd(value)
@@ -51,16 +24,11 @@ const usdSchema = z.string().max(32).superRefine((value, ctx) => {
 })
 
 const limitsSpecSchema = z.object({
-  /** The AI provider this limit governs; null for a default limit (every provider without its own limit). */
   provider: configRefSchema.nullable().default(null),
-  /** true: members are blocked at the limit; false: only flagged. */
   hardLimit: z.boolean().default(true),
-  /** Members may ask an admin for 25% more. */
   allowRequestReset: z.boolean().default(true),
-  /** One allowance per period, in USD (estimated provider cost). */
   limits: z.array(z.object({ timeframe: gatewayUsageTimeframeSchema, costUsd: usdSchema }).strict()).min(1).max(3)
     .refine((limits) => new Set(limits.map((limit) => limit.timeframe)).size === limits.length, "Periods must be unique."),
-  /** Who the limit applies to. */
   assignments: z.object({
     organization: z.boolean().default(false),
     teams: z.array(configRefSchema).max(500).default([]),
@@ -70,7 +38,6 @@ const limitsSpecSchema = z.object({
 
 type LimitsSpec = z.infer<typeof limitsSpecSchema>
 
-/** Integer micro-USD → the shortest exact USD decimal ("20", "0.5", "1.000001"). */
 export function microUsdToUsd(micro: number): string {
   const value = BigInt(micro)
   const whole = value / 1_000_000n
@@ -79,9 +46,6 @@ export function microUsdToUsd(micro: number): string {
 }
 
 const TIMEFRAME_ORDER: GatewayUsageTimeframe[] = ["day", "week", "month"]
-
-// ---------------------------------------------------------------------------
-// Read
 
 async function readPolicies(ctx: ConfigAreaContext, ids?: string[]): Promise<ConfigItem[]> {
   const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
@@ -121,7 +85,6 @@ async function readPolicies(ctx: ConfigAreaContext, ids?: string[]): Promise<Con
       })
       const providerName = policy.inferenceProviderId ? providerNames.get(policy.inferenceProviderId) : undefined
       const spec: LimitsSpec = {
-        // A provider limit whose provider was deleted still points at it; the ref then fails to resolve on import.
         provider: policy.inferenceProviderId
           ? { $ref: `${PROVIDERS_AREA}/${policy.inferenceProviderId}`, ...(providerName ? { name: providerName } : {}) }
           : null,
@@ -136,9 +99,6 @@ async function readPolicies(ctx: ConfigAreaContext, ids?: string[]): Promise<Con
       return { id: policy.id, key: null, name: policy.name, spec }
     })
 }
-
-// ---------------------------------------------------------------------------
-// Matching
 
 function specOf(item: ConfigItem): LimitsSpec | null {
   const parsed = limitsSpecSchema.safeParse(item.spec)
@@ -179,9 +139,6 @@ function similarity(blob: ConfigItem, target: ConfigItem): { score: number; reas
   return { score: Math.min(1, Math.round(score * 1000) / 1000), reasons }
 }
 
-// ---------------------------------------------------------------------------
-// Apply
-
 function touches(changes: ConfigFieldChange[], field: string): boolean {
   return changes.some((change) => change.path === field || change.path.startsWith(`${field}.`) || change.path.startsWith(`${field}[`))
 }
@@ -198,7 +155,6 @@ function scopeOf(ctx: ConfigAreaContext): GatewayUsageScope {
   return { organizationId: normalizeDenTypeId("organization", ctx.organizationId), memberId: normalizeDenTypeId("member", ctx.actor.memberId) }
 }
 
-/** The resolved provider id, or null for a default limit. */
 function resolvedProviderId(value: unknown): string | null {
   if (value === null || value === undefined) return null
   if (isJsonObject(value) && typeof value.id === "string" && value.id) return value.id
@@ -227,7 +183,6 @@ function resolvedSpec(spec: unknown): ResolvedLimits {
   }
 }
 
-/** Runs the item's writes in order, recording each; a failure carries the writes already done. */
 class Steps {
   readonly done: ConfigApplyStep[] = []
   async run<T>(step: ConfigApplyStep, field: string | undefined, write: () => Promise<T>): Promise<T> {
@@ -298,7 +253,6 @@ async function applyLimits(ctx: ConfigAreaContext, op: ConfigApplyOp) {
     return { localId: policyId, steps: steps.done }
   }
 
-  // update
   const [current] = await ctx.db.select().from(GatewayUsagePolicyTable)
     .where(and(eq(GatewayUsagePolicyTable.id, op.targetId), eq(GatewayUsagePolicyTable.organizationId, scope.organizationId))).limit(1)
   if (!current || current.archivedAt) throw new ConfigApplyItemError({ code: "policy_not_found", message: `Limit "${op.previous.name}" no longer exists or was archived.`, status: 404 })
@@ -306,7 +260,6 @@ async function applyLimits(ctx: ConfigAreaContext, op: ConfigApplyOp) {
   const settingsFields = ["name", "provider", "hardLimit", "allowRequestReset", "limits"].filter((field) => touches(op.changes, field))
   if (settingsFields.length) {
     const currentLimits = await ctx.db.select().from(GatewayUsageLimitTable).where(eq(GatewayUsageLimitTable.policyId, current.id))
-    // Only the named fields come from the blob; the rest are kept as stored.
     const write: GatewayUsagePolicyWrite = {
       name: settingsFields.includes("name") ? name : current.name,
       providerId: settingsFields.includes("provider") ? spec.providerId : current.inferenceProviderId,
@@ -322,7 +275,6 @@ async function applyLimits(ctx: ConfigAreaContext, op: ConfigApplyOp) {
   if (touches(op.changes, "assignments")) {
     const rows = await ctx.db.select().from(GatewayUsageAssignmentTable)
       .where(and(eq(GatewayUsageAssignmentTable.organizationId, scope.organizationId), eq(GatewayUsageAssignmentTable.policyId, current.id)))
-    // People without an email are never exported, so a blob can't name them: leave their assignments alone.
     const emails = await loadMemberEmails(ctx.db, scope.organizationId, rows.flatMap((row) => row.memberId ? [row.memberId] : []))
     const wantTeams = new Set(spec.assignments.teamIds.map((id) => teamTarget(id).teamId))
     const wantMembers = new Set(spec.assignments.memberIds.map((id) => memberTarget(id).memberId))
@@ -358,9 +310,6 @@ async function applyLimits(ctx: ConfigAreaContext, op: ConfigApplyOp) {
   }
   return { localId: current.id, steps: steps.done }
 }
-
-// ---------------------------------------------------------------------------
-// Irreversible effects
 
 function microOf(spec: LimitsSpec | null, timeframe: GatewayUsageTimeframe): number | null {
   const entry = spec?.limits.find((limit) => limit.timeframe === timeframe)
@@ -404,16 +353,12 @@ export const aiGatewayLimitsArea = defineConfigArea({
   deployments: ["cloud", "self_hosted"],
   viewPermission: "gateway_limits.view",
   managePermission: "gateway_limits.manage",
-  // Runtime accounting (gateway_usage_subject, _tracking, _bucket, _consumption_event, _quarantine,
-  // _bucket_charge, _reset_request, _audit) is never exported.
   tables: ["gateway_usage_limit_policy", "gateway_usage_limit_entry", "gateway_usage_limit_assignment"],
   naturalKeys: [{ label: "name", get: (item) => item.name.trim().toLowerCase() || null }],
   similarity,
   secretFields: [],
   arrayKeys: { limits: "timeframe" },
-  // A limit on one provider's usage is that provider's: without it, it would become a limit on everything.
   requiredRefs: ["provider"],
-  // The usage service opens its own (deadlock-retried) transactions.
   transactional: false,
   irreversible,
 

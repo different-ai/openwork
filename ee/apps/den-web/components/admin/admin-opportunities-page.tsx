@@ -59,8 +59,6 @@ export function AdminOpportunitiesPage() {
       }, controller.signal).then(result => {
         if (controller.signal.aborted) return;
         if (result.access === "error") setError(result.message);
-        // Keep a verified snapshot only for a failed refresh of these filters.
-        // A lost session or allowlist grant clears every row immediately.
         setState(current => result.access === "error" && current.access === "ready" && current.query === query ? current : { ...result, query });
       }).catch((reason: unknown) => {
         if (controller.signal.aborted) return;

@@ -1,4 +1,3 @@
-/** How long the update callback waits for React to draw before the new snapshot is taken (a macrotask, not a frame). */
 const SETTLE_MS = 16;
 
 /**
@@ -16,7 +15,6 @@ export function withViewTransition(update: () => void) {
   const run = () => { if (!ran) { ran = true; update(); } };
   try {
     const transition: unknown = Reflect.apply(start, document, [() => new Promise<void>((resolve) => { run(); setTimeout(resolve, SETTLE_MS); })]);
-    // A skipped or interrupted transition rejects these; the update itself has already run.
     for (const name of ["ready", "finished", "updateCallbackDone"]) {
       const settled: unknown = typeof transition === "object" && transition !== null ? Reflect.get(transition, name) : null;
       if (settled instanceof Promise) settled.catch(() => {});

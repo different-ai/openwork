@@ -66,8 +66,6 @@ const openWorkWebAccessRequiredSchema = z.object({
 }).meta({ ref: "AutomationOpenWorkWebAccessRequiredError" })
 type McpDescribeRouteOptions = DescribeRouteOptions & { "x-mcp": true }
 const describeMcpRoute = (options: McpDescribeRouteOptions) => describeRoute(options)
-// Runner-credential routes must never surface as MCP tools; an MCP caller with
-// write scope could otherwise mint a desktop-runner bearer credential.
 type NonMcpDescribeRouteOptions = DescribeRouteOptions & { "x-mcp": false }
 const describeNonMcpRoute = (options: NonMcpDescribeRouteOptions) => describeRoute(options)
 
@@ -84,7 +82,6 @@ function scope(c: {
     organizationId: context.organization.id,
     ownerMemberId: context.currentMember.id,
     modelAttentionCapable,
-    // Only first-party desktops send the model-attention header, so only they are narrowed.
     readableScheduleKinds: readableAutomationScheduleKinds({
       scheduleKindsHeader: c.req.header(AUTOMATION_SCHEDULE_KINDS_HEADER),
       firstPartyDesktop: modelAttentionCapable,
@@ -92,15 +89,10 @@ function scope(c: {
   }
 }
 
-/** MCP tool calls reach these routes with the internal agent session. */
 function placementOptions(c: { get(name: "session"): { id: string } | null | undefined }) {
   return { agentCaller: c.get("session")?.id === "mcp_internal" }
 }
 
-/**
- * The run body is optional: released clients send `{}` and agents may send
- * nothing, so it is read here instead of through a required-body validator.
- */
 async function runNowBody(c: { req: { text(): Promise<string> } }) {
   const text = await c.req.text()
   if (!text.trim()) return runAutomationNowSchema.safeParse({})
@@ -184,7 +176,6 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
     commandStore?: RemoteSessionCommandStore
     requestStore?: RemoteSessionRequestStore
     enabled?: boolean
-    /** The app registers the independent runner owner explicitly. */
     sessionRunners?: boolean
   } = {},
 ) {
@@ -390,7 +381,6 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
         if (reason === "automation_runner_event_sequence_gap") {
           return c.json({ error: "automation_runner_event_sequence_gap" }, 409)
         }
-        // Anything else is an internal failure; never echo raw error text to runners.
         return c.json({ error: "runner_event_rejected" }, 500)
       }
     },
@@ -426,8 +416,6 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
         if (reason === "automation_run_complete_lease_lost" || reason === "automation_run_lease_lost") {
           return c.json({ error: "runner_lease_lost" }, 409)
         }
-        // A transient fault must not read as a lost lease, or runners abandon
-        // result reporting; 500 lets the desktop retry completion.
         return c.json({ error: "runner_completion_failed" }, 500)
       }
     },
@@ -578,7 +566,6 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
       summary: "Run an Automation now",
       description: `${routeDescription} Send executionTarget "cloud" to run a Desktop Automation once in OpenWork Cloud without changing it. `
         + "Agents cannot run a Cloud Automation on a desktop.",
-      // Optional: released clients send `{}` and agents may send no body at all.
       requestBody: {
         required: false,
         content: {
@@ -611,9 +598,6 @@ export function registerAutomationRoutes<T extends { Variables: RouteVariables }
         return c.json({ error: "invalid_request", message: validationIssuesMessage(body.error.issues), details: body.error.issues }, 400)
       }
       try {
-        // Runner presence is advisory and must not require a database
-        // heartbeat. The durable claim deadline records an unclaimed desktop
-        // run as missed through the same path used by scheduled occurrences.
         const run = await service.runNow(scope(c), c.req.valid("param").id, {
           ...placementOptions(c),
           executionTarget: body.data.executionTarget,

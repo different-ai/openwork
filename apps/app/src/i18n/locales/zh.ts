@@ -1,11 +1,3 @@
-/**
- * 中文（简体）翻译
- * 产品名称保留英文：OpenCode、OpenPackage、OpenWork
- * Skills：标题用"Skills（技能）"，正文用"skills"
- * MCP：协议名称保留英文，不翻译为"应用"
- * 翻译的术语：命令(Commands)、插件(Plugins)、会话(Sessions)、应用(Apps)
- */
-
 export default {
   "artifact.office_empty": "此文件没有可读文本。请在其他应用中打开以查看原文件。",
   "artifact.office_empty_slide": "此幻灯片没有可读文本。",

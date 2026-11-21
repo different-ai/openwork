@@ -4,11 +4,9 @@ export type ServerTelemetryContext = {
   method?: string;
   route?: string;
   surface?: string;
-  /** Groups reports into one issue wherever the error was thrown. */
   fingerprint?: string[];
   level?: "warning";
   tags?: Record<string, string>;
-  /** Internal-only context; never forwarded to the desktop telemetry host. */
   requestSignal?: AbortSignal;
 };
 
@@ -17,8 +15,6 @@ export type OpenworkDesktopTelemetry = {
 };
 
 declare global {
-  // Provided by the Electron host when the embedded server runs in desktop mode.
-  // The standalone openwork-server package leaves this unset.
   var __openworkDesktopTelemetry: OpenworkDesktopTelemetry | undefined;
 }
 
@@ -28,7 +24,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function isExpectedRequestCancellation(error: unknown, requestSignal: AbortSignal | undefined): boolean {
   if (!requestSignal?.aborted) return false;
-  // Abort reasons may legally be null (including a canceled empty HEAD body).
   if (error === requestSignal.reason) return true;
   const visited = new Set<object>();
   let current: unknown = error;
@@ -53,11 +48,6 @@ export function isExpectedRequestCancellation(error: unknown, requestSignal: Abo
 const DISK_FULL_REPORT_INTERVAL_MS = 10 * 60 * 1000;
 let lastDiskFullReportAt: number | null = null;
 
-/**
- * A full disk is the state of someone's computer, not a defect, and every
- * write fails while it lasts. Report it as one grouped warning per interval,
- * with the space that was left. Null means this one is not reported.
- */
 function diskFullReport(): Pick<ServerTelemetryContext, "fingerprint" | "level" | "tags"> | null {
   const now = Date.now();
   if (lastDiskFullReportAt !== null && now - lastDiskFullReportAt < DISK_FULL_REPORT_INTERVAL_MS) return null;

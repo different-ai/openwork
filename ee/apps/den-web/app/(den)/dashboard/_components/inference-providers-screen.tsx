@@ -31,7 +31,6 @@ const MUTED = "text-[color:var(--dls-text-secondary)]";
 
 type RowStatus = { label: string; tone: DeviceTone };
 
-/** The lanes a provider and a Smart Router share: models, who can use it, status, then Manage or Set up. */
 function ProviderLanes({ models, audience, nobody, audienceTestId, status, open }: {
   models: string;
   audience: string;
@@ -67,7 +66,6 @@ export function ProviderRow({ provider, orgSlug, orgContext }: {
   orgSlug: string | null;
   orgContext: ReturnType<typeof useOrgDashboard>["orgContext"];
 }) {
-  // LiteLLM and TrueFoundry per-person keys add automatic member grants; only the access group says who may use it.
   const accessGroupId = provider.litellm ? liteLlmAccessGroupId(provider) : provider.truefoundry ? trueFoundryAccessGroupId(provider) : null;
   const audience = describeGatewayAccess(accessGroupId ? { ...provider, accessGrants: (provider.accessGrants ?? []).filter((grant) => grant.modelGroupId === accessGroupId) } : provider, {
     organization: null,
@@ -79,9 +77,6 @@ export function ProviderRow({ provider, orgSlug, orgContext }: {
   const truefoundry = provider.truefoundry;
   const syncError = litellm?.lastSyncError ?? truefoundry?.lastSyncError ?? null;
   const customProvider = isGatewayCustomProviderId(provider.providerId);
-  // Per-person LiteLLM keys are ready once the admin key syncs; each person adds their own key.
-  // LiteLLM with Microsoft sign-in has no key: it is ready once its sign-in settings are saved.
-  // TrueFoundry is ready once its admin key is saved; OpenWork creates each person's key.
   const keyReady = litellm?.keySource === "entra" ? (provider.credentialSets ?? []).some((set) => set.credentialMode === "member" && set.configured)
     : litellm ? litellm.hasSyncKey && (litellm.mode === "member" || provider.credentialStatus === "ready")
       : truefoundry ? truefoundry.hasAdminKey
@@ -126,7 +121,6 @@ export function ProviderRow({ provider, orgSlug, orgContext }: {
   );
 }
 
-/** A Smart Router, listed above providers and laid out like one. */
 function SmartRouterRow({ router, routing, orgSlug }: { router: AutoRouter; routing: AutoRouterRoutingState; orgSlug: string | null }) {
   const { orgContext } = useOrgDashboard();
   const nobody = assignmentIsEmpty(router.assignment);
@@ -175,11 +169,9 @@ function EmptyState({ orgSlug }: { orgSlug: string | null }) {
   );
 }
 
-/** The AI Providers tab of AI Gateway: who can use models, then one row per provider. */
 export function GatewayProvidersSection() {
   const { orgId, orgSlug, orgContext } = useOrgDashboard();
   const { inferenceProviders, busy, error, reloadProviders } = useOrgInferenceProviders(orgId);
-  // Smart Routers are listed first, like providers.
   const smartRouters = useAutoRouters(orgId ?? "");
   const [query, setQuery] = useState("");
   const filtered = useMemo(() => {
@@ -195,7 +187,6 @@ export function GatewayProvidersSection() {
   const canAddSmartRouter = smartRouters.data?.canEdit === true;
   const empty = !busy && !error && inferenceProviders.length === 0;
   const loaded = !busy && !error;
-  // Feature intros: providers but no Smart Router yet → a banner above the list.
   const smartRouterIntro = useFeatureIntro(
     "ai-gateway.smart-routers",
     loaded && smartRouters.data ? { providers: inferenceProviders.length, smartRouters: smartRouters.data.routers.length } : null,
@@ -205,10 +196,7 @@ export function GatewayProvidersSection() {
     <div>
       {error ? <DenNotice message="Could not load your providers. Your saved configuration has not changed." tone="error" presentation="inline" className="mb-6" action={<DenButton size="sm" variant="secondary" onClick={() => void reloadProviders()}>Retry</DenButton>} /> : null}
 
-      {/* Who can use models also governs personal keys and local models, so it
-          is reachable before any provider exists. */}
       {empty ? <div className="mb-6"><GatewayWhoCanUseModels /></div> : null}
-      {/* With feature intros on, the AI providers intro replaces the empty state (DESIGN.md I1). */}
       <FeatureIntroGate introKey="ai-gateway.ai-providers" facts={loaded ? { providers: inferenceProviders.length } : null}>
         {empty ? <EmptyState orgSlug={orgSlug} /> : (
           <>

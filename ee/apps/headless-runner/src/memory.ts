@@ -2,18 +2,6 @@ import type { CellsStore, MemoryFile, MemoryWrite } from "./cells-store.js"
 import { FILE_LIMITS } from "./files.js"
 import type { Session, Store } from "./store.js"
 
-/**
- * Where a conversation's memory/ lives, for the model's context (all files, read once per run of a turn) and for the
- * file tools (one file at a time). Everything else in the scratch workspace stays the conversation's own.
- *
- * - No access (null): memory/ is the conversation's own files, as always.
- * - `memoryOf` (legacy): another conversation's files in the same database.
- * - `memoryScope: "owner"`: the owner's memory. Local where it is stored (Node, an owner cell); in a session cell, calls
- *   to the owner cell (see src/worker), one read per run and each write through.
- *
- * `list` is called once per run of a turn (again after a restart) and its files are shown in the system prompt of
- * every step, so a turn's requests start the same and the provider's prompt cache keeps hitting.
- */
 export type MemoryAccess = {
   list(): Promise<MemoryFile[]>
   read(path: string): Promise<string | null>
@@ -21,17 +9,14 @@ export type MemoryAccess = {
   delete(path: string): Promise<boolean>
 }
 
-/** Picks a conversation's memory, or null when memory/ is its own. */
 export type MemoryResolver = (session: Session) => MemoryAccess | null
 
-/** The owner's memory could not be reached: the step fails (retryably) rather than run without it. */
 export class MemoryUnavailableError extends Error {
   constructor(readonly code = "memory_unavailable") {
     super(code)
   }
 }
 
-/** Another conversation's memory/ files, in the same database (legacy `memoryOf`). */
 export function sessionMemory(store: Store, sessionId: string): MemoryAccess {
   return {
     list: async () => store.memoryFiles(sessionId),
@@ -51,7 +36,6 @@ export function sessionMemory(store: Store, sessionId: string): MemoryAccess {
   }
 }
 
-/** The owner's memory, stored in this database (Node host, an owner cell). */
 export function localOwnerMemory(cells: CellsStore, owner: string): MemoryAccess {
   return {
     list: async () => cells.ownerMemoryFiles(owner),
@@ -61,10 +45,6 @@ export function localOwnerMemory(cells: CellsStore, owner: string): MemoryAccess
   }
 }
 
-/**
- * Memory where both live in this database: the owner's for `memoryScope: "owner"`, the other conversation's for
- * `memoryOf` (when it still exists), otherwise the conversation's own (null).
- */
 export function localMemory(store: Store, cells: CellsStore): MemoryResolver {
   const pick = (session: Session): MemoryAccess | null => {
     if (session.memoryScope === "owner") return session.owner ? localOwnerMemory(cells, session.owner) : null
@@ -73,7 +53,6 @@ export function localMemory(store: Store, cells: CellsStore): MemoryResolver {
   }
   return (session) => {
     if (!pick(session)) return null
-    // Decided again on every call: the owner's memory can take over a shared one while a turn runs (adoptOwnerMemory).
     const now = () => pick(store.getSession(session.id) ?? session) ?? sessionMemory(store, session.id)
     return {
       list: () => now().list(),

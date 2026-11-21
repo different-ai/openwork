@@ -1,31 +1,3 @@
-/**
- * TrueFoundry gateway providers: one admin key, a personal access token for each person.
- *
- * An admin pastes a TrueFoundry virtual account token with the tenant admin
- * role. OpenWork reads the tenant's chat models with it, then, for every person
- * an admin allows (grants of the empty "Gets a TrueFoundry key" group):
- *
- *   1. finds their TrueFoundry user by their OpenWork email; when missing and
- *      "Create missing users in TrueFoundry" is on, adds them first;
- *   2. creates one personal access token owned by that user, and stores it as
- *      the person's own credential (never shown to anyone);
- *   3. lists the models that token can reach and grants the shared group with
- *      exactly that model set.
- *
- * Requests then reach TrueFoundry as that person, so TrueFoundry's teams,
- * budgets, rate limits and logs apply; OpenWork records tokens but not cost.
- * Someone with a token but no models (a new TrueFoundry user, until a TrueFoundry
- * admin gives them access) keeps the token, and the next sync picks up their models.
- *
- * TrueFoundry admins cannot delete another user's tokens, but a token can
- * delete itself. A person who loses access keeps a revoked credential row
- * (secret retained, never served) only until the next reconcile deletes the
- * token with itself.
- *
- * Network calls happen before any transaction; apply steps take the provider
- * lock and recheck eligibility. Tokens created for a plan that cannot be
- * applied are deleted again.
- */
 import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, GatewayCredentialSetTable, GatewayModelGroupModelTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderTable, GatewayTrueFoundryUserTable, MemberTable, TeamMemberTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, isDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -48,7 +20,6 @@ export type TrueFoundryUserStatus = "active" | "not_in_truefoundry" | "user_inac
 export const TRUEFOUNDRY_ACCESS_GROUP_NAME = "Gets a TrueFoundry key"
 const CONCURRENCY = 4
 const RETRY_AFTER_MS = 5 * 60_000
-/** Tokens younger than this are never cleaned up: another run may have just created one and not stored it yet. */
 const CLEANUP_MIN_AGE_MS = 10 * 60_000
 
 export function requireTrueFoundrySettings(provider: Pick<GatewayProvider, "provider_id" | "settings">): TrueFoundrySettings {
@@ -111,32 +82,26 @@ function groupName(modelIds: string[]) {
   return modelIds.length === 1 ? `TrueFoundry · ${modelIds[0]}`.slice(0, 255) : `TrueFoundry · ${modelIds.length} models`
 }
 
-/** The tenant's chat models, read with the admin key. Proves the key can manage users first. */
 export async function planTrueFoundryCatalog(client: Pick<TrueFoundryClient, "requireAdmin" | "listModels">, adminKey: string, loadCatalog: () => Promise<readonly ModelsDevProvider[]> = getModelsDevCatalogProviders, previous: readonly TrueFoundryModel[] = []): Promise<TrueFoundryModel[]> {
   await client.requireAdmin(adminKey)
   const ids = await client.listModels(adminKey)
   if (!ids.length) throw new TrueFoundryError("no_models", "TrueFoundry lists no chat models for this key. Give the virtual account access to your models in TrueFoundry, then try again.")
-  // Names, capabilities and limits come from models.dev; without it, models keep their ids.
   const catalog = await loadCatalog().catch((): readonly ModelsDevProvider[] => [])
   const models = trueFoundryCatalogModels(ids.slice(0, 500), catalog)
   if (catalog.length) return models
-  // models.dev unreachable: keep what the last sync learned instead of dropping names and limits.
   return models.map((model) => previous.find((entry) => entry.id === model.id) ?? model)
 }
 
 export type TrueFoundryCatalogPlan = { setId: GatewaySet["id"]; adminCredential: { id: Credential["id"]; secret: string }; catalog: TrueFoundryModel[] }
 
-/** Network half of a catalog sync. Holds no locks; applyTrueFoundryCatalog rechecks its inputs. */
 export async function planTrueFoundrySync(provider: GatewayProvider, client: TrueFoundryClient = createTrueFoundryClient(trueFoundryEndpoints(provider))): Promise<TrueFoundryCatalogPlan> {
   const settings = requireTrueFoundrySettings(provider)
-  // Primary: syncs run right after the provider or its key was written.
   const set = await activeSet(db.$primary, provider, settings)
   const { credential, key } = await adminKeyRow(db.$primary, set)
   const catalog = await planTrueFoundryCatalog(client, key, getModelsDevCatalogProviders, trueFoundryUpstreamModels(settings))
   return { setId: set.id, adminCredential: { id: credential.id, secret: credential.secret }, catalog }
 }
 
-/** Database half of a catalog sync. Caller holds the provider lock (providerTransaction). */
 export async function applyTrueFoundryCatalog(tx: GatewayTx, lockedProvider: GatewayProvider, plan: TrueFoundryCatalogPlan) {
   const provider = await loadProviderForUpdate(tx, lockedProvider)
   const settings = requireTrueFoundrySettings(provider)
@@ -145,19 +110,15 @@ export async function applyTrueFoundryCatalog(tx: GatewayTx, lockedProvider: Gat
   const { credential } = await adminKeyRow(tx, set)
   if (credential.id !== plan.adminCredential.id || credential.secret !== plan.adminCredential.secret) throw new GatewayWriteError(409, "truefoundry_key_changed", "The TrueFoundry key changed during sync. Sync again.")
   settings.upstream = plan.catalog
-  // Prices reach people (and the AI Gateway's pricing and limits) only while usage costs are tracked.
   settings.catalog = selectTrueFoundryModels(plan.catalog, settings.selectedModelIds).map((model) => servedTrueFoundryModel(model, settings.trackUsageCosts))
   await writeGatewayModels(tx, provider, settings.catalog)
   await ensureGroup(tx, provider, settings, SIGN_IN_GROUP_KEY, TRUEFOUNDRY_ACCESS_GROUP_NAME, "Grant this group to the people and teams OpenWork should create TrueFoundry keys for. It holds no models; each person's TrueFoundry access decides their models.", [])
-  // Models that left the catalog drop out of every group with their rows; each
-  // person's next reconcile moves them to the group matching their new set.
   settings.lastSyncedAt = new Date().toISOString()
   settings.lastSyncError = null
   await saveSettings(tx, provider, settings)
   Object.assign(lockedProvider, provider)
 }
 
-/** Records a failed sync without touching the last good catalog. */
 export async function recordTrueFoundrySyncError(providerId: GatewayProvider["id"], message: string) {
   await db.transaction(async (tx) => {
     const [provider] = await tx.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.id, providerId)).for("update")
@@ -173,11 +134,6 @@ export type TrueFoundryCreateInput = {
   creatorId: GatewayMemberId
 }
 
-/**
- * Inserts a TrueFoundry provider, its member credential set, the admin key and
- * the first catalog. The caller verified the key with planTrueFoundryCatalog and
- * holds the member lock.
- */
 export async function createTrueFoundryProvider(tx: GatewayTx, provider: GatewayProvider, input: TrueFoundryCreateInput, catalog: TrueFoundryModel[]) {
   const settings = requireTrueFoundrySettings(provider)
   await tx.insert(GatewayProviderTable).values(provider)
@@ -196,10 +152,6 @@ export async function createTrueFoundryProvider(tx: GatewayTx, provider: Gateway
   return { setId: set.id }
 }
 
-/**
- * Checks a model pick against the models TrueFoundry listed at the last sync.
- * null means every model. Returns the pick without duplicates.
- */
 export function checkTrueFoundryModelPick(settings: TrueFoundrySettings, modelIds: readonly string[] | null): string[] | null {
   if (modelIds === null) return null
   const picked = [...new Set(modelIds)]
@@ -210,7 +162,6 @@ export function checkTrueFoundryModelPick(settings: TrueFoundrySettings, modelId
   return picked
 }
 
-/** Replaces the admin key, the missing-users setting, usage cost tracking and/or the model pick. Verify a new key first. Caller holds the provider lock. */
 export async function updateTrueFoundryProvider(tx: GatewayTx, lockedProvider: GatewayProvider, input: { adminKey?: string; createMissingUsers?: boolean; trackUsageCosts?: boolean; modelIds?: string[] | null }) {
   const provider = await loadProviderForUpdate(tx, lockedProvider)
   const settings = requireTrueFoundrySettings(provider)
@@ -221,15 +172,11 @@ export async function updateTrueFoundryProvider(tx: GatewayTx, lockedProvider: G
   }
   const next = { ...settings }
   if (input.createMissingUsers !== undefined) next.createMissingUsers = input.createMissingUsers
-  // The served catalog (models and prices) follows at the sync the caller runs next.
   if (input.trackUsageCosts !== undefined) next.trackUsageCosts = input.trackUsageCosts
   if (input.modelIds !== undefined) next.selectedModelIds = checkTrueFoundryModelPick(settings, input.modelIds)
   if (input.createMissingUsers !== undefined || input.trackUsageCosts !== undefined || input.modelIds !== undefined) await saveSettings(tx, provider, next)
   Object.assign(lockedProvider, provider)
 }
-
-// ---------------------------------------------------------------------------
-// People
 
 type IssueContext = {
   provider: GatewayProvider
@@ -244,16 +191,12 @@ export type TrueFoundryMemberPlan = {
   outcome: Exclude<TrueFoundryUserStatus, "revoked">
   message: string | null
   userId: string | null
-  /** When OpenWork added the TrueFoundry user in this plan or earlier. */
   userCreatedAt: Date | null
-  /** The token to store, or null to keep none. */
   token: { value: string; id: string | null; name: string; created: boolean } | null
   models: string[]
-  /** TrueFoundry failed for a reason that says nothing about the stored token: leave the person as they are. */
   keep?: true
 }
 
-/** A token OpenWork created and must delete in TrueFoundry; the id is looked up by name when unknown. */
 type OwnedToken = { value: string; id: string | null; name: string | null }
 
 async function memberRow(providerId: GatewayProvider["id"], memberId: GatewayMemberId, database: typeof db | typeof db.$primary = db) {
@@ -266,13 +209,11 @@ async function memberRow(providerId: GatewayProvider["id"], memberId: GatewayMem
 
 async function issueContext(provider: GatewayProvider, client?: TrueFoundryClient): Promise<IssueContext> {
   const settings = requireTrueFoundrySettings(provider)
-  // Primary: provisioning runs right after the provider, its key or its grants were written.
   const set = await activeSet(db.$primary, provider, settings)
   const { key } = await adminKeyRow(db.$primary, set)
   return { provider, settings, client: client ?? createTrueFoundryClient(trueFoundryEndpoints(provider)), adminKey: key, catalogIds: settings.catalog.map((model) => model.id) }
 }
 
-/** Deletes a token with itself; best effort, never throws. */
 async function deleteToken(client: TrueFoundryClient, token: OwnedToken) {
   try {
     const id = token.id ?? (token.name ? await client.ownTokenId(token.value, token.name) : null)
@@ -283,7 +224,6 @@ async function deleteToken(client: TrueFoundryClient, token: OwnedToken) {
   }
 }
 
-/** Network half for one person: find (or add) them, reuse or create their token, read its models. */
 export async function planTrueFoundryMember(ctx: IssueContext, member: { memberId: GatewayMemberId; email: string | null }): Promise<TrueFoundryMemberPlan> {
   const existing = await memberRow(ctx.provider.id, member.memberId)
   const previousCreatedAt = existing?.row.truefoundry_user_created ?? null
@@ -291,7 +231,6 @@ export async function planTrueFoundryMember(ctx: IssueContext, member: { memberI
   const reachable = (models: string[]) => models.filter((id) => ctx.catalogIds.includes(id))
   let created: { value: string; id: string | null; name: string } | null = null
   try {
-    // A stored token that still works is kept: TrueFoundry limits how many each person may hold.
     const stored = existing && existing.row.status !== "revoked" && existing.credentialStatus === "active" && existing.credentialKind === "api_key" && existing.secret && existing.row.token_name
       ? { value: existing.secret, id: existing.row.token_id, name: existing.row.token_name } : null
     if (stored) {
@@ -301,9 +240,6 @@ export async function planTrueFoundryMember(ctx: IssueContext, member: { memberI
           ? { ...base, outcome: "active", message: null, token: { ...stored, created: false }, models }
           : { ...base, outcome: "no_models", message: "This person's TrueFoundry access reaches none of the synced models. Give them access in TrueFoundry, then sync.", token: { ...stored, created: false }, models: [] }
       } catch (error) {
-        // Expired or deleted in TrueFoundry: create a fresh token below. Anything else (TrueFoundry
-        // unreachable, a 5xx) says nothing about the token: dropping it would lose the only handle
-        // OpenWork has to delete it, and use up one of the person's few token slots for good.
         if (!(error instanceof TrueFoundryError && error.code === "unauthorized")) {
           return { ...base, outcome: "error", message: error instanceof TrueFoundryError ? error.message : "OpenWork could not check this person's TrueFoundry key.", token: { ...stored, created: false }, models: [], keep: true }
         }
@@ -337,7 +273,6 @@ export async function planTrueFoundryMember(ctx: IssueContext, member: { memberI
         ? "OpenWork added this person to TrueFoundry. Only TrueFoundry's default models are available until you give them access in TrueFoundry, and none are synced yet."
         : "This person's TrueFoundry access reaches none of the synced models. Give them access in TrueFoundry, then sync.", token, models: [] }
   } catch (error) {
-    // Never leave a token behind for a plan that will not be applied.
     if (created) await deleteToken(ctx.client, created)
     if (error instanceof TrueFoundryError && error.code === "token_limit") return { ...base, outcome: "token_limit", message: error.message, token: null, models: [] }
     if (error instanceof TrueFoundryError && error.code === "user_not_found") return { ...base, outcome: "not_in_truefoundry", message: error.message, token: null, models: [] }
@@ -353,7 +288,6 @@ async function upsertRow(tx: GatewayTx, values: typeof GatewayTrueFoundryUserTab
   else await tx.insert(GatewayTrueFoundryUserTable).values(values)
 }
 
-/** Drops a row's automatic grant and stops serving its token. Keeps the secret until the token deletes itself. */
 async function revokeRow(tx: GatewayTx, row: UserRow) {
   if (row.credential_id) await tx.update(GatewayProviderCredentialTable).set({ status: "revoked", last_error: "truefoundry_access_removed", updated_at: new Date() }).where(eq(GatewayProviderCredentialTable.id, row.credential_id))
   if (row.access_grant_id) await tx.delete(GatewayProviderAccessTable).where(eq(GatewayProviderAccessTable.id, row.access_grant_id))
@@ -361,11 +295,6 @@ async function revokeRow(tx: GatewayTx, row: UserRow) {
     .where(and(eq(GatewayTrueFoundryUserTable.gateway_provider_id, row.gateway_provider_id), eq(GatewayTrueFoundryUserTable.org_membership_id, row.org_membership_id)))
 }
 
-/**
- * Database half for one person. Returns the tokens to delete in TrueFoundry once
- * this commits: one created for the plan that can't be applied, and the token
- * the plan replaces or drops, which OpenWork would otherwise lose track of.
- */
 export async function applyTrueFoundryMember(tx: GatewayTx, lockedProvider: GatewayProvider, plan: TrueFoundryMemberPlan): Promise<OwnedToken[]> {
   const provider = await loadProviderForUpdate(tx, lockedProvider)
   const settings = readTrueFoundrySettings(provider.settings)
@@ -384,13 +313,11 @@ export async function applyTrueFoundryMember(tx: GatewayTx, lockedProvider: Gate
       .where(and(eq(GatewayTrueFoundryUserTable.gateway_provider_id, provider.id), eq(GatewayTrueFoundryUserTable.org_membership_id, plan.memberId)))
     return []
   }
-  // The token stored now, kept until it is deleted in TrueFoundry, whether revoked or not.
   const [stored] = current?.credential_id ? await tx.select().from(GatewayProviderCredentialTable).where(eq(GatewayProviderCredentialTable.id, current.credential_id)) : []
   const storedValue = current ? apiKeyOf(stored, true) : null
   const superseded = current && storedValue && storedValue !== plan.token?.value ? [{ value: storedValue, id: current.token_id, name: current.token_name }] : []
   const row = { gateway_provider_id: provider.id, org_membership_id: plan.memberId, status: plan.outcome, message: plan.message, truefoundry_user_id: plan.userId, truefoundry_user_created: plan.userCreatedAt, checked_at: now }
   if (!plan.token) {
-    // Nothing usable: stop serving any earlier token. A stored token TrueFoundry rejected is already gone there.
     if (current) {
       if (current.credential_id) await tx.update(GatewayProviderCredentialTable).set({ status: "revoked", secret: "{}", last_error: "truefoundry_token_unavailable", updated_at: now }).where(eq(GatewayProviderCredentialTable.id, current.credential_id))
       if (current.access_grant_id) await tx.delete(GatewayProviderAccessTable).where(eq(GatewayProviderAccessTable.id, current.access_grant_id))
@@ -408,7 +335,6 @@ export async function applyTrueFoundryMember(tx: GatewayTx, lockedProvider: Gate
     const [grant] = await tx.select().from(GatewayProviderAccessTable).where(and(eq(GatewayProviderAccessTable.gateway_provider_id, provider.id), eq(GatewayProviderAccessTable.model_group_id, groupId),
       eq(GatewayProviderAccessTable.credential_set_id, set.id), eq(GatewayProviderAccessTable.audience_key, gatewayAudienceKey(audience))))
     if (ownGrant && ownGrant !== grant?.id) await tx.delete(GatewayProviderAccessTable).where(eq(GatewayProviderAccessTable.id, ownGrant))
-    // Reuse, never own, an identical grant an admin made by hand.
     grantId = grant ? (grant.id === ownGrant ? grant.id : null) : await writeGatewayGrant(tx, provider, { modelGroupId: groupId, credentialSetId: set.id, audience })
   } else if (ownGrant) {
     await tx.delete(GatewayProviderAccessTable).where(eq(GatewayProviderAccessTable.id, ownGrant))
@@ -416,16 +342,12 @@ export async function applyTrueFoundryMember(tx: GatewayTx, lockedProvider: Gate
   await upsertRow(tx, { ...row, token_id: plan.token.id, token_name: plan.token.name, credential_id: credential.id, model_group_id: groupId, access_grant_id: grantId })
   await saveSettings(tx, provider, settings)
   Object.assign(lockedProvider, provider)
-  // Another run for this person (first use in the app, a second server) may have stored a token
-  // in the meantime: this plan replaces it, so it is deleted rather than left holding a slot.
   return superseded
 }
 
-/** Active members allowed to get tokens: admin grants on the access group, excluding automatic grants. */
 export async function trueFoundryEligibleMembers(provider: GatewayProvider, settings: TrueFoundrySettings) {
   const groupId = settings.groups[SIGN_IN_GROUP_KEY]
   if (!groupId || !isDenTypeId("gatewayModelGroup", groupId)) return []
-  // Primary: reconciling runs right after the grants were written.
   const grants = await db.$primary.select().from(GatewayProviderAccessTable).innerJoin(GatewayModelGroupTable, and(eq(GatewayModelGroupTable.id, GatewayProviderAccessTable.model_group_id), eq(GatewayModelGroupTable.status, "active")))
     .where(and(eq(GatewayProviderAccessTable.gateway_provider_id, provider.id), eq(GatewayProviderAccessTable.model_group_id, groupId), eq(GatewayProviderAccessTable.credential_set_id, normalizeDenTypeId("gatewayCredentialSet", settings.credentialSetId))))
   const audience = grants.map((row) => row.gateway_provider_access)
@@ -442,12 +364,6 @@ export async function trueFoundryEligibleMembers(provider: GatewayProvider, sett
     .where(and(eq(MemberTable.organizationId, provider.organization_id), isNull(MemberTable.removedAt), everyone ? undefined : inArray(MemberTable.id, [...memberIds])))
 }
 
-/**
- * With the person's stored token, deletes their other OpenWork tokens for this provider that are
- * older than a few minutes: ones an earlier OpenWork lost track of, which would otherwise hold
- * their few token slots until they expire. Their own tokens are never touched. Best effort: if
- * TrueFoundry doesn't let a token delete its siblings, this does nothing.
- */
 async function cleanUpOldTokens(ctx: IssueContext, token: { value: string; name: string }) {
   try {
     const tag = trueFoundryProviderTag(ctx.provider.id)
@@ -476,9 +392,7 @@ async function applyPlan(provider: GatewayProvider, ctx: IssueContext, plan: Tru
   if (plan.token && !plan.keep && (plan.outcome === "active" || plan.outcome === "no_models")) await cleanUpOldTokens(ctx, plan.token)
 }
 
-/** Deletes the tokens of people who lost access or left, then forgets them. */
 async function removeStaleMembers(ctx: IssueContext, eligibleIds: Set<string>) {
-  // Primary: sees the rows applyPlan wrote moments ago.
   const rows = await db.$primary.select({ row: GatewayTrueFoundryUserTable, secret: GatewayProviderCredentialTable.secret, kind: GatewayProviderCredentialTable.kind, status: GatewayProviderCredentialTable.status })
     .from(GatewayTrueFoundryUserTable).leftJoin(GatewayProviderCredentialTable, eq(GatewayProviderCredentialTable.id, GatewayTrueFoundryUserTable.credential_id))
     .where(eq(GatewayTrueFoundryUserTable.gateway_provider_id, ctx.provider.id))
@@ -491,7 +405,6 @@ async function removeStaleMembers(ctx: IssueContext, eligibleIds: Set<string>) {
       const [current] = await tx.select().from(GatewayTrueFoundryUserTable)
         .where(and(eq(GatewayTrueFoundryUserTable.gateway_provider_id, ctx.provider.id), eq(GatewayTrueFoundryUserTable.org_membership_id, entry.row.org_membership_id))).for("update")
       if (!current) return
-      // Allowed again while the token was being deleted: the next reconcile creates a fresh one.
       if (current.credential_id) await tx.update(GatewayProviderCredentialTable).set({ status: "revoked", secret: "{}", last_error: "truefoundry_access_removed", updated_at: new Date() }).where(eq(GatewayProviderCredentialTable.id, current.credential_id))
       if (current.access_grant_id) await tx.delete(GatewayProviderAccessTable).where(eq(GatewayProviderAccessTable.id, current.access_grant_id))
       await tx.delete(GatewayTrueFoundryUserTable).where(and(eq(GatewayTrueFoundryUserTable.gateway_provider_id, ctx.provider.id), eq(GatewayTrueFoundryUserTable.org_membership_id, entry.row.org_membership_id)))
@@ -501,7 +414,6 @@ async function removeStaleMembers(ctx: IssueContext, eligibleIds: Set<string>) {
   return removed
 }
 
-/** Groups no person points at any more, except the access group. Caller holds the provider lock. */
 async function deleteUnusedGroups(tx: GatewayTx, lockedProvider: GatewayProvider) {
   const provider = await loadProviderForUpdate(tx, lockedProvider)
   const settings = requireTrueFoundrySettings(provider)
@@ -520,11 +432,6 @@ async function deleteUnusedGroups(tx: GatewayTx, lockedProvider: GatewayProvider
   Object.assign(lockedProvider, provider)
 }
 
-/**
- * Creates, refreshes and removes tokens for everyone. Run after a catalog sync.
- * People who lost access or left the organization have their tokens deleted
- * in TrueFoundry too. TrueFoundry users OpenWork added are never removed.
- */
 export async function reconcileTrueFoundryMembers(provider: GatewayProvider, client?: TrueFoundryClient): Promise<GatewayTrueFoundrySyncResult> {
   const ctx = await issueContext(provider, client)
   const result: GatewayTrueFoundrySyncResult = { modelCount: ctx.settings.catalog.length, people: 0, tokensCreated: 0, usersCreated: 0, notInTrueFoundry: 0, noModels: 0, tokenLimit: 0, errors: 0, removed: 0 }
@@ -551,7 +458,6 @@ export async function reconcileTrueFoundryMembers(provider: GatewayProvider, cli
 
 const recentAttempts = new Map<string, number>()
 
-/** One person, now: the browser "Check again" button and first use in the app. */
 export async function provisionTrueFoundryMember(provider: GatewayProvider, memberId: GatewayMemberId, options: { force?: boolean } = {}) {
   const attemptKey = `${provider.id}:${memberId}`
   const last = recentAttempts.get(attemptKey) ?? 0
@@ -568,10 +474,6 @@ export async function provisionTrueFoundryMember(provider: GatewayProvider, memb
   return plan
 }
 
-/**
- * Starts provisioning in the background for an allowed person with no token
- * yet, at most once every few minutes, so the app picks up models on its next refresh.
- */
 export function scheduleTrueFoundryProvisioning(provider: GatewayProvider, memberId: GatewayMemberId) {
   if (!isTrueFoundryProviderId(provider.provider_id) || !readTrueFoundrySettings(provider.settings)) return
   const last = recentAttempts.get(`${provider.id}:${memberId}`) ?? 0
@@ -585,12 +487,6 @@ export function scheduleTrueFoundryProvisioning(provider: GatewayProvider, membe
   })
 }
 
-/**
- * "Reset tokens" for a person at TrueFoundry's token limit: revokes every personal access token
- * they hold in TrueFoundry (the only way an admin can free one, since TrueFoundry can't list or
- * delete just OpenWork's), then creates a new one. Their stored token now fails with 401, so the
- * new plan replaces it. Only for people at the limit; the admin confirms first in Den.
- */
 export async function resetTrueFoundryMemberTokens(provider: GatewayProvider, memberId: GatewayMemberId) {
   const row = await memberRow(provider.id, memberId, db.$primary)
   if (row?.row.status !== "token_limit") throw new GatewayWriteError(409, "truefoundry_not_at_token_limit", "This person isn't at TrueFoundry's token limit. Sync to refresh their status.")
@@ -603,15 +499,12 @@ export async function resetTrueFoundryMemberTokens(provider: GatewayProvider, me
   return trueFoundryMemberStatus(provider.id, memberId)
 }
 
-/** A person's state for the connect page. */
 export async function trueFoundryMemberStatus(providerId: GatewayProvider["id"], memberId: GatewayMemberId) {
-  // Primary: read right after provisioning wrote this person's token.
   const row = await memberRow(providerId, memberId, db.$primary)
   const ready = row?.row.status === "active" && row.credentialStatus === "active"
   return { status: row?.row.status ?? "pending", message: row?.row.message ?? null, ready }
 }
 
-/** Local revocation after access changes; the next reconcile deletes the tokens. Caller holds the provider lock. */
 export async function pruneTrueFoundryMembers(tx: GatewayTx, lockedProvider: GatewayProvider) {
   if (!isTrueFoundryProviderId(lockedProvider.provider_id)) return
   const provider = await loadProviderForUpdate(tx, lockedProvider)
@@ -625,7 +518,6 @@ export async function pruneTrueFoundryMembers(tx: GatewayTx, lockedProvider: Gat
   }
 }
 
-/** Best effort, before a provider is removed: every token OpenWork created deletes itself in TrueFoundry. */
 export async function deleteTrueFoundryTokens(provider: GatewayProvider) {
   if (!isTrueFoundryProviderId(provider.provider_id) || !readTrueFoundrySettings(provider.settings)) return
   const rows = await db.select({ tokenId: GatewayTrueFoundryUserTable.token_id, tokenName: GatewayTrueFoundryUserTable.token_name, secret: GatewayProviderCredentialTable.secret, kind: GatewayProviderCredentialTable.kind, status: GatewayProviderCredentialTable.status })

@@ -299,7 +299,6 @@ const HARNESSES: Guide[] = [
   { name: "Any other tool", detail: "OpenAI or Anthropic compatible", href: "/docs/ai-gateway/third-party-tools", mark: <Route className="h-5 w-5 text-[var(--lp-ink)]" strokeWidth={1.5} aria-hidden="true" /> }
 ];
 
-/** A ruled list of setup guides: mark, name and one line, linking to the guide. */
 function GuideList({ label, items, twoColumns = false }: { label: string; items: Guide[]; twoColumns?: boolean }) {
   return (
     <div>

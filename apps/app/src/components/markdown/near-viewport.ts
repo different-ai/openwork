@@ -1,4 +1,3 @@
-/** Keep readable markup in the document; only defer its optional enhancements. */
 export function enhanceNearViewport(elements: HTMLElement[], enhance: (element: HTMLElement) => void) {
   const pending = new Set(elements);
   if (!pending.size) return () => {};

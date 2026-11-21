@@ -4,7 +4,6 @@ import { useExampleStep } from "../use-example-step";
 import { ExampleAvatar, ExampleGroupLabel, ExampleRow, ExampleRows, ExampleServiceMark } from "../example-parts";
 import { accessExampleService, accessExampleSignIn, accessExampleToolCount, accessExampleTools, accessExampleWho } from "./access-example-data";
 
-/** Connector page example: who has it, how they sign in, and what their AI can do with it. */
 export function ConnectorAccessExample() {
   const step = useExampleStep(accessExampleWho.length);
 

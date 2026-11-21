@@ -12,7 +12,6 @@ type FeatureReader = {
   readMemberFeatures: (organizationId: string, userId: string) => Promise<FeatureMap>
 }
 
-/** No cache: a kill or member override must also stop a request already preparing. */
 export function createLiteLlmEntraFeatureCheck(reader: FeatureReader): CheckLiteLlmEntraFeature {
   return async (scope) => {
     try {

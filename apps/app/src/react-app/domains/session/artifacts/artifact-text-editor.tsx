@@ -72,8 +72,6 @@ export function ArtifactTextEditor(props: ArtifactTextEditorProps) {
           props.language === "markdown" ? [] : lineNumbers(),
           history(),
           keymap.of([...defaultKeymap, ...historyKeymap]),
-          // GFM base so tables, strikethrough and task lists parse; the
-          // CommonMark default never produces Table nodes to render.
           props.language === "markdown" ? [markdown({ base: markdownLanguage }), markdownLivePreview()] : [],
           EditorView.lineWrapping,
           EditorView.updateListener.of((update) => {
@@ -103,7 +101,6 @@ export function ArtifactTextEditor(props: ArtifactTextEditorProps) {
 
     viewRef.current = view;
 
-    // Dev-only handle so e2e flows can drive the editor selection.
     if (import.meta.env.DEV) {
       (window as unknown as { __artifactEditorView?: EditorView }).__artifactEditorView = view;
     }

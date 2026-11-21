@@ -34,7 +34,6 @@ import {
 
 export type ComputerDetail = z.infer<typeof organizationComputerDetailResponseSchema>;
 type Detail = ComputerDetail;
-/** Events shown before "Show all": enough for the last incident without a hundred rows. */
 const EVENTS_SHOWN = 20;
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -44,7 +43,6 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
   </section>;
 }
 
-/** `flush` drops the top hairline where the rows follow the line that already closes the computer's row. */
 function Rows({ children, flush = false }: { children: ReactNode; flush?: boolean }) {
   return <dl className={flush ? undefined : `border-t ${hairline}`}>{children}</dl>;
 }
@@ -130,11 +128,6 @@ function DetailSkeleton() {
   </div>;
 }
 
-/**
- * One computer's supported inventory, without credentials or impersonation.
- * `standalone` adds what its row in the list would have shown. The owner,
- * last contact and full app version are always here: a narrow list drops those lanes.
- */
 export function ComputerDetailView({ detail, now, standalone = false }: { detail: Detail; now: number; standalone?: boolean }) {
   const device = detail.device;
   const status = computerStatus(device);
@@ -150,7 +143,6 @@ export function ComputerDetailView({ detail, now, standalone = false }: { detail
         </Row>
       </> : null}
       <Row label="Owner"><span title={ownerEmail(device)}>{ownerLabel(device)}</span></Row>
-      {/* Said about a member's computer, to whoever may see the team's: what applies there and why, never a way to change it. */}
       {device.remoteAccess ? <Row label={REMOTE_ACCESS_LABEL}>
         <span className="flex min-w-0 flex-col items-end" data-testid={`computer-remote-access-${device.id}`} data-remote-access={device.remoteAccess.effective}>
           <span>{remoteAccessValue(device.remoteAccess)}</span>
@@ -202,11 +194,6 @@ export function ComputerDetailView({ detail, now, standalone = false }: { detail
   </>;
 }
 
-/**
- * Everything Den knows that explains one computer's state. Inside the list it sits under the computer's
- * row; `onClose` is given when the computer is not on the page shown, so it stands on its own. `actions`
- * is what the viewer may do to it, at the top right: given the loaded computer, since a standalone one has no row.
- */
 export function ComputerDetail({ orgId, deviceId, onClose, actions }: {
   orgId: string;
   deviceId: string;

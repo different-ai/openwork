@@ -41,7 +41,6 @@ export function guestCommandOutcome(statusCode: number | null | undefined, timeo
 
 export async function execChecked(vm: Pick<Vm, "exec">, command: string, timeoutMs = 120_000): Promise<string> {
   const result = await vm.exec({ command, timeoutMs, linuxUser: "root" });
-  // Keep this prefix: the review app logs only messages that start with it.
   if (result.statusCode !== 0) throw new Error(`Freestyle guest command failed (${guestCommandOutcome(result.statusCode, timeoutMs)}).`);
   return result.stdout ?? "";
 }
@@ -84,7 +83,7 @@ export async function waitForPublicAccess(url: string, probe: typeof fetch = fet
         const html = status === 200 ? await page.text() : "";
         if (status !== 200) await page.body?.cancel();
         if (status === 200 && html.includes(world === "desktop" ? "noVNC" : "OpenWork")) return;
-        if (status === 200) status = 502; // A proxy warmup page is not the app.
+        if (status === 200) status = 502;
       }
       if (![404, 408, 425, 429].includes(status) && status < 500) break;
     } catch (error) {
@@ -120,12 +119,10 @@ export async function waitForServiceRoutes(
       }
       await pause(Math.min(1_000, 250 * (attempt + 1)));
     }
-    // Keep this prefix: the review app logs only messages that start with it.
     throw new Error(`Public sandbox readiness failed (HTTP ${status || "unreachable"}) for ${service}.`);
   }));
 }
 
-/** Transitional job facade: existing preview bootstrap stays intact while Workbot's host uses shared blocks. */
 type PreviewGuest = Pick<Vm, "exec" | "delete"> & { fs: Pick<Vm["fs"], "readTextFile" | "writeTextFile"> };
 
 async function createWorkbotPreviewGuest(input: {
@@ -141,7 +138,7 @@ async function createWorkbotPreviewGuest(input: {
       tls: { rules: input.domains.map(domain => ({ action: "allow", domain, source: { public: true }, destination: { port: 8080 } })) },
     },
   }, { client: input.api });
-  const createdAt = new Date().toISOString(); // conservative: access expires no later than the host TTL
+  const createdAt = new Date().toISOString();
   const box = await provider.create({
     idempotencyKey: input.slug, image: provider.currentImage(),
     labels: { kind: PREVIEW_KIND, world: "workbot", gitSha: input.gitSha, ...(input.reportId ? { reportId: input.reportId } : {}) },
@@ -180,7 +177,6 @@ export async function launchPreview(
   if (!Number.isInteger(minutes) || minutes < 10 || minutes > 1430) throw new Error("Preview lifetime must be 10–1430 minutes.");
   const launchId = randomUUID().replaceAll("-", "");
   const domain = `${world === "desktop" ? "desktop" : world === "workbot" ? "den" : "ow"}-${launchId}.preview.openwork.software`;
-  // Workbot is one app on its own host that signs people in through Den's; Den's API answers on Den's host.
   const workbotOrigin = `https://workbot-${launchId}.preview.openwork.software`;
   const origins = world === "workbot" ? { den: `https://${domain}`, workbot: workbotOrigin } : world === "acme-web" ? {
     app: `https://${domain}`, den: `https://den-${launchId}.preview.openwork.software`, api: `https://api-${launchId}.preview.openwork.software`,
@@ -197,7 +193,6 @@ export async function launchPreview(
     ttlSeconds: minutes * 60, idleTimeoutSeconds: 600,
     metadata: { kind: PREVIEW_KIND, gitSha: input.gitSha, ...(input.reportId ? { reportId: input.reportId } : {}) },
     firewall: { rules: [{ action: "allow", source: {}, destination: { public: true } }] },
-    // Inline rules share the VM lifecycle and disappear with its provider TTL.
     tls: { rules: domains.map((domain) => ({ action: "allow", domain, source: { public: true }, destination: { port: 8080 } })) },
   });
   let stage = "assign-access";
@@ -206,22 +201,15 @@ export async function launchPreview(
     await vm.fs.writeTextFile(ACCESS_FILE, JSON.stringify({ token, expiresAt, origins, ...(world === "acme-web" || world === "workbot" ? { templateOrigins } : {}) }), { mode: 0o600 });
     let outputs: PreviewOutputs = {};
     if (world === "acme-web") {
-      // Den's demo session lasts 7 days; snapshots last at most 7 days and
-      // sandboxes at most 23h50m. A snapshot younger than 5 days has enough
-      // session lifetime left for every allowed sandbox, even after warmup.
-      // CI already checks the complete running world before taking the snapshot.
       const age = Date.now() - Date.parse(snapshot.createdAt);
       if (!Number.isFinite(age) || age < 0 || age >= 5 * 24 * 60 * 60_000) {
         stage = "resume-services";
-        // Older v4 snapshots may contain the previous renewal script, which
-        // only rotated already-expired sessions. Refresh it before reuse.
         await vm.fs.writeTextFile("/opt/openwork-preview/resume.mjs", await readFile(new URL("./resume.mjs", import.meta.url), "utf8"), { mode: 0o600 });
         await execChecked(vm, "node /opt/openwork-preview/resume.mjs", 60_000);
       }
       stage = "read-outputs";
       outputs = parsePreviewOutputs(JSON.parse(await vm.fs.readTextFile("/opt/openwork-preview/outputs.json")));
       const serviceKeys: Record<string, string> = { app: "webUrl", den: "denWeb", api: "denApi", engine: "openworkUrl", gateway: "gatewayUrl" };
-      // Link the noVNC viewer only when this snapshot started the desktop display.
       if (outputs.desktopStatus && outputs.desktopStatus.value !== "unavailable") serviceKeys.desktop = "desktopUrl";
       for (const [name, key] of Object.entries(serviceKeys)) {
         const origin = Object.entries(origins ?? {}).find(([service]) => service === name)?.[1];
@@ -237,7 +225,6 @@ export async function launchPreview(
       outputs.denWeb = { value: `${origins.den}/__openwork_launch?token=${token}`, secret: true, group: "Services", note: "Ready · Den only" };
       outputs.previewCookie = { value: `__Host-openwork-preview=${token}`, secret: true, group: "Developer access", note: "Cookie header for requests to this VM's private service URLs" };
     }
-    // Workbot's one link authorizes Den first, then lands on Workbot, so signing in crosses both hosts.
     const url = `https://${domain}/__openwork_launch?token=${token}${world === "workbot" ? "&then=workbot" : ""}`;
     if (world === "desktop") {
       stage = "desktop-ready";
@@ -263,13 +250,12 @@ export async function launchPreview(
     }
     if (world === "acme-web" && origins) {
       stage = "service-routes";
-      // The app hostname was checked above; every other linked service must route too.
       const linked = Object.fromEntries(Object.entries(origins).filter(([service]) => service !== "app" && (service !== "desktop" || outputs.desktopUrl)));
       await waitForServiceRoutes(linked, token, probe);
     }
     return { id: vmId, snapshotId: snapshot.id, gitSha: input.gitSha, url, expiresAt, world, outputs };
   } catch (error) {
-    await vm.delete().catch(() => undefined); // Provider TTL still bounds failed cleanup.
+    await vm.delete().catch(() => undefined);
     throw new PreviewLaunchError(stage, vmId, error);
   }
 }

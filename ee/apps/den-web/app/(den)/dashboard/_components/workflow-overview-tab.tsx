@@ -91,7 +91,6 @@ export function WorkflowOverviewTab({
     : detail.currentVersion;
   const graphSummary = replayVersion.graph ? summarizeGraph(replayVersion.graph) : null;
   const flowInput = workflowDiagramInput(latestReplay, replayVersion.exampleInput);
-  // A workflow saved without inputs (a brief, a report) just runs; there is nothing to review.
   const takesNoInput = !hasInputForm && !detail.currentVersion.inputSchema && ["", "{}", "null"].includes(fields.input.replace(/\s/g, ""));
 
   return (

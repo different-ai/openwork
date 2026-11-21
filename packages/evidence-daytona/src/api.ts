@@ -8,7 +8,6 @@ import { retrySnapshotQuota, type SnapshotRetryOptions } from "./quota-retry.ts"
 export interface DaytonaConfig {
   apiUrl: string;
   apiKey: string;
-  /** Linux VMs (memory snapshots, forks) only exist in some regions. */
   region: string;
 }
 
@@ -34,7 +33,6 @@ export interface Sandbox {
   state: string;
   labels: Record<string, string>;
   toolboxProxyUrl?: string;
-  /** Provider-confirmed privacy, when returned by the API. */
   public?: boolean;
   errorReason?: string | null;
   createdAt?: string;
@@ -83,7 +81,6 @@ function asSnapshot(value: unknown): Snapshot {
     createdAt: text(value.createdAt), lastUsedAt: text(value.lastUsedAt) };
 }
 
-/** Provider responses can echo request data; never put them in logs beyond this short, token-free summary. */
 function errorMessage(body: unknown, status: number): string {
   const message = record(body) && typeof body.message === "string" ? body.message : `HTTP ${status}`;
   return message.replace(/[A-Za-z0-9_-]{32,}/g, "[redacted]").slice(0, 300);
@@ -117,9 +114,8 @@ export class DaytonaApi {
       }
       const raw = await response.text();
       let parsed: unknown = raw;
-      try { parsed = raw ? JSON.parse(raw) : null; } catch { /* plain text body */ }
+      try { parsed = raw ? JSON.parse(raw) : null; } catch {}
       if (response.ok) return parsed;
-      // Retry gateway hiccups only; client errors are real answers.
       if ([502, 503, 504].includes(response.status) && attempt < 3) { await delay(1_000 * attempt); continue; }
       throw new DaytonaApiError(response.status, `Daytona ${method} ${path.split("?")[0]} failed: ${errorMessage(parsed, response.status)}`);
     }
@@ -141,11 +137,9 @@ export class DaytonaApi {
     return (await this.listAll(`/sandbox?labels=${encodeURIComponent(JSON.stringify(match))}`)).map(asSandbox);
   }
 
-  /** Cleanup must never make decisions from a partial or unrecognised listing. */
   private async listAll(path: string): Promise<unknown[]> {
     const items: unknown[] = [];
     const seen = new Set<string>();
-    // Snapshots page by number; sandboxes ignore `page` and page by `nextCursor`.
     let cursor: string | undefined;
     for (let page = 1; page <= 50; page++) {
       const position = cursor === undefined ? `page=${page}` : `cursor=${encodeURIComponent(cursor)}`;
@@ -203,11 +197,8 @@ export class DaytonaApi {
     catch (error) { if (!(error instanceof DaytonaApiError && error.status === 404)) throw error; }
   }
 
-  /** Saves a sandbox as a snapshot. With memory (hot), the sandbox must be running and new sandboxes resume its processes. */
   async snapshotSandbox(id: string, name: string, includeMemory: boolean, options?: SnapshotRetryOptions): Promise<void> {
     const save = async () => { await this.call("POST", `/sandbox/${encodeURIComponent(id)}/snapshot`, { name, includeMemory }); };
-    // Checkpoints are optional: propagate their save failure without tying up a
-    // capture fork for a full cleanup interval. Required build layers can wait.
     if (name.startsWith("ow-dy-checkpoint-v1-")) await save();
     else await this.withSnapshotQuotaRetry(save, options);
   }
@@ -249,7 +240,6 @@ export class DaytonaApi {
     catch (error) { if (!(error instanceof DaytonaApiError && error.status === 404)) throw error; }
   }
 
-  /** Copies a running VM sandbox, memory included, into a new independent sandbox. */
   async forkSandbox(id: string, name: string): Promise<Sandbox> {
     return asSandbox(await this.call("POST", `/sandbox/${encodeURIComponent(id)}/fork`, { name }));
   }
@@ -258,17 +248,12 @@ export class DaytonaApi {
     await this.call("PUT", `/sandbox/${encodeURIComponent(id)}/labels`, { labels: value });
   }
 
-  /**
-   * Browser-usable preview URL: the token is in the host name, so no header is
-   * needed. It stops working after `expiresInSeconds`.
-   */
   async signedPreviewUrl(id: string, port: number, expiresInSeconds: number): Promise<string> {
     const value = await this.call("GET", `/sandbox/${encodeURIComponent(id)}/ports/${port}/signed-preview-url?expiresInSeconds=${expiresInSeconds}`);
     if (!record(value) || typeof value.url !== "string") throw new Error("Invalid Daytona signed preview URL response");
     return trimTrailingSlashes(value.url);
   }
 
-  /** Private preview URL for a port; requests must send `x-daytona-preview-token: <token>`. */
   async previewUrl(id: string, port: number): Promise<{ url: string; token: string }> {
     const value = await this.call("GET", `/sandbox/${encodeURIComponent(id)}/ports/${port}/preview-url`);
     if (!record(value) || typeof value.url !== "string" || typeof value.token !== "string") throw new Error("Invalid Daytona preview URL response");
@@ -279,7 +264,6 @@ export class DaytonaApi {
     return sandbox.toolboxProxyUrl ? `${trimTrailingSlashes(sandbox.toolboxProxyUrl)}/${sandbox.id}` : `${this.config.apiUrl}/toolbox/${sandbox.id}/toolbox`;
   }
 
-  /** Runs a short command as the sandbox user (root on our images). Long work runs as a systemd unit instead. */
   async exec(sandbox: Sandbox, command: string, timeoutSeconds = 120): Promise<{ exitCode: number; output: string }> {
     const response = await this.request(`${this.toolbox(sandbox)}/process/execute`, {
       method: "POST", headers: this.headers({ "content-type": "application/json" }),
@@ -294,7 +278,6 @@ export class DaytonaApi {
 
   async execChecked(sandbox: Sandbox, command: string, timeoutSeconds = 120): Promise<string> {
     const result = await this.exec(sandbox, command, timeoutSeconds);
-    // Keep this prefix: callers log only messages that start with it.
     if (result.exitCode !== 0) throw new Error(`Daytona guest command failed (exit ${result.exitCode}).`);
     return result.output;
   }
@@ -315,7 +298,6 @@ export class DaytonaApi {
     });
     if (response.status === 404) return null;
     if (!response.ok) {
-      // Some toolbox versions answer 400 for a missing file.
       if (response.status === 400) return null;
       throw new DaytonaApiError(response.status, `Daytona download of ${path} failed (HTTP ${response.status})`);
     }

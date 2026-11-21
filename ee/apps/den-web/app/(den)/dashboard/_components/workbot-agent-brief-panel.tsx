@@ -2,14 +2,6 @@
 
 import { DenSelect } from "../../_components/ui/select";
 
-/**
- * Manage › Workbot › Members' agents with Your agent's brief (`workbotAgentBrief`): one rhythm ("Check every 2 hours,
- * 8 AM–7 PM, weekdays"), the daily limit, the extra checks agents may ask for, and what to tell people as one text
- * the agents read. Replaces the four message types, the meeting lead time and the organization instructions, which
- * are carried into the text until an admin saves it. Where messages go and what agents read stay as they are.
- * A team's Workbot tab shows the same rows for the team's policy (`scope`).
- */
-
 export function hourLabel(hour: number) {
   const h = hour % 24;
   return `${h % 12 === 0 ? 12 : h % 12} ${h < 12 ? "AM" : "PM"}`;
@@ -19,7 +11,6 @@ export function everyLabel(hours: number) {
   return hours === 1 ? "Every hour" : `Every ${hours} hours`;
 }
 
-/** The send check's rows (`workbotAgentSendCheck`), for the agent settings. */
 export const SEND_CHECK_ROW = {
   label: "Check each message before sending",
   help: "A second, fast model reads each message before it is sent and holds one your instructions say to leave out, or that repeats what the agent already said today. It never writes or changes a message, and it keeps nothing it reads.",
@@ -28,17 +19,14 @@ export const SEND_CHECK_ROW = {
   thresholdHelp: "A message is held only when the check is at least this sure it should not be sent. Higher sends more messages; lower holds more.",
 } as const;
 
-/** A threshold as people read it: 0.2 is "20%". */
 export function percentLabel(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
-/** The thresholds a select offers: the standard choices, plus the saved one when it was set through the API. */
 export function thresholdChoices(choices: readonly number[], saved: number): number[] {
   return [...new Set([...choices, saved])].sort((left, right) => left - right);
 }
 
-/** One threshold select; the value shown is the saved one, else the default. */
 export function ThresholdSelect({ labelledBy, choices, value, fallback, disabled, onChange }: {
   labelledBy: string;
   choices: readonly number[];
@@ -61,7 +49,6 @@ export function ThresholdSelect({ labelledBy, choices, value, fallback, disabled
   );
 }
 
-/** The check gate's rows (`workbotAgentCheckGate`), for the agent settings. */
 export const CHECK_GATE_ROW = {
   label: "Skip checks when nothing new arrived",
   help: "Before a scheduled check, Workbot looks at what reached the member's Gmail and Google Calendar since the last one. With nothing new, or only routine mail, the agent doesn't run. The first check of the day and checks the agent asked for always run, and so does a check after two skipped in a row.",
@@ -69,7 +56,6 @@ export const CHECK_GATE_ROW = {
   thresholdHelp: "When mail arrived, the check is skipped only if the chance that any of it matters is at or below this. Lower runs the agent more often; higher skips more.",
 } as const;
 
-/** A sample message in the brief's voice, as members get it in their Workbot DM. Fictional names; not interactive. */
 export function BriefPreview() {
   return (
     <div className="flex gap-3 rounded-xl bg-gray-50 px-4 py-3 text-[13px] leading-5 text-gray-900" data-testid="workbot-agent-brief-preview">

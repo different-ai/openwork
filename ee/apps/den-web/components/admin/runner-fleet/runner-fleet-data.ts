@@ -17,25 +17,18 @@ export const RUNNER_FLEET_PATH = "/v1/admin/runner-fleet";
 const HISTORY_REFRESH_MS = 60_000;
 const RECONNECT_MS = [1_000, 2_000, 5_000, 10_000] as const;
 
-/** Asked fresh each time: the tab can be hidden or shown while a request is in flight. */
 const tabHidden = () => document.visibilityState === "hidden";
 
 export const parseRunnerFleet = (payload: unknown): AdminRunnerFleet | null => adminRunnerFleetSchema.safeParse(payload).data ?? null;
 const parseHistory = (payload: unknown): AdminRunnerFleetHistory | null => adminRunnerFleetHistorySchema.safeParse(payload).data ?? null;
 
 type Access = Exclude<AdminResult<unknown>["access"], "ready">;
-/** `live`: readings arrive on their own. `reconnecting`: the stream dropped and is being reopened. `paused`: the tab is hidden. */
 export type FleetConnection = "connecting" | "live" | "reconnecting" | "paused";
 export type FleetState =
   | { status: "loading"; fleet: null; message: "" }
   | { status: "ready"; fleet: AdminRunnerFleet; message: "" }
   | { status: Access; fleet: AdminRunnerFleet | null; message: string };
 
-/**
- * The fleet, live. One request settles access and shows the first reading; then the event stream replaces it every
- * few seconds. A dropped stream is reopened with a growing wait, with a plain read first so a signed-out or removed
- * admin sees that instead of a stale fleet. Nothing is requested while the tab is hidden.
- */
 export function useRunnerFleet() {
   const hasSessionCookie = useAdminSessionCookie();
   const [state, setState] = useState<FleetState>(() => hasSessionCookie ? { status: "loading", fleet: null, message: "" } : { status: "signed-out", fleet: null, message: "" });
@@ -62,7 +55,6 @@ export function useRunnerFleet() {
     };
     const wait = (ms: number) => new Promise<void>((resolve) => { timer = setTimeout(resolve, ms); });
 
-    /** One plain read. False when this admin may not see the page (or anything else stopped it for good). */
     const read = async () => {
       const result = await requestAdmin(RUNNER_FLEET_PATH, parseRunnerFleet, signal);
       if (signal.aborted) return false;
@@ -72,7 +64,6 @@ export function useRunnerFleet() {
       return result.access === "error";
     };
 
-    /** Reads the stream until it ends. True when it delivered at least one reading. */
     const watch = async (streamSignal: AbortSignal) => {
       const endpoint = denBrowserEndpoint(`${RUNNER_FLEET_PATH}/events`);
       const response = await fetch(endpoint, { cache: "no-store", credentials: denApiCredentials(endpoint), signal: streamSignal, headers: withStoredBearer({ Accept: "text/event-stream" }) });
@@ -119,7 +110,6 @@ export function useRunnerFleet() {
           });
           continue;
         }
-        // The stream has its own switch, so hiding the tab closes it without ending the page's session.
         stream = new AbortController();
         const closeStream = () => stream?.abort();
         signal.addEventListener("abort", closeStream, { once: true });
@@ -130,12 +120,10 @@ export function useRunnerFleet() {
           failures = delivered ? 0 : failures + 1;
         } catch {
           if (signal.aborted) return;
-          // A stream closed because the tab was hidden did not fail.
           if (!tabHidden()) failures += 1;
         } finally {
           signal.removeEventListener("abort", closeStream);
         }
-        // A stream that ended on its own (its time was up) is reopened at once.
         if (failures > 0 && !tabHidden()) {
           setConnection("reconnecting");
           await wait(RECONNECT_MS[Math.min(failures, RECONNECT_MS.length) - 1] ?? 10_000);
@@ -159,7 +147,6 @@ export function useRunnerFleet() {
 
 export type HistoryState = { status: "loading" | "ready" | "error"; history: AdminRunnerFleetHistory | null; message: string };
 
-/** The recorded history for a range, read again each minute while the page is open. */
 export function useRunnerFleetHistory(range: RunnerFleetHistoryRange, enabled: boolean) {
   const [state, setState] = useState<HistoryState>({ status: "loading", history: null, message: "" });
   const last = useRef<{ range: RunnerFleetHistoryRange; history: AdminRunnerFleetHistory } | null>(null);

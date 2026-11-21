@@ -16,12 +16,10 @@ const persistedSchema = z.object({
   workspaceScopes: z.record(z.string(), z.string()).default({}),
 });
 
-/** Evidence belongs to the workspace's runtime provider, never its display name. */
 export function credentialHealthKey(workspaceId: string, providerId: string): string {
   return JSON.stringify([workspaceId, providerId]);
 }
 
-/** Local workspaces share one device auth store; remote hosts do not. */
 export function providerCredentialScope(baseUrl: string): string {
   try {
     const url = new URL(baseUrl);
@@ -41,7 +39,6 @@ type CredentialHealthState = {
   observe: (workspaceId: string, providerId: string, status: "verified" | "rejected", startedAt: number, observedAt?: number) => void;
 };
 
-/** Only the outcome is retained. No keys, error text, response bodies or model output. */
 export const useProviderCredentialHealth = create<CredentialHealthState>()(persist((set) => ({
   entries: {},
   revisions: {},
@@ -82,8 +79,6 @@ export const useProviderCredentialHealth = create<CredentialHealthState>()(persi
   observe: (workspaceId, providerId, status, startedAt, observedAt = Date.now()) => set((state) => {
     const key = credentialHealthKey(workspaceId, providerId);
     const revision = state.revisions[key] ?? 0;
-    // A request already in flight when a key was replaced cannot bless or
-    // reject the replacement. Equal timestamps are conservatively ignored.
     if (revision >= startedAt) return state;
     const current = state.entries[key];
     if (current && (current.observedAt > observedAt || (current.observedAt === observedAt && current.status === status))) return state;
@@ -96,10 +91,10 @@ export const useProviderCredentialHealth = create<CredentialHealthState>()(persi
       try { return typeof localStorage === "undefined" ? null : localStorage.getItem(key); } catch { return null; }
     },
     setItem: (key, value) => {
-      try { if (typeof localStorage !== "undefined") localStorage.setItem(key, value); } catch { /* Health must never interrupt chat when storage is full or blocked. */ }
+      try { if (typeof localStorage !== "undefined") localStorage.setItem(key, value); } catch {}
     },
     removeItem: (key) => {
-      try { if (typeof localStorage !== "undefined") localStorage.removeItem(key); } catch { /* Keep in-memory evidence when persistence is unavailable. */ }
+      try { if (typeof localStorage !== "undefined") localStorage.removeItem(key); } catch {}
     },
   })),
   partialize: ({ entries, revisions, configurations, workspaceScopes }) => ({ entries, revisions, configurations, workspaceScopes }),

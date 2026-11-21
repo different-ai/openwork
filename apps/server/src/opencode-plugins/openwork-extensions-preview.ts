@@ -119,12 +119,9 @@ const workspaceListEnvelopeSchema = z.object({
 const sessionTimeSchema = z.object({
   created: z.number().optional(),
   updated: z.number().optional(),
-  // Set by the engine when a session is archived; absent or 0 otherwise.
   archived: z.number().nullish(),
 }).passthrough();
 
-// The engine's session-level model: set from `model` at creation and updated
-// by every prompt (`variant` is the reasoning effort the turn ran with).
 const engineSessionModelSchema = z.object({
   id: z.string(),
   providerID: z.string(),
@@ -166,8 +163,6 @@ A thread, sub thread or separate session the person asks for is a session of its
 Messaging another session does not require opening it either: use session.send { sessionId, text } to append a prompt to that session by id; nothing on screen changes unless you pass reveal: true. composer.set_text and composer.send type into whichever composer the person currently has focused, so never use them to reach a different session.
 To open settings or navigate the app, use openwork_execute with ids from openwork_context such as settings.panel.open — never browser_* tools for the OpenWork app itself.`;
 
-// External-web mechanics only: the app-surface section above owns the rule
-// that browser_* tools never drive the OpenWork app itself.
 const OPENWORK_BROWSER_INSTRUCTION =
   `## Built-in Browser (external websites)
 Prefer a suitable connected integration, then website tools, then DOM controls. Use images when text and controls are insufficient.
@@ -188,7 +183,6 @@ type SessionSearchMatchMode = NonNullable<SessionSearchArgs["match"]>;
 type SessionSearchSnippet = { before: string; match: string; after: string };
 type SessionSearchResult = {
   workspaceId: string;
-  /** Engine that holds the session; session.read finds it on either one. */
   engine: OpenworkEngine;
   workspace: string;
   sessionId: string;
@@ -198,7 +192,6 @@ type SessionSearchResult = {
   archived: boolean;
   parentId: string | null;
   kind: "title" | "message";
-  /** The whole query text appeared contiguously (not just every term). */
   phrase: boolean;
   snippet: SessionSearchSnippet;
   role?: string;
@@ -211,10 +204,8 @@ type CreatedOpenWorkSessionResult = {
   title: string;
   titleTruncated: boolean;
   started: boolean;
-  /** The model the engine bound to the session, read from its create response. */
   model: OpenworkSessionModel | null;
   route: string;
-  /** Listed under the calling session, which gets a report when this one finishes a turn. */
   linked?: true;
 };
 type FailedOpenWorkSessionResult = {
@@ -248,8 +239,6 @@ function preserveMcpResult(output: unknown): void {
   const existing = isRecord(output.metadata) ? output.metadata : {};
   output.metadata = {
     ...existing,
-    // This is transport-only result preservation. Whether the completed tool
-    // owns an MCP App is determined later from its current tool definition.
     openworkMcpApp: appResult,
   };
 }
@@ -257,10 +246,7 @@ function preserveMcpResult(output: unknown): void {
 const affordanceReadEffects: OpenworkAffordanceEffects = { data: "read", ui: "none", external: false };
 const affordanceWriteEffects: OpenworkAffordanceEffects = { data: "write", ui: "none", external: false };
 const affordanceExternalWriteEffects: OpenworkAffordanceEffects = { data: "write", ui: "none", external: true };
-// session.send with reveal=true: the message is written headlessly, then the
-// target session is opened in the person's pane on their behalf.
 const affordanceWriteNavigateEffects: OpenworkAffordanceEffects = { data: "write", ui: "navigate", external: false };
-// A proposal writes nothing anywhere: it is rendered for a person to act on.
 const affordanceProposalEffects: OpenworkAffordanceEffects = { data: "none", ui: "none", external: false };
 
 function affordanceResult(
@@ -328,8 +314,6 @@ function normalizeOpenCodeContext(value: unknown): OpenCodeContext {
 
 const SESSION_SEARCH_DEFAULT_LIMIT = 10;
 const SESSION_SEARCH_DEFAULT_SCAN_LIMIT = 100;
-// Title matching is one list call per workspace, so it covers every root
-// session; scanLimit only bounds the transcript phase.
 const SESSION_SEARCH_TITLE_LIST_LIMIT = 5000;
 const SESSION_SEARCH_DEFAULT_MESSAGE_LIMIT = 400;
 const SESSION_SEARCH_CONCURRENCY = 6;
@@ -411,8 +395,6 @@ async function readOpenworkAgentContext(
       contributions,
     };
   }
-  // The server runs session groups itself, so the renderer's copies of those
-  // ids (only present while a window is open) are not advertised twice.
   const uiAffordances = Array.isArray(uiContext.availableAffordances)
     ? uiContext.availableAffordances.filter((item: unknown) => !(isRecord(item) && SESSION_GROUP_AFFORDANCE_IDS.includes(String(item.id))))
     : [];
@@ -532,7 +514,6 @@ async function executeOpenworkAffordance(
       "This affordance declares a dedicated Connect executor. Call the tool named in openwork_context.",
     );
   }
-  // Keep the requesting conversation attached when commands cross the server.
   const result = await uiControlRequest("command", { ...request, ...affordanceOrigin(context) });
   return isRecord(result) && typeof result.ok === "boolean"
     ? result
@@ -603,11 +584,6 @@ function sessionPassesFilters(session: SessionInfo, args: SessionSearchArgs): bo
   return true;
 }
 
-/**
- * Session-level model from the engine record, or null when no model was ever
- * bound. The engine writes the literal variant "default" for a turn that
- * named none; agents pass and read null for that, like the composer pill.
- */
 function sessionModelOf(session: SessionInfo): OpenworkSessionModel | null {
   const model = session.model;
   if (!model) return null;
@@ -689,7 +665,6 @@ function messageSearchResult(workspace: OpenWorkWorkspace, session: SessionInfo,
   return fallback;
 }
 
-/** Sessions whose title matched, or whose snippet is a phrase match, first; then newest activity. */
 function rankSearchResults(matches: SessionSearchResult[], titleMatched: ReadonlySet<string>): SessionSearchResult[] {
   const rank = (result: SessionSearchResult) => (titleMatched.has(result.sessionId) || result.phrase ? 0 : 1);
   return matches.sort((left, right) => rank(left) - rank(right) || right.updatedAt - left.updatedAt);
@@ -710,7 +685,6 @@ function filterWorkspaces(workspaces: OpenWorkWorkspace[], workspaceId?: string)
   });
 }
 
-/** The engine this affordance runs on: the read transport's, or v1 when v1 launched the plugin. */
 function ownEngineReader(): OpenworkEngineReader {
   const transport = openworkReadTransport.getStore();
   if (!transport) return { engine: "v1", get: serverGet };
@@ -722,13 +696,6 @@ function ownEngineReader(): OpenworkEngineReader {
   };
 }
 
-/**
- * Both engines run while v1 is retired, and the v1 history import is
- * one-shot, so a session created on either engine afterwards exists only
- * there. Reads try this affordance's own engine first, then the other one.
- * Every read still passes through the host's engine mount, which keeps its
- * workspace ownership and session-home checks.
- */
 function engineReaders(): OpenworkEngineReader[] {
   const own = ownEngineReader();
   const transport = openworkReadTransport.getStore();
@@ -747,10 +714,6 @@ async function listWorkspaceSessions(reader: OpenworkEngineReader, workspace: Op
   );
 }
 
-// The removed wrapper route validated that a session actually belongs to the
-// requested workspace before exposing it (requireWorkspaceSession). The native
-// engine route only scopes the upstream request, so a caller supplying a
-// foreign session ID would otherwise read cross-workspace transcript data.
 async function assertSessionInWorkspace(workspace: OpenWorkWorkspace, session: SessionInfo): Promise<void> {
   const workspacePath = workspace.path?.trim();
   const sessionDirectory = session.directory?.trim();
@@ -819,8 +782,6 @@ async function readSessionActivity(reader: OpenworkEngineReader, workspace: Open
   return sessionActivityFrom(statuses, permissions, questions, session.id, descendants.ids, descendants.unknown);
 }
 
-// The engine returns the newest `limit` messages; without a limit it returns
-// the whole transcript, oldest first.
 async function readSessionMessages(reader: OpenworkEngineReader, workspace: OpenWorkWorkspace, sessionId: string, limit?: number): Promise<SessionMessage[]> {
   const query = limit === undefined ? "" : `?${new URLSearchParams({ limit: String(limit) }).toString()}`;
   return z.array(sessionMessageSchema).parse(
@@ -860,12 +821,9 @@ async function searchOpenWorkSessions(rawArgs: unknown): Promise<object> {
   await Promise.all(workspaces.map(async (workspace) => {
     const listed = await Promise.all(readers.map((reader, index) =>
       listWorkspaceSessions(reader, workspace, SESSION_SEARCH_TITLE_LIST_LIMIT).catch((error: unknown) => {
-        // The other engine is best effort: it may be stopped or never used.
         if (index === 0) workspaceErrors.push({ workspaceId: workspace.id, workspace: workspaceLabel(workspace), error: unknownErrorMessage(error) });
         return [];
       })));
-    // The v1 history import keeps session ids, so an imported chat is listed
-    // by both engines; the affordance's own engine wins.
     const seen = new Set<string>();
     listed.forEach((items, index) => {
       const reader = readers[index];
@@ -883,7 +841,6 @@ async function searchOpenWorkSessions(rawArgs: unknown): Promise<object> {
   const matches: SessionSearchResult[] = [];
   const titleMatched = new Set<string>();
 
-  // Title phase: every filtered root session, one list call per workspace.
   for (const { workspace, session, reader } of sessions.slice(scanLimit)) {
     const titleMatch = titleSearchResult(workspace, session, reader.engine, queryLower, mode);
     if (!titleMatch) continue;
@@ -891,8 +848,6 @@ async function searchOpenWorkSessions(rawArgs: unknown): Promise<object> {
     matches.push(titleMatch);
   }
 
-  // Transcript phase: only the scanLimit newest sessions are read. A message
-  // match wins the snippet, but the title match still owns the rank.
   await forEachWithConcurrency(sessionsToScan, SESSION_SEARCH_CONCURRENCY, async ({ workspace, session, reader }) => {
     const titleMatch = titleSearchResult(workspace, session, reader.engine, queryLower, mode);
     if (titleMatch) titleMatched.add(session.id);
@@ -973,7 +928,6 @@ async function readSessionOnEitherEngine(
     try {
       return { session: await readWorkspaceSession(workspace, sessionId, reader), reader };
     } catch {
-      // Not on this engine, or not owned by this workspace there.
     }
   }
   return null;
@@ -981,7 +935,6 @@ async function readSessionOnEitherEngine(
 
 type SessionReadArgs = z.infer<typeof sessionReadArgsSchema>;
 
-/** `detail: "full"` and `messageId` reads: every stored message, mapped by session-read-detail. */
 async function readOpenWorkSessionDetail(
   workspace: OpenWorkWorkspace,
   session: SessionInfo,
@@ -1020,7 +973,6 @@ async function readOpenWorkSessionDetail(
     };
   }
 
-  // Reading from the start or summarizing needs the whole transcript.
   const limit = summary || (from === "start" && reader.engine !== "v2") ? undefined : count;
   let messages: RichMessage[];
   let lastError: { code: string; message: string } | null;
@@ -1089,7 +1041,6 @@ async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
       if (args.messageId !== undefined || args.detail === "full") {
         return await readOpenWorkSessionDetail(workspace, session, reader, args);
       }
-      // Reading from the start or summarizing needs the whole transcript.
       const needsFullTranscript = summary || from === "start";
       const [messages, activity, catalog] = await Promise.all([
         readSessionMessages(reader, workspace, args.sessionId, needsFullTranscript ? undefined : count),
@@ -1131,11 +1082,6 @@ async function readOpenWorkSession(rawArgs: unknown): Promise<object> {
   return { ok: false, error: `Session ${args.sessionId} was not found in matching OpenWork workspaces` };
 }
 
-/**
- * Resolve an existing session by id to the workspace that owns it. Same
- * lookup as session.read: every matching workspace is probed and the
- * ownership check in readWorkspaceSession refuses foreign sessions.
- */
 async function locateOpenWorkSession(
   sessionId: string,
   workspaceId: string | undefined,
@@ -1171,7 +1117,6 @@ async function serverSend(method: "POST" | "PATCH" | "DELETE", path: string, bod
   return payload;
 }
 
-/** Root sessions on every engine; null unless each list was read in full. */
 async function liveWorkspaceSessions(workspace: OpenWorkWorkspace): Promise<Map<string, string> | null> {
   try {
     const lists = await Promise.all(engineReaders().map((reader) => listWorkspaceSessions(reader, workspace, SESSION_SEARCH_TITLE_LIST_LIMIT)));
@@ -1186,7 +1131,6 @@ function sessionGroupHost(workspace: OpenWorkWorkspace): SessionGroupHost {
   return { get: serverGet, send: serverSend, liveSessions: () => liveWorkspaceSessions(workspace) };
 }
 
-/** Explicit workspace, else the workspace owning the named or calling session, else the only one. */
 async function resolveSessionGroupWorkspace(
   workspaceId: string | undefined,
   sessionId: string | undefined,
@@ -1240,7 +1184,6 @@ async function runSessionGroupAffordance(id: string, rawArgs: unknown, context: 
 
 let lastSendMessageStamp = 0;
 
-/** Same shape the desktop composer uses (see app/lib/opencode.ts createPromptMessageID). */
 function createSendMessageId(): string {
   lastSendMessageStamp = Math.max(Date.now() * 0x1000, lastSendMessageStamp + 1);
   return `msg_${lastSendMessageStamp.toString(16).padStart(12, "0").slice(-12)}${randomUUID().replaceAll("-", "").slice(0, 14)}`;
@@ -1259,15 +1202,6 @@ type SendToOpenWorkSessionResult =
     revealed?: boolean;
   };
 
-/**
- * Append a prompt to an existing session by id through the engine's
- * prompt_async, exactly as session.create starts a new one. The engine
- * persists the user message immediately and returns 204; when that session
- * is mid-turn its running loop picks the message up at the next step instead
- * of rejecting it. Nothing on screen changes unless `reveal` is true, in
- * which case the desktop is asked to open the session afterwards (best
- * effort: the message is already sent if that fails).
- */
 async function sendToOpenWorkSession(rawArgs: unknown, context: OpenCodeContext): Promise<SendToOpenWorkSessionResult> {
   const parsed = sessionSendArgsSchema.safeParse(rawArgs);
   if (!parsed.success) return sessionArgumentError(parsed.error, rawArgs);
@@ -1330,7 +1264,6 @@ type PendingQuestionItem = {
   options: Array<{ label: string; description: string }>;
   multiple: boolean;
   custom: boolean;
-  /** v2 forms answer by field key and option value. */
   field?: { key: string; values: Map<string, string> };
 };
 type PendingQuestion = { requestId: string; sessionId: string; questions: PendingQuestionItem[] };
@@ -1340,11 +1273,6 @@ function listItems(value: unknown): unknown[] {
   return Array.isArray(rows) ? rows : [];
 }
 
-/**
- * Questions a session is waiting on the person to answer, read from the
- * engine that holds it: v1 lists them per workspace, v2 per session as
- * question forms.
- */
 async function findPendingQuestions(sessionId: string, workspaceId: string | undefined): Promise<
   { workspace: OpenWorkWorkspace; engine: "v1" | "v2"; pending: PendingQuestion[] } | { error: string }
 > {
@@ -1413,13 +1341,6 @@ async function listSessionQuestions(rawArgs: unknown): Promise<object> {
   };
 }
 
-/**
- * Answer another session's pending question with the person's answers.
- * Options are matched by label; free text is refused where the question
- * does not allow it. A session cannot answer its own question, and every
- * answer waits for the person to allow it in the calling chat: the question
- * text comes from another session and must not steer an unattended reply.
- */
 async function answerSessionQuestion(rawArgs: unknown, context: OpenCodeContext): Promise<object> {
   const parsed = sessionQuestionAnswerArgsSchema.safeParse(rawArgs);
   if (!parsed.success) return sessionArgumentError(parsed.error, rawArgs);
@@ -1443,7 +1364,6 @@ async function answerSessionQuestion(rawArgs: unknown, context: OpenCodeContext)
   }
   if (!context.ask) return { ok: false, error: "OpenWork cannot ask for your approval here, so the question was not answered." };
   try {
-    // Nothing is saved for later, so each answer is approved on its own.
     await context.ask({
       permission: SESSION_QUESTION_ANSWER_PERMISSION,
       patterns: [pending.sessionId],
@@ -1539,7 +1459,6 @@ async function resolveContextWorkspace(workspaceId: string | undefined, context:
       .at(0);
     if (match) return match;
   }
-  // The v2 engine passes only the calling session, not its directory.
   if (context.sessionID) {
     const located = await locateOpenWorkSession(context.sessionID, undefined);
     if (!("error" in located)) return located.workspace;
@@ -1549,12 +1468,6 @@ async function resolveContextWorkspace(workspaceId: string | undefined, context:
   throw new Error(`Multiple OpenWork workspaces match; pass workspaceId. Available: ${workspaces.map((workspace) => workspaceLabel(workspace)).join(", ")}`);
 }
 
-/**
- * The engine takes the model in two shapes: `{ id, providerID, variant }` on
- * the session record at creation, and `{ providerID, modelID }` plus a
- * top-level `variant` on prompt_async. Both are sent so the session is bound
- * to the model before its first turn and that turn runs at the same effort.
- */
 function engineSessionCreateModel(model: OpenworkSessionModel) {
   return { providerID: model.providerId, id: model.modelId, ...(model.variant ? { variant: model.variant } : {}) };
 }
@@ -1577,28 +1490,16 @@ function sessionArgumentError(error: z.ZodError, rawArgs: unknown): { ok: false;
     const detail = issue.code === "too_big" && issue.origin === "string" && typeof value === "string"
       ? `${value.trim().length.toLocaleString("en-US")} characters, max ${issue.maximum.toLocaleString("en-US")}`
       : issue.message;
-    // Unknown keys belong to the argument object itself, which has no path.
     return { path, message: path ? `${path}: ${detail}` : detail };
   });
   return { ok: false, error: issues.map((issue) => issue.message).join("; "), issues };
 }
 
-/**
- * Names the calling session on a prompt its agent sends, so the receiving
- * session's record shows the turn was asked for by an agent, not typed by the
- * person. Only the v2 engine keeps message metadata.
- */
 function promptSender(context: OpenCodeContext): { sentBy?: string } {
   const sessionId = context.sessionID?.trim();
   return sessionId && openworkReadTransport.getStore() ? { sentBy: sessionId } : {};
 }
 
-/**
- * The link for sessions the calling session starts, when the app lists such
- * sessions under their parent. Only the v2 engine keeps session metadata, and
- * only the app knows whether the feature is on and the caller can be a parent,
- * so anything short of its yes means no link.
- */
 async function agentSessionLink(workspaceId: string, context: OpenCodeContext): Promise<SessionLink | undefined> {
   const sessionId = context.sessionID?.trim();
   if (!sessionId || !openworkReadTransport.getStore()) return undefined;
@@ -1672,11 +1573,6 @@ async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext
   }));
   const created = results.filter((result): result is CreatedOpenWorkSessionResult => result.ok);
   const failures = results.filter((result): result is FailedOpenWorkSessionResult => !result.ok);
-  // The desktop only receives engine events for its selected workspace, so a
-  // session created here in any other workspace stays invisible until that
-  // list is refetched. A session whose prompt failed still exists, so it is
-  // refetched too. Best effort: headless runs without a connected window get
-  // a soft error.
   if (createdOnEngine) {
     await uiControlRequest("command", {
       id: "workspace.reload_sessions",
@@ -1689,25 +1585,12 @@ async function createOpenWorkSessions(rawArgs: unknown, context: OpenCodeContext
     workspace: workspaceLabel(workspace),
     created,
     failures,
-    // Said once, here, where the agent decides whether to poll.
     ...(link && created.length > 0 ? { reports: "Each linked session reports to this session when it finishes a turn. Wait for the report; do not poll with session.read." } : {}),
   };
 }
 
-/**
- * Validates a proposed Automation and hands it back for the renderer to show.
- *
- * Deliberately does no I/O. Automations are active from the moment they exist,
- * and the Den credential lives in the renderer, so an agent can describe an
- * Automation but only a person can create one.
- */
 function proposeAutomation(rawArgs: unknown, context: OpenCodeContext): object {
   const { workspaceId: _modelSupplied, ...parsed } = automationProposalSchema.parse(withOnceTimestamp(rawArgs));
-  // Pin the proposing conversation's workspace so the Automation keeps running
-  // there even after the person activates a different workspace. The pin comes
-  // from the engine-provided context only: a model-supplied workspaceId is
-  // discarded so a prompt-injected agent cannot retarget the Automation to a
-  // workspace the person is not looking at.
   const workspaceId = context.workspaceId ?? context.workspaceID;
   const proposal = workspaceId ? { ...parsed, workspaceId } : parsed;
   return {
@@ -1746,7 +1629,6 @@ async function postJson(path: string, body: ExtensionActionPayload | Record<stri
   return payload;
 }
 
-// Pulls of large files stream through OpenWork Cloud, so they get more time than other extension calls.
 function driveToolSignal(context: unknown) {
   const timeout = AbortSignal.timeout(15 * 60 * 1000);
   return isRecord(context) && context.abort instanceof AbortSignal ? AbortSignal.any([context.abort, timeout]) : timeout;
@@ -1780,21 +1662,15 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown, _options
     await assertSessionContinuation(postJson, { directory: engineMcpStatusDirectory, sessionID: input.sessionID });
   },
   "chat.headers": async (input: { sessionID: string; model: { providerID: string }; message: { id: string } }, output: { headers: Record<string, string> }) => {
-    // OpenWork Models and free Auto: the desktop relay checks the session against the task the user started.
     if (input.model.providerID !== "openwork" && input.model.providerID !== "openwork-free") return;
     output.headers["x-openwork-session-id"] = input.sessionID;
     output.headers["x-openwork-task-id"] = input.message.id;
   },
   "tool.execute.after": async (input: unknown, output: unknown) => {
     await fulfillGmailAttachments(input, output);
-    // OpenCode 1.18.18 keeps the text projection of an MCP result but drops
-    // structuredContent and result _meta before persisting the completed tool
-    // part. Preserve those standard fields in the existing metadata channel
-    // so OpenWork can host the UI without replaying the tool call.
     preserveMcpResult(output);
   },
   "experimental.chat.system.transform": async (_input: unknown, output: { system: string[] }) => {
-    // Prompt composition is static: live discovery belongs to explicit tool calls.
     appendAgentInstructions(
       output.system,
       createInstructionSection("agent-surface", OPENWORK_AGENT_SURFACE_INSTRUCTION),
@@ -1833,7 +1709,6 @@ export const OpenWorkExtensionsPreview = async (factoryInput?: unknown, _options
       description: "Run a side-effect-free OpenWork affordance whose executor is OpenWork. Use the exact id and arguments from openwork_context. This reads backend or app state without navigation or window focus.",
       args: openworkAffordanceRequestSchema.shape,
       async execute(rawArgs: unknown, context?: OpenCodeContext) {
-        // A read about the calling chat (its groups) defaults to that chat's workspace, as a command does.
         const mergedContext = { ...factoryContext, ...normalizeOpenCodeContext(context) };
         return JSON.stringify(await queryOpenworkAffordance(rawArgs, mergedContext), null, 2);
       },

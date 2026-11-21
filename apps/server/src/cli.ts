@@ -73,8 +73,6 @@ if (args.version) {
 let webRoot: string | null = null;
 let webTokensPath: string | null = null;
 if (args.web) {
-  // Everything below is read by resolveServerConfig / the engine spawn through
-  // process.env, so it must be settled before the config is resolved.
   const packageRoot = await resolvePackageRoot({ env: process.env, execPath: process.execPath });
   webRoot = await resolveWebRoot({ env: process.env, packageRoot, sourceDir: import.meta.dirname });
   if (!webRoot) {
@@ -87,10 +85,8 @@ if (args.web) {
     const pluginDir = await resolveBundledPluginDir(packageRoot);
     if (pluginDir) process.env.OPENWORK_EXTENSIONS_PLUGIN_DIR = pluginDir;
   }
-  // The web UI has no approvals responder, so manual mode would time out every gated write.
   args.approvalMode ??= process.env.OPENWORK_APPROVAL_MODE === "manual" ? "manual" : "auto";
   if (args.workspaces.length === 0 && !process.env.OPENWORK_WORKSPACES) args.workspaces.push(process.cwd());
-  // Stable tokens across restarts: CLI flag, then env, then a file in the data dir.
   const tokenProvided = Boolean(args.token || process.env.OPENWORK_TOKEN);
   const hostTokenProvided = Boolean(args.hostToken || process.env.OPENWORK_HOST_TOKEN);
   if (!tokenProvided || !hostTokenProvided) {
@@ -131,12 +127,6 @@ if (!config.readOnly) {
   await migrateWorkspaceRuntimeConfigToEngineGlobal(config);
 }
 
-// Bind the HTTP server before spawning the engine: serve-node may fall back
-// to an OS-assigned port on EADDRINUSE, and the engine's spawn-time env
-// (OPENWORK_SERVER_URL) must point at the port that actually bound, not the
-// requested one.
-// The engine also starts with no workspace registered yet, so providers load
-// before the first workspace exists.
 const manageEngine = !config.opencodeBaseUrl && process.env.OPENWORK_MANAGE_OPENCODE === "1"
   && shouldStartManagedEngine(config.workspaces);
 const server = await startServer(config, { deferManagedEngineStartup: manageEngine });
@@ -147,12 +137,7 @@ const workerActivityHeartbeat = startWorkerActivityHeartbeat(config, logger, {
 });
 
 if (manageEngine) {
-  // Reap engines recorded by servers that died without cleanup. Best
-  // effort: a failed reap must never block startup.
   await reapOrphanEngineInstances(config, { logger }).catch(() => undefined);
-  // Server-managed config file: the engine re-reads it from disk on every
-  // instance rebuild, and keepOpenworkRuntimeConfigFileFresh synchronizes it
-  // on every runtime-DB write — so disposes always pick up current state.
   const { path: runtimeConfigPath } = await writeOpenworkRuntimeConfigFile(config);
   stopRuntimeConfigFileRefresh = keepOpenworkRuntimeConfigFileFresh(config);
   const managedOpencodeCwd = resolveManagedEngineCwd({
@@ -170,8 +155,6 @@ if (manageEngine) {
     OPENCODE_CONFIG: runtimeConfigPath,
     OPENCODE_MODELS_URL: opencodeModelsUrl,
   };
-  // Where engine v1 keeps a database or global config of its own when a
-  // standalone OpenCode v2 install owns the shared ones.
   const engineStateDir = join(runtimeStorageDir(config), "opencode-v1", "state");
   const engineSpawnTemplate: EngineSpawnTemplate = {
     bin: process.env.OPENWORK_OPENCODE_BIN,
@@ -203,9 +186,6 @@ if (manageEngine) {
     entry.opencodePassword ??= managedOpencode.password;
     entry.directory ??= entry.path;
   }
-  // The identity only needs to be unique per managed-process boot; a
-  // random nonce provides that without routing the engine credentials
-  // through the fast identity hash.
   managedOpencodeIdentity = [
     managedOpencode.pid ?? "unknown",
     randomUUID(),
@@ -251,9 +231,6 @@ if (manageEngine) {
   logger.log("info", `Managed OpenCode listening on ${managedOpencode.url}`);
 }
 
-// The runtime config file above only covers workspaces[0]. Push every
-// workspace's runtime-DB MCPs into the engine so they aren't invisible
-// until a manual reload. Best-effort.
 if (managedOpencode) {
   void syncAllWorkspacesRuntimeMcpToEngine(config).catch((error) => {
     logger.log("error", "Startup MCP synchronization crashed.", {
@@ -325,9 +302,6 @@ async function shutdown() {
   if (managedOpencodeIdentity && !enginePool) {
     clearTrustedOpencodeProcess(config, managedOpencodeIdentity);
   }
-  // Await the engine teardown (SIGTERM → 1s → SIGKILL, bounded ~1.5s): a
-  // synchronous process.exit here used to skip the escalation entirely and
-  // orphan the OpenCode child to init.
   try {
     if (enginePool) {
       clearEnginePoolForConfig(config);
@@ -336,7 +310,6 @@ async function shutdown() {
       await managedOpencode?.close();
     }
   } catch {
-    // Engine already exited.
   }
   if (managedEngineRecordId && !enginePool) {
     await removeEngineInstance(config, managedEngineRecordId).catch(() => undefined);

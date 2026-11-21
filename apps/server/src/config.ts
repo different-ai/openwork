@@ -25,11 +25,8 @@ export interface CliArgs {
   logRequests?: boolean;
   version?: boolean;
   help?: boolean;
-  /** `openwork-server web`: serve the bundled UI + API on one origin with a managed engine. */
   web?: boolean;
-  /** `web --open`: launch the default browser once the server is listening. */
   open?: boolean;
-  /** `web --no-bootstrap-token`: do not sign the browser in automatically. */
   bootstrapToken?: boolean;
 }
 
@@ -325,7 +322,6 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
   const envCorsOrigins = process.env.OPENWORK_CORS_ORIGINS;
   const parsedEnvCors = envCorsOrigins ? parseList(envCorsOrigins) : null;
   const corsOrigins = cli.corsOrigins ?? parsedEnvCors ?? fileConfig.corsOrigins ?? ["*"];
-  // `web` serves the signed-in UI, so it answers only loopback, IP and configured host names.
   const envAllowedHosts = process.env.OPENWORK_ALLOWED_HOSTS;
   const parsedEnvAllowedHosts = envAllowedHosts ? parseList(envAllowedHosts) : null;
   const allowedHosts = cli.allowedHosts ?? parsedEnvAllowedHosts ?? fileConfig.allowedHosts ?? (cli.web ? [] : undefined);
@@ -361,8 +357,6 @@ export async function resolveServerConfig(cli: CliArgs): Promise<ServerConfig> {
     hostToken,
     configPath,
     opencodeBaseUrl,
-    // Capture caller-supplied connections before CLI/embedded managed startup
-    // fills both the global and workspace URLs with its own local engine.
     externalOpencode: hasExternalOpencode({ opencodeBaseUrl, workspaces }),
     opencodeDirectory,
     opencodeUsername,

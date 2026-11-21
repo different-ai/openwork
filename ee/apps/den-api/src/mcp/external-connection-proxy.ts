@@ -76,7 +76,6 @@ const externalMcpProxyRuntime: ExternalMcpProxyRuntime = {
   readResource: readExternalMcpResource,
 }
 
-/** How long a client may keep a changing tools/list result; changes also send tools/list_changed. */
 export const EXTERNAL_CONNECTION_TOOLS_TTL_MS = 60_000
 
 const PROXY_GATEWAY_TOOL_NAMES = new Set([SEARCH_CAPABILITIES_TOOL_NAME, EXECUTE_CAPABILITY_TOOL_NAME])
@@ -106,7 +105,6 @@ const boundedGatewayTools: ExternalMcpProxyTool[] = [
       properties: {
         name: { type: "string", minLength: 1 },
         arguments: { type: "object" },
-        // Older input, accepted for a while; capabilityCallInput explains why.
         body: { type: "object", description: "Older form of arguments." },
       },
       required: ["name"],
@@ -134,17 +132,11 @@ const legacyBoundedGatewayTools: ExternalMcpProxyTool[] = boundedGatewayTools.ma
     : tool
 ))
 
-/** MCP tool and output schemas must describe objects; anything else would fail the whole list. */
 function objectSchema(value: unknown): Record<string, unknown> | undefined {
   if (!isRecord(value) || (value.type !== undefined && value.type !== "object")) return undefined
   return { ...value, type: "object" }
 }
 
-/**
- * The tools a list may carry. The SDK checks every listed tool, so a provider
- * tool whose input schema is not an object is left out instead of failing the
- * list, and an output schema that is not an object is dropped.
- */
 function listableTools(tools: readonly ExternalMcpProxyTool[]): Tool[] {
   return tools.flatMap((tool) => {
     const inputSchema = objectSchema(tool.inputSchema)
@@ -159,10 +151,6 @@ function listableTools(tools: readonly ExternalMcpProxyTool[]): Tool[] {
   })
 }
 
-/**
- * A provider tool the model may see on a directly exposed connection. Tools
- * that declare an app-only UI visibility stay private to the App host.
- */
 function toolVisibleToModel(tool: ExternalMcpProxyTool): boolean {
   const meta = isRecord(tool._meta) ? tool._meta : {}
   const ui = isRecord(meta.ui) ? meta.ui : {}
@@ -204,13 +192,7 @@ export function createExternalConnectionProxyServer(input: {
   scopes: ReadonlySet<string>
   runtime?: ExternalMcpProxyRuntime
   appHostClient?: boolean
-  /** Opt in to the modern search results and execute arguments schema; defaults to legacy. */
   toolShapes?: boolean
-  /**
-   * Whether the organization currently allows member-facing MCP connections.
-   * Direct exposure is fail-closed: the provider catalog is served only when
-   * the caller explicitly confirms the organization flag is on.
-   */
   directExposureEnabled?: boolean
 }) {
   const { connection } = input.operation
@@ -233,19 +215,14 @@ export function createExternalConnectionProxyServer(input: {
       }
     }
     const call = runtime.callTool({ ...input.operation, toolName: tool.name, args })
-    // Library usage: one row per direct call, ok or error, never the arguments or result.
     recordConnectorCall(Promise.resolve(call), {
       organizationId: connection.organizationId,
       orgMembershipId: input.operation.member.orgMembershipId,
       connectionId: connection.id,
-      // The App host calls tools for an open App; any other client is the member's agent.
       source: input.appHostClient === true ? "app" : "agent",
     }, toolCallFailed)
     return call
   }
-  // An administrator opted this connection into direct exposure: ordinary MCP
-  // clients receive the provider's own catalog instead of the bounded
-  // search/execute pair. The App host keeps its private app-only surface.
   const directClient = connection.exposeDirectly
     && input.directExposureEnabled === true
     && input.appHostClient !== true
@@ -273,8 +250,6 @@ export function createExternalConnectionProxyServer(input: {
     (await (input.appHostClient ? listAppTools() : listDirectTools()))
       .map((tool) => externalMcpAppResourceUri(tool)).filter((uri) => uri !== null),
   )
-  // The provider's catalog, filtered by tool policy and grants, can change while a client is connected; the bounded
-  // search/execute pair cannot. Changes reach listening clients through the inventory event bus.
   const listsChange = input.appHostClient === true || directClient
   const server = new Server(input.descriptor.serverInfo ?? {
     name: connection.name,
@@ -360,8 +335,6 @@ export function createExternalConnectionProxyServer(input: {
         const toolName = typeof args.name === "string" ? args.name.trim() : ""
         const tool = (await listProviderTools()).find((candidate) => candidate.name === toolName)
         if (!tool) throw new ProtocolError(ProtocolErrorCode.InvalidRequest, "The capability is unavailable. Call search_capabilities again.")
-        // Accept both forms even after a rollout is killed: clients may still
-        // execute a cached modern search result against the legacy view.
         return callTool(tool, toolArguments(args.arguments ?? args.body))
       }
       if (!input.appHostClient) {
@@ -410,8 +383,6 @@ async function jsonRpcRequestId(request: Request): Promise<string | number | nul
       if (typeof id === "string" || typeof id === "number") return id
     }
   } catch {
-    // Preflight owns invalid JSON. A downstream failure without a readable id
-    // still uses the protocol-defined null error id.
   }
   return null
 }
@@ -451,11 +422,6 @@ export async function externalMcpProxyProtocolErrorResponse(
   })
 }
 
-/**
- * Serves proxy requests for both protocol eras without sessions. A modern
- * client's `subscriptions/listen` stream belongs to the connection's
- * organization and hears every change to its inventory (InventoryEventBus).
- */
 export function createExternalConnectionProxyHandler(input: { revision: InventoryRevision; pollMs?: number }) {
   const bus = new InventoryEventBus({
     revision: input.revision,
@@ -506,7 +472,6 @@ export async function handleExternalConnectionProxyRequest(input: {
   operation: ExternalMcpProxyOperation
   scopes: ReadonlySet<string>
   appHostClient?: boolean
-  /** Opt in to the modern search results and execute arguments schema; defaults to legacy. */
   toolShapes?: boolean
   directExposureEnabled?: boolean
   runtime?: ExternalMcpProxyRuntime
@@ -558,15 +523,6 @@ export const EXTERNAL_CONNECTION_PROXY_ROUTE_DEPS: ExternalConnectionProxyRouteD
   proxy: handleExternalConnectionProxyRequest,
 }
 
-/**
- * Exposes one member-authorized connection to Desktop's private App host. An
- * ordinary client receives only a bounded search/execute compatibility surface
- * unless an administrator marked the connection `exposeDirectly`, in which case
- * it is served as a standard MCP server whose tool catalog is filtered by the
- * organization's tool policy. Grants, and the holds execute_capability applies
- * to a granted connection, are re-checked on every request. An authored App id
- * at the same path is served as that App's own MCP server.
- */
 export function registerExternalConnectionProxyRoutes<T extends { Variables: RequestIdVariables & Record<string, unknown> }>(
   app: Hono<T>,
   deps: ExternalConnectionProxyRouteDeps = EXTERNAL_CONNECTION_PROXY_ROUTE_DEPS,
@@ -576,10 +532,6 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
   app.all(path, tokenRoute, async (c) => {
     const requestIdValue = c.get("requestId")
     const requestId = typeof requestIdValue === "string" ? requestIdValue : "unknown"
-    // A browser at an App's URL gets the site page. Nobody has signed in yet,
-    // so every App id gets the same page and the App is not looked up: the
-    // page signs the visitor in with their OpenWork session, and only then
-    // does this route say whether they may open the App as a site.
     if (wantsAppSite(c.req.raw) && isMcpAppServerId(c.req.param("connectionId"))) {
       const page = await appSiteResponse({ appIdOrName: c.req.param("connectionId"), publicOnly: false })
       if (page) return page
@@ -594,8 +546,6 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
       return new Response(null, { status: 405, headers: { allow: "POST" } })
     }
 
-    // Each authored App is served as its own MCP server at a connection path,
-    // so released clients register and authorize it like any direct connection.
     const requestedId = c.req.param("connectionId")
     if (isMcpAppServerId(requestedId)) {
       return handleMcpAppServerRequest({ app: app as unknown as Hono, context: c, principal, appId: requestedId })
@@ -608,7 +558,6 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
     try {
       connectionId = normalizeDenTypeId("externalMcpConnection", requestedId)
     } catch {
-      // A malformed id is no connection of this organization, like a well-formed id nobody has.
       return unavailable()
     }
     const resolvedMember = await deps.member({
@@ -625,7 +574,6 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
       teamIds: member.teamIds,
     })
     if (!connection || !granted) return unavailable()
-    // Only a member with a grant is told why a connection is held.
     const hold = externalMcpConnectionHold(connection, member)
     if (hold) return unavailable(hold.message)
     if (usesMemberApiKey(connection)

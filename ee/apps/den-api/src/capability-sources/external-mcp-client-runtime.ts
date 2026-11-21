@@ -64,8 +64,5 @@ export const {
   inspectExternalMcpToolCall,
 } = enterpriseMcpClient
 
-// Version-one states can exist for at most their original ten-minute TTL
-// after rollout. They must finish against the verifier format that created
-// them.
 export const completeLegacyExternalMcpAuth = completeWithCurrentClient
 export const abandonLegacyExternalMcpAuth = abandonWithCurrentClient

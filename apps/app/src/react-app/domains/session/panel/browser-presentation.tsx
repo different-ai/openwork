@@ -18,14 +18,6 @@ type BrowserFullscreenDialogProps = {
   controller: BrowserPresentationController;
 };
 
-/**
- * The browser over the whole screen: the app window goes into macOS full
- * screen and this dialog fills it. A Base UI dialog rather than a native
- * `<dialog>`: the top layer would hide the toolbar's portaled tooltips,
- * popovers and menus behind it. For the same reason the whole page, not the
- * dialog, is the full-screen element. Escape, Exit and the close button all
- * leave to the person's last floating or side choice.
- */
 function BrowserFullscreenDialog({ sessionId, controller }: BrowserFullscreenDialogProps) {
   const exitRef = React.useRef<HTMLButtonElement>(null);
   const { tab, status, needsYou, present, exitFullscreen, fullscreenReturnFocus } = controller;
@@ -101,12 +93,9 @@ function BrowserFullscreenDialog({ sessionId, controller }: BrowserFullscreenDia
   );
 }
 
-/** The browser's own window and the full-screen view, for the conversation on screen. */
 export function BrowserPresentationSurfaces({ sessionId, controller }: BrowserFullscreenDialogProps) {
   const { mode, tab, browserTabs, present, focusWindowOnOpen } = controller;
   const poppedOut = controller.enabled && mode === "floating" && tab !== null;
-  // Closing the window, by its button or the system's close, puts the page back
-  // beside the chat, as does a window that could not open.
   const slot = useFloatingWindow("browser", poppedOut, {
     title: `${tab?.label ?? "New tab"} · Browser`,
     width: 1280,
@@ -129,7 +118,6 @@ export function BrowserPresentationSurfaces({ sessionId, controller }: BrowserFu
           sessionId={sessionId}
           tab={tab}
           tabs={browserTabs}
-          // From its own window, bring the app forward to show the page.
           onPresent={(next) => { window.focus(); present(next); }}
         />
       ) : null}
@@ -138,10 +126,6 @@ export function BrowserPresentationSurfaces({ sessionId, controller }: BrowserFu
   );
 }
 
-/**
- * The side rail's Browser button while the floating browser is on: it opens
- * and closes the browser beside the chat, like the rail's other panels.
- */
 export function BrowserRailButton({ controller }: { controller: BrowserPresentationController }) {
   const shown = controller.mode === "side";
   const label = `Browser · ${controller.status}`;

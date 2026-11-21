@@ -1,19 +1,12 @@
-// OpenAI Responses API for Cursor. Cursor's OpenAI override can
-// send a model through Responses instead of Chat Completions. Every Gateway translator speaks Chat
-// Completions on the client side, so a Responses request is read as a chat request, sent to the
-// model's own protocol as usual, and the Chat Completions answer is written back as a Responses
-// object (JSON) or Responses event stream (SSE).
 import { randomUUID } from "node:crypto"
 import { isJsonObject, type JsonObject } from "@openwork-ee/gateway-protocols/chat"
 
-/** The text of a Responses content array (`input_text`, `output_text`, `text` parts) or a plain string. */
 function partsText(content: unknown): string {
   if (typeof content === "string") return content
   if (!Array.isArray(content)) return ""
   return content.flatMap((part) => isJsonObject(part) && typeof part.text === "string" ? [part.text] : []).join("")
 }
 
-/** Responses content parts as Chat Completions parts (text and images); a string stays a string. */
 function chatParts(content: unknown): unknown {
   if (typeof content === "string") return content
   if (!Array.isArray(content)) return ""
@@ -50,11 +43,9 @@ function functionTool(tool: JsonObject, name: string): JsonObject {
   } }
 }
 
-/** A custom tool takes free text; a chat model gets it as one string argument, with its grammar. */
 function customTool(tool: JsonObject, name: string): JsonObject {
   const format = isJsonObject(tool.format) ? tool.format : null
   const grammar = format && typeof format.definition === "string" ? format.definition : null
-  // The tool's own description may say not to send JSON: here its text goes in one JSON string.
   const description = [
     typeof tool.description === "string" ? tool.description : "",
     "Send the tool's text as the `input` argument, exactly as written: every line as it should be, with its exact indentation and no added spaces.",
@@ -67,11 +58,6 @@ function customTool(tool: JsonObject, name: string): JsonObject {
   } }
 }
 
-/**
- * A Responses tool as Chat Completions tools: functions as they are, custom tools and namespaces as
- * above. Hosted tools (web search, file search, local shell and the like) are dropped: only the
- * provider that runs them could.
- */
 function chatTools(tool: unknown): JsonObject[] {
   if (!isJsonObject(tool)) return []
   if (tool.type === "function") {
@@ -110,7 +96,6 @@ export function responsesToolNames(body: JsonObject): ResponsesToolNames {
   return { custom, namespaced }
 }
 
-/** The fewest output tokens every translated provider accepts. */
 const MIN_OUTPUT_TOKENS = 16
 
 /**
@@ -150,7 +135,6 @@ export function responsesToChat(body: JsonObject): JsonObject {
   const choice = body.tool_choice
   if (typeof choice === "string") chat.tool_choice = choice
   else if (isJsonObject(choice) && (choice.type === "function" || choice.type === "custom") && typeof choice.name === "string") chat.tool_choice = { type: "function", function: { name: choice.name } }
-  // OpenAI-compatible providers refuse fewer than 16 output tokens.
   if (typeof body.max_output_tokens === "number") chat.max_tokens = Math.max(MIN_OUTPUT_TOKENS, body.max_output_tokens)
   for (const field of ["temperature", "top_p", "parallel_tool_calls", "user"]) if (body[field] !== undefined) chat[field] = body[field]
   return chat
@@ -204,7 +188,6 @@ function reasoningItem(id: string, text: string): OutputItem {
   return { type: "reasoning", id, summary: text ? [{ type: "summary_text", text }] : [] }
 }
 
-/** A chat tool call as the Responses item the request's tools call for. */
 function toolCallItem(input: { id: string; callId: string; name: string; arguments: string; status: string }, tools?: ResponsesToolNames): OutputItem {
   const namespaced = tools?.namespaced.get(input.name)
   if (tools?.custom.has(input.name)) {
@@ -213,12 +196,11 @@ function toolCallItem(input: { id: string; callId: string; name: string; argumen
   return { type: "function_call", id: input.id, call_id: input.callId, ...(namespaced ? { namespace: namespaced.namespace, name: namespaced.name } : { name: input.name }), arguments: input.arguments, status: input.status }
 }
 
-/** A custom tool's free text from the `{input}` arguments a chat model sends; other text as it is. */
 function customInput(args: string): string {
   try {
     const parsed: unknown = JSON.parse(args)
     if (isJsonObject(parsed) && typeof parsed.input === "string") return parsed.input
-  } catch { /* Not JSON: the model sent the text itself. */ }
+  } catch {}
   return args
 }
 
@@ -368,7 +350,6 @@ export function chatStreamToResponses(body: ReadableStream<Uint8Array>, model: s
         }
         if (typeof fn.arguments === "string" && fn.arguments) {
           call.arguments += fn.arguments
-          // A custom tool's text is only known once its JSON arguments are whole.
           if (!tools?.custom.has(call.name)) event(controller, "response.function_call_arguments.delta", { item_id: call.id, output_index: call.index, delta: fn.arguments })
         }
       }
@@ -392,7 +373,7 @@ export function chatStreamToResponses(body: ReadableStream<Uint8Array>, model: s
     try {
       const parsed: unknown = JSON.parse(data)
       if (isJsonObject(parsed)) chunk(controller, parsed)
-    } catch { /* A malformed line is skipped, as Chat Completions clients do. */ }
+    } catch {}
   }
   return body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
     transform(bytes, controller) {
@@ -404,7 +385,6 @@ export function chatStreamToResponses(body: ReadableStream<Uint8Array>, model: s
     flush(controller) {
       buffer += decoder.decode()
       if (buffer) line(controller, buffer.trimEnd())
-      // A stream cut off before [DONE] still ends with a terminal event.
       if (!finished) fail(controller, { code: "upstream_incomplete", message: "The model's response ended early." })
     },
   }))

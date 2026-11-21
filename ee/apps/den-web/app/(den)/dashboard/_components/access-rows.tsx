@@ -6,11 +6,6 @@ import { useState, type ReactNode } from "react";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { ItemPanel } from "./item-list";
 
-/**
- * Rows and pickers shared by everything that lists people and teams with
- * access: the Who can use it block, and the people in a role.
- */
-
 export function initials(name: string): string {
   const parts = name.trim().split(/\s+/).filter(Boolean);
   const letters = parts.length > 1 ? `${parts[0][0]}${parts[parts.length - 1][0]}` : (parts[0] ?? "?").slice(0, 2);
@@ -71,12 +66,7 @@ export function RemoveButton({ label, onClick, disabled, actionLabel = "Remove" 
 
 export type PersonChoice = { id: string; name: string; email: string };
 
-/**
- * The people in a team or a role: one row each with Remove, then Add person.
- * Used by Create role and by the team form, so both pick people the same way.
- */
 export function PeopleField({ people, chosenIds, onChange, rowTestId }: {
-  /** Everyone who can be added, in display order. */
   people: readonly PersonChoice[];
   chosenIds: readonly string[];
   onChange: (ids: string[]) => void;
@@ -107,7 +97,6 @@ export function PeopleField({ people, chosenIds, onChange, rowTestId }: {
 
 export type TeamChoice = { id: string; name: string; detail: string };
 
-/** The teams a role goes to: one row each with Remove, then Add team (sharedRoles Create role). */
 export function TeamsField({ teams, chosenIds, onChange, rowTestId }: {
   teams: readonly TeamChoice[];
   chosenIds: readonly string[];
@@ -135,8 +124,6 @@ export function TeamsField({ teams, chosenIds, onChange, rowTestId }: {
   );
 }
 
-// Both draft sharing and role grants use the same trigger, not the same picker:
-// draft sharing is multi-select; a grant assigns one target a specific role.
 export const accessAddButtonClassName = buttonVariants({ variant: "secondary", size: "sm" });
 
 export type PickerOption = { id: string; name: string; detail: string };

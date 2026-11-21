@@ -1,7 +1,6 @@
 import { CalendarDays, Plug } from "lucide-react";
 import type { MemberAgentSource } from "@openwork/types/den/workbot-proactive";
 
-/** A source with nothing connected behind it yet: what it is, not a blank square. */
 export function SourceIcon({ kind }: { kind: MemberAgentSource["kind"] }) {
   const Icon = kind === "calendar" ? CalendarDays : Plug;
   return (

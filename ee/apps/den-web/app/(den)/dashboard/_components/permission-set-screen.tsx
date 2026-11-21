@@ -56,9 +56,7 @@ export function PermissionSetScreen({ permissionSetId }: { permissionSetId: stri
 
 function PermissionSetContent({ ready, permissionSetId }: { ready: ReadyAccess; permissionSetId: string; }) {
   const query = usePermissionSet(ready.orgId, permissionSetId);
-  // Lives above the editor, which remounts after each save, so Undo and errors survive it.
   const update = useUpdatePermissionSet(ready.orgId, permissionSetId);
-  // A role's page opens on who has it. Member has no such list: everyone holds it.
 
   const [chosenTab, setTab] = useState<SetTab | null>(null);
   const rolesBack = { href: `${getMembersRoute(ready.orgSlug)}?tab=roles`, label: "Roles" };
@@ -115,7 +113,6 @@ function PermissionSetContent({ ready, permissionSetId }: { ready: ReadyAccess; 
       ) : tab === "permissions" ? (
         <div role="tabpanel" aria-label="Permissions" className="flex flex-col gap-6">
           {sharedCustom && set.archivedAt === null ? <RoleNameField ready={ready} set={set} /> : null}
-          {/* Remount when the saved state changes so the draft starts from it. */}
           <PermissionSetEditor key={set.permissions.map((state) => state.status).join("")} ready={ready} set={set} update={update} impact={impact} />
         </div>
       ) : (
@@ -127,13 +124,11 @@ function PermissionSetContent({ ready, permissionSetId }: { ready: ReadyAccess; 
   );
 }
 
-/** The disclosure arrow of an "Applies to" summary. */
 function AppliesToChevron() {
   return <ChevronRight className="size-3.5 text-gray-400 transition-transform duration-150 group-open:rotate-90 motion-reduce:transition-none" aria-hidden="true" />;
 }
 
 function AppliesTo({ ready, set }: { ready: ReadyAccess; set: PermissionSetDetail; }) {
-  // Admin comes from a person's own role or from a team with the Admin role.
   const adminTeamsLabel = (count: number) => plural(count, "team with the Admin role", "teams with the Admin role");
   const appliesTo = set.appliesTo;
   if (set.archivedAt) {
@@ -202,12 +197,10 @@ function AppliesTo({ ready, set }: { ready: ReadyAccess; set: PermissionSetDetai
   );
 }
 
-/** Why a key can't be changed in this set by this person, or null. */
 function keyLockReason(ready: ReadyAccess, set: PermissionSetDetail, key: PermissionKey, saved: PermissionStatus, locked: boolean): string | null {
   if (locked) return "Always on for admins";
   if (saved === "allow" || ready.held.has(key)) return null;
   const defaultKey = defaultSetForSetKind(set.kind);
-  // Re-allowing a key that is on by default in this default set is always allowed.
   if (defaultKey && isPermissionDefaultOn(getPermissionDefinition(key), defaultKey)) return null;
   return "You don't have this permission";
 }
@@ -224,7 +217,6 @@ function PermissionSetEditor({ ready, set, update, impact }: {
   ready: ReadyAccess;
   set: PermissionSetDetail;
   update: ReturnType<typeof useUpdatePermissionSet>;
-  /** who a save changes, e.g. "Updates Sales and Engineering, 9 people". */
   impact?: string;
 }) {
   const [draft, setDraft] = useState<ReadonlyMap<string, PermissionStatus>>(new Map());
@@ -347,7 +339,6 @@ function RemoveTeamPermissions({ ready, set }: { ready: ReadyAccess; set: Permis
   const [open, setOpen] = useState(false);
   const remove = useRemoveTeamPermissions(ready.orgId, set.id);
   const sharedTeams = set.teams.map((team) => team.name ?? "A deleted team");
-  // deleting a role takes it off every team; teamRoles: removing it leaves the team with Member.
   const words = {
         trigger: "Delete role",
         title: `Delete ${set.name}?`,

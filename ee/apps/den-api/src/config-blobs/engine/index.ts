@@ -1,8 +1,3 @@
-/**
- * The config-blob engine: canonical hashing, matching, diffing, reference
- * and secret resolution, planning and execution. Pure apart from the adapter
- * calls `executePlan` makes; no db access of its own.
- */
 export { baseHash, canonicalJson, canonicalJsonPlain, itemRev, normalizeSpecValue, specRev, stringifyCanonical, type RevLayout } from "./canonical.js"
 export {
   blobItemAsConfigItem,

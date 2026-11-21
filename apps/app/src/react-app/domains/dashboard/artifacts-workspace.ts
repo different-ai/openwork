@@ -7,7 +7,6 @@ export type ArtifactRow =
 
 export type ArtifactGroup = { title: "Pinned" | "Yours" | "Team"; rows: ArtifactRow[] };
 
-/** Placement never determines access: every accessible catalog entry gets a row. */
 export function artifactRows(
   builtApps: readonly BuiltMcpAppCatalogEntry[],
   pinnedIds: readonly string[],
@@ -21,8 +20,6 @@ export function artifactRows(
   }
   for (const app of savedApps) {
     const id = `saved:${app.view.id}`;
-    // Legacy summaries expose management permission, not authorship. Admin
-    // access must never turn an unknown author into an ownership claim.
     unique.set(id, { kind: "saved", id, title: app.view.title, pinned: app.onDashboard, isOwner: false, app });
   }
   return [...unique.values()];
@@ -38,7 +35,6 @@ export function groupArtifacts(rows: readonly ArtifactRow[], search = ""): Artif
   return groups;
 }
 
-/** Session memory is partitioned by the verified member/org/deployment scope. */
 const selectedByScope = new Map<string, string>();
 export function readArtifactSelection(scope: string): string | null {
   return selectedByScope.get(scope) ?? null;

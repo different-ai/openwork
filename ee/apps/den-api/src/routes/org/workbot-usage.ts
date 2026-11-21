@@ -6,7 +6,6 @@ import { forbiddenSchema, jsonResponse, notFoundSchema, unauthorizedSchema } fro
 import { readWorkbotUsage } from "../../workbot/usage.js"
 import type { OrgRouteVariables } from "./shared.js"
 
-/** What Workbot spent on models, for admins (Den › Analytics › Workbot). Aggregates only. */
 export function registerOrgWorkbotUsageRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get(
     "/v1/workbot-usage",

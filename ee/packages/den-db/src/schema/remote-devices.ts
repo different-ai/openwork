@@ -28,29 +28,20 @@ export const RemoteDeviceTable = mysqlTable(
   {
     id: denTypeIdColumn("remoteDevice", "id").notNull().primaryKey(),
     organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
-    /** The member whose computer this is; null when it is shared with the whole organization. */
     ownerMemberId: denTypeIdColumn("member", "owner_member_id"),
-    /** Who registered a computer by hand; null for computers that registered themselves. */
     createdByMemberId: denTypeIdColumn("member", "created_by_member_id"),
     kind: varchar("kind", { length: 16 }).$type<RemoteDeviceKind>().notNull(),
     provider: varchar("provider", { length: 32 }).$type<RemoteDeviceProvider>().notNull(),
     source: varchar("source", { length: 16 }).$type<RemoteDeviceSource>().notNull(),
     platform: varchar("platform", { length: 16 }).$type<RemoteDevicePlatform>(),
-    /**
-     * The provider's id for the computer: a desktop's runner row id (`rnr_…`, the `computerId` remote sessions use),
-     * a Workbot computer's runner session id (`hs_…`), or a VM id.
-     */
     externalId: varchar("external_id", { length: 191 }).notNull(),
     label: varchar("label", { length: 120 }).notNull(),
     state: varchar("state", { length: 24 }).$type<RemoteDeviceState>().notNull().default("unknown"),
     statusDetail: varchar("status_detail", { length: 300 }),
     appVersion: varchar("app_version", { length: 80 }),
-    /** For Workbot's computers: `main` or the side chat's id. */
     workbotChat: varchar("workbot_chat", { length: 96 }),
-    /** The latest desktop report, for platform admins. */
     diagnostics: compatJsonColumn<RemoteDeviceDiagnostics>("diagnostics"),
     lastSeenAt: timestamp("last_seen_at", { fsp: 3 }),
-    /** Removed from the list by its owner. A computer that reports again comes back. */
     removedAt: timestamp("removed_at", { fsp: 3 }),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { fsp: 3 })
@@ -80,7 +71,6 @@ export const RemoteDeviceEventTable = mysqlTable(
     level: varchar("level", { length: 8 }).$type<RemoteDeviceEventLevel>().notNull(),
     message: varchar("message", { length: 300 }).notNull(),
     actor: varchar("actor", { length: 16 }).$type<RemoteDeviceEventActor>().notNull(),
-    /** The member who acted, when one did. */
     actorId: varchar("actor_id", { length: 64 }),
     data: compatJsonColumn<Record<string, string | number | boolean | null>>("data"),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
@@ -100,12 +90,10 @@ export const RemoteDeviceEventTable = mysqlTable(
 export const ComputerDisconnectionTable = mysqlTable(
   "computer_disconnection",
   {
-    /** The install's runner row id (`rnr_…`): `automation_runner.id`, and `remote_device.external_id` for a desktop. */
     id: varchar("id", { length: 160 }).notNull().primaryKey(),
     organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
     ownerMemberId: denTypeIdColumn("member", "owner_member_id").notNull(),
     disconnectedAt: timestamp("disconnected_at", { fsp: 3 }).notNull(),
-    /** The member who disconnected it: its owner, or someone with Disconnect team computers. */
     disconnectedByMemberId: denTypeIdColumn("member", "disconnected_by_member_id"),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
   },

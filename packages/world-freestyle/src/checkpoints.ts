@@ -44,13 +44,10 @@ async function allocate(input: { snapshotId: string; slug: string; kind: string;
   const created = await api.vms.create({
     snapshotId: input.snapshotId, slug: input.slug, ttlSeconds: 3600, idleTimeoutSeconds: 600,
     metadata: { kind: input.kind, sourceSha: input.sourceSha, ...input.metadata },
-    // All runtime services and mocked inference are inside this VM. No egress.
     firewall: { rules: [] },
     tls: { rules: Object.values(origins).map((origin) => ({ action: "allow", domain: new URL(origin).hostname, source: { public: true }, destination: { port: 8080 } })) },
   });
   try {
-    // A template may be reused across commits whose VM-side files are identical.
-    // New worlds check that fingerprint; forks are bound by their checkpoint manifest.
     if ((await created.vm.fs.readTextFile(`${root}/evidence-ready`)).trim() !== "web-v1"
       || (input.runtimeFingerprint !== undefined
         && (await created.vm.fs.readTextFile(`${root}/runtime-fingerprint`)).trim() !== input.runtimeFingerprint)) throw new Error("Evidence world source mismatch");
@@ -69,7 +66,6 @@ export async function launchEvidenceWorld(template: { id: string; runtimeFingerp
 
 export interface StartedCheckpoint {
   checkpoint: EvidenceCheckpoint;
-  /** Resolves once the provider has fully saved the snapshot. Await it before deleting the VM. */
   saved: Promise<void>;
 }
 
@@ -89,7 +85,6 @@ export async function startEvidenceCheckpoint(input: { vmId: string; sourceSha: 
   const count = await handle.fs.exists(countPath) ? Number(await handle.fs.readTextFile(countPath)) : 0;
   if (!Number.isInteger(count) || count < 0 || count >= 10) throw new CheckpointCapacity("This proof has reached its ten-checkpoint limit");
   const now = Date.now();
-  // Previews are opened within hours; 12h keeps snapshot storage, the largest cost, small.
   const checkpoint = parseEvidenceCheckpoint({ version: 1, provider: "freestyle", id: `ow-evidence-v1-${randomUUID().replaceAll("-", "")}`,
     sourceSha: input.sourceSha, imageHash: input.imageHash, capturedAt: new Date(now).toISOString(), expiresAt: new Date(now + CHECKPOINT_TTL_SECONDS * 1000).toISOString() });
   await handle.fs.writeTextFile(countPath, String(count + 1));
@@ -97,7 +92,6 @@ export async function startEvidenceCheckpoint(input: { vmId: string; sourceSha: 
   const saved = handle.snapshot({ slug: checkpoint.id, ttlSeconds: CHECKPOINT_TTL_SECONDS, autoDeleteSeconds: CHECKPOINT_TTL_SECONDS }).then(async (result) => {
     if (result.snapshot.public !== false) { await api.vms.snapshots.delete(result.snapshotId); throw new Error("Evidence snapshots must be private"); }
   });
-  // Mark handled now; callers still observe a failure when they await it.
   saved.catch(() => undefined);
   return { checkpoint, saved };
 }
@@ -127,7 +121,6 @@ export async function forkEvidenceCheckpoint(value: unknown, reportId: string, r
   catch (error) { if (isMissing(error)) throw new CheckpointUnavailable("This checkpoint is no longer available"); throw error; }
   if (snapshot.public !== false || snapshot.slug !== checkpoint.id) throw new CheckpointUnavailable("Invalid evidence snapshot");
   const key = createHash("sha256").update(checkpoint.id).digest("hex").slice(0, 24);
-  // Provider-enforced unique slots bound concurrent forks across server instances.
   for (let slot = 0; slot < 3; slot++) {
     const slug = `ow-evidence-fork-${key}-${slot}`;
     try {
@@ -135,15 +128,13 @@ export async function forkEvidenceCheckpoint(value: unknown, reportId: string, r
         metadata: { reportId, requestId, checkpoint: checkpoint.id } }, api, probe);
       try {
         await verifyRestoredCheckpoint(result.id, checkpoint, api);
-        // Preserve the launch receipt separately: later captures of this working
-        // copy update checkpoint.json but must not change retry ownership.
         await api.vms.ref(result.id).fs.writeTextFile(`${root}/restored-checkpoint.json`, JSON.stringify({ vmId: result.id, checkpoint }), { mode: 0o600 });
         return result;
       } catch (error) { await api.vms.delete(result.id); throw error; }
     } catch (error) {
       if (!(error instanceof FreestyleApiError) || error.status !== 409) throw error;
       const existing = await api.vms.get(slug).catch((cause: unknown) => { if (isMissing(cause)) return null; throw cause; });
-      if (!existing) throw error; // Account quota, not an occupied slot.
+      if (!existing) throw error;
       if (existing.metadata.kind === FORK_KIND && existing.metadata.reportId === reportId && existing.metadata.requestId === requestId
         && existing.metadata.checkpoint === checkpoint.id && existing.metadata.sourceSha === checkpoint.sourceSha) {
         const receipt: unknown = JSON.parse(await api.vms.ref(existing.id).fs.readTextFile(`${root}/restored-checkpoint.json`));

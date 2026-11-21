@@ -1,7 +1,3 @@
-/** Recover only explicitly rejected, optional title-generation parameters.
- * The correlation header is removed unless already covered by an AWS signature.
- * No prompts, response bodies, URLs, or credentials enter diagnostics.
- */
 const HEADER = "x-openwork-title-attempt";
 const DEADLINE_MS = 60_000;
 const MAX_ERROR_BYTES = 16_384;
@@ -62,7 +58,6 @@ async function errorBody(response: Response): Promise<unknown> {
   } catch {
     return null;
   } finally {
-    // A clone's tee can wait for the original consumer when cancelled.
     void reader.cancel().catch(() => undefined);
   }
 }
@@ -72,7 +67,6 @@ function correction(body: string, value: unknown): { body: string; parameter: st
   const error = value.error;
   if (error.code !== "unsupported_value" && error.code !== "unsupported_parameter") return null;
   const parameter = error.param;
-  // Never change identity, content, tools, token limits, or required parameters.
   if (parameter !== "reasoning.effort" && parameter !== "reasoning_effort"
     && parameter !== "temperature" && parameter !== "top_p") return null;
   let parsed: unknown;
@@ -82,8 +76,6 @@ function correction(body: string, value: unknown): { body: string; parameter: st
   const key = parameter === "reasoning.effort" ? "effort" : parameter;
   if (!record(target) || !Object.hasOwn(target, key)) return null;
 
-  // Provider text is used only to recognize a fixed vocabulary of effort values.
-  // If it supplies no recognizable list, let the same model use its default.
   const message = typeof error.message === "string" ? error.message : "";
   const supported = /Supported values are:\s*([^\n]+)/i.exec(message)?.[1] ?? "";
   const efforts = new Set([...supported.matchAll(/['"](none|minimal|low|medium|high|xhigh|max)['"]/g)]
@@ -116,13 +108,11 @@ function install() {
     const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
     const id = headers.get(HEADER);
     if (!id) return base(input, init);
-    // Removing a signed header here invalidates SigV4's canonical request.
     if (!/^AWS4-HMAC-SHA256\s/i.test(headers.get("authorization") ?? "")) headers.delete(HEADER);
     const externalSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
     const deadline = AbortSignal.timeout(DEADLINE_MS);
     const options = { ...init, headers, signal: externalSignal ? AbortSignal.any([externalSignal, deadline]) : deadline };
     const attempt = attempts.get(id);
-    // Unknown/expired markers are stripped too, except when already signed.
     if (!attempt) return base(input, options);
     try {
       const response = await base(input, options);
@@ -153,7 +143,6 @@ function install() {
   globalThis.fetch = Object.assign(patched, base);
 }
 
-// Only export the factory: the engine treats every export as a plugin.
 export const OpenWorkTitleRecovery = async (input: {
   client: { app: { log: (input: { body: {
     service: string; level: "info" | "warn"; message: string; extra: Diagnostic;

@@ -27,7 +27,6 @@ export function appBuilderResultFailed(part: DynamicToolUIPart): boolean {
   );
 }
 
-/** Only the real builder result with a matching launch may open a preview. */
 export function builtAppSummary(part: DynamicToolUIPart) {
   if (
     !isAppBuilderPart(part) ||

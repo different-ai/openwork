@@ -14,14 +14,12 @@ import { useAuthSecurityIntroFacts } from "./auth-security-intro-facts";
 import { ScimScreen } from "./scim-screen";
 import { SsoScreen } from "./sso-screen";
 
-/** General (session settings) comes first, and is the default. */
 const TABS: readonly TabItem<AuthSecurityTab>[] = [
   { value: "general", label: "General", icon: SlidersHorizontal },
   { value: "sso", label: "Single sign-on (SSO)", icon: KeyRound },
   { value: "scim", label: "User provisioning (SCIM)", icon: UsersRound },
 ];
 
-/** Each tab's feature intro, for its unseen dot (DESIGN.md I9). General has none. */
 const AUTH_SECURITY_TAB_INTROS: Partial<Record<AuthSecurityTab, FeatureIntroKey>> = {
   sso: "auth-security.sso",
   scim: "auth-security.scim",
@@ -36,7 +34,6 @@ function tabUnseen(introUnseen: (key: FeatureIntroKey) => boolean, tab: AuthSecu
   return intro ? introUnseen(intro) : false;
 }
 
-/** Same query, minus our own `tab` and `setup`, so other deep-link parameters survive a redirect. */
 function carriedParams(searchParams: URLSearchParams): URLSearchParams {
   const params = new URLSearchParams(searchParams.toString());
   params.delete("tab");
@@ -50,11 +47,6 @@ function withQuery(route: string, params: URLSearchParams): string {
   return `${route}${route.includes("?") ? "&" : "?"}${query}`;
 }
 
-/**
- * Settings › Auth & Security: General (session settings, `?tab=general`, the
- * default), single sign-on (`?tab=sso`) and user provisioning (`?tab=scim`)
- * as tabs. The old SSO and SCIM pages redirect to their tab.
- */
 export function AuthSecurityScreen() {
   const { orgSlug, orgContext } = useOrgDashboard();
   const router = useRouter();
@@ -66,14 +58,12 @@ export function AuthSecurityScreen() {
   const setupMode = searchParams.get("setup") === "1";
 
   const loadedFacts = useAuthSecurityIntroFacts(introsEnabled && Boolean(orgContext) && !setupMode);
-  // What the tabs report after a change here wins over the section's first load.
   const [reported, setReported] = useState<AuthSecurityFacts>({});
   const reportFacts = useCallback((facts: AuthSecurityFacts) => {
     setReported((current) => ({ ...current, ...facts }));
   }, []);
   const sectionFacts = loadedFacts ? { ...loadedFacts, ...reported } : null;
 
-  // Until the organization is known.
   if (!orgContext) return null;
 
   function setTab(next: AuthSecurityTab) {
@@ -105,9 +95,6 @@ export function AuthSecurityScreen() {
     </DashboardPageTemplate>
   );
 
-  // `?setup=1` comes from an intro's action and goes straight to the form (DESIGN.md I5).
-  // General has settings whether or not SSO or SCIM is set up, so no section intro covers it.
   if (setupMode || tab === "general") return page;
-  // Nothing set up yet (no SSO connection, no SCIM connector): the section intro replaces the page (DESIGN.md I2).
   return <FeatureIntroGate introKey="auth-security" facts={sectionFacts}>{page}</FeatureIntroGate>;
 }

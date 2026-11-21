@@ -255,10 +255,6 @@ function actorContext(c: OrgContext): PluginArchActorContext {
   }
 }
 
-/**
- * A non-sensitive permission plus today's recent sign-in requirement for this
- * specific action (the key itself does not require one everywhere it is used).
- */
 async function requirePermissionWithFreshSession(c: OrgContext, key: PermissionKey) {
   const permission = await requirePermission(c, key)
   if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response), permissionFailureHeaders(permission.response))
@@ -315,13 +311,11 @@ export function isAgentPluginMcpOAuthClientSetup(input: { apiKey?: string | null
   return isAgentPluginMcpSecretSetup(input)
 }
 
-/** The skill name in SKILL.md frontmatter, which Den keeps to lowercase letters, digits and hyphens. */
 function skillNameFromMarkdown(markdown: string): string | null {
   const frontmatter = /^---\r?\n([\s\S]*?)\r?\n---/.exec(markdown)?.[1] ?? ""
   return /^name:\s*["']?([a-z0-9-]{1,64})["']?\s*$/m.exec(frontmatter)?.[1] ?? null
 }
 
-/** The skill in an uploaded archive (multipart field `file`), and an optional `pluginName`. */
 async function uploadedSkillZip(c: OrgContext): Promise<{ skillMarkdown: string; files: SkillFileBody[]; pluginName: string | null }> {
   if (!c.req.header("content-type")?.toLowerCase().startsWith("multipart/form-data")) {
     throw new PluginArchRouteFailure(400, "invalid_skill_zip", "Upload the skill as multipart form data, with the .zip in a field named file.")
@@ -361,7 +355,6 @@ function anthropicFailure(error: unknown): unknown {
 }
 
 const skillZipBodyLimit = bodyLimit({
-  // The archive plus the multipart framing around it.
   maxSize: SKILL_ZIP_MAX_BYTES + 64 * 1024,
   onError: (c) => c.json({ error: "invalid_skill_zip", message: `A skill archive can be at most ${SKILL_ZIP_MAX_BYTES / (1024 * 1024)} MB.` }, 413),
 })
@@ -370,8 +363,6 @@ function withPluginArchOrgContext(app: Hono<any>, method: "delete" | "get" | "pa
   const routeHandler = handlers.pop() as unknown
   const routeMiddlewares = handlers as unknown[]
   const routeApp = app as unknown as Record<string, (...args: unknown[]) => unknown>
-  // A write route reads back what it wrote (often through shared helpers), so
-  // all of its reads go to the primary instead of a lagging replica.
   const readScope = method === "get" ? [] : [primaryReadsMiddleware]
   routeApp[method](path, orgMemberRoute(), ...readScope, ...routeMiddlewares, resolveMemberTeamsMiddleware, routeHandler)
 }
@@ -650,7 +641,6 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
       }
     })
 
-  // Registered before :versionId so "latest" is not validated as a version id.
   withPluginArchOrgContext(app, "get", pluginArchRoutePaths.configObjectLatestVersion,
     paramValidator(configObjectParamsSchema),
     describeRoute({

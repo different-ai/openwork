@@ -46,7 +46,6 @@ export const ConfigObjectTable = mysqlTable(
   {
     id: denTypeIdColumn("configObject", "id").notNull().primaryKey(),
     organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
-    /** Stable key that travels with the object between organizations. Set once, editable, never follows the title. */
     externalKey: varchar("external_key", { length: 128 }),
     objectType: mysqlEnum("object_type", configObjectTypeValues).notNull(),
     sourceMode: mysqlEnum("source_mode", configObjectSourceModeValues).notNull(),
@@ -124,7 +123,6 @@ export const PluginTable = mysqlTable(
   {
     id: denTypeIdColumn("plugin", "id").notNull().primaryKey(),
     organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
-    /** Stable key that travels with the plugin between organizations. Set once, editable, never follows the name. */
     externalKey: varchar("external_key", { length: 128 }),
     name: varchar("name", { length: 255 }).notNull(),
     description: text("description"),

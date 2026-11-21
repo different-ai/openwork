@@ -79,7 +79,6 @@ function writeStoredCollections(collections: StoredCollections) {
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(collections));
   } catch {
-    // Ignore storage failures.
   }
 }
 

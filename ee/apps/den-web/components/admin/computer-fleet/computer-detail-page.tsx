@@ -35,7 +35,6 @@ const EXPLANATION_STYLE: Record<Explanation["tone"], string> = {
 };
 const LEVEL_TONE: Record<ComputerFleetEvent["level"], DenBadgeTone> = { info: "neutral", warning: "warning", error: "danger" };
 
-/** A moment as the viewer's own date and time, with how long ago it was (or how far off it is). */
 function Moment({ iso, now }: { iso: string | null; now: number }) {
   if (!iso) return <span className="text-gray-600">Not reported</span>;
   const at = new Date(iso);
@@ -57,7 +56,6 @@ function Facts({ title, children, testId }: { title: string; children: ReactNode
   );
 }
 
-/** One fact. Left out when it has nothing to say, so a provider that reports little gives a short card. */
 function Fact({ name, children }: { name: string; children: ReactNode }) {
   if (children === null || children === undefined || children === false || children === "") return null;
   return (
@@ -235,7 +233,6 @@ export function ComputerDetailPage({ source, id }: { source: ComputerFleetSource
   if (!state.computer && state.status === "loading") return <AdminAccessScreen state="checking" />;
 
   const seconds = receivedAt === null ? null : Math.max(0, Math.round((now - receivedAt) / 1000));
-  // Ages follow the minute; only "read N s ago" follows the second.
   const minute = Math.floor(now / 60_000) * 60_000;
   return (
     <div className="flex flex-col gap-8" data-testid="computer-detail-page" data-status={state.status}>

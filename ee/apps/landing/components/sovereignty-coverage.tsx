@@ -52,7 +52,6 @@ function CheckMark({ status }: { status: SovereigntyCheckStatus }) {
 
 const statusPrefix: Record<SovereigntyCheckStatus, string> = { answered: "Answered: ", setup: "Not in this setup: ", open: "Open on our side: " };
 
-/** The eight objectives of the Cloud Sovereignty Framework, and how much of each OpenWork answers in the setup the reader picks. */
 export function SovereigntyCoverage() {
   const [setup, setSetup] = useState<SovereigntySetup>(sovereigntyDefaultSetup);
   const coverage = sovereigntyCoverage(setup);

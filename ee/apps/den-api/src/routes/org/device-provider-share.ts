@@ -15,7 +15,6 @@ import { ensureFreshPrivilegedSession } from "../../privileged-session.js"
 import { hasPermission } from "./shared.js"
 import type { OrgRouteVariables } from "./shared.js"
 
-/** A person's own screen decides from this; an agent never shares someone's key. */
 type DeviceShareRouteOptions = DescribeRouteOptions & { "x-mcp": false }
 const describeDeviceShareRoute = (options: DeviceShareRouteOptions) => describeRoute(options)
 
@@ -42,8 +41,6 @@ export function registerOrgDeviceProviderShareRoutes<T extends { Variables: OrgR
     async (c) => {
       const actor = c.get("organizationContext")
       if (!actor) return c.json({ error: "organization_not_found" }, 404)
-      // Not requireFeature(): Settings reads this on every visit, which is not a use
-      // of the feature. The app reports the use when a person actually shares.
       c.header("Cache-Control", "no-store")
       const organizationId = actor.organization.id
       const blocker = !(await hasPermission(c, "gateway_providers.manage")) ? "no_permission" as const
@@ -70,7 +67,6 @@ export function registerOrgDeviceProviderShareRoutes<T extends { Variables: OrgR
       const providerIds = parseDeviceShareProviderIds(c.req.valid("query").providerIds)
       const [catalog, existing] = providerIds.length
         ? await Promise.all([
-          // An unreachable catalog offers nothing rather than an action that would fail.
           getModelsDevProviders(providerIds).catch(() => []),
           db.select({ providerId: GatewayProviderTable.provider_id, name: GatewayProviderTable.name })
             .from(GatewayProviderTable)

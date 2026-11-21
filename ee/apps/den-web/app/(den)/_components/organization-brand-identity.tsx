@@ -24,8 +24,6 @@ export function OrganizationBrandIdentity({
 
   if (showLogo && brand.logoUrl) {
     return (
-      // Organization assets may be served by private on-prem hosts that are
-      // intentionally absent from this deployment's image allowlist.
       // eslint-disable-next-line @next/next/no-img-element
       <img
         src={brand.logoUrl}
@@ -39,7 +37,6 @@ export function OrganizationBrandIdentity({
   return (
     <span className={`inline ${className}`}>
       {showIcon && brand.iconUrl ? (
-        // See the private-host note above.
         // eslint-disable-next-line @next/next/no-img-element
         <img
           src={brand.iconUrl}

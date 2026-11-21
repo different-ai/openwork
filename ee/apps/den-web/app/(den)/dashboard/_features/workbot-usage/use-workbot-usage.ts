@@ -7,12 +7,10 @@ import { ORG_SCOPE_HEADER } from "../../../_lib/org-scope";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { useLibraryUsageAvailable } from "../library-usage/use-library-usage";
 
-/** Whether this member has permission to view Workbot's cost analytics. */
 export function useWorkbotUsageAvailable() {
   return useLibraryUsageAvailable();
 }
 
-/** What Workbot spent on models over the last 30 days. */
 export function useWorkbotUsage() {
   const { orgId, orgContext, orgBusy, orgError, mutationBusy } = useOrgDashboard();
   const available = useWorkbotUsageAvailable();

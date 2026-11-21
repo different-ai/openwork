@@ -1,17 +1,3 @@
-/**
- * Member credential sets: each person signs in to the upstream cloud with their
- * own account. One place for what each sign-in method needs from the set and
- * what makes a member's stored credential usable.
- *
- *   google     Google OAuth client (Vertex)                          oauth_google
- *   microsoft  Entra ID tenant + confidential app registration (Foundry, LiteLLM)  oauth_azure
- *   aws_sso    IAM Identity Center instance, account, permission set (Bedrock)  aws_sso
- *
- * Microsoft access tokens are issued for one API scope. Microsoft Foundry
- * accepts Azure Cognitive Services tokens (`scope` null below). A LiteLLM
- * provider in member Microsoft Entra sign-in mode names a scope of the
- * organization's own app registration, which its proxy validates (JWT auth).
- */
 import { isDeepStrictEqual } from "node:util"
 import { GatewayCredentialSetTable, GatewayProviderCredentialTable, GatewayProviderTable } from "@openwork-ee/den-db/schema"
 import { liteLlmEntraScope } from "@openwork-ee/gateway-catalog"
@@ -24,19 +10,10 @@ type SignInProvider = Pick<typeof GatewayProviderTable.$inferSelect, "provider_i
 
 export type { GatewayMemberSignInMethod }
 
-/**
- * The API scope members' Microsoft access tokens are issued for: a LiteLLM
- * provider's own scope in member Microsoft Entra sign-in mode, or null (Azure
- * Cognitive Services for Microsoft Foundry, and every other provider).
- */
 export function providerMemberSignInScope(provider: SignInProvider): string | null {
   return liteLlmEntraScope(provider)
 }
 
-/**
- * How members sign in to a saved provider: its catalog provider's method, or
- * Microsoft for a LiteLLM provider in member Microsoft Entra sign-in mode.
- */
 export function providerMemberSignInMethod(provider: SignInProvider): GatewayMemberSignInMethod | null {
   return gatewayMemberSignInMethod(provider.provider_id, { liteLlmEntraSignIn: providerMemberSignInScope(provider) !== null })
 }
@@ -50,10 +27,6 @@ export function readAwsSsoSettings(value: unknown): GatewayAwsSsoSettings | null
   return parsed.success ? parsed.data : null
 }
 
-/**
- * What an administrator still has to enter before members can sign in, or null when the set is complete.
- * `scope` is the provider's own Microsoft API scope (providerMemberSignInScope).
- */
 export function memberSignInConfigurationError(method: GatewayMemberSignInMethod, set: Omit<CredentialSet, "id">, scope: string | null = null): string | null {
   switch (method) {
     case "google":
@@ -68,7 +41,6 @@ export function memberSignInConfigurationError(method: GatewayMemberSignInMethod
   }
 }
 
-/** Fields of a set that do not belong to its sign-in method. */
 export function memberSignInExtraneousFields(method: GatewayMemberSignInMethod | null, set: Omit<CredentialSet, "id">): string | null {
   if (method !== "microsoft" && set.oauth_tenant_id) return "Only Microsoft Foundry member sets take an Entra ID tenant."
   if (method !== "aws_sso" && set.aws_sso) return "Only Amazon Bedrock member sets take IAM Identity Center settings."
@@ -76,18 +48,11 @@ export function memberSignInExtraneousFields(method: GatewayMemberSignInMethod |
   return null
 }
 
-/** True when two versions of a set would hand members the same upstream identity. */
 export function sameMemberSignInConfiguration(a: Omit<CredentialSet, "id">, b: Omit<CredentialSet, "id">) {
   return a.oauth_client_id === b.oauth_client_id && a.oauth_client_secret === b.oauth_client_secret
     && (a.oauth_tenant_id ?? null) === (b.oauth_tenant_id ?? null) && isDeepStrictEqual(a.aws_sso ?? null, b.aws_sso ?? null)
 }
 
-/**
- * Binds a browser entry attempt to the set's sign-in configuration, so a change
- * while someone is signing in invalidates the attempt. Google keeps its original
- * binding; the others are namespaced by method. A provider's own Microsoft API
- * scope (`scope`) is part of the configuration it binds.
- */
 export function memberSignInBinding(method: GatewayMemberSignInMethod, set: CredentialSet, verifier: string, scope: string | null = null): string | null {
   if (memberSignInConfigurationError(method, set, scope)) return null
   switch (method) {
@@ -102,10 +67,6 @@ export function memberSignInBinding(method: GatewayMemberSignInMethod, set: Cred
   }
 }
 
-/**
- * A member's stored credential can serve requests now or after a silent renewal.
- * A Microsoft token counts only for the API scope the provider configures now (`scope`).
- */
 export function memberSignInCredentialUsable(method: GatewayMemberSignInMethod, set: Omit<CredentialSet, "id">, credential: Credential, parsed: InferenceProviderSecret, now = Date.now(), scope: string | null = null): boolean {
   if (memberSignInConfigurationError(method, set, scope)) return false
   const expiry = credential.expires_at?.getTime()
@@ -124,7 +85,6 @@ export function memberSignInCredentialUsable(method: GatewayMemberSignInMethod, 
   }
 }
 
-/** The person-facing name of what they sign in with. */
 export function memberSignInBrand(method: GatewayMemberSignInMethod) {
   return method === "google" ? "Google" : method === "microsoft" ? "Microsoft" : "AWS"
 }

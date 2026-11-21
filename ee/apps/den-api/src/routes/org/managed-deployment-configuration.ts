@@ -27,7 +27,6 @@ import { checkRateLimit } from "../../utils/rate-limit.js"
 import { RUN_LIFETIME_MS, awsSignInFor, deploymentParam, launchDetails, oneView, operation, runParam } from "./managed-deployments.js"
 import type { OrgRouteVariables } from "./shared.js"
 
-// Each refusal carries the sentence the dashboard shows as is.
 const MESSAGES = {
   deployment_not_found: "This deployment no longer exists. Reload the page.",
   configuration_aws_only: "Only AWS deployments can be edited after installation.",
@@ -79,10 +78,8 @@ export function registerManagedDeploymentConfigurationRoutes<T extends { Variabl
         const enabled = (key: FeatureKey) => organizationFeatureEnabled(org.organization.id, key, { database: tx, lock: "share", userId: org.currentMember.userId })
         if (!await enabled("managedDeployments")) return featureOff("managedDeployments")
         if (!await enabled("managedDeploymentConfigUpdates")) return featureOff("managedDeploymentConfigUpdates")
-        // The row lock serializes this with launches, enrollment and installer milestones.
         const runs = await tx.select().from(ManagedDeploymentRunTable).where(eq(ManagedDeploymentRunTable.deployment_id, id))
         const basis = configurationBasis(row, runs, published, now)
-        // A change its approval command has claimed can only be read again, and only while that command can still be run.
         const claimed = runs.find((run) => run.id === row.active_run_id && approvalClaimed(run) && run.expires_at > now) ?? null
         if (basis.lock && !claimed) return basis.lock === "aws_only" ? refuse(400, "configuration_aws_only") : refuse(409, basis.lock)
         const plan = planDeploymentConfigurationChange(recordedConfiguration(row), body.configuration)
@@ -92,11 +89,8 @@ export function registerManagedDeploymentConfigurationRoutes<T extends { Variabl
 
         const subject = { organizationId: org.organization.id, deploymentId: id, name: plan.next.name }
         const recorded = { ownerEmail: row.owner_email, target: row.target }
-        // Storage form: an unchanged target stays the row's own JSON, so a historical
-        // record keeps omitting the parameters its installer template does not have.
         const requested = { ownerEmail: plan.next.ownerEmail, target: plan.targetChanged ? plan.next.target : row.target }
         const renamed = plan.next.name !== row.name
-        // A new name is saved with whatever else the request does, and only when it is accepted.
         const save = async (events: (AuditChangeEventInput | null)[]) => {
           if (renamed) await tx.update(ManagedDeploymentTable).set({ name: plan.next.name }).where(eq(ManagedDeploymentTable.id, id))
           await appendDomainChanges(tx, capture, [renamed ? managedDeploymentRenamedEvent(subject, row.name, auditConfiguration(recorded)) : null, ...events])
@@ -104,17 +98,12 @@ export function registerManagedDeploymentConfigurationRoutes<T extends { Variabl
         const current = body.expectedRevision === configurationRevision(row)
         if (claimed) {
           const record = configurationChangeRecord(claimed)
-          // Nothing is written: the same request reads the same run and command back.
           if (renamed || canonicalJson(record.requested) !== canonicalJson(requested)) return refuse(409, "run_in_progress")
           return { outcome: "approval_required", row, run: claimed, record, assistants }
         }
         if (basis.lock) return refuse(409, "run_in_progress")
         const pending = basis.pending ? { run: basis.pending, record: configurationChangeRecord(basis.pending) } : null
 
-        // Asking again for the change that is awaiting approval returns the same run and
-        // command, whatever revision the caller read: a lost response is safe to resend.
-        // Only that read is exempt. A name that differs is a write, and a caller who read
-        // an older view would undo someone else's rename with it.
         if (pending && pending.run.expires_at > now && canonicalJson(pending.record.requested) === canonicalJson(requested)) {
           if (renamed && !current) return refuse(409, "configuration_changed")
           await save([])
@@ -128,7 +117,6 @@ export function registerManagedDeploymentConfigurationRoutes<T extends { Variabl
             await save([])
             return { outcome: "saved", row: { ...row, name: plan.next.name }, assistants }
           }
-          // The recorded configuration was asked for again: the prepared change is discarded.
           await withdrawConfigurationChange(tx, row, pending.run)
           await save([managedDeploymentConfigurationChangeWithdrawnEvent(subject, {
             recorded: auditConfiguration(recorded), requested: auditConfiguration(pending.record.requested), changes: pending.record.changes,
@@ -139,7 +127,6 @@ export function registerManagedDeploymentConfigurationRoutes<T extends { Variabl
 
         if (plan.enablesGateway && !basis.gatewayAvailable) return refuse(409, "gateway_needs_current_installer")
         if (!apiOrigin) return refuse(503, "release_not_configured")
-        // An expired run, or the pending change this one replaces.
         if (basis.active && basis.active.state !== "failed" && basis.active.state !== "ready") {
           await tx.update(ManagedDeploymentRunTable).set({ state: "failed" }).where(eq(ManagedDeploymentRunTable.id, basis.active.id))
         }
@@ -148,8 +135,6 @@ export function registerManagedDeploymentConfigurationRoutes<T extends { Variabl
           version: 1, requestedBy: { memberId: org.currentMember.id, userId: org.currentMember.userId }, baseRunId: basis.base.id, restoresRunId: basis.restoresRunId,
           previous: recorded, requested, changes: plan.changes.filter((change) => change.field !== "name"),
         })
-        // The installer that last succeeded, re-run with the requested parameters and reporting
-        // to this API. The deployment keeps its recorded email and target until the run verifies health.
         await tx.insert(ManagedDeploymentRunTable).values({
           id: runId, deployment_id: id, kind: "configure", version: basis.base.version, template_url: basis.base.template_url, bundle_url: basis.base.bundle_url,
           bundle_sha256: basis.base.bundle_sha256, api_origin: apiOrigin, challenge: randomBytes(32).toString("hex"),
@@ -169,7 +154,6 @@ export function registerManagedDeploymentConfigurationRoutes<T extends { Variabl
       const signIn = await awsSignInFor(org, db.$primary)
       const deployment = await oneView(result.row, signIn, { primary: true, configuration: true })
       if (result.outcome !== "approval_required") return c.json(deploymentConfigurationChangeResultSchema.parse({ outcome: result.outcome, deployment }))
-      // The handoff carries the requested configuration; the row keeps the recorded one until the run verifies health.
       const { run, record } = result
       return c.json(deploymentConfigurationChangeResultSchema.parse({
         outcome: "approval_required", deployment, kind: "configure",
@@ -178,14 +162,11 @@ export function registerManagedDeploymentConfigurationRoutes<T extends { Variabl
       }))
     })
 
-  // ---- The approval command, in the customer's CloudShell (no user session) ----
-
   app.post("/v1/managed-deployments/:deploymentId/runs/:runId/approval-check", operation("Confirm a configuration change before AWS is updated", "Called by the approval command of a configuration change, before it updates the installer stack. Answers 200 only while the run is the deployment's active configuration change, still awaits approval, has not passed its deadline, and configuration changes are still on for the organization and the person who asked. The first 200 claims the change: from then on it cannot be edited, replaced or discarded, no install, retry or update is prepared, and it has the full run lifetime to enroll. Asking again while that deadline lasts answers 200 and changes nothing. It never enrolls the installer and issues no token. The run challenge authorizes the call; it proves who holds the command, not which AWS identity runs it.", deploymentApprovalCheckResultSchema, { mcp: false }, []),
     tokenRoute, paramValidator(runParam), jsonValidator(deploymentApprovalCheckInputSchema), async (c) => {
       c.header("Cache-Control", "no-store")
       const { deploymentId, runId } = c.req.valid("param")
       const challenge = Buffer.from(c.req.valid("json").challenge)
-      // Primary: the command may be run moments after the change was prepared.
       const [row] = await db.$primary.select().from(ManagedDeploymentTable).where(eq(ManagedDeploymentTable.id, deploymentId)).limit(1)
       const [run] = await db.$primary.select().from(ManagedDeploymentRunTable).where(and(eq(ManagedDeploymentRunTable.id, runId), eq(ManagedDeploymentRunTable.deployment_id, deploymentId))).limit(1)
       if (!row || !run || run.kind !== "configure") return c.json({ error: "deployment_not_found" }, 404)
@@ -199,8 +180,6 @@ export function registerManagedDeploymentConfigurationRoutes<T extends { Variabl
       const audited = await attributeAuditRequest(c, { organizationId: row.org_id, ...auditServiceAttribution("managed-deployment", deploymentId) })
       if (!audited.ok) return audited.response
       const expiresAt = await db.transaction(async (tx) => {
-        // Deployment, then run: the order every writer locks in, so this and a request that
-        // replaces or discards the change happen one after the other, never interleaved.
         const [deployment] = await tx.select().from(ManagedDeploymentTable).where(eq(ManagedDeploymentTable.id, deploymentId)).limit(1).for("update")
         if (!deployment || deployment.active_run_id !== runId) return null
         const [current] = await tx.select().from(ManagedDeploymentRunTable).where(eq(ManagedDeploymentRunTable.id, runId)).limit(1).for("update")
@@ -211,7 +190,6 @@ export function registerManagedDeploymentConfigurationRoutes<T extends { Variabl
         if (!await enabled("managedDeployments") || !await enabled("managedDeploymentConfigUpdates")) return null
         const gateway = [record.previous.target, record.requested.target].map(normalizeAwsTargetForView).some((target) => target.runtimeProfile === "gateway" || assistantsEnabled(target.assistants))
         if (gateway && !await enabled("managedDeploymentAssistants")) return null
-        // Asking again confirms the same claim and never moves its deadline.
         if (approvalClaimed(current)) return current.expires_at
         const deadline = new Date(now.getTime() + RUN_LIFETIME_MS)
         await tx.update(ManagedDeploymentRunTable).set({ last_seen_at: now, expires_at: deadline }).where(eq(ManagedDeploymentRunTable.id, runId))

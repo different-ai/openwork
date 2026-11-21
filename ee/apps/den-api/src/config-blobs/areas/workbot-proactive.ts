@@ -1,35 +1,3 @@
-/**
- * Config-blob area `workbot.proactive` (Manage › Workbot › members' agents):
- * one item holding how members' agents work in the organization.
- *
- * - Carried: the policy saved in `organization.metadata.workbot.proactive`
- *   (on/off, working hours, daily limit, members' starting choice, default
- *   destination), what agents may read (`sources`), the brief an admin saved
- *   under `workbotAgentBrief` (only the fields they saved, and only while
- *   that feature is on for the exporting member), and the content
- *   of the "Your agent" template (responsibilities and organization
- *   instructions; each save on the target adds a template version).
- * - Connections in `sources` are references: an MCP connection is
- *   `{ $ref: "connectors.mcp/<id>", name }`; one of Den's own providers
- *   (Google Workspace, Microsoft 365, …) is `{ native: "<provider key>" }`,
- *   matched on the target by its provider. A connection the target doesn't
- *   have is left out with a warning.
- * - Never carried: each member's agent (agent_instance and their own
- *   choices: personal), checks, deliveries and health counts (runtime), the
- *   Workbot Slack installation (secrets and a workspace binding).
- *
- * Apply goes through PUT /v1/org/workbot-settings/proactive's own function
- * (`saveWorkbotProactiveSettings`): the brief gate, the sources check and the
- * working-hours rule are the dashboard's. Only the fields the plan changes are
- * sent.
- *
- * What the target can't take is left out with a warning, never a failed run:
- * a connection agents can't read here (the save's own rule: an MCP without
- * reviewed read tools while `workbotAgentBrief` is off), the brief and the
- * per-tool choices while that feature is off. `preflight` computes the same
- * change at plan time, so an item that would write nothing is planned as a
- * skip with the reason, and what will be left out is said before approval.
- */
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { configRefSchema } from "@openwork/types/den/config-blobs"
 import {
@@ -61,19 +29,14 @@ const AREA = "workbot.proactive"
 const ITEM_NAME = "Members' agents"
 const MCP_AREA = "connectors.mcp"
 
-// ---------------------------------------------------------------------------
-// Spec
-
 const connectionIdSchema = z.string().trim().min(1).max(64)
 const nativeConnectionSchema = z.object({ native: z.string().trim().min(1).max(64) }).strict()
-/** Blob form: a reference or a native provider. At apply, a resolved reference also carries the local `id`. */
 const connectionSchema = z.union([configRefSchema.extend({ id: z.string().min(1).optional() }).strict(), nativeConnectionSchema])
 type SpecConnection = z.infer<typeof connectionSchema>
 
 const leadMinutesSchema = z.number().int().refine((value) => WORKBOT_PROACTIVE_LEAD_MINUTES.some((allowed) => allowed === value), {
   message: "Choose 5, 10, 15, 30 or 60 minutes.",
 })
-/** `optionalConnection`: at apply, a reference the admin chose to drop is removed, leaving the entry without one. */
 function specSchema(optionalConnection: boolean) {
   const entryConnection = optionalConnection ? connectionSchema.optional() : connectionSchema
   return z.object({
@@ -87,19 +50,12 @@ function specSchema(optionalConnection: boolean) {
     destination: z.enum(["workbot_dm"]).nullable().default("workbot_dm"),
     sources: z.object({
       calendar: agentSourcePolicySchema.default("everyone"),
-      /**
-       * In files exported before mail and chat became part of their connections and the calendar app stopped being
-       * picked. Read so those files still import; never applied and no longer exported.
-       */
       email: z.unknown().optional(),
       chat: z.unknown().optional(),
       coreConnections: z.unknown().optional(),
       coreDefaults: z.unknown().optional(),
-      /** Null: every connection whose read tools are reviewed. */
       otherConnections: z.array(connectionSchema).max(2000).nullable().default(null),
-      /** Other connections that aren't "members choose". */
       connections: z.array(z.object({ connection: entryConnection, policy: z.enum(["everyone", "off"]) }).strict()).max(2000).default([]),
-      /** `workbotAgentBrief`: an admin's choice per tool, per connection. */
       toolOverrides: z.array(z.object({
         connection: entryConnection,
         tools: z.record(z.string().trim().min(1).max(255), agentToolOverrideSchema),
@@ -108,9 +64,7 @@ function specSchema(optionalConnection: boolean) {
       calendar: "everyone",
       otherConnections: null, connections: [], toolOverrides: [],
     }),
-    /** `workbotAgentBrief`: only the fields an admin saved; the rest is carried over on the target. */
     brief: storedAgentBriefSchema.strict().default({}),
-    /** The "Your agent" template's content. */
     template: z.object({
       responsibilities: z.object({
         morning_brief: z.boolean(),
@@ -128,9 +82,6 @@ const applySpecSchema = specSchema(true)
 type ApplySpec = z.infer<typeof applySpecSchema>
 
 const POLICY_FIELDS = ["enabled", "leadMinutes", "workingDays", "startHour", "endHour", "dailyCap", "membersStart", "destination"] as const
-
-// ---------------------------------------------------------------------------
-// Connections
 
 type TargetConnection = { id: string; name: string; url: string; native: string | null }
 
@@ -161,12 +112,10 @@ function exportList(ids: readonly string[] | undefined, connections: Map<string,
   }))
 }
 
-/** The target's connection for a spec connection; null (with a warning) when the target has none. */
 function localConnection(connection: SpecConnection | undefined, connections: readonly TargetConnection[], warnings: Set<string>): string | null {
   if (!connection) return null
   if ("native" in connection) {
     const matches = connections.filter((entry) => entry.native === connection.native)
-    // A connection row wins over the legacy provider-level setup (whose id is the provider key).
     const found = matches.find((entry) => entry.id !== connection.native) ?? matches[0]
     if (found) return found.id
     warnings.add(`The ${connection.native} connection isn't set up in this organization; members' agents can't read it here.`)
@@ -185,9 +134,6 @@ function localList(list: readonly SpecConnection[] | null, connections: readonly
     return id ? [id] : []
   }))]
 }
-
-// ---------------------------------------------------------------------------
-// Export
 
 async function exportItems(ctx: ConfigAreaContext): Promise<ConfigItem[]> {
   const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
@@ -228,16 +174,11 @@ async function exportItems(ctx: ConfigAreaContext): Promise<ConfigItem[]> {
       connections: policyEntries,
       toolOverrides,
     },
-    // As the dashboard: the saved brief only while Your agent's brief is on for the actor. Off, it is left
-    // out, and an import without it leaves the target's saved brief as it is (apply never clears a field).
     brief: briefOn ? { ...settings.brief } : {},
     template: { responsibilities: { ...template.responsibilities }, instructions: template.instructions },
   }
   return [{ id: ctx.organizationId, name: ITEM_NAME, spec }]
 }
-
-// ---------------------------------------------------------------------------
-// Apply
 
 function sameSet(a: readonly string[] | null | undefined, b: readonly string[] | null | undefined): boolean {
   if (!a || !b) return (a ?? null) === (b ?? null)
@@ -255,11 +196,6 @@ function listed(names: readonly string[]): string {
   return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`
 }
 
-/**
- * The smallest sources change that turns `current` into `spec`, limited to what the op touches. A connection the
- * save would refuse (checkSourcesChange, with the same `mode`) is left out with a warning: the organization the
- * file came from may read connections this one can't yet.
- */
 function sourcesChange(op: ConfigApplyOp, spec: ApplySpec["sources"], current: AgentSourcesPolicy, connections: readonly TargetConnection[], mode: SourceMode, warnings: Set<string>): AgentSourcesPolicyInput {
   const change: AgentSourcesPolicyInput = {}
   const byId = new Map(connections.map((connection) => [connection.id, connection]))
@@ -286,7 +222,6 @@ function sourcesChange(op: ConfigApplyOp, spec: ApplySpec["sources"], current: A
       if (!id) continue
       const connection = byId.get(id)
       if (connection && !canBeSource(connection, mode)) {
-        // "Not allowed" needs no saying: agents can't read it here either way.
         if (entry.policy !== "off") unreadable.add(connection.name)
         continue
       }
@@ -342,7 +277,6 @@ type TargetState = {
   settings: Awaited<ReturnType<typeof readProactiveSettings>>
   template: Awaited<ReturnType<typeof readAgentTemplate>>
   connections: TargetConnection[]
-  /** `workbotAgentBrief` for the applier: the brief, per-tool choices and any connection as a source. */
   briefOn: boolean
 }
 
@@ -357,10 +291,6 @@ async function readTargetState(ctx: ConfigAreaContext): Promise<TargetState> {
   return { settings, template, connections, briefOn }
 }
 
-/**
- * What the op would save here, and what it leaves out and why. Shared by `apply` and `preflight`, so the plan says
- * what the apply does. An empty change means the item writes nothing.
- */
 function plannedChange(op: ConfigApplyOp, spec: ApplySpec, state: TargetState): { change: WorkbotProactiveSettingsInput; warnings: string[] } {
   const { settings, template, connections, briefOn } = state
   const warnings = new Set<string>()
@@ -375,7 +305,6 @@ function plannedChange(op: ConfigApplyOp, spec: ApplySpec, state: TargetState): 
   if (touches(op, "membersStart") && spec.membersStart !== settings.membersStart) change.membersStart = spec.membersStart
   if (touches(op, "destination") && spec.destination !== settings.destination) change.destination = spec.destination
 
-  // The save checks sources under the same mode (saveWorkbotProactiveSettings).
   const sources = sourcesChange(op, spec.sources, settings.sources, connections, briefOn ? "any" : "reviewed", warnings)
   if (sources.toolOverrides && !briefOn) {
     delete sources.toolOverrides
@@ -416,21 +345,13 @@ function plannedChange(op: ConfigApplyOp, spec: ApplySpec, state: TargetState): 
 
 const WORKBOT_OFF = "Workbot isn't on for this deployment, so members' agents can't be set up here."
 
-/**
- * The op's spec as the apply gets it, built from how the plan resolved each connection: a connection the
- * organization already holds carries its local `id`, a dropped one is removed. Null when a connection the op
- * writes isn't known yet (this same plan creates it, or the admin still has to decide): nothing can be said
- * about it before the apply.
- */
 function resolvedPreview(op: ConfigApplyOp & { kind: "create" | "update" }, refs: NonNullable<ConfigPreflightInfo["refs"]>): { [key: string]: unknown } | null {
   const byPath = new Map(refs.map((ref) => [ref.path, ref]))
   let pending = false
   const out = rewriteRefs(specObject(op.item.spec), (path, ref) => {
     const found = byPath.get(path)
-    // The entry goes with a dropped connection (`requiredRefs`); in `otherConnections` the entry is the connection.
     if (found?.resolution === "drop") return DROP_ENTRY
     if (found?.resolution === "target" && found.id) return { ...ref, id: found.id }
-    // `sources.connections[0].connection` is written when the op touches `sources.connections`.
     const field = /^sources\.[A-Za-z]+/.exec(path)?.[0] ?? path
     if (touches(op, field)) pending = true
     return ref
@@ -458,16 +379,11 @@ export const workbotProactiveArea = defineConfigArea({
   deployments: ["cloud", "self_hosted"],
   viewPermission: "inference.view",
   managePermission: "inference.manage",
-  // organization.metadata.workbot.proactive (owned table: organization, by settings.general) and the "Your agent"
-  // template, a config_object of type `agent` with its versions (tables owned by plugins.skills, which must skip it).
   tables: [],
   naturalKeys: [ORG_SINGLETON_NATURAL_KEY],
   secretFields: [],
-  // A connection's policy and its tool choices are about that connection: dropped, they go with it.
   requiredRefs: ["sources.connections[].connection", "sources.toolOverrides[].connection"],
-  // Organization instructions and the brief are prompts the organization wrote.
   containsConfidentialContent: true,
-  // saveWorkbotProactiveSettings writes through updateOrganizationMetadata and saveAgentTemplate on the global db.
   transactional: false,
   protectedFromDelete: () => "The settings for members' agents can't be deleted.",
 
@@ -484,11 +400,6 @@ export const workbotProactiveArea = defineConfigArea({
   exportItems,
   readItems: (ctx, ids) => readSingleton(ctx, ids, exportItems),
 
-  /**
-   * Plan time: an import that would write nothing here is planned as a skip with what it leaves out, and what an
-   * import that does write leaves out is said before approval. Connections this same plan creates are judged by
-   * the apply.
-   */
   async preflight(ctx, op, info) {
     if (op.kind === "delete") return null
     if (workbotOrigin() === null) return { skip: WORKBOT_OFF }

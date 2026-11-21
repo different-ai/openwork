@@ -12,10 +12,8 @@ import { appSiteResponse, wantsAppSite } from "./app-site.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
 import { DEN_MCP_READ_SCOPE } from "./scopes.js"
 
-/** Where an App marked public is served, by its App id or its friendly name. It needs no sign-in, unlike every /mcp/agent path. */
 export const PUBLIC_MCP_APP_ROUTE = "/mcp/public/apps/:appIdOrName"
 
-/** MCP requests to a public App are a few hundred bytes; anything far larger is refused unread. */
 const MAX_REQUEST_BYTES = 64 * 1024
 const PUBLIC_READ_SCOPES: ReadonlySet<string> = new Set([DEN_MCP_READ_SCOPE])
 const UNAVAILABLE = "This artifact is not available."
@@ -32,22 +30,11 @@ async function requestId(request: Request): Promise<string | number | null> {
     const body: unknown = await request.clone().json()
     if (typeof body === "object" && body !== null && "id" in body && (typeof body.id === "string" || typeof body.id === "number")) return body.id
   } catch {
-    // Preflight already refused malformed JSON.
   }
   return null
 }
 
-/**
- * Serves an App its editor marked public, to anyone, without sign-in: its
- * current revision and open_app, nothing else. No OAuth challenge or
- * protected-resource metadata is sent, so MCP clients connect without asking
- * anyone to sign in. Every refusal reads the same, so it says nothing about
- * which Apps exist.
- */
 export function registerPublicMcpAppRoutes<T extends { Variables: RequestIdVariables & Record<string, unknown> }>(app: Hono<T>) {
-  // These URLs are open to anyone and get linked from outside, so they are the
-  // ones a crawler finds. Marked here as well as API-wide, so the public
-  // surface stays out of search results whatever changes around it.
   app.use("/mcp/public", noIndex)
   app.use("/mcp/public/*", noIndex)
   app.all(
@@ -59,7 +46,6 @@ export function registerPublicMcpAppRoutes<T extends { Variables: RequestIdVaria
     }),
     async (c) => {
       const request = c.req.raw
-      // A browser gets the App as a page when its author made it a site.
       if (wantsAppSite(request)) {
         const page = await appSiteResponse({ appIdOrName: c.req.param("appIdOrName"), publicOnly: true })
         if (page) return page
@@ -78,7 +64,6 @@ export function registerPublicMcpAppRoutes<T extends { Variables: RequestIdVaria
       const server = createMcpAppServer({
         definition: { app: served, tools: [] },
         scopes: PUBLIC_READ_SCOPES,
-        // Only the revision checked above is served.
         loadResource: async (revision) => {
           if (revision.appId !== served.appId || revision.revisionId !== served.revisionId) throw new Error("revision_not_public")
           return { ...resource, app: served }

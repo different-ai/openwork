@@ -24,7 +24,6 @@ const discoverySchema = z.object({
   })),
 });
 
-/** What Den learned about an MCP server without registering or saving anything. */
 export type DenMcpDiscovery = z.infer<typeof discoverySchema>;
 
 export function parseDenMcpDiscovery(payload: unknown): DenMcpDiscovery | null {
@@ -38,9 +37,7 @@ export type McpServerCheckStatus = "pass" | "warn" | "fail" | "skip";
 export type McpServerCheck = {
   id: McpServerCheckId;
   status: McpServerCheckStatus;
-  /** Plain-words result, e.g. "Signs in with your account". */
   detail: string;
-  /** The technical name, for people who know it, e.g. "OAuth · DCR". */
   term?: string;
 };
 
@@ -61,10 +58,6 @@ export type McpServerCheckWords = {
   toolsNone: string;
 };
 
-/**
- * Turns Den's discovery into the rows the Add an MCP server checklist ticks
- * off. Registration only applies to servers that sign in with an account.
- */
 export function mcpServerChecks(discovery: DenMcpDiscovery, words: McpServerCheckWords): McpServerCheck[] {
   const reached = discovery.status !== "unreachable";
   const spoke = discovery.server.initialize !== "failed";
@@ -110,7 +103,6 @@ export function mcpServerChecks(discovery: DenMcpDiscovery, words: McpServerChec
   return checks;
 }
 
-/** Whether the member can go on: anything but an unreachable or non-MCP server. */
 export function mcpServerChecksPassed(checks: McpServerCheck[]) {
   return checks.every((check) => check.status !== "fail");
 }

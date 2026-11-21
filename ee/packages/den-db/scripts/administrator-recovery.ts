@@ -92,8 +92,6 @@ async function featureEnabled(connection: mysql.Connection, organizationId: stri
   const overrides: FeatureOverrides = {}
   if (rolloutRows[0]) rollouts.administratorRecovery = { enabled: rolloutRows[0].enabled === 1, killed: rolloutRows[0].killed === 1 }
   if (overrideRows[0]) {
-    // An explicit organization denial is a recovery safety stop, even when
-    // the installation operator enabled the flag in Helm.
     if (overrideRows[0].enabled !== 1) return false
     overrides.administratorRecovery = true
   }
@@ -172,7 +170,6 @@ async function printCheck(connection: mysql.Connection, target: Target, expected
   const [fence] = await connection.query<mysql.RowDataPacket[]>("SELECT archived_at FROM permission_set WHERE id=?", [stable("pms", target.organization.id)])
   const [roles] = await connection.query<mysql.RowDataPacket[]>("SELECT p.id,p.name FROM permission_set_team l JOIN permission_set p ON p.id=l.permission_set_id AND p.organization_id=l.organization_id WHERE l.organization_id=? AND l.team_id=? AND l.removed_at IS NULL AND p.archived_at IS NULL ORDER BY p.id", [target.organization.id, team.id])
   const action = fence.length ? "already_consumed_no_recreation" : "would_apply"
-  // Display labels are redacted too; no email column is selected.
   log({ event: "administrator_recovery_check", organization: target.organization, team, existingRoles: roles.map((role) => ({ id: role.id, name: role.name })), featureEnabled: true, action, recoveryPermissionCount: 14, peopleCount: people.length, note: "Existing Admin default decisions remain in force; owners already have all permissions. This is not a roster fingerprint." })
   printRoster(people)
 }

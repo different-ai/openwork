@@ -1,10 +1,3 @@
-/**
- * The wire boundary: schemas for native OpenCode session payloads, plus the
- * mapping into the headless thread types.
- *
- * Every schema is permissive about fields it does not name, so an engine or
- * server that grows a field does not break a benchmark run mid-campaign.
- */
 import { z } from "zod";
 
 import type {

@@ -80,8 +80,6 @@ function ErrorRetry({ message, onRetry, busy }: { message: string; onRetry: () =
   );
 }
 
-/* ---------- Spend limits ---------- */
-
 function SpendLimits({ orgId }: { orgId: string }) {
   const limits = useMyGatewayLimits(orgId);
   const ask = useAskForMoreUsage(orgId);
@@ -199,8 +197,6 @@ function LimitDetails({ status }: { status: GatewayUsageStatus }) {
   );
 }
 
-/* ---------- Past 30 days ---------- */
-
 type UsageQuery = ReturnType<typeof useMyGatewayUsage>;
 
 function PastUsage({ query }: { query: UsageQuery }) {
@@ -279,8 +275,6 @@ function PastUsage({ query }: { query: UsageQuery }) {
     </Section>
   );
 }
-
-/* ---------- Model catalog & cost comparison ---------- */
 
 function priceLine(price: GatewayListedPrice): string {
   const usd = (value: number) => `$${value.toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 4 })}`;

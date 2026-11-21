@@ -2,14 +2,6 @@ import { createHash } from "node:crypto"
 import { z } from "zod"
 import { sqlRow } from "../store.js"
 
-/**
- * A sealed segment: whole old turns of one session, moved out of the hot database into the files bucket, immutable.
- *
- * Gzip'd JSONL (CompressionStream, on Node and in a cell alike). The first line is the header; then one line per turn
- * row (as stored, without its resume grant) and one per transcript row (as stored, with any large body inlined), so a
- * segment alone pages a session's history and exports it with nothing lost. Readers check the format version and the
- * SHA-256 of the stored bytes (kept in the manifest) before using one.
- */
 export const SEGMENT_FORMAT = "openwork-headless-segment"
 export const SEGMENT_VERSION = 1
 
@@ -20,7 +12,6 @@ export const segmentHeaderSchema = z.object({
   n: z.number().int(),
   seqFrom: z.number(),
   seqTo: z.number(),
-  /** The first and last sealed turn's message id, in turn order. */
   turnFrom: z.string(),
   turnTo: z.string(),
   createdAt: z.number(),
@@ -30,10 +21,8 @@ type SqlRow = z.infer<typeof sqlRow>
 
 const lineSchema = z.union([z.object({ turn: sqlRow }).strict(), z.object({ message: sqlRow }).strict()])
 
-/** Turn rows in turn order, transcript rows in seq order. */
 export type SegmentData = { header: SegmentHeader; turns: SqlRow[]; messages: SqlRow[] }
 
-/** Where segment `n` of a session lives; a rewrite of it gets a fresh name (`rev`) so the old one stays until the swap. */
 export function segmentKey(sessionId: string, n: number, rev?: string) {
   return `sessions/${sessionId}/segments/${String(n).padStart(6, "0")}${rev ? `.${rev}` : ""}.jsonl.gz`
 }
@@ -63,7 +52,6 @@ export class SegmentError extends Error {
   }
 }
 
-/** Decodes stored bytes, checking them against the manifest's checksum first. */
 export async function decodeSegment(bytes: Uint8Array<ArrayBuffer>, expectedSha256: string): Promise<{ data: SegmentData; size: number }> {
   if (sha256Hex(bytes) !== expectedSha256) throw new SegmentError("segment_corrupt", "segment checksum mismatch")
   let text: string

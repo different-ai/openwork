@@ -1,12 +1,10 @@
 import fuzzysort from "fuzzysort";
 
-/** A session the search dialog can match by title. */
 export type SearchableSession = {
   workspaceId: string;
   sessionId: string;
   title: string;
   workspaceTitle: string;
-  /** Last activity (in practice, the newest message) in milliseconds. */
   updatedAt: number;
 };
 
@@ -26,11 +24,6 @@ export function dedupeSearchableSessions(sessions: SearchableSession[]): Searcha
 
 const newestFirst = (a: SearchableSession, b: SearchableSession) => b.updatedAt - a.updatedAt;
 
-/**
- * Sessions to show for a query, newest message first. Sessions whose title or
- * workspace contains every typed word come first; looser fuzzy matches follow
- * by match quality so a typo still finds something without outranking them.
- */
 export function rankSearchableSessions(
   sessions: SearchableSession[],
   query: string,

@@ -7,7 +7,6 @@ const FEATURE_STALE_MS = 30_000
 
 export type DeploymentFeatureSnapshot = { enabled: boolean | undefined; updatedAt: number }
 
-/** Deployment-only; unknown discovery is not evidence that the deployment is off. */
 export function useDeploymentFeature(key: "remoteDesktopDeviceLogin"): DeploymentFeatureSnapshot {
   const settings = readDenSettings()
   const { baseUrl, apiBaseUrl } = settings

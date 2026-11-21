@@ -25,10 +25,6 @@ export type McpRegistrationObservation = McpRegistrationFacts & {
 
 const ACCEPTED: ReadonlySet<McpRegistrationOutcome> = new Set(["registered_client_metadata", "registered_dynamic"])
 
-/**
- * Records one observation: appends the event and moves the issuer's status. Best effort: never throws, so a sign-in
- * is never failed or delayed by reporting.
- */
 export async function recordMcpRegistrationObservation(observation: McpRegistrationObservation): Promise<void> {
   const issuer = normalizeIssuer(observation.issuer)
   if (!issuer) return
@@ -50,7 +46,6 @@ export async function recordMcpRegistrationObservation(observation: McpRegistrat
       createdAt: at,
     })
 
-    // primary: the next status is derived from the current one.
     const [current] = await db.$primary.select({ status: McpRegistrationStatusTable.status })
       .from(McpRegistrationStatusTable).where(eq(McpRegistrationStatusTable.issuer, issuer)).limit(1)
     const status = nextMcpRegistrationStatus(current?.status ?? null, observation.outcome, observation)
@@ -97,12 +92,10 @@ export async function recordMcpRegistrationObservation(observation: McpRegistrat
 
 export type McpRegistrationStatusRow = typeof McpRegistrationStatusTable.$inferSelect
 
-/** Current status for each issuer, most recently observed first. */
 export async function listMcpRegistrationStatuses(): Promise<McpRegistrationStatusRow[]> {
   return db.select().from(McpRegistrationStatusTable).orderBy(desc(McpRegistrationStatusTable.lastObservedAt))
 }
 
-/** Statuses for the given issuers, for annotating presets. Empty on any database error. */
 export async function mcpRegistrationStatusByIssuer(issuers: readonly string[]): Promise<Map<string, McpRegistrationStatus>> {
   const normalized = [...new Set(issuers.map(normalizeIssuer).filter((value): value is string => value !== null))]
   const result = new Map<string, McpRegistrationStatus>()
@@ -117,7 +110,6 @@ export async function mcpRegistrationStatusByIssuer(issuers: readonly string[]):
   return result
 }
 
-/** Statuses keyed by preset id, for the catalog. Empty on any database error. */
 export async function mcpRegistrationStatusByPreset(): Promise<Map<string, McpRegistrationStatus>> {
   const result = new Map<string, McpRegistrationStatus>()
   try {
@@ -132,7 +124,6 @@ export async function mcpRegistrationStatusByPreset(): Promise<Map<string, McpRe
 
 export type McpRegistrationEventCount = { issuer: string; outcome: McpRegistrationOutcome; source: McpRegistrationSource; count: number }
 
-/** How often each issuer saw each outcome since a date, for reports. */
 export async function countMcpRegistrationEvents(since: Date): Promise<McpRegistrationEventCount[]> {
   const rows = await db.select({
     issuer: McpRegistrationEventTable.issuer,
@@ -145,10 +136,6 @@ export async function countMcpRegistrationEvents(since: Date): Promise<McpRegist
   return rows.map((row) => ({ ...row, count: Number(row.count) }))
 }
 
-/**
- * Claims an issuer for the scheduled check: false when another replica holds it or it was checked within
- * minIntervalMs, so restarts and replicas never re-register with a provider more than once per interval.
- */
 export async function claimMcpRegistrationProbe(issuer: string, leaseMs: number, minIntervalMs: number, now = new Date()): Promise<boolean> {
   const normalized = normalizeIssuer(issuer)
   if (!normalized) return false

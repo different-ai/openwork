@@ -27,7 +27,6 @@ import {
 
 type OrganizationId = DenTypeId<"organization">
 
-/** Whether members get OpenWork-managed models (paid Models or free Auto). No side effects. */
 async function openWorkModelsManaged(organizationId: OrganizationId): Promise<boolean> {
   const [organization] = await db.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable)
     .where(eq(OrganizationTable.id, organizationId)).limit(1)
@@ -73,7 +72,6 @@ async function gatewayTargets(organizationId: OrganizationId, now: number): Prom
       credential_mode: GatewayCredentialSetTable.credential_mode,
       status: GatewayCredentialSetTable.status,
     }).from(GatewayCredentialSetTable).where(inArray(GatewayCredentialSetTable.gateway_provider_id, providerIds)),
-    // Only organization-held credentials are decrypted; member secrets are never read.
     db.select({ ...credentialColumns, secret: GatewayProviderCredentialTable.secret }).from(GatewayProviderCredentialTable)
       .where(and(scope, isNull(GatewayProviderCredentialTable.org_membership_id))),
     db.select(credentialColumns).from(GatewayProviderCredentialTable)
@@ -118,7 +116,6 @@ async function legacyTargets(organizationId: OrganizationId): Promise<ProviderTa
   return buildLegacyProviderTargets({ providers, memberCredentials, models })
 }
 
-/** Every provider row the organization has, with stored facts and the live check each allows. */
 export async function loadProviderTargets(organizationId: OrganizationId, now = Date.now()): Promise<ProviderTarget[]> {
   const [gateway, legacy, openwork] = await Promise.all([
     gatewayManagementUnavailable() ? Promise.resolve([]) : gatewayTargets(organizationId, now),
@@ -128,11 +125,6 @@ export async function loadProviderTargets(organizationId: OrganizationId, now = 
   return [...(openwork ? [openWorkModelsTarget()] : []), ...gateway, ...legacy]
 }
 
-/**
- * Provider rows for one organization. Stored facts only unless `live`; a live
- * check lists models (or confirms the key) with each org-held credential and
- * never sends a model request or uses a member's credential.
- */
 export async function checkOrganizationProviders(
   organizationId: OrganizationId,
   options: { live: boolean; fetchImpl?: typeof fetch; previousSuccess?: ReadonlyMap<string, string> },

@@ -43,7 +43,6 @@ const LIBRARY_SECTIONS = [
 export function buildCommandPaletteSettingsItems(input: {
   developerMode: boolean;
   capabilities: Pick<PlatformCapabilities, "autoUpdate">;
-  /** Desktop policy checker; when `allowControlSettings` is blocked only the Cloud tabs remain. */
   checkRestriction?: DesktopAppRestrictionChecker;
   onOpenSettings: (route: string) => void;
   onOpenExtensions: (section?: string) => void;
@@ -53,7 +52,6 @@ export function buildCommandPaletteSettingsItems(input: {
     "general",
     ...getWorkspaceSettingsTabs(),
     ...getGlobalSettingsTabs(input.developerMode, input.capabilities),
-    // Not in the sidebar (opened from AI Providers), but still searchable.
     "ollama",
     ...CLOUD_SETTINGS_TABS,
   ] satisfies SettingsTab[]).filter((tab) => isSettingsTabAllowed({ tab, checkRestriction }));

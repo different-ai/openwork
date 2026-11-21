@@ -15,7 +15,6 @@ const glyphSizeClasses: Record<CatalogIdentityTileSize, string> = {
   lg: "h-6 w-6",
 };
 
-/** First alphanumeric character, for catalogue entries with no logo. */
 export function getCatalogMonogram(name: string): string {
   const match = name.match(/[\p{L}\p{N}]/u);
   return (match?.[0] ?? "?").toUpperCase();
@@ -23,22 +22,12 @@ export function getCatalogMonogram(name: string): string {
 
 export type CatalogIdentityTileProps = {
   name: string;
-  /** Real logo when the API has one. Marketplaces do; plugins do not. */
   logoUrl?: string | null;
-  /** Marks an entry that ships with OpenWork rather than being added. */
   builtIn?: boolean;
-  /** Glyph for built-in entries, which have no logo and no useful monogram. */
   builtInIcon?: LucideIcon;
   size?: CatalogIdentityTileSize;
 };
 
-/**
- * CatalogIdentityTile
- *
- * Identity for a marketplace or plugin: its logo when one exists, otherwise a
- * monogram on neutral grey. Same geometry as the icon tiles used elsewhere in
- * Den, so a catalogue entry looks like itself on every screen it appears on.
- */
 export function CatalogIdentityTile({
   name,
   logoUrl,

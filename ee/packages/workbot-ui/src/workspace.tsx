@@ -99,12 +99,10 @@ export function WorkspaceMenu({ page, onPage, onDocument, onChats, drafts }: { p
   const host = workbotHost();
   const [open, setOpen] = useState(false);
   const surface = useRetainedSurface(open);
-  // The same sources as Documents (Google Drive, and OneDrive where it is connected), so both list the same files.
   const documents = useWorkbotDocumentsSource();
   const recent = useQuery({
     queryKey: ["documents", ...documents.scope, documents.provider.id, "workspace-recent"],
     queryFn: ({ signal }) => documents.provider.list({ view: "recent", folderId: "root", query: "", signal }),
-    // Opening the drawer again within half a minute shows the same list at once; it refreshes after that.
     enabled: surface.open && documents.ready, retry: false, staleTime: 30_000, gcTime: DOCUMENTS_LIST_GC_MS,
   });
   const prefetchDocuments = usePrefetchWorkbotDocuments();

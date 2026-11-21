@@ -1,37 +1,3 @@
-/**
- * `plugins.skills`: config objects (skills, agents, commands, tools, MCP
- * definitions, hooks, context, custom objects and imported Apps) of
- * Plugins › Skills…, one item per object, with its LATEST version.
- *
- * Exported per object: type, title (the item name), whether it is archived,
- * its content (raw source text, normalized payload and schema version of the
- * latest version) and who can use it, by role (everyone, teams, people by
- * email). Content is encrypted at rest because it is confidential, not
- * because it is a credential: it IS exported (decision D1), so the area is
- * marked `containsConfidentialContent`. Nothing here is a secret.
- *
- * Informational only (exported for readers, never written, never a diff):
- * description and title (derived from the content by the store), the source
- * path, how the object was created (`origin`), `managedBy` and `source`, and
- * an MCP App's remote install (`remoteApp`).
- *
- * Which objects: org-shared ones only (see plugins-support.ts). Personal
- * objects (only their creator can reach them), Workflows / scripts and
- * authored MCP Apps are not part of this area and an import never touches
- * them.
- *
- * Source-managed objects (`managedBy: "source"`, synced from a GitHub source
- * in Plugins › Sources) are exported so plugins can reference them, but their
- * content belongs to the source: an import refuses to create them or change
- * their content or lifecycle (the item fails with `source_managed`; skip it,
- * the source sync brings it back), and never deletes them. Their access
- * grants are admin-set and can be changed.
- *
- * Apply goes through the plugin-system store, as the config-object routes do:
- * `createConfigObject`, `createConfigObjectVersion` (an update with changed
- * content adds exactly one new immutable version; title and description are
- * re-derived from it), `setConfigObjectLifecycle` and the access-grant calls.
- */
 import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"
 import { ConnectorInstanceTable, RemoteMcpAppTable, configObjectTypeValues } from "@openwork-ee/den-db/schema"
 import { denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -67,9 +33,7 @@ import { skillPayloadWithContents } from "../../skill-file-blobs.js"
 const AREA = "plugins.skills"
 
 const contentSchema = z.object({
-  /** The source file as written (SKILL.md for skills). */
   rawSourceText: z.string().max(4 * 1024 * 1024).nullable().default(null),
-  /** The normalized payload the desktop reads. */
   payload: z.record(z.string(), z.unknown()).nullable().default(null),
   schemaVersion: z.string().trim().min(1).max(100).nullable().default(null),
 }).strict()
@@ -79,12 +43,10 @@ const specSchema = z.object({
   archived: z.boolean().default(false),
   content: contentSchema,
   access: accessByRoleSchema.default({ orgWide: null, teams: { viewer: [], editor: [], manager: [] }, members: { viewer: [], editor: [], manager: [] } }),
-  // Informational (see informationalFields).
   description: z.string().max(65535).nullable().default(null),
   sourcePath: z.string().max(255).nullable().default(null),
   origin: z.enum(["cloud", "import", "connector"]).default("cloud"),
   managedBy: z.enum(["manual", "source"]).default("manual"),
-  /** Name of the source (Plugins › Sources) a source-managed object comes from. */
   source: z.string().max(255).nullable().default(null),
   remoteApp: z.object({ sourceUrl: z.string().max(2048), status: z.enum(["active", "retired"]) }).strict().nullable().default(null),
 }).strict()
@@ -103,11 +65,6 @@ const applySpecSchema = z.object({
 
 type Row = Awaited<ReturnType<typeof loadConfigObjects>>[number]
 
-/**
- * The Workbot "Your agent" template (an `agent` object at a fixed path) is
- * carried by `workbot.proactive`, which owns it: this area never exports,
- * matches, creates or deletes it.
- */
 function isAgentTemplate(type: unknown, path: unknown): boolean {
   return type === "agent" && path === AGENT_TEMPLATE_PATH
 }
@@ -127,7 +84,6 @@ async function readSkills(ctx: ConfigAreaContext, ids: readonly string[] | null)
   let rows: Row[] = (await loadConfigObjects(ctx.db, organizationId, ids)).filter((row) => !isAgentTemplate(row.objectType, row.currentRelativePath))
   if (rows.length === 0) return []
   const latest = await latestConfigObjectVersions(rows.map((row) => row.id), organizationId)
-  // Authored MCP Apps are compiled through create_app / update_app, never through this area.
   rows = rows.filter((row) => {
     const version = latest.get(row.id)
     return !(row.objectType === "app" && version && isAuthoredMcpAppVersion(version))
@@ -151,8 +107,6 @@ async function readSkills(ctx: ConfigAreaContext, ids: readonly string[] | null)
   const instanceNames = new Map(instances.map((instance) => [instance.id, instance.name]))
   const remoteByObject = new Map(remoteApps.map((app) => [app.configObjectId, app]))
 
-  // Skills carry their supporting files' contents, not the digests this
-  // organization stores them by, so the export imports anywhere.
   const payloads = new Map<string, Record<string, unknown> | null>()
   for (const row of rows) {
     const payload = latest.get(row.id)?.normalizedPayloadJson ?? null
@@ -207,20 +161,17 @@ export const pluginsSkillsArea = defineConfigArea({
   specSchema,
   dependsOn: ["members.teams", "members.people"],
   deployments: ["cloud", "self_hosted"],
-  // Exports every org-shared object whoever it is shared with: the "manage everything shared" view.
   viewPermission: "sharing.manage_all",
   managePermission: "sharing.manage_all",
   tables: ["config_object", "config_object_version", "config_object_access_grant", "remote_mcp_app"],
   assignedKeys: true,
   ensureKeys: (ctx, items) => ensureItemKeys("config_object", ctx.organizationId, items),
   naturalKeys: [{
-    // Source-managed objects are identified by the source and file they come from.
     label: "source file",
     get: (item) => item.spec.managedBy === "source" && typeof item.spec.source === "string" && typeof item.spec.sourcePath === "string"
       ? `${normalizeText(item.spec.source)}\n${item.spec.sourcePath}`
       : null,
   }, {
-    // First contact, for objects that have no key in common yet: the same type and title is the same one.
     label: "type and title",
     get: (item) => item.spec.managedBy !== "source" && typeof item.spec.type === "string" && normalizeText(item.name)
       ? `${item.spec.type}\n${normalizeText(item.name)}`
@@ -242,9 +193,7 @@ export const pluginsSkillsArea = defineConfigArea({
   secretFields: [],
   containsConfidentialContent: true,
   informationalFields: ["description", "sourcePath", "origin", "managedBy", "source", "remoteApp"],
-  // The title is derived from the content (SKILL.md name, metadata title): never set by an import.
   informationalName: true,
-  // Store calls run on the global db (and re-sync plugin MCP access).
   transactional: false,
   protectedFromDelete: (item) => item.spec.managedBy === "source"
     ? `"${item.name}" comes from ${typeof item.spec.source === "string" ? `the source "${item.spec.source}"` : "a source"}; remove it from the repository instead.`
@@ -299,7 +248,6 @@ export const pluginsSkillsArea = defineConfigArea({
         ...(spec.content.rawSourceText !== null ? { rawSourceText: spec.content.rawSourceText } : {}),
         ...(spec.content.payload !== null ? { normalizedPayloadJson: spec.content.payload } : {}),
         ...(spec.content.schemaVersion !== null ? { schemaVersion: spec.content.schemaVersion } : {}),
-        // Titles of non-skill objects are derived from metadata first: keep the exported title.
         metadata: { title: op.item.name, ...(spec.description ? { description: spec.description } : {}) },
       }
       if (spec.content.rawSourceText === null && spec.content.payload === null) {
@@ -331,7 +279,6 @@ export const pluginsSkillsArea = defineConfigArea({
         return { localId, warnings }
       }
 
-      // update: only what the plan changes.
       const configObjectId = normalizeDenTypeId("configObject", op.targetId)
       const [row] = await loadConfigObjects(ctx.db, ctx.organizationId, [configObjectId])
       if (!row) throw new ConfigApplyError("config_object_not_found", `"${op.previous.name}" no longer exists.`, 404)

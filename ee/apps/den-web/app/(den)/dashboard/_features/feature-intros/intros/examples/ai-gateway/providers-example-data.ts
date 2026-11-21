@@ -1,8 +1,6 @@
 import type { ExampleProvider } from "./example-parts";
 import { ANTHROPIC, GOOGLE, OPENAI } from "./gateway-example-data";
 
-/** Sample data only: no API calls (DESIGN.md I7). */
-
 export const providersExampleRows: ReadonlyArray<{
   provider: ExampleProvider;
   models: string;

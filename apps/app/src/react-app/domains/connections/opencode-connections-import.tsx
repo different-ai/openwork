@@ -12,24 +12,19 @@ import type {
 import { t } from "@/i18n";
 
 export type OpencodeConnectionsImportSource = {
-  /** Identifies the workspace the preview belongs to. */
   workspaceId: string;
   preview: () => Promise<OpencodeConnectionsPreview>;
   importConnections: (names: string[]) => Promise<OpencodeConnectionImportResult[]>;
-  /** Reload the connection list so imported connections show their real state. */
   onImported?: () => void;
 };
 
 export type OpencodeImportRow = {
   name: string;
-  /** What to say beside the name: the connection's state, or why it was not imported. */
   detail: string;
   blocked: boolean;
-  /** False for a connection that is ready, which needs nothing from the person. */
   attention: boolean;
 };
 
-/** Rows for entries that cannot be imported as they are. */
 export function opencodeImportProblemRows(items: OpencodeConnectionPreviewItem[]): OpencodeImportRow[] {
   return items.flatMap((item): OpencodeImportRow[] => {
     if (item.status === "blocked") return [{ name: item.name, detail: t("opencode_import.blocked"), blocked: true, attention: true }];
@@ -38,7 +33,6 @@ export function opencodeImportProblemRows(items: OpencodeConnectionPreviewItem[]
   });
 }
 
-/** One row per result: the real state of each imported connection, then what was left out and why. */
 export function opencodeImportReceiptRows(
   results: OpencodeConnectionImportResult[],
   stateOf: (name: string) => { label: string; ready: boolean } | null,
@@ -69,15 +63,8 @@ function Rows(props: { rows: OpencodeImportRow[] }) {
   );
 }
 
-/**
- * Settings → connections: says how many connections the person set up in
- * OpenCode are not in OpenWork and imports them on request. After an import
- * it lists each connection's real state and whatever was left out.
- * Renders nothing when OpenCode has nothing to bring over.
- */
 export function OpencodeConnectionsImport(props: {
   source: OpencodeConnectionsImportSource;
-  /** The live state of a connection OpenWork has; null while it is not listed yet. */
   stateOf: (name: string) => { label: string; ready: boolean } | null;
 }) {
   const queryClient = useQueryClient();

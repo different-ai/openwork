@@ -16,10 +16,6 @@ import { ssoDomainColumnCovers, ssoDomainsCover } from "./sso-domains.js"
 import { isOrganizationSsoReady, ssoStateVerificationIdentifier } from "@openwork-ee/den-sso"
 import { ssoTestDomainMismatchMessage } from "./sso-test-domain.js"
 
-// Every read here uses the primary: the test lifecycle is a sequence of steps
-// (create, start, provider redirect, callback, complete, enable) that each
-// check state the previous step wrote moments earlier. All are low volume.
-
 type SsoConnection = typeof SsoConnectionTable.$inferSelect
 type SsoTestUserId = NonNullable<SsoConnection["activeTestUserId"]>
 type SsoTestFailureReason = "authentication" | "cancelled" | "expired" | "identity_mismatch" | "start_failed"
@@ -76,15 +72,6 @@ async function getConnectionWithProvider(connection: SsoConnection) {
   return { connection, provider: provider ?? null }
 }
 
-/**
- * The connection a Better Auth `/sign-in/sso` request uses. A request naming a
- * provider gets that provider. One naming an organization or an email domain
- * may match several connections: the oldest ready one
- * (enabled, domain verified) wins, preferring one that covers the email's
- * domain, so a sign-in never lands on a disabled or unverified provider while
- * a ready one exists. Without a ready one, the oldest match answers (and is
- * refused unless an administrator is testing it).
- */
 export async function findConnectionForSignIn(input: {
   providerId: string | null
   organizationSlug: string | null
@@ -322,11 +309,6 @@ function clearActiveTestFields() {
   }
 }
 
-/**
- * The identity provider sent the administrator back without a session. When
- * their own email is outside the connection's domain that is the reason, so
- * say which domain to use instead of a generic provider error.
- */
 export async function failOrganizationSsoTestAuthentication(intentId: string) {
   const [test] = await db.$primary
     .select({ domain: SsoConnectionTable.domain, email: AuthUserTable.email })
@@ -404,12 +386,6 @@ export function createSsoConfigRevision(input: {
   return createHmac("sha256", env.betterAuthSecret).update(JSON.stringify(input)).digest("hex")
 }
 
-/**
- * Why a connection can't be enabled as things stand, or null when it can: its
- * domain must be verified and its current configuration tested successfully.
- * The one rule for enabling a connection and for anything that predicts it
- * (the plan of a configuration import).
- */
 export function ssoConnectionEnableBlocker(
   connection: Pick<SsoConnection, "testStatus" | "lastTestedRevision" | "configRevision">,
   provider: { domainVerified: boolean | null } | null,
@@ -421,7 +397,6 @@ export function ssoConnectionEnableBlocker(
   return null
 }
 
-/** Enables one connection (read again from the primary) once its domain is verified and its current configuration tested. */
 export async function enableOrganizationSsoConnection(target: SsoConnection | null, capture: AuditChangeCapture | null = null) {
   const [connection] = target ? await db.$primary
     .select()
@@ -438,8 +413,6 @@ export async function enableOrganizationSsoConnection(target: SsoConnection | nu
   }
 
   const lastTestedRevision = connection.lastTestedRevision
-  // Guarded update and its sso_connection.enabled event commit together; the
-  // organization share fence (when captured) precedes the connection row lock.
   const auditEventIds = await db.transaction(async (tx) => {
     const [before] = capture ? await tx.select().from(SsoConnectionTable).where(eq(SsoConnectionTable.id, connection.id)).limit(1).for("update") : []
     const result = await tx
@@ -459,7 +432,6 @@ export async function enableOrganizationSsoConnection(target: SsoConnection | nu
     : { ok: false as const, message: "The SSO configuration changed before it could be enabled. Test it again." }
 }
 
-/** Disables one connection, keeping its configuration so it can be tested and enabled again. */
 export async function disableOrganizationSsoConnection(connection: SsoConnection | null, capture: AuditChangeCapture | null = null) {
   if (!connection) return { ok: false as const, message: "SSO configuration was not found." }
   const organizationId = connection.organizationId

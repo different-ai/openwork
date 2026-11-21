@@ -1,9 +1,6 @@
 import type { ExampleService } from "../example-parts";
 import { HUBSPOT } from "./plugins-example-data";
 
-/** Sample data only: no API calls (DESIGN.md I7). */
-
-/** "Create a plugin": its name, then What's inside, as the form fills it in. */
 export const createExamplePlugin = { name: "Sales playbook", description: "How we prepare, run and follow up on sales calls" };
 
 export const createExampleInside: ReadonlyArray<
@@ -16,7 +13,6 @@ export const createExampleInside: ReadonlyArray<
 
 export const createExampleFootnote = "Nobody else gets it until you choose who can use it.";
 
-/** "Import from GitHub": a public plugin's link, then what the preview found in it. */
 export const importExampleUrl = "github.com/anthropics/knowledge-work-plugins/tree/main/sales";
 
 export const importExampleItems: ReadonlyArray<{ kind: "Skill" | "MCP server"; name: string; status: string; supported: boolean }> = [
@@ -26,7 +22,6 @@ export const importExampleItems: ReadonlyArray<{ kind: "Skill" | "MCP server"; n
   { kind: "MCP server", name: "local-crm", status: "Desktop-only servers cannot be imported", supported: false },
 ];
 
-/** A skill as its editor saves it: name, when to use it, and the steps. */
 export const skillExample = {
   name: "prep-a-sales-call",
   description: "Use when someone has a customer call coming up.",

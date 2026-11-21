@@ -23,7 +23,6 @@ const STAGE_AFTER: Record<Input["kind"], (previous: Stage) => Stage> = {
   closed: () => "closed", dismissed: () => "dismissed", reopened: () => "needs_review",
 }
 
-/** Records what happened and the next step together. Never sends a message or changes the organization. */
 export async function recordAccountFollowUpAction(id: OrganizationId, actor: UserId, input: Input, now = new Date()) {
   const today = startOfUtcDay(now)
   const nextFollowUpAt = input.kind === "closed" || input.kind === "dismissed" || !input.followUpOn ? null : new Date(`${input.followUpOn}T00:00:00.000Z`)
@@ -43,7 +42,6 @@ export async function recordAccountFollowUpAction(id: OrganizationId, actor: Use
     }
     const [previous] = await tx.select().from(AccountFollowUpTable).where(eq(AccountFollowUpTable.organizationId, id)).limit(1)
     const outreach = input.kind === "contacted" || input.kind === "meeting"
-    // Any step other than a note completes the follow-up that was scheduled.
     const completed = input.kind !== "note" && input.kind !== "reopened" && previous?.nextFollowUpAt ? previous.nextFollowUpAt : null
     const actionId = createDenTypeId("accountFollowUpAction")
     await tx.insert(AccountFollowUpActionTable).values({

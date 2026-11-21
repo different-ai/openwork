@@ -13,7 +13,6 @@ function RoleTile() {
   );
 }
 
-/** One custom role on two teams and the permissions it adds (Members › Roles box, next to the real built-in roles). */
 export function CustomRoleExample() {
   const step = useExampleStep(rolesExamplePermissions.length);
 
@@ -40,7 +39,6 @@ export function CustomRoleExample() {
   );
 }
 
-/** Roles example: a custom role, and the built-in roles beside it. */
 export function RolesExample() {
   return (
     <div>

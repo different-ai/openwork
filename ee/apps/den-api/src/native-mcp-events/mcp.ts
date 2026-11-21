@@ -18,7 +18,6 @@ export function registerNativeMcpEvents(server: McpServer, actor: McpAuditPrinci
     }
   }
   server.server.setRequestHandler("events/list", { params: z.object({ cursor: z.string().optional() }).passthrough() }, () => run("events/list", undefined, async () => ({ resultType: "complete", events: catalog(options.poll === true) })))
-  // A poll changes nothing, so it needs no write scope and no audit record.
   if (options.poll) server.server.setRequestHandler("events/poll", { params: pollSchema }, input => run("events/poll", input.name, () => pollNativeEvent(actor, input)))
   server.server.setRequestHandler("events/subscribe", { params: subscribeSchema }, input => run("events/subscribe", input.name, async () => {
     if (!canWrite) throw new NativeEventError(-32024, "Subscriptions require mcp:write")

@@ -3,30 +3,17 @@ import type { WorldProvider } from "./target.ts";
 /** What a check knows about the invocation it guards. */
 export interface PreflightContext {
   place: WorldProvider;
-  /** The exact `pnpm world up …` command being checked, for copy-paste fixes. */
   command?: string;
 }
 
 export interface PreflightCheck {
   id: string;
   label: string;
-  /** Placements this check applies to. Omit to run for every placement. */
   places?: readonly WorldProvider[];
-  /**
-   * A requirement rather than a health badge: a provider login or API key the
-   * world cannot start without. A definite failure stops `world up` before
-   * anything is created and makes `world plan` exit 1. A timeout never blocks.
-   */
   blocking?: true;
-  /** Static requirement text for `world help --json`: what is needed and how to provide it. */
   needs?: string;
   fix?: string;
-  /** Overrides the preflight timeout for a slower network probe. */
   timeoutMs?: number;
-  /**
-   * `warning` means the check passed but the person should look, for example
-   * a valid login to an unexpected account. Warnings never block.
-   */
   run(context: PreflightContext): Promise<{ ok: boolean; detail?: string; hint?: string; warning?: true }>;
 }
 

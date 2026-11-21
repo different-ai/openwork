@@ -113,14 +113,6 @@ function welcomeReducer(state: WelcomeState, action: WelcomeAction): WelcomeStat
   }
 }
 
-/**
- * WelcomeRoute: full-screen welcome page shown on first launch when
- * the user has no workspaces and has not completed onboarding.
- *
- * Clicking "Get started" opens the CreateWorkspaceModal. Once a
- * workspace is created, provider and attribution onboarding runs before
- * hasCompletedOnboarding is set and the user is redirected to /session.
- */
 export function WelcomeRoute() {
   const navigate = useNavigate();
   const local = useLocal();
@@ -145,7 +137,6 @@ export function WelcomeRoute() {
   const providerRef = useOnboardingStep("provider", state.providerStep && !holdSignedOutSurface);
   const attributionRef = useOnboardingStep("attribution", state.attributionStep && !holdSignedOutSurface);
 
-  // If user already completed onboarding, redirect away immediately.
   useEffect(() => {
     if (local.prefs.hasCompletedOnboarding) {
       navigate("/session", { replace: true });
@@ -232,7 +223,6 @@ export function WelcomeRoute() {
             targetSessionId = session.id;
             captureAnalyticsEvent("task_created", { source: "onboarding", workspace_type: "local" });
           } catch {
-            // Best-effort first task creation.
           }
         }
         if (targetWorkspaceId) {
@@ -245,7 +235,6 @@ export function WelcomeRoute() {
           if (targetSessionId) writeLastSessionFor(targetWorkspaceId, targetSessionId);
         }
         dispatch({ type: "close" });
-        // Show the provider selection step before navigating to the session.
         dispatch({ type: "provider-step", workspaceId: targetWorkspaceId, sessionId: targetSessionId });
 
       } catch (error) {
@@ -299,7 +288,6 @@ export function WelcomeRoute() {
       const prompt = aiPrompt?.trim().slice(0, 500) ?? "";
       captureAnalyticsEvent("attribution_survey_submitted", {
         source,
-        // User-volunteered survey answer (not session content); see survey UI.
         ai_prompt: prompt || null,
         ai_prompt_length: prompt.length,
       });
@@ -363,9 +351,6 @@ export function WelcomeRoute() {
           showOpenWorkModels={showOpenWorkModelsPromo}
           onOpenWorkModels={() => {
             captureOnboardingEvent("onboarding_provider_selected", { choice: "openwork_models" });
-            // Land on the OpenWork Models value-prop page when already
-            // signed in to Den; otherwise start sign-up. Previously this
-            // always opened a bare sign-up page — payment before value.
             platform.openLink(getOpenWorkModelsActionUrl(denAuth.isSignedIn, "sign-up"));
             const route = state.pendingWorkspaceId
               ? workspaceSessionRoute(state.pendingWorkspaceId, state.pendingSessionId)

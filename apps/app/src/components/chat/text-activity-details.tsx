@@ -9,14 +9,12 @@ import { t } from "@/i18n"
 import { commandProgram } from "@/lib/text-activity"
 import { cn } from "@/lib/utils"
 
-/** Lines of output shown before "Show more". */
 const OUTPUT_PREVIEW_LINES = 12
 
 async function copyText(text: string) {
   try {
     await navigator.clipboard.writeText(text)
   } catch {
-    // Clipboard access can be unavailable outside a secure browser context.
   }
 }
 
@@ -34,12 +32,6 @@ function ShowMore({ expanded, onToggle }: { expanded: boolean; onToggle: () => v
   )
 }
 
-/**
- * An opened command (text-first): one quiet card under its row. The command
- * first (`$` muted, the program tinted like a shell prompt, the rest in ink,
- * wrapping), then its output in lighter mono capped with "Show more", and a
- * `…` menu to copy either. It replaces a separate Technical details box.
- */
 export function TextCommandCard({ command, output, failed = false }: { command: string; output: string | null; failed?: boolean }) {
   const [expanded, setExpanded] = useState(false)
   const { program, rest } = commandProgram(command)
@@ -76,10 +68,6 @@ export function TextCommandCard({ command, output, failed = false }: { command: 
   )
 }
 
-/**
- * An opened edit or write: the change in the same quiet card, removed lines
- * marked − in red and added lines + in green, capped with "Show more".
- */
 export function TextDiffCard({ removed, added }: { removed: string | null; added: string | null }) {
   const [expanded, setExpanded] = useState(false)
   const rows = [
@@ -102,10 +90,6 @@ export function TextDiffCard({ removed, added }: { removed: string | null; added
   )
 }
 
-/**
- * Raw output behind a failed step (T2): a quiet "Technical details" box,
- * slate-2 with an inset hairline and small mono text. Label only above it.
- */
 export function TextTechnicalDetails({ children }: { children: ReactNode }) {
   return (
     <div data-text-technical-details="" className="flex min-w-0 flex-col gap-1">
@@ -117,7 +101,6 @@ export function TextTechnicalDetails({ children }: { children: ReactNode }) {
   )
 }
 
-/** "+11 −3" after an edit's sentence, green and red, only when counts are known. */
 export function TextDiffStats({ added, removed }: { added: number; removed: number }) {
   if (added === 0 && removed === 0) return null
   return (

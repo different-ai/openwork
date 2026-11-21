@@ -2,12 +2,6 @@ import type { OutreachItem } from "@openwork/types/den/admin-organization";
 
 const day = (value: string) => new Date(value).toLocaleDateString("en-US", { month: "long", day: "numeric", timeZone: "UTC" });
 
-/**
- * A starting point for a person to edit and send themselves. The words use only
- * what the recipient can already see (their name, workspace, plan, seats, the
- * limit they reached). Telemetry and colleagues in other workspaces decide which
- * draft is offered, never what it says.
- */
 export function outreachDraft(item: Pick<OutreachItem, "play" | "organizationName" | "company" | "endsAt">, recipientName: string | null, now = new Date()) {
   const first = recipientName?.trim().split(/\s+/)[0];
   const greeting = first ? `Hi ${first},` : "Hi,";

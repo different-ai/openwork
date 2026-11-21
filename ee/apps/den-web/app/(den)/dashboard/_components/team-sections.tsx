@@ -5,16 +5,10 @@ import { type TabItem, UnderlineTabs } from "../../_components/ui/tabs";
 import { DASHBOARD_PAGE_CLASS } from "../../_components/ui/dashboard-styles";
 import { ItemHeader } from "./item-header";
 
-/**
- * The frame of a team's page and Everyone's page: the same column and header
- * as every other page (so opening a team from Members does not shift the
- * page), a way back that names where it goes, and one line of state.
- */
 export function TeamPageFrame({ title, memberCount, backHref, action, testId, children }: {
   title: string;
   memberCount: number;
   backHref: string;
-  /** The page's one action, top right. */
   action?: ReactNode;
   testId?: string;
   children: ReactNode;
@@ -30,7 +24,6 @@ export function TeamPageFrame({ title, memberCount, backHref, action, testId, ch
   );
 }
 
-/** The sections of a team's page and Everyone's page, in a row of tabs. */
 export function TeamSections<T extends string>({ tabs, activeTab, onChange, children }: {
   tabs: readonly TabItem<T>[];
   activeTab: T;

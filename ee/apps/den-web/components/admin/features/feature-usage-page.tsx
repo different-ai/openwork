@@ -33,11 +33,6 @@ import {
   type FeatureUsageRow,
 } from "./feature-usage-model";
 
-/**
- * /admin › Features: every feature across organizations, whether it is used and working. One row per feature
- * (DESIGN.md S2); a row opens to its totals, reasons and organizations (S3). Counts only.
- */
-
 const day = (value: string) => new Date(value).toLocaleDateString(undefined, { day: "numeric", month: "short", timeZone: "UTC" });
 const dayAndYear = (value: string) => new Date(value).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
 const number = (value: number) => value.toLocaleString("en-US");
@@ -110,7 +105,6 @@ function FeatureDetail({ detail }: { detail: FeatureUsageDetail }) {
             <Stat label="Succeeded" value={number(outcomes.succeeded)} />
             <Stat label="Failed" value={number(outcomes.failed)} />
             {showsSkips(outcomes.unit) ? <Stat label="Skipped" value={number(outcomes.skipped)} /> : null}
-            {/* Delivered only adds something when it differs from what succeeded (an agent's checks vs the messages they sent). */}
             {outcomes.delivered !== null && outcomes.delivered !== outcomes.succeeded ? <Stat label="Messages sent" value={number(outcomes.delivered)} /> : null}
             {outcomes.limited !== null ? <Stat label="Hit the limit" value={number(outcomes.limited)} /> : null}
           </dl>
@@ -194,7 +188,6 @@ export function FeatureUsagePage() {
     });
   }, []);
 
-  // An open row follows the range: its detail loads once per range.
   useEffect(() => {
     for (const key of open) if (!details[`${range}:${key}`]) loadDetail(key, range);
   }, [open, range, details, loadDetail]);

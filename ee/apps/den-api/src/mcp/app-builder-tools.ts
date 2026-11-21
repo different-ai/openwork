@@ -23,16 +23,8 @@ import { buildMarketplaceCapabilityName } from "./marketplace-capability-name.js
 import { DEN_MCP_READ_SCOPE, DEN_MCP_WRITE_SCOPE } from "./scopes.js"
 import { scoreText, tokenize, type CapabilityMatch } from "./search.js"
 
-/**
- * Model-facing note in the launch result of an App built in OpenWork. OpenWork
- * shows the App right above the model's reply, so a long reply pushes it out of
- * view. Other clients cannot be told apart here, so the note is conditional and
- * never hides the App's MCP URL, which is how those clients use the App.
- */
 export const MCP_APP_SHOWN_NOTE = "If you are in OpenWork, the person now sees this artifact right above your reply: answer in one or two sentences and do not repeat what it shows."
 
-// Add gateway documentation without changing the shared validators. Cloning
-// the array definition retains its size limit and unique-name refinement.
 const toolDeclarations = createMcpAppInputSchema.shape.tools.unwrap()
 const toolDeclaration = toolDeclarations.element
 const documentedTools = toolDeclarations.clone({
@@ -103,17 +95,9 @@ function mcpUrl(publicOrigin: string, serverPath: string) {
   return `${publicOrigin}${serverPath}`
 }
 
-/**
- * The App's own launch, as a Connect result. OpenWork renders it through its
- * private Connect catalog with the App server's open_app tool; other hosts
- * receive the text, the structured App, and its MCP URL. An App the catalog
- * cannot list (canOpen false) is described without a launch OpenWork would fail.
- */
 export function mcpAppLaunchResult(input: { app: McpAppSummary; publicOrigin: string; message: string; launchInput?: unknown; canOpen?: boolean; built?: boolean }) {
   const launchInput = mcpAppLaunchInput(input.launchInput)
   const url = mcpUrl(input.publicOrigin, input.app.serverPath)
-  // Code Mode retains structuredContent but omits transport _meta. Keep the
-  // server-issued launch in both projections; capacity-denied Apps have neither.
   const launch = { connectionId: input.app.appId, toolName: MCP_APP_LAUNCH_TOOL_NAME, resourceUri: input.app.resourceUri, arguments: { input: launchInput } }
   const structuredContent = { app: input.app, input: launchInput, mcpUrl: url, ...(input.canOpen === false ? {} : { launch }) }
   if (input.canOpen === false) {
@@ -136,12 +120,10 @@ export function mcpAppLaunchResult(input: { app: McpAppSummary; publicOrigin: st
   }
 }
 
-/** An App's launch input is a JSON object; anything else opens it with none. */
 function mcpAppLaunchInput(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? { ...value } : {}
 }
 
-/** App matches for search_capabilities: the exact name executes a launch of the App's own server. */
 export function searchMcpApps(apps: McpAppEntry[], query: string, publicOrigin: string): CapabilityMatch[] {
   const tokens = tokenize(query)
   return apps.map((app) => ({
@@ -165,13 +147,11 @@ export type AppBuilderService = {
   read: (input: { appId: string }) => Promise<ReadMcpAppOutput>
 }
 
-/** Connect prepares and builds Apps; each completed App serves itself. */
 export function registerAppBuilderTools(input: {
   server: McpServer
   scopes: ReadonlySet<string>
   service: AppBuilderService
   publicOrigin: string
-  /** Whether OpenWork can open this App: its server index lists it. */
   canOpen?: (appId: string) => Promise<boolean>
   notifyCatalogChanged: () => void
 }) {
@@ -193,7 +173,6 @@ export function registerAppBuilderTools(input: {
       return errorResult(error)
     }
   })
-  /** Tells the agent what a public choice in this call did, with the URL to hand out. */
   const publicNote = (choice: boolean | undefined, appId: string, name?: string) => choice === true || name
     ? ` It is public: anyone can add ${mcpUrl(input.publicOrigin, mcpAppPublicPath(name ?? appId))} to an MCP client without signing in.`
     : choice === false ? " It is not public." : ""
@@ -255,7 +234,6 @@ export function registerAppBuilderTools(input: {
     try {
       requireScope(DEN_MCP_READ_SCOPE)
       const result = await input.service.read(request)
-      // Hosts that forward only text still need the source update_app replaces.
       return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }], structuredContent: result }
     } catch (error) {
       return errorResult(error)

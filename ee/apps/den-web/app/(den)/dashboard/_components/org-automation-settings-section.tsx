@@ -23,7 +23,6 @@ const kinds: { key: keyof OrganizationAutomationSettings; title: string; descrip
   { key: "cloud", title: "Cloud Automations", description: "Members and agents schedule work that runs in OpenWork Cloud, even when every computer is off." },
 ];
 
-/** Settings › Automations: turn each kind of Automation on or off for the whole organization. */
 export function OrgAutomationSettingsSection({ canManage }: { canManage: boolean }) {
   const [view, setView] = useState<AutomationSettingsView | null>(null);
   const [error, setError] = useState<string | null>(null);

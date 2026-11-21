@@ -6,12 +6,6 @@ import { calmChat } from "./host";
 import { WorkspaceLink } from "./workspace";
 import { Lexer, type MarkedToken, type Token } from "marked";
 
-/**
- * Renders an answer's Markdown as React elements. Model output can carry text
- * from anywhere (a page, an email, a message), so nothing is ever injected as
- * HTML: raw HTML is shown as text, and links open only http(s) and mailto.
- */
-
 const KNOWN = new Set<string>([
   "blockquote", "br", "checkbox", "code", "codespan", "def", "del", "em", "escape", "heading", "hr", "html",
   "image", "link", "list", "list_item", "paragraph", "space", "strong", "table", "text",
@@ -80,7 +74,6 @@ function block(token: Token, index: number): ReactNode {
     case "hr":
       return <hr key={index} className="border-[var(--wb-disabled)]" />;
     case "blockquote":
-      // A quoted draft: a quiet bar, the words in full ink (Paper v4, screen 3).
       return (
         <blockquote key={index} className="flex gap-3">
           <span aria-hidden className="w-0.5 shrink-0 rounded-[1px] bg-[var(--wb-disabled)]" />
@@ -124,7 +117,6 @@ function block(token: Token, index: number): ReactNode {
           </li>
         );
       });
-      // Task lists show their checkbox instead of a bullet or number.
       return token.ordered
         ? <ol key={index} className="flex flex-col gap-1">{items}</ol>
         : <ul key={index} className="flex flex-col gap-1">{items}</ul>;
@@ -190,11 +182,6 @@ export function sameToken(a: unknown, b: unknown): boolean {
   return keys.length === Object.keys(b).length && keys.every((key) => key in b && sameToken(a[key], b[key]));
 }
 
-/**
- * One top-level block of an answer (a paragraph, a list, a table…), in its place. What it shows comes from its token
- * alone, so it re-renders only when that token reads differently: a reply being written re-renders the block it is
- * writing, not every block above it.
- */
 const MarkdownBlock = memo(function MarkdownBlock({ token }: { token: Token }) {
   return block(token, 0);
 }, (previous, next) => sameToken(previous.token, next.token));

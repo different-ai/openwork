@@ -18,25 +18,17 @@ import { isToolPartInFlight } from "@/lib/tool-activity";
 import { cn } from "@/lib/utils";
 import { resolveConnectorToolIdentity, type ConnectorToolIdentity } from "@/react-app/domains/connections/connector-tool-identity";
 
-/** Keep the script's activity on the same rail as the rest of the turn. */
-/** The agent reading its own toolbox: plumbing, not work the person asked for. */
 export function isToolLookup(call: DynamicToolUIPart) {
   return call.toolName === "search" || call.toolName.endsWith("search_capabilities")
-    // Reading what the app offers is the same kind of plumbing (T2).
     || (call.toolName === "openwork_context" && call.state === "output-available");
 }
 
-/**
- * A finished script that did no visible work (no calls, or only catalog
- * lookups) renders nothing; callers drop it before layout so it leaves no gap.
- */
 export function isSilentCodeModePart(part: DynamicToolUIPart): boolean {
   const calls = codeModeToolCalls(part);
   if (!calls || isToolPartInFlight(part) || part.state === "output-error") return false;
   return calls.every(isToolLookup);
 }
 
-/** One short line from a script error, for the row itself. */
 const shortReason = shortFailureReason;
 
 export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
@@ -45,9 +37,7 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
   lifecycle: CurrentToolLifecycle | null;
   connectors: ConnectorToolIdentity[];
 }) {
-  // Catalog lookups are the agent reading its own toolbox, never shown.
   const calls = allCalls.filter((call) => !isToolLookup(call));
-  // A finished group folds unless the person explicitly chose otherwise.
   const [userOpen, setUserOpen] = useState<boolean | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
   const [now, setNow] = useState(Date.now());
@@ -63,12 +53,8 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
     const interval = window.setInterval(() => setNow(Date.now()), 1_000);
     return () => window.clearInterval(interval);
   }, [running]);
-  // Groups never open or close on their own: live progress shows in the
-  // collapsed line, so finishing a step doesn't make the chat jump. Only the
-  // person's choice opens a group, and it stays as they left it.
   const open = userOpen ?? false;
   const { shareLabels } = useCreatedSkills();
-  // The same sentences the rows use, so the group's label and its steps agree.
   const knownSentence = (call: DynamicToolUIPart): CapabilityCallSentence | null => {
     const saved = savedSkillSentence(call);
     if (saved) return { service: null, ...saved };
@@ -80,11 +66,7 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
   const failedCalls = calls.filter(call => call.state === "output-error" && !isBlocked(call));
   const failed = part.state === "output-error";
   const serviceName = (call: DynamicToolUIPart) => {
-    // Catalog search is an OpenWork mechanism, not a service the person used.
     if (call.toolName.endsWith("search_capabilities")) return null;
-    // The service a call reached (Render, Slack…) wins. Only calls with no
-    // connector of their own, such as Den scripts, are named by where they
-    // ran; the MCP's settings title ("Cloud Control") is plumbing.
     const connector = resolveConnectorToolIdentity(call, connectors);
     if (connector?.name) return connector.name;
     if (call.toolName.startsWith("openwork-cloud_")) return "OpenWork Cloud";
@@ -96,20 +78,14 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
     ? (knownSentence(current) ?? getCapabilityCallSentence(current, { connectionName: serviceName(current), includeQuery: false })).present
     : null;
   const waitingOn = running && current && now - lastActivityAt >= 8_000 ? serviceName(current) : null;
-  // The same action can be phrased with an article in the group label but not
-  // in the child sentence ("Creating a note" versus "Creating note").
   const comparable = (value: string) => value.toLowerCase().replace(/\b(?:a|an|the)\b/g, "").replace(/\s+/g, " ").trim();
   const distinctCurrent = currentSentence && !comparable(summary).startsWith(comparable(currentSentence));
   const label = statusUnknown ? `${summary}, status unavailable`
     : waiting ? "Waiting for your action"
       : !open && distinctCurrent ? `${summary} · ${currentSentence}` : summary;
 
-  // A finished script that only read the tool catalog did no work the
-  // person asked for: show nothing rather than "Checked which tools…".
   if (allCalls.length > 0 && calls.length === 0 && !isToolPartInFlight(part) && part.state !== "output-error") return null;
 
-  // A script with no tool calls did no work a person can see: hide it once
-  // it succeeds; while running or after failing it is one quiet row.
   if (calls.length === 0 && !waiting) {
     if (!inFlight && !failed) return null;
     const reason = shortReason(part);
@@ -125,12 +101,8 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
     );
   }
 
-  // One call is one step: no nested rail, no "1 step", no repeated sentence.
-  // The row's details icon opens the script (its source and its error).
   const only = calls.length === 1 && !waiting && !statusUnknown ? calls[0] : undefined;
   if (only) {
-    // The call's own input is the readable one (a Den script's source). Its
-    // own captured result wins; otherwise show the script's result.
     const merged: DynamicToolUIPart = only.state === "output-available" && only.output === undefined && part.state === "output-available"
       ? { ...only, output: part.output } : only;
     return (
@@ -146,8 +118,6 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
     );
   }
 
-  // Rows inside a group named for one service drop that name, and identical
-  // consecutive finished calls fold into one row ("2 times").
   const services = [...new Set(calls.map(serviceName).filter((name): name is string => Boolean(name)))];
   const groupService = services.length === 1 ? services[0] ?? null : null;
   const rowLabel = (call: DynamicToolUIPart) => `${call.state}:${getCapabilityCallSentence(call, { connectionName: serviceName(call) }).past}`;
@@ -158,8 +128,6 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
     else rows.push({ call, repeat: 1 });
   }
 
-  // Text-first: a group whose calls all reached one service carries that
-  // service's real mark inline ("[OpenWork] Looked up 2 tools"), never a glyph.
   const groupMarks = [...new Map(calls.map((call) => {
     const identity = resolveConnectorToolIdentity(call, connectors)
       ?? (isOpenWorkSkillCall(call) || isOpenWorkActivity(call) || call.toolName.startsWith("openwork-cloud_") ? OPENWORK_IDENTITY : null);
@@ -186,7 +154,6 @@ export function CodeModeTool({ part, calls: allCalls, lifecycle, connectors }: {
       </div>
       {detailsOpen ? <TechnicalDetailsPanel part={part} /> : null}
       <CollapsibleContent className="h-(--collapsible-panel-height) overflow-hidden transition-[height] duration-180 ease-out data-starting-style:h-0 data-ending-style:h-0 motion-reduce:transition-none [&[hidden]:not([hidden='until-found'])]:hidden">
-        {/* Flat, not boxed (S1): steps share the summary's left edge. */}
         <div className="mt-2 flex flex-col gap-2">
           {rows.map(({ call, repeat }) => (
             <CapabilityCallLine

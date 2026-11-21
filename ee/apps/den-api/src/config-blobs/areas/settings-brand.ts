@@ -1,27 +1,3 @@
-/**
- * Config-blob area `settings.advanced.brand` (Settings › Advanced › Brand
- * appearance): one item with the organization's app name, accent color,
- * wordmark (logo) and app icon.
- *
- * - App name and accent color come from `organization.metadata`.
- * - Logo and icon are either a link the admin entered (`{ source: "url" }`)
- *   or an image uploaded to Den (`{ source: "upload" }`). An upload travels
- *   as its bytes (base64 `data`) with content type, size, dimensions and
- *   SHA-256; the signed URL is never exported (it names the source
- *   organization) and the target signs its own. `data` is left out of diffs
- *   and hashes (`sha256` stands for it). Images are at most 2 MB each, so a
- *   blob with both could pass the blob size limit: once the encoded images
- *   reach `BRAND_DATA_BUDGET` the rest are exported without `data`, and an
- *   import can then only keep an identical image the target already has.
- * - Never carried: the organization's name, slug and its `logo` column
- *   (identity, D5).
- *
- * Apply goes through PATCH /v1/org's own function (app name, accent color,
- * links, clearing; the icon link is fetched and checked) and the brand asset
- * upload's own function (`uploadedAsset`: decoding, size, dimension and
- * aspect checks, normalization, storage), with the same Enterprise
- * entitlement and permissions as the dashboard.
- */
 import { createHash } from "node:crypto"
 import { eq } from "@openwork-ee/den-db/drizzle"
 import { OrganizationTable } from "@openwork-ee/den-db/schema"
@@ -40,7 +16,6 @@ import { ConfigApplyError, configRouteContext, expectRouteOk, specObject } from 
 
 const AREA = "settings.advanced.brand"
 const ITEM_NAME = "Brand appearance"
-/** Encoded image bytes exported per blob item, leaving room under CONFIG_BLOB_MAX_BYTES for the other areas. */
 export const BRAND_DATA_BUDGET = 3_500_000
 const KINDS = ["logo", "icon"] as const
 type Kind = (typeof KINDS)[number]
@@ -48,13 +23,11 @@ type Kind = (typeof KINDS)[number]
 const uploadSchema = z.object({
   source: z.literal("upload"),
   contentType: z.enum(["image/png", "image/jpeg"]),
-  /** Hex SHA-256 of the stored bytes. */
   sha256: z.string().regex(/^[a-f0-9]{64}$/),
   byteLength: z.number().int().positive(),
   width: z.number().int().positive(),
   height: z.number().int().positive(),
   originalName: z.string().max(255),
-  /** Base64 bytes; absent when the blob would have grown too large. */
   data: z.string().max(3_000_000).optional(),
 }).strict()
 const linkSchema = z.object({ source: z.literal("url"), url: z.string().url().max(2048) }).strict()
@@ -62,7 +35,6 @@ const assetSchema = z.discriminatedUnion("source", [uploadSchema, linkSchema]).n
 type SpecAsset = z.infer<typeof assetSchema>
 
 const brandSpecSchema = z.object({
-  /** Null: "OpenWork". */
   appName: z.string().trim().min(1).max(64).nullable().default(null),
   accentColor: z.string().trim().min(1).max(32).nullable().default(null),
   logo: assetSchema,
@@ -229,17 +201,13 @@ export const settingsBrandArea = defineConfigArea({
   deployments: ["cloud", "self_hosted"],
   viewPermission: "branding.update",
   managePermission: "branding.update",
-  // organization.metadata brand fields (organization is owned by settings.general) and the uploaded image bytes.
   tables: ["organization_brand_asset"],
   naturalKeys: [ORG_SINGLETON_NATURAL_KEY],
   secretFields: [],
   informationalFields: ["logo.data", "icon.data"],
-  // PATCH /v1/org and the asset store write on the global db.
   transactional: false,
-  // A brand icon link is fetched to check it is an image.
   externalEffects: true,
   protectedFromDelete: () => "Brand appearance can't be deleted.",
-  // Replaced images stay in storage, so a revert can point at them again.
   irreversible: () => [],
 
   exportItems,
@@ -258,7 +226,6 @@ export const settingsBrandArea = defineConfigArea({
     const current = brandSpecSchema.parse((await readSpec(ctx, false)).spec)
     const warnings: string[] = []
 
-    // Links and clearing go through PATCH /v1/org with the text fields; uploads through the asset upload.
     const { input, targets } = changedTextFields(op, next, current)
     const uploads: Array<{ kind: Kind; asset: z.infer<typeof uploadSchema> }> = []
     for (const kind of KINDS) {

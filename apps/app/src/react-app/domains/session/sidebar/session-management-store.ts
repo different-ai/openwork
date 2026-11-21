@@ -1,13 +1,3 @@
-/**
- * Zustand store for session management primitives (pin, manual order,
- * custom group mirror + expanded state). Persisted to localStorage via
- * zustand/middleware/persist.
- *
- * Archive is server-side (OpenCode session.time.archived). Session groups are
- * synced server-side; this store keeps a local optimistic mirror plus UI-only
- * collapsed state. Components import it directly with selectors, avoiding
- * context/prop drilling.
- */
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 import { sessionManagementStorage } from "./session-management-storage";
@@ -59,24 +49,16 @@ type SessionGroupSyncStatus = {
   deferredServerSync?: SessionGroupDeferredServerSync;
 };
 
-/**
- * A spot the person dragged a session to in the Feed. `key` is the time it
- * sorts at; it holds until the session has activity newer than `at`, which
- * brings it back to the top.
- */
 export type FeedPlacement = { key: number; at: number };
 
 export type SidebarView = "workspaces" | "feed";
 
-/** A workspace group pinned to the bottom of the Feed; sessions filed there stay until moved. */
 export type FeedFolder = { workspaceId: string; groupId: string };
 
-/** Feed sections: by day, active and inactive, or one list. */
 export const FEED_GROUP_BY_OPTIONS = ["day", "activity", "none"] as const;
 export type FeedGroupBy = (typeof FEED_GROUP_BY_OPTIONS)[number];
 export const DEFAULT_FEED_GROUP_BY: FeedGroupBy = "day";
 
-/** The time the Feed orders and groups by: last activity or creation. */
 export const FEED_SORT_BY_OPTIONS = ["activity", "created"] as const;
 export type FeedSortBy = (typeof FEED_SORT_BY_OPTIONS)[number];
 export const DEFAULT_FEED_SORT_BY: FeedSortBy = "activity";
@@ -84,10 +66,8 @@ export const DEFAULT_FEED_SORT_BY: FeedSortBy = "activity";
 type SessionManagementState = {
   pinnedIds: string[];
   unreadIds: string[];
-  /** Local time work last started or finished in a session on this device. */
   workedAtById: Record<string, number>;
   feedPlacementById: Record<string, FeedPlacement>;
-  /** Sidebar layout: the workspace tree, or every workspace's sessions in one feed. */
   sidebarView: SidebarView;
   feedFolders: FeedFolder[];
   feedGroupBy: FeedGroupBy;
@@ -101,12 +81,7 @@ type SessionManagementActions = {
   reorderPins: (sessionIds: string[]) => void;
   markUnread: (sessionId: string) => void;
   clearUnread: (sessionId: string) => void;
-  /**
-   * Work started or finished in the session (a reply, a run, an approval answered). OpenCode v2 does not move the
-   * session's own time per message, so the Feed counts this as activity too.
-   */
   noteActivity: (sessionId: string) => void;
-  /** Put a session at a spot in the Feed until it has new activity. */
   placeInFeed: (sessionId: string, key: number) => void;
   setSidebarView: (view: SidebarView) => void;
   setFeedGroupBy: (groupBy: FeedGroupBy) => void;
@@ -119,7 +94,6 @@ type SessionManagementActions = {
   reorderGroups: (workspaceId: string, groupIds: string[]) => void;
   toggleGroupExpanded: (workspaceId: string, groupId: string) => void;
   replaceWorkspaceGroups: (workspaceId: string, state: SessionGroupServerState) => void;
-  /** Remove a group definition and move its sessions to another group or ungrouped. */
   removeGroup: (workspaceId: string, groupId: string, destinationGroupId?: string | null) => void;
   forgetWorkspace: (workspaceId: string) => void;
 };
@@ -219,7 +193,6 @@ function reportSyncError(error: unknown): void {
   console.warn("[session-groups] server sync failed", error);
 }
 
-/** First send cannot proceed until its captured group has been assigned. */
 export async function assignNewSessionGroup(workspaceId: string, sessionId: string, groupId: string | null): Promise<void> {
   if (groupId && !useSessionManagementStore.getState().groupsByWorkspace[workspaceId]?.groups.some((group) => group.id === groupId)) {
     throw new Error("Group is unavailable. Choose another destination.");
@@ -496,18 +469,12 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
   ),
 );
 
-// ---------------------------------------------------------------------------
-// Selectors (keep render-stable references via shallow selectors)
-// ---------------------------------------------------------------------------
-
 const EMPTY_PINNED = new Set<string>();
 const EMPTY_UNREAD = new Set<string>();
 const EMPTY_ORDER: string[] = [];
 
 export function usePinnedSessionIds(): Set<string> {
   const ids = useSessionManagementStore((s) => s.pinnedIds);
-  // Derive a Set; reference-stable when the array is the same object.
-  // Consumers only need membership checks so Set is ideal.
   return ids.length ? new Set(ids) : EMPTY_PINNED;
 }
 

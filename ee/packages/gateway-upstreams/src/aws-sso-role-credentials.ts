@@ -1,7 +1,3 @@
-// Exchanges a member's IAM Identity Center access token for short-lived role
-// credentials of the set's AWS account and permission set (GetRoleCredentials),
-// cached per credential and token until five minutes before they expire. The
-// keys then sign Bedrock requests with SigV4 like organization AWS keys.
 import { createHash } from "node:crypto"
 import { AwsSsoError, getAwsSsoRoleCredentials, type FetchLike } from "@openwork-ee/gateway-upstreams/aws-identity-center"
 import { createInferenceEgressFetch } from "@openwork-ee/gateway-upstreams/egress"
@@ -12,9 +8,7 @@ export const AWS_ROLE_CREDENTIALS_CACHE_LIMIT = 1024
 
 export type MintAwsRoleCredentialsResult =
   | { kind: "credentials"; awsKeys: GatewayAwsKeysSecret }
-  /** The sign-in no longer works (expired or revoked): the person signs in again. */
   | { kind: "auth_required" }
-  /** AWS refused this account or permission set for the person: an administrator fixes the assignment. */
   | { kind: "forbidden"; message: string }
   | { kind: "retry" }
   | { kind: "error"; message: string }
@@ -36,7 +30,6 @@ export function createAwsSsoRoleCredentialMinter(deps: { fetchImpl?: FetchLike }
       const role = await getAwsSsoRoleCredentials({ region: sso.region, accessToken, accountId: sso.accountId, roleName: sso.roleName, fetchImpl })
       const expiresAt = role.expiration.getTime()
       if (!Number.isFinite(expiresAt) || expiresAt - EXPIRY_MARGIN_MS <= input.now.getTime()) {
-        // Very short permission-set sessions: use them once rather than caching.
         if (expiresAt <= input.now.getTime()) return { kind: "error", message: "IAM Identity Center returned expired role credentials" }
         return { kind: "credentials", awsKeys: { accessKeyId: role.accessKeyId, secretAccessKey: role.secretAccessKey, sessionToken: role.sessionToken } }
       }
@@ -57,8 +50,6 @@ export function createAwsSsoRoleCredentialMinter(deps: { fetchImpl?: FetchLike }
   }
 
   return async (input) => {
-    // The token, account and permission set all key the cache: a renewed token or a
-    // reconfigured set never reuses keys minted for another.
     const revision = createHash("sha256").update(JSON.stringify([input.awsSso.accessToken, input.awsSso.sso])).digest("hex")
     const key = `${input.credentialId}:${revision}`
     for (const [id, entry] of cache) {

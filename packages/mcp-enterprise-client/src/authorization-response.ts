@@ -33,7 +33,6 @@ export type McpAuthorizationResponseIssuerValidation = {
 export function validateMcpAuthorizationResponseIssuer(input: {
   expectedIssuer?: string | null
   discoveryState?: unknown
-  /** Undefined means the response omitted `iss`; an empty value is present and invalid. */
   responseIssuer?: string
   mixUpDefense?: McpAuthorizationResponseMixUpDefense
 }): McpAuthorizationResponseIssuerValidation {

@@ -4,7 +4,6 @@ import { ExampleCaption, ExampleGroupLabel, ExampleRow, ExampleRows, ExampleServ
 import { useExampleStep } from "../use-example-step";
 import { myBotExample } from "./my-bot-example-data";
 
-/** `?` example: the last check, today's checks and what the bot reads. */
 export function MyBotExample() {
   const step = useExampleStep(myBotExample.today.length);
 

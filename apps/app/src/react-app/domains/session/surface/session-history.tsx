@@ -40,10 +40,7 @@ export function openingHistoryWindow(saved: SessionScrollState): OpeningHistoryW
   const page = saved.geometry?.page;
   if (page) return { limit: page.limit, ...(page.before === null ? {} : { before: page.before }) };
   const nearby = saved.geometry?.messageIds ?? [];
-  // Old saved positions may have an anchor but predate nearby-ID persistence.
   const ids = nearby.includes(saved.anchor.messageId) ? nearby : [saved.anchor.messageId];
-  // Rendering splits a native assistant turn into a steps row and can append a
-  // synthetic error row. Keep those DOM IDs for restoration, not native reads.
   const nativeIds = ids.map((id) => {
     const messageId = id.endsWith(":steps") ? id.slice(0, -":steps".length) : id;
     return messageId.startsWith(SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX)
@@ -66,25 +63,15 @@ type OpeningHistoryInput = {
 
 const hydratingTranscripts = new WeakSet<object>();
 const EMPTY_HISTORY: UIMessage[] = [];
-/** The newest-window size a warm return reads; a shorter window is the whole conversation. */
 export const LATEST_HISTORY_WINDOW = 24;
 
 type HistoryRecord = OpenworkSessionHistory["messages"][number];
 
 function recordSignature(record: HistoryRecord): string {
-  // Compare everything except inline file bytes: an image data URL can be
-  // megabytes, and a replaced image also changes its part ID, length, or time.
   return JSON.stringify([record.info, record.parts.map((part) =>
     "url" in part && typeof part.url === "string" ? { ...part, url: part.url.length } : part)]);
 }
 
-/**
- * A newest window that equals the tail of a complete cached history proves the
- * cache is still current. Returning to such a conversation keeps the cache
- * instead of re-reading every message (and every inline image) again. Any
- * doubt — a different session revision, revert, count, ID, or part lifecycle —
- * falls back to the uncapped read.
- */
 export function latestConfirmsFullHistory(
   full: OpenworkSessionHistory,
   latest: Pick<OpenworkSessionHistory, "session" | "messages">,
@@ -114,8 +101,6 @@ async function readLatestHistory<T>(read: (signal: AbortSignal) => Promise<T>, s
   readSignal.addEventListener("abort", onAbort, { once: true });
   const timer = setTimeout(() => deadline.abort(new Error("Latest history read timed out.")), 2_000);
   try {
-    // Some transports cannot abort an already-dispatched request. The optional
-    // newest read must still release full-history loading at its deadline.
     return await Promise.race([read(readSignal), aborted]);
   } finally {
     clearTimeout(timer);
@@ -326,13 +311,11 @@ export function openingSessionHistoryOptions(input: OpeningHistoryInput, saved =
 
 export function prefetchOpeningSessionHistory(client: QueryClient, input: OpeningHistoryInput) {
   if (client.getQueryData<OpenworkSessionHistory>(input.snapshotQueryKey)?.session.id === input.sessionId) return;
-  // No queue and no neighboring reads: only one speculative opening at a time.
   if (client.isFetching({ queryKey: ["react-session-opening"] })) return;
   const options = openingSessionHistoryOptions(input, undefined, client);
   void client.prefetchQuery(options);
   return () => {
     const query = client.getQueryCache().find({ queryKey: options.queryKey, exact: true });
-    // Click may already have adopted this exact query. Never cancel its read.
     if (query && query.getObserversCount() === (openingCompletions.get(client)?.get(query.queryHash)?.retained ? 1 : 0)) {
       void client.cancelQueries({ queryKey: options.queryKey, exact: true });
     }
@@ -375,10 +358,6 @@ export function useOpeningSessionHistory(input: OpeningHistoryInput & {
   const entry = useMemo<{
     warm: boolean;
     fullRead: { baseline: UIMessage[]; updateCount: number } | null;
-    /**
-     * The exact cached complete history whose tail the latest newest read
-     * matched. Weak so a replaced snapshot is not kept alive by this record.
-     */
     confirmedFull: WeakRef<OpenworkSessionHistory> | null;
     readers: Set<AbortController>;
   }>(() => ({
@@ -408,7 +387,6 @@ export function useOpeningSessionHistory(input: OpeningHistoryInput & {
           part.sessionID !== input.sessionId || part.messageID !== info.id))) {
         throw new Error("Conversation history belongs to another session.");
       }
-      // Judge the cache as it stands now: live events may have changed it during the read.
       const cachedNow = client.getQueryData<OpenworkSessionHistory>(input.snapshotQueryKey);
       entry.confirmedFull = cachedNow !== undefined && latestConfirmsFullHistory(cachedNow, history) ? new WeakRef(cachedNow) : null;
       const current = applyHistorySourceChanges(client.getQueryData<LatestSessionHistory>(latestKey) ?? initial, readSource());
@@ -530,24 +508,12 @@ export function useOpeningSessionHistory(input: OpeningHistoryInput & {
     try {
       return await (input.ignoreCached ? client.fetchQuery(options) : client.ensureQueryData(options));
     } catch (error) {
-      // The cache cancels this read when the surface's own observer drops
-      // mid-flight. Development builds simulate an unmount for every mount
-      // effect, so a send fired from one (the hero's one-step Run task) always
-      // sees its reader drop and re-subscribe while the read is in flight. With
-      // the reader still present that is not a failed read: read again. Once
-      // nobody observes the thread anymore (navigated away), it stands.
       if (!(error instanceof CancelledError) || activeOwner.current !== entry) throw error;
       const query = client.getQueryCache().find({ queryKey: input.snapshotQueryKey, exact: true });
       if (!query || query.getObserversCount() === 0) throw error;
       return client.fetchQuery(options);
     }
   }, [client, entry, input.ignoreCached, input.snapshotQueryKey, fullReader]);
-  // A follow-up decides whether to interrupt delegated work from the current
-  // turn's newest messages. Cached complete history already holds them;
-  // otherwise one bounded newest read does. A send never waits on the uncapped
-  // read a saved reading position leaves in flight: on a cold engine that read
-  // can outlast its request timeout, and a timed-out read must not bounce the
-  // person's message back into the composer.
   const readSendHistory = useCallback(async (options: { revealLatest?: boolean } = {}): Promise<OpenworkSessionHistory["messages"]> => {
     if (activeOwner.current !== entry) throw new CancelledError();
     const cached = client.getQueryData<OpenworkSessionHistory>(input.snapshotQueryKey);
@@ -565,9 +531,6 @@ export function useOpeningSessionHistory(input: OpeningHistoryInput & {
         if (latest.session.id !== input.sessionId) throw new Error("Conversation history belongs to another session.");
         return latest.messages;
       } catch (error) {
-        // StrictMode's effect cleanup cancels the hero's first-send read even
-        // when the same owner is immediately restored. Retry only that read,
-        // once; a real unmount or credential/session change stays cancelled.
         if (!canRetry || !controller.signal.aborted || activeOwner.current !== entry) throw error;
       } finally { entry.readers.delete(controller); }
       return read(false);
@@ -580,8 +543,6 @@ export function useOpeningSessionHistory(input: OpeningHistoryInput & {
   ) => {
     if (activeOwner.current !== entry) return;
     const snapshot = await (options.fresh ? client.fetchQuery({
-      // Branch must not join an older opening/send read or trust cached history.
-      // Concurrent branches share this uncapped read and its response boundary.
       queryKey: ["react-session-branch-history", input.owner, credential],
       queryFn: ({ signal }) => fullReader(signal),
       staleTime: 0,
@@ -600,7 +561,6 @@ export function useOpeningSessionHistory(input: OpeningHistoryInput & {
   const [backgroundOwner, setBackgroundOwner] = useState<typeof entry | null>(null);
   useEffect(() => {
     if (!query.isSuccess || query.isFetching || hasFullSnapshot || paginated && !needsRevertHistory) return;
-    // Let the relevant messages paint before full-history JSON/React work starts.
     let second: number | undefined;
     const first = window.requestAnimationFrame(() => {
       second = window.requestAnimationFrame(() => setBackgroundOwner(entry));
@@ -642,16 +602,10 @@ export function useOpeningSessionHistory(input: OpeningHistoryInput & {
     latestHistory,
     readFullSnapshot: fullReader,
     seedSnapshot,
-    // A newest window that came back shorter than its limit already holds the
-    // whole conversation. Only a full window, a saved-position window, or an
-    // unavailable preview can still be missing earlier messages.
     partial: paginated ? !pages.complete : snapshot === null || limit === undefined || snapshot.messages.length >= limit,
     backgroundReady: paginated && !needsRevertHistory ? false : hasFullSnapshot
       ? !entry.warm || !input.readLatest || !latestQuery.isFetching
       : query.isSuccess && snapshot !== null && backgroundOwner === entry,
-    // The cached complete history whose tail the newest read matched needs no
-    // uncapped re-read. Only that exact object is current: a later refresh or
-    // terminal-edge invalidation replaces it and returns to the default policy.
     fullCurrent: hasFullSnapshot && entry.warm && latestQuery.isSuccess && entry.confirmedFull !== null
       && client.getQueryData<OpenworkSessionHistory>(input.snapshotQueryKey) === entry.confirmedFull.deref(),
     pages,
@@ -687,20 +641,14 @@ export function SessionHistoryLoading({ saved, failed = false }: { saved: Sessio
 export function SessionHistoryStatus({ complete, pending, loading, failed, failedReason, onRetry }: {
   complete: boolean;
   pending: boolean;
-  /** The uncapped read is in flight and may still add earlier messages. */
   loading: boolean;
   failed: boolean;
-  /** Why the read failed, when the server knows (e.g. a v1 chat not copied to v2 yet). */
   failedReason?: string;
   onRetry: () => Promise<unknown>;
 }) {
   const [retrying, setRetrying] = useState(false);
   const retryPending = useRef(false);
   if (complete || (pending && !failed && !retrying)) return null;
-  // Only a read that is actually in flight may announce loading. A read that
-  // is not enabled yet, paused, or reverted by a cancellation has nothing to
-  // report, and an announcement derived from missing history alone would stay
-  // visible with nothing left to clear it.
   if (!loading && !failed && !retrying) return null;
   if (!failed && !retrying) return <div data-thread-history-status className="relative z-10 h-0 shrink-0">
     <span role="status" className="sr-only">Loading earlier messages…</span>
@@ -730,8 +678,6 @@ export function SessionHistoryBoundary({ owner, pending, saved, failed, children
   failed?: boolean;
   children: ReactNode;
 }) {
-  // useQuery owns the opening read without suspending its reveal behind React's
-  // fallback throttle. Keep descendant suspensions isolated from the composer.
   return <Suspense key={owner} fallback={<SessionHistoryLoading saved={saved} />}>
     {pending ? <SessionHistoryLoading saved={saved} failed={failed} /> : children}
   </Suspense>;

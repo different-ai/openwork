@@ -1,18 +1,3 @@
-/**
- * LiteLLM proxy client and the mapping from LiteLLM's data model to ours.
- *
- *   LiteLLM model group (model_name)      -> gateway_provider_models row
- *   LiteLLM team / key model list          -> gateway_model_groups row (one per distinct model set)
- *   LiteLLM virtual key                    -> gateway_provider_credentials row (org or member subject)
- *
- * Only public model facts are read: /model_group/info carries no deployment
- * secrets, unlike /model/info's litellm_params. Every call is egress-guarded,
- * time-boxed and never follows redirects. Errors never echo keys.
- *
- * The client needs a LiteLLM key. A provider in member Microsoft Entra sign-in
- * mode has none, so nothing here is called for it: its models are the list an
- * admin entered (liteLlmStaticModels).
- */
 import { createHash } from "node:crypto"
 import { createInferenceEgressFetch, validateInferenceUrl } from "@openwork-ee/gateway-upstreams"
 import type { ModelsDevProvider } from "./models-dev.js"
@@ -22,9 +7,7 @@ type JsonRecord = Record<string, unknown>
 export type LiteLlmFetch = typeof fetch
 
 export type LiteLlmEndpoints = {
-  /** OpenAI-compatible base the gateway forwards to, ending in /v1. */
   inferenceBaseUrl: string
-  /** Proxy root for LiteLLM management routes (/team/list, /key/info, ...). */
   adminBaseUrl: string
 }
 
@@ -32,7 +15,6 @@ export type LiteLlmModel = { id: string; name: string; config: JsonRecord }
 export type LiteLlmTeam = { id: string; alias: string | null; models: string[] }
 export type LiteLlmKeyInfo = { teamId: string | null; userId: string | null; models: string[] }
 export type LiteLlmUser = { userId: string; email: string; teams: string[]; models: string[] }
-/** An existing key's settings. Never its value: LiteLLM keeps only a hash. */
 export type LiteLlmKeyRecord = {
   tokenId: string
   alias: string | null
@@ -53,11 +35,9 @@ export type LiteLlmIssueRequest = {
   models?: string[]
   aliases?: Record<string, string>
   tags?: string[]
-  /** Seconds until expiry; omitted keys never expire. */
   durationSeconds?: number
 }
 
-/** Prefix of every key alias OpenWork creates, so mirroring never copies its own keys. */
 export const LITELLM_ISSUED_KEY_ALIAS_PREFIX = "openwork-"
 
 export class LiteLlmError extends Error {
@@ -86,7 +66,6 @@ function readPrice(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null
 }
 
-/** Accepts the proxy root or its /v1 base, with or without a trailing slash. */
 export function normalizeLiteLlmBaseUrl(raw: string): LiteLlmEndpoints {
   let url: URL
   try { url = new URL(raw.trim()) } catch { throw new LiteLlmError("invalid_base_url", "Enter the LiteLLM proxy URL, for example https://litellm.example.com.") }
@@ -123,13 +102,11 @@ export function createLiteLlmClient(endpoints: LiteLlmEndpoints, fetchImpl: Lite
     try { return await response.json() } catch { throw new LiteLlmError("bad_response", `LiteLLM returned invalid JSON for ${path.split("?")[0]}.`) }
   }
 
-  /** The models this key may call: LiteLLM applies key, team and access-group rules. */
   async function listModels(key: string): Promise<string[]> {
     const body = await request("/v1/models", key)
     if (!isRecord(body) || !Array.isArray(body.data)) throw new LiteLlmError("bad_response", "LiteLLM /v1/models returned an unexpected shape.")
     const ids = [...new Set(body.data.flatMap((entry) => {
       const id = isRecord(entry) ? readString(entry.id) : null
-      // Wildcard routes (openai/*) are not callable model ids.
       return id && !id.includes("*") ? [id] : []
     }))].sort()
     const { modelIds, dropped } = dedupeLiteLlmModelIds(ids)
@@ -137,7 +114,6 @@ export function createLiteLlmClient(endpoints: LiteLlmEndpoints, fetchImpl: Lite
     return modelIds
   }
 
-  /** Public per-model facts. Best-effort: older proxies or locked-down keys may refuse it. */
   async function modelGroupInfo(key: string): Promise<Map<string, JsonRecord>> {
     try {
       const body = await request("/model_group/info", key)
@@ -154,7 +130,6 @@ export function createLiteLlmClient(endpoints: LiteLlmEndpoints, fetchImpl: Lite
     }
   }
 
-  /** Requires an admin key. Shapes differ across LiteLLM versions. */
   async function listTeams(adminKey: string): Promise<LiteLlmTeam[]> {
     const body = await request("/team/list", adminKey)
     const rows = Array.isArray(body) ? body : isRecord(body) && Array.isArray(body.teams) ? body.teams : isRecord(body) && Array.isArray(body.data) ? body.data : null
@@ -167,7 +142,6 @@ export function createLiteLlmClient(endpoints: LiteLlmEndpoints, fetchImpl: Lite
     })
   }
 
-  /** The calling key's own record. Best-effort: some deployments restrict /key/info. */
   async function keyInfo(key: string): Promise<LiteLlmKeyInfo | null> {
     try {
       const body = await request("/key/info", key)
@@ -180,7 +154,6 @@ export function createLiteLlmClient(endpoints: LiteLlmEndpoints, fetchImpl: Lite
     }
   }
 
-  /** Exact, case-insensitive email match. LiteLLM's filter is a substring search. Requires an admin key. */
   async function findUserByEmail(adminKey: string, email: string): Promise<LiteLlmUser | null> {
     const wanted = email.trim().toLowerCase()
     const body = await request(`/user/list?user_email=${encodeURIComponent(wanted)}&page=1&page_size=100`, adminKey)
@@ -192,7 +165,6 @@ export function createLiteLlmClient(endpoints: LiteLlmEndpoints, fetchImpl: Lite
     return { userId: readString(match.user_id) ?? "", email: readString(match.user_email) ?? wanted, teams: strings(match.teams), models: strings(match.models) }
   }
 
-  /** A user's own model list, or null when LiteLLM does not know the user. Requires an admin key. */
   async function userModels(adminKey: string, userId: string): Promise<string[] | null> {
     const body = await request(`/user/info?user_id=${encodeURIComponent(userId)}`, adminKey, undefined, null)
     const info = isRecord(body) && isRecord(body.user_info) ? body.user_info : null
@@ -200,10 +172,6 @@ export function createLiteLlmClient(endpoints: LiteLlmEndpoints, fetchImpl: Lite
     return Array.isArray(info.models) ? info.models.flatMap((model) => readString(model) ?? []) : []
   }
 
-  /**
-   * Proves the key can manage LiteLLM. Its admin endpoints answer a valid
-   * non-admin key with 401 (v1.97) or 403, so both mean "not an admin key".
-   */
   async function requireAdmin(key: string): Promise<LiteLlmTeam[]> {
     try { return await listTeams(key) } catch (error) {
       if (error instanceof LiteLlmError && (error.code === "unauthorized" || error.code === "forbidden")) {
@@ -213,7 +181,6 @@ export function createLiteLlmClient(endpoints: LiteLlmEndpoints, fetchImpl: Lite
     }
   }
 
-  /** A user's keys, oldest first. Values are never returned, only settings. Requires an admin key. */
   async function listUserKeys(adminKey: string, userId: string): Promise<LiteLlmKeyRecord[]> {
     const body = await request(`/key/list?user_id=${encodeURIComponent(userId)}&return_full_object=true&page=1&size=100`, adminKey)
     const rows = isRecord(body) && Array.isArray(body.keys) ? body.keys : null
@@ -228,11 +195,6 @@ export function createLiteLlmClient(endpoints: LiteLlmEndpoints, fetchImpl: Lite
     }).sort((a, b) => (a.createdAt ?? "").localeCompare(b.createdAt ?? "") || a.tokenId.localeCompare(b.tokenId))
   }
 
-  /**
-   * Creates a key owned by the user. It may only call models: LiteLLM's
-   * llm_api_routes, so a key owned by a LiteLLM admin never inherits admin rights.
-   * Key-level budgets and rate limits are never set. Requires an admin key.
-   */
   async function issueKey(adminKey: string, input: LiteLlmIssueRequest): Promise<{ key: string; tokenId: string }> {
     const body = await request("/key/generate", adminKey, {
       user_id: input.userId,
@@ -251,7 +213,6 @@ export function createLiteLlmClient(endpoints: LiteLlmEndpoints, fetchImpl: Lite
     return { key, tokenId }
   }
 
-  /** Deletes keys by token hash. Keys already gone count as deleted. Requires an admin key. */
   async function deleteKeys(adminKey: string, tokenIds: string[]): Promise<void> {
     if (!tokenIds.length) return
     await request("/key/delete", adminKey, { keys: tokenIds }, { deleted_keys: [] })
@@ -262,18 +223,11 @@ export function createLiteLlmClient(endpoints: LiteLlmEndpoints, fetchImpl: Lite
 
 export type LiteLlmClient = ReturnType<typeof createLiteLlmClient>
 
-/**
- * models.dev-shaped model config from LiteLLM's public model-group facts.
- * Costs are converted from USD per token to USD per 1M tokens, which is what
- * the gateway's pricing reads. Unknown facts are omitted, never guessed.
- */
 export function liteLlmModelConfig(id: string, info: JsonRecord | undefined): JsonRecord {
   const config: JsonRecord = { id, name: id }
   if (!info) return config
   const context = readPositive(info.max_input_tokens) ?? readPositive(info.max_tokens)
   const output = readPositive(info.max_output_tokens)
-  // LiteLLM reports models missing from its cost map with null limits, $0 prices
-  // and every capability false. Those are unknowns, not facts: omit them.
   if (!context && !readString(info.mode)) return config
   if (context && output) config.limit = { context, output }
   const input = readPrice(info.input_cost_per_token)
@@ -296,11 +250,6 @@ export function liteLlmModelConfig(id: string, info: JsonRecord | undefined): Js
   return config
 }
 
-/**
- * gateway_provider_models.model_id compares case-insensitively (MySQL default
- * collation), so IDs differing only by case cannot both be stored. Keeps the
- * first ID per case-insensitive key and reports the rest.
- */
 export function dedupeLiteLlmModelIds(ids: readonly string[]): { modelIds: string[]; dropped: string[] } {
   const seen = new Set<string>()
   const modelIds: string[] = []
@@ -313,7 +262,6 @@ export function dedupeLiteLlmModelIds(ids: readonly string[]): { modelIds: strin
   return { modelIds, dropped }
 }
 
-/** Chat-capable models with their configs. Embedding, image and audio models are left out. */
 export function liteLlmCatalogModels(modelIds: string[], info: Map<string, JsonRecord>): LiteLlmModel[] {
   return modelIds.flatMap((id) => {
     const facts = info.get(id)
@@ -323,17 +271,8 @@ export function liteLlmCatalogModels(modelIds: string[], info: Map<string, JsonR
   })
 }
 
-/** Catalog facts copied onto a hand-entered model. Prices are left out: LiteLLM budgets these people, not OpenWork. */
 const STATIC_MODEL_FACTS = ["attachment", "reasoning", "reasoning_options", "tool_call", "structured_output", "temperature", "modalities", "limit"] as const
 
-/**
- * A model list an admin entered by hand. A proxy that only accepts sign-in
- * tokens (member Microsoft Entra sign-in) gives OpenWork no key to read its
- * own list with, so the admin names the models. A name the public models.dev
- * catalog knows (`gpt-4o-mini`, `azure/gpt-4o`) takes that model's limits and
- * capabilities, so OpenWork never asks for more output than the model allows.
- * Any other name keeps only its name: unknown facts are omitted, never guessed.
- */
 export function liteLlmStaticModels(modelIds: readonly string[], catalog: readonly ModelsDevProvider[] = []): LiteLlmModel[] {
   const ids = modelIds.map((id) => id.trim()).filter((id) => id && !id.includes("*"))
   return dedupeLiteLlmModelIds(ids).modelIds.map((id) => {
@@ -343,29 +282,16 @@ export function liteLlmStaticModels(modelIds: readonly string[], catalog: readon
   })
 }
 
-/**
- * A team's callable models. LiteLLM treats an empty list or `all-proxy-models`
- * as everything; other names that are not model ids are access groups, which
- * only the proxy can expand, so they resolve through member keys instead.
- */
 export function liteLlmTeamModels(team: LiteLlmTeam, catalogIds: readonly string[]): string[] | null {
   if (!team.models.length || team.models.includes("all-proxy-models")) return [...catalogIds]
   const known = team.models.filter((model) => catalogIds.includes(model))
   return known.length === team.models.length ? [...new Set(known)].sort() : null
 }
 
-/** Stable identity of a model set, so members with the same access share one group. */
 export function liteLlmModelSetKey(modelIds: readonly string[]): string {
   return `models:${createHash("sha256").update(JSON.stringify([...new Set(modelIds)].sort())).digest("base64url").slice(0, 22)}`
 }
 
-/**
- * Models a key without a team can call. LiteLLM's /v1/models over-reports for
- * these keys, so read the owner's own list: empty means every model on the
- * proxy, `no-default-models` means none outside a team. Names that are not
- * model ids (access groups) cannot be expanded here, so the caller falls back
- * to the key's own listing. Returns null in that case.
- */
 export function liteLlmPersonalModels(ownerModels: readonly string[], keyModels: readonly string[], catalogIds: readonly string[]): string[] | null {
   const restrict = (models: readonly string[]) => models.every((model) => catalogIds.includes(model)) ? [...new Set(models)].sort() : null
   if (ownerModels.includes("no-default-models")) return []
@@ -376,7 +302,6 @@ export function liteLlmPersonalModels(ownerModels: readonly string[], keyModels:
   return key === null ? null : key.filter((model) => owner.includes(model))
 }
 
-/** Settings a mirrored key copies. A change means the copy must be recreated. Limits are never copied. */
 export function liteLlmMirrorFingerprint(source: Pick<LiteLlmKeyRecord, "teamId" | "models" | "aliases" | "tags" | "expiresAt">): string {
   return createHash("sha256").update(JSON.stringify([source.teamId, [...source.models].sort(), Object.entries(source.aliases).sort(), [...source.tags].sort(), source.expiresAt])).digest("base64url").slice(0, 43)
 }

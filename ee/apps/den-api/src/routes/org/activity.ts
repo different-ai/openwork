@@ -80,7 +80,6 @@ export function registerOrgActivityRoutes<T extends { Variables: OrgRouteVariabl
       let plugins: DashboardActivityAccess["plugins"] = "all"
       let marketplaces: DashboardActivityAccess["marketplaces"] = "all"
       if (!(await canManageAllPluginArchResources(context))) {
-        // Rare: an admin without Manage everything shared sees what was shared with them.
         const ids = await listActivePluginArchIds(organizationId)
         plugins = [...(await resolvePluginArchPluginRoles(context, ids.pluginIds)).keys()]
         const roles = await Promise.all(ids.marketplaceIds.map(async (marketplaceId) =>

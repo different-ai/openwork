@@ -6,14 +6,7 @@ import { peopleMemberCondition } from "./setup-agent-members.js"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
 
-/**
- * Member rows that are billable users: joined members, plus the placeholder
- * row of each pending invitation that has not expired. Removed members, the
- * setup agent and expired invitations never count.
- */
 export function billingUserCondition(now = new Date()) {
-  // Conditions built with column operators so `now` is bound in the column's
-  // UTC format; a raw Date in sql`` would be sent in the server's local time.
   const pendingInvitation = sql`exists (select 1 from ${InvitationTable} where ${and(
     eq(InvitationTable.id, MemberTable.inviteId),
     eq(InvitationTable.status, "pending"),
@@ -27,10 +20,6 @@ export function billingUserCondition(now = new Date()) {
 
 type BillingUserCounts = { users: number; webUsers: number }
 
-/**
- * The one query that counts billable users, for several organizations at
- * once: every user, and the users with OpenWork Web.
- */
 export async function countBillingUsersAndWebUsersForOrganizations(organizationIds: readonly OrgId[]): Promise<Map<OrgId, BillingUserCounts>> {
   const result = new Map<OrgId, BillingUserCounts>()
   if (organizationIds.length === 0) return result
@@ -64,7 +53,6 @@ export async function countBillingUsers(organizationId: OrgId): Promise<number> 
   return (await countBillingUsersForOrganizations([organizationId])).get(organizationId) ?? 0
 }
 
-/** Billing quantities for one organization: its users, its Web users and free seats. */
 export async function getOrganizationBillingQuantities(organizationId: OrgId): Promise<OrganizationBillingQuantities> {
   const [counts, rows] = await Promise.all([
     countBillingUsersAndWebUsersForOrganizations([organizationId]),
@@ -77,7 +65,6 @@ export async function getOrganizationBillingQuantities(organizationId: OrgId): P
   return calculateOrganizationBillingQuantities({ ...(counts.get(organizationId) ?? { users: 0, webUsers: 0 }), metadata: rows[0]?.metadata })
 }
 
-/** Billing quantities for several organizations at once (admin lists). */
 export async function getBillingQuantitiesForOrganizations(organizations: ReadonlyArray<{ id: OrgId; metadata: Record<string, unknown> | null | undefined }>) {
   const ids = organizations.map((organization) => organization.id)
   const countsByOrg = await countBillingUsersAndWebUsersForOrganizations(ids)
@@ -91,11 +78,6 @@ export async function getBillingQuantitiesForOrganizations(organizations: Readon
   return result
 }
 
-/**
- * Organizations with a pending invitation that expired in (since, until]:
- * each stopped counting as a user without any request, so its subscriptions
- * need to follow the lower count.
- */
 export async function listOrganizationsWithInvitationsExpiredBetween(input: { since: Date; until: Date }): Promise<OrgId[]> {
   const rows = await db
     .selectDistinct({ organizationId: InvitationTable.organizationId })

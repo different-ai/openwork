@@ -33,34 +33,22 @@ export type EnterpriseMcpLifecycle = {
 
 export type EnterpriseMcpPersistenceContext = {
   connectionId: string
-  /**
-   * A persistence adapter must reject or roll back a write that cannot commit
-   * before this absolute deadline. Checking only before a database call is not
-   * sufficient because the operation may settle after its caller timed out.
-   */
   commitExpiresAt: EnterpriseMcpEpochMs
   signal: AbortSignal
 }
 
 export type EnterpriseMcpOAuthClientRegistration = {
   clientInformation: StoredOAuthClientInformation
-  /** Opaque adapter-owned compare-and-swap revision. */
   revision: string
-  /** Absolute client/client-secret expiration, when the provider declares one. */
   expiresAt?: EnterpriseMcpEpochMs
   source: "pre-registered" | "client-metadata" | "dynamic"
 }
 
 export interface EnterpriseMcpOAuthClientRegistrationPort {
   load(context: EnterpriseMcpPersistenceContext): Promise<EnterpriseMcpOAuthClientRegistration | undefined>
-  /**
-   * First-writer-wins for concurrent dynamic registration. Implementations
-   * return the winning record and never silently replace a different client.
-   */
   save(input: {
     context: EnterpriseMcpPersistenceContext
     clientInformation: StoredOAuthClientInformation
-    /** The redirect URI used for this client registration attempt. */
     redirectUri: string
     expiresAt?: EnterpriseMcpEpochMs
     source: "client-metadata" | "dynamic"
@@ -85,25 +73,18 @@ export interface EnterpriseMcpOAuthDiscoveryPort {
 
 export type EnterpriseMcpOAuthCredential = {
   tokens: StoredOAuthTokens
-  /** Absolute access-token expiration, computed when tokens are committed. */
   expiresAt?: EnterpriseMcpEpochMs
-  /** Opaque adapter-owned compare-and-swap revision. */
   revision: string
 }
 
 export type EnterpriseMcpOAuthAuthorizationHandle = {
   id: string
-  /** Opaque single-use transaction revision. */
   revision: string
   expiresAt: EnterpriseMcpEpochMs
   clientRegistrationRevision?: string
 }
 
 export interface EnterpriseMcpOAuthAuthorizationPort {
-  /**
-   * Persist a bounded PKCE transaction. The id is the caller's signed OAuth
-   * state and must be stored as a keyed hash or equivalent non-reversible key.
-   */
   begin(input: {
     context: EnterpriseMcpPersistenceContext
     id: string
@@ -111,7 +92,6 @@ export interface EnterpriseMcpOAuthAuthorizationPort {
     expiresAt: EnterpriseMcpEpochMs
     clientRegistrationRevision?: string
   }): Promise<void>
-  /** Load without consuming; successful token commit consumes atomically. */
   load(input: {
     context: EnterpriseMcpPersistenceContext
     id: string
@@ -125,12 +105,6 @@ export interface EnterpriseMcpOAuthAuthorizationPort {
 
 export interface EnterpriseMcpOAuthCredentialPort {
   load(context: EnterpriseMcpPersistenceContext): Promise<EnterpriseMcpOAuthCredential | undefined>
-  /**
-   * For authorization-code commits, the adapter MUST atomically validate and
-   * consume `authorization`, validate `clientRegistrationRevision`, persist
-   * the tokens, and enforce `context.commitExpiresAt`. Refresh commits enforce
-   * the same lifecycle fence but do not consume an authorization transaction.
-   */
   save(input: {
     context: EnterpriseMcpPersistenceContext
     tokens: StoredOAuthTokens
@@ -138,26 +112,12 @@ export interface EnterpriseMcpOAuthCredentialPort {
     source: "authorization-code" | "refresh"
     authorization?: EnterpriseMcpOAuthAuthorizationHandle
     clientRegistrationRevision?: string
-    /** Required for refresh commits; rejects a response based on stale tokens. */
     expectedCredentialRevision?: string
   }): Promise<void>
   invalidate(input: {
     context: EnterpriseMcpPersistenceContext
     reason: "expired" | "provider-rejected" | "post-authorization-validation-failed"
   }): Promise<void>
-  /**
-   * Optional. Runs one refresh-token grant at a time per credential, across
-   * every process sharing the store. Providers that rotate refresh tokens keep
-   * only one of several concurrent refreshes valid, so parallel grants can
-   * leave the saved credential unusable. The adapter holds the credential
-   * exclusively, then:
-   * - returns `superseded` with the current credential (if any), without
-   *   calling `refresh`, when the stored refresh token is no longer
-   *   `refreshToken`;
-   * - otherwise calls `refresh` and, when it returns tokens, commits them as a
-   *   refresh before releasing the credential (`refreshed`), or commits
-   *   nothing (`not-saved`).
-   */
   refreshExclusively?(input: {
     context: EnterpriseMcpPersistenceContext
     refreshToken: string
@@ -183,11 +143,6 @@ export type EnterpriseMcpOAuthConfiguration = {
   clientMetadataUrl?: string
   authorizationServerIssuer?: string
   requestedScopes?: string[]
-  /**
-   * Ask for `requestedScopes` alone at sign-in, even when the server's sign-in
-   * challenge names more. Off by default: challenge scopes are otherwise kept.
-   * Ignored while `requestedScopes` is empty.
-   */
   requestSelectedScopesOnly?: boolean
 }
 
@@ -260,7 +215,6 @@ export type EnterpriseMcpConnection = {
 export type EnterpriseMcpConnectInput = {
   connection: EnterpriseMcpConnection
   redirectUri: string
-  /** Required only when OAuth must begin; normally a signed, expiring state. */
   authorizationId?: string
 }
 
@@ -272,9 +226,7 @@ export type EnterpriseMcpCompleteAuthorizationInput = {
   connection: EnterpriseMcpConnection
   redirectUri: string
   code: string
-  /** The decoded iss parameter from the authorization response, when present. */
   responseIssuer?: string
-  /** The exact signed state returned by the provider callback. */
   authorizationId: string
 }
 
@@ -297,10 +249,6 @@ export type EnterpriseMcpCallToolInput = {
 }
 
 export type EnterpriseMcpCallListedToolInput = EnterpriseMcpCallToolInput & {
-  /**
-   * Runs on the provider's current tool list, in the same session as the call.
-   * Throwing refuses the call before anything is sent to the tool.
-   */
   beforeCall: (tools: EnterpriseMcpTool[]) => void | Promise<void>
 }
 
@@ -360,14 +308,12 @@ export type EnterpriseMcpAuthorizationServerRequirement = {
 }
 
 export type EnterpriseMcpConnectionRequirements = {
-  /** Read-only suggestions, not trusted authorization servers and never auto-applied. */
   publishedSignInAddresses?: Array<{ authorizationEndpoint: string; tokenEndpoint: string; advertisedIssuer: string; metadataIssuer: string }>
   status: "ready" | "manual_action_required" | "unsupported" | "unreachable"
   server: {
     url: string
     protocolEra?: "modern" | "legacy"
     protocolVersion?: string
-    /** Protocol-negotiation status; the field name is retained for API compatibility. */
     initialize: "succeeded" | "authentication_required" | "failed"
   }
   authentication: {
@@ -375,9 +321,7 @@ export type EnterpriseMcpConnectionRequirements = {
     resource?: string
     protectedResourceMetadataUrl?: string
     authorizationServers: EnterpriseMcpAuthorizationServerRequirement[]
-    /** Scopes requested by the resource's authentication challenge, not inferred from its URL or tools. */
     requiredScopes: string[]
-    /** Protected-resource advertisement, kept separate so callers can disclose contradictory challenges. */
     resourceScopesSupported?: string[]
     recommendedScopes: string[]
     refreshSupport: "supported" | "not_advertised" | "unknown"
@@ -416,10 +360,6 @@ export type DiscoverEnterpriseMcpConnectionRequirementsInput = {
 }
 
 export type EnterpriseMcpClientOptions = {
-  /**
-   * Required outbound port. The composition root owns SSRF, DNS rebinding,
-   * proxy, TLS, redirect, response-size, and secret-forwarding policy.
-   */
   fetch: EnterpriseMcpFetch
   clock?: EnterpriseMcpClock
   diagnosticSink?: EnterpriseMcpDiagnosticSink
@@ -429,7 +369,6 @@ export type EnterpriseMcpClientOptions = {
   expirationSkewMs?: number
   clientName?: string
   clientVersion?: string
-  /** Advertise webhook events only for an explicitly enabled subscription operation. */
   webhookEvents?: boolean
   lifecycle?: EnterpriseMcpLifecycle
 }
@@ -442,7 +381,6 @@ export interface EnterpriseMcpClient {
   listTools(input: EnterpriseMcpListToolsInput): Promise<EnterpriseMcpTool[]>
   callTool(input: EnterpriseMcpCallToolInput): Promise<EnterpriseMcpToolResult>
   callToolRaw(input: EnterpriseMcpCallToolInput): Promise<EnterpriseMcpToolResult>
-  /** Lists tools, then calls one, in a single provider session. */
   callListedTool(input: EnterpriseMcpCallListedToolInput): Promise<EnterpriseMcpToolResult>
   listResources(input: EnterpriseMcpListResourcesInput): Promise<EnterpriseMcpResourceList>
   readResource(input: EnterpriseMcpReadResourceInput): Promise<EnterpriseMcpResourceResult>

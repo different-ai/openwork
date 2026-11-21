@@ -29,7 +29,6 @@ type AutomationListItem = AutomationList["items"][number];
 
 const ACTIVE_RUN_STATUSES = new Set(["queued", "claimed", "running"]);
 
-/** The Computers status language: a dot and a sentence-case word; color only for what needs attention. */
 function AutomationStatus({ status }: { status: string }) {
   const tone = status === "failed" || status === "needs_attention" ? "danger" : status === "succeeded" || status === "active" ? "success" : "neutral";
   const label = status.replaceAll("_", " ");
@@ -46,7 +45,6 @@ function PlacementIcon({ executionTarget }: { executionTarget: "desktop" | "clou
   return executionTarget === "cloud" ? <Cloud className="h-3 w-3" /> : <Monitor className="h-3 w-3" />;
 }
 
-/** The surface that owns an Automation's lifecycle: Web for Cloud placement, Desktop for Desktop placement. */
 function ManageLink({ item, openworkWebUrl }: { item: { automation: { id: string }; revision: { executionTarget?: "desktop" | "cloud" } }; openworkWebUrl: string }) {
   if (item.revision.executionTarget === "cloud") {
     const href = `${openworkWebUrl.replace(/\/$/, "")}/automations?automation=${encodeURIComponent(item.automation.id)}`;
@@ -55,7 +53,6 @@ function ManageLink({ item, openworkWebUrl }: { item: { automation: { id: string
   return <span className="inline-flex items-center gap-1.5 text-[12px] text-[var(--dls-text-secondary)]"><Monitor className="h-3.5 w-3.5" />Manage in OpenWork Desktop</span>;
 }
 
-/** Groups the monitor list by what needs eyes first: running, needs attention, scheduled, paused. */
 function groupItems(items: AutomationListItem[]) {
   const running: AutomationListItem[] = [];
   const attention: AutomationListItem[] = [];
@@ -111,8 +108,6 @@ export function AutomationsScreen() {
   if (!automationId) {
     const items = listQuery.data?.items.filter((item) => archiveRestoreEnabled || item.automation.state !== "archived") ?? [];
     const groups = groupItems(items);
-    // With feature intros on, the My Automations intro replaces the list while there are none (DESIGN.md I1, I2);
-    // with the flag off, the page and its empty line render as before.
     return (
       <FeatureIntroGate introKey="automations" facts={listQuery.data ? { automations: items.length } : null}>
         <div className={DASHBOARD_PAGE_CLASS} data-automations-monitor>

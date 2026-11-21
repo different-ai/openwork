@@ -10,13 +10,6 @@ import type { ActivityStep, ActivityTask, WorkbotActivity } from "./activity";
 import { ProfileSheet } from "./profile-sheet";
 import { OpenWorkMark } from "./mark";
 
-/**
- * Workbot's working state, out of the chat: its name in the header carries a quiet line saying what
- * it is doing now, and tapping the name opens the task sheet with the steps behind it. Three levels, each on request:
- * the status line, the sheet, then the live screen ("Watch"). The chat keeps only what Workbot says. Background tasks
- * are one row each; their steps open inside the row.
- */
-
 function useTicking(on: boolean) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -27,7 +20,6 @@ function useTicking(on: boolean) {
   return now;
 }
 
-/** "12s", "4m", "1h 5m": how long, as a glance. */
 function elapsed(ms: number) {
   const seconds = Math.max(0, Math.round(ms / 1_000));
   if (seconds < 60) return `${seconds}s`;
@@ -52,10 +44,9 @@ function StatusIcon({ activity, size = 12 }: { activity: WorkbotActivity; size?:
  * as the avatar on a wide screen (ProfileBadge): the profile.
  * Nothing to say: just the name, still opening the sheet when there are tasks to look back on.
  */
-export function WorkingName({ name, activity, mark, phone = false }: { name: string; activity: WorkbotActivity; mark: ReactNode; /** The phone header's pill: centred, and always opens its sheet. */ phone?: boolean }) {
+export function WorkingName({ name, activity, mark, phone = false }: { name: string; activity: WorkbotActivity; mark: ReactNode; phone?: boolean }) {
   const [open, setOpen] = useState(false);
   const now = useTicking(activity.working && activity.since !== null);
-  // The name and desktop avatar always open the same profile.
 
   const title = <span className="truncate text-[15px] font-semibold leading-5 tracking-[-0.015em] text-[var(--wb-text)]">{name}</span>;
   return <>
@@ -87,8 +78,6 @@ export function ProfileBadge({ name, activity }: { name: string; activity: Workb
 
   const label = activity.working ? `${name}: ${activity.label}. Show what ${name} is doing` : `${name}: open profile`;
   const sheet = <ProfileSheet open={open} onClose={() => setOpen(false)} name={name} activity={activity} />;
-  // Calm look: one inline pill on every screen: a small avatar, the name, a green dot that breathes while Workbot
-  // works, and what it is doing now.
   if (calmChat()) return <>
     <button type="button" onClick={() => setOpen(true)} aria-haspopup="dialog" aria-label={label}
       className="flex h-9 min-w-0 max-w-full items-center gap-2 rounded-full bg-[var(--wb-surface)] pl-1.5 pr-3.5 shadow-[0_0_0_1px_var(--wb-ring)] transition-shadow duration-150 hover:shadow-[0_0_0_1px_var(--wb-disabled)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]" data-workbot-profile-pill>
@@ -176,10 +165,6 @@ export function taskTime(task: ActivityTask) {
   return at ? clock(at) : null;
 }
 
-/**
- * One background task, one row: its title, one status line and a time, with Stop while it is unfinished. Its steps
- * (repeats counted) and note open on tap, inside the row; they are never listed at the top level.
- */
 function TaskRow({ task }: { task: ActivityTask }) {
   const stop = useStopWorkbotTask();
   const [expanded, setExpanded] = useState(false);

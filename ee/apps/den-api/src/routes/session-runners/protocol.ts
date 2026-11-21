@@ -13,7 +13,6 @@ const runnerDisconnectedSchema = z.object({ error: z.literal(COMPUTER_DISCONNECT
 
 const describeRunnerRoute = (options: DescribeRouteOptions & { "x-mcp": false }) => describeRoute(options)
 
-/** Runner credentials never become MCP tools, including released aliases. */
 export const runnerRoute = (input: { summary: string; description?: string; responses: DescribeRouteOptions["responses"] }) => describeRunnerRoute({
   tags: ["Internal"],
   "x-mcp": false,
@@ -30,11 +29,6 @@ export const runnerConflictResponse = jsonResponse("The lease was lost or the re
 
 export function createRunnerProtocol(service: Pick<SessionRunnerService, "runnerStanding"> = sessionRunnerService) {
   return {
-    // Stateless credentials are honored only while the owner is active and the
-    // computer is connected. This runs for every HTTP request; a held-open
-    // stream rechecks periodically. A disconnected computer is answered 403
-    // computer_disconnected here, for every runner route at once: the 401 the
-    // handlers send would only make the desktop mint another credential.
     async authenticateRunner(c: { req: { header(name: string): string | undefined } }) {
       const identity = automationRunnerAuth.authenticate(c.req.header("Authorization"))
       if (!identity) return null

@@ -27,13 +27,10 @@ function scrubPerson(properties: Properties): Properties {
   return scrubUrls(rest);
 }
 
-// A documented SDK hook, not a replacement SDK/identity implementation.
-// This filters outbound captures; it does not change SDK persistence or auth.
 export function beforeSendPosthog(event: CaptureResult | null): CaptureResult | null {
   if (!event) return null;
   try {
     const properties = scrubPerson(event.properties);
-    // Returning-user updates use properties.$set rather than top-level $set.
     for (const key of ["$set", "$set_once"]) {
       if (properties[key] && typeof properties[key] === "object") {
         properties[key] = scrubPerson(properties[key]);
@@ -41,7 +38,6 @@ export function beforeSendPosthog(event: CaptureResult | null): CaptureResult | 
     }
     return {
       ...event,
-      // Preserve the SDK's required public project token and event envelope.
       properties,
       ...(event.$set ? { $set: scrubPerson(event.$set) } : {}),
       ...(event.$set_once ? { $set_once: scrubPerson(event.$set_once) } : {}),

@@ -43,8 +43,6 @@ export function redactedResponseBodyExcerpt(text: string, limit = ENTERPRISE_MCP
     const serialized = JSON.stringify(redactJsonValue(parsed))
     if (serialized !== undefined) redacted = serialized
   } catch {
-    // A bounded excerpt may end mid-JSON. The conservative regex above still
-    // removes values whose sensitive key is visible in the excerpt.
   }
   return redacted.slice(0, limit)
 }

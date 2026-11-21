@@ -190,7 +190,6 @@ function HistoryFigure({ history, metric, now }: { history: AdminComputerFleetHi
       <figure className="max-w-full">
         <figcaption className="mb-2 text-[12px] text-gray-600">{METRIC_NAME[metric]}, highest in each square: peak {count(max)}.</figcaption>
         <div className="overflow-x-auto pb-1">
-          {/* Room on the right for the last column's label, which is wider than its square. */}
           <div className="inline-flex gap-2 pr-10" role="img" aria-label={`${METRIC_NAME[metric]} over ${RANGE_NAME[history.range]}, peak ${count(max)}.`}>
             <div className="grid gap-[2px] pt-[18px] text-right text-[11px] leading-[11px] text-gray-600" style={{ gridTemplateRows: `repeat(${grid.rows}, 11px)` }} aria-hidden="true">
               {grid.rowLabels.map((label, index) => <span key={index}>{label}</span>)}
@@ -227,7 +226,6 @@ export function ComputerFleetPage() {
   const fleet = state.fleet;
   const configured = fleet !== null && fleet.status !== "not_configured" && fleet.runnerError === null;
   const history = useComputerFleetHistory(range, configured);
-  // Ages and the grid follow the minute, not the second.
   const minute = Math.floor(now / 60_000) * 60_000;
 
   if (state.status === "signed-out" || state.status === "forbidden") return <AdminAccessScreen state={state.status} message={state.message} onRetry={retry} />;
@@ -235,12 +233,10 @@ export function ComputerFleetPage() {
   if (!fleet) return <AdminAccessScreen state="error" message={state.message} onRetry={retry} />;
 
   const notice = fleetNotice(fleet);
-  // Counted from what is listed: with an organization chosen, that is its computers, not the fleet's.
   const needLook = fleet.sandboxes.filter((sandbox) => sandbox.attention !== null).length;
   const shown = filter ?? defaultFilter(fleet.sandboxes);
   const listed = filterSandboxes(fleet.sandboxes, shown);
   const organizations = organizationOptions(fleet);
-  // An organization whose last computer just went away is still the one chosen: keep it in the menu.
   const chosen = organizations.some((option) => option.value === organization) ? organizations : [...organizations, { value: organization, label: "The chosen organization (0)" }];
   const seconds = receivedAt === null ? null : Math.max(0, Math.round((now - receivedAt) / 1000));
   const filterOptions: Array<{ value: ListFilter; label: string }> = [

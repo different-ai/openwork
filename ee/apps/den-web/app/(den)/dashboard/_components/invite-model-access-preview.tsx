@@ -12,7 +12,6 @@ type PreviewState =
   | { status: "error"; retry: () => void }
   | { status: "configured"; rows: InviteModelAccess[]; retry?: () => void };
 
-/** Mounted only while a flagged invite form is open; it never gates Send invite. */
 export function InviteModelAccessPreview({ orgId, team, canViewProviders, gatewayAvailable }: {
   orgId: string;
   team: { id: string; name: string } | null;
@@ -34,11 +33,6 @@ function inviteModelNames(row: InviteModelAccess): string {
   return [...known, ...(unavailable ? [`${unavailable} model ${unavailable === 1 ? "name" : "names"} unavailable`] : [])].join(", ");
 }
 
-/**
- * What an invitee gets from shared Gateway grants (Everyone + the chosen team).
- * State in rows, one quiet scope line, no paragraph (DESIGN P1, P6). Never a
- * live readiness claim, and never the inviter's own grants or desktop keys.
- */
 export function InviteModelAccessPreviewView({ teamName, state }: { teamName: string | null; state: PreviewState }) {
   const scope = teamName ? `Everyone + ${teamName}` : "Everyone";
   const rows = state.status === "configured" ? state.rows : [];

@@ -7,16 +7,13 @@ export type DiagnosticsSummary = {
   detail: string;
 };
 
-/** The one line Settings shows about connected tools; the full health stays in the copied report. */
 export function summarizeDiagnostics(input: {
   checking: boolean;
-  /** False while the workspace has no server connection to ask yet. */
   canCheck: boolean;
   signedIn: boolean;
   orgSelected: boolean;
   health: OpenworkCloudMcpHealth | null;
 }): DiagnosticsSummary {
-  // A re-check keeps the last result on screen; only the first check has nothing to show yet.
   if (input.checking && !input.health) {
     return { tone: "neutral", label: "Checking", detail: "Checking your connected tools." };
   }
@@ -54,7 +51,6 @@ export function summarizeDiagnostics(input: {
   };
 }
 
-/** "OpenWork v1.2.3, OpenCode 2.0.0": the versions support asks for first. */
 export function diagnosticsVersionLine(input: {
   appVersion: string | null;
   health: OpenworkCloudMcpHealth | null;

@@ -75,7 +75,6 @@ function sameLocalDate(left: LocalDate, right: LocalDate): boolean {
   )
 }
 
-/** Zone offset (local minus UTC) at a minute-aligned instant, in milliseconds. */
 function zoneOffsetMs(timestamp: number, timezone: string): number {
   const minute = Math.floor(timestamp / 60_000) * 60_000
   return localKey(localDateTime(minute, timezone)) - minute
@@ -83,17 +82,6 @@ function zoneOffsetMs(timestamp: number, timezone: string): number {
 
 const OFFSET_PROBE_MS = 14 * 60 * 60 * 1_000
 
-/**
- * Resolves one wall-clock occurrence in an IANA zone without scanning.
- *
- * Semantics (shared by the scheduler, previews and the calendar range API):
- * - an ambiguous time (DST fall-back repeats it) resolves to its first instant;
- * - a nonexistent time (DST spring-forward skips it) shifts to the first valid
- *   minute after the gap, reported as `shifted`.
- *
- * The instant must lie within ±14h of the nominal UTC wall time, so the zone
- * offsets sampled at both ends (and the middle) contain every candidate offset.
- */
 function resolveLocalOccurrence(
   date: LocalDate,
   hour: number,
@@ -112,7 +100,6 @@ function resolveLocalOccurrence(
     .sort((left, right) => left - right)
   if (exact[0] !== undefined) return { timestamp: exact[0], shifted: false }
 
-  // Nonexistent wall time: binary-search the transition between the two offsets.
   const candidates = offsets.map((offset) => nominal - offset)
   let low = Math.min(...candidates)
   let high = Math.max(...candidates)
@@ -121,7 +108,6 @@ function resolveLocalOccurrence(
     const local = localDateTime(low, timezone)
     return sameLocalDate(local, date) ? { timestamp: low, shifted: true } : null
   }
-  // Invariant: key(low) <= nominal < key(high), both minute aligned.
   while (high - low > 60_000) {
     const middle = low + Math.floor((high - low) / 120_000) * 60_000
     if (localKey(localDateTime(middle, timezone)) > nominal) high = middle
@@ -130,14 +116,12 @@ function resolveLocalOccurrence(
   return sameLocalDate(localDateTime(high, timezone), date) ? { timestamp: high, shifted: true } : null
 }
 
-/** Schedules that repeat on the clock; a calendar trigger has no clock occurrences. */
 type RecurringSchedule = Exclude<AutomationSchedule, { kind: "once" | "calendar" }>
 
 function isScheduledDay(schedule: RecurringSchedule, weekday: number): boolean {
   return schedule.kind === "daily" || schedule.daysOfWeek.includes(weekday)
 }
 
-/** The wall-clock times a recurring schedule runs on each of its days, earliest first. */
 function wallTimesOfDay(schedule: RecurringSchedule): { hour: number; minute: number }[] {
   if (schedule.kind !== "interval") return [{ hour: schedule.hour, minute: schedule.minute }]
   const times: { hour: number; minute: number }[] = []
@@ -150,11 +134,6 @@ function wallTimesOfDay(schedule: RecurringSchedule): { hour: number; minute: nu
 const SHIFTED_WARNING = (timezone: string) =>
   `A wall-clock occurrence falls inside a daylight-saving transition and was shifted to the next valid minute in ${timezone}.`
 
-/**
- * Every occurrence of one local day, earliest first. Two wall times can
- * resolve to the same instant when a daylight-saving gap shifts one onto the
- * next; that instant counts once.
- */
 function occurrencesOnLocalDay(
   schedule: RecurringSchedule,
   date: LocalDate,
@@ -242,11 +221,8 @@ export function automationOccurrences(
 }
 
 export interface AutomationOccurrenceRangeOptions {
-  /** Inclusive lower bound (epoch ms). */
   from: number
-  /** Exclusive upper bound (epoch ms). */
   to: number
-  /** Maximum occurrences to return; the result says when more existed. */
   limit?: number
 }
 
@@ -279,8 +255,6 @@ export function automationOccurrencesInRange(
 
   const occurrences: number[] = []
   const warnings = new Set<string>()
-  // A local day can start up to ~14h either side of UTC midnight; start one day
-  // early and stop one day late so the edges of the range are always covered.
   const first = addLocalDays(localDateTime(from, schedule.timezone), -1)
   const last = addLocalDays(localDateTime(to, schedule.timezone), 1)
   const lastKey = Date.UTC(last.year, last.month - 1, last.day)

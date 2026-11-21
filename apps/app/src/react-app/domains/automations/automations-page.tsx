@@ -104,7 +104,6 @@ function ExecutionIcon({ run }: { run: AutomationRun }) {
 
 const describeError = describeAutomationError
 
-/** Editor defaults for a pinned-Workflow Automation, which has no instructions or model of its own. */
 function inputDefaults(models: readonly AutomationModelOption[]): CreateAutomation {
   const first = models[0] ?? AUTOMATION_FREE_MODEL
   return {
@@ -115,7 +114,6 @@ function inputDefaults(models: readonly AutomationModelOption[]): CreateAutomati
   }
 }
 
-/** Name, instructions and schedule handed over from the Calendar (`?create=1&name&instructions&schedule`). */
 function calendarPrefill(params: URLSearchParams): Pick<CreateAutomation, "name" | "instructions" | "schedule"> | null {
   const schedule = automationScheduleSchema.safeParse(safeJson(params.get("schedule")))
   const name = params.get("name")?.trim() ?? ""
@@ -176,9 +174,7 @@ function LoadingState() {
 export function AutomationsPage(props: {
   providerCatalog?: AutomationProviderCatalog
   workspaceId?: string | null
-  /** Titlebar slot for New Automation, matching Library and Dashboard. */
   headerActionsTarget?: HTMLElement | null
-  /** Opens OpenWork Cloud sign-in, the same action Library offers when signed out. */
   onSignIn?: () => void
 } = {}) {
   const denAuth = useDenAuth()
@@ -202,10 +198,8 @@ export function AutomationsPage(props: {
   const selectedRunId = searchParams.get("run")?.trim() || null
   const selectedThreadId = searchParams.get("thread")?.trim() || null
   const creating = searchParams.get("create") === "1"
-  // A Den "Automate this Workflow" link lands here with the exact version to pin.
   const workflowId = searchParams.get("workflow")?.trim() || null
   const workflowVersionId = searchParams.get("version")?.trim() || null
-  // The Calendar's "More options" lands here with what the person already typed and picked.
   const prefill = calendarPrefill(searchParams)
   const placement = automationCreationPlacement()
 
@@ -215,14 +209,9 @@ export function AutomationsPage(props: {
     queryKey: [...queryRoot, "runner-presence"],
     queryFn: () => client!.getAutomationDesktopRunnerPresence(organizationId!),
     enabled: ready,
-    // A failed probe waits for the next interval instead of retrying, and a
-    // Den without the route answers null once — there is nothing to poll.
     retry: false,
     refetchInterval: (queryState) => (queryState.state.data === null ? false : 60_000),
   })
-  // Only a Den that positively reports no desktop earns the warning. A Den too
-  // old to answer, or one that has not answered yet, leaves presence unknown,
-  // and claiming there is no desktop on that basis would be worse than silence.
   const noDesktopConnected = runnerPresenceQuery.data?.connected === false
   const detailQuery = useAutomationDetailQuery(denContext, selectedId)
   const runsQuery = useAutomationRunsQuery(denContext, selectedId)
@@ -261,8 +250,6 @@ export function AutomationsPage(props: {
 
   if (denAuth.status === "checking") return <LoadingState />
   if (!denAuth.isSignedIn) {
-    // Automations live in OpenWork Cloud: signed out, nothing here calls Den,
-    // and the page is one empty state whose action is signing in.
     return (
       <div className="h-full w-full" data-automations-signed-out>
         <CloudSignInEmptyState
@@ -300,14 +287,11 @@ export function AutomationsPage(props: {
   }
 
   if (creating) {
-    // Manual run access includes viewers; scheduling retains the existing
-    // editor/manager gate enforced by Den.
     const workflow = placement === "cloud" && workflowId && workflowQuery.data?.canSchedule ? workflowQuery.data : undefined
     const workflowVersion = workflow
       ? workflow.versions.find((version) => version.id === workflowVersionId) ?? workflow.currentVersion
       : undefined
     if (placement === "cloud" && workflowId && workflowQuery.isLoading) return <LoadingState />
-    // A Workflow runs only in the cloud, so its form keeps the fixed placement.
     const createChoices = workflowId ? [] : placementChoices
     const createPlacement = resolveAutomationPlacement(placement, createChoices)
     return (
@@ -352,9 +336,6 @@ export function AutomationsPage(props: {
           onSave={async (input, chosenPlacement) => {
             setBusyAction("create")
             try {
-              // Pin the local workspace the person is creating from; targeting
-              // must not follow whichever workspace is active at run time. A
-              // browser has no local workspace, so its desktop runs stay unpinned.
               const workspaceId = isDesktopRuntime() ? props.workspaceId?.trim() || null : null
               const detail = chosenPlacement === "cloud"
                 ? await client.createCloudAutomation(organizationId, {
@@ -416,8 +397,6 @@ export function AutomationsPage(props: {
     const detailPlacement = detail.revision.executionTarget ?? "desktop"
 
     if (editing && editable) {
-      // Where it runs now is always a choice, so an Automation whose target
-      // went away can still be moved to the one that exists.
       const editChoices = automationEditChoices(detailPlacement, placementChoices)
       return (
         <div className="mx-auto max-w-3xl space-y-5 p-6">
@@ -451,7 +430,6 @@ export function AutomationsPage(props: {
                 await client.updateAutomation(organizationId, task.id, chosenPlacement === detailPlacement ? input : {
                   ...input,
                   executionTarget: chosenPlacement,
-                  // Moving to the desktops from here pins it to this workspace, as creating here does.
                   ...(chosenPlacement === "desktop" && localWorkspaceId ? { workspaceId: localWorkspaceId } : {}),
                 })
                 await refresh()
@@ -775,8 +753,6 @@ export function AutomationsPage(props: {
     )
   }
 
-  // The page title lives in the titlebar; New Automation sits beside it there,
-  // as Library and Dashboard place their add controls.
   const newAutomation = <Button onClick={() => setSearchParams(new URLSearchParams({ create: "1" }))}><Plus />New Automation</Button>
   return (
     <div className="mx-auto w-full max-w-5xl space-y-5 px-6 py-8 sm:px-8">

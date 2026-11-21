@@ -64,7 +64,6 @@ export function persistFontZoom(storage: Pick<Storage, "setItem">, value: number
   try {
     storage.setItem(FONT_ZOOM_STORAGE_KEY, String(value));
   } catch {
-    // ignore storage failures
   }
 }
 

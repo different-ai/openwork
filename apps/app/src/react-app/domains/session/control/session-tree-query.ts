@@ -8,18 +8,11 @@ export type SessionTreeQueryResult = {
   ok: true;
   workspaceId: string;
   sessionId: string;
-  /** The session this one was started from, when it is still listed. */
   parent: { sessionId: string; title: string; kind: SessionLinkKind } | null;
-  /** Sessions started from this one, each followed by the ones started from it. */
   sessions: Array<{ sessionId: string; title: string; kind: SessionLinkKind; depth: number; status: string }>;
-  /** A session started from this one now is listed under it; one its agent starts also reports back to it. */
   canStartLinked: boolean;
 };
 
-/**
- * What `session.tree` answers for one session. `engineV2` is whether the
- * workspace's chats run on the engine that keeps the link.
- */
 export function sessionTreeQuery(input: {
   workspaceId: string;
   sessionId: string;
@@ -44,7 +37,6 @@ export function sessionTreeQuery(input: {
       sessionId: child.session.id,
       title: getDisplaySessionTitle(child.session.title),
       kind: child.kind,
-      // Counted from the asked session, whatever its own place in the tree.
       depth: child.depth - firstDepth + 1,
       status: input.statusFor(child.session.id),
     })),

@@ -103,7 +103,6 @@ export function useConfigChangeRequest(orgId: string | null, id: string) {
   });
 }
 
-/** The plan is read once the analysis is done; `version` (status + plan hash) refetches it when the request moves on. */
 export function useConfigPlan(orgId: string | null, id: string, version: string | null) {
   return useQuery<ConfigChangeRequestPlanResponse>({
     queryKey: [...configQueryKeys.plan(orgId ?? "", id), version],
@@ -121,7 +120,6 @@ async function send<T>(orgId: string, method: "POST" | "PUT" | "PATCH", path: st
   return payload;
 }
 
-/** Runs a write behind the workspace re-auth prompt and returns its result. */
 function useReauthable() {
   const { runReauthableAction } = useOrgDashboard();
   return async function run<T>(label: string, action: () => Promise<T>): Promise<T> {
@@ -146,16 +144,10 @@ export function useCreateConfigChangeRequest(orgId: string | null) {
   });
 }
 
-/**
- * Refetches after a write without holding the mutation open: an awaited
- * invalidation waits for every matching refetch, and a polled query whose
- * fetch is replaced mid-flight can keep the button spinning.
- */
 function refresh(queryClient: QueryClient, queryKey: readonly unknown[] | null): void {
   if (queryKey) void queryClient.invalidateQueries({ queryKey });
 }
 
-/** Shared by decisions and inputs: both return the request and its re-computed plan. */
 function usePlanUpdate<TInput>(orgId: string | null, id: string, label: string, path: string, fallback: string) {
   const queryClient = useQueryClient();
   const run = useReauthable();
@@ -224,17 +216,12 @@ export function useConfigRequestAction(orgId: string | null, id: string) {
   });
 }
 
-/**
- * Fetches a blob from the API and saves it as a file in the browser. A
- * session that isn't recent enough gets the re-sign-in error, so callers run
- * it through `useConfigDownload`.
- */
 export async function downloadConfigFile(orgId: string, path: string, fileName: string, fallback: string): Promise<void> {
   const response = await requestResponse(path, { method: "GET", headers: { [ORG_SCOPE_HEADER]: orgId }, cache: "no-store" }, 60000);
   const text = await response.text();
   if (!response.ok) {
     let payload: unknown = text;
-    try { payload = JSON.parse(text); } catch { /* keep text */ }
+    try { payload = JSON.parse(text); } catch {}
     throw getRequestError(payload, response, fallback);
   }
   const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
@@ -252,11 +239,6 @@ const DOWNLOAD_REAUTH_PROMPT: ReauthPrompt = {
   description: "Config files can hold prompts, skills and other content. The download starts after you confirm.",
 };
 
-/**
- * Downloads a config file behind the workspace re-sign-in prompt (den-api
- * asks for a recent sign-in on exports). Cancelling the prompt rejects with
- * a plain "not downloaded" message.
- */
 export function useConfigDownload(orgId: string | null) {
   const { runReauthableAction } = useOrgDashboard();
   return async function download(path: string, fileName: string, fallback: string): Promise<void> {

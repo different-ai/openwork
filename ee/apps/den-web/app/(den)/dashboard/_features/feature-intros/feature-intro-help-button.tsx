@@ -20,7 +20,6 @@ function isTypingTarget(target: EventTarget | null): boolean {
   return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
 }
 
-/** The current page's intro: the most specific of the URL match and the intros mounted on the page. */
 function useCurrentIntro(): FeatureIntro | null {
   const { enabled, intros, activeKeys } = useFeatureIntroRuntime();
   const pathname = usePathname();
@@ -41,11 +40,6 @@ function useCurrentIntro(): FeatureIntro | null {
   }, [enabled, intros, activeKeys, pathname, searchParams]);
 }
 
-/**
- * `?` in the top bar (DESIGN.md I8): reopens the current page's intro at any
- * time, even when set up. Shortcut `?` when not typing. Hidden until the
- * organization is loaded or when no intro covers the page. Render inside <Suspense> (search params).
- */
 export function FeatureIntroHelpButton() {
   const { record, contextFor } = useFeatureIntroRuntime();
   const intro = useCurrentIntro();
@@ -129,7 +123,6 @@ export function FeatureIntroHelpButton() {
   );
 }
 
-/** Neutral unseen dot for a sidebar entry whose section intro hasn't been viewed (I9). */
 export function FeatureIntroNavDot({ href }: { href: string }) {
   const { enabled, intros } = useFeatureIntroRuntime();
   const intro = enabled ? matchFeatureIntro(intros.filter((entry) => !entry.parent), href, null) : null;

@@ -13,14 +13,11 @@ const sameIdentity = (left: Me, right: Me) => left.userId === right.userId && le
 
 function Signed({ me, authorization, refreshIdentity }: { me: Me; authorization?: WorkbotHost["documentAuthorization"]; refreshIdentity(): Promise<Me | null> }) {
   const host = useMemo(() => createHost(me, { authorization, refreshIdentity }), [me, authorization, refreshIdentity])
-  // Existing query keys need not be globally unique: each retained owner has
-  // its own client, so a later account cannot inherit the previous cache.
   const queries = useMemo(() => new QueryClient({ defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } } }), [me.organizationId, me.userId])
   const dispose = useRef<ReturnType<typeof setTimeout>>(undefined)
   const previousAuthorization = useRef(authorization)
   useEffect(() => {
     if (previousAuthorization.current !== undefined && authorization === undefined) {
-      // Resume ordinary reads, never mutations or document session factories.
       void queries.invalidateQueries({ predicate: query => query.queryKey[0] !== "documents" })
     }
     previousAuthorization.current = authorization
@@ -34,9 +31,6 @@ function Signed({ me, authorization, refreshIdentity }: { me: Me; authorization?
 
 function App() {
   const me = useQuery({ queryKey: ["workbot", "me"], queryFn: fetchMe, staleTime: 60_000, refetchOnReconnect: "always" })
-  // Refresh authorization every minute. Every pending read below
-  // locks the page, so this one runs on its own: the same person and workspace only update what is cached, and any
-  // other answer goes through that locked read.
   const enabled = me.data?.enabled === true
   const refetchMe = me.refetch
   useEffect(() => {
@@ -47,7 +41,7 @@ function App() {
         const current = queryClient.getQueryData<Me | null>(["workbot", "me"])
         if (next && current && sameIdentity(current, next)) queryClient.setQueryData(["workbot", "me"], next)
         else void refetchMe()
-      }, () => { /* A failed read leaves the verified state as it was; the next one tries again. */ })
+      }, () => {})
     }, 60_000)
     return () => clearInterval(timer)
   }, [enabled, refetchMe])
@@ -57,11 +51,9 @@ function App() {
   const changedIdentity = owner !== null && me.data != null && !sameIdentity(owner, me.data)
   const identityUnavailable = me.isError || me.failureCount > 0
   const workspaceDisabled = owner?.enabled === true && me.isSuccess && me.data != null && !changedIdentity && !me.data.enabled
-  // Cached success is not fresh authorization while a different browser session may be resolving.
   const verified = me.isSuccess && !me.isFetching && !identityUnavailable && me.data != null && !changedIdentity && !workspaceDisabled
   const blocked = owner !== null && !verified
   useEffect(() => {
-    // A successful response for another person must not replace a draft's owner.
     const next = me.data
     if (!me.isSuccess || identityUnavailable || !next) return
     setOwner(current => current === null ? next : sameIdentity(current, next) && !(current.enabled && !next.enabled) ? next : current)
@@ -81,8 +73,6 @@ function App() {
   }, [owner, me.isSuccess, me.data])
   const refreshIdentity = useCallback(async () => {
     await me.refetch()
-    // Fresh file checks must resume after React has committed the settled authorization,
-    // not while the retained owner's policy still reflects this request's pending mask.
     return new Promise<Me | null>(resolve => setIdentityWaiters(current => [...current, resolve]))
   }, [me.refetch])
   useEffect(() => {
@@ -93,7 +83,6 @@ function App() {
   if (owner !== null) {
     const authorization = blocked ? workspaceDisabled ? "disabled" : identityUnavailable || me.isFetching ? "blocked" : "signin" : undefined
     if (!blocked && !owner.enabled) return <WorkspaceAccess me={owner} />
-    // Hidden, not conditionally removed: auth revalidation cannot run editor teardown.
     return <>
       <div className="h-full" hidden={blocked} data-workbot-retained-owner><Signed key={JSON.stringify([owner.organizationId, owner.userId])} me={owner} authorization={authorization} refreshIdentity={refreshIdentity} /></div>
       {blocked && <main className="workbot grid h-full place-items-center px-6 text-center" role="status" aria-label="Workspace sign-in recovery" aria-busy={me.isFetching}><div className="flex max-w-sm flex-col items-center gap-3">
@@ -109,10 +98,6 @@ function App() {
   return null
 }
 
-/**
- * index.html draws the header and a message box before this script loads. The boot page goes once the app draws; the
- * words typed there, with the caret, move to the first message box the app shows (which can come a render later).
- */
 function handOffBoot(root: HTMLElement) {
   const boot = document.getElementById("workbot-boot")
   if (!boot) return
@@ -130,7 +115,6 @@ function handOffBoot(root: HTMLElement) {
     if (!box) return
     observer.disconnect()
     if (draft.text && !box.value) {
-      // Through the element's own setter and an input event, so React's onChange sees it as typing.
       Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(box, draft.text)
       box.dispatchEvent(new Event("input", { bubbles: true }))
     }
@@ -140,7 +124,6 @@ function handOffBoot(root: HTMLElement) {
     }
   })
   observer.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ["hidden", "disabled", "style"] })
-  // Words typed before a sign-in redirect or an error page have no message box to go to.
   setTimeout(() => observer.disconnect(), 15_000)
 }
 

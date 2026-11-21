@@ -114,7 +114,6 @@ export async function usagePolicies(
     .select()
     .from(A)
     .where(and(eq(A.organizationId, organizationId), inArray(A.policyId, ids)))
-  // A provider limit whose provider was deleted applies to no requests; say so.
   const existingProviders = await usageProviderNames(
     tx,
     organizationId,
@@ -302,7 +301,6 @@ export function projectedBucket(
 ): UsageBucket {
   const period = gatewayUsagePeriod(timeframe, now)
   return {
-    // Default bucket ids keep their pre-provider shape.
     id: createHash("sha256")
       .update(
         `${scope.organizationId}/${scope.memberId}/${timeframe}/${period.start.toISOString()}${providerScope ? `/${providerScope}` : ""}`,
@@ -410,7 +408,6 @@ export function usageSnapshot(
         ...bucket
       }) => ({
         ...bucket,
-        // Default snapshots stay identical to the pre-provider shape for older readers.
         ...(providerScope ? { providerScope } : {}),
         startAt: bucket.startAt.toISOString(),
         resetAt: bucket.resetAt.toISOString(),

@@ -1,15 +1,3 @@
-/**
- * Dev observability client. Forwards browser console logs, uncaught errors,
- * promise rejections, and fetch activity to the openwork-server `/dev/log`
- * sink so an operator can tail a single file and see everything the React
- * shell is doing — especially right before a hang.
- *
- * Also powers a lightweight hang detector: a heartbeat runs every 1s; if the
- * main thread doesn't service the heartbeat within 3s we log a stall event.
- *
- * Everything here is a no-op in prod builds (checked via `import.meta.env`).
- */
-
 import { publishInspectorSlice, recordInspectorEvent } from "../../app/lib/app-inspector";
 
 type LogLevel = "log" | "info" | "warn" | "error" | "debug";
@@ -36,9 +24,6 @@ const pendingFetches = new Map<number, { url: string; method: string; startedAt:
 let nextFetchId = 1;
 let lastHeartbeat = Date.now();
 let hangHandle: ReturnType<typeof setInterval> | null = null;
-// Reference to the un-wrapped fetch. We use it from inside `flushQueue` so our
-// own POST to /dev/log doesn't go through the wrapper (which would recurse
-// and also spam the log with its own activity).
 let nativeFetchRef: typeof fetch = typeof window !== "undefined" ? window.fetch.bind(window) : (globalThis.fetch as typeof fetch);
 let originalFetchRef: typeof fetch | null = null;
 let nativeConsoleRef: Record<LogLevel, (...args: unknown[]) => void> | null = null;
@@ -48,12 +33,6 @@ let visibilityHandlerRef: (() => void) | null = null;
 let disposeInspectorSliceRef: (() => void) | null = null;
 const sessionKey = `react-${Date.now().toString(36)}-${crypto.randomUUID().slice(0, 8)}`;
 
-// Cached availability of the server-side /dev/log sink, keyed by base URL.
-// Prevents the debug-logger from spamming 404s into the console when the
-// pnpm dev process was started WITHOUT OPENWORK_DEV_LOG_FILE set. The
-// sink returns 404 in that case and the browser logs every failed POST.
-// We probe once per base URL and disable posting for the remainder of the
-// session when the probe fails.
 const sinkAvailabilityByBase = new Map<string, boolean>();
 const sinkProbePromises = new Map<string, Promise<boolean>>();
 
@@ -68,9 +47,6 @@ async function sinkIsAvailable(base: string): Promise<boolean> {
   })
     .then(async (response) => {
       if (!response.ok) return false;
-      // Server returns 200 + `{ok:true}` when the sink is enabled and
-      // 200 + `{ok:false, reason:"dev_log_disabled"}` otherwise, so the
-      // probe itself never logs a 404 to the console.
       try {
         const body = (await response.json()) as { ok?: boolean };
         return body.ok === true;
@@ -140,12 +116,8 @@ async function flushQueue() {
   const base = await serverUrlRef();
   if (!base) return;
 
-  // Skip the POST entirely when we know the sink is disabled, otherwise
-  // every dev session without OPENWORK_DEV_LOG_FILE set spams 404s.
   const available = await sinkIsAvailable(base);
   if (!available) {
-    // Drop the queued entries; they're still retained in
-    // window.__openwork.events() for any operator who needs them.
     queue = [];
     return;
   }
@@ -160,9 +132,6 @@ async function flushQueue() {
       keepalive: true,
     });
   } catch {
-    // Keep this silent; we don't want the logger to itself create a log
-    // storm when the server is unreachable. Events are still retained in
-    // window.__openwork.events().
   }
 }
 
@@ -183,11 +152,9 @@ export function recordDebugLog(entry: DevLogEntry) {
 
 function isEnabled(): boolean {
   if (typeof window === "undefined") return false;
-  // Always on in dev; explicit opt-out via `localStorage.openwork.debug.disableLogger = "1"`.
   try {
     if (window.localStorage.getItem("openwork.debug.disableLogger") === "1") return false;
   } catch {
-    // ignore
   }
   const env = (import.meta as unknown as { env?: Record<string, unknown> }).env ?? {};
   if (env.PROD === true) {
@@ -202,7 +169,6 @@ export function startDebugLogger(opts?: { serverUrl?: () => string | Promise<str
   started = true;
   if (opts?.serverUrl) serverUrlRef = opts.serverUrl;
 
-  // Patch console
   const nativeConsole: Record<LogLevel, (...args: unknown[]) => void> = {
     log: console.log.bind(console),
     info: console.info.bind(console),
@@ -222,13 +188,11 @@ export function startDebugLogger(opts?: { serverUrl?: () => string | Promise<str
           args: args.map((arg) => safeStringify(arg)),
         });
       } catch {
-        // ignore
       }
       original(...args);
     };
   });
 
-  // Window errors
   const handleWindowError = (event: ErrorEvent) => {
     const target = event.error as Error | undefined;
     enqueue({
@@ -254,10 +218,6 @@ export function startDebugLogger(opts?: { serverUrl?: () => string | Promise<str
   windowUnhandledRejectionHandlerRef = handleUnhandledRejection;
   window.addEventListener("unhandledrejection", handleUnhandledRejection);
 
-  // Fetch wrapping (so we can see which requests are hanging around a stall).
-  // We capture the native reference here and reuse it inside `flushQueue` so
-  // our own POST to /dev/log doesn't go through the wrapper (which would make
-  // the logger log itself forever).
   const nativeFetch = window.fetch.bind(window);
   originalFetchRef = nativeFetch;
   nativeFetchRef = nativeFetch;
@@ -276,7 +236,6 @@ export function startDebugLogger(opts?: { serverUrl?: () => string | Promise<str
       }
       if (init?.method) method = init.method;
     } catch {
-      // ignore
     }
     const isDevLogCall = url.includes("/dev/log");
     if (!isDevLogCall) {
@@ -313,12 +272,6 @@ export function startDebugLogger(opts?: { serverUrl?: () => string | Promise<str
     }
   }) as typeof window.fetch;
 
-  // Heartbeat / hang detector.
-  // A long heartbeat gap has two possible causes:
-  // 1. A real JS-thread stall (bug) — usually 3-10s.
-  // 2. macOS threw the webview into App Nap / backgrounding throttle when
-  //    the window wasn't focused — gaps can be minutes, not a real "hang".
-  // We split them so alarms only fire for case 1.
   const HANG_THRESHOLD_MS = 3000;
   const RESUME_THRESHOLD_MS = 10_000;
   lastHeartbeat = Date.now();
@@ -351,8 +304,6 @@ export function startDebugLogger(opts?: { serverUrl?: () => string | Promise<str
     lastHeartbeat = now;
   }, 1000);
 
-  // Track visibility changes for diagnostics only. Route-level code owns any
-  // refresh behavior so the logger does not accidentally fan out network calls.
   if (typeof document !== "undefined") {
     const handleVisibilityChange = () => {
       enqueue({

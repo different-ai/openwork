@@ -36,10 +36,8 @@ type Props = {
 };
 
 const section = "mt-24 scroll-mt-24 md:mt-32";
-/** The product-window frame used by the roadmap and the homepage product tabs. */
 const productFrame =
   "overflow-hidden rounded-[14px] bg-white shadow-[0_0_0_1px_rgba(1,22,39,0.08),0_2px_4px_rgba(1,22,39,0.04),0_32px_64px_-24px_rgba(1,22,39,0.22)]";
-/** White card on a tonal panel, as on the MCP gateway page. */
 const panelCard = "rounded-[14px] bg-white shadow-[0_0_0_1px_rgba(1,22,39,0.08),0_12px_24px_-16px_rgba(1,22,39,0.2)]";
 
 const agentMarks: Record<EnterpriseAgentId, ReactNode> = {
@@ -50,7 +48,6 @@ const agentMarks: Record<EnterpriseAgentId, ReactNode> = {
   cursor: <BrandLogo name="cursor" className="h-5 w-5 text-[#111]" />
 };
 
-/** Hairline-topped title and detail, as on the MCP gateway page. */
 function Fact({ fact }: { fact: EnterpriseFact }) {
   return (
     <div className="flex flex-col gap-2 border-t border-[var(--lp-border)] pt-5">

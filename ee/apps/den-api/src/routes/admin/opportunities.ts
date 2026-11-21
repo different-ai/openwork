@@ -50,9 +50,6 @@ export async function readAdminOpportunities(input: z.infer<typeof querySchema>,
   const request = normalizeAdminPageRequest({ ...input, limit: String(input.limit) })
   const from = new Date(now.getTime() - Number(input.days) * 86_400_000)
   const companyDomain = companyDomainSql()
-  // Look up each current person's activity through telemetry_event_member_ts.
-  // Sign-in timestamps and activity in another organization are not app usage
-  // here. Missing/disabled telemetry stays unobserved, never guessed from login.
   const people = db.$with("opportunity_people").as(db.select({
     organizationId: MemberTable.organizationId, userId: MemberTable.userId,
     companyDomain: companyDomain.as("company_domain"),
@@ -73,7 +70,6 @@ export async function readAdminOpportunities(input: z.infer<typeof querySchema>,
     companyDomainCount: sql<number>`count(distinct ${people.companyDomain})`.as("company_domain_count"),
     domainSearch: sql<number>`max(case when ${people.companyDomain} like ${`%${sanitizeAdminSearchForLike(request.search)}%`} escape '|' then 1 else 0 end)`.as("domain_search"),
   }).from(people).groupBy(people.organizationId))
-  // Count metadata only. Never read skill text, MCP addresses or credentials.
   const setup = db.$with("opportunity_setup").as(db.select({
     organizationId: ConfigObjectTable.organizationId,
     skills: sql<number>`sum(case when ${ConfigObjectTable.objectType} = 'skill' then 1 else 0 end)`.as("skills"),
@@ -134,7 +130,6 @@ export function registerAdminOpportunitiesRoute<T extends { Variables: AuthConte
   registerAdminOutreachRoute(app)
   registerAdminOpportunityAccountRoutes(app)
   registerAdminSignupCompaniesRoute(app)
-  // Internal platform-admin reporting, not an organization product entitlement.
   app.get("/v1/admin/opportunities", describeRoute({
     tags: ["Admin"], summary: "Find organizations with observed app adoption",
     description: "Platform-admin-only, server-paginated organization signals. Defaults to two joined human users and observed organization-scoped telemetry in the last 30 days, most recent first. Company-email signals use verified addresses excluding known personal providers; they do not establish employment. Cloud setup counts active, non-deleted skill and MCP metadata. Billing is the stored plan tier and recorded subscription status; outreach is what platform admins recorded. Missing telemetry does not imply inactivity. No content, credentials, Stripe calls or external enrichment.",

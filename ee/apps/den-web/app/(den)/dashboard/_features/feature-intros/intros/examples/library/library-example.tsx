@@ -7,7 +7,6 @@ import { LibraryExampleItem } from "./library-row";
 
 const rows = libraryExampleGroups.flatMap((group) => group.rows);
 
-/** Section example: a member's Library once the team shares, what waits on them first, then theirs. */
 export function LibraryExample() {
   const step = useExampleStep(rows.length);
   const active = step === null ? null : rows[step] ?? null;

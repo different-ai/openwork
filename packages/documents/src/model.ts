@@ -10,7 +10,6 @@ export const editorDocumentSchema = z.discriminatedUnion("kind", [
   z.object({ ...fileFields, kind: z.literal("spreadsheet"), source: z.enum(["google", "xlsx"]), sheets: z.array(z.object({ id: z.string(), name: z.string(), rows: z.number().int(), columns: z.number().int() })), activeSheetId: z.string(), startRow: z.number().int(), endRow: z.number().int(), cells: z.array(editorCellSchema) }),
   z.object({ ...fileFields, kind: z.literal("document"), source: z.enum(["google", "docx"]), sections: z.array(z.object({ id: z.string(), name: z.string(), paragraphs: z.array(editorParagraphSchema) })) }),
   z.object({ ...fileFields, kind: z.literal("text"), text: z.string() }),
-  // `media`: the file plays in the browser's own player, from `contentUrl` in byte ranges.
   z.object({ ...fileFields, kind: z.literal("preview"), mimeType: z.string(), media: z.enum(["video", "audio"]).optional() }),
 ])
 export type EditorDocument = z.infer<typeof editorDocumentSchema>
@@ -26,7 +25,6 @@ export type DocumentSave = z.infer<typeof documentSaveSchema>
 export type EditorRequest = { sheetId?: string; startRow?: number; connectionId?: string }
 export type DocumentsEditor = {
   office?: OfficeEditor
-  /** Whether this file's provider has the full Office editor; unset means it follows `office`. */
   hasOffice?(fileId: string): boolean
   open(fileId: string, input?: EditorRequest, signal?: AbortSignal): Promise<EditorDocument>
   save(fileId: string, changes: DocumentSave): Promise<void>

@@ -1,15 +1,9 @@
-/** Sample data only: no API calls (DESIGN.md I7). */
-
 export type MembersExampleRow = {
   initials: string;
   name: string;
-  /** Email, as the member list shows under the name. */
   email: string;
-  /** Role column, as on Members. */
   role: string;
-  /** Teams they're in, quiet chips. */
   teams: readonly string[];
-  /** "Joined" column: a date, or Pending for an invite. */
   joined: string;
   pending?: boolean;
 };

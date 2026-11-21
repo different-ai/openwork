@@ -77,7 +77,6 @@ async function serveAudit(c: AuditRouteContext, action: "event_types" | "operati
       principalKey: `user:${organization.currentMember.userId}:member:${organization.currentMember.id}:key:${credentialId ?? "session"}`,
       kind: "audit.access", scope: operationId ?? `audit.${action}`, origin: "api", originTrust: "authenticated", requestId: c.get("requestId") ?? createDenTypeId("request"),
     }
-    // Both appends are request-bound with idempotency keys, so a transient-failure retry is a replay.
     const retry = { idempotent: true, requestId: context.requestId ?? null, organizationId: context.organizationId }
     const capture = await withAuditRetry(() => db.transaction(async (tx) => {
       await readAuditAvailability(tx, context.organizationId)
@@ -112,11 +111,6 @@ async function serveAudit(c: AuditRouteContext, action: "event_types" | "operati
   }
 }
 
-/**
- * PATCH /v1/audit/settings's write without the HTTP layer (also used by config-blob imports,
- * src/config-blobs/areas/settings-audit.ts). Re-checks membership and Manage audit settings inside the
- * transaction. Returns the rejection, or null when saved; AuditLogError / AuditReadError propagate.
- */
 export async function setOrganizationAuditCapture(params: {
   organizationId: DenTypeId<"organization">
   member: { id: DenTypeId<"member">; userId: DenTypeId<"user"> }
@@ -129,15 +123,11 @@ export async function setOrganizationAuditCapture(params: {
     const { entitlement } = await readAuditAvailability(tx, params.organizationId)
     const [member] = await tx.select().from(MemberTable).where(and(eq(MemberTable.id, params.member.id), eq(MemberTable.organizationId, params.organizationId), eq(MemberTable.userId, params.member.userId), isNull(MemberTable.removedAt))).limit(1)
     if (!member) return "forbidden"
-    // Re-check Manage audit settings through this transaction (read-only, share locks), so a
-    // permission revoked after the route check is seen before capture state changes.
     const permissions = await resolvePermissionsForMember({ organizationId: params.organizationId, memberId: member.id, database: tx })
     if (!permissions.has("audit.manage")) return "forbidden"
     if (input.captureOn && !entitlement.enabled) return "enterprise_plan_required"
     if (input.captureOn && !env.auditCaptureEnabled) return "audit_capture_unavailable"
     const initialization = await initializeAuditPolicyInTx(tx, params.organizationId, env.auditCaptureEnabled)
-    // Revision zero means absent, not permission to overwrite a concurrent
-    // winner. Our own initial ON + explicit OFF commit in this one tx.
     if (input.expectedRevision === 0 && initialization.policy && !initialization.initialized) throw new AuditLogError("audit_policy_changed")
     if (initialization.initialized && input.expectedRevision !== 0) throw new AuditLogError("audit_policy_changed")
     await setAuditCaptureState(tx, { ...input, expectedRevision: initialization.initialized && input.expectedRevision === 0 ? 1 : input.expectedRevision, context: {

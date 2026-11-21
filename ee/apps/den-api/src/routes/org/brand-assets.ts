@@ -49,7 +49,6 @@ const invalidAssetSchema = z.object({
   message: z.string(),
 }).meta({ ref: "InvalidManagedBrandAssetError" })
 
-/** Base URL of signed brand asset links (also used by config-blob imports). */
 export function brandAssetPublicBaseUrl() {
   return env.apiPublicUrl ?? `http://127.0.0.1:${env.port}`
 }
@@ -76,7 +75,6 @@ function normalizeAssetRoute(input: {
   }
 }
 
-/** Validates, normalizes and stores one upload (also used by config-blob imports, src/config-blobs/areas/settings-brand.ts). */
 export async function uploadedAsset(input: {
   file: File
   kind: BrandAssetKind
@@ -144,8 +142,6 @@ export function registerOrgBrandAssetRoutes<T extends { Variables: OrgRouteVaria
       if (!verifyBrandAssetSignature(key, signature, signingSecret)) {
         return c.json({ error: "not_found" }, 404)
       }
-      // The HMAC binds the organization in the path: attribute the download to
-      // it; the holder of a capability URL is anonymous.
       const audited = await attributeAuditRequest(c, {
         organizationId: key.organizationId, actor: { type: "unknown", id: null }, principalKey: "anonymous:signed_brand_asset_url",
       })

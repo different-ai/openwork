@@ -7,68 +7,33 @@ import { createContext, useContext, type CSSProperties } from "react";
  * their connected apps, and where app logos come from. Workbot itself knows nothing about the host's sign-in.
  */
 export type WorkbotHost = {
-  /** A JSON request to the Workbot API (`/v1/workbot/...`), signed in as the person; resolves with the parsed body. */
   requestJson(path: string, init?: RequestInit, timeoutMs?: number): Promise<{ response: Response; payload: unknown }>
-  /** Where a path is served and how to sign a raw request to it (the live stream, downloads, uploads with progress). */
   prepare(path: string): Promise<{ url: string; headers: Headers; credentials: RequestCredentials }>
-  /** A person-readable message from a failed response's body; Workbot falls back to its own wording. */
   errorMessage?: (payload: unknown, fallback: string) => string
-  /** The signed-in person. */
   user: { name: string | null } | null
-  /** The apps the person has connected, for the header. A hook: called once on every render of the header. */
   useConnectedApps: () => Array<{ id: string; name: string }>
-  /** Logo URLs to try in order for an app, by its display name, then by its website ("exa.ai") when it has one. */
   appIcons: (name: string, site?: string) => string[]
-  /** Where the avatar in the header leads. */
   homeHref: string
-  /** Workbot's Calendar tab is on for this person (on while Workbot is on). */
   calendar?: boolean
-  /** Documents browsing is enabled for this organization; omitted means off. */
   documents?: boolean
-  /** Access to the native apps on Workbot's remote computer. Omitted means unavailable. */
   computer?: boolean
-  /** Access to the browser on Workbot's remote computer. Omitted means unavailable. */
   browser?: boolean
-  /** Teach browser tasks and save private Cloud skills; omitted means off. */
   browserDemonstrations?: boolean
-  /** Explicit document editing is enabled; omitted means preview only. */
   documentEditing?: boolean
-  /** Contextual chat and workspace navigation. Omitted means off. */
   workspaceAssistant?: boolean
-  /** Offers to open documents a reply mentions and keeps the chat open beside them. Needs workspaceAssistant. */
   guidedNavigation?: boolean
-  /** Signed-in model-limit recovery; never offers anonymous access or starts a payment. */
   usageRecovery?: { denUrl: string; organizationId: string }
-  /** The Get set up checklist in the header, and the Den pages its steps open. Omitted means off. */
   activation?: { denUrl: string; organizationId: string }
-  /** The organization runs Automations in the cloud, so the Calendar can create them. Off when unset. */
   canSchedule?: boolean
-  /** Where the person connects their own Google or Microsoft account, for the Calendar's connect links. */
   connectionsHref?: string | null
-  /** Existing sign-in URL, used without replacing a document with retained changes. */
   signInHref?: string | null
-  /** Fresh sign-in identity check before revealing a retained document draft. */
   verifyDocumentIdentity?(): Promise<boolean>
-  /** The retained owner remains mounted, but this host authorization fact masks it. */
   documentAuthorization?: "signin" | "blocked" | "disabled"
-  /** Moves Devices into the profile as Computers (`workbotProfileComputers`). Off when unset. */
   profileComputers?: boolean
-  /** Devices rows say what Workbot is doing on each computer (`workbotDeviceActivity`). Off when unset. */
   deviceActivity?: boolean
-  /**
-   * The calm chat look: a labelled sidebar, Workbot's name and status as one pill, a narrower column, replies as plain
-   * text, and compact browser and file cards (`workbotCalmChat`). Looks only; off when unset.
-   */
   calmChat?: boolean
-  /** The person can start side chats next to their main chat (on while Workbot is on). Off when unset. */
   sideChats?: boolean
-  /**
-   * The header avatar opens an account menu: who is signed in, Switch workspace, Your dashboard and Sign out.
-   * Omitted means the avatar only links to `homeHref`. `signOut` rejects, with a person-readable message, when the
-   * sign-in could not be ended.
-   */
   account?: { email: string; organizationName: string; signOut(): Promise<void>; switchWorkspace(): void }
-  /** Authenticated identity for permission-protected model-setting caches; absent on older hosts. */
   identity?: { principalId: string; organizationId: string }
 }
 

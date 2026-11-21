@@ -19,9 +19,7 @@ export const CHECKPOINT_PREFIX = "ow-dy-checkpoint-v1-";
 /** How long a saved checkpoint (a PR preview) can be opened. */
 export const CHECKPOINT_TTL_SECONDS = 12 * 3600;
 const MAX_CHECKPOINTS = 10;
-/** Open copies per checkpoint at once. */
 const COPY_SLOTS = 3;
-/** A reviewer's copy: access lasts this long; Daytona stops it when idle and then deletes it. */
 const COPY_MINUTES = 60;
 const IDLE_STOP_MINUTES = 30;
 const ROOT = "/opt/openwork-preview";
@@ -29,7 +27,6 @@ const MANIFEST = `${ROOT}/checkpoint.json`;
 
 export interface StartedCheckpoint {
   checkpoint: EvidenceCheckpoint;
-  /** Resolves once the snapshot is saved and the capture fork is gone. Await it before deleting the world. */
   saved: Promise<void>;
 }
 
@@ -49,7 +46,6 @@ export async function startDaytonaCheckpoint(input: { sandboxId: string; sourceS
   const checkpoint = parseEvidenceCheckpoint({ version: 1, provider: "daytona", id: `${CHECKPOINT_PREFIX}${randomUUID().replaceAll("-", "")}`,
     sourceSha: input.sourceSha, imageHash: input.imageHash, capturedAt: new Date(now).toISOString(), expiresAt: new Date(now + CHECKPOINT_TTL_SECONDS * 1000).toISOString() });
   await api.writeFile(sandbox, `${ROOT}/checkpoint-count`, String(count + 1));
-  // Written before the fork, so the copy carries the manifest it is verified against.
   await api.writeFile(sandbox, MANIFEST, JSON.stringify(checkpoint), 0o600);
   const fork = await api.forkSandbox(sandbox.id, `ow-dy-capture-${randomUUID().replaceAll("-", "")}`);
   const saved = (async () => {
@@ -59,11 +55,9 @@ export async function startDaytonaCheckpoint(input: { sandboxId: string; sourceS
       await api.snapshotSandbox(fork.id, checkpoint.id, true);
       await api.waitForSnapshot(checkpoint.id);
     } finally {
-      // The world cannot be deleted while this fork exists.
       await api.deleteSandbox(fork.id).catch(() => undefined);
     }
   })();
-  // Mark handled now; callers still observe a failure when they await it.
   saved.catch(() => undefined);
   return { checkpoint, saved };
 }
@@ -72,10 +66,8 @@ interface CopyAccess {
   sandboxId: string;
   token: string;
   expiresAt: string;
-  /** Every signed viewer origin issued for this copy; the gateway accepts browser requests only from these. */
   allowedOrigins: string[];
 }
-/** Keeps the access file small; older links stop being accepted for browser requests. */
 const MAX_ISSUED_ORIGINS = 20;
 
 function parseAccess(text: string | null, sandboxId: string): CopyAccess | null {
@@ -91,11 +83,6 @@ function parseAccess(text: string | null, sandboxId: string): CopyAccess | null 
   } catch { return null; }
 }
 
-/**
- * The launch link for a copy: a Daytona signed host (no header needed), then the
- * gateway sets its own cookie. Each call signs a new host, recorded in the copy's
- * access file so the gateway accepts browser requests from it.
- */
 async function launchLink(api: DaytonaApi, sandbox: Sandbox, access: CopyAccess): Promise<{ url: string; expiresAt: string }> {
   const seconds = Math.max(60, Math.floor((Date.parse(access.expiresAt) - Date.now()) / 1000));
   const origin = new URL(await api.signedPreviewUrl(sandbox.id, 8080, seconds)).origin;
@@ -127,7 +114,6 @@ export async function openDaytonaCheckpoint(value: unknown, reportId: string, re
         const access = parseAccess(await api.readFile(existing, `${ROOT}/access.json`), existing.id);
         if (access) return launchLink(api, existing, access);
       }
-      // A finished or broken copy frees its slot; a live copy for someone else keeps it.
       if (existing.labels.kind === COPY_KIND && !["started", "starting", "creating", "restoring"].includes(existing.state)) await api.deleteSandbox(existing.id);
       else continue;
     }

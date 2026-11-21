@@ -7,14 +7,8 @@ import { getRequestError, requestJson, requestResponse } from "../../_lib/den-fl
 import { getPluginRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
-/** Archives up to 40 MB can take a while to upload and unpack. */
 const SKILL_ZIP_TIMEOUT_MS = 120_000;
 
-/**
- * Imports a skill folder zipped the way Claude and Anthropic's Agent Skills
- * keep it (SKILL.md at the top or in one folder named after the skill) as a
- * new private plugin, then opens it.
- */
 export function SkillZipUploadButton() {
   const router = useRouter();
   const { orgSlug, runReauthableAction } = useOrgDashboard();
@@ -72,7 +66,6 @@ export function SkillZipUploadButton() {
   );
 }
 
-/** Saves a skill as `<name>.zip`, in the folder layout Claude uploads. */
 export async function downloadSkillZip(configObjectId: string): Promise<void> {
   const response = await requestResponse(
     `/v1/config-objects/${encodeURIComponent(configObjectId)}/skill-zip`,
@@ -91,7 +84,6 @@ export async function downloadSkillZip(configObjectId: string): Promise<void> {
     link.download = fileName;
     link.click();
   } finally {
-    // Revoke after the click has handed the file to the browser.
     setTimeout(() => URL.revokeObjectURL(url), 1_000);
   }
 }

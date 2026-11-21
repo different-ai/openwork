@@ -24,13 +24,6 @@ import { HelpTip } from "./help-tip";
 import { BriefPreview, CHECK_GATE_ROW, everyLabel, hourLabel, SEND_CHECK_ROW, ThresholdSelect } from "./workbot-agent-brief-panel";
 import { AGENTS_SWITCH_LABEL, type AgentPolicyScope } from "./workbot-agent-scope";
 
-/**
- * Members' agents in the standard tabbed settings: the same settings and saves as before, in three
- * groups (who gets an agent, messages, schedule) and then what to tell people. A choice between yes and no is a
- * switch and a choice among several is a select. Only a row whose label can't say what it does has a tooltip.
- */
-
-/** What a row does, shown from the "i" beside its label: only the rows that need explaining. */
 export const AGENT_SETTING_HELP = {
   membersStart: "On: members get messages and can turn their agent off. Off: each member turns their agent on.",
   example: "A sample of the direct message a member gets in Slack from their agent. The names are made up, and it does not change with your instructions.",
@@ -57,14 +50,9 @@ function Row({ label, labelId, help, note, children, testId }: { label: string; 
   );
 }
 
-/**
- * Agent instructions: the text every agent reads, shown as text until Edit is clicked. Editing has Reset to default,
- * Cancel and Save; nothing is saved until Save.
- */
 function InstructionsRow({ brief, locked, onSave }: { brief: AgentBriefView; locked: boolean; onSave: (text: string) => void }) {
   const id = useId();
   const [draft, setDraft] = useState<string | null>(null);
-  // A saved change closes the editor.
   useEffect(() => setDraft(null), [brief.text]);
   const editing = draft !== null;
   const isDefault = (draft ?? brief.text).trim() === brief.defaultText.trim();
@@ -116,7 +104,6 @@ export function WorkbotAgentSettingsGroups({ view, brief, canManage, saving, onC
   saving: boolean;
   onChange: (change: WorkbotProactiveSettingsInput) => void;
   connectorsHref: string;
-  /** Whose policy the rows show: Everyone's, or one team's. */
   scope?: AgentPolicyScope;
 }) {
   const ids = { every: useId(), hours: useId(), days: useId(), cap: useId(), extra: useId(), holdAt: useId(), skipAt: useId() };

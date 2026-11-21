@@ -39,7 +39,6 @@ export function WhatYourAiCanDo({ tools, loading, signedIn, error }: {
   error: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
-  // A cached list from before a sign-out is not what this person's AI can do now.
   const available = signedIn ? tools : [];
   const visible = expanded ? available : available.slice(0, TOOLS_PREVIEW);
   const count = available.length === 1 ? "1 thing" : `${available.length} things`;
@@ -79,7 +78,6 @@ export function ChatButton({ name }: { name: string }) {
   );
 }
 
-/** A6: a connector in My Library. */
 export function LibraryConnectorScreen({ connectionId }: { connectionId: string }) {
   const router = useRouter();
   const params = useSearchParams();

@@ -14,7 +14,6 @@ export type DenOrgSummary = {
   orgMemberId: string;
   membershipId: string;
   memberCount: number;
-  /** Null when an older server does not report the plan; never inferred from the member's role. */
   planTier: BillingPlanTier | null;
   isSandbox: boolean;
   createdAt: string | null;
@@ -32,7 +31,6 @@ export type DenOrgMember = {
   createdAt: string | null;
   joinedAt: string | null;
   isOwner: boolean;
-  /** Whether this member has OpenWork Web; admins choose. */
   openworkWeb: boolean;
   user: {
     id: string;
@@ -93,146 +91,73 @@ export type DenInvitationPreview = {
 
 export type DenCanonicalRole = "owner" | "admin" | "member";
 
-/** Roles the member pickers offer. Owner moves only by ownership transfer. */
 export const ASSIGNABLE_ORG_ROLES = ["member", "admin", "super-admin"] as const;
 
-/**
- * What the signed-in member can do in the dashboard. Each `can*` flag is the
- * catalog permission the matching Den API route requires (see
- * docs/permissions/route-inventory.md), so the UI never offers an action the
- * API will refuse. `isOwner`, `isAdmin` and `isMember` describe the role.
- */
 export type DenOrgAccessFlags = {
   canonicalRole: DenCanonicalRole;
   isOwner: boolean;
-  /**
-   * Super-admin role (never the owner): can make, change and remove
-   * super-admins, and gets the Super admin permission set, which starts with
-   * every permission the owner has. Only deleting the organization and
-   * transferring ownership stay with the owner.
-   */
   isSuperAdmin: boolean;
   isMember: boolean;
-  /** Owner, admin or super-admin role, or member of an Admin team. Role-derived; prefer a permission flag for gating an action. */
   isAdmin: boolean;
-  /**
-   * Holds at least one organization permission, so some admin page has
-   * something to show. Opens the admin area; each page then checks its own flag.
-   */
   canViewSettings: boolean;
-  /** `organization.update` */
   canManageSettings: boolean;
-  /** `sso.manage` or `scim.manage` */
   canManageSecurityConfiguration: boolean;
-  /** `invitations.manage` */
   canInviteMembers: boolean;
-  /** `invitations.manage` */
   canCancelInvitations: boolean;
-  /** `members.update` */
   canManageMembers: boolean;
-  /** `members.delete` */
   canRemoveMembers: boolean;
-  /** `members.update`: assign the Member or Admin role (also on invitations). */
   canManageRoles: boolean;
-  /** `teams.view`: open any team's details. */
   canViewTeams: boolean;
-  /** `teams.manage` */
   canManageTeams: boolean;
-  /** `teams.manage_admin`: mark a team Admin, or change who is in an Admin team. */
   canManageAdminTeams: boolean;
-  /** `permissions.view`: Member, Admin and team permissions and their history. */
   canViewPermissions: boolean;
-  /** `permissions.manage`: change Member, Admin and team permissions. */
   canManagePermissions: boolean;
-  /** `agent_permissions.view`: what agents can do on members' computers. */
   canViewAgentPermissions: boolean;
-  /** `agent_permissions.manage`: change what agents can do on members' computers. */
   canManageAgentPermissions: boolean;
-  /** `prompts.view`: see the system prompts that steer members' agents. */
   canViewPrompts: boolean;
-  /** `prompts.manage`: change the system prompts that steer members' agents. */
   canManagePrompts: boolean;
-  /** `api_keys.view` */
   canViewApiKeys: boolean;
-  /** `api_keys.manage` */
   canManageApiKeys: boolean;
-  /** `scim.view` */
   canViewScim: boolean;
-  /** `scim.manage` */
   canManageScim: boolean;
-  /** `sso.view` */
   canViewSso: boolean;
-  /** `sso.manage` */
   canManageSso: boolean;
-  /** `branding.update` */
   canManageBranding: boolean;
-  /** `web_origins.view` */
   canViewWebOrigins: boolean;
-  /** `web_origins.manage` */
   canManageWebOrigins: boolean;
-  /** `computers.view`: inspect every member's registered computers. */
   canViewComputers: boolean;
-  /** `computers.disconnect`: disconnect a member's signed-in computer and remove computers from the team list. */
   canDisconnectComputers: boolean;
-  /** `desktop_policies.view` */
   canViewDesktopPolicies: boolean;
-  /** `desktop_policies.manage` */
   canManageDesktopPolicies: boolean;
   canViewDeployments: boolean;
   canViewUsageAnalytics: boolean;
   canManageDeployments: boolean;
-  /** `billing.view` */
   canViewBilling: boolean;
-  /** `billing.manage`: start a subscription in checkout. */
   canManageBilling: boolean;
-  /** `billing_portal.use`: payment details, invoices, change or cancel the subscription. */
   canOpenBillingPortal: boolean;
   canViewInvoices: boolean;
-  /** `audit.view` */
   canViewAuditLogs: boolean;
-  /** `audit.manage`: turn audit capture on or off. */
   canManageAuditCapture: boolean;
-  /** `inference.view`: OpenWork Models settings. */
   canViewModelsSettings: boolean;
-  /** `inference.manage`: turn OpenWork Models on or off. */
   canManageModelsSettings: boolean;
-  /** `llm_providers.view`: every provider, not only your own. */
   canViewAllLlmProviders: boolean;
-  /** `gateway_providers.view` */
   canViewGatewayProviders: boolean;
-  /** `gateway_providers.manage` */
   canManageGatewayProviders: boolean;
-  /** `gateway_usage.view` */
   canViewGatewayUsage: boolean;
-  /** `gateway_limits.view` */
   canViewGatewayLimits: boolean;
-  /** `gateway_limits.manage` */
   canManageGatewayLimits: boolean;
-  /** `connections.view`: every connection, its tools and tool policy. */
   canViewAllConnections: boolean;
-  /** `connections.manage`: organization connections, who can use any connection, tool policies, shared accounts. */
   canManageConnections: boolean;
-  /** `connections.update`: edit any connection's settings. */
   canEditAnyConnection: boolean;
-  /** `connections.disconnect`: sign everyone out of any connection. */
   canDisconnectAnyConnection: boolean;
-  /** `connections.delete`: remove any connection. */
   canRemoveAnyConnection: boolean;
-  /** `marketplaces.manage` */
   canManageMarketplaces: boolean;
-  /** `plugins.import` */
   canImportPlugins: boolean;
-  /** `connectors.manage`: GitHub sync sources. */
   canManageSyncSources: boolean;
-  /** `sharing.manage_all`: manager on every plugin, marketplace, skill and connector. */
   canManageAllShared: boolean;
-  /** `sharing.share_org_wide` */
   canShareWithEveryone: boolean;
-  /** Owner only. */
   canTransferOwnership: boolean;
-  /** Owner only. */
   canDeleteOrganization: boolean;
-  /** `billing.manage` */
   canStartSeatCheckout: boolean;
 };
 
@@ -250,10 +175,8 @@ export type DenOrgApiKey = {
   expiresAt: string | null;
   createdAt: string | null;
   updatedAt: string | null;
-  /** `config`: a config token with scopes and an optional area limit. */
   type: DenOrgApiKeyType;
   scopes: DenConfigTokenScope[];
-  /** Config tokens: the areas it may touch; null = every area. */
   areas: string[] | null;
   owner: {
     userId: string;
@@ -293,13 +216,10 @@ export type DenOrgScimHealth = {
 export type DenOrgSsoConnection = {
   id: string;
   providerId: string;
-  /** The saved name, or null. */
   name: string | null;
-  /** What sign-in buttons show: the saved name, else one derived from the issuer. */
   displayName: string;
   kind: "oidc" | "saml";
   issuer: string;
-  /** Every domain, comma separated; `domains` lists them. */
   domain: string;
   domains: string[];
   status: "disabled" | "enabled";
@@ -313,7 +233,6 @@ export type DenOrgSsoConnection = {
   domainVerified: boolean;
   domainVerificationHost: string;
   domainVerificationDnsName: string;
-  /** One TXT record name per domain. */
   domainVerificationDnsNames: Array<{ domain: string; dnsName: string }>;
   oidc: {
     clientId: string | null;
@@ -362,7 +281,6 @@ export type DenOrgContext = {
     isOwner: boolean;
     directRole: string;
     adminTeams: { id: string; name: string }[];
-    /** Effective permission keys from GET /v1/org. Null when an older server does not send them. */
     permissions: PermissionKey[] | null;
   };
   members: DenOrgMember[];
@@ -371,12 +289,9 @@ export type DenOrgContext = {
   currentMemberTeams: DenCurrentMemberTeam[];
   entitlements: DenOrgEntitlements;
   authMethods: DenOrgAuthMethods;
-  /** Frozen for published screens; new code reads `features` through orgFeatureEnabled(). */
   capabilities: DenOrgCapabilities;
-  /** Effective on/off per registry feature (packages/features/src/registry.ts). Missing from older servers means off. */
   features: FeatureMap;
   deploymentCapabilities: DeploymentCapabilities;
-  /** Server-verified installation operator capability; never inferred from organization role. */
   canManageDeploymentServices: boolean;
 };
 
@@ -391,24 +306,17 @@ export type DenOrgEntitlements = {
   orgControls: boolean;
   analytics: boolean;
   auditLogs: boolean;
-  /** SCIM provisioning (Enterprise). */
   scim: boolean;
 };
 
-/** Server-advertised and per-org capabilities; optional fields default to off. */
 export type DenOrgCapabilities = {
-  /** Effective organization rollout and deployment visibility, separate from capture entitlement. */
   auditLogs: boolean;
   installLinks: boolean;
   mcpConnections: boolean;
-  /** Apps built in OpenWork are served as their own MCP servers; absent (off) on older servers. */
   appMcpServers?: boolean;
-  /** Always on: Workflows/Code Mode shipped for every organization. Older servers may still return false. */
   workflows: boolean;
-  /** Effective Web offer; true for the global switch or this organization's complimentary admin grant. */
   openworkWeb: boolean;
   cloud: boolean;
-  /** The organization's one-chat assistant; absent (off) on older servers. */
   workbot?: boolean;
 };
 
@@ -505,20 +413,14 @@ export function getAllowedDesktopVersionsFromMetadata(metadata: string | null): 
   return [...new Set(values.map((entry) => normalizeDesktopVersionString(entry)).filter((entry): entry is string => Boolean(entry)))];
 }
 
-/**
- * Auth & Security › General: "Session length"
- * choices in hours, matching den-api SESSION_LENGTH_HOURS.
- */
 export const SESSION_LENGTH_HOURS = [12, 24, 72, 168] as const;
 export type SessionLengthHours = (typeof SESSION_LENGTH_HOURS)[number];
 export const DEFAULT_SESSION_LENGTH_HOURS: SessionLengthHours = 168;
 
-/** "Maximum Session Length" choices in days, matching den-api MAX_SESSION_LENGTH_DAYS. */
 export const MAX_SESSION_LENGTH_DAYS = [1, 7, 14, 30, 60, 90] as const;
 export type MaxSessionLengthDays = (typeof MAX_SESSION_LENGTH_DAYS)[number];
 export const DEFAULT_MAX_SESSION_LENGTH_DAYS: MaxSessionLengthDays = 30;
 
-/** "Enforce fresh Admin sessions" choices in minutes, matching den-api ADMIN_REAUTH_MINUTES; 0 is Disabled. */
 export const ADMIN_REAUTH_MINUTES = [15, 60, 240, 480, 1440, 0] as const;
 export type AdminReauthMinutes = (typeof ADMIN_REAUTH_MINUTES)[number];
 export const DEFAULT_ADMIN_REAUTH_MINUTES: AdminReauthMinutes = 15;
@@ -541,7 +443,6 @@ export type SessionSecuritySettings = {
   adminReauthMinutes: AdminReauthMinutes;
 };
 
-/** The organization's saved session settings, with the defaults for anything unset. */
 export function getSessionSecuritySettingsFromMetadata(metadata: string | null): SessionSecuritySettings {
   const parsed = parseOrganizationMetadata(metadata);
   return {
@@ -609,7 +510,6 @@ function normalizeRoleSlug(value: string): string {
   return value.trim().toLowerCase().replace(/[\s_]+/g, "-");
 }
 
-/** The role value names super-admin and not owner. */
 export function isSuperAdminRole(roleValue: string): boolean {
   const roles = splitRoleString(roleValue).map(normalizeRoleSlug);
   return roles.includes("super-admin") && !roles.includes("owner");
@@ -618,7 +518,6 @@ export function isSuperAdminRole(roleValue: string): boolean {
 function normalizeCanonicalRole(value: string): DenCanonicalRole | null {
   const normalized = normalizeRoleSlug(value);
   if (normalized === "owner") return "owner";
-  // A super-admin is also an admin; isSuperAdminRole tells them apart.
   if (normalized === "admin" || normalized === "super-admin") return "admin";
   if (normalized === "member") return "member";
   return null;
@@ -646,7 +545,6 @@ export function getHighestCanonicalRole(roleValue: string, isOwner: boolean): De
   return "member";
 }
 
-/** The picker value for a stored role: super-admin or admin when it names one, else member. */
 export function assignableOrgRole(roleValue: string): (typeof ASSIGNABLE_ORG_ROLES)[number] {
   if (isSuperAdminRole(roleValue)) return "super-admin";
   return getHighestCanonicalRole(roleValue, false) === "admin" ? "admin" : "member";
@@ -656,13 +554,6 @@ export function canRefreshInvitationRole(role: string, access: Pick<DenOrgAccess
   return access.canInviteMembers && (access.canManageRoles || getHighestCanonicalRole(role, false) === "member");
 }
 
-/**
- * Access flags for a member. Pass `permissions` (`currentMember.permissions`
- * from GET /v1/org) for the signed-in member. Without it, as for other members
- * or an older server, flags follow the default permissions of the role, which
- * is what the API applies while the Permissions feature is off. Only the owner
- * always holds every key; a super-admin holds what their Super admin set allows.
- */
 export function getOrgAccessFlags(roleValue: string, isOwner: boolean, permissions?: readonly PermissionKey[] | null): DenOrgAccessFlags {
   const canonicalRole = getHighestCanonicalRole(roleValue, isOwner);
   const resolvedIsOwner = canonicalRole === "owner";
@@ -748,7 +639,6 @@ export function getOrgAccessFlags(roleValue: string, isOwner: boolean, permissio
   };
 }
 
-/** Plain reason for a control locked by a missing permission (DESIGN.md P4). */
 export function permissionLockReason(key: PermissionKey): string {
   const needs = `Needs the “${getPermissionDefinition(key).label}” permission.`;
   return isPermissionOwnerOnlyByDefault(key) ? `${needs} Ask the organization owner.` : `${needs} Ask an organization owner or admin for access.`;
@@ -797,7 +687,6 @@ export function getAnalyticsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/analytics`;
 }
 
-/** Any member's own AI Gateway usage, limits and model prices. */
 export function getMyUsageRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/my-usage`;
 }
@@ -818,12 +707,10 @@ export function getTeamRoute(orgSlug: string | null | undefined, teamId: string)
   return `${getMembersRoute(orgSlug)}/teams/${encodeURIComponent(teamId)}`;
 }
 
-/** A team's Agents tab: what agents can do for people in the team. */
 export function getTeamAgentsRoute(orgSlug: string | null | undefined, teamId: string): string {
   return `${getTeamRoute(orgSlug, teamId)}?tab=agents`;
 }
 
-/** Members › Teams › Everyone: every member, including people in no team. */
 export function getEveryoneRoute(orgSlug?: string | null): string {
   return `${getMembersRoute(orgSlug)}/teams/everyone`;
 }
@@ -832,7 +719,6 @@ export function getEveryoneAgentsRoute(orgSlug?: string | null): string {
   return `${getEveryoneRoute(orgSlug)}?tab=agents`;
 }
 
-/** Everyone's Browser tab: the pages agents and the built-in browser can open, for every member. */
 export function getEveryoneBrowserRoute(orgSlug?: string | null): string {
   return `${getEveryoneRoute(orgSlug)}?tab=browser`;
 }
@@ -877,7 +763,6 @@ export function getComputersRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/computers`;
 }
 
-/** Every member's own and shared computers; the team-wide list is `getComputersRoute`. */
 export function getMyComputersRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/my-computers`;
 }
@@ -947,7 +832,6 @@ export function getNewAiGatewayProviderRoute(orgSlug?: string | null, providerId
   return providerId ? `${base}?provider=${encodeURIComponent(providerId)}` : base;
 }
 
-/** The four-step wizard for a custom OpenAI-compatible provider. */
 export function getNewAiGatewayCustomProviderRoute(orgSlug?: string | null): string {
   return `${getAiGatewayRoute(orgSlug)}/providers/new/custom`;
 }
@@ -956,12 +840,10 @@ export function getAiGatewayProviderRoute(orgSlug: string | null | undefined, in
   return `${getAiGatewayRoute(orgSlug)}/providers/${encodeURIComponent(inferenceProviderId)}`;
 }
 
-/** Step one of a new Smart Router: its name, models and tasks. */
 export function getNewAiGatewaySmartRouterRoute(orgSlug?: string | null): string {
   return `${getAiGatewayRoute(orgSlug)}/smart-routers/new`;
 }
 
-/** A Smart Router's page; `step: "access"` is step two of creating one: who it applies to. */
 export function getAiGatewaySmartRouterRoute(orgSlug: string | null | undefined, routerId: string, step?: "access"): string {
   const base = `${getAiGatewayRoute(orgSlug)}/smart-routers/${encodeURIComponent(routerId)}`;
   return step ? `${base}?step=${step}` : base;
@@ -1028,10 +910,6 @@ export function getApiKeysRoute(orgSlug?: string | null): string {
 
 export type AuthSecurityTab = "general" | "sso" | "scim";
 
-/**
- * Settings › Auth & Security: General, SSO and SCIM as tabs. The old
- * `/sso` and `/scim` pages redirect to their tab. `setup` opens the tab's setup form directly instead of its intro.
- */
 export function getAuthSecurityRoute(orgSlug?: string | null, tab?: AuthSecurityTab, options: { setup?: boolean } = {}): string {
   const base = `${getOrgDashboardRoute(orgSlug)}/auth-security`;
   const params = new URLSearchParams();
@@ -1045,12 +923,10 @@ export function getAuthSecurityRoute(orgSlug?: string | null, tab?: AuthSecurity
 export const CONFIG_TABS = ["overview", "import", "export", "changes", "history"] as const;
 export type ConfigTab = (typeof CONFIG_TABS)[number];
 
-/** The tab named by `?tab=`; an unknown or retired value opens Overview. */
 export function readConfigTab(value: string | null | undefined): ConfigTab {
   return CONFIG_TABS.find((tab) => tab === value) ?? "overview";
 }
 
-/** Settings › Config: overview, import, export, open changes and history. */
 export function getConfigRoute(orgSlug?: string | null, tab?: ConfigTab): string {
   const base = `${getOrgDashboardRoute(orgSlug)}/config`;
   return tab && tab !== "overview" ? `${base}?tab=${tab}` : base;
@@ -1080,7 +956,6 @@ export function getEditPluginSkillRoute(orgSlug: string | null | undefined, plug
   return `${getPluginSkillRoute(orgSlug, pluginId, skillId)}/edit`;
 }
 
-/** The full plugin editor: hooks, agents, marketplaces and skill files. */
 export function getPluginDetailsRoute(orgSlug: string | null | undefined, pluginId: string): string {
   return `${getPluginRoute(orgSlug, pluginId)}/details`;
 }
@@ -1121,7 +996,6 @@ export function getMcpConnectionsRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/mcp-connections`;
 }
 
-/** A configured connector's page in Manage, Google Workspace and Microsoft 365 included. */
 export function getMcpConnectionRoute(orgSlug: string | null | undefined, connectorId: string): string {
   return `${getMcpConnectionsRoute(orgSlug)}/${encodeURIComponent(connectorId)}`;
 }
@@ -1142,7 +1016,6 @@ export function getLibraryPluginRoute(orgSlug: string | null | undefined, plugin
   return `${getLibraryRoute(orgSlug)}/plugins/${encodeURIComponent(pluginId)}`;
 }
 
-/** A skill inside a plugin, viewed from My Library (no admin area needed). */
 export function getLibraryPluginSkillRoute(orgSlug: string | null | undefined, pluginId: string, skillId: string): string {
   return `${getLibraryPluginRoute(orgSlug, pluginId)}/skills/${encodeURIComponent(skillId)}`;
 }
@@ -1155,7 +1028,6 @@ export function getLibraryNewPluginRoute(orgSlug?: string | null, start?: "skill
   return `${getLibraryRoute(orgSlug)}/plugins/new${start ? `?start=${start}` : ""}`;
 }
 
-/** The member's own agent (My bot), in the sidebar's Work section. */
 export function getLibraryMyAgentRoute(orgSlug?: string | null): string {
   return `${getOrgDashboardRoute(orgSlug)}/my-bot`;
 }
@@ -1176,7 +1048,6 @@ export function getLibraryConnectorShareRoute(orgSlug: string | null | undefined
   return `${getLibraryConnectorRoute(orgSlug, connectionId)}/share`;
 }
 
-/** The connector catalog, or one entry's setup checks when a catalog id is given. */
 export function getLibraryAddConnectorRoute(orgSlug?: string | null, catalogId?: string): string {
   return `${getLibraryRoute(orgSlug)}/connectors/new${catalogId ? `/${encodeURIComponent(catalogId)}` : ""}`;
 }
@@ -1293,7 +1164,6 @@ export function parseOrgContextPayload(payload: unknown): DenOrgContext | null {
             createdAt: asIsoString(entry.createdAt),
             joinedAt: asIsoString(entry.joinedAt),
             isOwner: asBoolean(entry.isOwner),
-            // Older Den deployments omit it: every member had Web then.
             openworkWeb: entry.openworkWeb !== false,
             user: {
               id: userIdentity,
@@ -1436,13 +1306,11 @@ function parseOrgAuthMethods(value: unknown): DenOrgAuthMethods {
   };
 }
 
-/** Fail closed: a feature the server did not report (older server) is off. */
 function parseOrgFeatures(value: unknown): FeatureMap {
   const reported = isRecord(value) ? value : {};
   return mapFeatures((key) => reported[key] === true);
 }
 
-/** Whether a registry feature is on for the active organization. Use this for every new feature gate. */
 export function orgFeatureEnabled(orgContext: Pick<DenOrgContext, "features"> | null | undefined, key: keyof FeatureMap): boolean {
   return orgContext?.features[key] === true;
 }
@@ -1457,8 +1325,6 @@ function parseOrgCapabilities(value: unknown): DenOrgCapabilities {
     installLinks: value.installLinks === true,
     mcpConnections: value.mcpConnections === true,
     appMcpServers: value.appMcpServers === true,
-    // Workflows are enabled everywhere on current servers; only an explicit
-    // false from an older server still hides the surface.
     workflows: value.workflows !== false,
     openworkWeb: value.openworkWeb === true,
     cloud: value.cloud === true,
@@ -1751,7 +1617,6 @@ export function parseOrgSsoPayload(payload: unknown): {
   return { connection, domainVerificationToken: asString(payload.domainVerificationToken) };
 }
 
-/** GET /v1/sso/connections. */
 export function parseOrgSsoConnectionsPayload(payload: unknown): DenOrgSsoConnection[] {
   if (!isRecord(payload) || !Array.isArray(payload.connections)) return [];
   return payload.connections.flatMap((entry) => {

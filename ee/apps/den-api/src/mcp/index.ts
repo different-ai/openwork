@@ -23,14 +23,6 @@ const CATALOG_CACHE_TTL_MS = 5 * 60 * 1000
 
 let catalogCache: { catalog: McpToolOperation[]; expiresAt: number } | null = null
 
-/**
- * The tool catalog is derived from the OpenAPI document, which only changes
- * on deploy. Cache it briefly instead of self-fetching openapi.json and
- * rebuilding the catalog on every /mcp request.
- *
- * Exported so the minimal agent-facing endpoint (./agent.ts) shares this
- * exact cache instead of re-fetching/rebuilding the catalog separately.
- */
 export async function getCatalog(app: Hono, env: unknown) {
   if (catalogCache && catalogCache.expiresAt > Date.now()) {
     return catalogCache.catalog
@@ -48,8 +40,6 @@ const protectedResourceMetadataSchema = z.object({
   bearer_methods_supported: z.array(z.string()),
 }).meta({ ref: "OAuthProtectedResourceMetadata" })
 
-// OpenAPI metadata for the RFC 9728 protected-resource documents. Every MCP
-// transport publishes the same shape at the paths clients are known to probe.
 export function protectedResourceMetadataRoute(route: "mcp" | "agent" | "admin") {
   return describeRoute({
     tags: ["OAuth"],
@@ -64,18 +54,7 @@ export function protectedResourceMetadata(request: Request, route: "mcp" | "agen
   const resource = getMcpResourceContext(request, route).resourceUrl
   return {
     resource,
-    // Better Auth 1.6 can safely advertise only one public OAuth audience for
-    // this deployment. /mcp/agent metadata is exact for public OAuth; /mcp and
-    // /mcp/admin retain their parent resource metadata for first-party desktop
-    // and legacy discovery, but public JWTs are accepted only on /mcp/agent.
-    // OAuth issuers are invariant; the resource may live on a separate API or
-    // reverse-proxy origin, but Better Auth completes the callback with this
-    // configured issuer.
     authorization_servers: [getDenAuthIssuer(env.betterAuthUrl)],
-    // The MCP SDK uses protected-resource scopes for both dynamic client
-    // registration and the authorization request. Advertising offline access
-    // lets it explicitly request a rotating refresh grant (and prompt for
-    // consent) instead of falling back to browser auth every 45 minutes.
     scopes_supported: [...DEN_MCP_REQUESTED_SCOPES],
     bearer_methods_supported: ["header"],
   }

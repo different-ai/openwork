@@ -122,7 +122,6 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
   useEffect(() => {
     setDetail(null);
     setCatalogError(null);
-    // LiteLLM and custom provider models come from the organization's own provider, not the shared catalog.
     if (!orgId || !providerId || providerId === LITELLM_PROVIDER_ID || providerId === TRUEFOUNDRY_PROVIDER_ID || isGatewayCustomProviderId(providerId)) { setCatalogBusy(false); return; }
     let cancelled = false;
     setCatalogBusy(true);
@@ -161,7 +160,6 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
   ));
   const keySaved = Boolean(configuredSet?.configured && configuredSet.credentialMode === credentialMode);
   const displayName = detail?.name ?? provider?.name ?? "provider";
-  // Newest first, so the latest models are easy to find and the test uses a current one.
   const models = useMemo(() => detail ? sortModelsNewestFirst(filterSupportedGatewayCatalogModels(detail.config, detail.models)) : [], [detail]);
   const modelIds = useMemo(() => {
     const supportedIds = new Set(models.map((model) => model.id));
@@ -173,14 +171,11 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
     ...(signInMethod === "microsoft" ? { oauthTenantId } : {}), ...(signInMethod === "aws_sso" ? { awsSso } : {}),
     ...(bedrock ? { awsKeys, reuseCredentialFrom: reuseSource?.id ?? null } : {}),
   };
-  // A new provider with a shared key is tested before it can be added.
   const testRequired = !provider && credentialMode === "org";
-  // The first model in the list below that can answer a text prompt; with "Only the ones I pick", the first picked one.
   const testModelId = pickTestModel(models, allowAllModels ? null : modelIds);
   const configFingerprint = JSON.stringify(formInput);
   const testPassed = providerTest?.state === "done" && providerTest.result.ok;
 
-  // Any change to the configuration dismisses the last test result.
   useEffect(() => {
     if (testedConfig.current === configFingerprint) return;
     testedConfig.current = null;
@@ -213,7 +208,6 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
     });
   }
 
-  /** The checks a new shared-key configuration must pass before it is tested or added. */
   function configurationError(): string | null {
     if (catalogError) return "Retry the provider catalog first.";
     if (!detail || detail.id !== providerId) return "Wait for the provider catalog to load.";
@@ -249,7 +243,6 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
     } catch (cause) {
       result = { ok: false, model, status: null, code: "test_failed", message: cause instanceof Error ? cause.message : "Could not test the provider." };
     }
-    // A result for settings that have since changed is dropped.
     if (testedConfig.current !== fingerprint) return;
     setProviderTest(result ? { state: "done", result } : null);
   }

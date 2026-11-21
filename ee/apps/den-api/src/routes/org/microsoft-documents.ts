@@ -22,8 +22,6 @@ const errorSchema = z.object({ error: z.string(), message: z.string() })
 
 type Context = Parameters<MiddlewareHandler<{ Variables: OrgRouteVariables }>>[0]
 export type MicrosoftDocumentsAccess =
-  /** `otherDrives`: whether other people's drives and SharePoint are reachable, to read and to save. */
-  /** graphBaseUrl: set only for a sandbox's sample Microsoft 365 (its workplace's Graph instead of Microsoft's). */
   | { ok: true; accessToken: string; graphBaseUrl?: string; canWrite: boolean; otherDrives: { read: boolean; write: boolean } }
   | { ok: false; reply: Response }
 type Granted = Extract<MicrosoftDocumentsAccess, { ok: true }>
@@ -32,7 +30,6 @@ export type MicrosoftDocumentsOptions = {
   memberRoute: MiddlewareHandler<{ Variables: OrgRouteVariables }>
   graphBaseUrl: string
   fetch: typeof fetch
-  /** The calling member's Microsoft token with OneDrive read access, or the reply that explains why not. */
   access(c: Context): Promise<MicrosoftDocumentsAccess>
 }
 
@@ -60,7 +57,6 @@ export function registerMicrosoftDocumentRoutes<T extends { Variables: OrgRouteV
   }
   const failure = (c: Context, message: string) => c.json({ error: "document_unavailable", message }, 400)
 
-  /** One Graph request with the member's token, turning Graph's refusals into readable replies. */
   const graph = async (c: Context, accessToken: string, url: URL, init: RequestInit = {}) => {
     const headers = new Headers(init.headers)
     headers.set("authorization", `Bearer ${accessToken}`)
@@ -79,7 +75,6 @@ export function registerMicrosoftDocumentRoutes<T extends { Variables: OrgRouteV
     if (response.status === 412) return { ok: false, reply: c.json({ error: "drive_conflict", message: "This file changed in OneDrive. Your edits are kept here; reload the file before saving again." }, 409) } as const
     return { ok: false, reply: c.json({ error: "microsoft_graph_error", message: `Microsoft 365 returned HTTP ${response.status}.${detail}` }, 502) } as const
   }
-  /** The member's own drive, for connections limited to it. */
   const ownDrive = async (c: Context, access: Granted) => {
     const url = graphUrl(access, "me/drive"); url.searchParams.set("$select", "id")
     const result = await graph(c, access.accessToken, url); if (!result.ok) return result
@@ -87,7 +82,6 @@ export function registerMicrosoftDocumentRoutes<T extends { Variables: OrgRouteV
     if (!drive.success) return { ok: false, reply: c.json({ error: "microsoft_graph_error", message: "Microsoft 365 did not report your OneDrive." }, 502) } as const
     return { ok: true, id: drive.data.id } as const
   }
-  /** Like the file routes, other drives and SharePoint need the all-files permission: read-all to read, full access to save. */
   const reachable = async (c: Context, access: Granted, driveId: string, write: boolean) => {
     if (write ? access.otherDrives.write : access.otherDrives.read) return { ok: true } as const
     const own = await ownDrive(c, access); if (!own.ok) return own
@@ -109,7 +103,6 @@ export function registerMicrosoftDocumentRoutes<T extends { Variables: OrgRouteV
     return { ok: true, bytes: await boundedBytes(result.response) } as const
   }
 
-  /** For edits: a refused download ends the save with Graph's own reply. */
   const downloadOrThrow = async (c: Context, access: Granted, path: string) => {
     const source = await download(c, access, path)
     if (!source.ok) throw source.reply
@@ -127,7 +120,6 @@ export function registerMicrosoftDocumentRoutes<T extends { Variables: OrgRouteV
     const input = c.req.valid("query")
     let url: URL
     if (input.cursor) {
-      // Continue only Microsoft's own next page link, never an arbitrary address.
       let next: URL
       try { next = new URL(Buffer.from(input.cursor, "base64url").toString("utf8")) } catch { return failure(c, "This page link is invalid.") }
       if (next.origin !== graphRootFor(access).origin || !next.pathname.startsWith(graphRootFor(access).pathname)) return failure(c, "This page link is invalid.")
@@ -152,7 +144,6 @@ export function registerMicrosoftDocumentRoutes<T extends { Variables: OrgRouteV
     if (!listing.success) return c.json({ error: "microsoft_graph_error", message: "Microsoft 365 returned an unexpected file list." }, 502)
     let files = listing.data.value.flatMap(raw => { const entry = microsoftDocumentItem(raw); return entry ? [entry] : [] })
     if (!access.otherDrives.read) {
-      // Recent files and shortcuts can point into other drives this connection may not open.
       const own = await ownDrive(c, access); if (!own.ok) return own.reply
       files = files.filter(file => decodeMicrosoftDocumentId(file.id)?.driveId === own.id)
     }
@@ -207,7 +198,6 @@ export function registerMicrosoftDocumentRoutes<T extends { Variables: OrgRouteV
       else if (meta.mimeType === DOCX && save.kind === "document") updated = await patchWord(await downloadOrThrow(c, access, meta.path), save)
       else if (meta.mimeType.startsWith("text/") && save.kind === "text") updated = new TextEncoder().encode(save.text)
       else return failure(c, "This file type does not support these edits.")
-      // If-Match makes OneDrive refuse the write when someone else saved in between.
       const result = await graph(c, access.accessToken, graphUrl(access, `${meta.path}/content`), { method: "PUT", body: new Uint8Array(updated).buffer, headers: { "content-type": meta.mimeType, "if-match": meta.revision }, redirect: "error" })
       if (!result.ok) return result.reply
       const receipt = graphItemSchema.safeParse(await result.response.json().catch(() => null))
@@ -223,7 +213,6 @@ export function registerMicrosoftDocumentRoutes<T extends { Variables: OrgRouteV
     const access = await options.access(c); if (!access.ok) return access.reply
     const { fileId } = c.req.valid("param")
     const meta = await item(c, access, fileId); if (!meta.ok) return meta.reply
-    // Video and audio go to the browser's own player one byte range at a time, so it can start early and seek.
     const playable = documentMediaKind(meta.mimeType)
     if (playable) {
       const size = meta.file.size ?? 0

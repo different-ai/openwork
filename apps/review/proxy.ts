@@ -1,7 +1,5 @@
 import { NextResponse } from "next/server";
 
-// Vercel Authentication protects the entire preview, including JSON and images.
-// Standard Protection leaves production domains public, so do not serve there.
 export function proxy() {
   if (process.env.VERCEL && process.env.VERCEL_ENV !== "preview")
     return new NextResponse("Open this app through its protected Vercel preview.", {

@@ -1,18 +1,5 @@
 import { z } from "zod"
 
-/**
- * Published desktop clients interpret a missing rollout key as a rollback.
- * These response-only values preserve the graduated behavior during API-first
- * upgrades, or keep removed behavior off. They are not registry entries,
- * rollout state or admin controls.
- *
- * Remove a value only when no supported published desktop version still reads
- * that key (and the minimum supported client version enforces that boundary).
- * sandboxOrgs is deliberately absent: sandbox availability is cloud-only and
- * is advertised by its deployment-checked admin API, not a client rollout key.
- * The same applies to sandboxMicrosoft365, sandboxSlack, sandboxModelChoice and Workbot browser recovery.
- * Workbot advertises recovery only from its deployment-checked session route.
- */
 const retired = z.literal(true).default(true).meta({
   deprecated: true,
   description: "Fixed compatibility value for supported published desktop clients; not a configurable feature.",
@@ -106,12 +93,10 @@ const retiredClientFeaturesSchema = z.object({
   lastUsedSignIn: retired,
   remoteSessionHelperView: retired,
   settingsFind: retired,
-  // Removed, not GA: team pages keep their existing top tabs.
   teamSettingsSidebar: z.literal(false).default(false).meta({
     deprecated: true,
     description: "Fixed false compatibility value for the removed team sidebar; not configurable.",
   }),
-  // Removed, not GA: older desktops must keep the pre-existing updater path.
   desktopUpdateDownloadWindow: z.literal(false).default(false).meta({
     deprecated: true,
     description: "Fixed false compatibility value for a removed desktop updater experiment; not configurable.",
@@ -122,7 +107,6 @@ export const clientFeaturesSchema = retiredClientFeaturesSchema.meta({
   description: "Effective feature state plus deprecated fixed compatibility values for graduated or removed behavior. Compatibility values are not configurable features.",
 }).catchall(z.boolean())
 
-/** Response-only compatibility: never persist these keys as registry/admin state. */
 export function clientFeatures(features: Record<string, boolean>): Record<string, boolean> & z.infer<typeof retiredClientFeaturesSchema> {
   return { ...features, ...retiredClientFeaturesSchema.parse({}) }
 }

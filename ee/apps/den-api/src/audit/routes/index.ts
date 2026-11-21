@@ -10,7 +10,6 @@ export * from "./types.js"
 
 export const BETTER_AUTH_BASE_PATH = "/api/auth"
 
-/** Declaration slices by owning module; the coverage script reports per slice. */
 export const auditRouteSlices: Readonly<Record<string, readonly AuditRouteDeclaration[]>> = {
   integrations: integrationsAuditRoutes,
   content: contentAuditRoutes,
@@ -29,11 +28,9 @@ export function auditRouteKey(method: string, path: string) {
 const declarationsByKey = new Map<string, AuditRouteDeclaration>()
 for (const declaration of auditRouteDeclarations) {
   const key = auditRouteKey(declaration.method, declaration.path)
-  // First declaration wins at runtime; the coverage script rejects duplicates.
   if (!declarationsByKey.has(key)) declarationsByKey.set(key, declaration)
 }
 
-/** Keys declared more than once (a coverage-script failure). */
 export function duplicateAuditRouteKeys(): string[] {
   const seen = new Set<string>()
   const duplicates = new Set<string>()
@@ -45,7 +42,6 @@ export function duplicateAuditRouteKeys(): string[] {
   return [...duplicates].sort()
 }
 
-/** Exact registered `${METHOD} ${template}`; HEAD falls back to GET (Hono dispatch) and any method to ALL. */
 export function findAuditRouteDeclaration(method: string, path: string): AuditRouteDeclaration | null {
   const upper = method.toUpperCase()
   return declarationsByKey.get(auditRouteKey(upper, path))
@@ -66,14 +62,8 @@ const betterAuthDeclarations: CompiledBetterAuthDeclaration[] = auditRouteDeclar
     const segments = splitPath(declaration.path)
     return { declaration, segments, params: segments.filter((segment) => segment.startsWith(":")).length }
   })
-  // Static segments win over parameters, then registration order.
   .sort((left, right) => left.params - right.params)
 
-/**
- * Resolves a concrete better-auth request path (served by the `/api/auth/*`
- * catch-all) to the endpoint declaration "/api/auth" + endpoint.path, binding
- * `:param` segments. Never returns query strings.
- */
 export function findBetterAuthDeclaration(method: string, concretePath: string): { declaration: AuditRouteDeclaration; params: Record<string, string> } | null {
   if (!concretePath.startsWith(`${BETTER_AUTH_BASE_PATH}/`)) return null
   const upper = method.toUpperCase()

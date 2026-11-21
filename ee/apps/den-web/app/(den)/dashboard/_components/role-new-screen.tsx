@@ -38,7 +38,6 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 type ReadyAccess = Extract<PermissionsAccess, { state: "ready" }>;
 
-/** Create a named role and give it to people and teams. `requestedStart` is the address's `?start=`, e.g. "billing-manager". */
 export function RoleNewScreen({ requestedStart = null }: { requestedStart?: string | null }) {
   const permissions = usePermissionsAccess();
 
@@ -48,11 +47,6 @@ export function RoleNewScreen({ requestedStart = null }: { requestedStart?: stri
   return <SharedRoleNewContent ready={permissions} requestedStart={requestedStart && isRoleStart(requestedStart) ? requestedStart : "member"} />;
 }
 
-/**
- * A role is created by name, given to any people and teams now (each one's
- * current role is replaced, as the rows say), and starts from Member, Admin,
- * Billing manager or everything, limited to what its creator holds.
- */
 function SharedRoleNewContent({ ready, requestedStart }: { ready: ReadyAccess; requestedStart: RoleStart }) {
   const { orgContext } = useOrgDashboard();
   const router = useRouter();
@@ -66,7 +60,6 @@ function SharedRoleNewContent({ ready, requestedStart }: { ready: ReadyAccess; r
   const [name, setName] = useState("");
   const [teamIds, setTeamIds] = useState<string[]>([]);
   const [memberIds, setMemberIds] = useState<string[]>([]);
-  // Switches the person changed by hand. Choosing another starting point keeps them.
   const [overrides, setOverrides] = useState<ReadonlyMap<PermissionKey, PermissionStatus>>(new Map());
   const base = new Set(roleStartKeys(start, ready.held));
   const allowed = new Set(PERMISSION_KEYS.filter((key) => (overrides.get(key) ?? (base.has(key) ? "allow" : "deny")) === "allow"));
@@ -74,7 +67,6 @@ function SharedRoleNewContent({ ready, requestedStart }: { ready: ReadyAccess; r
   const back = { href: `${getMembersRoute(ready.orgSlug)}?tab=roles`, label: "Roles" };
   const trimmed = name.trim();
 
-  // Nobody gives themselves a role, and the owner needs none.
   const people = (orgContext?.members ?? []).filter((member) => !member.isOwner && member.id !== orgContext?.currentMember.id).map((member) => ({
     id: member.id,
     name: member.user.name || member.user.email,
@@ -109,7 +101,6 @@ function SharedRoleNewContent({ ready, requestedStart }: { ready: ReadyAccess; r
     if (!trimmed) return;
     try {
       const set = await create.mutateAsync({ name: trimmed, teamIds, memberIds, permissions: [...allowed].map((key) => ({ key, status: "allow" })) });
-      // A person and a team hold one role: whoever was an admin becomes this role, as their row said.
       const created = { kind: "custom" as const, value: customRoleValue(set.id), label: set.name, setId: set.id, allowedCount: set.allowedCount, teams: [], directMemberIds: [] };
       for (const member of orgContext?.members ?? []) {
         if (memberIds.includes(member.id)) await givePerson(member.id, { ...organizationRoles.memberRoleState(member), setId: set.id }, created);
@@ -155,7 +146,6 @@ function SharedRoleNewContent({ ready, requestedStart }: { ready: ReadyAccess; r
           options={ROLE_STARTS.map((option) => ({ value: option, label: roleStartLabel(option) }))}
           optionTestId={(option) => `role-new-start-${option}`}
         />
-        {/* Blocked, not an error: say what is left out and why (C5). */}
         {missing.length > 0 ? (
           <p className="text-[13px] text-gray-500" data-testid="role-new-start-missing">
             {`${roleStartLabel(start)} also has ${missing.join(", ")}. You don't have ${missing.length === 1 ? "that permission" : "those permissions"}, so this role starts without ${missing.length === 1 ? "it" : "them"}.`}

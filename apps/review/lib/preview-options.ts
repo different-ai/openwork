@@ -1,7 +1,6 @@
 import type { EvidenceProviderId } from "@openwork/evidence-provider";
 import type { PreviewWorld } from "@openwork/evidence-provider/review";
 
-/** Safe server-derived launch choices. Never contains credentials or access URLs. */
 export interface PreviewProviderOption {
   id: EvidenceProviderId;
   label: string;
@@ -10,7 +9,6 @@ export interface PreviewProviderOption {
   reason?: string;
 }
 
-/** Browser links must stay on the selected provider's access-controlled hosts. */
 export function previewAccessUrl(provider: EvidenceProviderId, value: string, desktop = false): boolean {
   try {
     const url = new URL(value);

@@ -86,9 +86,6 @@ export function registerGithubWebhookRoutes<T extends Env>(app: Hono<T>) {
       const ref = typeof payload.ref === "string" ? payload.ref : undefined
       const headSha = typeof payload.after === "string" ? payload.after : undefined
 
-      // Signature verified: our stored connector accounts for this installation
-      // name the organization. One installation linked to several organizations
-      // has no single tenant, so such deliveries stay in the platform store.
       if (installationId !== undefined) {
         const accounts = await db
           .select({ organizationId: ConnectorAccountTable.organizationId })

@@ -13,7 +13,6 @@ import { ConfigOverviewSection } from "./config-overview-section";
 import { ConfigSettingsSection } from "./config-settings-section";
 import { useConfigOrgReady } from "./config-blobs-parts";
 
-/** Settings › Config: an overview, then import, export, open changes and history, one tab each (`?tab=`). */
 export function ConfigScreen() {
   const { ready } = useConfigOrgReady();
   const router = useRouter();

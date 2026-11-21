@@ -18,8 +18,6 @@ import { SECTION_TITLE_CLASS } from "../../../_components/ui/dashboard-styles";
 import { analyticsHasActivity, analyticsUsageIntroFacts } from "../../_components/analytics-intro-facts";
 import { useFeatureIntro } from "../feature-intros";
 
-/* ── Formatting ── */
-
 function formatDuration(ms: number | null): string {
   if (ms === null) return "—";
   if (ms < 1000) return "<1s";
@@ -69,29 +67,21 @@ const trendCopy = {
   },
 } as const;
 
-/* ── Main screen ── */
-
 export function AnalyticsScreen() {
   const { activeOrg, orgContext } = useOrgDashboard();
   const [projectValue, setProjectValue] = useState("");
   const [granularity, setGranularity] = useState<Granularity>("day");
 
-  // Server enforces the same gate with a 402 on /v1/telemetry/analytics
-  // (entitlements.ts); this mirrors the SSO / desktop policies screens.
   const locked = Boolean(orgContext) && !orgContext?.entitlements.analytics;
 
   const projectOptions = useProjectOptions(!locked);
   const { data, isLoading, isFetching, isError, refetch } = useAnalytics(!locked, projectValue);
 
   const projectScoped = projectValue.length > 0;
-  // A workspace nobody has used yet gets one clear empty state, not a page of zeros.
   const noActivity = data !== undefined && !projectScoped && !isError && !analyticsHasActivity(data);
-  // Feature intro: the Analytics intro replaces the plan notice and "No activity yet"
-  // below the header; the tabs stay, since Plugins & connectors and Workflow runs have their own data.
   const intro = useFeatureIntro("analytics", analyticsUsageIntroFacts({ included: orgContext ? !locked : null, data, projectScoped }));
   const introShown = intro.size === "fullscreen";
   const weekly = data?.weekly ?? [];
-  // Older servers may not return daily trends; keep their weekly data usable.
   const dailyAvailable = Array.isArray(data?.daily);
   const activeGranularity: Granularity = dailyAvailable ? granularity : "week";
   const trend = activeGranularity === "day"
@@ -132,7 +122,6 @@ export function AnalyticsScreen() {
       </div>
       </div>
 
-      {/* The figures, as one strip rather than a grid of boxes. */}
       <StatStrip label="Summary" columns="grid-cols-2 md:grid-cols-3 xl:grid-cols-6">
         <StatCard
           title="OpenWork users"
@@ -167,7 +156,6 @@ export function AnalyticsScreen() {
         />
       </StatStrip>
 
-      {/* Trend charts */}
       <div className="grid gap-3 lg:grid-cols-3">
         <TrendChart isLoading={isLoading}
           title={copy.activeTitle}
@@ -195,7 +183,6 @@ export function AnalyticsScreen() {
         />
       </div>
 
-      {/* Model usage */}
       <div>
         <h2 className={SECTION_TITLE_CLASS}>Models</h2>
         <div className="mt-3 grid gap-3 lg:grid-cols-[minmax(0,2fr)_minmax(280px,1fr)]">
@@ -217,7 +204,6 @@ export function AnalyticsScreen() {
         </div>
       </div>
 
-      {/* Privacy note */}
       <p className="border-t border-[var(--den-list-line)] pt-4 text-xs leading-5 text-[var(--dls-text-secondary)]">
         Telemetry never includes prompt contents, code, file contents, diffs, secrets, or terminal output.
         Usage data appears here once members sign in to the OpenWork app and start running tasks.

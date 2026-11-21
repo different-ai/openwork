@@ -9,10 +9,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null
 }
 
-/**
- * MySQL "table doesn't exist" (errno 1146) for a resume grant table (`table`, or either of them), through Drizzle's
- * wrapper (`cause`) or PlanetScale's (`body`). Any other error, including a missing table elsewhere, is not this.
- */
 export function isMissingResumeTableError(error: unknown, table?: ResumeTable): boolean {
   if (!isRecord(error)) return false
   const message = typeof error.message === "string" ? error.message : ""
@@ -21,11 +17,6 @@ export function isMissingResumeTableError(error: unknown, table?: ResumeTable): 
   return isMissingResumeTableError(error.cause, table) || isMissingResumeTableError(error.body, table)
 }
 
-/**
- * Runs resume-grant cleanup on another flow's path (user deletion) for one table. Until the migration that creates
- * the table has run it holds no rows, so a missing table means nothing to delete and the surrounding flow must not
- * fail because den-api deployed before its migration finished. Every other error is thrown.
- */
 export async function unlessResumeTableMissing(table: ResumeTable, work: () => Promise<unknown>): Promise<void> {
   try {
     await work()
@@ -37,21 +28,6 @@ export async function unlessResumeTableMissing(table: ResumeTable, work: () => P
 type OrganizationId = typeof HeadlessResumeGrantTable.$inferSelect.organizationId
 type UserId = typeof HeadlessResumeGrantTable.$inferSelect.userId
 
-/**
- * Revokes every resume grant (resume-grants.ts) one person holds in one organization, so the headless runner can no
- * longer get tokens for their turns there. Called first in the membership credential revocation path (member
- * removed, role or role permissions changed, ownership transferred), before any token is deleted. Kept apart from
- * resume-grants.ts so the revocation path does not import the token minter. User deletion deletes the rows instead
- * (user-deletion.ts and the admin user deletion route).
- *
- * The revocation moment is recorded first, then live grants are marked revoked. A grant being minted concurrently is
- * not in the sweep, but it was authorized before this moment, so the exchange refuses it (see
- * headlessResumeGrantAuthorizedBeforeRevocation): no ordering of the two writes lets it through.
- *
- * Before the migrations run: with neither table there can be no grant, so there is nothing to revoke. With grants but
- * no revocation table (a half-applied migration), the grants are still marked revoked and then the error is thrown:
- * without the watermark a concurrently minted grant could survive, so the revocation must not report success.
- */
 export async function revokeHeadlessResumeGrantsForMember(input: { organizationId: OrganizationId; userId: UserId; now?: Date }): Promise<number> {
   const now = input.now ?? new Date()
   let watermarkError: unknown = null
@@ -66,7 +42,6 @@ export async function revokeHeadlessResumeGrantsForMember(input: { organizationI
   }
   let revoked = 0
   try {
-    // primary: sweep grants minted moments ago too.
     const live = await db.$primary
       .select({ id: HeadlessResumeGrantTable.id })
       .from(HeadlessResumeGrantTable)
@@ -83,7 +58,6 @@ export async function revokeHeadlessResumeGrantsForMember(input: { organizationI
       revoked = live.length
     }
   } catch (error) {
-    // No grant table yet: no grant can exist, so nothing can survive this revocation.
     if (isMissingResumeTableError(error, "headless_resume_grant")) return 0
     throw error
   }

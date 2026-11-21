@@ -60,23 +60,17 @@ export type DomainSsoRequirement = {
   organizationName: string
   signInPath: string
   policy: OrganizationSsoPolicy
-  /** Multi-organization routing; false on single-organization deployments. */
   perOrganization: boolean
 }
 
 export type LoginSsoRouting =
-  /** No SSO applies: the usual sign-in step. */
   | { kind: "none" }
-  /** SSO is the only way in (today's behavior, single-organization SSO, or a restricted domain). */
   | { kind: "sso_only" }
-  /** SSO is offered first; the usual methods stay available. */
   | { kind: "sso_preferred"; ssoRequired: boolean }
 
 export function resolveLoginSsoRouting(input: {
-  /** Single-organization deployment with SSO configured: unchanged, always SSO. */
   singletonSso: boolean
   requirement: DomainSsoRequirement | null
-  /** Organization of a valid pending invitation addressed to this email, when the sign-in names one. */
   invitationOrganizationId: string | null
 }): LoginSsoRouting {
   if (input.singletonSso) return { kind: "sso_only" }
@@ -84,8 +78,6 @@ export function resolveLoginSsoRouting(input: {
   if (!requirement) return { kind: "none" }
   if (!requirement.perOrganization) return { kind: "sso_only" }
   if (requirement.policy.restrictDomainToSso) return { kind: "sso_only" }
-  // An invitation to another organization is the person's way in there; the
-  // domain's SSO organization does not get to redirect it.
   if (input.invitationOrganizationId && input.invitationOrganizationId !== requirement.organizationId) {
     return { kind: "none" }
   }
@@ -97,9 +89,7 @@ export type SignInSsoCandidate = {
   organizationId: string
   policy: OrganizationSsoPolicy
   perOrganization: boolean
-  /** The email's domain is this organization's verified SSO domain. */
   emailOnVerifiedDomain: boolean
-  /** The person is an active member of the organization. */
   member: boolean
 }
 
@@ -116,7 +106,5 @@ export function blocksNonSsoSignIn(candidate: SignInSsoCandidate) {
 
 /** Whether signing in with a verified email on the domain still joins the organization automatically. */
 export function allowsVerifiedDomainAutoJoin(input: { policy: OrganizationSsoPolicy; perOrganization: boolean }) {
-  // An organization that requires SSO gets its members through SSO sign-up,
-  // so a password or Google session never lands in it as a fresh member.
   return !input.perOrganization || !organizationRequiresSsoSession(input.policy)
 }

@@ -17,7 +17,6 @@ type DashboardTileShellProps = {
   badge?: ReactNode;
   onRefresh?: () => void;
   refreshing?: boolean;
-  /** A healthy App supplies its own visual shell; keep host actions out of its layout. */
   compact?: boolean;
   children: ReactNode;
 };
@@ -53,7 +52,6 @@ export function DashboardTileShell({ title, entryId, subtitle, badge, onRefresh,
           ) : null}
         </header>
       ) : null}
-      {/* Keep this parent stable: changing recovery chrome must not remount a live iframe. */}
       <div className={compact ? "min-w-0" : "flex min-h-0 flex-1 flex-col overflow-y-auto px-3 pb-3"}>{children}</div>
       {actionsPlacement !== "header" && (renderActions || (compact && onRefresh)) ? (
         <div className={cn("absolute right-1 top-1 z-10", compact && "opacity-100 transition-opacity [@media(hover:hover)]:opacity-0 [@media(hover:hover)]:group-hover/tile:opacity-100 focus-within:opacity-100")}>

@@ -31,7 +31,6 @@ const settingsInputSchema = organizationAiGatewaySettingsSchema.partial().strict
   .meta({ ref: "OrganizationAiGatewaySettingsInput" })
 const createInputSchema = z.object({
   name: gatewayApiKeyNameSchema,
-  /** When the key stops working (ISO 8601); omit or null for a key that never expires. Must be in the future. */
   expiresAt: z.string().datetime({ offset: true }).nullable().optional(),
 }).strict().meta({ ref: "CreateGatewayApiKeyRequest" })
 const apiKeyParamsSchema = z.object({ apiKeyId: denTypeIdSchema("gatewayApiKey") })
@@ -41,10 +40,6 @@ const unauthorized = jsonResponse("Authentication required.", unauthorizedSchema
 const notFound = jsonResponse("The organization was not found.", notFoundSchema)
 const keyNotFound = jsonResponse("No such active key.", notFoundSchema)
 
-/**
- * AI Gateway API keys for 3rd party tools: the organization setting in
- * Settings › General, each member's own keys in Library › Models, and every key in AI Gateway › API Keys.
- */
 export function registerOrgGatewayApiKeyRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get(
     "/v1/org/ai-gateway-settings",

@@ -4,17 +4,8 @@ import { OpenworkServerError, type OpenworkServerClient, type WorkspaceDefaultMo
 import type { ResolvedWorkspaceEndpoint } from "../../app/lib/workspace-endpoint";
 import type { ModelRef } from "../../app/types";
 
-/**
- * Mirrors the model a new chat in a workspace would use onto that workspace's
- * OpenWork server, so background callers (automations, remote sessions, cloud
- * workers) start sessions on the same model instead of a stale engine default.
- * Best effort: failures are swallowed and never reach the UI.
- */
-
 export type WorkspaceDefaultModelSyncTarget = {
-  /** Identifies the OpenWork server; an older server without the route disables sync for all its workspaces. */
   serverKey: string;
-  /** Identifies the workspace (and credentials) on that server for dedupe. */
   workspaceKey: string;
   put: (model: WorkspaceDefaultModelRef | null) => Promise<unknown>;
 };
@@ -31,7 +22,6 @@ const defaultScheduleTimer: ScheduleTimer = (run, ms) => {
   return () => clearTimeout(id);
 };
 
-/** A 404 that is not about the workspace means the server predates the route. */
 function isMissingRoute(error: unknown): boolean {
   return error instanceof OpenworkServerError && error.status === 404 && error.code !== "workspace_not_found";
 }
@@ -65,7 +55,6 @@ export class WorkspaceDefaultModelSync {
     return this.disabledServers.has(serverKey);
   }
 
-  /** Queue a write of `model`; repeated or unchanged values within the debounce window collapse into one PUT. */
   schedule(target: WorkspaceDefaultModelSyncTarget, model: WorkspaceDefaultModelRef | null): void {
     if (this.disabledServers.has(target.serverKey)) return;
     const key = this.key(target);
@@ -82,7 +71,6 @@ export class WorkspaceDefaultModelSync {
     this.pending.set(key, { cancel, serialized });
   }
 
-  /** Forget what a workspace was sent (e.g. its server disconnected) so the next schedule writes again. */
   forget(target: Pick<WorkspaceDefaultModelSyncTarget, "serverKey" | "workspaceKey">): void {
     const key = JSON.stringify([target.serverKey, target.workspaceKey]);
     this.pending.get(key)?.cancel();
@@ -90,7 +78,6 @@ export class WorkspaceDefaultModelSync {
     this.sent.delete(key);
   }
 
-  /** Resolves once every queued write has settled. */
   async idle(): Promise<void> {
     await Promise.all([...this.queues.values()]);
   }
@@ -126,12 +113,9 @@ export type UseWorkspaceDefaultModelSyncInput = {
   endpoint: (Pick<ResolvedWorkspaceEndpoint, "baseUrl" | "token" | "workspaceId"> & {
     client: Pick<OpenworkServerClient, "setWorkspaceDefaultModel">;
   }) | null;
-  /** False while the workspace's server is unreachable; a reconnect writes again. */
   connected: boolean;
-  /** The model a new chat would actually use (after dropping unavailable Auto). */
   model: ModelRef | null;
   variant: string | null;
-  /** True while entitlement is still being checked and the effective model is not known yet. */
   pending: boolean;
   sync?: WorkspaceDefaultModelSync;
 };
@@ -153,8 +137,6 @@ export function useWorkspaceDefaultModelSync(input: UseWorkspaceDefaultModelSync
       return;
     }
     if (pending) return;
-    // With no usable model right now (e.g. Auto is unavailable and nothing
-    // else is set), keep the server's last default instead of clearing it.
     const payload = workspaceDefaultModelPayload({ providerID, modelID }, variant);
     if (!payload) return;
     sync.schedule({

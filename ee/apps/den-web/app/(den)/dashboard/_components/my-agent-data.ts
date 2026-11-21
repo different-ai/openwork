@@ -13,11 +13,6 @@ import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-fl
 import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
-/**
- * My agent: the member's own agent, read from and changed through `/v1/me/agent`, the same
- * API chat uses through Connect. A change here is saved as from the page.
- */
-
 const agentPath = "/v1/me/agent";
 
 export function myAgentQueryKey(orgId: string): string[] {
@@ -29,7 +24,6 @@ export function useMyAgent(orgId: string, enabled = true) {
     queryKey: myAgentQueryKey(orgId),
     enabled: enabled && Boolean(orgId),
     retry: false,
-    // Checks land in the background; keep the last check current while the page is open.
     refetchInterval: 60_000,
     queryFn: async ({ signal }): Promise<MemberAgentView> => {
       const { response, payload } = await requestJson(agentPath, { method: "GET", headers: { [ORG_SCOPE_HEADER]: orgId }, cache: "no-store", signal }, 15000);
@@ -41,7 +35,6 @@ export function useMyAgent(orgId: string, enabled = true) {
   });
 }
 
-/** The week's checks, for "Earlier this week"; loaded when it is opened. */
 export function useMyAgentChecks(orgId: string, enabled: boolean) {
   return useQuery({
     queryKey: [...myAgentQueryKey(orgId), "checks"],
@@ -57,7 +50,6 @@ export function useMyAgentChecks(orgId: string, enabled: boolean) {
   });
 }
 
-/** Saves one change and shows the agent as Den saved it. */
 export function useSaveMyAgent(orgId: string) {
   const queryClient = useQueryClient();
   const { runReauthableAction } = useOrgDashboard();

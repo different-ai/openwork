@@ -1,15 +1,9 @@
-/**
- * Shared completion page for OAuth callbacks. Used by both external MCP
- * connection callbacks and native provider callbacks.
- */
-
 import type { WorkbotOAuthReturn } from "../workbot/connect-return-schema.js"
 
 export function escapeHtml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
 }
 
-/** A link to the provider page where the person fixes the failure. */
 export type ConnectCallbackFixLink = { label: string; href: string }
 
 function safeFixLink(link: ConnectCallbackFixLink | undefined): ConnectCallbackFixLink | undefined {
@@ -26,7 +20,6 @@ export function connectCallbackPage(input:
   | { ok: false; name: string; message: string; referenceId?: string; fixLink?: ConnectCallbackFixLink }, workbotReturn?: WorkbotOAuthReturn & { connectionId: string }): string {
   const fixLink = input.ok ? undefined : safeFixLink(input.fixLink)
   const brand = workbotReturn ? "Workbot" : "OpenWork"
-  // Finishing OAuth is not a readiness check. Workbot verifies the usable connection on return.
   const title = workbotReturn ? input.ok ? `Signed in to ${input.name}` : "Connection not verified" : input.ok ? "You're connected" : "Connection failed"
   const body = workbotReturn
     ? input.ok
@@ -48,7 +41,6 @@ export function connectCallbackPage(input:
       ${fixLink ? `<p><a class="fix-link" href="${escapeHtml(fixLink.href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(fixLink.label)}</a></p>` : ""}
       ${input.referenceId ? `<p class="reference">Diagnostic reference: <code>${escapeHtml(input.referenceId)}</code></p>` : ""}
       <p>Return to OpenWork to try connecting again. You can close this window.</p>`
-  // No token, account detail, or provider error crosses the popup boundary. The opener must re-read readiness.
   const completion = workbotReturn ? JSON.stringify({ type: "openwork:connection-result", requestId: workbotReturn.requestId, connectionId: workbotReturn.connectionId, ok: input.ok }).replace(/</g, "\\u003c") : null
   const returnUrl = workbotReturn ? new URL(workbotReturn.returnPath, workbotReturn.origin).toString() : null
   const targetOrigin = workbotReturn ? JSON.stringify(workbotReturn.origin).replace(/</g, "\\u003c") : null
@@ -63,12 +55,6 @@ export function connectCallbackPage(input:
   })
 }
 
-/**
- * Shown before anything is exchanged when the provider's reply reaches a
- * browser with no OpenWork session: names the account the connection will
- * belong to, and continues only on a click. The form resubmits the reply to
- * the same callback with the confirmation Den issued for it.
- */
 export function connectConfirmationPage(input: {
   name: string
   accountEmail: string

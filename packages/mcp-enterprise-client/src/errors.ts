@@ -145,7 +145,6 @@ export class EnterpriseMcpOAuthContractError extends Error {
 export class EnterpriseMcpToolResultError extends Error {
   readonly code = "MCP_TOOL_REPORTED_ERROR"
   readonly providerSignal: Record<string, unknown> | undefined
-  /** The provider's own explanation of the failure. Untrusted: the host redacts and shortens it before showing it, and it never enters the message or diagnostic events. */
   readonly providerText: string[]
 
   constructor(result?: unknown) {

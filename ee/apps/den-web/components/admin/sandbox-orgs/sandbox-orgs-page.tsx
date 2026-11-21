@@ -33,9 +33,7 @@ const stateLabel = { open: "Open", expired: "Ended", closed: "Closed" } as const
 
 type Draft = { name: string; connectorBaseUrl: string; days: string; memberLimit: string; domains: string; joinRole: SandboxJoinRole; creditUsd: string; models: string[]; modelQuery: string };
 const freshDraft = (defaults: SandboxList["defaults"]): Draft => ({ name: "", connectorBaseUrl: defaults?.workplaceUrl ?? "", days: "14", memberLimit: "50", domains: "", joinRole: "super-admin", creditUsd: defaults?.creditUsd ? String(defaults.creditUsd) : "", models: [...(defaults?.gatewayModels ?? [])], modelQuery: "" });
-/** Model ids are case-sensitive catalog ids; only stray spaces are dropped. */
 const modelKey = (value: string) => value.trim();
-/** The chosen models plus an id still typed in the box, so text that was never entered is not lost. */
 const chosenModels = (draft: Draft) => [...new Set([...draft.models, modelKey(draft.modelQuery)].filter(Boolean))];
 const dollars = (value: number) => `$${value.toFixed(value % 1 === 0 ? 0 : 2)}`;
 const CREDIT_STEP_USD = 25;
@@ -56,9 +54,7 @@ export function SandboxOrgsPage() {
   const savingRef = useRef(false);
   const [draft, setDraft] = useState<Draft | null>(null);
   const [notice, setNotice] = useState("");
-  // The admin picks this sandbox's AI Gateway models, starting from the deployment's list.
   const canChooseModels = Boolean(data?.defaults?.modelChoice && data.defaults.gatewayModels.length);
-  // The models to pick from, loaded when the form first opens. null while loading; available false when it failed.
   const [modelOptions, setModelOptions] = useState<SandboxModelOptions | null>(null);
   const formOpen = draft !== null;
   const providerId = data?.defaults?.gatewayProviderId ?? "";
@@ -124,7 +120,6 @@ export function SandboxOrgsPage() {
       allowedEmailDomains: draft.domains.split(/[\s,]+/).map(value => value.trim().toLowerCase()).filter(Boolean),
       joinRole: draft.joinRole,
       ...(draft.creditUsd ? { creditUsd: Number(draft.creditUsd) } : {}),
-      // Sent only when the admin changed the list, so an unchanged form creates what it always did.
       ...(modelsChosen ? { modelIds: models } : {}),
     };
     if (await mutate(base, body, `Created ${body.name}. Copy its join link below.`)) setDraft(null);

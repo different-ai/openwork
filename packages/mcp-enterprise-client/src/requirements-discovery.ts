@@ -110,7 +110,6 @@ function boundedResponse(response: Response, signal: AbortSignal): Response {
   })
 }
 
-/** DNS guards and injected fetch ports may finish after cancellation. Fence them too. */
 function abortableResponse(pending: Promise<Response>, signal: AbortSignal): Promise<Response> {
   return new Promise((resolve, reject) => {
     let aborted = false
@@ -151,8 +150,6 @@ function scopedFetch(input: {
 }
 
 function metadataRequirement(metadata: AuthorizationServerMetadata): EnterpriseMcpAuthorizationServerRequirement | undefined {
-  // Issuer verification is not permission to disclose credentials embedded in a
-  // published URL. Keep exact trusted identifiers only when all URLs are safe.
   const urls = [metadata.issuer, metadata.authorization_endpoint, metadata.token_endpoint, metadata.registration_endpoint]
   if (urls.some((url) => url !== undefined && !manualOAuthEndpointSchema.safeParse(url).success)) return undefined
   return {
@@ -188,10 +185,6 @@ async function discoverBoundAuthorizationServerMetadata(input: {
     mismatch = error
   }
 
-  // A few providers advertise the protected resource as a discovery alias.
-  // The strict SDK mismatch exposes only the parsed issuer identifier. Treat
-  // that value as a pointer, independently rediscover it with RFC 8414 issuer
-  // validation enabled, and never consume endpoints from the alias document.
   const canonical = await discoverAuthorizationServerMetadata(canonicalIssuer, { fetchFn: input.fetch })
   if (!canonical) throw mismatch
   return canonical
@@ -302,11 +295,8 @@ export async function discoverConnectionRequirements(
             negotiation = typeof request === "object" && request !== null && "method" in request
               && (request.method === "server/discover" || request.method === "initialize")
           } catch {
-            // Unknown request bodies cannot supply a negotiation badge.
           }
         }
-        // Follow the actual negotiation attempt, not a failed modern probe or
-        // the initialized notification sent before client.connect resolves.
         if (negotiation) negotiationHttpStatus = undefined
         const response = await fetch(url, init)
         if (negotiation) negotiationHttpStatus = response.status
@@ -357,7 +347,6 @@ export async function discoverConnectionRequirements(
       try {
         await client?.close()
       } catch {
-        // Discovery results remain useful even when best-effort transport cleanup fails.
       }
     }
 
@@ -366,7 +355,6 @@ export async function discoverConnectionRequirements(
     let resourceMetadata: Awaited<ReturnType<typeof discoverOAuthProtectedResourceMetadata>> | undefined
     let resourceHttpStatus: number | undefined
     const resourceFetch: EnterpriseMcpFetch = async (url, init) => {
-      // A later network failure has no HTTP status; do not reuse a fallback's 404.
       resourceHttpStatus = undefined
       const response = await fetch(url, init)
       resourceHttpStatus = response.status
@@ -396,7 +384,6 @@ export async function discoverConnectionRequirements(
       .slice(0, input.maxAuthorizationServers ?? DEFAULT_MAX_AUTHORIZATION_SERVERS)
     const authorizationServers: EnterpriseMcpAuthorizationServerRequirement[] = []
     const publishedSignInAddresses: NonNullable<EnterpriseMcpConnectionRequirements["publishedSignInAddresses"]> = []
-    // A bounded discovery must not claim to have validated issuers it did not inspect.
     let providerFailure: EnterpriseMcpDiscoveryCheck["code"] = (resourceMetadata?.authorization_servers?.length ?? 0) > advertisedIssuers.length
       ? "unsupported"
       : undefined
@@ -410,8 +397,6 @@ export async function discoverConnectionRequirements(
     if (advertisedIssuers.length) emit({ id: "provider", status: "running" })
     else emit({ id: "provider", status: "skipped", code: providerFailure ?? (authenticationRequired ? "unavailable" : "not_required") })
     for (const issuer of advertisedIssuers) {
-      // Observe the already-fetched document, separately from strict SDK validation.
-      // Never follow a URL from a failed document to obtain these suggestions.
       const candidates: Array<{ authorizationEndpoint: string; tokenEndpoint: string; metadataIssuer: string }> = []
       let issuerHttpStatus: number | undefined
       let issuerSuccessfulHttpStatus: number | undefined
@@ -419,8 +404,6 @@ export async function discoverConnectionRequirements(
         issuerHttpStatus = undefined
         const response = await fetch(url, { ...init, redirect: "manual", credentials: "omit" })
         issuerHttpStatus = response.status
-        // Alias recovery can rethrow an earlier mismatch after canonical 404s.
-        // That mismatch belongs to the successful document, not the later 404.
         if (response.ok) issuerSuccessfulHttpStatus = response.status
         if (response.status === 200 && response.headers.get("content-type")?.split(";", 1)[0]?.trim() === "application/json") {
           const metadata = OAuthMetadataSchema.safeParse(await response.clone().json().catch(() => undefined))
@@ -463,7 +446,6 @@ export async function discoverConnectionRequirements(
       for (const candidate of candidates) publishedSignInAddresses.push({ ...candidate, advertisedIssuer: safeOAuthIssuerLabel(issuer) })
     }
 
-    // One badge must not hide mixed failures or borrow a successful issuer's status.
     const providerHttpStatus = providerFailure
       ? providerFailureStatuses.every(status => status === providerFailureStatuses[0]) ? providerFailureStatuses[0] : undefined
       : providerValidatedHttpStatus
@@ -536,7 +518,6 @@ export async function discoverConnectionRequirements(
     }
   } finally {
     clearTimeout(timeout)
-    // Release unconsumed challenge/cleanup bodies and fence late SDK work.
     controller.abort()
   }
 }

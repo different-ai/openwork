@@ -52,7 +52,6 @@ const replaceTargetSchema = z.object({
 
 const sessionDescription = "Prepare a Google Drive resumable upload session for an explicitly requested file upload. This does not upload bytes or prove completion. Clients with file transport can PUT local bytes directly to the returned secret uploadUrl, outside model context. With fileId the upload replaces that file's content as a new Drive version; with convertTo a new Office file becomes a native Google file. Google sessions can remain valid for up to one week; they are not short-lived signed URLs. Do not automatically create another session after an uncertain result. Final PUT returns file metadata, including headRevisionId and md5Checksum for later replaces. Uses the selected connection."
 
-/** Shared implementation: native capability selects via signed headers; hosts via explicit connectionId. */
 export function registerGoogleDriveUploadRoutes<T extends { Variables: OrgRouteVariables }>(routeApp: Hono<T>, dependencies: GoogleWorkspaceActionDependencies) {
   const app = new Hono<{ Variables: OrgRouteVariables }>()
   const errorSchema = z.object({ error: z.string(), message: z.string() })
@@ -77,8 +76,6 @@ export function registerGoogleDriveUploadRoutes<T extends { Variables: OrgRouteV
     }
     let replaces: { fileId: string; previousRevision: string | null } | undefined
     if (input.fileId) {
-      // Check-then-write: Drive has no compare-and-swap for content, so this
-      // narrows the window and the replaced version stays in Drive's history.
       const metadataUrl = new URL(`${base}/drive/v3/files/${encodeURIComponent(input.fileId)}`)
       metadataUrl.searchParams.set("supportsAllDrives", "true")
       metadataUrl.searchParams.set("fields", "id,mimeType,trashed,headRevisionId,version,modifiedTime")

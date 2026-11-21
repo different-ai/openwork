@@ -55,8 +55,6 @@ import {
   DEFAULT_OPENWORK_MARKETPLACE_NAME,
 } from "../org/plugin-system/default-marketplaces.js"
 
-// Long enough to come back the next day or after a weekend; the 15-minute
-// pre-claim tokens and claim codes are separate, shorter clocks.
 const BOOTSTRAP_TTL_MS = 1000 * 60 * 60 * 72
 const BOOTSTRAP_RATE_LIMIT_WINDOW_MS = 1000 * 60 * 60
 const BOOTSTRAP_RATE_LIMIT_MAX = 5
@@ -68,16 +66,7 @@ const bootstrapWorkspaceSchema = z.object({
   skillName: z.string().trim().min(1).max(120).default("First OpenWork Skill"),
   devicePublicKey: z.string().trim().min(16).max(4096).optional(),
   claimRoles: z.array(z.enum(["owner", "admin", "member"])).min(1).max(3).default(["owner"]),
-  // Optional. Not persisted and not a security boundary - the claim token is
-  // the only thing that authorizes a claim. This is purely passed through
-  // into the owner claim link so the claim page can pre-fill (not lock) the
-  // email field for a smoother human handoff.
   ownerEmail: z.string().trim().toLowerCase().email().max(255).optional(),
-  // Optional teammate emails to invite as soon as the workspace is claimed.
-  // Not actionable until a human claims ownership (a provisional workspace
-  // has no authenticated member yet), so these ride along on the owner
-  // claim link and are sent through the existing /v1/invitations endpoint
-  // by the claim page right after a successful claim.
   teammateEmails: z.array(z.string().trim().toLowerCase().email().max(255)).max(10).optional(),
 })
 
@@ -143,7 +132,6 @@ const userCodeParamsSchema = z.object({
 
 const acceptClaimCodeSchema = z.object({
   userCode: z.string().trim().min(4).max(32),
-  // Only "keep as a new organization" exists today.
   mode: z.literal("new_org").default("new_org"),
 })
 
@@ -186,12 +174,6 @@ async function readPreclaimAssertion(headers: Headers, bootstrapId: string) {
   return { ok: true as const, bootstrap: checked.bootstrap, revoked: checked.revoked }
 }
 
-/**
- * Audit attribution for a verified bootstrap credential: the provisional
- * organization it is bound to, actor = the authenticated user (the setup agent
- * with its setup member for pre-claim assertions; the claiming person, not
- * yet a member, for claim codes/links).
- */
 async function attributeBootstrap(c: Context, input: { organizationId: string; userId: string | null; memberId?: string | null }) {
   const attribution = input.userId ? auditSessionUserAttribution(input.userId, input.memberId) : null
   if (!attribution) return null
@@ -203,7 +185,6 @@ function sha256(value: string) {
   return createHash("sha256").update(value).digest("hex")
 }
 
-/** Teammates saved at setup, handed to the new owner to invite. */
 async function teammateInvitesFor(bootstrapId: string, role: string): Promise<{ teammateEmails?: string[] }> {
   if (role !== "owner") return {}
   const [row] = await db
@@ -242,7 +223,6 @@ function skillMetadata(skillText: string) {
 }
 
 async function checkBootstrapRateLimit(key: string, now: number) {
-  // primary: the counter is read back right after earlier requests wrote it.
   const [row] = await db.$primary
     .select({ id: RateLimitTable.id, count: RateLimitTable.count, lastRequest: RateLimitTable.lastRequest })
     .from(RateLimitTable)
@@ -277,11 +257,6 @@ async function enforceBootstrapRateLimit(headers: Headers) {
 
 type BootstrapTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 
-/**
- * Make a signed-in person a member of a provisional workspace (owner for the
- * claim-code flow) and retire the setup member. Shared by claim links and
- * claim codes so both end in the same state.
- */
 async function transferProvisionalWorkspace(tx: BootstrapTransaction, claim: {
   organizationId: typeof OrganizationTable.$inferSelect.id
   organization: typeof OrganizationTable.$inferSelect
@@ -335,9 +310,6 @@ async function transferProvisionalWorkspace(tx: BootstrapTransaction, claim: {
         ...readOrganizationMetadata(metadata.bootstrap),
         provisional: false,
         claimedAt: now.toISOString(),
-        // Preserve existing claim attribution: this is the authenticated
-        // account's internal ID stored at runtime, not a customer identity
-        // embedded in public source or fixtures.
         claimedByUserId: normalizedUserId,
       },
     },
@@ -368,8 +340,6 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
       }
 
       const input = c.req.valid("json")
-      // Expiry cleanup rides on new bootstraps: retire a few unclaimed,
-      // expired workspaces' setup agents. Never blocks or fails this request.
       void retireExpiredPreclaimWorkspaces().catch(() => undefined)
       const expiresAt = new Date(Date.now() + BOOTSTRAP_TTL_MS)
       const skillText = starterSkillText(input.skillName)
@@ -394,8 +364,6 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
           },
         })
 
-        // The setup member is a sign-in-less agent user so the pre-claim
-        // assertion can authenticate as a real principal on the MCP gateway.
         const agentUser = agentUserValues(bootstrapId)
         const assertionJti = randomBytes(18).toString("base64url")
         await tx.insert(AuthUserTable).values(agentUser)
@@ -637,8 +605,6 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
       const tokenHash = sha256(input.token)
       const normalizedUserId = normalizeDenTypeId("user", user.id)
 
-      // Resolve the claim's organization (no lock) to record the intent before
-      // the locking transfer transaction below.
       const [pendingClaim] = await db
         .select({ organizationId: WorkspaceClaimTable.organizationId })
         .from(WorkspaceClaimTable)
@@ -717,10 +683,7 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
       if (session?.id) {
         await setSessionActiveOrganization(normalizeDenTypeId("session", session.id), result.organization.id)
       }
-      // Same as any other join: billing follows the new user count and the
-      // member gets a gateway key.
       await runPostOrganizationMemberChangeHooks({ organizationId: result.organization.id, memberId: result.memberId, change: "added" })
-      // A claim link also ends the agent's pre-claim credentials.
       await revokePreclaimCredentials(result.bootstrapId)
       await retirePreclaimAgent(result.bootstrapId)
       await db.update(WorkspaceClaimCodeTable).set({ state: "cancelled" }).where(and(eq(WorkspaceClaimCodeTable.bootstrapId, result.bootstrapId), eq(WorkspaceClaimCodeTable.state, "pending")))
@@ -866,7 +829,6 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
         await tx.update(WorkspaceClaimCodeTable)
           .set({ state: "accepted", claimedByUserId: normalizedUserId, acceptedAt: now })
           .where(eq(WorkspaceClaimCodeTable.id, code.id))
-        // Unused claim links stop working once the workspace has an owner.
         await tx.update(WorkspaceClaimTable)
           .set({ status: "cancelled" })
           .where(and(eq(WorkspaceClaimTable.bootstrapId, normalizeDenTypeId("workspaceBootstrap", lookup.bootstrapId)), eq(WorkspaceClaimTable.status, "pending")))
@@ -885,7 +847,6 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
         return c.json({ error: "membership_removed", message: "Your access to this workspace was removed. Ask a workspace admin for a new invite." }, 403)
       }
 
-      // Reconcile: revoke the assertion and every pre-claim token, then mark it.
       await revokePreclaimCredentials(lookup.bootstrapId, now)
       await retirePreclaimAgent(lookup.bootstrapId, now)
       await db.update(WorkspaceClaimCodeTable)
@@ -894,8 +855,6 @@ export function registerBootstrapRoutes<T extends { Variables: AuthContextVariab
       if (session?.id) {
         await setSessionActiveOrganization(normalizeDenTypeId("session", session.id), result.organization.id)
       }
-      // Same as any other join: billing follows the new user count and the
-      // member gets a gateway key.
       await runPostOrganizationMemberChangeHooks({ organizationId: result.organization.id, memberId: result.memberId, change: "added" })
       return c.json({ ok: true, organization: result.organization, ...(await teammateInvitesFor(lookup.bootstrapId, result.organization.role)) })
     },

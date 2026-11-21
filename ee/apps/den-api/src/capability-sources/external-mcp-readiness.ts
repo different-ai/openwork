@@ -20,7 +20,6 @@ export const READINESS_FAILURE_REASONS = {
   tools_unreadable: "The service answered but its tools couldn't be read. Check the connection address and settings.",
 } satisfies Record<ExternalMcpReadinessFailure, string>
 
-/** Why a readiness check of a working sign-in did not pass. */
 export function readinessFailureForDiagnostic(diagnostic: ExternalMcpDiagnostic): ExternalMcpReadinessFailure {
   if (diagnostic.code === EXTERNAL_MCP_SLACK_MCP_ACCESS_DISABLED_CODE) return "provider_setup_required"
   if (diagnostic.category === "provider_unavailable" || diagnostic.category === "oauth_provider_unavailable") return "unavailable"
@@ -29,22 +28,15 @@ export function readinessFailureForDiagnostic(diagnostic: ExternalMcpDiagnostic)
   return "tools_unreadable"
 }
 
-/** Why a sign-in that came back to Den did not leave a working connection. */
 function connectAttemptFailure(diagnostic: ExternalMcpDiagnostic): ExternalMcpReadinessFailure {
   const failure = readinessFailureForDiagnostic(diagnostic)
   if (failure !== "tools_unreadable" && failure !== "sign_in_rejected") return failure
   if (diagnostic.phase.startsWith("AUTH_") || diagnostic.phase === "CONFIGURATION" || diagnostic.phase === "CONTINUITY_REFRESH") {
-    // Signing in again only helps when the person signing in can fix it.
     return diagnostic.actionOwner === "member" ? "sign_in_rejected" : "setup_required"
   }
   return failure
 }
 
-/**
- * The stored fields of a failed check or sign-in attempt. Only server-written
- * copy is kept: the diagnostic message for a code whose message Den writes
- * itself, otherwise the fixed reason for the failure. Never provider prose.
- */
 export function failedReadinessFields(diagnostic: ExternalMcpDiagnostic, failure: ExternalMcpReadinessFailure) {
   const serverWritten = diagnostic.code === EXTERNAL_MCP_SLACK_MCP_ACCESS_DISABLED_CODE
   const providerSettingsUrl = serverWritten ? slackAppSettingsUrl(diagnostic.providerSettingsUrl) : undefined
@@ -57,16 +49,6 @@ export function failedReadinessFields(diagnostic: ExternalMcpDiagnostic, failure
   }
 }
 
-/**
- * Records why a sign-in that returned to Den failed, so the apps can show it
- * instead of waiting for a connection that will not appear. Per-member
- * connections keep it on the member's connected-account row, which carries
- * no credential here (it is created without one when missing); shared
- * connections keep it on the connection. Nothing is recorded while a working
- * credential remains: a failed re-sign-in must not hide a connection that
- * still works. The fingerprint binds it to the current sign-in state, so a
- * later sign-in or check replaces it.
- */
 export async function recordFailedConnectAttempt(input: {
   connection: ExternalMcpConnectionRow
   memberId: DenTypeId<"member">
@@ -92,7 +74,6 @@ export async function recordFailedConnectAttempt(input: {
         isNull(ConnectedAccountTable.accessToken),
       ))
     } else {
-      // A concurrent sign-in that created the row first wins.
       await db.insert(ConnectedAccountTable).ignore().values({
         id: createDenTypeId("connectedAccount"),
         organizationId: connection.organizationId,
@@ -120,8 +101,6 @@ export async function recordFailedConnectAttempt(input: {
   return true
 }
 
-// A successful probe of someone else's account never makes this member Ready.
-// Configuration and credential revisions keep an old check from verifying a replacement.
 export function readinessFingerprint(connection: ExternalMcpConnectionRow, account?: Awaited<ReturnType<typeof getConnectedAccount>>) {
   return fingerprintReadinessIdentity(connection, account)
 }
@@ -156,8 +135,6 @@ export async function saveReadinessCheck(connection: ExternalMcpConnectionRow, m
       eq(ConnectedAccountTable.providerId, connection.id),
       eq(ConnectedAccountTable.orgMembershipId, memberId),
     ))
-    // One member's working sign-in shows admins the connector itself works.
-    // Only Ready is copied: one person's failure says nothing about everyone else.
     if (check.status === "ready") {
       await saveConnectionLevelCheck(connection, { ...check, fingerprint: fingerprintOrganizationReadinessIdentity(connection) })
     }
@@ -166,23 +143,12 @@ export async function saveReadinessCheck(connection: ExternalMcpConnectionRow, m
   }
 }
 
-/**
- * The connector's own stored status, without any network call. Shared
- * connections are checked with their one credential; per-member connections
- * hold the latest Ready check any member recorded for the current settings.
- */
 export function storedOrganizationReadiness(connection: ExternalMcpConnectionRow): VisibleReadiness | null {
   return connection.credentialMode === "per_member"
     ? visibleReadiness(connection.readinessCheck, fingerprintOrganizationReadinessIdentity(connection))
     : visibleReadiness(connection.readinessCheck, fingerprintReadinessIdentity(connection))
 }
 
-/**
- * For per-member connections with no stored connector status, copy the most
- * recent Ready check any member already recorded (still valid for their
- * current sign-in and the connector's current settings) onto the connector.
- * One query for all connections; no outside service is called.
- */
 export async function promoteMemberReadiness(connections: ExternalMcpConnectionRow[]): Promise<Map<string, VisibleReadiness>> {
   const promoted = new Map<string, VisibleReadiness>()
   const candidates = connections.filter((connection) => connection.credentialMode === "per_member" && !storedOrganizationReadiness(connection))

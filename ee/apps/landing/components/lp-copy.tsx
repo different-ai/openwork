@@ -38,7 +38,6 @@ type LpCopyButtonProps = {
   className?: string;
 };
 
-/** Pill button that copies `value`. "Copy URL" → "Copied" (DESIGN.md C2). */
 export function LpCopyButton({
   value,
   label = "Copy URL",
@@ -67,7 +66,6 @@ type LpCopyIconProps = {
   label: string;
 };
 
-/** Icon-only copy control for commands inside a code well. */
 export function LpCopyIcon({ value, label }: LpCopyIconProps) {
   const { copied, copy } = useCopy(value);
   return (

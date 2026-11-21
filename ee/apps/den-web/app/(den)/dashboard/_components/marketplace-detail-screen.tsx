@@ -128,14 +128,11 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
     return () => document.removeEventListener("mousedown", handlePointerDown);
   }, [actionsOpen]);
 
-  // Feature intro: a box replaces "No plugins in this collection yet" (DESIGN.md I1).
-  // This page can't tell how many collections exist, so it clears what the list reported.
   const pluginsIntro = useFeatureIntro(
     "collections.plugins",
     data ? { collectionPlugins: data.plugins.length, canAddPlugins: access.canManageAllShared, collections: null, ownCollections: null } : null,
   );
 
-  // Feature intro action (DESIGN.md I5): ?addPlugin=1 opens Add a plugin with this collection chosen.
   const searchParams = useSearchParams();
   const addPluginRequested = searchParams.get(COLLECTION_ADD_PLUGIN_PARAM) === "1";
   useEffect(() => {
@@ -177,7 +174,6 @@ export function MarketplaceDetailScreen({ marketplaceId }: { marketplaceId: stri
       router.push(getMarketplacesRoute(orgSlug));
       router.refresh();
     } catch {
-      // The mutation error is rendered below the action.
     }
   }
   const tabs: readonly TabItem<MarketplaceDetailTab>[] = [
@@ -443,7 +439,6 @@ function EditMarketplaceDialog({
       });
       onSaved();
     } catch {
-      // The mutation error is rendered in the dialog.
     }
   }
 
@@ -915,7 +910,6 @@ function MarketplaceConfigureSection({
 }: {
   connectError: { connectionId: string; message: string } | null;
   connectingConnectionId: string | null;
-  /** `connections.manage`: configure services and connect organization accounts. */
   canManageConnections: boolean;
   onConnect: (connectionId: string) => void;
   pollingConnectionId: string | null;
@@ -1064,10 +1058,6 @@ function MarketplacePluginRow({
   );
 }
 
-/**
- * Every plugin on Den is cloud ready, so saying so is noise. The badge only
- * appears for the states an administrator or member has to act on.
- */
 function renderCloudReadinessBadge(readiness?: MarketplacePluginCloudReadiness) {
   if (!readiness || readiness.state === "ready" || readiness.state === "desktop_only") return undefined;
 
@@ -1164,7 +1154,6 @@ export function PluginMcpSetupDialog({
       setResult(configured);
     } catch {
       setApiKey("");
-      // The mutation error is rendered below.
     }
   }
 

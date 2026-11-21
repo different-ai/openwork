@@ -11,8 +11,6 @@ export function shouldDeleteGlobalUser(activeMembershipCount: number) {
   return activeMembershipCount === 0
 }
 
-// SSO JIT creates the user before Den's provisionUser hook can refuse it, so a
-// deprovisioned email must be recognised from the SSO provider alone.
 export async function isScimDeprovisionedEmailForSsoProvider(input: {
   ssoProviderId: string
   email: string

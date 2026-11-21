@@ -26,7 +26,6 @@ export const ManagedDeploymentRunTable = mysqlTable("managed_deployment_run", {
   deployment_id: varchar("deployment_id", { length: 36 }).notNull(),
   kind: mysqlEnum("kind", ["install", "update", "retry", "configure"]).notNull(),
   version: varchar("version", { length: 80 }).notNull(),
-  // The exact release approved for this run, frozen when it was prepared.
   template_url: varchar("template_url", { length: 2048 }).notNull(),
   bundle_url: varchar("bundle_url", { length: 2048 }).notNull(),
   bundle_sha256: varchar("bundle_sha256", { length: 64 }).notNull(),
@@ -37,7 +36,6 @@ export const ManagedDeploymentRunTable = mysqlTable("managed_deployment_run", {
   last_sequence: int("last_sequence").notNull().default(0),
   last_seen_at: timestamp("last_seen_at", { fsp: 3 }),
   expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
-  // Only on a configure run: what was requested, validated by @openwork/managed-deployments on every read.
   configuration_change: json("configuration_change").$type<Record<string, unknown>>(),
   ...timestamps,
 }, (table) => [index("managed_deployment_run_deployment").on(table.deployment_id)])
@@ -58,7 +56,6 @@ export const ManagedDeploymentHealthTable = mysqlTable("managed_deployment_healt
   version: varchar("version", { length: 80 }),
   checks: json("checks").$type<Record<string, unknown>[]>().notNull(),
   reported_at: timestamp("reported_at", { fsp: 3 }).notNull(),
-  // Signature time of the accepted report; later reports must be newer.
   signed_at: timestamp("signed_at", { fsp: 3 }).notNull(),
 })
 

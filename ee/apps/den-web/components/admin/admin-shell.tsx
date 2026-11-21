@@ -28,9 +28,6 @@ const SECTIONS = [
 ];
 
 export function AdminShell({ hasSessionCookie, children }: { hasSessionCookie: boolean; children: ReactNode }) {
-  // Check access once per admin visit. Keying the gate by pathname re-ran the
-  // check and remounted every page on each click; each data endpoint still
-  // authorizes itself and pages show the access screen when it fails.
   return (
     <SessionCookieContext.Provider value={hasSessionCookie}>
       <AdminAccessGate hasSessionCookie={hasSessionCookie}>
@@ -55,8 +52,6 @@ function AdminAccessGate({ hasSessionCookie, children }: { hasSessionCookie: boo
       setState({ access: "error", message: "Could not check admin access. Retry to check your access." });
     }, 12_000);
     setState({ access: "checking" });
-    // A cookie/token is only a hint. Confirm the platform allowlist before
-    // mounting navigation or any page. Each data endpoint still authorizes itself.
     void requestAdmin<true>("/v1/admin/features", payload =>
       payload && typeof payload === "object" && "features" in payload && Array.isArray(payload.features) ? true : null,
     controller.signal).then(result => {
