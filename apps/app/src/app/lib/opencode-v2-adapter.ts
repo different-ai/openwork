@@ -26,7 +26,7 @@ import { AUTO_ROUTER_SESSION_ROUTES_KEY, autoRouterReplyRoutes } from "@openwork
 import { SESSION_LINK_METADATA_KEY, SESSION_PROMPT_SENDER_KEY, readSessionLink, sessionLinkMetadata, type SessionLink } from "@openwork/types/session-link";
 import type { OpenworkSessionHistory } from "./openwork-server";
 import { isDesktopRuntime } from "./runtime-env";
-import type { McpStatusMap, OpencodeEvent } from "../types";
+import type { McpStatusMap, MessageTokens, OpencodeEvent } from "../types";
 import { normalizeDirectoryPath } from "../utils";
 import { dispatchProviderCatalogChanged } from "./provider-events";
 import { attachmentMarker, attachmentNoteFilenames, composeV2Prompt, splitV2Prompt, wrapPastedText, type PromptAttachment } from "./v2-prompt-context";
@@ -885,6 +885,22 @@ function mapV2ReplyUsage(value: Record<string, unknown>) {
   };
 }
 
+export function mapV2Tokens(value: unknown): MessageTokens | undefined {
+  const raw = readRecord(value, "tokens");
+  const input = readNumber(raw, "input");
+  const output = readNumber(raw, "output");
+  if (!raw || input === undefined || output === undefined) return undefined;
+  const cache = readRecord(raw, "cache");
+  const total = readNumber(raw, "total");
+  return {
+    ...(total === undefined ? {} : { total }),
+    input,
+    output,
+    reasoning: readNumber(raw, "reasoning") ?? 0,
+    cache: { read: readNumber(cache, "read") ?? 0, write: readNumber(cache, "write") ?? 0 },
+  };
+}
+
 export function mapV2UserPart(part: Part): Part[] {
   if (part.type !== "text") return [part];
   const { segments, context, attachments } = splitV2Prompt(part.text);
@@ -967,7 +983,7 @@ function mapV2ShellMessage(
   };
 }
 
-function mapV2Message(
+export function mapV2Message(
   value: unknown,
   sessionID: string,
   taskSessions: TaskSessionAssociations = taskSessionAssociations(null),
@@ -992,6 +1008,7 @@ function mapV2Message(
   const parts = role === "user" ? nativeParts.flatMap(mapV2UserPart) : nativeParts;
   const rawError = readRecord(value, "error");
   const error = readString(rawError, "type") === "aborted" ? undefined : rawError;
+  const tokens = role === "assistant" ? mapV2Tokens(value) : undefined;
   return {
     info: {
       id,
@@ -1003,6 +1020,7 @@ function mapV2Message(
       },
       ...(role === "assistant" ? { ...mapV2ReplyModel(value), finish: readString(value, "finish") } : {}),
       ...(role === "assistant" ? mapV2ReplyUsage(value) : {}),
+      ...(tokens ? { tokens } : {}),
       ...(role === "assistant" && error
         ? { error: mapV2SessionError(error) }
         : {}),
@@ -1627,6 +1645,15 @@ export function translateV2Event(
       sequence: readNumber(value.durable, "seq"),
       status: { type: "retry", attempt, message: errorMessage(properties.error), next },
     } }];
+  }
+
+  if (type === "session.step.ended" || type === "session.next.step.ended") {
+    if (isRetiredV2Event(state, value, properties)) return null;
+    const messageID = readMessageID(properties);
+    const tokens = mapV2Tokens(properties);
+    return sessionID && messageID && tokens
+      ? [{ type: "session.usage.measured", properties: { sessionID, messageID, tokens } }]
+      : null;
   }
 
   if (type === "session.step.started") {
@@ -2627,6 +2654,22 @@ export function createClientV2(
       if (mapped) return successfulResult(result, mapped);
       return failedResult({ ...result, payload: { name: "InvalidV2MessageResponse" } });
     },
+    context: async (
+      parameters: SessionParameters,
+      options?: RequestOptions,
+    ): Promise<FieldsResult<unknown[]>> => {
+      const result = await request(
+        "GET",
+        `/api/session/${encodeURIComponent(parameters.sessionID)}/context`,
+        undefined,
+        options?.signal,
+      );
+      if (!result.response.ok) return failedResult(result);
+      const items = responseData(result.payload);
+      return Array.isArray(items)
+        ? successfulResult(result, items)
+        : failedResult({ ...result, payload: { name: "InvalidV2ContextResponse" } });
+    },
     messages: async (
       parameters: SessionParameters & { limit?: number; before?: string },
       options?: RequestOptions,
@@ -3213,7 +3256,7 @@ export function createClientV2(
       settleQuestion(parameters, options),
   });
   return client as typeof client & {
-    session: typeof client.session & Pick<typeof adapter.session, "setModel">;
+    session: typeof client.session & Pick<typeof adapter.session, "setModel" | "context">;
   };
 }
 

@@ -40,6 +40,17 @@ export type WorkspaceSessionGroup = {
   error?: string | null;
 };
 
+export type MessageTokens = {
+  total?: number;
+  input: number;
+  output: number;
+  reasoning: number;
+  cache: {
+    read: number;
+    write: number;
+  };
+};
+
 export type PlaceholderMessageInfo = {
   id: string;
   sessionID: string;
