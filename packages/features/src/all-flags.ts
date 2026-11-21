@@ -42,6 +42,7 @@ export { default as sandboxGateway } from "@openwork/features/flags/sandbox-gate
 export { default as sandboxTools } from "@openwork/features/flags/sandbox-tools"
 export { default as sessionMultiSelect } from "@openwork/features/flags/session-multi-select"
 export { default as sessionTree } from "@openwork/features/flags/session-tree"
+export { default as sideChatFromSelection } from "@openwork/features/flags/side-chat-from-selection"
 export { default as sideChatPanel } from "@openwork/features/flags/side-chat-panel"
 export { default as sideQuestions } from "@openwork/features/flags/side-questions"
 export { default as workbotAgentBrief } from "@openwork/features/flags/workbot-agent-brief"

@@ -19,8 +19,10 @@ Three ways in:
 
 - `/btw <question>` in the message box asks and opens the side chat. A bare
   `/btw` just opens it. The command is listed in the `/` menu.
-- **Start a side chat** on text selected in a reply opens it with the text
-  attached above the message box as a quote from the conversation.
+- **Start a side chat** on text selected in a reply, with
+  [`sideChatFromSelection`](../side-chat-from-selection/README.md) on, opens
+  it with the text attached above the message box as a quote from the
+  conversation.
 - **Open side chat** in the command palette opens it.
 - **Side chat** in the side panel's list of destinations opens it.
 
