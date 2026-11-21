@@ -9,7 +9,7 @@ import { DenNotice } from "./ui/notice";
 import { type AuthUser, getErrorMessage, getUser, requestJson, type SocialAuthProvider, WORKSPACE_REAUTH_SECURITY_MESSAGE } from "../_lib/den-flow";
 import { readOrganizationSsoPolicy } from "@openwork-ee/den-sso";
 import type { DenOrgContext } from "../_lib/den-org";
-import { type MemberSsoSignIn, type ResolvedDomainSso, parseMemberSsoSignIns, parseResolvedDomainSso, resolveReauthSsoTarget } from "../_lib/reauth-sso";
+import { type MemberSsoSignIn, type ResolvedDomainSso, parseMemberSsoSignIns, parseReauthSessionMethods, parseResolvedDomainSso, reauthPasswordOption, resolveReauthSsoTarget } from "../_lib/reauth-sso";
 
 function getSocialLabel(provider: SocialAuthProvider) {
   return provider === "google" ? "Google" : "GitHub";
@@ -57,6 +57,7 @@ const REAUTH_SOCIAL_PROVIDERS: readonly SocialAuthProvider[] = ["google", "githu
 
 export function ReauthDialog({
   open,
+  recoveryEnabled = false,
   user,
   orgContext,
   organizationId,
@@ -66,6 +67,7 @@ export function ReauthDialog({
   description = "Your change will finish automatically after you confirm.",
 }: {
   open: boolean;
+  recoveryEnabled?: boolean;
   user: AuthUser | null;
   orgContext: DenOrgContext | null;
   organizationId?: string | null;
@@ -74,6 +76,8 @@ export function ReauthDialog({
   title?: string;
   description?: string;
 }) {
+  const [passwordExpanded, setPasswordExpanded] = useState(false);
+  const [sessionMethods, setSessionMethods] = useState<ReturnType<typeof parseReauthSessionMethods>>(null);
   const [password, setPassword] = useState("");
   const [busy, setBusy] = useState(false);
   const [waitingForPopup, setWaitingForPopup] = useState(false);
@@ -89,7 +93,6 @@ export function ReauthDialog({
   const popupClosedIntervalRef = useRef<number | null>(null);
 
   const effectiveProviders = providers.length > 0 ? providers : user?.authProviders ?? [];
-  const hasPassword = !loadingMethods && (effectiveProviders.length === 0 || effectiveProviders.includes("email"));
   const socialProviders = useMemo(
     () => REAUTH_SOCIAL_PROVIDERS.filter((provider) => effectiveProviders.includes(provider)),
     [effectiveProviders],
@@ -110,7 +113,15 @@ export function ReauthDialog({
   });
   const ssoUrl = ssoTarget?.signInUrl ?? null;
   const ssoOnly = ssoTarget?.ssoOnly ?? false;
+  const methods = recoveryEnabled ? sessionMethods : null;
+  const passwordOption = reauthPasswordOption({
+    loading: loadingMethods || (recoveryEnabled && !nonce),
+    ssoOnly,
+    legacyPasswordAvailable: effectiveProviders.length === 0 || effectiveProviders.includes("email"),
+    methods,
+  });
   const hasManagedOrgSignIn = Boolean(
+    methods?.sessionUsesSso ||
     ssoUrl ||
       ssoPolicy.requireSso ||
       orgContext?.authMethods.sso ||
@@ -158,6 +169,9 @@ export function ReauthDialog({
       popupRef.current?.close();
       stopPopupWatcher();
       setPassword("");
+      setPasswordExpanded(false);
+      setSessionMethods(null);
+      setNonce("");
       setError(null);
       setBusy(false);
       setLoadingMethods(false);
@@ -182,6 +196,7 @@ export function ReauthDialog({
             const ssoSignInResult = await requestJson("/v1/me/sso-sign-in", { method: "GET" }, 12000);
             if (!cancelled && ssoSignInResult.response.ok) {
               setMemberSsoSignIns(parseMemberSsoSignIns(ssoSignInResult.payload));
+              setSessionMethods(parseReauthSessionMethods(ssoSignInResult.payload));
             }
           } catch {
           }
@@ -432,9 +447,14 @@ export function ReauthDialog({
               ) : null}
 
               {hasManagedOrgSignIn ? (
-                <DenButton className="w-full" onClick={continueSso} loading={busy || loadingMethods} disabled={!ssoUrl || busy || loadingMethods}>
-                  Continue with SSO
-                </DenButton>
+                <div className="grid gap-2">
+                  <DenButton className="w-full" onClick={continueSso} loading={busy || loadingMethods} disabled={!ssoUrl || !user?.email || busy || loadingMethods}>
+                    Continue with SSO
+                  </DenButton>
+                  {recoveryEnabled && !loadingMethods && (!ssoUrl || !user?.email) ? (
+                    <p className="text-sm text-slate-600">Single sign-on isn&apos;t available for this account in this workspace. Ask a workspace admin to check its sign-in settings.</p>
+                  ) : null}
+                </div>
               ) : null}
 
               {!ssoOnly && socialProviders.map((provider) => {
@@ -452,7 +472,13 @@ export function ReauthDialog({
                 );
               })}
 
-              {hasPassword && !ssoOnly ? (
+              {passwordOption === "disclosed" && !passwordExpanded ? (
+                <DenButton variant="plain" size="inline" className="justify-self-center underline underline-offset-4" disabled={busy} onClick={() => setPasswordExpanded(true)}>
+                  Use a password instead
+                </DenButton>
+              ) : null}
+
+              {passwordOption === "visible" || (passwordOption === "disclosed" && passwordExpanded) ? (
                 <form className="grid gap-3" onSubmit={submitPassword}>
                   <label className="grid gap-2">
                     <span className="text-[13px] font-medium text-gray-700">Password</span>
@@ -465,7 +491,7 @@ export function ReauthDialog({
                       required
                     />
                   </label>
-                  <DenButton className="w-full" type="submit" loading={busy} disabled={!password.trim()}>
+                  <DenButton className="w-full" variant={passwordOption === "disclosed" ? "secondary" : "primary"} type="submit" loading={busy} disabled={!password.trim()}>
                     Verify password
                   </DenButton>
                 </form>
