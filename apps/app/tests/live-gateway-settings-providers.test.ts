@@ -2,9 +2,12 @@ import { describe, expect, spyOn, test } from "bun:test";
 import { createDenClient } from "../src/app/lib/den";
 import {
   isLiveGatewaySetConnected,
+  isPendingGatewaySignInConnected,
+  pendingGatewayModelOptions,
   resolveGatewayProviderIds,
   resolveLiveGatewayConnectProviders,
   resolveLiveGatewayImportedProviders,
+  resolvePendingGatewaySignIns,
   type LiveGatewayProvider,
 } from "../src/react-app/domains/connections/provider-auth/cloud-provider-config";
 
@@ -93,6 +96,43 @@ describe("Settings lists Gateway providers under live provider sync", () => {
     expect(isLiveGatewaySetConnected(setRow, [{ ...mixed, authorizationRequests: [] }])).toBe(false);
     expect(isLiveGatewaySetConnected(setRow, [{ ...mixed, authorizationRequests: [], models: [model(readySet), model(pendingSet)] }])).toBe(true);
     expect(isLiveGatewaySetConnected(setRow, [])).toBe(false);
+  });
+});
+
+describe("Settings and the model picker offer the same Gateway sign-ins", () => {
+  // A Vertex member sign-in that lapsed: Den lists its models under a pending sign-in, none as usable.
+  const lapsed: LiveGatewayProvider = {
+    ...memberOnly,
+    id: "ipr_vertex",
+    providerId: "google-vertex",
+    name: "Vertex",
+    authorizationRequests: [{ credentialSetId: `gcs_${pendingSet}`, name: "Google", authUrl: "https://den.example.test/auth", models: [model(pendingSet)] }],
+  };
+  const skipped = {
+    ipr_skipped: { cloudProviderId: "ipr_skipped", providerId: "ipr_skipped", name: "Server skip", reason: "member_auth_required" },
+  };
+
+  test("under live provider sync the rows come from Den, so a lapsed sign-in still offers its models", () => {
+    const rows = resolvePendingGatewaySignIns({ signedIn: true, liveGatewayProviders: [ready, lapsed], skippedProviders: skipped });
+    expect(rows.map((row) => row.name)).toEqual(["Vertex / Google"]);
+    expect(pendingGatewayModelOptions(rows).map((option) => [option.modelID, option.footer])).toEqual([[model(pendingSet).id, "Sign-in required"]]);
+  });
+
+  test("without live provider sync the rows still come from the server sync's skips", () => {
+    expect(resolvePendingGatewaySignIns({ signedIn: true, liveGatewayProviders: null, skippedProviders: skipped }).map((row) => row.name)).toEqual(["Server skip"]);
+  });
+
+  test("signed out, nobody is asked to sign in", () => {
+    expect(resolvePendingGatewaySignIns({ signedIn: false, liveGatewayProviders: [lapsed], skippedProviders: skipped })).toEqual([]);
+  });
+
+  test("a sign-in is confirmed from the same source that listed it", () => {
+    const [row] = resolvePendingGatewaySignIns({ signedIn: true, liveGatewayProviders: [lapsed], skippedProviders: undefined });
+    const signedIn = { ...lapsed, credentialStatus: "ready" as const, authorizationRequests: [], models: [model(pendingSet)] };
+    expect(isPendingGatewaySignInConnected(row, { liveGatewayProviders: [lapsed], importedCloudProviders: {} })).toBe(false);
+    expect(isPendingGatewaySignInConnected(row, { liveGatewayProviders: [signedIn], importedCloudProviders: {} })).toBe(true);
+    // Without live sync only the imported (server-synced) providers count.
+    expect(isPendingGatewaySignInConnected(row, { liveGatewayProviders: null, importedCloudProviders: {} })).toBe(false);
   });
 });
 

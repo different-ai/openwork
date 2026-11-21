@@ -189,10 +189,10 @@ import type { CreateWorkspaceOptions } from "@/react-app/domains/workspace/types
 import {
   connectGatewayProvider,
   GATEWAY_CONNECT_TIMEOUT_MESSAGE,
-  isGatewaySetConnected,
+  isPendingGatewaySignInConnected,
   type GatewayConnectProvider,
   isCloudManagedProviderKey,
-  resolveGatewayConnectProviders,
+  resolvePendingGatewaySignIns,
   resolveGatewayCloudProviderIds,
   resolveGatewayProviderIds,
 } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
@@ -1091,7 +1091,8 @@ export function SessionRoute() {
   const handleModelPickerOpen = useCallback(() => {
     void preWorkspaceGatewayModels.refresh().catch(() => undefined);
     void refreshCloudProviderSync("model_picker_open");
-  }, [preWorkspaceGatewayModels.refresh, refreshCloudProviderSync]);
+    void sessionProviderAuthStore.refreshLiveGatewaySignIns();
+  }, [preWorkspaceGatewayModels.refresh, refreshCloudProviderSync, sessionProviderAuthStore]);
   const openWorkModelsEntitled = useMemo(() => {
     if (!denAuth.isSignedIn) return false;
     const fromOrg = sessionProviderAuthSnapshot.cloudOrgProviders.some(
@@ -1121,8 +1122,12 @@ export function SessionRoute() {
     [sessionProviderAuthSnapshot.importedCloudProviders],
   );
   const gatewayConnectProviders = useMemo(
-    () => denAuth.isSignedIn ? resolveGatewayConnectProviders(sessionProviderAuthSnapshot.cloudProviderServerSync?.skippedProviders) : [],
-    [denAuth.isSignedIn, sessionProviderAuthSnapshot.cloudProviderServerSync?.skippedProviders],
+    () => resolvePendingGatewaySignIns({
+      signedIn: denAuth.isSignedIn,
+      liveGatewayProviders: sessionProviderAuthSnapshot.liveGatewayProviders,
+      skippedProviders: sessionProviderAuthSnapshot.cloudProviderServerSync?.skippedProviders,
+    }),
+    [denAuth.isSignedIn, sessionProviderAuthSnapshot.liveGatewayProviders, sessionProviderAuthSnapshot.cloudProviderServerSync?.skippedProviders],
   );
   const gatewayConnectAbort = useRef<AbortController | null>(null);
   const gatewayModelSelectionRef = useRef<GatewayModelSelectionHandle | null>(null);
@@ -1150,12 +1155,18 @@ export function SessionRoute() {
         openUrl: (url) => platform.openLink(url),
         resync: async () => {
           synced = false;
+          const liveSyncSkipsManualRefresh = sessionProviderAuthStore.getSnapshot().liveGatewayProviders !== null;
+          if (liveSyncSkipsManualRefresh) {
+            const result = await sessionProviderAuthStore.runCloudProviderSync("manual");
+            synced = result?.outcome === "handled_live" || result?.outcome === "handled_server_side";
+            return;
+          }
           await refreshCloudProviderSync("manual");
           synced = sessionProviderAuthStore.getSnapshot().gatewayUsageProviderScope != null;
         },
         isConnected: () => synced && (request
           ? sessionProviderAuthStore.isGatewayModelAvailable(provider, request.model)
-          : isGatewaySetConnected(provider, sessionProviderAuthStore.getSnapshot().importedCloudProviders)),
+          : isPendingGatewaySignInConnected(provider, sessionProviderAuthStore.getSnapshot())),
       });
       if (!connected && !signal.aborted && !request) {
         toast.error(GATEWAY_CONNECT_TIMEOUT_MESSAGE, { action: { label: "Retry sign-in", onClick: () => {
