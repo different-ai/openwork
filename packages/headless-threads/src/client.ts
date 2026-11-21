@@ -787,6 +787,29 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     };
   }
 
+  /**
+   * The model for a turn sent without one. `send` is null when the thread
+   * already runs on a model, so the engine keeps it (v1 reuses its last
+   * turn's, v2 its bound one); only a thread without one starts on the
+   * workspace default. `check` is the model the turn runs on, when known.
+   */
+  async function unspecifiedTurnModel(
+    engine: Transport,
+    threadId: string,
+    messages: MessageWire[],
+    signal?: AbortSignal,
+  ): Promise<{ send: HeadlessThreadModel | null; check: HeadlessThreadModel | null }> {
+    if (engine.engine === "v2") {
+      const bound = await engine.sessionModel(threadId, signal);
+      if (bound !== null) return { send: null, check: bound };
+    } else if (messages.some((message) => message.info.role === "user")) {
+      return { send: null, check: null };
+    }
+    const model = await workspaceDefaultModel(signal);
+    if (model === null && engine.engine === "v2") modelRequired("POST", `${v2SessionPath(threadId)}/prompt`);
+    return { send: model, check: model };
+  }
+
   async function sendTurn(threadId: string, input: HeadlessThreadTurnInput): Promise<HeadlessTurnAcceptance> {
     const engine = await transport(input.signal);
     const messages = await engine.messages(threadId, input.signal);
@@ -794,14 +817,12 @@ export function createHeadlessThreadClient(options: HeadlessThreadClientOptions)
     if (input.messageId && messages.some((message) => message.info.id === input.messageId && message.info.role === "user")) {
       return { threadId, acceptedAt: now(), messageCountBefore, messageId: input.messageId, alreadyPresent: true };
     }
-    const model = input.model ?? options.defaultModel ?? await workspaceDefaultModel(input.signal);
-    // A v2 session keeps the model it was given; reuse it rather than refuse.
-    const sessionModel = model === null && engine.engine === "v2" ? await engine.sessionModel(threadId, input.signal) : null;
-    if (model === null && engine.engine === "v2" && sessionModel === null) {
-      modelRequired("POST", `${v2SessionPath(threadId)}/prompt`);
-    }
-    await requireAvailableModel(engine, model ?? sessionModel, input.signal);
-    await engine.submit(threadId, input.prompt, model, input.messageId, input.signal);
+    const named = input.model ?? options.defaultModel ?? null;
+    const model = named === null
+      ? await unspecifiedTurnModel(engine, threadId, messages, input.signal)
+      : { send: named, check: named };
+    await requireAvailableModel(engine, model.check, input.signal);
+    await engine.submit(threadId, input.prompt, model.send, input.messageId, input.signal);
     return {
       threadId,
       acceptedAt: now(),
