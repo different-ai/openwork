@@ -932,6 +932,7 @@ export function SessionRoute() {
   const sideChats = useWorkbenchStore((state) => state.sideChats);
   const sessionTreeEnabled = useDesktopFeature("sessionTree");
   const sideQuestionsEnabled = useDesktopFeature("sideQuestions");
+  const sideChatFromSelectionEnabled = useDesktopFeature("sideChatFromSelection");
   // A side chat records the session it was opened from, so it is listed under it everywhere.
   const sideChatLinkFor = useCallback((parent: { workspaceId: string; sessionId: string } | null | undefined, workspaceId: string): SessionLink | undefined => {
     if (!sessionTreeEnabled || !parent || parent.workspaceId !== workspaceId) return undefined;
@@ -2877,6 +2878,7 @@ export function SessionRoute() {
     const workbench = useWorkbenchStore.getState();
     const parent = workbench.primary;
     if (!parent) return;
+    markFeatureUsed("sideChatFromSelection");
     if (sideQuestionsEnabled) {
       useSideQuestionStore.getState().setQuote(parent.sessionId, text);
       showSideChatTab(parent.sessionId);
@@ -2902,7 +2904,6 @@ export function SessionRoute() {
       workbench.openTab(tab);
       workbench.setSideChat(parent, tab);
     }
-    markFeatureUsed("sessionTree");
     focusPromptSoon();
   }, [sessionDraftScope, sideQuestionsEnabled]);
 
@@ -4108,7 +4109,7 @@ export function SessionRoute() {
       primarySlotIsConversation={!activityRouteActive && Boolean(pendingConversation || remoteTaskRouteActive)}
       primaryHeader={remoteTaskRouteActive && remoteThreadKey ? <RemoteSessionHeader key={remoteThreadKey} threadKey={remoteThreadKey} navigation={remoteHelperNavigation} /> : undefined}
       onOpenRemoteTask={openRemoteTask}
-      onStartSideChatWithQuote={sessionTreeEnabled || sideQuestionsEnabled ? handleStartSideChatWithQuote : undefined}
+      onStartSideChatWithQuote={sideChatFromSelectionEnabled ? handleStartSideChatWithQuote : undefined}
       retainedArtifactSlot={retainedArtifactsScope ? {
         scope: retainedArtifactsScope,
         active: dashboardRouteActive && !appsRouteActive,

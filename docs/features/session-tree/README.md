@@ -11,7 +11,7 @@ attached to the one they came from instead of becoming unrelated rows.
 
 | | Who starts it | What it knows | Reports back | Where it is listed |
 |---|---|---|---|---|
-| **Side chat** | The person: **Open side chat**, or select text in a reply and choose **Start a side chat** | Nothing yet, plus a pointer to the main session, which it can read | No | Under the session |
+| **Side chat** | The person: **Open side chat**, or **Start a side chat** on selected text ([`sideChatFromSelection`](../side-chat-from-selection/README.md)) | Nothing yet, plus a pointer to the main session, which it can read | No | Under the session |
 | **Session the agent starts** | The session's agent, with `session.create` | Only the task it was given | Yes, each time it finishes a turn | Under the session |
 | **Branch** | The person: **Branch in new chat** | A copy of the conversation up to a message | No | A row of its own, as before |
 
@@ -21,11 +21,6 @@ attached to the one they came from instead of becoming unrelated rows.
   session sits one step further in; the tree is two levels deep.
 - **A way back.** An open nested session shows **Back to _parent title_** in
   the header, the same control sub-agent chats have.
-- **Start a side chat from a reply.** Selecting text inside one reply shows a
-  small **Start a side chat** bar above the selection. It opens a side chat
-  beside the session with the text quoted in the message box; nothing is sent
-  until the person sends it. Text already typed in an open side chat draft is
-  kept, with the quote added under it.
 - **Reports.** When a session the agent started finishes a turn, the session
   that started it gets a note. The chat shows it as one row, for example
   "Session finished · Fix the login redirect", which opens that session. The
@@ -72,7 +67,7 @@ attached to the one they came from instead of becoming unrelated rows.
 
 Code: `packages/types/src/session-link.ts` (the link),
 `apps/app/src/react-app/domains/session/sidebar/session-tree.ts` (the tree),
-`.../session/links/` (reports and the selection bar),
+`.../session/links/` (reports),
 `.../session/control/session-tree-query.ts` (the query), and
 `createOpenWorkSessions` in
 `apps/server/src/opencode-plugins/openwork-extensions-preview.ts`.
@@ -82,8 +77,8 @@ Code: `packages/types/src/session-link.ts` (the link),
 With the feature off, or after the kill switch, the sidebar is flat again:
 every session has its own row, and an attached side chat is hidden while
 attached, as before. Nothing is deleted. Links stay in session metadata and
-the rows nest again if the feature comes back. No new links are written, the
-selection bar and `session.tree` go away, and no reports are sent. Notes
+the rows nest again if the feature comes back. No new links are written,
+`session.tree` goes away, and no reports are sent. Notes
 already in a chat stay readable as rows.
 
 One thing is written whether the feature is on or off: a message an agent
@@ -94,8 +89,9 @@ it.
 ## How to try it
 
 1. Turn `sessionTree` on for an organization in `/admin` › Features.
-2. In a session, select part of a reply and choose **Start a side chat**.
-   Send the message: the side chat appears under the session in the sidebar.
+2. In a session, open a side chat (**Open side chat** in the command palette)
+   and send a message: the side chat appears under the session in the
+   sidebar.
 3. Ask the session to "start two sessions, one to list the open questions and
    one to draft a summary, then tell me what they found". Both appear under
    the session, and each adds a "Session finished" row when it is done.
