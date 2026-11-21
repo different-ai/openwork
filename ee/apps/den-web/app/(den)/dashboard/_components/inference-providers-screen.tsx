@@ -82,10 +82,14 @@ export function ProviderRow({ provider, orgSlug, orgContext }: {
   // Per-person LiteLLM keys are ready once the admin key syncs; each person adds their own key.
   // LiteLLM with Microsoft sign-in has no key: it is ready once its sign-in settings are saved.
   // TrueFoundry is ready once its admin key is saved; OpenWork creates each person's key.
-  const keyReady = litellm?.keySource === "entra" ? (provider.credentialSets ?? []).some((set) => set.credentialMode === "member" && set.configured)
+  // Google, Microsoft or AWS sign-in has no shared key either: it is ready once its sign-in settings are saved,
+  // whether or not the viewer has signed in themselves.
+  const sets = provider.credentialSets ?? [];
+  const memberSignInConfigured = sets.some((set) => set.credentialMode === "member" && set.configured);
+  const keyReady = litellm?.keySource === "entra" ? memberSignInConfigured
     : litellm ? litellm.hasSyncKey && (litellm.mode === "member" || provider.credentialStatus === "ready")
       : truefoundry ? truefoundry.hasAdminKey
-        : provider.credentialStatus === "ready" || (provider.credentialSets ?? []).some((set) => set.credentialMode === "org" && set.credentialStatus === "ready");
+        : provider.credentialStatus === "ready" || memberSignInConfigured || sets.some((set) => set.credentialMode === "org" && set.credentialStatus === "ready");
   const ready = provider.status === "active" && keyReady && !syncError && !nobody;
   const status: RowStatus = provider.status === "disabled"
     ? { label: "Off", tone: "neutral" }
