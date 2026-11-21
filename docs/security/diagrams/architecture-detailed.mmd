@@ -1,0 +1,50 @@
+flowchart LR
+  subgraph PC["USER PC · logged-in OS user · NOT a VM"]
+    UI["Electron shell + React UI\nOpenWork HTTP server embedded in main\nLocal tokens / profile: storage caveats apply"]
+    ENGINE["OpenCode engine · child process\nLocal files and session history\nv2 org hook; harness rules ≠ OS confinement"]
+    UI <-->|"F1 · prompt / history / config\nIPC + loopback HTTP · bearer / Basic"| ENGINE
+    WEB["Optional Cloud web client\nUser browser + member authentication"]
+  end
+
+  subgraph CLOUD["OPENWORK CLOUD · hosting subprocessors · live topology UNVERIFIED"]
+    DEN["Den web + Den API\nSSO / SCIM; RBAC / provisioning\nSQL identity, config, secrets, audit / usage"]
+    AI["AI Gateway · separate service\nModel / credential grants and limits\nContent transit; SQL usage metadata"]
+    MCP["MCP Gateway · INSIDE Den API\nMember / org / connection authorization\nTool data transit; encrypted OAuth columns"]
+    HEAD["Optional HEADLESS runner · Node / cells\nOwn model / tool loop · NOT OpenCode\nPersistent SQLite transcripts / scratch + blobs"]
+    FULL["Optional FULL CLOUD worker\nOpenWork server + managed OpenCode\nPersistent volumes + DB / workspace checkpoints"]
+    EDGE["Cloud browser edge · den-gateway\nResolves member worker via Den\nInjects worker client / host credentials"]
+  end
+
+  subgraph IDP["CUSTOMER IdP"]
+    ENTRA["Microsoft Entra ID\nSSO identity / assertions\nSCIM users / groups"]
+  end
+  subgraph MODEL["MODEL PROVIDERS"]
+    BED["AWS Bedrock · native / Mantle\nPrompts + selected context / output\nServer-held AWS / member credentials"]
+    OTHER["Other inference · conditional\nManaged Models uses OpenRouter\nDirect BYOK uses configured provider"]
+  end
+  subgraph SAAS["MCP SERVERS / SaaS"]
+    TOOLS["External MCP / Microsoft 365\nArguments / results; delegated tokens\nProvider permissions and retention"]
+  end
+  AUX["Other external services\nUpdates / downloads; PostHog / Sentry\nConfigured or preference-gated paths"]
+
+  UI <-->|"F2 / F11 · account, policy, usage / diagnostics\nHTTPS · member session / bearer"| DEN
+  DEN <-->|"F3 / F4 · SSO / SCIM identity data\nHTTPS · SAML / OIDC / SCIM bearer"| ENTRA
+  ENGINE <-->|"F5 · prompt / context / output\nHTTPS · gateway bearer"| AI
+  AI <-->|"F6 · inference body / stream\nHTTPS · SigV4 / Bedrock bearer"| BED
+  ENGINE <-->|"F7 · MCP calls / results\nHTTPS · member bearer"| MCP
+  MCP <-->|"F8 · arguments / results\nHTTPS MCP / Graph · OAuth / configured auth"| TOOLS
+  AI -.->|"F9a · managed Models prompt / output\nHTTPS · upstream API key"| OTHER
+  ENGINE -.->|"F9b · direct provider prompt / output\nConfigured URL / provider auth"| OTHER
+  UI -.->|"F11 / F12 · errors, analytics, downloads\nHTTPS · data / auth vary"| AUX
+  DEN <-.->|"F10 · prompt, grants, result / index\nHTTPS · service / scoped capability tokens"| HEAD
+  HEAD -.->|"F10 · inference context / output\nHTTPS · scoped model bearer"| AI
+  HEAD -.->|"F10 · tool calls / results\nHTTPS · scoped MCP token"| MCP
+  DEN -.->|"F10 · provision / control / credentials\nProvider service auth · transport varies"| FULL
+  WEB <-.->|"F10 · web session / files / prompt data\nHTTPS · member bearer"| EDGE
+  FULL -.->|"F10 · inference context / output\nConfigured HTTPS · gateway bearer"| AI
+  FULL -.->|"F10 · MCP calls / results\nHTTPS · member-scoped MCP token"| MCP
+  EDGE <-.->|"F10 · worker resolution / member auth\nHTTPS · gateway shared secret"| DEN
+  EDGE <-.->|"F10 · runtime / file / session data\nWorker client + host tokens · verify inner TLS"| FULL
+
+  classDef caution fill:#fff5dc,stroke:#a66b00,color:#513700;
+  class HEAD,FULL,EDGE,OTHER,AUX caution;
