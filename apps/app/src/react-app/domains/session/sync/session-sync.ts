@@ -1109,6 +1109,7 @@ function applyEvent(entry: SyncEntry, workspaceId: string, event: OpencodeEvent)
       .some((message) => message.id === messageId && message.parts.some((part) =>
         (part.type === "text" || part.type === "reasoning") && getPartMetadataId(part) === partId));
     if (!declared && typeof messageId === "string" && messageId) reconcileSessionMessages(entry, sessionId, messageId);
+    else if (messageId === undefined && sessionId) reconcileSessionMessages(entry, sessionId);
     return;
   }
 

@@ -195,7 +195,7 @@ import {
   type ChatMcpReconnectScope,
 } from "./mcp-chat-reconnect";
 import { OpenTargetProvider, type OpenTargetOptions } from "@/lib/target-provider";
-import { runCommandPrompt } from "./run-command-prompt";
+import { RAN_COMMAND_NOTE_SOURCE, ranCommandNote, runCommandPrompt } from "./run-command-prompt";
 import { fileOriginForRuntime } from "../artifacts/resolve-open-target";
 import type { ThreadStatus } from "@/lib/messages";
 import {
@@ -3368,14 +3368,31 @@ export function SessionSurface(props: SessionSurfaceProps) {
       dispatchQueuedDrain(props.sessionId, { type: "user_retry" });
       if (!claimQueuedSend(props.sessionId, messageID, true)) return;
       markFeatureUsed("chatRunCommands");
-      const text = runCommandPrompt(command);
-      try {
-        await sendDraft({ messageId: messageID, mode: "prompt", parts: [{ type: "text", text }], attachments: [], text }, messageID);
-      } catch {
+      if (!isOpencodeV2Client(opencodeClient)) {
+        const text = runCommandPrompt(command);
+        try {
+          await sendDraft({ messageId: messageID, mode: "prompt", parts: [{ type: "text", text }], attachments: [], text }, messageID);
+        } catch {
+          return;
+        }
         return;
       }
+      try {
+        const result = await sendDraft({ messageId: messageID, mode: "shell", parts: [{ type: "text", text: command }], attachments: [], text: command }, messageID);
+        if (result.outcome !== "sent" && result.outcome !== "accepted") return;
+        unwrap(await opencodeClient.addSessionNote({
+          sessionID: props.sessionId,
+          id: createPromptMessageID(),
+          text: ranCommandNote(command),
+          description: "Continue from the command",
+          metadata: { source: RAN_COMMAND_NOTE_SOURCE },
+          resume: true,
+        }));
+      } catch (nextError) {
+        setError({ message: nextError instanceof Error ? nextError.message : String(nextError) });
+      }
     });
-  }, [archived, archiveStateKnown, props.opencodeBaseUrl, props.sessionId, sendDraft]);
+  }, [archived, archiveStateKnown, opencodeClient, props.opencodeBaseUrl, props.sessionId, sendDraft, setError]);
 
   useEffect(() => {
     const refreshConnectionInventory = () => {
