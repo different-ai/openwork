@@ -264,12 +264,17 @@ if (shouldDownloadOpencode) {
 
   mkdirSync(extractDir, { recursive: true });
 
-  if (process.platform === "win32") {
+if (process.platform === "win32") {
+    // Windows PowerShell 5.1 child processes inherit PSModulePath from PowerShell 7
+    // and load PowerShell 7's Microsoft.PowerShell.Archive module, causing
+    // Expand-Archive to fail with an ExtractToDirectory overload mismatch.
     const psQuote = (value) => `'${value.replace(/'/g, "''")}'`;
     const psScript = [
       "$ErrorActionPreference = 'Stop'",
       `Invoke-WebRequest -Uri ${psQuote(opencodeUrl)} -OutFile ${psQuote(archivePath)}`,
-      `Expand-Archive -Path ${psQuote(archivePath)} -DestinationPath ${psQuote(extractDir)} -Force`,
+      `Add-Type -AssemblyName System.IO.Compression.FileSystem`,
+      `if (Test-Path ${psQuote(extractDir)}) { Remove-Item -Recurse -Force ${psQuote(extractDir)} }`,
+      `[System.IO.Compression.ZipFile]::ExtractToDirectory(${psQuote(archivePath)}, ${psQuote(extractDir)})`,
     ].join("; ");
 
     const result = spawnSync("powershell", ["-NoProfile", "-Command", psScript], {
