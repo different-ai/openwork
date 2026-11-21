@@ -27,21 +27,14 @@ export function importNodeSqlite(): Promise<typeof import("node:sqlite")> {
   return import(NODE_SQLITE_SPECIFIER);
 }
 
-/**
- * Several connections share runtime.sqlite (cached writers plus short-lived
- * read-only handles). SQLite's default busy timeout is 0, so any overlap with a
- * write failed immediately with "database is locked" (DESKTOP-APP-7E).
- */
 export const RUNTIME_SQLITE_BUSY_TIMEOUT_MS = 5000;
 
 type SqlExecutor = { exec: (sql: string) => unknown };
 
-/** Applies the busy timeout so readers wait for an in-flight write instead of failing. */
 export function configureRuntimeSqliteReader(sqlite: SqlExecutor): void {
   sqlite.exec(`PRAGMA busy_timeout = ${RUNTIME_SQLITE_BUSY_TIMEOUT_MS}`);
 }
 
-/** Busy timeout plus WAL so readers and a writer no longer block each other. */
 export function configureRuntimeSqliteConnection(sqlite: SqlExecutor, path: string): void {
   configureRuntimeSqliteReader(sqlite);
   try {
