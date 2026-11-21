@@ -83,13 +83,11 @@ import {
   connectGatewayProvider,
   GATEWAY_CONNECT_TIMEOUT_MESSAGE,
   gatewayConnectProviderKey,
-  isGatewaySetConnected,
-  isLiveGatewaySetConnected,
+  isPendingGatewaySignInConnected,
   type GatewayConnectProvider,
-  resolveGatewayConnectProviders,
   resolveGatewayProviderIds,
-  resolveLiveGatewayConnectProviders,
   resolveLiveGatewayImportedProviders,
+  resolvePendingGatewaySignIns,
 } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
 import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "@/react-app/domains/connections/provider-auth/store";
 import ProviderAuthModal, { PROVIDER_LABELS } from "@/react-app/domains/connections/provider-auth/provider-auth-modal";
@@ -865,11 +863,11 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
     [settingsImportedCloudProviders],
   );
   const gatewayConnectProviders = useMemo(
-    () => !cloudSession.isSignedIn
-      ? []
-      : liveGatewayProviders !== null
-        ? resolveLiveGatewayConnectProviders(liveGatewayProviders)
-        : resolveGatewayConnectProviders(providerAuthSnapshot.cloudProviderServerSync?.skippedProviders),
+    () => resolvePendingGatewaySignIns({
+      signedIn: cloudSession.isSignedIn,
+      liveGatewayProviders,
+      skippedProviders: providerAuthSnapshot.cloudProviderServerSync?.skippedProviders,
+    }),
     [cloudSession.isSignedIn, liveGatewayProviders, providerAuthSnapshot.cloudProviderServerSync?.skippedProviders],
   );
   const [connectingGatewayProviderId, setConnectingGatewayProviderId] = useState<string | null>(null);
@@ -908,10 +906,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
         isConnected: () => {
           if (!synced) return false;
           if (request) return providerAuthStore.isGatewayModelAvailable(provider, request.model);
-          const snapshot = providerAuthStore.getSnapshot();
-          return snapshot.liveGatewayProviders === null
-            ? isGatewaySetConnected(provider, snapshot.importedCloudProviders)
-            : isLiveGatewaySetConnected(provider, snapshot.liveGatewayProviders);
+          return isPendingGatewaySignInConnected(provider, providerAuthStore.getSnapshot());
         },
       });
       if (!connected && !signal.aborted && !request) {
