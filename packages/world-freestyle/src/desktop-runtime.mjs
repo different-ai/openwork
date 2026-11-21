@@ -7,10 +7,6 @@ import { inspectDesktop } from "./desktop-state.mjs";
 
 const ELECTRON_LOG = "/opt/openwork-preview/desktop/electron.log";
 
-/**
- * What the desktop logged about startup: every error or server line, then the last distinct lines.
- * Repeated "falling back to defaults" bootstrap notices are dropped; tokens and long secrets are masked.
- */
 export async function desktopLogTail(lines = 60, read = readFile) {
   let text;
   try { text = await read(ELECTRON_LOG, "utf8"); }
@@ -22,7 +18,6 @@ export async function desktopLogTail(lines = 60, read = readFile) {
   return [`-- notable (${notable.length}) --`, ...notable, `-- last ${tail.length} distinct lines --`, ...tail].map(mask).join("\n");
 }
 
-/** Tables in the profile's engine database, to show which engine initialized it first. */
 export async function engineDatabaseSummary(read = readFile) {
   try {
     const profile = JSON.parse(await read("/opt/openwork-preview/desktop/profile.json", "utf8"));

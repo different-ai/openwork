@@ -79,8 +79,6 @@ export async function observeDesktop({ nonce, expectedWorkspacePath }, loadProdu
     flags.productContractRead = record(DEFAULT_MODEL) && typeof DEFAULT_MODEL.providerID === "string" && typeof DEFAULT_MODEL.modelID === "string";
     if (!flags.productContractRead) return flags;
     const modelRef = `${DEFAULT_MODEL.providerID}/${DEFAULT_MODEL.modelID}`;
-    // A signed-out desktop provisions the built-in free Auto provider and may select its model;
-    // that is the product's own default, not a provisioned credential.
     const FREE_PROVIDER = "openwork-free";
     const ordinaryModel = (model) => model === undefined || model === null || model === "" || model === modelRef
       || (typeof model === "string" && model.startsWith(`${FREE_PROVIDER}/`))
