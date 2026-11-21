@@ -57,8 +57,9 @@ src/
    features share into `design-system/`, `kernel/` or `infra/`.
 
 `pnpm check` enforces rules 1, 3 and 6 (`scripts/check-app-structure.mjs`) and
-rejects new comments and new `useEffect` calls in app code
-(`scripts/check-code-habits.mjs`). What existed before the checks is frozen in
+rejects new `useEffect` calls in app code (`scripts/check-code-habits.mjs`).
+The same script rejects new comments, `any`, casts, non-null assertions,
+suppressions and `console.log` across `apps`, `packages` and `ee`. What existed before the checks is frozen in
 their baselines, which only shrink.
 
 Toasts are rendered with `sonner` (`@/components/ui/sonner`), mounted once via

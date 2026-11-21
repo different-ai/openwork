@@ -150,18 +150,21 @@ jobs:
           node --test scripts/check-node-source-imports.test.mjs
           node scripts/check-node-source-imports.mjs
       # The app's layering and habits, frozen where they stand: no new
-      # wrong-direction imports, legacy-folder files, comments or effects.
+      # wrong-direction imports, legacy-folder files, comments, effects, any,
+      # casts, non-null assertions, suppressions, console.log or AI-sounding docs.
       - name: Check the app's structure and code habits
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          node --test scripts/check-app-structure.test.mjs scripts/check-code-habits.test.mjs
+          node --test scripts/check-app-structure.test.mjs scripts/check-code-habits.test.mjs scripts/check-prose-habits.test.mjs
           node scripts/check-app-structure.mjs
           if [ -n "${BASE_SHA:-}" ]; then
             git fetch --no-tags --depth=1 origin "$BASE_SHA"
             node scripts/check-code-habits.mjs --base "$BASE_SHA"
+            node scripts/check-prose-habits.mjs --base "$BASE_SHA"
           else
             node scripts/check-code-habits.mjs
+            node scripts/check-prose-habits.mjs
           fi
       # Workspace folders match their package names (scripts/check-package-names.mjs).
       - name: Check workspace package names

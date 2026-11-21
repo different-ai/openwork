@@ -67,7 +67,12 @@ export const CHECKS = [
   {
     name: "code-habits",
     command: ["node", "scripts/check-code-habits.mjs"],
-    fix: "Remove the comment or the effect as the message says. Do not add it to the baseline.",
+    fix: "Remove the comment, effect, any, cast, non-null assertion, suppression or console.log as the message says. Do not add it to the baseline.",
+  },
+  {
+    name: "prose-habits",
+    command: ["node", "scripts/check-prose-habits.mjs"],
+    fix: "Rewrite the flagged markdown line as the message says. Code blocks and inline code are not checked.",
   },
   {
     name: "spec-lint",

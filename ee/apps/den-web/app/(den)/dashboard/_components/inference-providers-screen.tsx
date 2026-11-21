@@ -77,10 +77,12 @@ export function ProviderRow({ provider, orgSlug, orgContext }: {
   const truefoundry = provider.truefoundry;
   const syncError = litellm?.lastSyncError ?? truefoundry?.lastSyncError ?? null;
   const customProvider = isGatewayCustomProviderId(provider.providerId);
-  const keyReady = litellm?.keySource === "entra" ? (provider.credentialSets ?? []).some((set) => set.credentialMode === "member" && set.configured)
+  const sets = provider.credentialSets ?? [];
+  const memberSignInConfigured = sets.some((set) => set.credentialMode === "member" && set.configured);
+  const keyReady = litellm?.keySource === "entra" ? memberSignInConfigured
     : litellm ? litellm.hasSyncKey && (litellm.mode === "member" || provider.credentialStatus === "ready")
       : truefoundry ? truefoundry.hasAdminKey
-        : provider.credentialStatus === "ready" || (provider.credentialSets ?? []).some((set) => set.credentialMode === "org" && set.credentialStatus === "ready");
+        : provider.credentialStatus === "ready" || memberSignInConfigured || sets.some((set) => set.credentialMode === "org" && set.credentialStatus === "ready");
   const ready = provider.status === "active" && keyReady && !syncError && !nobody;
   const status: RowStatus = provider.status === "disabled"
     ? { label: "Off", tone: "neutral" }

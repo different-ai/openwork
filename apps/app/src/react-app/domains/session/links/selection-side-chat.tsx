@@ -60,19 +60,19 @@ export function SelectionSideChat({ scope, onStart }: {
         finalFocus={false}
         data-selection-side-chat=""
         onMouseDown={(event) => event.preventDefault()}
-        className="w-auto gap-0 rounded-lg p-1 data-open:animate-none data-closed:animate-none"
+        className="w-auto gap-0 rounded-lg bg-foreground p-0.5 text-background shadow-none ring-0 data-open:animate-none data-closed:animate-none"
       >
         <Button
           variant="ghost"
-          size="sm"
-          className="h-7 gap-1.5 px-2 text-[13px]"
+          size="xs"
+          className="gap-1.5 rounded-md px-2 text-background hover:bg-background/15 hover:text-background"
           onClick={() => {
             onStart(picked.text);
             document.getSelection()?.removeAllRanges();
             setPicked(null);
           }}
         >
-          <Columns2 className="size-4" />
+          <Columns2 className="size-3.5 opacity-70" />
           {t("session_tree.start_side_chat")}
         </Button>
       </PopoverContent>

@@ -8,7 +8,7 @@ import { useAutomationsDenContext } from "@/react-app/domains/automations/use-au
 
 const FEATURE_STALE_MS = 30_000
 
-type DesktopFeatureKey = "remoteComputers" | "followUpSuggestions" | "questionMinimize" | "questionInThread" | "importOpencodeConnections" | "lowStorageWarning" | "sessionTree" | "sessionMultiSelect" | "sideChatPanel" | "sideQuestions" | "providerFilterSyncFix" | "sandboxTools" | "browserSecretHandles" | "chatRunCommands" | "chatTableExpand" | "officeOutlinePreview"
+type DesktopFeatureKey = "remoteComputers" | "followUpSuggestions" | "questionMinimize" | "questionInThread" | "importOpencodeConnections" | "lowStorageWarning" | "sessionTree" | "sessionMultiSelect" | "sideChatPanel" | "sideChatFromSelection" | "sideQuestions" | "providerFilterSyncFix" | "sandboxTools" | "browserSecretHandles" | "chatRunCommands" | "chatTableExpand" | "officeOutlinePreview"
 
 export function useDesktopFeature(key: DesktopFeatureKey): boolean
 export function useDesktopFeature(key: DesktopFeatureKey, includePending: true): boolean | undefined
