@@ -1027,6 +1027,34 @@ function completionNoticeMessage(id: string, sessionID: string, created: number,
   return subagent ? subagentNoticeMessage(id, sessionID, created, subagent) : null;
 }
 
+function mapV2ShellMessage(
+  value: Record<string, unknown>,
+  id: string,
+  sessionID: string,
+  created: number,
+  completed: number | undefined,
+): V2MappedMessage | null {
+  if (readString(value, "type") !== "shell" || readRecord(value, "metadata")?.background === true) return null;
+  const command = readString(value, "command");
+  if (command === undefined) return null;
+  const callID = readString(value, "shellID") ?? id;
+  const status = readString(value, "status");
+  const output = readString(readRecord(value, "output"), "output") ?? "";
+  const exit = readNumber(value, "exit");
+  const input = { command };
+  const metadata = { output, ...(exit === undefined ? {} : { exit }) };
+  const end = completed ?? created;
+  const state: ToolPart["state"] = status === "running"
+    ? { status: "running", input, title: "bash", metadata, time: { start: created } }
+    : status === "killed" || status === "timeout"
+      ? { status: "error", input, error: status === "timeout" ? "Command timed out" : "Command cancelled", metadata, time: { start: created, end } }
+      : { status: "completed", input, output, title: "bash", metadata, time: { start: created, end } };
+  return {
+    info: { id, sessionID, role: "assistant", time: { created, ...(completed === undefined ? {} : { completed }) } },
+    parts: [{ id: callID, messageID: id, sessionID, type: "tool", callID, tool: "bash", state }],
+  };
+}
+
 function mapV2Message(
   value: unknown,
   sessionID: string,
@@ -1049,6 +1077,8 @@ function mapV2Message(
   const created = readNumber(time, "created") ?? readNumber(value, "timestamp") ?? 0;
   const completed = readNumber(time, "completed");
   const resolvedSessionID = readString(value, "sessionID") ?? sessionID;
+  const shell = mapV2ShellMessage(value, id, resolvedSessionID, created, completed);
+  if (shell) return shell;
   const role = messageRole(value);
   const nativeParts = mapV2MessageParts(value, id, resolvedSessionID, created, taskSessions);
   const parts = role === "user" ? nativeParts.flatMap(mapV2UserPart) : nativeParts;
@@ -1588,6 +1618,12 @@ export function translateV2Event(
   if (!type) return null;
   const properties = eventProperties(value);
   const sessionID = readSessionID(properties);
+
+  if (type === "session.shell.started" || type === "session.shell.ended") {
+    return sessionID && readRecord(readRecord(properties, "shell"), "metadata")?.background !== true
+      ? [{ type: "openwork.message.refresh", properties: { sessionID } }]
+      : null;
+  }
 
   if (type === "session.moved") {
     // The server keeps this stream attached to the conversation's home while
@@ -3099,7 +3135,16 @@ export function createClientV2(
       return result.response.ok ? getSession(parameters, options) : failedResult(result);
     },
     summarize: async (): Promise<FieldsResult<boolean>> => unsupportedResult(baseUrl, "session.summarize"),
-    shell: async (): Promise<FieldsResult<Record<string, never>>> => unsupportedResult(baseUrl, "session.shell"),
+    shell: async (
+      parameters: SessionParameters & { command: string; messageID?: string },
+      options?: RequestOptions,
+    ): Promise<FieldsResult<Record<string, never>>> => {
+      const result = await request("POST", `/api/session/${encodeURIComponent(parameters.sessionID)}/shell`, {
+        command: parameters.command,
+        ...(parameters.messageID ? { id: parameters.messageID } : {}),
+      }, options?.signal);
+      return result.response.ok ? successfulResult(result, {}) : failedResult(result);
+    },
     command: async (
       parameters: SessionCommandParameters,
       options?: RequestOptions,
