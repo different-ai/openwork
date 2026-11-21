@@ -20,8 +20,7 @@ own files, built on OpenCode. This repo is public.
 * **Generated contracts.** Never commit or hand-edit OpenAPI or
   `packages/sdk/src/gen/**`. Never regenerate a Drizzle migration snapshot to
   resolve a conflict.
-* **Code.** pnpm only. No `any`, typecasts, or `as` unless unavoidable. Reuse
-  `@/components`; end users are non-technical.
+* **Code.** pnpm only. Reuse `@/components`; end users are non-technical.
 * **Fix the root cause.** A workaround you find is debt to remove, not a
   pattern to copy. Never write a comment or doc that justifies a shortcut.
 * **Checks.** Run `pnpm check` before you say you are done. It is the
