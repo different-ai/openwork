@@ -1,3 +1,4 @@
+import { GithubInstallationApprovalError } from "./github-installation-policy.js"
 import { declarativeDeleteSchema, declarativeResponses, externalKeyParamsSchema, isDuplicateEntry } from "../declarative.js"
 import { findMarketplaceByExternalKey } from "./store.js"
 import type { Context, Hono } from "hono"
@@ -264,6 +265,9 @@ async function requirePermissionWithFreshSession(c: OrgContext, key: PermissionK
 }
 
 function routeErrorResponse(c: OrgContext, error: unknown) {
+  if (error instanceof GithubInstallationApprovalError) {
+    return c.json({ error: "github_installation_not_approved", message: error.message }, 403)
+  }
   if (error instanceof PluginArchAuthorizationError) {
     const authorizationError = error as PluginArchAuthorizationError
     return c.json({ error: authorizationError.error, reason: authorizationError.reason, message: authorizationError.message }, 403)
@@ -2566,7 +2570,7 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
         const context = actorContext(c)
         await requirePluginArchCapability(context, "connector_account.create")
         const body = validJson<any>(c)
-        return c.json({ ok: true, item: await createGithubConnectorAccount({ accountLogin: body.accountLogin, accountType: body.accountType, context, displayName: body.displayName, installationId: body.installationId }) }, 201)
+        return c.json({ ok: true, item: await createGithubConnectorAccount({ context, installationId: body.installationId }) }, 201)
       } catch (error) {
         return routeErrorResponse(c, error)
       }
@@ -2630,10 +2634,17 @@ export function registerPluginArchRoutes<T extends { Variables: OrgRouteVariable
         200: jsonResponse("GitHub target validated successfully.", githubValidateTargetResponseSchema),
         400: jsonResponse("The GitHub target validation request was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to validate GitHub targets.", unauthorizedSchema),
+        403: jsonResponse("The caller or installation is not authorized for this organization.", forbiddenSchema),
       },
     }),
     async (c: OrgContext) => {
-      const body = validJson<any>(c)
-      return c.json({ ok: true, item: await validateGithubTarget({ branch: body.branch, installationId: body.installationId, ref: body.ref, repositoryFullName: body.repositoryFullName, repositoryId: body.repositoryId }) })
+      try {
+        const context = actorContext(c)
+        await requirePluginArchCapability(context, "connector_instance.create")
+        const body = validJson<z.infer<typeof githubValidateTargetSchema>>(c)
+        return c.json({ ok: true, item: await validateGithubTarget({ ...body, organizationId: context.organizationContext.organization.id }) })
+      } catch (error) {
+        return routeErrorResponse(c, error)
+      }
     })
 }

@@ -19,6 +19,7 @@ import {
   getGithubConnectorAppConfig,
   getGithubRepositoryHeadSha,
 } from "../routes/org/plugin-system/github-app.js"
+import { approvedGithubInstallationOwner, githubAccountInstallationId, GithubInstallationApprovalError } from "../routes/org/plugin-system/github-installation-policy.js"
 import { executeGithubConnectorSyncEvent } from "../routes/org/plugin-system/store.js"
 import {
   githubReconcileRevisionAt,
@@ -393,7 +394,7 @@ type GithubReconcileTarget = {
 }
 
 async function loadGithubReconcileTargets(targetIds: ConnectorTargetId[]) {
-  const rows = await db
+  const rows = await db.$primary
     .select({
       accountOrganizationId: ConnectorAccountTable.organizationId,
       accountRemoteId: ConnectorAccountTable.remoteId,
@@ -404,7 +405,8 @@ async function loadGithubReconcileTargets(targetIds: ConnectorTargetId[]) {
       cachedSourceRevisionRef: jsonString(ConnectorTargetTable.targetConfigJson, "$.githubDiscoveryCache.sourceRevisionRef"),
       createdByOrgMembershipId: ConnectorInstanceTable.createdByOrgMembershipId,
       externalTargetRef: ConnectorTargetTable.externalTargetRef,
-      installationId: jsonNumberText(ConnectorInstanceTable.instanceConfigJson, "$.installationId"),
+      legacyInstallationId: jsonNumberText(ConnectorInstanceTable.instanceConfigJson, "$.installationId"),
+      hasLegacyInstallationId: sql<number | null>`json_contains_path(${ConnectorInstanceTable.instanceConfigJson}, 'one', '$.installationId')`,
       instanceId: ConnectorInstanceTable.id,
       instanceOrganizationId: ConnectorInstanceTable.organizationId,
       instanceStatus: ConnectorInstanceTable.status,
@@ -436,12 +438,25 @@ async function loadGithubReconcileTargets(targetIds: ConnectorTargetId[]) {
       ineligible.add(row.targetId)
       continue
     }
+    let installationId: number
+    try {
+      installationId = githubAccountInstallationId(row.accountRemoteId,
+        Number(row.hasLegacyInstallationId) === 1 ? Number(row.legacyInstallationId) : undefined)
+    } catch (error) {
+      if (!(error instanceof GithubInstallationApprovalError)) throw error
+      ineligible.add(row.targetId)
+      continue
+    }
+    if (approvedGithubInstallationOwner(installationId) !== row.instanceOrganizationId) {
+      ineligible.add(row.targetId)
+      continue
+    }
     eligible.set(row.targetId, {
       accountUpdatedAt: row.accountUpdatedAt,
       branch: row.branch !== null ? row.branch.trim() : row.externalTargetRef?.trim() ?? "",
       cachedSourceRevisionRef: row.cachedSourceRevisionRef,
       createdByOrgMembershipId: row.createdByOrgMembershipId,
-      installationId: row.installationId !== null ? Number(row.installationId) : Number(row.accountRemoteId),
+      installationId,
       instanceId: row.instanceId,
       instanceUpdatedAt: row.instanceUpdatedAt,
       organizationId: row.instanceOrganizationId,
@@ -490,6 +505,7 @@ async function probeGithubConnectorTarget(target: GithubReconcileTarget, activeC
     branch: target.branch,
     config: getGithubConnectorAppConfig(env.githubConnectorApp),
     installationId: target.installationId,
+    organizationId: target.organizationId,
     repositoryFullName: target.repositoryFullName,
   })
   const completedEvents = await db

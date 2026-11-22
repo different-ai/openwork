@@ -1,3 +1,4 @@
+import { approvedGithubInstallationOwner } from "../org/plugin-system/github-installation-policy.js"
 import { createHmac, timingSafeEqual } from "node:crypto"
 import type { Env, Hono } from "hono"
 import { describeRoute } from "hono-openapi"
@@ -86,14 +87,18 @@ export function registerGithubWebhookRoutes<T extends Env>(app: Hono<T>) {
       const ref = typeof payload.ref === "string" ? payload.ref : undefined
       const headSha = typeof payload.after === "string" ? payload.after : undefined
 
-      if (installationId !== undefined) {
-        const accounts = await db
-          .select({ organizationId: ConnectorAccountTable.organizationId })
+      const organizationId = installationId === undefined ? undefined : approvedGithubInstallationOwner(installationId)
+      if (organizationId) {
+        const [account] = await db.$primary
+          .select({ id: ConnectorAccountTable.id })
           .from(ConnectorAccountTable)
-          .where(and(eq(ConnectorAccountTable.connectorType, "github"), eq(ConnectorAccountTable.remoteId, String(installationId))))
-        const organizationIds = [...new Set(accounts.map((account) => account.organizationId))]
-        if (organizationIds.length === 1 && organizationIds[0]) {
-          const audited = await attributeAuditRequest(c, { organizationId: organizationIds[0], ...auditServiceAttribution("github", null), origin: "webhook" })
+          .where(and(
+            eq(ConnectorAccountTable.connectorType, "github"),
+            eq(ConnectorAccountTable.organizationId, organizationId),
+            eq(ConnectorAccountTable.remoteId, String(installationId)),
+          )).limit(1)
+        if (account) {
+          const audited = await attributeAuditRequest(c, { organizationId, ...auditServiceAttribution("github", null), origin: "webhook" })
           if (!audited.ok) return audited.response
         }
       }

@@ -47,7 +47,6 @@ import {
   GithubConnectorRequestError,
   getGithubAppSummary,
   getGithubConnectorAppConfig,
-  getGithubInstallationAccessToken,
   getGithubRepositoryHeadSha,
   getGithubRepositoryTextFile,
   getGithubRepositoryTree,
@@ -56,6 +55,7 @@ import {
   validateGithubInstallationTarget,
   verifyGithubInstallStateToken,
 } from "./github-app.js"
+import { approvedGithubInstallationOwner, githubAccountInstallationId, GithubInstallationApprovalError, requireApprovedGithubInstallation } from "./github-installation-policy.js"
 import {
   buildGithubRepoDiscovery,
   type GithubDiscoveredPlugin,
@@ -3735,7 +3735,7 @@ export async function listConnectorAccounts(input: { context: PluginArchActorCon
   return pageItems(filtered, input.cursor, input.limit)
 }
 
-export async function createConnectorAccount(input: { context: PluginArchActorContext; connectorType: ConnectorAccountRow["connectorType"]; displayName: string; externalAccountRef?: string | null; metadata?: Record<string, unknown>; remoteId: string }) {
+async function insertConnectorAccount(input: { context: PluginArchActorContext; connectorType: ConnectorAccountRow["connectorType"]; displayName: string; externalAccountRef?: string | null; metadata?: Record<string, unknown>; remoteId: string }) {
   const now = new Date()
   const row = {
     connectorType: input.connectorType,
@@ -3752,6 +3752,13 @@ export async function createConnectorAccount(input: { context: PluginArchActorCo
   }
   await db.insert(ConnectorAccountTable).values(row)
   return serializeConnectorAccount(row)
+}
+
+export async function createConnectorAccount(input: Parameters<typeof insertConnectorAccount>[0]) {
+  if (input.connectorType === "github") {
+    return upsertGithubConnectorAccountFromInstallation({ context: input.context, installationId: githubAccountInstallationId(input.remoteId) })
+  }
+  return insertConnectorAccount(input)
 }
 
 export async function getConnectorAccountDetail(context: PluginArchActorContext, connectorAccountId: ConnectorAccountId) {
@@ -3887,6 +3894,10 @@ export async function createConnectorInstance(input: { connectorAccountId: Conne
   if (!account) {
     throw new PluginArchRouteFailure(404, "connector_account_not_found", "Connector account not found.")
   }
+  if (input.connectorType === "github" || account.connectorType === "github") {
+    if (input.connectorType !== "github") throw new GithubInstallationApprovalError()
+    approvedGithubAccountInstallationId(account, input.config)
+  }
   const now = new Date()
   const row = {
     connectorAccountId: account.id,
@@ -3928,6 +3939,9 @@ export async function getConnectorInstanceDetail(context: PluginArchActorContext
 
 export async function updateConnectorInstance(input: { connectorInstanceId: ConnectorInstanceId; config?: Record<string, unknown>; context: PluginArchActorContext; name?: string; remoteId?: string | null; status?: ConnectorInstanceRow["status"] }) {
   const row = await ensureEditableConnectorInstance(input.context, input.connectorInstanceId)
+  if (row.connectorType === "github" && (input.status === "active" || (input.config && "installationId" in input.config))) {
+    await approvedGithubInstanceInstallationId(row, input.config)
+  }
   await db.update(ConnectorInstanceTable).set({
     instanceConfigJson: input.config === undefined ? row.instanceConfigJson : input.config,
     name: input.name?.trim() || row.name,
@@ -3941,6 +3955,7 @@ export async function updateConnectorInstance(input: { connectorInstanceId: Conn
 export async function setConnectorInstanceLifecycle(input: { action: "archive" | "disable" | "enable"; connectorInstanceId: ConnectorInstanceId; context: PluginArchActorContext }) {
   const row = await ensureEditableConnectorInstance(input.context, input.connectorInstanceId)
   const status = input.action === "archive" ? "archived" : input.action === "disable" ? "disabled" : "active"
+  if (row.connectorType === "github" && status === "active") await approvedGithubInstanceInstallationId(row)
   await db.update(ConnectorInstanceTable).set({ status, updatedAt: new Date() }).where(eq(ConnectorInstanceTable.id, row.id))
   return getConnectorInstanceDetail(input.context, row.id)
 }
@@ -4383,6 +4398,9 @@ export async function queueConnectorTargetResync(input: { connectorTargetId: Con
   const target = await getConnectorTargetRow(input.context.organizationContext.organization.id, input.connectorTargetId)
   if (!target) throw new PluginArchRouteFailure(404, "connector_target_not_found", "Connector target not found.")
   const instance = await ensureEditableConnectorInstance(input.context, target.connectorInstanceId)
+  if (target.connectorType === "github" || instance.connectorType === "github") {
+    await requireApprovedGithubSyncTarget(instance, target)
+  }
   const eventId = createDenTypeId("connectorSyncEvent")
   await db.insert(ConnectorSyncEventTable).values({
     completedAt: null,
@@ -4508,7 +4526,11 @@ export async function getConnectorSyncEventDetail(context: PluginArchActorContex
 export async function retryConnectorSyncEvent(input: { connectorSyncEventId: ConnectorSyncEventId; context: PluginArchActorContext }) {
   const row = await getConnectorSyncEventRow(input.context.organizationContext.organization.id, input.connectorSyncEventId)
   if (!row) throw new PluginArchRouteFailure(404, "connector_sync_event_not_found", "Connector sync event not found.")
-  await ensureEditableConnectorInstance(input.context, row.connectorInstanceId)
+  const instance = await ensureEditableConnectorInstance(input.context, row.connectorInstanceId)
+  if (row.connectorType === "github" || instance.connectorType === "github") {
+    const target = row.connectorTargetId ? await getConnectorTargetRow(row.organizationId, row.connectorTargetId) : null
+    await requireApprovedGithubSyncTarget(instance, target)
+  }
   await db.update(ConnectorSyncEventTable).set({
     attemptCount: 0,
     completedAt: null,
@@ -4529,6 +4551,9 @@ export async function syncConnectorInstanceNow(input: { connectorInstanceId: Con
 
   let enqueuedCount = 0
   for (const target of targets) {
+    if (target.connectorType === "github" || instance.connectorType === "github") {
+      await requireApprovedGithubSyncTarget(instance, target)
+    }
     const activeEvents = await db
       .select({ id: ConnectorSyncEventTable.id })
       .from(ConnectorSyncEventTable)
@@ -6428,21 +6453,49 @@ function withGithubDiscoveryCache(config: Record<string, unknown>, cache: Github
   }
 }
 
+function approvedGithubAccountInstallationId(account: ConnectorAccountRow | null, instanceConfig?: unknown) {
+  if (!account || account.connectorType !== "github" || account.status !== "active") {
+    throw new GithubInstallationApprovalError()
+  }
+  const installationId = githubAccountInstallationId(account.remoteId, isRecord(instanceConfig) ? instanceConfig.installationId : undefined)
+  requireApprovedGithubInstallation(account.organizationId, installationId)
+  return installationId
+}
+
+async function approvedGithubInstanceInstallationId(
+  instance: Pick<ConnectorInstanceRow, "organizationId" | "connectorAccountId" | "connectorType" | "instanceConfigJson">,
+  config: unknown = instance.instanceConfigJson,
+) {
+  if (instance.connectorType !== "github") throw new GithubInstallationApprovalError()
+  const account = await withPrimaryReads(() => getConnectorAccountRow(instance.organizationId, instance.connectorAccountId))
+  return approvedGithubAccountInstallationId(account, config)
+}
+
+async function requireApprovedGithubSyncTarget(instance: ConnectorInstanceRow, target: ConnectorTargetRow | null) {
+  if (instance.status !== "active" || !target || target.connectorType !== "github"
+    || target.connectorInstanceId !== instance.id || target.organizationId !== instance.organizationId) {
+    throw new GithubInstallationApprovalError()
+  }
+  await approvedGithubInstanceInstallationId(instance)
+}
+
 async function getGithubDiscoveryContext(input: { connectorInstanceId: ConnectorInstanceId; context: PluginArchActorContext }) {
-  const connectorInstance = await ensureVisibleConnectorInstance(input.context, input.connectorInstanceId)
+  const connectorInstance = await withPrimaryReads(() => ensureVisibleConnectorInstance(input.context, input.connectorInstanceId))
   if (connectorInstance.connectorType !== "github") {
     throw new PluginArchRouteFailure(409, "github_connector_instance_required", "Connector instance is not a GitHub connector.")
   }
 
-  const connectorAccount = await getConnectorAccountRow(input.context.organizationContext.organization.id, connectorInstance.connectorAccountId)
-  if (!connectorAccount || connectorAccount.connectorType !== "github") {
-    throw new PluginArchRouteFailure(404, "connector_account_not_found", "GitHub connector account not found.")
-  }
+  if (connectorInstance.status !== "active") throw new GithubInstallationApprovalError()
+  const installationId = await approvedGithubInstanceInstallationId(connectorInstance)
 
   const targetRows = await db
     .select()
     .from(ConnectorTargetTable)
-    .where(eq(ConnectorTargetTable.connectorInstanceId, connectorInstance.id))
+    .where(and(
+      eq(ConnectorTargetTable.connectorInstanceId, connectorInstance.id),
+      eq(ConnectorTargetTable.organizationId, connectorInstance.organizationId),
+      eq(ConnectorTargetTable.connectorType, "github"),
+    ))
     .orderBy(asc(ConnectorTargetTable.createdAt), asc(ConnectorTargetTable.id))
     .limit(1)
   const connectorTarget = targetRows[0] ?? null
@@ -6456,11 +6509,7 @@ async function getGithubDiscoveryContext(input: { connectorInstanceId: Connector
   const repositoryFullName = typeof targetConfig.repositoryFullName === "string" ? targetConfig.repositoryFullName.trim() : connectorTarget.remoteId.trim()
   const branch = typeof targetConfig.branch === "string" ? targetConfig.branch.trim() : connectorTarget.externalTargetRef?.trim() ?? ""
   const ref = typeof targetConfig.ref === "string" ? targetConfig.ref.trim() : branch ? `refs/heads/${branch}` : ""
-  const installationId = typeof connectorInstance.instanceConfigJson === "object" && connectorInstance.instanceConfigJson && typeof (connectorInstance.instanceConfigJson as Record<string, unknown>).installationId === "number"
-    ? (connectorInstance.instanceConfigJson as Record<string, unknown>).installationId as number
-    : Number(connectorAccount.remoteId)
-
-  if (!repositoryFullName || !branch || !ref || !Number.isFinite(installationId) || installationId <= 0) {
+  if (!repositoryFullName || !branch || !ref) {
     throw new PluginArchRouteFailure(409, "invalid_github_connector_target", "GitHub connector target is missing repository, branch, or installation metadata.")
   }
 
@@ -6471,10 +6520,10 @@ async function getGithubDiscoveryContext(input: { connectorInstanceId: Connector
   return {
     autoImportNewPlugins: typeof autoImportSaved === "boolean" ? autoImportSaved : true,
     branch,
-    connectorAccount,
     connectorInstance,
     connectorTarget,
     installationId,
+    organizationId: connectorInstance.organizationId,
     ref,
     repositoryFullName,
   }
@@ -6633,6 +6682,7 @@ async function executeGithubConnectorSyncEventOnPrimary(input: { connectorSyncEv
     throw new Error("GitHub connector target not found for sync event.")
   }
 
+  await requireApprovedGithubSyncTarget(connectorInstance, connectorTarget)
   const startedAt = new Date()
   const autoImportSummary = await maybeAutoImportGithubConnectorInstance({
     connectorInstance,
@@ -6681,8 +6731,8 @@ async function getGithubDiscoveryFileTexts(input: {
   branch: string
   config: ReturnType<typeof githubConnectorAppConfig>
   installationId: number
+  organizationId: string
   repositoryFullName: string
-  token?: string
   treeEntries: GithubDiscoveryTreeEntry[]
 }) {
   const interestingPaths = new Set<string>()
@@ -6704,10 +6754,10 @@ async function getGithubDiscoveryFileTexts(input: {
       fileTextByPath[path] = await getGithubRepositoryTextFile({
         config: input.config,
         installationId: input.installationId,
+        organizationId: input.organizationId,
         path,
         ref: input.branch,
         repositoryFullName: input.repositoryFullName,
-        token: input.token,
       })
     } catch (error) {
       wrapGithubConnectorError(error)
@@ -6728,22 +6778,18 @@ function pagedGithubDiscoveryTree(input: { cursor?: string; entries: GithubDisco
 async function computeGithubDiscoverySnapshot(input: {
   branch: string
   installationId: number
+  organizationId: string
   ref: string
   repositoryFullName: string
-  token?: string
 }) {
-  const token = input.token ?? await getGithubInstallationAccessToken({
-    config: githubConnectorAppConfig(),
-    installationId: input.installationId,
-  })
   let treeSnapshot: Awaited<ReturnType<typeof getGithubRepositoryTree>>
   try {
     treeSnapshot = await getGithubRepositoryTree({
       branch: input.branch,
       config: githubConnectorAppConfig(),
       installationId: input.installationId,
+      organizationId: input.organizationId,
       repositoryFullName: input.repositoryFullName,
-      token,
     })
   } catch (error) {
     wrapGithubConnectorError(error)
@@ -6753,8 +6799,8 @@ async function computeGithubDiscoverySnapshot(input: {
     branch: input.branch,
     config: githubConnectorAppConfig(),
     installationId: input.installationId,
+    organizationId: input.organizationId,
     repositoryFullName: input.repositoryFullName,
-    token,
     treeEntries: treeSnapshot.treeEntries,
   })
   const discovery = buildGithubRepoDiscovery({
@@ -6784,14 +6830,14 @@ async function computeGithubDiscoverySnapshot(input: {
   } satisfies GithubDiscoverySnapshot
 }
 
-async function computeGithubConnectorDiscovery(input: { connectorInstanceId: ConnectorInstanceId; context: PluginArchActorContext; token?: string }) {
+async function computeGithubConnectorDiscovery(input: { connectorInstanceId: ConnectorInstanceId; context: PluginArchActorContext }) {
   const discoveryContext = await getGithubDiscoveryContext(input)
   const snapshot = await computeGithubDiscoverySnapshot({
     branch: discoveryContext.branch,
     installationId: discoveryContext.installationId,
+    organizationId: discoveryContext.organizationId,
     ref: discoveryContext.ref,
     repositoryFullName: discoveryContext.repositoryFullName,
-    token: input.token,
   })
 
   return {
@@ -6838,8 +6884,15 @@ async function resolveGithubConnectorDiscovery(input: { connectorInstanceId: Con
       branch: discoveryContext.branch,
       config: githubConnectorAppConfig(),
       installationId: discoveryContext.installationId,
+      organizationId: discoveryContext.organizationId,
       repositoryFullName: discoveryContext.repositoryFullName,
-    }).catch(() => null)
+    }).catch((error: unknown) => {
+      if ((error instanceof GithubConnectorRequestError && (error.status === 429 || error.status >= 500))
+        || error instanceof TypeError || (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError"))) {
+        return null
+      }
+      throw error
+    })
     if (liveHeadSha === null || liveHeadSha === cached.sourceRevisionRef) {
       return {
         autoImportNewPlugins: discoveryContext.autoImportNewPlugins,
@@ -7276,19 +7329,17 @@ async function materializeGithubImportPlans(input: {
     ? input.connectorTarget.targetConfigJson as Record<string, unknown>
     : {}
   const branch = typeof targetConfig.branch === "string" ? targetConfig.branch : input.connectorTarget.externalTargetRef ?? ""
-  const installationId = typeof input.connectorInstance.instanceConfigJson === "object" && input.connectorInstance.instanceConfigJson && typeof (input.connectorInstance.instanceConfigJson as Record<string, unknown>).installationId === "number"
-    ? (input.connectorInstance.instanceConfigJson as Record<string, unknown>).installationId as number
-    : null
+  const organizationId = input.context.organizationContext.organization.id
+  const instance = await withPrimaryReads(() => getConnectorInstanceRow(organizationId, input.connectorInstance.id))
+  if (!instance || instance.status !== "active" || input.connectorTarget.connectorInstanceId !== instance.id) {
+    throw new GithubInstallationApprovalError()
+  }
+  const installationId = await approvedGithubInstanceInstallationId(instance)
   const repositoryFullName = typeof targetConfig.repositoryFullName === "string" ? targetConfig.repositoryFullName : input.connectorTarget.remoteId
   if (!installationId || !branch || !repositoryFullName) {
     throw new PluginArchRouteFailure(409, "invalid_github_materialization_context", "GitHub connector target is missing required materialization context.")
   }
 
-  const token = await getGithubInstallationAccessToken({
-    config,
-    installationId,
-  })
-  const organizationId = input.context.organizationContext.organization.id
   const plannedFiles = input.importPlans.flatMap((plan) => plan.paths.map((path) => ({
     mapping: plan.mapping,
     path,
@@ -7303,10 +7354,10 @@ async function materializeGithubImportPlans(input: {
     fetchFile: (path) => getGithubRepositoryTextFile({
       config,
       installationId,
+      organizationId,
       path,
       ref: branch,
       repositoryFullName,
-      token,
     }),
     files: plannedFiles.map((file, index) => ({
       lastSeenSourceRevisionRef: existingBindings[index]?.lastSeenSourceRevisionRef ?? null,
@@ -7463,33 +7514,23 @@ async function ensureDiscoveryMapping(input: {
   })
 }
 
-export async function createGithubConnectorAccount(input: { accountLogin: string; accountType: "Organization" | "User"; context: PluginArchActorContext; displayName: string; installationId: number }) {
-  return createConnectorAccount({
-    connectorType: "github",
-    context: input.context,
-    displayName: input.displayName,
-    metadata: {
-      accountLogin: input.accountLogin,
-      accountType: input.accountType,
-      repositories: [],
-      repositorySelection: "all",
-      settingsUrl: null,
-    },
-    remoteId: String(input.installationId),
-  })
+export async function createGithubConnectorAccount(input: { context: PluginArchActorContext; installationId: number }) {
+  return upsertGithubConnectorAccountFromInstallation(input)
 }
 
 async function upsertGithubConnectorAccountFromInstallation(input: { context: PluginArchActorContext; installationId: number }) {
+  const organizationId = input.context.organizationContext.organization.id
+  requireApprovedGithubInstallation(organizationId, input.installationId)
   let installation: Awaited<ReturnType<typeof getGithubInstallationSummary>>
   try {
     installation = await getGithubInstallationSummary({
       config: githubConnectorAppConfig(),
       installationId: input.installationId,
+      organizationId,
     })
   } catch (error) {
     wrapGithubConnectorError(error)
   }
-  const organizationId = input.context.organizationContext.organization.id
   const existingRows = await db
     .select()
     .from(ConnectorAccountTable)
@@ -7509,7 +7550,7 @@ async function upsertGithubConnectorAccountFromInstallation(input: { context: Pl
   }
 
   if (!existingRows[0]) {
-    return createConnectorAccount({
+    return insertConnectorAccount({
       connectorType: "github",
       context: input.context,
       displayName: installation.displayName,
@@ -7695,18 +7736,10 @@ export async function applyGithubConnectorDiscovery(input: { autoImportNewPlugin
 }
 
 export async function listGithubRepositories(input: { connectorAccountId: ConnectorAccountId; context: PluginArchActorContext; cursor?: string; limit?: number; q?: string }) {
-  const account = await getConnectorAccountRow(input.context.organizationContext.organization.id, input.connectorAccountId)
-  if (!account) {
-    throw new PluginArchRouteFailure(404, "connector_account_not_found", "Connector account not found.")
-  }
-  if (account.connectorType !== "github") {
-    throw new PluginArchRouteFailure(409, "github_connector_account_required", "Connector account is not a GitHub account.")
-  }
-
-  const installationId = Number(account.remoteId)
-  if (!Number.isFinite(installationId) || installationId <= 0) {
-    throw new PluginArchRouteFailure(409, "invalid_github_installation_id", "Connector account does not have a valid GitHub installation id.")
-  }
+  const organizationId = input.context.organizationContext.organization.id
+  const account = await withPrimaryReads(() => getConnectorAccountRow(organizationId, input.connectorAccountId))
+  if (!account) throw new PluginArchRouteFailure(404, "connector_account_not_found", "Connector account not found.")
+  const installationId = approvedGithubAccountInstallationId(account)
 
   let repositories: RepositorySummary[]
   let installationSummary: Awaited<ReturnType<typeof getGithubInstallationSummary>>
@@ -7714,10 +7747,12 @@ export async function listGithubRepositories(input: { connectorAccountId: Connec
     repositories = await listGithubInstallationRepositories({
       config: githubConnectorAppConfig(),
       installationId,
+      organizationId,
     })
     installationSummary = await getGithubInstallationSummary({
       config: githubConnectorAppConfig(),
       installationId,
+      organizationId,
     })
   } catch (error) {
     wrapGithubConnectorError(error)
@@ -7766,10 +7801,10 @@ export async function validateGithubTarget(input: {
   branch: string
   config?: ReturnType<typeof githubConnectorAppConfig>
   installationId: number
+  organizationId: string
   ref: string
   repositoryFullName: string
   repositoryId: number
-  token?: string
 }) {
   try {
     return await validateGithubInstallationTarget({
@@ -7779,7 +7814,7 @@ export async function validateGithubTarget(input: {
       ref: input.ref,
       repositoryFullName: input.repositoryFullName,
       repositoryId: input.repositoryId,
-      token: input.token,
+      organizationId: input.organizationId,
     })
   } catch (error) {
     wrapGithubConnectorError(error)
@@ -7797,19 +7832,19 @@ export async function githubSetup(input: {
   repositoryFullName: string
   repositoryId: number
 }) {
-  const githubConfig = githubConnectorAppConfig()
-  const installationToken = await getGithubInstallationAccessToken({
-    config: githubConfig,
-    installationId: input.installationId,
-  })
+  const organizationId = input.context.organizationContext.organization.id
+  requireApprovedGithubInstallation(organizationId, input.installationId)
+  const account = input.connectorAccountId ? await getConnectorAccountRow(organizationId, input.connectorAccountId) : null
+  if (input.connectorAccountId && approvedGithubAccountInstallationId(account) !== input.installationId) {
+    throw new GithubInstallationApprovalError()
+  }
   const validation = await validateGithubTarget({
     branch: input.branch,
-    config: githubConfig,
     installationId: input.installationId,
     ref: input.ref,
     repositoryFullName: input.repositoryFullName,
     repositoryId: input.repositoryId,
-    token: installationToken,
+    organizationId,
   })
   if (!validation.repositoryAccessible) {
     throw new PluginArchRouteFailure(409, "github_repository_not_accessible", "GitHub repository is not accessible for this installation.")
@@ -7823,28 +7858,19 @@ export async function githubSetup(input: {
     installationId: input.installationId,
     ref: input.ref,
     repositoryFullName: input.repositoryFullName,
-    token: installationToken,
+    organizationId,
   })
 
-  let connectorAccountId = input.connectorAccountId as ConnectorAccountId | undefined
-  let connectorAccountDetail = connectorAccountId ? await getConnectorAccountDetail(input.context, connectorAccountId) : null
-  if (!connectorAccountId || !connectorAccountDetail) {
-    connectorAccountDetail = await createGithubConnectorAccount({
-      accountLogin: input.repositoryFullName.split("/")[0] ?? input.repositoryFullName,
-      accountType: "Organization",
-      context: input.context,
-      displayName: input.repositoryFullName,
-      installationId: input.installationId,
-    })
-    connectorAccountId = connectorAccountDetail.id
-  }
+  const connectorAccountDetail = account
+    ? await getConnectorAccountDetail(input.context, account.id)
+    : await upsertGithubConnectorAccountFromInstallation(input)
+  const connectorAccountId = connectorAccountDetail.id
 
   const connectorInstance = await createConnectorInstance({
     connectorAccountId,
     connectorType: "github",
     config: {
       autoImportNewPlugins: true,
-      installationId: input.installationId,
     },
     context: input.context,
     name: input.connectorInstanceName,
@@ -7904,6 +7930,8 @@ type GithubWebhookTargetRow = {
 }
 
 async function listActiveGithubWebhookTargets(installationId: number) {
+  const organizationId = approvedGithubInstallationOwner(installationId)
+  if (!organizationId) return []
   return db
     .select({ instance: ConnectorInstanceTable, target: ConnectorTargetTable })
     .from(ConnectorTargetTable)
@@ -7915,6 +7943,7 @@ async function listActiveGithubWebhookTargets(installationId: number) {
       eq(ConnectorAccountTable.organizationId, ConnectorInstanceTable.organizationId),
       eq(ConnectorAccountTable.connectorType, "github"),
       eq(ConnectorAccountTable.remoteId, String(installationId)),
+      eq(ConnectorAccountTable.organizationId, organizationId),
       eq(ConnectorAccountTable.status, "active"),
       eq(ConnectorInstanceTable.status, "active"),
     ))
@@ -8105,10 +8134,17 @@ export async function enqueueGithubWebhookSync(input: {
     return { accepted: false as const, reason: "missing installation id" }
   }
 
+  const organizationId = approvedGithubInstallationOwner(input.installationId)
+  if (!organizationId) return { accepted: false as const, reason: "installation not approved" }
+
   const accounts = await db
     .select()
     .from(ConnectorAccountTable)
-    .where(and(eq(ConnectorAccountTable.connectorType, "github"), eq(ConnectorAccountTable.remoteId, String(input.installationId))))
+    .where(and(
+      eq(ConnectorAccountTable.connectorType, "github"),
+      eq(ConnectorAccountTable.organizationId, organizationId),
+      eq(ConnectorAccountTable.remoteId, String(input.installationId)),
+    ))
 
   if (input.event !== "push") {
     if (input.event === "installation") {
@@ -8161,12 +8197,21 @@ export async function enqueueGithubWebhookSync(input: {
       eq(ConnectorAccountTable.organizationId, ConnectorInstanceTable.organizationId),
       eq(ConnectorAccountTable.connectorType, "github"),
       eq(ConnectorAccountTable.remoteId, String(input.installationId)),
+      eq(ConnectorAccountTable.organizationId, organizationId),
       eq(ConnectorAccountTable.status, "active"),
       eq(ConnectorInstanceTable.status, "active"),
     ))
 
   const queuedIds: string[] = []
   for (const row of instances) {
+    if (row.instance.connectorType !== "github") continue
+    const instanceConfig = row.instance.instanceConfigJson
+    try {
+      githubAccountInstallationId(String(input.installationId), instanceConfig?.installationId)
+    } catch (error) {
+      if (!(error instanceof GithubInstallationApprovalError)) throw error
+      continue
+    }
     const targetConfig = row.target.targetConfigJson ?? {}
     const targetRef = typeof targetConfig.ref === "string" ? targetConfig.ref : null
     if (targetRef && targetRef !== input.ref) {

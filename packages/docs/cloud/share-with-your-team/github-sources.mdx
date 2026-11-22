@@ -39,7 +39,11 @@ Self-hosting OpenWork? Your operator must set up the GitHub App first. See
 1. On **Sources**, find **GitHub** and click **Connect**.
 2. GitHub opens. Install the OpenWork GitHub App and choose the repositories it
    can read: all of them, or only the ones you select.
-3. GitHub sends you back to OpenWork, which finishes the connection.
+3. GitHub sends you back to OpenWork. Your deployment operator must approve
+   this GitHub App installation for your OpenWork organization before the
+   connection can finish. If you see an approval error, contact your operator.
+   Existing sources without approval keep their previously imported plugins,
+   but stop syncing until the operator approves the installation.
 
 The account shows up on **Sources** with who added it. To connect another GitHub
 account or organization, click **Connect another**.
