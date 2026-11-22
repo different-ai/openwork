@@ -823,16 +823,15 @@ export function createEngineV2Preview(options: {
   }
 
   async function settleWorkspaceMcp(workspaceId: string, directory: string, server: string): Promise<void> {
-    if (!sidecar || !chatRouting) return;
+    const servingChats = () => Boolean(sidecar) && chatRouting;
+    if (!servingChats()) return;
     try {
       await ensureWorkspaceReady(directory);
     } catch (error) {
-      // The engine can stop while readiness waits on the provider push. The
-      // change is already saved, and v2 loads it when it next opens the folder.
-      if (!sidecar || !chatRouting) return;
+      if (!servingChats()) return;
       throw error;
     }
-    if (!sidecar || !chatRouting) return;
+    if (!servingChats()) return;
     await syncWorkspaceMcp(workspaceId, directory, { servers: [server] });
     if (!enabled) return;
     const active = sidecar;
