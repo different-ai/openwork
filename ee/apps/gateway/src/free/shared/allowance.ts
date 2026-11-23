@@ -146,10 +146,11 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
   return {
     family,
     async safetyPaused(principal: FreePrincipal) {
+      const features = await readFeatures(database.$primary, null, env.features)
+      if (!features.freeAutoSafetyPauses) return false
       const [entry] = await database.$primary.select({ id: Pause.identifier }).from(Pause)
         .where(and(eq(Pause.identifier, freePrincipalHash(principal)), gt(Pause.expires_at, sql`current_timestamp(3)`))).limit(1)
-      if (!entry) return false
-      return (await readFeatures(database.$primary, null, env.features)).freeAutoSafetyPauses
+      return Boolean(entry)
     },
     async consumeNonce(proof: { keyThumbprint: string; nonce: string; timestamp: number }): Promise<"accepted" | "replay" | "unavailable"> {
       const now = new Date()
@@ -176,7 +177,7 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
       const result = await capacity.run(() => database.transaction(async (tx) => {
         if (!await memberFreePrincipalAllowed(principal, tx)) return null
         const result = await check(tx, principal, new Date())
-        if (!result.code && principal.kind === "member" && await sharedBudgetsEnabled(database, principal)) {
+        if (!result.code && principal.kind === "member" && await sharedBudgetsEnabled(tx, principal)) {
           result.code = await memberSharedLimit(tx, principal, config, maximumCompletionCost(config, 1) ?? 1, result.now)
         }
         return result
@@ -190,7 +191,7 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
     },
     async admit(principal: FreePrincipal, requestId: string, choices: number): Promise<FreeAdmission> {
       if (!owns(principal)) return { ok: false, code: "free_principal_rejected" }
-      if (principal.kind === "member" && await sharedBudgetsEnabled(database, principal)) {
+      if (principal.kind === "member" && await sharedBudgetsEnabled(database.$primary, principal)) {
         const cost = maximumCompletionCost(config, choices)
         if (cost === null) return { ok: false, code: "free_request_outside_budget" }
         return capacity.run(() => database.transaction(async (tx): Promise<FreeAdmission> => {
