@@ -7,7 +7,7 @@ import assert from "node:assert/strict"
 import { randomUUID } from "node:crypto"
 import { after, test } from "node:test"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
-import { bootDen, summary, type Call } from "./harness.js"
+import { bootDen, field, summary, type Call } from "./harness.js"
 
 const den = await bootDen()
 after(() => den.close())
@@ -105,4 +105,22 @@ test("request activity shows the failed sign-in burst by hour", async () => {
   const signIns = requests.findings.find((finding) => finding.id === "failed-sign-ins")
   assert.equal(signIns?.severity, "high")
   assert.ok(requests.endpoints.some((endpoint) => endpoint.action === "auth.sign_in.email.attempted" && endpoint.refused >= 120))
+})
+
+test("platform admins can time-limit and lift a free model safety pause", async () => {
+  const path = "/v1/admin/free-auto/safety-pause"
+  const body = { identifier: "a".repeat(64), hours: 1, reason: "provider_notice" }
+  assert.equal((await den.request(null, "PUT", path, { body })).status, 401)
+  assert.equal((await den.request(person.token, "PUT", path, { body })).status, 403)
+  assert.equal((await den.request(admin.token, "PUT", path, { body: { ...body, hours: 169 } })).status, 400)
+  const saved = await den.request(admin.token, "PUT", path, { body })
+  assert.equal(saved.status, 200)
+  assert.equal(field(ok(saved), "enforcementEnabled"), false)
+  const active = async () => {
+    const [rows] = await query("SELECT actor_id FROM free_auto_safety_pause WHERE identifier = ? AND expires_at > CURRENT_TIMESTAMP(3)", [body.identifier])
+    return rows
+  }
+  assert.deepEqual(await active(), [{ actor_id: admin.userId }])
+  assert.equal((await den.request(admin.token, "PUT", path, { body: { ...body, hours: 0, reason: "review_complete" } })).status, 200)
+  assert.deepEqual(await active(), [])
 })
