@@ -50,3 +50,59 @@ test("platform zero, historical org usage, and the same person in another org al
     assert.equal(await admit({ ...principal, organizationId: createDenTypeId("organization") }), "anonymous_limit_exceeded")
   } finally { if ("end" in client) await client.end() }
 })
+
+test("signed-in accounts share founder and desktop budgets independently across organizations", { skip: !process.env.FREE_BUDGET_TEST_DATABASE_URL }, async () => {
+  const { db, client } = createDenDb({ databaseUrl: process.env.FREE_BUDGET_TEST_DATABASE_URL })
+  const { recordFreeAutoFounder, InferenceFreeUsageTable } = await import("@openwork-ee/den-db")
+  const member = () => ({ kind: "member" as const, id: createDenTypeId("user"), memberId: createDenTypeId("member"),
+    inferenceKeyId: createDenTypeId("inferenceKey"), organizationId: createDenTypeId("organization") })
+  const [first, second, independent, unknown] = Array.from({ length: 4 }, member)
+  const [desktopA, desktopB] = [randomUUID(), randomUUID()].map(value => value.replaceAll("-", "").repeat(2))
+  const limited = { ...config, orgWeeklyAmount: 1000, member: { ...config.member, weeklyLimitAmount: 600 } }
+  const admit = (principal: typeof first, desktopHash: string | undefined, amount: number, id = randomUUID()) =>
+    db.transaction(tx => reserveMemberBudget(tx, principal, limited, id, amount, { desktopHash }))
+  try {
+    await recordFreeAutoFounder(db, first.organizationId, first.id)
+    await recordFreeAutoFounder(db, second.organizationId, first.id)
+    await recordFreeAutoFounder(db, second.organizationId, second.id)
+    await recordFreeAutoFounder(db, independent.organizationId, independent.id)
+    assert.equal(await admit(unknown, desktopA, 1), "free_founder_unavailable")
+    assert.equal(await admit(first, undefined, 1), "desktop_proof_required")
+    await db.insert(InferenceFreeUsageTable).values({ request_id: randomUUID(), principal_hash: "b".repeat(64),
+      organization_id: first.organizationId, org_membership_id: first.memberId, inference_key_id: first.inferenceKeyId,
+      model_id: "openai/gpt-6-luna", amount: 400 })
+    const ids = [randomUUID(), randomUUID()]
+    const candidates = [first, second]
+    const desktops = [desktopA, desktopB]
+    const results = await Promise.all(candidates.map((principal, i) => admit(principal, desktops[i], 600, ids[i])))
+    assert.deepEqual(results.toSorted(), ["free_founder_budget_exhausted", null].sort())
+    const winner = results.indexOf(null)
+    assert.equal(await admit(independent, desktops[winner], 1), "free_desktop_budget_exhausted")
+    assert.equal(await admit(independent, desktops[1 - winner], 600), null)
+    await db.transaction(tx => settleMemberBudget(tx, candidates[winner], limited, ids[winner], {
+      eventId: randomUUID(), model: "openai/gpt-6-luna", amount: 400, inputTokens: 3, outputTokens: 1, cachedInputTokens: 0,
+    }, false))
+    assert.equal(await admit(candidates[1 - winner], desktops[winner], 200), null)
+    assert.equal(await admit(independent, desktops[winner], 1), "free_desktop_budget_exhausted")
+  } finally { if ("end" in client) await client.end() }
+})
+
+test("a new organization inherits cross-org enforcement even with local budgets turned off", { skip: !process.env.FREE_BUDGET_TEST_DATABASE_URL }, async () => {
+  const { db, client } = createDenDb({ databaseUrl: process.env.FREE_BUDGET_TEST_DATABASE_URL })
+  const { FeatureRolloutTable, OrganizationFeatureTable } = await import("@openwork-ee/den-db")
+  const { memberBudgetMode } = await import("../src/free/member/shared-budget.js")
+  const member = { kind: "member" as const, id: createDenTypeId("user"), memberId: createDenTypeId("member"),
+    inferenceKeyId: createDenTypeId("inferenceKey"), organizationId: createDenTypeId("organization") }
+  const rollback = new Error("rollback test settings")
+  try {
+    await assert.rejects(db.transaction(async tx => {
+      await tx.insert(FeatureRolloutTable).values({ feature_key: "freeAutoCrossOrgBudgets", enabled: true })
+        .onDuplicateKeyUpdate({ set: { enabled: true, killed: false } })
+      await tx.insert(OrganizationFeatureTable).values(["freeAutoSharedBudgets", "freeAutoCrossOrgBudgets"].map(feature_key => ({
+        organization_id: member.organizationId, feature_key, enabled: false, source: "admin",
+      })))
+      assert.equal(await memberBudgetMode(tx, member), "cross-org")
+      throw rollback
+    }), err => err === rollback)
+  } finally { if ("end" in client) await client.end() }
+})

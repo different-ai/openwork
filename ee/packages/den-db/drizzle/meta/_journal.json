@@ -1457,6 +1457,13 @@
       "when": 1795464211561,
       "tag": "0208_free_auto_safety_pause",
       "breakpoints": true
+    },
+    {
+      "idx": 209,
+      "version": "5",
+      "when": 1795465730458,
+      "tag": "0209_free_auto_founder_budgets",
+      "breakpoints": true
     }
   ]
 }

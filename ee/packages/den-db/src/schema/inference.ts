@@ -531,7 +531,13 @@ export const InferenceFreeUsageBucketTable = mysqlTable("inference_free_usage_bu
   used_amount: bigint("used_amount", { mode: "number" }).notNull().default(0),
 }, (table) => [uniqueIndex("inference_free_usage_identity_window").on(table.identity_hash, table.window_start_at)])
 
+export const FreeAutoOrgFounderTable = mysqlTable("free_auto_org_founder", {
+  organization_id: denTypeIdColumn("organization", "organization_id").notNull().primaryKey(),
+  founder_user_id: denTypeIdColumn("user", "founder_user_id").notNull(),
+}, (table) => [index("free_auto_org_founder_user").on(table.founder_user_id)])
+
 export const InferenceFreeUsageTable = mysqlTable("inference_free_usage", {
+  desktop_hash: varchar("desktop_hash", { length: 64 }),
   request_id: varchar("request_id", { length: 64 }).notNull().primaryKey(),
   completion_id: varchar("completion_id", { length: 255 }),
   principal_hash: varchar("principal_hash", { length: 64 }).notNull(),
@@ -548,6 +554,7 @@ export const InferenceFreeUsageTable = mysqlTable("inference_free_usage", {
 }, (table) => [uniqueIndex("inference_free_usage_completion").on(table.completion_id),
   index("inference_free_usage_principal_created").on(table.principal_hash, table.created_at),
   index("inference_free_usage_created_amount").on(table.created_at, table.amount),
+  index("inference_free_usage_desktop_created").on(table.desktop_hash, table.created_at),
   index("inference_free_usage_org_created").on(table.organization_id, table.created_at)])
 
 export const inferenceKey = InferenceKeyTable

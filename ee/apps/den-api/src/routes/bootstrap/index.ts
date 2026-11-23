@@ -1,3 +1,4 @@
+import { recordFreeAutoFounder } from "@openwork-ee/den-db"
 import { and, eq, gt, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
 import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy"
 import { runPostOrganizationMemberChangeHooks } from "../../organization-member-hooks.js"
@@ -300,6 +301,7 @@ async function transferProvisionalWorkspace(tx: BootstrapTransaction, claim: {
     })
   }
 
+  if (claim.role === "owner") await recordFreeAutoFounder(tx, claim.organizationId, normalizedUserId)
   await tx.update(MemberTable).set({ removedAt: now }).where(eq(MemberTable.id, claim.setupMemberId))
   await tx.update(WorkspaceBootstrapTable).set({ status: "claimed", claimedAt: now }).where(eq(WorkspaceBootstrapTable.id, claim.bootstrapId))
   const metadata = readOrganizationMetadata(claim.organization.metadata)

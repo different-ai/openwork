@@ -1,3 +1,4 @@
+import { recordFreeAutoFounder } from "@openwork-ee/den-db"
 import { peopleMemberCondition } from "./setup-agent-members.js"
 import { and, asc, count, eq, gt, inArray, isNotNull, isNull, or, sql } from "@openwork-ee/den-db/drizzle"
 import { listAuthoritativeTeamMemberships } from "@openwork-ee/den-db/permissions"
@@ -1039,20 +1040,22 @@ async function createOrganizationRecord(input: {
       },
     }
 
-  await db.insert(OrganizationTable).values({
-    id: organizationId,
-    name: input.name,
-    slug: input.slug ?? organizationId,
-    logo: input.logo ?? null,
-    metadata,
-  })
-
   const ownerMemberId = createDenTypeId("member")
-  await db.insert(MemberTable).values({
-    id: ownerMemberId,
-    organizationId,
-    userId: input.userId,
-    role: "owner",
+  await db.transaction(async (tx) => {
+    await tx.insert(OrganizationTable).values({
+      id: organizationId,
+      name: input.name,
+      slug: input.slug ?? organizationId,
+      logo: input.logo ?? null,
+      metadata,
+    })
+    await tx.insert(MemberTable).values({
+      id: ownerMemberId,
+      organizationId,
+      userId: input.userId,
+      role: "owner",
+    })
+    await recordFreeAutoFounder(tx, organizationId, input.userId)
   })
   await ensureMemberGatewayKey({ organizationId, memberId: ownerMemberId })
 
