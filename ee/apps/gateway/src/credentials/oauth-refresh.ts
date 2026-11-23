@@ -34,9 +34,17 @@ export type OauthRefreshStore = {
   recordRefreshFailure(input: { lock: RefreshLock; error: string | null; permanent: boolean; now: Date }): Promise<boolean>
 }
 
+export type GoogleRenewalReason = "invalid_rapt" | "invalid_grant"
+
+export function googleRenewalReason(row: Pick<CredentialRow, "kind" | "status"> & { last_error?: string | null }): { googleReason?: GoogleRenewalReason } {
+  if (row.kind === "oauth_google" && row.status === "refresh_failed"
+    && (row.last_error === "invalid_rapt" || row.last_error === "invalid_grant")) return { googleReason: row.last_error }
+  return {}
+}
+
 export type OauthRefreshOutcome =
   | { kind: "refreshed"; credential: OauthCredentialRow }
-  | { kind: "auth_required" }
+  | { kind: "auth_required"; googleReason?: GoogleRenewalReason }
   | { kind: "configuration_required" }
   | { kind: "retry"; reason: "refresh_busy" | "refresh_unavailable" | "credential_changed" }
 
@@ -220,13 +228,13 @@ export function createOauthRefresher(deps: {
     const clock = input.clock ?? (() => new Date(input.now.getTime() + Math.floor(performance.now() - started)))
     const scope = { credentialId: input.credential.id, provider: input.provider, subject: input.subject, authorization: input.authorization }
     const row = await deps.store.reloadCredential(scope)
-    if (!row || row.status !== "active") return { kind: "auth_required" }
+    if (!row || row.status !== "active") return { kind: "auth_required", ...(row && googleRenewalReason(row)) }
     if (isAdminRepairableKind(row.kind) && row.last_error === "invalid_client") return { kind: "configuration_required" }
     if (!row.expires_at || !Number.isFinite(row.expires_at.getTime())) return { kind: "auth_required" }
     if (canReuseOauthToken(row, clock())) return { kind: "refreshed", credential: row }
     const latest = async (reason: "refresh_busy" | "refresh_unavailable" | "credential_changed"): Promise<OauthRefreshOutcome> => {
       const winner = await deps.store.reloadCredential(scope)
-      if (!winner || winner.status !== "active") return { kind: "auth_required" }
+      if (!winner || winner.status !== "active") return { kind: "auth_required", ...(winner && googleRenewalReason(winner)) }
       if (isAdminRepairableKind(winner.kind) && winner.last_error === "invalid_client") return { kind: "configuration_required" }
       if (!winner.expires_at || !Number.isFinite(winner.expires_at.getTime())) return { kind: "auth_required" }
       const now = clock()
