@@ -21,6 +21,7 @@ on:
         required: false
         type: string
 
+cache-mode: read
 permissions:
   contents: write # pushes and deletes throwaway tmp/world-check/* branches
 
