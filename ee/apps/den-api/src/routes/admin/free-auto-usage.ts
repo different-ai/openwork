@@ -20,6 +20,7 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
+import { deploymentFeatureEnabled } from "../../features.js"
 import { adminRoute, jsonValidator, queryValidator } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
@@ -244,7 +245,7 @@ export function registerAdminFreeAutoUsageRoutes<T extends { Variables: AuthCont
     tags: ["Admin"], summary: "Set a temporary Free Auto safety pause",
     description: "Platform administrators can pause a reviewed identifier across organizations, or release it by setting hours to zero.",
     responses: {
-      200: jsonResponse("Pause expiry.", z.object({ expiresAt: z.string() })),
+      200: jsonResponse("Pause expiry.", z.object({ expiresAt: z.iso.datetime(), enforcementEnabled: z.boolean() })),
       400: jsonResponse("Invalid safety pause.", invalidRequestSchema),
       401: jsonResponse("Sign in required.", unauthorizedSchema),
       403: jsonResponse("Platform administrator required.", forbiddenSchema),
@@ -252,9 +253,10 @@ export function registerAdminFreeAutoUsageRoutes<T extends { Variables: AuthCont
   }), adminRoute(), jsonValidator(pauseInput), async c => {
     const { identifier, hours, reason } = c.req.valid("json")
     const expiresAt = new Date(Date.now() + hours * 3_600_000)
+    const enforcementEnabled = await deploymentFeatureEnabled("freeAutoSafetyPauses")
     const change = { expires_at: expiresAt, reason, actor_id: normalizeDenTypeId("user", c.get("user").id) }
     await db.insert(FreeAutoSafetyPauseTable).values({ identifier, ...change }).onDuplicateKeyUpdate({ set: change })
-    return c.json({ expiresAt: expiresAt.toISOString() }, 200, { "cache-control": "no-store" })
+    return c.json({ expiresAt: expiresAt.toISOString(), enforcementEnabled }, 200, { "cache-control": "no-store" })
   })
   app.get(
     "/v1/admin/free-auto/usage",
