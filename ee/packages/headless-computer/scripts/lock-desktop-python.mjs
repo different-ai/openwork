@@ -42,7 +42,7 @@ try {
     return readFileSync(output, "utf8").split("\n").map((line) => line.trim()).filter((line) => line && !line.startsWith("#"))
   }
 
-  const [amd64, arm64] = ARCHES.map((arch) => resolve("3.11", `${arch}-manylinux_2_28`))
+  const [amd64, arm64] = ARCHES.map((arch) => resolve("3.11.18", `${arch}-manylinux_2_28`))
   if (amd64.join("\n") !== arm64.join("\n")) throw new Error(`amd64 and arm64 resolve differently:\n${amd64.join(" ")}\n${arm64.join(" ")}`)
   // The Freestyle snapshot installs these same pins as wheels on CPython 3.12.
   const freestyle = join(work, "pins.txt")
