@@ -3,7 +3,7 @@ import { env } from "../../env.js"
 import { maximumCompletionCost, memberSharedLimit, reserveMemberBudget, settleMemberBudget, memberBudgetMode } from "../member/shared-budget.js"
 import { and, eq, gt, lte, or, sql } from "@openwork-ee/den-db/drizzle"
 import {
-  FreeAutoSafetyPauseTable as Pause, DesktopFreeProofNonceTable as Nonce, AnonymousInferenceIdentityTable as Identity,
+  FreeAutoSafetyCaseTable as SafetyCase, FreeAutoSafetyMemberTable as SafetyMember, FreeAutoSafetyPauseTable as Pause, DesktopFreeProofNonceTable as Nonce, AnonymousInferenceIdentityTable as Identity,
   AnonymousInferenceUsageBucketTable as GuestBucket, AnonymousInferenceUsageTable as GuestUsage,
   InferenceFreeUsageBucketTable as MemberBucket, InferenceFreeUsageTable as MemberUsage,
   freeAutoLimitId, freeAutoObservationRateId, recordFreeAutoLimit,
@@ -147,9 +147,19 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
     family,
     async safetyPaused(principal: FreePrincipal) {
       const features = await readFeatures(database.$primary, null, env.features)
+      const identifier = freePrincipalHash(principal)
+      if (features.freeAutoSafetyCases) {
+        if (principal.kind === "member") {
+          await database.insert(SafetyMember).values({ identifier, user_id: principal.id })
+            .onDuplicateKeyUpdate({ set: { identifier } })
+        }
+        const [blocked] = await database.$primary.select({ key: SafetyCase.case_key }).from(SafetyCase)
+          .where(and(eq(SafetyCase.identifier, identifier), eq(SafetyCase.state, "blocked"))).limit(1)
+        if (blocked) return true
+      }
       if (!features.freeAutoSafetyPauses) return false
       const [entry] = await database.$primary.select({ id: Pause.identifier }).from(Pause)
-        .where(and(eq(Pause.identifier, freePrincipalHash(principal)), gt(Pause.expires_at, sql`current_timestamp(3)`))).limit(1)
+        .where(and(eq(Pause.identifier, identifier), gt(Pause.expires_at, sql`current_timestamp(3)`))).limit(1)
       return Boolean(entry)
     },
     async consumeNonce(proof: { keyThumbprint: string; nonce: string; timestamp: number }): Promise<"accepted" | "replay" | "unavailable"> {
