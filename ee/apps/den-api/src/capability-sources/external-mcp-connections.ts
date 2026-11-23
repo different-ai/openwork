@@ -144,8 +144,9 @@ async function directlyUsableExternalMcpConnections(input: {
   organizationId: OrganizationId
   orgMembershipId: OrgMembershipId
   teamIds: TeamId[]
+  connectionIds?: ExternalMcpConnectionId[]
 }) {
-  const key = `usable-external-mcp-connections:${input.organizationId}:${input.orgMembershipId}:${[...input.teamIds].sort().join(",")}`
+  const key = `usable-external-mcp-connections:${input.organizationId}:${input.orgMembershipId}:${[...input.teamIds].sort().join(",")}:${input.connectionIds ? [...input.connectionIds].sort().join(",") : "*"}`
   return requestRead(key, async () => {
     const rows = await db
       .selectDistinct({ connection: ExternalMcpConnectionTable })
@@ -156,6 +157,7 @@ async function directlyUsableExternalMcpConnections(input: {
       )
       .where(and(
         eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+        input.connectionIds && inArray(ExternalMcpConnectionTable.id, input.connectionIds),
         isNull(ExternalMcpConnectionAccessGrantTable.pluginMcpRequirementBindingId),
         grantFilter(input),
       ))
@@ -278,6 +280,7 @@ async function sourcedUsableExternalMcpConnections(input: {
   organizationId: OrganizationId
   orgMembershipId: OrgMembershipId
   teamIds: TeamId[]
+  connectionIds?: ExternalMcpConnectionId[]
   includeAuthMismatches?: boolean
 }) {
   const rows = await db
@@ -306,6 +309,7 @@ async function sourcedUsableExternalMcpConnections(input: {
     ))
     .where(and(
       eq(ExternalMcpConnectionTable.organizationId, input.organizationId),
+      input.connectionIds && inArray(ExternalMcpConnectionTable.id, input.connectionIds),
       grantFilter(input),
       eq(PluginMcpRequirementBindingTable.organizationId, input.organizationId),
       eq(PluginTable.organizationId, input.organizationId),
@@ -1385,8 +1389,10 @@ export async function listUsableExternalMcpConnections(input: {
   organizationId: OrganizationId
   orgMembershipId: OrgMembershipId
   teamIds: TeamId[]
+  connectionIds?: ExternalMcpConnectionId[]
   withheldConnectionIds?: ReadonlySet<string>
 }): Promise<ExternalMcpConnectionRow[]> {
+  if (input.connectionIds?.length === 0) return []
   const directConnections = await directlyUsableExternalMcpConnections(input)
   const sourcedConnections = await sourcedUsableExternalMcpConnections(input)
   const usable = await withoutRetiredPluginOwnedConnections(input.organizationId, directConnections, sourcedConnections)

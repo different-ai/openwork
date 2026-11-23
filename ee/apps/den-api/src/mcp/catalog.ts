@@ -1,4 +1,3 @@
-import type { Hono } from "hono"
 import { z } from "zod"
 import { isMcpOperationAllowed, type OpenApiOperation } from "./policy.js"
 
@@ -380,7 +379,11 @@ function buildInputGuidance(input: McpToolOperation) {
   ].join("\n")
 }
 
-export async function loadOpenApiDocument(app: Hono, env: unknown): Promise<OpenApiDocument> {
+export type CatalogApp<Bindings> = {
+  fetch: (request: Request, env: Bindings) => Response | Promise<Response>
+}
+
+export async function loadOpenApiDocument<Bindings>(app: CatalogApp<Bindings>, env: Bindings): Promise<OpenApiDocument> {
   const response = await app.fetch(new Request("http://den-api.local/openapi.json"), env)
   if (!response.ok) {
     throw new Error(`Unable to load Den OpenAPI document: ${response.status}`)

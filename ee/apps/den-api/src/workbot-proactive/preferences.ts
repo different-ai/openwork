@@ -5,6 +5,7 @@ import {
   AGENT_MEMBER_BRIEF_MAX,
   AGENT_PREFERENCE_COPY,
   AGENT_PREFERENCE_FIELDS,
+  AGENT_RECENT_CHANGES_MAX,
   AGENT_RESPONSIBILITIES,
   AGENT_RESPONSIBILITY_COPY,
   AGENT_PREFERENCE_MAX,
@@ -438,7 +439,7 @@ export function memberAgentChanges(
   stored: StoredAgentPreferences,
   settings: WorkbotProactiveSettings,
   sourceNames: ReadonlyMap<string, string> = new Map(),
-  limit = 20,
+  limit = AGENT_RECENT_CHANGES_MAX,
   connectionNames: ReadonlyMap<string, string> = new Map(),
   brief?: AgentBriefPolicy | null,
 ): MemberAgentChange[] {

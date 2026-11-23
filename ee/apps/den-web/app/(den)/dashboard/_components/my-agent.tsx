@@ -27,6 +27,7 @@ import { DenTextarea } from "../../_components/ui/textarea";
 import { ItemPanel, ItemRow, ItemRowsSkeleton, ItemSection } from "./item-list";
 import { ItemHeader, ItemPage } from "./item-header";
 import { ConnectorLogo } from "./item-logo";
+import { enableConnectorBatches } from "./my-agent-enable-connectors";
 import { SourceIcon } from "./source-icon";
 import {
   OUTCOME_PILL,
@@ -246,12 +247,15 @@ function focalLine(view: MemberAgentView, now: number): { title: string; sentenc
   return { title: "No checks yet", sentence: view.destination?.blocked === "member_not_linked" ? "Link your Slack account to Workbot to get its messages." : "It reads your calendar and connectors in your working hours." };
 }
 
-export function MyAgentPanel({ view, now, links, saving, error, earlier, onChange }: {
+export function MyAgentPanel({ view, now, links, saving, error, earlier, onChange, enableAll, enablingAll, pendingSources }: {
   view: MemberAgentView;
   now: number;
   links: MyAgentLinks;
   saving: boolean;
   error: string | null;
+  enableAll?: (batches: MemberAgentInput[]) => void;
+  enablingAll?: boolean;
+  pendingSources?: MemberAgentInput["sources"];
   earlier: { open: boolean; onToggle: (open: boolean) => void; checks: MemberAgentCheck[] | null; loading: boolean; error: string | null };
   onChange: Change;
 }) {
@@ -264,6 +268,7 @@ export function MyAgentPanel({ view, now, links, saving, error, earlier, onChang
   const fix = view.lastCheck?.fix ?? null;
   const reconnect = view.lastCheck?.sources[0] ?? null;
   const google = links.google;
+  const batches = enableAll ? enableConnectorBatches(view.sources ?? []) : [];
 
   return (
     <ItemPage testId="my-agent-screen">
@@ -337,9 +342,12 @@ export function MyAgentPanel({ view, now, links, saving, error, earlier, onChang
       </ItemSection>
       )}
 
-      <ItemSection title="What it reads" variant="rule" testId="my-agent-uses">
+      <ItemSection title="What it reads" variant="rule" testId="my-agent-uses" meta={enableAll && (batches.length > 0 || enablingAll) ? (
+        <DenButton size="xs" variant="secondary" disabled={saving || !view.available} loading={enablingAll}
+          onClick={() => enableAll(batches)}>Enable all connected apps</DenButton>
+      ) : undefined}>
         <div className="flex flex-col divide-y divide-gray-100">
-          {(view.sources ?? []).map((source) => <SourceRow key={source.id} view={view} source={source} now={now} saving={saving} links={links} onChange={onChange} />)}
+          {(view.sources ?? []).map((source) => <SourceRow key={source.id} view={view} source={source} pendingOn={pendingSources?.find((change) => change.source === source.id)?.on} now={now} saving={saving} links={links} onChange={onChange} />)}
         </div>
         {(view.sources ?? []).some(sourceLocked) ? (
           <p className="border-t border-gray-100 pt-2.5" data-testid="my-agent-sources-locked"><LockNote>{`Locked sources are ${ADMIN_LOCK.charAt(0).toLowerCase()}${ADMIN_LOCK.slice(1)}`}</LockNote></p>
@@ -474,7 +482,7 @@ function AccountPicker({ kind, options, chosen, disabled, onPick }: {
   );
 }
 
-function SourceRow({ view, source, now, saving, links, onChange }: { view: MemberAgentView; source: MemberAgentSource; now: number; saving: boolean; links: MyAgentLinks; onChange: Change }) {
+function SourceRow({ view, source, pendingOn, now, saving, links, onChange }: { pendingOn?: boolean; view: MemberAgentView; source: MemberAgentSource; now: number; saving: boolean; links: MyAgentLinks; onChange: Change }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(source.instruction);
   useEffect(() => setDraft(source.instruction), [source.instruction]);
@@ -525,7 +533,8 @@ function SourceRow({ view, source, now, saving, links, onChange }: { view: Membe
           </span>
         </span>
         <span className="flex shrink-0 items-center gap-2">
-          {!core && status ? <span className="whitespace-nowrap text-[12px] text-gray-500">{status}</span> : null}
+          {pendingOn !== undefined ? <span role="status" className="text-[12px] text-gray-500">Saving…</span> : null}
+          {!core && status && pendingOn === undefined ? <span className="whitespace-nowrap text-[12px] text-gray-500">{status}</span> : null}
           {!core ? connectAction : null}
           {core && source.policy !== "off" && source.options.length > 1 ? (
             <AccountPicker kind={core} options={source.options} chosen={chosen} disabled={saving}
@@ -548,7 +557,7 @@ function SourceRow({ view, source, now, saving, links, onChange }: { view: Membe
               <span className="flex w-4 justify-center">
                 {locked ? <Lock size={14} strokeWidth={1.5} className="text-gray-500" role="img" aria-label={source.policy === "off" ? "Not allowed by your admin" : "On for everyone, set by your admin"} /> : null}
               </span>
-              <DenSwitch size="sm" aria-label={source.name} checked={source.on} disabled={locked || saving}
+              <DenSwitch size="sm" aria-label={source.name} checked={pendingOn ?? source.on} disabled={locked || saving}
                 onChange={(on) => onChange({ sources: [{ source: source.id, on }] })} />
             </>
           ) : null}
