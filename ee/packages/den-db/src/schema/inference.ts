@@ -514,6 +514,14 @@ export const DesktopFreeProofNonceTable = mysqlTable("desktop_free_proof_nonces"
   expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
 }, (table) => [index("desktop_free_proof_nonce_expiry").on(table.expires_at)])
 
+export const FreeAutoSafetyPauseTable = mysqlTable("free_auto_safety_pause", {
+  identifier: varchar("identifier", { length: 64 }).notNull().primaryKey(),
+  expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
+  actor_id: denTypeIdColumn("user", "actor_id").notNull(),
+  reason: varchar("reason", { length: 32 }).notNull(),
+  updated_at: timestamps.updated_at,
+})
+
 export const InferenceFreeUsageBucketTable = mysqlTable("inference_free_usage_buckets", {
   id: varchar("id", { length: 64 }).notNull().primaryKey(),
   identity_hash: varchar("identity_hash", { length: 64 }).notNull(),

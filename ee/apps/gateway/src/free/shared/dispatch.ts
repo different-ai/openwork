@@ -4,7 +4,7 @@ import { INFERENCE_USAGE_CONVERSION_FACTOR } from "@openwork/types/den/inference
 import type { FreeAllowanceStore, FreeUsageReceipt } from "./allowance.js"
 import { FREE_OPENAI_CHAT_URL, FREE_OPENAI_RESPONSES_URL, type AutoConfig } from "./config.js"
 import { freeSafetyIdentifier, type FreePrincipal } from "./principal.js"
-import { meterFreeResponse, upstreamErrorDetails, type UpstreamErrorDetails } from "./meter.js"
+import { isPolicyRefusal, meterFreeResponse, upstreamErrorDetails, type UpstreamErrorDetails } from "./meter.js"
 import { retryFreeSettlement } from "./settlement.js"
 import { freeError } from "./errors.js"
 import type { FreeProtocol } from "./request.js"
@@ -82,6 +82,19 @@ export async function dispatchFreeCompletion(input: {
     if (admission.reserved) await charge(null, true)
     return freeError(503, "request_log_unavailable", `${REQUEST_LOG_UNAVAILABLE_MESSAGE} No allowance was consumed.`)
   }
+  let paused: boolean
+  try {
+    paused = await store.safetyPaused(principal)
+  } catch {
+    if (admission.reserved) await charge(null, true)
+    await usageLog?.finish({ status: 503, outcome: "upstream_error", errorCode: "free_safety_check_unavailable" })
+    return freeError(503, "free_safety_check_unavailable")
+  }
+  if (paused) {
+    if (admission.reserved) await charge(null, true)
+    await usageLog?.finish({ status: 403, outcome: "upstream_error", errorCode: "free_safety_paused" })
+    return freeError(403, "free_safety_paused", "Free model access is paused for safety review.")
+  }
   let response: Response
   let headerTimedOut = false
   const headerTimeout = setTimeout(() => { headerTimedOut = true; controller.abort() }, config.requestTimeoutMs)
@@ -112,6 +125,10 @@ export async function dispatchFreeCompletion(input: {
     logFailure("error", "free Auto upstream request failed", {
       reason: "upstream_status", http_status_code: response.status, upstream_request_id: upstreamRequestId, ...upstreamFields(details),
     })
+    if (isPolicyRefusal(details)) {
+      await usageLog?.finish({ status: response.status, outcome: "upstream_error", errorCode: "free_policy_refusal" })
+      return freeError(403, "free_policy_refusal", "This request was stopped by the model provider's safety policy.")
+    }
     await usageLog?.finish({ status: response.status, outcome: "upstream_error", errorCode: "free_inference_upstream_unavailable" }).catch(() => undefined)
     return freeError(503, "free_inference_upstream_unavailable", "Auto is temporarily unavailable. No allowance was consumed.")
   }
