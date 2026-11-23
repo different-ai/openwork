@@ -1443,6 +1443,13 @@
       "when": 1795139540657,
       "tag": "0206_skill_file_blob",
       "breakpoints": true
+    },
+    {
+      "idx": 207,
+      "version": "5",
+      "when": 1795463890124,
+      "tag": "0207_free_usage_spend_lookup",
+      "breakpoints": true
     }
   ]
 }
