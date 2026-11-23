@@ -1001,16 +1001,13 @@ export function createEngineV2Preview(options: {
     const localKeys = allowsProvider
       ? new Map([...localAuth.apiKeys].filter(([id]) => allowsProvider(id)))
       : localAuth.apiKeys;
-    // A corrupt env store must not abort the whole mirror (and with it every
-    // provider save); report it like other unreadable inputs and continue
-    // without stored credentials.
-    const storedEnv = options.env
+    const storedEnvOrEmptyWhenUnreadable = options.env
       ? await options.env.list().catch((error: unknown) => {
         unreadable.push(errorMessage(error));
         return [];
       })
       : [];
-    const credentials = new Map(storedEnv.map((entry) => [entry.key, entry.value]));
+    const credentials = new Map(storedEnvOrEmptyWhenUnreadable.map((entry) => [entry.key, entry.value]));
     const native = await readEngineV2NativeProviders(active);
     const environment: NodeJS.ProcessEnv = { ...process.env, ...Object.fromEntries(credentials) };
     const userFile = await userConfigProviders(configured, allowsProvider, native, localKeys, credentials, undefined, environment);
