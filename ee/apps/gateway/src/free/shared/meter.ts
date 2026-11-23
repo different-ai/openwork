@@ -16,6 +16,10 @@ export type FreeAutoFailureReason =
   | "invalid_response"
   | "response_too_large"
 export type UpstreamErrorDetails = { type?: string; code?: string }
+const policyCodes = new Set(["safety_identifier_blocked", "identifier_blocked", "cyber_policy", "content_policy_violation", "misalignment_policy_violation"])
+export function isPolicyRefusal(details: UpstreamErrorDetails) {
+  return policyCodes.has(details.code ?? "") || policyCodes.has(details.type ?? "")
+}
 export class FreeAutoFailure extends Error {
   constructor(message: string, readonly reason: FreeAutoFailureReason, readonly upstream: UpstreamErrorDetails = {}) { super(message) }
 }
@@ -168,7 +172,14 @@ export function meterFreeResponse(body: ReadableStream<Uint8Array>, input: {
     report(failure)
     void settle(null).catch(() => { console.error("Auto allowance settlement failed") })
     if (failure.reason === "client_cancelled") output.close()
-    else output.error(Object.assign(new Error(failure.message), { stack: `Error: ${failure.message}` }))
+    else if (input.streaming && isPolicyRefusal(failure.upstream)) {
+      const error = { code: "free_policy_refusal", type: "policy_error", message: "The model provider stopped this request for safety." }
+      const frame = input.protocol === "responses"
+        ? `event: error\ndata: ${JSON.stringify({ type: "error", code: error.code, message: error.message })}\n\n`
+        : `data: ${JSON.stringify({ error })}\n\ndata: [DONE]\n\n`
+      output.enqueue(encoder.encode(frame))
+      output.close()
+    } else output.error(Object.assign(new Error(failure.message), { stack: `Error: ${failure.message}` }))
   }
   const errorEventFailure = () => new FreeAutoFailure("Auto upstream failed", "upstream_error", parseErrorEvent(data.join("\n")))
   const abort = () => fail(cancelled())
