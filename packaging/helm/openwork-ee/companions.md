@@ -6,10 +6,13 @@ both off by default. They are deployment configuration, not new product feature
 flags. Existing organization features and access controls still apply.
 
 **Verification status:** offline rendering and contract tests are provided.
-Kubernetes install, upgrade, disable, re-enable and a member reply through this
-chart have not yet been exercised. A successful manually applied companion
-installation is not this chart's runtime proof. Use an isolated lab before
-production rollout.
+A reported local Helm lifecycle check at chart revision `eb6c3611` used synthetic
+stand-in containers for install, upgrade, disable and uninstall, including stable
+retained PVC UID checks. That covers Helm resource lifecycle behavior, not the
+actual application images, OAuth, application data recovery or a member reply
+through Gateway. Application end-to-end proof remains outstanding. A successful
+manually applied companion installation is not this chart's application runtime
+proof. Use an isolated application lab before production rollout.
 
 ## Before enabling
 
@@ -37,8 +40,11 @@ production rollout.
   is prefixed, even if it already begins with `api.`. Nondefault HTTPS ports are
   preserved and port 443 is normalized away. Set `apiOrigin` explicitly for
   same-origin routing, IP-based web origins or any different public API route.
-  Ambiguous non-DNS derivation is rejected. These origins must be reachable from
-  both companions. The runner
+  Ambiguous non-DNS derivation is rejected. Companion chart `apiOrigin` accepts
+  an HTTPS origin only, not a pathful API base such as `https://den.example.com/api`.
+  Prefix-mounted API deployments are not supported by this companion interface;
+  expose the API's root routes at its public origin instead. These origins must
+  be reachable from both companions. The runner
   uses the public API for MCP, callbacks and telemetry. Its default model base
   is derived from `config.public.gatewayPublicBaseUrl` with `/api/v1` appended.
   Member turns supply scoped Gateway credentials and provider-specific routing;
@@ -105,13 +111,55 @@ On self-hosted Den Web (`DEN_DEPLOYMENT=self_hosted`), an absent or blank
 `DEN_WORKBOT_URL` makes `/workbot` return 404 rather than redirect to the hosted
 service. This also applies after disabling chart-managed Workbot. An explicit
 manual URL still wins, including its path/query and organization forwarding.
-Cloud with `DEN_DEPLOYMENT=cloud` retains the hosted default. Missing/unknown
-deployment configuration does not authorize a hosted redirect. This is a
-self-hosting redirect bug fix, not a new organization rollout or scheduling flag.
+Cloud, unset and unknown deployment classifications retain the historical hosted
+fallback, including organization query forwarding. No new environment setting is
+required on existing hosted/Vercel installations. Only the affirmative
+`DEN_DEPLOYMENT=self_hosted` classification suppresses an unconfigured hosted
+fallback; Helm already supplies it through `config.deployment: self_hosted`.
+This is a scoped self-hosting redirect bug fix, not a new organization rollout
+or scheduling flag.
 The redirect correction is Den Web application code in this revision. It requires
 matching application images built with this change; selecting an older published
 image tag does not acquire the fix from Helm values alone. Source-level page
 handler tests are not proof that a previously published image includes it.
+
+### Manual destinations and Terraform classification
+
+With the chart-managed companion switches off, an operator keeping a manual
+Workbot installation must configure the destination on **both** processes:
+
+```yaml
+denApi:
+  env:
+    DEN_WORKBOT_URL: https://chat.example.com
+denWeb:
+  env:
+    DEN_WORKBOT_URL: https://chat.example.com
+```
+
+Den API uses its setting for the Workbot integration/OAuth origin; Den Web uses
+its own setting for `/workbot`. Setting only the API value does not configure
+the Web redirect. Use the same canonical HTTPS Workbot origin on both.
+Historical explicit manual Web destinations retain path/query parameters and
+organization forwarding; that compatibility does not add path-prefix hosting
+to chart-managed Workbot. Remove these overrides before enabling chart-managed
+companions, which derive and inject the destination themselves.
+
+The Terraform source modules were inspected, not deployed or changed here.
+`infra/terraform/modules/openwork-self-host` wraps a selected Helm chart; only
+a chart version that supplies `DEN_DEPLOYMENT=self_hosted` gives this marker by
+default. The direct AWS ECS, GCP Cloud Run and Azure Container Apps modules do
+not currently supply that marker in their environment maps. Without a reviewed
+operator override, those installs retain the historical hosted fallback when
+Workbot is unconfigured, even though the infrastructure is self-hosted.
+
+For direct AWS/GCP installs, the existing `extra_environment` map can explicitly
+supply `DEN_DEPLOYMENT = "self_hosted"` to the applications when the operator
+intends this classification. Azure's plaintext `extra_environment` allowlist
+does not permit this key; no automatic self-hosted-off guarantee is made for
+that module in this slice. Review its supported configuration separately rather
+than bypassing its allowlist or applying unreviewed Terraform changes. None of
+these settings or infrastructure changes is applied by this chart guide.
 
 This does **not** adopt a manually applied Deployment, Service, PVC or Secret.
 Before switching from a manual installation, inventory ownership, names,

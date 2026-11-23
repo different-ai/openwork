@@ -79,8 +79,9 @@ test("an operator starts with core only and keeps manual companion configuration
   assert.ok(!output.includes("headless-runner"));
   assert.ok(!output.includes("workbot"));
   assert.ok(!output.includes("kind: PersistentVolumeClaim"));
-  const manual = render({ "denApi.env.DEN_HEADLESS_RUNNER_URL": "http://manual:8795", "denWeb.env.DEN_WORKBOT_URL": "https://manual.example.test" });
+  const manual = render({ "denApi.env.DEN_HEADLESS_RUNNER_URL": "http://manual:8795", "denApi.env.DEN_WORKBOT_URL": "https://manual.example.test", "denWeb.env.DEN_WORKBOT_URL": "https://manual.example.test" });
   value(document(manual, "Deployment", "den-api"), "DEN_HEADLESS_RUNNER_URL", "http://manual:8795");
+  value(document(manual, "Deployment", "den-api"), "DEN_WORKBOT_URL", "https://manual.example.test");
   value(document(manual, "Deployment", "den-web"), "DEN_WORKBOT_URL", "https://manual.example.test");
   evidence.recordAssertionEvidence("core remains default-off", "No companion workloads, PVC or Den injection; existing manual env overrides still render", true);
 });
@@ -253,6 +254,7 @@ const invalid: [Record<string, string | boolean>, string][] = [
   [{ ...workbot, "workbot.ingress.enabled": true }, "tlsSecretName"],
   [{ ...runner, "headlessRunner.enabled": "false" }, "YAML boolean"],
   [{ ...runner, "config.public.apiOrigin": "https://api.example.test//" }, "config.public.apiOrigin"],
+  [{ ...runner, "config.public.apiOrigin": "https://api.example.test/den/api" }, "config.public.apiOrigin"],
   [{ ...workbot, "workbot.publicUrl": "https://den.example.test" }, "separate host"],
   [{ ...runner, "headlessRunner.persistence.size": "0Gi" }, "positive storage quantity"],
   [{ ...runner, "headlessRunner.secret.grantKey": "runner-token" }, "keys must be distinct"],

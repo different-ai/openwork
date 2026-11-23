@@ -2,19 +2,22 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { workbotBaseUrl, workbotDestination } from "./destination.ts";
 
-for (const deployment of [undefined, "", "self_hosted", " self_hosted ", "invalid"]) {
+for (const deployment of ["self_hosted", " self_hosted "]) {
   test(`an unconfigured ${deployment ?? "default"} deployment has no hosted Workbot fallback`, () => {
     assert.equal(workbotBaseUrl({ DEN_DEPLOYMENT: deployment }), null);
     assert.equal(workbotBaseUrl({ DEN_DEPLOYMENT: deployment, DEN_WORKBOT_URL: "  " }), null);
   });
 }
 
-test("Cloud retains its hosted Workbot fallback", () => {
-  assert.equal(workbotBaseUrl({ DEN_DEPLOYMENT: "cloud" }), "https://chat.openworklabs.com");
-  assert.equal(workbotBaseUrl({ DEN_DEPLOYMENT: " cloud ", DEN_WORKBOT_URL: " " }), "https://chat.openworklabs.com");
-});
+for (const deployment of [undefined, "", "invalid", "cloud", " cloud "]) {
+  test(`the ${deployment ?? "unset"} deployment preserves the historical hosted fallback`, () => {
+    assert.equal(workbotBaseUrl({ DEN_DEPLOYMENT: deployment }), "https://chat.openworklabs.com");
+    assert.equal(workbotBaseUrl({ DEN_DEPLOYMENT: deployment, DEN_WORKBOT_URL: " " }), "https://chat.openworklabs.com");
+    assert.equal(workbotDestination(workbotBaseUrl({ DEN_DEPLOYMENT: deployment }), "org_legacy"), "https://chat.openworklabs.com/?organization=org_legacy");
+  });
+}
 
-for (const deployment of [undefined, "self_hosted", "cloud"]) {
+for (const deployment of [undefined, "invalid", "self_hosted", "cloud"]) {
   test(`explicit manual Workbot URL wins for ${deployment ?? "default"} deployment`, () => {
     assert.equal(workbotBaseUrl({ DEN_DEPLOYMENT: deployment, DEN_WORKBOT_URL: " https://manual.example.test/chat?source=den " }), "https://manual.example.test/chat?source=den");
   });
