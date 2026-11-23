@@ -678,7 +678,7 @@ export function externalToolsSearchCacheKey(connection: ExternalMcpConnectionRow
   }
 }
 
-function cachedSearchTools(connection: ExternalMcpConnectionRow, member: McpMemberIdentity): ExternalMcpTool[] | undefined {
+export function cachedSearchTools(connection: ExternalMcpConnectionRow, member: McpMemberIdentity): ExternalMcpTool[] | undefined {
   if (connection.toolPolicy?.allDisabled) return undefined
   const key = externalToolsSearchCacheKey(connection, member)
   const cached = key ? getExternalToolsSearchCache(key) : undefined
@@ -1088,6 +1088,16 @@ export async function probeExternalConnectionStatus(input: {
   if (!canUse) {
     return { ok: false, error: "forbidden", message: `You have not been granted access to "${connection.name}".` }
   }
+  const account = connection.credentialMode === "per_member" && !connection.oauthIssuerReviewRequiredAt
+    ? await getConnectedAccountForListing({ organizationId: connection.organizationId, orgMembershipId: input.member.orgMembershipId, providerId: connection.id })
+    : null
+  return listedExternalConnectionStatus(connection, account)
+}
+
+export function listedExternalConnectionStatus(
+  connection: ExternalMcpConnectionRow,
+  account: Awaited<ReturnType<typeof getConnectedAccountForListing>>,
+): Extract<ExternalConnectionProbe, { ok: true }> {
   if (connection.oauthIssuerReviewRequiredAt) {
     const message = `"${connection.name}" is blocked until an organization admin reviews its changed OAuth issuer.`
     return {
@@ -1103,11 +1113,6 @@ export async function probeExternalConnectionStatus(input: {
     }
   }
   if (connection.credentialMode === "per_member") {
-    const account = await getConnectedAccountForListing({
-      organizationId: connection.organizationId,
-      orgMembershipId: input.member.orgMembershipId,
-      providerId: connection.id,
-    })
     const gap = memberCredentialGap(connection, account)
     if (gap) return { ok: true, connected: false, status: gap.status }
   } else if (!hasSharedCredential(connection)) {

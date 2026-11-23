@@ -23,7 +23,7 @@ const CATALOG_CACHE_TTL_MS = 5 * 60 * 1000
 
 let catalogCache: { catalog: McpToolOperation[]; expiresAt: number } | null = null
 
-export async function getCatalog(app: Hono, env: unknown) {
+export async function getCatalog(app: Pick<Hono, "fetch">, env: unknown) {
   if (catalogCache && catalogCache.expiresAt > Date.now()) {
     return catalogCache.catalog
   }

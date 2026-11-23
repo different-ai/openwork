@@ -1,13 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { getLibraryAddConnectorRoute, getLibraryConnectorRoute, getLibraryMyAgentRoute, getLibraryRoute } from "../../_lib/den-org";
+import { getLibraryAddConnectorRoute, getLibraryConnectorRoute, getLibraryMyAgentRoute, getLibraryRoute, orgFeatureEnabled } from "../../_lib/den-org";
 import { useFeatureIntro } from "../_features/feature-intros";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ItemHeader, ItemPage } from "./item-header";
 import { useLibrary, type LibraryConnectionItem, type LibraryItem } from "./library-data";
 import { MyAgentPanel, MyAgentPanelSkeleton, MyAgentRow, MyAgentRowError, MyAgentRowSkeleton, type MyAgentLinks } from "./my-agent";
-import { useMyAgent, useMyAgentChecks, useSaveMyAgent } from "./my-agent-data";
+import { useMyAgent, useMyAgentChecks, useMyAgentToolCounts, useSaveMyAgent } from "./my-agent-data";
 import { fromMyAgent, myAgentGoogleHref } from "./my-agent-connector-navigation";
 import { myAgentAvailable } from "./my-agent-availability"
 import { useWorkbotReadiness } from "./workbot-readiness-data";
@@ -45,6 +45,7 @@ export function MyAgentScreen() {
   const readiness = useWorkbotReadiness(orgId || null, available);
   const off = readiness.data?.enabled === false;
   const agent = useMyAgent(orgId, available && !off);
+  const toolCounts = useMyAgentToolCounts(orgId, available && !off ? agent.data : undefined);
   const library = useLibrary();
   const save = useSaveMyAgent(orgId);
   const [earlierOpen, setEarlierOpen] = useState(false);
@@ -74,7 +75,11 @@ export function MyAgentScreen() {
 
   return (
     <MyAgentPanel
-      view={agent.data}
+      view={{ ...agent.data, sources: agent.data.sources?.map((source) => source.readTools === null && toolCounts.data?.[source.id] != null
+        ? { ...source, readTools: toolCounts.data[source.id] } : source) }}
+      enableAll={orgFeatureEnabled(orgContext, "workbotEnableAllConnectors") ? (batches) => save.mutate(batches) : undefined}
+      enablingAll={save.isPending && Array.isArray(save.variables)}
+      pendingSources={save.isPending && !Array.isArray(save.variables) ? save.variables?.sources : undefined}
       now={Date.now()}
       links={links}
       saving={save.isPending}

@@ -380,7 +380,7 @@ function buildInputGuidance(input: McpToolOperation) {
   ].join("\n")
 }
 
-export async function loadOpenApiDocument(app: Hono, env: unknown): Promise<OpenApiDocument> {
+export async function loadOpenApiDocument(app: Pick<Hono, "fetch">, env: unknown): Promise<OpenApiDocument> {
   const response = await app.fetch(new Request("http://den-api.local/openapi.json"), env)
   if (!response.ok) {
     throw new Error(`Unable to load Den OpenAPI document: ${response.status}`)
