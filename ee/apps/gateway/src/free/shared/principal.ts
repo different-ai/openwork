@@ -1,6 +1,7 @@
 import { freeInferenceDigest } from "@openwork-ee/utils/free-inference-digest"
 import { and, eq, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
-import { InferenceKeyTable, MemberTable, OrganizationTable, readDesktopPolicyForOrgMember, sandboxFreeAutoStopped } from "@openwork-ee/den-db"
+import { FreeRequestError } from "./errors.js"
+import { AuthUserTable, InferenceKeyTable, MemberTable, OrganizationTable, readDesktopPolicyForOrgMember, sandboxFreeAutoStopped } from "@openwork-ee/den-db"
 import { assertManagedModelsAllowed } from "@openwork/types/den/managed-models-policy"
 import { freeInferenceDefaultPinned, freeInferenceOrganizationAllowed } from "@openwork/types/den/inference"
 import { db, freeAutoDatabase } from "../../db.js"
@@ -18,9 +19,10 @@ export const freeIdentityHash = freeInferenceDigest
 export function freePrincipalHash(principal: FreePrincipal) { return freeIdentityHash(principal.kind, principal.id) }
 export const freeSafetyIdentifier = freePrincipalHash
 
-async function memberFreePrincipalRow(principal: Pick<MemberPrincipal, "inferenceKeyId" | "memberId" | "organizationId">, database: Database) {
-  const [row] = await database.select({ userId: MemberTable.userId, metadata: OrganizationTable.metadata }).from(InferenceKeyTable)
+async function memberFreePrincipalRow(principal: Pick<MemberPrincipal, "inferenceKeyId" | "memberId" | "organizationId">, database: Pick<Database, "select">) {
+  const [row] = await database.select({ userId: MemberTable.userId, emailVerified: AuthUserTable.emailVerified, metadata: OrganizationTable.metadata }).from(InferenceKeyTable)
     .innerJoin(MemberTable, and(eq(MemberTable.id, InferenceKeyTable.org_membership_id), eq(MemberTable.organizationId, InferenceKeyTable.organization_id)))
+    .innerJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId))
     .innerJoin(OrganizationTable, eq(OrganizationTable.id, MemberTable.organizationId))
     .where(and(eq(InferenceKeyTable.id, principal.inferenceKeyId), eq(InferenceKeyTable.status, "active"),
       eq(MemberTable.id, principal.memberId), eq(OrganizationTable.id, principal.organizationId),
@@ -40,17 +42,24 @@ async function freePolicyAllowed(identity: Pick<MemberPrincipal, "memberId" | "o
   return !await sandboxFreeAutoStopped(database, identity.organizationId)
 }
 
-export async function findMemberFreePrincipal(key: Pick<InferenceKeyRow, "id" | "org_membership_id" | "organization_id">, database: Database = freeAutoDatabase()): Promise<MemberPrincipal | null> {
+function requireVerifiedEmail(verified: boolean) {
+  if (!verified) throw new FreeRequestError(403, "email_verification_required", "Verify your account email to use OpenWork Free.")
+}
+
+export async function findMemberFreePrincipal(key: Pick<InferenceKeyRow, "id" | "org_membership_id" | "organization_id">, database: typeof db = freeAutoDatabase()): Promise<MemberPrincipal | null> {
   const identity = { inferenceKeyId: key.id, memberId: key.org_membership_id, organizationId: key.organization_id }
-  const row = await memberFreePrincipalRow(identity, database)
+  const row = await memberFreePrincipalRow(identity, database.$primary)
   if (!row?.userId || !freeOrganization(row.metadata) || !await freePolicyAllowed(identity, database)) return null
+  requireVerifiedEmail(row.emailVerified)
   return { kind: "member", id: row.userId, ...identity }
 }
 
 export async function memberFreePrincipalAllowed(principal: FreePrincipal, database: Database = db): Promise<boolean> {
   if (principal.kind !== "member") return true
   const row = await memberFreePrincipalRow(principal, database)
-  return Boolean(row && row.userId === principal.id && freeOrganization(row.metadata) && await freePolicyAllowed(principal, database))
+  if (!row || row.userId !== principal.id || !freeOrganization(row.metadata) || !await freePolicyAllowed(principal, database)) return false
+  requireVerifiedEmail(row.emailVerified)
+  return true
 }
 
 export async function readFreePrincipalDefaultPinned(principal: FreePrincipal, database: Database = freeAutoDatabase()): Promise<boolean> {

@@ -2908,6 +2908,18 @@ export function createDenClient(options: {
     },
 
 
+    async sendAccountVerificationCode(email: string) {
+      await requestJson(baseUrls, "/api/auth/email-otp/send-verification-otp", {
+        method: "POST", token, body: { email, type: "email-verification" },
+      });
+    },
+
+    async verifyAccountEmail(email: string, otp: string) {
+      await requestJson(baseUrls, "/api/auth/email-otp/verify-email", {
+        method: "POST", token, body: { email, otp },
+      });
+    },
+
     async signOut() {
       await requestJson<unknown>(baseUrls, "/api/auth/sign-out", {
         method: "POST",

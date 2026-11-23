@@ -1,14 +1,10 @@
+import { fixtureDesktopSigner } from "./fixtures/desktop-signer.js"
 import assert from "node:assert/strict"
-import { mkdtemp, rm } from "node:fs/promises"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
 import { test } from "node:test"
 import { Hono } from "hono"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { DESKTOP_FREE_CHAT_PATH, MEMBER_FREE_CHAT_PATH } from "@openwork/free-auto"
-import { deriveReleaseSecret } from "@openwork/free-auto/node"
 import { INFERENCE_FREE_MODEL_ID } from "@openwork/types/den/inference"
-import { createDesktopFreeSigner } from "../../../../apps/desktop/electron/desktop-free-signer.mjs"
 import { DesktopFreeSession } from "../../../../apps/server/src/free-auto/desktop-session.js"
 import type { FreeAllowanceStore } from "../src/free/shared/allowance.js"
 
@@ -19,16 +15,10 @@ const { createFreeMemberHandler } = await import("../src/free/member/handler.js"
 const { registerAnonymousInferenceRoutes } = await import("../src/free/guest/routes.js")
 
 test("desktop grant covers guest and member calls, rejects replay and follows the member credential", async t => {
-  const dir = await mkdtemp(join(tmpdir(), "ow-desktop-grant-"))
-  t.after(() => rm(dir, { recursive: true, force: true }))
   const config = readAutoConfig({ INFERENCE_FREE_ENABLED: "true", ANONYMOUS_INFERENCE_ENABLED: "true",
     INFERENCE_FREE_OPENAI_API_KEY: "fixture", ANONYMOUS_ACCOUNTING_IDENTITY_KEY: "fixture-accounting-identity-key-000000",
     ANONYMOUS_TOKEN_SECRET: "fixture-token-secret-00000000000000000", DESKTOP_FREE_RELEASE_KEY: "fixture-release-key-000000000000000000" })
-  const version = "1.2.3"
-  const signer = createDesktopFreeSigner({ filePath: join(dir, "identity"), platform: "darwin", arch: "arm64", appVersion: version,
-    readMachineId: async () => "a".repeat(64), releaseSecret: async () => deriveReleaseSecret(config.releaseKey, version),
-    isEligible: () => true, loadSafeStorage: () => ({ isAsyncEncryptionAvailable: async () => true,
-      encryptStringAsync: async (value: string) => Buffer.from(value), decryptStringAsync: async (value: Buffer) => ({ result: value.toString() }) }) })
+  const signer = await fixtureDesktopSigner(t, config.releaseKey)
   const seen = new Set<string>()
   const admittedDesktops: Array<string | undefined> = []
   const store: FreeAllowanceStore = { family: "member", safetyPaused: async () => false, consumeNonce: async proof => {
