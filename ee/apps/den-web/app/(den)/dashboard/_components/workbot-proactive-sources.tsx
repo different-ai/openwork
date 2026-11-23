@@ -23,6 +23,7 @@ import { denDropdownListClass, denDropdownRowBaseClass, denDropdownRowIdleClass 
 import { DenSelect } from "../../_components/ui/select";
 import { ConnectorLogo } from "./item-logo";
 import type { AgentPolicyScope } from "./workbot-agent-scope";
+import { connectorPolicyChanges } from "./my-agent-enable-connectors";
 import { AgentConnectionToolsButton } from "./workbot-agent-tools";
 
 type SourcesView = Pick<WorkbotProactiveView, "settings" | "sourceConnections">;
@@ -155,8 +156,9 @@ export function AgentCalendarPolicy({ view, disabled, onChange }: {
   );
 }
 
-export function WorkbotProactiveSources({ view, canManage, saving, onChange, tools, heading = true }: {
+export function WorkbotProactiveSources({ view, canManage, saving, onChange, tools, heading = true, bulkControls = false }: {
   heading?: boolean;
+  bulkControls?: boolean;
   view: WorkbotProactiveView;
   canManage: boolean;
   saving: boolean;
@@ -171,6 +173,12 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange, too
   const anyConnector = view.brief !== undefined;
 
   const save = (change: AgentSourcesPolicyInput) => onChange({ sources: change });
+  const choices = bulkControls && connections
+    ? anyConnector ? connections.other.map((option) => ({ id: option.id, policy: otherPolicy(view, option) }))
+      : listedConnections(view).map((option) => ({ id: option.id, policy: agentSourcePolicy(sources, option.id) }))
+    : [];
+  const enable = connectorPolicyChanges(choices, "everyone");
+  const disable = connectorPolicyChanges(choices, "off");
   const toolsButtonOf = (option: { id: string; name: string }) => tools && anyConnector ? (
     <AgentConnectionToolsButton orgId={tools.orgId} scope={tools.scope} connectionId={option.id} name={option.name} connectHref={tools.connectorHref(option.id)} disabled={locked} onChange={save} />
   ) : null;
@@ -261,6 +269,14 @@ export function WorkbotProactiveSources({ view, canManage, saving, onChange, too
       <div className="overflow-hidden rounded-2xl border border-gray-100 bg-white" data-testid="workbot-proactive-sources">
         {connections ? (
           <div className="divide-y divide-gray-100" data-testid="workbot-source-others">
+            {choices.length > 0 ? (
+              <div className="flex flex-wrap justify-end gap-2 px-6 py-2">
+                <DenButton size="xs" variant="secondary" disabled={locked || !Object.keys(enable).length}
+                  onClick={() => save({ connections: enable })}>Enable allowed apps for everyone</DenButton>
+                <DenButton size="xs" variant="secondary" disabled={locked || !Object.keys(disable).length}
+                  onClick={() => save({ connections: disable })}>Turn all off</DenButton>
+              </div>
+            ) : null}
             {anyConnector ? everyConnectionRows() : listedRows()}
           </div>
         ) : (

@@ -77,8 +77,8 @@ export function MyAgentScreen() {
     <MyAgentPanel
       view={{ ...agent.data, sources: agent.data.sources?.map((source) => source.readTools === null && toolCounts.data?.[source.id] != null
         ? { ...source, readTools: toolCounts.data[source.id] } : source) }}
-      enableAll={orgFeatureEnabled(orgContext, "workbotEnableAllConnectors") ? (batches) => save.mutate(batches) : undefined}
-      enablingAll={save.isPending && Array.isArray(save.variables)}
+      setAll={orgFeatureEnabled(orgContext, "workbotEnableAllConnectors") ? (batches) => save.mutate(batches) : undefined}
+      bulkDirection={save.isPending && Array.isArray(save.variables) ? save.variables[0]?.sources?.[0]?.on ?? undefined : undefined}
       pendingSources={save.isPending && !Array.isArray(save.variables) ? save.variables?.sources : undefined}
       now={Date.now()}
       links={links}

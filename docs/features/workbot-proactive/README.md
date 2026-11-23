@@ -69,7 +69,7 @@ wake: schedule (morning + ~3h)  ─┐
 
 ## Enable connected connectors together
 
-With `workbotEnableAllConnectors` enabled on Cloud or self-hosted, members can open **My bot → What it reads → Enable all connected apps**. This turns on the connected connectors they can choose, skipping any known to have no read-only tools. Members can still turn individual connectors off. The calendar keeps its own selection. Turning off the rollout hides the bulk action and preserves each member's saved choices. Feature owner: `reachjalil`.
+With `workbotEnableAllConnectors` enabled on Cloud or self-hosted, members can open **My bot → What it reads → Enable all connected apps**. This turns on the connected connectors they can choose, skipping any known to have no read-only tools. Members can turn all their optional sources off together, including the calendar when their admin lets them choose. Admins can enable all allowed apps for everyone or turn them off together in the connector policy for Everyone or a team. Bulk enable preserves explicit bans. Turning off the rollout hides the bulk action and preserves each member's saved choices. Feature owner: `reachjalil`.
 
 ![Connected apps in My bot with the bulk enable button](./enable-connected.png)
 

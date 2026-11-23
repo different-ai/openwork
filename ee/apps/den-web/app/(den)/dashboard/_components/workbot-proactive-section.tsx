@@ -26,7 +26,7 @@ import { useSaveWorkbotProactive, useWorkbotProactive } from "./workbot-proactiv
 import { PROACTIVE_PREVIEW_KINDS, WorkbotProactivePreview } from "./workbot-proactive-preview";
 import { WorkbotProactiveSources } from "./workbot-proactive-sources";
 import { WorkbotAgentSettingsGroups } from "./workbot-agent-settings-groups";
-import { getLibraryConnectorRoute } from "../../_lib/den-org";
+import { getLibraryConnectorRoute, orgFeatureEnabled } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 const EVERYONE: AgentPolicyScope = { kind: "everyone" };
@@ -269,7 +269,7 @@ export function WorkbotProactiveSection({ orgId, canManage, connectorsHref, scop
   onEdit?: () => void;
 }) {
   const query = useWorkbotProactive(orgId, Boolean(orgId), scope);
-  const { orgSlug } = useOrgDashboard();
+  const { orgSlug, orgContext } = useOrgDashboard();
   const save = useSaveWorkbotProactive(orgId, scope);
   const headingId = useId();
   const saving = save.isPending || busy;
@@ -312,7 +312,7 @@ export function WorkbotProactiveSection({ orgId, canManage, connectorsHref, scop
             />
           )}
           {show === "policy" ? null : (
-            <WorkbotProactiveSources view={query.data} canManage={canManage} saving={saving} onChange={change} heading={show !== "sources"}
+            <WorkbotProactiveSources bulkControls={orgFeatureEnabled(orgContext, "workbotEnableAllConnectors")} view={query.data} canManage={canManage} saving={saving} onChange={change} heading={show !== "sources"}
               tools={{ orgId, scope, connectorHref: (connectionId) => getLibraryConnectorRoute(orgSlug, connectionId) }} />
           )}
         </div>

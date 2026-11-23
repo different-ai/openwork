@@ -27,7 +27,7 @@ import { DenTextarea } from "../../_components/ui/textarea";
 import { ItemPanel, ItemRow, ItemRowsSkeleton, ItemSection } from "./item-list";
 import { ItemHeader, ItemPage } from "./item-header";
 import { ConnectorLogo } from "./item-logo";
-import { enableConnectorBatches } from "./my-agent-enable-connectors";
+import { connectorBatches } from "./my-agent-enable-connectors";
 import { SourceIcon } from "./source-icon";
 import {
   OUTCOME_PILL,
@@ -247,14 +247,14 @@ function focalLine(view: MemberAgentView, now: number): { title: string; sentenc
   return { title: "No checks yet", sentence: view.destination?.blocked === "member_not_linked" ? "Link your Slack account to Workbot to get its messages." : "It reads your calendar and connectors in your working hours." };
 }
 
-export function MyAgentPanel({ view, now, links, saving, error, earlier, onChange, enableAll, enablingAll, pendingSources }: {
+export function MyAgentPanel({ view, now, links, saving, error, earlier, onChange, setAll, bulkDirection, pendingSources }: {
   view: MemberAgentView;
   now: number;
   links: MyAgentLinks;
   saving: boolean;
   error: string | null;
-  enableAll?: (batches: MemberAgentInput[]) => void;
-  enablingAll?: boolean;
+  setAll?: (batches: MemberAgentInput[]) => void;
+  bulkDirection?: boolean;
   pendingSources?: MemberAgentInput["sources"];
   earlier: { open: boolean; onToggle: (open: boolean) => void; checks: MemberAgentCheck[] | null; loading: boolean; error: string | null };
   onChange: Change;
@@ -268,7 +268,8 @@ export function MyAgentPanel({ view, now, links, saving, error, earlier, onChang
   const fix = view.lastCheck?.fix ?? null;
   const reconnect = view.lastCheck?.sources[0] ?? null;
   const google = links.google;
-  const batches = enableAll ? enableConnectorBatches(view.sources ?? []) : [];
+  const enable = setAll ? connectorBatches(view.sources ?? [], true) : [];
+  const disable = setAll ? connectorBatches(view.sources ?? [], false) : [];
 
   return (
     <ItemPage testId="my-agent-screen">
@@ -342,9 +343,13 @@ export function MyAgentPanel({ view, now, links, saving, error, earlier, onChang
       </ItemSection>
       )}
 
-      <ItemSection title="What it reads" variant="rule" testId="my-agent-uses" meta={enableAll && (batches.length > 0 || enablingAll) ? (
-        <DenButton size="xs" variant="secondary" disabled={saving || !view.available} loading={enablingAll}
-          onClick={() => enableAll(batches)}>Enable all connected apps</DenButton>
+      <ItemSection title="What it reads" variant="rule" testId="my-agent-uses" meta={setAll && (enable.length > 0 || disable.length > 0 || bulkDirection !== undefined) ? (
+        <div className="flex flex-wrap justify-end gap-2">
+          <DenButton size="xs" variant="secondary" disabled={saving || !view.available || !enable.length} loading={bulkDirection === true}
+            onClick={() => setAll(enable)}>Enable all connected apps</DenButton>
+          <DenButton size="xs" variant="secondary" disabled={saving || !view.available || !disable.length} loading={bulkDirection === false}
+            onClick={() => setAll(disable)}>Turn all off</DenButton>
+        </div>
       ) : undefined}>
         <div className="flex flex-col divide-y divide-gray-100">
           {(view.sources ?? []).map((source) => <SourceRow key={source.id} view={view} source={source} pendingOn={pendingSources?.find((change) => change.source === source.id)?.on} now={now} saving={saving} links={links} onChange={onChange} />)}
