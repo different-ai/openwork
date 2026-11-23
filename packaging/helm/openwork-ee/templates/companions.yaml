@@ -49,7 +49,7 @@ metadata:
 spec:
   replicas: 1
   strategy:
-    type: Recreate
+    type: {{ ternary "Recreate" "RollingUpdate" $runner }}
   selector:
     matchLabels:
       {{- include "openwork-ee.componentSelectorLabels" (dict "root" $ "component" $component) | nindent 6 }}

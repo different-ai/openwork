@@ -1,9 +1,11 @@
-import { redirect } from "next/navigation";
-import { workbotDestination } from "../dashboard/_lib/workbot-entry";
+import { notFound, redirect } from "next/navigation";
+import { workbotBaseUrl, workbotDestination } from "./destination";
 
 export const dynamic = "force-dynamic";
 
 export default async function WorkbotPage({ searchParams }: { searchParams: Promise<{ organizationId?: string | string[] }> }) {
   const { organizationId } = await searchParams;
-  redirect(workbotDestination(process.env.DEN_WORKBOT_URL?.trim() || "https://chat.openworklabs.com", organizationId));
+  const base = workbotBaseUrl();
+  if (!base) notFound();
+  redirect(workbotDestination(base, organizationId));
 }

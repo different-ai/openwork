@@ -31,9 +31,14 @@ production rollout.
   The alias must exist in this installation. The chart validates its shape,
   not its existence or the member's permissions. Do not copy the synthetic alias
   from the contract test. Alias-free runner startup is not included in this slice.
-- Set `config.public.webOrigin` to the browser-facing Den HTTPS origin. Set
-  `config.public.apiOrigin` for split-origin installs; otherwise it inherits the
-  web origin. These origins must be reachable from both companions. The runner
+- Set `config.public.webOrigin` to the browser-facing Den HTTPS origin. A blank
+  `config.public.apiOrigin` follows Den's DNS derivation: `https://den.example.com`
+  becomes `https://api.den.example.com`, not the web origin. The whole hostname
+  is prefixed, even if it already begins with `api.`. Nondefault HTTPS ports are
+  preserved and port 443 is normalized away. Set `apiOrigin` explicitly for
+  same-origin routing, IP-based web origins or any different public API route.
+  Ambiguous non-DNS derivation is rejected. These origins must be reachable from
+  both companions. The runner
   uses the public API for MCP, callbacks and telemetry. Its default model base
   is derived from `config.public.gatewayPublicBaseUrl` with `/api/v1` appended.
   Member turns supply scoped Gateway credentials and provider-specific routing;
@@ -72,12 +77,41 @@ callback token requires Den and runner together. Losing or changing the grant
 key prevents old grants from resuming. Rotating the session secret signs people
 out. Preserve all four values across disable/re-enable unless rotating on purpose.
 
+## Pod Security admission constraints
+
+This slice does not add a Restricted Pod Security override interface. The
+existing chart has no security-context convention to reuse, and the published
+companion images currently start as root. These manifests do not set
+`runAsNonRoot`, `allowPrivilegeEscalation: false`, a restricted seccomp profile
+or dropped capabilities. They are **not compatible with Restricted admission
+as rendered**. Disabling service-account-token mounting is not sufficient.
+The core chart has its own hardening requirements too.
+
+If your namespace enforces Restricted, do not enable these workloads as-is.
+A separately tested hardening change must establish a supported non-root UID,
+SQLite/files PVC ownership and writable directories, then set the required pod
+and container contexts. Do not assume setting a random UID will preserve access
+to an existing claim. This guide does not recommend weakening namespace or
+cluster admission policies. No non-root, read-only-root-filesystem or Restricted
+runtime compatibility has been proven by the offline tests.
+
 ## Stage 1: core only
 
 Install or upgrade the core chart with your existing reviewed values. Leaving
 both companion roots absent or `{}` creates no companion workloads, PVCs,
 Ingresses or Den environment entries. Existing manual `denApi.env` and
 `denWeb.env` configuration still renders when the chart opt-ins are off.
+On self-hosted Den Web (`DEN_DEPLOYMENT=self_hosted`), an absent or blank
+`DEN_WORKBOT_URL` makes `/workbot` return 404 rather than redirect to the hosted
+service. This also applies after disabling chart-managed Workbot. An explicit
+manual URL still wins, including its path/query and organization forwarding.
+Cloud with `DEN_DEPLOYMENT=cloud` retains the hosted default. Missing/unknown
+deployment configuration does not authorize a hosted redirect. This is a
+self-hosting redirect bug fix, not a new organization rollout or scheduling flag.
+The redirect correction is Den Web application code in this revision. It requires
+matching application images built with this change; selecting an older published
+image tag does not acquire the fix from Helm values alone. Source-level page
+handler tests are not proof that a previously published image includes it.
 
 This does **not** adopt a manually applied Deployment, Service, PVC or Secret.
 Before switching from a manual installation, inventory ownership, names,
@@ -122,16 +156,46 @@ helm upgrade --install openwork-ee packaging/helm/openwork-ee \
 
 The runner is a separate Deployment: one replica, `Recreate`, no mounted service
 account token, private `ClusterIP` on 8795. It has no ingress or public Service.
+`ClusterIP` is not a NetworkPolicy boundary: the chart does not create network
+isolation. The internal runner connection uses HTTP bearer authentication, so
+use a trusted private cluster network and your reviewed network isolation policy.
+No native runner TLS or cross-cluster public runner exposure is included.
 Its SQLite database is `/var/data/headless.sqlite`; attachments are on disk at
 `/var/data/files` on the same PVC. Computer provisioning and S3 storage are not
 included. Den API receives the private runner URL and targeted API/callback
 Secret refs. Den Web does not receive runner credentials.
 
-Enabling the runner also makes it available to existing eligible cloud agent
-Automations and Slack Assistant paths, subject to their organization settings
-and entitlements. Workbot does not have to be running. Monitor Den's Services
-page and service logs before adding Workbot. Pod probes check HTTP process
-health only; they are not evidence of working Gateway inference or callbacks.
+### Existing consumers and model scope
+
+Enabling the runner changes existing eligible cloud agent Automations: when
+headless Automations are included by the organization's plan (or plan gating is
+off), Den's existing runtime selector can choose headless instead of the web
+runtime. Already scheduled eligible work can therefore start using this runner
+without enabling Workbot. This is the existing selection policy; the chart adds
+no independent scheduling-policy feature or pause switch. Review scheduled
+work and its model grants before enabling the runner.
+
+Already installed, connector-enabled Slack assistants can also start using this
+runner. Configuring a runner does **not** install a Slack bot, opt in a connector,
+grant a member access or enable Slack across organizations. Existing connector
+setup, member OAuth, grants, assistant opt-in and worker settings remain
+required. Workbot does not have to be running for Automations or Slack.
+
+One runner serves the deployment, potentially multiple organizations, while
+Den binds each turn to its authenticated organization/member and supplies
+member-scoped model access. The explicit startup `model.alias` identifies one
+Gateway model group/credential-set/model selection in this installation. It is
+not a universal model alias across organizations, a member grant, or an
+instruction to rewrite every organization's model settings. Configure and
+verify each organization's/member's intended model choices and grants in Den;
+per-turn model access can select a different authorized model/protocol. An
+organization-specific alias must not be copied into another organization's
+settings as a substitute for its own catalog. The chart cannot prove those
+live catalog mappings or multi-organization isolation by rendering.
+
+Monitor Den's Services page and service logs before adding Workbot. Pod probes
+check HTTP process health only; they are not evidence of working Gateway
+inference, model access or callbacks.
 
 ## Stage 3: Workbot
 
@@ -146,14 +210,35 @@ workbot:
   ingress:
     enabled: true
     className: nginx
-    annotations: {}
+    # ingress-nginx example; use your controller's equivalent settings.
+    annotations:
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+      nginx.ingress.kubernetes.io/proxy-buffering: "off"
     tlsSecretName: workbot-tls
   resources: {}
 ```
 
 Provision DNS, an ingress controller and the TLS certificate Secret through your
 normal process. The Ingress host and TLS host are derived from `publicUrl`,
-with `/` routed to the Workbot `ClusterIP` Service on 3020. Do not reuse the
+with `/` routed to the Workbot `ClusterIP` Service on 3020. Workbot is stateless
+and uses `RollingUpdate`; its cookies depend on the stable operator session
+Secret, while conversations live on the runner. Only the SQLite runner uses
+`Recreate`.
+
+Den API must also resolve, reach and trust Workbot's public HTTPS URL, including
+`/internal/readiness`; browser reachability alone is insufficient. Ensure pod
+egress, DNS, hairpin routing and CA trust permit that path. Den presents the
+runner service token to the authenticated readiness endpoint. A healthy Workbot
+process probe does not prove this Den-to-public-edge path.
+
+The chart leaves controller-specific streaming configuration to
+`workbot.ingress.annotations`. The ingress-nginx example above sets one-hour
+read/send timeouts and disables response buffering; the chart defaults do not
+add those annotations. Set suitable streaming/idle limits at every ingress,
+load balancer and proxy hop, not just this Ingress, and test a long response.
+An ingress timeout can disconnect the browser while a runner turn is still
+active, so do not interpret disconnect as cancellation. Do not reuse the
 Den web, API or Gateway hostname for Workbot; there is no path-prefix hosting.
 For an existing HTTPS reverse proxy, leave `workbot.ingress.enabled: false`
 and pass requests to the Workbot Service yourself, preserving host and forwarded
@@ -189,8 +274,11 @@ Mobile association settings and additional runner backends are not included.
    Runner Deployment and Service disappear. All chart-injected runner URL and
    token/callback refs disappear from Den API. No chart-injected Workbot entries
    remain in either Den process. Running turns are interrupted; there is no
-   automatic drain or promise that an interrupted turn resumes. Cloud runner
-   consumers are unavailable until it returns. Stored conversations and files
+   automatic drain or promise that an interrupted turn resumes. Slack and
+   persisted headless execution paths cannot use the stopped runner. New cloud
+   Automation runtime selection can fall back to the existing web runtime when
+   no runner is configured, subject to that runtime's availability; this does
+   not migrate stored headless runs or their data. Stored conversations and files
    stay on the still-rendered PVC. Core resources are not disabled.
 3. To re-enable, retain the release, namespace, claim settings, secrets, model
    alias and compatible image release. Enable runner first and inspect its
@@ -215,15 +303,18 @@ or Secrets is a separate operator decision after retention and backup review.
 Before a managed rollout, remove old `DEN_HEADLESS_RUNNER_*` and `DEN_WORKBOT_URL`
 entries from manual env configuration; the chart rejects those conflicts while
 the runner opt-in is on. Also remove those keys from any externally managed
-shared Den Secret. The chart cannot inspect an external Secret offline and
-does not edit it. Legacy external settings can otherwise survive workload
+shared Den Secret. Remove any manual `DEN_BASE_URL`/`DEN_API_PUBLIC_URL` overrides
+from the shared Secret too, and use the public-origin values; conflicting direct
+Den API env overrides are rejected while managed companions are enabled.
+The chart cannot inspect an external Secret offline and does not edit it. Legacy external settings can otherwise survive workload
 disable, so their removal is a required migration preflight.
 
 ## Offline checks and runtime proof plan
 
 ```sh
 pnpm --dir evals exec vitest run --config vitest.config.ts \
-  --project pr scripts/helm-companions.test.ts
+  --project pr scripts/helm-companions.test.ts scripts/den-workbot-redirect.test.ts
+node --test 'ee/apps/den-web/app/(den)/workbot/destination.test.mjs'
 for test in packaging/helm/openwork-ee/tests/*.sh; do bash "$test"; done
 node --test packaging/helm/openwork-ee/tests/node-runtime.mjs
 pnpm check

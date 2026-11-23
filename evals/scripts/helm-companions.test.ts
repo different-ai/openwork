@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import { cpSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { test } from "@openwork/testkit";
+import { denUrls } from "../../ee/packages/utils/src/den-urls.ts";
 
 const chart = fileURLToPath(new URL("../../packaging/helm/openwork-ee/", import.meta.url));
 const alias = `gwm_${"0".repeat(26)}_${"1".repeat(26)}_${"2".repeat(26)}`;
@@ -130,6 +131,8 @@ test("an operator adds Workbot through TLS ingress or an existing HTTPS edge", (
     assert.ok(deployment.includes('name: "private-ca"'));
   }
   const pod = document(output, "Deployment", "workbot");
+  assert.ok(pod.includes("type: RollingUpdate\n"));
+  assert.ok(!pod.includes("type: Recreate\n"));
   value(pod, "WORKBOT_PUBLIC_URL", "https://chat.example.test");
   value(pod, "WORKBOT_DEN_API_URL", "https://api.example.test");
   value(pod, "WORKBOT_DEN_WEB_URL", "https://den.example.test");
@@ -212,6 +215,21 @@ test("an operator can select existing storage, pull secrets and the shared CA Se
   evidence.recordAssertionEvidence("storage and certificate pass-through", "Explicit empty StorageClass and registry pull secret render; both companions mount the CA Secret read-only without broad envFrom", true);
 });
 
+test("blank API origin follows Den's DNS derivation instead of sending companions to the web host", ({ evidence }) => {
+  for (const webOrigin of ["https://den.example.test", "https://den.example.test/", "https://den.example.test:443", "https://den.example.test:8443", "https://den.example.test:00443", "https://den.example.test:00444", "https://DEN.EXAMPLE.TEST", "https://api.den.example.test"]) {
+    const expected = denUrls({ DEN_BASE_URL: webOrigin }).api;
+    const output = render({ ...workbot, "config.public.apiOrigin": "", "config.public.webOrigin": webOrigin });
+    const pod = document(output, "Deployment", "headless-runner");
+    value(pod, "HEADLESS_MCP_URL", `${expected}/mcp/agent`);
+    value(pod, "HEADLESS_DEN_API_URL", expected);
+    value(pod, "HEADLESS_WORKBOT_DEN_API_URL", expected);
+    value(document(output, "Deployment", "workbot"), "WORKBOT_DEN_API_URL", expected);
+  }
+  const explicit = render({ ...runner, "config.public.webOrigin": "https://192.0.2.10", "config.public.apiOrigin": "https://api.example.test" });
+  value(document(explicit, "Deployment", "headless-runner"), "HEADLESS_DEN_API_URL", "https://api.example.test");
+  evidence.recordAssertionEvidence("derived origin matches Den source", "Eight DNS variants match denUrls including whole-host prefix, HTTPS port normalization and nondefault ports; IP web hosts require explicit API origin", true);
+});
+
 const invalid: [Record<string, string | boolean>, string][] = [
   [{ "workbot.enabled": true }, "requires headlessRunner.enabled"],
   [{ ...runner, "gateway.enabled": false }, "requires gateway.enabled"],
@@ -238,6 +256,12 @@ const invalid: [Record<string, string | boolean>, string][] = [
   [{ ...workbot, "workbot.publicUrl": "https://den.example.test" }, "separate host"],
   [{ ...runner, "headlessRunner.persistence.size": "0Gi" }, "positive storage quantity"],
   [{ ...runner, "headlessRunner.secret.grantKey": "runner-token" }, "keys must be distinct"],
+  [{ ...workbot, "config.public.apiOrigin": "", "workbot.publicUrl": "https://api.den.example.test" }, "separate host"],
+  [{ ...workbot, "config.public.apiOrigin": "", "workbot.publicUrl": "https://api.den.example.test:443" }, "separate host"],
+  [{ ...runner, "config.public.apiOrigin": "", "config.public.webOrigin": "https://192.0.2.10" }, "set config.public.apiOrigin explicitly"],
+  [{ ...runner, "config.public.apiOrigin": "", "config.public.webOrigin": "https://[2001:db8::10]" }, "set config.public.apiOrigin explicitly"],
+  [{ ...runner, "denApi.env.DEN_API_PUBLIC_URL": "https://other.example.test" }, "origin env overrides"],
+  [{ ...runner, "denApi.env.DEN_BASE_URL": "https://other.example.test" }, "origin env overrides"],
 ];
 for (const [index, [settings, diagnostic]] of invalid.entries()) {
   test(`an operator gets a safe diagnostic for invalid companion configuration ${index + 1}`, ({ evidence }) => {

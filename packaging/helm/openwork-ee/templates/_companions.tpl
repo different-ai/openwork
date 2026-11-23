@@ -49,7 +49,21 @@ resources: {}
 {{- end -}}
 
 {{- define "openwork-ee.companions.apiOrigin" -}}
-{{- default .Values.config.public.webOrigin .Values.config.public.apiOrigin | trimSuffix "/" -}}
+{{- if .Values.config.public.apiOrigin -}}
+{{- .Values.config.public.apiOrigin | trimSuffix "/" -}}
+{{- else -}}
+{{- include "openwork-ee.gatewayOrigin.validate" (dict "name" "config.public.webOrigin" "value" .Values.config.public.webOrigin "public" true) -}}
+{{- $web := urlParse .Values.config.public.webOrigin -}}
+{{- $host := lower $web.host -}}
+{{- $hostname := regexReplaceAll `:[0-9]+$` $host "" -}}
+{{- if or (hasPrefix "[" $host) (not (regexMatch `[a-z]` $hostname)) -}}{{- fail "set config.public.apiOrigin explicitly when webOrigin is not a DNS hostname; automatic API origin derivation supports DNS origins only" -}}{{- end -}}
+{{- /* Match utils/den-urls.ts: prefix the whole hostname, preserve nondefault
+       ports, and normalize the HTTPS default port just like URL.origin. */ -}}
+{{- $port := regexFind `:[0-9]+$` $host | trimPrefix ":" -}}
+{{- $host = $hostname -}}
+{{- if and $port (ne (atoi $port) 443) -}}{{- $host = printf "%s:%d" $hostname (atoi $port) -}}{{- end -}}
+{{- printf "https://api.%s" $host -}}
+{{- end -}}
 {{- end -}}
 
 {{- define "openwork-ee.companions.runnerUrl" -}}
@@ -103,7 +117,7 @@ http://{{ include "openwork-ee.fullname" . }}-headless-runner:8795
 {{- if not (has $r.model.protocol (list "anthropic" "openai" "openai-responses")) -}}{{- fail "headlessRunner.model.protocol must be anthropic, openai or openai-responses" -}}{{- end -}}
 {{- if or (not (kindIs "string" $r.model.alias)) (not (regexMatch `^gwm_[0-7][0-9a-hjkmnp-tv-z]{25}_[0-7][0-9a-hjkmnp-tv-z]{25}_[0-7][0-9a-hjkmnp-tv-z]{25}$` $r.model.alias)) -}}{{- fail "headlessRunner.model.alias must be an explicit configured Gateway model alias (gwm_...)" -}}{{- end -}}
 {{- include "openwork-ee.gatewayOrigin.validate" (dict "name" "config.public.webOrigin" "value" .Values.config.public.webOrigin "public" true) -}}
-{{- include "openwork-ee.gatewayOrigin.validate" (dict "name" "config.public.apiOrigin (or webOrigin)" "value" (default .Values.config.public.webOrigin .Values.config.public.apiOrigin) "public" true) -}}
+{{- include "openwork-ee.gatewayOrigin.validate" (dict "name" "config.public.apiOrigin (explicit or derived)" "value" (ternary .Values.config.public.apiOrigin (include "openwork-ee.companions.apiOrigin" .) (not (empty .Values.config.public.apiOrigin))) "public" true) -}}
 {{- range $field := list "existingSecret" "apiTokenKey" "callbackTokenKey" "grantKey" -}}
 {{- if not (get $r.secret $field) -}}{{- fail (printf "headlessRunner.secret.%s is required" $field) -}}{{- end -}}
 {{- end -}}
@@ -115,6 +129,9 @@ http://{{ include "openwork-ee.fullname" . }}-headless-runner:8795
 {{- if or (not $image.repository) (ne (include "openwork-ee.imageTag" (dict "root" $ "componentTag" $image.tag)) $denTag) -}}{{- fail "chart-managed companions require matching Den API, Den Web, Gateway and runner image tags and nonempty repositories" -}}{{- end -}}
 {{- end -}}
 {{- /* Legacy env remains legal with opt-ins off, but must never override managed wiring. */ -}}
+{{- range $key := list "DEN_BASE_URL" "DEN_API_PUBLIC_URL" -}}
+{{- if hasKey $.Values.denApi.env $key -}}{{- fail "remove Den API origin env overrides and use config.public.webOrigin/apiOrigin with chart-managed companions" -}}{{- end -}}
+{{- end -}}
 {{- range $env := list .Values.denApi.env .Values.denWeb.env -}}
 {{- range $key, $_ := $env -}}
 {{- if or (hasPrefix "DEN_HEADLESS_RUNNER_" $key) (eq $key "DEN_WORKBOT_URL") -}}{{- fail "remove DEN_HEADLESS_RUNNER_* and DEN_WORKBOT_URL env overrides before enabling chart-managed companions" -}}{{- end -}}
@@ -123,7 +140,7 @@ http://{{ include "openwork-ee.fullname" . }}-headless-runner:8795
 {{- if $w.enabled -}}
 {{- include "openwork-ee.gatewayOrigin.validate" (dict "name" "workbot.publicUrl" "value" $w.publicUrl "public" true) -}}
 {{- range $origin := list $.Values.config.public.webOrigin (include "openwork-ee.companions.apiOrigin" $) $.Values.config.public.gatewayPublicBaseUrl -}}
-{{- if eq (lower (urlParse $w.publicUrl).host) (lower (urlParse $origin).host) -}}{{- fail "workbot.publicUrl must use a separate host from Den Web, Den API and Gateway" -}}{{- end -}}
+{{- if eq (regexReplaceAll `:[0-9]+$` (lower (urlParse $w.publicUrl).host) "") (regexReplaceAll `:[0-9]+$` (lower (urlParse $origin).host) "") -}}{{- fail "workbot.publicUrl must use a separate host from Den Web, Den API and Gateway" -}}{{- end -}}
 {{- end -}}
 {{- if or (not $w.image.repository) (ne (include "openwork-ee.imageTag" (dict "root" . "componentTag" $w.image.tag)) $denTag) -}}{{- fail "workbot image tag must match Den API and runner; repository must be nonempty" -}}{{- end -}}
 {{- if or (not $w.secret.existingSecret) (not $w.secret.sessionSecretKey) -}}{{- fail "workbot.secret.existingSecret and sessionSecretKey are required" -}}{{- end -}}
