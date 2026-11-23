@@ -5,6 +5,7 @@ import { cn } from "@/lib/utils";
 
 export function ComposerSuggestionMenu(props: {
   open: boolean;
+  quiet?: boolean;
   anchor: RefObject<HTMLElement | null>;
   onDismiss: () => void;
   children: ReactNode;
@@ -32,7 +33,10 @@ export function ComposerSuggestionMenu(props: {
         finalFocus={false}
         data-composer-suggestions=""
         onMouseDown={(event) => event.preventDefault()}
-        className="max-h-[min(var(--available-height),16rem)] w-(--anchor-width) gap-0 overscroll-contain rounded-[14px] bg-popover p-1.5 shadow-[var(--dls-shell-shadow)] ring-0 data-open:animate-none data-closed:animate-none dark:ring-0"
+        className={cn(
+          "max-h-[min(var(--available-height),16rem)] w-(--anchor-width) gap-0 overscroll-contain rounded-[14px] bg-popover p-1.5 ring-0 data-open:animate-none data-closed:animate-none dark:ring-0",
+          props.quiet ? "border border-border shadow-none" : "shadow-[var(--dls-shell-shadow)]",
+        )}
       >
         {props.children}
       </PopoverContent>
