@@ -189,9 +189,18 @@ def maintenance_fence(plan, timeout=900):
         yield from module.get("resources", [])
         for child in module.get("child_modules", []):
             yield from resources(child)
-    existing = [r for r in resources(plan.get("prior_state", {}).get("values", {}).get("root_module", {}))
-                if r.get("type") == "google_cloud_run_v2_service"]
+    prior = list(resources(plan.get("prior_state", {}).get("values", {}).get("root_module", {})))
+    existing = [r for r in prior if r.get("type") == "google_cloud_run_v2_service"]
     if not existing:
+        # Migration precedes service creation, so an interrupted first install
+        # can have a running migration even though neither service is in state.
+        migration = name(os.environ["DEPLOYMENT_ID"]) + "-migrate"
+        for resource in prior:
+            values = resource.get("values", {})
+            if resource.get("type") == "google_cloud_run_v2_job" and values.get("name") == migration:
+                if values.get("project") != os.environ["PROJECT_ID"] or values.get("location") != os.environ["REGION"]:
+                    raise ValueError("unexpected migration target")
+                verify_no_running_migration()
         return False
     expected = {name(os.environ["DEPLOYMENT_ID"]) + suffix for suffix in ("-api", "-web")}
     if len(existing) != 2 or {r.get("values", {}).get("name") for r in existing} != expected:
