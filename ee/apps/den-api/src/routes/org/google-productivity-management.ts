@@ -169,6 +169,7 @@ function routeDescription(operationId: string, summary: string, response: z.ZodT
     401: jsonResponse("Sign in first.", unauthorizedSchema),
     409: jsonResponse("Connect with the required provider permission.", z.object({ error: z.literal("needs_connection"), message: z.string() })),
     413: jsonResponse("Request exceeds 1 MiB.", z.object({ error: z.literal("invalid_request"), message: z.string() })),
+    ...(/sheet/i.test(operationId) ? { 429: jsonResponse("Sheets quota reached. Wait before retrying.", z.object({ error: z.literal("rate_limited"), message: z.string(), retryAfterSeconds: z.number().int().positive() })) } : {}),
     502: jsonResponse("Google did not confirm the operation; do not blindly retry mutations.", upstreamErrorSchema),
   } })
 }
