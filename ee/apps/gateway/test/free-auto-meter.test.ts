@@ -79,3 +79,12 @@ test("an OpenAI message that quotes a caller value is never kept", async () => {
   assert.deepEqual(failures[0]?.upstream, { type: "invalid_request_error", code: "invalid_value" })
   assert.doesNotMatch(JSON.stringify(failures[0]?.upstream), /my-secret-tool/)
 })
+
+test("a streaming policy block returns a terminal error without provider text", async () => {
+  const frame = 'event: error\ndata: {"error":{"code":"cyber_policy","message":"private upstream text"}}\n\n'
+  const stream = meterFreeResponse(upstream(frame), { config, protocol: "responses", streaming: true,
+    maxBytes: 65536, signal: new AbortController().signal, settle: async () => {} })
+  const body = await new Response(stream).text()
+  assert.match(body, /free_policy_refusal/)
+  assert.doesNotMatch(body, /private upstream text/)
+})
