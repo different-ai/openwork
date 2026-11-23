@@ -178,7 +178,7 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
       const result = await capacity.run(() => database.transaction(async (tx) => {
         if (!await memberFreePrincipalAllowed(principal, tx)) return null
         const result = await check(tx, principal, new Date())
-        if (!result.code && principal.kind === "member" && await sharedBudgetsEnabled(database, principal)) {
+        if (!result.code && principal.kind === "member" && await sharedBudgetsEnabled(tx, principal)) {
           result.code = await memberSharedLimit(tx, principal, config, maximumCompletionCost(config, 1) ?? 1, result.now)
         }
         return result
@@ -192,7 +192,7 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
     },
     async admit(principal: FreePrincipal, requestId: string, choices: number): Promise<FreeAdmission> {
       if (!owns(principal)) return { ok: false, code: "free_principal_rejected" }
-      if (principal.kind === "member" && await sharedBudgetsEnabled(database, principal)) {
+      if (principal.kind === "member" && await sharedBudgetsEnabled(database.$primary, principal)) {
         const cost = maximumCompletionCost(config, choices)
         if (cost === null) return { ok: false, code: "free_request_outside_budget" }
         return capacity.run(() => database.transaction(async (tx): Promise<FreeAdmission> => {

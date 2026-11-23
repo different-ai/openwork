@@ -1,6 +1,6 @@
 import { and, eq, gte, lt, sql } from "@openwork-ee/den-db/drizzle"
 import { InferenceFreeUsageBucketTable as Bucket, InferenceFreeUsageTable as Usage } from "@openwork-ee/den-db"
-import { readFeatures } from "@openwork-ee/den-db/organization-features"
+import { readFeatures, type FeatureDatabase } from "@openwork-ee/den-db/organization-features"
 import { freeUsageAmount } from "@openwork/free-auto/accounting"
 import { freeInferenceWindow, INFERENCE_FREE_MODEL_ID } from "@openwork/types/den/inference"
 import { env } from "../../env.js"
@@ -11,8 +11,8 @@ import type { AutoConfig } from "../shared/config.js"
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
 
-export async function sharedBudgetsEnabled(database: typeof db, principal: MemberPrincipal) {
-  return (await readFeatures(database.$primary, principal.organizationId, env.features)).freeAutoSharedBudgets
+export async function sharedBudgetsEnabled(database: FeatureDatabase, principal: MemberPrincipal) {
+  return (await readFeatures(database, principal.organizationId, env.features)).freeAutoSharedBudgets
 }
 
 export function maximumCompletionCost(config: AutoConfig, choices: number) {
