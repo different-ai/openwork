@@ -30,7 +30,7 @@ test("desktop grant covers guest and member calls, rejects replay and follows th
     isEligible: () => true, loadSafeStorage: () => ({ isAsyncEncryptionAvailable: async () => true,
       encryptStringAsync: async (value: string) => Buffer.from(value), decryptStringAsync: async (value: Buffer) => ({ result: value.toString() }) }) })
   const seen = new Set<string>()
-  const store: FreeAllowanceStore = { family: "member", consumeNonce: async proof => {
+  const store: FreeAllowanceStore = { family: "member", safetyPaused: async () => false, consumeNonce: async proof => {
     if (seen.has(proof.nonce)) return "replay"
     seen.add(proof.nonce)
     return "accepted"

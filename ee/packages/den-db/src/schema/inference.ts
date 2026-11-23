@@ -514,6 +514,14 @@ export const DesktopFreeProofNonceTable = mysqlTable("desktop_free_proof_nonces"
   expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
 }, (table) => [index("desktop_free_proof_nonce_expiry").on(table.expires_at)])
 
+export const FreeAutoSafetyPauseTable = mysqlTable("free_auto_safety_pause", {
+  identifier: varchar("identifier", { length: 64 }).notNull().primaryKey(),
+  expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
+  actor_id: denTypeIdColumn("user", "actor_id").notNull(),
+  reason: varchar("reason", { length: 32 }).notNull(),
+  updated_at: timestamps.updated_at,
+})
+
 export const InferenceFreeUsageBucketTable = mysqlTable("inference_free_usage_buckets", {
   id: varchar("id", { length: 64 }).notNull().primaryKey(),
   identity_hash: varchar("identity_hash", { length: 64 }).notNull(),
@@ -539,6 +547,7 @@ export const InferenceFreeUsageTable = mysqlTable("inference_free_usage", {
   created_at: timestamps.created_at,
 }, (table) => [uniqueIndex("inference_free_usage_completion").on(table.completion_id),
   index("inference_free_usage_principal_created").on(table.principal_hash, table.created_at),
+  index("inference_free_usage_created_amount").on(table.created_at, table.amount),
   index("inference_free_usage_org_created").on(table.organization_id, table.created_at)])
 
 export const inferenceKey = InferenceKeyTable

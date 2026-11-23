@@ -19,6 +19,8 @@ export { default as denGreySidebar } from "@openwork/features/flags/den-grey-sid
 export { default as desktopOnlyFreeAuto } from "@openwork/features/flags/desktop-only-free-auto"
 export { default as desktopSystemProxy } from "@openwork/features/flags/desktop-system-proxy"
 export { default as followUpSuggestions } from "@openwork/features/flags/follow-up-suggestions"
+export { default as freeAutoSafetyPauses } from "@openwork/features/flags/free-auto-safety-pauses"
+export { default as freeAutoSharedBudgets } from "@openwork/features/flags/free-auto-shared-budgets"
 export { default as gatewayOpenCodeSetup } from "@openwork/features/flags/gateway-open-code-setup"
 export { default as importOpencodeConnections } from "@openwork/features/flags/import-opencode-connections"
 export { default as litellmEntraMemberSignIn } from "@openwork/features/flags/litellm-entra-member-sign-in"

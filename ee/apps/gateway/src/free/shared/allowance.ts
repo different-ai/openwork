@@ -1,6 +1,9 @@
-import { eq, lte, or, sql } from "@openwork-ee/den-db/drizzle"
+import { readFeatures } from "@openwork-ee/den-db/organization-features"
+import { env } from "../../env.js"
+import { maximumCompletionCost, memberSharedLimit, reserveMemberBudget, settleMemberBudget, sharedBudgetsEnabled } from "../member/shared-budget.js"
+import { and, eq, gt, lte, or, sql } from "@openwork-ee/den-db/drizzle"
 import {
-  DesktopFreeProofNonceTable as Nonce, AnonymousInferenceIdentityTable as Identity,
+  FreeAutoSafetyPauseTable as Pause, DesktopFreeProofNonceTable as Nonce, AnonymousInferenceIdentityTable as Identity,
   AnonymousInferenceUsageBucketTable as GuestBucket, AnonymousInferenceUsageTable as GuestUsage,
   InferenceFreeUsageBucketTable as MemberBucket, InferenceFreeUsageTable as MemberUsage,
   freeAutoLimitId, freeAutoObservationRateId, recordFreeAutoLimit,
@@ -18,7 +21,7 @@ export type FreeAllowanceFamily = "anonymous" | "member"
 export type FreeUsageReceipt = { eventId: string; model: string; amount: number; inputTokens: number; cachedInputTokens: number; outputTokens: number }
 export type FreeWindow = { id: string; scope: "member" | "installation" | "global"; identity: string;
   window: "weekly" | "daily" | "monthly"; start: Date; end: Date; limit: number }
-export type FreeAdmission = { ok: true; windows: FreeWindow[] } | { ok: false; code: string }
+export type FreeAdmission = { ok: true; windows: FreeWindow[]; reserved?: boolean } | { ok: false; code: string }
 
 export function freeUsageBucketId(scope: string, identity: string, window: string, start: Date) {
   return freeIdentityHash("free", ["usage", scope, identity, window, start.toISOString()].join(":"))
@@ -142,6 +145,12 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
 
   return {
     family,
+    async safetyPaused(principal: FreePrincipal) {
+      const [entry] = await database.$primary.select({ id: Pause.identifier }).from(Pause)
+        .where(and(eq(Pause.identifier, freePrincipalHash(principal)), gt(Pause.expires_at, sql`current_timestamp(3)`))).limit(1)
+      if (!entry) return false
+      return (await readFeatures(database.$primary, null, env.features)).freeAutoSafetyPauses
+    },
     async consumeNonce(proof: { keyThumbprint: string; nonce: string; timestamp: number }): Promise<"accepted" | "replay" | "unavailable"> {
       const now = new Date()
       if (Math.abs(now.getTime() - proof.timestamp) > DESKTOP_FREE_PROOF_CLOCK_SKEW_MS) return "unavailable"
@@ -166,17 +175,31 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
       if (!owns(principal)) return { state: "unavailable", code: "free_principal_rejected", allowance: null }
       const result = await capacity.run(() => database.transaction(async (tx) => {
         if (!await memberFreePrincipalAllowed(principal, tx)) return null
-        return check(tx, principal, new Date())
+        const result = await check(tx, principal, new Date())
+        if (!result.code && principal.kind === "member" && await sharedBudgetsEnabled(database, principal)) {
+          result.code = await memberSharedLimit(tx, principal, config, maximumCompletionCost(config, 1) ?? 1, result.now)
+        }
+        return result
       }))
       if (!result) return { state: "unavailable", code: "free_principal_rejected", allowance: null }
       await observeLimit(principal, result)
       const { allowance, code } = result
-      if (code === "anonymous_limit_exceeded") return { state: "exhausted", code, allowance }
+      if (code === "anonymous_limit_exceeded" || code === "free_org_budget_exhausted" || code === "free_platform_budget_exhausted") return { state: "exhausted", code, allowance }
       if (code) return { state: "unavailable", code, allowance }
       return { state: "ready", code: null, allowance }
     },
-    async admit(principal: FreePrincipal): Promise<FreeAdmission> {
+    async admit(principal: FreePrincipal, requestId: string, choices: number): Promise<FreeAdmission> {
       if (!owns(principal)) return { ok: false, code: "free_principal_rejected" }
+      if (principal.kind === "member" && await sharedBudgetsEnabled(database, principal)) {
+        const cost = maximumCompletionCost(config, choices)
+        if (cost === null) return { ok: false, code: "free_request_outside_budget" }
+        return capacity.run(() => database.transaction(async (tx): Promise<FreeAdmission> => {
+          const code = await reserveMemberBudget(tx, principal, config, requestId, cost)
+          if (code) return { ok: false, code }
+          if (!await memberFreePrincipalAllowed(principal, tx)) throw new Error("Member eligibility changed")
+          return { ok: true, windows: [], reserved: true }
+        }))
+      }
       const result = await capacity.run(() => database.transaction(async (tx) => {
         if (!await memberFreePrincipalAllowed(principal, tx)) return null
         return check(tx, principal, new Date())
@@ -185,11 +208,15 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
       await observeLimit(principal, result)
       return result.code ? { ok: false, code: result.code } : { ok: true, windows: result.windows }
     },
-    async charge(input: { requestId: string; principal: FreePrincipal; windows: FreeWindow[]; receipt: FreeUsageReceipt | null }) {
+    async charge(input: { requestId: string; principal: FreePrincipal; windows: FreeWindow[]; receipt: FreeUsageReceipt | null; reserved?: boolean; release?: boolean }) {
       const receipt = validFreeReceipt(input.receipt) ? input.receipt : null
       const amount = receipt?.amount ?? config.unreportedUsageAmount
       const { principal } = input
       return database.transaction(async (tx) => {
+        if (input.reserved && principal.kind === "member") {
+          await settleMemberBudget(tx, principal, config, input.requestId, receipt, input.release === true)
+          return true
+        }
         const usage = family === "member" ? MemberUsage : GuestUsage
         const [existing] = await tx.select({ id: usage.request_id }).from(usage).where(or(eq(usage.request_id, input.requestId),
           receipt ? eq(usage.completion_id, receipt.eventId) : undefined)).limit(1)
