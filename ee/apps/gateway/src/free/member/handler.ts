@@ -56,6 +56,7 @@ export function createFreeMemberHandler(dependencies: FreeMemberDependencies = d
       const path = c.req.path, method = c.req.method
       if (new URL(c.req.url).search) return freeError(400, "invalid_request")
       const strict = await dependencies.requireDesktop?.(principal.organizationId)
+      let desktopHash: string | undefined
       const verifyDesktop = async (bodyHash: string) => {
         if (!strict) return null
         const address = dependencies.clientAddress?.(c)
@@ -66,7 +67,9 @@ export function createFreeMemberHandler(dependencies: FreeMemberDependencies = d
         if (!session || session.credentialHash !== sha256Hex(auth)) return desktopChallenge()
         const gate = await checkDesktopFreeRequest(c.req.raw, bodyHash, { config, consumeNonce: store.consumeNonce }, session)
         if (gate.error) return gate.error
-        return gate.proof.version === 3 && !gate.versionError ? null : desktopChallenge()
+        if (gate.proof.version !== 3 || gate.versionError) return desktopChallenge()
+        desktopHash = session.installationHash
+        return null
       }
       if (method === "GET") {
         const denied = await verifyDesktop(sha256Hex(""))
@@ -80,7 +83,7 @@ export function createFreeMemberHandler(dependencies: FreeMemberDependencies = d
       }
       if (method === "GET" && path === MEMBER_FREE_STATUS_PATH) {
         const status: DesktopFreeAccessStatus = { currentVersion: "", minimumVersion: null, providerID: DESKTOP_FREE_PROVIDER_ID,
-          modelID: DESKTOP_FREE_MODEL_ID, catalog: managedModelCatalog(), defaultPinned: await dependencies.defaultPinned(principal), ...await store.read(principal) }
+          modelID: DESKTOP_FREE_MODEL_ID, catalog: managedModelCatalog(), defaultPinned: await dependencies.defaultPinned(principal), ...await store.read(principal, desktopHash) }
         return c.json(status, 200, { "cache-control": "no-store" })
       }
       if (method !== "POST" || (path !== MEMBER_FREE_CHAT_PATH && path !== MEMBER_FREE_RESPONSES_PATH)) return freeError(404, "not_found", "Only Auto is available without an OpenWork Models subscription.")
@@ -92,7 +95,7 @@ export function createFreeMemberHandler(dependencies: FreeMemberDependencies = d
       const prepared = prepareFreeRequest(parsed.value, config, freeSafetyIdentifier(principal), path === MEMBER_FREE_RESPONSES_PATH ? "responses" : "chat")
       const usageLog = dependencies.usageLog
       const upstream = new URL(prepared.protocol === "responses" ? FREE_OPENAI_RESPONSES_URL : FREE_OPENAI_CHAT_URL)
-      return dispatchFreeCompletion({ config, store, fetch: dependencies.fetch, principal, prepared, signal, controller,
+      return dispatchFreeCompletion({ config, store, fetch: dependencies.fetch, principal, desktopHash, prepared, signal, controller,
         startUsageLog: usageLog ? (requestId, stream) => {
           const recorder = createRequestLogRecorder({ insertRequestLog: usageLog.insert, updateRequestLog: usageLog.update,
             reporter: safeInferenceReporter(usageLog.reporter ?? sentryInferenceReporter) })

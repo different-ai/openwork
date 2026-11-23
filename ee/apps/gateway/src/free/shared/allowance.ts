@@ -1,6 +1,6 @@
 import { readFeatures } from "@openwork-ee/den-db/organization-features"
 import { env } from "../../env.js"
-import { maximumCompletionCost, memberSharedLimit, reserveMemberBudget, settleMemberBudget, sharedBudgetsEnabled } from "../member/shared-budget.js"
+import { maximumCompletionCost, memberSharedLimit, reserveMemberBudget, settleMemberBudget, memberBudgetMode } from "../member/shared-budget.js"
 import { and, eq, gt, lte, or, sql } from "@openwork-ee/den-db/drizzle"
 import {
   FreeAutoSafetyPauseTable as Pause, DesktopFreeProofNonceTable as Nonce, AnonymousInferenceIdentityTable as Identity,
@@ -172,30 +172,34 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
       const now = new Date()
       await capacity.run(() => database.transaction(async (tx) => { await identityActivity(tx, { kind: "installation", id: installationHash }, now) }))
     },
-    async read(principal: FreePrincipal): Promise<Pick<DesktopFreeAccessStatus, "state" | "code" | "allowance">> {
+    async read(principal: FreePrincipal, desktopHash?: string): Promise<Pick<DesktopFreeAccessStatus, "state" | "code" | "allowance">> {
       if (!owns(principal)) return { state: "unavailable", code: "free_principal_rejected", allowance: null }
       const result = await capacity.run(() => database.transaction(async (tx) => {
         if (!await memberFreePrincipalAllowed(principal, tx)) return null
         const result = await check(tx, principal, new Date())
-        if (!result.code && principal.kind === "member" && await sharedBudgetsEnabled(tx, principal)) {
-          result.code = await memberSharedLimit(tx, principal, config, maximumCompletionCost(config, 1) ?? 1, result.now)
+        if (!result.code && principal.kind === "member") {
+          const mode = await memberBudgetMode(tx, principal)
+          if (mode !== "personal") result.code = await memberSharedLimit(tx, principal, config,
+            maximumCompletionCost(config, 1) ?? 1, result.now, mode === "cross-org" ? { desktopHash } : undefined)
         }
         return result
       }))
       if (!result) return { state: "unavailable", code: "free_principal_rejected", allowance: null }
       await observeLimit(principal, result)
       const { allowance, code } = result
+      if (code === "free_founder_budget_exhausted" || code === "free_desktop_budget_exhausted") return { state: "exhausted", code, allowance: null }
       if (code === "anonymous_limit_exceeded" || code === "free_org_budget_exhausted" || code === "free_platform_budget_exhausted") return { state: "exhausted", code, allowance }
       if (code) return { state: "unavailable", code, allowance }
       return { state: "ready", code: null, allowance }
     },
-    async admit(principal: FreePrincipal, requestId: string, choices: number): Promise<FreeAdmission> {
+    async admit(principal: FreePrincipal, requestId: string, choices: number, desktopHash?: string): Promise<FreeAdmission> {
       if (!owns(principal)) return { ok: false, code: "free_principal_rejected" }
-      if (principal.kind === "member" && await sharedBudgetsEnabled(database.$primary, principal)) {
+      const mode = principal.kind === "member" ? await memberBudgetMode(database.$primary, principal) : "personal"
+      if (principal.kind === "member" && mode !== "personal") {
         const cost = maximumCompletionCost(config, choices)
         if (cost === null) return { ok: false, code: "free_request_outside_budget" }
         return capacity.run(() => database.transaction(async (tx): Promise<FreeAdmission> => {
-          const code = await reserveMemberBudget(tx, principal, config, requestId, cost)
+          const code = await reserveMemberBudget(tx, principal, config, requestId, cost, mode === "cross-org" ? { desktopHash } : undefined)
           if (code) return { ok: false, code }
           if (!await memberFreePrincipalAllowed(principal, tx)) throw new Error("Member eligibility changed")
           return { ok: true, windows: [], reserved: true }

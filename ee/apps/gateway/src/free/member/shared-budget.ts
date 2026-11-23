@@ -1,5 +1,5 @@
 import { and, eq, gte, lt, sql } from "@openwork-ee/den-db/drizzle"
-import { InferenceFreeUsageBucketTable as Bucket, InferenceFreeUsageTable as Usage } from "@openwork-ee/den-db"
+import { FreeAutoOrgFounderTable as Founder, InferenceFreeUsageBucketTable as Bucket, InferenceFreeUsageTable as Usage } from "@openwork-ee/den-db"
 import { readFeatures, type FeatureDatabase } from "@openwork-ee/den-db/organization-features"
 import { freeUsageAmount } from "@openwork/free-auto/accounting"
 import { freeInferenceWindow, INFERENCE_FREE_MODEL_ID } from "@openwork/types/den/inference"
@@ -11,9 +11,17 @@ import type { AutoConfig } from "../shared/config.js"
 
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
 
-export async function sharedBudgetsEnabled(database: FeatureDatabase, principal: MemberPrincipal) {
-  return (await readFeatures(database, principal.organizationId, env.features)).freeAutoSharedBudgets
+export async function crossOrgBudgetsEnabled(database: FeatureDatabase) {
+  return (await readFeatures(database, null, env.features)).freeAutoCrossOrgBudgets
 }
+
+export async function memberBudgetMode(database: FeatureDatabase, principal: MemberPrincipal) {
+  if (await crossOrgBudgetsEnabled(database)) return "cross-org"
+  const scoped = await readFeatures(database, principal.organizationId, env.features)
+  return scoped.freeAutoSharedBudgets ? "shared" : "personal"
+}
+
+type CrossOrgBudget = { desktopHash?: string }
 
 export function maximumCompletionCost(config: AutoConfig, choices: number) {
   if (config.upstreamModel !== "gpt-6-luna" || choices !== 1) return null
@@ -31,7 +39,7 @@ function personBucket(principal: MemberPrincipal, date: Date, config: AutoConfig
     window_start_at: week.start, window_end_at: week.end, limit_amount: config.member.weeklyLimitAmount }
 }
 
-export async function memberSharedLimit(tx: Tx, principal: MemberPrincipal, config: AutoConfig, amount: number, now: Date) {
+export async function memberSharedLimit(tx: Tx, principal: MemberPrincipal, config: AutoConfig, amount: number, now: Date, crossOrg?: CrossOrgBudget) {
   const week = freeInferenceWindow(now)
   const dayStart = new Date(now)
   dayStart.setUTCHours(0, 0, 0, 0)
@@ -41,22 +49,34 @@ export async function memberSharedLimit(tx: Tx, principal: MemberPrincipal, conf
     gte(Usage.created_at, week.start), lt(Usage.created_at, week.end)))
   if (!fitsBudget(Number(platform.amount), amount, config.memberGlobalDailyAmount)) return "free_platform_budget_exhausted"
   if (!fitsBudget(Number(org.amount), amount, config.orgWeeklyAmount)) return "free_org_budget_exhausted"
+  if (crossOrg) {
+    if (!crossOrg.desktopHash) return "desktop_proof_required"
+    const [founder] = await tx.select({ userId: Founder.founder_user_id }).from(Founder)
+      .where(eq(Founder.organization_id, principal.organizationId))
+    if (!founder) return "free_founder_unavailable"
+    const inWeek = and(gte(Usage.created_at, week.start), lt(Usage.created_at, week.end))
+    const [founderUsage] = await tx.select(total).from(Founder).innerJoin(Usage, eq(Usage.organization_id, Founder.organization_id))
+      .where(and(eq(Founder.founder_user_id, founder.userId), inWeek))
+    if (!fitsBudget(Number(founderUsage.amount), amount, config.orgWeeklyAmount)) return "free_founder_budget_exhausted"
+    const [desktop] = await tx.select(total).from(Usage).where(and(eq(Usage.desktop_hash, crossOrg.desktopHash), inWeek))
+    if (!fitsBudget(Number(desktop.amount), amount, config.member.weeklyLimitAmount)) return "free_desktop_budget_exhausted"
+  }
   return null
 }
 
-export async function reserveMemberBudget(tx: Tx, principal: MemberPrincipal, config: AutoConfig, requestId: string, amount: number) {
+export async function reserveMemberBudget(tx: Tx, principal: MemberPrincipal, config: AutoConfig, requestId: string, amount: number, crossOrg?: CrossOrgBudget) {
   const lockId = freeIdentityHash("member-budget", "admission-lock")
   const epoch = new Date("2000-01-01T00:00:00Z")
   await tx.insert(Bucket).values({ id: lockId, identity_hash: lockId, window_start_at: epoch,
     window_end_at: epoch, used_amount: 0, limit_amount: 0 }).onDuplicateKeyUpdate({ set: { id: lockId } })
   const now = new Date()
   const bucket = personBucket(principal, now, config)
-  const sharedLimit = await memberSharedLimit(tx, principal, config, amount, now)
+  const sharedLimit = await memberSharedLimit(tx, principal, config, amount, now, crossOrg)
   if (sharedLimit) return sharedLimit
   await tx.insert(Bucket).values({ ...bucket, used_amount: 0 }).onDuplicateKeyUpdate({ set: { limit_amount: bucket.limit_amount } })
   const [person] = await tx.select().from(Bucket).where(eq(Bucket.id, bucket.id)).for("update")
   if (!fitsBudget(person.used_amount, amount, bucket.limit_amount)) return "anonymous_limit_exceeded"
-  await tx.insert(Usage).values({ request_id: requestId, principal_hash: bucket.identity_hash, organization_id: principal.organizationId,
+  await tx.insert(Usage).values({ request_id: requestId, desktop_hash: crossOrg?.desktopHash, principal_hash: bucket.identity_hash, organization_id: principal.organizationId,
     org_membership_id: principal.memberId, inference_key_id: principal.inferenceKeyId, model_id: INFERENCE_FREE_MODEL_ID,
     created_at: now, amount, estimated: true })
   await tx.update(Bucket).set({ used_amount: sql`${Bucket.used_amount} + ${amount}` }).where(eq(Bucket.id, bucket.id))

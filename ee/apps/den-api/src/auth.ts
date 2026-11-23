@@ -1,5 +1,5 @@
 import * as crypto from "node:crypto";
-import { recordFreeAutoSignIn } from "@openwork-ee/den-db";
+import { recordFreeAutoFounder, recordFreeAutoSignIn } from "@openwork-ee/den-db";
 import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy";
 import { invalidateTeamInferenceOAuth, revokeMemberGatewayCredentials } from "./llm/inference-provider-lifecycle.js";
 import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js";
@@ -1587,6 +1587,9 @@ export const auth = betterAuth({
             const { capabilities: _ignored, ...retained } = metadata;
             return { data: { metadata: retained } };
           }
+        },
+        afterCreateOrganization: async ({ organization, user }) => {
+          await recordFreeAutoFounder(db, normalizeDenTypeId("organization", organization.id), normalizeDenTypeId("user", user.id));
         },
         beforeUpdateOrganization: async ({ organization }) => {
           if ("metadata" in organization) {

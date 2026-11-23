@@ -30,12 +30,16 @@ test("desktop grant covers guest and member calls, rejects replay and follows th
     isEligible: () => true, loadSafeStorage: () => ({ isAsyncEncryptionAvailable: async () => true,
       encryptStringAsync: async (value: string) => Buffer.from(value), decryptStringAsync: async (value: Buffer) => ({ result: value.toString() }) }) })
   const seen = new Set<string>()
+  const admittedDesktops: Array<string | undefined> = []
   const store: FreeAllowanceStore = { family: "member", safetyPaused: async () => false, consumeNonce: async proof => {
     if (seen.has(proof.nonce)) return "replay"
     seen.add(proof.nonce)
     return "accepted"
   }, consumeSession: async () => {}, read: async () => ({ state: "ready", allowance: null, code: null }),
-    admit: async () => ({ ok: true, windows: [] }), charge: async () => true }
+    admit: async (principal, _request, _choices, desktopHash) => {
+      if (principal.kind === "member") admittedDesktops.push(desktopHash)
+      return { ok: true, windows: [] }
+    }, charge: async () => true }
   let calls = 0
   const fetch = async () => {
     calls++
@@ -55,7 +59,7 @@ test("desktop grant covers guest and member calls, rejects replay and follows th
   const session = new DesktopFreeSession(signer, "https://gateway.test")
   const body = new TextEncoder().encode(JSON.stringify({ model: INFERENCE_FREE_MODEL_ID, messages: [{ role: "user", content: "hello" }] }))
   const send = (path: string, headers: Record<string,string>) => app.request(path, { method: "POST", body, headers: { "content-type": "application/json", ...headers } })
-  for (const [path, member] of [[DESKTOP_FREE_CHAT_PATH, null], [MEMBER_FREE_CHAT_PATH, "Bearer fixture-a"]] as const) {
+  for (const [path, member] of [[DESKTOP_FREE_CHAT_PATH, null], [MEMBER_FREE_CHAT_PATH, "Bearer fixture-a"], [MEMBER_FREE_CHAT_PATH, "Bearer fixture-c"]] as const) {
     assert.equal((await send(path, member ? { authorization: member } : {})).status, 403)
     const headers = await session.headers(member, path, "POST", body, new AbortController().signal)
     const response = await send(path, headers)
@@ -64,5 +68,8 @@ test("desktop grant covers guest and member calls, rejects replay and follows th
     assert.equal((await send(path, headers)).status, 401)
     if (member) assert.equal((await send(path, { ...headers, authorization: "Bearer fixture-b" })).status, 403)
   }
-  assert.equal(calls, 2)
+  const { createAnonymousIdentities } = await import("../src/free/guest/identity.js")
+  const { installationHash } = createAnonymousIdentities({ machineId: "a".repeat(64) }, "203.0.113.40", config)
+  assert.deepEqual(admittedDesktops, [installationHash, installationHash])
+  assert.equal(calls, 3)
 })

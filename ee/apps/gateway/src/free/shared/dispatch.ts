@@ -1,3 +1,4 @@
+import { desktopChallenge } from "../desktop-access.js"
 import * as Sentry from "@sentry/node"
 import { randomBytes } from "node:crypto"
 import { INFERENCE_USAGE_CONVERSION_FACTOR } from "@openwork/types/den/inference"
@@ -44,17 +45,21 @@ function errorCode(error: unknown) {
 
 export async function dispatchFreeCompletion(input: {
   config: AutoConfig; store: FreeAllowanceStore; fetch: typeof fetch;
-  principal: FreePrincipal; prepared: { body: string; stream: boolean; choices?: number; protocol?: FreeProtocol };
+  principal: FreePrincipal; desktopHash?: string; prepared: { body: string; stream: boolean; choices?: number; protocol?: FreeProtocol };
   signal: AbortSignal; controller: AbortController;
   startUsageLog?: (requestId: string, stream: boolean) => RequestLogRecorder;
 }) {
   const { config, store, principal, prepared, signal, controller } = input
   signal.throwIfAborted()
   const requestId = randomBytes(16).toString("hex")
-  const admission = await store.admit(principal, requestId, prepared.choices ?? 1)
+  const admission = await store.admit(principal, requestId, prepared.choices ?? 1, input.desktopHash)
   if (!admission.ok) {
-    const response = freeError(admission.code === "free_principal_rejected" ? 403 : 429, admission.code)
-    if (principal.kind === "member" && admission.code === "anonymous_limit_exceeded") {
+    if (admission.code === "desktop_proof_required") return desktopChallenge()
+    if (admission.code === "free_founder_unavailable") return freeError(403, admission.code, "Included model usage is unavailable for this organization. You can use a configured or paid model.")
+    const sharedMessage = admission.code === "free_desktop_budget_exhausted" ? "This desktop has reached its weekly free model limit."
+      : admission.code === "free_founder_budget_exhausted" ? "Organizations created by the same account have reached their shared weekly free model limit." : undefined
+    const response = freeError(admission.code === "free_principal_rejected" ? 403 : 429, admission.code, sharedMessage)
+    if (principal.kind === "member" && (admission.code === "anonymous_limit_exceeded" || sharedMessage)) {
       response.headers.set("X-OpenWork-Error-Code", "free_allowance_exhausted")
       response.headers.set("X-OpenWork-Usage-State", "blocked")
     }
