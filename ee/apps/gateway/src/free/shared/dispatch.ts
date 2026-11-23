@@ -51,7 +51,7 @@ export async function dispatchFreeCompletion(input: {
   const { config, store, principal, prepared, signal, controller } = input
   signal.throwIfAborted()
   const requestId = randomBytes(16).toString("hex")
-  const admission = await store.admit(principal)
+  const admission = await store.admit(principal, requestId, prepared.choices ?? 1)
   if (!admission.ok) {
     const response = freeError(admission.code === "free_principal_rejected" ? 403 : 429, admission.code)
     if (principal.kind === "member" && admission.code === "anonymous_limit_exceeded") {
@@ -60,8 +60,8 @@ export async function dispatchFreeCompletion(input: {
     }
     return response
   }
-  const charge = (receipt: FreeUsageReceipt | null) => retryFreeSettlement(
-    () => store.charge({ requestId, principal, windows: admission.windows, receipt }),
+  const charge = (receipt: FreeUsageReceipt | null, release = false) => retryFreeSettlement(
+    () => store.charge({ requestId, principal, windows: admission.windows, receipt, reserved: admission.reserved, release }),
     () => Sentry.captureMessage("Free Auto charge pending database recovery", {
       level: "error", tags: { route: principal.kind === "member" ? "openwork_free" : "anonymous_free" },
       extra: { requestId, receipt, principal, windows: admission.windows },
@@ -79,6 +79,7 @@ export async function dispatchFreeCompletion(input: {
     upstream_error_type: details.type, upstream_error_code: details.code,
   })
   if (usageLog && await usageLog.whenStarted?.() === false) {
+    if (admission.reserved) await charge(null, true)
     return freeError(503, "request_log_unavailable", `${REQUEST_LOG_UNAVAILABLE_MESSAGE} No allowance was consumed.`)
   }
   let response: Response
@@ -106,6 +107,7 @@ export async function dispatchFreeCompletion(input: {
   const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase()
   const upstreamRequestId = response.headers.get("x-request-id")?.slice(0, 128)
   if (!response.ok) {
+    if (admission.reserved) await charge(null, true)
     const details = await readUpstreamError(response, controller)
     logFailure("error", "free Auto upstream request failed", {
       reason: "upstream_status", http_status_code: response.status, upstream_request_id: upstreamRequestId, ...upstreamFields(details),

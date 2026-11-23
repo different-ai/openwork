@@ -539,6 +539,7 @@ export const InferenceFreeUsageTable = mysqlTable("inference_free_usage", {
   created_at: timestamps.created_at,
 }, (table) => [uniqueIndex("inference_free_usage_completion").on(table.completion_id),
   index("inference_free_usage_principal_created").on(table.principal_hash, table.created_at),
+  index("inference_free_usage_created_amount").on(table.created_at, table.amount),
   index("inference_free_usage_org_created").on(table.organization_id, table.created_at)])
 
 export const inferenceKey = InferenceKeyTable

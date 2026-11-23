@@ -42,6 +42,8 @@ export function readAutoConfig(environment: Record<string, string | undefined>) 
     apiKey, upstreamModel, tokenSecret, accountingIdentityKey,
     releaseKey, releaseKeyPrevious: releaseKeyPrevious.length >= 32 ? releaseKeyPrevious : "",
     devReleaseSecret: devReleaseSecret.length >= 32 ? devReleaseSecret : "",
+    orgWeeklyAmount: integer("INFERENCE_FREE_ORG_WEEKLY_MICRO_USD", 25000000, 0, 10000000000) * 100,
+    memberGlobalDailyAmount: integer("INFERENCE_FREE_MEMBER_GLOBAL_DAILY_MICRO_USD", 100000000, 0, 10000000000) * 100,
     maxConcurrent: integer("FREE_AUTO_MAX_CONCURRENT", 8, 1, 200),
     maxQueued: integer("FREE_AUTO_MAX_QUEUED", 32, 0, 1000),
     minimumVersion,
