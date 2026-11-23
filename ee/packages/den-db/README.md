@@ -9,6 +9,26 @@
 - Always generate new migrations with Drizzle from this package.
 - Do not create migrations from `den-api`, `den-controller`, or other apps.
 
+## How Den stores an organization's default model
+
+An admin saves the model for everyone with `PUT /v1/org/default-model/everyone`.
+The response and the settings page's next `GET /v1/org/default-model` both
+need to show the saved choice.
+
+| Database decision | How the default model works |
+| --- | --- |
+| Tenant key | The route takes `organization_id` from the caller's verified organization membership. It requires `inference.manage` to save and `inference.view` to read. Two organizations can each have an `everyone` default. |
+| Lookup index | The unique index `org_default_model_scope (organization_id, scope_key)` matches the save's two equality predicates. The settings query filters on the leading `organization_id` column to load all defaults for that organization. A team override uses the team ID as its scope key. |
+| Duplicate writes | The transaction locks the matching row with `SELECT … FOR UPDATE`, updates it in place, or inserts it when absent. The unique index enforces one row per organization and scope. The route retries once on a duplicate-key error. Repeating a save keeps the same row ID, though its update timestamp can change. Saving `null` removes that scope's default. |
+| Read routing | The write transaction runs on the primary. Both the PUT response and the separate settings GET call `listDefaultModelSettings`, which reads defaults, teams, and memberships through `db.$primary`. A new GET cannot rely on the previous request's write to select the primary. |
+
+The [schema](src/schema/default-models.ts), [store](../../apps/den-api/src/default-model.ts),
+and [HTTP routes](../../apps/den-api/src/routes/org/default-model.ts) implement the example.
+The [API test](../../apps/den-api/test/api/org-default-model.api.test.ts) saves
+different defaults in two organizations, holds the replica at its pre-write
+snapshot, and checks the immediate GET and the row ID after a repeated PUT.
+It also checks that another organization's owner cannot read or clear the setting.
+
 ## Install or upgrade Den
 
 | Database and starting state | What to run | What happens |
