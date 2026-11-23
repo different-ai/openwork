@@ -62,7 +62,7 @@
   "devDependencies": {
     "@electron/asar": "^3.4.1",
     "@electron/rebuild": "^4.2.0",
-    "electron": "^43.8.1",
+    "electron": "^43.8.12",
     "electron-builder": "^26.18.0"
   },
   "packageManager": "pnpm@10.27.0"
