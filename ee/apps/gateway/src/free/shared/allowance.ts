@@ -1,7 +1,9 @@
+import { readFeatures } from "@openwork-ee/den-db/organization-features"
+import { env } from "../../env.js"
 import { maximumCompletionCost, memberSharedLimit, reserveMemberBudget, settleMemberBudget, sharedBudgetsEnabled } from "../member/shared-budget.js"
-import { eq, lte, or, sql } from "@openwork-ee/den-db/drizzle"
+import { and, eq, gt, lte, or, sql } from "@openwork-ee/den-db/drizzle"
 import {
-  DesktopFreeProofNonceTable as Nonce, AnonymousInferenceIdentityTable as Identity,
+  FreeAutoSafetyPauseTable as Pause, DesktopFreeProofNonceTable as Nonce, AnonymousInferenceIdentityTable as Identity,
   AnonymousInferenceUsageBucketTable as GuestBucket, AnonymousInferenceUsageTable as GuestUsage,
   InferenceFreeUsageBucketTable as MemberBucket, InferenceFreeUsageTable as MemberUsage,
   freeAutoLimitId, freeAutoObservationRateId, recordFreeAutoLimit,
@@ -143,6 +145,12 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
 
   return {
     family,
+    async safetyPaused(principal: FreePrincipal) {
+      const [entry] = await database.$primary.select({ id: Pause.identifier }).from(Pause)
+        .where(and(eq(Pause.identifier, freePrincipalHash(principal)), gt(Pause.expires_at, sql`current_timestamp(3)`))).limit(1)
+      if (!entry) return false
+      return (await readFeatures(database.$primary, null, env.features)).freeAutoSafetyPauses
+    },
     async consumeNonce(proof: { keyThumbprint: string; nonce: string; timestamp: number }): Promise<"accepted" | "replay" | "unavailable"> {
       if (family !== "anonymous") return "unavailable"
       const now = new Date()

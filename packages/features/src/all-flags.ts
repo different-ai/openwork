@@ -18,6 +18,7 @@ export { default as connectionSelectedScopesOnly } from "@openwork/features/flag
 export { default as denGreySidebar } from "@openwork/features/flags/den-grey-sidebar"
 export { default as desktopSystemProxy } from "@openwork/features/flags/desktop-system-proxy"
 export { default as followUpSuggestions } from "@openwork/features/flags/follow-up-suggestions"
+export { default as freeAutoSafetyPauses } from "@openwork/features/flags/free-auto-safety-pauses"
 export { default as freeAutoSharedBudgets } from "@openwork/features/flags/free-auto-shared-budgets"
 export { default as gatewayOpenCodeSetup } from "@openwork/features/flags/gateway-open-code-setup"
 export { default as importOpencodeConnections } from "@openwork/features/flags/import-opencode-connections"
