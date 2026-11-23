@@ -8,6 +8,9 @@ import {
   memberAgentInputSchema,
   memberAgentSavedSchema,
   memberAgentViewSchema,
+  memberConnectorTogglesSchema,
+  memberConnectorSavedSchema,
+  type MemberConnectorSaved,
   type MemberAgentCheck,
   type MemberAgentInput,
   type MemberAgentSaved,
@@ -48,16 +51,17 @@ import {
   readMemberChecks,
   type AgentInstanceRow,
 } from "../../workbot-proactive/repository.js"
-import { resolveMemberSources, type MemberConnection, type ResolvedSource, type SourceMode } from "../../workbot-proactive/sources.js"
-import { countConnectedMembers, loadMemberConnectorInventory } from "../../workbot-proactive/sources-repository.js"
+import { resolveMemberSources, sourceOn, type MemberConnection, type ResolvedSource, type SourceMode } from "../../workbot-proactive/sources.js"
+import { countConnectedMembers, listMemberConnections, loadMemberConnectorInventory } from "../../workbot-proactive/sources-repository.js"
 import { sourceReadToolCounts } from "../../workbot-proactive/agent-tools.js"
 import { getCatalog } from "../../mcp/index.js"
 import type { McpToolOperation } from "../../mcp/catalog.js"
 import { nativeOperations } from "../../mcp/native-capabilities.js"
 import type { AgentTemplateVersion } from "../../workbot-proactive/template.js"
 import { workbotOrigin } from "../../workbot/config.js"
-import { resolveMemberAgentPolicy, resolveMemberWorkbotSettings, type AgentPolicy, type MemberTeamAgent } from "../../workbot/team-settings.js"
+import { memberAgentSettings, resolveMemberAgentPolicy, resolveMemberWorkbotSettings, type AgentPolicy, type MemberTeamAgent } from "../../workbot/team-settings.js"
 
+const pageOnly = { "x-mcp": false }
 const PAGE_TOOLS_DEADLINE_MS = 4_000
 
 const memberAgentDocumentSchema = memberAgentViewSchema.meta({ ref: "MemberAgent" })
@@ -260,6 +264,62 @@ export function registerMeAgentRoutes<T extends { Variables: AuthContextVariable
       const rows = await readMemberChecks(member.memberId, new Date(Date.now() - days * 86_400_000))
       const checks: MemberAgentCheck[] = rows.flatMap((entry) => memberAgentCheck(entry) ?? [])
       return c.json({ days, checks })
+    },
+  )
+
+  app.patch(
+    "/v1/me/agent/connectors",
+    describeRoute({
+      ...pageOnly,
+      operationId: "saveMyAgentConnectorSwitches",
+      tags: ["Users"],
+      summary: "Save my connector switches",
+      description: "Sets the signed-in member's connector choices by exact source ID. Returns the confirmed switches and new undo entries. A batch is saved together under the member's current access and agent policy.",
+      responses: {
+        200: jsonResponse("Confirmed connector settings.", memberConnectorSavedSchema),
+        400: jsonResponse("Invalid or unavailable connector choices.", changeRefusedSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        404: jsonResponse("Workbot is unavailable.", featureDisabledSchema),
+      },
+    }),
+    orgMemberRoute(),
+    jsonValidator(memberConnectorTogglesSchema),
+    async (c) => {
+      const context = c.get("organizationContext")
+      const member = await memberOf(context)
+      if ("error" in member) return c.json(disabled(member.error), 404)
+      c.header("Cache-Control", "no-store")
+      const request = c.req.valid("json")
+      const ids = new Set(request.sources.map((entry) => entry.source))
+      const settings = memberAgentSettings(member.workbot, context?.organization.metadata)
+      const [connections, anyConnector] = await Promise.all([
+        listMemberConnections(member, ids),
+        agentBriefAllowed(member.organizationId, member.userId),
+      ])
+      const sources = resolveMemberSources({ connections, policy: settings.sources, choices: {}, lastLook: {}, mode: anyConnector ? "any" : "reviewed" })
+        .filter((entry) => entry.kind === "other" && ids.has(entry.id))
+      if (sources.length !== ids.size) return c.json({ error: "source_not_allowed", message: "A selected connector is no longer available." }, 400)
+      const now = Date.now()
+      const result = await changeMemberAgent<MemberConnectorSaved | Extract<MemberAgentChangeResult, { ok: false }>>(member.organizationId, member.memberId, (row) => {
+        const stored = parseStoredPreferences(row?.preferences)
+        const applied = applyMemberAgentChange({ request, settings, sources, stored, overrides: row?.overrides, source: "page", now, newId: newChangeId })
+        if (!applied.ok) return { result: applied, change: null, wake: false }
+        const previousIds = new Set(stored.log.map((entry) => entry.id))
+        const added = applied.stored.log.filter((entry) => !previousIds.has(entry.id))
+        return {
+          change: added.length ? { preferences: JSON.stringify(applied.stored) } : null,
+          wake: applied.wake,
+          result: {
+            sources: sources.map((entry) => ({
+              id: entry.id, policy: entry.policy, connections: entry.connections.map(memberConnectionView),
+              on: sourceOn(entry.policy, applied.stored.sources[entry.id], false),
+            })),
+            changes: memberAgentChanges({ ...applied.stored, log: added }, settings, new Map(sources.map((entry) => [entry.id, entry.name]))),
+          },
+        }
+      }, new Date(now))
+      if ("error" in result) return c.json({ error: result.error, message: result.message }, result.status)
+      return c.json(result)
     },
   )
 
