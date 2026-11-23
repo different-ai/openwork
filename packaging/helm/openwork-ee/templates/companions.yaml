@@ -1,0 +1,194 @@
+{{- include "openwork-ee.companions.validate" . -}}
+{{- $r := include "openwork-ee.headlessRunner" . | fromYaml -}}
+{{- $w := include "openwork-ee.workbot" . | fromYaml -}}
+{{- if and $r.persistence.enabled (not $r.persistence.existingClaim) }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "openwork-ee.fullname" . }}-headless-runner
+  annotations:
+    helm.sh/resource-policy: keep
+  labels:
+    {{- include "openwork-ee.componentLabels" (dict "root" . "component" "headless-runner") | nindent 4 }}
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- if not (kindIs "invalid" $r.persistence.storageClass) }}
+  storageClassName: {{ $r.persistence.storageClass | quote }}
+  {{- end }}
+  resources:
+    requests:
+      storage: {{ $r.persistence.size | quote }}
+{{- end }}
+{{- range $component := list "headless-runner" "workbot" }}
+{{- $runner := eq $component "headless-runner" }}
+{{- $settings := ternary $r $w $runner }}
+{{- $port := ternary 8795 3020 $runner }}
+{{- if $settings.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "openwork-ee.fullname" $ }}-{{ $component }}
+  labels:
+    {{- include "openwork-ee.componentLabels" (dict "root" $ "component" $component) | nindent 4 }}
+spec:
+  type: ClusterIP
+  selector:
+    {{- include "openwork-ee.componentSelectorLabels" (dict "root" $ "component" $component) | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ $port }}
+      targetPort: http
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "openwork-ee.fullname" $ }}-{{ $component }}
+  labels:
+    {{- include "openwork-ee.componentLabels" (dict "root" $ "component" $component) | nindent 4 }}
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      {{- include "openwork-ee.componentSelectorLabels" (dict "root" $ "component" $component) | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "openwork-ee.componentSelectorLabels" (dict "root" $ "component" $component) | nindent 8 }}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 60
+      {{- with $.Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if or $runner $.Values.customCa.enabled }}
+      volumes:
+        {{- if $runner }}
+        - name: data
+          persistentVolumeClaim:
+            claimName: {{ default (printf "%s-headless-runner" (include "openwork-ee.fullname" $)) $r.persistence.existingClaim | quote }}
+        {{- end }}
+        {{- if $.Values.customCa.enabled }}
+        {{- include "openwork-ee.customCa.volume" $ | nindent 8 }}
+        {{- end }}
+      {{- end }}
+      containers:
+        - name: {{ $component }}
+          image: "{{ $settings.image.repository }}:{{ include "openwork-ee.imageTag" (dict "root" $ "componentTag" $settings.image.tag) }}"
+          imagePullPolicy: {{ $.Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: {{ $port }}
+          {{- if or $runner $.Values.customCa.enabled }}
+          volumeMounts:
+            {{- if $runner }}
+            - name: data
+              mountPath: /var/data
+            {{- end }}
+            {{- if $.Values.customCa.enabled }}
+            {{- include "openwork-ee.customCa.volumeMount" $ | nindent 12 }}
+            {{- end }}
+          {{- end }}
+          env:
+            - name: NODE_ENV
+              value: production
+            {{- if $runner }}
+            - name: HEADLESS_PORT
+              value: "8795"
+            - name: HEADLESS_DB_PATH
+              value: /var/data/headless.sqlite
+            - name: HEADLESS_MODEL_PROTOCOL
+              value: {{ $r.model.protocol | quote }}
+            - name: HEADLESS_MODEL
+              value: {{ $r.model.alias | quote }}
+            - name: HEADLESS_MODEL_BASE_URL
+              value: {{ printf "%s/api/v1" ($.Values.config.public.gatewayPublicBaseUrl | trimSuffix "/") | quote }}
+            - name: HEADLESS_MCP_URL
+              value: {{ printf "%s/mcp/agent" (include "openwork-ee.companions.apiOrigin" $) | quote }}
+            - name: HEADLESS_WORKBOT_DEN_API_URL
+              value: {{ include "openwork-ee.companions.apiOrigin" $ | quote }}
+            - name: HEADLESS_DEN_API_URL
+              value: {{ include "openwork-ee.companions.apiOrigin" $ | quote }}
+            - name: HEADLESS_FILES
+              value: disk
+            - name: HEADLESS_FILES_DIR
+              value: /var/data/files
+            - name: HEADLESS_COMPUTER
+              value: "off"
+            {{- range $env, $key := dict "HEADLESS_API_TOKEN" $r.secret.apiTokenKey "HEADLESS_DEN_CALLBACK_TOKEN" $r.secret.callbackTokenKey "HEADLESS_GRANT_KEY" $r.secret.grantKey }}
+            {{- include "openwork-ee.companions.secretEnv" (dict "env" $env "secret" $r.secret.existingSecret "key" $key) | nindent 12 }}
+            {{- end }}
+            {{- else }}
+            - name: WORKBOT_PORT
+              value: "3020"
+            - name: WORKBOT_PUBLIC_URL
+              value: {{ $w.publicUrl | trimSuffix "/" | quote }}
+            - name: WORKBOT_DEN_API_URL
+              value: {{ include "openwork-ee.companions.apiOrigin" $ | quote }}
+            - name: WORKBOT_DEN_WEB_URL
+              value: {{ $.Values.config.public.webOrigin | trimSuffix "/" | quote }}
+            - name: WORKBOT_RUNNER_URL
+              value: {{ include "openwork-ee.companions.runnerUrl" $ | quote }}
+            {{- include "openwork-ee.companions.secretEnv" (dict "env" "WORKBOT_RUNNER_TOKEN" "secret" $r.secret.existingSecret "key" $r.secret.apiTokenKey) | nindent 12 }}
+            {{- include "openwork-ee.companions.secretEnv" (dict "env" "WORKBOT_SESSION_SECRET" "secret" $w.secret.existingSecret "key" $w.secret.sessionSecretKey) | nindent 12 }}
+            {{- end }}
+            {{- if $.Values.customCa.enabled }}
+            {{- include "openwork-ee.customCa.env" $ | nindent 12 }}
+            {{- end }}
+          startupProbe:
+            httpGet:
+              path: {{ ternary "/health" "/healthz" $runner }}
+              port: http
+            failureThreshold: 30
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: {{ ternary "/health" "/healthz" $runner }}
+              port: http
+            periodSeconds: 15
+          readinessProbe:
+            httpGet:
+              path: {{ ternary "/health" "/healthz" $runner }}
+              port: http
+            periodSeconds: 5
+          {{- with $settings.resources }}
+          resources:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+{{- end }}
+{{- end }}
+{{- if and $w.enabled $w.ingress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "openwork-ee.fullname" . }}-workbot
+  labels:
+    {{- include "openwork-ee.componentLabels" (dict "root" . "component" "workbot") | nindent 4 }}
+  {{- with $w.ingress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with $w.ingress.className }}
+  ingressClassName: {{ . | quote }}
+  {{- end }}
+  tls:
+    - hosts:
+        - {{ (urlParse $w.publicUrl).host | quote }}
+      secretName: {{ $w.ingress.tlsSecretName | quote }}
+  rules:
+    - host: {{ (urlParse $w.publicUrl).host | quote }}
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: {{ include "openwork-ee.fullname" . }}-workbot
+                port:
+                  name: http
+{{- end }}

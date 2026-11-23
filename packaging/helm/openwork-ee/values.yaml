@@ -11,6 +11,12 @@ image:
 
 imagePullSecrets: []
 
+# Optional chart-managed companions. Independent opt-ins, both OFF by default.
+# Sparse maps keep upgrades from older saved values default-off. See
+# companions.md for the complete interface and staged lifecycle.
+headlessRunner: {}
+workbot: {}
+
 config:
   databaseMode: mysql
   openworkDevMode: "0"
