@@ -51,7 +51,7 @@ export function slashTriggerAtCaret(text: string, caret: number) {
   const offset = before.lastIndexOf("/");
   if (offset < 0 || (offset > 0 && !/\s/.test(text[offset - 1]))) return null;
   const query = before.slice(offset + 1);
-  if (/[\r\n]/.test(query)) return null;
+  if (/^\s/.test(query) || /[\r\n]/.test(query)) return null;
 
   const restOfWord = text.slice(caret).match(/^\S*/)?.[0] ?? "";
   if (restOfWord.includes("/")) return null;

@@ -23,7 +23,7 @@ describe("composer slash suggestions", () => {
   });
 
   test("does not treat a path, URL or joined words as a trigger", () => {
-    for (const draft of ["src/app", "https://x", "and/or", "/usr/local", "open /usr/local"]) {
+    for (const draft of ["src/app", "https://x", "and/or", "/usr/local", "open /usr/local", "this and / or that"]) {
       expect(trigger(draft)).toBeNull();
     }
     expect(slashTriggerAtCaret("/usr/local", 3)).toBeNull();
