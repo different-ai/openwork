@@ -15,7 +15,6 @@ export async function sharedBudgetsEnabled(database: typeof db, principal: Membe
   return (await readFeatures(database.$primary, principal.organizationId, env.features)).freeAutoSharedBudgets
 }
 
-// Budget against the supported model's full context, including image inputs and reasoning.
 export function maximumCompletionCost(config: AutoConfig, choices: number) {
   if (config.upstreamModel !== "gpt-6-luna" || choices !== 1) return null
   return freeUsageAmount(config, 1_050_000, 128_000)
@@ -46,8 +45,6 @@ export async function memberSharedLimit(tx: Tx, principal: MemberPrincipal, conf
 }
 
 export async function reserveMemberBudget(tx: Tx, principal: MemberPrincipal, config: AutoConfig, requestId: string, amount: number) {
-  // Acquire a common lock before the transaction's first snapshot read. Holding it across the
-  // balance check and insert serializes admissions from different gateway replicas and orgs.
   const lockId = freeIdentityHash("member-budget", "admission-lock")
   const epoch = new Date("2000-01-01T00:00:00Z")
   await tx.insert(Bucket).values({ id: lockId, identity_hash: lockId, window_start_at: epoch,
@@ -67,7 +64,6 @@ export async function reserveMemberBudget(tx: Tx, principal: MemberPrincipal, co
 }
 
 export async function settleMemberBudget(tx: Tx, principal: MemberPrincipal, config: AutoConfig, requestId: string, receipt: FreeUsageReceipt | null, release: boolean) {
-  // Unknown provider usage retains the durable estimate, including after gateway restarts.
   if (!receipt && !release) return
   const [held] = await tx.select({ estimated: Usage.estimated, created_at: Usage.created_at, amount: Usage.amount }).from(Usage).where(eq(Usage.request_id, requestId)).for("update")
   if (!held || !held.estimated) return
