@@ -90,18 +90,30 @@ test("a teammate adds skills, tasks, and files without leaving the sentence", as
     expect(keptSentence).toBe(true);
   });
 
-  await step("after: two words show the task in the same list as file mentions", async () => {
-    await user.type("composer", "compare @weekly report for today", { replace: true });
-    for (const _character of " for today") await user.press("ArrowLeft");
-    const rows = await options(mentions, world.task.title);
-    const combined = await options(mentions, "weekly-notes.txt");
-    evidence.recordAssertionEvidence("Weekly report and weekly-notes.txt share the Mentions list", combined.join(", "), rows.length > 0);
+  await step("after: one word shows both the file and the task", async () => {
+    await user.type("composer", "compare @weekly", { replace: true });
+    await options(mentions, world.task.title);
+    const rows = await options(mentions, "weekly-notes.txt");
+    const fileFirst = rows[0]?.includes("weekly-notes.txt") && rows[1]?.includes(world.task.title);
+    evidence.recordAssertionEvidence("The file appears before the task for a one-word query", rows.join(", "), fileFirst === true);
     await user.screenshot();
+    expect(fileFirst).toBe(true);
   });
 
-  await step("after: picking the task keeps the text on both sides", async () => {
-    await user.click({ role: "option", label: /Weekly report/ });
+  await step("after: two words show only the matching task", async () => {
+    await user.type("composer", " report");
+    expect(await draft()).toBe("compare @weekly report");
+    const rows = await options(mentions, world.task.title);
+    const taskOnly = rows.length === 1 && rows[0]?.includes(world.task.title);
+    evidence.recordAssertionEvidence("Only Weekly report is offered", rows.join(", "), taskOnly === true);
+    await user.screenshot();
+    expect(taskOnly).toBe(true);
+  });
+
+  await step("after: Enter inserts the task without replacing the draft", async () => {
+    await user.press("Enter");
     await noPopover();
+    await user.type("composer", "for today");
     const text = await draft();
     const chips = (await probe.dom(`${editor} [data-session-reference-session]`)).elements;
     const kept = /compare\s+Weekly report\s+for today/.test(text) && chips.length === 1;
@@ -121,6 +133,17 @@ test("a teammate adds skills, tasks, and files without leaving the sentence", as
     evidence.recordAssertionEvidence("Tab inserts the file chip without changing the other words", text, inserted);
     await user.screenshot();
     expect(inserted).toBe(true);
+  });
+
+  await step("after: prose after a file name closes the mention menu", async () => {
+    await user.type("composer", "@weekly-notes.txt", { replace: true });
+    await options(mentions, "weekly-notes.txt");
+    await user.type("composer", " please summarise");
+    const remaining = await noPopover();
+    const text = await draft();
+    evidence.recordAssertionEvidence("The file name and prose stay plain text with no popover", text, remaining === 0 && text === "@weekly-notes.txt please summarise");
+    await user.screenshot();
+    expect(text).toBe("@weekly-notes.txt please summarise");
   });
 
   for (const example of ["#weekly", "@zzqxxzzq", "/zzqxxzzq"]) {

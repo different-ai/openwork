@@ -191,6 +191,20 @@ test("inline mentions ignore hashes and dismiss only the current at sign", async
   await act(async () => { view.root.unmount(); });
 });
 
+test("Enter sends prose after a file name instead of inserting a file chip", async () => {
+  const view = await mountComposer("", {
+    inlineSuggestions: true,
+    searchFiles: async () => ["weekly-notes.txt"],
+  });
+  await view.typeText(view.editor, "@weekly-notes.txt");
+  expect(document.querySelector('[aria-label="Mentions"] [role="option"]')?.textContent).toContain("weekly-notes.txt");
+  await view.typeText(view.editor, " please summarise");
+  expect(document.querySelector("[data-composer-suggestions]")).toBeNull();
+  await press(view.editor, "Enter");
+  expect(view.sent).toEqual(["@weekly-notes.txt please summarise"]);
+  await act(async () => { view.root.unmount(); });
+});
+
 test("slash Escape applies to one trigger and Enter sends when the next trigger has no match", async () => {
   const view = await mountComposer("", {
     inlineSuggestions: true,

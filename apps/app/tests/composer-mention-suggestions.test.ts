@@ -15,9 +15,9 @@ function trigger(text: string) {
 }
 
 describe("inline mentions", () => {
-  test("uses the caret and separates the first word from the task query", () => {
-    expect(trigger("compare @weekly report")).toEqual({ query: "weekly report", offset: 8, end: 22, firstWordEnd: 15 });
-    expect(inlineMentionAtCaret("@weekly report for today", 14)).toEqual({ query: "weekly report", offset: 0, end: 14, firstWordEnd: 7 });
+  test("uses the caret to find a multi-word task query", () => {
+    expect(trigger("compare @weekly report")).toEqual({ query: "weekly report", offset: 8, end: 22 });
+    expect(inlineMentionAtCaret("@weekly report for today", 14)).toEqual({ query: "weekly report", offset: 0, end: 14 });
     expect(trigger("hello\n@weekly")?.offset).toBe(6);
     expect(trigger("@")?.query).toBe("");
   });
@@ -28,18 +28,22 @@ describe("inline mentions", () => {
     }
   });
 
-  test("matches only the task title after a space and preserves first-word file matches", () => {
+  test("offers non-task items only before the first space", () => {
     const tasks = [candidate("Weekly report"), candidate("Inventory", "ses_inventory")];
-    expect(inlineMentionSuggestions([notes], tasks, "weekly report").map((item) => item.kind)).toEqual(["file", "task"]);
-    expect(inlineMentionSuggestions([notes], tasks, "weekly reference")).toEqual([notes]);
-    expect(inlineMentionSuggestions([notes], tasks, "weekly report", "ses_report")).toEqual([notes]);
+    expect(inlineMentionSuggestions([notes], tasks, "weekly").map((item) => item.kind)).toEqual(["file", "task"]);
+    for (const query of ["weekly report", "weekly ", "weekly\t"]) {
+      expect(inlineMentionSuggestions([notes], tasks, query).map((item) => item.kind)).toEqual(["task"]);
+    }
+    expect(inlineMentionSuggestions([notes], tasks, "weekly-notes.txt please summarise")).toEqual([]);
+    expect(inlineMentionSuggestions([notes], tasks, "weekly reference")).toEqual([]);
+    expect(inlineMentionSuggestions([notes], tasks, "weekly report", "ses_report")).toEqual([]);
     expect(inlineMentionSuggestions([notes], tasks, "zzqxxzzq")).toEqual([]);
   });
 
   test("reserves four rows for each group", () => {
     const files = Array.from({ length: 8 }, (_, index) => ({ ...notes, id: `file-${index}` }));
     const tasks = Array.from({ length: 8 }, (_, index) => candidate(`Weekly report ${index}`, `ses_report${index}`));
-    expect(inlineMentionSuggestions(files, tasks, "weekly report").map((item) => item.kind)).toEqual([
+    expect(inlineMentionSuggestions(files, tasks, "weekly").map((item) => item.kind)).toEqual([
       "file", "file", "file", "file", "task", "task", "task", "task",
     ]);
   });

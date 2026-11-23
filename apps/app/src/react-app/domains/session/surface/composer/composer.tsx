@@ -66,7 +66,7 @@ import { formatRelativeTime } from "@/app/utils";
 import { filterSessionReferenceCandidates } from "./session-reference-search";
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 
-import { filterMentionItems, firstMentionWord, inlineMentionSuggestions, type MentionItem, type MentionSuggestion, type MentionTrigger } from "./mention-suggestions";
+import { filterMentionItems, inlineMentionSuggestions, isSingleWordMentionQuery, type MentionItem, type MentionSuggestion, type MentionTrigger } from "./mention-suggestions";
 
 type ComposerProps = {
   draft: string;
@@ -381,8 +381,8 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   const legacyMentionQuery = activeMentionQuery ?? "";
   const mentionIsLatest = inlineMention !== null && (!activeSlashTrigger || inlineMention.offset > activeSlashTrigger.offset);
   const mentionTrigger = inlineSuggestions && mentionIsLatest && inlineMention.offset !== mentionDismissedAt ? inlineMention : null;
-  const mentionActive = inlineSuggestions ? mentionTrigger !== null : mentionOpen;
-  const mentionQuery = inlineSuggestions ? firstMentionWord(mentionTrigger?.query ?? "") : legacyMentionQuery;
+  const mentionQuery = inlineSuggestions ? mentionTrigger?.query ?? "" : legacyMentionQuery;
+  const mentionSearchActive = inlineSuggestions ? mentionTrigger !== null && isSingleWordMentionQuery(mentionQuery) : mentionOpen;
   const handleInlineMentionChange = useCallback((next: MentionTrigger | null) => {
     const previous = inlineMentionRef.current;
     if (previous?.query === next?.query && previous?.offset === next?.offset) return;
@@ -576,7 +576,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   }, [slashActive, toolMenuOpen, loadCommands]);
 
   useEffect(() => {
-    if (!mentionActive) return;
+    if (!mentionSearchActive) return;
     let cancelled = false;
     setMentionItems(COMPUTER_MENTIONS);
     void Promise.all([
@@ -598,7 +598,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     return () => {
       cancelled = true;
     };
-  }, [mentionActive, mentionQuery, props.listAgents, props.recentFiles, props.searchFiles]);
+  }, [mentionSearchActive, mentionQuery, props.listAgents, props.recentFiles, props.searchFiles]);
 
   useEffect(() => {
     if (!toolMenuOpen) {

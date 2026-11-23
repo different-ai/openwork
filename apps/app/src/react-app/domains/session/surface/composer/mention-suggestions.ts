@@ -14,8 +14,8 @@ export type MentionItem = {
 export type MentionSuggestion = MentionItem | { id: string; kind: "task"; candidate: SessionReferenceCandidate };
 export type MentionTrigger = { query: string; offset: number };
 
-export function firstMentionWord(query: string) {
-  return query.match(/^\S*/)?.[0] ?? "";
+export function isSingleWordMentionQuery(query: string) {
+  return !/\s/.test(query);
 }
 
 export function inlineMentionAtCaret(text: string, caret: number) {
@@ -24,8 +24,7 @@ export function inlineMentionAtCaret(text: string, caret: number) {
   const query = text.slice(offset + 1, caret);
   if (/^[\s]|[\r\n]/.test(query)) return null;
   const suffix = text.slice(caret).match(/^[^\s@]*/)?.[0] ?? "";
-  const firstWordEnd = offset + 1 + (text.slice(offset + 1).match(/^[^\s@]*/)?.[0].length ?? 0);
-  return { query, offset, end: caret + suffix.length, firstWordEnd };
+  return { query, offset, end: caret + suffix.length };
 }
 
 export function filterMentionItems(items: MentionItem[], query: string, limit = 8) {
@@ -40,8 +39,9 @@ export function inlineMentionSuggestions(
   query: string,
   currentSessionId?: string,
 ): MentionSuggestion[] {
+  const nonTasks = isSingleWordMentionQuery(query) ? filterMentionItems(items, query, 4) : [];
   return [
-    ...filterMentionItems(items, firstMentionWord(query), 4),
+    ...nonTasks,
     ...filterSessionReferenceCandidates(candidates, query, { excludeSessionId: currentSessionId, limit: 4, titleOnly: true })
       .map((candidate): MentionSuggestion => ({ id: `task:${candidate.workspaceId}:${candidate.sessionId}`, kind: "task", candidate })),
   ];

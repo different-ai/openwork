@@ -59,7 +59,7 @@ import { isComputerTarget } from "./computer-mentions";
 import { shouldCollapsePastedText, splitPastedText } from "./pasted-text";
 import { insertPastedText } from "./pasted-text-insertion";
 import { lineBoundaryMoveForKey } from "./line-boundary-keys";
-import { inlineMentionAtCaret, type MentionTrigger } from "./mention-suggestions";
+import { inlineMentionAtCaret, isSingleWordMentionQuery, type MentionTrigger } from "./mention-suggestions";
 import { slashTriggerAtCaret, type SlashTrigger } from "./slash-command";
 
 type PastedTextToken = { label: string; lines: number; text: string };
@@ -1012,7 +1012,7 @@ function triggerQueryAtSelection(trigger: keyof typeof TRIGGER_QUERY_RE) {
   return { node, start: end - match[0].length, end: end + remaining.length, caret: end, query: match[1] ?? "" };
 }
 
-function inlineTriggerAtSelection<T extends { query: string; offset: number; end: number }>(find: (text: string, caret: number) => T | null) {
+function inlineTriggerAtSelection(find: (text: string, caret: number) => { query: string; offset: number; end: number } | null) {
   const point = editableTextAtSelection();
   const caret = $draftOffsetAtSelection();
   if (!point || caret === null) return null;
@@ -1021,7 +1021,7 @@ function inlineTriggerAtSelection<T extends { query: string; offset: number; end
   const match = find(boundary + node.getTextContent(), boundary.length + point.caret);
   if (!match || match.offset < boundary.length) return null;
   const start = match.offset - boundary.length;
-  return { node, start, end: match.end - boundary.length, boundaryLength: boundary.length, match, trigger: { query: match.query, offset: caret - (point.caret - start) } };
+  return { node, start, end: match.end - boundary.length, trigger: { query: match.query, offset: caret - (point.caret - start) } };
 }
 
 function slashAtSelection() {
@@ -1060,11 +1060,10 @@ function insertSessionReferenceAtSelection(reference: SessionReferenceTokenValue
 }
 
 function insertMentionAtSelection(kind: ComposerMentionKind, value: string, inline: boolean) {
-  const inlineMatch = inline ? inlineMentionAtSelection() : null;
-  const match = inline ? inlineMatch : mentionAtSelection();
+  const match = inline ? inlineMentionAtSelection() : mentionAtSelection();
   if (!match) return false;
-  const wordEnd = inlineMatch ? inlineMatch.match.firstWordEnd - inlineMatch.boundaryLength : match.end;
-  const end = wordEnd + (kind !== "agent" && match.node.getTextContent()[wordEnd] === " " ? 1 : 0);
+  if ("trigger" in match && !isSingleWordMentionQuery(match.trigger.query)) return false;
+  const end = match.end + (kind !== "agent" && match.node.getTextContent()[match.end] === " " ? 1 : 0);
   const selection = match.node.select(match.start, end);
   if (kind === "agent") {
     selection.removeText();
