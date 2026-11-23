@@ -59,6 +59,7 @@ import { isComputerTarget } from "./computer-mentions";
 import { shouldCollapsePastedText, splitPastedText } from "./pasted-text";
 import { insertPastedText } from "./pasted-text-insertion";
 import { lineBoundaryMoveForKey } from "./line-boundary-keys";
+import { slashTriggerAtCaret, type SlashTrigger } from "./slash-command";
 
 type PastedTextToken = { label: string; lines: number; text: string };
 
@@ -81,6 +82,7 @@ type EditorProps = {
   placeholderShortcut?: string;
   onChange: (value: string) => void;
   onMentionQueryChange?: (query: string | null) => void;
+  onSlashQueryChange?: (trigger: SlashTrigger | null) => void;
   onSessionReferenceQueryChange?: (trigger: { query: string; offset: number } | null) => void;
   onOpenSessionReference?: (reference: { workspaceId: string; sessionId: string }) => void;
   onSubmit: (options: { queue: boolean }) => void | Promise<void>;
@@ -95,6 +97,7 @@ type EditorProps = {
 };
 
 export type LexicalPromptEditorHandle = {
+  replaceSlashAtSelection: (trigger: SlashTrigger, choice: { kind: "command"; name: string } | { kind: "skill"; name: string; token?: string }) => boolean;
   insertSkillAtSelection: (skillName: string, skillToken?: string) => void;
   insertMentionAtSelection: (kind: ComposerMentionKind, value: string) => string | null;
   insertConnectorAtSelection: (connectorName: string) => void;
@@ -980,7 +983,7 @@ const TRIGGER_QUERY_RE = {
   "#": { before: /(?<!\S)#((?:[^\s#][^#\n]*)?)$/, after: /^[^\s#]*/ },
 } as const;
 
-function triggerQueryAtSelection(trigger: keyof typeof TRIGGER_QUERY_RE) {
+function editableTextAtSelection() {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return null;
   let node = selection.anchor.getNode();
@@ -992,12 +995,32 @@ function triggerQueryAtSelection(trigger: keyof typeof TRIGGER_QUERY_RE) {
     end = node.getTextContentSize();
   }
   if (!$isTextNode(node) || isComposerInlineTokenNode(node)) return null;
+  return { node, caret: end };
+}
+
+function triggerQueryAtSelection(trigger: keyof typeof TRIGGER_QUERY_RE) {
+  const point = editableTextAtSelection();
+  if (!point) return null;
+  const { node, caret: end } = point;
   const text = node.getTextContent();
   const patterns = TRIGGER_QUERY_RE[trigger];
   const match = text.slice(0, end).match(patterns.before);
   if (!match) return null;
   const remaining = text.slice(end).match(patterns.after)?.[0] ?? "";
   return { node, start: end - match[0].length, end: end + remaining.length, caret: end, query: match[1] ?? "" };
+}
+
+function slashAtSelection() {
+  const point = editableTextAtSelection();
+  const caret = $draftOffsetAtSelection();
+  if (!point || caret === null) return null;
+  const { node } = point;
+  const previous = node.getPreviousSibling();
+  const boundary = previous?.getTextContent().slice(-1) ?? "";
+  const match = slashTriggerAtCaret(boundary + node.getTextContent(), boundary.length + point.caret);
+  if (!match || match.offset < boundary.length) return null;
+  const start = match.offset - boundary.length;
+  return { node, start, end: match.end - boundary.length, trigger: { query: match.query, offset: caret - (point.caret - start) } };
 }
 
 function mentionAtSelection() {
@@ -1541,6 +1564,23 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
   const [editor] = useLexicalComposerContext();
 
   useImperativeHandle(props.editorRef, () => ({
+    replaceSlashAtSelection(trigger, choice) {
+      let replaced = false;
+      editor.update(() => {
+        const match = slashAtSelection();
+        if (!match || match.trigger.offset !== trigger.offset || match.trigger.query !== trigger.query) return;
+        if (choice.kind === "command" && trigger.offset !== 0) return;
+        const chip = choice.kind === "skill"
+          ? $createComposerSkillNode(choice.name, choice.token)
+          : $createComposerSlashCommandNode(choice.name);
+        const end = match.end + (match.node.getTextContent()[match.end] === " " ? 1 : 0);
+        const space = $createTextNode(" ");
+        match.node.select(match.start, end).insertNodes([chip, space]);
+        space.selectEnd();
+        replaced = true;
+      }, { discrete: true });
+      return replaced;
+    },
     insertSkillAtSelection(skillName: string, skillToken?: string) {
       editor.update(() => insertSkillAtSelection(skillName, skillToken));
       editor.focus();
@@ -1680,6 +1720,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
   const valueRef = useRef(props.value);
   const onChangeRef = useRef(props.onChange);
   const onMentionQueryChangeRef = useRef(props.onMentionQueryChange);
+  const onSlashQueryChangeRef = useRef(props.onSlashQueryChange);
   const onSessionReferenceQueryChangeRef = useRef(props.onSessionReferenceQueryChange);
 
   useEffect(() => {
@@ -1689,8 +1730,9 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
   useEffect(() => {
     onChangeRef.current = props.onChange;
     onMentionQueryChangeRef.current = props.onMentionQueryChange;
+    onSlashQueryChangeRef.current = props.onSlashQueryChange;
     onSessionReferenceQueryChangeRef.current = props.onSessionReferenceQueryChange;
-  }, [props.onChange, props.onMentionQueryChange, props.onSessionReferenceQueryChange]);
+  }, [props.onChange, props.onMentionQueryChange, props.onSlashQueryChange, props.onSessionReferenceQueryChange]);
 
   const initialConfig = useMemo(
     () => ({
@@ -1711,6 +1753,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
     (state: Parameters<NonNullable<React.ComponentProps<typeof OnChangePlugin>["onChange"]>>[0]) => {
       state.read(() => {
         onMentionQueryChangeRef.current?.(mentionAtSelection()?.query ?? null);
+        onSlashQueryChangeRef.current?.(slashAtSelection()?.trigger ?? null);
         onSessionReferenceQueryChangeRef.current?.(sessionReferenceTriggerAtSelection());
         const next = serializePromptFromRoot();
         if (next === valueRef.current) return;

@@ -2176,6 +2176,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
   const subagentTrackerShown = subagentTrackerToolCallIds.size > 0 || remoteTrackerTasks.length > 0;
   const runningShells = useBackgroundShellStore((state) => state.booksByWorkspaceId[props.workspaceId]?.running);
   const backgroundShells = useMemo(() => sessionBackgroundShells(runningShells, props.sessionId), [runningShells, props.sessionId]);
+  const slashAnywhere = useDesktopFeature("composerSlashAnywhere");
   const followUpSuggestionsEnabled = useDesktopFeature("followUpSuggestions");
   const chatRunCommandsEnabled = useDesktopFeature("chatRunCommands");
   const questionMinimizeEnabled = useDesktopFeature("questionMinimize");
@@ -3954,6 +3955,7 @@ export function SessionSurface(props: SessionSurfaceProps) {
         <SignInHandoffNotice workspaceId={props.workspaceId} sessionId={props.sessionId} hasDraft={Boolean(persistableComposerDraftText(draft).trim())} />
         {sandboxSendNotice?.owner === sessionOwner ? <p role="status" data-testid="sandbox-send-note" className="mx-3 mb-2 text-xs text-muted-foreground">{sandboxSendNotice.message}</p> : null}
         <ReactSessionComposer
+          slashAnywhere={slashAnywhere}
           sandboxModeControl={<SandboxModePill pill={sandboxPill} onOpenPermissions={() => props.onOpenSettingsSection?.("permissions")} />}
           runModeControl={<WorkspaceRunModeMenu client={props.client} workspaceId={props.workspaceId} busy={composerBusy || preparingCloudTools || Boolean(props.activePermission || props.activeQuestion)} />}
           draft={autoSendPayload ? draft : autoSending ? "" : draft}

@@ -1,3 +1,4 @@
+import fuzzysort from "fuzzysort";
 import type { SkillCard, SlashCommandOption } from "@/app/types";
 
 const SLASH_COMMAND_QUERY_RE = /^\/([A-Za-z0-9_-]*)$/;
@@ -41,6 +42,36 @@ export function connectSkillSlashCommandOptions(skills: SkillCard[]): ComposerSl
 export function getSlashCommandQuery(value: string) {
   const match = value.match(SLASH_COMMAND_QUERY_RE);
   return match ? match[1] : null;
+}
+
+export type SlashTrigger = { query: string; offset: number };
+
+export function slashTriggerAtCaret(text: string, caret: number) {
+  const before = text.slice(0, caret);
+  const offset = before.lastIndexOf("/");
+  if (offset < 0 || (offset > 0 && !/\s/.test(text[offset - 1]))) return null;
+  const query = before.slice(offset + 1);
+  if (/[\r\n]/.test(query)) return null;
+
+  const restOfWord = text.slice(caret).match(/^\S*/)?.[0] ?? "";
+  if (restOfWord.includes("/")) return null;
+  return { query, offset, end: caret + restOfWord.length };
+}
+
+function normalizeSlashSearch(value: string) {
+  return value.replace(/[-_\s]+/g, " ").trim();
+}
+
+export function filterSlashCommands(items: ComposerSlashCommandOption[], trigger: SlashTrigger, limit = 8) {
+  const eligible = trigger.offset === 0 ? items : items.filter((item) => item.source === "skill");
+  const query = normalizeSlashSearch(trigger.query);
+  if (!query) return eligible.slice(0, limit);
+  const keys = [
+    (item: ComposerSlashCommandOption) => normalizeSlashSearch(item.name),
+    (item: ComposerSlashCommandOption) => item.skill ? normalizeSlashSearch(item.skill.name) : "",
+  ];
+  if (!/\s/.test(trigger.query)) keys.push((item) => item.description ?? "");
+  return fuzzysort.go(query, eligible, { keys, limit }).map((entry) => entry.obj);
 }
 
 export function parseSlashCommandInvocation(value: string) {

@@ -11,6 +11,7 @@ export { default as browserSecretHandles } from "@openwork/features/flags/browse
 export { default as chatRunCommands } from "@openwork/features/flags/chat-run-commands"
 export { default as chatSkillCardShare } from "@openwork/features/flags/chat-skill-card-share"
 export { default as chatTableExpand } from "@openwork/features/flags/chat-table-expand"
+export { default as composerSlashAnywhere } from "@openwork/features/flags/composer-slash-anywhere"
 export { default as connectEngineTools } from "@openwork/features/flags/connect-engine-tools"
 export { default as connectStandardTools } from "@openwork/features/flags/connect-standard-tools"
 export { default as connectionMcpServers } from "@openwork/features/flags/connection-mcp-servers"

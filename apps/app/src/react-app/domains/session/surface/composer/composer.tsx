@@ -31,9 +31,11 @@ import { COMPUTER_MENTIONS } from "./computer-mentions";
 import type { ComposerMentionKind } from "./mention-encoding";
 import {
   connectSkillSlashCommandOptions,
+  filterSlashCommands,
   getSlashCommandQuery,
   skillSlashCommandName,
   type ComposerSlashCommandOption,
+  type SlashTrigger,
 } from "./slash-command";
 import { encodeConnectSkillToken } from "./connect-skill-token";
 import { FILE_URL_RE, HTTP_URL_RE, type PastedTextChip } from "./pasted-text";
@@ -123,6 +125,7 @@ type ComposerProps = {
   listAgents: () => Promise<Agent[]>;
   onSelectAgent: (agent: string | null) => void;
   listCommands: () => Promise<SlashCommandOption[]>;
+  slashAnywhere?: boolean;
   listSkills?: () => Promise<SkillCard[]>;
   skills?: SkillCard[];
   listMcp?: () => Promise<{ servers: McpServerEntry[]; statuses: McpStatusMap; status: string | null }>;
@@ -227,7 +230,11 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   const [skills, setSkills] = useState<SkillCard[]>(props.skills ?? []);
   const [importedPlugins, setImportedPlugins] = useState<CloudImportedPlugin[]>(props.importedPlugins ?? []);
   const [pluginsLoading, setPluginsLoading] = useState(false);
-  const [slashOpen, setSlashOpen] = useState(false);
+  const slashAnywhere = props.slashAnywhere === true;
+  const [legacySlashOpen, setSlashOpen] = useState(false);
+  const slashTriggerRef = useRef<SlashTrigger | null>(null);
+  const [activeSlashTrigger, setActiveSlashTrigger] = useState<SlashTrigger | null>(null);
+  const [slashDismissedAt, setSlashDismissedAt] = useState<number | null>(null);
   const [toolMenuOpen, setToolMenuOpen] = useState(false);
   const [plusMenuQuery, setPlusMenuQuery] = useState("");
   const [workspaceFileResults, setWorkspaceFileResults] = useState<string[]>([]);
@@ -371,7 +378,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
 
   const showStop = props.busy && !props.editing;
 
-  const slashCommandQuery = getSlashCommandQuery(props.draft);
+  const slashCommandQuery = slashAnywhere ? null : getSlashCommandQuery(props.draft);
   const slashOpenNext = slashCommandQuery !== null;
   const slashQuery = slashCommandQuery ?? "";
   const mentionOpenNext = activeMentionQuery !== null;
@@ -383,6 +390,21 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     setSlashOpen(slashOpenNext);
     setMenuIndex(0);
   }, [slashOpenNext, slashQuery]);
+
+  const handleSlashTriggerChange = useCallback((next: SlashTrigger | null) => {
+    const previous = slashTriggerRef.current;
+    if (previous?.query === next?.query && previous?.offset === next?.offset) return;
+    slashTriggerRef.current = next;
+    setMenuIndex(0);
+    setActiveSlashTrigger(next);
+    setSlashDismissedAt((offset) => offset === next?.offset ? offset : null);
+  }, []);
+  const slashTrigger = slashAnywhere && activeSlashTrigger?.offset !== slashDismissedAt ? activeSlashTrigger : null;
+  const slashActive = slashAnywhere ? slashTrigger !== null : legacySlashOpen;
+  const dismissSlashMenu = () => {
+    if (slashAnywhere) setSlashDismissedAt(activeSlashTrigger?.offset ?? null);
+    else setSlashOpen(false);
+  };
 
   useEffect(() => {
     setMentionOpen(mentionOpenNext);
@@ -505,7 +527,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   }, [toolMenuOpen]);
 
   useEffect(() => {
-    if (!slashOpen && !toolMenuOpen) return;
+    if (!slashActive && !toolMenuOpen) return;
     const openId = toolMenuLoadRef.current.openId;
     if (toolMenuOpen && toolMenuLoadRef.current.commands) return;
     if (toolMenuOpen) toolMenuLoadRef.current.commands = true;
@@ -539,7 +561,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     return () => {
       cancelled = true;
     };
-  }, [slashOpen, toolMenuOpen, loadCommands]);
+  }, [slashActive, toolMenuOpen, loadCommands]);
 
   useEffect(() => {
     if (!mentionOpen) return;
@@ -671,7 +693,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   }, [orgMcp.error, toolMenuOpen]);
 
   useEffect(() => {
-    if (!slashOpen && !toolMenuOpen) return;
+    if (!slashActive && !toolMenuOpen) return;
     const openId = toolMenuLoadRef.current.openId;
     if (!toolMenuOpen || !toolMenuLoadRef.current.skills) {
       let cancelled = false;
@@ -701,17 +723,18 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       };
     }
     return undefined;
-  }, [loadSkills, slashOpen, toolMenuOpen]);
+  }, [loadSkills, slashActive, toolMenuOpen]);
 
   const slashItems = useMemo<ComposerSlashCommandOption[]>(
     () => [...commands, ...connectSkillSlashCommandOptions(skills)],
     [commands, skills],
   );
   const slashFiltered = useMemo(() => {
-    if (!slashOpen) return [];
+    if (slashAnywhere) return slashTrigger ? filterSlashCommands(slashItems, slashTrigger) : [];
+    if (!legacySlashOpen) return [];
     if (!slashQuery) return slashItems.slice(0, 8);
     return fuzzysort.go(slashQuery, slashItems, { keys: ["name", "description"], limit: 8 }).map((entry) => entry.obj);
-  }, [slashItems, slashOpen, slashQuery]);
+  }, [slashAnywhere, slashItems, legacySlashOpen, slashQuery, slashTrigger]);
   const mentionFiltered = useMemo(() => {
     if (!mentionOpen) return [];
     if (!mentionQuery) return mentionItems.slice(0, 8);
@@ -746,7 +769,8 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   const [expandedAttachmentId, setExpandedAttachmentId] = useState<string | null>(null);
   const expandedAttachment = props.attachments.find((attachment) => attachment.id === expandedAttachmentId);
 
-  const activeMenu = slashOpen ? "slash" : mentionOpen ? "mention" : sessionMenuOpen ? "session" : null;
+  const slashMenuOpen = slashAnywhere ? slashFiltered.length > 0 : legacySlashOpen;
+  const activeMenu = slashMenuOpen ? "slash" : mentionOpen ? "mention" : sessionMenuOpen ? "session" : null;
   const activeItems: readonly unknown[] = activeMenu === "slash"
     ? slashFiltered
     : activeMenu === "mention" ? mentionFiltered : activeMenu === "session" ? sessionFiltered : [];
@@ -856,6 +880,37 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     props.onDraftChange(`/${command.name} `);
     setSlashOpen(false);
     setToolMenuOpen(false);
+  };
+
+  const applySlashSelection = (command: ComposerSlashCommandOption) => {
+    if (!slashAnywhere) {
+      applyCommandSelection(command, { replaceSkillDraft: true });
+      return true;
+    }
+    if (!slashTrigger) return false;
+    const editor = editorRef.current;
+    const skill = command.skill;
+    let applied: boolean | undefined;
+    if (skill?.origin === "openwork-connect") {
+      const slug = skillSlashCommandName(skill);
+      applied = editor?.replaceSlashAtSelection(slashTrigger, {
+        kind: "skill", name: slug, token: encodeConnectSkillToken({
+          slug,
+          name: skill.name,
+          marketplace: skill.marketplaceName ?? "assigned",
+          capability: skill.connectCapabilityName ?? skill.name,
+        }),
+      });
+    } else {
+      applied = editor?.replaceSlashAtSelection(slashTrigger, {
+        kind: command.source === "skill" ? "skill" : "command",
+        name: skill?.name ?? command.name,
+      });
+    }
+    if (!applied) return false;
+    setToolMenuOpen(false);
+    markFeatureUsed("composerSlashAnywhere");
+    return true;
   };
 
   const applySkillSelection = (input: string | SkillCard, options?: { replaceSkillDraft?: boolean }) => {
@@ -1025,8 +1080,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     if (activeMenu === "slash") {
       const command = slashFiltered[menuIndex];
       if (!command) return false;
-      applyCommandSelection(command, { replaceSkillDraft: true });
-      return true;
+      return applySlashSelection(command);
     }
     if (activeMenu === "mention") {
       const item = mentionFiltered[menuIndex];
@@ -1180,7 +1234,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     if (activeMenu && event.key === "Escape") {
       event.preventDefault();
       if (activeMenu === "session") dismissSessionMenu();
-      setSlashOpen(false);
+      dismissSlashMenu();
       setMentionOpen(false);
       return;
     }
@@ -1220,7 +1274,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   };
 
   const renderSlashMenu = () => (
-    <ComposerSuggestionMenu open={activeMenu === "slash"} anchor={panelRef} onDismiss={() => setSlashOpen(false)}>
+    <ComposerSuggestionMenu open={activeMenu === "slash"} anchor={panelRef} onDismiss={dismissSlashMenu}>
       {slashFiltered.length > 0 ? (
         <div role="listbox" aria-label={t("composer.plus_commands")} className="flex flex-col gap-0.5">
           {slashFiltered.map((command, index) => (
@@ -1239,10 +1293,10 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
               onMouseDown={(event) => {
                 event.preventDefault();
                 event.stopPropagation();
-                applyCommandSelection(command, { replaceSkillDraft: true });
+                applySlashSelection(command);
               }}
               onClick={(event) => {
-                if (event.detail === 0) applyCommandSelection(command, { replaceSkillDraft: true });
+                if (event.detail === 0) applySlashSelection(command);
               }}
             >
               <Terminal size={14} className="mt-0.5 shrink-0 text-gray-9" />
@@ -1416,6 +1470,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
               placeholderShortcut={followUpSuggestion ? "Tab" : undefined}
               onChange={dictation.edit}
               onMentionQueryChange={setActiveMentionQuery}
+              onSlashQueryChange={slashAnywhere ? handleSlashTriggerChange : undefined}
               onSessionReferenceQueryChange={sessionReferencesEnabled ? handleSessionTriggerChange : undefined}
               onOpenSessionReference={sessionReferences?.openReference}
               onSubmit={handleEditorSubmit}
@@ -1493,7 +1548,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                     if (open) {
                       setMentionOpen(false);
                       setMentionItems([]);
-                      setSlashOpen(false);
+                      dismissSlashMenu();
                     }
                     setToolMenuOpen(open);
                   }}
