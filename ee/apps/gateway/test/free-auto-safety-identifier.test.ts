@@ -77,12 +77,13 @@ function guestApp(address: string, paused = false) {
   return { app, upstream, charged }
 }
 
-function memberApp(principal: MemberPrincipal) {
+function memberApp(principal: MemberPrincipal, blocked?: string) {
   const upstream = openAi()
   const { charged, store } = allowance("member")
   const key: InferenceKeyRow = { id: principal.inferenceKeyId, organization_id: principal.organizationId, org_membership_id: principal.memberId,
     name: null, key_hash: "fixture", key_prefix: null, encrypted_key: null, status: "active", revoked_at: null,
     created_at: new Date(0), updated_at: new Date(0) }
+  store.safetyPaused = async(candidate) => freePrincipalHash(candidate) === blocked
   const handler = createFreeMemberHandler({ config, store, fetch: upstream.fetch, findMember: async () => principal, defaultPinned: async () => false })
   const app = new Hono()
   app.all("*", (c) => handler(c, key))
@@ -175,4 +176,13 @@ test("a paused safety identifier never reaches either provider endpoint", async 
     assert.equal((await response.json()).error.code, "free_safety_paused")
   }
   assert.equal(upstream.bodies.length, 0)
+})
+
+test("a safety pause follows the member across organizations and replacement keys", async () => {
+  const first = member("paused-member")
+  for (const principal of [first, member(first.id)]) {
+    const { app, upstream } = memberApp(principal, freePrincipalHash(first))
+    assert.equal((await app.request(post(MEMBER_FREE_RESPONSES_PATH, responses))).status, 403)
+    assert.equal(upstream.bodies.length, 0)
+  }
 })
