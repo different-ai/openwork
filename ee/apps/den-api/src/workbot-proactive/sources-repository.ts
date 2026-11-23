@@ -6,16 +6,22 @@ import type { AgentReadToolInput } from "@openwork/automations/agent-read-tools"
 import { db } from "../db.js"
 import { env } from "../env.js"
 import { createExternalMcpLifecycleDeadline } from "../capability-sources/external-mcp-client.js"
-import { getExternalMcpConnection, listExternalMcpConnections, listUsableExternalMcpConnections } from "../capability-sources/external-mcp-connections.js"
+import { getExternalMcpConnection, listExternalMcpConnections, listUsableExternalMcpConnections, type ExternalMcpConnectionRow } from "../capability-sources/external-mcp-connections.js"
 import { isToolDisabled } from "../capability-sources/external-mcp-tool-policy.js"
 import { listNativeProviderUsableEntries } from "../capability-sources/native-provider-connections.js"
-import { getOrgOAuthClient } from "../capability-sources/oauth-credentials.js"
+import { getConnectedAccountsForListing, getOrgOAuthClient } from "../capability-sources/oauth-credentials.js"
 import { NATIVE_OAUTH_PROVIDERS } from "../capability-sources/provider-registry.js"
-import { listExternalMcpToolsThroughSearchCache, probeExternalConnectionStatus } from "../mcp/external-capabilities.js"
+import { cachedSearchTools, listedExternalConnectionStatus, listExternalMcpToolsThroughSearchCache, type McpMemberIdentity } from "../mcp/external-capabilities.js"
 import { listTeamsForMember } from "../member-teams.js"
 import type { MemberConnection } from "./sources.js"
 
-export async function listMemberConnections(input: { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member"> }): Promise<MemberConnection[]> {
+type SourceMember = { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member"> }
+
+export async function listMemberConnections(input: SourceMember): Promise<MemberConnection[]> {
+  return (await loadMemberConnectorInventory(input)).connections
+}
+
+export async function loadMemberConnectorInventory(input: SourceMember) {
   const teamIds = (await listTeamsForMember({ organizationId: input.organizationId, memberId: input.memberId })).map((team) => team.id)
   const member = { orgMembershipId: input.memberId, teamIds }
   const [natives, externals] = await Promise.all([
@@ -29,13 +35,25 @@ export async function listMemberConnections(input: { organizationId: DenTypeId<"
     native: entry.nativeProviderKey,
     state: entry.connectedForMe ? (entry.needsReconnect ? "reconnect" : "connected") : "needs_connection",
   }))
+  const accounts = await getConnectedAccountsForListing({
+    organizationId: input.organizationId,
+    orgMembershipId: input.memberId,
+    providerIds: externals.filter((row) => row.credentialMode === "per_member" && !row.oauthIssuerReviewRequiredAt).map((row) => row.id),
+  })
+  const byId = new Map<string, ExternalMcpConnectionRow>()
   for (const connection of externals) {
-    const probe = await probeExternalConnectionStatus({ organizationId: input.organizationId, member, connectionId: connection.id }).catch(() => null)
-    if (!probe?.ok) continue
+    byId.set(connection.id, connection)
+    const probe = listedExternalConnectionStatus(connection, accounts.get(connection.id) ?? null)
     const state: MemberConnection["state"] = probe.connected ? "connected" : probe.status.state === "reauth_required" ? "reconnect" : "needs_connection"
     connections.push({ id: connection.id, name: connection.name, url: connection.url, native: null, state })
   }
-  return connections
+  return {
+    connections,
+    listTools: (id: string, deadlineMs: number, cacheOnly: boolean) => {
+      const connection = byId.get(id)
+      return connection ? memberConnectionTools(connection, member, deadlineMs, cacheOnly) : Promise.resolve(null)
+    },
+  }
 }
 
 type OrganizationSourceConnection = AgentSourceConnection & { native: string | null }
@@ -111,13 +129,19 @@ export async function listConnectionToolsForMember(input: {
   const connection = await getExternalMcpConnection({ organizationId: input.organizationId, connectionId })
   if (!connection || connection.kind !== "external_mcp" || connection.toolPolicy?.allDisabled) return null
   const teamIds = input.teamIds ?? (await listTeamsForMember({ organizationId: input.organizationId, memberId: input.memberId })).map((team) => team.id)
+  return memberConnectionTools(connection, { orgMembershipId: input.memberId, teamIds: [...teamIds] }, input.deadlineMs ?? CONNECTION_TOOLS_DEADLINE_MS, false)
+}
+
+async function memberConnectionTools(connection: ExternalMcpConnectionRow, member: McpMemberIdentity, deadlineMs: number, cacheOnly: boolean): Promise<AgentReadToolInput[] | null> {
+  if (connection.toolPolicy?.allDisabled) return null
   try {
-    const tools = await listExternalMcpToolsThroughSearchCache({
+    const tools = cacheOnly ? cachedSearchTools(connection, member) : await listExternalMcpToolsThroughSearchCache({
       connection,
-      member: { orgMembershipId: input.memberId, teamIds: [...teamIds] },
+      member,
       redirectUriBase: env.apiPublicUrl ?? "http://127.0.0.1",
-      deadline: createExternalMcpLifecycleDeadline(input.deadlineMs ?? CONNECTION_TOOLS_DEADLINE_MS),
+      deadline: createExternalMcpLifecycleDeadline(deadlineMs),
     })
+    if (!tools) return null
     return tools
       .filter((tool) => !isToolDisabled(connection.toolPolicy, tool.name))
       .map((tool) => ({

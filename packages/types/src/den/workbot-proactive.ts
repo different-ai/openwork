@@ -640,6 +640,8 @@ export type MemberAgentView = z.infer<typeof memberAgentViewSchema>
 
 const preferenceInputText = z.string().trim().max(AGENT_PREFERENCE_MAX)
 
+export const AGENT_SOURCE_CHANGES_MAX = 20
+
 /** `PUT /v1/me/agent`: "stop telling me about calendar changes", "snooze until tomorrow", "turn it off". */
 export const memberAgentInputSchema = z
   .object({
@@ -656,7 +658,7 @@ export const memberAgentInputSchema = z
       on: z.boolean().optional(),
       instruction: preferenceInputText.optional(),
       connectionId: z.string().trim().min(1).max(64).optional(),
-    }).strict()).min(1).max(20).optional(),
+    }).strict()).min(1).max(AGENT_SOURCE_CHANGES_MAX).optional(),
     undo: z.string().trim().min(1).max(64).optional(),
     checkEveryHours: z.union([...agentCheckEveryHoursSchema.options, z.null()]).optional(),
     brief: z
