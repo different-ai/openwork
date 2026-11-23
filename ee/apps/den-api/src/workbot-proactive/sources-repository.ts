@@ -1,7 +1,7 @@
 import { and, count, eq, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
 import { ConnectedAccountTable, MemberTable } from "@openwork-ee/den-db/schema"
 import type { AgentSourceConnection } from "@openwork/types/den/workbot-proactive"
-import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+import { isDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import type { AgentReadToolInput } from "@openwork/automations/agent-read-tools"
 import { db } from "../db.js"
 import { env } from "../env.js"
@@ -17,18 +17,22 @@ import type { MemberConnection } from "./sources.js"
 
 type SourceMember = { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member"> }
 
-export async function listMemberConnections(input: SourceMember): Promise<MemberConnection[]> {
-  return (await loadMemberConnectorInventory(input)).connections
+export async function listMemberConnections(input: SourceMember, ids?: ReadonlySet<string>): Promise<MemberConnection[]> {
+  return (await loadMemberConnectorInventory(input, ids)).connections
 }
 
-export async function loadMemberConnectorInventory(input: SourceMember) {
+export async function loadMemberConnectorInventory(input: SourceMember, ids?: ReadonlySet<string>) {
   const teamIds = (await listTeamsForMember({ organizationId: input.organizationId, memberId: input.memberId })).map((team) => team.id)
   const member = { orgMembershipId: input.memberId, teamIds }
-  const [natives, externals] = await Promise.all([
-    listNativeProviderUsableEntries({ organizationId: input.organizationId, orgMembershipId: input.memberId, teamIds }),
-    listUsableExternalMcpConnections({ organizationId: input.organizationId, orgMembershipId: input.memberId, teamIds }),
-  ])
-  const connections: MemberConnection[] = natives.map((entry) => ({
+  const externalRows = listUsableExternalMcpConnections({
+    organizationId: input.organizationId, ...member,
+    connectionIds: ids && [...ids].filter((id) => isDenTypeId("externalMcpConnection", id)),
+  })
+  const nativeRows = ids && (await externalRows).length === ids.size
+    ? []
+    : listNativeProviderUsableEntries({ organizationId: input.organizationId, ...member })
+  const [natives, externals] = await Promise.all([nativeRows, externalRows])
+  const connections: MemberConnection[] = natives.filter((entry) => !ids || ids.has(entry.id)).map((entry) => ({
     id: entry.id,
     name: entry.name,
     url: entry.url,

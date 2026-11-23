@@ -2,6 +2,7 @@
 
 import {
   memberAgentChecksSchema,
+  memberConnectorSavedSchema,
   memberAgentSavedSchema,
   memberAgentViewSchema,
   type MemberAgentCheck,
@@ -12,6 +13,8 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-flow";
 import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+
+import { connectorSwitches, mergeSavedConnectorSwitches } from "./my-agent-connector-save";
 
 const agentPath = "/v1/me/agent";
 
@@ -78,6 +81,21 @@ export function useSaveMyAgent(orgId: string) {
     mutationFn: async (changes: MemberAgentInput | MemberAgentInput[]) => {
       for (const change of Array.isArray(changes) ? changes : [changes]) {
         await runReauthableAction("save-my-agent", async () => {
+          const switches = connectorSwitches(change, queryClient.getQueryData<MemberAgentView>(key));
+          if (switches) {
+            const { response, payload } = await requestJson(`${agentPath}/connectors`, {
+              method: "PATCH", headers: { [ORG_SCOPE_HEADER]: orgId }, body: JSON.stringify(switches),
+            }, 15000);
+            if (response.ok) {
+              const saved = memberConnectorSavedSchema.parse(payload);
+              await queryClient.cancelQueries({ queryKey: key, exact: true });
+              queryClient.setQueryData<MemberAgentView>(key, (view) => view && mergeSavedConnectorSwitches(view, saved));
+              return;
+            }
+            if (!(response.status === 404 && getErrorMessage(payload, "") === "not_found")) {
+              throw getRequestError(payload, response, `Couldn't save (${response.status}).`);
+            }
+          }
           const { response, payload } = await requestJson(agentPath, { method: "PUT", headers: { [ORG_SCOPE_HEADER]: orgId }, body: JSON.stringify(change) }, 15000);
           if (!response.ok) throw getRequestError(payload, response, `Couldn't save (${response.status}).`);
           const parsed = memberAgentSavedSchema.safeParse(payload);

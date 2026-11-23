@@ -640,7 +640,20 @@ export type MemberAgentView = z.infer<typeof memberAgentViewSchema>
 
 const preferenceInputText = z.string().trim().max(AGENT_PREFERENCE_MAX)
 
+export const AGENT_RECENT_CHANGES_MAX = 20
 export const AGENT_SOURCE_CHANGES_MAX = 20
+
+export const memberConnectorTogglesSchema = z.object({
+  sources: z.array(z.object({ source: z.string().min(1).max(120), on: z.boolean() }).strict())
+    .min(1).max(AGENT_SOURCE_CHANGES_MAX)
+    .refine((changes) => new Set(changes.map((entry) => entry.source)).size === changes.length, "Choose each connector once."),
+}).strict()
+
+export const memberConnectorSavedSchema = z.object({
+  sources: z.array(memberAgentSourceSchema.pick({ id: true, on: true, policy: true, connections: true })),
+  changes: z.array(memberAgentChangeSchema),
+})
+export type MemberConnectorSaved = z.infer<typeof memberConnectorSavedSchema>
 
 /** `PUT /v1/me/agent`: "stop telling me about calendar changes", "snooze until tomorrow", "turn it off". */
 export const memberAgentInputSchema = z
