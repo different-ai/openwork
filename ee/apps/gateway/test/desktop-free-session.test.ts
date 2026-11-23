@@ -4,6 +4,7 @@ import { test } from "node:test"
 import { Hono } from "hono"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { DESKTOP_FREE_CHAT_PATH, MEMBER_FREE_CHAT_PATH } from "@openwork/free-auto"
+import { deriveReleaseSecret } from "@openwork/free-auto/node"
 import { INFERENCE_FREE_MODEL_ID } from "@openwork/types/den/inference"
 import { DesktopFreeSession } from "../../../../apps/server/src/free-auto/desktop-session.js"
 import type { FreeAllowanceStore } from "../src/free/shared/allowance.js"
@@ -18,7 +19,7 @@ test("desktop grant covers guest and member calls, rejects replay and follows th
   const config = readAutoConfig({ INFERENCE_FREE_ENABLED: "true", ANONYMOUS_INFERENCE_ENABLED: "true",
     INFERENCE_FREE_OPENAI_API_KEY: "fixture", ANONYMOUS_ACCOUNTING_IDENTITY_KEY: "fixture-accounting-identity-key-000000",
     ANONYMOUS_TOKEN_SECRET: "fixture-token-secret-00000000000000000", DESKTOP_FREE_RELEASE_KEY: "fixture-release-key-000000000000000000" })
-  const signer = await fixtureDesktopSigner(t, config.releaseKey)
+  const signer = await fixtureDesktopSigner(t, version => deriveReleaseSecret(config.releaseKey, version))
   const seen = new Set<string>()
   const admittedDesktops: Array<string | undefined> = []
   const store: FreeAllowanceStore = { family: "member", safetyPaused: async () => false, consumeNonce: async proof => {

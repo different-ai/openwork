@@ -6,6 +6,7 @@ import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { AuthUserTable, FeatureRolloutTable, InferenceFreeUsageTable } from "@openwork-ee/den-db/schema"
 import { MEMBER_FREE_CHAT_PATH, MEMBER_FREE_STATUS_PATH } from "@openwork/free-auto"
 import { freeUsageAmount } from "@openwork/free-auto/accounting"
+import { deriveReleaseSecret } from "@openwork/free-auto/node"
 import { INFERENCE_FREE_MODEL_ID } from "@openwork/types/den/inference"
 import { DesktopFreeSession } from "../../../../../apps/server/src/free-auto/desktop-session.js"
 import { fixtureDesktopSigner } from "../../../gateway/test/fixtures/desktop-signer.js"
@@ -89,7 +90,7 @@ test("one verified email opens two organizations with one founder allowance", as
     return handle(c, auth.key)
   })
   t.mock.method(globalThis, "fetch", (url: string, init: RequestInit) => gateway.request(url, init))
-  const desktop = new DesktopFreeSession(await fixtureDesktopSigner(t, config.releaseKey), "https://gateway.test")
+  const desktop = new DesktopFreeSession(await fixtureDesktopSigner(t, version => deriveReleaseSecret(config.releaseKey, version)), "https://gateway.test")
   const body = new TextEncoder().encode(JSON.stringify({ model: INFERENCE_FREE_MODEL_ID, messages: [{ role: "user", content: "hello" }] }))
   async function send(key: string) {
     const headers = await desktop.headers(`Bearer ${key}`, MEMBER_FREE_CHAT_PATH, "POST", body, new AbortController().signal)
