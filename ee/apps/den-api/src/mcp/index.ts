@@ -8,7 +8,7 @@ import { env } from "../env.js"
 import { publicRoute, tokenRoute } from "../middleware/index.js"
 import { jsonResponse } from "../openapi.js"
 import { getMcpResourceContext, verifyMcpRequest } from "./auth.js"
-import { buildMcpCatalog, getToolDescription, loadOpenApiDocument, type McpToolOperation } from "./catalog.js"
+import { buildMcpCatalog, getToolDescription, loadOpenApiDocument, type CatalogApp, type McpToolOperation } from "./catalog.js"
 import { invokeMcpOperation } from "./invoke.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
 import { appLogger } from "../observability/logger.js"
@@ -23,7 +23,7 @@ const CATALOG_CACHE_TTL_MS = 5 * 60 * 1000
 
 let catalogCache: { catalog: McpToolOperation[]; expiresAt: number } | null = null
 
-export async function getCatalog(app: Pick<Hono, "fetch">, env: unknown) {
+export async function getCatalog<Bindings>(app: CatalogApp<Bindings>, env: Bindings) {
   if (catalogCache && catalogCache.expiresAt > Date.now()) {
     return catalogCache.catalog
   }

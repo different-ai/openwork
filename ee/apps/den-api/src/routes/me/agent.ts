@@ -232,7 +232,7 @@ export function registerMeAgentRoutes<T extends { Variables: AuthContextVariable
       if ("error" in member) return c.json(disabled(member.error), 404)
       c.header("Cache-Control", "no-store")
       const policy = await resolveMemberAgentPolicy(member)
-      return c.json(await memberAgentView({ ...member, toolCounts: c.req.valid("query").toolCounts ?? "discover", settings: policy.settings, row: await readAgentInstance(member.memberId), ...(await agentSetup(member, policy)), catalog: () => getCatalog(app, c.env) }))
+      return c.json(await memberAgentView({ ...member, toolCounts: c.req.valid("query").toolCounts ?? "discover", settings: policy.settings, row: await readAgentInstance(member.memberId), ...(await agentSetup(member, policy)), catalog: () => getCatalog(app, c.env ?? undefined) }))
     },
   )
 
@@ -308,7 +308,7 @@ export function registerMeAgentRoutes<T extends { Variables: AuthContextVariable
         }
       }, new Date(now))
       if (!outcome.ok) return c.json({ error: outcome.error, message: outcome.message }, outcome.status)
-      const view = await memberAgentView({ ...member, settings, inventory, toolCounts: "cached", row: await readAgentInstance(member.memberId), ...setup, catalog: () => getCatalog(app, c.env) })
+      const view = await memberAgentView({ ...member, settings, inventory, toolCounts: "cached", row: await readAgentInstance(member.memberId), ...setup, catalog: () => getCatalog(app, c.env ?? undefined) })
       const link = myAgentLink()
       const lines = [...choiceLines(plain), ...outcome.lines]
       const connect = outcome.connect.map((entry) => ({ name: entry.name, href: entry.connectionId ? libraryConnectorLink(entry.connectionId) : libraryCatalogLink() }))
