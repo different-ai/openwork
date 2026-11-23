@@ -20,6 +20,7 @@ on:
         type: string
         default: ""
 
+cache-mode: read
 permissions:
   contents: read
 
@@ -154,11 +155,11 @@ jobs:
             exit 1
           }
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ inputs.ref || github.sha }}
       - name: Cache Electron and pinned sidecars
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
             ~/.cache/electron
@@ -181,7 +182,7 @@ jobs:
         run: node apps/desktop/scripts/packaged-smoke.mjs --server-built
       - name: Upload packaged smoke evidence and timings
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: packaged-desktop-smoke-${{ github.run_attempt }}
           path: |
