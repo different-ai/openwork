@@ -94,7 +94,8 @@ import { createWindowsShortcutScheduler, readWindowsShortcutMarker } from "./win
 import { resetMacDockIcon } from "./brand-icon-darwin.mjs";
 import { createDesktopVaultKeyProvider } from "./secure-vault-key.mjs";
 import { desktopFreeBootstrapEligible } from "./desktop-free-eligibility.mjs";
-import { applyDesktopFreeBuildSettings } from "./desktop-free-release.mjs";
+import { createDesktopFreeSigner } from "./desktop-free-signer.mjs";
+import { applyDesktopFreeBuildSettings, loadDesktopFreeReleaseKey } from "./desktop-free-release.mjs";
 import {
   captureStartupException,
   clearOpenworkSentrySession,
@@ -1605,12 +1606,15 @@ const runtimeManager = createRuntimeManager({
     return response === 1;
   },
   anonymousInference: {
-    // Signed-out Auto has no device identity: like OpenCode Zen, the gateway limits it by IP.
-    desktop: {
-      // app.getVersion() is Electron's own version in development builds.
-      currentVersion: resolveAppVersion(app),
-      eligible: () => desktopFreeBootstrapEligible(DESKTOP_DISTRIBUTION, workspaceStore.readDesktopBootstrapConfigSync()),
-    },
+    desktop: createDesktopFreeSigner({
+      filePath: path.join(app.getPath("userData"), "desktop-free-identity.bin"),
+      loadSafeStorage: () => require("electron").safeStorage,
+      platform: process.platform,
+      arch: process.arch,
+      appVersion: resolveAppVersion(app),
+      isEligible: () => desktopFreeBootstrapEligible(DESKTOP_DISTRIBUTION, workspaceStore.readDesktopBootstrapConfigSync()),
+      releaseSecret: () => loadDesktopFreeReleaseKey(resolveAppVersion(app)),
+    }),
   },
   // When OPENWORK_ENCRYPTION_KEY is set, skip the safeStorage provider so it does not shadow the documented env override used by CI/headless/enterprise.
   localManagedMcpVaultKey: process.env.OPENWORK_ENCRYPTION_KEY?.trim()

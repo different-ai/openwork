@@ -1,3 +1,4 @@
+import { organizationFeatureEnabled } from "../features.js"
 import { and, eq, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
 import { InferenceOrgUpstreamProviderKeyTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -34,6 +35,7 @@ export async function workbotOrganizationManagedDefaultRoutable(organizationId: 
   const [organization] = await db.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable).where(eq(OrganizationTable.id, orgId)).limit(1)
   if (!organization) return false
   if (readInferenceMetadata(organization.metadata)) return true
+  if (await organizationFeatureEnabled(orgId, "desktopOnlyFreeAuto")) return false
   return env.inferenceFree.enabled && freeInferenceOrganizationAllowed(organization.metadata)
 }
 
@@ -44,8 +46,8 @@ export async function workbotManagedLunaState(actor: CloudAgentGatewayActor) {
     .innerJoin(OrganizationTable, eq(OrganizationTable.id, MemberTable.organizationId))
     .where(and(eq(MemberTable.organizationId, organizationId), eq(MemberTable.userId, userId), isNull(MemberTable.removedAt), isNotNull(MemberTable.joinedAt))).limit(1)
   if (!member) throw new CloudAgentGatewayAccessError("model_access_unavailable")
-  const allowed = await organizationAllowsManagedModels(organizationId)
   const paid = Boolean(readInferenceMetadata(member.metadata))
+  const allowed = await organizationAllowsManagedModels(organizationId) && (paid || !await organizationFeatureEnabled(organizationId, "desktopOnlyFreeAuto"))
   const [upstream] = paid ? await db.select({ id: InferenceOrgUpstreamProviderKeyTable.id }).from(InferenceOrgUpstreamProviderKeyTable)
     .where(and(eq(InferenceOrgUpstreamProviderKeyTable.organization_id, organizationId), eq(InferenceOrgUpstreamProviderKeyTable.provider, "openrouter"), eq(InferenceOrgUpstreamProviderKeyTable.status, "active"))).limit(1) : []
   const paidReady = allowed && paid && Boolean(upstream) && INFERENCE_MODEL_ALIASES[INFERENCE_FREE_MODEL_ID].enabled
@@ -61,7 +63,7 @@ export async function workbotManagedLunaAccess(actor: CloudAgentGatewayActor, mo
     const apiKey = await ensureMemberInferenceKey(state.input)
     return { baseUrl: `${env.modelsPublicBaseUrl.replace(/\/+$/, "")}/api/v1`, apiKey, protocol: "openai", model: INFERENCE_FREE_MODEL_ID }
   }
-  if (model !== WORKBOT_FREE_LUNA_ID || !state.allowed || !["free", "exhausted"].includes(state.free.kind)) throw new CloudAgentGatewayAccessError("model_access_unavailable")
+  if (model !== WORKBOT_FREE_LUNA_ID || !state.allowed || await organizationFeatureEnabled(state.input.organizationId, "desktopOnlyFreeAuto") || !["free", "exhausted"].includes(state.free.kind)) throw new CloudAgentGatewayAccessError("model_access_unavailable")
   const issued = await issueMemberFreeInferenceCredential(state.input)
   if (!("credential" in issued)) throw new CloudAgentGatewayAccessError("model_access_unavailable")
   return { baseUrl: issued.credential.baseURL, apiKey: issued.credential.apiKey, protocol: "openai-responses", model: INFERENCE_FREE_MODEL_ID }
