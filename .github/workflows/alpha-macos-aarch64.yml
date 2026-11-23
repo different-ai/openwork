@@ -283,6 +283,12 @@ jobs:
           echo "started_at=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
           pnpm --filter @openwork/desktop build:electron
 
+      - name: Prepare desktop free model release proof
+        if: github.repository == 'different-ai/openwork'
+        env:
+          DESKTOP_FREE_RELEASE_KEY: ${{ secrets.DESKTOP_FREE_RELEASE_KEY }}
+        run: node apps/desktop/scripts/prepare-desktop-free-release.mjs
+
       - name: Package Electron alpha (macOS, signed + notarized)
         if: env.MACOS_NOTARIZE == 'true'
         shell: bash
@@ -536,6 +542,12 @@ jobs:
           echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "started_at=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
           pnpm --filter @openwork/desktop build:electron
+
+      - name: Prepare desktop free model release proof
+        if: github.repository == 'different-ai/openwork'
+        env:
+          DESKTOP_FREE_RELEASE_KEY: ${{ secrets.DESKTOP_FREE_RELEASE_KEY }}
+        run: node apps/desktop/scripts/prepare-desktop-free-release.mjs
 
       - name: Test Windows signing scripts
         shell: pwsh
