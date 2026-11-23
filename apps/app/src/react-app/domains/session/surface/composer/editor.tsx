@@ -59,6 +59,7 @@ import { isComputerTarget } from "./computer-mentions";
 import { shouldCollapsePastedText, splitPastedText } from "./pasted-text";
 import { insertPastedText } from "./pasted-text-insertion";
 import { lineBoundaryMoveForKey } from "./line-boundary-keys";
+import { inlineMentionAtCaret, type MentionTrigger } from "./mention-suggestions";
 import { slashTriggerAtCaret, type SlashTrigger } from "./slash-command";
 
 type PastedTextToken = { label: string; lines: number; text: string };
@@ -81,6 +82,7 @@ type EditorProps = {
   placeholder: string;
   placeholderShortcut?: string;
   onChange: (value: string) => void;
+  onInlineMentionChange?: (trigger: MentionTrigger | null) => void;
   onMentionQueryChange?: (query: string | null) => void;
   onSlashQueryChange?: (trigger: SlashTrigger | null) => void;
   onSessionReferenceQueryChange?: (trigger: { query: string; offset: number } | null) => void;
@@ -99,9 +101,9 @@ type EditorProps = {
 export type LexicalPromptEditorHandle = {
   replaceSlashAtSelection: (trigger: SlashTrigger, choice: { kind: "command"; name: string } | { kind: "skill"; name: string; token?: string }) => boolean;
   insertSkillAtSelection: (skillName: string, skillToken?: string) => void;
-  insertMentionAtSelection: (kind: ComposerMentionKind, value: string) => string | null;
+  insertMentionAtSelection: (kind: ComposerMentionKind, value: string, inline?: boolean) => string | null;
   insertConnectorAtSelection: (connectorName: string) => void;
-  insertSessionReferenceAtSelection: (reference: SessionReferenceTokenValue) => string | null;
+  insertSessionReferenceAtSelection: (reference: SessionReferenceTokenValue, inline?: boolean) => string | null;
   insertFileMentionAtSelection: (path: string) => string;
   draftOffsetAtSelection: () => number | null;
   draftSelectionRange: () => { start: number; end: number } | null;
@@ -1010,17 +1012,24 @@ function triggerQueryAtSelection(trigger: keyof typeof TRIGGER_QUERY_RE) {
   return { node, start: end - match[0].length, end: end + remaining.length, caret: end, query: match[1] ?? "" };
 }
 
-function slashAtSelection() {
+function inlineTriggerAtSelection<T extends { query: string; offset: number; end: number }>(find: (text: string, caret: number) => T | null) {
   const point = editableTextAtSelection();
   const caret = $draftOffsetAtSelection();
   if (!point || caret === null) return null;
   const { node } = point;
-  const previous = node.getPreviousSibling();
-  const boundary = previous?.getTextContent().slice(-1) ?? "";
-  const match = slashTriggerAtCaret(boundary + node.getTextContent(), boundary.length + point.caret);
+  const boundary = node.getPreviousSibling()?.getTextContent().slice(-1) ?? "";
+  const match = find(boundary + node.getTextContent(), boundary.length + point.caret);
   if (!match || match.offset < boundary.length) return null;
   const start = match.offset - boundary.length;
-  return { node, start, end: match.end - boundary.length, trigger: { query: match.query, offset: caret - (point.caret - start) } };
+  return { node, start, end: match.end - boundary.length, boundaryLength: boundary.length, match, trigger: { query: match.query, offset: caret - (point.caret - start) } };
+}
+
+function slashAtSelection() {
+  return inlineTriggerAtSelection(slashTriggerAtCaret);
+}
+
+function inlineMentionAtSelection() {
+  return inlineTriggerAtSelection(inlineMentionAtCaret);
 }
 
 function mentionAtSelection() {
@@ -1038,8 +1047,8 @@ function sessionReferenceTriggerAtSelection() {
   return { query: match.query, offset: caret === null ? -1 : caret - (match.caret - match.start) };
 }
 
-function insertSessionReferenceAtSelection(reference: SessionReferenceTokenValue) {
-  const match = sessionReferenceQueryAtSelection();
+function insertSessionReferenceAtSelection(reference: SessionReferenceTokenValue, inline: boolean) {
+  const match = inline ? inlineMentionAtSelection() : sessionReferenceQueryAtSelection();
   if (!match || !encodeSessionReferenceToken(reference)) return false;
   const end = match.end + (match.node.getTextContent()[match.end] === " " ? 1 : 0);
   const selection = match.node.select(match.start, end);
@@ -1050,10 +1059,12 @@ function insertSessionReferenceAtSelection(reference: SessionReferenceTokenValue
   return true;
 }
 
-function insertMentionAtSelection(kind: ComposerMentionKind, value: string) {
-  const match = mentionAtSelection();
+function insertMentionAtSelection(kind: ComposerMentionKind, value: string, inline: boolean) {
+  const inlineMatch = inline ? inlineMentionAtSelection() : null;
+  const match = inline ? inlineMatch : mentionAtSelection();
   if (!match) return false;
-  const end = match.end + (kind !== "agent" && match.node.getTextContent()[match.end] === " " ? 1 : 0);
+  const wordEnd = inlineMatch ? inlineMatch.match.firstWordEnd - inlineMatch.boundaryLength : match.end;
+  const end = wordEnd + (kind !== "agent" && match.node.getTextContent()[wordEnd] === " " ? 1 : 0);
   const selection = match.node.select(match.start, end);
   if (kind === "agent") {
     selection.removeText();
@@ -1585,10 +1596,10 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
       editor.update(() => insertSkillAtSelection(skillName, skillToken));
       editor.focus();
     },
-    insertMentionAtSelection(kind: ComposerMentionKind, value: string) {
+    insertMentionAtSelection(kind, value, inline = false) {
       let draft: string | null = null;
       editor.update(() => {
-        if (insertMentionAtSelection(kind, value)) draft = serializePromptFromRoot();
+        if (insertMentionAtSelection(kind, value, inline)) draft = serializePromptFromRoot();
       }, { discrete: true });
       return draft;
     },
@@ -1596,10 +1607,10 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
       editor.update(() => insertTokenAtSelection($createComposerConnectorNode(connectorName)));
       editor.focus();
     },
-    insertSessionReferenceAtSelection(reference: SessionReferenceTokenValue) {
+    insertSessionReferenceAtSelection(reference, inline = false) {
       let draft: string | null = null;
       editor.update(() => {
-        if (insertSessionReferenceAtSelection(reference)) draft = serializePromptFromRoot();
+        if (insertSessionReferenceAtSelection(reference, inline)) draft = serializePromptFromRoot();
       }, { discrete: true });
       return draft;
     },
@@ -1719,6 +1730,7 @@ function SessionReferenceChipPlugin(props: { onOpenSessionReference?: (reference
 export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorProps>(function LexicalPromptEditor(props, ref) {
   const valueRef = useRef(props.value);
   const onChangeRef = useRef(props.onChange);
+  const onInlineMentionChangeRef = useRef(props.onInlineMentionChange);
   const onMentionQueryChangeRef = useRef(props.onMentionQueryChange);
   const onSlashQueryChangeRef = useRef(props.onSlashQueryChange);
   const onSessionReferenceQueryChangeRef = useRef(props.onSessionReferenceQueryChange);
@@ -1729,10 +1741,11 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
 
   useEffect(() => {
     onChangeRef.current = props.onChange;
+    onInlineMentionChangeRef.current = props.onInlineMentionChange;
     onMentionQueryChangeRef.current = props.onMentionQueryChange;
     onSlashQueryChangeRef.current = props.onSlashQueryChange;
     onSessionReferenceQueryChangeRef.current = props.onSessionReferenceQueryChange;
-  }, [props.onChange, props.onMentionQueryChange, props.onSlashQueryChange, props.onSessionReferenceQueryChange]);
+  }, [props.onChange, props.onInlineMentionChange, props.onMentionQueryChange, props.onSlashQueryChange, props.onSessionReferenceQueryChange]);
 
   const initialConfig = useMemo(
     () => ({
@@ -1752,6 +1765,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
   const syncPromptFromEditorState = useCallback(
     (state: Parameters<NonNullable<React.ComponentProps<typeof OnChangePlugin>["onChange"]>>[0]) => {
       state.read(() => {
+        onInlineMentionChangeRef.current?.(inlineMentionAtSelection()?.trigger ?? null);
         onMentionQueryChangeRef.current?.(mentionAtSelection()?.query ?? null);
         onSlashQueryChangeRef.current?.(slashAtSelection()?.trigger ?? null);
         onSessionReferenceQueryChangeRef.current?.(sessionReferenceTriggerAtSelection());

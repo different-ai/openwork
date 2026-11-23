@@ -66,14 +66,7 @@ import { formatRelativeTime } from "@/app/utils";
 import { filterSessionReferenceCandidates } from "./session-reference-search";
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 
-type MentionItem = {
-  id: string;
-  kind: ComposerMentionKind;
-  value: string;
-  label: string;
-  description?: string;
-};
-
+import { filterMentionItems, firstMentionWord, inlineMentionSuggestions, type MentionItem, type MentionSuggestion, type MentionTrigger } from "./mention-suggestions";
 
 type ComposerProps = {
   draft: string;
@@ -125,7 +118,7 @@ type ComposerProps = {
   listAgents: () => Promise<Agent[]>;
   onSelectAgent: (agent: string | null) => void;
   listCommands: () => Promise<SlashCommandOption[]>;
-  slashAnywhere?: boolean;
+  inlineSuggestions?: boolean;
   listSkills?: () => Promise<SkillCard[]>;
   skills?: SkillCard[];
   listMcp?: () => Promise<{ servers: McpServerEntry[]; statuses: McpStatusMap; status: string | null }>;
@@ -230,7 +223,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   const [skills, setSkills] = useState<SkillCard[]>(props.skills ?? []);
   const [importedPlugins, setImportedPlugins] = useState<CloudImportedPlugin[]>(props.importedPlugins ?? []);
   const [pluginsLoading, setPluginsLoading] = useState(false);
-  const slashAnywhere = props.slashAnywhere === true;
+  const inlineSuggestions = props.inlineSuggestions === true;
   const [legacySlashOpen, setSlashOpen] = useState(false);
   const slashTriggerRef = useRef<SlashTrigger | null>(null);
   const [activeSlashTrigger, setActiveSlashTrigger] = useState<SlashTrigger | null>(null);
@@ -241,6 +234,9 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   const [mentionItems, setMentionItems] = useState<MentionItem[]>([]);
   const [activeMentionQuery, setActiveMentionQuery] = useState<string | null>(null);
   const [mentionOpen, setMentionOpen] = useState(false);
+  const inlineMentionRef = useRef<MentionTrigger | null>(null);
+  const [inlineMention, setInlineMention] = useState<MentionTrigger | null>(null);
+  const [mentionDismissedAt, setMentionDismissedAt] = useState<number | null>(null);
   const [activeSessionTrigger, setActiveSessionTrigger] = useState<{ query: string; offset: number } | null>(null);
   const [sessionMenuDismissedAt, setSessionMenuDismissedAt] = useState<number | null>(null);
   const sessionReferences = useSessionReferencesMaybe();
@@ -378,11 +374,27 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
 
   const showStop = props.busy && !props.editing;
 
-  const slashCommandQuery = slashAnywhere ? null : getSlashCommandQuery(props.draft);
+  const slashCommandQuery = inlineSuggestions ? null : getSlashCommandQuery(props.draft);
   const slashOpenNext = slashCommandQuery !== null;
   const slashQuery = slashCommandQuery ?? "";
   const mentionOpenNext = activeMentionQuery !== null;
-  const mentionQuery = activeMentionQuery ?? "";
+  const legacyMentionQuery = activeMentionQuery ?? "";
+  const mentionIsLatest = inlineMention !== null && (!activeSlashTrigger || inlineMention.offset > activeSlashTrigger.offset);
+  const mentionTrigger = inlineSuggestions && mentionIsLatest && inlineMention.offset !== mentionDismissedAt ? inlineMention : null;
+  const mentionActive = inlineSuggestions ? mentionTrigger !== null : mentionOpen;
+  const mentionQuery = inlineSuggestions ? firstMentionWord(mentionTrigger?.query ?? "") : legacyMentionQuery;
+  const handleInlineMentionChange = useCallback((next: MentionTrigger | null) => {
+    const previous = inlineMentionRef.current;
+    if (previous?.query === next?.query && previous?.offset === next?.offset) return;
+    inlineMentionRef.current = next;
+    setInlineMention(next);
+    setMentionDismissedAt((offset) => offset === next?.offset ? offset : null);
+    if (next) setMenuIndex(0);
+  }, []);
+  const dismissMentionMenu = () => {
+    if (inlineSuggestions) setMentionDismissedAt(inlineMention?.offset ?? null);
+    else setMentionOpen(false);
+  };
   const nonDefaultAgents = useMemo(() => agents.filter(isNonDefaultAgent), [agents]);
   const showAgentPicker = props.selectedAgent !== null;
 
@@ -399,24 +411,24 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     setActiveSlashTrigger(next);
     setSlashDismissedAt((offset) => offset === next?.offset ? offset : null);
   }, []);
-  const slashTrigger = slashAnywhere && activeSlashTrigger?.offset !== slashDismissedAt ? activeSlashTrigger : null;
-  const slashActive = slashAnywhere ? slashTrigger !== null : legacySlashOpen;
+  const slashTrigger = inlineSuggestions && !mentionIsLatest && activeSlashTrigger?.offset !== slashDismissedAt ? activeSlashTrigger : null;
+  const slashActive = inlineSuggestions ? slashTrigger !== null : legacySlashOpen;
   const dismissSlashMenu = () => {
-    if (slashAnywhere) setSlashDismissedAt(activeSlashTrigger?.offset ?? null);
+    if (inlineSuggestions) setSlashDismissedAt(activeSlashTrigger?.offset ?? null);
     else setSlashOpen(false);
   };
 
   useEffect(() => {
     setMentionOpen(mentionOpenNext);
     setMenuIndex(0);
-  }, [mentionOpenNext, mentionQuery]);
+  }, [mentionOpenNext, legacyMentionQuery]);
 
   const handleSessionTriggerChange = useCallback((next: { query: string; offset: number } | null) => {
     setActiveSessionTrigger((current) => (
       current?.query === next?.query && current?.offset === next?.offset ? current : next
     ));
   }, []);
-  const sessionTriggerActive = sessionReferencesEnabled && activeSessionTrigger !== null;
+  const sessionTriggerActive = !inlineSuggestions && sessionReferencesEnabled && activeSessionTrigger !== null;
   const sessionQuery = activeSessionTrigger?.query ?? "";
   useEffect(() => {
     if (!sessionTriggerActive) setSessionMenuDismissedAt(null);
@@ -564,7 +576,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   }, [slashActive, toolMenuOpen, loadCommands]);
 
   useEffect(() => {
-    if (!mentionOpen) return;
+    if (!mentionActive) return;
     let cancelled = false;
     setMentionItems(COMPUTER_MENTIONS);
     void Promise.all([
@@ -586,7 +598,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     return () => {
       cancelled = true;
     };
-  }, [mentionOpen, mentionQuery, props.listAgents, props.recentFiles, props.searchFiles]);
+  }, [mentionActive, mentionQuery, props.listAgents, props.recentFiles, props.searchFiles]);
 
   useEffect(() => {
     if (!toolMenuOpen) {
@@ -730,16 +742,17 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     [commands, skills],
   );
   const slashFiltered = useMemo(() => {
-    if (slashAnywhere) return slashTrigger ? filterSlashCommands(slashItems, slashTrigger) : [];
+    if (inlineSuggestions) return slashTrigger ? filterSlashCommands(slashItems, slashTrigger) : [];
     if (!legacySlashOpen) return [];
     if (!slashQuery) return slashItems.slice(0, 8);
     return fuzzysort.go(slashQuery, slashItems, { keys: ["name", "description"], limit: 8 }).map((entry) => entry.obj);
-  }, [slashAnywhere, slashItems, legacySlashOpen, slashQuery, slashTrigger]);
-  const mentionFiltered = useMemo(() => {
-    if (!mentionOpen) return [];
-    if (!mentionQuery) return mentionItems.slice(0, 8);
-    return fuzzysort.go(mentionQuery, mentionItems, { keys: ["label"], limit: 8 }).map((entry) => entry.obj);
-  }, [mentionItems, mentionOpen, mentionQuery]);
+  }, [inlineSuggestions, slashItems, legacySlashOpen, slashQuery, slashTrigger]);
+  const mentionFiltered = useMemo<MentionSuggestion[]>(() => {
+    if (inlineSuggestions) return mentionTrigger
+      ? inlineMentionSuggestions(mentionItems, sessionReferences?.candidates() ?? [], mentionTrigger.query, props.sessionId)
+      : [];
+    return mentionOpen ? filterMentionItems(mentionItems, mentionQuery) : [];
+  }, [inlineSuggestions, mentionTrigger, mentionItems, sessionReferences, props.sessionId, mentionOpen, mentionQuery]);
   const sessionFiltered = useMemo(() => {
     if (!sessionMenuOpen || !sessionReferences) return [];
     return filterSessionReferenceCandidates(sessionReferences.candidates(), sessionQuery, { excludeSessionId: props.sessionId });
@@ -769,8 +782,9 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   const [expandedAttachmentId, setExpandedAttachmentId] = useState<string | null>(null);
   const expandedAttachment = props.attachments.find((attachment) => attachment.id === expandedAttachmentId);
 
-  const slashMenuOpen = slashAnywhere ? slashFiltered.length > 0 : legacySlashOpen;
-  const activeMenu = slashMenuOpen ? "slash" : mentionOpen ? "mention" : sessionMenuOpen ? "session" : null;
+  const slashMenuOpen = inlineSuggestions ? slashFiltered.length > 0 : legacySlashOpen;
+  const mentionMenuOpen = inlineSuggestions ? mentionFiltered.length > 0 : mentionOpen;
+  const activeMenu = slashMenuOpen ? "slash" : mentionMenuOpen ? "mention" : sessionMenuOpen ? "session" : null;
   const activeItems: readonly unknown[] = activeMenu === "slash"
     ? slashFiltered
     : activeMenu === "mention" ? mentionFiltered : activeMenu === "session" ? sessionFiltered : [];
@@ -883,7 +897,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   };
 
   const applySlashSelection = (command: ComposerSlashCommandOption) => {
-    if (!slashAnywhere) {
+    if (!inlineSuggestions) {
       applyCommandSelection(command, { replaceSkillDraft: true });
       return true;
     }
@@ -909,7 +923,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     }
     if (!applied) return false;
     setToolMenuOpen(false);
-    markFeatureUsed("composerSlashAnywhere");
+    markFeatureUsed("composerInlineSuggestions");
     return true;
   };
 
@@ -1052,9 +1066,10 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   };
 
   const applyMentionSelection = (item: MentionItem) => {
-    const draft = editorRef.current?.insertMentionAtSelection(item.kind, item.value);
+    const draft = editorRef.current?.insertMentionAtSelection(item.kind, item.value, inlineSuggestions);
     if (draft == null) return false;
     props.onInsertMention(item.kind, item.value, draft);
+    if (inlineSuggestions) markFeatureUsed("composerInlineSuggestions");
     setMentionOpen(false);
     return true;
   };
@@ -1064,12 +1079,17 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
       workspaceId: candidate.workspaceId,
       sessionId: candidate.sessionId,
       title: candidate.title,
-    });
+    }, inlineSuggestions);
     if (draft == null) return false;
     props.onDraftChange(draft);
     setActiveSessionTrigger(null);
+    if (inlineSuggestions) markFeatureUsed("composerInlineSuggestions");
     return true;
   };
+
+  const applyMentionSuggestion = (item: MentionSuggestion) => item.kind === "task"
+    ? applySessionReferenceSelection(item.candidate)
+    : applyMentionSelection(item);
 
   const acceptActiveItem = () => {
     if (!activeItems.length) return false;
@@ -1085,7 +1105,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     if (activeMenu === "mention") {
       const item = mentionFiltered[menuIndex];
       if (!item) return false;
-      return applyMentionSelection(item);
+      return applyMentionSuggestion(item);
     }
     return false;
   };
@@ -1234,8 +1254,8 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     if (activeMenu && event.key === "Escape") {
       event.preventDefault();
       if (activeMenu === "session") dismissSessionMenu();
-      dismissSlashMenu();
-      setMentionOpen(false);
+      if (!inlineSuggestions || activeMenu === "slash") dismissSlashMenu();
+      if (!inlineSuggestions || activeMenu === "mention") dismissMentionMenu();
       return;
     }
     if (!activeMenu || !activeItems.length) return;
@@ -1274,7 +1294,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
   };
 
   const renderSlashMenu = () => (
-    <ComposerSuggestionMenu open={activeMenu === "slash"} anchor={panelRef} onDismiss={dismissSlashMenu}>
+    <ComposerSuggestionMenu quiet={inlineSuggestions} open={activeMenu === "slash"} anchor={panelRef} onDismiss={dismissSlashMenu}>
       {slashFiltered.length > 0 ? (
         <div role="listbox" aria-label={t("composer.plus_commands")} className="flex flex-col gap-0.5">
           {slashFiltered.map((command, index) => (
@@ -1326,10 +1346,11 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     <ComposerSuggestionMenu
       open={activeMenu === "mention" && mentionFiltered.length > 0}
       anchor={panelRef}
-      onDismiss={() => setMentionOpen(false)}
+      quiet={inlineSuggestions}
+      onDismiss={dismissMentionMenu}
     >
       <div role="listbox" aria-label={t("composer.mentions_label")} className="flex flex-col gap-0.5">
-        {mentionFiltered.map((item, index) => (
+        {mentionFiltered.map((item, index) => item.kind === "task" ? renderTaskOption(item.candidate, index) : (
           <button
             key={item.id}
             ref={(element) => {
@@ -1342,7 +1363,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
             className={composerSuggestionRowClass(index === menuIndex)}
             onMouseMove={() => setMenuIndex(index)}
             onClick={() => {
-              applyMentionSelection(item);
+              applyMentionSuggestion(item);
             }}
           >
             {item.kind === "computer" ? (
@@ -1366,6 +1387,46 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     </ComposerSuggestionMenu>
   );
 
+  const renderTaskOption = (candidate: SessionReferenceCandidate, index: number) => (
+      <button
+        key={`${candidate.workspaceId}:${candidate.sessionId}`}
+        ref={(element) => {
+          menuItemRefs.current[index] = element;
+        }}
+        type="button"
+        role="option"
+        aria-selected={index === menuIndex}
+        tabIndex={-1}
+        title={candidate.title}
+        className={composerSuggestionRowClass(index === menuIndex)}
+        onMouseMove={() => setMenuIndex(index)}
+        onMouseDown={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          applySessionReferenceSelection(candidate);
+        }}
+        onClick={(event) => {
+          if (event.detail === 0) applySessionReferenceSelection(candidate);
+        }}
+      >
+        <img src={resolveExtensionIconSrc("/openwork-sidebar-mark.svg")} alt="" aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 object-contain opacity-80 dark:invert" />
+        <span className="min-w-0 flex-1">
+          <span className="flex items-center justify-between gap-3">
+            <span className="truncate text-xs font-semibold">{candidate.title}</span>
+            {candidate.updatedAt > 0 ? (
+              <span className="shrink-0 text-[11px] text-gray-10 tabular-nums">{formatRelativeTime(candidate.updatedAt)}</span>
+            ) : null}
+          </span>
+          <span className="flex items-center gap-2 text-xs text-gray-10">
+            <span className="min-w-0 truncate">{candidate.workspaceTitle}</span>
+            {candidate.archived ? (
+              <span className="shrink-0 rounded-sm bg-gray-3 px-1 text-[11px] text-gray-11">{t("composer.session_reference_archived")}</span>
+            ) : null}
+          </span>
+        </span>
+      </button>
+  );
+
   const renderSessionMenu = () => (
     <ComposerSuggestionMenu
       open={activeMenu === "session"}
@@ -1374,45 +1435,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
     >
       {sessionFiltered.length > 0 ? (
         <div role="listbox" aria-label={t("composer.session_references_label")} className="flex flex-col gap-0.5" data-session-reference-menu="">
-          {sessionFiltered.map((candidate, index) => (
-            <button
-              key={`${candidate.workspaceId}:${candidate.sessionId}`}
-              ref={(element) => {
-                menuItemRefs.current[index] = element;
-              }}
-              type="button"
-              role="option"
-              aria-selected={index === menuIndex}
-              tabIndex={-1}
-              title={candidate.title}
-              className={composerSuggestionRowClass(index === menuIndex)}
-              onMouseMove={() => setMenuIndex(index)}
-              onMouseDown={(event) => {
-                event.preventDefault();
-                event.stopPropagation();
-                applySessionReferenceSelection(candidate);
-              }}
-              onClick={(event) => {
-                if (event.detail === 0) applySessionReferenceSelection(candidate);
-              }}
-            >
-              <img src={resolveExtensionIconSrc("/openwork-sidebar-mark.svg")} alt="" aria-hidden="true" className="mt-0.5 size-3.5 shrink-0 object-contain opacity-80 dark:invert" />
-              <span className="min-w-0 flex-1">
-                <span className="flex items-center justify-between gap-3">
-                  <span className="truncate text-xs font-semibold">{candidate.title}</span>
-                  {candidate.updatedAt > 0 ? (
-                    <span className="shrink-0 text-[11px] text-gray-10 tabular-nums">{formatRelativeTime(candidate.updatedAt)}</span>
-                  ) : null}
-                </span>
-                <span className="flex items-center gap-2 text-xs text-gray-10">
-                  <span className="min-w-0 truncate">{candidate.workspaceTitle}</span>
-                  {candidate.archived ? (
-                    <span className="shrink-0 rounded-sm bg-gray-3 px-1 text-[11px] text-gray-11">{t("composer.session_reference_archived")}</span>
-                  ) : null}
-                </span>
-              </span>
-            </button>
-          ))}
+          {sessionFiltered.map(renderTaskOption)}
         </div>
       ) : (
         <div role="status" className="px-3 py-2 text-xs text-gray-10">
@@ -1469,9 +1492,10 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
               placeholder={followUpSuggestion ?? t("composer.placeholder")}
               placeholderShortcut={followUpSuggestion ? "Tab" : undefined}
               onChange={dictation.edit}
-              onMentionQueryChange={setActiveMentionQuery}
-              onSlashQueryChange={slashAnywhere ? handleSlashTriggerChange : undefined}
-              onSessionReferenceQueryChange={sessionReferencesEnabled ? handleSessionTriggerChange : undefined}
+              onInlineMentionChange={inlineSuggestions ? handleInlineMentionChange : undefined}
+              onMentionQueryChange={inlineSuggestions ? undefined : setActiveMentionQuery}
+              onSlashQueryChange={inlineSuggestions ? handleSlashTriggerChange : undefined}
+              onSessionReferenceQueryChange={!inlineSuggestions && sessionReferencesEnabled ? handleSessionTriggerChange : undefined}
               onOpenSessionReference={sessionReferences?.openReference}
               onSubmit={handleEditorSubmit}
               onExpandPastedText={handleExpandPastedText}
@@ -1546,7 +1570,7 @@ export const ReactSessionComposer = memo(function ReactSessionComposer(props: Co
                   open={toolMenuOpen}
                   onOpenChange={(open) => {
                     if (open) {
-                      setMentionOpen(false);
+                      dismissMentionMenu();
                       setMentionItems([]);
                       dismissSlashMenu();
                     }

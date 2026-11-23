@@ -894,7 +894,7 @@ export function SessionRoute() {
   const attentionLocale = currentLocale();
   const remoteAttentionKey = useRemoteThreadAttentionKey();
   const sideChats = useWorkbenchStore((state) => state.sideChats);
-  const slashAnywhere = useDesktopFeature("composerSlashAnywhere");
+  const inlineSuggestions = useDesktopFeature("composerInlineSuggestions");
   const sessionTreeEnabled = useDesktopFeature("sessionTree");
   const sideQuestionsEnabled = useDesktopFeature("sideQuestions");
   const sideChatFromSelectionEnabled = useDesktopFeature("sideChatFromSelection");
@@ -2414,7 +2414,7 @@ export function SessionRoute() {
       listAgents,
       onSelectAgent: setNewTaskAgent,
       listCommands: listSlashCommands,
-      slashAnywhere,
+      inlineSuggestions,
       searchFiles: async (query: string) => {
         const trimmed = query.trim();
         if (!trimmed || !opencodeClient) return [];
@@ -2443,7 +2443,7 @@ export function SessionRoute() {
     handleOpenSettings,
     listAgents,
     listSlashCommands,
-    slashAnywhere,
+    inlineSuggestions,
     local,
     modelUnavailableMessage,
     modelRecoveryScope,
