@@ -48,6 +48,34 @@ test("preserved-table startup on disposable MySQL", { skip: !databaseUrl, timeou
   async function receipts(executor: Executor) {
     return executor.query(`SELECT hash, created_at FROM \`${journalTable}\` ORDER BY id`)
   }
+  async function seedDashboard(executor: Executor) {
+    await executor.query("INSERT INTO dashboard (id, organization_id, name, elements_json, created_by_org_membership_id) VALUES ('preserve', 'fixture', 'original', JSON_ARRAY(), 'fixture')")
+    await executor.query("INSERT INTO dashboard_access_grant (id, organization_id, dashboard_id, role, created_by_org_membership_id) VALUES ('preserve', 'fixture', 'preserve', 'viewer', 'fixture')")
+  }
+  async function assertDashboardPreserved(executor: Executor) {
+    assert.equal((await executor.query("SELECT name FROM dashboard WHERE id='preserve'"))[0]?.name, "original")
+    assert.equal((await executor.query("SELECT role FROM dashboard_access_grant WHERE id='preserve'"))[0]?.role, "viewer")
+  }
+  async function verifySeededUpgrade(executor: Executor, upgrade: () => Promise<void>) {
+    await replay(executor, 147)
+    await seedDashboard(executor)
+    await upgrade()
+    const upgraded = await receipts(executor)
+    assert.equal(historyPrefix(plan, upgraded), plan.length)
+    await assertDashboardPreserved(executor)
+    await upgrade()
+    await migrateLocalDatabase(executor, plan, true)
+    assert.deepEqual(await receipts(executor), upgraded)
+    await assertDashboardPreserved(executor)
+  }
+  async function runBootstrap(url: string) {
+    try {
+      await run(process.execPath, [new URL("../dist/scripts/bootstrap.js", import.meta.url).pathname], {
+        env: { ...process.env, DATABASE_URL: url, DEN_DB_ENCRYPTION_KEY: "disposable-migration-test-key-1234567890", DEN_DB_PERMISSION_RECONCILIATION: "0" },
+        timeout: 90_000,
+      })
+    } catch { assert.fail("Compiled bootstrap failed (driver output withheld); build den-db and its workspace dependencies before this test") }
+  }
   try {
     const [server] = await admin.query<mysql.RowDataPacket[]>("SELECT VERSION() AS version, @@version_compile_os AS os, @@lower_case_table_names AS case_mode")
     assert.match(String(server[0]?.version), /^8\.4\./)
@@ -63,20 +91,19 @@ test("preserved-table startup on disposable MySQL", { skip: !databaseUrl, timeou
       const { shape } = await inspectSchema(executor)
       assert.ok(shape.has("table:dashboard"))
       assert.ok(shape.has("table:dashboard_access_grant"))
-      await executor.query("INSERT INTO dashboard (id, organization_id, name, elements_json, created_by_org_membership_id) VALUES ('preserve', 'fixture', 'original', JSON_ARRAY(), 'fixture')")
-      await executor.query("INSERT INTO dashboard_access_grant (id, organization_id, dashboard_id, role, created_by_org_membership_id) VALUES ('preserve', 'fixture', 'preserve', 'viewer', 'fixture')")
+      await seedDashboard(executor)
       await migrateLocalDatabase(executor, plan, true)
       assert.deepEqual(await receipts(executor), before)
-      assert.equal((await executor.query("SELECT name FROM dashboard WHERE id='preserve'"))[0]?.name, "original")
-      assert.equal((await executor.query("SELECT role FROM dashboard_access_grant WHERE id='preserve'"))[0]?.role, "viewer")
+      await assertDashboardPreserved(executor)
       t.diagnostic(`fresh replay + checked restart: ${before.length} exact receipts; both preserved rows unchanged; interruption marker empty`)
     }))
 
-    await t.test("a recorded 0147 replay upgrades and remains checked-startup compatible", async () => database(async (executor) => {
-      await replay(executor, 147)
-      await migrateLocalDatabase(executor, plan)
-      await migrateLocalDatabase(executor, plan, true)
-      assert.equal(historyPrefix(plan, await receipts(executor)), plan.length)
+    await t.test("a seeded 0147 database survives the local upgrade and restart", async () => database(async (executor) => {
+      await verifySeededUpgrade(executor, () => migrateLocalDatabase(executor, plan))
+    }))
+
+    await t.test("a seeded 0147 database survives packaged bootstrap and restart", async () => database(async (executor, url) => {
+      await verifySeededUpgrade(executor, () => runBootstrap(url))
     }))
 
     await t.test("fresh replay cannot silently switch to bootstrap if both preserved tables disappear before final verification", async () => database(async (_quarantine, quarantineUrl) => database(async (executor) => {
@@ -97,12 +124,7 @@ test("preserved-table startup on disposable MySQL", { skip: !databaseUrl, timeou
     })))
 
     await t.test("the authentic compiled current-schema bootstrap without either table still checks", async () => database(async (executor, url) => {
-      try {
-        await run(process.execPath, [new URL("../dist/scripts/bootstrap.js", import.meta.url).pathname], {
-          env: { ...process.env, DATABASE_URL: url, DEN_DB_ENCRYPTION_KEY: "disposable-migration-test-key-1234567890", DEN_DB_PERMISSION_RECONCILIATION: "0" },
-          timeout: 90_000,
-        })
-      } catch { assert.fail("Compiled bootstrap failed (driver output withheld); build den-db before this test") }
+      await runBootstrap(url)
       const { shape } = await inspectSchema(executor)
       assert.equal(shape.has("table:dashboard"), false)
       assert.equal(shape.has("table:dashboard_access_grant"), false)

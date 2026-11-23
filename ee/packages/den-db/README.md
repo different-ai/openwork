@@ -9,46 +9,55 @@
 - Always generate new migrations with Drizzle from this package.
 - Do not create migrations from `den-api`, `den-controller`, or other apps.
 
-## Commands
+## Install or upgrade Den
 
-Generate a migration after editing the schema:
+| Database and starting state | What to run | What happens |
+| --- | --- | --- |
+| Local MySQL | Run `pnpm dev:web-local`. To inspect first, set a loopback `DATABASE_URL` and run `pnpm --dir ee/packages/den-db db:migrate:local --check`. | On first startup, the runner replays from the historical foundation. On upgrade, it checks the schema and journal before applying pending SQL. It runs repairs and verifies the final schema and receipts before services start. Stop other connections before applying. See [local startup safety](#local-startup-safety). |
+| Hosted PlanetScale | The [Den DB Migrate workflow](../../../.github/workflows/den-db-migrate.yml) runs on selected pushes to `dev`, on a schedule, or by manual dispatch. | On the existing production branch it opens a DDL window for pending migrations, runs `db:migrate`, and restores safe migrations. Check the workflow result for confirmation that safe migrations were re-enabled. |
+| Self-hosted Den, empty database | Run the release image's migration job before starting Den. It executes `node /app/ee/packages/den-db/dist/scripts/bootstrap.js`. | Bootstrap installs the image's current-schema snapshot and records the bundled migration history as its baseline. The historical chain starts by altering existing tables. |
+| Self-hosted Den, existing database | Run the same migration job from the **new** release before rolling out its services. For a pending 0097, follow the [0097 upgrade preconditions](#production-0097-upgrade-preconditions) first. | Bootstrap checks recorded history and applies pending migrations. An existing schema without a journal or with an unknown history needs deliberate recovery. Inspect an interrupted migration before retrying. |
 
-```bash
-pnpm --dir ee/packages/den-db db:generate
+Hosted `db:migrate` applies journaled SQL, runs schema repairs, then reconciles
+default permission sets. The workflow also runs reconciliation separately so
+permission catalog changes take effect even when there is no pending migration.
+
+The self-hosted job runs schema repairs and attempts permission reconciliation
+on fresh installs as well as upgrades. Reconciliation fills missing default
+Member and Admin permission rows and is idempotent. Bootstrap logs a
+reconciliation failure and continues. If it reports one, correct the cause and
+rerun `pnpm --dir ee/packages/den-db db:reconcile-permissions` with the same
+database configuration from a source checkout. The local migration runner
+handles schema and receipts only.
+
+## Development commands
+
+- Generate SQL after a schema edit with `pnpm --dir ee/packages/den-db db:generate`.
+- Apply the guarded local upgrade directly with `pnpm --dir ee/packages/den-db db:migrate:local` and a loopback `DATABASE_URL`.
+- Use `pnpm --dir ee/packages/den-db db:push` only on a disposable development database. Direct schema pushes do not record the migration history used by upgrades.
+- To run self-hosted bootstrap from a source checkout, build the workspace dependencies with `pnpm --filter '@openwork-ee/den-db^...' --if-present run build`, then run `pnpm --dir ee/packages/den-db db:bootstrap` against the intended database.
+
+## Verify installs and upgrades locally
+
+The [MySQL fixture](test/migration-preserved-tables.mysql.test.ts) uses Linux
+MySQL 8.4 with case-sensitive table names (`lower_case_table_names=0`).
+Set `OPENWORK_MIGRATION_TEST_MYSQL_URL` to a disposable loopback MySQL URL
+whose database name begins with `exp_`. The fixture account needs permission
+to create and drop temporary databases on that server. The test skips if the
+variable is absent.
+
+Run from the repository root with workspace dependencies installed.
+
+```sh
+pnpm --filter '@openwork-ee/den-db...' --if-present run build
+pnpm --dir ee/packages/den-db exec node --conditions=development --import tsx --test test/migration-preserved-tables.mysql.test.ts
 ```
 
-Apply schema directly to a development database:
-
-```bash
-pnpm --dir ee/packages/den-db db:push
-```
-
-Run Drizzle migrations against a configured database:
-
-```bash
-pnpm --dir ee/packages/den-db db:migrate
-```
-
-Install or upgrade a production database, including empty first installs:
-
-```bash
-pnpm --dir ee/packages/den-db db:bootstrap
-```
-
-Containerized production installs run the precompiled artifact directly:
-
-```bash
-node /app/ee/packages/den-db/dist/scripts/bootstrap.js
-```
-
-`db:migrate`, `db:push` and `bootstrap.js` finish by reconciling default
-permission sets: catalog permissions that are new since a Member or Admin set
-was created get a row (`source = 'reconcile'`). It is idempotent and needs no
-migration file, so the Den DB Migrate workflow also runs it on its own:
-
-```bash
-pnpm --dir ee/packages/den-db db:reconcile-permissions
-```
+Historical replay preserves the legacy dashboard and access-grant tables.
+A fresh install from the packaged snapshot omits both. The fixture checks
+both fresh layouts. For upgrades it seeds a dashboard and its access grant
+at migration 0147, runs the local and packaged upgrade paths on separate
+databases, and checks the rows and ordered migration receipts again at restart.
 
 ## Production 0097 upgrade preconditions
 
