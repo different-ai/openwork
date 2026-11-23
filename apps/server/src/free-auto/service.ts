@@ -1,6 +1,7 @@
+import { DesktopFreeSession } from "./desktop-session.js";
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
-  DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_RESPONSES_PATH, DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_OPEN_API_KEY, DESKTOP_FREE_PROVIDER_ID,
+  DESKTOP_FREE_REQUIRED_CODE, DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_RESPONSES_PATH, DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_MODELS_PATH, DESKTOP_FREE_OPEN_API_KEY, DESKTOP_FREE_PROVIDER_ID,
   DESKTOP_FREE_STATUS_PATH, MEMBER_FREE_CHAT_PATH, MEMBER_FREE_RESPONSES_PATH, MEMBER_FREE_CREDENTIAL_PATH, MEMBER_FREE_MODELS_PATH,
   MEMBER_FREE_STATUS_PATH, type DesktopFreeAccessStatus,
 } from "@openwork/free-auto";
@@ -36,6 +37,7 @@ export class AnonymousInferenceService {
   private readonly settings: RelaySettings;
   private readonly enabled: boolean;
   private readonly host: DesktopFreeHost | null;
+  private desktopSession?: DesktopFreeSession;
   private localAccessToken = freshLocalToken();
   private journey: Promise<string> | null = null;
   private analyticsEnabled: Promise<boolean> | null = null;
@@ -72,6 +74,7 @@ export class AnonymousInferenceService {
     const previous = this.memberSession;
     if (previous?.baseUrl === next?.baseUrl && previous?.orgId === next?.orgId && previous?.token === next?.token) return this.relayConfigUpdate;
     const sameScope = previous && next && previous.baseUrl === next.baseUrl && previous.orgId === next.orgId;
+    this.desktopSession = undefined;
     this.memberSession = next;
     this.memberCredential = null;
     this.memberCredentialPromise = null;
@@ -322,7 +325,7 @@ export class AnonymousInferenceService {
     return { "x-openwork-free-journey": createHash("sha256").update(`${this.settings.origin}:${await this.journey}`).digest("hex") };
   }
 
-  private async remote(path: string, method: string, body: Uint8Array<ArrayBuffer>, requestSignal = AbortSignal.timeout(SESSION_TIMEOUT_MS), relayToken?: string): Promise<Response> {
+  private async remote(path: string, method: string, body: Uint8Array<ArrayBuffer>, requestSignal = AbortSignal.timeout(SESSION_TIMEOUT_MS), relayToken?: string, retryProof = true): Promise<Response> {
     const signal = AbortSignal.any([requestSignal, this.identityController.signal]);
     await this.assertDispatchAllowed();
     signal.throwIfAborted();
@@ -333,14 +336,26 @@ export class AnonymousInferenceService {
     const authorization = member ?? `Bearer ${DESKTOP_FREE_OPEN_API_KEY}`;
     const actualPath = member ? memberPath(path) : path;
     const journey = await this.journeyHeaders();
+    const authHeaders = await this.desktopSession?.headers(member, actualPath, method, body, signal) ?? { authorization };
+    signal.throwIfAborted();
+    if (relayToken) this.assertRelayIdentity(relayToken);
     const response = await externalFetch(`${this.settings.origin}${actualPath}`, {
       method, body: method === "GET" ? undefined : body,
-      headers: { authorization, ...journey, ...(method === "POST" ? { "content-type": "application/json" } : {}) },
+      headers: { ...authHeaders, ...journey, ...(method === "POST" ? { "content-type": "application/json" } : {}) },
       signal, redirect: "error", credentials: "omit", cache: "no-store",
     });
     signal.throwIfAborted();
     if (response.ok) return response;
     const failure = new RemoteFailure(response.status, await readBoundedBody(response.body, ERROR_BODY_LIMIT, signal), responseHeaders(response.headers));
+    const code = failure.payload().code;
+    if (retryProof && ((failure.status === 403 && code === DESKTOP_FREE_REQUIRED_CODE)
+      || (this.desktopSession && failure.status === 401 && code === "invalid_anonymous_token"))) {
+      const host = this.host;
+      if (host?.eligible() && host.sign && host.identity) {
+        this.desktopSession = new DesktopFreeSession({ sign: host.sign, identity: host.identity }, this.settings.origin);
+        return this.remote(path, method, body, requestSignal, relayToken, false);
+      }
+    }
     if (member && [401, 403].includes(failure.status) && this.memberCredential?.authorization === member) {
       this.memberCredential = null;
       this.cachedStatus = null;

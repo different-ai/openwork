@@ -143,7 +143,6 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
   return {
     family,
     async consumeNonce(proof: { keyThumbprint: string; nonce: string; timestamp: number }): Promise<"accepted" | "replay" | "unavailable"> {
-      if (family !== "anonymous") return "unavailable"
       const now = new Date()
       if (Math.abs(now.getTime() - proof.timestamp) > DESKTOP_FREE_PROOF_CLOCK_SKEW_MS) return "unavailable"
       return capacity.run(async () => {

@@ -1,3 +1,4 @@
+import { desktopChallenge, desktopProofRequired } from "../desktop-access.js"
 import type { Context, Hono } from "hono"
 import { freeAutoJourneyHash } from "@openwork-ee/den-db"
 import { FreeAutoBusyError } from "../shared/capacity.js"
@@ -20,18 +21,19 @@ import { FreeRequestError } from "../shared/errors.js"
 import { prepareFreeRequest, readFreeRequest } from "../shared/request.js"
 import { env } from "../../env.js"
 
-const sessionSchema = z.strictObject({ pow: z.string().regex(DESKTOP_FREE_SESSION_POW_PATTERN).optional() })
+const sessionSchema = z.strictObject({ credentialHash: z.string().regex(/^[a-f0-9]{64}$/).optional(), pow: z.string().regex(DESKTOP_FREE_SESSION_POW_PATTERN).optional() })
 export type FreeRouteDependencies = {
   config: AutoConfig;
   store: FreeAllowanceStore;
   fetch: typeof fetch;
   now?: () => number;
+  requireDesktop?: typeof desktopProofRequired;
   clientAddress: (c: Context) => string | null;
 }
 function defaults(): FreeRouteDependencies {
   const config = env.freeAuto
   if (config.releaseKey) console.info(`[free-auto] release key fingerprint ${releaseKeyFingerprint(config.releaseKey)}${config.releaseKeyPrevious ? `, previous ${releaseKeyFingerprint(config.releaseKeyPrevious)}` : ""}`)
-  return { config, store: createFreeAllowanceStore(config, "anonymous"), fetch: createInferenceEgressFetch(),
+  return { config, requireDesktop: desktopProofRequired, store: createFreeAllowanceStore(config, "anonymous"), fetch: createInferenceEgressFetch(),
     clientAddress: (c) => resolveAnonymousClientAddress(c, config) }
 }
 function bearer(request: Request) {
@@ -55,22 +57,25 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
     try { return await handler(c) } catch (error) { return errorResponse(error) }
   }
   app.post(DESKTOP_FREE_SESSION_PATH, route(async (c) => {
-    if (!config.anonymousEnabled) return switchedOff()
+    if (!config.anonymousEnabled && !config.memberEnabled) return switchedOff()
     if (c.req.raw.headers.has("authorization") || new URL(c.req.url).search) return desktopFreeGateError(401, "invalid_anonymous_token")
     const address = dependencies.clientAddress(c)
     if (!address) return desktopFreeGateError(503, "anonymous_unavailable")
     const parsed = await readFreeRequest(c.req.raw, 4096, AbortSignal.any([c.req.raw.signal, AbortSignal.timeout(10000)]))
     const session = sessionSchema.safeParse(parsed.value)
     if (!session.success) return desktopFreeGateError(400, "invalid_request")
+    if (session.data.credentialHash ? !config.memberEnabled : !config.anonymousEnabled) return switchedOff()
+    if (config.tokenSecret.length < 32 || config.releaseKey.length < 32) return switchedOff()
     const gate = await checkDesktopFreeRequest(c.req.raw, parsed.bodyHash, gateDependencies)
     if (gate.error) return gate.error
     if (gate.versionError) return versionResponse(gate.versionError)
+    if (session.data.credentialHash && gate.proof.version !== 3) return desktopChallenge()
     if (!verifySessionPow({ machineId: gate.proof.machineId, nonce: gate.proof.nonce, pow: session.data.pow, bits: config.sessionPowBits, rounds: config.sessionPowRounds })) {
       return Response.json({ error: { code: "session_pow_required", bits: config.sessionPowBits, rounds: config.sessionPowRounds, message: "A proof of work is required to start a guest session." } }, { status: 400, headers: { "cache-control": "no-store" } })
     }
     const identities = createAnonymousIdentities(gate.proof, address, config)
     await store.consumeSession(identities.installationHash)
-    return c.json({ ...issueAnonymousToken(identities, gate.proof, config), model: DESKTOP_FREE_MODEL_ID }, 200, { "cache-control": "no-store" })
+    return c.json({ ...issueAnonymousToken(identities, gate.proof, config, Date.now(), session.data.credentialHash), model: DESKTOP_FREE_MODEL_ID }, 200, { "cache-control": "no-store" })
   }))
 
   function openRequest(request: Request) {
@@ -84,7 +89,9 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
     if (!config.anonymousEnabled) return { error: switchedOff() }
     const token = bearer(c.req.raw)
     const address = dependencies.clientAddress(c)
+    const strict = await dependencies.requireDesktop?.(null)
     if (openRequest(c.req.raw)) {
+      if (strict) return { error: desktopChallenge() }
       if (!untaggedAutoEnabled(config)) return { principal: { kind: "installation", id: "", deviceless: true }, minimumVersion: null, currentVersion: "",
         versionError: { code: "desktop_build_unverified", currentVersion: "", minimumVersion: null, message: "The OpenWork free model is currently unavailable." } }
       if (!address) return { error: desktopFreeGateError(503, "anonymous_unavailable") }
@@ -94,9 +101,10 @@ export function registerAnonymousInferenceRoutes(app: Hono, dependencies = defau
         versionError: null, minimumVersion: null, currentVersion: "" }
     }
     const guest = token && address ? verifyAnonymousToken(token, address, config) : null
-    if (!guest || !address) return { error: desktopFreeGateError(401, "invalid_anonymous_token") }
+    if (!guest || guest.credentialHash || !address) return { error: desktopFreeGateError(401, "invalid_anonymous_token") }
     const gate = await checkDesktopFreeRequest(c.req.raw, bodyHash, gateDependencies, guest)
     if (gate.error) return { error: gate.error }
+    if (strict && gate.proof.version !== 3) return { error: desktopChallenge() }
     const principal: GuestPrincipal = gate.proof.version === 2
       ? { kind: "installation", id: guest.installationHash, untaggedIpHash: guest.ipHash }
       : { kind: "installation", id: guest.installationHash }

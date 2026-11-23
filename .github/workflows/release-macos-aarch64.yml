@@ -732,6 +732,12 @@ jobs:
           VITE_OPENWORK_OFFICIAL_RELEASE: ${{ github.repository == 'different-ai/openwork' && inputs.benchmark_only != true && '1' || '0' }}
         run: pnpm --filter @openwork/desktop build:electron
 
+      - name: Prepare desktop free model release proof
+        if: github.repository == 'different-ai/openwork' && inputs.benchmark_only != true
+        env:
+          DESKTOP_FREE_RELEASE_KEY: ${{ secrets.DESKTOP_FREE_RELEASE_KEY }}
+        run: node apps/desktop/scripts/prepare-desktop-free-release.mjs
+
       - name: Package Electron (macOS, signed + notarized)
         if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE == 'true'
         env:

@@ -1,3 +1,8 @@
+import { desktopChallenge, desktopProofRequired } from "../desktop-access.js"
+import { DESKTOP_FREE_SESSION_HEADER } from "@openwork/free-auto"
+import { sha256Hex } from "@openwork/free-auto/node"
+import { checkDesktopFreeRequest } from "../guest/gate.js"
+import { resolveAnonymousClientAddress, verifyAnonymousToken } from "../guest/identity.js"
 import type { Context } from "hono"
 import { freeAutoJourneyHash, linkFreeAutoGuest } from "@openwork-ee/den-db"
 import { freeAutoDatabase } from "../../db.js"
@@ -25,12 +30,14 @@ export type FreeMemberDependencies = {
   fetch: typeof fetch;
   findMember: typeof findMemberFreePrincipal;
   defaultPinned: typeof readFreePrincipalDefaultPinned;
+  requireDesktop?: typeof desktopProofRequired;
+  clientAddress?: (c: Context) => string | null;
   linkGuest?: (input: Parameters<typeof linkFreeAutoGuest>[1]) => Promise<void>;
   usageLog?: { insert: InsertRequestLog; update?: UpdateRequestLog; reporter?: InferenceReporter };
 }
 function defaults(): FreeMemberDependencies {
   const config = env.freeAuto
-  return { config, store: createFreeAllowanceStore(config, "member"), fetch: createInferenceEgressFetch(), findMember: findMemberFreePrincipal,
+  return { config, requireDesktop: desktopProofRequired, clientAddress: c => resolveAnonymousClientAddress(c, config), store: createFreeAllowanceStore(config, "member"), fetch: createInferenceEgressFetch(), findMember: findMemberFreePrincipal,
     defaultPinned: readFreePrincipalDefaultPinned, linkGuest: (input) => linkFreeAutoGuest(freeAutoDatabase(), input),
     usageLog: { insert: insertRequestLogIntoDb, update: updateRequestLogInDb } }
 }
@@ -48,6 +55,23 @@ export function createFreeMemberHandler(dependencies: FreeMemberDependencies = d
       if (!principal) return disabled()
       const path = c.req.path, method = c.req.method
       if (new URL(c.req.url).search) return freeError(400, "invalid_request")
+      const strict = await dependencies.requireDesktop?.(principal.organizationId)
+      const verifyDesktop = async (bodyHash: string) => {
+        if (!strict) return null
+        const address = dependencies.clientAddress?.(c)
+        const token = c.req.header(DESKTOP_FREE_SESSION_HEADER)
+        const auth = c.req.header("authorization")
+        if (!address || !token || !auth?.startsWith("Bearer ")) return desktopChallenge()
+        const session = verifyAnonymousToken(token, address, config)
+        if (!session || session.credentialHash !== sha256Hex(auth)) return desktopChallenge()
+        const gate = await checkDesktopFreeRequest(c.req.raw, bodyHash, { config, consumeNonce: store.consumeNonce }, session)
+        if (gate.error) return gate.error
+        return gate.proof.version === 3 && !gate.versionError ? null : desktopChallenge()
+      }
+      if (method === "GET") {
+        const denied = await verifyDesktop(sha256Hex(""))
+        if (denied) return denied
+      }
       const journeyHash = freeAutoJourneyHash(c.req.header("x-openwork-free-journey"))
       if (journeyHash && method === "GET" && path === MEMBER_FREE_STATUS_PATH) await dependencies.linkGuest?.({ journeyHash, userId: principal.id, organizationId: principal.organizationId, now: new Date() })
         .catch(() => console.warn("[free-auto] signed-in journey could not be recorded"))
@@ -63,6 +87,8 @@ export function createFreeMemberHandler(dependencies: FreeMemberDependencies = d
       const controller = new AbortController()
       const signal = AbortSignal.any([controller.signal, c.req.raw.signal])
       const parsed = await readFreeRequest(c.req.raw, config.maxBodyBytes, AbortSignal.any([signal, AbortSignal.timeout(config.requestTimeoutMs)]))
+      const denied = await verifyDesktop(parsed.bodyHash)
+      if (denied) return denied
       const prepared = prepareFreeRequest(parsed.value, config, freeSafetyIdentifier(principal), path === MEMBER_FREE_RESPONSES_PATH ? "responses" : "chat")
       const usageLog = dependencies.usageLog
       const upstream = new URL(prepared.protocol === "responses" ? FREE_OPENAI_RESPONSES_URL : FREE_OPENAI_CHAT_URL)

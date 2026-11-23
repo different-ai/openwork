@@ -77,7 +77,12 @@ export type DriveFileApprovalRequest = {
   mode?: "replace" | "copy";
 };
 
-export type DesktopFreeHost = {
+export type DesktopFreeSigner = {
+  identity(): Promise<{ machineId: string }>;
+  sign(input: { method: string; path: string; body: Uint8Array; authorization: string; nonce?: string }): Promise<string>;
+};
+
+export type DesktopFreeHost = Partial<DesktopFreeSigner> & {
   currentVersion: string;
   eligible: () => boolean;
 };

@@ -18,4 +18,4 @@ Free Auto runs on one OpenAI key for everyone, so each request carries a `safety
 - When OpenAI names an identifier, find its requests with `principal_hash = '<identifier>'` in `inference_free_usage` (signed-in; the row has the organization and member) or `anonymous_inference_usage` (signed-out).
 - Free Auto failure logs carry `safety_identifier`, so requests OpenAI refuses for one identifier can be told apart from an outage.
 
-Requests with no desktop proof are limited by IP only. `ANONYMOUS_UNTAGGED_IP_DAILY_MICRO_USD=0` on the Gateway turns them off, along with builds that have no release tag; official desktop releases keep signed-out Auto.
+Requests with no desktop proof are limited by IP only. `ANONYMOUS_UNTAGGED_IP_DAILY_MICRO_USD=0` on the Gateway turns them off, along with builds that have no release tag; signed-out access then requires a proof-capable release. Use the desktop-only feature for a rollout covering signed-in members and guests.
