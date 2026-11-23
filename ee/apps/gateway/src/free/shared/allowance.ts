@@ -146,10 +146,11 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
   return {
     family,
     async safetyPaused(principal: FreePrincipal) {
+      const features = await readFeatures(database.$primary, null, env.features)
+      if (!features.freeAutoSafetyPauses) return false
       const [entry] = await database.$primary.select({ id: Pause.identifier }).from(Pause)
         .where(and(eq(Pause.identifier, freePrincipalHash(principal)), gt(Pause.expires_at, sql`current_timestamp(3)`))).limit(1)
-      if (!entry) return false
-      return (await readFeatures(database.$primary, null, env.features)).freeAutoSafetyPauses
+      return Boolean(entry)
     },
     async consumeNonce(proof: { keyThumbprint: string; nonce: string; timestamp: number }): Promise<"accepted" | "replay" | "unavailable"> {
       if (family !== "anonymous") return "unavailable"
