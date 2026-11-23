@@ -14,6 +14,7 @@ export const SandboxOrganizationTable = mysqlTable("sandbox_organization", {
   memberLimit: int("member_limit").notNull(),
   modelKeyHash: varchar("model_key_hash", { length: 128 }),
   modelCreditUsd: int("model_credit_usd"),
+  sponsoredSetId: denTypeIdColumn("gatewayCredentialSet", "sponsored_set_id"),
   expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),
   closedAt: timestamp("closed_at", { fsp: 3 }),
   createdByUserId: denTypeIdColumn("user", "created_by_user_id").notNull(),

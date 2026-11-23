@@ -514,6 +514,17 @@ export const DesktopFreeProofNonceTable = mysqlTable("desktop_free_proof_nonces"
   expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
 }, (table) => [index("desktop_free_proof_nonce_expiry").on(table.expires_at)])
 
+export const FundedModelSuspensionTable = mysqlTable("funded_model_suspension", {
+  reference_hash: varchar("reference_hash", { length: 64 }).notNull().primaryKey(),
+  provider_reference: varchar("provider_reference", { length: 128 }).notNull(),
+  user_id: denTypeIdColumn("user", "user_id").notNull(),
+  suspended_by: denTypeIdColumn("user", "suspended_by").notNull(),
+  suspended_at: timestamp("suspended_at", { fsp: 3 }).notNull().defaultNow(),
+  released_at: timestamp("released_at", { fsp: 3 }),
+  released_by: denTypeIdColumn("user", "released_by"),
+  release_reference: varchar("release_reference", { length: 128 }),
+}, t => [index("funded_model_suspension_user").on(t.user_id, t.released_at)])
+
 export const FreeAutoSafetyCaseTable = mysqlTable("free_auto_safety_case", {
   case_key: varchar("case_key", { length: 64 }).notNull().primaryKey(),
   case_id: varchar("case_id", { length: 128 }).notNull(),

@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { test } from "node:test"
 import { Hono } from "hono"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
-import { DESKTOP_FREE_CHAT_PATH, MEMBER_FREE_CHAT_PATH } from "@openwork/free-auto"
+import { DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_OPEN_API_KEY, MEMBER_FREE_CHAT_PATH } from "@openwork/free-auto"
 import { deriveReleaseSecret } from "@openwork/free-auto/node"
 import { INFERENCE_FREE_MODEL_ID } from "@openwork/types/den/inference"
 import { createDesktopFreeSigner } from "../../../../apps/desktop/electron/desktop-free-signer.mjs"
@@ -41,13 +41,17 @@ test("desktop grant covers guest and member calls, rejects replay and follows th
       return { ok: true, windows: [] }
     }, charge: async () => true }
   let calls = 0
-  const fetch = async () => {
+  const safetyIds: string[] = []
+  const fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+    safetyIds.push(JSON.parse(String(init?.body)).safety_identifier)
     calls++
     return Response.json({ id: "fixture", model: config.upstreamModel, choices: [{ index: 0, finish_reason: "stop" }],
       usage: { prompt_tokens: 1, completion_tokens: 1 } })
   }
   const app = new Hono()
-  const common = { config, store, fetch, clientAddress: () => "203.0.113.40", requireDesktop: async () => true }
+  let address = "203.0.113.40"
+  let required = true
+  const common = { config, store, fetch, clientAddress: () => address, requireDesktop: async () => required }
   registerAnonymousInferenceRoutes(app, common)
   const principal = { kind: "member" as const, id: createDenTypeId("user"), memberId: createDenTypeId("member"),
     organizationId: createDenTypeId("organization"), inferenceKeyId: createDenTypeId("inferenceKey") }
@@ -72,4 +76,20 @@ test("desktop grant covers guest and member calls, rejects replay and follows th
   const { installationHash } = createAnonymousIdentities({ machineId: "a".repeat(64) }, "203.0.113.40", config)
   assert.deepEqual(admittedDesktops, [installationHash, installationHash])
   assert.equal(calls, 3)
+  address = "198.51.100.8"
+  required = false
+  const renewed = new DesktopFreeSession(signer, "https://gateway.test")
+  const headers = await renewed.headers(null, DESKTOP_FREE_CHAT_PATH, "POST", body, new AbortController().signal, true)
+  assert.equal((await send(DESKTOP_FREE_CHAT_PATH, headers)).status, 200)
+  assert.match(safetyIds[0], /^[a-f0-9]{64}$/)
+  assert.equal(safetyIds[3], safetyIds[0])
+  assert.notEqual(safetyIds[0], "a".repeat(64))
+  assert.notEqual(safetyIds[0], safetyIds[1])
+  const locked = new DesktopFreeSession({ identity: async () => { throw new Error("locked") }, sign: signer.sign }, "https://gateway.test")
+  const open = await locked.headers(null, DESKTOP_FREE_CHAT_PATH, "POST", body, new AbortController().signal, true)
+  assert.equal(open.authorization, "Bearer " + DESKTOP_FREE_OPEN_API_KEY)
+  required = true
+  assert.equal((await send(DESKTOP_FREE_CHAT_PATH, open)).status, 403)
+  await assert.rejects(locked.headers("Bearer fixture", MEMBER_FREE_CHAT_PATH, "POST", body, new AbortController().signal, true))
+  await assert.rejects(locked.headers(null, DESKTOP_FREE_CHAT_PATH, "POST", body, new AbortController().signal, false))
 })

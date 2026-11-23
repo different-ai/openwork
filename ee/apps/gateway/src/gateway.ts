@@ -36,6 +36,7 @@ import { checkGatewayUsage, type CheckGatewayUsage } from "./usage-limits.js"
 import type { InsertRequestLog, RequestLogRecorder, RequestLogRecorderDependencies } from "./request-log.js"
 import type { ParsedUsage, UsageParser, ReasoningStore } from "@openwork-ee/gateway-protocols"
 import { autoRouterIdFromModel } from "@openwork/types/den/auto-router"
+import type { FundedModelGuard } from "./funded-model-access.js"
 import { loadAutoRouterConfigFromDb, loadMemberAutoRoutersFromDb, type LoadAutoRouterConfig, type LoadMemberAutoRouters } from "./auto-router/config.js"
 import { handleAutoRequest, type AutoRouterDependencies } from "./auto-router/handler.js"
 import { smartToolRouters, type SmartToolDependencies } from "./smart-tools.js"
@@ -78,6 +79,7 @@ export type GatewayDependencies = {
   askJev: AskJev
   autoRouterReasoning: ReasoningStore
   autoRouterRoutingConfigured: boolean
+  fundedModelGuard?: FundedModelGuard
 }
 
 export type GatewayRouteDependencies =
@@ -821,6 +823,10 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       return reject(gatewayError(403, selected.code, "No current grant authorizes this model and selection."), selected.code, "Gateway model access denied")
     }
     selection = selected.selection
+    if (selection.row.credentialSet.credential_mode === "org") {
+      const denied = await input.fundedModelGuard?.(identity, { kind: "sandbox", credentialSetId: selection.row.credentialSet.id })
+      if (denied) return denied
+    }
     if (isLiteLlmProviderId(provider.provider_id)) {
       spendTracking = liteLlmSpendTrackingEnabled(selection.row.credentialSet.credential_mode)
       const price = spendTracking && selection.upstreamModel ? readModelPrice(selection.row.model?.model_config) : null
@@ -1150,6 +1156,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
 
   function autoDependencies(c: Context<GatewayEnv>, identity: GatewayContext): AutoRouterDependencies {
     return {
+      fundedAccess: () => input.fundedModelGuard?.(identity, { kind: "managed" }),
       loadConfig: dependencies.loadAutoRouterConfig,
       loadMemberGatewayAccess: loadEnabledMemberGatewayAccess,
       catalog: dependencies.catalog,

@@ -336,7 +336,11 @@ export class AnonymousInferenceService {
     const authorization = member ?? `Bearer ${DESKTOP_FREE_OPEN_API_KEY}`;
     const actualPath = member ? memberPath(path) : path;
     const journey = await this.journeyHeaders();
-    const authHeaders = await this.desktopSession?.headers(member, actualPath, method, body, signal) ?? { authorization };
+    const host = this.host;
+    if (!member && !this.desktopSession && host?.eligible() && host.sign && host.identity) {
+      this.desktopSession = new DesktopFreeSession({ sign: host.sign, identity: host.identity }, this.settings.origin);
+    }
+    const authHeaders = await this.desktopSession?.headers(member, actualPath, method, body, signal, !member && retryProof) ?? { authorization };
     signal.throwIfAborted();
     if (relayToken) this.assertRelayIdentity(relayToken);
     const response = await externalFetch(`${this.settings.origin}${actualPath}`, {
