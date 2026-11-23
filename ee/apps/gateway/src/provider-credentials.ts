@@ -5,7 +5,7 @@ export { pickInferenceApiKeyFromMap as pickApiKeyFromMap } from "@openwork-ee/ga
 import { parseGatewayProviderSecret } from "@openwork/types/den/gateway"
 import type { GatewayAwsKeysSecret, GatewayProviderCredentialKind } from "@openwork/types/den/gateway"
 import type { MintAwsRoleCredentials, MintGcpAccessToken } from "@openwork-ee/gateway-upstreams"
-import { hasRefreshToken, isAdminRepairableKind, isRefreshableCredentialKind, needsOauthRefresh } from "./credentials/oauth-refresh.js"
+import { googleRenewalReason, type GoogleRenewalReason, hasRefreshToken, isAdminRepairableKind, isRefreshableCredentialKind, needsOauthRefresh } from "./credentials/oauth-refresh.js"
 import type { RefreshMemberToken } from "./credentials/oauth-refresh.js"
 import { loadGatewayAccessFromDb, sameGatewaySelection, selectGatewayGrant } from "./provider-access.js"
 import type { GatewayAccessScope, GatewayGrantSelection } from "./provider-access.js"
@@ -34,7 +34,7 @@ type MaterializedCredential =
   | { kind: "feature_disabled" }
   | { kind: "secret"; credentialId: CredentialId; credentialKind: GatewayProviderCredentialKind; secret: string }
   | { kind: "aws_keys"; credentialId: CredentialId; credentialKind: "aws_keys" | "aws_sso"; awsKeys: GatewayAwsKeysSecret }
-  | { kind: "auth_required"; credentialId: CredentialId | null; reason: "missing" | "expired" | "inactive" | "refresh_failed" }
+  | { kind: "auth_required"; credentialId: CredentialId | null; reason: "missing" | "expired" | "inactive" | "refresh_failed"; googleReason?: GoogleRenewalReason }
   | { kind: "configuration_required"; credentialId: CredentialId }
   | { kind: "org_credential_missing" }
   | { kind: "org_credential_expired"; credentialId: CredentialId }
@@ -147,6 +147,9 @@ export async function resolveUpstreamCredential(input: {
     consistency: liteLlmEntraScope(input.provider) !== null ? "primary" : undefined }
   let credential = await input.loadProviderCredential(lookup)
   if (!credential) return set.credential_mode === "member" ? { kind: "auth_required", credentialId: null, reason: "missing" } : { kind: "org_credential_missing" }
+  if (set.credential_mode === "member" && credential.kind === "oauth_google" && credential.status === "refresh_failed") {
+    return { kind: "auth_required", credentialId: credential.id, reason: "refresh_failed", ...googleRenewalReason(credential) }
+  }
   if (credential.status !== "active") return inactive(credential.id)
   if (isAdminRepairableKind(credential.kind) && credential.last_error === "invalid_client") return { kind: "configuration_required", credentialId: credential.id }
   let parsed = parseSecret(credential)
@@ -168,7 +171,7 @@ export async function resolveUpstreamCredential(input: {
   if (set.credential_mode === "member" && isRefreshableCredentialKind(refreshKind) && parsed.kind === refreshKind && input.refreshMemberToken
     && needsOauthRefresh(credential, hasRefreshToken(parsed), clock())) {
     const outcome = await input.refreshMemberToken({ credential: { ...credential, kind: refreshKind }, provider: { ...set, api_scope: apiScope }, authorization: lookup, subject, now: clock(), clock })
-    if (outcome.kind === "auth_required") return { kind: "auth_required", credentialId: credential.id, reason: "refresh_failed" }
+    if (outcome.kind === "auth_required") return { ...outcome, credentialId: credential.id, reason: "refresh_failed" }
     if (outcome.kind === "refreshed") {
       credential = outcome.credential
       parsed = parseSecret(credential)

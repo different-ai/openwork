@@ -874,11 +874,13 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
           const response = gatewayError(
             401,
             "openwork_auth_required",
-            `Connect your ${provider.provider_id} account in OpenWork to use this provider (${credential.reason === "missing" ? "no credential" : `credential ${credential.reason}`}).`,
+            credential.googleReason === "invalid_rapt" ? "Google requires you to sign in again. Reconnect your Vertex account in My Library."
+              : credential.googleReason === "invalid_grant" ? "Google no longer accepts this sign-in. Reconnect your Vertex account in My Library."
+              : `Connect your ${provider.provider_id} account in OpenWork to use this provider (${credential.reason === "missing" ? "no credential" : `credential ${credential.reason}`}).`,
             { provider_id: provider.id, credential_set_id: selection.row.credentialSet.id },
           )
           response.headers.set("x-openwork-auth-required", "1")
-          return reject(response, "member_auth_required", "Member credential required")
+          return reject(response, "member_auth_required", `Member credential required (${credential.googleReason ?? credential.reason})`)
         }
         case "configuration_required": {
           const client = resolved.family === "microsoft_foundry" || liteLlmEntraScope(provider) !== null ? "Microsoft Entra ID app registration (check that its client secret has not expired)" : "Google OAuth client"
