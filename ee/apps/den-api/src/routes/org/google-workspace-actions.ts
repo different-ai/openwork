@@ -1,3 +1,5 @@
+import { checkFixedWindowRateLimit } from "../../utils/rate-limit.js"
+import { fetchGoogleSheet } from "./google-sheets-quota.js"
 import type { Context } from "hono"
 import type { GoogleWorkspaceAccessToken } from "./google-workspace.js"
 import type { OrgRouteVariables } from "./shared.js"
@@ -104,9 +106,12 @@ export async function requestGoogleAction(
   const headers = new Headers(init.headers)
   headers.set("authorization", `Bearer ${token.accessToken}`)
   if (init.body) headers.set("content-type", "application/json")
+  const sheets = /^\/v4\/spreadsheets(?:\/|$)/.test(url.pathname)
   let response: Response
   try {
-    response = await dependencies.fetch(url, { ...init, headers, signal: c.req.raw.signal })
+    const signal = c.req.raw.signal
+    const send = () => dependencies.fetch(url, { ...init, headers, signal })
+    response = sheets ? await fetchGoogleSheet(context.currentMember.id, init.method ?? "GET", signal, send, checkFixedWindowRateLimit) : await send()
   } catch {
     return { ok: false, reply: c.json({
       error: "google_api_error",
@@ -114,6 +119,12 @@ export async function requestGoogleAction(
         ? "Google did not confirm the operation. It may have completed; check the service before retrying."
         : "Google could not be reached. Try the read again later.",
     }, 502) }
+  }
+  if (sheets && response.status === 429) {
+    const seconds = Number(response.headers.get("Retry-After"))
+    c.header("Retry-After", String(seconds))
+    return { ok: false, reply: c.json({ error: "rate_limited", retryAfterSeconds: seconds,
+      message: `Google Sheets is busy. Wait ${seconds} seconds before trying again. Batch your reads into larger ranges.` }, 429) }
   }
   if (!response.ok) {
     const google = parseGoogleError(await readGoogleActionJson(response))
