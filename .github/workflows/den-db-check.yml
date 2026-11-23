@@ -1,6 +1,25 @@
 name: Den DB Check
 
 on:
+  pull_request:
+    paths:
+      - "ee/packages/den-db/src/schema.ts"
+      - "ee/packages/den-db/src/schema/**"
+      - "ee/packages/den-db/src/columns.ts"
+      - "ee/packages/den-db/src/load-env.ts"
+      - "ee/packages/den-db/src/mysql-config.ts"
+      - "ee/packages/den-db/drizzle.config.ts"
+      - "ee/packages/den-db/drizzle/**"
+      - "ee/packages/den-db/scripts/check-migrations.mjs"
+      - "ee/packages/den-db/package.json"
+      - "ee/packages/utils/src/typeid.ts"
+      - "ee/packages/utils/package.json"
+      - "packages/types/src/den/**"
+      - "packages/types/package.json"
+      - "package.json"
+      - "pnpm-lock.yaml"
+      - "pnpm-workspace.yaml"
+      - ".github/workflows/den-db-check.yml"
   workflow_dispatch:
 
 permissions:
@@ -13,6 +32,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v6
+        with:
+          persist-credentials: false
 
       - name: Setup Node
         uses: actions/setup-node@v6
@@ -25,18 +46,7 @@ jobs:
           version: 11.4.0
 
       - name: Install dependencies
-        run: pnpm install --filter "@openwork-ee/den-db..."
+        run: pnpm install --frozen-lockfile --filter "@openwork-ee/den-db..."
 
-      - name: Generate migrations from schema
-        run: pnpm --filter @openwork-ee/den-db db:generate
-
-      - name: Fail if schema changed without a committed migration
-        run: |
-          set -euo pipefail
-          changes="$(git status --porcelain -- ee/packages/den-db/drizzle)"
-          if [ -n "$changes" ]; then
-            echo "$changes"
-            echo "::error::Schema changed without a committed migration. Run 'pnpm --filter @openwork-ee/den-db db:generate' locally and commit the generated files in ee/packages/den-db/drizzle."
-            exit 1
-          fi
-          echo "Migrations are in sync with the schema."
+      - name: Check committed migrations against the schema
+        run: pnpm --filter @openwork-ee/den-db db:check

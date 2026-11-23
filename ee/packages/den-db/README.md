@@ -132,14 +132,19 @@ preconditions above. See [0097 notes](drizzle/0097_gateway_access_matrix.md).
 
 ## Automated migrations (CI)
 
-Two GitHub Actions workflows keep schema and database in sync:
-
-- `.github/workflows/den-db-check.yml` — on every PR touching this package,
-  runs `db:generate` and fails if the schema changed without a committed
-  migration.
-- `.github/workflows/den-db-migrate.yml` — applies migrations to the
-  production PlanetScale database when migration files land on `dev`
-  (and via manual `workflow_dispatch`).
+- **Schema and migrations in sync** runs on pull requests that change the Den
+  schema, shared column or Den type definitions, migration files, or the check's
+  configuration and dependencies. It checks the journal and SQL files, then
+  runs Drizzle generation offline. If Drizzle needs a migration, generate it
+  locally with `pnpm --dir ee/packages/den-db db:generate` and commit the SQL
+  and metadata together. Run the same check with
+  `pnpm --dir ee/packages/den-db db:check`. Generation can write pending
+  migration files to your working tree. The workflow also supports manual runs.
+- **Den DB migration test** rehearses committed migrations on a temporary
+  PlanetScale copy for eligible same-repository PRs. Its trigger and eligibility
+  rules are in [the rehearsal workflow](../../../.github/workflows/den-db-migration-test.yml).
+- **Den DB Migrate** applies pending migrations to the hosted PlanetScale
+  database on selected pushes to `dev`, on a schedule, and by manual dispatch.
 
 The migrate workflow reads these repository secrets (same names as the
 local env vars — see `.env.example`):

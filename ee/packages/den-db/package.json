@@ -163,6 +163,7 @@
     "build": "node scripts/build.mjs",
     "build:utils": "pnpm --dir ../utils run build",
     "db:baseline": "node --import tsx scripts/baseline-migrations.ts",
+    "db:check": "node scripts/check-migrations.mjs",
     "db:migrate:local": "node --import tsx scripts/dev-migrate.ts",
     "db:bootstrap": "pnpm run build && node dist/scripts/bootstrap.js",
     "db:generate": "node --conditions=development --import tsx ./node_modules/drizzle-kit/bin.cjs generate --config drizzle.config.ts",
