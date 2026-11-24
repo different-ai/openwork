@@ -8,13 +8,16 @@ import {
 } from "@openwork/automations/proactive"
 import {
   AGENT_BRIEF_MESSAGE_LIMIT,
+  AGENT_ONE_MESSAGE_LIMIT,
   agentBriefForCheck,
   agentCheckInstructions,
   agentCheckPrompt,
   agentMessageInstructions,
   agentMessagePrompt,
   agentMessageRetryPrompt,
+  agentOneMessageInstructions,
   agentToldToday,
+  asOneMessage,
   checkGateApplies,
   decideBriefDelivery,
   extraChecksLeft,
@@ -67,6 +70,7 @@ const CONVERSATION_DAYS = 2
 
 export type AgentBriefWakeDeps = AgentWakeDeps & {
   briefOn: (organizationId: DenTypeId<"organization">, userId: DenTypeId<"user">) => Promise<boolean>
+  oneMessage?: (organizationId: DenTypeId<"organization">, userId: DenTypeId<"user">, memberId: DenTypeId<"member">) => Promise<boolean>
   person: (organizationId: DenTypeId<"organization">, memberId: DenTypeId<"member">) => Promise<string | null>
   check: (input: { actor: { userId: string; organizationId: string }; sessionId: string; instructions: string; model: string; prompt: string; messageId: string; scopes: readonly string[] }) => Promise<AgentRawTurnResult>
   message: (input: { actor: { userId: string; organizationId: string }; sessionId: string; instructions: string; model: string; prompt: string; messageId: string }) => Promise<AgentRawTurnResult>
@@ -196,10 +200,11 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
     return { status: "ran", reasons: ["scheduled"], reply: "unavailable", delivered: null }
   }
   if (!listed) return retry("sources_unavailable")
+  const oneMessage = (await deps.oneMessage?.(organizationId, userId, memberId).catch(() => false)) ?? false
   const ready = sources.filter((source) => readableConnections(source).length > 0)
   const notices = {
     ...await noticeUnreadableSources({
-      row, organizationId, userId, unreadable: blockedConnections(sources), othersReadable: ready.length > 0, told: state.notices, now, slot, kind, deps, record,
+      row, organizationId, userId, unreadable: blockedConnections(sources), othersReadable: ready.length > 0, told: state.notices, now, slot, kind, deps, record, combined: oneMessage,
     }),
     ...await noticeStoppedSources({ row, organizationId, userId, sources, choices: stored.sources, othersReadable: ready.length > 0, told: state.notices, now, slot, kind, deps, record }),
   }
@@ -271,10 +276,17 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
   const model = await deps.model(actor).catch(() => null)
   if (!model) return retry("model_unavailable")
 
-  const check = await deps.check({
+  const readConversation = async () => {
+    const conversation = await deps.conversation({ organizationId, userId, since: now - CONVERSATION_DAYS * 24 * HOUR_MS }).catch(() => null)
+    if (conversation === null) appLogger.info("workbot_agent_conversation_unavailable", { member_id: memberId })
+    return conversation ?? []
+  }
+  const countSentToday = () => deps.sentSince(memberId, new Date(zonedDayStart(now, timeZone)))
+  const beforeCheck = oneMessage ? { name, sentToday: await countSentToday(), cap: limits.dailyCap, conversation: await readConversation() } : undefined
+  const checkTurn = {
     actor,
     sessionId: deps.sessionId(organizationId, memberId),
-    instructions: agentCheckInstructions({ name, brief: briefText }),
+    instructions: oneMessage ? agentOneMessageInstructions({ name, brief: briefText }) : agentCheckInstructions({ name, brief: briefText }),
     model,
     prompt: agentCheckPrompt({
       occasion,
@@ -284,6 +296,7 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
       extraChecksLeft: extraChecksLeft(state.requests, brief.extraChecksPerDay, now, timeZone),
       sent: state.sent,
       lastReport: state.lastReport ?? null,
+      oneMessage: beforeCheck,
       sources: readable.map((source) => ({
         id: source.id,
         name: source.name,
@@ -301,10 +314,19 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
     }),
     messageId: deps.messageId(memberId, row.nextWakeAt.getTime()),
     scopes: agentReadScopes({ ...readAllowlist(readable), tools: toolPlan.tools, nativeReads: toolPlan.nativeReads }),
-  })
+  }
+  const check = await deps.check(checkTurn)
   if (check.kind === "unavailable") return retry(check.code)
   logUsage(memberId, "check", check)
-  const report = parseCheckReport(check.text)
+  const report = oneMessage ? null : parseCheckReport(check.text)
+  let checkedReply = oneMessage ? parseAgentMessages(check.text, true) : null
+  if (checkedReply?.kind === "invalid") {
+    appLogger.info("workbot_agent_message_retry", { member_id: memberId, reason: checkedReply.reason })
+    const again = await deps.check({ ...checkTurn, prompt: agentMessageRetryPrompt(checkedReply.reason), messageId: deps.messageId(`${memberId}:check:2`, row.nextWakeAt.getTime()) })
+    if (again.kind === "unavailable") return retry(again.code)
+    logUsage(memberId, "check", again)
+    checkedReply = parseAgentMessages(again.text, true)
+  }
 
   const requests = settleCheckRequests(await deps.requestedChecks(memberId).catch(() => state.requests ?? []), now)
   const readIds = readable.map((source) => source.id)
@@ -322,40 +344,41 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
   let sent = 0
   const sentRecords: AgentSentRecord[] = []
   let delivered: "sent" | "failed" | "nothing_new" | "daily_limit" | "quiet_hours" | "quiet_window" | "snoozed" | null = null
-  if (report.kind === "findings") {
-    const sentToday = await deps.sentSince(memberId, new Date(zonedDayStart(now, timeZone)))
+  if (report?.kind === "findings" || (checkedReply && checkedReply.kind !== "quiet")) {
+    const sentToday = beforeCheck?.sentToday ?? await countSentToday()
     if (sentToday >= limits.dailyCap) {
       outcome = { reason: "daily_limit" }
       delivered = "daily_limit"
     } else {
-      const conversation = await deps.conversation({ organizationId, userId, since: now - CONVERSATION_DAYS * 24 * HOUR_MS }).catch(() => null)
-      if (conversation === null) appLogger.info("workbot_agent_conversation_unavailable", { member_id: memberId })
-      const reply = await writeMessages({
+      const conversation = beforeCheck?.conversation ?? await readConversation()
+      const reply = checkedReply ?? (report?.kind === "findings" ? await writeMessages({
         deps, actor, model, name, memberId, organizationId, wakeAt: row.nextWakeAt.getTime(),
-        prompt: agentMessagePrompt({ name, sentToday, cap: limits.dailyCap, now, timeZone, nextCheckAt: nextAfter, firstCheck: occasion.kind === "first", report: report.report, conversation: conversation ?? [] }),
-      })
-      if (reply.kind === "unavailable") {
+        prompt: agentMessagePrompt({ name, sentToday, cap: limits.dailyCap, now, timeZone, nextCheckAt: nextAfter, firstCheck: occasion.kind === "first", report: report.report, conversation }),
+      }) : null)
+      if (reply?.kind === "unavailable") {
         appLogger.info("workbot_agent_message_unavailable", { member_id: memberId, code: reply.code })
         outcome = { reason: "agent_unavailable" }
-      } else if (reply.kind === "invalid") {
+      } else if (reply?.kind === "invalid") {
         appLogger.warn("workbot_agent_message_unparsed", { member_id: memberId, reason: reply.reason })
         outcome = { reason: "unreadable_reply" }
-      } else if (reply.kind === "quiet") {
+      } else if (reply?.kind === "quiet") {
         outcome = { reason: "findings_held" }
-      } else {
+      } else if (reply?.kind === "messages") {
         const sendCheck = settings.sendCheck === true && deps.sendCheck ? await deps.sendCheck({ organizationId, memberId, userId }).catch(() => null) : null
-        let messages = reply.messages
+        const merged = oneMessage ? asOneMessage(reply.messages) : null
+        const candidates = oneMessage ? (merged ? [merged] : []) : reply.messages
+        let messages = candidates
         let heldForBrief = 0
         if (sendCheck) {
-          const toldToday = agentToldToday({ conversation: conversation ?? [], sent: state.sent, since: zonedDayStart(now, timeZone) })
-          const checked = await Promise.all(reply.messages.map((message) => sendCheck({ brief: briefText, message: message.text, update: message.update, toldToday, holdAt: settings.sendCheckThreshold })))
-          messages = reply.messages.filter((_, index) => checked[index]?.verdict.kind !== "hold")
+          const toldToday = agentToldToday({ conversation, sent: state.sent, since: zonedDayStart(now, timeZone) })
+          const checked = await Promise.all(candidates.map((message) => sendCheck({ brief: briefText, message: message.text, update: message.update, toldToday, holdAt: settings.sendCheckThreshold })))
+          messages = candidates.filter((_, index) => checked[index]?.verdict.kind !== "hold")
           heldForBrief = checked.filter((result) => result.verdict.kind === "hold" && result.verdict.reason === "brief").length
           appLogger.info("workbot_agent_send_check", {
             member_id: memberId,
-            messages: reply.messages.length,
+            messages: candidates.length,
             held_brief: heldForBrief,
-            held_repeat: reply.messages.length - messages.length - heldForBrief,
+            held_repeat: candidates.length - messages.length - heldForBrief,
             unavailable: checked.filter((result) => result.status === "unavailable").length,
             duration_ms: Math.max(0, ...checked.map((result) => result.durationMs)),
             input_tokens: checked.reduce((sum, result) => sum + (result.inputTokens ?? 0), 0),
@@ -391,7 +414,7 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
             for (const entry of folded) await deps.reserve({ organizationId, memberId, item: entry.item, outcome: "folded", kind: "brief" })
             const allowedNow = (await deps.holdsLease(row)) && (await deps.allowed(organizationId, userId)) && (await deps.briefOn(organizationId, userId))
             const result = allowedNow
-              ? await deps.deliver({ organizationId, userId, text: cleanAgentMessage(message.text, { limit: AGENT_BRIEF_MESSAGE_LIMIT, linkDomains }) })
+              ? await deps.deliver({ organizationId, userId, text: cleanAgentMessage(message.text, { limit: oneMessage ? AGENT_ONE_MESSAGE_LIMIT : AGENT_BRIEF_MESSAGE_LIMIT, linkDomains }) })
               : { ok: false as const, code: "lease_or_feature_lost" }
             await deps.finish(id, result.ok ? "sent" : "failed")
             if (result.ok) {
@@ -424,14 +447,14 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
     day: new Date(now).toISOString().slice(0, 10),
     counts: [{ responsibility: AGENT_RHYTHM_COUNTER, checks: 1, quiet: sent ? 0 : 1, sent }],
   }).catch(() => appLogger.warn("workbot_agent_checks_unrecorded", { member_id: memberId }))
-  appLogger.info("workbot_agent_ran", { member_id: memberId, path: "brief", occasion: occasion.kind, report: report.kind, delivered: delivered ?? "none", sent })
+  appLogger.info("workbot_agent_ran", { member_id: memberId, path: oneMessage ? "one_message" : "brief", occasion: occasion.kind, report: report?.kind ?? checkedReply?.kind, delivered: delivered ?? "none", sent })
   const settled: AgentState = {
     ...nextState,
     sent: rememberSent(state.sent, sentRecords, now),
-    lastReport: report.kind === "findings" ? { at: now, text: report.report.slice(0, 4_000) } : state.lastReport ?? null,
+    ...(report ? { lastReport: report.kind === "findings" ? { at: now, text: report.report.slice(0, 4_000) } : state.lastReport ?? null } : {}),
   }
   await deps.settle(row, { state: JSON.stringify(settled), timeZone, templateVersionId: template.versionId, failures: 0, nextWakeAt: nextWake(nextAfter, requests) })
-  return { status: "ran", reasons: ["scheduled"], reply: report.kind === "findings" ? "message" : "quiet", delivered }
+  return { status: "ran", reasons: ["scheduled"], reply: report?.kind === "findings" || checkedReply?.kind === "messages" ? "message" : "quiet", delivered }
 }
 
 async function writeMessages(input: {

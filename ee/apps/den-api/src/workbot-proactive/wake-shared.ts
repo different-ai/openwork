@@ -41,6 +41,7 @@ export async function noticeUnreadableSources(input: {
   userId: DenTypeId<"user">
   unreadable: { connection: MemberConnection; sources: { id: string; name: string }[] }[]
   othersReadable: boolean
+  combined?: boolean
   told: Readonly<Record<string, number>>
   now: number
   slot: string
@@ -54,29 +55,50 @@ export async function noticeUnreadableSources(input: {
   record: (input: CheckRecordInput) => Promise<void>
 }): Promise<Record<string, number>> {
   const { deps } = input
+  type Entry = (typeof input.unreadable)[number]
   const notices: Record<string, number> = {}
+  const untold: Entry[] = []
+  const actionLink = (connection: MemberConnection) => {
+    const action = `${connection.state === "reconnect" ? "Reconnect" : "Connect"} ${connectionName(connection)}`
+    return `<${deps.connectLink(connection.id)}|${action}>`
+  }
+  const sendAndRecord = async (entries: Entry[], text: string) => {
+    const sent = (await deps.holdsLease(input.row)) && (await deps.allowed(input.organizationId, input.userId))
+      ? await deps.deliver({ organizationId: input.organizationId, userId: input.userId, text })
+      : null
+    for (const entry of entries) {
+      if (sent?.ok) notices[entry.connection.id] = input.now
+      await input.record({
+        reason: "source_disconnected",
+        key: `source_disconnected:${entry.connection.id}:${input.slot}`,
+        kind: input.kind,
+        sources: entry.sources.map((source) => ({ id: source.id, name: source.name, connectionId: entry.connection.id })),
+        message: sent?.ok ? sent.message ?? null : null,
+      })
+    }
+  }
   for (const entry of input.unreadable) {
     const told = input.told[entry.connection.id]
     if (told !== undefined) {
       notices[entry.connection.id] = told
-      continue
+    } else if (input.combined) {
+      untold.push(entry)
+    } else {
+      const what = joinNames(entry.sources.map((source) => source.name))
+      const text = input.othersReadable
+        ? `Quick check: I can't read your ${what}, so I've paused checking ${entry.sources.length > 1 ? "them" : "it"} and kept reading the rest. ${actionLink(entry.connection)}`
+        : `Quick check: I can't read your ${what}, so I've paused your checks until it's fixed. ${actionLink(entry.connection)}`
+      await sendAndRecord([entry], text)
     }
-    const action = `${entry.connection.state === "reconnect" ? "Reconnect" : "Connect"} ${entry.connection.native ? connectionName(entry.connection) : entry.connection.name}`
-    const what = joinNames(entry.sources.map((source) => source.name))
-    const text = input.othersReadable
-      ? `Quick check: I can't read your ${what}, so I've paused checking ${entry.sources.length > 1 ? "them" : "it"} and kept reading the rest. <${deps.connectLink(entry.connection.id)}|${action}>`
-      : `Quick check: I can't read your ${what}, so I've paused your checks until it's fixed. <${deps.connectLink(entry.connection.id)}|${action}>`
-    const sent = (await deps.holdsLease(input.row)) && (await deps.allowed(input.organizationId, input.userId))
-      ? await deps.deliver({ organizationId: input.organizationId, userId: input.userId, text })
-      : { ok: false as const, code: "lease_or_feature_lost" }
-    if (sent.ok) notices[entry.connection.id] = input.now
-    await input.record({
-      reason: "source_disconnected",
-      key: `source_disconnected:${entry.connection.id}:${input.slot}`,
-      kind: input.kind,
-      sources: entry.sources.map((source) => ({ id: source.id, name: source.name, connectionId: entry.connection.id })),
-      message: sent.ok ? sent.message ?? null : null,
-    })
+  }
+  if (untold.length) {
+    const names = [...new Set(untold.flatMap((entry) => entry.sources.map((source) => source.name)))]
+    const many = names.length > 1
+    const what = many ? `${names.slice(0, -1).join(", ")} or ${names.at(-1)}` : names[0] ?? "source"
+    const rest = input.othersReadable
+      ? `I'm skipping ${many ? "them" : "it"}. Everything else is still being checked.`
+      : `your checks are paused until ${many ? "they're" : "it's"} connected again.`
+    await sendAndRecord(untold, `I can't read ${what} right now, so ${rest} ${untold.map((entry) => actionLink(entry.connection)).join(" · ")}`)
   }
   return notices
 }

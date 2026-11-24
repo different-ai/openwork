@@ -827,7 +827,7 @@ const agentStateSchema = z.object({
   woke: z.array(z.string()).max(100),
   notices: z.record(z.string(), z.number()).default({}),
   requests: z.array(z.object({ at: z.number(), why: z.string().max(200), requestedAt: z.number(), done: z.boolean().optional() })).max(40).optional(),
-  sent: z.array(z.object({ at: z.number(), about: z.array(z.string().max(400)).max(8), lead: z.string().max(240) })).max(40).optional(),
+  sent: z.array(z.object({ at: z.number(), about: z.array(z.string().max(400)).max(96), lead: z.string().max(240) })).max(40).optional(),
   lastReport: z.object({ at: z.number(), text: z.string().max(4_000) }).nullable().optional(),
   skips: z.number().int().min(0).max(100).optional(),
 })

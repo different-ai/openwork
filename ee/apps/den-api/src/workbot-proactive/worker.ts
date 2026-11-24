@@ -1,5 +1,6 @@
 import { libraryConnectorLink, myAgentLink } from "../agent-links.js"
 import { markFeaturesUsed } from "../feature-usage.js"
+import { organizationFeatureEnabled } from "../features.js"
 import { assertFundedUserAllowed } from "../openai-safety/account-suspensions.js"
 import { env } from "../env.js"
 import { appLogger } from "../observability/logger.js"
@@ -76,6 +77,11 @@ export function defaultAgentWakeDeps(): AgentBriefWakeDeps {
       return { link: myAgentLink() }
     },
     briefOn: (organizationId, userId) => agentBriefAllowed(organizationId, userId),
+    oneMessage: async (organizationId, userId, memberId) => {
+      if (!(await organizationFeatureEnabled(organizationId, "workbotAgentOneMessage", { userId }))) return false
+      markFeaturesUsed({ organizationId, memberId, keys: ["workbotAgentOneMessage"] })
+      return true
+    },
     person: memberFirstName,
     check: (input) => runAgentSessionTurn(input, turnDeps),
     message: (input) => runAgentSessionTurn({ ...input, title: "Your agent: message", readOnly: true, scopes: AGENT_MESSAGE_SCOPES }, turnDeps),

@@ -55,6 +55,7 @@ export { default as sideChatPanel } from "@openwork/features/flags/side-chat-pan
 export { default as sideQuestions } from "@openwork/features/flags/side-questions"
 export { default as workbotAgentBrief } from "@openwork/features/flags/workbot-agent-brief"
 export { default as workbotAgentCheckGate } from "@openwork/features/flags/workbot-agent-check-gate"
+export { default as workbotAgentOneMessage } from "@openwork/features/flags/workbot-agent-one-message"
 export { default as workbotAgentSendCheck } from "@openwork/features/flags/workbot-agent-send-check"
 export { default as workbotAgentStoppedSources } from "@openwork/features/flags/workbot-agent-stopped-sources"
 export { default as workbotCalmChat } from "@openwork/features/flags/workbot-calm-chat"
