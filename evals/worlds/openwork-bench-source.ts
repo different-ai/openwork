@@ -1,7 +1,7 @@
 /**
- * The OpenWork Bench revision OpenWork's worlds install. One pin for the
- * `openwork-bench` script world and the proof's task world, so a published
- * run and its footage come from the same benchmark code and task files.
+ * The OpenWork Bench revision the openwork-bench proof's task world runs. Keep
+ * it on the bench release that published results use, so the proof's footage
+ * comes from the same task files, task world and grader.
  */
 export const OPENWORK_BENCH_REPO = "https://github.com/different-ai/openwork-bench";
 /** The v0.1 pilot release: the engine v2 openwork-desktop harness (`owb run --openwork-url`, `--max-usd`) and `owb world serve --http`. */

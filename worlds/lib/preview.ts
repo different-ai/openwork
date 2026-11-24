@@ -401,7 +401,7 @@ export interface FreestyleDesktopDeps {
   track(id: string): Promise<void>;
 }
 
-export async function defaultFreestyleDeps(): Promise<FreestyleDesktopDeps> {
+async function defaultFreestyleDeps(): Promise<FreestyleDesktopDeps> {
   const { ensureSnapshot } = await import("../../packages/world-freestyle/src/builder.ts");
   const { launchPreview, deletePreview } = await import("../../packages/world-freestyle/src/index.ts");
   return {
@@ -479,7 +479,7 @@ function isPreviewScenario(value: string): value is PreviewScenario {
 }
 
 /** The current origin/dev commit: what a remote preview builds when no source is given. */
-export async function resolveRemoteDev(): Promise<string> {
+async function resolveRemoteDev(): Promise<string> {
   try {
     const { stdout } = await promisify(execFile)("git", ["ls-remote", "--exit-code", "origin", "refs/heads/dev"], {
       cwd: fileURLToPath(new URL("../..", import.meta.url)),
