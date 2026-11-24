@@ -106,6 +106,7 @@ export function createAgentMcpServer(options: {
   canSendSlackMessages?: boolean
   myAgent?: boolean
   myAgentBrief?: boolean
+  harnessFeedbackInstructions?: string
   toolView?: ConnectToolView
   toolShapes?: boolean
   skillsExtension?: boolean
@@ -119,6 +120,7 @@ export function createAgentMcpServer(options: {
     ...(options.remoteSessionStatus ? [REMOTE_SESSION_STATUS_INSTRUCTIONS] : []),
     ...(options.remoteSessionStatus && options.remoteSessionEvents ? [REMOTE_SESSION_EVENT_INSTRUCTIONS] : []),
     ...(options.canSendSlackMessages ? [slackSendAsBotInstructions(view)] : []),
+    ...(options.harnessFeedbackInstructions ? [options.harnessFeedbackInstructions] : []),
     ...(options.myAgent ? [options.myAgentBrief ? MY_AGENT_BRIEF_INSTRUCTIONS : MY_AGENT_INSTRUCTIONS] : [])].join("\n")
   const directory = view === "engine" && options.services
     ? serviceDirectoryInstructions(options.services, AGENT_MCP_INSTRUCTIONS_MAX_CHARS - rules.length - 1)
@@ -153,7 +155,7 @@ export function createAgentMcpServer(options: {
     contents: [{
       uri: AGENT_MCP_GUIDANCE_URI,
       mimeType: "text/markdown",
-      text: agentMcpDetailedInstructions(options.appServers !== false, view, options.toolShapes),
+      text: [agentMcpDetailedInstructions(options.appServers !== false, view, options.toolShapes), options.harnessFeedbackInstructions].filter(Boolean).join("\n"),
     }],
   }))
   return server

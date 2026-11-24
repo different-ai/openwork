@@ -28,6 +28,7 @@ import { getMcpResourceContext, isFirstPartyMcpPrincipal, mcpPrincipalCredential
 import { AUDIT_UNAVAILABLE_TOOL_MESSAGE, AuditUnavailableError, auditUnavailableToolResult, mcpAuditPrincipal, runMcpServiceAction, serviceAuditResourceId, serviceErrorStatus, toolResultStatus } from "../audit/mcp-service-audit.js"
 import { DEN_MCP_APP_HOST_SCOPE, DEN_MCP_WRITE_SCOPE } from "./scopes.js"
 import { agentCheckRequestsAvailable, registerAgentCheckRequestTool } from "./agent-check-request.js"
+import { HARNESS_FEEDBACK_INSTRUCTIONS, harnessFeedbackAvailable, registerHarnessFeedbackTool } from "./harness-feedback.js"
 import { getCatalog, protectedResourceMetadata, protectedResourceMetadataRoute } from "./index.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
 import { createScopedAgentMcpHttpHandlers, type AgentMcpAudience } from "./agent-http.js"
@@ -710,7 +711,9 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     })
     const advertisesInstructions = method === "initialize" || method === "server/discover"
     const listsSkillsNatively = nativeSkills && supportsConnectNativeSkills(c.req.header(CONNECT_MCP_APP_HOST_CAPABILITY_HEADER))
+    const harnessFeedback = await harnessFeedbackAvailable(principal)
     const server = createAgentMcpServer({
+      harnessFeedbackInstructions: harnessFeedback ? HARNESS_FEEDBACK_INSTRUCTIONS : undefined,
       appServers: appServersEnabled,
       toolView,
       toolShapes,
@@ -726,6 +729,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       services: engineTools && advertisesInstructions ? await loadConnectServices(capabilityContext) : undefined,
     })
     if (auditPrincipal && organizationFeatures.nativeMcpEvents) registerNativeMcpEvents(server, auditPrincipal, c.req.raw, principal.scopes.has(DEN_MCP_WRITE_SCOPE), { poll: organizationFeatures.mcpThreads })
+    if (harnessFeedback) registerHarnessFeedbackTool(server, principal)
     if (skillsExtension) registerSkillsExtension(server, loadResolvedSkills)
     if (memberIdentity && agentCheckRequestsAvailable({ scopes: principal.scopes, member: true, workbotAgentBrief: organizationFeatures.workbotAgentBrief })) {
       registerAgentCheckRequestTool(server, { organizationId, memberId: memberIdentity.orgMembershipId, userId: normalizeDenTypeId("user", principal.userId), audit: auditPrincipal })
