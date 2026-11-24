@@ -89,10 +89,11 @@ remain separate qualification requirements.
 Preparation and smoke never publish or change installer defaults. Promotion still
 requires exact-byte real-cloud fresh-install **and** approved-Update review, the
 dedicated non-self-review approval environment, explicit opt-in and serialized
-expected-current checks. An existing immutable installer version cannot be reused
+expected-current checks. An existing immutable installer release cannot be reused
 with different bundle bytes: if an older two-image candidate was already published
-under that version, stop and obtain a separately approved new release version;
-never overwrite its objects or bypass the promotion review.
+under that version, stop and publish the reviewed candidate as the next
+[installer revision](#installer-revisions) of that version; never overwrite its
+objects or bypass the promotion review.
 
 ## AWS shared-module adoption
 
@@ -175,23 +176,63 @@ the protected plan guard must refuse any data-bearing replacement. Synthetic
 native state tests verify address/value preservation, not a real v5-state/v6
 provider upgrade. That requires the separate live Update proof.
 
-### New-version Update and test handoff
+### Installer revisions
 
-Den intentionally rejects same-version Update; Retry is not Update. That rule
-lives only in Den's launch route and dashboard. The installer never compared versions: the
-bootstrap checks that the bundle matches its `OPENWORK_VERSION`, and a new
-`RunId` is what starts a run. Den may therefore re-run the installed release
-with changed parameters (a configuration change, feature
-`managedDeploymentConfigUpdates`); the runner's refusal to delete or replace
-data-bearing resources applies to that run as to any other. For an
-isolated test-only newer installer version using a verified existing application
-pair, build with `--image-pins <approved-json-file>` containing `den_api`
-and `den_web` fixed-repository Linux/amd64 digests (plus both assistant images
-when opting into the profile below). The builder re-verifies every supplied
-image through the registry. The release stores those pins; the runner passes
-them to the shared module rather than inventing a tag for the test version.
-Ordinary known release versions retain their built-in immutable image pair.
-No production publication or hosted configuration change is part of offline work.
+The installer has its own revision for one app version. `version` is the
+OpenWork app and image version everywhere; `installerRevision` is a whole number
+from 1 that counts installers built for that version. A release, an environment
+value or a database row without a revision is revision 1, and revision 1 is
+never written, so everything published before revisions existed is unchanged
+byte for byte. `protocolVersion` stays 1.
+
+Use a revision for an installer-only fix or a configuration change that does
+not need new app images. Do not invent a newer installer version for it.
+
+| Where | Revision 1 | Revision N above 1 |
+| --- | --- | --- |
+| Build | `build-release.mjs <aws\|gcp> <version> <dir>` | add `--installer-revision N` |
+| `manifest.json`, `release.json` | no `installerRevision` | `"installerRevision": N` |
+| Object folder | `releases/<provider>/<version>/` | `releases/<provider>/<version>_rN/` |
+| Publisher output | the four `DEN_MANAGED_DEPLOYMENT_<PROVIDER>_*` values | one `DEN_MANAGED_DEPLOYMENT_<PROVIDER>_RELEASE` value |
+
+A higher revision lives in a folder beside its version, not inside it: each
+publisher refuses any unexpected object under a release folder, so revision 1
+stays exactly what it was. The same immutability rules apply to every folder.
+A revision above 1 can be configured only through the single
+`DEN_MANAGED_DEPLOYMENT_<PROVIDER>_RELEASE` value or an Admin pin; the four
+separate settings cannot carry it.
+
+Den orders releases by version first, then revision
+(`compareInstallerRelease` in `packages/managed-deployments`). The same
+comparison decides whether an update is available, whether Update is allowed,
+whether a release may be pinned, and whether the release workflow may promote.
+
+**Deploy Den before publishing any revision above 1.** A Den from before
+revisions reads `installerRevision` as invalid: it refuses to verify such a
+manifest in Admin, and with the release value set it offers no installer at all
+until it is upgraded.
+
+### Updates, retries and the test handoff
+
+Den prepares an Update only when the published release is newer than the
+installed one: a newer version, or the same version at a higher installer
+revision. Retry is not Update. That rule lives only in Den's launch route and
+dashboard. The installer never compared versions: the bootstrap checks that the
+bundle matches its `OPENWORK_VERSION`, and a new `RunId` is what starts a run.
+Den may therefore re-run the installed release with changed parameters (a
+configuration change, feature `managedDeploymentConfigUpdates`), which keeps the
+installed version and revision; the runner's refusal to delete or replace
+data-bearing resources applies to that run as to any other.
+
+To test an Update against an existing application pair, build the next
+installer revision of that version with `--installer-revision N` and
+`--image-pins <approved-json-file>` containing `den_api` and `den_web`
+fixed-repository Linux/amd64 digests (plus both assistant images when opting
+into the profile below). The builder re-verifies every supplied image through
+the registry. The release stores those pins and the runner passes them to the
+shared module. Ordinary known release versions retain their built-in immutable
+image pair. No production publication or hosted configuration change is part of
+offline work.
 
 The later authorized harness must use an isolated Den: published baseline ->
 new-version **real Update** and IAM re-approval -> preserved DB/data/session/core

@@ -17,7 +17,8 @@ checksummed release bundle, preserving repository paths. Tests/examples, state,
 plans and credentials are never packaged. The builder checks module-local file
 references against the payload, and extraction requires the complete module.
 `release.json` must contain `provider: "gcp"`, `version`, `protocolVersion: 1`,
-a `files` map of path to SHA-256, and an `images` inventory with exactly
+`installerRevision` when the installer revision is above 1
+([installer revisions](../README.md#installer-revisions)), a `files` map of path to SHA-256, and an `images` inventory with exactly
 `den_api`, `den_web`, and `health`. Every image is a Linux/amd64 manifest pinned as
 `ALLOWLISTED_REPOSITORY@sha256:64_LOWERCASE_HEX_DIGITS`. The only repositories are
 `ghcr.io/different-ai/openwork-den-api`, `ghcr.io/different-ai/openwork-den-web`,
@@ -224,9 +225,11 @@ Before merging, the managed-deployments owners must review or explicitly waive
 the grant, maintenance behavior and historical baseline/fresh-install boundaries.
 Before publishing newer images, qualify that exact image set through isolated
 Den Update, migration/auth/readiness and preservation checks, fresh install and
-cleanup. The October pass does not certify today's images. Use reviewed
-`--image-pins` if testing a new installer label with existing application digests;
-never bypass Den's same-version rejection or publish mocked registry artifacts.
+cleanup. The October pass does not certify today's images. To test an Update
+with existing application digests, build the next installer revision of that
+version with `--installer-revision N` and reviewed `--image-pins`; it publishes
+to `releases/gcp/<version>_rN/`. Deploy Den before publishing any revision
+above 1, and never publish mocked registry artifacts.
 
 The runner enrolls using `{"provider":"gcp","idToken":"..."}` with audience
 `API_ORIGIN/v1/managed-deployments/DEPLOYMENT/runs/RUN/enroll#CHALLENGE`.
