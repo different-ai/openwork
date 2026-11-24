@@ -54,7 +54,7 @@ export async function dispatchFreeCompletion(input: {
   const requestId = randomBytes(16).toString("hex")
   const admission = await store.admit(principal, requestId, prepared.choices ?? 1, input.desktopHash)
   if (!admission.ok) {
-    if (admission.code === "desktop_proof_required") return desktopChallenge()
+    if (admission.code === "desktop_proof_required") return desktopChallenge(config.minimumVersion)
     if (admission.code === "free_founder_unavailable") return freeError(403, admission.code, "Included model usage is unavailable for this organization. You can use a configured or paid model.")
     const sharedMessage = admission.code === "free_desktop_budget_exhausted" ? "This desktop has reached its weekly free model limit."
       : admission.code === "free_founder_budget_exhausted" ? "Organizations created by the same account have reached their shared weekly free model limit." : undefined
@@ -98,7 +98,7 @@ export async function dispatchFreeCompletion(input: {
   if (paused) {
     if (admission.reserved) await charge(null, true)
     await usageLog?.finish({ status: 403, outcome: "upstream_error", errorCode: "free_safety_paused" })
-    return freeError(403, "free_safety_paused", "Free model access is paused for safety review.")
+    return freeError(403, "free_safety_paused", "Free model access is restricted. Contact OpenWork support for review.")
   }
   let response: Response
   let headerTimedOut = false

@@ -1,15 +1,14 @@
+import { fixtureDesktopSigner } from "./fixtures/desktop-signer.js"
 import assert from "node:assert/strict"
-import { mkdtemp, rm } from "node:fs/promises"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
 import { test } from "node:test"
 import { Hono } from "hono"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
-import { DESKTOP_FREE_CHAT_PATH, MEMBER_FREE_CHAT_PATH } from "@openwork/free-auto"
+import { DESKTOP_FREE_CHAT_PATH, DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_OPEN_API_KEY, DESKTOP_FREE_PROVIDER_ID, MEMBER_FREE_CHAT_PATH, desktopFreeProofRequested } from "@openwork/free-auto"
 import { deriveReleaseSecret } from "@openwork/free-auto/node"
 import { INFERENCE_FREE_MODEL_ID } from "@openwork/types/den/inference"
-import { createDesktopFreeSigner } from "../../../../apps/desktop/electron/desktop-free-signer.mjs"
 import { DesktopFreeSession } from "../../../../apps/server/src/free-auto/desktop-session.js"
+import { RemoteFailure } from "../../../../apps/server/src/free-auto/http.js"
+import { statusFromRejection } from "../../../../apps/server/src/free-auto/responses.js"
 import type { FreeAllowanceStore } from "../src/free/shared/allowance.js"
 
 process.env.DATABASE_URL ??= "mysql://fixture:fixture@127.0.0.1:1/fixture"
@@ -18,17 +17,14 @@ const { readAutoConfig } = await import("../src/free/shared/config.js")
 const { createFreeMemberHandler } = await import("../src/free/member/handler.js")
 const { registerAnonymousInferenceRoutes } = await import("../src/free/guest/routes.js")
 
+const unavailable = { state: "unavailable" as const, code: null, currentVersion: "", minimumVersion: null,
+  providerID: DESKTOP_FREE_PROVIDER_ID, modelID: DESKTOP_FREE_MODEL_ID, allowance: null }
+
 test("desktop grant covers guest and member calls, rejects replay and follows the member credential", async t => {
-  const dir = await mkdtemp(join(tmpdir(), "ow-desktop-grant-"))
-  t.after(() => rm(dir, { recursive: true, force: true }))
   const config = readAutoConfig({ INFERENCE_FREE_ENABLED: "true", ANONYMOUS_INFERENCE_ENABLED: "true",
     INFERENCE_FREE_OPENAI_API_KEY: "fixture", ANONYMOUS_ACCOUNTING_IDENTITY_KEY: "fixture-accounting-identity-key-000000",
     ANONYMOUS_TOKEN_SECRET: "fixture-token-secret-00000000000000000", DESKTOP_FREE_RELEASE_KEY: "fixture-release-key-000000000000000000" })
-  const version = "1.2.3"
-  const signer = createDesktopFreeSigner({ filePath: join(dir, "identity"), platform: "darwin", arch: "arm64", appVersion: version,
-    readMachineId: async () => "a".repeat(64), releaseSecret: async () => deriveReleaseSecret(config.releaseKey, version),
-    isEligible: () => true, loadSafeStorage: () => ({ isAsyncEncryptionAvailable: async () => true,
-      encryptStringAsync: async (value: string) => Buffer.from(value), decryptStringAsync: async (value: Buffer) => ({ result: value.toString() }) }) })
+  const signer = await fixtureDesktopSigner(t, version => deriveReleaseSecret(config.releaseKey, version))
   const seen = new Set<string>()
   const admittedDesktops: Array<string | undefined> = []
   const store: FreeAllowanceStore = { family: "member", safetyPaused: async () => false, consumeNonce: async proof => {
@@ -41,13 +37,17 @@ test("desktop grant covers guest and member calls, rejects replay and follows th
       return { ok: true, windows: [] }
     }, charge: async () => true }
   let calls = 0
-  const fetch = async () => {
+  const safetyIds: string[] = []
+  const fetch = async (_input: RequestInfo | URL, init?: RequestInit) => {
+    safetyIds.push(JSON.parse(String(init?.body)).safety_identifier)
     calls++
     return Response.json({ id: "fixture", model: config.upstreamModel, choices: [{ index: 0, finish_reason: "stop" }],
       usage: { prompt_tokens: 1, completion_tokens: 1 } })
   }
   const app = new Hono()
-  const common = { config, store, fetch, clientAddress: () => "203.0.113.40", requireDesktop: async () => true }
+  let address = "203.0.113.40"
+  let required = true
+  const common = { config, store, fetch, clientAddress: () => address, requireDesktop: async () => required }
   registerAnonymousInferenceRoutes(app, common)
   const principal = { kind: "member" as const, id: createDenTypeId("user"), memberId: createDenTypeId("member"),
     organizationId: createDenTypeId("organization"), inferenceKeyId: createDenTypeId("inferenceKey") }
@@ -60,16 +60,37 @@ test("desktop grant covers guest and member calls, rejects replay and follows th
   const body = new TextEncoder().encode(JSON.stringify({ model: INFERENCE_FREE_MODEL_ID, messages: [{ role: "user", content: "hello" }] }))
   const send = (path: string, headers: Record<string,string>) => app.request(path, { method: "POST", body, headers: { "content-type": "application/json", ...headers } })
   for (const [path, member] of [[DESKTOP_FREE_CHAT_PATH, null], [MEMBER_FREE_CHAT_PATH, "Bearer fixture-a"], [MEMBER_FREE_CHAT_PATH, "Bearer fixture-c"]] as const) {
-    assert.equal((await send(path, member ? { authorization: member } : {})).status, 403)
+    const challenge = await send(path, member ? { authorization: member } : {})
+    assert.equal(challenge.status, 426)
+    const refused = new RemoteFailure(challenge.status, new Uint8Array(await challenge.arrayBuffer()), challenge.headers)
+    assert.equal(desktopFreeProofRequested(refused.status, refused.payload()), true)
+    // Released desktops cannot sign: they read the same answer as "Needs an OpenWork update".
+    assert.equal(statusFromRejection(refused.payload(), unavailable).state, "update_required")
     const headers = await session.headers(member, path, "POST", body, new AbortController().signal)
     const response = await send(path, headers)
     assert.equal(response.status, 200)
     await response.text()
     assert.equal((await send(path, headers)).status, 401)
-    if (member) assert.equal((await send(path, { ...headers, authorization: "Bearer fixture-b" })).status, 403)
+    if (member) assert.equal((await send(path, { ...headers, authorization: "Bearer fixture-b" })).status, 426)
   }
   const { createAnonymousIdentities } = await import("../src/free/guest/identity.js")
   const { installationHash } = createAnonymousIdentities({ machineId: "a".repeat(64) }, "203.0.113.40", config)
   assert.deepEqual(admittedDesktops, [installationHash, installationHash])
   assert.equal(calls, 3)
+  address = "198.51.100.8"
+  required = false
+  const renewed = new DesktopFreeSession(signer, "https://gateway.test")
+  const headers = await renewed.headers(null, DESKTOP_FREE_CHAT_PATH, "POST", body, new AbortController().signal, true)
+  assert.equal((await send(DESKTOP_FREE_CHAT_PATH, headers)).status, 200)
+  assert.match(safetyIds[0], /^[a-f0-9]{64}$/)
+  assert.equal(safetyIds[3], safetyIds[0])
+  assert.notEqual(safetyIds[0], "a".repeat(64))
+  assert.notEqual(safetyIds[0], safetyIds[1])
+  const locked = new DesktopFreeSession({ identity: async () => { throw new Error("locked") }, sign: signer.sign }, "https://gateway.test")
+  const open = await locked.headers(null, DESKTOP_FREE_CHAT_PATH, "POST", body, new AbortController().signal, true)
+  assert.equal(open.authorization, "Bearer " + DESKTOP_FREE_OPEN_API_KEY)
+  required = true
+  assert.equal((await send(DESKTOP_FREE_CHAT_PATH, open)).status, 426)
+  await assert.rejects(locked.headers("Bearer fixture", MEMBER_FREE_CHAT_PATH, "POST", body, new AbortController().signal, true))
+  await assert.rejects(locked.headers(null, DESKTOP_FREE_CHAT_PATH, "POST", body, new AbortController().signal, false))
 })

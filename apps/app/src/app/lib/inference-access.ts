@@ -43,7 +43,7 @@ export function freeAutoSwitchedOff(status: { code?: string | null } | null | un
   return status?.code === "free_disabled" || status?.code === "inference_disabled";
 }
 
-const NOT_OFFERED_CODES = ["free_not_enrolled", "free_not_offered", "admin_disabled", "not_eligible", "member_free_policy_denied", "managed_models_disabled_for_dpa", "desktop_build_unverified"];
+const NOT_OFFERED_CODES = ["free_not_enrolled", "free_not_offered", "admin_disabled", "not_eligible", "member_free_policy_denied", "managed_models_disabled_for_dpa", "desktop_build_unverified", "desktop_app_required"];
 export function autoNotOffered(status: { code?: string | null } | null | undefined): boolean {
   return typeof status?.code === "string" && NOT_OFFERED_CODES.includes(status.code);
 }
@@ -56,6 +56,7 @@ function notOfferedCopy(code?: string | null) {
     case "free_not_enrolled": return { subtitle: "Not on for your organization yet", detail: "Your organization hasn’t turned on OpenWork Free yet. An admin can turn it on. Other models still work." };
     case "free_not_offered": case "admin_disabled": return { subtitle: "Turned off by your organization", detail: "Your organization has turned off OpenWork Free. Other models still work." };
     case "managed_models_disabled_for_dpa": return { subtitle: "Not available for your organization", detail: "OpenWork Free isn’t available under your organization’s data agreement. Other models still work." };
+    case "desktop_app_required": return { subtitle: "Desktop app only", detail: "OpenWork Free works in the OpenWork desktop app. Other models still work." };
     default: return { subtitle: "Not available for this account", detail: "OpenWork Free isn’t available for this account. Other models still work." };
   }
 }
@@ -76,6 +77,7 @@ export function autoAccessWallFromError(value: unknown, model?: ModelRef | null,
   const code = Reflect.get(value, "code");
   const rawMessage = Reflect.get(value, "message");
   const known = typeof code === "string" ? { code, ...(typeof rawMessage === "string" && rawMessage.trim() ? { message: rawMessage.trim().slice(0, 2000) } : {}) } : {};
+  if (code === "email_verification_required") return { state: "unavailable", ...known };
   if (code === "desktop_update_required") {
     const minimumVersion = Reflect.get(value, "minimumVersion");
     return typeof minimumVersion === "string" && minimumVersion.trim() ? { state: "update", minimumVersion, ...known } : { state: "update", ...known };
@@ -115,6 +117,7 @@ export function autoUpdateTarget(minimumVersion?: string | null) {
   return version ? `OpenWork v${version} or newer` : "OpenWork";
 }
 export function autoPickerCopy(state: AutoPickerState, signedIn: boolean, minimumVersion?: string | null, code?: string | null, resetsAt?: string | null) {
+  if (code === "email_verification_required") return { subtitle: "Verify your email", detail: "Verify your account email to use OpenWork Free.", action: null };
   switch (state) {
     case "not_offered": return { ...notOfferedCopy(code), action: null };
     case "exhausted": {
@@ -155,6 +158,7 @@ export function autoWallCopy(wall: AutoAccessWall, signedIn: boolean, now = Date
     wall.resetsAt ? `Resets: ${wall.resetsAt}` : null, wall.minimumVersion ? `Minimum version: ${wall.minimumVersion}` : null]
     .filter(Boolean).join("\n") || null;
   const copy = (() => {
+    if (wall.code === "email_verification_required") return { title: "Verify your email to use OpenWork Free", detail: "One verification covers all your workspaces." };
     switch (wall.state) {
       case "unavailable": return { title: "OpenWork Free is busy right now", detail: "Pick another model to keep going, or try OpenWork Free again in a bit." };
       case "sync": return { title: "OpenWork Free is still getting ready", detail: "Wait a moment, or pick another model to keep going." };

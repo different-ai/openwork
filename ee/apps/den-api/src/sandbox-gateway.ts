@@ -1,6 +1,7 @@
 import { eq } from "@openwork-ee/den-db/drizzle"
 import { GatewayProviderModelTable, GatewayProviderTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+import { SandboxOrganizationTable } from "@openwork-ee/den-db/schema"
 import { db } from "./db.js"
 import { env } from "./env.js"
 import { gatewayCatalog, GatewayWriteError, writeGatewayGrant, writeGatewayGroup, writeGatewayModels, writeGatewaySet, type GatewayProvider } from "./llm/gateway-matrix.js"
@@ -43,6 +44,7 @@ export async function addSandboxGatewayProvider(input: {
     await tx.insert(GatewayProviderTable).values(provider)
     await writeGatewayModels(tx, provider, catalog.models)
     const set = await writeGatewaySet(tx, provider, { name: "Default credentials", credentialMode: "org", credential: { kind: "api_key", secret: apiKey } }, { createdByOrgMembershipId: input.ownerMemberId })
+    await tx.update(SandboxOrganizationTable).set({ sponsoredSetId: set.id }).where(eq(SandboxOrganizationTable.organizationId, provider.organization_id))
     const models = await tx.select().from(GatewayProviderModelTable).where(eq(GatewayProviderModelTable.gateway_provider_id, provider.id))
     if (models.length === 0) throw new Error("sandbox_gateway_models_missing")
     const groupId = await writeGatewayGroup(tx, provider, { name: "All Allowed Models", modelIds: models.map(model => model.model_id) })

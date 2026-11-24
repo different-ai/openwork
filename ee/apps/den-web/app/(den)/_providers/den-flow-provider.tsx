@@ -106,6 +106,9 @@ type DenFlowContextValue = {
   continueSetup: (organizationId: string | null, route: string) => void;
   completeSetup: (organizationId: string) => Promise<boolean>;
   webAuthRequested: boolean;
+  webAuthConfirmation: { host: string; organizationName: string } | null;
+  confirmWebAuthHandoff: () => void;
+  cancelWebAuthHandoff: () => void;
   desktopRedirectUrl: string | null;
   desktopRedirectBusy: boolean;
   retryDesktopAuthHandoff: () => void;
@@ -222,6 +225,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   const [desktopRedirectUrl, setDesktopRedirectUrl] = useState<string | null>(null);
   const desktopAuthRequested = Boolean(continuation?.desktopScheme || desktopRedirectUrl);
   const [desktopRedirectAttempted, setDesktopRedirectAttempted] = useState(false);
+  const [webAuthConfirmation, setWebAuthConfirmation] = useState<{ host: string; organizationName: string } | null>(null);
   const [webRedirectBusy, setWebRedirectBusy] = useState(false);
   const [webRedirectAttempted, setWebRedirectAttempted] = useState(false);
   const [runtimeConfig, setRuntimeConfig] = useState<DenWebRuntimeConfig>(EMPTY_RUNTIME_CONFIG);
@@ -607,7 +611,7 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     return typeof returnUrl === "string" && returnUrl.trim() ? returnUrl.trim() : null;
   }
 
-  async function completeWebAuthHandoff() {
+  async function completeWebAuthHandoff(confirmed = false) {
     if (!webAuthRequested || webRedirectBusy) {
       return;
     }
@@ -630,8 +634,16 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       const { response, payload } = await requestJson("/api/auth/desktop-handoff", {
         method: "POST",
         headers,
-        body: JSON.stringify({ returnUrl: webAuthReturnUrl })
+        body: JSON.stringify(confirmed ? { returnUrl: webAuthReturnUrl, confirmed: true } : { returnUrl: webAuthReturnUrl })
       });
+
+      if (response.status === 409 && isRecord(payload) && payload.error === "confirmation_required" && typeof payload.returnHost === "string") {
+        setWebAuthConfirmation({
+          host: payload.returnHost,
+          organizationName: typeof payload.organizationName === "string" ? payload.organizationName : "",
+        });
+        return;
+      }
 
       if (!response.ok) {
         setAuthError(getErrorMessage(payload, `Web handoff failed with ${response.status}.`));
@@ -1235,6 +1247,15 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     continueSetup,
     completeSetup,
     webAuthRequested,
+    webAuthConfirmation,
+    confirmWebAuthHandoff: () => {
+      void completeWebAuthHandoff(true);
+    },
+    cancelWebAuthHandoff: () => {
+      setWebAuthConfirmation(null);
+      setWebAuthRequested(false);
+      setWebAuthReturnUrl(null);
+    },
     desktopRedirectUrl,
     desktopRedirectBusy,
     retryDesktopAuthHandoff: () => {

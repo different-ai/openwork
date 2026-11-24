@@ -341,7 +341,9 @@
             "group": "Observability",
             "pages": [
               "cloud/analytics",
-              "cloud/audit-logs"
+              "cloud/audit-logs",
+              "cloud/export-audit-logs",
+              "cloud/audit-export-api"
             ]
           },
           {

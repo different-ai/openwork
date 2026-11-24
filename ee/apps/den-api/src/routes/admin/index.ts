@@ -49,6 +49,8 @@ import { getOrganizationPlanStates } from "../../organization-plan-state.js"
 import { organizationPlanStateSchema, type PlanPaidBy } from "@openwork/types/den/billing-plans"
 import { adminRoute, jsonValidator, queryValidator } from "../../middleware/index.js"
 import { registerAdminFreeAutoConversionsRoutes } from "./free-auto-conversions.js"
+import { registerAdminSafetyCases } from "./free-auto-safety-cases.js"
+import { registerFundedModelSuspensions } from "./funded-model-suspensions.js"
 import { registerAdminFreeAutoUsageRoutes } from "./free-auto-usage.js"
 import { registerAdminSecurityRoutes } from "./security.js"
 import { registerAdminDashboardRoute } from "./dashboard.js"
@@ -1391,6 +1393,8 @@ const adminRouteErrors = {
 
 export function registerAdminRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
   registerAdminManagedReleaseRoutes(app)
+  registerAdminSafetyCases(app)
+  registerFundedModelSuspensions(app)
   registerAdminFreeAutoUsageRoutes(app)
   registerAdminFreeAutoConversionsRoutes(app)
   registerAdminSecurityRoutes(app)

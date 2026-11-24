@@ -28,6 +28,7 @@ import { checkFixedWindowRateLimit, checkRateLimit } from "../../utils/rate-limi
 import type { OrgRouteVariables } from "./shared.js"
 
 const PATH = "/v1/managed-deployments"
+const GOOGLE_CLOUD_FEATURE = "managedGoogleCloudDeployments" as const
 export const RUN_LIFETIME_MS = 3 * 60 * 60 * 1000
 const MAX_HEARTBEAT_BYTES = 16_384
 export const deploymentParam = z.object({ deploymentId: z.string().uuid() })
@@ -181,7 +182,8 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
     orgPermissionRoute("deployments.view"), requireFeature("managedDeployments"), async (c) => {
       const org = c.get("organizationContext")
       if (!org) return c.json({ error: "organization_not_found" }, 404)
-      const [aws, gcp] = await Promise.all([effectiveInstallerReadiness("aws"), effectiveInstallerReadiness("gcp")])
+      const [aws, gcpEnabled] = await Promise.all([effectiveInstallerReadiness("aws"), organizationFeatureEnabled(org.organization.id, GOOGLE_CLOUD_FEATURE)])
+      const gcp = gcpEnabled ? await effectiveInstallerReadiness("gcp") : { provider: "gcp", available: false, version: null, reason: "feature_disabled" }
       return c.json(managedDeploymentConfigurationSchema.parse({
         providers: [
           aws,
@@ -219,10 +221,14 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       const org = c.get("organizationContext")
       if (!org) return c.json({ error: "organization_not_found" }, 404)
       const body = c.req.valid("json")
-      if (!await effectiveInstallerRelease(body.provider)) return c.json({ error: "release_not_configured" }, 503)
+      if (body.provider === "aws" && !await effectiveInstallerRelease("aws")) return c.json({ error: "release_not_configured" }, 503)
       const id = randomUUID()
       const created = await db.transaction(async (tx) => {
         if (!await organizationFeatureEnabled(org.organization.id, "managedDeployments", { database: tx, lock: "share", userId: org.currentMember.userId })) return launchError("feature_disabled", 404)
+        if (body.provider === "gcp") {
+          if (!await organizationFeatureEnabled(org.organization.id, GOOGLE_CLOUD_FEATURE, { database: tx, lock: "share" })) return launchError("feature_disabled", 404)
+          if (!await effectiveInstallerRelease("gcp")) return { error: "release_not_configured", status: 503 } as const
+        }
         let target: Record<string, unknown> = body.target
         if (body.provider === "aws") {
           const available = await organizationFeatureEnabled(org.organization.id, "managedDeploymentAssistants", { database: tx, lock: "share", userId: org.currentMember.userId })
@@ -280,6 +286,7 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
         const [row] = await tx.select().from(ManagedDeploymentTable).where(and(eq(ManagedDeploymentTable.id, id), eq(ManagedDeploymentTable.org_id, org.organization.id))).limit(1).for("update")
         if (!row) return { error: "deployment_not_found", status: 404 } as const
         if (!await organizationFeatureEnabled(org.organization.id, "managedDeployments", { database: tx, lock: "share", userId: org.currentMember.userId })) return { error: "feature_disabled", status: 404 } as const
+        if (row.provider === "gcp" && !await organizationFeatureEnabled(row.org_id, GOOGLE_CLOUD_FEATURE, { database: tx, lock: "share" })) return launchError("feature_disabled", 404)
         if ((assistants || runtimeProfile) && row.provider !== "aws") return launchError("assistants_aws_only", 400)
         const storedTarget = row.provider === "aws" ? awsTarget(row) : null
         const changedTarget = storedTarget && (assistants || runtimeProfile) ? awsTargetSchema.safeParse({
@@ -338,6 +345,7 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
       const [run] = await db.select().from(ManagedDeploymentRunTable).where(and(eq(ManagedDeploymentRunTable.id, runId), eq(ManagedDeploymentRunTable.deployment_id, deploymentId))).limit(1)
       if (!row || !run || row.active_run_id !== run.id || (row.provider !== "aws" && row.provider !== "gcp")) return c.json({ error: "deployment_not_found" }, 404)
       if (run.state !== "awaiting_approval" || run.expires_at < new Date()) return c.json({ error: "deployment_run_conflict" }, 409)
+      if (row.provider === "gcp" && !await organizationFeatureEnabled(row.org_id, GOOGLE_CLOUD_FEATURE)) return c.json({ error: "feature_disabled" }, 404)
       const retryAfter = await checkRateLimit(`managed-enroll:${runId}`, 10, 60_000, Date.now())
       if (retryAfter !== null) {
         c.header("Retry-After", String(retryAfter))
@@ -363,6 +371,7 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
         if (!deployment || deployment.active_run_id !== runId) return null
         const [current] = await tx.select().from(ManagedDeploymentRunTable).where(eq(ManagedDeploymentRunTable.id, runId)).limit(1).for("update")
         if (!current || current.state !== "awaiting_approval" || current.expires_at < new Date()) return null
+        if (deployment.provider === "gcp" && !await organizationFeatureEnabled(deployment.org_id, GOOGLE_CLOUD_FEATURE, { database: tx, lock: "share" })) return "feature_disabled" as const
         if (current.kind === "configure" && !approvalClaimed(current) && !await organizationFeatureEnabled(deployment.org_id, "managedDeploymentConfigUpdates", { database: tx, lock: "share", userId: configurationChangeRecord(current).requestedBy.userId })) {
           await withdrawConfigurationChange(tx, deployment, current)
           return null
@@ -373,6 +382,7 @@ export function registerManagedDeploymentRoutes<T extends { Variables: OrgRouteV
         const [stored] = await tx.select({ expiresAt: ManagedDeploymentRunTable.expires_at }).from(ManagedDeploymentRunTable).where(eq(ManagedDeploymentRunTable.id, runId)).limit(1)
         return stored ?? null
       })
+      if (enrolled === "feature_disabled") return c.json({ error: "feature_disabled" }, 404)
       if (!enrolled) return c.json({ error: "deployment_run_conflict" }, 409)
       c.header("Cache-Control", "no-store")
       return c.json({ token, expiresAt: enrolled.expiresAt.toISOString() })
