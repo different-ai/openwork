@@ -6,6 +6,7 @@
 import assert from "node:assert/strict"
 import { randomUUID } from "node:crypto"
 import { after, test } from "node:test"
+import { INFERENCE_USAGE_CONVERSION_FACTOR } from "@openwork/types/den/inference"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { bootDen, field, summary, type Call } from "./harness.js"
 
@@ -94,6 +95,48 @@ test("account and credential findings come from real rows", async () => {
   for (const id of ["unverified-signups", "unverified-domains", "network-spread", "organization-creation", "api-keys", "client-registrations", "invitations", "spend-spikes"]) {
     assert.ok(byId.has(id), `${id} is always reported`)
   }
+})
+
+test("the organization finding ranks founders by settled free spend in distinct new organizations", async () => {
+  const founder = await den.signUp("Workspace founder")
+  const first = await den.createOrg(founder, "One")
+  const second = await den.createOrg(founder, "Two")
+  const unused = await den.createOrg(founder, "Unused")
+  const past = await den.createOrg(founder, "Past")
+  const other = await den.createOrg(person, "Independent")
+  const replacementOwner = await den.newMember(founder, second.orgId, "Next owner")
+  await query("UPDATE member SET role = 'owner' WHERE id = ?", [replacementOwner.memberId])
+  await query("UPDATE member SET role = 'member' WHERE id = ?", [second.owner.memberId])
+  const now = new Date()
+  const weekAgo = new Date(now.getTime() - 8 * 86_400_000)
+  const dollar = INFERENCE_USAGE_CONVERSION_FACTOR
+  await freeUsage(first.orgId, first.owner.memberId, now, 2 * dollar)
+  await freeUsage(first.orgId, first.owner.memberId, now, dollar)
+  await freeUsage(other.orgId, other.owner.memberId, now, 20 * dollar)
+  await freeUsage(unused.orgId, unused.owner.memberId, now, 50 * dollar)
+  await query("UPDATE inference_free_usage SET estimated = true WHERE organization_id = ?", [unused.orgId])
+  await freeUsage(unused.orgId, unused.owner.memberId, now, 0)
+  await freeUsage(past.orgId, past.owner.memberId, now, 30 * dollar)
+  await query("UPDATE organization SET created_at = ? WHERE id = ?", [utc(weekAgo), past.orgId])
+  await freeUsage(second.orgId, replacementOwner.memberId, weekAgo, dollar)
+
+  async function finding() {
+    const report = securityReportResponseSchema.parse(ok(await den.request(admin.token, "GET", "/v1/admin/security?days=7")))
+    const result = report.findings.find(entry => entry.id === "organization-creation")
+    assert.ok(result)
+    return result
+  }
+  assert.equal((await finding()).entityCount, 0)
+  await freeUsage(second.orgId, replacementOwner.memberId, now, dollar)
+  assert.equal((await finding()).entities[0]?.severity, "low")
+  await freeUsage(second.orgId, replacementOwner.memberId, now, dollar)
+  const medium = await finding()
+  assert.equal(medium.unit, "micro_usd")
+  assert.equal(medium.value, 5_000_000)
+  assert.deepEqual(medium.entities, [{ id: founder.userId, label: founder.email, detail: "$5.00 across 2 new organizations",
+    value: 5_000_000, severity: "medium", target: { type: "user", userId: founder.userId } }])
+  await freeUsage(second.orgId, replacementOwner.memberId, now, 10 * dollar)
+  assert.equal((await finding()).entities[0]?.severity, "high")
 })
 
 test("request activity shows the failed sign-in burst by hour", async () => {

@@ -1,10 +1,11 @@
-import { and, count, eq, gte, inArray, isNotNull, lt, ne, sql } from "@openwork-ee/den-db/drizzle"
+import { and, count, eq, gt, gte, inArray, isNotNull, lt, lte, ne, sql } from "@openwork-ee/den-db/drizzle"
 import {
   AdminAllowlistTable,
   AuthApiKeyTable,
   AutomationTable,
   AuthSessionTable,
   AuthUserTable,
+  FreeAutoOrgFounderTable,
   InferenceFreeUsageTable,
   InferenceUsageLedgerEntryTable,
   InvitationTable,
@@ -43,7 +44,6 @@ import {
   NETWORK_SPREAD_TIERS,
   networkOf,
   networkSpreadFinding,
-  ORGANIZATION_CREATION_TIERS,
   organizationCreationFinding,
   rateLimitedFinding,
   ROUND_THE_CLOCK_HOURS,
@@ -144,7 +144,7 @@ export async function readSecurityReport(input: { days: number; now?: Date }): P
   const previousFrom = new Date(from.getTime() - input.days * DAY_MS)
 
   const [
-    accounts, firstSignIns, previousAccounts, sessions, owners, adminGrants, adminTotal,
+    accounts, firstSignIns, previousAccounts, sessions, founderSpend, adminGrants, adminTotal,
     keyOwners, keyPosture, clientTotals, clientUsers, inviters, paidSpend, freeSpend, paidHours, freeHours, firstDayAllowance,
   ] = await Promise.all([
     db.select({ userId: AuthUserTable.id, email: AuthUserTable.email, emailVerified: AuthUserTable.emailVerified, createdAt: AuthUserTable.createdAt })
@@ -157,9 +157,18 @@ export async function readSecurityReport(input: { days: number; now?: Date }): P
     db.select({ userId: AuthSessionTable.userId, ipAddress: AuthSessionTable.ipAddress, userAgent: AuthSessionTable.userAgent, signIns: count() })
       .from(AuthSessionTable).where(gte(AuthSessionTable.createdAt, from))
       .groupBy(AuthSessionTable.userId, AuthSessionTable.ipAddress, AuthSessionTable.userAgent),
-    db.select({ userId: MemberTable.userId, organizations: count() }).from(MemberTable)
-      .where(and(gte(MemberTable.createdAt, from), sql`${MemberTable.role} like ${"%owner%"}`, eq(MemberTable.isSetupAgent, false), isNotNull(MemberTable.userId)))
-      .groupBy(MemberTable.userId).having(sql`count(*) >= ${ORGANIZATION_CREATION_TIERS.medium}`),
+    db.select({
+      userId: FreeAutoOrgFounderTable.founder_user_id,
+      organizations: sql<number>`count(distinct ${InferenceFreeUsageTable.organization_id})`,
+      amount: sql<number>`sum(${InferenceFreeUsageTable.amount})`,
+    }).from(InferenceFreeUsageTable)
+      .innerJoin(FreeAutoOrgFounderTable, eq(FreeAutoOrgFounderTable.organization_id, InferenceFreeUsageTable.organization_id))
+      .innerJoin(OrganizationTable, eq(OrganizationTable.id, InferenceFreeUsageTable.organization_id))
+      .where(and(gte(OrganizationTable.createdAt, from), lte(OrganizationTable.createdAt, now),
+        gte(InferenceFreeUsageTable.created_at, from), lte(InferenceFreeUsageTable.created_at, now),
+        eq(InferenceFreeUsageTable.estimated, false), gt(InferenceFreeUsageTable.amount, 0)))
+      .groupBy(FreeAutoOrgFounderTable.founder_user_id)
+      .having(sql`count(distinct ${InferenceFreeUsageTable.organization_id}) >= 2`),
     db.select({ id: AdminAllowlistTable.id, email: AdminAllowlistTable.email, note: AdminAllowlistTable.note, createdAt: AdminAllowlistTable.created_at })
       .from(AdminAllowlistTable).where(gte(AdminAllowlistTable.created_at, from)),
     db.select({ admins: count() }).from(AdminAllowlistTable),
@@ -277,7 +286,7 @@ export async function readSecurityReport(input: { days: number; now?: Date }): P
 
   const userIds = [...new Set([
     ...spreadUsers.map(([userId]) => userId),
-    ...owners.flatMap((row) => row.userId ? [row.userId] : []),
+    ...founderSpend.map((row) => row.userId),
     ...keyOwners.map((row) => row.ownerId),
     ...clientUsers.flatMap((row) => row.userId ? [row.userId] : []),
     ...inviters.map((row) => row.userId),
@@ -303,7 +312,8 @@ export async function readSecurityReport(input: { days: number; now?: Date }): P
     disposableSignupFinding(newAccounts),
     unverifiedDomainFinding([...unverifiedByDomain].map(([domain, entry]) => ({ domain, ...entry })), new Set([...PERSONAL_EMAIL_DOMAINS, ...DISPOSABLE_EMAIL_DOMAINS])),
     networkSpreadFinding(spreadUsers.map(([userId, entry]) => ({ userId, email: emailOf(userId), networks: entry.networks.size, signIns: entry.signIns, clients: entry.clients.size }))),
-    organizationCreationFinding(owners.flatMap((row) => row.userId ? [{ userId: row.userId, email: emailOf(row.userId), organizations: number(row.organizations) }] : [])),
+    organizationCreationFinding(founderSpend.map((row) => ({ userId: row.userId, email: emailOf(row.userId),
+      organizations: number(row.organizations), spendMicroUsd: microUsd(number(row.amount)) }))),
     adminGrantFinding(adminGrants, number(adminTotal[0]?.admins)),
     apiKeyFinding(keyOwners.map((row) => ({ ownerId: row.ownerId, label: emailOf(row.ownerId), keys: number(row.keys), isUser: emailById.has(row.ownerId) })),
       { enabled: number(keyPosture[0]?.enabled), withoutExpiry: number(keyPosture[0]?.withoutExpiry) }),

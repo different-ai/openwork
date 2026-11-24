@@ -222,21 +222,23 @@ export function networkSpreadFinding(rows: readonly UserNetworkSpread[]): Securi
   })
 }
 
-export type OrganizationCreator = { userId: string; email: string; organizations: number }
-export const ORGANIZATION_CREATION_TIERS = { high: 15, medium: 5 }
+type OrganizationCreator = { userId: string; email: string; organizations: number; spendMicroUsd: number }
+const FOUNDER_SPEND_TIERS = { medium: 5_000_000, high: 15_000_000 }
 
 export function organizationCreationFinding(rows: readonly OrganizationCreator[]): SecurityFinding {
-  const entities = rows.flatMap((row): SecurityEntity[] => {
-    const severity = tiered(row.organizations, ORGANIZATION_CREATION_TIERS)
-    return severity === "clear" ? [] : [{ id: row.userId, label: row.email, detail: `Owner of ${plural(row.organizations, "new organization")}`, value: row.organizations, severity, target: { type: "user", userId: row.userId } }]
-  })
+  const entities = rows.map((row): SecurityEntity => ({
+    id: row.userId, label: row.email, target: { type: "user", userId: row.userId },
+    detail: `${usd(row.spendMicroUsd)} across ${plural(row.organizations, "new organization")}`,
+    value: row.spendMicroUsd, severity: tiered(row.spendMicroUsd, { ...FOUNDER_SPEND_TIERS, low: 0 }),
+  }))
+  const total = entities.reduce((sum, entity) => sum + entity.value, 0)
   return finding({
-    id: "organization-creation", category: "accounts", title: "Many new organizations from one person",
-    summary: entities.length ? `${plural(entities.length, "person", "people")} created ${ORGANIZATION_CREATION_TIERS.medium}+ organizations.` : "Nobody created more than a few organizations.",
-    rule: `Counts organizations a person became the owner of in the range; ${ORGANIZATION_CREATION_TIERS.medium}+ is medium, ${ORGANIZATION_CREATION_TIERS.high}+ high.`,
-    why: "Every organization starts with its own free allowances, so repeated creation can multiply them.",
-    review: "Open the person and check whether the organizations hold real work or only used free model credits.",
-    value: entities.length, unit: "count", entities,
+    id: "organization-creation", category: "accounts", title: "Free spend across new organizations",
+    summary: entities.length ? `${usd(total)} in free usage across multiple new organizations per founder.` : "No founder used free models in two or more new organizations.",
+    rule: `Counts settled free usage in at least two organizations created by the same founder within the selected period. Low below ${usd(FOUNDER_SPEND_TIERS.medium)}, medium from ${usd(FOUNDER_SPEND_TIERS.medium)}, high from ${usd(FOUNDER_SPEND_TIERS.high)}.`,
+    why: "Concentrated free usage across new organizations can indicate repeated claims on the starter allowance.",
+    review: "Check the founder’s organizations and their model activity before taking action.",
+    value: total, unit: "micro_usd", entities,
   })
 }
 
