@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto"
 import { and, desc, eq, gt } from "@openwork-ee/den-db/drizzle"
 import { ManagedInstallerChangeTable, ManagedInstallerConfigTable, ManagedInstallerValidationTable } from "@openwork-ee/den-db/schema"
-import { managedInstallerCoordinatesSchema, managedInstallerValidationSchema, type ManagedInstallerApprovalMode, type ManagedInstallerValidation, type ManagedInstallerProvider, type ManagedInstallerProviderState, type ManagedInstallerQualification, type ManagedInstallerReport } from "@openwork/types/den/managed-installer-releases"
+import { compareInstallerRelease, installerRevisionField, installerRevisionOf } from "@openwork/managed-deployments/installer-release"
+import { managedInstallerCoordinatesSchema, type ManagedInstallerCoordinates, managedInstallerValidationSchema, type ManagedInstallerApprovalMode, type ManagedInstallerValidation, type ManagedInstallerProvider, type ManagedInstallerProviderState, type ManagedInstallerQualification, type ManagedInstallerReport } from "@openwork/types/den/managed-installer-releases"
 import { db } from "../db.js"
 import { awsRelease, gcpRelease, managedDeploymentApiOrigin, releaseReadiness, type ManagedDeploymentRelease } from "./config.js"
 import { immutableInstallerUrl, inferInstallerSource, installerSourceBaseUrl, InstallerReleaseError, sha256, verifyFrozenInstallerRelease, verifyInstallerRelease } from "./release-verifier.js"
@@ -21,18 +22,10 @@ function requireApproval(mode: ManagedInstallerApprovalMode, verifier: string, a
 }
 type Transaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 const providers: ManagedInstallerProvider[] = ["aws", "gcp"]
-const sameCoordinates = (a: { version: string, templateUrl: string, bundleUrl: string, bundleSha256: string }, b: { version: string, templateUrl: string, bundleUrl: string, bundleSha256: string }) => a.version === b.version && a.templateUrl === b.templateUrl && a.bundleUrl === b.bundleUrl && a.bundleSha256 === b.bundleSha256
-function compareReleaseVersions(next: string, current: string) {
-  const a = /^(\d+)\.(\d+)\.(\d+)$/.exec(next)
-  const b = /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?$/.exec(current)
-  if (!a || !b) return null
-  for (const index of [1, 2, 3]) {
-    const left = a[index]
-    const right = b[index]
-    if (!left || !right) return null
-    if (BigInt(left) !== BigInt(right)) return BigInt(left) < BigInt(right) ? -1 : 1
-  }
-  return b[4] ? 1 : 0
+const sameCoordinates = (a: ManagedInstallerCoordinates, b: ManagedInstallerCoordinates) => a.version === b.version && installerRevisionOf(a.installerRevision) === installerRevisionOf(b.installerRevision) && a.templateUrl === b.templateUrl && a.bundleUrl === b.bundleUrl && a.bundleSha256 === b.bundleSha256
+function pinnedRevisionIn(state: Record<string, unknown>) {
+  const release = managedInstallerCoordinatesSchema.safeParse(state.release)
+  return release.success ? installerRevisionOf(release.data.installerRevision) : null
 }
 const environmentRelease = (provider: ManagedInstallerProvider) => provider === "aws" ? awsRelease() : gcpRelease()
 
@@ -65,7 +58,7 @@ export function installerProviderState(provider: ManagedInstallerProvider, row?:
   const environment = environmentRelease(provider)
   const readiness = releaseReadiness(provider)
   const parsed = row?.release == null ? null : managedInstallerCoordinatesSchema.safeParse(row.release)
-  let release = parsed ? parsed.success ? parsed.data : null : environment ? { version: environment.version, templateUrl: environment.templateUrl, bundleUrl: environment.bundleUrl, bundleSha256: environment.bundleSha256 } : null
+  let release = parsed ? parsed.success ? parsed.data : null : environment ? { version: environment.version, ...installerRevisionField(environment.installerRevision), templateUrl: environment.templateUrl, bundleUrl: environment.bundleUrl, bundleSha256: environment.bundleSha256 } : null
   let source: ManagedInstallerProviderState["source"] = row?.release != null ? parsed?.success ? "admin" : "invalid_configuration" : environment ? "environment" : readiness.reason === "invalid_configuration" ? "invalid_configuration" : "unconfigured"
   const prefix = `DEN_MANAGED_DEPLOYMENT_${provider.toUpperCase()}`
   let sourceBaseUrl = row?.source_base_url ?? environmentSourceBaseUrl(provider)
@@ -101,7 +94,7 @@ export async function installerReleaseReport(actor?: string): Promise<ManagedIns
     const [pending] = await db.$primary.select().from(ManagedInstallerValidationTable).where(and(eq(ManagedInstallerValidationTable.provider, provider), eq(ManagedInstallerValidationTable.revision, state.revision), gt(ManagedInstallerValidationTable.expires_at, new Date()))).orderBy(desc(ManagedInstallerValidationTable.expires_at), desc(ManagedInstallerValidationTable.id)).limit(1)
     return { ...state, pendingValidation: pending ? validationForCaller(pending, state.approvalMode, actor) : null }
   }))
-  return { providers: states, history: changes.map((change) => ({ id: change.id, provider: change.provider, action: change.action, version: change.version, actor: change.actor, createdAt: change.created_at.toISOString(), manifestSha256: change.manifest_sha256, qualification: change.qualification })) }
+  return { providers: states, history: changes.map((change) => ({ id: change.id, provider: change.provider, action: change.action, version: change.version, ...(change.version ? installerRevisionField(pinnedRevisionIn(change.after)) : {}), actor: change.actor, createdAt: change.created_at.toISOString(), manifestSha256: change.manifest_sha256, qualification: change.qualification })) }
 }
 
 function requireRevision(state: ManagedInstallerProviderState, revision: string) {
@@ -145,12 +138,13 @@ async function changeSetting(input: { provider: ManagedInstallerProvider, expect
       const current = before.release
       const next = candidate.validation.release
       if (current) {
-        const order = compareReleaseVersions(next.version, current.version)
-        if (order === null || order < 0) throw new InstallerReleaseError("release_downgrade", "Choose a version newer than the current default. Reset is a separate explicit action.", 409)
-        if (order === 0 && !sameCoordinates(current, next)) throw new InstallerReleaseError("version_conflict", "This version already identifies different release bytes. Publish a new version.", 409)
+        const order = compareInstallerRelease(next, current)
+        if (order === null || order < 0) throw new InstallerReleaseError("release_downgrade", "Choose a version or installer revision newer than the current default. Reset is a separate explicit action.", 409)
+        if (order === 0 && !sameCoordinates(current, next)) throw new InstallerReleaseError("version_conflict", "This version and installer revision already identify different release bytes. Publish a new installer revision.", 409)
         if (order === 0 && row.release) {
-          const [previousPin] = await tx.select().from(ManagedInstallerChangeTable).where(and(eq(ManagedInstallerChangeTable.provider, input.provider), eq(ManagedInstallerChangeTable.action, "pinned"), eq(ManagedInstallerChangeTable.version, current.version))).orderBy(desc(ManagedInstallerChangeTable.created_at), desc(ManagedInstallerChangeTable.id)).limit(1)
-          if (!previousPin || previousPin.manifest_sha256 !== candidate.validation.manifestSha256) throw new InstallerReleaseError("version_conflict", "This version already identifies different release bytes. Publish a new version.", 409)
+          const pins = await tx.select().from(ManagedInstallerChangeTable).where(and(eq(ManagedInstallerChangeTable.provider, input.provider), eq(ManagedInstallerChangeTable.action, "pinned"), eq(ManagedInstallerChangeTable.version, current.version))).orderBy(desc(ManagedInstallerChangeTable.created_at), desc(ManagedInstallerChangeTable.id)).limit(100)
+          const previousPin = pins.find((pin) => pinnedRevisionIn(pin.after) === installerRevisionOf(current.installerRevision))
+          if (!previousPin || previousPin.manifest_sha256 !== candidate.validation.manifestSha256) throw new InstallerReleaseError("version_conflict", "This version and installer revision already identify different release bytes. Publish a new installer revision.", 409)
           return
         }
       }
@@ -183,13 +177,13 @@ export async function resetInstallerRelease(provider: ManagedInstallerProvider, 
 export async function pinInstallerRelease(input: { provider: ManagedInstallerProvider, validationId: string, expectedRevision: string, qualification: ManagedInstallerQualification }, actor: string, fetcher: typeof fetch = fetch) {
   return changeSetting({ ...input, actor, action: "pinned" }, fetcher)
 }
-export async function validateInstallerRelease(input: { provider: ManagedInstallerProvider, version: string, expectedRevision: string }, actor: string, verifier: typeof verifyInstallerRelease = verifyInstallerRelease) {
+export async function validateInstallerRelease(input: { provider: ManagedInstallerProvider, version: string, installerRevision?: number, expectedRevision: string }, actor: string, verifier: typeof verifyInstallerRelease = verifyInstallerRelease) {
   const [row] = await db.$primary.select().from(ManagedInstallerConfigTable).where(eq(ManagedInstallerConfigTable.provider, input.provider))
   const state = installerProviderState(input.provider, row)
   requireRevision(state, input.expectedRevision)
   if (!state.sourceBaseUrl) throw new InstallerReleaseError("source_required", "Save a public release source before validating.")
   requireAllowedSource(input.provider, state.sourceBaseUrl)
-  const verified = await verifier(input.provider, state.sourceBaseUrl, input.version)
+  const verified = await verifier(input.provider, state.sourceBaseUrl, input.version, fetch, installerRevisionOf(input.installerRevision))
   const now = new Date()
   const validation = { id: randomUUID(), provider: input.provider, release: verified.release, manifestSha256: verified.manifestSha256, services: verified.services, verifiedAt: now.toISOString(), expiresAt: new Date(now.getTime() + 15 * 60 * 1000).toISOString() }
   await db.transaction(async (tx) => {

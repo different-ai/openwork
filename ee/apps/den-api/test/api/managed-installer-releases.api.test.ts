@@ -26,8 +26,8 @@ const aws = async () => {
   return state
 }
 const qualification = { freshInstallUrl: "https://example.test/evidence/fresh", approvedUpdateUrl: "https://example.test/evidence/update" }
-const fetcher = fixtureFetch(new Map(["1.2.1", "1.2.3", "1.2.4"].map((version) => [version, fixtureArtifacts(version)])))
-const verifier: typeof verifyInstallerRelease = (provider, base, version) => verifyInstallerRelease(provider, base, version, fetcher)
+const fetcher = fixtureFetch(new Map([...["1.2.1", "1.2.3", "1.2.4"].map((version): [string, ReturnType<typeof fixtureArtifacts>] => [version, fixtureArtifacts(version)]), ["1.2.3_r2", fixtureArtifacts("1.2.3", { installerRevision: 2 })]]))
+const verifier: typeof verifyInstallerRelease = (provider, base, version, _fetch, installerRevision) => verifyInstallerRelease(provider, base, version, fetcher, installerRevision)
 
 test("the generated contract describes every managed release operation without exposing it through MCP", async () => {
   const contract = await den.request(null, "GET", "/openapi.json")
@@ -158,6 +158,49 @@ test("persistent source CAS, immutable validation, atomic pin and explicit envir
   assert.ok(changes.some((change) => change.action === "pinned" && change.actor === admin.userId && change.qualification?.freshInstallUrl === qualification.freshInstallUrl && change.manifest_sha256 === validation.manifestSha256))
   assert.ok(changes.every((change) => change.before && change.after))
   assert.ok(changes.some((change) => change.action === "approval_saved" && change.actor === admin.userId && change.before.approvalMode === "independent_admin" && change.after.approvalMode === "platform_admin"))
+})
+
+test("an installer-only fix is pinned as a higher revision of the same version, and never replaced or rolled back", async () => {
+  const pin = (validationId: string, expectedRevision: string, transport = fetcher) => releases.pinInstallerRelease({ provider: "aws", validationId, expectedRevision, qualification }, admin.userId, transport)
+  const initial = await aws()
+  assert.equal(initial.release?.version, "1.2.2")
+  const first = await releases.validateInstallerRelease({ provider: "aws", version: "1.2.3", expectedRevision: initial.revision }, admin.userId, verifier)
+  assert.equal(Object.hasOwn(first.release, "installerRevision"), false, "revision 1 is the absence of a revision")
+  await pin(first.id, initial.revision)
+  const onFirst = await aws()
+  assert.deepEqual(onFirst.release, first.release)
+
+  const preview = await den.request(admin.token, "POST", "/v1/admin/managed-releases/validate", { body: { provider: "aws", version: "1.2.3", installerRevision: 0, expectedRevision: onFirst.revision } })
+  assert.equal(preview.status, 400, summary(preview))
+  const second = await releases.validateInstallerRelease({ provider: "aws", version: "1.2.3", installerRevision: 2, expectedRevision: onFirst.revision }, admin.userId, verifier)
+  assert.equal(second.release.installerRevision, 2)
+  assert.match(second.release.templateUrl, /\/releases\/aws\/1\.2\.3_r2\/cloudformation\.json\?versionId=/)
+  assert.match(second.release.bundleUrl, /\/releases\/aws\/1\.2\.3_r2\/bundle\.tar\.gz\?versionId=/)
+  await pin(second.id, onFirst.revision)
+  const onSecond = await aws()
+  assert.equal(onSecond.release?.version, "1.2.3")
+  assert.equal(onSecond.release?.installerRevision, 2)
+  assert.equal((await releases.effectiveInstallerRelease("aws"))?.installerRevision, 2)
+  assert.equal(onSecond.sourceBaseUrl, source, "the release source is the folder above the revision's own folder")
+  const [latest, previous] = (await report()).history
+  assert.deepEqual([latest?.action, latest?.version, latest?.installerRevision], ["pinned", "1.2.3", 2])
+  assert.deepEqual([previous?.action, previous?.version, previous?.installerRevision], ["pinned", "1.2.3", undefined])
+
+  const historyCount = (await report()).history.length
+  const again = await releases.validateInstallerRelease({ provider: "aws", version: "1.2.3", installerRevision: 2, expectedRevision: onSecond.revision }, admin.userId, verifier)
+  await pin(again.id, onSecond.revision)
+  assert.equal((await report()).history.length, historyCount, "pinning the same revision again records no change")
+
+  const back = await releases.validateInstallerRelease({ provider: "aws", version: "1.2.3", expectedRevision: onSecond.revision }, admin.userId, verifier)
+  await assert.rejects(pin(back.id, onSecond.revision), /newer than the current default/)
+  const otherBytes = fixtureFetch(new Map([["1.2.3_r2", fixtureArtifacts("1.2.3", { installerRevision: 2, imageDigest: "c".repeat(64) })]]))
+  const conflict = await releases.validateInstallerRelease({ provider: "aws", version: "1.2.3", installerRevision: 2, expectedRevision: onSecond.revision }, admin.userId, (provider, base, version, _fetch, installerRevision) => verifyInstallerRelease(provider, base, version, otherBytes, installerRevision))
+  await assert.rejects(pin(conflict.id, onSecond.revision, otherBytes), /different release bytes/)
+  assert.equal((await aws()).revision, onSecond.revision, "a refused pin writes nothing")
+
+  const reset = await den.request(admin.token, "POST", "/v1/admin/managed-releases/reset", { body: { provider: "aws", expectedRevision: onSecond.revision } })
+  assert.equal(reset.status, 200, summary(reset))
+  assert.equal((await aws()).release?.version, "1.2.2")
 })
 
 test("source changes invalidate validation and concurrent writers cannot lose a setting", async () => {

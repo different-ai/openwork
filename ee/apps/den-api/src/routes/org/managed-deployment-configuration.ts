@@ -136,7 +136,7 @@ export function registerManagedDeploymentConfigurationRoutes<T extends { Variabl
           previous: recorded, requested, changes: plan.changes.filter((change) => change.field !== "name"),
         })
         await tx.insert(ManagedDeploymentRunTable).values({
-          id: runId, deployment_id: id, kind: "configure", version: basis.base.version, template_url: basis.base.template_url, bundle_url: basis.base.bundle_url,
+          id: runId, deployment_id: id, kind: "configure", version: basis.base.version, installer_revision: basis.base.installer_revision, template_url: basis.base.template_url, bundle_url: basis.base.bundle_url,
           bundle_sha256: basis.base.bundle_sha256, api_origin: apiOrigin, challenge: randomBytes(32).toString("hex"),
           state: "awaiting_approval", expires_at: new Date(now.getTime() + RUN_LIFETIME_MS), configuration_change: record,
         })

@@ -4,12 +4,14 @@ import { sha256 } from "../../src/managed-deployments/release-verifier.js"
 
 export const source = "https://managed-fixture.s3.us-east-1.amazonaws.com/releases/aws/"
 export const gcpSource = "https://storage.googleapis.com/managed-fixture/releases/gcp/"
-export function fixtureArtifacts(version = "1.2.3", options: { coreOnly?: boolean, corrupt?: boolean, imageDigest?: string, provider?: "aws" | "gcp" } = {}) {
+export function fixtureArtifacts(version = "1.2.3", options: { coreOnly?: boolean, corrupt?: boolean, imageDigest?: string, provider?: "aws" | "gcp", installerRevision?: number, manifestRevision?: unknown, bundleRevision?: unknown } = {}) {
+  const declared = (revision: unknown) => revision === undefined ? {} : { installerRevision: revision }
+  const published = options.installerRevision !== undefined && options.installerRevision > 1 ? options.installerRevision : undefined
   const provider = options.provider ?? "aws"
   const images: Record<string, string> = Object.fromEntries(Object.entries({ den_api: "den-api", den_web: "den-web", ...(provider === "aws" && !options.coreOnly ? { headless_runner: "headless-runner", workbot: "workbot", ai_gateway: "inference" } : {}) }).map(([key, suffix]) => [key, `ghcr.io/different-ai/openwork-${suffix}@sha256:${options.imageDigest ?? "a".repeat(64)}`]))
   if (provider === "gcp") images.health = `docker.io/library/python@sha256:${"a".repeat(64)}`
   const module = Buffer.from("resource \"example\" \"fixture\" {}\n")
-  const metadata = Buffer.from(JSON.stringify({ provider, version, protocolVersion: 1, files: { "main.tf": sha256(module) }, images }))
+  const metadata = Buffer.from(JSON.stringify({ provider, version, ...declared("bundleRevision" in options ? options.bundleRevision : published), protocolVersion: 1, files: { "main.tf": sha256(module) }, images }))
   const archive: Buffer[] = []
   for (const [name, body] of [["main.tf", module], ["release.json", metadata]] satisfies [string, Buffer][]) {
     const header = Buffer.alloc(512)
@@ -29,18 +31,18 @@ export function fixtureArtifacts(version = "1.2.3", options: { coreOnly?: boolea
   }
   const bundle = Buffer.from(gzipSync(new Uint8Array(Buffer.concat([...archive, Buffer.alloc(1024)]))))
   const template = Buffer.from("{\"Resources\":{}}")
-  const manifest = Buffer.from(JSON.stringify({ provider, version, protocolVersion: 1, bundleSha256: options.corrupt ? "f".repeat(64) : sha256(bundle), templateSha256: sha256(template) }))
+  const manifest = Buffer.from(JSON.stringify({ provider, version, ...declared("manifestRevision" in options ? options.manifestRevision : published), protocolVersion: 1, bundleSha256: options.corrupt ? "f".repeat(64) : sha256(bundle), templateSha256: sha256(template) }))
   return new Map([["manifest.json", manifest], [provider === "aws" ? "cloudformation.json" : "tutorial.md", template], ["bundle.tar.gz", bundle]])
 }
 
-export function fixtureFetch(versions = new Map([["1.2.3", fixtureArtifacts()]]), options: { noVersion?: boolean, changed?: boolean, provider?: "aws" | "gcp" } = {}): typeof fetch {
+export function fixtureFetch(releaseFolders = new Map([["1.2.3", fixtureArtifacts()]]), options: { noVersion?: boolean, changed?: boolean, provider?: "aws" | "gcp" } = {}): typeof fetch {
   return async (input, init) => {
     const url = new URL(typeof input === "string" ? input : input instanceof URL ? input.href : input.url)
     if (!url.href.startsWith(options.provider === "gcp" ? gcpSource : source)) throw new Error("Unexpected fixture request")
     if (init?.redirect !== "error" || init?.credentials !== "omit") throw new Error("Unsafe request")
-    const [version, name] = url.pathname.split("/").slice(-2)
-    const body = version && name ? versions.get(version)?.get(name) : undefined
+    const [folder, name] = url.pathname.split("/").slice(-2)
+    const body = folder && name ? releaseFolders.get(folder)?.get(name) : undefined
     if (!body) return new Response(null, { status: 404 })
-    return new Response(new Uint8Array(options.changed && url.search ? Buffer.from("changed") : body), { headers: options.noVersion ? {} : options.provider === "gcp" ? { "x-goog-generation": "1234567890" } : { "x-amz-version-id": `fixture-${version}-${name}` } })
+    return new Response(new Uint8Array(options.changed && url.search ? Buffer.from("changed") : body), { headers: options.noVersion ? {} : options.provider === "gcp" ? { "x-goog-generation": "1234567890" } : { "x-amz-version-id": `fixture-${folder}-${name}` } })
   }
 }

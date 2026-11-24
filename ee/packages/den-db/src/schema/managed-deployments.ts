@@ -17,6 +17,7 @@ export const ManagedDeploymentTable = mysqlTable("managed_deployment", {
   size: varchar("size", { length: 20 }).notNull(),
   active_run_id: varchar("active_run_id", { length: 36 }),
   installed_version: varchar("installed_version", { length: 80 }),
+  installed_installer_revision: int("installed_installer_revision"),
   ...timestamps,
 }, (table) => [index("managed_deployment_org").on(table.org_id)])
 
@@ -26,6 +27,7 @@ export const ManagedDeploymentRunTable = mysqlTable("managed_deployment_run", {
   deployment_id: varchar("deployment_id", { length: 36 }).notNull(),
   kind: mysqlEnum("kind", ["install", "update", "retry", "configure"]).notNull(),
   version: varchar("version", { length: 80 }).notNull(),
+  installer_revision: int("installer_revision").notNull().default(1),
   template_url: varchar("template_url", { length: 2048 }).notNull(),
   bundle_url: varchar("bundle_url", { length: 2048 }).notNull(),
   bundle_sha256: varchar("bundle_sha256", { length: 64 }).notNull(),
