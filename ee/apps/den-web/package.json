@@ -19,7 +19,7 @@
     "@base-ui/react": "^1.4.1",
     "@opentelemetry/api": "1.9.1",
     "@opentelemetry/api-logs": "0.220.0",
-    "@opentelemetry/exporter-logs-otlp-proto": "0.220.0",
+    "@opentelemetry/exporter-logs-otlp-proto": "0.301.2",
     "@opentelemetry/exporter-metrics-otlp-proto": "0.220.0",
     "@opentelemetry/exporter-trace-otlp-proto": "0.220.0",
     "@opentelemetry/resources": "2.9.0",
