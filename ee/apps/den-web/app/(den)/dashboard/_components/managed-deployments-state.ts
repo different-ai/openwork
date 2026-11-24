@@ -1,4 +1,4 @@
-import type { ManagedDeployment } from "@openwork/types/den/managed-deployments";
+import { installerReleaseLabel, installerRevisionOf, type ManagedDeployment } from "@openwork/types/den/managed-deployments";
 
 export type DeploymentTone = "neutral" | "warning" | "danger";
 
@@ -6,10 +6,28 @@ export function assistantSettingsState(deployment: ManagedDeployment, enabled: b
   if (!enabled) return { editable: false, reason: "Gateway-managed runtimes aren't enabled for this workspace. Ask your OpenWork operator to enable them. Existing services and health reports are unchanged; new gateway-runtime approvals are blocked." };
   if (!canManage) return { editable: false, reason: "Read only. A workspace owner or someone with deployment management access can change the runtime profile or computers." };
   const run = deployment.run;
-  if (run && !run.expired && (run.state === "awaiting_approval" || run.state === "provisioning")) return { editable: false, reason: "The runtime profile and computer settings are frozen for this approval. They can change with the next version-increasing Update." };
+  if (run && !run.expired && (run.state === "awaiting_approval" || run.state === "provisioning")) return { editable: false, reason: "The runtime profile and computer settings are frozen for this approval. They can change with the next Update." };
   if (!deployment.installedVersion || !deployment.updateAvailable) return { editable: false, reason: "The runtime profile and computers can change when a newer installer is available. Retry keeps the approved settings." };
   return { editable: true, reason: null };
 }
+
+type InstallerRelease = { version: string; installerRevision?: number | null };
+
+export function updateLabel(deployment: Pick<ManagedDeployment, "installedVersion">, release: InstallerRelease) {
+  const name = installerReleaseLabel(release.version, release.installerRevision);
+  return deployment.installedVersion === release.version && installerRevisionOf(release.installerRevision) > 1 ? `Update installer for ${name}` : `Update to ${name}`;
+}
+
+export function availableUpdate(deployment: Pick<ManagedDeployment, "installedVersion" | "availableVersion" | "availableInstallerRevision" | "updateAvailable">): { action: string; note: string } | null {
+  if (!deployment.updateAvailable || !deployment.availableVersion) return null;
+  const release = { version: deployment.availableVersion, installerRevision: deployment.availableInstallerRevision };
+  const installerOnly = deployment.installedVersion === release.version && installerRevisionOf(release.installerRevision) > 1;
+  return {
+    action: updateLabel(deployment, release),
+    note: installerOnly ? `installer revision ${installerRevisionOf(release.installerRevision)} available` : `${installerReleaseLabel(release.version, release.installerRevision)} available`,
+  };
+}
+
 export type ProviderReadiness = {
   provider: "aws" | "gcp" | "azure";
   available: boolean;

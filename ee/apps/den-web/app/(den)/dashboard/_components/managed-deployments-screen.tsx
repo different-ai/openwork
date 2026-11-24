@@ -2,7 +2,7 @@
 
 import { Dialog } from "@base-ui/react/dialog";
 import {
-  awsAssistantsSchema, assistantsEnabled, gatewayAssistants, normalizeAwsTargetForCreate, awsRegionSchema, gcpRegionSchema, deploymentStepSchema, managedDeploymentInputSchema,
+  awsAssistantsSchema, assistantsEnabled, gatewayAssistants, installerReleaseLabel, normalizeAwsTargetForCreate, awsRegionSchema, gcpRegionSchema, deploymentStepSchema, managedDeploymentInputSchema,
   managedDeploymentSchema,
   type AwsAssistants, type AwsRuntimeProfile, type DeploymentLaunchKind, type ManagedDeployment,
 } from "@openwork/types/den/managed-deployments";
@@ -21,7 +21,7 @@ import { orgFeatureEnabled, permissionLockReason } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ConfirmDialog } from "./item-list";
 import { useFeatureIntro } from "../_features/feature-intros";
-import { assistantSettingsState, deploymentStatus, providerName, readinessMessage, type DeploymentTone, type ProviderReadiness } from "./managed-deployments-state";
+import { assistantSettingsState, availableUpdate, deploymentStatus, providerName, readinessMessage, updateLabel, type DeploymentTone, type ProviderReadiness } from "./managed-deployments-state";
 import { ManagedDeploymentAssistants } from "./managed-deployment-assistants";
 import { ManagedDeploymentConfigurationDialog } from "./managed-deployment-configuration-dialog";
 import { CHANGE_STOPPED_REPORTING, changeFailureMessage, changeNeverApproved, configurationEntry, currentHandoff, runtimeBlock } from "./managed-deployment-configuration-state";
@@ -261,6 +261,7 @@ function DeploymentDetail({ deployment, launch, busy, canManage, canPrepare, ass
   const gcp = deployment.provider === "gcp";
   const run = deployment.run;
   const installed = Boolean(deployment.installedVersion);
+  const update = availableUpdate(deployment);
   const runFailed = Boolean(run && (run.state === "failed" || run.expired));
   const failure = run?.events.find((event) => event.outcome === "failed");
   const nextStep = run?.events.length ?? 0;
@@ -281,7 +282,7 @@ function DeploymentDetail({ deployment, launch, busy, canManage, canPrepare, ass
         {configuration ? <Row label="First administrator">{deployment.ownerEmail}</Row> : null}
         <Row label="Cloud">{cloud} · {deployment.provider === "aws" ? deployment.target.accountId : deployment.target.projectId} · {deployment.target.region}</Row>
         {deployment.provider === "aws" ? <Row label="Network">{networkLabel(deployment.target.network)}</Row> : <><Row label="Project number">{deployment.target.projectNumber}</Row><Row label="DNS zone">{deployment.target.dnsZoneName}</Row></>}
-        <Row label="Version">{deployment.installedVersion ?? "Not installed"}{deployment.updateAvailable && deployment.availableVersion ? ` · ${deployment.availableVersion} available` : ""}</Row>
+        <Row label="Version">{deployment.installedVersion ?? "Not installed"}{update ? ` · ${update.note}` : ""}</Row>
         <Row label="Updates">Approval required</Row>
         {installed ? <Row label="Last health report">{relativeTime(health.reportedAt)}</Row> : null}
       </div>
@@ -313,7 +314,7 @@ function DeploymentDetail({ deployment, launch, busy, canManage, canPrepare, ass
 
       {run && run.state !== "ready" && !(changeRun && changeNeverApproved(run)) ? (
         <section aria-labelledby="run-heading" className="space-y-2">
-          <h3 id="run-heading" className="text-[13px] font-semibold text-gray-900">{run.kind === "configure" ? "Configuration change" : run.kind === "update" ? `Update to ${run.version}` : run.kind === "retry" ? `Retry ${run.version}` : `Install ${run.version}`}</h3>
+          <h3 id="run-heading" className="text-[13px] font-semibold text-gray-900">{run.kind === "configure" ? "Configuration change" : run.kind === "update" ? updateLabel(deployment, run) : `${run.kind === "retry" ? "Retry" : "Install"} ${installerReleaseLabel(run.version, run.installerRevision)}`}</h3>
           {run.state === "awaiting_approval" && !run.expired && !(run.kind === "configure" && run.lastSeenAt) ? <p className="text-[13px] text-gray-500">Waiting for approval in {cloud}{gcp ? " Shell" : ""}.</p> : null}
           <ol data-testid="managed-deployment-steps">
             {deploymentStepSchema.options.map((step, index) => {
@@ -355,7 +356,7 @@ function DeploymentDetail({ deployment, launch, busy, canManage, canPrepare, ass
           ) : !launch?.command ? <DenButton type="button" loading={busy} disabled={!canPrepare} onClick={() => onPrepare("install")}>Prepare {cloud} approval</DenButton> : null
         ) : null}
         {canManage && runFailed && !changeRun ? <DenButton type="button" loading={busy} disabled={!canPrepare} onClick={() => onPrepare(installed || run?.events.length || run?.state === "failed" ? "retry" : "install")}>Prepare retry</DenButton> : null}
-        {canManage && installed && deployment.updateAvailable && !(run?.state === "provisioning" && !run.expired) && !(changeRun && (run?.state === "awaiting_approval" || deployment.configuration?.lock === "run_in_progress")) && (launch?.kind !== "update" || run?.state === "ready") ? <DenButton type="button" loading={busy} disabled={!canPrepare || (runtimeProfileDraft === "gateway" && !assistantsAvailable)} onClick={() => onPrepare("update", assistantState.editable ? assistantDraft ?? undefined : undefined, assistantState.editable ? runtimeProfileDraft ?? undefined : undefined)}>Update to {deployment.availableVersion}</DenButton> : null}
+        {canManage && installed && update && !(run?.state === "provisioning" && !run.expired) && !(changeRun && (run?.state === "awaiting_approval" || deployment.configuration?.lock === "run_in_progress")) && (launch?.kind !== "update" || run?.state === "ready") ? <DenButton type="button" loading={busy} disabled={!canPrepare || (runtimeProfileDraft === "gateway" && !assistantsAvailable)} onClick={() => onPrepare("update", assistantState.editable ? assistantDraft ?? undefined : undefined, assistantState.editable ? runtimeProfileDraft ?? undefined : undefined)}>{update.action}</DenButton> : null}
         {configurationControl.shown ? <DenButton type="button" variant="secondary" data-testid="managed-deployment-edit-configuration" aria-describedby={configurationControl.reason ? "managed-deployment-configuration-lock" : undefined} disabled={configurationControl.disabled || busy} onClick={configuration?.onEdit}>Edit configuration</DenButton> : null}
         {installed ? <a className={buttonVariants({ variant: "secondary" })} href={deployment.webUrl} target="_blank" rel="noopener noreferrer">Open OpenWork<ExternalLink aria-hidden className="size-4" /></a> : null}
         <a className={buttonVariants({ variant: "ghost" })} href={deployment.consoleUrl} target="_blank" rel="noopener noreferrer">Open in {cloud}<ExternalLink aria-hidden className="size-4" /></a>
