@@ -169,6 +169,7 @@ export function buildInputPatterns(target, options = {}) {
       ...api(), ...closure("@openwork-ee/headless-runner"), ...closure("@openwork-ee/gateway"), "evals/packages/labs/**", "evals/packages/open-workplace/**",
       "packaging/helm/openwork-ee/values.schema.json",
       "packaging/docker/docker-compose.web-local.yml", "packaging/docker/docker-compose.ci-mysql.yml",
+      ...closure("openwork-server"),
       CI_WORKFLOW, ".github/scripts/classify-ci-changes.mjs", ".github/actions/setup-tests/**",
     ]; break;
     case "api-docs": patterns = [...api(), ...render, ...CONTRACT_SCRIPTS, ".github/scripts/runtime-scope.mjs", ".github/workflows/refresh-api-docs.yml"]; break;
