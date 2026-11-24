@@ -139,6 +139,12 @@ export const resolveLiveGatewayConnectProviders = (providers: readonly LiveGatew
     return [{ cloudProviderId: provider.id, providerId: provider.id, name: provider.name, authUrl: null }];
   });
 
+export const resolveLiveGatewayReadyProviders = (
+  providers: readonly LiveGatewayProvider[] | null,
+  listedCloudProviderIds: readonly string[] = [],
+): LiveGatewayProvider[] =>
+  (providers ?? []).filter((provider) => provider.models.length > 0 && !listedCloudProviderIds.includes(provider.id));
+
 export const resolveLiveGatewayImportedProviders = (providers: readonly LiveGatewayProvider[]): Record<string, CloudImportedProvider> =>
   Object.fromEntries(providers.filter((provider) => provider.models.length > 0).map((provider) => [provider.id, {
     cloudProviderId: provider.id,

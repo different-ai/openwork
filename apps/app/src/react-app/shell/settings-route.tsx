@@ -2401,6 +2401,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 onOpenDen={openProviderCloudPage}
                 onOpenModelConnections={() => { void platform.openLink(denDashboardUrl(readDenSettings().baseUrl, "modelConnections")); }}
                 gatewayConnectProviders={gatewayConnectProviders}
+                liveGatewayProviders={liveGatewayProviders}
                 connectingGatewayProviderId={connectingGatewayProviderId}
                 onConnectGatewayProvider={(provider) => { void handleConnectGatewayProvider(provider); }}
                 checkDesktopAppRestriction={checkDesktopRestriction}
