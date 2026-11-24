@@ -32,3 +32,7 @@ export function items(value: unknown, key: string): unknown[] {
   const found = field(value, key)
   return Array.isArray(found) ? found : []
 }
+
+export function strings(value: unknown, key: string): string[] {
+  return items(value, key).filter((item) => typeof item === "string")
+}

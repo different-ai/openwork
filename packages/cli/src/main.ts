@@ -1,5 +1,6 @@
 import { parseArgs } from "node:util"
 import * as auth from "./commands/auth.ts"
+import * as config from "./commands/config.ts"
 import * as invitations from "./commands/invitations.ts"
 import * as members from "./commands/members.ts"
 import * as org from "./commands/org.ts"
@@ -34,6 +35,16 @@ const COMMANDS: Record<string, Record<string, Command>> = {
     cancel: { usage: "invitations cancel <id-or-email> [--force]", summary: "Cancel a pending invitation", run: invitations.cancel },
     link: { usage: "invitations link <id-or-email>", summary: "Print a pending invitation's join link", run: invitations.link },
   },
+  config: {
+    areas: { usage: "config areas", summary: "List the configuration areas you can export or import", run: config.areas },
+    pull: { usage: "config pull [--areas <a,b>] [--out <file>]", summary: "Download the organization's configuration as a file", run: config.pull },
+    diff: { usage: "config diff <file> [--mode merge|mirror]", summary: "Show what importing a file would change", run: config.diff },
+    push: { usage: "config push <file> [--mode merge|mirror] [--title <text>]", summary: "Upload a file as a change request for review", run: config.push },
+    deploy: { usage: "config deploy <file> | --request <id> [--force]", summary: "Apply a file or an uploaded change request, and wait", run: config.deploy },
+    requests: { usage: "config requests", summary: "List open change requests", run: config.requests },
+    status: { usage: "config status <request-id>", summary: "Show a change request and its last apply", run: config.status },
+    cancel: { usage: "config cancel <request-id> [--force]", summary: "Withdraw an open change request", run: config.cancel },
+  },
 }
 
 const GLOBAL_OPTIONS = [
@@ -47,7 +58,7 @@ const GLOBAL_OPTIONS = [
 ]
 
 const ENVIRONMENT = [
-  "  OPENWORK_API_KEY     An organization API key, for scripts and CI",
+  "  OPENWORK_API_KEY     An organization API key for scripts and CI (a config token for `config`)",
   "  OPENWORK_API_TOKEN   A session token, used instead of a profile",
   "  OPENWORK_PROFILE     The profile to use",
   "  OPENWORK_ORG_ID      The organization to act on",
@@ -63,7 +74,7 @@ function commandLines(resources: string[]): string[] {
 export function helpText(resource?: string): string {
   const resources = resource && COMMANDS[resource] ? [resource] : Object.keys(COMMANDS)
   return [
-    "openwork: sign in to OpenWork Cloud and administer an organization",
+    "openwork: sign in to OpenWork Cloud, administer an organization and deploy its configuration",
     "",
     "Usage:",
     ...commandLines(resources),
@@ -92,6 +103,11 @@ function parse(argv: string[]) {
         role: { type: "string" },
         team: { type: "string" },
         "base-url": { type: "string" },
+        areas: { type: "string" },
+        out: { type: "string" },
+        mode: { type: "string" },
+        title: { type: "string" },
+        request: { type: "string" },
       },
     })
   } catch (error) {
@@ -138,6 +154,11 @@ export async function main(argv: string[], io: Io = processIo()): Promise<number
       role: values.role,
       team: values.team,
       baseUrl: values["base-url"],
+      areas: values.areas,
+      out: values.out,
+      mode: values.mode,
+      title: values.title,
+      request: values.request,
     }
     await command.run({ io, flags, json, args })
     return 0

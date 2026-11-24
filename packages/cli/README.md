@@ -13,7 +13,7 @@ openwork invitations create kim@example.com
 ```
 
 Every command is `openwork <resource> <verb>`. Run `openwork --help` for the
-full list.
+full list, or `openwork help config` for one group.
 
 ## Signing in
 
@@ -66,6 +66,48 @@ Results go to stdout; prompts, progress and errors go to stderr.
   sign-in. At a terminal the command asks you to confirm in the browser and
   then finishes the change. In a script it stops and tells you to run
   `openwork auth login --force`. API keys are exempt.
+
+## Configuration as a file
+
+An organization's configuration (teams, roles, connectors, AI providers,
+policies and more) can be kept as one JSON file, reviewed in git, and deployed.
+
+```bash
+openwork config pull --out org-config.json    # download it
+openwork config diff org-config.json          # what importing it would change
+openwork config push org-config.json          # upload it for review
+openwork config deploy org-config.json        # upload, confirm, apply and wait
+```
+
+- **Nothing is written by an upload.** Every import is a change request with a
+  plan: what would be created, updated, renamed or deleted. `config diff` shows
+  the plan without storing anything.
+- **`config deploy`** shows the uploaded request's plan, asks you to confirm,
+  applies it and waits for the result. It exits with 1 when an item fails, and
+  says where it stopped. When the organization already matches the file it does
+  nothing. Declining withdraws the request.
+- **Decisions.** When items need an answer (a secret to enter, an item to match),
+  `deploy` stops and leaves the request open. Answer them in the dashboard under
+  Settings › Config, then run `openwork config deploy --request <id>`. Answers
+  from an earlier import of the same source are reused by an upload, but not by
+  `config diff`, so a diff can show more open questions than a deploy.
+- **Modes.** `--mode merge` (the default) creates and updates. `--mode mirror`
+  can also delete what the file leaves out; each delete is chosen in the
+  dashboard.
+- **Secrets** are never in the file. Each is a placeholder.
+- **Second approver.** If the organization requires one, `deploy` records your
+  approval and stops; the request stays open for the other person.
+- `config requests`, `config status <id>` and `config cancel <id>` list, show and
+  withdraw change requests. `config areas` lists what you may export or import.
+
+In CI, set `OPENWORK_API_KEY` to a **config token** (an API key of type Config,
+from Settings › API keys). It needs `config:export` to pull, `config:submit` to
+diff and push, and both `config:submit` and `config:apply` to deploy a file. A
+config token only works with `openwork config`; a standard API key only works
+with the other commands. Never give the token to a job a pull request can change.
+
+The file format, areas and rules are described in
+[Export and import organization configuration](../docs/self-host/export-import-configuration.mdx).
 
 ## Development
 

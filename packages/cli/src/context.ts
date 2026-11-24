@@ -14,6 +14,11 @@ export type Flags = {
   role?: string
   team?: string
   baseUrl?: string
+  areas?: string
+  out?: string
+  mode?: string
+  title?: string
+  request?: string
 }
 
 export type Context = { io: Io; flags: Flags; json: boolean; args: string[] }
