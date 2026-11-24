@@ -59,6 +59,14 @@ Installer input is `--config-base64 <base64 JSON>` using the `GcpLaunch` shape i
 All fields are public configuration, not credentials. The bundle URL must be
 `https://storage.googleapis.com/BUCKET/OBJECT?generation=DIGITS`.
 
+`target.region` is one of the regions in `gcpRegionSchema`
+(`packages/managed-deployments/src/schema.ts`); Den offers exactly that list and
+`tests/test_gcp_installer.py` checks that the installer accepts each one. Every
+resource is regional or global and Terraform pins no zone. `asia-east2` (Hong
+Kong) is listed because Google's public location pages list Cloud Run, Cloud
+Scheduler, Cloud SQL and Artifact Registry there. No live install has run in
+`asia-east2`; qualify it with one before promising that region.
+
 The customer reviews the project, resource scope and cost, then types the exact
 project ID to approve. The script verifies the project number and public DNS
 zone before changing anything, checks the bundle before executing anything,

@@ -49,6 +49,29 @@ run "contract_and_security" {
     error_message = "Existing managed service names must be preserved."
   }
 }
+run "hong_kong_region" {
+  command = plan
+  variables {
+    region = "asia-east2"
+    images = {
+      den_api = "asia-east2-docker.pkg.dev/test-project/ow-123456781234/den_api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      den_web = "asia-east2-docker.pkg.dev/test-project/ow-123456781234/den_web@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      health  = "asia-east2-docker.pkg.dev/test-project/ow-123456781234/health@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  }
+  assert {
+    condition     = google_cloud_run_v2_job.health.location == "asia-east2" && google_cloud_scheduler_job.health.region == "asia-east2"
+    error_message = "The health job and its schedule must be planned in the chosen region."
+  }
+  assert {
+    condition     = google_cloud_scheduler_job.health.http_target[0].uri == "https://run.googleapis.com/v2/projects/test-project/locations/asia-east2/jobs/ow-123456781234-health:run"
+    error_message = "The schedule must run the health job in the chosen region."
+  }
+  assert {
+    condition     = alltrue([for binding in google_cloud_run_v2_service_iam_member.public : binding.location == "asia-east2"])
+    error_message = "Public service access must be planned in the chosen region."
+  }
+}
 run "wrong_project_is_blocked" {
   command = plan
   variables { project_number = "999999999999" }

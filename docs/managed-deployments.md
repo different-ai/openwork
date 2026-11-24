@@ -403,7 +403,10 @@ image set with a live upgrade. Use a genuinely newer isolated test installer for
 Den Update; same-version protection stays unchanged.
 
 Use a dedicated billing-enabled project, a supported region, and an already
-public authoritative Cloud DNS zone for the chosen address. The form requires
+public authoritative Cloud DNS zone for the chosen address. The region list is
+`gcpRegionSchema` in `packages/managed-deployments/src/schema.ts`. It includes
+`asia-east2` (Hong Kong) on the strength of Google's public region lists; no
+live install has run there yet. The form requires
 both project ID and number, zone name, domain, first administrator email, and
 cost/permission consent. IAM permissions are project-wide in this initial
 profile; do not use a shared production project. See
