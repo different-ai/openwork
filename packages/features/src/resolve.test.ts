@@ -50,7 +50,7 @@ test("feature docs resolve to internal docs in the repo or no link", () => {
 })
 
 test("precedence: unavailable, kill switch, lock, override, everyone", () => {
-  const key = "connectStandardTools"
+  const key = "browserDemonstrations"
   assert.equal(resolveFeature(key, { ...base, rollouts: { [key]: { enabled: true, killed: false } } }).enabled, true)
   const overridden = resolveFeature(key, { ...base, overrides: { [key]: true } })
   assert.equal(overridden.enabled, true)
@@ -63,7 +63,7 @@ test("precedence: unavailable, kill switch, lock, override, everyone", () => {
 })
 
 test("an organization override can turn a feature off while it is on for everyone", () => {
-  const key = "connectStandardTools"
+  const key = "browserDemonstrations"
   const resolved = resolveFeature(key, { ...base, rollouts: { [key]: { enabled: true, killed: false } }, overrides: { [key]: false } })
   assert.equal(resolved.everyone, true)
   assert.equal(resolved.enabled, false)
@@ -114,7 +114,7 @@ test("every key maps to a unique DEN_FEATURE_ name", () => {
   const names = FEATURE_KEYS.map(featureLockEnvName)
   for (const name of names) assert.match(name, /^DEN_FEATURE_[A-Z0-9]+(?:_[A-Z0-9]+)*$/)
   assert.equal(new Set(names).size, names.length)
-  assert.equal(featureLockEnvName("connectStandardTools"), "DEN_FEATURE_CONNECT_STANDARD_TOOLS")
+  assert.equal(featureLockEnvName("browserDemonstrations"), "DEN_FEATURE_BROWSER_DEMONSTRATIONS")
 })
 
 test("environment: self_hosted by default, strict values, unknown keys warn", () => {
@@ -126,22 +126,22 @@ test("environment: self_hosted by default, strict values, unknown keys warn", ()
   const parsed = parseFeatureEnvironment({
     DEN_DEPLOYMENT: "cloud",
     DEN_FEATURE_WORKBOT_DOCUMENTS: "true",
-    DEN_FEATURE_CONNECT_STANDARD_TOOLS: "false",
+    DEN_FEATURE_BROWSER_DEMONSTRATIONS: "false",
     DEN_FEATURE_WORKBOT: "false",
     DEN_FEATURE_PERMISSIONS: "false",
     DEN_FEATURE_ORG_MANAGED_DASHBOARDS: "",
     DEN_FEATURE_NOT_A_THING: "true",
   })
   assert.equal(parsed.deployment, "cloud")
-  assert.deepEqual(parsed.locks, { workbotDocuments: true, connectStandardTools: false })
+  assert.deepEqual(parsed.locks, { workbotDocuments: true, browserDemonstrations: false })
   assert.deepEqual(parsed.problems.map((problem) => [problem.variable, problem.fatal]), [["DEN_FEATURE_WORKBOT", false], ["DEN_FEATURE_PERMISSIONS", false], ["DEN_FEATURE_NOT_A_THING", false]])
 
-  const fatal = parseFeatureEnvironment({ DEN_DEPLOYMENT: "prod", DEN_FEATURE_CONNECT_STANDARD_TOOLS: "yes" })
-  assert.deepEqual(fatal.problems.map((problem) => [problem.variable, problem.fatal]), [["DEN_DEPLOYMENT", true], ["DEN_FEATURE_CONNECT_STANDARD_TOOLS", true]])
+  const fatal = parseFeatureEnvironment({ DEN_DEPLOYMENT: "prod", DEN_FEATURE_BROWSER_DEMONSTRATIONS: "yes" })
+  assert.deepEqual(fatal.problems.map((problem) => [problem.variable, problem.fatal]), [["DEN_DEPLOYMENT", true], ["DEN_FEATURE_BROWSER_DEMONSTRATIONS", true]])
 })
 
 test("member overrides inherit by default and take priority over organization and everyone", () => {
-  const key = "connectStandardTools"
+  const key = "browserDemonstrations"
   const context: FeatureContext = { ...base, overrides: { [key]: false }, memberOverrides: { [key]: true } }
   assert.equal(resolveFeature(key, context).enabled, true)
   assert.equal(resolveFeature(key, context).source, "member")
@@ -153,7 +153,7 @@ test("member overrides inherit by default and take priority over organization an
 })
 
 test("member overrides cannot bypass deployment restrictions, operator locks or the kill switch", () => {
-  const key = "connectStandardTools"
+  const key = "browserDemonstrations"
   const context: FeatureContext = { ...base, memberOverrides: { [key]: true } }
   assert.equal(resolveFeature(key, { ...context, locks: { [key]: false } }).source, "lock")
   assert.equal(resolveFeature(key, { ...context, locks: { [key]: false } }).enabled, false)

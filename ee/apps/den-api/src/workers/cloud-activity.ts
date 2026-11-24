@@ -1,7 +1,6 @@
 import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"
 import { AutomationRunTable, AutomationTable, MemberTable, WorkerTable } from "@openwork-ee/den-db/schema"
 import { db } from "../db.js"
-import { workerHasOpenOfficeSession } from "../documents-office-store.js"
 import { env } from "../env.js"
 import { appLogger } from "../observability/logger.js"
 import { fetchWithConnectRetry, previewFetch, type FetchLike } from "./preview-fetch.js"
@@ -30,7 +29,7 @@ export type CloudWorkerInterruptTrigger = "update" | "idle_stop"
 
 export type CloudWorkerInterruptibility = {
   verdict: "interruptible" | "busy" | "unknown"
-  reason: CloudWorkerActivityReason | "automation_run" | "document_session" | "no_instance" | "legacy_instance"
+  reason: CloudWorkerActivityReason | "automation_run" | "no_instance" | "legacy_instance"
   activity: CloudWorkerActivity | null
 }
 
@@ -122,7 +121,6 @@ export async function resolveCloudWorkerInterruptibility(input: {
   workerId: WorkerId
   trigger: CloudWorkerInterruptTrigger
   hasActiveAutomationRun: (workerId: WorkerId) => Promise<boolean>
-  hasOpenDocumentSession?: (workerId: WorkerId) => Promise<boolean>
   instance: () => Promise<{ url: string; hostToken: string } | null>
   probeActivity?: ProbeCloudWorkerActivity
 }): Promise<CloudWorkerInterruptibility> {
@@ -142,9 +140,6 @@ export async function resolveCloudWorkerInterruptibility(input: {
 async function decide(input: Parameters<typeof resolveCloudWorkerInterruptibility>[0]): Promise<CloudWorkerInterruptibility> {
   if (await input.hasActiveAutomationRun(input.workerId)) {
     return { verdict: "busy", reason: "automation_run", activity: null }
-  }
-  if (await (input.hasOpenDocumentSession ?? workerHasOpenOfficeSession)(input.workerId)) {
-    return { verdict: "busy", reason: "document_session", activity: null }
   }
   const instance = await input.instance()
   if (!instance) return { verdict: "unknown", reason: "no_instance", activity: null }

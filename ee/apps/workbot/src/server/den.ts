@@ -51,11 +51,9 @@ export const denSessionSchema = z.object({
   computer: z.boolean().default(false),
   browser: z.boolean().default(false),
   browserDemonstrations: z.boolean().default(false),
-  sandboxGateway: z.boolean().default(false),
   browserRecovery: z.boolean().default(false),
   calendar: z.boolean().optional(),
   documents: z.boolean().default(false),
-  documentEditing: z.boolean().default(false),
   workspaceAssistant: z.boolean().default(false),
   guidedNavigation: z.boolean().default(false),
   usageRecovery: z.boolean().default(false),
@@ -374,8 +372,8 @@ export function createDen(options: { apiUrl: string; publicUrl: string; serviceT
     async calendar(accessToken: string, input: { method: "GET" | "POST" | "PATCH"; path: string; body?: unknown }) {
       return authorized(input.method, `/v1/workbot/calendar${input.path}`, accessToken, input.body)
     },
-    async documents(accessToken: string, path: string, method: "GET" | "POST" = "GET", body?: unknown) {
-      return authorized(method, `/v1/workbot/documents${path}`, accessToken, body)
+    async documents(accessToken: string, path: string) {
+      return authorized("GET", `/v1/workbot/documents${path}`, accessToken)
     },
     async documentContent(accessToken: string, path: string, range?: string) {
       const waiting = new AbortController()

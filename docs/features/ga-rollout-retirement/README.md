@@ -8,6 +8,8 @@ A [second pass retires 18 additional globally enabled rollouts](../globally-enab
 
 The November follow-up makes `workbotAgentBrief`, `workbotProfileComputers`, `workbotDeviceActivity`, `workbotEnableAllConnectors`, `workbotAgentStoppedSources`, `chatRunCommands`, `chatTableExpand`, `sessionMultiSelect`, `followUpSuggestions`, `sideChatPanel`, `personalSkillPortability`, `denGreySidebar`, `litellmEntraMemberSignIn`, `sandboxTools`, `mcpThreadEvents`, `nativeMcpEvents` standard behavior on Cloud and self-hosted. `connectionSelectedScopesOnly` and `opencodeV2Only` remain rollback switches.
 
+The November cleanup removes the opt-in paths for `connectEngineTools`, `connectStandardTools`, `connectionMcpServers`, `sandboxGateway`, and `workbotDocumentEditing`. The previous off behavior remains; historical overrides and operator locks are ignored.
+
 - Connect: `googleCalendarRecurrence`, `googleDrivePdfText`, `desktopPersonalConnectors`, `outlookAttachments`.
 - Artifacts: `appToolRepair`, `publicApps`, `appSites`.
 - Desktop: `plainFreeModel`, `settledSessions`, `composerBackgroundTasks`, `agentQuestions`, `steadyLiveTurn`, `remoteSessionPush`.
@@ -122,11 +124,9 @@ These remain controlled rollouts or operational switches. Neither a stale code d
 | --- | --- |
 | `remoteDesktopDeviceLogin` | Remote desktop device sign-in |
 | `administratorRecovery` | Deploy-time administrator recovery |
-| `connectionMcpServers` | Connect: an MCP server for each connection |
 | `opencodeV2Only` | OpenCode v2 only |
 | `managedDeployments` | Managed deployments |
 | `workbotDocuments` | Workbot Documents |
-| `workbotDocumentEditing` | Workbot Documents: editing |
 | `workbotWorkspaceAssistant` | Workbot: workspace assistant |
 | `workbotCalmChat` | Workbot: calm chat look |
 | `workbotAgentCheckGate` | Workbot: Your agent skips checks when nothing new arrived |
@@ -134,6 +134,3 @@ These remain controlled rollouts or operational switches. Neither a stale code d
 | `browserDemonstrations` | Workbot: teach browser tasks |
 | `remoteComputers` | Desktop: computer use on remote computers |
 | `remoteTasksOptIn` | Desktop: other devices reach a computer only after its owner allows it |
-| `sandboxGateway` | Workbot: computers through the sandbox gateway |
-| `connectStandardTools` | Connect: standard tools |
-| `connectEngineTools` | Connect: a tool for each action in OpenWork's engine |

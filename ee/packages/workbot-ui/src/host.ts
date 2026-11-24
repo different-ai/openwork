@@ -19,7 +19,6 @@ export type WorkbotHost = {
   computer?: boolean
   browser?: boolean
   browserDemonstrations?: boolean
-  documentEditing?: boolean
   workspaceAssistant?: boolean
   guidedNavigation?: boolean
   usageRecovery?: { denUrl: string; organizationId: string }

@@ -92,6 +92,8 @@ export const RETIRED_FEATURE_KEYS = [
   "sideChatPanel", "personalSkillPortability", "denGreySidebar",
   "litellmEntraMemberSignIn", "sandboxTools", "mcpThreadEvents",
   "nativeMcpEvents",
+  "connectEngineTools", "connectStandardTools", "connectionMcpServers",
+  "sandboxGateway", "workbotDocumentEditing",
 ] as const
 
 export function isFeatureKey(value: string): value is FeatureKey {
