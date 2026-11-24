@@ -121,7 +121,9 @@ service counts AND actual STOPPED task status, including pending/draining tasks
 in those task families. Unknown state, a resumed service or timeout fails closed.
 It does not stop unrelated tasks in a shared cluster. Exclusive installer/schema
 ownership is required; do not run manual legacy tasks or another Terraform
-coordinator during maintenance.
+coordinator during maintenance. A customer who wants to run Terraform themselves
+takes the deployment over after a run has finished, never during one: see
+[Take over (eject)](#take-over-eject).
 
 After draining, the runner refreshes/replans and checks protected resources again.
 This records desired-count restoration, so only the new migration-gated API-only
@@ -275,8 +277,11 @@ secrets, AWS Backup, the backup role, and the existing ECS/ALB/Service Connect
 resources. Use Den's version-increasing Update handoff: review IAM with
 `CAPABILITY_NAMED_IAM`, update the installer stack, and only then let its CodeBuild
 run plan/apply. Never run the expanded Terraform payload using an old approved
-role. Do not weaken the protected-resource guard or bypass it with administrator
-Terraform. Removing the runner disk, secrets or backup protection is refused.
+role. While the installer manages a deployment, its protected-resource guard is
+not weakened or bypassed: the installer refuses to remove the runner disk,
+secrets or backup protection. A customer who has
+[taken the deployment over](#take-over-eject) runs Terraform under their own
+review, without that guard.
 
 There is one runner task and one SQLite database on encrypted EFS at `/var/data`.
 **Every runner task-definition rollout stops the old task before starting the new
@@ -406,6 +411,129 @@ Cloud-specific target/account/network values never enter the neutral contract.
 Both clouds use ordered milestones, allowlisted reports and customer-approved
 updates. Reports keep working when a feature is killed; launches fail closed.
 
+## Tune, take over and remove (AWS)
+
+Everything lives beside the Terraform state in the customer's bucket. The
+installer's role already reads and writes `deployments/<id>/*` and nothing else,
+so none of this needs a new approval.
+
+```
+deployments/<id>/
+  terraform.tfstate          Terraform state and its S3 lock file
+  overrides.json             customer-owned, optional
+  applied/                   written by the installer after every successful apply
+    release.json             version, installerRevision (when above 1), bundle URL and SHA-256
+    inputs.auto.tfvars.json  exactly what Terraform was given, overrides included, plus the trust roots it downloaded
+    backend.tf.json          backend settings for this state
+    terraform-version.json   version and the Linux download checksum
+    outputs.json             non-sensitive outputs
+    unmanaged.json           the bootstrap stack, retained task definitions and what `terraform destroy` leaves
+    README.md                how to tune, take over and remove this deployment
+  ejected.json               customer-written marker; the installer refuses to run
+```
+
+`applied/` never holds secrets, state, the run token or the enrolment challenge:
+only references such as secret ARNs. The installer checks both run credentials
+against every file before writing. "Infrastructure installed" is reported only
+after the folder was written; if the write fails, the run fails and a retry
+writes it. After a run that failed before that step, `applied/` still describes
+the apply before it.
+
+### Tune
+
+A customer writes `deployments/<id>/overrides.json`. The next run they approve
+(update, retry or configuration change) and every run after it applies the
+file; hosted OpenWork has no separate "apply tuning now" action yet. The
+installer reads it before anything changes, validates it and passes it to
+Terraform as the one typed `overrides` variable in the same
+`managed.auto.tfvars.json` (`aws/terraform/overrides.tf`). No file means the
+inputs are exactly what they were before overrides existed.
+
+| Key | Allowed | AWS meaning |
+| --- | --- | --- |
+| `api.cpu`, `api.memory`, `web.cpu`, `web.memory` | A Fargate size, not below the size profile | Task CPU units and MiB |
+| `api.min_instances`, `web.min_instances` | 1 to 10 | ECS desired count |
+| `api.max_instances`, `web.max_instances` | Equal to `min_instances` | AWS runs a fixed count; there is no autoscaling to bound |
+| `database.tier` | `db.t4g.*`, `db.m6g.*`, `db.m7g.*`, `db.r6g.*`, `db.r7g.*` | RDS instance class; changing it restarts the database |
+| `database.disk_size_gb` | Profile disk up to 4096 | Allocated storage; the autoscaling limit is at least twice it. A disk never shrinks: a plan that lowers the limit to the current disk or below is refused before apply |
+| `database.high_availability` | `true` or `false` | RDS Multi-AZ |
+| `extra_environment` | Up to 32 `OTEL_` variables | Added to Den API and web; names or URLs that carry credentials are refused |
+| `log_retention_days` | A CloudWatch period from 7 days | Service, migration and health agent log groups |
+
+Anything else is refused: unknown keys, the database engine version, deletion
+protection, backups, secrets, images and the network. A refused file fails the
+run at "AWS account and domain verified" with `infrastructure_failed`, before
+Terraform runs; the CodeBuild log names each refused setting, never its value.
+The Terraform variable repeats the same checks, fixed database settings are
+merged after the overrides, and the plan guard still refuses data-bearing
+deletes and replacements. A size or tier that AWS does not offer in the region
+fails during apply, like any other AWS refusal.
+
+### Take over (eject)
+
+`applied/README.md` in the customer's bucket has the exact commands for that
+deployment. In short: write `deployments/<id>/ejected.json`, download and check
+the bundle named in `release.json`, unpack it with `umask 022`, install the
+recorded Terraform version, copy `inputs.auto.tfvars.json` and `backend.tf.json`
+(as `backend_override.tf.json`) into `infra/managed-deployments/aws/terraform/`,
+then `terraform init -lockfile=readonly && terraform plan`. The plan is expected
+to show no changes.
+
+- **Marker.** While `ejected.json` exists the installer refuses every run right
+  after the account check, changes nothing, and reports `infrastructure_failed`
+  with the reason in the CodeBuild log. Health reports continue. Deleting the
+  marker hands the deployment back: the next run applies the installer's inputs
+  again. Hosted OpenWork does not yet show such a deployment as self-managed.
+- **Plan determinism.** The only input Terraform fetched at plan time was the
+  public RDS certificate bundle (`data.http.rds_ca`). The installer records the
+  bytes that apply used as `database_ca_bundle`, so a later plan downloads
+  nothing and embeds the same bytes. The two Lambda packages are built from
+  bundle files: the migration package includes its file mode, which is why the
+  bundle is unpacked with the default `umask 022` (the installer extracts it as
+  0644).
+- **Credentials.** The installer's role is usable only by its CodeBuild project
+  and cannot delete. The customer plans with their own identity: read and write
+  on `deployments/<id>/*`, read access to the deployment's resources and
+  `secretsmanager:GetSecretValue` on the secrets that start with its `ow-…`
+  name. Apply and destroy
+  need to create, change and delete those resources. The state holds the
+  database password and application keys.
+- **After taking over** the installer's protected-resource guard no longer runs;
+  the customer reviews every plan for the database, secrets, storage and network.
+
+### Remove
+
+Customer-run, with the same kit: take over, get a plan with no changes, turn
+off RDS deletion protection, delete the recovery points of the runner's backup
+vault if there is one, `terraform destroy`, then remove what `unmanaged.json`
+lists (retained task definition revisions, the CloudFormation stack and its two
+log groups, the final database snapshot once it is no longer needed) and delete
+the state bucket last. A network the customer supplied is never removed.
+
+### No orchestration lock on AWS
+
+Google Cloud serializes a whole run with a retained `orchestration.lock` object
+because several shells can run its installer at once. AWS has no such gap: the
+runner role can be assumed only by its stack's CodeBuild project, that project
+runs one build at a time (`ConcurrentBuildLimit: 1`) and cannot start builds
+itself, and the role's fixed name means a second stack for the same deployment
+cannot exist in the account. Every Terraform command also takes the S3 state
+lock. A lock object would add one failure with no automatic recovery: a build
+stopped by its timeout would block every later run until someone deleted the
+lock by hand. `tests/test_aws_eject_overrides.py` fails if any of these
+template properties changes.
+
+### Not proven live
+
+Unit tests, mocked Terraform tests and one real-Terraform test of the recorded
+trust roots cover this offline. Still required on an isolated account, on the
+exact release candidate: an install and an approved update that write
+`applied/`; a takeover whose `terraform plan` shows no changes; an update with
+an `overrides.json` (including a database tier change) and one with a refused
+file; a run refused by `ejected.json`; and a removal that leaves nothing owned
+behind. The credentials listed above are the expected minimum, not a tested
+policy.
+
 ## Security model
 
 - Dedicated account by default, or a validated existing network/cluster; only
@@ -416,8 +544,10 @@ updates. Reports keep working when a feature is killed; launches fail closed.
   bootstrap stack is deleted. Managed state still contains legacy secret values.
 - Only the stack's CodeBuild project may assume its runner role. The launcher
   cannot override buildspec/image/privilege; the runner cannot create/start builds.
-- Data-bearing deletes/replacements are refused, with only the exact TLS version
-  transition above allowed. No destructive rollout or administrator workaround.
+- The installer refuses data-bearing deletes/replacements, with only the exact
+  TLS version transition above allowed, and has no destructive rollout. Tuning is
+  an allowlist the installer validates; taking over is the customer's explicit,
+  marked decision.
 - Health reports contain only allowlisted check ids, states, counts and codes.
   No credentials, logs or customer data leave the account.
 
