@@ -404,8 +404,8 @@ you can also lock a feature for the whole install under `config.features`:
 ```yaml
 config:
   features:
-    permissions: "true"            # on for everyone on this install
-    computerUse: "false" # off for everyone on this install
+    remoteComputers: "true"   # on for everyone on this install
+    sessionTree: "false"      # off for everyone on this install
 ```
 
 - `""` (the default) follows `/admin`, which starts from the default listed
@@ -413,14 +413,25 @@ config:
 - `"true"` or `"false"` locks the feature for everyone. `/admin` shows "Set by
   deployment config" for it. The `/admin` kill switch still turns it off.
 
-Each key renders `DEN_FEATURE_<KEY>` for den-api. Features that are not part
-of self-hosted installs have no key, so they can't be turned on here. With the
-published chart, a key that isn't a feature fails `helm install`. A chart
+Each key renders `DEN_FEATURE_<KEY>` for den-api. The published chart lists
+every feature in the registry. A feature that is not part of self-hosted
+installs is marked `(cloud only)` there: den-api ignores its key on a
+self-hosted install and logs a warning, so it can't be turned on here. Keys of
+retired features are not in the registry any more. With the published chart, a
+key that isn't a feature fails `helm install`. A chart
 installed from a checkout accepts any key, and den-api ignores the ones it
 does not know with a warning in its log.
 
 `config.deployment` (`DEN_DEPLOYMENT`) is `self_hosted` unless this is
 OpenWork Cloud. Don't change it on a customer install.
+
+A feature is how OpenWork ships unfinished work. It is not how you choose what
+this install can do: Workbot, the Slack assistant, Automations, the AI Gateway
+and cloud computers are capabilities, set with the values and environment
+variables listed in
+[Deployment settings and capabilities](../../../docs/managed-deployments/settings-and-capabilities.md).
+Cloud computers are the one capability that still needs a feature
+(`remoteComputers`) turned on; that page records it as a known gap.
 
 For supported keys, defaults and descriptions, run
 `helm show values oci://ghcr.io/different-ai/charts/openwork-ee` and read
@@ -459,8 +470,8 @@ config:
 ```
 
 These render `DEN_AUTOMATIONS_ENABLED=true` and
-`DEN_AUTOMATIONS_RUNTIME_ENABLED=true` for Den. An entirely unconfigured Den
-keeps availability fail-closed while preserving the legacy runtime. When using
+`DEN_AUTOMATIONS_RUNTIME_ENABLED=true` for Den. A Den with neither variable set
+also has Automations on. When using
 raw environment variables, an explicit `DEN_AUTOMATIONS_ENABLED` value also
 becomes the runtime default: `false` is therefore a complete shutdown unless
 `DEN_AUTOMATIONS_RUNTIME_ENABLED=true` explicitly selects mixed-version

@@ -53,6 +53,11 @@ export const CHECKS = [
     fix: "Run `pnpm features:sync` and commit what it writes.",
   },
   {
+    name: "deployment-capabilities",
+    command: ["pnpm", "--filter", "@openwork/managed-deployments", "test"],
+    fix: "An installer, the Helm chart or Den no longer matches packages/managed-deployments/src/capabilities.ts. Update the catalog (and its gaps) in the same change; do not edit the test to fit.",
+  },
+  {
     name: "i18n",
     command: ["node", "scripts/i18n-audit.mjs", "--ci"],
     fix: "Add the missing key to apps/app/src/i18n/locales/en.ts, or remove the unused one.",
