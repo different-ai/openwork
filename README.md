@@ -143,11 +143,11 @@ and `AGENTS.md`).
 
 ### Testing
 
-All executable coverage lives in `evals/specs/**/*.test.ts`; app-driving journeys use `.e2e.test.ts`.
+Unit and API tests live alongside the code they cover. End-to-end journeys live in `evals/core/` and one-off PR proofs in `evals/proofs/`.
 
 ```bash
 pnpm --dir evals install --frozen-lockfile   # once
-pnpm evals:pr specs/<name>.test.ts           # app-less PR-lane spec
+pnpm evals:pr scripts/spec-lint/lint.test.ts # spec linter tests, no app required
 pnpm evals:e2e <name> --local                # app-driving E2E journey, run locally
 ```
 
