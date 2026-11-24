@@ -1850,7 +1850,7 @@ function SessionGroupActions({ group, groups, workspaceId, count }: {
   count: number;
 }) {
   const ctx = useSidebarContext();
-  const [expanded, setExpanded] = React.useState(false);
+  const actionsTrigger = React.useRef<HTMLButtonElement>(null);
   const [renameOpen, setRenameOpen] = React.useState(false);
   const [renameLabel, setRenameLabel] = React.useState(group.label);
   const [deleteOpen, setDeleteOpen] = React.useState(false);
@@ -1874,85 +1874,55 @@ function SessionGroupActions({ group, groups, workspaceId, count }: {
 
   return (
     <>
-      <span
-        data-session-group-actions={group.id}
-        className={cn(
-          "relative ml-auto flex h-5 shrink-0 items-center justify-end overflow-hidden transition-[width] duration-150",
-          expanded ? "w-20" : "w-4",
-        )}
-        onMouseLeave={() => setExpanded(false)}
-      >
-        <span data-session-group-count className="text-[10px] tabular-nums text-muted-foreground/70 group-hover/separator:hidden">
+      <span data-session-group-actions={group.id} className="relative flex h-5 w-5 shrink-0 items-center justify-center">
+        <span
+          data-session-group-count
+          className="text-[10px] tabular-nums text-muted-foreground/70 group-hover/separator:opacity-0 group-focus-within/separator:opacity-0 group-has-data-popup-open/separator:opacity-0 pointer-coarse:opacity-0"
+        >
           {count}
         </span>
-        {!expanded ? (
-          <button
-            type="button"
-            className="hidden size-5 items-center justify-center rounded text-muted-foreground hover:bg-sidebar-accent hover:text-foreground group-hover/separator:flex"
-            onMouseEnter={() => setExpanded(true)}
-            onFocus={() => setExpanded(true)}
-            onClick={(event) => event.stopPropagation()}
-            aria-label={t("session_management.group_actions")}
-          >
-            <MoreHorizontal className="size-3.5" />
-          </button>
-        ) : (
-          <span className="flex items-center">
-            <button
-              type="button"
-              className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-              onClick={(event) => {
-                event.stopPropagation();
-                useSessionManagementStore.getState().toggleFeedFolder(workspaceId, group.id);
-                setExpanded(false);
-              }}
-              aria-label={pinnedToFeed ? t("session_management.unpin_from_feed") : t("session_management.pin_to_feed")}
-              title={pinnedToFeed ? t("session_management.unpin_from_feed") : t("session_management.pin_to_feed")}
+        <DropdownMenu modal={false}>
+          <DropdownMenuTrigger openOnHover render={
+            <Button
+              ref={actionsTrigger}
+              variant="ghost"
+              size="icon-xs"
+              className="absolute inset-0 size-5 rounded text-muted-foreground opacity-0 hover:bg-sidebar-accent focus-visible:opacity-100 data-popup-open:opacity-100 group-hover/separator:opacity-100 group-focus-within/separator:opacity-100 pointer-coarse:opacity-100"
+              aria-label={t("session_management.group_actions") + ": " + group.label}
             >
-              {pinnedToFeed ? <PinOff className="size-3" /> : <Pin className="size-3" />}
-            </button>
-            <button
-              type="button"
-              className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-              onClick={(event) => {
-                event.stopPropagation();
-                ctx.onCreateTaskInWorkspace(workspaceId, group.id);
-                setExpanded(false);
-              }}
-              aria-label={t("session_management.new_session_in_group")}
-            >
-              <Plus className="size-3" />
-            </button>
-            <button
-              type="button"
-              className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-sidebar-accent hover:text-foreground"
-              onClick={(event) => {
-                event.stopPropagation();
-                setRenameLabel(group.label);
-                setRenameOpen(true);
-              }}
-              aria-label={t("session_management.rename_group")}
-            >
-              <Pencil className="size-3" />
-            </button>
-            <button
-              type="button"
-              className="flex size-5 items-center justify-center rounded text-muted-foreground hover:bg-destructive/10 hover:text-destructive"
-              onClick={(event) => {
-                event.stopPropagation();
-                setDeleteDestination(UNGROUPED_GROUP_ID);
-                setDeleteOpen(true);
-              }}
-              aria-label={t("session_management.delete_group")}
-            >
-              <Trash2 className="size-3" />
-            </button>
-          </span>
-        )}
+              <MoreHorizontal aria-hidden="true" className="size-3.5" />
+            </Button>
+          } />
+          <DropdownMenuContent align="end" finalFocus={() => renameOpen || deleteOpen ? false : actionsTrigger.current}>
+            <DropdownMenuItem onClick={() => useSessionManagementStore.getState().toggleFeedFolder(workspaceId, group.id)}>
+              {pinnedToFeed ? <PinOff aria-hidden="true" /> : <Pin aria-hidden="true" />}
+              {pinnedToFeed ? t("session_management.unpin_from_feed") : t("session_management.pin_to_feed")}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => ctx.onCreateTaskInWorkspace(workspaceId, group.id)}>
+              <Plus aria-hidden="true" />
+              {t("session_management.new_session_in_group")}
+            </DropdownMenuItem>
+            <DropdownMenuItem onClick={() => {
+              setRenameLabel(group.label);
+              setRenameOpen(true);
+            }}>
+              <Pencil aria-hidden="true" />
+              {t("session_management.rename_group")}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem variant="destructive" onClick={() => {
+              setDeleteDestination(UNGROUPED_GROUP_ID);
+              setDeleteOpen(true);
+            }}>
+              <Trash2 aria-hidden="true" />
+              {t("session_management.delete_group")}
+            </DropdownMenuItem>
+          </DropdownMenuContent>
+        </DropdownMenu>
       </span>
 
       <Dialog open={renameOpen} onOpenChange={setRenameOpen}>
-        <DialogContent className="sm:max-w-sm">
+        <DialogContent className="sm:max-w-sm" finalFocus={actionsTrigger}>
           <DialogHeader>
             <DialogTitle>{t("session_management.rename_group")}</DialogTitle>
           </DialogHeader>
@@ -1977,7 +1947,7 @@ function SessionGroupActions({ group, groups, workspaceId, count }: {
       </Dialog>
 
       <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
-        <DialogContent className="sm:max-w-sm">
+        <DialogContent className="sm:max-w-sm" finalFocus={actionsTrigger}>
           <DialogHeader>
             <DialogTitle>{t("session_management.delete_group")}</DialogTitle>
           </DialogHeader>
@@ -2038,35 +2008,38 @@ function SessionGroupSeparator({ label, count, expanded, onToggle, group, groups
   return (
     <div
       data-session-group={group?.id}
-      role="button"
-      tabIndex={0}
-      onPointerDown={(event) => {
-        pressedAt.current = { x: event.clientX, y: event.clientY };
-      }}
-      onClick={(event) => {
-        const pressed = pressedAt.current;
-        pressedAt.current = null;
-        if (pressed && Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) > 3) return;
-        onToggle();
-      }}
-      onKeyDown={(event) => {
-        if (event.target !== event.currentTarget || (event.key !== "Enter" && event.key !== " ")) return;
-        event.preventDefault();
-        onToggle();
-      }}
-      className={cn("group/separator flex h-8 w-full items-center gap-2 rounded-md pe-2 text-left transition-colors hover:bg-sidebar-accent/50")}
+      className="group/separator flex h-8 w-full items-center gap-2 rounded-md pe-2 transition-colors hover:bg-sidebar-accent/50"
       style={{ paddingInlineStart: sidebarRowPaddingInlineStart(0) }}
-      aria-expanded={expanded}
     >
-      <SidebarGlyphSlot>
-        <ChevronRight className={cn("size-3.5 text-muted-foreground transition-transform duration-200", expanded && "rotate-90")} />
-      </SidebarGlyphSlot>
-      <span
-        className={cn("min-w-0 flex-1 cursor-grab touch-none ow-fade-truncate active:cursor-grabbing", SIDEBAR_SECTION_LABEL)}
-        onPointerDown={onTitlePointerDown}
+      <Button
+        type="button"
+        variant="ghost"
+        size="sm"
+        className="h-full min-w-0 flex-1 justify-start gap-2 rounded-md border-0 p-0 text-left"
+        aria-expanded={expanded}
+        onPointerDown={(event) => {
+          pressedAt.current = { x: event.clientX, y: event.clientY };
+        }}
+        onPointerCancel={() => {
+          pressedAt.current = null;
+        }}
+        onClick={(event) => {
+          const pressed = pressedAt.current;
+          pressedAt.current = null;
+          if (event.detail > 0 && pressed && Math.hypot(event.clientX - pressed.x, event.clientY - pressed.y) > 3) return;
+          onToggle();
+        }}
       >
-        {label}
-      </span>
+        <SidebarGlyphSlot>
+          <ChevronRight aria-hidden="true" className={cn("size-3.5 text-muted-foreground transition-transform duration-200", expanded && "rotate-90")} />
+        </SidebarGlyphSlot>
+        <span
+          className={cn("min-w-0 flex-1 cursor-grab touch-none ow-fade-truncate active:cursor-grabbing", SIDEBAR_SECTION_LABEL)}
+          onPointerDown={onTitlePointerDown}
+        >
+          {label}
+        </span>
+      </Button>
       {group && groups && workspaceId ? (
         <SessionGroupActions group={group} groups={groups} workspaceId={workspaceId} count={count} />
       ) : (
