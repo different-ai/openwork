@@ -31,7 +31,9 @@ function archive(files) {
   return gzipSync(Buffer.concat(parts));
 }
 
-function objects(version) {
+// `revision` above 1 is an installer-only fix of `version`, published in its own folder.
+function objects(version, revision = 1) {
+  const identity = { provider: "aws", version, ...(revision > 1 ? { installerRevision: revision } : {}), protocolVersion: 1 };
   const files = Object.fromEntries([
     "infra/managed-deployments/aws/terraform/main.tf",
     "infra/managed-deployments/aws/terraform/assistants.tf",
@@ -40,15 +42,15 @@ function objects(version) {
     "infra/managed-deployments/aws/health/health_agent.py",
     "infra/managed-deployments/aws/health/assistant_health_agent.py",
     "infra/terraform/modules/openwork-aws-ecs/main.tf",
-  ].map(name => [name, `# Deterministic ${version} artifact fixture. Never executed.\n`]));
+  ].map(name => [name, `# Deterministic ${version} revision ${revision} artifact fixture. Never executed.\n`]));
   const release = {
-    provider: "aws", version, protocolVersion: 1,
+    ...identity,
     files: Object.fromEntries(Object.entries(files).map(([name, value]) => [name, hash(value)])),
     images: Object.fromEntries(Object.entries(repositories).map(([kind, repository]) => [kind, `ghcr.io/different-ai/${repository}@sha256:${"a".repeat(64)}`])),
   };
   const bundle = archive({ ...files, "release.json": JSON.stringify(release) });
   const template = Buffer.from(JSON.stringify({ AWSTemplateFormatVersion: "2010-09-09", Description: "Non-executable published-artifact fixture", Resources: {} }));
-  const manifest = Buffer.from(JSON.stringify({ provider: "aws", version, protocolVersion: 1, bundleSha256: version === "1.2.4" ? "0".repeat(64) : hash(bundle), templateSha256: hash(template) }));
+  const manifest = Buffer.from(JSON.stringify({ ...identity, bundleSha256: version === "1.2.4" ? "0".repeat(64) : hash(bundle), templateSha256: hash(template) }));
   return { "manifest.json": manifest, "bundle.tar.gz": bundle, "cloudformation.json": template };
 }
 
@@ -59,13 +61,14 @@ globalThis.fetch = Object.assign(async (input, init) => {
     const method = init?.method ?? (input instanceof Request ? input.method : "GET");
     console.info("Managed installer fixture:", JSON.stringify({ method, path: url.pathname, immutable: url.searchParams.has("versionId") }));
     if (!["GET", "HEAD"].includes(method)) throw new Error("The published-object fixture accepts reads only");
-    const match = /^\/releases\/aws\/(1\.2\.[234])\/(manifest\.json|bundle\.tar\.gz|cloudformation\.json)$/.exec(url.pathname);
+    const match = /^\/releases\/aws\/(1\.2\.[234]|1\.2\.3_r2)\/(manifest\.json|bundle\.tar\.gz|cloudformation\.json)$/.exec(url.pathname);
     if (url.pathname === "/releases/aws/1.2.5/manifest.json") return new Response("Private storage diagnostic: never show this provider body", { status: 403 });
     if (!match) return new Response(null, { status: 404 });
-    const [, version, file] = match;
-    const versionId = `fixture-${version}-${file}`;
+    const [, folder, file] = match;
+    const [version, revision] = folder.split("_r");
+    const versionId = `fixture-${folder}-${file}`;
     if (url.search && url.searchParams.get("versionId") !== versionId) return new Response(null, { status: 404 });
-    const bytes = objects(version)[file];
+    const bytes = objects(version, revision ? Number(revision) : 1)[file];
     return new Response(method === "HEAD" ? null : bytes, { headers: { "content-length": String(bytes.length), "x-amz-version-id": versionId } });
   }
   if (url.href === "https://api.github.com/repos/different-ai/openwork/releases/latest") {

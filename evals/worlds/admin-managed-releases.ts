@@ -2,7 +2,7 @@ import type { Place, Seed } from "@openwork/env";
 import { z } from "zod";
 
 const reportSchema = z.object({ history: z.array(z.object({
-  action: z.string(), version: z.string().nullable(), actor: z.string(), manifestSha256: z.string().nullable(),
+  action: z.string(), version: z.string().nullable(), installerRevision: z.number().optional(), actor: z.string(), manifestSha256: z.string().nullable(),
   qualification: z.object({ freshInstallUrl: z.string(), approvedUpdateUrl: z.string() }).nullable(),
 })) });
 
@@ -61,7 +61,7 @@ export async function adminManagedReleasesWorld(seed: Seed, { place }: { place: 
       if (!result.response.ok || !Array.isArray(rows)) throw new Error("Could not read the pending installation");
       const saved = rows.map(record).find(row => row.id === deployment.id);
       if (!saved) throw new Error("The pending installation disappeared");
-      return { installedVersion: saved.installedVersion, availableVersion: saved.availableVersion, run: record(saved.run), originalRunId: originalRun.id };
+      return { installedVersion: saved.installedVersion, availableVersion: saved.availableVersion, availableInstallerRevision: saved.availableInstallerRevision, run: record(saved.run), originalRunId: originalRun.id };
     },
     async memberAccess() {
       const read = await seed.api(den.members.member, "/v1/admin/managed-releases");
