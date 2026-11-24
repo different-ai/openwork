@@ -1,4 +1,3 @@
-import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { createServer } from "vite";
 import type { Place, Seed } from "@openwork/env";
@@ -11,9 +10,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 /** Real Workbot client and Documents components; only Den/provider responses are
- * synthetic. The Office peer proves owner/session lifecycle, NOT engine fidelity
- * or survival of changes buffered inside Collabora. Snapshot bytes are proved
- * separately against real Den/Redis in the Office API test. */
+ * synthetic. */
 export async function workbotWorkspace(seed: Seed, { place }: { place: Place }) {
   const resources = new AsyncDisposableStack();
   const messages: Record<string, unknown>[] = [];
@@ -31,11 +28,6 @@ export async function workbotWorkspace(seed: Seed, { place }: { place: Place }) 
   const identityReads: number[] = [];
   const identityScopes: { principalId: string; organizationId: string; status: number }[] = [];
   const listingReads: { view: string; folder: string; status: number }[] = [];
-  const officeOpens: string[] = [];
-  const officeRequests: string[] = [];
-  const officeCloses: string[] = [];
-  const officeLaunches: string[] = [];
-  const officeSessions = new Map<string, { expiresAt: string; recoveryExpiresAt: string }>();
   let driveDenied = false;
   let sessionExpired = false;
   let principalId = "user_example";
@@ -52,10 +44,7 @@ export async function workbotWorkspace(seed: Seed, { place }: { place: Place }) 
   const releaseFolders: (() => void)[] = [];
   let fileDenied = false;
   const deniedFiles = new Set<string>();
-  let officeError: number | null = 503;
   let documentsOff = false;
-  let editingOff = false;
-  let officeStarting = false;
   const files = [
     { id: "file_brief", name: "Project brief.txt", mimeType: "text/plain", modifiedTime: "2026-10-12T09:00:00Z", size: "42", webViewLink: "https://drive.google.com/file/d/file_brief/view" },
     { id: "file_budget", name: "Budget notes.txt", mimeType: "text/plain", modifiedTime: "2026-10-11T09:00:00Z", size: "36", webViewLink: "https://drive.google.com/file/d/file_budget/view" },
@@ -86,16 +75,9 @@ export async function workbotWorkspace(seed: Seed, { place }: { place: Place }) 
         server.middlewares.use(async (req, res, next) => {
           const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
           if (url.pathname === "/auth/login") { res.setHeader("content-type", "text/html"); return void res.end("<!doctype html><html><body>Workspace sign-in fixture</body></html>"); }
-          if (url.pathname.startsWith("/office-fixture/")) {
-            const id = url.pathname.split("/").pop() ?? "";
-            officeLaunches.push(id);
-            res.setHeader("content-type", "text/html");
-            return void res.end(`<!doctype html><html><body>Received-snapshot protocol fixture, not a document engine<script>parent.postMessage(JSON.stringify({MessageId:'App_LoadingStatus',Values:{Status:'Document_Loaded'}}),location.origin)</script></body></html>`);
-          }
           if (!url.pathname.startsWith("/v1/workbot")) return next();
           const referring = new URL(req.headers.referer ?? "http://fixture");
           const enabled = referring.searchParams.get("assistant") !== "off";
-          const documentEditing = !editingOff && referring.searchParams.get("editing") !== "off";
           const documents = !documentsOff && referring.searchParams.get("documents") !== "off";
           const denied = driveDenied || referring.searchParams.get("access") === "denied";
           const json = (body: unknown, status = 200) => { if (res.destroyed) return; res.statusCode = status; res.setHeader("content-type", "application/json"); res.end(JSON.stringify(body)); };
@@ -104,7 +86,7 @@ export async function workbotWorkspace(seed: Seed, { place }: { place: Place }) 
             identityReads.push(identityStatus);
             identityScopes.push({ principalId, organizationId, status: identityStatus });
             if (identityStatus !== 200) return json({ error: identityStatus === 401 ? "unauthorized" : "identity_unavailable" }, identityStatus);
-            return json({ name: "Alex", email: "alex@example.test", userId: principalId, organizationId, organizationName: "Example", enabled: true, calendar: true, documents, documentEditing, computer: referring.searchParams.get("computer") === "on", browser: referring.searchParams.get("browser") === "on", browserChat: true, workspaceAssistant: enabled, guidedNavigation: referring.searchParams.get("guided") === "on", canSchedule: false, sideChats: referring.searchParams.get("sideChats") === "on", denUrl: "https://workspace.example.test" });
+            return json({ name: "Alex", email: "alex@example.test", userId: principalId, organizationId, organizationName: "Example", enabled: true, calendar: true, documents, computer: referring.searchParams.get("computer") === "on", browser: referring.searchParams.get("browser") === "on", browserChat: true, workspaceAssistant: enabled, guidedNavigation: referring.searchParams.get("guided") === "on", canSchedule: false, sideChats: referring.searchParams.get("sideChats") === "on", denUrl: "https://workspace.example.test" });
           }
           const expectedUser = req.headers["x-openwork-client-user"];
           const expectedOrganization = req.headers["x-openwork-client-organization"];
@@ -150,9 +132,7 @@ export async function workbotWorkspace(seed: Seed, { place }: { place: Place }) 
           if (url.pathname.startsWith("/v1/workbot/documents")) {
             const write = /\/files\/([^/]+)\/editor$/.exec(url.pathname);
             if (req.method === "POST" && write) documentWrites.push(write[1]!);
-            if (/\/files\/[^/]+\/office(?:\/|$)/.test(url.pathname)) officeRequests.push(url.pathname);
-            const office = /\/files\/file_office\/office(?:\/([^/]+)(?:\/(close|save))?)?$/.exec(url.pathname);
-            if (office?.[2] === "close") officeCloses.push(office[1]!);
+            if (req.method !== "GET") return json({ error: "not_found" }, 404);
             if (!documents) return json({ error: "workbot_documents_not_enabled" }, 403);
             if (sessionExpired) return json({ error: "unauthorized" }, 401);
             if (denied) return json({ error: "needs_connection" }, 409);
@@ -164,21 +144,6 @@ export async function workbotWorkspace(seed: Seed, { place }: { place: Place }) 
               listingReads.push({ view: recent ? "recent" : "folder", folder: folderId, status });
               if (status !== 200) return json({ error: status === 403 ? "permission_denied" : "upstream_unavailable" }, status);
               return json({ ok: true, files: folderId === folder.id && !recent ? [secret] : [...(recent ? [] : [folder]), ...files, ...(referring.searchParams.get("previews") === "on" ? previewFiles : [])] });
-            }
-            if (office) {
-              const id = office[1];
-              if (!id) {
-                officeOpens.push("open");
-                if (officeStarting) return json({ error: "office_starting", message: "Starting the document editor in your OpenWork Cloud workspace…" }, 503);
-                if (officeError !== null) return json({ error: "office_unavailable", message: "The document service isn't available." }, officeError);
-                const id = randomUUID(); const expiresAt = new Date(Date.now() + 3_600_000).toISOString();
-                const session = { expiresAt, recoveryExpiresAt: new Date(Date.parse(expiresAt) + 900_000).toISOString() };
-                officeSessions.set(id, session);
-                return json({ ...session, id, serverUrl: url.origin, editorUrl: `${url.origin}/office-fixture/${id}`, accessToken: "fixture_capability", canEdit: false, saveAsCopy: false, fileType: "xlsx" });
-              }
-              const session = officeSessions.get(id); if (!session) return json({ error: "office_unavailable" }, 409);
-              if (office[2] === "close") { officeSessions.delete(id); return json({ ok: true }); }
-              return json({ ...session, draftVersion: 0, uncertain: false });
             }
             const match = /\/files\/([^/]+)\/(metadata|editor|content)$/.exec(url.pathname);
             if (match) {
@@ -192,13 +157,12 @@ export async function workbotWorkspace(seed: Seed, { place }: { place: Place }) 
                 return void res.end(file.mimeType === "image/png" ? Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+j/aQAAAAASUVORK5CYII=", "base64") : fixturePdf());
               }
               if (["file_pdf", "file_slides", "file_image"].includes(file.id) && match[2] === "editor") return json({ kind: "preview", fileId: file.id, connectionId: "google-workspace", name: file.name, revision: "v1", canEdit: false, mimeType: file.mimeType });
-              if (["file_doc", "file_docx"].includes(file.id) && match[2] === "editor") return json({ kind: "document", source: file.id === "file_docx" ? "docx" : "google", fileId: file.id, connectionId: "google-workspace", name: file.name, revision: "v1", canEdit: true, sections: [{ id: "body", name: "Body", paragraphs: [{ id: "p1", runs: [{ id: "r1", text: "A readable project plan", bold: true }] }] }] });
+              if (["file_doc", "file_docx"].includes(file.id) && match[2] === "editor") return json({ kind: "document", source: file.id === "file_docx" ? "docx" : "google", fileId: file.id, connectionId: "google-workspace", name: file.name, revision: "v1", canEdit: false, sections: [{ id: "body", name: "Body", paragraphs: [{ id: "p1", runs: [{ id: "r1", text: "A readable project plan", bold: true }] }] }] });
               if (match[2] === "metadata") { if (holdMetadata) await new Promise<void>(resolve => releaseMetadatas.push(resolve)); opened.push(file.id); return json({ id: file.id, name: file.name, mimeType: file.mimeType, modifiedTime: file.modifiedTime, size: file.size === null ? null : Number(file.size), openUrl: file.webViewLink }); }
-              if (req.method === "POST") return json({ ok: true });
               if (file.id === "file_sheet" || file.id === "file_office") {
-                return json({ kind: "spreadsheet", source: file.id === "file_office" ? "xlsx" : "google", fileId: file.id, connectionId: "google-workspace", name: file.name, revision: "v1", canEdit: true, sheets: [{ id: "0", name: "Phrases", rows: 3, columns: 2 }], activeSheetId: "0", startRow: 1, endRow: 3, cells: [{ row: 1, column: 1, text: "Trigger phrase" }, { row: 2, column: 1, text: "book a demo" }] });
+                return json({ kind: "spreadsheet", source: file.id === "file_office" ? "xlsx" : "google", fileId: file.id, connectionId: "google-workspace", name: file.name, revision: "v1", canEdit: false, sheets: [{ id: "0", name: "Phrases", rows: 3, columns: 2 }], activeSheetId: "0", startRow: 1, endRow: 3, cells: [{ row: 1, column: 1, text: "Trigger phrase" }, { row: 2, column: 1, text: "book a demo" }] });
               }
-              return json({ kind: "text", fileId: file.id, connectionId: "google-workspace", name: file.name, revision: "v1", canEdit: true, ...(referring.searchParams.get("notice") === "on" ? { notice: "Text editing. Original document layout and other content are retained when you save." } : {}), text: file.id === "file_brief" ? "Project overview" : "Budget overview" });
+              return json({ kind: "text", fileId: file.id, connectionId: "google-workspace", name: file.name, revision: "v1", canEdit: false, ...(referring.searchParams.get("notice") === "on" ? { notice: "Text editing. Original document layout and other content are retained when you save." } : {}), text: file.id === "file_brief" ? "Project overview" : "Budget overview" });
             }
           }
           if (url.pathname.endsWith("/calendar/v1/automations")) return json({ items: [], nextCursor: null });
@@ -237,7 +201,6 @@ export async function workbotWorkspace(seed: Seed, { place }: { place: Place }) 
       seedOwnerSpreadsheet: () => { thread("user_example").push({ id: "owner_sheet_turn", text: "Make me a budget sheet", sentAt: Date.now(), finishedAt: Date.now(), status: "done", attachments: [], outputs: [{ id: "out_budget", name: "Budget.xlsx", mediaType: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", size: 4096, updatedAt: Date.now() }], parts: [{ kind: "text", text: "Here is the budget." }], modelSteps: 1, error: null }); },
       seedOwnerConversation: (text: string) => { thread("user_example").push({ id: "owner_account_turn", text, sentAt: Date.now(), finishedAt: Date.now(), status: "done", attachments: [], outputs: [], parts: [{ kind: "text", text: "Original account answer" }], modelSteps: 1, error: null }); },
       async documentReadStatus() { const response = await fetch(`${url}v1/workbot/documents/v1/documents/google-drive/files/file_brief/editor`); await response.arrayBuffer(); return response.status; },
-      officeOpens: () => [...officeOpens], officeRequests: () => [...officeRequests], officeCloses: () => [...officeCloses], officeLaunches: () => [...officeLaunches],
       revokeDrive: () => { driveDenied = true; }, restoreDrive: () => { driveDenied = false; },
       expireSession: () => { sessionExpired = true; }, restoreSession: () => { sessionExpired = false; },
       expireIdentity: () => { identityStatus = 401; }, failIdentity: () => { identityStatus = 503; }, restoreIdentityService: () => { identityStatus = 200; },
@@ -247,10 +210,6 @@ export async function workbotWorkspace(seed: Seed, { place }: { place: Place }) 
       denyRecent: () => { recentStatus = 403; }, failRecent: () => { recentStatus = 503; }, restoreRecent: () => { recentStatus = 200; },
       holdFolder: () => { holdFolder = true; }, releaseFailedFolder: () => { folderStatus = 503; release(); }, restoreFolder: () => { folderStatus = 200; release(); },
       denyFile: () => { fileDenied = true; }, allowFile: () => { fileDenied = false; }, denyBudget: () => { deniedFiles.add("file_budget"); },
-      makeOfficeAvailable: () => { officeError = null; officeStarting = false; },
-      startOfficeSlowly: () => { officeStarting = true; },
-      makeOfficeUnavailable: () => { officeError = 503; officeStarting = false; },
-      disableEditing: () => { editingOff = true; }, enableEditing: () => { editingOff = false; },
       disableDocuments: () => { documentsOff = true; }, enableDocuments: () => { documentsOff = false; },
       // Test-owned wall-clock + OS connectivity fault, not a query/cache setter.
       // Both base and head cross the real 60-second parent stale boundary, then

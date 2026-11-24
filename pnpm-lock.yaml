@@ -1415,9 +1415,6 @@ importers:
       '@openwork/sandbox-daytona':
         specifier: workspace:*
         version: link:../../../packages/sandbox-daytona
-      '@openwork/sandbox-differently':
-        specifier: workspace:*
-        version: link:../../../packages/sandbox-differently
       '@openwork/sandbox-freestyle':
         specifier: workspace:*
         version: link:../../../packages/sandbox-freestyle

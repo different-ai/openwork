@@ -58,3 +58,25 @@ test("old operator locks cannot turn graduated features off or enter the active 
     for (const key of graduated) assert.equal(Object.hasOwn(features, key), false, key)
   }
 })
+
+const removed = [
+  "connectEngineTools", "connectStandardTools", "connectionMcpServers",
+  "sandboxGateway", "workbotDocumentEditing",
+]
+
+test("removed experiments cannot be enabled with old operator locks", () => {
+  const env = Object.fromEntries(removed.map((key) => [
+    `DEN_FEATURE_${key.replace(/([a-z0-9])([A-Z])/g, "$1_$2").toUpperCase()}`,
+    "true",
+  ]))
+  for (const key of removed) {
+    assert.ok(RETIRED_FEATURE_KEYS.some((retired) => retired === key), key)
+    assert.equal(featureKeySchema.safeParse(key).success, false, key)
+  }
+  const parsed = parseFeatureEnvironment(env)
+  assert.deepEqual(parsed.locks, {})
+  assert.equal(parsed.problems.length, removed.length)
+  assert.ok(parsed.problems.every((problem) => !problem.fatal))
+  const features = resolveFeatures({ ...parsed, rollouts: {}, overrides: {} })
+  for (const key of removed) assert.equal(Object.hasOwn(features, key), false, key)
+})

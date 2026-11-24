@@ -30,7 +30,6 @@ const host: WorkbotHost = {
   calmChat: search.get("calm") === "1",
   deviceActivity: search.get("deviceActivity") === "1",
   documents: search.get("documents") === "1",
-  documentEditing: search.get("documents") === "1",
   calendar: search.get("calendar") === "1",
   workspaceAssistant: search.get("documents") === "1" || search.get("calendar") === "1",
   connectionsHref: "https://den.example.test/dashboard/your-connections",
