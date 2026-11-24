@@ -1,0 +1,91 @@
+---
+title: "Audit export API"
+description: "Look up the audit export endpoint, query parameters, response headers, formats, request limits, and errors."
+keywords: ["audit export", "API", "cursor", "NDJSON", "CSV", "rate limit"]
+---
+
+`GET /v1/audit/export` returns one page of retained, structured audit events.
+The Cloud base URL is `https://api.openworklabs.com`. For self-hosted, use your
+Den API host.
+
+The [generated operation reference](https://openworklabs.com/docs/api-reference/organizations/export-one-audit-snapshot-page)
+contains the OpenAPI schemas. For the reference that matches your installed
+Den API, open `/docs` on its host. For a working script, see
+[Export audit logs to your SIEM](/cloud/export-audit-logs).
+
+## Authentication
+
+Send an organization [API key](/cloud/api-keys) as `x-api-key: <api-key>`,
+without a `Bearer` prefix. The key owner must have **View audit history**
+(`audit.view`). Audit visibility (`DEN_AUDIT_VISIBILITY_ENABLED`) is required
+and on by default.
+
+## Query parameters
+
+All parameters are optional. Omitted filters impose no restriction and supplied
+filters combine with AND. Unknown, repeated or empty parameters are rejected.
+
+| Parameter | Type and default | Accepted values and meaning |
+| --- | --- | --- |
+| `format` | String; `ndjson` | `ndjson` or `csv`. |
+| `limit` | Integer; `50` | `1`–`100` child events per page, excluding the CSV column header. Decimal digits only, with no leading zero, sign or decimal point. |
+| `cursor` | String; omitted | Opaque `X-Audit-Next-Cursor` value, up to 4,096 characters. |
+| `from` | Date or date-time; unbounded | Inclusive lower bound on the operation's first-recorded time. |
+| `to` | Date or date-time; unbounded | Inclusive upper bound on the operation's first-recorded time. |
+| `actorId` | User ID; unrestricted | Operation's initiating `usr_` user ID, not a membership ID. |
+| `action` | String; unrestricted | Exact action on an eligible child event; 1–128 characters matching `^[a-z][a-z0-9_.-]*$`. See `GET /v1/audit/event-types`. |
+| `outcome` | String; unrestricted | Current operation outcome: `running`, `succeeded`, `failed`, `partial` or `unknown`. |
+| `origin` | String; unrestricted | Operation origin: `api`, `cloud_ui`, `mcp`, `scheduler`, `webhook` or `platform_admin`. |
+| `searchId` | String; unrestricted | Exact, case-sensitive operation ID, eligible child event ID, child `requestId` or stored child resource ID. No free-text search. |
+| `resourceId` | String; unrestricted | Exact, case-sensitive stored resource ID on an eligible child. No live-resource lookup. |
+| `resourceType` | String; unrestricted | Type of the same stored reference. Requires `resourceId`; 1–64 characters matching `^[a-z][a-z0-9_.-]*$`. |
+
+`from` must be no later than `to`. Both accept `YYYY-MM-DD`, meaning UTC
+midnight at the start of that date, or `YYYY-MM-DDTHH:MM:SS[.fraction]`
+followed by `Z` or `±HH:MM`, with a maximum of 40 characters. For example:
+`2026-11-01T00:00:00+08:00`. Seconds and a time zone are required for date-times;
+short times and offsets without a colon are rejected.
+
+`resourceId` and `searchId` are 1–255 characters. Both exclude U+0000–U+001F
+and U+007F; `searchId` also excludes U+0080–U+009F. See
+[How export snapshots and cursors work](/cloud/audit-logs#how-export-snapshots-and-cursors-work)
+for the distinction between operation filters and the events returned.
+
+## Successful response
+
+**`X-Audit-Next-Cursor` is a response header, never a field in the body.**
+
+| Header | Meaning |
+| --- | --- |
+| `X-Audit-Next-Cursor` | Value of the next request's `cursor` parameter. Absent when there are no more eligible events, even if the final page is full. |
+| `X-Audit-Snapshot-At` | UTC cutoff for events included in this snapshot. Fixed across pages. |
+| `Content-Type` | `application/x-ndjson` or `text/csv`, with `charset=utf-8`. |
+| `Content-Disposition` | Suggested attachment filename, the same on every page of the snapshot. |
+
+Events are ordered by ascending event ID. **NDJSON** contains one full event
+envelope per line, or an empty body if no events match. **CSV** contains summary
+fields only, without before or after values. Each page has a column header,
+even if no events match, and rows end with CRLF.
+
+## Request limits
+
+New keys default to 600 requests per key with a 60-second window, shared
+across API calls. The counter resets only after a quiet period longer than the
+window since the last accepted key use, not at a fixed minute boundary. At the
+default limit, calls without that quiet period are throttled after 600 requests
+in total. Den returns `401`, not `429`, for key throttling. A reverse proxy can
+impose separate limits; clients should not rely on a `Retry-After` header.
+`DEN_API_KEY_RATE_LIMIT_MAX` can change the default for new keys.
+
+## Errors
+
+Den returns JSON errors, not export pages.
+
+| Status | `error` and meaning |
+| --- | --- |
+| `400` | `audit_invalid_query`: invalid parameters. `audit_invalid_cursor`: invalid cursor or mismatch with the organization, format or filters. |
+| `401` | `unauthorized`: authentication failed or Den throttled the API key. |
+| `403` | `forbidden`: organization access or permission denied. `audit_visibility_disabled`: deployment visibility disabled. `sso_required`: a sign-in session must satisfy organization SSO. |
+| `404` | `organization_not_found`: no organization context could be resolved. |
+| `410` | `audit_cursor_expired`: the cursor has expired. |
+| `503` | `audit_unavailable` or `audit_storage_inconsistent`: audit storage or required access recording failed. No export data is returned. |

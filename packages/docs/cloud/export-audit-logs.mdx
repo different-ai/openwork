@@ -1,0 +1,148 @@
+---
+title: "Export audit logs to your SIEM"
+description: "Download every page of an OpenWork audit snapshot as NDJSON for Splunk or another SIEM."
+keywords: ["audit logs", "export", "SIEM", "Splunk", "NDJSON", "cursor"]
+---
+
+Download the retained events in an audit snapshot to `audit.ndjson`, then use
+that file as input to Splunk or another SIEM.
+
+## Before you start
+
+- Grant the key's owner **View audit history** (`audit.view`) in the target
+  organization, then [create an API key](/cloud/api-keys#create-a-key). A role
+  or effective permission change revokes their existing keys for that organization.
+- Make sure audit visibility is enabled on Den API
+  (`DEN_AUDIT_VISIBILITY_ENABLED`, on by default).
+- Set `DEN_API_URL` to `https://api.openworklabs.com` for Cloud or to your own
+  Den API base URL for self-hosted. Set `DEN_API_KEY` to the organization key.
+  The requests send it as `x-api-key`, with no `Bearer` prefix.
+
+## Follow the cursor
+
+1. Call `GET /v1/audit/export` without `cursor`.
+2. Read **`X-Audit-Next-Cursor` from the successful response headers**, not
+   from the NDJSON or CSV body. If present, URL-encode its full value as the
+   next request's `cursor`. Keep the same organization, format and filters.
+   You can change `limit`.
+3. Stop when a successful response omits `X-Audit-Next-Cursor`. An empty
+   result or a final page with exactly `limit` events can both end the export.
+
+To inspect the first page, save its headers separately from the data:
+
+```sh
+curl --fail --silent --show-error --get "${DEN_API_URL%/}/v1/audit/export" \
+  --header "x-api-key: $DEN_API_KEY" \
+  --data-urlencode 'limit=100' \
+  --dump-header page.headers --output page.ndjson
+```
+
+## Download every NDJSON page
+
+Save the script as `export-audit.sh` in a new directory and run
+`bash export-audit.sh`. It appends successful pages to `audit.ndjson.partial`
+and saves the next cursor in `audit.cursor`. When it finishes, use the final
+`audit.ndjson` file as your SIEM input. Keep the files and error output private.
+
+```bash
+#!/usr/bin/env bash
+set -eu
+umask 077
+: "${DEN_API_URL:?Set your Den API base URL}"
+: "${DEN_API_KEY:?Set your Den API key}"
+
+if [ -e audit.ndjson ]; then
+  printf 'audit.ndjson already exists; use a new directory.\n' >&2
+  exit 1
+fi
+cursor=
+if [ -s audit.cursor ] && [ -f audit.ndjson.partial ]; then
+  cursor=$(cat audit.cursor)
+elif [ -e audit.cursor ] || [ -e audit.ndjson.partial ]; then
+  printf 'Incomplete checkpoint; inspect the partial export before continuing.\n' >&2
+  exit 1
+fi
+
+work=$(mktemp -d)
+trap 'rm -rf "$work"' EXIT
+retried=0
+
+show_cursor() {
+  printf 'Resume cursor: %s\n' "${cursor:-(none; retry the first page)}" >&2
+}
+
+while :; do
+  args=(--data-urlencode 'format=ndjson' --data-urlencode 'limit=100')
+  if [ -n "$cursor" ]; then
+    args+=(--data-urlencode "cursor=$cursor")
+  fi
+  if ! status=$(curl --silent --show-error --get "${DEN_API_URL%/}/v1/audit/export" \
+    --header "x-api-key: $DEN_API_KEY" "${args[@]}" \
+    --dump-header "$work/headers" --output "$work/page" --write-out '%{http_code}'); then
+    show_cursor
+    exit 1
+  fi
+  if [ "$status" != 200 ]; then
+    printf 'HTTP %s\n' "$status" >&2
+    cat "$work/page" >&2
+    printf '\n' >&2
+    show_cursor
+    if [ "$status" = 401 ] && [ "$retried" = 0 ]; then
+      printf 'Possible key throttling. Waiting 61 seconds, then retrying this page once.\n' >&2
+      retried=1
+      sleep 61
+      continue
+    fi
+    exit 1
+  fi
+  retried=0
+
+  next=$(awk '/^HTTP\// { cursor="" }
+    tolower($0) ~ /^x-audit-next-cursor:/ {
+      sub(/^[^:]+:[ \t]*/, ""); sub(/[ \t\r]+$/, ""); cursor=$0
+    }
+    END { print cursor }' "$work/headers")
+  cat "$work/page" >> audit.ndjson.partial
+  if [ -z "$next" ]; then
+    mv audit.ndjson.partial audit.ndjson
+    rm -f audit.cursor
+    break
+  fi
+  printf '%s\n' "$next" > audit.cursor
+  cursor=$next
+done
+```
+
+To filter the download, add the same `--data-urlencode` options to `args` on
+every iteration. See the [Audit export API](/cloud/audit-export-api) for the
+available filters.
+
+To download CSV instead, start without a cursor and add
+`--data-urlencode 'format=csv'` to the single-page command. Use a distinct
+output path for each page: the API suggests the same attachment filename for
+every page. When combining CSV pages, keep the column header only once.
+
+## Resume after an error
+
+- **Request failed:** Fix the error, then run `bash export-audit.sh` from the
+  same directory with the same filters. The script loads `audit.cursor` and
+  appends the remaining pages. For your own client, save the next cursor only
+  after processing the current page.
+- **Throttled:** Leave the key unused everywhere for longer than 60 seconds
+  (or longer than its configured window), then resume from the saved cursor.
+  The script retries a `401` once after 61 seconds. If it still returns `401`,
+  check the key and its settings before trying again.
+- **Cursor expired or filters changed:** Start in a new directory without a
+  cursor. Use event IDs to deduplicate any events you already processed.
+- **Interrupted while writing a page:** Check the partial output for an
+  incomplete or duplicate page before using it.
+
+## Check a self-hosted proxy
+
+If a page you expect to continue has no cursor, inspect the headers with
+`curl --dump-header -` in place of `--dump-header page.headers` in the first-page
+command. Make sure your reverse proxy passes through `X-Audit-Next-Cursor`.
+Stripping it makes a page with more results look like the last page.
+
+See [How export snapshots and cursors work](/cloud/audit-logs#how-export-snapshots-and-cursors-work)
+for what a snapshot includes and why it is not a continuous feed.
