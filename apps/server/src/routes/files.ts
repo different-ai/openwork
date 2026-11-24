@@ -25,10 +25,6 @@ const FILE_SESSION_MAX_FILE_BYTES = 5_000_000;
 const FILE_SESSION_CATALOG_DEFAULT_LIMIT = 2000;
 const FILE_SESSION_CATALOG_MAX_LIMIT = 10000;
 const FILE_BROWSER_EXCLUDED_DIRECTORIES = new Set([".git", "node_modules"]);
-// Filesystem error codes that should cause a single entry to be skipped during a
-// catalog walk instead of failing the whole listing. Includes permission errors,
-// entries that vanished mid-walk, and timeouts/I/O failures from network or
-// cloud-synced mounts (e.g. macOS File Provider folders under ~/Library/CloudStorage).
 const CATALOG_SKIPPABLE_FS_ERROR_CODES = new Set([
   "EACCES",
   "EPERM",
@@ -38,15 +34,14 @@ const CATALOG_SKIPPABLE_FS_ERROR_CODES = new Set([
   "EBUSY",
   "ENOTCONN",
   "ELOOP",
+  "EINVAL",
+  "ENOTSUP",
 ]);
 
 function isSkippableCatalogFsError(error: unknown): boolean {
-  return (
-    error instanceof Error &&
-    "code" in error &&
-    typeof (error as NodeJS.ErrnoException).code === "string" &&
-    CATALOG_SKIPPABLE_FS_ERROR_CODES.has((error as NodeJS.ErrnoException).code as string)
-  );
+  if (!(error instanceof Error)) return false;
+  if ("code" in error && typeof error.code === "string") return CATALOG_SKIPPABLE_FS_ERROR_CODES.has(error.code);
+  return error.message.startsWith("Invalid package ");
 }
 const MAX_PATH_COMPONENT_BYTES = 255;
 const INBOX_MULTIPART_MAX_BYTES = 250_000_000;
@@ -665,8 +660,7 @@ async function listWorkspaceCatalogEntries(workspaceRoot: string, excludeHeavyDi
           info = await stat(absPath);
         } catch (error: unknown) {
           if (isSkippableCatalogFsError(error)) {
-            const code = (error as NodeJS.ErrnoException).code;
-            if (code !== "ENOENT") skippedDirectories.push(rel);
+            if (!(error instanceof Error && "code" in error && error.code === "ENOENT")) skippedDirectories.push(rel);
             continue;
           }
           throw error;
