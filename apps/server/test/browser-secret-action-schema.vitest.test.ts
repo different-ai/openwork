@@ -4,7 +4,7 @@ import { server } from "../src/opencode-plugins/openwork-chrome-devtools.js";
 import { usePrivateValuesArgs } from "../src/opencode-plugins/private-values-tool.js";
 
 const plugin = await server();
-const action = plugin.tool.browser_act.args.action;
+const action = plugin.tool.browser_act.args.actions.element;
 
 describe("secret handles in the browser tool contract", () => {
 
