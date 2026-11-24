@@ -24,6 +24,7 @@ export { default as freeAutoCrossOrgBudgets } from "@openwork/features/flags/fre
 export { default as freeAutoSafetyCases } from "@openwork/features/flags/free-auto-safety-cases"
 export { default as freeAutoSafetyPauses } from "@openwork/features/flags/free-auto-safety-pauses"
 export { default as freeAutoSharedBudgets } from "@openwork/features/flags/free-auto-shared-budgets"
+export { default as fundedModelAccountSuspensions } from "@openwork/features/flags/funded-model-account-suspensions"
 export { default as gatewayOpenCodeSetup } from "@openwork/features/flags/gateway-open-code-setup"
 export { default as importOpencodeConnections } from "@openwork/features/flags/import-opencode-connections"
 export { default as litellmEntraMemberSignIn } from "@openwork/features/flags/litellm-entra-member-sign-in"

@@ -51,6 +51,7 @@ import { adminRoute, jsonValidator, queryValidator } from "../../middleware/inde
 import { registerAdminFreeAutoConversionsRoutes } from "./free-auto-conversions.js"
 import { registerAdminSafetyCases } from "./free-auto-safety-cases.js"
 import { registerAdminWorkspaceCreateLimit } from "./workspace-create-limit.js"
+import { registerFundedModelSuspensions } from "./funded-model-suspensions.js"
 import { registerAdminFreeAutoUsageRoutes } from "./free-auto-usage.js"
 import { registerAdminSecurityRoutes } from "./security.js"
 import { registerAdminDashboardRoute } from "./dashboard.js"
@@ -1395,6 +1396,7 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
   registerAdminManagedReleaseRoutes(app)
   registerAdminSafetyCases(app)
   registerAdminWorkspaceCreateLimit(app)
+  registerFundedModelSuspensions(app)
   registerAdminFreeAutoUsageRoutes(app)
   registerAdminFreeAutoConversionsRoutes(app)
   registerAdminSecurityRoutes(app)

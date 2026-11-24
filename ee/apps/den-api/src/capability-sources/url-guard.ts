@@ -8,6 +8,37 @@ export class PrivateUrlError extends Error {
   }
 }
 
+const TEMPORARY_DNS_ERROR_CODES = new Set(["EAI_AGAIN", "ETIMEOUT", "ESERVFAIL", "ECONNREFUSED"])
+
+export class UnresolvedHostError extends PrivateUrlError {
+  readonly temporary: boolean
+
+  constructor(url: string, temporary: boolean) {
+    super(url, "the hostname does not resolve")
+    this.temporary = temporary
+  }
+}
+
+type LookupAll = (hostname: string) => Promise<{ address: string }[]>
+
+const lookupAll: LookupAll = (hostname) => lookup(hostname, { all: true, verbatim: true })
+
+export async function resolveHostAddresses(rawUrl: string, hostname: string, resolve: LookupAll = lookupAll) {
+  for (let attempt = 1; ; attempt += 1) {
+    let addresses: { address: string }[]
+    try {
+      addresses = await resolve(hostname)
+    } catch (error) {
+      const code = error && typeof error === "object" && "code" in error ? String(error.code) : ""
+      const temporary = TEMPORARY_DNS_ERROR_CODES.has(code)
+      if (temporary && attempt < 2) continue
+      throw new UnresolvedHostError(rawUrl, temporary)
+    }
+    if (addresses.length === 0) throw new UnresolvedHostError(rawUrl, false)
+    return addresses
+  }
+}
+
 function parseIpv4(address: string): number[] | null {
   const parts = address.split(".")
   if (parts.length !== 4) return null
@@ -145,15 +176,7 @@ export async function assertPublicUrl(rawUrl: string): Promise<void> {
     return
   }
 
-  let addresses: { address: string }[]
-  try {
-    addresses = await lookup(hostname, { all: true, verbatim: true })
-  } catch {
-    throw new PrivateUrlError(rawUrl, "the hostname does not resolve")
-  }
-  if (addresses.length === 0) {
-    throw new PrivateUrlError(rawUrl, "the hostname does not resolve")
-  }
+  const addresses = await resolveHostAddresses(rawUrl, hostname)
   for (const { address } of addresses) {
     if (isPrivateAddress(address)) {
       throw new PrivateUrlError(rawUrl, `the hostname resolves to a private or reserved address (${address})`)

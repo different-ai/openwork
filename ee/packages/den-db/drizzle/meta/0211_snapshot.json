@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "cd661a24-2aeb-42e8-b65b-d6ef89dc69dc",
+  "id": "16d83578-c7b9-424b-9d1a-5a012131c459",
   "prevId": "78d63ff0-c1ec-40e3-802b-cd8a4a04b851",
   "tables": {
     "admin_metric_refresh_lease": {
@@ -6685,6 +6685,89 @@
       "uniqueConstraints": {},
       "checkConstraint": {}
     },
+    "funded_model_suspension": {
+      "name": "funded_model_suspension",
+      "columns": {
+        "reference_hash": {
+          "name": "reference_hash",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "provider_reference": {
+          "name": "provider_reference",
+          "type": "varchar(128)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "suspended_by": {
+          "name": "suspended_by",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "suspended_at": {
+          "name": "suspended_at",
+          "type": "timestamp(3)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(now())"
+        },
+        "released_at": {
+          "name": "released_at",
+          "type": "timestamp(3)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "released_by": {
+          "name": "released_by",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "release_reference": {
+          "name": "release_reference",
+          "type": "varchar(128)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "funded_model_suspension_user": {
+          "name": "funded_model_suspension_user",
+          "columns": [
+            "user_id",
+            "released_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "funded_model_suspension_reference_hash": {
+          "name": "funded_model_suspension_reference_hash",
+          "columns": [
+            "reference_hash"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
     "gateway_request_logs": {
       "name": "gateway_request_logs",
       "columns": {
@@ -8350,84 +8433,6 @@
           "name": "inference_usage_ledger_entries_id",
           "columns": [
             "id"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraint": {}
-    },
-    "workspace_create_identity": {
-      "name": "workspace_create_identity",
-      "columns": {
-        "identity": {
-          "name": "identity",
-          "type": "varchar(320)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "workspace_create_identity_identity": {
-          "name": "workspace_create_identity_identity",
-          "columns": [
-            "identity"
-          ]
-        }
-      },
-      "uniqueConstraints": {},
-      "checkConstraint": {}
-    },
-    "workspace_create_limit_rule": {
-      "name": "workspace_create_limit_rule",
-      "columns": {
-        "scope": {
-          "name": "scope",
-          "type": "enum('email','domain')",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "value": {
-          "name": "value",
-          "type": "varchar(320)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "workspace_limit": {
-          "name": "workspace_limit",
-          "type": "int",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "set_by_user_id": {
-          "name": "set_by_user_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false
-        },
-        "updated_at": {
-          "name": "updated_at",
-          "type": "timestamp(3)",
-          "primaryKey": false,
-          "notNull": true,
-          "autoincrement": false,
-          "default": "CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)"
-        }
-      },
-      "indexes": {},
-      "foreignKeys": {},
-      "compositePrimaryKeys": {
-        "workspace_create_limit_rule_scope_value_pk": {
-          "name": "workspace_create_limit_rule_scope_value_pk",
-          "columns": [
-            "scope",
-            "value"
           ]
         }
       },
@@ -13042,6 +13047,13 @@
         "model_credit_usd": {
           "name": "model_credit_usd",
           "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "sponsored_set_id": {
+          "name": "sponsored_set_id",
+          "type": "varchar(64)",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false

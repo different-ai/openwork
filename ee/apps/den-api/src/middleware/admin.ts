@@ -116,6 +116,10 @@ export const requireAdminMiddleware: MiddlewareHandler<{ Variables: AuthContextV
     return c.json({ error: "unauthorized" }, 401) as never
   }
 
+  if (c.get("session")?.organizationScopeId) {
+    return c.json({ error: "forbidden" }, 403)
+  }
+
   const email = normalizeEmail(user.email)
   if (!email) {
     return c.json({ error: "admin_email_required" }, 403) as never

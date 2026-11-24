@@ -34,6 +34,7 @@ import { cursorPathPrefix } from "./cursor.js"
 import { claudeCodePathPrefix } from "./claude-code.js"
 import { codexPathPrefix } from "./codex.js"
 import { loadProviderCatalogFromFile } from "./provider-catalog.js"
+import type { FundedModelGuard } from "./funded-model-access.js"
 import { gatewayProviderTestPath, registerProviderTestRoute } from "./provider-test.js"
 import type { GatewayDependencies } from "./gateway.js"
 import { describeUpstreamFetchFailure, isJsonContentType, readBoundedBody, RequestBodyLimitError } from "./relay.js"
@@ -97,6 +98,7 @@ const blockedServerToolTypes = new Set([
 ])
 
 const defaultProxyDependencies: ProxyDependencies = {
+  fundedModelGuard: async (identity, route) => (await import("./funded-model-access.js")).checkFundedModelAccess(identity, route),
   async findActiveInferenceKey(key) {
     const keys = await import("./keys.js")
     return keys.findActiveInferenceKey(key)
@@ -129,6 +131,7 @@ const defaultProxyDependencies: ProxyDependencies = {
 let freeMemberHandler: FreeMemberHandler | undefined
 
 type ProxyDependencies = {
+  fundedModelGuard?: FundedModelGuard
   findActiveGatewayKey?: typeof findActiveGatewayKey
   findActiveInferenceKey: typeof findActiveInferenceKeyFn
   assertOrganizationManagedModelsAllowed: typeof assertOrganizationManagedModelsAllowedFn
@@ -872,6 +875,16 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
   const authenticateGateway = gatewayAuth({ findActiveGatewayKey: dependencies.findActiveGatewayKey ?? (async (key) => (await import("./keys.js")).findActiveGatewayKey(key)) })
   api.use("/api/v1/*", createMiddleware<InferenceAuthEnv>((c, next) => c.req.path.startsWith("/api/v1/providers/") || c.req.path.startsWith(`${cursorPathPrefix}/`) || c.req.path.startsWith(`${claudeCodePathPrefix}/`) || c.req.path.startsWith(`${codexPathPrefix}/`) || c.req.path === gatewayProviderTestPath || isSharedGatewayRequest(c.req.raw, c.req.path)
     ? authenticateGateway(c, next) : authenticateModels(c, next)))
+  api.use("/api/v1/*", createMiddleware<InferenceAuthEnv>(async (c, next) => {
+    const identity = c.get("inference")
+    const route = identity.kind === "models" ? { kind: "managed" as const }
+      : c.req.path === gatewayProviderTestPath ? { kind: "sandbox" as const } : null
+    if (route && c.req.method !== "GET") {
+      const denied = await dependencies.fundedModelGuard?.(identity, route)
+      if (denied) return denied
+    }
+    await next()
+  }))
   api.use("/api/v1/*", orgContext({ loadOrganization: dependencies.loadOrganization ?? loadOrganizationFromDb }))
   registerProviderTestRoute(api, {
     fetch: dependencies.fetch,
@@ -880,7 +893,7 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
     mintGcpAccessToken: dependencies.gateway?.mintGcpAccessToken ?? createGcpServiceAccountTokenMinter(),
     now: dependencies.gateway?.now ?? (() => new Date()),
   })
-  registerGatewayRoutes(api, { fetch: dependencies.fetch, insertRequestLog, updateRequestLog: dependencies.updateRequestLog, reporter, ...dependencies.gateway })
+  registerGatewayRoutes(api, { fetch: dependencies.fetch, fundedModelGuard: dependencies.fundedModelGuard, insertRequestLog, updateRequestLog: dependencies.updateRequestLog, reporter, ...dependencies.gateway })
   for (const path of ["/api/v1", "/api/v1/*"]) {
     api.all(path, handleApiRequest)
   }

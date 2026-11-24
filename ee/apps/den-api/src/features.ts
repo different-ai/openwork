@@ -1,4 +1,5 @@
 import {
+  freeAutoDesktopProofRequiredBy,
   readFeatures,
   lockFeatureForMutation,
   readOrganizationFeatureOverridesForMany,
@@ -83,6 +84,11 @@ export async function getFeaturesForOrganizations(organizationIds: readonly stri
 
 export async function deploymentFeatureEnabled(key: FeatureKey): Promise<boolean> {
   return resolveFeatures({ ...env.features, rollouts: await cache.features.rollouts(), overrides: {} })[key]
+}
+
+export async function freeModelsNeedDesktop(organizationId: string): Promise<boolean> {
+  const deployment = resolveFeatures({ ...env.features, rollouts: await cache.features.rollouts(), overrides: {} })
+  return freeAutoDesktopProofRequiredBy(deployment, await getOrganizationFeatures(organizationId))
 }
 
 export async function updateFeatureRollout(input: Parameters<typeof setFeatureRollout>[1]) {

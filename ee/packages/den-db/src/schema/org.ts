@@ -9,7 +9,9 @@ export const DesktopHandoffGrantTable = mysqlTable(
   {
     id: varchar("id", { length: 64 }).notNull().primaryKey(),
     user_id: denTypeIdColumn("user", "user_id").notNull(),
-    session_token: text("session_token").notNull(),
+    session_id: denTypeIdColumn("session", "session_id"),
+    organization_id: denTypeIdColumn("organization", "organization_id"),
+    session_token: text("session_token"),
     expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
     consumed_at: timestamp("consumed_at", { fsp: 3 }),
     created_at: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
