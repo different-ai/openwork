@@ -16,6 +16,7 @@ export function EvidenceViewer({ report, id, checkpointProviders = [] }: { repor
   const [showNotes, setShowNotes] = useState(true);
   const [marks, setMarks] = useState(true);
   const dialog = useRef<HTMLDialogElement>(null);
+  const screenshotPane = useRef<HTMLDivElement>(null);
   const index = images.findIndex((item) => item.id === selected);
   const item = images[index];
   const source = item && report.sources.find((entry) => entry.id === item.sourceId);
@@ -48,8 +49,11 @@ export function EvidenceViewer({ report, id, checkpointProviders = [] }: { repor
     if (next) window.location.hash = `evidence-${next.id}`;
   }
   return <dialog ref={dialog} className="evidence-viewer" aria-labelledby="viewer-title" onClose={close} onKeyDown={(event) => {
-    if (event.key === "ArrowLeft") { event.preventDefault(); move(-1); }
-    if (event.key === "ArrowRight") { event.preventDefault(); move(1); }
+    if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+    const pane = screenshotPane.current;
+    if (pane && event.target instanceof Node && pane.contains(event.target) && pane.scrollWidth > pane.clientWidth) return;
+    event.preventDefault();
+    move(event.key === "ArrowLeft" ? -1 : 1);
   }}>
     {item && <>
       <header className="viewer-toolbar">
@@ -68,7 +72,7 @@ export function EvidenceViewer({ report, id, checkpointProviders = [] }: { repor
         <button type="button" className="quiet" onClick={() => dialog.current?.close()}>Close <kbd>esc</kbd></button>
       </header>
       <div className="viewer-body">
-        <div className={`viewer-image${actualSize ? " actual-size" : ""}${marks ? "" : " marks-hidden"}`} tabIndex={0} aria-label="Screenshot">
+        <div ref={screenshotPane} className={`viewer-image${actualSize ? " actual-size" : ""}${marks ? "" : " marks-hidden"}`} tabIndex={0} role="region" aria-label="Screenshot">
           <div className="viewer-shot">
             <MarkedShot image={item} src={`/r/${id}/assets/${item.asset}`} alt={item.caption} labels actualSize={actualSize} />
             {showNotes && notes.map((note, noteIndex) => note.region && (
