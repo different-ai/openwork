@@ -227,7 +227,7 @@ X-Audit-Snapshot-At starts at server time minus five seconds and stays fixed acr
 
 Each response is one attachment containing all eligible child events of matching operations, in ascending event ID (recording time) order. NDJSON has one full envelope per line. CSV has a column header on every page and summary fields only: references and changed-field names are JSON cells, no before/after content. Every cell is quoted; formula-leading whitespace/control and =+-@ are prefixed with an apostrophe, backslashes are doubled, and controls/multiline characters are encoded as literal backslash-u escapes.
 
-The API key's request limit is shared with other calls using the key. See the [audit export guide](https://openworklabs.com/docs/cloud/audit-logs#export) for examples and error handling.`,
+The API key's request limit is shared with other calls using the key. See the [Audit export API reference](https://openworklabs.com/docs/cloud/audit-export-api) for limits and errors and [Download audit history with the API](https://openworklabs.com/docs/cloud/export-audit-logs) for an example.`,
     parameters: [
       { ...pageParameters[0], description: "Maximum child events per page, excluding the CSV column header. Default 50, range 1 to 100. Can change between pages." },
       { ...pageParameters[1], description: "Omit for the first page. For later pages, use the entire X-Audit-Next-Cursor response header as this query parameter. Nonempty, at most 4096 characters." },

@@ -106,8 +106,8 @@ only runs as a dry run: nothing is deleted.
 
 ## Export
 
-- [Export audit logs to your SIEM](/cloud/export-audit-logs) for setup, paging
-  and resuming an interrupted download.
+- [Download audit history with the API](/cloud/export-audit-logs) for setup,
+  paging and resuming an interrupted download.
 - [Audit export API](/cloud/audit-export-api) for parameters, response headers,
   formats, limits and errors.
 
@@ -123,7 +123,9 @@ while you're paging, it can appear only partly in the export.
 
 The first request sets `X-Audit-Snapshot-At` to server time minus five seconds.
 Every page in that snapshot uses the same cutoff. It excludes events recorded
-later, including new children of existing operations. The cutoff doesn't
+later, including new children of existing operations. Event IDs are assigned
+before writes commit. Leaving out the most recent five seconds reduces the
+chance that an in-progress write lands behind a page you've already read. The cutoff doesn't
 freeze current operation outcomes or protect retention. If access recording
 is on, export requests can themselves produce audit events. Those events
 fall outside the current snapshot but can appear in a later export.
@@ -132,6 +134,10 @@ A new snapshot can include newer events, but exporting is not a continuous
 feed. Using the previous snapshot cutoff as a polling watermark in `from`
 can miss events: `from` filters when the operation was first recorded, not
 when each child event was recorded.
+
+The cursor is in a response header so the attachment body contains only
+export data. NDJSON pages can be appended directly; CSV pages can be combined
+after dropping repeated column headers.
 
 A signed cursor records the last event position and belongs to one
 organization, format and set of filters. It expires 24 hours after the first

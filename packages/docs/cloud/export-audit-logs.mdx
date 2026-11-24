@@ -1,17 +1,19 @@
 ---
-title: "Export audit logs to your SIEM"
-description: "Download every page of an OpenWork audit snapshot as NDJSON for Splunk or another SIEM."
+title: "Download audit history with the API"
+description: "Download every page of an OpenWork audit snapshot to an NDJSON file."
 keywords: ["audit logs", "export", "SIEM", "Splunk", "NDJSON", "cursor"]
 ---
 
-Download the retained events in an audit snapshot to `audit.ndjson`, then use
-that file as input to Splunk or another SIEM.
+Download the retained events in an audit snapshot to `audit.ndjson`. You can
+use the file as input to Splunk or another SIEM.
 
 ## Before you start
 
 - Grant the key's owner **View audit history** (`audit.view`) in the target
-  organization, then [create an API key](/cloud/api-keys#create-a-key). A role
-  or effective permission change revokes their existing keys for that organization.
+  organization, then [create an API key](/cloud/api-keys#create-a-key). Changing
+  the owner's role, removing them from the organization, or transferring
+  ownership turns off their existing keys for that organization. Changing
+  permissions without changing the role does not revoke the keys.
 - Make sure audit visibility is enabled on Den API
   (`DEN_AUDIT_VISIBILITY_ENABLED`, on by default).
 - Set `DEN_API_URL` to `https://api.openworklabs.com` for Cloud or to your own

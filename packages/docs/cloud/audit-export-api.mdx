@@ -8,17 +8,17 @@ keywords: ["audit export", "API", "cursor", "NDJSON", "CSV", "rate limit"]
 The Cloud base URL is `https://api.openworklabs.com`. For self-hosted, use your
 Den API host.
 
-The [generated operation reference](https://openworklabs.com/docs/api-reference/organizations/export-one-audit-snapshot-page)
+The [generated operation reference](/api-reference/organizations/export-one-audit-snapshot-page)
 contains the OpenAPI schemas. For the reference that matches your installed
 Den API, open `/docs` on its host. For a working script, see
-[Export audit logs to your SIEM](/cloud/export-audit-logs).
+[Download audit history with the API](/cloud/export-audit-logs).
 
 ## Authentication
 
 Send an organization [API key](/cloud/api-keys) as `x-api-key: <api-key>`,
-without a `Bearer` prefix. The key owner must have **View audit history**
-(`audit.view`). Audit visibility (`DEN_AUDIT_VISIBILITY_ENABLED`) is required
-and on by default.
+without a `Bearer` prefix. The key owner must be a current member of the
+key's organization with **View audit history** (`audit.view`). Audit visibility
+(`DEN_AUDIT_VISIBILITY_ENABLED`) is required and on by default.
 
 ## Query parameters
 
@@ -29,11 +29,11 @@ filters combine with AND. Unknown, repeated or empty parameters are rejected.
 | --- | --- | --- |
 | `format` | String; `ndjson` | `ndjson` or `csv`. |
 | `limit` | Integer; `50` | `1`–`100` child events per page, excluding the CSV column header. Decimal digits only, with no leading zero, sign or decimal point. |
-| `cursor` | String; omitted | Opaque `X-Audit-Next-Cursor` value, up to 4,096 characters. |
+| `cursor` | String; omitted | Opaque `X-Audit-Next-Cursor` value, up to 4,096 characters. Valid for 24 hours from the first page, without renewal. Bound to the organization, format and filters; `limit` may change. |
 | `from` | Date or date-time; unbounded | Inclusive lower bound on the operation's first-recorded time. |
 | `to` | Date or date-time; unbounded | Inclusive upper bound on the operation's first-recorded time. |
-| `actorId` | User ID; unrestricted | Operation's initiating `usr_` user ID, not a membership ID. |
-| `action` | String; unrestricted | Exact action on an eligible child event; 1–128 characters matching `^[a-z][a-z0-9_.-]*$`. See `GET /v1/audit/event-types`. |
+| `actorId` | User ID; unrestricted | Operation's initiating `usr_` user ID, not a membership ID or a later child event's actor. |
+| `action` | String; unrestricted | Exact action on any child event at or before the snapshot cutoff; 1–128 characters matching `^[a-z][a-z0-9_.-]*$`. See `GET /v1/audit/event-types`. |
 | `outcome` | String; unrestricted | Current operation outcome: `running`, `succeeded`, `failed`, `partial` or `unknown`. |
 | `origin` | String; unrestricted | Operation origin: `api`, `cloud_ui`, `mcp`, `scheduler`, `webhook` or `platform_admin`. |
 | `searchId` | String; unrestricted | Exact, case-sensitive operation ID, eligible child event ID, child `requestId` or stored child resource ID. No free-text search. |
@@ -58,7 +58,7 @@ for the distinction between operation filters and the events returned.
 | Header | Meaning |
 | --- | --- |
 | `X-Audit-Next-Cursor` | Value of the next request's `cursor` parameter. Absent when there are no more eligible events, even if the final page is full. |
-| `X-Audit-Snapshot-At` | UTC cutoff for events included in this snapshot. Fixed across pages. |
+| `X-Audit-Snapshot-At` | UTC cutoff set to server time minus five seconds on the first page. Fixed across pages. |
 | `Content-Type` | `application/x-ndjson` or `text/csv`, with `charset=utf-8`. |
 | `Content-Disposition` | Suggested attachment filename, the same on every page of the snapshot. |
 
@@ -85,7 +85,7 @@ Den returns JSON errors, not export pages.
 | --- | --- |
 | `400` | `audit_invalid_query`: invalid parameters. `audit_invalid_cursor`: invalid cursor or mismatch with the organization, format or filters. |
 | `401` | `unauthorized`: authentication failed or Den throttled the API key. |
-| `403` | `forbidden`: organization access or permission denied. `audit_visibility_disabled`: deployment visibility disabled. `sso_required`: a sign-in session must satisfy organization SSO. |
+| `403` | `forbidden`: organization access or permission denied. `audit_visibility_disabled`: deployment visibility disabled. `sso_required`: organization SSO is required for the sign-in session. This error does not apply to API keys. |
 | `404` | `organization_not_found`: no organization context could be resolved. |
 | `410` | `audit_cursor_expired`: the cursor has expired. |
 | `503` | `audit_unavailable` or `audit_storage_inconsistent`: audit storage or required access recording failed. No export data is returned. |
