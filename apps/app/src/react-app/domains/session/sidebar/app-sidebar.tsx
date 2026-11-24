@@ -1961,7 +1961,9 @@ function SessionGroupActions({ group, groups, workspaceId, count }: {
             value={renameLabel}
             onChange={(event) => setRenameLabel(event.currentTarget.value)}
             onKeyDown={(event) => {
-              if (event.key === "Enter") saveRename();
+              if (event.key !== "Enter" || event.nativeEvent.isComposing || event.keyCode === 229) return;
+              event.preventDefault();
+              saveRename();
             }}
             aria-label={t("session_management.group_name")}
           />
