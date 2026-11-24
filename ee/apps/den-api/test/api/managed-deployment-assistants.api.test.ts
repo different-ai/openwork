@@ -177,6 +177,7 @@ test("same-version, Retry, foreign secrets, other workspaces and unauthorized me
 })
 
 test("Google Cloud rejects AWS profiles and computer settings", async () => {
+  assert.equal((await den.setFeature(org.orgId, "managedGoogleCloudDeployments", true)).status, 200)
   const id = randomUUID()
   const target = { projectId: "openwork-test", projectNumber: "123456789012", region: "us-central1", dnsZoneName: "example-test" }
   assert.equal((await owner("POST", "/v1/managed-deployments", { ...input, provider: "gcp", target: { ...target, runtimeProfile: "gateway" } })).status, 400)
