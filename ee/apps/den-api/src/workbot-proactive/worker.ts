@@ -1,6 +1,5 @@
 import { libraryConnectorLink, myAgentLink } from "../agent-links.js"
 import { markFeaturesUsed } from "../feature-usage.js"
-import { organizationFeatureEnabled } from "../features.js"
 import { assertFundedUserAllowed } from "../openai-safety/account-suspensions.js"
 import { env } from "../env.js"
 import { appLogger } from "../observability/logger.js"
@@ -32,9 +31,9 @@ import { createCheckGateModel } from "./check-gate.js"
 import { createEvaluationModel } from "./evaluation-model.js"
 import { createAgentSendCheck } from "./send-check.js"
 import { readAgentTemplate } from "./template.js"
-import { agentMessageId, agentMessageSessionId, agentSessionId, defaultAgentTurnDeps, endAgentMessageSession, runAgentSessionTurn, runAgentTurn } from "./turn.js"
+import { agentMessageId, agentSessionId, defaultAgentTurnDeps, runAgentSessionTurn, runAgentTurn } from "./turn.js"
 import { wakeAgent, type AgentWakeOutcome } from "./wake.js"
-import { AGENT_MESSAGE_SCOPES, wakeAgentBrief, type AgentBriefWakeDeps } from "./wake-brief.js"
+import { wakeAgentBrief, type AgentBriefWakeDeps } from "./wake-brief.js"
 
 const TICK_MS = 15_000
 const MAX_CONCURRENT_WAKES = 4
@@ -77,16 +76,8 @@ export function defaultAgentWakeDeps(): AgentBriefWakeDeps {
       return { link: myAgentLink() }
     },
     briefOn: (organizationId, userId) => agentBriefAllowed(organizationId, userId),
-    oneMessage: async (organizationId, userId, memberId) => {
-      if (!(await organizationFeatureEnabled(organizationId, "workbotAgentOneMessage", { userId }))) return false
-      markFeaturesUsed({ organizationId, memberId, keys: ["workbotAgentOneMessage"] })
-      return true
-    },
     person: memberFirstName,
     check: (input) => runAgentSessionTurn(input, turnDeps),
-    message: (input) => runAgentSessionTurn({ ...input, title: "Your agent: message", readOnly: true, scopes: AGENT_MESSAGE_SCOPES }, turnDeps),
-    messageSessionId: agentMessageSessionId,
-    endMessageSession: (sessionId) => endAgentMessageSession(sessionId, turnDeps),
     conversation: (input) => readWorkbotDirectMessages({ organizationId: input.organizationId, userId: input.userId, since: input.since }),
     requestedChecks: readAgentCheckRequests,
     checkGate: async ({ organizationId, memberId, userId }) => {

@@ -30,10 +30,9 @@ function reply(...messages: { text: string; about: string[]; update?: boolean }[
 
 const review = { text: "Dana moved the review to *2 PM*.", about: ["calendar:review"] }
 
-function harness(input: { checks: string[]; feature?: boolean; sentToday?: number; told?: string[]; sendCheck?: AgentBriefWakeDeps["sendCheck"] }) {
+function harness(input: { checks: string[]; briefOn?: AgentBriefWakeDeps["briefOn"]; sentToday?: number; told?: string[]; sendCheck?: AgentBriefWakeDeps["sendCheck"]; connections?: Awaited<ReturnType<AgentBriefWakeDeps["connections"]>> }) {
   const calls: string[] = []
   const checks: Parameters<AgentBriefWakeDeps["check"]>[0][] = []
-  const messenger: Parameters<AgentBriefWakeDeps["message"]>[0][] = []
   const delivered: string[] = []
   const records: Parameters<AgentBriefWakeDeps["recordCheck"]>[0][] = []
   const reserves: { id: string; outcome: string | undefined }[] = []
@@ -43,14 +42,20 @@ function harness(input: { checks: string[]; feature?: boolean; sentToday?: numbe
   const deps: AgentBriefWakeDeps = {
     now: () => NOW,
     allowed: async () => true,
-    settings: async () => ({ ...DEFAULT_WORKBOT_PROACTIVE_SETTINGS, enabled: true, brief: { dailyCap: 4 }, sendCheck: Boolean(input.sendCheck) }),
+    settings: async () => ({
+      ...DEFAULT_WORKBOT_PROACTIVE_SETTINGS,
+      enabled: true,
+      brief: { dailyCap: 4 },
+      sendCheck: Boolean(input.sendCheck),
+      sources: { ...DEFAULT_WORKBOT_PROACTIVE_SETTINGS.sources, connections: { emc_mail: "everyone", emc_chat: "everyone" } },
+    }),
     template: async () => ({ ...DEFAULT_AGENT_TEMPLATE, versionId: null, version: 1 }),
     user: async () => userId,
     calendar: async () => ({ kind: "ok", json: { timeZone: "UTC" } }),
     model: async () => "model",
     turn: async () => { throw new Error("Unexpected legacy wake turn") },
-    connections: async () => [{ id: "emc_calendar", name: "Calendar", url: "https://calendar.google.com", native: "google-workspace", state: "connected" }],
-    connectLink: () => "https://den.example/connect",
+    connections: async () => input.connections ?? [{ id: "emc_calendar", name: "Calendar", url: "https://calendar.google.com", native: "google-workspace", state: "connected" }],
+    connectLink: (id) => `https://den.example/connect/${id}`,
     sessionId: () => "check-session",
     messageId: (key, wakeAt) => `${key}:${wakeAt}`,
     told: async (_member, items) => new Set(items.map(agentLedgerKey).filter((key) => ledger.has(key))),
@@ -78,24 +83,13 @@ function harness(input: { checks: string[]; feature?: boolean; sentToday?: numbe
     },
     recordChecks: async () => undefined,
     recordCheck: async (record) => { records.push(record) },
-    briefOn: async () => true,
-    oneMessage: async () => {
-      calls.push("flag")
-      return input.feature ?? true
-    },
+    briefOn: input.briefOn ?? (async () => true),
     person: async () => "Lee",
     check: async (turn) => {
       calls.push("check")
       checks.push(turn)
       return { kind: "answered", text: input.checks[checks.length - 1] ?? "NO_REPLY", usage: null }
     },
-    message: async (turn) => {
-      calls.push("message")
-      messenger.push(turn)
-      return { kind: "answered", text: reply(review), usage: null }
-    },
-    messageSessionId: () => "message-session",
-    endMessageSession: async () => { calls.push("endMessage") },
     conversation: async () => {
       calls.push("conversation")
       return [{ at: NOW - 60_000, from: "member", text: "Tell me if Dana moves the review." }]
@@ -104,18 +98,30 @@ function harness(input: { checks: string[]; feature?: boolean; sentToday?: numbe
     readTools: async () => [],
     sendCheck: input.sendCheck,
   }
-  return { calls, checks, messenger, records, reserves, finishes, delivered, ledger, state: () => parseAgentState(settled), run: () => wakeAgentBrief(row, deps) }
+  return { calls, checks, records, reserves, finishes, delivered, ledger, state: () => parseAgentState(settled), run: () => wakeAgentBrief(row, deps) }
 }
 
-test("flag off preserves the check report and the separate messenger turn", async () => {
-  const report = "P0: Dana moved the review. calendar:review"
-  const h = harness({ feature: false, checks: [report] })
-  assert.deepEqual(await h.run(), { status: "ran", reasons: ["scheduled"], reply: "message", delivered: "sent" })
-  assert.deepEqual(h.calls, ["flag", "check", "count", "conversation", "message", "endMessage"])
-  assert.match(h.checks[0]?.prompt ?? "", /Your last report to the messenger/)
-  assert.match(h.messenger[0]?.prompt ?? "", /P0: Dana moved the review/)
-  assert.deepEqual(h.delivered, [review.text])
-  assert.deepEqual(h.state().lastReport, { at: NOW, text: report })
+test("a brief check combines unreadable-source notices into one DM", async () => {
+  const h = harness({
+    checks: [],
+    connections: [
+      { id: "emc_mail", name: "Mail", url: "https://mail.example/mcp", native: null, state: "reconnect" },
+      { id: "emc_chat", name: "Chat", url: "https://chat.example/mcp", native: null, state: "needs_connection" },
+    ],
+  })
+  assert.deepEqual(await h.run(), { status: "skipped", reason: "no_sources" })
+  assert.deepEqual(h.calls, [])
+  assert.deepEqual(h.delivered, ["I can't read Mail or Chat right now, so your checks are paused until they're connected again. <https://den.example/connect/emc_mail|Reconnect Mail> · <https://den.example/connect/emc_chat|Connect Chat>"])
+  assert.deepEqual(h.state().notices, { emc_mail: NOW, emc_chat: NOW })
+  assert.deepEqual(h.records.map((record) => record.reason), ["source_disconnected", "source_disconnected"])
+})
+
+test("a brief message does not send when the rollout permission is lost", async () => {
+  const h = harness({ checks: [reply(review)], briefOn: async () => false })
+  await h.run()
+  assert.deepEqual(h.delivered, [])
+  assert.deepEqual(h.finishes, [[review.about[0], "failed"]])
+  assert.deepEqual(h.records, [])
 })
 
 test("one-message check reads context first and sends one combined DM with fresh lead and folded ids", async () => {
@@ -123,7 +129,7 @@ test("one-message check reads context first and sends one combined DM with fresh
   const approval = { text: "Dana added a noon sign-off.", about: ["calendar:review", ...Array.from({ length: 8 }, (_, i) => `calendar:approval-${i}`)] }
   const h = harness({ checks: [reply(old, review, approval)], sentToday: 1, told: old.about })
   assert.equal((await h.run()).status, "ran")
-  assert.deepEqual(h.calls, ["flag", "count", "conversation", "check"])
+  assert.deepEqual(h.calls, ["count", "conversation", "check"])
   assert.match(h.checks[0]?.instructions ?? "", /One message per check/)
   assert.match(h.checks[0]?.prompt ?? "", /You've sent 1 of 4 messages today\./)
   assert.match(h.checks[0]?.prompt ?? "", /Lee: Tell me if Dana moves the review\./)
@@ -142,7 +148,7 @@ test("one-message check reads context first and sends one combined DM with fresh
 test("one-message NO_REPLY records no findings and does not send", async () => {
   const h = harness({ checks: ["NO_REPLY"] })
   assert.deepEqual(await h.run(), { status: "ran", reasons: ["scheduled"], reply: "quiet", delivered: null })
-  assert.deepEqual(h.calls, ["flag", "count", "conversation", "check"])
+  assert.deepEqual(h.calls, ["count", "conversation", "check"])
   assert.deepEqual(h.delivered, [])
   assert.equal(h.records[0]?.reason, "no_findings")
 })
@@ -150,7 +156,7 @@ test("one-message NO_REPLY records no findings and does not send", async () => {
 test("an invalid one-message reply retries once in the same check session with a different message id", async () => {
   const h = harness({ checks: ["not JSON", reply(review)] })
   await h.run()
-  assert.deepEqual(h.calls, ["flag", "count", "conversation", "check", "check"])
+  assert.deepEqual(h.calls, ["count", "conversation", "check", "check"])
   assert.equal(h.checks[1]?.sessionId, h.checks[0]?.sessionId)
   assert.equal(h.checks[1]?.instructions, h.checks[0]?.instructions)
   assert.notEqual(h.checks[1]?.messageId, h.checks[0]?.messageId)
@@ -161,7 +167,7 @@ test("an invalid one-message reply retries once in the same check session with a
 test("a one-message check cannot deliver when it has used its daily cap", async () => {
   const h = harness({ checks: [reply(review)], sentToday: 4 })
   assert.deepEqual(await h.run(), { status: "ran", reasons: ["scheduled"], reply: "message", delivered: "daily_limit" })
-  assert.deepEqual(h.calls, ["flag", "count", "conversation", "check"])
+  assert.deepEqual(h.calls, ["count", "conversation", "check"])
   assert.match(h.checks[0]?.prompt ?? "", /You've sent 4 of 4 messages today\./)
   assert.deepEqual(h.delivered, [])
   assert.deepEqual(h.reserves, [])
