@@ -24,7 +24,6 @@ dev, or demo work. Names follow `<lifecycle>-<surface>`:
 | `preview-app-web` | The web app plus the server it needs (local, private Daytona URL, Freestyle). |
 | `acme-web` | The seeded Acme demo stack: Den, AI Gateway, and the web app. |
 | `preview-workbot` | Workbot with Den sign-in and the headless runner: the seeded Acme org, Workbot turned on. `-- --calendar` adds the owner's seeded Automations, model choices and mock meetings for Workbot's Calendar. `-- --open-workplace` (local) makes Open Outlook, Open Calendar and Open Drive each person's Microsoft 365 through Den's real connector: Alex and Casey each get their own, already connected, and Workbot's turns run through the AI Gateway on a scripted model that really calls those tools (`--live` for a real model). |
-| `openwork-bench` | `preview-desktop` with [OpenWork Bench](https://github.com/different-ai/openwork-bench) installed in the same sandbox, ready to run its `openwork-desktop` harness against the app's own server (Daytona, Freestyle). See [OpenWork Bench runs](#openwork-bench-runs). |
 | `dev-app-web` | Your working tree as the local server plus web app (`pnpm dev:headless-web`). |
 | `live-desktop`, `live-app-web` | Source desktop or web app on your installed production state. |
 
@@ -119,43 +118,18 @@ as `preview-full` does for its own disposable Den.
 
 ## OpenWork Bench runs
 
-`openwork-bench` boots the signed-out `preview-desktop` app, installs
-`owb` with `uv tool install` at the revision pinned in
-`evals/worlds/openwork-bench-source.ts`, and checks out that revision's tasks.
-It then reads the desktop server's address and tokens inside the sandbox and
-writes them to `~/openwork-bench/openwork.env` (readable only there).
-Outputs give the file, the variable names (`OPENWORK_URL`, `OPENWORK_TOKEN`,
-`OPENWORK_HOST_TOKEN`, `OWB_TASKS_DIR`) and a `benchRun` command, never the
-values. Model keys never enter the world.
-
-```sh
-# In openwork-bench: check the spec and price the run before anything starts.
-uv run owb world plan --world worlds/openwork-bench.world.yaml
-
-# Here: the desktop at a pinned commit, with the benchmark next to it.
-OPENWORK_EVAL_REF=<full-pushed-sha> pnpm world up openwork-bench --place daytona \
-  --stage <stage> --detach --timeout 1200000 -- --lifetime 240
-pnpm world outputs openwork-bench --stage <stage>
-
-# Inside the sandbox, with a dedicated, capped model key exported for this run:
-source ~/openwork-bench/openwork.env
-owb run <model>@openwork-desktop --openwork-url "$OPENWORK_URL" \
-  --workspace-root ~/openwork-bench/workspaces
-
-pnpm world down openwork-bench --stage <stage>
-```
-
-`-- --bench-ref <sha>` installs another openwork-bench commit. The lifetime is
-10–1430 minutes (240 by default), and the sandbox is deleted when it ends.
-`--place freestyle` works too, but Daytona suits long runs. Without
-`OPENWORK_EVAL_REF` the desktop is built from the current `origin/dev`.
+[OpenWork Bench](https://github.com/different-ai/openwork-bench) runs against
+the plain `preview-desktop` world. Its
+[`docs/openwork-desktop.md`](https://github.com/different-ai/openwork-bench/blob/main/docs/openwork-desktop.md)
+covers installing the benchmark next to the desktop and starting a run.
 
 [`evals/proofs/openwork-bench.proof.test.ts`](../evals/proofs/openwork-bench.proof.test.ts)
-records one task in the app: the brief goes in through the composer, a
-scripted model works through the task world (attached as the `owb-world` MCP
-server, as the harness attaches it), and the task's own checks grade the
-result. Its before and after screenshots are footage for published results. It
-spends nothing on models and needs `uvx` or `pipx` on the runner.
+records one task in the app, from the openwork-bench revision pinned in
+`evals/worlds/openwork-bench-source.ts`: the brief goes in through the
+composer, a scripted model works through the task world (attached as the
+`owb-world` MCP server, as the harness attaches it), and the task's own checks
+grade the result. Its before and after screenshots are footage for published
+results. It spends nothing on models and needs `uvx` or `pipx` on the runner.
 
 ## Writing a world
 
