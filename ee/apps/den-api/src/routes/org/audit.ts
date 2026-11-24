@@ -219,11 +219,24 @@ export function registerOrgAuditRoutes<T extends { Variables: Variables }>(app: 
 
   app.get("/v1/audit/export", describeAuditRoute({
     operationId: "getAuditExport", tags: ["Organizations"], "x-mcp": false, summary: "Export one audit snapshot page",
-    description: `${coverage} ${pagination} ${filterDescription} Exports ALL matching operations' children within the snapshot in ascending event ID (recording time) order. Each response is one bounded attachment, not a continuous drain. Follow X-Audit-Next-Cursor with the same format and filters until that header is absent. X-Audit-Snapshot-At stays fixed. NDJSON has one full envelope per line. CSV has a header on every page and summary fields only: references and changed-field names are JSON cells, no before/after content. Every cell is quoted; formula-leading whitespace/control and =+-@ are prefixed with an apostrophe, backslashes are doubled, controls/multiline characters are encoded as literal backslash-u escapes.`,
-    parameters: [...pageParameters, ...filterParameters, { in: "query", name: "format", schema: { type: "string", enum: ["ndjson", "csv"], default: "ndjson" } }],
-    responses: { ...errors, 200: { description: "A bounded attachment page. No next-cursor header means this snapshot is exhausted.", content: { "application/x-ndjson": { schema: { type: "string" } }, "text/csv": { schema: { type: "string" } } }, headers: {
-      "X-Audit-Next-Cursor": { description: "Opaque continuation; absent on the last page.", schema: { type: "string" } },
-      "X-Audit-Snapshot-At": { description: "Frozen snapshot instant; events recorded after it are excluded.", schema: { type: "string", format: "date-time" } },
+    description: `Requires View audit history (audit.view) and deployment audit visibility. For scripts, send an organization API key in x-api-key. Exports retained, structured events only.
+
+Omit cursor on the first request. Copy the full X-Audit-Next-Cursor response header into the next request's cursor query parameter. There is no nextCursor field in the body. Keep the organization, filters and format unchanged; limit may change. Stop when a successful response omits the header, even if it has exactly limit events. Cursors are signed and expire 24 hours after the first page, without renewal.
+
+X-Audit-Snapshot-At starts at server time minus five seconds and stays fixed across pages. Events recorded after it are excluded. This is not a continuous feed or a retention guarantee. ${filterDescription}
+
+Each response is one attachment containing all eligible child events of matching operations, in ascending event ID (recording time) order. NDJSON has one full envelope per line. CSV has a column header on every page and summary fields only: references and changed-field names are JSON cells, no before/after content. Every cell is quoted; formula-leading whitespace/control and =+-@ are prefixed with an apostrophe, backslashes are doubled, and controls/multiline characters are encoded as literal backslash-u escapes.
+
+The API key's request limit is shared with other calls using the key. See the [audit export guide](https://openworklabs.com/docs/cloud/audit-logs#export) for examples and error handling.`,
+    parameters: [
+      { ...pageParameters[0], description: "Maximum child events per page, excluding the CSV column header. Default 50, range 1 to 100. Can change between pages." },
+      { ...pageParameters[1], description: "Omit for the first page. For later pages, use the entire X-Audit-Next-Cursor response header as this query parameter. Nonempty, at most 4096 characters." },
+      ...filterParameters,
+      { in: "query", name: "format", schema: { type: "string", enum: ["ndjson", "csv"], default: "ndjson" }, description: "Attachment format. Use the same format on every page of a cursor chain." },
+    ],
+    responses: { ...errors, 403: { ...errors[403], description: "View audit history (audit.view) and deployment audit visibility are required." }, 200: { description: "One attachment page of events, with no pagination object in the body.", content: { "application/x-ndjson": { schema: { type: "string" } }, "text/csv": { schema: { type: "string" } } }, headers: {
+      "X-Audit-Next-Cursor": { description: "Set only when more eligible events remain. Pass this opaque response header value as the next request's cursor query parameter.", schema: { type: "string" } },
+      "X-Audit-Snapshot-At": { description: "UTC cutoff, set to server time minus five seconds on the first page and unchanged on later pages. Events recorded after it are excluded.", schema: { type: "string", format: "date-time" } },
       "Content-Disposition": { description: "Attachment filename for this page.", schema: { type: "string" } },
     } } },
   } satisfies AuditRouteDescription), orgPermissionRoute("audit.view"), (c) => serveAudit(c, "export", async (organizationId) => {
