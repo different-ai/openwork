@@ -1471,6 +1471,13 @@
       "when": 1795467811847,
       "tag": "0210_free_auto_safety_cases",
       "breakpoints": true
+    },
+    {
+      "idx": 211,
+      "version": "5",
+      "when": 1795469022012,
+      "tag": "0211_funded_model_account_suspensions",
+      "breakpoints": true
     }
   ]
 }

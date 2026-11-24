@@ -82,7 +82,7 @@ const unusable: AutoRouterConfig = { id: createDenTypeId("autoRouter"), name: "R
 /** Jev answers that every prompt is about coding, so Smart picks the router's second model (the fallback is the first). */
 const askJev: AskJev = async ({ tasks }) => ({ tasks: new Map(tasks.map((task) => [task.key, task.name === "Coding" ? 1 : 0])), thinking: null, model: "jev-fixture" })
 
-function app(options: { routers?: AutoRouterConfig[]; routingConfigured?: boolean; keySource?: GatewayContext["keySource"] } = {}) {
+function app(options: { routers?: AutoRouterConfig[]; routingConfigured?: boolean; keySource?: GatewayContext["keySource"]; suspended?: boolean } = {}) {
   clearAutoTurnChoices()
   const sent: Request[] = []
   const routers = options.routers ?? [router, unusable]
@@ -123,7 +123,12 @@ function app(options: { routers?: AutoRouterConfig[]; routingConfigured?: boolea
     autoRouterRoutingConfigured: options.routingConfigured ?? true,
     loadMemberAutoRouters: async () => { routerReads++; return routers },
     loadAutoRouterConfig: async ({ routerId: id }) => routers.find((entry) => entry.id === id) ?? null,
-    askJev,
+    fundedModelGuard: async (_identity, route) => options.suspended && route.kind === "managed"
+      ? Response.json({ error: { code: "funded_model_account_suspended" } }, { status: 403 }) : null,
+    askJev: async input => {
+      assert.ok(!options.suspended, "suspended accounts must not invoke the platform classifier")
+      return askJev(input)
+    },
     now: () => now,
   })
   const post = (path: string, body: Record<string, unknown>) => api.request(path, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) })
@@ -221,6 +226,16 @@ test("the general model list keeps Smart Routers to API keys; desktop keys learn
   const { api } = app({ keySource: "member" })
   const ids = list((await json(await api.request("/api/v1/models"))).data).map((entry) => record(entry).id)
   assert.equal(ids.length, 2)
+})
+
+test("a suspended account reaches neither Smart classification nor the upstream model in each adapter", async () => {
+  const { post, sent } = app({ suspended: true })
+  const messages = [{ role: "user", content: "hello" }]
+  assert.equal((await post("/api/v1/chat/completions", { model: autoRouterModelId(routerId), messages })).status, 403)
+  assert.equal((await post("/api/v1/cursor/chat/completions", { model: smartName, messages })).status, 403)
+  assert.equal((await post("/api/v1/claude-code/v1/messages", { model: smartName, max_tokens: 10, messages })).status, 403)
+  assert.equal((await post("/api/v1/codex/responses", { model: smartName, input: "hello" })).status, 403)
+  assert.equal(sent.length, 0)
 })
 
 test("Cursor Chat Completions by Smart name runs Smart, ignoring a level in the name", async () => {

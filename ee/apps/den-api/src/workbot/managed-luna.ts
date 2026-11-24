@@ -1,4 +1,5 @@
 import { organizationFeatureEnabled } from "../features.js"
+import { assertFundedUserAllowed } from "../openai-safety/account-suspensions.js"
 import { and, eq, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
 import { InferenceOrgUpstreamProviderKeyTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -57,6 +58,7 @@ export async function workbotManagedLunaState(actor: CloudAgentGatewayActor) {
 }
 
 export async function workbotManagedLunaAccess(actor: CloudAgentGatewayActor, model: string): Promise<HeadlessModelAccess> {
+  await assertFundedUserAllowed(actor.userId)
   const state = await workbotManagedLunaState(actor)
   if (model === WORKBOT_PAID_LUNA_ID) {
     if (!state.paidReady) throw new CloudAgentGatewayAccessError("managed_models_setup_required")
