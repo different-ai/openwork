@@ -1,4 +1,4 @@
-export function workbotBaseUrl(env: { DEN_WORKBOT_URL?: string; DEN_DEPLOYMENT?: string } = process.env): string | null {
+export function workbotBaseUrl(env: Record<string, string | undefined> = process.env): string | null {
   const explicit = env.DEN_WORKBOT_URL?.trim();
   if (explicit) return explicit;
   return env.DEN_DEPLOYMENT?.trim() === "self_hosted" ? null : "https://chat.openworklabs.com";
