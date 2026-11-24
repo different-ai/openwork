@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { TaskRecovery } from "@/components/chat/task-recovery";
 import { Button } from "@/components/ui/button";
 import { PickerNotice } from "../models/picker-notice";
+import { FreeEmailVerification } from "./free-email-verification";
 import { useState } from "react";
 import { useSessionActivityStore } from "../session/status/session-activity-store";
 import { useCheckDesktopRestriction } from "./desktop-config-provider";
@@ -104,6 +105,9 @@ export function AutoPickerRecovery({ state, code, resetsAt, onRetry, onReload, h
   const reloadWorkspace = onReload ?? (workspace?.openworkServerClient && workspace.workspaceId ? () => workspace.openworkServerClient!.reloadEngine(workspace.workspaceId) : undefined);
   const reload = reloadWorkspace ? async () => { await reloadWorkspace(); await retry(); } : undefined;
   if (state === "ready" || freeAutoSwitchedOff(observed)) return null;
+  if ((code ?? observed?.code) === "email_verification_required" && auth.user?.email) {
+    return <PickerNotice action={<FreeEmailVerification key={auth.user.id} email={auth.user.email} />}>{copy.detail}</PickerNotice>;
+  }
   return <PickerNotice testId="auto-picker-recovery" action={<>
     {copy.action === "Sign in" ? <Button size="sm" onClick={() => openAutoSignIn(undefined, signIn)}>Sign in</Button> : null}
     {copy.action === "Update" ? <Button size="sm" onClick={openAutoUpdate}>Update</Button> : null}
@@ -175,6 +179,7 @@ function AutoAccessWallNotice({ wall, sessionId, workspaceId, recovery }: { wall
   return <div data-testid="auto-access-wall" data-state={wall.state}>
     <TaskRecovery compact state="paused" title={copy.title} description={copy.detail} technicalDetails={copy.technicalDetails}
       actions={<>
+        {wall.code === "email_verification_required" && auth.user?.email && <FreeEmailVerification key={auth.user.id} email={auth.user.email} />}
         {offerSignIn ? <Button size="xs" variant="outline" onClick={() => openAutoSignIn(recovery, signIn, { workspaceId, sessionId })}>Sign in</Button> : null}
         <Button size="xs" variant="ghost" onClick={() => openAlternativeModelPicker(sessionId)}>Choose a model</Button>
       </>} />

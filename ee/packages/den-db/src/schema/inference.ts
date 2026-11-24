@@ -514,6 +514,25 @@ export const DesktopFreeProofNonceTable = mysqlTable("desktop_free_proof_nonces"
   expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
 }, (table) => [index("desktop_free_proof_nonce_expiry").on(table.expires_at)])
 
+export const FreeAutoSafetyCaseTable = mysqlTable("free_auto_safety_case", {
+  case_key: varchar("case_key", { length: 64 }).notNull().primaryKey(),
+  case_id: varchar("case_id", { length: 128 }).notNull(),
+  identifier: varchar("identifier", { length: 64 }),
+  notice: mysqlEnum("notice", ["warning", "deactivation", "local_review"]).notNull(),
+  reason: varchar("reason", { length: 100 }),
+  state: mysqlEnum("state", ["review", "blocked", "closed"]).notNull(),
+  issued_at: timestamp("issued_at", { fsp: 3 }).notNull(),
+  reviewer_id: denTypeIdColumn("user", "reviewer_id"),
+  decision: varchar("decision", { length: 40 }),
+  review_history: json("review_history").$type<{ decision: string; reviewerId: string; at: string }[]>(),
+  ...timestamps,
+}, t => [index("free_auto_safety_case_enforce").on(t.identifier, t.state), index("free_auto_safety_case_queue").on(t.state, t.issued_at)])
+
+export const FreeAutoSafetyMemberTable = mysqlTable("free_auto_safety_member", {
+  identifier: varchar("identifier", { length: 64 }).notNull().primaryKey(),
+  user_id: denTypeIdColumn("user", "user_id").notNull(),
+})
+
 export const FreeAutoSafetyPauseTable = mysqlTable("free_auto_safety_pause", {
   identifier: varchar("identifier", { length: 64 }).notNull().primaryKey(),
   expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),

@@ -186,9 +186,7 @@ jobs:
         continue-on-error: true
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
-          key: macos-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            macos-pnpm-
+          key: alpha-release-${{ runner.os }}-${{ runner.arch }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
 
       - name: Install dependencies
         run: pnpm --filter @openwork/desktop... --filter @openwork/app... --filter openwork-server... install --frozen-lockfile --prefer-offline
@@ -508,9 +506,7 @@ jobs:
         continue-on-error: true
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
-          key: Windows-electron-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            Windows-electron-pnpm-
+          key: alpha-release-${{ runner.os }}-${{ runner.arch }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
 
       - name: Install dependencies
         run: pnpm --filter @openwork/desktop... --filter @openwork/app... --filter openwork-server... install --frozen-lockfile --prefer-offline

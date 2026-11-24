@@ -40,7 +40,7 @@ apt-get install -y -qq --no-install-recommends -- "$@"
 /**
  * One import per package in requirements-desktop.in, by its module name. The desktop image imports them all
  * right after installing, so a package that will not load fails the image build instead of an assistant's
- * first script. The system Python, which is where the desktop installs them on every provider.
+ * first script. Use the same interpreter as document commands on PATH.
  */
 export const DESKTOP_PYTHON_IMPORTS: Record<string, string> = {
   "openpyxl": "openpyxl", "xlsxwriter": "xlsxwriter", "xlrd": "xlrd", "python-docx": "docx", "python-pptx": "pptx",
@@ -51,7 +51,7 @@ export const DESKTOP_PYTHON_IMPORTS: Record<string, string> = {
   "seaborn": "seaborn", "pillow": "PIL", "opencv-python-headless": "cv2", "requests": "requests",
   "beautifulsoup4": "bs4", "tqdm": "tqdm", "pytz": "pytz",
 }
-const DESKTOP_PYTHON_CHECK = `MPLBACKEND=Agg /usr/bin/python3 -c "import ${Object.values(DESKTOP_PYTHON_IMPORTS).join(", ")}"`
+const DESKTOP_PYTHON_CHECK = `MPLBACKEND=Agg python3 -c "import ${Object.values(DESKTOP_PYTHON_IMPORTS).join(", ")}"`
 
 /**
  * Where the desktop's preinstalled Node packages live (desktop-node-packages.json, installed exactly from its lock).

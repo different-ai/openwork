@@ -15,6 +15,7 @@ on:
         required: true
         type: string
 
+cache-mode: read
 permissions:
   contents: read
   pull-requests: read

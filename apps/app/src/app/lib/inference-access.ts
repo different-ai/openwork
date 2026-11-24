@@ -76,6 +76,7 @@ export function autoAccessWallFromError(value: unknown, model?: ModelRef | null,
   const code = Reflect.get(value, "code");
   const rawMessage = Reflect.get(value, "message");
   const known = typeof code === "string" ? { code, ...(typeof rawMessage === "string" && rawMessage.trim() ? { message: rawMessage.trim().slice(0, 2000) } : {}) } : {};
+  if (code === "email_verification_required") return { state: "unavailable", ...known };
   if (code === "desktop_update_required") {
     const minimumVersion = Reflect.get(value, "minimumVersion");
     return typeof minimumVersion === "string" && minimumVersion.trim() ? { state: "update", minimumVersion, ...known } : { state: "update", ...known };
@@ -115,6 +116,7 @@ export function autoUpdateTarget(minimumVersion?: string | null) {
   return version ? `OpenWork v${version} or newer` : "OpenWork";
 }
 export function autoPickerCopy(state: AutoPickerState, signedIn: boolean, minimumVersion?: string | null, code?: string | null, resetsAt?: string | null) {
+  if (code === "email_verification_required") return { subtitle: "Verify your email", detail: "Verify your account email to use OpenWork Free.", action: null };
   switch (state) {
     case "not_offered": return { ...notOfferedCopy(code), action: null };
     case "exhausted": {
@@ -155,6 +157,7 @@ export function autoWallCopy(wall: AutoAccessWall, signedIn: boolean, now = Date
     wall.resetsAt ? `Resets: ${wall.resetsAt}` : null, wall.minimumVersion ? `Minimum version: ${wall.minimumVersion}` : null]
     .filter(Boolean).join("\n") || null;
   const copy = (() => {
+    if (wall.code === "email_verification_required") return { title: "Verify your email to use OpenWork Free", detail: "One verification covers all your workspaces." };
     switch (wall.state) {
       case "unavailable": return { title: "OpenWork Free is busy right now", detail: "Pick another model to keep going, or try OpenWork Free again in a bit." };
       case "sync": return { title: "OpenWork Free is still getting ready", detail: "Wait a moment, or pick another model to keep going." };

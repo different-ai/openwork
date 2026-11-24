@@ -10,7 +10,7 @@ const pinned = new Set([...read("requirements-desktop.lock").matchAll(/^([A-Za-z
 test("every desktop Python package is pinned with hashes and imported when the image is built", () => {
   for (const name of listed) assert.ok(pinned.has(name.toLowerCase()), `${name} is listed but not in requirements-desktop.lock; run node scripts/lock-desktop-python.mjs`)
   assert.deepEqual(Object.keys(DESKTOP_PYTHON_IMPORTS).sort(), [...listed].sort())
-  assert.match(DESKTOP_COMPUTER_INSTALL_SCRIPT, new RegExp(`/usr/bin/python3 -c "import ${Object.values(DESKTOP_PYTHON_IMPORTS).join(", ")}"`))
+  assert.match(DESKTOP_COMPUTER_INSTALL_SCRIPT, new RegExp(`MPLBACKEND=Agg python3 -c "import ${Object.values(DESKTOP_PYTHON_IMPORTS).join(", ")}"`))
 })
 
 test("every desktop Node package is locked with integrity, installed from the lock, required at build, and on NODE_PATH for commands", () => {

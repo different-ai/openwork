@@ -22,6 +22,7 @@ import type { OrganizationVariables } from "../src/middleware/org-context.js"
 // env.ts validates at import; nothing here touches a database.
 process.env.DATABASE_URL ??= "mysql://fixture:fixture@127.0.0.1:1/fixture"
 process.env.DEN_DB_ENCRYPTION_KEY ??= "fixture-encryption-key-0000000000000000"
+const { resolveUpstreamCredential } = await import("../src/provider-credentials.js")
 const { registerGatewayRoutes, gatewayPathPrefix, gatewayModelsPath } = await import("../src/gateway.js")
 const { createProviderCatalog } = await import("@openwork-ee/gateway-catalog")
 
@@ -212,6 +213,41 @@ async function refresh(input: { secret: string; configuredScope: string | null; 
   })
   return { outcome, requests, current }
 }
+
+test("Vertex keeps Google's sign-in reason across the first failed renewal and later model requests", async () => {
+  for (const reason of ["invalid_rapt", "invalid_grant"] as const) {
+    const secret = JSON.stringify({ accessToken: "old-google-access", refreshToken: "old-google-refresh" })
+    const input = refreshInput(secret)
+    const initial = { ...input.credential, kind: "oauth_google" as const }
+    const memory = memoryStore(initial)
+    const refresh = createOauthRefresher({ store: memory.store, tokenFetch: async () => Response.json({
+      error: "invalid_grant", error_subtype: reason, error_description: "private provider text",
+    }, { status: 400 }) })
+    const resolve = () => resolveUpstreamCredential({
+      provider: { id: providerId, organization_id: organizationId, provider_id: "google-vertex", status: "active", settings: {}, provider_config: {} },
+      scope: input.authorization.scope, selection: input.authorization.selection, envNames: [], clock: () => now,
+      loadProviderCredential: async () => memory.current(), refreshMemberToken: refresh,
+    })
+    const expected = { kind: "auth_required", credentialId, reason: "refresh_failed", googleReason: reason }
+    assert.deepEqual(await resolve(), expected)
+    assert.deepEqual(await resolve(), expected)
+  }
+})
+
+test("Vertex keeps a working grant during a temporary outage and renews it on the next request", async () => {
+  const secret = JSON.stringify({ accessToken: "old-google-access", refreshToken: "old-google-refresh" })
+  const input = refreshInput(secret)
+  const credential = { ...input.credential, kind: "oauth_google" as const }
+  const memory = memoryStore(credential)
+  let calls = 0
+  const renew = createOauthRefresher({ store: memory.store, tokenFetch: async () => ++calls === 1
+    ? Response.json({ error: "invalid_grant" }, { status: 503 })
+    : Response.json({ access_token: "new-google-access", token_type: "Bearer", expires_in: 3600 }) })
+  assert.deepEqual(await renew({ ...input, credential }), { kind: "retry", reason: "refresh_unavailable" })
+  assert.equal(memory.current().status, "active")
+  assert.equal((await renew({ ...input, credential })).kind, "refreshed")
+  assert.equal(JSON.parse(memory.current().secret).refreshToken, "old-google-refresh")
+})
 
 test("a LiteLLM member's token is renewed with the provider's configured API scope", async () => {
   const { outcome, requests, current } = await refresh({ secret: memberSecret(apiScope), configuredScope: apiScope, granted: apiScope })

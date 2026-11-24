@@ -71,6 +71,7 @@ export type NewTaskComposerContext = {
   listAgents: () => Promise<Agent[]>;
   onSelectAgent: (agent: string | null) => void;
   listCommands: () => Promise<SlashCommandOption[]>;
+  inlineSuggestions?: boolean;
   searchFiles: (query: string) => Promise<string[]>;
   onOpenSettingsSection?: (section: ComposerSettingsSection) => void;
 };
@@ -495,6 +496,7 @@ export function NewTaskComposer(props: NewTaskComposerProps) {
       setFailedSubmission(null);
     }}>Clear the current draft to restore the unsent message</button> : null}
     <ReactSessionComposer
+      inlineSuggestions={context?.inlineSuggestions}
       contextControl={context?.destination?.workspaceId && context.workspaceOptions ? <NewTaskDestinationMenu
         destination={context.destination}
         workspaces={context.workspaceOptions}

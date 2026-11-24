@@ -16,6 +16,7 @@ on:
         required: false
         type: string
 
+cache-mode: none
 permissions: {}
 
 concurrency:
