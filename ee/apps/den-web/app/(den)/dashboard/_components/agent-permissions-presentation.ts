@@ -2,7 +2,7 @@ import {
   agentPermissionDefinitions,
   agentPermissionDecisionsFor,
   agentPermissionDecisionLabels,
-  AGENT_PERMISSION_DEFAULT_DECISION,
+  agentPermissionDefaultDecision,
   agentPermissionMemberDecides,
   type AgentPermissionDefinition,
   type AgentPermissionDecision,
@@ -13,7 +13,8 @@ import {
 
 export type AgentPermissionsArea = "all" | "agents" | "browser";
 
-const BROWSER_KEYS: readonly string[] = ["websites", "browserUploads"];
+const PRIVATE_VALUE_KEYS: readonly string[] = ["privateValueFills", "privateValueCommands", "privateValuePaste", "privateValueTerminal", "privateValueRuns"];
+const BROWSER_KEYS: readonly string[] = ["websites", "browserUploads", ...PRIVATE_VALUE_KEYS];
 const BLOCKED_WITH_COMPUTER_USE: readonly string[] = ["computerFiles", "computerClipboard", "appScripting"];
 
 const BLOCKED_WITH_HOST_EXECUTION: readonly string[] = ["computerUse", "computerFiles", "computerClipboard", "appScripting", "localMcpServers"];
@@ -54,16 +55,18 @@ const EDITOR_GROUPS: readonly { label: string; sections: readonly AgentPermissio
   { label: "Commands and files", sections: ["commands", "files"] },
   { label: "Computer use", sections: ["computer"] },
   { label: "Web", sections: ["web"] },
+  { label: "Private values", sections: ["privateValues"] },
   { label: "Skills and MCP servers", sections: ["extensions"] },
 ];
 
-export function visibleAgentPermissionGroups(area: AgentPermissionsArea, options: Partial<Record<keyof ReturnType<typeof sandboxRequirementVisibility>, boolean>> = {}) {
-  const groups = area === "browser" ? [{ label: "Websites", sections: ["web"] }] : EDITOR_GROUPS;
+export function visibleAgentPermissionGroups(area: AgentPermissionsArea, options: Partial<Record<keyof ReturnType<typeof sandboxRequirementVisibility>, boolean>> & { privateValues?: boolean } = {}) {
+  const groups = area === "browser" ? [{ label: "Websites", sections: ["web"] }, { label: "Private values", sections: ["privateValues"] }] : EDITOR_GROUPS;
   return groups.map((group) => ({
     label: group.label,
     definitions: agentPermissionDefinitions.filter((definition) =>
       group.sections.includes(definition.section)
       && inArea(area, definition.key)
+      && (!PRIVATE_VALUE_KEYS.includes(definition.key) || options.privateValues === true)
       && ((definition.key !== "hostExecution" && definition.key !== "sandboxOptOut") || options[definition.key] !== false)),
   })).filter((group) => group.definitions.length > 0);
 }
@@ -95,7 +98,7 @@ export function agentPermissionChoiceValue(definition: AgentPermissionDefinition
 }
 
 export function storedAgentPermissionDecision(definition: AgentPermissionDefinition, team: string | null, decision: AgentPermissionDecision | undefined): AgentPermissionDecision | undefined {
-  return team === null && !agentPermissionMemberDecides(definition.key) && decision === AGENT_PERMISSION_DEFAULT_DECISION ? undefined : decision;
+  return team === null && !agentPermissionMemberDecides(definition.key) && decision === agentPermissionDefaultDecision(definition.key) ? undefined : decision;
 }
 
 export function agentPermissionBlockedBy(key: string, settings: AgentPermissionSettings, everyone: AgentPermissionSettings | null, features?: AgentPermissionEditorFeatures): { key: string; reason: string } | null {

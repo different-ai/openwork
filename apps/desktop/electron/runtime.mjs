@@ -710,7 +710,8 @@ function extraPathEntries() {
   return [...candidates.filter((entry) => entry && isDirectory(entry)), path.join(home, ".local", "bin")];
 }
 
-function enrichedPath(sidecarDirs, currentPath) {
+/** PATH with the folders tools are usually installed in, which an app started from the Finder or the Start menu lacks. */
+export function enrichedPath(sidecarDirs, currentPath) {
   const entries = [
     ...sidecarDirs.filter(isDirectory),
     ...extraPathEntries(),
