@@ -155,8 +155,8 @@ export function useAutomationModelChoices(context: AutomationsDenContext, provid
     [providerCatalog, providersQuery.data, zenModelRestricted],
   )
   const desktopOtherWorkspace = useMemo(
-    () => automationModelOptions(providersQuery.data ?? [], { includeFreeStarter: !zenModelRestricted }),
-    [providersQuery.data, zenModelRestricted],
+    () => automationModelOptions(providersQuery.data ?? [], { includeFreeStarter: !zenModelRestricted, desktopWideCatalog: providerCatalog }),
+    [providerCatalog, providersQuery.data, zenModelRestricted],
   )
   const cloud = useMemo(() => automationModelOptions(providersQuery.data ?? [], { includeFreeStarter: false }), [providersQuery.data])
   return { desktop, desktopOtherWorkspace, cloud, providersQuery }

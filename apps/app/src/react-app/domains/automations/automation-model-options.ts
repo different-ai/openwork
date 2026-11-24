@@ -25,24 +25,36 @@ export type AutomationModelAvailability = {
   includeFreeStarter?: boolean
   includeCloudDefault?: boolean
   catalog?: AutomationProviderCatalog
+  desktopWideCatalog?: AutomationProviderCatalog
 }
+
+const isGatewaySyncedToEveryWorkspace = (providerId: string) => providerId.startsWith("ipr_")
 
 export function automationModelOptions(
   providers: readonly DenOrgLlmProvider[],
   options: AutomationModelAvailability = {},
 ): AutomationModelOption[] {
-  const { catalog, ...shared } = options
+  const { catalog, desktopWideCatalog, ...shared } = options
   const fromDen = sharedAutomationModelOptions(providers, shared)
-  if (catalog === undefined) return fromDen
+  if (catalog !== undefined) {
+    return [
+      ...fromDen.filter((model) => Boolean(catalog[model.providerId]?.[model.modelId])),
+      ...desktopRuntimeModelOptions(catalog),
+    ].sort(compareAutomationModelOptions)
+  }
+  if (desktopWideCatalog === undefined) return fromDen
   return [
-    ...fromDen.filter((model) => Boolean(catalog[model.providerId]?.[model.modelId])),
-    ...desktopRuntimeModelOptions(catalog),
+    ...fromDen,
+    ...desktopRuntimeModelOptions(desktopWideCatalog, isGatewaySyncedToEveryWorkspace),
   ].sort(compareAutomationModelOptions)
 }
 
-function desktopRuntimeModelOptions(catalog: AutomationProviderCatalog): AutomationModelOption[] {
+function desktopRuntimeModelOptions(
+  catalog: AutomationProviderCatalog,
+  include: (providerId: string) => boolean = () => true,
+): AutomationModelOption[] {
   return Object.entries(catalog)
-    .filter(([providerId]) => !isDenAuthorizedAutomationProvider(providerId))
+    .filter(([providerId]) => !isDenAuthorizedAutomationProvider(providerId) && include(providerId))
     .flatMap(([providerId, models]) => Object.entries(models).map(([modelId, model]): AutomationModelOption => ({
       providerId,
       modelId,
