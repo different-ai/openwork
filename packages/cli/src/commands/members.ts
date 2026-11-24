@@ -1,6 +1,6 @@
 import { api } from "../api.ts"
-import { resolveSession, type Session } from "../config.ts"
-import { confirmDestructive, dryRun, noArgs, oneArg, withRecentSignIn, type Context } from "../context.ts"
+import type { Session } from "../config.ts"
+import { confirmDestructive, dryRun, noArgs, oneArg, openSession, withRecentSignIn, type Context } from "../context.ts"
 import { parseOrgDetails, type Member } from "../den.ts"
 import { CliError } from "../io.ts"
 import { emit, table } from "../output.ts"
@@ -15,7 +15,7 @@ async function findMemberByIdOrEmail(context: Context, session: Session, wanted:
 
 export async function list(context: Context): Promise<void> {
   noArgs(context)
-  const session = resolveSession(context.io, context.flags)
+  const session = await openSession(context)
   const { members } = parseOrgDetails(await api(context.io, session, "GET", "/v1/org"))
   emit(context.io, context.json, { members }, table(["ID", "EMAIL", "NAME", "ROLE", "JOINED"],
     members.map((member) => [member.id, member.email, member.name, member.isOwner ? "owner" : member.role, member.joinedAt ? member.joinedAt.slice(0, 10) : "invited"])))
@@ -25,7 +25,7 @@ export async function setRole(context: Context): Promise<void> {
   const wanted = oneArg(context, "member id or email")
   const role = context.flags.role
   if (!role) throw new CliError("usage", "Pass the new role with --role, for example --role admin.")
-  const session = resolveSession(context.io, context.flags)
+  const session = await openSession(context)
   const member = await findMemberByIdOrEmail(context, session, wanted)
   const path = `/v1/members/${encodeURIComponent(member.id)}/role`
   if (dryRun(context, "POST", path, { role })) return
@@ -35,7 +35,7 @@ export async function setRole(context: Context): Promise<void> {
 
 export async function remove(context: Context): Promise<void> {
   const wanted = oneArg(context, "member id or email")
-  const session = resolveSession(context.io, context.flags)
+  const session = await openSession(context)
   const member = await findMemberByIdOrEmail(context, session, wanted)
   const path = `/v1/members/${encodeURIComponent(member.id)}`
   if (dryRun(context, "DELETE", path)) return

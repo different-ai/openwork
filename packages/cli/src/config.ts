@@ -21,12 +21,17 @@ export type Session = {
   baseUrl: string
   auth: { kind: "token" | "apiKey"; value: string }
   orgId: string | null
+  requestedOrg: string | null
   source: "OPENWORK_API_KEY" | "OPENWORK_API_TOKEN" | "profile" | "openwork-bootstrap"
   profile: string | null
 }
 
 export function normalizeBaseUrl(value: string): string {
-  return value.trim().replace(/\/+$/, "")
+  const trimmed = value.trim().replace(/\/+$/, "")
+  if (!URL.canParse(trimmed) || !/^https?:$/.test(new URL(trimmed).protocol)) {
+    throw new CliError("invalid_api_url", `"${value}" is not an http or https address.`)
+  }
+  return trimmed
 }
 
 function configDir(io: Io): string {
@@ -104,12 +109,12 @@ export function chosenProfileName(io: Io, store: Store, flag: string | undefined
 }
 
 export function resolveSession(io: Io, flags: { profile?: string; org?: string }): Session {
-  const org = flags.org || io.env.OPENWORK_ORG_ID || null
+  const requestedOrg = flags.org || io.env.OPENWORK_ORG_ID || null
   const envUrl = normalizeBaseUrl(io.env.OPENWORK_API_URL || DEFAULT_API_URL)
   const apiKey = io.env.OPENWORK_API_KEY?.trim()
-  if (apiKey) return { baseUrl: envUrl, auth: { kind: "apiKey", value: apiKey }, orgId: org, source: "OPENWORK_API_KEY", profile: null }
+  if (apiKey) return { baseUrl: envUrl, auth: { kind: "apiKey", value: apiKey }, orgId: null, requestedOrg, source: "OPENWORK_API_KEY", profile: null }
   const token = io.env.OPENWORK_API_TOKEN?.trim()
-  if (token) return { baseUrl: envUrl, auth: { kind: "token", value: token }, orgId: org, source: "OPENWORK_API_TOKEN", profile: null }
+  if (token) return { baseUrl: envUrl, auth: { kind: "token", value: token }, orgId: null, requestedOrg, source: "OPENWORK_API_TOKEN", profile: null }
 
   const store = readStore(io)
   const name = chosenProfileName(io, store, flags.profile)
@@ -117,12 +122,12 @@ export function resolveSession(io: Io, flags: { profile?: string; org?: string }
     const profile = store.profiles[name]
     if (!profile) throw new CliError("unknown_profile", `There is no profile named "${name}". Run \`openwork auth list\` to see them.`)
     if (expired(profile.expiresAt)) throw new CliError("sign_in_expired", `The sign-in for profile "${name}" has expired. Run \`openwork auth login\`.`)
-    return { baseUrl: profile.baseUrl, auth: { kind: "token", value: profile.accessToken }, orgId: org ?? profile.orgId, source: "profile", profile: name }
+    return { baseUrl: profile.baseUrl, auth: { kind: "token", value: profile.accessToken }, orgId: profile.orgId, requestedOrg, source: "profile", profile: name }
   }
 
   const bootstrap = bootstrapProfile(io)
   if (bootstrap && !expired(bootstrap.expiresAt)) {
-    return { baseUrl: normalizeBaseUrl(bootstrap.baseUrl), auth: { kind: "token", value: bootstrap.accessToken }, orgId: org, source: "openwork-bootstrap", profile: null }
+    return { baseUrl: normalizeBaseUrl(bootstrap.baseUrl), auth: { kind: "token", value: bootstrap.accessToken }, orgId: null, requestedOrg, source: "openwork-bootstrap", profile: null }
   }
   throw new CliError("not_signed_in", "You are not signed in. Run `openwork auth login`, or set OPENWORK_API_KEY.")
 }

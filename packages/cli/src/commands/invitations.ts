@@ -1,6 +1,6 @@
 import { api, ApiError } from "../api.ts"
-import { resolveSession, type Session } from "../config.ts"
-import { confirmDestructive, dryRun, noArgs, oneArg, withRecentSignIn, type Context } from "../context.ts"
+import type { Session } from "../config.ts"
+import { confirmDestructive, dryRun, noArgs, oneArg, openSession, withRecentSignIn, type Context } from "../context.ts"
 import { parseCreatedInvitation, parseInvitationLink, parseOrgDetails, type Invitation } from "../den.ts"
 import { CliError } from "../io.ts"
 import { emit, table } from "../output.ts"
@@ -15,7 +15,7 @@ async function findPendingInvitationByIdOrEmail(context: Context, session: Sessi
 
 export async function list(context: Context): Promise<void> {
   noArgs(context)
-  const session = resolveSession(context.io, context.flags)
+  const session = await openSession(context)
   const { invitations } = parseOrgDetails(await api(context.io, session, "GET", "/v1/org"))
   emit(context.io, context.json, { invitations }, invitations.length
     ? table(["ID", "EMAIL", "ROLE", "STATUS", "EXPIRES"], invitations.map((invitation) => [invitation.id, invitation.email, invitation.role, invitation.status, invitation.expiresAt.slice(0, 10)]))
@@ -30,7 +30,7 @@ function savedButEmailFailed(error: unknown, email: string): unknown {
 export async function create(context: Context): Promise<void> {
   const email = oneArg(context, "email address")
   const body = { email, role: context.flags.role ?? "member", ...(context.flags.team ? { teamId: context.flags.team } : {}) }
-  const session = resolveSession(context.io, context.flags)
+  const session = await openSession(context)
   if (dryRun(context, "POST", "/v1/invitations", body)) return
   const answer = await withRecentSignIn(context, session, (current) => api(context.io, current, "POST", "/v1/invitations", body)).catch((error: unknown) => {
     throw savedButEmailFailed(error, email)
@@ -41,7 +41,7 @@ export async function create(context: Context): Promise<void> {
 
 export async function cancel(context: Context): Promise<void> {
   const wanted = oneArg(context, "invitation id or email")
-  const session = resolveSession(context.io, context.flags)
+  const session = await openSession(context)
   const invitation = await findPendingInvitationByIdOrEmail(context, session, wanted)
   const path = `/v1/invitations/${encodeURIComponent(invitation.id)}/cancel`
   if (dryRun(context, "POST", path)) return
@@ -52,7 +52,7 @@ export async function cancel(context: Context): Promise<void> {
 
 export async function link(context: Context): Promise<void> {
   const wanted = oneArg(context, "invitation id or email")
-  const session = resolveSession(context.io, context.flags)
+  const session = await openSession(context)
   const invitation = await findPendingInvitationByIdOrEmail(context, session, wanted)
   const result = parseInvitationLink(await withRecentSignIn(context, session, (current) => api(context.io, current, "GET", `/v1/invitations/${encodeURIComponent(invitation.id)}/link`)))
   emit(context.io, context.json, { invitationId: result.invitationId, email: invitation.email, inviteLink: result.inviteLink, expiresAt: result.expiresAt }, result.inviteLink)

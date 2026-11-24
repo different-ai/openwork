@@ -1,7 +1,7 @@
-import { api, rawRequest, authHeaders } from "../api.ts"
+import { api, authHeaders, rawRequest } from "../api.ts"
 import { chosenProfileName, DEFAULT_API_URL, normalizeBaseUrl, readStore, resolveSession, writeStore, type Session } from "../config.ts"
-import { noArgs, oneArg, signInProfile, type Context } from "../context.ts"
-import { parseMyOrgs, parseUser } from "../den.ts"
+import { endSession, myOrganizations, noArgs, oneArg, organizationByIdOrSlug, signInToProfile, type Context } from "../context.ts"
+import { parseUser } from "../den.ts"
 import { CliError } from "../io.ts"
 import { emit, table } from "../output.ts"
 
@@ -20,7 +20,7 @@ export async function login(context: Context): Promise<void> {
   const baseUrl = normalizeBaseUrl(context.flags.baseUrl || existing?.baseUrl || context.io.env.OPENWORK_API_URL || DEFAULT_API_URL)
 
   if (existing && !context.flags.force && existing.baseUrl === baseUrl) {
-    const session: Session = { baseUrl, auth: { kind: "token", value: existing.accessToken }, orgId: null, source: "profile", profile: name }
+    const session: Session = { baseUrl, auth: { kind: "token", value: existing.accessToken }, orgId: null, requestedOrg: null, source: "profile", profile: name }
     const me = await rawRequest(context.io, baseUrl, "/v1/me", { headers: authHeaders(session) })
     if (me.status === 200) {
       emit(context.io, context.json, { profile: name, user: existing.user, alreadySignedIn: true }, `Already signed in as ${existing.user.email} (profile ${name}). Pass --force to sign in again.`)
@@ -28,7 +28,7 @@ export async function login(context: Context): Promise<void> {
     }
   }
 
-  const profile = await signInProfile(context, name, baseUrl, false)
+  const profile = await signInToProfile(context, name, baseUrl)
   emit(context.io, context.json, { profile: name, user: profile.user, organization: profile.orgId ? { id: profile.orgId, slug: profile.orgSlug } : null, baseUrl },
     `Signed in as ${profile.user.email} (profile ${name})${profile.orgSlug ? `, organization ${profile.orgSlug}` : ""}.`)
 }
@@ -43,11 +43,7 @@ export async function logout(context: Context): Promise<void> {
     emit(context.io, context.json, { signedOut: false }, "Not signed in.")
     return
   }
-  const ended = await rawRequest(context.io, profile.baseUrl, "/api/auth/sign-out", {
-    method: "POST",
-    body: {},
-    headers: { authorization: `Bearer ${profile.accessToken}` },
-  }).then((response) => response.status === 200, () => false)
+  const ended = await endSession(context, profile.baseUrl, profile.accessToken)
   delete store.profiles[name]
   if (store.active === name) store.active = Object.keys(store.profiles)[0] ?? null
   writeStore(context.io, store)
@@ -58,8 +54,10 @@ export async function whoami(context: Context): Promise<void> {
   noArgs(context)
   const session = resolveSession(context.io, context.flags)
   const user = parseUser(await api(context.io, session, "GET", "/v1/me"))
-  const orgs = parseMyOrgs(await api(context.io, session, "GET", "/v1/me/orgs"))
-  const org = orgs.orgs.find((candidate) => candidate.id === (session.orgId ?? orgs.activeOrgId)) ?? null
+  const orgs = await myOrganizations(context, session)
+  const org = session.requestedOrg
+    ? organizationByIdOrSlug(orgs, session, session.requestedOrg)
+    : orgs.orgs.find((candidate) => candidate.id === (session.orgId ?? orgs.activeOrgId)) ?? null
   const result = {
     user,
     organization: org ? { id: org.id, name: org.name, slug: org.slug, role: org.role } : null,

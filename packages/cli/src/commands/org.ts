@@ -1,15 +1,15 @@
 import { api } from "../api.ts"
 import { readStore, resolveSession, writeStore } from "../config.ts"
-import { noArgs, oneArg, type Context } from "../context.ts"
-import { parseMyOrgs, parseOrgDetails } from "../den.ts"
+import { myOrganizations, noArgs, oneArg, openSession, organizationByIdOrSlug, type Context } from "../context.ts"
+import { parseOrgDetails } from "../den.ts"
 import { CliError } from "../io.ts"
 import { emit, table } from "../output.ts"
 
 export async function list(context: Context): Promise<void> {
   noArgs(context)
   const session = resolveSession(context.io, context.flags)
-  const orgs = parseMyOrgs(await api(context.io, session, "GET", "/v1/me/orgs"))
-  const current = session.orgId ?? orgs.activeOrgId
+  const orgs = await myOrganizations(context, session)
+  const current = session.requestedOrg ? organizationByIdOrSlug(orgs, session, session.requestedOrg).id : session.orgId ?? orgs.activeOrgId
   const rows = orgs.orgs.map((org) => ({ id: org.id, name: org.name, slug: org.slug, role: org.role, plan: org.planTier, members: org.memberCount, current: org.id === current }))
   emit(context.io, context.json, { organizations: rows }, rows.length
     ? table(["", "ID", "NAME", "SLUG", "ROLE", "PLAN", "MEMBERS"], rows.map((org) => [org.current ? "*" : " ", org.id, org.name, org.slug, org.role, org.plan, org.members]))
@@ -18,7 +18,7 @@ export async function list(context: Context): Promise<void> {
 
 export async function get(context: Context): Promise<void> {
   noArgs(context)
-  const session = resolveSession(context.io, context.flags)
+  const session = await openSession(context)
   const details = parseOrgDetails(await api(context.io, session, "GET", "/v1/org"))
   const result = {
     id: details.id,
@@ -48,9 +48,7 @@ export async function use(context: Context): Promise<void> {
   if (session.source !== "profile" || !session.profile) {
     throw new CliError("no_profile", `${session.source} has no profile to remember an organization. Pass --org or set OPENWORK_ORG_ID instead.`)
   }
-  const orgs = parseMyOrgs(await api(context.io, { ...session, orgId: null }, "GET", "/v1/me/orgs"))
-  const org = orgs.orgs.find((candidate) => candidate.id === wanted || candidate.slug === wanted)
-  if (!org) throw new CliError("unknown_organization", `You are not a member of an organization with the id or slug "${wanted}". Run \`openwork org list\`.`)
+  const org = organizationByIdOrSlug(await myOrganizations(context, session), session, wanted)
   const store = readStore(context.io)
   const profile = store.profiles[session.profile]
   if (!profile) throw new CliError("unknown_profile", `Profile "${session.profile}" no longer exists.`)

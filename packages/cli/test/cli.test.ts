@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import { mkdtempSync, readFileSync, statSync } from "node:fs"
+import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { test } from "node:test"
@@ -11,6 +11,7 @@ type Reply = { status?: number; body?: unknown }
 type Route = (call: Call) => Reply | undefined
 
 const ORG = { id: "organization_1", name: "Acme", slug: "acme", role: "owner", planTier: "team", memberCount: 2, isActive: true }
+const BETA = { ...ORG, id: "organization_2", name: "Beta", slug: "beta", isActive: false }
 const DETAILS = {
   organization: { id: ORG.id, name: "Acme", slug: "acme", owner: { email: "owner@acme.test" } },
   currentMember: { role: "owner", permissions: ["members.update"] },
@@ -49,7 +50,12 @@ function harness(options: { interactive?: boolean; env?: Record<string, string>;
     if (call.path === "/api/auth/device/token") return { body: { access_token: `session-${++signIns}`, expires_in: 604800 } }
     if (call.path === "/api/auth/sign-out") return { body: {} }
     if (call.path === "/v1/me") return { body: { user: { id: "user_1", email: "owner@acme.test", name: "Owner" } } }
-    if (call.path === "/v1/me/orgs") return { body: { orgs: [ORG, { ...ORG, id: "organization_2", name: "Beta", slug: "beta", isActive: false }], activeOrgId: ORG.id, activeOrgSlug: ORG.slug } }
+    if (call.path === "/v1/me/orgs") {
+      // Like the API: a request that names an organization lists only that one.
+      const named = call.headers.get("x-openwork-org-id")
+      const orgs = [ORG, BETA].filter((org) => !named || org.id === named)
+      return { body: { orgs, activeOrgId: named ?? ORG.id, activeOrgSlug: orgs[0]?.slug ?? null } }
+    }
     if (call.path === "/v1/org") return { body: DETAILS }
     return { status: 404, body: { error: "not_found" } }
   }
@@ -191,4 +197,79 @@ test("a person at a terminal gets a table", async () => {
   await cli.run("auth", "login")
   assert.equal(await cli.run("members", "list"), 0)
   assert.match(cli.out.at(-1) as string, /^ID\s+EMAIL\s+NAME\s+ROLE\s+JOINED\nmember_1\s+owner@acme\.test\s+Owner\s+owner\s+2026-01-02\n/)
+})
+
+test("org list shows every organization and marks the one in use", async () => {
+  const cli = harness()
+  await cli.run("auth", "login")
+  await cli.run("org", "use", "beta")
+  assert.equal(await cli.run("org", "list"), 0)
+  const listed = JSON.parse(cli.out.at(-1) as string).organizations
+  assert.deepEqual(listed.map((org: { slug: string; current: boolean }) => [org.slug, org.current]), [["acme", false], ["beta", true]])
+})
+
+test("--org takes an id or a slug, and an unknown one stops the command before any change", async () => {
+  const cli = harness({ routes: (call) => (call.method === "DELETE" ? { status: 204 } : undefined) })
+  await cli.run("auth", "login")
+  assert.equal(await cli.run("members", "list", "--org", "beta"), 0)
+  assert.equal(cli.sent("GET", "/v1/org").at(-1)?.headers.get("x-openwork-org-id"), "organization_2")
+
+  assert.equal(await cli.run("members", "remove", "sam@acme.test", "--org", "betta", "--force"), 1)
+  assert.equal(JSON.parse(cli.err.at(-1) as string).error, "unknown_organization")
+  assert.equal(cli.calls.filter((call) => call.method === "DELETE").length, 0)
+})
+
+test("a sign-in from openwork-bootstrap is used when there is no profile", async () => {
+  const cli = harness()
+  writeFileSync(join(cli.io.env.OPENWORK_CONFIG_DIR as string, "credentials.json"), JSON.stringify({
+    baseUrl: "https://den.test/",
+    accessToken: "bootstrap-session",
+    expiresAt: null,
+    user: { id: "user_1", email: "owner@acme.test" },
+  }))
+  assert.equal(await cli.run("auth", "whoami"), 0)
+  assert.equal(cli.sent("GET", "/v1/me")[0]?.headers.get("authorization"), "Bearer bootstrap-session")
+  assert.equal(JSON.parse(cli.out.at(-1) as string).credential, "openwork-bootstrap")
+})
+
+test("signing in again as someone else leaves the profile alone", async () => {
+  const cli = harness({
+    interactive: true,
+    routes: (call) => {
+      const second = call.headers.get("authorization") === "Bearer session-2"
+      if (call.path === "/v1/me" && second) return { body: { user: { id: "user_9", email: "other@acme.test" } } }
+      if (call.path === "/v1/members/member_2/role") return { status: 403, body: { error: "reauth", reason: "fresh_auth_required" } }
+      return undefined
+    },
+  })
+  await cli.run("auth", "login")
+  assert.equal(await cli.run("members", "set-role", "sam@acme.test", "--role", "admin"), 1)
+  assert.match(cli.err.at(-1) as string, /You signed in as other@acme\.test, but profile "default" belongs to owner@acme\.test/)
+  assert.equal(cli.sent("POST", "/v1/members/member_2/role").length, 1)
+  assert.equal(cli.sent("POST", "/api/auth/sign-out")[0]?.headers.get("authorization"), "Bearer session-2")
+  assert.equal(JSON.parse(readFileSync(cli.profilesPath, "utf8")).profiles.default.accessToken, "session-1")
+})
+
+test("a rejected request shows which fields were wrong, and where to start billing", async () => {
+  const cli = harness({
+    interactive: true,
+    routes: (call) => {
+      if (call.method !== "POST" || call.path !== "/v1/invitations") return undefined
+      return call.headers.get("authorization") === "Bearer session-1" && (call.body as { email: string }).email === "nope"
+        ? { status: 400, body: { error: "invalid_request", details: [{ message: "Invalid email address", path: ["email"] }] } }
+        : { status: 402, body: { error: "payment_required", message: "This workspace has used its free users.", billingUrl: "https://den.test/billing" } }
+    },
+  })
+  await cli.run("auth", "login")
+  assert.equal(await cli.run("invitations", "create", "nope"), 1)
+  assert.equal(cli.err.at(-1), "Error: The request was not valid.\nemail: Invalid email address")
+  assert.equal(await cli.run("invitations", "create", "kim@acme.test"), 1)
+  assert.equal(cli.err.at(-1), "Error: This workspace has used its free users.\nStart billing: https://den.test/billing")
+})
+
+test("help lists the commands of one group", async () => {
+  const cli = harness()
+  assert.equal(await cli.run("help", "members"), 0)
+  assert.match(cli.out[0] as string, /openwork members set-role/)
+  assert.doesNotMatch(cli.out[0] as string, /openwork auth login/)
 })

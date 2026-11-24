@@ -37,13 +37,13 @@ const COMMANDS: Record<string, Record<string, Command>> = {
 }
 
 const GLOBAL_OPTIONS = [
-  "  --json             Print JSON (the default when output is piped)",
-  "  --profile <name>   Use this saved profile",
-  "  --org <id>         Act on this organization",
-  "  --dry-run          Print the change instead of making it",
-  "  --force            Skip the confirmation for a destructive change",
-  "  -h, --help         Show help",
-  "  -v, --version      Show the version",
+  "  --json              Print JSON (the default when output is piped)",
+  "  --profile <name>    Use this saved profile",
+  "  --org <id-or-slug> Act on this organization",
+  "  --dry-run           Print the change instead of making it",
+  "  --force             Skip the confirmation for a destructive change",
+  "  -h, --help          Show help",
+  "  -v, --version       Show the version",
 ]
 
 const ENVIRONMENT = [
@@ -116,8 +116,8 @@ export async function main(argv: string[], io: Io = processIo()): Promise<number
       return 0
     }
     const [resource, verb, ...args] = positionals
-    if (values.help || !resource) {
-      io.out(helpText(resource))
+    if (values.help || !resource || resource === "help") {
+      io.out(helpText(resource === "help" ? verb : resource))
       return 0
     }
     const verbs = COMMANDS[resource]

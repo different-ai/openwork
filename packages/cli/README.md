@@ -44,7 +44,9 @@ run, because the variable would still win.
 
 A profile remembers the organization you picked while signing in. Change it
 with `openwork org use <id-or-slug>`, or override it for one command with
-`--org <id>` or `OPENWORK_ORG_ID`.
+`--org <id-or-slug>` or `OPENWORK_ORG_ID`. A command stops before changing
+anything when you are not a member of the organization you named. An API key
+works only in the organization it was created in.
 
 ## Output
 
