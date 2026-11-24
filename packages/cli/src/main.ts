@@ -37,13 +37,13 @@ const COMMANDS: Record<string, Record<string, Command>> = {
 }
 
 const GLOBAL_OPTIONS = [
-  "  --json              Print JSON (the default when output is piped)",
-  "  --profile <name>    Use this saved profile",
-  "  --org <id-or-slug> Act on this organization",
-  "  --dry-run           Print the change instead of making it",
-  "  --force             Skip the confirmation for a destructive change",
-  "  -h, --help          Show help",
-  "  -v, --version       Show the version",
+  "  --json               Print JSON (the default when output is piped)",
+  "  --profile <name>     Use this saved profile",
+  "  --org <id-or-slug>   Act on this organization",
+  "  --dry-run            Print the change instead of making it",
+  "  --force              Skip the confirmation for a destructive change",
+  "  -h, --help           Show help",
+  "  -v, --version        Show the version",
 ]
 
 const ENVIRONMENT = [
@@ -106,6 +106,7 @@ function report(io: Io, json: boolean, error: unknown): void {
     : `Error: ${failure.message}${failure.code === "usage" ? "\nRun `openwork --help` for the commands." : ""}`)
 }
 
+/** Run one command, shaped `openwork <resource> <verb>`. Returns the exit code: 0 on success, 1 on any failure. */
 export async function main(argv: string[], io: Io = processIo()): Promise<number> {
   let json = !io.interactive || argv.includes("--json")
   try {

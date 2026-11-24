@@ -80,6 +80,7 @@ export function readStore(io: Io): Store {
   return { active, profiles }
 }
 
+/** Saved sign-ins are bearer secrets: an owner-only file whose tokens are never printed. */
 export function writeStore(io: Io, store: Store): void {
   const path = storePath(io)
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 })
@@ -104,10 +105,15 @@ function bootstrapProfile(io: Io): Profile | null {
   }
 }
 
+/** The profile a command uses: --profile, then OPENWORK_PROFILE, then the one last switched to. */
 export function chosenProfileName(io: Io, store: Store, flag: string | undefined): string | null {
   return flag || io.env.OPENWORK_PROFILE || store.active
 }
 
+/**
+ * The credential to act with, in order: OPENWORK_API_KEY, OPENWORK_API_TOKEN,
+ * the chosen profile, then a sign-in saved by `openwork-bootstrap login`.
+ */
 export function resolveSession(io: Io, flags: { profile?: string; org?: string }): Session {
   const requestedOrg = flags.org || io.env.OPENWORK_ORG_ID || null
   const envUrl = normalizeBaseUrl(io.env.OPENWORK_API_URL || DEFAULT_API_URL)

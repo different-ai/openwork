@@ -1,68 +1,8 @@
 import assert from "node:assert/strict"
-import { mkdtempSync, readFileSync, statSync, writeFileSync } from "node:fs"
-import { tmpdir } from "node:os"
+import { readFileSync, statSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { test } from "node:test"
-import type { Io } from "../src/io.ts"
-import { main } from "../src/main.ts"
-
-type Call = { method: string; path: string; headers: Headers; body: unknown }
-type Reply = { status?: number; body?: unknown }
-type Route = (call: Call) => Reply | undefined
-
-const ORG = { id: "organization_1", name: "Acme", slug: "acme", role: "owner", planTier: "team", memberCount: 2, isActive: true }
-const BETA = { ...ORG, id: "organization_2", name: "Beta", slug: "beta", isActive: false }
-const DETAILS = {
-  organization: { id: ORG.id, name: "Acme", slug: "acme", owner: { email: "owner@acme.test" } },
-  currentMember: { role: "owner", permissions: ["members.update"] },
-  members: [
-    { id: "member_1", role: "owner", effectiveRole: "owner", isOwner: true, joinedAt: "2026-01-02T00:00:00.000Z", user: { id: "user_1", email: "owner@acme.test", name: "Owner" } },
-    { id: "member_2", role: "member", effectiveRole: "member", isOwner: false, joinedAt: "2026-02-03T00:00:00.000Z", user: { id: "user_2", email: "sam@acme.test", name: "Sam" } },
-  ],
-  invitations: [{ id: "invitation_1", email: "new@acme.test", role: "member", status: "pending", expiresAt: "2026-12-01T00:00:00.000Z", createdAt: "2026-11-24T00:00:00.000Z" }],
-  teams: [],
-}
-
-/** A stand-in for the API: device sign-in, the reads every command uses, and per-test routes first. */
-function harness(options: { interactive?: boolean; env?: Record<string, string>; routes?: Route; confirm?: boolean } = {}) {
-  const calls: Call[] = []
-  const out: string[] = []
-  const err: string[] = []
-  let signIns = 0
-  const io: Io = {
-    env: { OPENWORK_CONFIG_DIR: mkdtempSync(join(tmpdir(), "openwork-cli-")), OPENWORK_API_URL: "https://den.test", ...options.env },
-    homeDir: "/nonexistent",
-    interactive: options.interactive ?? false,
-    out: (text) => out.push(text),
-    err: (text) => err.push(text),
-    confirm: async () => options.confirm ?? false,
-    sleep: async () => {},
-    fetch: (async (input: string | URL | Request, init?: RequestInit) => {
-      const url = new URL(String(input))
-      const call: Call = { method: init?.method ?? "GET", path: url.pathname, headers: new Headers(init?.headers), body: init?.body ? JSON.parse(String(init.body)) : undefined }
-      calls.push(call)
-      const reply = options.routes?.(call) ?? builtIn(call)
-      return new Response(reply.body === undefined ? null : JSON.stringify(reply.body), { status: reply.status ?? 200 })
-    }) as typeof fetch,
-  }
-  function builtIn(call: Call): Reply {
-    if (call.path === "/api/auth/device/code") return { body: { device_code: "device", user_code: "ABCDEFGH", verification_uri_complete: "https://den.test/device?user_code=ABCDEFGH", interval: 1, expires_in: 900 } }
-    if (call.path === "/api/auth/device/token") return { body: { access_token: `session-${++signIns}`, expires_in: 604800 } }
-    if (call.path === "/api/auth/sign-out") return { body: {} }
-    if (call.path === "/v1/me") return { body: { user: { id: "user_1", email: "owner@acme.test", name: "Owner" } } }
-    if (call.path === "/v1/me/orgs") {
-      // Like the API: a request that names an organization lists only that one.
-      const named = call.headers.get("x-openwork-org-id")
-      const orgs = [ORG, BETA].filter((org) => !named || org.id === named)
-      return { body: { orgs, activeOrgId: named ?? ORG.id, activeOrgSlug: orgs[0]?.slug ?? null } }
-    }
-    if (call.path === "/v1/org") return { body: DETAILS }
-    return { status: 404, body: { error: "not_found" } }
-  }
-  const run = (...argv: string[]) => main(argv, io)
-  const sent = (method: string, path: string) => calls.filter((call) => call.method === method && call.path === path)
-  return { io, calls, out, err, run, sent, profilesPath: join(io.env.OPENWORK_CONFIG_DIR as string, "profiles.json") }
-}
+import { harness, ORG, type Call, type Route } from "./harness.ts"
 
 test("signing in saves an owner-only profile and never prints the token", async () => {
   const cli = harness()
@@ -221,7 +161,7 @@ test("--org takes an id or a slug, and an unknown one stops the command before a
 
 test("a sign-in from openwork-bootstrap is used when there is no profile", async () => {
   const cli = harness()
-  writeFileSync(join(cli.io.env.OPENWORK_CONFIG_DIR as string, "credentials.json"), JSON.stringify({
+  writeFileSync(join(cli.configDir, "credentials.json"), JSON.stringify({
     baseUrl: "https://den.test/",
     accessToken: "bootstrap-session",
     expiresAt: null,

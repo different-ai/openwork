@@ -31,6 +31,7 @@ export type RawResponse = { status: number; body: unknown; headers: Headers }
 
 const REQUEST_TIMEOUT_MS = 60_000
 
+/** One HTTP call. An error status is returned, not thrown; the caller decides what it means. */
 export async function rawRequest(io: Io, baseUrl: string, path: string, options: RequestOptions = {}): Promise<RawResponse> {
   let response: Response
   try {

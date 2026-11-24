@@ -29,18 +29,21 @@ export function noArgs(context: Context): void {
   if (context.args.length) throw new CliError("usage", `Unexpected argument "${context.args[0]}".`)
 }
 
+/** Ask before a destructive change. --force skips it; with no one at the terminal the command stops instead of guessing. */
 export async function confirmDestructive(context: Context, question: string): Promise<void> {
   if (context.flags.force || context.flags.dryRun) return
   if (!context.io.interactive) throw new CliError("confirmation_required", "Aborted. Pass --force to confirm when no one is at the terminal.")
   if (!(await context.io.confirm(question))) throw new CliError("aborted", "Aborted.")
 }
 
+/** With --dry-run, print the request instead of sending it. Returns true when it did. */
 export function dryRun(context: Context, method: string, path: string, body?: unknown): boolean {
   if (!context.flags.dryRun) return false
   emit(context.io, context.json, { dryRun: true, request: { method, path, ...(body === undefined ? {} : { body }) } }, `Would send ${method} ${path}${body === undefined ? "" : ` ${JSON.stringify(body)}`}`)
   return true
 }
 
+/** Every organization the caller belongs to. The API lists only one when a request names it, so this asks without naming any. */
 export async function myOrganizations(context: Context, session: Session): Promise<MyOrgs> {
   const withoutOrganizationFilter = { ...session, orgId: null }
   return parseMyOrgs(await api(context.io, withoutOrganizationFilter, "GET", "/v1/me/orgs"))
@@ -54,6 +57,11 @@ export function organizationByIdOrSlug(orgs: MyOrgs, session: Session, wanted: s
     : `You are not a member of an organization with the id or slug "${wanted}". Run \`openwork org list\`.`)
 }
 
+/**
+ * The session a command acts with. The API ignores an organization it cannot
+ * read and falls back to the session's own, so --org and OPENWORK_ORG_ID are
+ * looked up here, by id or slug, before any request names them.
+ */
 export async function openSession(context: Context): Promise<Session> {
   const session = resolveSession(context.io, context.flags)
   if (!session.requestedOrg) return session
@@ -109,6 +117,12 @@ async function signInAgainAsSamePerson(context: Context, name: string, previous:
   return profile
 }
 
+/**
+ * Run a call that needs a recent sign-in. When the API asks for one, a profile
+ * signs in again as the same person and the call runs once more; a key, a token
+ * from the environment, or a run with no one at the terminal gets an error that
+ * says what to do.
+ */
 export async function withRecentSignIn<T>(context: Context, session: Session, run: (session: Session) => Promise<T>): Promise<T> {
   try {
     return await run(session)

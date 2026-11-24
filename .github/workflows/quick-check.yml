@@ -134,7 +134,7 @@ jobs:
           packages/computer-use/computer-control-value-approval.test.mjs
           apps/desktop/test/ui-control-private-redact.test.mjs
       - name: Test the openwork command
-        run: node --test packages/cli/test/cli.test.ts
+        run: node --test packages/cli/test/*.test.ts
       - name: Check outbound access manifest
         run: node scripts/check-outbound-access.mjs
       - name: Setup pnpm

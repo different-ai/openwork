@@ -1,6 +1,7 @@
 import { homedir } from "node:os"
 import { createInterface } from "node:readline/promises"
 
+/** Everything the command touches outside its own code, so tests can replace it. */
 export type Io = {
   env: Record<string, string | undefined>
   homeDir: string
@@ -12,6 +13,7 @@ export type Io = {
   sleep(ms: number): Promise<void>
 }
 
+/** A failure the person can act on: `code` is stable for scripts, `message` is for reading. */
 export class CliError extends Error {
   readonly code: string
   readonly details: unknown

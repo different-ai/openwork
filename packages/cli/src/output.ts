@@ -9,6 +9,7 @@ export function table(headers: string[], rows: Cell[][]): string {
   return [line(headers), ...text.map(line)].join("\n")
 }
 
+/** A command's result goes to stdout: JSON for scripts and agents, readable text for a person at a terminal. */
 export function emit(io: Io, json: boolean, data: unknown, readable: string): void {
   io.out(json ? JSON.stringify(data, null, 2) : readable)
 }

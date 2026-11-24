@@ -10,6 +10,11 @@ function retryAfterMs(value: string | null): number {
   return Math.min(seconds, 3600) * 1000
 }
 
+/**
+ * OAuth 2.0 Device Authorization Grant (RFC 8628): show a link and a one-time
+ * code on stderr, then poll until the person approves or denies it in the
+ * browser, or the code expires. No password reaches this command.
+ */
 export async function deviceLogin(io: Io, baseUrl: string, json: boolean): Promise<{ accessToken: string; expiresAt: string | null }> {
   const started = await rawRequest(io, baseUrl, "/api/auth/device/code", { method: "POST", body: { client_id: DEVICE_CLIENT_ID } })
   const deviceCode = field(started.body, "device_code")
