@@ -5,7 +5,7 @@ import { createHmac, randomBytes, timingSafeEqual } from "node:crypto"
 import type { Context, MiddlewareHandler } from "hono"
 import { getSignedCookie } from "hono/cookie"
 import { DEN_API_KEY_HEADER, getApiKeySessionById, type DenApiKeySession } from "./api-keys.js"
-import { sessionTokenMatches } from "./session-token.js"
+import { sessionTokenMatches, sessionTokenOrganizationScope } from "./session-token.js"
 import { auth, DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX } from "./auth.js"
 import { cache, type CachedAuthSession } from "./cache.js"
 import { db } from "./db.js"
@@ -19,6 +19,7 @@ type AuthSessionValue = {
   session: Omit<CachedAuthSession["session"], "id" | "token"> & {
     id: string
     token: string
+    organizationScopeId?: CachedAuthSession["session"]["activeOrganizationId"]
   }
 }
 type AuthSessionLike = AuthSessionValue | null
@@ -243,9 +244,12 @@ function readBearerToken(headers: Headers): string | null {
 }
 
 function bearerSessionValue(row: CachedAuthSession): AuthSessionValue {
+  const organizationScope = sessionTokenOrganizationScope(row.session.token)
   return {
     signInSessionId: row.session.id,
-    session: row.session,
+    session: organizationScope
+      ? { ...row.session, activeOrganizationId: normalizeDenTypeId("organization", organizationScope), organizationScopeId: normalizeDenTypeId("organization", organizationScope) }
+      : row.session,
     user: {
       ...row.user,
       id: normalizeDenTypeId("user", row.user.id),
@@ -328,6 +332,9 @@ function sessionRequestContext(context?: Context): SessionRequestContext | undef
 }
 
 async function getSessionFromToken(token: string, requestContext?: SessionRequestContext): Promise<AuthSessionLike> {
+  if (sessionTokenOrganizationScope(token) === "") {
+    return null
+  }
   const result = await cache.auth.sessionResult(token)
   const row = result.value
   if (!row) {
@@ -379,6 +386,12 @@ async function getSessionFromToken(token: string, requestContext?: SessionReques
     return null
   }
   return bearerSessionValue(renewed)
+}
+
+export function requestHasOrganizationBoundSession(c: Context<{ Variables: Partial<AuthContextVariables> }>): boolean {
+  if (c.get("session")?.organizationScopeId) return true
+  const bearerToken = readBearerToken(c.req.raw.headers)
+  return bearerToken !== null && sessionTokenOrganizationScope(bearerToken) !== null
 }
 
 export async function readSignedSessionCookieToken(c: Context) {
