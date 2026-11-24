@@ -5,14 +5,10 @@ This chart can manage a private headless runner and a Workbot web service.
 both off by default. They are deployment configuration, not new product feature
 flags. Existing organization features and access controls still apply.
 
-**Verification status:** offline rendering and contract tests are provided.
-A reported local Helm lifecycle check at chart revision `eb6c3611` used synthetic
-stand-in containers for install, upgrade, disable and uninstall, including stable
-retained PVC UID checks. That covers Helm resource lifecycle behavior, not the
-actual application images, OAuth, application data recovery or a member reply
-through Gateway. Application end-to-end proof remains outstanding. A successful
-manually applied companion installation is not this chart's application runtime
-proof. Use an isolated application lab before production rollout.
+Offline rendering and contract tests are provided. They do not establish runtime
+compatibility for an arbitrary image release, cluster or ingress controller.
+Use the isolated application lifecycle checks below before a production rollout;
+include real member sign-in, a granted model reply and stored-data recovery.
 
 ## Before enabling
 
@@ -107,21 +103,34 @@ Install or upgrade the core chart with your existing reviewed values. Leaving
 both companion roots absent or `{}` creates no companion workloads, PVCs,
 Ingresses or Den environment entries. Existing manual `denApi.env` and
 `denWeb.env` configuration still renders when the chart opt-ins are off.
-On self-hosted Den Web (`DEN_DEPLOYMENT=self_hosted`), an absent or blank
-`DEN_WORKBOT_URL` makes `/workbot` return 404 rather than redirect to the hosted
-service. This also applies after disabling chart-managed Workbot. An explicit
-manual URL still wins, including its path/query and organization forwarding.
-Cloud, unset and unknown deployment classifications retain the historical hosted
-fallback, including organization query forwarding. No new environment setting is
-required on existing hosted/Vercel installations. Only the affirmative
-`DEN_DEPLOYMENT=self_hosted` classification suppresses an unconfigured hosted
-fallback; Helm already supplies it through `config.deployment: self_hosted`.
-This is a scoped self-hosting redirect bug fix, not a new organization rollout
-or scheduling flag.
-The redirect correction is Den Web application code in this revision. It requires
-matching application images built with this change; selecting an older published
-image tag does not acquire the fix from Helm values alone. Source-level page
-handler tests are not proof that a previously published image includes it.
+Existing installs retain the historical hosted `/workbot` fallback. To opt a
+self-hosted deployment into returning 404 when Workbot is unconfigured, add this
+to the complete values file:
+
+```yaml
+config:
+  deployment: self_hosted
+  features:
+    workbotConfiguredEntry: "true"
+```
+
+This registry feature is **off by default** and available only on self-hosted
+Den. Keep it in the complete values file when disabling Workbot or both
+companions; it is independent of the workload switches. An explicit manual
+`DEN_WORKBOT_URL` still wins, including path/query and organization forwarding.
+Cloud, unset and unknown deployment classifications keep the hosted fallback.
+No new setting is required on existing hosted installations.
+
+Den Web reads the canonical public deployment feature response from
+`DEN_API_BASE`. Missing, invalid or unavailable discovery keeps the feature off
+and preserves the hosted fallback, so this is **not an offline isolation or
+security boundary**. Registry kill switches, operator locks and deployment-wide
+rollout apply; organization overrides do not govern this public entry. See the
+[feature guide](../../../docs/features/workbot-configured-entry/README.md).
+
+Both Den API and Den Web need matching images containing this feature. Selecting
+older published images does not acquire it from chart values alone. Earlier
+companion runtime checks do not prove this newly gated route.
 
 ### Manual destinations and Terraform classification
 
@@ -149,9 +158,10 @@ The Terraform source modules were inspected, not deployed or changed here.
 `infra/terraform/modules/openwork-self-host` wraps a selected Helm chart; only
 a chart version that supplies `DEN_DEPLOYMENT=self_hosted` gives this marker by
 default. The direct AWS ECS, GCP Cloud Run and Azure Container Apps modules do
-not currently supply that marker in their environment maps. Without a reviewed
-operator override, those installs retain the historical hosted fallback when
-Workbot is unconfigured, even though the infrastructure is self-hosted.
+not currently supply that marker in their environment maps. The marker alone
+also does not enable the new entry feature: canonical deployment discovery must
+resolve it on. Those installs otherwise retain the historical hosted fallback
+when Workbot is unconfigured, even though the infrastructure is self-hosted.
 
 For direct AWS/GCP installs, the existing `extra_environment` map can explicitly
 supply `DEN_DEPLOYMENT = "self_hosted"` to the applications when the operator
@@ -257,12 +267,9 @@ workbot:
     existingSecret: workbot-runtime
   ingress:
     enabled: true
-    className: nginx
-    # ingress-nginx example; use your controller's equivalent settings.
-    annotations:
-      nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
-      nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
-      nginx.ingress.kubernetes.io/proxy-buffering: "off"
+    className: REPLACE_WITH_YOUR_INGRESS_CLASS
+    # Supply controller-specific annotations after validating streaming and TLS.
+    annotations: {}
     tlsSecretName: workbot-tls
   resources: {}
 ```
@@ -281,10 +288,12 @@ runner service token to the authenticated readiness endpoint. A healthy Workbot
 process probe does not prove this Den-to-public-edge path.
 
 The chart leaves controller-specific streaming configuration to
-`workbot.ingress.annotations`. The ingress-nginx example above sets one-hour
-read/send timeouts and disables response buffering; the chart defaults do not
-add those annotations. Set suitable streaming/idle limits at every ingress,
-load balancer and proxy hop, not just this Ingress, and test a long response.
+`workbot.ingress.annotations` and the operator's controller configuration.
+No controller-specific buffering or timeout annotations are enabled by default.
+Select a maintained controller and validate its exact version and configuration;
+annotation names and timeout semantics are not portable between controllers.
+Set suitable streaming/idle limits at every ingress, load balancer and proxy hop,
+not just this Ingress, and test a long response with a deliberate quiet interval.
 An ingress timeout can disconnect the browser while a runner turn is still
 active, so do not interpret disconnect as cancellation. Do not reuse the
 Den web, API or Gateway hostname for Workbot; there is no path-prefix hosting.

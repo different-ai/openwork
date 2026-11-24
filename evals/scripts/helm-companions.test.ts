@@ -166,6 +166,24 @@ test("an operator disables Workbot then the runner without retaining live worklo
   evidence.recordAssertionEvidence("rendered disable is a workload removal", "Workbot off preserves runner wiring; runner off removes all chart-injected Den settings, retaining only PVC; existingClaim remounts without ownership", true);
 });
 
+test("an operator retains the configured entry feature independently of companion workload switches", ({ evidence }) => {
+  assert.ok(!render().includes("DEN_FEATURE_WORKBOT_CONFIGURED_ENTRY"));
+  for (const switches of [
+    { "workbot.enabled": true, "headlessRunner.enabled": true },
+    { "workbot.enabled": false, "headlessRunner.enabled": true },
+    { "workbot.enabled": false, "headlessRunner.enabled": false },
+  ]) {
+    const output = render({ ...workbot, ...switches, "config.features.workbotConfiguredEntry": "true" });
+    const config = output.split(/^---$/m).find(part => part.includes("kind: ConfigMap\n") && part.includes('DEN_FEATURE_WORKBOT_CONFIGURED_ENTRY: "true"'));
+    assert.ok(config, "the shared configuration retains the operator lock");
+    for (const component of ["den-api", "den-web"]) {
+      assert.ok(document(output, "Deployment", component).includes("envFrom:\n            - configMapRef:"));
+    }
+    if (!switches["workbot.enabled"]) assert.ok(!output.includes("DEN_WORKBOT_URL"));
+  }
+  evidence.recordAssertionEvidence("entry policy survives disable", "The existing chart feature mapping retains the operator lock on Den API across both workload switches; default render has no new feature setting", true);
+});
+
 test("an operator can reuse pre-companion saved defaults without enabling anything", ({ evidence }) => {
   const cache = fileURLToPath(new URL("../../node_modules/.cache/", import.meta.url));
   mkdirSync(cache, { recursive: true });
