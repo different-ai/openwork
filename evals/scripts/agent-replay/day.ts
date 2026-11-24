@@ -50,7 +50,7 @@ export type DayGithubItem = {
 };
 
 /**
- * A custom MCP connector nobody reviewed (`workbotAgentBrief`: any connected connector is a source), with tools as its
+ * A custom MCP connector nobody reviewed (any connected connector is a source), with tools as its
  * server lists them, annotations included. `does` is what each tool does in this recorded world: list the items, read
  * one, or change something (a write is never answered; offering or calling one is scored).
  */

@@ -7,7 +7,7 @@ import { readMemberGmailArrivals, readMemberGoogleCalendar } from "../routes/org
 import { organizationCloudModel } from "../workbot/model.js"
 import { resolveMemberTeamAgent, teamAgentPolicy } from "../workbot/team-settings.js"
 import { readWorkbotDirectMessages } from "../slack-assistant/direct-message.js"
-import { activeMemberUser, agentBriefAllowed, agentCheckGateAllowed, agentSendCheckAllowed, agentStoppedSourcesAllowed, listAgentCandidates, memberFirstName, proactiveAllowed, readProactiveSettings } from "./access.js"
+import { activeMemberUser, agentCheckGateAllowed, agentSendCheckAllowed, listAgentCandidates, memberFirstName, proactiveAllowed, readProactiveSettings } from "./access.js"
 import { deliverAgentMessage, destinationBlock } from "./deliver.js"
 import {
   agentSentSince,
@@ -24,15 +24,13 @@ import {
   reserveAgentDelivery,
   settleAgent,
   toldAgentItems,
-  type AgentInstanceRow,
 } from "./repository.js"
 import { countConnectedMembers, listConnectionToolsForMember, listMemberConnections } from "./sources-repository.js"
 import { createCheckGateModel } from "./check-gate.js"
 import { createEvaluationModel } from "../llm/evaluation-model.js"
 import { createAgentSendCheck } from "./send-check.js"
 import { readAgentTemplate } from "./template.js"
-import { agentMessageId, agentSessionId, defaultAgentTurnDeps, runAgentSessionTurn, runAgentTurn } from "./turn.js"
-import { wakeAgent, type AgentWakeOutcome } from "./wake.js"
+import { agentMessageId, agentSessionId, defaultAgentTurnDeps, runAgentSessionTurn } from "./turn.js"
 import { wakeAgentBrief, type AgentBriefWakeDeps } from "./wake-brief.js"
 
 const TICK_MS = 15_000
@@ -54,7 +52,6 @@ export function defaultAgentWakeDeps(): AgentBriefWakeDeps {
     user: activeMemberUser,
     calendar: readMemberGoogleCalendar,
     model: (actor) => organizationCloudModel(actor),
-    turn: (input) => runAgentTurn(input, turnDeps),
     sessionId: agentSessionId,
     messageId: agentMessageId,
     told: toldAgentItems,
@@ -70,12 +67,7 @@ export function defaultAgentWakeDeps(): AgentBriefWakeDeps {
     connections: listMemberConnections,
     connectedMembers: countConnectedMembers,
     connectLink: libraryConnectorLink,
-    stoppedSources: async ({ organizationId, memberId, userId }) => {
-      if (!(await agentStoppedSourcesAllowed(organizationId, userId))) return null
-      markFeaturesUsed({ organizationId, memberId, keys: ["workbotAgentStoppedSources"] })
-      return { link: myAgentLink() }
-    },
-    briefOn: (organizationId, userId) => agentBriefAllowed(organizationId, userId),
+    agentLink: myAgentLink,
     person: memberFirstName,
     check: (input) => runAgentSessionTurn(input, turnDeps),
     conversation: (input) => readWorkbotDirectMessages({ organizationId: input.organizationId, userId: input.userId, since: input.since }),
@@ -103,12 +95,6 @@ export function defaultAgentWakeDeps(): AgentBriefWakeDeps {
   }
 }
 
-export async function wakeMemberAgent(row: AgentInstanceRow, deps: AgentBriefWakeDeps): Promise<AgentWakeOutcome> {
-  const userId = await deps.user(row.organizationId, row.memberId).catch(() => null)
-  const brief = userId ? await deps.briefOn(row.organizationId, userId).catch(() => false) : false
-  return brief ? wakeAgentBrief(row, deps) : wakeAgent(row, deps)
-}
-
 export async function discoverAgents() {
   for (const candidate of await listAgentCandidates()) await ensureAgentInstances(candidate.organizationId, candidate.memberIds)
 }
@@ -133,7 +119,7 @@ export function startWorkbotProactiveWorker(deps: AgentBriefWakeDeps = defaultAg
       if (capacity <= 0) return
       for (const row of await claimDueAgents(capacity, new Date(now))) {
         running += 1
-        void wakeMemberAgent(row, deps)
+        void wakeAgentBrief(row, deps)
           .catch(async () => {
             appLogger.warn("workbot_agent_wake_failed", { member_id: row.memberId })
             await deps.settle(row, { nextWakeAt: new Date(deps.now() + 15 * 60_000), failures: row.failures + 1 }).catch(() => false)

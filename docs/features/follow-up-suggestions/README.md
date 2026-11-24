@@ -1,7 +1,7 @@
-# Suggested follow-ups (`followUpSuggestions`)
+# Suggested follow-ups
 
-- **Feature key:** `followUpSuggestions`
-- **Deployments:** cloud and self-hosted (`everywhere`), off by default
+- **Status:** generally available; `followUpSuggestions` was retired in November 2026.
+- **Deployments:** cloud and self-hosted
 - **Author:** @reachjalil
 
 ## What people get
@@ -63,14 +63,15 @@ the Smart Router, the request therefore goes to the chat's model.
 Any failure (request refused, model unavailable, no usable answer) shows the
 usual placeholder. Nothing is reported to the person.
 
-## Off
+## Older desktop builds
 
-Turning it off stops the requests and shows the usual placeholder. Nothing is
-stored, so it is safe to turn off at any moment.
+Desktop builds that still read `followUpSuggestions` get a fixed `true` from
+the features response, so they keep suggestions too. Stored overrides and
+operator locks for the key are ignored.
 
 ## Try it
 
-Turn the feature on for an organization, send a message in a chat, and wait
+Send a message in a chat, and wait
 for the reply to finish with the message box empty. Ask for something with an
 natural continuation to see a suggestion, and something closed (for example
 "what is 2 + 2?") to see none. Also try a short reply such as "the second one"

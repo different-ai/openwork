@@ -13,13 +13,9 @@ and any connection they turned on, such as Slack. Calendar events only wake it s
 short message when something needs the member, and stays quiet otherwise. It only reads: it never sends, accepts or
 edits anything for them.
 
-> **With `workbotAgentBrief` on** (cloud and self-hosted, off by default), Your agent drops the four responsibilities,
-> their mutes, the meeting lead time and calendar wakes for one rhythm (a check every 2 hours in working hours, plus
-> extra checks it asks for with `request_check`), a plain-text brief (the organization's default plus each member's
-> own lines), and two steps per check (a read-only check that reports findings, then a short tool-less message turn
-> that knows the member's recent Workbot DM). Den keeps only hard limits. See
-> [Your agent's brief and check rhythm](../workbot-agent-brief/README.md). Everything below describes the agent with
-> that feature off, which is unchanged.
+> [Your agent's brief and check rhythm](../workbot-agent-brief/README.md) is now standard on Cloud and self-hosted.
+> The agent checks on a fixed rhythm and follows the organization's brief plus each member's own lines.
+> The older schedule, preset responsibilities and calendar wake design below are retained as historical context.
 
 ## Architecture
 
@@ -69,7 +65,7 @@ wake: schedule (morning + ~3h)  ─┐
 
 ## Enable connected connectors together
 
-With `workbotEnableAllConnectors` enabled on Cloud or self-hosted, members can open **My bot → What it reads → Enable all connected apps**. This turns on the connected connectors they can choose, skipping any known to have no read-only tools. Members can turn all their optional sources off together, including the calendar when their admin lets them choose. Admins can enable all allowed apps for everyone or turn them off together in the connector policy for Everyone or a team. Bulk enable preserves explicit bans. Turning off the rollout hides the bulk action and preserves each member's saved choices. Feature owner: `reachjalil`.
+On Cloud and self-hosted, members can open **My bot → What it reads → Enable all connected apps**. This turns on the connected connectors they can choose, skipping any known to have no read-only tools. Members can turn all their optional sources off together, including the calendar when their admin lets them choose. Admins can enable all allowed apps for everyone or turn them off together in the connector policy for Everyone or a team. Bulk enable preserves explicit bans. The `workbotEnableAllConnectors` rollout switch is retired. Owner: `reachjalil`.
 
 ![Admin connector policies after turning all apps off](./bulk-connector-policy.png)
 
@@ -89,8 +85,7 @@ something that changed after it told them), which has no preset. Mutes apply to 
 
 Email and team chat are not sources of their own (they were, each on for everyone). Chat is read through the Slack
 connector. Mail and Teams chats are read through the Google Workspace or Microsoft 365 connector, which is a source
-only with `workbotAgentBrief` on (any connector can be one there); without it, Den's own providers are read for the
-calendar only. An organization that had email or team chat on for everyone follows each connector's setting now.
+under the current [brief and connector model](../workbot-agent-brief/README.md). The older policy read Den's own providers for calendar only. An organization that had email or team chat on for everyone follows each connector's setting now.
 
 | Preset | What the member gets | Woken early by |
 | --- | --- | --- |
@@ -277,7 +272,7 @@ The harness's own tests (`harness.test.ts`, a scripted model) run with the evals
 1. Replays against the headless runner itself (the evals call the model directly with the same tools' answers).
 2. Other services as sources (Plain, HubSpot…) once their read tools are reviewed, or an admin-approved list of read
    tools per connection.
-3. Follow-ups ("remind me", "tell me when"): no `schedule_wake` tool yet. With `workbotAgentBrief`, the agent's own
+3. Follow-ups ("remind me", "tell me when"): no `schedule_wake` tool yet. With the current brief, the agent's own
    check can ask for an extra check (`request_check`), capped and inside the member's hours.
 4. Copying delivered text into the member's Workbot conversation.
 5. Desktop notifications as a destination.

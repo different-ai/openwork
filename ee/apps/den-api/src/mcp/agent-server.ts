@@ -93,9 +93,7 @@ function slackSendAsBotInstructions(toolView: InstructionView = "search"): strin
   return `To notify the user or "send me" something on Slack (DM me, ping me, remind me, let me know; also in Automations and their instructions), use ${tool} with target me; slack_send_message posts as the user and does not notify them, so use it only to post as the user.`
 }
 
-export const MY_AGENT_INSTRUCTIONS = "To change what Your agent tells the user, use putMeAgent; to explain why it was quiet, read the user's agent checks."
-
-export const MY_AGENT_BRIEF_INSTRUCTIONS = "To change what Your agent tells the user (\"also watch our Render bill\", \"never tell me about newsletters\": lines added to their brief), what it reads (\"also use Linear\", \"use my Granola for meeting context\": any connector they can use, by name in `sources`) or how often it checks, use putMeAgent; to explain why it was quiet or when it checks next, read the user's agent and its checks."
+export const MY_AGENT_INSTRUCTIONS = "To change what Your agent tells the user (\"also watch our Render bill\", \"never tell me about newsletters\": lines added to their brief), what it reads (\"also use Linear\", \"use my Granola for meeting context\": any connector they can use, by name in `sources`) or how often it checks, use putMeAgent; to explain why it was quiet or when it checks next, read the user's agent and its checks."
 
 const FULL_TOOL_VIEW_CACHE_HINTS = { "tools/list": { ttlMs: 60_000, cacheScope: "private" as const } }
 
@@ -105,7 +103,6 @@ export function createAgentMcpServer(options: {
   remoteSessionEvents?: boolean
   canSendSlackMessages?: boolean
   myAgent?: boolean
-  myAgentBrief?: boolean
   harnessFeedbackInstructions?: string
   toolView?: ConnectToolView
   toolShapes?: boolean
@@ -121,7 +118,7 @@ export function createAgentMcpServer(options: {
     ...(options.remoteSessionStatus && options.remoteSessionEvents ? [REMOTE_SESSION_EVENT_INSTRUCTIONS] : []),
     ...(options.canSendSlackMessages ? [slackSendAsBotInstructions(view)] : []),
     ...(options.harnessFeedbackInstructions ? [options.harnessFeedbackInstructions] : []),
-    ...(options.myAgent ? [options.myAgentBrief ? MY_AGENT_BRIEF_INSTRUCTIONS : MY_AGENT_INSTRUCTIONS] : [])].join("\n")
+    ...(options.myAgent ? [MY_AGENT_INSTRUCTIONS] : [])].join("\n")
   const directory = view === "engine" && options.services
     ? serviceDirectoryInstructions(options.services, AGENT_MCP_INSTRUCTIONS_MAX_CHARS - rules.length - 1)
     : ""

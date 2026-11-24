@@ -15,20 +15,12 @@ export async function proactiveAllowed(organizationId: string, userId?: string) 
   return (await resolveMemberWorkbotSettings({ organizationId, userId })).enabled
 }
 
-export async function agentBriefAllowed(organizationId: string, userId?: string) {
-  return organizationFeatureEnabled(organizationId, "workbotAgentBrief", userId ? { userId } : {})
-}
-
 export async function agentCheckGateAllowed(organizationId: string, userId?: string) {
   return organizationFeatureEnabled(organizationId, "workbotAgentCheckGate", userId ? { userId } : {})
 }
 
 export async function agentSendCheckAllowed(organizationId: string, userId?: string) {
   return organizationFeatureEnabled(organizationId, "workbotAgentSendCheck", userId ? { userId } : {})
-}
-
-export async function agentStoppedSourcesAllowed(organizationId: string, userId?: string) {
-  return organizationFeatureEnabled(organizationId, "workbotAgentStoppedSources", userId ? { userId } : {})
 }
 
 export function agentEvaluationModelReady() {

@@ -1,6 +1,6 @@
 # Local sandbox tools
 
-Feature `sandboxTools`, cloud and self-hosted, **off by default**. Owner: `benjaminshafii`.
+Feature `sandboxTools`, cloud and self-hosted, **generally available; rollout switch retired**. Owner: `benjaminshafii`.
 
 ## What changes
 
@@ -14,7 +14,7 @@ for the full contract (labels, storage, policy, API, lifecycle).
   names. All other tools and MCP transports are withheld, including desktop computer use and the built-in browser.
   Force implies Use.
 
-Both off is the default and is the behavior without the feature. A sandbox failure never runs anything on the
+Both settings are off by default. A sandbox failure never runs anything on the
 computer instead. This is agent-tool confinement, not an OS jail for the trusted engine process. Authorized live
 read-write folders intentionally let the sandbox change their files.
 
@@ -36,8 +36,8 @@ imported from workspace files.
   runs. Opening Settings never starts it. Failures show a plain message and Retry.
 - One sandbox per project is kept by the server across chats and across the restart a Force change needs.
 
-Existing requirements survive rollout loss: the member sees why the sandbox is unavailable and the computer's
-tools do not come back. Older desktops: see the capability table in [modes.md](modes.md).
+Existing requirements survive a policy or sandbox availability failure: the member sees why the sandbox is
+unavailable and Force never restores the computer's tools. Older desktops: see the capability table in [modes.md](modes.md).
 
 ### Settings and status API
 
@@ -58,14 +58,14 @@ command does not pay for it. Host bind contents survive; guest-only scratch is r
 next result. A command queued behind a grant change never runs in a sandbox that still has the revoked folder.
 In-flight operations are bounded, not promised instantaneous descendant cancellation.
 
-Use Apple Silicon macOS or Linux KVM, a short `MSB_HOME` on macOS, and the normal feature registry for rollout in a
-disposable test organization. No production rollout is changed here. Missing runtime/image/hypervisor support is
+Use Apple Silicon macOS or Linux KVM and a short `MSB_HOME` on macOS. Test organization policy in a
+disposable organization. Missing runtime/image/hypervisor support is
 an error. Native release signing/packaging still needs validation before broad enablement.
 
 ## Turning it off and watching it
 
-Off with host allowed preserves normal behavior. Off while sandbox-only is required keeps the requirement and
-refuses guest execution, rather than silently restoring the host. Watch policy/runtime errors, mount recreation,
+With both settings off and no organization requirement, normal tools work as before. If a required sandbox
+is unavailable, the requirement stands; Force never falls back to the host. Watch policy/runtime errors, mount recreation,
 unknown execution outcomes and leftover VM disks.
 
 The pinned Claude Agent integration disables native CLI tools and sends advertised tools through OpenCode's

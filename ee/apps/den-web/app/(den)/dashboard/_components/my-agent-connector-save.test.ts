@@ -12,6 +12,7 @@ const view: MemberAgentView = {
   available: true, on: true, snoozedUntil: null, responsibilities: [], destination: null,
   workingHours: { workingDays: "weekdays", startHour: 9, endHour: 17, dailyCap: 3 }, nextCheckAt: null,
   sources: [calendar, notes], todayChecks: [],
+  brief: { lines: "", organization: "", carriedOver: false }, nextChecks: [],
 };
 
 test("only exact connector switches use the compact save", () => {

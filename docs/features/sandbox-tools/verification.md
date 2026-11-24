@@ -1,5 +1,7 @@
 # Sandbox-only verification
 
+> Historical record from before the sandbox rollout switch was retired. See [modes.md](modes.md) for current behavior.
+
 Scope: local microsandbox, required-only mode, Den/local permission controls and host-rail admission. No production
 organization, feature rollout, provider configuration or customer data was mutated. Tests use disposable local Den
 instances and runtime profiles; real-model keys remain in an in-memory inference proxy.

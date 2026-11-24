@@ -466,11 +466,6 @@ export type SettingsSurfaceProps = {
   onClose?: () => void;
 };
 
-function PermissionsSandboxPanel(props: Omit<React.ComponentProps<typeof SandboxPanel>, "rollout">) {
-  const rollout = useDesktopFeature("sandboxTools", true);
-  return <SandboxPanel {...props} rollout={rollout} />;
-}
-
 function PermissionsRouteStart() {
   const marked = useRef(false);
   const markStart = useCallback((element: HTMLSpanElement | null) => {
@@ -2308,7 +2303,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 void connectionsStore.refreshMcpServers();
               }}
             />
-            <PermissionsSandboxPanel
+            <SandboxPanel
               workspaceState={permissionsWorkspaceState}
               client={selectedWorkspaceEndpoint?.client ?? openworkClient}
               workspaceId={runtimeWorkspaceId}

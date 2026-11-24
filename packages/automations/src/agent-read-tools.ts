@@ -3,9 +3,8 @@ import type { AgentToolDecisionReason, AgentToolOverride } from "@openwork/types
 /**
  * Which of a connection's tools a member's background agent ("Your agent") may call. It only ever reads.
  *
- * Today (`workbotAgentBrief` off) only services with a hand-reviewed list of read tools can be read at all
- * (`reviewedReadTool`). With `workbotAgentBrief` on, any connected connector can be a source, so each tool gets its
- * own decision (`decideAgentReadTool`), in this order:
+ * Any connected connector can be a source, so each tool gets its own decision (`decideAgentReadTool`), in this
+ * order:
  *
  *   1. Never a tool its provider marks destructive (`destructiveHint: true`), whoever allowed it. Locked.
  *   2. An admin's choice for this tool on this connection ("Tools agents may use").

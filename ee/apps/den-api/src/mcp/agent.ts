@@ -718,23 +718,22 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       toolView,
       toolShapes,
       remoteSessionStatus: Boolean(memberIdentity),
-      remoteSessionEvents: organizationFeatures.mcpThreads && organizationFeatures.nativeMcpEvents,
+      remoteSessionEvents: organizationFeatures.mcpThreads,
       canSendSlackMessages: slackSendAsBotAvailable(capabilityContext),
       myAgent: Boolean(memberIdentity && principal.scopes.has(DEN_MCP_WRITE_SCOPE)),
-      myAgentBrief: organizationFeatures.workbotAgentBrief,
       skillsExtension,
-      nativeEvents: Boolean(auditPrincipal && organizationFeatures.nativeMcpEvents),
+      nativeEvents: Boolean(auditPrincipal),
       skills: skillsExtension && advertisesInstructions && !listsSkillsNatively ? await loadRemoteSkills() : undefined,
       engine: engineTools,
       services: engineTools && advertisesInstructions ? await loadConnectServices(capabilityContext) : undefined,
     })
-    if (auditPrincipal && organizationFeatures.nativeMcpEvents) registerNativeMcpEvents(server, auditPrincipal, c.req.raw, principal.scopes.has(DEN_MCP_WRITE_SCOPE), { poll: organizationFeatures.mcpThreads })
+    if (auditPrincipal) registerNativeMcpEvents(server, auditPrincipal, c.req.raw, principal.scopes.has(DEN_MCP_WRITE_SCOPE), { poll: organizationFeatures.mcpThreads })
     if (harnessFeedback) registerHarnessFeedbackTool(server, principal)
     if (skillsExtension) registerSkillsExtension(server, loadResolvedSkills)
-    if (memberIdentity && agentCheckRequestsAvailable({ scopes: principal.scopes, member: true, workbotAgentBrief: organizationFeatures.workbotAgentBrief })) {
+    if (memberIdentity && agentCheckRequestsAvailable({ scopes: principal.scopes, member: true })) {
       registerAgentCheckRequestTool(server, { organizationId, memberId: memberIdentity.orgMembershipId, userId: normalizeDenTypeId("user", principal.userId), audit: auditPrincipal })
     }
-    if (organizationFeatures.mcpThreadEvents && auditPrincipal) {
+    if (auditPrincipal) {
       const eventThread = await eventThreadForPrincipal(principal)
       if (eventThread) registerMcpEventTools(server, eventThread, [...principal.scopes], auditPrincipal)
     }

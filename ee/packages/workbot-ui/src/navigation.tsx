@@ -1,7 +1,7 @@
 "use client";
 
 import { Dialog } from "@base-ui/react/dialog";
-import { CalendarDays, FileText, Lock, MessageCircle, MonitorSmartphone, PanelLeft, Plus, Search, X } from "lucide-react";
+import { CalendarDays, FileText, Lock, MessageCircle, PanelLeft, Plus, Search, X } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { AccountAvatar } from "./account-menu";
 import { chatTitle, sinceLabel } from "./chats";
@@ -52,7 +52,6 @@ function destinations(props: NavigationProps, rail = false): Destination[] {
     },
     ...(host.documents === true ? [{ label: "Documents", icon: FileText, selected: props.page === "documents", onClick: () => props.onPage("documents") }] : []),
     ...(host.calendar === true ? [{ label: "Calendar", icon: CalendarDays, selected: props.page === "calendar", onClick: () => props.onPage("calendar") }] : []),
-    ...(!(host.profileComputers === true) ? [{ label: "Devices", icon: MonitorSmartphone, selected: props.page === "devices", onClick: () => props.onPage("devices") }] : []),
   ];
 }
 

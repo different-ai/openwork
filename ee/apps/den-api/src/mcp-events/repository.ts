@@ -1,7 +1,6 @@
 import { and, asc, eq, gt, inArray, lt, lte, sql } from "@openwork-ee/den-db/drizzle"
 import { McpEventReceiptTable as Receipt, McpEventSubscriptionTable as Subscription, McpEventTurnTable as Turn } from "@openwork-ee/den-db/schema"
 import { db } from "../db.js"
-import { organizationFeatureEnabled } from "../features.js"
 import { controlMessageId, eventMessageId, type McpEventControl, type McpEvent } from "./protocol.js"
 
 export type EventSubscription = typeof Subscription.$inferSelect
@@ -82,7 +81,7 @@ export async function handOffEvent(receiptId: string, subscription: EventSubscri
     const [watch] = await tx.select({ status: Subscription.status, expiresAt: Subscription.expiresAt }).from(Subscription).where(eq(Subscription.id, subscription.id)).for("update").limit(1)
     const [receipt] = await tx.select({ status: Receipt.status }).from(Receipt).where(eq(Receipt.id, receiptId)).for("update").limit(1)
     if (!receipt || receipt.status !== "pending") return false
-    if (!watch || (watch.status !== "active" && !(terminated && watch.status === "terminated")) || watch.expiresAt.getTime() <= Date.now() || !await organizationFeatureEnabled(subscription.organizationId, "mcpThreadEvents", { userId: subscription.userId, database: tx, lock: "share" }) || (subscription.source === "openwork" && !await organizationFeatureEnabled(subscription.organizationId, "nativeMcpEvents", { userId: subscription.userId, database: tx, lock: "share" }))) {
+    if (!watch || (watch.status !== "active" && !(terminated && watch.status === "terminated")) || watch.expiresAt.getTime() <= Date.now()) {
       await tx.update(Receipt).set({ status: "skipped", payload: null }).where(eq(Receipt.id, receiptId))
       return false
     }
