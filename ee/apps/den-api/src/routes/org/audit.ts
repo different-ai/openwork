@@ -225,9 +225,11 @@ export function registerOrgAuditRoutes<T extends { Variables: Variables }>(app: 
     operationId: "getAuditExport", tags: ["Organizations"], "x-mcp": false, summary: "Export one audit snapshot page",
     description: `Requires View audit history (\`audit.view\`) and deployment audit visibility. For scripts, send an organization API key in \`x-api-key\` without a Bearer prefix; its owner must be a current member with that permission.
 
+Exports retained, structured events only; not every cloud action is recorded. Omitted filters impose no restriction; supplied filters combine with AND.
+
 Read \`X-Audit-Next-Cursor\` from the response headers, not the body. Pass it as \`cursor\`; stop when a successful response omits the header, even if the page is full.
 
-[Download audit history with the API](https://openworklabs.com/docs/cloud/export-audit-logs) · [How export snapshots and cursors work](https://openworklabs.com/docs/cloud/audit-logs#how-export-snapshots-and-cursors-work).`,
+[Download audit history with the API](https://openworklabs.com/docs/cloud/export-audit-logs) · [Audit export rules](https://openworklabs.com/docs/cloud/audit-export-api) · [How export snapshots and cursors work](https://openworklabs.com/docs/cloud/audit-logs#how-export-snapshots-and-cursors-work).`,
     parameters: [
       { ...pageParameters[0], description: "Maximum child events per page, excluding the CSV column header. Send decimal digits only, with no leading zero, sign, spaces or decimal point." },
       { in: "query", name: "cursor", schema: { type: "string", minLength: 1, maxLength: 4096 }, description: "Omit for the first page. For later pages, URL-encode the entire opaque X-Audit-Next-Cursor response header value." },
@@ -236,10 +238,10 @@ Read \`X-Audit-Next-Cursor\` from the response headers, not the body. Pass it as
     ],
     responses: {
       200: {
-        description: "One attachment page of retained, structured child events from matching operations, ordered by ascending event ID. Omitted filters impose no restriction; supplied filters combine with AND. Content-Type is application/x-ndjson; charset=utf-8 for NDJSON or text/csv; charset=utf-8 for CSV.",
+        description: "One attachment page of retained, structured child events from matching operations, ordered by ascending event ID. `Content-Type` is `application/x-ndjson; charset=utf-8` for NDJSON or `text/csv; charset=utf-8` for CSV.",
         content: {
-          "application/x-ndjson; charset=utf-8": { schema: { type: "string", description: "One complete audit event envelope per line, or an empty body when no events match." } },
-          "text/csv; charset=utf-8": { schema: { type: "string", description: "Summary fields only, without before or after values. References and changed-field names are JSON cells. Each page starts with a header row, even if no events match. Rows end with CRLF. Every cell is quoted. Formula-leading =, +, -, @, tab, CR or LF (including after leading whitespace or control characters) trigger an apostrophe prefix. Backslashes are doubled; control characters and Unicode line and paragraph separators use literal Unicode escapes." } },
+          "application/x-ndjson": { schema: { type: "string", description: "One complete audit event envelope per line, or an empty body when no events match." } },
+          "text/csv": { schema: { type: "string", description: "Summary fields only, without before or after values. References and changed-field names are JSON cells. Each page starts with a header row, even if no events match. Rows end with CRLF. Every cell is quoted. Formula-leading =, +, -, @, tab, CR or LF (including after leading whitespace or control characters) trigger an apostrophe prefix. Backslashes are doubled; control characters and Unicode line and paragraph separators use literal Unicode escapes." } },
         },
         headers: {
           "X-Audit-Next-Cursor": { description: "Present only when more eligible events remain. Use its entire value as the next request's cursor query parameter.", schema: { type: "string" } },

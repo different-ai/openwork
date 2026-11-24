@@ -5,15 +5,13 @@ keywords: ["audit logs", "export", "SIEM", "Splunk", "NDJSON", "cursor"]
 ---
 
 Download the retained events in an audit snapshot to `audit.ndjson`. You can
-use the file as input to Splunk or another SIEM.
+use the file as input to Splunk or another SIEM. See [Audit export rules](/cloud/audit-export-api)
+for cursor validity, throttling, and self-hosted setup.
 
 ## Before you start
 
 - Grant the key's owner **View audit history** (`audit.view`) in the target
-  organization, then [create an API key](/cloud/api-keys#create-a-key). Changing
-  the owner's role, removing them from the organization, or transferring
-  ownership turns off their existing keys for that organization. Changing
-  permissions without changing the role does not revoke the keys.
+  organization, then [create an API key](/cloud/api-keys#create-a-key).
 - Make sure audit visibility is enabled on Den API
   (`DEN_AUDIT_VISIBILITY_ENABLED`, on by default).
 - Set `DEN_API_URL` to `https://api.openworklabs.com` for Cloud or to your own
@@ -25,8 +23,7 @@ use the file as input to Splunk or another SIEM.
 1. Call `GET /v1/audit/export` without `cursor`.
 2. Read **`X-Audit-Next-Cursor` from the successful response headers**, not
    from the NDJSON or CSV body. If present, URL-encode its full value as the
-   next request's `cursor`. Keep the same organization, format and filters.
-   You can change `limit`.
+   next request's `cursor`.
 3. Stop when a successful response omits `X-Audit-Next-Cursor`. An empty
    result or a final page with exactly `limit` events can both end the export.
 
@@ -120,9 +117,8 @@ every iteration. See the [generated audit export reference](/api-reference/organ
 for the available filters.
 
 To download CSV instead, start without a cursor and add
-`--data-urlencode 'format=csv'` to the single-page command. Use a distinct
-output path for each page: the API suggests the same attachment filename for
-every page. When combining CSV pages, keep the column header only once.
+`--data-urlencode 'format=csv'` to the single-page command. See
+[Combine pages](/cloud/audit-export-api#combine-pages) before saving or joining CSV pages.
 
 ## Resume after an error
 
@@ -130,21 +126,19 @@ every page. When combining CSV pages, keep the column header only once.
   same directory with the same filters. The script loads `audit.cursor` and
   appends the remaining pages. For your own client, save the next cursor only
   after processing the current page.
-- **Throttled:** Leave the key unused everywhere for longer than 60 seconds
-  (or longer than its configured window), then resume from the saved cursor.
-  The script retries a `401` once after 61 seconds. If it still returns `401`,
-  check the key and its settings before trying again.
+- **Throttled:** Leave the key idle for longer than its [throttling window](/cloud/audit-export-api#api-key-throttling),
+  then rerun the script. It retries a `401` once after 61 seconds. If `401`
+  persists, check the key and its settings before trying again.
 - **Cursor expired or filters changed:** Start in a new directory without a
-  cursor. Use event IDs to deduplicate any events you already processed.
+  cursor. See [Keep pages in the same snapshot](/cloud/audit-export-api#keep-pages-in-the-same-snapshot).
 - **Interrupted while writing a page:** Check the partial output for an
   incomplete or duplicate page before using it.
 
 ## Check a self-hosted proxy
 
-If a page you expect to continue has no cursor, inspect the headers with
-`curl --dump-header -` in place of `--dump-header page.headers` in the first-page
-command. Make sure your reverse proxy passes through `X-Audit-Next-Cursor`.
-Stripping it makes a page with more results look like the last page.
+If you expect another page, inspect the headers with `curl --dump-header -`
+in place of `--dump-header page.headers` in the first-page command. If the
+cursor is missing, check the [self-hosted proxy rules](/cloud/audit-export-api#self-hosted-deployments).
 
 See [How export snapshots and cursors work](/cloud/audit-logs#how-export-snapshots-and-cursors-work)
 for what a snapshot includes and why it is not a continuous feed.

@@ -1,5 +1,5 @@
 ---
-title: "Audit export API"
+title: "Audit export rules"
 description: "Keep audit export pages in the same snapshot, combine them, and resume after throttling."
 keywords: ["audit export", "API", "cursor", "NDJSON", "CSV", "rate limit"]
 ---
@@ -21,21 +21,20 @@ suggests the same filename for every page in the chain. When combining pages,
 keep only the first column header. NDJSON and CSV use separate cursor chains;
 to change formats, start over without a cursor.
 
-## Resume after throttling
+## API key throttling
 
 New keys default to 600 requests per key in a 60-second window, shared across
-API calls. This is not a fixed minute boundary: the counter resets only after
-more than 60 seconds of inactivity since the last accepted use of the key.
-Den returns `401`, not `429`, when it throttles a key. Leave the key unused
-across all clients for longer than the configured window, then retry the same
-page with the saved cursor. If `401` persists, check the key and its settings.
+API calls. This is not a fixed minute boundary: the counter resets only when
+the key has been unused across all clients for longer than its window (60
+seconds by default). Den returns `401`, not `429`, when it throttles a key.
 A reverse proxy can impose separate limits; don't rely on `Retry-After`.
 For self-hosted configuration, see [Change the rate limit](/cloud/api-keys#change-the-rate-limit-self-hosted).
 
 ## Self-hosted deployments
 
 Open `/docs` on your Den API host for the generated reference matching your
-installed version. Configure your reverse proxy to pass through
+installed version. Older versions may show less detail than the hosted
+reference linked above. Configure your reverse proxy to pass through
 `X-Audit-Next-Cursor`; removing it makes an intermediate page look like the
 last one. Rotating `BETTER_AUTH_SECRET` invalidates existing cursors. All Den
 API replicas must use the same value or a cursor issued by one replica can

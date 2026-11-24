@@ -110,8 +110,8 @@ only runs as a dry run: nothing is deleted.
   paging and resuming an interrupted download.
 - [Generated audit export reference](/api-reference/organizations/export-one-audit-snapshot-page)
   for parameters, response headers, formats, and errors.
-- [Audit export API](/cloud/audit-export-api) for rules that apply across pages,
-  including cursor expiry, combining pages, and handling throttling.
+- [Audit export rules](/cloud/audit-export-api) for cursor validity, combining
+  pages, throttling, and self-hosted deployments.
 
 ## How export snapshots and cursors work
 
@@ -138,15 +138,9 @@ can miss events: `from` filters when the operation was first recorded, not
 when each child event was recorded.
 
 The cursor is in a response header so the attachment body contains only
-export data. NDJSON pages can be appended directly; CSV pages can be combined
-after dropping repeated column headers.
-
-A signed cursor records the last event position and belongs to one
-organization, format and set of filters. It expires 24 hours after the first
-page, and fetching another page does not renew it. NDJSON and CSV use separate
-cursor chains, so the same cursor cannot be used to switch formats. Rotating
-`BETTER_AUTH_SECRET` or using different values across self-hosted Den API
-replicas invalidates in-flight cursors.
+export data. It records where the previous page ended, and Den signs it so
+clients can't change that position or the snapshot it belongs to. See
+[Audit export rules](/cloud/audit-export-api) for when a cursor can be reused.
 
 ## Related
 
