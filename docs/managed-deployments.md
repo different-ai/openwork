@@ -154,8 +154,9 @@ through `search_capabilities` / `execute_capability`:
    `handoff` is the one step the person takes in their own cloud: `open_link`
    (AWS install: approve the prefilled CloudFormation stack) or
    `run_in_cloud_shell` (GCP, and AWS retry/update: open the cloud shell link and
-   run the verified command). OpenWork never runs it. Calling it again reopens
-   the same pending run.
+   run the verified command; on GCP the command starts a Cloud Build build and
+   returns). OpenWork never runs it. Calling it again reopens the same pending
+   run.
 4. Follow progress (`GET /v1/managed-deployments`) and give the person `webUrl`
    once health reads operational.
 
@@ -374,6 +375,16 @@ before claiming that the live managed installer follows the latest release.
 
 ## Google Cloud (GCP)
 
+The installation runs in the customer's project as a **Cloud Build build under
+the deployment's runner service account**, as AWS runs in CodeBuild. A person
+approves it in Cloud Shell; that terminal only bootstraps and starts the build.
+It no longer asks for a Google application-default sign-in, nothing
+impersonates a service account, and the terminal can close. Enrolment renews
+the run's three-hour lifetime for every run kind, so a slow approval does not
+shorten the installation. **This runner, tuning and take-over are not yet proven
+on a live project**: `infra/managed-deployments/gcp/README.md` lists the exact
+checks required before a release that contains them is published.
+
 The managed installer uses the shared Cloud Run module with explicit legacy
 naming and state-backed secrets. Existing and fresh managed installs stay on
 **MySQL 8.0**; the direct module default remains 8.4. No major database upgrade or
@@ -436,23 +447,76 @@ profile; do not use a shared production project. See
 5. Create a deployment and prepare approval. Review the generated command,
    open Google Cloud Shell, and run it there. The command verifies the pinned
    bundle before extraction/execution. The installer checks project number and
-   DNS, asks for the exact project ID as approval, and prompts for Google ADC
-   consent. It never asks for service-account keys.
-6. Terraform runs as the deployment runner identity with customer-owned,
-   private, versioned GCS state. Cloud SQL backups/deletion protection and plan
-   checks protect data-bearing resources. Updates/retries require another
-   explicit approved command; no automatic update or teardown exists.
+   DNS and asks for the exact project ID as approval. With the approving
+   person's own credentials it enables APIs, creates the deployment's
+   identities and state bucket, and lets that person start builds as the runner
+   account. It then submits one build, prints its log link and exits. It never
+   asks for service-account keys or application-default credentials. The
+   approving person also needs permission to create Cloud Build builds.
+6. The build verifies the pinned bundle again, enrols with OpenWork using an
+   identity token the runner account mints for itself, mirrors the pinned
+   images and runs Terraform as the runner with customer-owned, private,
+   versioned GCS state. Cloud SQL backups/deletion protection and plan checks
+   protect data-bearing resources. Updates/retries require another explicit
+   approved command; there is no automatic update. A deployment bootstrapped
+   from Cloud Shell keeps its bucket, state and runner account and moves to
+   builds on its next run.
 7. Open `https://<address>/setup` and retrieve
    `DEN_INITIAL_ADMIN_BOOTSTRAP_CODE` from the deployment's Secret Manager
-   secret. OpenWork never receives it. Cloud Run logs contain installer/service
+   secret. OpenWork never receives it. The build log (Cloud Logging, in the
+   customer's project) and Cloud Run logs contain installer/service
    diagnostics; the read-only health job posts allowlisted checks every five
    minutes with a Google-signed, exact-body-bound ID token. Old reports remain
    visible when reporting stops; unknown checks are not shown as successful.
 
 Expected costs include Cloud Run, Cloud SQL, global HTTPS load balancer,
-Artifact Registry, DNS, Scheduler and storage; review current Google pricing
-rather than reusing AWS estimates. No live project has been installed by these
-local tests. Gateway/automations are disabled in the initial GCP profile.
+Artifact Registry, DNS, Scheduler, Cloud Build minutes and storage; review
+current Google pricing rather than reusing AWS estimates. No live project has
+been installed by these local tests. Gateway/automations are disabled in the
+initial GCP profile.
+
+### Tune
+
+A customer changes size without a new installer and without taking over: write
+`overrides.json` in `deployments/<deployment id>/` in the state bucket, then
+approve an Update or Retry. The keys and units are the ones AWS uses: `api` and
+`web` (`cpu`, `memory`, `min_instances`, `max_instances`), `database` (`tier`,
+`disk_size_gb`, `high_availability`) and `extra_environment` (`OTEL_` names that
+carry no credential). On Cloud Run the maximum may exceed the minimum.
+`log_retention_days` is refused on Google Cloud with a message: logs live in
+the project's Cloud Logging buckets. Sizes cannot go below the `small` profile,
+and anything else in the file, including the database version, deletion
+protection and secrets, stops the run at "Google Cloud project and domain verified" with
+`infrastructure_failed`, before anything changes. A plan that would shrink the
+database disk is refused the same way. Tuning uses the update's maintenance
+sequence, so plan the same short outage. Values, limits and an example:
+`infra/managed-deployments/gcp/README.md#tune`.
+
+### Take over (eject)
+
+After every successful apply the runner writes `deployments/<deployment
+id>/applied/` to the state bucket, with the same files as AWS: the release
+coordinates, the exact Terraform inputs, the backend settings, the Terraform
+version, the public outputs, a list of what exists outside the Terraform state,
+and a README with that deployment's exact commands. It never contains a secret,
+state, the run token or the enrolment challenge, and "Infrastructure installed"
+is reported only after it was written. With that folder and the release bundle,
+the customer runs `terraform init` and `terraform plan` with their own
+credentials and is expected to see no changes: the configuration names no
+identity. While `ejected.json` exists beside `applied/` the installer refuses
+every run, in the approving terminal and in the build, and reports
+`infrastructure_failed`. Health reports continue. OpenWork does not yet show
+such a deployment as self-managed. Steps and required permissions:
+`infra/managed-deployments/gcp/README.md#take-over-eject`.
+
+### Remove
+
+The installer never deletes a deployment. The customer takes it over, exports
+the database, runs `terraform apply -var allow_destroy=true` (turns off
+deletion protection), `terraform destroy -var allow_destroy=true`, and deletes
+what `unmanaged.json` lists: the image repository, the five service accounts,
+the custom role and, last, the state bucket. Not yet run end to end on a live
+project.
 
 ## Limits
 

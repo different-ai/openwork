@@ -10,7 +10,7 @@ from pathlib import Path
 import unittest
 from unittest.mock import patch
 
-from test_gcp_installer import GCP, ROOT, ENV, runner, install
+from test_gcp_installer import GCP, ROOT, ENV, runner, install, quiet_run_boundaries
 
 
 def observations(revision="owned-revision", count="0", stamp=None):
@@ -288,7 +288,7 @@ class CommandTimeoutTests(unittest.TestCase):
                     "maintenanceCommand": {"errorCode": "command_deadline"}})
 
     def test_timeout_records_infrastructure_failure_without_reporting_success(self):
-        with patch.dict(os.environ, ENV), patch.object(runner, "enroll", return_value="test-token"), \
+        with patch.dict(os.environ, ENV), quiet_run_boundaries(), patch.object(runner, "enroll", return_value="test-token"), \
                 patch.object(runner, "verify_target"), patch.object(runner, "orchestration_mutex"), \
                 patch.object(runner, "mirror_images", return_value={}), \
                 patch.object(runner, "apply", side_effect=lambda *args: runner.service_status("owned-api")), \
