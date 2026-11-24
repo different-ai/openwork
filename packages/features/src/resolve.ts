@@ -84,6 +84,8 @@ export const RETIRED_FEATURE_KEYS = [
   "workbotSettingsTabs", "sandboxSlack",
   "sandboxModelChoice",
   "settingsFind",
+  "freeAutoSharedBudgets", "freeAutoSafetyPauses", "desktopOnlyFreeAuto",
+  "freeAutoCrossOrgBudgets", "freeAutoSafetyCases", "fundedModelAccountSuspensions",
 ] as const
 
 export function isFeatureKey(value: string): value is FeatureKey {

@@ -25,6 +25,8 @@ const graduated = [
   "workbotProactive", "workbotTeamSettings", "workbotUsageAnalytics",
   "fileSendPermissions", "remoteDevices", "remoteSessionAccess",
   "workbotSettingsTabs", "sandboxSlack", "sandboxModelChoice", "settingsFind",
+  "freeAutoSharedBudgets", "freeAutoSafetyPauses", "desktopOnlyFreeAuto",
+  "freeAutoCrossOrgBudgets", "freeAutoSafetyCases", "fundedModelAccountSuspensions",
 ]
 
 test("completed November rollouts are retired rather than permanently enabled flags", () => {

@@ -1,21 +1,24 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import type { FeatureMap } from "@openwork/features"
 import { DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_PROVIDER_ID, desktopFreeProofRequested } from "@openwork/free-auto"
-import { freeAutoDesktopProofRequiredBy } from "@openwork-ee/den-db/organization-features"
 import { desktopAppRequiredFailure, statusFromRejection } from "../../../../apps/server/src/free-auto/responses.js"
 
-const features = (on: { freeAutoCrossOrgBudgets?: boolean; desktopOnlyFreeAuto?: boolean }) =>
-  ({ freeAutoCrossOrgBudgets: false, desktopOnlyFreeAuto: false, ...on }) as FeatureMap
+process.env.DATABASE_URL ??= "mysql://fixture:fixture@127.0.0.1:1/fixture"
+process.env.DEN_DB_ENCRYPTION_KEY ??= "fixture-encryption-key-0000000000000000"
+const { readAutoConfig } = await import("../src/free/shared/config.js")
+const { desktopProofRequired } = await import("../src/free/desktop-access.js")
 
-test("free models need a desktop when the organization is desktop-only or budgets are shared across organizations", () => {
-  const off = features({})
-  assert.equal(freeAutoDesktopProofRequiredBy(off, off), false)
-  assert.equal(freeAutoDesktopProofRequiredBy(off, features({ desktopOnlyFreeAuto: true })), true)
-  assert.equal(freeAutoDesktopProofRequiredBy(features({ freeAutoCrossOrgBudgets: true }), off), true)
-  // Signed-out guests follow only the deployment-wide desktop-only switch.
-  assert.equal(freeAutoDesktopProofRequiredBy(features({ freeAutoCrossOrgBudgets: true }), null), false)
-  assert.equal(freeAutoDesktopProofRequiredBy(features({ desktopOnlyFreeAuto: true }), null), true)
+const base = { INFERENCE_FREE_ENABLED: "true", INFERENCE_FREE_OPENAI_API_KEY: "fixture", ANONYMOUS_ACCOUNTING_IDENTITY_KEY: "fixture-accounting-identity-key-000000" }
+
+test("free models need a signed desktop only once a minimum desktop version is set", () => {
+  assert.equal(desktopProofRequired(readAutoConfig(base)), false)
+  const required = readAutoConfig({ ...base, DESKTOP_FREE_MIN_VERSION: "v0.18.73", WORKBOT_FREE_GRANT_SECRET: "w".repeat(48) })
+  assert.equal(required.minimumVersion, "0.18.73")
+  assert.equal(desktopProofRequired(required), true)
+})
+
+test("a minimum desktop version without the Workbot grant secret is refused at startup", () => {
+  assert.throws(() => readAutoConfig({ ...base, DESKTOP_FREE_MIN_VERSION: "0.18.73" }), /WORKBOT_FREE_GRANT_SECRET/)
 })
 
 test("a server that cannot sign reports free models as desktop-only instead of asking for an update", () => {
