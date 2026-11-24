@@ -59,8 +59,6 @@ export const denSessionSchema = z.object({
   usageRecovery: z.boolean().default(false),
   activationChecklist: z.boolean().default(true),
   sideChats: z.boolean().default(false),
-  profileComputers: z.boolean().default(false),
-  deviceActivity: z.boolean().default(false),
   calmChat: z.boolean().default(false),
   model: z.string().nullable().default(null),
   verifyModel: z.boolean().default(false),

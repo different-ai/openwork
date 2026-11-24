@@ -6,7 +6,9 @@ A [second pass retires 18 additional globally enabled rollouts](../globally-enab
 
 ## Retired switches
 
-The November cleanup removes the opt-in paths for `connectEngineTools`, `connectStandardTools`, `connectionMcpServers`, `sandboxGateway`, `workbotDocumentEditing`. The previous off behavior remains; historical overrides and operator locks are ignored.
+The November follow-up makes `workbotAgentBrief`, `workbotProfileComputers`, `workbotDeviceActivity`, `workbotEnableAllConnectors`, `workbotAgentStoppedSources`, `chatRunCommands`, `chatTableExpand`, `sessionMultiSelect`, `followUpSuggestions`, `sideChatPanel`, `personalSkillPortability`, `denGreySidebar`, `litellmEntraMemberSignIn`, `sandboxTools`, `mcpThreadEvents`, `nativeMcpEvents` standard behavior on Cloud and self-hosted. `connectionSelectedScopesOnly` and `opencodeV2Only` remain rollback switches.
+
+The November cleanup removes the opt-in paths for `connectEngineTools`, `connectStandardTools`, `connectionMcpServers`, `sandboxGateway`, and `workbotDocumentEditing`. The previous off behavior remains; historical overrides and operator locks are ignored.
 
 - Connect: `googleCalendarRecurrence`, `googleDrivePdfText`, `desktopPersonalConnectors`, `outlookAttachments`.
 - Artifacts: `appToolRepair`, `publicApps`, `appSites`.
@@ -120,19 +122,13 @@ These remain controlled rollouts or operational switches. Neither a stale code d
 
 | Key | Feature |
 | --- | --- |
-| `nativeMcpEvents` | Session and computer MCP events |
-| `mcpThreadEvents` | MCP thread events |
 | `remoteDesktopDeviceLogin` | Remote desktop device sign-in |
-| `followUpSuggestions` | Desktop: suggested follow-ups |
-| `denGreySidebar` | Den: grey sidebar, white pages |
 | `administratorRecovery` | Deploy-time administrator recovery |
 | `opencodeV2Only` | OpenCode v2 only |
 | `managedDeployments` | Managed deployments |
 | `workbotDocuments` | Workbot Documents |
 | `workbotWorkspaceAssistant` | Workbot: workspace assistant |
-| `workbotProfileComputers` | Workbot: Computers in its profile |
 | `workbotCalmChat` | Workbot: calm chat look |
-| `workbotAgentBrief` | Workbot: Your agent's brief and check rhythm |
 | `workbotAgentCheckGate` | Workbot: Your agent skips checks when nothing new arrived |
 | `workbotAgentSendCheck` | Workbot: Your agent checks each message before sending |
 | `browserDemonstrations` | Workbot: teach browser tasks |

@@ -5,11 +5,11 @@
 /**
  * Stop only the navigation the caller cancelled, after the native callback
  * unwinds. The guard must reject a closed/replaced tab or newer navigation.
- * @param {{ isDestroyed(): boolean, stop(): void }} contents
+ * @param {{ isDestroyed(): boolean, stop(): void } | undefined} contents
  * @param {() => boolean} isCurrent
  */
 export function deferBrowserStop(contents, isCurrent) {
   setImmediate(() => {
-    if (!contents.isDestroyed() && isCurrent()) contents.stop();
+    if (contents && !contents.isDestroyed() && isCurrent()) contents.stop();
   });
 }

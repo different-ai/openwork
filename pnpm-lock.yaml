@@ -1647,6 +1647,15 @@ importers:
         specifier: ^5.9.3
         version: 5.9.3
 
+  packages/cli:
+    devDependencies:
+      '@types/node':
+        specifier: ^24.0.0
+        version: 24.19.2
+      typescript:
+        specifier: ^5.9.0
+        version: 5.9.3
+
   packages/codemode:
     dependencies:
       '@opencode/codemode':

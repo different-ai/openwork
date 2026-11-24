@@ -132,7 +132,7 @@ export const auditServiceActionDeclarations = [
   {
     action: "agent.check_request.create", kind: "agent.member", class: "tenant_change", resource: { type: "agent_instance", idFrom: "the token's own member id" }, origin: "mcp",
     tools: ["request_check"], callSites: ["src/mcp/agent-check-request.ts:registerAgentCheckRequestTool → requestAgentCheck"],
-    notes: `workbotAgentBrief: a member's background agent asks for one extra check of its own member's sources. Only the agent's read-scoped check token sees it; it changes only that member's agent schedule, capped per day and inside their hours. Refusals (limit, outside hours, unreadable time) are recorded as failed outcomes. ${MCP_PRINCIPAL}`,
+    notes: `A member's background agent asks for one extra check of its own member's sources. Only the agent's read-scoped check token sees it; it changes only that member's agent schedule, capped per day and inside their hours. Refusals (limit, outside hours, unreadable time) are recorded as failed outcomes. ${MCP_PRINCIPAL}`,
   },
   {
     action: "organization.plan.set", kind: "platform.admin.organization", class: "tenant_change", resource: { type: "organization", idFrom: "organizationId argument (verified to exist)" }, origin: "platform_admin",

@@ -1,7 +1,7 @@
 # LiteLLM: member Microsoft Entra sign-in
 
-Feature key: `litellmEntraMemberSignIn` (cloud and self-hosted, off by default).
-Author: `benjaminshafii`.
+- **Status:** generally available; `litellmEntraMemberSignIn` was retired in November 2026. Microsoft sign-in for LiteLLM is standard behavior on cloud and self-hosted, with no rollout switch.
+- **Author:** `benjaminshafii`
 
 ## What changes
 
@@ -10,7 +10,7 @@ Some organizations run LiteLLM with JWT auth only (`enable_jwt_auth`,
 existing LiteLLM modes all need a LiteLLM key, so those proxies could not be
 added to AI Gateway.
 
-With the feature on, **AI Gateway › AI Providers › Add a provider › LiteLLM**
+**AI Gateway › AI Providers › Add a provider › LiteLLM**
 offers a fourth choice, **Microsoft sign-in**:
 
 - The admin enters the proxy URL, a dedicated Entra app registration
@@ -26,11 +26,11 @@ offers a fourth choice, **Microsoft sign-in**:
   LiteLLM, which validates it (JWKS, issuer, audience).
 
 Nothing changes for Microsoft Foundry sign-in or for the three key-based
-LiteLLM modes, with the feature on or off.
+LiteLLM modes.
 
 ## What it looks like
 
-Screenshots from a local Den with the feature on, taken while running the
+Screenshots from a local Den, taken while running the
 proof described under [Verified](#verified). The tenant, application and
 addresses are throwaway values.
 
@@ -50,10 +50,6 @@ comes back to a confirmation.
 ![Connect page](connect-page.png)
 
 ![Connected](connected.png)
-
-**With the feature off.** Microsoft sign-in stays visible but locked.
-
-![Add LiteLLM with the feature off](add-litellm-feature-off.png)
 
 ## How it is built
 
@@ -98,52 +94,25 @@ LiteLLM keys, with Microsoft Entra ID as the identity provider.
 
 ## How to try it
 
-1. Turn `litellmEntraMemberSignIn` on for the organization in `/admin`.
-2. Use a LiteLLM proxy with a valid Enterprise or trial license: native JWT
+1. Use a LiteLLM proxy with a valid Enterprise or trial license: native JWT
    authentication requires one. In Entra, register an app, expose an API scope
    on it, set `requestedAccessTokenVersion` to `2` in its manifest, and create a
    client secret. Configure LiteLLM's JWT auth with that tenant's v2.0 issuer and
    the app's client ID as an audience. The published guide has every step:
    `packages/docs/ai-gateway/litellm.mdx` ("Microsoft sign-in").
-3. Add the provider in AI Gateway with **Microsoft sign-in**, save, and add
+2. Add the provider in AI Gateway with **Microsoft sign-in**, save, and add
    the redirect URI shown on the provider page to the Entra app registration.
-4. In the OpenWork app, choose one of the provider's models and select
+3. In the OpenWork app, choose one of the provider's models and select
    **Connect**. Sign in with Microsoft. The models become usable.
 
-## What turning it off does
+## Availability
 
-- No new LiteLLM provider can be added in this mode, and an existing one's
-  sign-in settings and model list cannot be changed (`403 feature_disabled`).
-  Setup keeps Microsoft sign-in visible but locked; an existing provider's
-  settings are read only. Both name the deployment administrator as the person
-  who can turn it on.
-- **Connect** stops: the connect page says Microsoft sign-in for this provider
-  is turned off and that an admin can turn it back on. A sign-in already in
-  the browser is refused at the callback and nothing is stored.
-- People who already signed in cannot use this mode while the feature is off:
-  their models are no longer advertised as ready, and AI Gateway refuses new
-  requests before renewing or forwarding an Entra token. It checks again before
-  dispatch, so disabling the feature during request preparation also blocks it
-  once the check observes the new state. This is admission control, not atomic
-  cancellation: an already-admitted refresh may finish and store its rotated
-  token, and an upstream request already dispatched is not cancelled.
-- Stored encrypted tokens and settings are kept. Turning the feature back on
-  lets people reuse their sign-in if Microsoft still accepts it; otherwise they
-  connect again. Disabling or removing providers, changing access grants and
-  signing out remain available with the feature off.
-
-## Merge and rollback
-
-The feature is off by default on cloud and self-hosted installations. Merging
-this code does not create providers, change Entra app registrations, enable the
-feature for an organization or migrate data. With no explicit rollout or
-operator override, the only setup UI change is a locked sign-in option.
-
-The additional identity, feature-state and primary-database dispatch checks are
-restricted to this new LiteLLM mode; existing provider modes retain their
-previous request path. To roll back a trial, turn the feature off before
-reverting its code. Keep the flag off until the flow has also run against a real
-Microsoft Entra tenant: see [Not verified](#not-verified).
+There is no switch to turn this mode off. Whether it works for an organization
+depends on configuration only: an admin must add a LiteLLM provider with
+**Microsoft sign-in** and a complete Entra app registration, and each person
+must sign in. To stop it for an organization, disable or remove the provider or
+change its access grants. The identity and primary-database dispatch checks are
+restricted to this LiteLLM mode; other provider modes keep their request path.
 
 ## What to watch
 
@@ -166,8 +135,8 @@ Tokens and the client secret are never logged and never returned by any API.
   response checks, the credential and refresh allowlists, renewal with the
   configured scope, and the bearer LiteLLM receives.
 - `ee/apps/den-api/test/api/litellm-entra-sign-in.api.test.ts`: create, edit,
-  the whole Connect flow, the feature turned off, and Foundry and key-based
-  LiteLLM providers behaving the same with the feature on and off.
+  the whole Connect flow, and Foundry and key-based LiteLLM providers behaving
+  as before.
 - `ee/apps/den-web/app/(den)/dashboard/_components/litellm-provider-data.test.ts`:
   what the admin screens send and refuse.
 
@@ -179,9 +148,7 @@ checkout's Den, Den web and AI Gateway against a **real, licensed LiteLLM
 Enterprise proxy** (1.109.1) with its own JWT authentication, a database, one
 LiteLLM user per Entra object id and no LiteLLM key for anyone:
 
-- With the feature off the admin UI locks the option and the API answers
-  `403 feature_disabled`.
-- With it on, an admin adds the provider in the browser, a member signs in from
+- An admin adds the provider in the browser, a member signs in from
   the Connect page, and a real `chat/completions` request through AI Gateway
   returns LiteLLM's reply. LiteLLM received the member's own token (issuer,
   audience and object id as configured) and held no key for them.
@@ -189,8 +156,7 @@ LiteLLM user per Entra object id and no LiteLLM key for anyone:
   by another key, for another audience, from another tenant, an expired token,
   and a person it has no user for.
 - A teammate who has not signed in gets `401 openwork_auth_required` from AI
-  Gateway and LiteLLM is not called. Turning the feature off again gives the
-  signed-in member `403 feature_disabled` before LiteLLM is called.
+  Gateway and LiteLLM is not called.
 
 Run it with `LITELLM_LICENSE` set and docker available:
 `pnpm evals:e2e litellm-entra-sign-in --local`.
@@ -203,7 +169,7 @@ Run it with `LITELLM_LICENSE` set and docker available:
   custom scope through this flow, so the real consent screen, the `scope`
   Entra returns for the configured scope, Conditional Access and the claims of
   a real v2 access token are unproven. Do this once against a real tenant with
-  a dedicated app registration before turning the feature on for anyone.
+  a dedicated app registration.
 - **Token renewal against LiteLLM.** AI Gateway only renews through public
   addresses, so the stand-in cannot answer it. Renewal is covered by the
   Gateway's unit tests only.

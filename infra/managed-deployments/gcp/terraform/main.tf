@@ -80,6 +80,10 @@ resource "terraform_data" "target" {
   }
 }
 
+locals {
+  regions_needing_in_region_backup = toset(["asia-east2"])
+}
+
 module "platform" {
   source                            = "../../../terraform/modules/openwork-gcp-cloud-run"
   project_id                        = var.project_id
@@ -109,6 +113,7 @@ module "platform" {
     database_version = "MYSQL_8_0"
     tier             = "db-custom-1-3840"
     disk_size_gb     = 20
+    backup_location  = contains(local.regions_needing_in_region_backup, var.region) ? var.region : null
   }
   den_api    = { cpu = "2", memory = "2Gi", min_instances = 1, max_instances = 10 }
   den_web    = { cpu = "1", memory = "1Gi", min_instances = 1, max_instances = 10 }

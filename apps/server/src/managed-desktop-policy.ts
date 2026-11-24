@@ -64,10 +64,9 @@ function transientTransportReason(error: unknown): DenRetryReason | null {
 }
 
 const SANDBOX_FRESHNESS_MS = 2_000;
-type SandboxAccess = { enabled: boolean; featureEnabled: boolean; scope: string; hostDenied: boolean; hostPolicyVerified: boolean; useRequired: boolean };
+type SandboxAccess = { enabled: boolean; scope: string; hostDenied: boolean; hostPolicyVerified: boolean; useRequired: boolean };
 type SandboxVerification = "verified" | "refreshing" | "checking" | "unavailable";
 export type SandboxSettingsSnapshot = SandboxSettings & {
-  featureEnabled: boolean;
   effectiveUseSandbox: boolean;
   effectiveForceSandbox: boolean;
   managedUse: boolean;
@@ -357,7 +356,6 @@ class ManagedDesktopPolicy {
   private sandboxOrgUse = false;
   private sandboxOrgVerified = false;
   private sandboxRulesRestrictive = false;
-  private lastSandboxFeatureEnabled = false;
   private sandboxVerification: SandboxVerification = "checking";
   private sandboxRetryDelayMs = 0;
   private sandboxRetryAt = 0;
@@ -373,7 +371,6 @@ class ManagedDesktopPolicy {
     this.sandboxOrgUse = false;
     this.sandboxOrgVerified = false;
     this.sandboxRulesRestrictive = false;
-    this.lastSandboxFeatureEnabled = false;
     this.sandboxVerification = "checking";
     this.sandboxRetryDelayMs = 0;
     this.sandboxRetryAt = 0;
@@ -424,7 +421,6 @@ class ManagedDesktopPolicy {
     const effectiveForceSandbox = this.isolationTransition || applied.forceSandbox || access.hostDenied || !access.hostPolicyVerified;
     return {
       ...local,
-      featureEnabled: access.featureEnabled,
       effectiveForceSandbox,
       effectiveUseSandbox: effectiveForceSandbox || (access.enabled && (local.useSandbox || access.useRequired)),
       managedUse: access.useRequired,
@@ -453,8 +449,8 @@ class ManagedDesktopPolicy {
       ? (inFlight || !this.settledForSettings() ? "refreshing" : "verified")
       : inFlight ? "checking" : this.sandboxVerification;
     return this.settingsResponse(local, applied, {
-      ...this.sandboxAuthority(), scope: "unverified", featureEnabled: this.lastSandboxFeatureEnabled,
-      enabled: this.lastSandboxFeatureEnabled && this.sandboxVerification !== "unavailable" && !this.sandboxRulesRestrictive,
+      ...this.sandboxAuthority(), scope: "unverified",
+      enabled: this.sandboxVerification === "verified" && !this.sandboxRulesRestrictive,
     }, verification);
   }
   private freshSandboxAccess(revision: number): SandboxAccess | undefined {
@@ -480,32 +476,23 @@ class ManagedDesktopPolicy {
   }
   private async refreshSandboxAccess(session: CloudProviderDenSession | null, generation: number, revision: number): Promise<SandboxAccess> {
     try {
-      let featureEnabled: boolean;
       let scope: string;
-      let rolloutSentAt: number;
+      let verifiedAt: number;
       if (session) {
-        rolloutSentAt = performance.now();
-        const [policy, org] = await Promise.allSettled([
-          this.readSandboxDesktopConfig(session, generation), this.readDenJson(session, "/v1/org", generation, false, () => { rolloutSentAt = performance.now(); }),
-        ]);
+        await this.readSandboxDesktopConfig(session, generation);
         this.identityChanged(generation);
-        if (policy.status !== "fulfilled" || org.status !== "fulfilled") throw new Error("Sandbox verification failed");
-        const features = isRecord(org.value) && isRecord(org.value.features) ? org.value.features : {};
-        featureEnabled = features.sandboxTools === true;
+        verifiedAt = this.sandboxDesktopSentAt;
         scope = sessionKey(session);
       } else {
-        rolloutSentAt = performance.now();
-        const signedOut = await this.readSignedOutFeatures(() => { rolloutSentAt = performance.now(); });
+        verifiedAt = performance.now();
+        scope = `signed-out:${await this.signedOutDenOrigin()}`;
         this.identityChanged(generation);
-        featureEnabled = signedOut.features.sandboxTools === true;
-        scope = `signed-out:${signedOut.origin}`;
       }
-      const access = { ...this.sandboxAuthority(), featureEnabled, enabled: featureEnabled && !this.sandboxRulesRestrictive, scope };
-      this.lastSandboxFeatureEnabled = featureEnabled;
+      const access = { ...this.sandboxAuthority(), enabled: !this.sandboxRulesRestrictive, scope };
       this.sandboxVerification = "verified";
       this.sandboxRetryDelayMs = 0;
       this.sandboxRetryAt = 0;
-      this.sandboxFresh = { revision, until: rolloutSentAt + this.sandboxFreshnessMs, access };
+      this.sandboxFresh = { revision, until: verifiedAt + this.sandboxFreshnessMs, access };
       this.sandboxSettledAt = performance.now();
       return access;
     } catch {
@@ -513,20 +500,23 @@ class ManagedDesktopPolicy {
       this.sandboxVerification = "unavailable";
       this.sandboxRetryDelayMs = Math.min(30_000, this.sandboxRetryDelayMs ? 2 * this.sandboxRetryDelayMs : 2_000);
       this.sandboxRetryAt = performance.now() + this.sandboxRetryDelayMs;
-      return { ...this.sandboxAuthority(), enabled: false, featureEnabled: this.lastSandboxFeatureEnabled, scope: "unverified" };
+      return { ...this.sandboxAuthority(), enabled: false, scope: "unverified" };
     }
   }
-  private async readSignedOutFeatures(onSend?: () => void): Promise<{ origin: string; features: Record<string, unknown> }> {
+  private async signedOutDenOrigin(): Promise<string> {
     const origin = this.config.trustedDenOrigin ?? await readActivatedEnterpriseDenOrigin() ?? "https://api.openworklabs.com";
     const url = new URL(origin);
     if (url.username || url.password || url.search || url.hash || url.pathname !== "/"
       || (url.protocol !== "https:" && !(url.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(url.hostname)))) throw new Error("Untrusted Den origin");
-    onSend?.();
-    const response = await externalFetch(new URL("/v1/features", url).href, { headers: { Accept: "application/json" }, redirect: "error", signal: AbortSignal.timeout(DEN_READ_ATTEMPT_TIMEOUT_MS) });
+    return url.origin;
+  }
+  private async readSignedOutFeatures(): Promise<Record<string, unknown>> {
+    const origin = await this.signedOutDenOrigin();
+    const response = await externalFetch(new URL("/v1/features", origin).href, { headers: { Accept: "application/json" }, redirect: "error", signal: AbortSignal.timeout(DEN_READ_ATTEMPT_TIMEOUT_MS) });
     if (!response.ok) throw new Error("Feature verification failed");
     const payload: unknown = await response.json();
     const features = isRecord(payload) && isRecord(payload.features) ? payload.features : payload;
-    return { origin: url.origin, features: isRecord(features) ? features : {} };
+    return isRecord(features) ? features : {};
   }
   private desktopFresh(): boolean {
     return performance.now() - this.sandboxDesktopSentAt < this.sandboxFreshnessMs;
@@ -576,7 +566,7 @@ class ManagedDesktopPolicy {
         const payload = await this.readDenJson(session, "/v1/org", generation);
         features = isRecord(payload) && isRecord(payload.features) ? payload.features : {};
       } else {
-        features = (await this.readSignedOutFeatures()).features;
+        features = await this.readSignedOutFeatures();
       }
       this.identityChanged(generation);
       return features.desktopSystemProxy === true;

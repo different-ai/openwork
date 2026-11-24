@@ -1,6 +1,6 @@
 # Run commands from the chat
 
-Feature key: `chatRunCommands` · Deployments: cloud and self-hosted · Default: off · Author: `reachjalil`
+Status: generally available; `chatRunCommands` was retired in November 2026 · Deployments: cloud and self-hosted · Author: `reachjalil`
 
 ## What a person gets
 
@@ -32,17 +32,16 @@ the command, and the agent runs it with its shell tool.
 
 ## Trying it
 
-Turn `chatRunCommands` on for your organization in `/admin` › Features, then
-ask the agent for a command, for example "give me a curl command to check
+Ask the agent for a command, for example "give me a curl command to check
 example.com". Click **Run** on the block.
 
-## Turning it off
+## Older desktop builds
 
-The Run button disappears; blocks are copy-only again. Messages already sent
-stay in the conversation as ordinary messages.
+Desktop builds that still read `chatRunCommands` get a fixed `true` from the
+features response, so they keep the Run button too. Stored overrides and
+operator locks for the key are ignored.
 
 ## What to watch
 
-Feature usage in `/admin` › Features (`markFeatureUsed("chatRunCommands")` on
-each click). The command runs on the person's click, so the agent's shell permission
+The command runs on the person's click, so the agent's shell permission
 prompt does not apply to it; on the v1 fallback it still does.

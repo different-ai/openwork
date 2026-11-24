@@ -27,6 +27,12 @@ const graduated = [
   "workbotSettingsTabs", "sandboxSlack", "sandboxModelChoice", "settingsFind",
   "freeAutoSharedBudgets", "freeAutoSafetyPauses", "desktopOnlyFreeAuto",
   "freeAutoCrossOrgBudgets", "freeAutoSafetyCases", "fundedModelAccountSuspensions",
+  "workbotAgentBrief", "workbotProfileComputers", "workbotDeviceActivity",
+  "workbotEnableAllConnectors", "workbotAgentStoppedSources", "chatRunCommands",
+  "chatTableExpand", "sessionMultiSelect", "followUpSuggestions",
+  "sideChatPanel", "personalSkillPortability", "denGreySidebar",
+  "litellmEntraMemberSignIn", "sandboxTools", "mcpThreadEvents",
+  "nativeMcpEvents",
 ]
 
 test("completed November rollouts are retired rather than permanently enabled flags", () => {

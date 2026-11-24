@@ -28,8 +28,6 @@ export type WorkbotHost = {
   signInHref?: string | null
   verifyDocumentIdentity?(): Promise<boolean>
   documentAuthorization?: "signin" | "blocked" | "disabled"
-  profileComputers?: boolean
-  deviceActivity?: boolean
   calmChat?: boolean
   sideChats?: boolean
   account?: { email: string; organizationName: string; signOut(): Promise<void>; switchWorkspace(): void }

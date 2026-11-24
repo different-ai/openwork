@@ -99,8 +99,7 @@ function DevicesSkeleton() {
 export function WorkbotDevices({ computerFor }: { computerFor?: (workbotChat: string) => (() => void) | null }) {
   const host = workbotHost();
   const devices = useWorkbotDevices();
-  const activity = host.deviceActivity === true;
-  const remote = useWorkbotRemoteJobs(activity);
+  const remote = useWorkbotRemoteJobs(true);
   const active = (remote.data?.jobs ?? []).filter(remoteJobActive);
   const groups = deviceGroups(devices.data ?? []);
   const canOpen = computerViews(host).length > 0;
@@ -120,7 +119,7 @@ export function WorkbotDevices({ computerFor }: { computerFor?: (workbotChat: st
           {devices.isError ? <p role="status" className="pb-2 text-[12px] leading-4 text-[var(--wb-muted)]">Couldn&apos;t load your computers. <button type="button" className="rounded font-medium text-[var(--wb-text)] underline underline-offset-2 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]" onClick={() => void devices.refetch()}>Try again</button></p> : null}
           {groups.map(group => <section key={group.id} aria-label={groups.length > 1 ? group.label : undefined} className="pb-5 last:pb-0">
             {groups.length > 1 ? <h2 className="pb-1 pt-2 text-[12px] font-medium text-[var(--wb-muted)]">{group.label}</h2> : null}
-            <ul>{group.devices.map(device => <DeviceRow key={device.id} device={device} work={activity ? deviceWork(device, active) : null} onOpen={opener(device)} />)}</ul>
+            <ul>{group.devices.map(device => <DeviceRow key={device.id} device={device} work={deviceWork(device, active)} onOpen={opener(device)} />)}</ul>
           </section>)}
           <p className="pt-4 text-[12px] leading-4 text-[var(--wb-muted)]">Add or remove computers in OpenWork Desktop, under Settings › Devices.</p>
         </>}

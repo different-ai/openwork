@@ -2,14 +2,14 @@
 
 `mcpThreads` — cloud and self-hosted, **off by default**. Owner: `reachjalil`.
 
-A person can start, follow and answer OpenWork sessions from any MCP client, and the client hears about a session's changes through MCP Events instead of polling its status. This builds on [session and computer MCP events](../native-mcp-events/README.md) (`nativeMcpEvents`) and [MCP thread events](../mcp-thread-events/README.md) (`mcpThreadEvents`). It changes nothing about how a session runs: create, send, read, stop, answer, desktop dispatch and the status call keep their behavior.
+A person can start, follow and answer OpenWork sessions from any MCP client, and the client hears about a session's changes through MCP Events instead of polling its status. This builds on [session and computer MCP events](../native-mcp-events/README.md) and [MCP thread events](../mcp-thread-events/README.md). It changes nothing about how a session runs: create, send, read, stop, answer, desktop dispatch and the status call keep their behavior.
 
 ## What the flag adds
 
 | With | What changes |
 | --- | --- |
 | `mcpThreads` | Clients other than OpenWork's own (Claude, ChatGPT, any other MCP client) list the remote-session actions as tools of their own: `remote_session_create`, `_send`, `_read`, `_status`, `_stop`, `_list`, `_targets`, and `_answer` / `_attach` where those are allowed. Each runs the same capability as `execute_capability`, with the same grants, scopes and audit. |
-| `mcpThreads` + `nativeMcpEvents` | A successful create or send names the event to follow: `event: { name: "openwork.remote_session.status_changed", arguments: { commandId or sessionId }, delivery: ["webhook", "poll"] }`. The event catalog offers poll delivery, and `events/poll` answers it. |
+| `mcpThreads` | A successful create or send names the event to follow: `event: { name: "openwork.remote_session.status_changed", arguments: { commandId or sessionId }, delivery: ["webhook", "poll"] }`. The event catalog offers poll delivery, and `events/poll` answers it. |
 | all three flags | A hosted chat that starts or continues a session is watched at once. The result carries `watch: { id, expiresAt }` and tells the model to end its turn. When the session finishes, fails or needs an answer, the chat gets one new turn. |
 
 OpenWork's own chats keep capability search: the nine tools would add to every turn's tool list for no gain.
@@ -30,7 +30,7 @@ Starting the watch never fails the create or send. When it cannot start (ten wat
 
 ## Trying it
 
-1. Turn on `mcpThreads` and `nativeMcpEvents` for a test organization, and `mcpThreadEvents` for the hosted-chat part.
+1. Turn on `mcpThreads` for a test organization. Native and hosted-chat MCP events are generally available.
 2. From an outside MCP client connected to OpenWork, list tools: the `remote_session_*` tools appear. Start a session and check the result's `event`.
 3. Poll `events/poll` with that name and arguments, first with `cursor: null`, then with each returned cursor. An event arrives when the session goes idle, waits or fails. A client with webhook support subscribes with `events/subscribe` instead.
 4. In a hosted chat, ask it to run a task on one of your computers. The chat says the task started and ends its turn. When the task settles, the chat reports the result in a new turn.

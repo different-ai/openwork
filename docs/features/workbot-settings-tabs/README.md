@@ -28,8 +28,7 @@ Workbot's settings use three tabs wherever members' agents are available:
 
 ## Clearer rows on Members' agents
 
-With Your agent's brief on as well (`workbotAgentBrief`), the Members' agents
-rows are regrouped and reworded. Each row saves the same value as before.
+The Members' agents rows are grouped and worded for [Your agent's brief](../workbot-agent-brief/README.md). Each row saves the same value as before.
 
 | Before | Now |
 |---|---|

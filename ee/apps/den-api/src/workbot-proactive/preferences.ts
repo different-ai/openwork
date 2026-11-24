@@ -1,4 +1,4 @@
-import { formatHour, type ProactivePolicy } from "@openwork/automations/proactive"
+import { formatHour } from "@openwork/automations/proactive"
 import type { AgentInstanceOverrides } from "@openwork-ee/den-db/schema"
 import {
   AGENT_CHECK_EVERY_HOURS,
@@ -128,10 +128,6 @@ export function memberLimits(settings: WorkbotProactiveSettings, overrides: Agen
     checkEveryHours: checkEvery,
     extraChecksPerDay: brief.extraChecksPerDay,
   }
-}
-
-export function memberPolicy(limits: MemberAgentLimits): ProactivePolicy {
-  return { workingDays: limits.workingDays, startHour: limits.startHour, endHour: limits.endHour, dailyCap: limits.dailyCap }
 }
 
 export function hoursLabel(hours: { startHour: number; endHour: number }) {

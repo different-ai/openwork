@@ -27,7 +27,6 @@ import { loadProviderCredentialFromDb, resolveUpstreamCredential } from "./provi
 import type { GatewayCredential, GatewayProvider, LoadProviderCredential } from "./provider-credentials.js"
 import { isEventStreamContentType, isJsonContentType, trackStream, readBoundedBody, RequestBodyLimitError, upstreamLifetime, describeUpstreamFetchFailure } from "./relay.js"
 import { env } from "./env.js"
-import { checkLiteLlmEntraFeature, type CheckLiteLlmEntraFeature } from "./litellm-entra-feature.js"
 import { gatewayLog } from "./log.js"
 import { respondBeforeUpstream } from "./early-response.js"
 import type { EarlyStreamProtocol } from "./early-response.js"
@@ -64,7 +63,6 @@ export type GatewayDependencies = {
   updateRequestLog?: RequestLogRecorderDependencies["updateRequestLog"]
   reporter: InferenceReporter
   loadGatewayProvider: LoadGatewayProvider
-  checkLiteLlmEntraFeature: CheckLiteLlmEntraFeature
   loadGatewayAccess: LoadGatewayAccess
   loadMemberGatewayAccess: LoadMemberGatewayAccess
   resolveGatewayModelProvider: ResolveGatewayModelProvider
@@ -644,7 +642,6 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     updateRequestLog: input.updateRequestLog,
     reporter: input.reporter,
     loadGatewayProvider: input.loadGatewayProvider ?? loadGatewayProviderFromDb,
-    checkLiteLlmEntraFeature: input.checkLiteLlmEntraFeature ?? checkLiteLlmEntraFeature,
     loadGatewayAccess: input.loadGatewayAccess ?? loadGatewayAccessFromDb,
     loadMemberGatewayAccess: input.loadMemberGatewayAccess ?? loadMemberGatewayAccessFromDb,
     resolveGatewayModelProvider: input.resolveGatewayModelProvider ?? resolveGatewayModelProviderFromDb,
@@ -686,16 +683,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       return gatewayError(404, "provider_not_found", `Unknown inference provider: ${inferenceProviderId}.`)
     }
     const entraMode = usesLiteLlmEntra(provider)
-    const featureDisabled = () => gatewayError(403, "feature_disabled", "Microsoft sign-in for this provider is turned off.")
-    const entraEnabled = async () => {
-      try {
-        return await dependencies.checkLiteLlmEntraFeature(identity)
-      } catch {
-        return false
-      }
-    }
     if (entraMode) {
-      if (!await entraEnabled()) return featureDisabled()
       const current = await dependencies.loadGatewayProvider({ inferenceProviderId, organizationId: identity.organizationId, consistency: "primary" })
       if (!current || !usesLiteLlmEntra(current) || liteLlmEntraScope(current) === null) {
         return gatewayError(503, "provider_configuration_changed", "The inference provider changed. Retry the same selection.")
@@ -854,7 +842,6 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       selection,
       envNames: catalog?.env ?? [],
       loadProviderCredential: dependencies.loadProviderCredential,
-      checkLiteLlmEntraFeature: entraMode ? entraEnabled : undefined,
       refreshMemberToken: dependencies.refreshMemberToken,
       mintGcpAccessToken: dependencies.mintGcpAccessToken,
       mintAwsRoleCredentials: dependencies.mintAwsRoleCredentials,
@@ -869,8 +856,6 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
         credentialId: "credentialId" in credential ? credential.credentialId : null,
       })
       switch (credential.kind) {
-        case "feature_disabled":
-          return reject(featureDisabled(), "feature_disabled", "Microsoft sign-in feature disabled")
         case "retry": {
           const response = gatewayError(503, "provider_credential_retry", "The provider credential is temporarily unavailable. Retry shortly.", { provider_id: provider.id })
           response.headers.set("retry-after", "5")
@@ -986,10 +971,6 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
 
     const lifetime = upstreamLifetime(request.signal, env.upstreamTimeoutMs)
     const dispatch = async (): Promise<Response> => {
-      if (entraMode && !await entraEnabled()) {
-        lifetime.dispose()
-        return reject(featureDisabled(), "feature_disabled", "Microsoft sign-in feature disabled")
-      }
       let upstream: Response
       try {
         validateInferenceUrl(prepared.url)
@@ -1142,23 +1123,11 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     })
   }
 
-  const loadEnabledMemberGatewayAccess: LoadMemberGatewayAccess = async (identity) => {
-    const rows = await dependencies.loadMemberGatewayAccess(identity)
-    const isEntraRow = (row: typeof rows[number]) => isLiteLlmProviderId(row.provider.provider_id) && row.provider.litellmKeySource === "entra"
-    if (!rows.some(isEntraRow)) return rows
-    let enabled = false
-    try {
-      enabled = await dependencies.checkLiteLlmEntraFeature(identity)
-    } catch {
-    }
-    return enabled ? rows : rows.filter((row) => !isEntraRow(row))
-  }
-
   function autoDependencies(c: Context<GatewayEnv>, identity: GatewayContext): AutoRouterDependencies {
     return {
       fundedAccess: () => input.fundedModelGuard?.(identity, { kind: "managed" }),
       loadConfig: dependencies.loadAutoRouterConfig,
-      loadMemberGatewayAccess: loadEnabledMemberGatewayAccess,
+      loadMemberGatewayAccess: dependencies.loadMemberGatewayAccess,
       catalog: dependencies.catalog,
       askJev: dependencies.askJev,
       reasoningStore: dependencies.autoRouterReasoning,
@@ -1184,7 +1153,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     const identity = c.get("inference")
     if (identity.kind !== "gateway") return next()
     c.header("cache-control", "no-store")
-    const rows = await loadEnabledMemberGatewayAccess(identity)
+    const rows = await dependencies.loadMemberGatewayAccess(identity)
     const routers = identity.keySource === "api_key" ? await smartToolRouters(identity, rows, dependencies.catalog, smartTools(c, identity)) : []
     return c.json(listGatewayModels(rows, routers))
   })
@@ -1192,7 +1161,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     const identity = c.get("inference")
     if (identity.kind !== "gateway") return gatewayError(401, "invalid_api_key", "An OpenWork Gateway key is required.")
     c.header("cache-control", "no-store")
-    const rows = await loadEnabledMemberGatewayAccess(identity)
+    const rows = await dependencies.loadMemberGatewayAccess(identity)
     return c.json(listCursorModels(cursorModels(rows, dependencies.catalog), await smartToolRouters(identity, rows, dependencies.catalog, smartTools(c, identity))))
   })
   const cursorChat = async (c: Context<GatewayEnv>, api: CursorApi) => {
@@ -1214,7 +1183,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       api,
       identity,
       dependencies: {
-        loadMemberGatewayAccess: loadEnabledMemberGatewayAccess,
+        loadMemberGatewayAccess: dependencies.loadMemberGatewayAccess,
         catalog: dependencies.catalog,
         reasoningStore: dependencies.autoRouterReasoning,
         forward: (target) => handleGatewayRequest(c, target),
@@ -1228,7 +1197,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     const identity = c.get("inference")
     if (identity.kind !== "gateway") return claudeCodeError(401, "authentication_error", "An OpenWork Gateway key is required.")
     c.header("cache-control", "no-store")
-    const rows = await loadEnabledMemberGatewayAccess(identity)
+    const rows = await dependencies.loadMemberGatewayAccess(identity)
     return c.json(listClaudeCodeModels(cursorModels(rows, dependencies.catalog), await smartToolRouters(identity, rows, dependencies.catalog, smartTools(c, identity))))
   })
   const claudeCodeBody = async (c: Context<GatewayEnv>): Promise<JsonObject | Response> => {
@@ -1258,7 +1227,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       body,
       identity,
       dependencies: {
-        loadMemberGatewayAccess: loadEnabledMemberGatewayAccess,
+        loadMemberGatewayAccess: dependencies.loadMemberGatewayAccess,
         catalog: dependencies.catalog,
         reasoningStore: dependencies.autoRouterReasoning,
         forward: (target) => handleGatewayRequest(c, target),
@@ -1271,7 +1240,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
     const identity = c.get("inference")
     if (identity.kind !== "gateway") return gatewayError(401, "invalid_api_key", "An OpenWork Gateway key is required.")
     c.header("cache-control", "no-store")
-    const rows = await loadEnabledMemberGatewayAccess(identity)
+    const rows = await dependencies.loadMemberGatewayAccess(identity)
     return c.json(listCodexModels(cursorModels(rows, dependencies.catalog), await smartToolRouters(identity, rows, dependencies.catalog, smartTools(c, identity))))
   })
   api.post(codexResponsesPath, async (c) => {
@@ -1292,7 +1261,7 @@ export function registerGatewayRoutes(api: Hono<GatewayEnv>, input: GatewayRoute
       body,
       identity,
       dependencies: {
-        loadMemberGatewayAccess: loadEnabledMemberGatewayAccess,
+        loadMemberGatewayAccess: dependencies.loadMemberGatewayAccess,
         catalog: dependencies.catalog,
         reasoningStore: dependencies.autoRouterReasoning,
         forward: (target) => handleGatewayRequest(c, target),

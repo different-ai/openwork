@@ -63,8 +63,32 @@ run "legacy_generated_database_url_uses_connector" {
   }
 }
 
+run "backup_location_is_chosen_by_the_caller" {
+  command = plan
+  variables {
+    region   = "asia-east2"
+    database = { backup_location = "asia-east2" }
+  }
+  assert {
+    condition     = google_sql_database_instance.this[0].region == "asia-east2" && google_sql_database_instance.this[0].settings[0].backup_configuration[0].location == "asia-east2"
+    error_message = "A chosen backup location must reach the Cloud SQL backup configuration."
+  }
+  assert {
+    condition     = output.database_backup_location == "asia-east2"
+    error_message = "The chosen backup location must be reported."
+  }
+  assert {
+    condition     = google_sql_database_instance.this[0].settings[0].backup_configuration[0].enabled && google_sql_database_instance.this[0].database_version == "MYSQL_8_4"
+    error_message = "Choosing a backup location must not change the other database defaults."
+  }
+}
+
 run "safe_stateful_defaults" {
   command = apply
+  assert {
+    condition     = google_sql_database_instance.this[0].settings[0].backup_configuration[0].location == null && output.database_backup_location == null
+    error_message = "Direct module users must keep Google's default backup location unless they choose one."
+  }
   assert {
     condition     = google_sql_user.openwork[0].host == "%"
     error_message = "Direct module users must retain the existing percent host default."

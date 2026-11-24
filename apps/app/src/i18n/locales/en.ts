@@ -470,7 +470,6 @@ export default {
   "sandbox.force_description": "Everything the agent runs stays inside the sandbox. It can only reach this project and your authorized folders.",
   "sandbox.managed": "Managed by your organization",
   "sandbox.included": "Included in Force OpenWork Sandbox",
-  "sandbox.unavailable": "The sandbox isn't available for this account, so agents can't run tools until it is.",
   "sandbox.pending": "Saved. Applies when current tasks finish.",
   "sandbox.pending_computer": "Current tasks can still use this computer.",
   "sandbox.pending_sandbox": "Current tasks stay in the sandbox.",

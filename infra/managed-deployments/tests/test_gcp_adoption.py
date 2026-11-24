@@ -52,6 +52,9 @@ class AdoptionTests(unittest.TestCase):
                 if resource["type"] == "google_sql_database_instance":
                     self.assertEqual(change["after"]["database_version"], "MYSQL_8_0")
                     self.assertEqual(change["after"]["name"], change["before"]["name"])
+                    self.assertFalse(change.get("replace_paths"))
+                    self.assertEqual(change["after"]["settings"][0]["backup_configuration"], change["before"]["settings"][0]["backup_configuration"])
+                    self.assertIsNone(change["after"]["settings"][0]["backup_configuration"][0]["location"])
 
     def test_secret_updates_unknown_passwords_major_upgrades_and_service_replacement_are_blocked(self):
         for kind, change in [
@@ -64,6 +67,15 @@ class AdoptionTests(unittest.TestCase):
         ]:
             with self.subTest(kind=kind):
                 self.assertEqual(runner.unsafe_changes({"resource_changes": [{"address": "owned", "type": kind, "change": change}]}), ["owned"])
+
+    def test_backup_location_moves_in_place_and_is_refused_as_a_replacement(self):
+        def instance(actions):
+            settings = lambda location: [{"backup_configuration": [{"enabled": True, "location": location}]}]
+            return {"resource_changes": [{"address": "owned", "type": "google_sql_database_instance", "change": {
+                "actions": actions, "before": {"database_version": "MYSQL_8_0", "settings": settings(None)},
+                "after": {"database_version": "MYSQL_8_0", "settings": settings("asia-east2")}}}]}
+        self.assertEqual(runner.unsafe_changes(instance(["update"])), [])
+        self.assertEqual(runner.unsafe_changes(instance(["delete", "create"])), ["owned"])
 
     def test_apply_keeps_maintenance_through_migration_and_revision_validation(self):
         order = []
