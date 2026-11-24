@@ -54,7 +54,6 @@ export function workspaceLimitReachedBody(limit: number): WorkspaceLimitReached 
   }
 }
 
-/** SQL twin of normalizeEmailIdentity, so accounts created with +aliases or Gmail dots count as one person. */
 const lowered = sql`LOWER(TRIM(${AuthUserTable.email}))`
 const emailDomain = sql`SUBSTRING_INDEX(${lowered}, '@', -1)`
 const emailBase = sql`SUBSTRING_INDEX(SUBSTRING_INDEX(${lowered}, '@', 1), '+', 1)`
@@ -70,7 +69,6 @@ async function readPerson(reader: Reader, userId: UserId): Promise<Person | null
 
 type ResolvedLimit = { limit: number | null; rule: WorkspaceLimitRuleScope | null }
 
-/** Most specific first: the person's email, then their email domain, then the deployment default. */
 async function resolveLimit(reader: Reader, person: Person): Promise<ResolvedLimit> {
   const fallback = env.workspaceCreateLimit.limit > 0 ? env.workspaceCreateLimit.limit : null
   if (!person.identity) return { limit: fallback, rule: null }
@@ -86,7 +84,6 @@ async function resolveLimit(reader: Reader, person: Person): Promise<ResolvedLim
   return match ? { limit: match.limit, rule: match.scope } : { limit: fallback, rule: null }
 }
 
-/** Workspaces founded inside the window by every account that normalizes to this person's email. */
 async function countFounded(reader: Reader, person: Person): Promise<number> {
   const conditions: SQL[] = []
   if (env.workspaceCreateLimit.windowDays > 0) {
@@ -108,13 +105,8 @@ async function countFounded(reader: Reader, person: Person): Promise<number> {
   return row?.value ?? 0
 }
 
-/**
- * Call inside the transaction that records the new founder. Locking one row per normalized email
- * serializes concurrent creations by the same person, including from different alias accounts.
- */
 export async function assertWorkspaceCreateAllowed(tx: Tx, userId: UserId): Promise<void> {
   if (!await deploymentFeatureEnabled("workspaceCreateLimit")) return
-  // Take the locks before any plain read: under REPEATABLE READ the first plain read fixes the snapshot the count uses.
   const [user] = await tx.select({ email: AuthUserTable.email }).from(AuthUserTable).where(eq(AuthUserTable.id, userId)).limit(1).for("update")
   if (!user) return
   const person: Person = { userId, identity: normalizeEmailIdentity(user.email) }
@@ -127,10 +119,6 @@ export async function assertWorkspaceCreateAllowed(tx: Tx, userId: UserId): Prom
   if (await countFounded(tx, person) >= limit) throw new WorkspaceLimitReachedError(workspaceLimitReachedBody(limit))
 }
 
-/**
- * Better Auth inserts the organization before its after-create hook runs. Record the founder under the
- * same per-person lock as the other paths and remove the new organization when it would exceed the limit.
- */
 export async function recordFounderWithinLimit(organizationId: ReturnType<typeof normalizeDenTypeId<"organization">>, userId: UserId): Promise<void> {
   try {
     await db.transaction(async (tx) => {
@@ -190,7 +178,6 @@ export async function readWorkspaceLimitSettings(): Promise<WorkspaceLimitSettin
   }
 }
 
-/** Adds or replaces the rule for one normalized email or domain. Returns null for an unusable value. */
 export async function setWorkspaceLimitRule(input: WorkspaceLimitRuleInput & { setByUserId: UserId }): Promise<string | null> {
   const value = normalizeRuleValue(input.scope, input.value)
   if (!value) return null

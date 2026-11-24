@@ -5,7 +5,6 @@ import type { ComponentType } from "react";
 import { ADMIN_LIMIT_KINDS, type AdminLimitKind } from "@openwork/types/den/admin-limits";
 import { WorkspaceCreationLimits } from "./workspace-creation-limits";
 
-/** One panel per limit kind. Add a kind to ADMIN_LIMIT_KINDS and its panel here. */
 const PANELS: Record<AdminLimitKind, ComponentType> = {
   "workspace-creation": WorkspaceCreationLimits,
 };
