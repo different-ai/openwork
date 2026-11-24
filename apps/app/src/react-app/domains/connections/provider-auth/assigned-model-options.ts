@@ -1,4 +1,4 @@
-import type { DenOrgLlmProvider } from "@/app/lib/den";
+import type { DenOrgLlmProvider, DenOrgUsableGatewayProvider } from "@/app/lib/den";
 import type { ModelOption } from "@/app/types";
 import {
   getCloudManagedProviderId,
@@ -15,13 +15,6 @@ export function filterCloudManagedModelOptions<T extends Pick<ModelOption, "prov
     : options.filter((option) => !isCloudManagedProviderKey(option.providerID));
 }
 
-/**
- * A granted provider can only serve requests when a credential exists for
- * the calling member: the organization's shared key, the member's own
- * per-member binding, or no credential declared at all. A grant without a
- * credential (for example a per-member LiteLLM key the member removed) must
- * not be offered as a selectable model — the engine will never connect it.
- */
 export function hasUsableCloudProviderCredential(
   provider: Pick<DenOrgLlmProvider, "providerConfig" | "hasApiKey" | "hasMyCredential">,
 ): boolean {
@@ -60,6 +53,23 @@ export function assignedModelOptions(
       return [option];
     });
   });
+}
+
+export function assignedGatewayModelOptions(
+  providers: readonly DenOrgUsableGatewayProvider[],
+): ModelOption[] {
+  return providers.flatMap((provider) => provider.models.map((model) => ({
+    providerID: provider.id,
+    modelID: model.id,
+    title: model.name,
+    description: provider.name,
+    behaviorTitle: "Reasoning",
+    behaviorLabel: "Default",
+    behaviorDescription: "",
+    behaviorValue: null,
+    isFree: false,
+    source: "gateway",
+  })));
 }
 
 export function markDisabledModelOptions(options: readonly ModelOption[], disabledProviderIds: readonly string[]): ModelOption[] {

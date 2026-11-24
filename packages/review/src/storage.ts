@@ -48,7 +48,6 @@ export async function uploadReview(
       );
     }
   }
-  // Bound concurrency and commit the manifest last. A failed upload never gets a report URL.
   for (let index = 0; index < assets.length; index += 4) {
     await Promise.all(
       assets

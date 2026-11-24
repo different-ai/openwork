@@ -1,0 +1,1 @@
+CREATE INDEX `inference_free_usage_created_amount` ON `inference_free_usage` (`created_at`,`amount`);

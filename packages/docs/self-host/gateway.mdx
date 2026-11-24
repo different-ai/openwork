@@ -151,7 +151,29 @@ gateway:
     adminTokenKey: GATEWAY_ADMIN_TOKEN
 ```
 
-The retention Secret reference is authoritative for **both** `GATEWAY_ADMIN_TOKEN` and `INFERENCE_ADMIN_TOKEN` on the Gateway and CronJob, even if the shared Secret has different tokens. It enables admin access without `gateway.admin.enabled`. The inherited schedule is `0 3 * * *`, timezone `Etc/UTC`; the job calls the retained internal Service's `/internal/rollups/run`. Service enablement is also required. Non-Helm deployments must supply their own authorized maintenance caller.
+The retention Secret reference is authoritative for **both** `GATEWAY_ADMIN_TOKEN` and `INFERENCE_ADMIN_TOKEN` on the Gateway and CronJob, even if the shared Secret has different tokens. It enables admin access without `gateway.admin.enabled`. Service enablement is also required.
+
+The job runs hourly, matching the hosted deployment. Each run calls the retained internal Service's `/internal/rollups/run`, folds request logs older than two days into hourly usage rollups, and deletes the folded rows in the same transaction; hourly rollups older than 90 days fold into daily rollups. The usage dashboard reads raw logs and rollups together, so totals stay correct between runs.
+
+| Setting | Default | Notes |
+| --- | --- | --- |
+| `schedule` | `5 * * * *` | Charts before this change defaulted to nightly `0 3 * * *`. An explicitly set schedule is kept. |
+| `timeZone` | `Etc/UTC` | |
+| `maxBucketsPerRun` | `48` | Hours or days handled per run, `1` to `1000`. |
+| `maxSourceRowsPerBucket` | `5000` | Rows consumed per hour per run in one transaction, `1` to `5000`. |
+
+One run consumes at most `maxBucketsPerRun` × `maxSourceRowsPerBucket` rows (240,000 by default). An hour with more rows finishes over the next runs, so hourly runs keep up with roughly 240,000 requests per hour. The job logs its summary, for example `{"hourBuckets":1,"dayBuckets":0,"rawRowsDeleted":1253,...}`. If `hourBuckets` stays above `1` for several runs, the job is catching up.
+
+Non-Helm deployments must supply their own hourly caller with the same token and body:
+
+```sh
+curl -fsS -X POST -H "Authorization: Bearer $GATEWAY_ADMIN_TOKEN" \
+  -H "content-type: application/json" \
+  -d '{"maxBucketsPerRun":48,"maxSourceRowsPerBucket":5000}' \
+  http://<gateway-internal-host>:8791/internal/rollups/run
+```
+
+A request without a body uses the same defaults.
 
 ## Sparse Helm compatibility
 
@@ -242,7 +264,7 @@ For `redirect_uri_mismatch`, compare the exact displayed callback with Google's 
 
 Members can also sign in with their own account to **Amazon Bedrock** and **Amazon Bedrock (OpenAI)** through AWS IAM Identity Center, and to **Microsoft Foundry (Claude)** through Microsoft Entra ID. Follow [Amazon Bedrock](/ai-gateway/amazon-bedrock) and [Microsoft Foundry](/ai-gateway/microsoft-foundry) for the cloud-side setup.
 
-Both, and the Microsoft Foundry provider itself, are behind the **AI Gateway: AWS and Microsoft sign-in** feature (`gatewayCloudSignIn`). Turn it on for one organization in `/admin`, or lock it on for the whole install with the Helm value `config.features.gatewayCloudSignIn` (`DEN_FEATURE_GATEWAY_CLOUD_SIGN_IN`). Turning it off stops new Foundry providers and new AWS or Microsoft sign-ins; people already signed in keep working until they sign out.
+Both, and the Microsoft Foundry provider itself, are available in every organization; there is nothing to turn on in `/admin`.
 
 Run the release's database migration first: it adds the `aws_sso` credential kind and the credential-set columns `oauth_tenant_id` and `aws_sso`.
 

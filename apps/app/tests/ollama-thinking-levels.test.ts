@@ -47,9 +47,9 @@ test("writes each level as a variant the engine sends as reasoning_effort", () =
   const model = provider.models?.gemma4;
   expect(model?.variants).toEqual({ none: { reasoningEffort: "none" }, high: { reasoningEffort: "high" } });
   expect(model?.attachment).toBe(true);
-  expect(nativeModelVariants(model?.variants, "@opencode-ai/ai/providers/openai-compatible")).toEqual([
-    { id: "none", settings: { providerOptions: { reasoningEffort: "none" } } },
-    { id: "high", settings: { providerOptions: { reasoningEffort: "high" } } },
+  expect(nativeModelVariants(model?.variants, "@opencode/ai/providers/openai-compatible")).toEqual([
+    { id: "none", settings: { reasoningEffort: "none" } },
+    { id: "high", settings: { reasoningEffort: "high" } },
   ]);
 });
 

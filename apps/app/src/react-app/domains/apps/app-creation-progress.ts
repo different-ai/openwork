@@ -1,5 +1,7 @@
 import type { DynamicToolUIPart, UIMessage } from "ai";
 import { prepareMcpAppOutputSchema } from "@openwork/types/mcp-app";
+import { getCapabilityCallSentence } from "@/lib/capability-call";
+import { isToolPartInFlight } from "@/lib/tool-activity";
 import {
   appBuilderResultFailed,
   builtAppSummary,
@@ -8,13 +10,16 @@ import {
 
 export type AppCreationRun = {
   id: string;
+  startedAt?: number;
   preparation?: DynamicToolUIPart;
   discoveries?: DynamicToolUIPart[];
   executions?: DynamicToolUIPart[];
   builds: DynamicToolUIPart[];
-  /** Earlier attempts at this App that were rejected before a retry succeeded. */
   attempts?: DynamicToolUIPart[];
+  intent?: { kind: "create" | "edit"; part: DynamicToolUIPart };
+  script?: { kind: AppScriptKind; part: DynamicToolUIPart };
 };
+export type AppScriptKind = "prepare" | "create" | "update";
 export type AppCreationStage = "needs" | "writing" | "checking" | "ready";
 
 export function isAppPreparationPart(part: DynamicToolUIPart): boolean {
@@ -39,7 +44,6 @@ export function appPreparation(part: DynamicToolUIPart | undefined) {
     field(result, "structuredContent"),
   );
   if (structured.success) return structured.data;
-  // Both engines also retain the MCP text projection. Older engines can omit metadata.
   let output: unknown = part.output;
   if (typeof output === "string") {
     try {
@@ -52,82 +56,174 @@ export function appPreparation(part: DynamicToolUIPart | undefined) {
   return parsed.success ? parsed.data : null;
 }
 
-/** A step that succeeded but whose result an older engine did not record. */
 export function appStepUnrecorded(part: DynamicToolUIPart | undefined): boolean {
   if (!part || part.state !== "output-available") return false;
   const result = field(part.callProviderMetadata?.openwork, "mcpResult");
   return field(field(result, "structuredContent"), "unrecorded") === true;
 }
 
-/** Correlate by the server-issued preparation id, keeping separate Apps and retries separate. */
-export function appCreationRuns(messages: UIMessage[], creationRequested = false): AppCreationRun[] {
+const BUILD_AN_APP_SKILL = /(?:^|[/:]|^openwork-cloud-)build-an-app$/;
+
+function isAppGuideCall(tool: string, input: unknown): boolean {
+  if (!/(?:^|[_.])(?:get_skill|skill)$/.test(tool)) return false;
+  const name = field(input, "name") ?? field(input, "capability") ?? field(input, "id");
+  return typeof name === "string" && BUILD_AN_APP_SKILL.test(name);
+}
+
+export function isAppGuidePart(part: DynamicToolUIPart): boolean {
+  if (isAppGuideCall(part.toolName, part.input)) return true;
+  const calls = field(part.callProviderMetadata?.openwork?.codeMode, "calls");
+  return Array.isArray(calls) && calls.length > 0 && calls.every((call) => {
+    const tool = field(call, "tool");
+    return typeof tool === "string" && isAppGuideCall(tool, field(call, "input"));
+  });
+}
+
+function isAppReadPart(part: DynamicToolUIPart): boolean {
+  return /(?:^|_)read_app$/.test(part.toolName);
+}
+
+function stepId(part: DynamicToolUIPart): string {
+  return part.toolCallId.split(":app:")[0] ?? part.toolCallId;
+}
+
+function codeOf(part: DynamicToolUIPart): string {
+  const code = field(part.input, "code");
+  return typeof code === "string" ? code : "";
+}
+
+export function appScriptKind(part: DynamicToolUIPart): AppScriptKind | null {
+  if (!part.callProviderMetadata?.openwork?.codeMode) return null;
+
+  const code = codeOf(part);
+  if (/\bupdate_app\s*\(/.test(code)) return "update";
+  if (/\bcreate_app\s*\(/.test(code)) return "create";
+  if (/\bprepare_app\s*\(/.test(code)) return "prepare";
+  return null;
+}
+
+export function appTitleInCall(part: DynamicToolUIPart | undefined): string | null {
+  if (!part) return null;
+  const title = field(part.input, "title");
+  if (typeof title === "string" && title.trim()) return title.trim();
+  const named = /\btitle\s*:\s*"((?:[^"\\]|\\.){1,120})"/.exec(codeOf(part))?.[1];
+  return named ? named.replace(/\\(.)/g, "$1") : null;
+}
+
+export function appSourceLines(part: DynamicToolUIPart | undefined): number | null {
+  if (!part) return null;
+  const source = field(part.input, "reactSource");
+  if (typeof source === "string") return source ? source.split("\n").length : null;
+  const code = codeOf(part);
+  return code ? Math.max(code.split("\n").length, (code.match(/\\n/g)?.length ?? 0) + 1) : null;
+}
+
+function isAppLeadInPart(part: DynamicToolUIPart): boolean {
+  return /(?:^|_)search_capabilities$/.test(part.toolName) || isAppReadPart(part) || isAppGuidePart(part);
+}
+
+export function appRead(part: DynamicToolUIPart | undefined): { appId: string; title: string | null } | null {
+  if (!part || !isAppReadPart(part)) return null;
+  const appId = field(part.input, "appId");
+  if (typeof appId !== "string" || !appId) return null;
+  let output: unknown = part.state === "output-available" ? part.output : undefined;
+  if (typeof output === "string") {
+    try {
+      output = JSON.parse(output);
+    } catch {
+      output = undefined;
+    }
+  }
+  const structured = field(field(part.callProviderMetadata?.openwork, "mcpResult"), "structuredContent");
+  const title = field(field(structured, "app"), "title") ?? field(field(output, "app"), "title");
+  return { appId, title: typeof title === "string" && title.trim() ? title : null };
+}
+
+export function appCreationRuns(messages: UIMessage[], live = false): AppCreationRun[] {
   const runs: AppCreationRun[] = [];
   const byPreparation = new Map<string, AppCreationRun>();
   const parts = new Map<string, DynamicToolUIPart>();
+  const starts = new Map<string, number>();
   for (const message of messages) {
     if (message.role !== "assistant") continue;
     for (const part of message.parts) {
-      if (part.type === "dynamic-tool") parts.set(part.toolCallId, part);
+      if (part.type === "dynamic-tool") {
+        parts.set(part.toolCallId, part);
+        const created = field(field(message.metadata, "opencode"), "created");
+        if (typeof created === "number" && Number.isFinite(created)) starts.set(part.toolCallId, created);
+      }
     }
   }
-  let discovery: AppCreationRun | undefined;
+  let leadIn: DynamicToolUIPart[] = [];
+  const join = (run: AppCreationRun) => {
+    if (leadIn.length) run.discoveries = [...(run.discoveries ?? []), ...leadIn];
+    leadIn = [];
+  };
+  const unfinished = (run: AppCreationRun | undefined) => run
+    && !run.builds.some(build => builtAppSummary(build) || appStepUnrecorded(build));
+  const continuing = (part: DynamicToolUIPart) => {
+    const latest = runs.at(-1);
+    if (!unfinished(latest) || !latest) return undefined;
+    const title = appTitleInCall(part);
+    const previousTitle = appCreationProgress(latest, false).title;
+    return title && previousTitle && title !== previousTitle ? undefined : latest;
+  };
+  const start = (part: DynamicToolUIPart) => {
+    const id = leadIn[0]?.toolCallId ?? stepId(part);
+    const run: AppCreationRun = { id, startedAt: starts.get(id) ?? starts.get(part.toolCallId), builds: [] };
+    join(run);
+    runs.push(run);
+    return run;
+  };
+  const runsInner = (part: DynamicToolUIPart) => [...parts.keys()].some(id => id.startsWith(`${part.toolCallId}:app:`));
   for (const part of parts.values()) {
-    if (creationRequested && /(?:^|_)search_capabilities$/.test(part.toolName)) {
-      if (!discovery) {
-        discovery = { id: part.toolCallId, discoveries: [], builds: [] };
-        runs.push(discovery);
-      }
-      discovery.discoveries?.push(part);
+    const scriptKind = appScriptKind(part);
+    if (scriptKind && !runsInner(part)) {
+      const run = continuing(part) ?? start(part);
+      run.script = { kind: scriptKind, part };
+      join(run);
+    } else if (isAppLeadInPart(part)) {
+      const latest = runs.at(-1);
+      if (unfinished(latest) && latest) {
+        latest.discoveries = [...(latest.discoveries ?? []), part];
+      } else if (isAppGuidePart(part) || isAppReadPart(part)) {
+        const run = start(part);
+        run.intent = { kind: isAppReadPart(part) ? "edit" : "create", part };
+        run.discoveries = [...(run.discoveries ?? []), part];
+      } else leadIn.push(part);
     } else if (isAppPreparationPart(part)) {
-      const run: AppCreationRun = discovery ?? { id: part.toolCallId, builds: [] };
+      const run = continuing(part) ?? start(part);
+      if (run.preparation) run.attempts = [...(run.attempts ?? []), run.preparation];
+      if (run.builds.length) {
+        run.attempts = [...(run.attempts ?? []), ...run.builds];
+        run.builds = [];
+      }
       run.preparation = part;
-      if (!discovery) runs.push(run);
-      discovery = undefined;
+      run.script = undefined;
+      join(run);
       const preparation = appPreparation(part);
       if (preparation) byPreparation.set(preparation.preparationId, run);
     } else if (isAppBuilderPart(part)) {
       const id = field(part.input, "preparationId");
-      let run = typeof id === "string" ? byPreparation.get(id) : undefined;
-      // While arguments stream, the correlation id may not have arrived yet.
-      if (
-        (!id || (typeof id === "string" && id.length < 36)) &&
-        part.state === "input-streaming" &&
-        /(?:^|_)create_app$/.test(part.toolName)
-      ) {
-        const latest = runs.at(-1);
-        if (
-          latest?.preparation &&
-          appPreparation(latest.preparation) &&
-          latest.builds.length === 0
-        )
-          run = latest;
-      }
-      // Without a usable id (unrecorded results), a build belongs to the
-      // latest App still being made, not to a new card.
-      if (!run && (typeof id !== "string" || !byPreparation.has(id))) {
-        const latest = runs.at(-1);
-        // Only when the latest preparation's id is unknown (not recorded);
-        // a known, different id is a different App.
-        if (latest?.preparation && !appPreparation(latest.preparation) && appStepUnrecorded(latest.preparation)
-          && !latest.builds.some((build) => builtAppSummary(build) || appStepUnrecorded(build))) run = latest;
-      }
-      if (run) run.builds.push(part);
-      else runs.push({ id: part.toolCallId, builds: [part] });
+      const run = (typeof id === "string" ? byPreparation.get(id) : undefined)
+        ?? continuing(part) ?? start(part);
+      run.builds.push(part);
+      run.script = undefined;
+      join(run);
+    } else if (!unfinished(runs.at(-1)) && !part.callProviderMetadata?.openwork?.codeMode) {
+      leadIn = [];
     }
   }
-  // A preparation Den rejected, followed by another preparation, is the same
-  // App being retried: fold it into the next run instead of a card of its own.
-  for (let index = runs.length - 2; index >= 0; index -= 1) {
-    const run = runs[index]!;
-    const next = runs[index + 1]!;
-    const rejected = run.preparation && run.builds.length === 0 && appBuilderResultFailed(run.preparation);
-    if (!rejected || !next.preparation || !run.preparation) continue;
-    next.attempts = [...(run.discoveries ?? []), run.preparation, ...(run.attempts ?? []), ...(next.attempts ?? [])];
-    runs.splice(index, 1);
+  if (!live) {
+    for (let index = runs.length - 1; index >= 0; index--) {
+      const run = runs[index]!;
+      if (!run.preparation && !run.builds.length && !run.script) runs.splice(index, 1);
+    }
   }
   for (const run of runs) {
     const calls = [...(run.discoveries ?? []), ...(run.preparation ? [run.preparation] : []), ...(run.attempts ?? []), ...run.builds];
     run.executions = [...parts.values()].filter(part => part.callProviderMetadata?.openwork?.codeMode && calls.some(call => call.toolCallId.startsWith(`${part.toolCallId}:app:`)));
+    if (run.script) run.executions.push(run.script.part);
   }
   return runs;
 }
@@ -138,26 +234,27 @@ export function appCreationProgress(run: AppCreationRun, active: boolean) {
   const app = build ? builtAppSummary(build) : null;
   const failed = Boolean(
     (build && appBuilderResultFailed(build)) ||
-      (!build && run.preparation && appBuilderResultFailed(run.preparation)),
+      (!build && run.preparation && appBuilderResultFailed(run.preparation)) ||
+      (run.script && appBuilderResultFailed(run.script.part)),
   );
   const checking = build?.state === "input-available";
-  // Built, but the launch was not recorded: done, just not previewable here.
   const builtUnrecorded = appStepUnrecorded(build);
   const prepared = Boolean(preparation) || appStepUnrecorded(run.preparation) || builtUnrecorded;
   const stage: AppCreationStage = app || builtUnrecorded
     ? "ready"
     : checking || (build && failed)
       ? "checking"
-      : prepared || build
+      : prepared || build || run.intent?.kind === "edit" || (run.script && run.script.kind !== "prepare")
         ? "writing"
         : "needs";
   const title =
     app?.title ??
     field(build?.input, "title") ??
     preparation?.title ??
-    field(run.preparation?.input, "title");
+    field(run.preparation?.input, "title") ??
+    appTitleInCall(run.script?.part) ??
+    run.discoveries?.map(appRead).find(read => read?.title)?.title;
   const detail = field(run.preparation?.input, "description");
-  // Completion without a verified launch is not success (e.g. catalog capacity).
   const unavailable = Boolean(
     !failed &&
       !builtUnrecorded &&
@@ -167,7 +264,7 @@ export function appCreationProgress(run: AppCreationRun, active: boolean) {
   const running = active && !failed && !unavailable && !app && !builtUnrecorded;
   return {
     stage,
-    title: typeof title === "string" ? title : "App",
+    title: typeof title === "string" && title ? title : null,
     prepared,
     detail: typeof detail === "string" ? detail.slice(0, 140) : null,
     preparation,
@@ -179,3 +276,37 @@ export function appCreationProgress(run: AppCreationRun, active: boolean) {
     running,
   };
 }
+
+export function appBuildInProgress(messages: UIMessage[]): boolean {
+  const turn = messages.slice(Math.max(0, messages.findLastIndex((message) => message.role === "user")));
+  return appCreationRuns(turn, true).some(run => {
+    const progress = appCreationProgress(run, true);
+    return !progress.app && !progress.builtUnrecorded;
+  });
+}
+
+function lastLine(text: string): string | null {
+  const lines = text.replace(/[*_`#>]+/g, "").split(/\n+/).map((line) => line.trim()).filter(Boolean);
+  const line = lines.at(-1);
+  return line ? (line.length > 140 ? `${line.slice(0, 139)}…` : line) : null;
+}
+
+export function appBuildActivity(messages: UIMessage[], appParts: ReadonlySet<string>, showThinking = false): string | null {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = messages[index]!;
+    if (message.role === "user") return null;
+    if (message.role !== "assistant") continue;
+    for (let partIndex = message.parts.length - 1; partIndex >= 0; partIndex -= 1) {
+      const part = message.parts[partIndex]!;
+      if (part.type === "reasoning" && showThinking) {
+        const line = lastLine(part.text);
+        if (line) return line;
+      } else if (part.type === "dynamic-tool" && (!appParts.has(part.toolCallId) || isToolPartInFlight(part))) {
+        const sentence = getCapabilityCallSentence(part);
+        return isToolPartInFlight(part) ? sentence.present : sentence.past;
+      }
+    }
+  }
+  return null;
+}
+

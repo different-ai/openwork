@@ -1,6 +1,6 @@
 import type { BrowserEvaluation } from "./browser-script.ts";
 import { probeAppState } from "./app-state.ts";
-import { callFunction, DEFAULT_CDP_PROBE_TIMEOUT_MS, connect, debuggerUrlFor, evaluate, pickAppTarget } from "./cdp.ts";
+import { callFunction, CdpPageError, DEFAULT_CDP_PROBE_TIMEOUT_MS, connect, debuggerUrlFor, evaluate, pickAppTarget } from "./cdp.ts";
 import { firstPageTarget, targetById, waitForCdp } from "./targets.ts";
 import type { AppStateProbe } from "./app-state.ts";
 import type { CdpClient, CdpFunctionArgument, CdpTarget, EvaluateOptions } from "./cdp.ts";
@@ -89,7 +89,8 @@ export async function reattachSurface(surface: Surface, opts: { timeoutMs?: numb
 }
 
 function isRecoverableTransportError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
+  // A page exception is the page's answer; retrying would only hide it behind a later CDP timeout.
+  if (!(error instanceof Error) || error instanceof CdpPageError) return false;
   return /timed out|timeout|CDP socket is not open|CDP transport stalled|CDP websocket (failed|closed)/i.test(error.message);
 }
 

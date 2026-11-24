@@ -1,24 +1,42 @@
-import { eq } from "@openwork-ee/den-db/drizzle"
-import { AuthAccountTable, AuthUserTable, RateLimitTable } from "@openwork-ee/den-db/schema"
+import { and, eq, gt, isNull, sql } from "@openwork-ee/den-db/drizzle"
+import { AuthAccountTable, AuthUserTable, InvitationTable, MemberTable, OrganizationTable, RateLimitTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { AGENT_PRIVATE_VALUES_CAPABILITY_HEADER, AGENT_SANDBOX_MODES_CAPABILITY_HEADER, AGENT_SANDBOX_ONLY_CAPABILITY_HEADER, agentPermissionRulesForClient } from "@openwork/types/den/agent-permissions"
+import { BILLING_PLAN_TIERS } from "@openwork/types/den/billing-plans"
+import { PRIVATE_VALUE_FILLS_ROUTE, privateValueFillReportResponseSchema, privateValueFillReportSchema } from "@openwork/types/den/private-value-fills"
 import { desktopConfigSchema } from "@openwork/types/den/desktop-policies"
-import type { Hono } from "hono"
-import { describeRoute } from "hono-openapi"
+import type { Hono, MiddlewareHandler } from "hono"
+import { describeRoute, type DescribeRouteOptions } from "hono-openapi"
 import { z } from "zod"
 import { OPENWORK_DOWNLOAD_URL } from "../../CONSTS.js"
 import { recordProfileUpdated } from "../../audit/domain/account.js"
+import { privateValueFillEvent } from "../../audit/domain/private-values.js"
 import { recordSessionOrganizationEntered } from "../../audit/domain/sessions.js"
+import { auditText } from "../../audit/domain/snapshot.js"
+import { appendAuditChanges, auditChangeCapture } from "../../audit/request-capture.js"
 import { cache } from "../../cache.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
-import { authenticatedRoute, jsonValidator, orgMemberRoute, userSessionRoute, type OrganizationContextVariables, type UserOrganizationsContext } from "../../middleware/index.js"
-import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
+import { automationAvailabilityFor, headlessAutomationsConfigured } from "../../automations/organization-availability.js"
+import { authenticatedRoute, jsonValidator, ORGANIZATION_BOUND_SESSION_MESSAGE, orgMemberRoute, userSessionRoute, type OrganizationContextVariables, type UserOrganizationsContext } from "../../middleware/index.js"
+import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, ssoRequiredSchema, unauthorizedSchema } from "../../openapi.js"
 import { normalizeOrganizationMetadata } from "../../organization-limits.js"
 import { resolveUserOrganizations, setSessionActiveOrganization, type UserOrgSummary } from "../../orgs.js"
 import type { AuthContextVariables } from "../../session.js"
 import { calculateDesktopPolicyForOrgMember } from "../../desktop-policies.js"
+import { readAgentPermissionRulesForMember } from "../../agent-permissions.js"
+import { desktopConfigDefaultModel } from "../../default-model.js"
+import { readPromptsForMember } from "../../prompts.js"
+import { memberPromptsSchema } from "@openwork/types/den/prompts"
+import { getOrganizationFeatures, requireFeature } from "../../features.js"
 import { DenEmailSendError, sendEmail } from "../../utils/email/send-email.js"
-import { organizationFeatureEnabled } from "../../features.js"
+import { findSsoAccessBlock, listMemberSsoSignIns, ssoRequiredErrorBody, ssoSignInUrl } from "../../organization-sso-access.js"
+import { registerMeActivationRoutes } from "./activation.js"
+import { registerMeAgentRoutes } from "./agent.js"
+import { registerMeFeatureIntroRoutes } from "./feature-intros.js"
+import { registerMePersonalSkillsRoutes } from "./personal-skills.js"
+
+const describeDesktopRoute = (options: DescribeRouteOptions & { "x-mcp": false }) => describeRoute(options)
 
 const DOWNLOAD_LINK_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000
 const DOWNLOAD_LINK_RATE_LIMIT_MAX = 5
@@ -31,11 +49,33 @@ const meResponseSchema = z.object({
 const meOrganizationsResponseSchema = z.object({
   orgs: z.array(z.object({
     id: denTypeIdSchema("organization"),
+    planTier: z.enum(BILLING_PLAN_TIERS),
+    isSandbox: z.boolean(),
     isActive: z.boolean(),
   }).passthrough()),
   activeOrgId: denTypeIdSchema("organization").nullable(),
   activeOrgSlug: z.string().nullable(),
 }).meta({ ref: "CurrentUserOrganizationsResponse" })
+
+const meInvitationsResponseSchema = z.object({
+  invitations: z.array(z.object({
+    id: denTypeIdSchema("invitation"),
+    organization: z.object({ id: denTypeIdSchema("organization"), name: z.string() }),
+    role: z.string(),
+    expiresAt: z.string().datetime(),
+  })),
+}).meta({ ref: "CurrentUserInvitationsResponse" })
+
+const meSsoSignInResponseSchema = z.object({
+  organizations: z.array(z.object({
+    organizationId: denTypeIdSchema("organization"),
+    organizationSlug: z.string(),
+    organizationName: z.string(),
+    signInPath: z.string(),
+    signInUrl: z.string().url(),
+    ssoOnly: z.boolean(),
+  })),
+}).meta({ ref: "CurrentUserSsoSignInResponse" })
 
 const meDesktopConfigResponseSchema = desktopConfigSchema.meta({
   ref: "CurrentUserDesktopConfigResponse",
@@ -66,6 +106,24 @@ const updateProfileSchema = z.object({
 const updateProfileResponseSchema = z.object({
   user: z.object({}).passthrough(),
 }).meta({ ref: "UpdateCurrentUserProfileResponse" })
+
+const keepBoundSessionOrganization: MiddlewareHandler<{ Variables: AuthContextVariables }> = async (c, next) => {
+  const user = c.get("user")
+  const boundOrganizationId = c.get("session")?.organizationScopeId
+  if (!user?.id || !boundOrganizationId) {
+    return next()
+  }
+
+  const requested = setActiveOrganizationSchema.safeParse(await c.req.json().catch(() => null))
+  const resolved = await resolveUserOrganizations({ activeOrganizationId: boundOrganizationId, userId: normalizeDenTypeId("user", user.id) })
+  const bound = resolved.orgs.find((org) => org.id === boundOrganizationId)
+  const named = requested.success && bound
+    && (requested.data.organizationId ? requested.data.organizationId === bound.id : requested.data.organizationSlug === bound.slug)
+  if (!bound || !named) {
+    return c.json({ error: "forbidden", message: ORGANIZATION_BOUND_SESSION_MESSAGE }, 403)
+  }
+  return c.json({ activeOrgId: bound.id, activeOrgSlug: bound.slug })
+}
 
 const setActiveOrganizationSchema = z.object({
   organizationId: denTypeIdSchema("organization").optional(),
@@ -120,7 +178,7 @@ function normalizeNamePart(value: string) {
 
 async function checkDownloadLinkRateLimit(userId: string, now: number) {
   const key = `me:send-download-link:${userId}`
-  const [row] = await db
+  const [row] = await db.$primary
     .select({ id: RateLimitTable.id, count: RateLimitTable.count, lastRequest: RateLimitTable.lastRequest })
     .from(RateLimitTable)
     .where(eq(RateLimitTable.key, key))
@@ -149,6 +207,11 @@ async function checkDownloadLinkRateLimit(userId: string, now: number) {
 }
 
 export function registerMeRoutes<T extends { Variables: AuthContextVariables & Partial<UserOrganizationsContext> & Partial<OrganizationContextVariables> }>(app: Hono<T>) {
+  registerMeActivationRoutes(app)
+  registerMeAgentRoutes(app)
+  registerMeFeatureIntroRoutes(app)
+  registerMePersonalSkillsRoutes(app)
+
   app.get(
     "/v1/me",
     describeRoute({
@@ -206,6 +269,72 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
       })),
       activeOrgId: c.get("activeOrganizationId") ?? null,
       activeOrgSlug: c.get("activeOrganizationSlug") ?? null,
+    })
+    },
+  )
+
+  app.get(
+    "/v1/me/sso-sign-in",
+    describeRoute({
+      tags: ["Users"],
+      summary: "List current user's organization SSO sign-ins",
+      description: "Lists the signed-in person's organizations that have ready SSO (enabled connection on a verified domain), with each organization's SSO sign-in URL and whether only SSO may sign in there. Used to confirm identity before sensitive changes; unlike the sign-in page's email preflight it includes SSO that is offered but not required.",
+      responses: {
+        200: jsonResponse("Organization SSO sign-ins returned successfully.", meSsoSignInResponseSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+      },
+    }),
+    userSessionRoute(),
+    async (c) => {
+      const user = c.get("user")
+      const organizations = await listMemberSsoSignIns(user.id)
+      return c.json({
+        organizations: organizations.map((organization) => ({
+          ...organization,
+          signInUrl: ssoSignInUrl(organization.signInPath),
+        })),
+      })
+    },
+  )
+
+  app.get(
+    "/v1/me/invitations",
+    describeRoute({
+      tags: ["Users"],
+      summary: "List current user's pending invitations",
+      description: "Lists unexpired invitations sent to the signed-in person's verified email for organizations they have not joined yet. Always empty for an unverified email, whatever the deployment's verification setting. Accept one with POST /v1/orgs/invitations/accept.",
+      responses: {
+        200: jsonResponse("Pending invitations returned successfully.", meInvitationsResponseSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+      },
+    }),
+    userSessionRoute(),
+    async (c) => {
+    const user = c.get("user")
+    const email = user.email?.trim().toLowerCase()
+    if (!email || user.emailVerified !== true) return c.json({ invitations: [] })
+
+    const userId = normalizeDenTypeId("user", user.id)
+    const rows = await db
+      .select({ id: InvitationTable.id, organizationId: InvitationTable.organizationId, organizationName: OrganizationTable.name, role: InvitationTable.role, expiresAt: InvitationTable.expiresAt })
+      .from(InvitationTable)
+      .innerJoin(OrganizationTable, eq(OrganizationTable.id, InvitationTable.organizationId))
+      .leftJoin(MemberTable, and(eq(MemberTable.organizationId, InvitationTable.organizationId), eq(MemberTable.userId, userId), isNull(MemberTable.removedAt)))
+      .where(and(
+        eq(InvitationTable.status, "pending"),
+        gt(InvitationTable.expiresAt, new Date()),
+        sql`lower(${InvitationTable.email}) = ${email}`,
+        isNull(MemberTable.id),
+      ))
+      .limit(20)
+
+    return c.json({
+      invitations: rows.map((row) => ({
+        id: row.id,
+        organization: { id: row.organizationId, name: row.organizationName },
+        role: row.role,
+        expiresAt: row.expiresAt.toISOString(),
+      })),
     })
     },
   )
@@ -294,7 +423,6 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
         .set({ name, updatedAt })
         .where(eq(AuthUserTable.id, normalizeDenTypeId("user", user.id)))
       await cache.auth.deleteSessionsForUser(normalizeDenTypeId("user", user.id))
-      // account.profile_updated in every membership (direct update: no better-auth hook).
       await recordProfileUpdated({ userId: user.id, before: user.name, after: name })
 
       return c.json({
@@ -319,9 +447,10 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
         200: jsonResponse("Active organization updated successfully.", activeOrganizationResponseSchema),
         400: jsonResponse("The active organization request body was invalid.", invalidRequestSchema),
         401: jsonResponse("The caller must be signed in to update active organization.", unauthorizedSchema),
-        403: jsonResponse("The caller cannot switch this kind of session.", forbiddenSchema),
+        403: jsonResponse("The caller cannot switch this kind of session, or the organization requires SSO and this session did not sign in through it (sso_required).", forbiddenSchema.or(ssoRequiredSchema)),
       },
     }),
+    keepBoundSessionOrganization,
     userSessionRoute(),
     jsonValidator(setActiveOrganizationSchema),
     async (c) => {
@@ -348,9 +477,12 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
       }
 
       const sessionId = normalizeDenTypeId("session", session.id)
+      const ssoBlock = await findSsoAccessBlock({ sessionId, organizationId: activeOrg.id })
+      if (ssoBlock) {
+        return c.json(ssoRequiredErrorBody(ssoBlock), 403)
+      }
       await setSessionActiveOrganization(sessionId, activeOrg.id)
       c.set("session", { ...session, activeOrganizationId: activeOrg.id })
-      // session.organization_entered in the destination organization only.
       if (session.activeOrganizationId !== activeOrg.id) {
         await recordSessionOrganizationEntered({ userId: user.id, organizationId: activeOrg.id, sessionId })
       }
@@ -360,11 +492,58 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
   )
 
   app.get(
+    "/v1/me/prompts",
+    describeRoute({
+      tags: ["Users"],
+      summary: "Get current user's prompts",
+      description: "Returns the system prompts that apply to the caller in their active organization, in the order desktops append them to OpenWork's instructions: prompts for everyone, then each of the caller's teams' prompts by team name, then prompts assigned to the caller. Desktops read it with their provider sync.",
+      responses: {
+        200: jsonResponse("Current user prompts returned successfully.", memberPromptsSchema),
+        401: jsonResponse("The caller must be signed in to read their prompts.", unauthorizedSchema),
+      },
+    }),
+    orgMemberRoute(),
+    async (c) => {
+      const { organization, currentMember } = c.get("organizationContext")
+      c.header("Cache-Control", "no-store")
+      return c.json({ prompts: await readPromptsForMember({ organizationId: organization.id, memberId: currentMember.id }) })
+    },
+  )
+
+  app.post(
+    PRIVATE_VALUE_FILLS_ROUTE,
+    describeDesktopRoute({
+      tags: ["Users"],
+      operationId: "reportPrivateValueFill",
+      "x-mcp": false,
+      summary: "Report a private-value use outcome",
+      responses: {
+        200: jsonResponse("Whether the outcome was recorded in the organization audit log.", privateValueFillReportResponseSchema),
+        400: jsonResponse("The fill report was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to report a fill.", unauthorizedSchema),
+        404: jsonResponse("The organization is unavailable or private-value fills are off.", z.object({ error: z.enum(["organization_not_found", "feature_disabled"]), feature: z.string().optional() })),
+      },
+    }),
+    orgMemberRoute(),
+    requireFeature("privateValues"),
+    jsonValidator(privateValueFillReportSchema.refine(({ id }) => auditText(id) === id, { path: ["id"], message: "Invalid report identifier." })),
+    async (c) => {
+      const capture = auditChangeCapture(c)
+      if (!capture) return c.json({ recorded: false })
+      const { organization } = c.get("organizationContext")
+      const event = privateValueFillEvent(organization.id, c.req.valid("json"))
+      if (!event) return c.json({ recorded: false })
+      const ids = await db.transaction((tx) => appendAuditChanges(tx, capture, [event]))
+      return c.json({ recorded: ids.length > 0 })
+    },
+  )
+
+  app.get(
     "/v1/me/desktop-config",
     describeRoute({
       tags: ["Users"],
       summary: "Get current user's desktop config",
-      description: "Returns the authenticated desktop app restrictions for the caller's active organization.",
+      description: "Returns the authenticated desktop app restrictions for the caller's active organization, including the caller's agent permissions as ordered OpenCode permission rules and the model new chats start with (defaultModel, applied by OpenCode v2 desktops only) when the organization has chosen one the caller can use. Computer use, Mac app scripting and outside-folder rules follow the organization's agent permission settings. X-OpenWork-Browser-Upload-Permissions: 1 clients receive browserUploadPermissions with the verified organization and member scope, and the organization's browser_upload rules. Older clients receive a conservative website block when an active managed upload rule cannot be enforced. X-OpenWork-Sandbox-Only: 1 clients receive the organization's host_execution rule (sandbox-only when it denies); other clients receive blocks for commands, file edits, outside folders, computer use, local MCP servers and websites while it is required, whether or not the sandbox rollout is on. Clients that send X-OpenWork-Sandbox-Modes: 1 also receive sandbox_opt_out rules for the Use OpenWork Sandbox requirement.",
       responses: {
         200: jsonResponse("Current user desktop config returned successfully.", meDesktopConfigResponseSchema),
         401: jsonResponse("The caller must be signed in to read desktop config.", unauthorizedSchema),
@@ -379,12 +558,39 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
         organizationId: organization.id,
         orgMemberId: currentMember.id,
       })
+      const features = await getOrganizationFeatures(organization.id, { userId: currentMember.userId })
+      const rules = await readAgentPermissionRulesForMember({ organizationId: organization.id, orgMemberId: currentMember.id })
+      const supportsBrowserUploads = c.req.header("X-OpenWork-Browser-Upload-Permissions") === "1"
+      const supportsFileSends = c.req.header("X-OpenWork-File-Send-Permissions") === "1"
+      const supportsSandboxOnly = c.req.header(AGENT_SANDBOX_ONLY_CAPABILITY_HEADER) === "1"
+      const supportsSandboxModes = c.req.header(AGENT_SANDBOX_MODES_CAPABILITY_HEADER) === "1"
+      const supportsPrivateValues = c.req.header(AGENT_PRIVATE_VALUES_CAPABILITY_HEADER) === "1" && features.privateValues === true
+      const agentPermissions = {
+        rules: agentPermissionRulesForClient(rules, { browserUploads: supportsBrowserUploads, fileSends: supportsFileSends, sandboxOnly: supportsSandboxOnly, sandboxModes: supportsSandboxModes, privateValues: supportsPrivateValues }),
+      }
+      const defaultModel = await desktopConfigDefaultModel({ organizationId: organization.id, memberId: currentMember.id })
+      const automations = automationAvailabilityFor({
+        metadata: organization.metadata,
+        headlessRunnerConfigured: headlessAutomationsConfigured(),
+      })
 
       return c.json({
         ...desktopPolicy,
-        automationsEnabled: env.automations.enabled,
+        allowLocalModels: desktopPolicy.allowLocalModels,
+        automationsEnabled: env.automations.enabled && (automations.desktop || automations.cloud),
+        desktopAutomationsEnabled: automations.desktop,
+        cloudAutomationsEnabled: automations.cloud,
         dashboardEnabled: env.dashboardsEnabled,
-        connectEnabled: await organizationFeatureEnabled(organization.id, "mcpConnections"),
+        connectEnabled: true,
+        liveProviderSync: true,
+        nativeAffordanceCodeMode: true,
+        opencodeV2Only: features.opencodeV2Only,
+        localProviderMirror: true,
+        removeOpencodeZen: true,
+        agentPermissions,
+        ...(supportsBrowserUploads ? { browserUploadPermissions: { enabled: true, organizationId: organization.id, memberId: currentMember.id } } : {}),
+        ...(supportsFileSends ? { fileSendPermissions: { enabled: true, organizationId: organization.id, memberId: currentMember.id } } : {}),
+        ...(defaultModel ? { defaultModel } : {}),
         ...(Array.isArray(metadata.allowedDesktopVersions)
           ? { allowedDesktopVersions: metadata.allowedDesktopVersions }
           : {}),

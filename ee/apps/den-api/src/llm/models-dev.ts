@@ -1,5 +1,4 @@
-import { withBedrockMantleProvider } from "@openwork-ee/utils/bedrock-mantle-catalog"
-import { withMicrosoftFoundryProvider } from "@openwork-ee/utils/microsoft-foundry-catalog"
+import { withBedrockMantleProvider, withMicrosoftFoundryProvider } from "@openwork-ee/gateway-catalog"
 
 const MODELS_DEV_API_URL = "https://models.openworklabs.com/api.json"
 const MODELS_DEV_CACHE_TTL_MS = 1000 * 60 * 10
@@ -33,13 +32,13 @@ export type ModelsDevProvider = {
   models: ModelsDevModel[]
 }
 
-let modelsDevCache:
-  | {
-      expiresAt: number
-      providers: ModelsDevProvider[]
-      providersById: Map<string, ModelsDevProvider>
-    }
-  | null = null
+type ModelsDevCatalog = {
+  expiresAt: number
+  providers: ModelsDevProvider[]
+  providersById: Map<string, ModelsDevProvider>
+}
+
+let modelsDevCache: ModelsDevCatalog | null = null
 
 function isRecord(value: unknown): value is JsonRecord {
   return typeof value === "object" && value !== null && !Array.isArray(value)
@@ -55,11 +54,7 @@ function asStringList(value: unknown): string[] {
     : []
 }
 
-async function loadModelsDevCatalog() {
-  if (modelsDevCache && modelsDevCache.expiresAt > Date.now()) {
-    return modelsDevCache
-  }
-
+async function fetchModelsDevCatalog() {
   const response = await fetch(MODELS_DEV_API_URL, {
     signal: AbortSignal.timeout(10_000),
     headers: {
@@ -77,8 +72,6 @@ async function loadModelsDevCatalog() {
     throw new Error("models.dev returned an invalid payload")
   }
 
-  // Mantle and Foundry Claude models need their own SDK per gateway provider; see
-  // bedrock-mantle-catalog and microsoft-foundry-catalog.
   const providers = Object.entries(withMicrosoftFoundryProvider(withBedrockMantleProvider(payload)))
     .map(([providerKey, rawProvider]) => {
       if (!isRecord(rawProvider)) {
@@ -129,6 +122,14 @@ async function loadModelsDevCatalog() {
   return nextCache
 }
 
+let modelsDevInflight: Promise<ModelsDevCatalog> | null = null
+
+async function loadModelsDevCatalog() {
+  if (modelsDevCache && modelsDevCache.expiresAt > Date.now()) return modelsDevCache
+  modelsDevInflight ??= fetchModelsDevCatalog().finally(() => { modelsDevInflight = null })
+  return modelsDevInflight
+}
+
 export async function listModelsDevProviders(): Promise<ModelsDevProviderSummary[]> {
   const catalog = await loadModelsDevCatalog()
   return catalog.providers.map((provider) => ({
@@ -147,7 +148,10 @@ export async function getModelsDevProvider(providerId: string): Promise<ModelsDe
   return catalog.providersById.get(providerId) ?? null
 }
 
-/** Resolve several providers from a single cached catalog read. */
+export async function getModelsDevCatalogProviders(): Promise<readonly ModelsDevProvider[]> {
+  return (await loadModelsDevCatalog()).providers
+}
+
 export async function getModelsDevProviders(providerIds: readonly string[]): Promise<ModelsDevProvider[]> {
   const catalog = await loadModelsDevCatalog()
   return [...new Set(providerIds)].flatMap((id) => {

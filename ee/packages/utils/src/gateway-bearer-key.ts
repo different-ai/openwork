@@ -38,7 +38,6 @@ export async function gatewayBearerKeyLookupDigest(key: GatewayBearerKey): Promi
   return Buffer.from(tag).toString("hex")
 }
 
-// New store only: no inference/SHA-only compatibility digest or cross-store lookup.
 export const gatewayBearerKeyStorageDigest = gatewayBearerKeyLookupDigest
 
 export async function gatewayBearerKeyLookupDigests(key: GatewayBearerKey): Promise<string[]> {

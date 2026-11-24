@@ -3,9 +3,13 @@ import { WorkerTable, WorkerTokenTable } from "@openwork-ee/den-db/schema"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
 import { z } from "zod"
+import { runnerEnginePolicySchema } from "@openwork/types/automations"
 import { attributeAuditRequest, auditServiceAttribution } from "../../audit/request-capture.js"
 import { db } from "../../db.js"
 import { jsonValidator, paramValidator, tokenRoute } from "../../middleware/index.js"
+import { cloudRuntimeAvailable, getCloudRuntime } from "../../workers/cloud-runtime.js"
+import { appLogger } from "../../observability/logger.js"
+import { workerHasOpenOfficeSession } from "../../documents-office-store.js"
 import { invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import {
   activityHeartbeatSchema,
@@ -24,6 +28,7 @@ const workerHeartbeatResponseSchema = z.object({
   openSessionCount: z.number().int().nullable(),
   lastHeartbeatAt: z.string().datetime(),
   lastActiveAt: z.string().datetime().nullable(),
+  enginePolicy: runnerEnginePolicySchema,
 }).meta({ ref: "WorkerHeartbeatResponse" })
 
 export function registerWorkerActivityRoutes<T extends { Variables: WorkerRouteVariables }>(app: Hono<T>) {
@@ -90,7 +95,6 @@ export function registerWorkerActivityRoutes<T extends { Variables: WorkerRouteV
     if (!worker) {
       return c.json({ error: "worker_not_found" }, 404)
     }
-    // Activity-scope token matched for this worker: its organization is the tenant.
     const audited = await attributeAuditRequest(c, {
       organizationId: worker.org_id,
       ...auditServiceAttribution("worker", workerId, { credentialId: tokenRows[0] ? `worker_token:${tokenRows[0].id}` : null }),
@@ -114,8 +118,19 @@ export function registerWorkerActivityRoutes<T extends { Variables: WorkerRouteV
       })
       .where(eq(WorkerTable.id, workerId))
 
+    const now = Date.now()
+    const recentWork = Boolean(body.isActiveRecently && activityAt && now - activityAt.getTime() <= 120_000 && activityAt.getTime() <= now + 30_000)
+    if (cloudRuntimeAvailable() && (recentWork || await workerHasOpenOfficeSession(workerId).catch(() => false))) {
+      await getCloudRuntime().recordActivity(workerId).catch(() => {
+        appLogger.warn("Could not refresh active computer idle timer", { worker_id: workerId })
+      })
+    }
+
+    const enginePolicy = { upgrade: true }
+    c.header("Cache-Control", "no-store")
     return c.json({
       ok: true,
+      enginePolicy,
       workerId,
       isActiveRecently: body.isActiveRecently,
       openSessionCount: body.openSessionCount ?? null,

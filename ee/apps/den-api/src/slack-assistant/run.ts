@@ -1,13 +1,14 @@
 import { z } from "zod"
-import type { RemoteSessionAction } from "../mcp/remote-session-capabilities.js"
-import { scopeKey, SlackApiError, type SlackCall } from "./protocol.js"
+import { excerpt, markdownToPlainText, slackSafeText, splitSlackText } from "./slack-text.js"
+import type { RunnerFailure, SlackRunner, SlackRunSnapshot, SlackRunStep, SlackSessionSettings } from "./headless.js"
+import type { LiveFeed, LiveFeedSource } from "./live.js"
+import { scopeKey, slackReactionName, SlackApiError, type SlackCall } from "./protocol.js"
 export const checkpointSchema = z.object({
-  phase: z.enum(["create", "send", "read", "finish"]).default("create"),
+  phase: z.enum(["create", "send", "read", "finish", "watch"]).default("create"),
   channel: z.string().optional(),
   threadTs: z.string().optional(),
   streamTs: z.string().optional(),
   sessionId: z.string().optional(),
-  workspaceId: z.string().optional(),
   prompt: z.string().optional(),
   sentText: z.string().default(""),
   steps: z.record(z.string(), z.string()).default({}),
@@ -18,67 +19,41 @@ export const checkpointSchema = z.object({
   streamStartedAt: z.number().optional(),
   recipientUserId: z.string().optional(),
   recipientTeamId: z.string().optional(),
-  wakeShown: z.boolean().default(false),
   finalStatus: z.enum(["active", "suspended"]).default("active"),
-  titleSynced: z.boolean().default(false),
   startedAt: z.number().optional(),
   stillWorkingShown: z.boolean().default(false),
-  /** A long task stopped streaming progress; it posts hourly check-ins and its final answer instead. */
   quiet: z.boolean().default(false),
   lastCheckInAt: z.number().optional(),
-  /** A message sent while an earlier task ran was acknowledged once. */
   queuedNoticeShown: z.boolean().default(false),
-  /** Streams live progress. Off: Slack's working status shows until the answer. Set per task when it starts. */
   live: z.boolean().default(true),
+  sessionResets: z.number().default(0),
+  workbot: z.boolean().default(false),
+  driveFiles: z.boolean().default(false),
+  answerReply: z.boolean().default(false),
+  answerText: z.string().optional(),
+  answerPartsPosted: z.number().default(0),
+  reactTo: z.object({ channel: z.string(), ts: z.string() }).optional(),
+  reacted: z.boolean().default(false),
+  liveWindow: z.number().default(0),
+  liveStep: z.number().optional(),
+  liveText: z.string().default(""),
+  liveBlind: z.boolean().default(false),
+  taskIds: z.array(z.string()).default([]),
+  reported: z.array(z.string()).default([]),
+  watchUntil: z.number().optional(),
 })
-type Checkpoint = z.infer<typeof checkpointSchema>
-const readSchema = z.object({
-  status: z.string(),
-  title: z.string().nullable().optional(),
-  messageCount: z.number(),
-  finalAssistantText: z.string(),
-  /** The last assistant message alone; runtimes without it fall back to finalAssistantText. */
-  lastAssistantText: z.string().optional(),
-  terminalError: z.unknown().optional(),
-  messages: z.array(
-    z.object({
-      role: z.string(),
-      toolCalls: z.array(z.object({ id: z.string(), name: z.string(), status: z.string().nullable() })),
-    }),
-  ),
-})
-export type RemoteCall = (
-  action: RemoteSessionAction,
-  body: Record<string, unknown>,
-) => Promise<Record<string, unknown>>
-export function webLink(sessionId: string) {
-  const url = new URL(
-    `/session/${encodeURIComponent(sessionId)}`,
-    process.env.DEN_WEB_OPENWORK_WEB_URL ?? "https://web.openworklabs.com",
-  )
-  return url.toString()
-}
+export type Checkpoint = z.infer<typeof checkpointSchema>
 
-/** Runs longer than this get a separate "done" reply, because updating a streamed message does not notify anyone. */
 export const DONE_PING_AFTER_MS = 60_000
-/** With no answer text by then, say the work continues and the reply will land in this thread. */
 export const STILL_WORKING_AFTER_MS = 20_000
 export const STILL_WORKING_LINE = "Still working on it. I'll reply here when it's done.\n\n"
 
-/**
- * A long task streams live progress for its first few minutes, then goes quiet: one line saying so, an hourly
- * check-in, and its final answer as a new reply that mentions the person. This is before Slack's stream
- * lifetime, so the live reply never has to continue in another message.
- */
 export const LONG_TASK_QUIET_AFTER_MS = 4 * 60_000
 export const LONG_TASK_LINE =
   "This one will take a while. I'll keep working and post the result here when I'm done. Press Stop to cancel."
 export const CHECK_IN_EVERY_MS = 60 * 60_000
-/** A quiet task is read less often; nothing is shown until the next check-in or the answer. */
 const QUIET_POLL_MS = 5_000
-/** A task without live progress is read every 3 seconds: nothing is shown until its answer. */
 const NOT_LIVE_POLL_MS = 3_000
-/** The reply to a message sent while an earlier task is still running in the thread. */
 export const QUEUED_LINE = "Got it. I'll do this right after the current task. Press Stop to end that task and start this now."
 
 export function formatElapsed(ms: number) {
@@ -87,29 +62,18 @@ export function formatElapsed(ms: number) {
   return hours ? `${hours}h ${minutes % 60}m` : `${minutes}m`
 }
 
-/** What the thread is told when a task ends without an answer. */
-function failureText(webHandoff: boolean, sessionId: string | undefined, terminalError: unknown) {
-  return webHandoff
-    ? `This task needs attention. [Open in OpenWork Web](${webLink(sessionId ?? "")}).`
-    : headlessFailureText(terminalError)
-}
-
-/** What the thread is told when a headless task ends without an answer. */
-function headlessFailureText(terminalError: unknown) {
-  const code = z.object({ code: z.string() }).catch({ code: "" }).parse(terminalError).code
-  return code === "stuck_repeating"
+function failureText(terminalError: { code: string }) {
+  return terminalError.code === "stuck_repeating"
     ? "I got stuck repeating the same step, so I stopped. Try again, or ask in a different way."
     : "This task couldn't finish. Try again, or ask in a different way."
 }
 
-/** A line that only titles what follows: a markdown heading, a bold-only line, or a short "Label:" line. */
 function isHeadingLine(raw: string, cleaned: string) {
   if (/^\s*#{1,6}\s/.test(raw)) return true
   if (/^[>*\-\s]*(\*\*|__)[^*_]+(\*\*|__)\W*$/.test(raw)) return true
   return cleaned.endsWith(":") && cleaned.length <= 60
 }
 
-/** First sentence of the first real paragraph of the answer, for the "done" reply. */
 export function doneSummary(text: string) {
   const line = text
     .split("\n")
@@ -121,15 +85,9 @@ export function doneSummary(text: string) {
 }
 
 export function currentReplyDelta(previous: string, current: string) {
-  // A revised answer must not append an unrelated full transcript.
   return current.startsWith(previous) ? current.slice(previous.length) : ""
 }
-/**
- * Slack closes a streamed message on its own after about five minutes, even while it is still being appended
- * to (`message_not_in_streaming_state`). Long runs continue in a fresh message in the same thread before that.
- */
 export const STREAM_ROTATE_AFTER_MS = 4 * 60_000
-/** Characters one streamed message carries before the reply continues in a new one. */
 export const STREAM_CHARACTER_LIMIT = 30_000
 export const STREAM_CONTINUED_LINE = "OpenWork task · continued\n\n"
 
@@ -165,16 +123,9 @@ async function startStream(slack: SlackCall, checkpoint: Checkpoint, chunks: Chu
   checkpoint.streamCharacters = chunkText(chunks).length
 }
 
-/**
- * Sends chunks to the reply. The stream opens with its first real content (a task step or answer text), so a
- * quick answer never starts with a placeholder; Slack's thinking status covers the gap until then. A long reply
- * continues in a new message before Slack's lifetime or size limit, or right after Slack closed it anyway; the
- * Slack session stays in progress throughout, so the native Stop button keeps working.
- */
 async function sendChunks(slack: SlackCall, checkpoint: Checkpoint, chunks: Chunk[], now: () => number) {
   if (!checkpoint.streamTs) return startStream(slack, checkpoint, chunks, now)
   const size = chunkText(chunks).length
-  // Checkpoints written before streams were timed start their clock now; Slack closing them early is still handled below.
   checkpoint.streamStartedAt ??= now()
   if (now() - checkpoint.streamStartedAt >= STREAM_ROTATE_AFTER_MS || checkpoint.streamCharacters + size > STREAM_CHARACTER_LIMIT) {
     try {
@@ -197,14 +148,12 @@ export async function stopSlackStream(slack: SlackCall, checkpoint: Checkpoint, 
   await closeStream(slack, checkpoint, checkpoint.finalStatus, extra)
 }
 
-/** Ends the reply message and leaves the Slack session in `status` ("processing" keeps Stop available). */
 async function closeStream(
   slack: SlackCall,
   checkpoint: Checkpoint,
   status: "active" | "suspended" | "processing",
   extra: Record<string, unknown> = {},
 ) {
-  // Closing text (a final link, "Stopped.") goes out as a plain reply when there is no open stream to carry it.
   const postClosingText = async () => {
     const text = chunkText(extra.chunks).trim()
     if (text && checkpoint.channel) await slack("chat.postMessage", { channel: checkpoint.channel, thread_ts: checkpoint.threadTs, text })
@@ -216,7 +165,6 @@ async function closeStream(
       status,
     })
   if (!checkpoint.streamTs) {
-    // Nothing was streamed yet: deliver any closing text as a plain reply and clear the thinking status.
     await postClosingText()
     await setFinalStatus()
     return
@@ -229,8 +177,6 @@ async function closeStream(
       ...extra,
     })
   } catch (error) {
-    // Slack can stop the stream before delivering the native Stop event, or close it on its own. The session
-    // lifecycle still needs an explicit transition out of processing, and closing text must not be lost.
     if (
       !(error instanceof SlackApiError) ||
       !["message_not_in_streaming_state", "stopped_by_user"].includes(error.code)
@@ -253,84 +199,81 @@ async function appendText(
     await onPart?.(part)
   }
 }
-export async function advanceSlackRun(input: {
+export const LIVE_WINDOW_MS = 20_000
+export const LIVE_FLUSH_MS = 1_000
+const LIVE_SAFETY_READ_MS = 3_000
+export const WATCH_POLL_MS = 10_000
+export const WATCH_MAX_MS = 24 * 60 * 60_000
+
+type RunInput = {
   checkpoint: Checkpoint
-  remote: RemoteCall
+  runner: SlackRunner
   slack: SlackCall
   messageId: string
-  saveSession: (sessionId: string, workspaceId: string) => Promise<void>
+  saveSession: (sessionId: string) => Promise<void>
+  clearSession: () => Promise<void>
   title: string
-  needsAttention?: (sessionId: string) => Promise<boolean>
   persist?: (checkpoint: Checkpoint) => Promise<void>
-  /** False for the headless runner: there is no OpenWork Web session to hand off to. */
-  webHandoff?: boolean
-  /** Gateway model alias for the headless runner, chosen by the workspace admin. */
   model?: string
-  /** Long tasks stop streaming progress after this long (the headless runtime); unset streams the whole run. */
   quietAfterMs?: number
+  settings?: SlackSessionSettings
+  live?: LiveFeedSource
+  renew?: () => Promise<void>
+  log?: (message: string, fields: Record<string, string>) => void
+  liveWindowMs?: number
+  sleep?: (ms: number) => Promise<void>
   now?: () => number
-}): Promise<{ checkpoint: Checkpoint; delayMs: number; done?: boolean }> {
+}
+
+type Step = { checkpoint: Checkpoint; delayMs: number; done?: boolean; watch?: boolean }
+
+const wait = (ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms))
+
+export async function advanceSlackRun(input: RunInput): Promise<Step> {
   const cp = input.checkpoint
-  const webHandoff = input.webHandoff !== false
   const now = input.now ?? Date.now
   if (cp.phase === "create") {
     if (!cp.sessionId) {
-      // Persist the empty native session before submitting any user instruction.
-      const result = await input.remote("create", { title: input.title, target: "cloud" })
-      if (result.error) return retryProvisioning(result, cp, input.slack, now)
-      const created = z.object({ sessionId: z.string(), workspaceId: z.string() }).parse(result)
-      await input.saveSession(created.sessionId, created.workspaceId)
+      const created = await input.runner.create({ title: input.title, ...(cp.workbot ? { settings: input.settings } : {}) })
+      if (!created.ok) return retryLater(created, cp)
+      await input.saveSession(created.sessionId)
       cp.sessionId = created.sessionId
-      cp.workspaceId = created.workspaceId
     }
     cp.phase = "send"
     return { checkpoint: cp, delayMs: 0 }
   }
   if (cp.phase === "send") {
-    const result = await input.remote("send", {
-      sessionId: cp.sessionId,
-      prompt: cp.prompt,
+    const sessionId = cp.sessionId ?? ""
+    const feed = cp.workbot && input.live ? await input.live.acquire(sessionId, cp.liveWindow) : null
+    const sent = await input.runner.send({
+      sessionId,
+      prompt: cp.prompt ?? "",
       messageId: input.messageId,
       ...(input.model ? { model: input.model } : {}),
+      ...(input.settings ? { settings: input.settings } : {}),
     })
-    if (result.error) return retryProvisioning(result, cp, input.slack, now)
+    if (!sent.ok) {
+      feed?.release(cp.liveWindow)
+      return sent.error === "unknown_session" ? startInFreshSession(input, cp) : retryLater(sent, cp)
+    }
     cp.phase = "read"
-    cp.prompt = undefined
-    return { checkpoint: cp, delayMs: 1_000 }
+    if (!cp.workbot) return { checkpoint: cp, delayMs: 1_000 }
+    cp.liveStep = sent.accepted && feed ? 0 : undefined
+    cp.liveText = ""
+    cp.liveBlind = false
+    await input.persist?.(cp)
+    return liveWindow(input, cp, feed)
   }
   if (cp.phase === "read") {
-    if (cp.sessionId && (await input.needsAttention?.(cp.sessionId))) {
-      await appendText(
-        input.slack,
-        cp,
-        `\n\nI need your input or approval. [Open in OpenWork Web](${webLink(cp.sessionId)}).`,
-        now,
-      )
-      cp.finalStatus = "suspended"
-      cp.phase = "finish"
-      return { checkpoint: cp, delayMs: 0 }
-    }
-    const result = await input.remote("read", { sessionId: cp.sessionId, messageId: input.messageId, limit: 100 })
-    if (result.error) return retryProvisioning(result, cp, input.slack, now)
-    const snapshot = readSchema.parse(result)
-    if (!cp.titleSynced && snapshot.title) {
-      await input.slack("agents.sessions.rename", {
-        channel_id: cp.channel,
-        thread_ts: cp.threadTs,
-        title: snapshot.title.slice(0, 200),
-      })
-      cp.titleSynced = true
-      await input.persist?.(cp)
-    }
-    const finished = snapshot.status === "idle" && Boolean(snapshot.finalAssistantText)
-    if (!cp.live) {
-      // Quiet: Slack's working status (with its Stop button) shows until the answer, which arrives on its own.
+    if (!cp.live && !cp.workbot) {
+      const read = await input.runner.read({ sessionId: cp.sessionId ?? "", messageId: input.messageId })
+      if (!read.ok) return read.error === "unknown_session" ? startInFreshSession(input, cp) : retryLater(read, cp)
+      const snapshot = read.snapshot
       if (snapshot.terminalError) {
-        await appendText(input.slack, cp, failureText(webHandoff, cp.sessionId, snapshot.terminalError), now)
+        await appendText(input.slack, cp, failureText(snapshot.terminalError), now)
         cp.finalStatus = "suspended"
         cp.phase = "finish"
-      } else if (finished) {
-        // Only the answer, not the notes the agent wrote on the way.
+      } else if (finishedTurn(cp, snapshot)) {
         await appendText(input.slack, cp, snapshot.lastAssistantText || snapshot.finalAssistantText, now, async (part) => {
           cp.sentText += part
           cp.firstTextAt ??= now()
@@ -341,12 +284,18 @@ export async function advanceSlackRun(input: {
       return { checkpoint: cp, delayMs: cp.phase === "finish" ? 0 : NOT_LIVE_POLL_MS }
     }
     if (cp.quiet) {
+      const read = await input.runner.read({ sessionId: cp.sessionId ?? "", messageId: input.messageId })
+      if (!read.ok) return read.error === "unknown_session" ? startInFreshSession(input, cp) : retryLater(read, cp)
+      const snapshot = read.snapshot
+      if (cp.workbot) await noteBackground(input, cp, snapshot)
       if (snapshot.terminalError) {
-        await appendText(input.slack, cp, headlessFailureText(snapshot.terminalError), now)
+        await appendText(input.slack, cp, failureText(snapshot.terminalError), now)
         cp.finalStatus = "suspended"
         cp.phase = "finish"
-      } else if (finished) {
-        // Only the final answer: the person did not see the progress notes before it.
+      } else if (finishedTurn(cp, snapshot) && cp.answerReply) {
+        cp.answerText = notesAndAnswer(snapshot, true).answer || snapshot.lastAssistantText
+        cp.phase = "finish"
+      } else if (finishedTurn(cp, snapshot)) {
         await appendText(input.slack, cp, snapshot.lastAssistantText || snapshot.finalAssistantText, now, async (part) => {
           cp.sentText += part
           await input.persist?.(cp)
@@ -363,102 +312,33 @@ export async function advanceSlackRun(input: {
       }
       return { checkpoint: cp, delayMs: cp.phase === "finish" ? 0 : QUIET_POLL_MS }
     }
-    if (
-      !snapshot.terminalError &&
-      !finished &&
-      input.quietAfterMs !== undefined &&
-      cp.startedAt !== undefined &&
-      now() - cp.startedAt >= input.quietAfterMs
-    ) {
-      // Before sending anything else, so the live reply never needs a second message. The Slack session stays in
-      // progress so Stop stays available; the answer comes later as a new reply.
-      await closeStream(input.slack, cp, "processing", { chunks: [{ type: "markdown_text", text: `\n\n${LONG_TASK_LINE}` }] })
-      cp.streamTs = undefined
-      cp.streamStartedAt = undefined
-      cp.streamCharacters = 0
-      cp.sentText = ""
-      cp.quiet = true
-      cp.lastCheckInAt = now()
-      await input.persist?.(cp)
-      return { checkpoint: cp, delayMs: QUIET_POLL_MS }
+    if (cp.workbot && input.live) {
+      const feed = await input.live.acquire(cp.sessionId ?? "", cp.liveWindow)
+      if (!feed || feed.fresh) cp.liveStep = undefined
+      return liveWindow(input, cp, feed)
     }
-    const delta = currentReplyDelta(cp.sentText, snapshot.finalAssistantText)
-    if (delta)
-      await appendText(input.slack, cp, delta, now, async (part) => {
-        cp.sentText += part
-        cp.firstTextAt ??= now()
-        await input.persist?.(cp)
-      })
-    const updates = new Map<
-      string,
-      {
-        type: "task_update"
-        id: string
-        title: string
-        status: "complete" | "error" | "in_progress"
-        rawStatus: string
-      }
-    >()
-    for (const message of snapshot.messages)
-      for (const tool of message.toolCalls) {
-        if (cp.steps[tool.id] === (tool.status ?? "pending")) continue
-        const status = tool.status === "completed" ? "complete" : tool.status === "error" ? "error" : "in_progress"
-        updates.set(tool.id, {
-          type: "task_update",
-          id: scopeKey(tool.id),
-          // The headless runtime reports readable step labels; OpenCode tool ids stay generic.
-          title: tool.name.includes(" ") ? tool.name : "Working with your connections",
-          status,
-          rawStatus: tool.status ?? "pending",
-        })
-      }
-    const entries = [...updates.entries()]
-    for (let offset = 0; offset < entries.length; offset += 20) {
-      const batch = entries.slice(offset, offset + 20)
-      const chunks = batch.map(([, { rawStatus, ...chunk }]) => chunk)
-      await sendChunks(input.slack, cp, chunks, now)
-      for (const [id, update] of batch) cp.steps[id] = update.rawStatus
-      await input.persist?.(cp)
-    }
-    const noAnswerYet = !cp.sentText && !snapshot.finalAssistantText
-    if (noAnswerYet && !cp.stillWorkingShown && cp.startedAt !== undefined && now() - cp.startedAt > STILL_WORKING_AFTER_MS) {
-      await appendText(input.slack, cp, STILL_WORKING_LINE, now)
-      cp.stillWorkingShown = true
-      await input.persist?.(cp)
-    }
-    if (snapshot.terminalError) {
-      await appendText(
-        input.slack,
-        cp,
-        `\n\n${failureText(webHandoff, cp.sessionId, snapshot.terminalError)}`,
-        now,
-      )
-      cp.finalStatus = "suspended"
-      cp.phase = "finish"
-    } else if (finished) cp.phase = "finish"
-    return { checkpoint: cp, delayMs: 1_000 }
+    const read = await input.runner.read({ sessionId: cp.sessionId ?? "", messageId: input.messageId })
+    if (!read.ok) return read.error === "unknown_session" ? startInFreshSession(input, cp) : retryLater(read, cp)
+    const outcome = await applyReply(input, cp, read.snapshot, read.snapshot.finalAssistantText)
+    return { checkpoint: cp, delayMs: outcome === "quiet" ? QUIET_POLL_MS : outcome === "finish" ? 0 : 1_000 }
   }
+  if (cp.phase === "watch") return { checkpoint: cp, delayMs: 0, done: true, watch: true }
   cp.completedAt ??= now()
-  await stopSlackStream(input.slack, cp, {
-    ...(webHandoff
-      ? { chunks: [{ type: "markdown_text", text: `\n\n[Open in OpenWork Web](${webLink(cp.sessionId ?? "")})` }] }
-      : {}),
-    blocks: [
-      {
-        type: "context_actions",
-        elements: [
-          {
-            type: "feedback_buttons",
-            action_id: `slack_feedback:${input.messageId.replace(/^msg_/, "")}`,
-            positive_button: { text: { type: "plain_text", text: "Helpful" }, value: "positive" },
-            negative_button: { text: { type: "plain_text", text: "Needs work" }, value: "negative" },
-          },
-        ],
-      },
-    ],
-  })
-  // A quiet task's answer is a new reply, which already notifies; only a streamed reply needs the extra mention.
-  if (cp.live && cp.startedAt !== undefined && cp.completedAt - cp.startedAt > DONE_PING_AFTER_MS && cp.recipientUserId) {
+  cp.prompt = undefined
+  const feedback = feedbackBlock(input.messageId)
+  if (cp.answerReply && cp.answerText) {
+    await postAnswer(input, cp, feedback)
+    await stopSlackStream(input.slack, cp)
+  } else await stopSlackStream(input.slack, cp, { blocks: [feedback] })
+  const reactedOnly = cp.workbot && !cp.sentText && cp.finalStatus !== "suspended"
+  if (
+    (cp.live || cp.workbot) &&
+    !(cp.answerReply && cp.finalStatus !== "suspended") &&
+    !reactedOnly &&
+    cp.startedAt !== undefined &&
+    cp.completedAt - cp.startedAt > DONE_PING_AFTER_MS &&
+    cp.recipientUserId
+  ) {
     try {
       await input.slack("chat.postMessage", {
         channel: cp.channel,
@@ -469,26 +349,330 @@ export async function advanceSlackRun(input: {
             : `<@${cp.recipientUserId}> Done: ${doneSummary(cp.sentText)}`,
       })
     } catch {
-      // The answer is already delivered; a missed ping must not fail the run.
     }
+  }
+  if (cp.workbot && cp.taskIds.length > 0) {
+    cp.phase = "watch"
+    cp.watchUntil = now() + WATCH_MAX_MS
+    return { checkpoint: cp, delayMs: WATCH_POLL_MS, done: true, watch: true }
   }
   return { checkpoint: cp, delayMs: 0, done: true }
 }
+
+function finishedTurn(cp: Checkpoint, snapshot: SlackRunSnapshot) {
+  return snapshot.status === "idle" && !snapshot.terminalError && (cp.workbot || Boolean(snapshot.finalAssistantText))
+}
+
+export function notesAndAnswer(snapshot: SlackRunSnapshot, finished: boolean) {
+  const written = snapshot.assistantTexts.flatMap((text, index) =>
+    text.trim() ? [{ text: text.trim(), worked: snapshot.assistantWorked[index] === true }] : [],
+  )
+  const last = written.at(-1)
+  const notes = written.flatMap((entry) => (entry.worked ? [entry.text] : [])).join("\n\n")
+  const answer = !finished ? "" : last ? (last.worked ? "" : last.text) : snapshot.lastAssistantText.trim()
+  return { notes, answer }
+}
+
+function feedbackBlock(messageId: string) {
+  return {
+    type: "context_actions",
+    elements: [
+      {
+        type: "feedback_buttons",
+        action_id: `slack_feedback:${messageId.replace(/^msg_/, "")}`,
+        positive_button: { text: { type: "plain_text", text: "Helpful" }, value: "positive" },
+        negative_button: { text: { type: "plain_text", text: "Needs work" }, value: "negative" },
+      },
+    ],
+  }
+}
+
+const ANSWER_LIMIT = 11_000
+
+async function postAnswer(input: RunInput, cp: Checkpoint, feedback: Record<string, unknown>) {
+  const parts = splitSlackText(withoutBroadcasts(cp.answerText ?? ""), ANSWER_LIMIT)
+  for (const [index, part] of parts.entries()) {
+    if (index < cp.answerPartsPosted) continue
+    await input.slack("chat.postMessage", {
+      channel: cp.channel,
+      thread_ts: cp.threadTs,
+      text: slackSafeText(excerpt(markdownToPlainText(part), 300)),
+      blocks: [{ type: "markdown", text: part }, ...(index === parts.length - 1 ? [feedback] : [])],
+      unfurl_links: false,
+      unfurl_media: false,
+    })
+    cp.answerPartsPosted = index + 1
+    await input.persist?.(cp)
+  }
+}
+
+async function noteBackground(input: RunInput, cp: Checkpoint, snapshot: SlackRunSnapshot) {
+  for (const task of snapshot.tasks) if (!cp.taskIds.includes(task.id)) cp.taskIds.push(task.id)
+  if (cp.reacted || !snapshot.reaction) return
+  cp.reacted = true
+  const name = slackReactionName(snapshot.reaction.emoji)
+  if (name && cp.reactTo) {
+    try {
+      await input.slack("reactions.add", { channel: cp.reactTo.channel, timestamp: cp.reactTo.ts, name })
+    } catch (error) {
+      input.log?.("slack_assistant_reaction_failed", { code: error instanceof SlackApiError ? error.code : "reaction_failed" })
+    }
+  }
+  await input.persist?.(cp)
+}
+
+export function liveReplyText(cp: Checkpoint, snapshot: SlackRunSnapshot) {
+  const stored = snapshot.finalAssistantText
+  if (snapshot.status === "idle" || cp.liveBlind || cp.liveStep !== snapshot.assistantTexts.length || !cp.liveText) return stored
+  return stored ? `${stored}\n\n${cp.liveText}` : cp.liveText
+}
+
+export function trackLiveText(cp: Checkpoint, event: { step: number; delta: string; reset?: boolean }) {
+  if (cp.liveStep === undefined || event.step < cp.liveStep) return
+  if (event.step > cp.liveStep) {
+    cp.liveStep = event.step
+    cp.liveText = event.reset ? "" : event.delta
+    cp.liveBlind = false
+    return
+  }
+  if (event.reset) {
+    cp.liveText = ""
+    cp.liveBlind = false
+    return
+  }
+  if (!cp.liveBlind) cp.liveText += event.delta
+}
+
+export function catchUpText(sent: string, final: string) {
+  if (final.startsWith(sent)) return final.slice(sent.length)
+  let common = 0
+  while (common < sent.length && common < final.length && sent[common] === final[common]) common += 1
+  const paragraph = final.lastIndexOf("\n\n", common)
+  const rest = final.slice(paragraph < 0 ? 0 : paragraph + 2).trim()
+  return rest ? `\n\n${rest}` : ""
+}
+
+async function liveWindow(input: RunInput, cp: Checkpoint, feed: LiveFeed | null): Promise<Step> {
+  const now = input.now ?? Date.now
+  const sleep = input.sleep ?? wait
+  const deadline = now() + (input.liveWindowMs ?? LIVE_WINDOW_MS)
+  let snapshot: SlackRunSnapshot | null = null
+  let lastRead = 0
+  let lastRenew = now()
+  let mustRead = true
+  try {
+    for (;;) {
+      for (const event of feed?.take() ?? []) {
+        if (event.messageId !== input.messageId) continue
+        if (event.type === "text") trackLiveText(cp, event)
+        else mustRead = true
+      }
+      if (mustRead || !snapshot || !feed || feed.closed || now() - lastRead >= LIVE_SAFETY_READ_MS) {
+        const read = await input.runner.read({ sessionId: cp.sessionId ?? "", messageId: input.messageId })
+        if (!read.ok) return read.error === "unknown_session" ? await startInFreshSession(input, cp) : retryLater(read, cp)
+        snapshot = read.snapshot
+        lastRead = now()
+        mustRead = false
+        if (cp.liveStep === undefined) {
+          cp.liveStep = snapshot.assistantTexts.length
+          cp.liveText = ""
+          cp.liveBlind = true
+        }
+      }
+      const outcome = await applyReply(input, cp, snapshot, liveReplyText(cp, snapshot))
+      if (outcome === "quiet") return { checkpoint: cp, delayMs: QUIET_POLL_MS }
+      if (outcome === "finish") return { checkpoint: cp, delayMs: 0 }
+      if (now() >= deadline) return { checkpoint: cp, delayMs: 0 }
+      if (now() - lastRenew >= 10_000) {
+        await input.renew?.()
+        lastRenew = now()
+      }
+      await sleep(Math.max(0, Math.min(LIVE_FLUSH_MS, deadline - now())))
+    }
+  } finally {
+    cp.liveWindow += 1
+    feed?.release(cp.liveWindow)
+  }
+}
+
+async function applyReply(input: RunInput, cp: Checkpoint, snapshot: SlackRunSnapshot, text: string) {
+  const now = input.now ?? Date.now
+  const quietAfterMs = input.quietAfterMs ?? LONG_TASK_QUIET_AFTER_MS
+  if (cp.workbot) await noteBackground(input, cp, snapshot)
+  const finished = finishedTurn(cp, snapshot)
+  if (!snapshot.terminalError && !finished && cp.startedAt !== undefined && now() - cp.startedAt >= quietAfterMs) {
+    await closeStream(input.slack, cp, "processing", { chunks: [{ type: "markdown_text", text: `\n\n${LONG_TASK_LINE}` }] })
+    cp.streamTs = undefined
+    cp.streamStartedAt = undefined
+    cp.streamCharacters = 0
+    cp.sentText = ""
+    cp.quiet = true
+    cp.lastCheckInAt = now()
+    await input.persist?.(cp)
+    return "quiet"
+  }
+  const split = cp.answerReply ? notesAndAnswer(snapshot, finished) : null
+  if (split && finished) cp.answerText = split.answer
+  const delta = split
+    ? currentReplyDelta(cp.sentText, split.notes)
+    : cp.workbot && (finished || snapshot.terminalError)
+      ? catchUpText(cp.sentText, text)
+      : currentReplyDelta(cp.sentText, text)
+  if (delta)
+    await appendText(input.slack, cp, delta, now, async (part) => {
+      cp.sentText += part
+      cp.firstTextAt ??= now()
+      await input.persist?.(cp)
+    })
+  if (cp.live) await sendStepUpdates(input.slack, cp, snapshot.steps, now, input.persist)
+  const noAnswerYet = !cp.sentText && !text
+  if (cp.live && noAnswerYet && !cp.stillWorkingShown && cp.startedAt !== undefined && now() - cp.startedAt > STILL_WORKING_AFTER_MS) {
+    await appendText(input.slack, cp, STILL_WORKING_LINE, now)
+    cp.stillWorkingShown = true
+    await input.persist?.(cp)
+  }
+  if (snapshot.terminalError) {
+    await appendText(input.slack, cp, `\n\n${failureText(snapshot.terminalError)}`, now)
+    cp.finalStatus = "suspended"
+    cp.phase = "finish"
+    return "finish"
+  }
+  if (finished) {
+    cp.phase = "finish"
+    return "finish"
+  }
+  return "continue"
+}
+
+async function sendStepUpdates(
+  slack: SlackCall,
+  cp: Checkpoint,
+  steps: SlackRunStep[],
+  now: () => number,
+  persist?: (checkpoint: Checkpoint) => Promise<void>,
+) {
+  const updates = new Map<string, { chunk: Chunk; rawStatus: string }>()
+  for (const step of steps) {
+    if (cp.steps[step.id] === step.status) continue
+    updates.set(step.id, {
+      chunk: {
+        type: "task_update",
+        id: scopeKey(step.id),
+        title: step.label.includes(" ") ? step.label : "Working with your connections",
+        status: step.status === "completed" ? "complete" : step.status === "error" ? "error" : "in_progress",
+      },
+      rawStatus: step.status,
+    })
+  }
+  const entries = [...updates.entries()]
+  for (let offset = 0; offset < entries.length; offset += 20) {
+    const batch = entries.slice(offset, offset + 20)
+    await sendChunks(slack, cp, batch.map(([, update]) => update.chunk), now)
+    for (const [id, update] of batch) cp.steps[id] = update.rawStatus
+    await persist?.(cp)
+  }
+}
+
+function withoutBroadcasts(text: string) {
+  return text
+    .replace(/<!(here|channel|everyone)(\|[^>]*)?>/gi, "@\u200b$1")
+    .replace(/<!subteam\^[^>]*>/gi, "@\u200bgroup")
+    .replace(/@(here|channel|everyone)\b/gi, "@\u200b$1")
+}
+
+const REPORT_LIMIT = 11_000
+
+export async function advanceSlackWatch(input: {
+  checkpoint: Checkpoint
+  runner: SlackRunner
+  slack: SlackCall
+  messageId: string
+  persist?: (checkpoint: Checkpoint) => Promise<void>
+  now?: () => number
+}): Promise<Step> {
+  const cp = input.checkpoint
+  const now = input.now ?? Date.now
+  const done = { checkpoint: cp, delayMs: 0, done: true }
+  if (!cp.sessionId || now() >= (cp.watchUntil ?? 0)) return done
+  const background = await input.runner.background({ sessionId: cp.sessionId, messageId: input.messageId })
+  if (!background.ok) return background.error === "unknown_session" || !background.retryable ? done : { checkpoint: cp, delayMs: WATCH_POLL_MS }
+  const titles = new Map(background.tasks.map((task) => [task.id, task.title]))
+  const mention = cp.recipientUserId && /^[UW][A-Z0-9]{2,}$/.test(cp.recipientUserId) ? `<@${cp.recipientUserId}>` : ""
+  for (const report of background.reports) {
+    if (cp.reported.includes(report.id) || !TERMINAL_STATUSES.has(report.status)) continue
+    if (report.status === "completed") {
+      const written = await input.runner.turnText({ sessionId: cp.sessionId, messageId: report.id })
+      if (!written.ok) {
+        if (written.retryable) continue
+      } else if (written.text.trim()) {
+        const parts = splitSlackText(withoutBroadcasts(written.text.trim()), REPORT_LIMIT)
+        for (const [index, part] of parts.entries()) {
+          const partId = `${report.id}#${index}`
+          if (parts.length > 1 && cp.reported.includes(partId)) continue
+          const notification = slackSafeText(excerpt(markdownToPlainText(index === 0 ? written.text : part), 300))
+          await input.slack("chat.postMessage", {
+            channel: cp.channel,
+            thread_ts: cp.threadTs,
+            text: index === 0 ? `${mention} ${notification}`.trim() : notification,
+            blocks: [
+              ...(index === 0 && mention ? [{ type: "section", text: { type: "mrkdwn", text: mention } }] : []),
+              { type: "markdown", text: part },
+            ],
+            unfurl_links: false,
+            unfurl_media: false,
+          })
+          if (parts.length > 1) {
+            cp.reported.push(partId)
+            await input.persist?.(cp)
+          }
+        }
+      }
+    } else if (report.status === "failed") {
+      const title = titles.get(report.task) || report.title
+      await input.slack("chat.postMessage", {
+        channel: cp.channel,
+        thread_ts: cp.threadTs,
+        text: `${mention} I couldn't bring back the result of ${title ? `"${slackSafeText(title)}"` : "the background task"}. Ask me about it here.`.trim(),
+      })
+    }
+    cp.reported.push(report.id)
+    await input.persist?.(cp)
+  }
+  const reportOf = new Map(background.reports.map((report) => [report.task, report.id]))
+  const settled = background.tasks.every((task) => {
+    const report = reportOf.get(task.id)
+    return task.status === "aborted" || (report !== undefined && cp.reported.includes(report))
+  })
+  return settled ? done : { checkpoint: cp, delayMs: WATCH_POLL_MS }
+}
+
+const TERMINAL_STATUSES: ReadonlySet<string> = new Set(["completed", "failed", "aborted"])
+
 export class RemoteSessionUnavailableError extends Error {
-  constructor() {
+  constructor(readonly runnerError?: string) {
     super("remote_session_unavailable")
   }
 }
-function retryProvisioning(result: Record<string, unknown>, cp: Checkpoint, slack: SlackCall, now: () => number) {
-  return (async () => {
-    if (result.retryable !== true) throw new RemoteSessionUnavailableError()
-    if (!cp.wakeShown && String(result.error).startsWith("cloud_runtime_")) {
-      await appendText(slack, cp, "Waking your workspace…\n\n", now)
-      cp.wakeShown = true
-    }
-    return {
-      checkpoint: cp,
-      delayMs: typeof result.retryAfterMs === "number" ? Math.max(1_000, Math.min(60_000, result.retryAfterMs)) : 5_000,
-    }
-  })()
+
+function retryLater(result: RunnerFailure, cp: Checkpoint) {
+  if (!result.retryable) throw new RemoteSessionUnavailableError(result.error)
+  return {
+    checkpoint: cp,
+    delayMs: typeof result.retryAfterMs === "number" ? Math.max(1_000, Math.min(60_000, result.retryAfterMs)) : 5_000,
+  }
+}
+
+async function startInFreshSession(input: { clearSession: () => Promise<void>; persist?: (checkpoint: Checkpoint) => Promise<void> }, cp: Checkpoint) {
+  if (cp.sessionResets >= 1 || !cp.prompt) throw new RemoteSessionUnavailableError("unknown_session")
+  cp.sessionResets += 1
+  await input.clearSession()
+  cp.sessionId = undefined
+  cp.phase = "create"
+  cp.sentText = ""
+  cp.steps = {}
+  cp.liveStep = undefined
+  cp.liveText = ""
+  cp.taskIds = []
+  await input.persist?.(cp)
+  return { checkpoint: cp, delayMs: 0 }
 }

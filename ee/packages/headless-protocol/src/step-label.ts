@@ -7,7 +7,6 @@ export function stepLabel(name: string, input: Record<string, unknown> = {}) {
       return "Finding the right tool"
     case "execute_capability":
       if (typeof input.name === "string" && /createCloudAutomation$/i.test(input.name)) return "Setting up the schedule"
-      // Capability names are internal ("getMe"); the person only knows their apps.
       return app ? `Using ${app}` : "Checking your apps"
     case "execute_capability_script":
       return "Running a multi-step action"
@@ -22,6 +21,8 @@ export function stepLabel(name: string, input: Record<string, unknown> = {}) {
       return path ? `Reading ${path}` : "Reading notes"
     case "bash":
       return typeof input.description === "string" && input.description.trim() ? input.description.trim().slice(0, 80) : "Using my computer"
+    case "desktop":
+      return input.view === "browser" ? "Working in the browser" : "Using my computer"
     case "look":
       return "Looking at the results"
     case "browser_open":
@@ -29,6 +30,8 @@ export function stepLabel(name: string, input: Record<string, unknown> = {}) {
       return typeof input.url === "string" ? `Opening ${hostOf(input.url)}` : "Opening the browser"
     case "browser_observe":
       return "Looking at the page"
+    case "browser_extract":
+      return "Reading the page"
     case "browser_act":
       return "Working in the browser"
     case "browser_handoff":

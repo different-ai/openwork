@@ -4,7 +4,7 @@ import { readFile } from "node:fs/promises";
 import { ensureDir, exists } from "./utils.js";
 import { ApiError } from "./errors.js";
 import { opencodeConfigPath } from "./workspace-files.js";
-import { readJsoncFile } from "./jsonc.js";
+import { readJsoncFile, updateJsoncTopLevel } from "./jsonc.js";
 import type { ReloadReason, WorkspaceInfo } from "./types.js";
 
 type WorkspaceOpenworkConfig = {
@@ -38,13 +38,6 @@ function errorStringField(error: unknown, field: "code" | "path" | "syscall"): s
   return typeof value === "string" ? value : undefined;
 }
 
-/**
- * Build the default per-workspace openwork config metadata. The openwork
- * config is now stored in the runtime DB (see
- * `seedOpenworkWorkspaceConfigIfEmpty`), not in `.opencode/openwork.json`, so
- * this no longer writes a file. Exposed so the workspace-creation route can
- * seed the DB row with the same defaults.
- */
 export function defaultWorkspaceOpenworkConfig(workspaceRoot: string, preset: string): WorkspaceOpenworkConfig {
   return {
     version: 1,
@@ -58,12 +51,49 @@ export function defaultWorkspaceOpenworkConfig(workspaceRoot: string, preset: st
   };
 }
 
+const LEGACY_BROWSER_PLUGIN = "opencode-chrome-devtools";
+
+export function isLegacyBrowserPlugin(value: unknown): boolean {
+  return value === LEGACY_BROWSER_PLUGIN;
+}
+
 async function ensureOpencodeConfig(workspaceRoot: string): Promise<boolean> {
   const path = opencodeConfigPath(workspaceRoot);
-  if (await exists(path)) {
-    await readJsoncFile<Record<string, unknown>>(path, {}, { allowInvalid: true });
+  if (!(await exists(path))) return false;
+  let data: Record<string, unknown>;
+  try {
+    ({ data } = await readJsoncFile<Record<string, unknown>>(path, {}, { allowInvalid: true }));
+  } catch (error) {
+    if (!isConfigAccessError(error)) throw error;
+    warnConfigAccessError("read", path, error);
+    return false;
   }
-  return false;
+  if (!Array.isArray(data.plugin) || !data.plugin.some(isLegacyBrowserPlugin)) return false;
+  const plugin = data.plugin.filter((item) => !isLegacyBrowserPlugin(item));
+  try {
+    await updateJsoncTopLevel(path, { plugin: plugin.length ? plugin : undefined });
+  } catch (error) {
+    if (!isConfigAccessError(error)) throw error;
+    warnConfigAccessError("update", path, error);
+    return false;
+  }
+  return true;
+}
+
+const CONFIG_ACCESS_ERROR_CODES = new Set(["EPERM", "EACCES", "EISDIR"]);
+
+function isConfigAccessError(error: unknown): boolean {
+  const code = errorStringField(error, "code");
+  return code !== undefined && CONFIG_ACCESS_ERROR_CODES.has(code);
+}
+
+function warnConfigAccessError(action: "read" | "update", path: string, error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  console.warn(`[workspace-init] Skipping legacy plugin cleanup; could not ${action} ${path}: ${message}`, {
+    fsCode: errorStringField(error, "code"),
+    syscall: errorStringField(error, "syscall"),
+    fsPath: errorStringField(error, "path"),
+  });
 }
 
 export async function ensureWorkspaceFiles(workspaceRoot: string, presetInput: string): Promise<EnsureWorkspaceFilesResult> {
@@ -83,8 +113,6 @@ export async function ensureWorkspaceFiles(workspaceRoot: string, presetInput: s
   }
   const reloadReasons = new Set<ReloadReason>();
   if (await ensureOpencodeConfig(workspaceRoot)) reloadReasons.add("config");
-  // openwork config is seeded into the runtime DB by the caller, not written
-  // as a file here.
   void preset;
   return {
     changed: reloadReasons.size > 0,
@@ -92,15 +120,6 @@ export async function ensureWorkspaceFiles(workspaceRoot: string, presetInput: s
   };
 }
 
-/**
- * Provision workspace files for every workspace that has local files to set up.
- *
- * Skips any workspace without a resolved local path, which would otherwise
- * reach ensureWorkspaceFiles() — which throws
- * `invalid_workspace_path` on a blank path — and abort server startup. Local
- * provisioning failures are logged and skipped so one stale path cannot abort
- * startup. Shared by the embedded-server and CLI boot paths.
- */
 export async function ensureLocalWorkspaceFiles(
   workspaces: ReadonlyArray<Pick<WorkspaceInfo, "path" | "preset">>,
 ): Promise<void> {

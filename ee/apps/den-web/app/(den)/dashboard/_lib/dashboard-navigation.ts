@@ -2,12 +2,16 @@ import {
   BarChart3,
   Box,
   CalendarClock,
+  Gauge,
+  Radar,
   Globe,
   Laptop,
   LibraryBig,
   LockKeyhole,
   MessageCircle,
+  MonitorSmartphone,
   ScrollText,
+  Server,
   Plug,
   SlidersHorizontal,
   Sparkles,
@@ -18,24 +22,34 @@ import {
   type DenOrgAccessFlags,
   type DenOrgCapabilities,
   getAiGatewayRoute,
+  getAnalyticsRoute,
   getApiKeysRoute,
   getAuditLogsRoute,
+  getAuthSecurityRoute,
   getAutomationsRoute,
   getBillingRoute,
+  getConfigRoute,
+  getComputersRoute,
   getDesktopPoliciesRoute,
   getDiagnosticsRoute,
+  getDeploymentsRoute,
+  getLibraryMyAgentRoute,
   getLibraryRoute,
   getMarketplacesRoute,
   getMcpConnectionsRoute,
   getMembersRoute,
+  getMyComputersRoute,
+  getMyUsageRoute,
   getOrgSettingsRoute,
+  getPermissionsRoute,
   getPluginsRoute,
-  getScimRoute,
-  getSsoRoute,
   getToolTesterRoute,
   getWebRoute,
+  getWorkbotSettingsRoute,
 } from "../../_lib/den-org";
 import type { DenOrgMode } from "../../_lib/runtime-config";
+import { canOpenAdminRoute } from "./admin-route-access";
+import { type WorkbotEntry, workbotEntryHref, workbotNavMarker } from "./workbot-entry";
 
 export type DashboardNavChild = {
   href: string;
@@ -48,12 +62,10 @@ export type DashboardNavItem = {
   label: string;
   icon: LucideIcon;
   badge?: string;
-  /** Quiet dot beside the label when something here is waiting on the viewer. */
   attention?: string;
+  locked?: string;
   testId?: string;
-  /** Extra pathname prefixes that select this entry. */
   matchHrefs?: string[];
-  /** Grouped entries link to their own href and expand on parent or child pages. */
   children?: DashboardNavChild[];
 };
 
@@ -77,8 +89,14 @@ export type BuildDashboardNavSectionsInput = {
   capabilities: DenOrgCapabilities;
   orgMode: DenOrgMode;
   runtimeConfigLoaded: boolean;
-  /** How many Library items wait on the viewer's sign-in. */
   libraryNeedsSignIn?: number;
+  managedDeployments?: boolean;
+  desktopPolicyScreenRemoved?: boolean;
+  workbotSettingsInTeams?: boolean;
+  canManageDeploymentServices?: boolean;
+  workbotEntry?: WorkbotEntry;
+  organizationId?: string | null;
+  myBot?: boolean;
 };
 
 export function buildDashboardNavSections({
@@ -87,12 +105,23 @@ export function buildDashboardNavSections({
   capabilities,
   runtimeConfigLoaded,
   libraryNeedsSignIn = 0,
+  managedDeployments = false,
+  desktopPolicyScreenRemoved = false,
+  workbotSettingsInTeams = false,
+  canManageDeploymentServices = false,
+  workbotEntry = { kind: "open" },
+  organizationId = null,
+  myBot = false,
 }: BuildDashboardNavSectionsInput): DashboardNavSection[] {
   const workflowsEnabled = capabilities.workflows;
   const showWeb = runtimeConfigLoaded && capabilities.openworkWeb;
+  const workbotOff = workbotEntry.kind === "off";
   const workItems: DashboardNavItem[] = [
-    ...(capabilities.workbot
-      ? [{ href: "/workbot", label: "Workbot", icon: MessageCircle, testId: "dashboard-nav-workbot" }]
+    ...(capabilities.workbot && !workbotOff
+      ? [{ href: workbotEntryHref(organizationId), label: "Workbot", icon: MessageCircle, testId: "dashboard-nav-workbot", ...workbotNavMarker(workbotEntry) }]
+      : []),
+    ...(myBot && orgSlug && !workbotOff
+      ? [{ href: getLibraryMyAgentRoute(orgSlug), label: "My bot", icon: Radar, testId: "dashboard-nav-my-bot" }]
       : []),
     {
       href: orgSlug ? getLibraryRoute(orgSlug) : "#",
@@ -105,40 +134,59 @@ export function buildDashboardNavSections({
     ...(workflowsEnabled && orgSlug
       ? [{ href: getAutomationsRoute(orgSlug), label: "My Automations", icon: CalendarClock }]
       : []),
+    ...(orgSlug
+      ? [{ href: getMyComputersRoute(orgSlug), label: "My Computers", icon: MonitorSmartphone, testId: "dashboard-nav-my-computers" }]
+      : []),
+    ...(orgSlug
+      ? [{ href: getMyUsageRoute(orgSlug), label: "My Usage", icon: Gauge, testId: "dashboard-nav-my-usage" }]
+      : []),
     ...(showWeb
       ? [{ href: orgSlug ? getWebRoute(orgSlug) : "#", label: "OpenWork Web", icon: Globe }]
       : []),
   ];
 
-  const manageItems: DashboardNavItem[] = access.isAdmin && orgSlug
+  const canOpen = (href: string) => canOpenAdminRoute(href, access, canManageDeploymentServices);
+  const manageItems: DashboardNavItem[] = orgSlug
     ? [
         { href: getPluginsRoute(orgSlug), label: "Plugins", icon: Box },
         { href: getMcpConnectionsRoute(orgSlug), label: "Connectors", icon: Plug, badge: "MCPs" },
         { href: getAiGatewayRoute(orgSlug), label: "AI Gateway", icon: Sparkles },
-        { href: getDesktopPoliciesRoute(orgSlug), label: "Desktop policies", icon: Laptop },
-      ]
+        ...(!desktopPolicyScreenRemoved ? [{ href: getDesktopPoliciesRoute(orgSlug), label: "Desktop policies", icon: Laptop }] : []),
+        { href: getComputersRoute(orgSlug), label: "Computers", icon: Laptop, testId: "dashboard-nav-computers" },
+        ...(!workbotSettingsInTeams ? [{ href: getWorkbotSettingsRoute(orgSlug), label: "Workbot", icon: MessageCircle, testId: "dashboard-nav-workbot-settings" }] : []),
+        ...(managedDeployments ? [{ href: getDeploymentsRoute(orgSlug), label: "Deployments", icon: Server }] : []),
+      ].filter((item) => canOpen(item.href))
     : [];
   const observabilityItems: DashboardNavItem[] = orgSlug
     ? [
-        ...(capabilities.auditLogs ? [{ href: getAuditLogsRoute(orgSlug), label: "Audit logs", icon: access.isAdmin ? ScrollText : LockKeyhole, ...(access.isAdmin ? {} : { badge: "Admin access" }) }] : []),
+        ...(access.canViewUsageAnalytics ? [{ href: getAnalyticsRoute(orgSlug), label: "Analytics", icon: BarChart3 }] : []),
+        ...(capabilities.auditLogs
+          ? [{
+              href: getAuditLogsRoute(orgSlug),
+              label: "Audit logs",
+              icon: access.canViewAuditLogs ? ScrollText : LockKeyhole,
+              ...(access.canViewAuditLogs ? {} : { badge: "Locked" }),
+            }]
+          : []),
       ]
     : [];
   const settingsChildren: DashboardNavChild[] = orgSlug
     ? [
-        ...(access.canViewSettings
-          ? [
-              { href: getOrgSettingsRoute(orgSlug), label: "General" },
-              { href: getDiagnosticsRoute(orgSlug), label: "Diagnostics" },
-              { href: getBillingRoute(orgSlug), label: "Billing" },
-              { href: getApiKeysRoute(orgSlug), label: "API Keys" },
-              { href: getSsoRoute(orgSlug), label: "SSO" },
-              { href: getScimRoute(orgSlug), label: "SCIM" },
-            ]
-          : []),
-        ...(access.isAdmin
+        ...[
+          { href: getOrgSettingsRoute(orgSlug), label: "General" },
+          { href: getDiagnosticsRoute(orgSlug), label: "Diagnostics" },
+          { href: getBillingRoute(orgSlug), label: "Billing" },
+          { href: getApiKeysRoute(orgSlug), label: "API Keys" },
+        ].filter((item) => canOpen(item.href)),
+        ...permissionsNavChildren(orgSlug, access, canOpen(getMembersRoute(orgSlug))),
+        ...authSecurityNavChildren(orgSlug, access),
+        ...(canOpen(getMarketplacesRoute(orgSlug))
           ? [{ href: getMarketplacesRoute(orgSlug), label: "Advanced" }]
           : []),
-        ...(capabilities.mcpConnections && access.isAdmin
+        ...(canOpen(getConfigRoute(orgSlug))
+          ? [{ href: getConfigRoute(orgSlug), label: "Config" }]
+          : []),
+        ...(capabilities.mcpConnections && canOpen(getToolTesterRoute(orgSlug))
           ? [{ href: getToolTesterRoute(orgSlug), label: "Tool Tester" }]
           : []),
       ]
@@ -152,7 +200,7 @@ export function buildDashboardNavSections({
       }
     : null;
   const teamItems: DashboardNavItem[] = [
-    ...(access.isAdmin && orgSlug
+    ...(orgSlug && canOpen(getMembersRoute(orgSlug))
       ? [{ href: getMembersRoute(orgSlug), label: "Members", icon: Users }]
       : []),
     ...(settingsGroup ? [settingsGroup] : []),
@@ -166,30 +214,45 @@ export function buildDashboardNavSections({
   ];
 }
 
-// Alias order is ranking priority in the command palette.
+function permissionsNavChildren(orgSlug: string, access: DenOrgAccessFlags, membersOpen: boolean): DashboardNavChild[] {
+  return access.canViewPermissions && !membersOpen ? [{ href: getPermissionsRoute(orgSlug), label: "Roles" }] : [];
+}
+
+function authSecurityNavChildren(orgSlug: string, access: DenOrgAccessFlags): DashboardNavChild[] {
+  return access.canViewSso || access.canViewScim ? [{ href: getAuthSecurityRoute(orgSlug), label: "Auth & Security" }] : [];
+}
+
 const PAGE_KEYWORDS: Record<string, string[]> = {
   Advanced: ["marketplace", "collections", "branding", "brand appearance"],
   "AI Gateway": ["llm", "provider", "gateway", "inference", "usage"],
+  Analytics: ["usage", "stats", "workflow runs", "history"],
   "Audit logs": ["audit", "history", "operations", "changes", "security"],
   "API Keys": ["token", "secret"],
+  "Auth & Security": ["sso", "single sign on", "saml", "oidc", "scim", "provisioning", "directory", "okta", "entra", "identity provider"],
   Billing: ["plan", "invoice", "payment"],
+  Config: ["export", "import", "backup", "json", "copy settings", "change requests", "revert"],
   "Bring Your Own Keys (Legacy)": ["llm", "provider", "byok", "api key"],
+  Computers: ["devices", "team computers", "desktop", "virtual computers", "inventory", "owners", "remote access", "other devices"],
   Connectors: ["mcp", "integrations", "servers", "connect"],
   "Desktop policies": ["policy", "mdm", "lock", "desktop"],
+  Deployments: ["aws", "self-hosted", "byoc", "install", "health", "status"],
   Dashboards: ["boards", "apps"],
-  Diagnostics: ["health", "debug", "troubleshooting"],
+  Diagnostics: ["health", "status", "services", "readiness", "debug", "troubleshooting", "desktop startup"],
   General: ["organization", "workspace"],
-  Members: ["people", "users", "invite", "teams", "roles"],
+  Members: ["people", "users", "invite", "teams", "roles", "agent permissions", "commands", "websites", "allow list", "block list", "desktop", "prompt suggestions"],
   Models: ["llm", "provider", "byok", "api key"],
+  Permissions: ["access", "roles", "teams", "admin", "rbac"],
   "My Automations": ["schedule", "recurring", "tasks"],
+  "My Computers": ["devices", "my devices", "laptop", "desktop", "virtual computers", "workbot computer", "remote access", "other devices", "tasks"],
+  "My bot": ["agent", "my agent", "morning brief", "meeting prep", "proactive", "notifications"],
   "My Library": ["skills", "plugins", "connections"],
+  "My Usage": ["usage", "spend", "cost", "limits", "budget", "tokens", "prices", "models"],
   "OpenWork Models": ["llm", "provider", "managed", "inference"],
   "OpenWork Web": ["cloud", "sessions"],
   Plugins: ["skills", "commands", "plugin directory"],
-  SCIM: ["provisioning", "directory", "users"],
   Settings: ["organization", "workspace"],
-  SSO: ["single sign on", "saml", "oidc"],
   "Tool Tester": ["tools", "test", "mcp"],
+  Workbot: ["model", "default model", "assistant", "slack", "automations"],
 };
 
 function keywordsFor(...labels: string[]): string[] {

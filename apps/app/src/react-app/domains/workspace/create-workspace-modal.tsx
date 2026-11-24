@@ -46,6 +46,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
     pickingFolder,
     showProgressDetails,
     now,
+    projectLabel,
   } = localState;
   const setLocal = <K extends keyof CreateWorkspaceLocalState>(
     key: K,
@@ -56,6 +57,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   const setPickingFolder = (value: SetStateAction<boolean>) => setLocal("pickingFolder", value);
   const setShowProgressDetails = (value: SetStateAction<boolean>) => setLocal("showProgressDetails", value);
   const setNow = (value: SetStateAction<number>) => setLocal("now", value);
+  const setProjectLabel = (value: SetStateAction<string>) => setLocal("projectLabel", value);
   const preset = props.defaultPreset ?? "starter";
 
   const showClose = props.showClose ?? true;
@@ -63,6 +65,7 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
   const workerSubmitting = props.workerSubmitting ?? false;
   const progress = props.submittingProgress ?? null;
   const workerDisabled = Boolean(props.workerDisabled);
+  const showProjectLabel = props.showProjectLabel ?? true;
   const workerDisabledReason = (props.workerDisabledReason ?? "").trim();
   const workerDebugLines = useMemo(
     () => (props.workerDebugLines ?? []).flatMap((line) => {
@@ -96,14 +99,11 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
     }
   })();
 
-  // Reset state when the modal opens.
   useEffect(() => {
     if (!props.open) return;
     dispatchLocal({ type: "reset" });
   }, [props.open]);
 
-  // The modal remains mounted when closed. Only publish elapsed-time updates
-  // while its progress UI is both visible and backed by a real start time.
   useEffect(() => {
     if (!submitting) {
       setShowProgressDetails(false);
@@ -129,15 +129,15 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
       const next = await props.onPickFolder();
       if (next) setSelectedFolder(next);
     } catch {
-      // Folder picker cancellation or bridge errors should never leave the
-      // modal in a busy state.
     } finally {
       setPickingFolder(false);
     }
   };
 
   const handleLocalSubmit = async () => {
-    props.onConfirm(preset, selectedFolder);
+    props.onConfirm(preset, selectedFolder, {
+      projectLabel: projectLabel.trim() || null,
+    });
   };
 
   return (
@@ -222,6 +222,9 @@ export function CreateWorkspaceModal(props: CreateWorkspaceModalProps) {
             hasSelectedFolder={hasSelectedFolder}
             pickingFolder={pickingFolder}
             onPickFolder={() => void handlePickFolder()}
+            projectLabel={showProjectLabel ? projectLabel : ""}
+            onProjectLabelInput={setProjectLabel}
+            showProjectLabel={showProjectLabel}
             submitting={submitting}
             localError={localError}
             onClose={props.onClose}

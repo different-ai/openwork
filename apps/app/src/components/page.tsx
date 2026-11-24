@@ -13,11 +13,6 @@ function Page({ className, ...props }: ComponentProps<"div">) {
   );
 }
 
-/**
- * Paper first-load spec: subtle pixel-dither mosaic over the page ground.
- * `dark:invert` flips the black pixels to white so the texture survives
- * dark mode.
- */
 function PageBackground({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
@@ -38,11 +33,6 @@ function PageTitlebarRegion({ className, ...props }: ComponentProps<"div">) {
   );
 }
 
-/**
- * Centers page content inside a bounded card (same treatment as the
- * sign-in/welcome card) so onboarding stages stay readable over the
- * dithered background. The outer region scrolls when content is tall.
- */
 function PageContainer({ className, children, ...props }: ComponentProps<"div">) {
   return (
     <div

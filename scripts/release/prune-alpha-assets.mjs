@@ -10,7 +10,7 @@ function buildRunNumber(name) {
   return match ? Number(match[1]) : null;
 }
 
-export function selectAlphaAssetsToPrune(assets, keepBuilds) {
+export function selectAlphaAssetsToPrune(assets, keepBuilds, protectedRunNumber = null) {
   const runNumbers = assets
     .map((asset) => buildRunNumber(asset.name))
     .filter((runNumber) => runNumber !== null);
@@ -20,7 +20,7 @@ export function selectAlphaAssetsToPrune(assets, keepBuilds) {
 
   return assets.filter((asset) => {
     const runNumber = buildRunNumber(asset.name);
-    return runNumber !== null && !retainedRuns.has(runNumber);
+    return runNumber !== null && runNumber !== protectedRunNumber && !retainedRuns.has(runNumber);
   });
 }
 
@@ -40,7 +40,7 @@ function parseArgs(args) {
       options.dryRun = true;
       continue;
     }
-    if (["--repo", "--tag", "--keep"].includes(arg)) {
+    if (["--repo", "--tag", "--keep", "--protect-run"].includes(arg)) {
       const value = args[index + 1];
       if (!value || value.startsWith("--")) throw new Error(`${arg} requires a value.`);
       options[arg.slice(2)] = value;
@@ -54,7 +54,11 @@ function parseArgs(args) {
   if (!options.repo || !options.tag || !Number.isInteger(keep) || keep <= 0) {
     throw new Error("Usage: node scripts/release/prune-alpha-assets.mjs --repo <owner/name> --tag <tag> --keep <positive-integer> [--dry-run]");
   }
-  return { repo: options.repo, tag: options.tag, keep, dryRun: options.dryRun };
+  const protectedRunNumber = options["protect-run"] === undefined ? null : Number(options["protect-run"]);
+  if (protectedRunNumber !== null && (!Number.isSafeInteger(protectedRunNumber) || protectedRunNumber <= 0)) {
+    throw new Error("--protect-run requires a positive run number.");
+  }
+  return { repo: options.repo, tag: options.tag, keep, dryRun: options.dryRun, protectedRunNumber };
 }
 
 function getRelease(repo, tag) {
@@ -77,7 +81,7 @@ function listAssets(repo, releaseId) {
 }
 
 function main() {
-  const { repo, tag, keep, dryRun } = parseArgs(process.argv.slice(2));
+  const { repo, tag, keep, dryRun, protectedRunNumber } = parseArgs(process.argv.slice(2));
   const release = getRelease(repo, tag);
   if (!release) {
     console.log(`Release ${tag} does not exist in ${repo}; nothing to prune.`);
@@ -85,7 +89,7 @@ function main() {
   }
 
   const assets = listAssets(repo, release.id);
-  const deletions = selectAlphaAssetsToPrune(assets, keep);
+  const deletions = selectAlphaAssetsToPrune(assets, keep, protectedRunNumber);
   if (deletions.length === 0) {
     console.log(`Nothing to prune from ${tag}; keeping the newest ${keep} alpha builds.`);
     return;

@@ -20,6 +20,7 @@ import {
   type SandboxPlatform,
 } from "@openwork/sandbox"
 import { toRuntimeProviderError } from "./errors.js"
+import { memorySnapshots } from "./memory-snapshots.js"
 
 export const DAYTONA_PROVIDER_ID = "daytona"
 
@@ -27,16 +28,14 @@ export type DaytonaProviderConfig = {
   apiKey: string
   apiUrl: string
   target?: string
-  /** The pinned runtime snapshot; `null` boots `image` with `resources` instead. */
   snapshot: string | null
   image: string
   resources: SandboxResources
   pollIntervalMs: number
   helperCreateTimeoutMs: number
-  /** Explicit platform for the configured snapshot; never inferred from its name. */
   platform?: SandboxPlatform
-  /** Operator verified this Daytona class supports memory-preserving pause. */
   supportsPause?: boolean
+  idleRetentionMinutes?: number
 }
 
 /** The slice of the SDK the provider drives; production wraps `Daytona`, tests substitute. */
@@ -44,6 +43,8 @@ export type DaytonaSandboxClient = {
   readonly id: string
   readonly name?: string
   readonly state: string | null
+  readonly snapshot?: string
+  readonly autoDeleteInterval?: number
   readonly target: string | null
   readonly labels?: Readonly<Record<string, string>>
   readonly public?: boolean
@@ -53,6 +54,8 @@ export type DaytonaSandboxClient = {
   stop(timeoutSeconds?: number): Promise<unknown>
   delete(timeoutSeconds?: number): Promise<unknown>
   pause?(timeoutSeconds?: number): Promise<unknown>
+  setTtl?(minutes: number): Promise<unknown>
+  refreshActivity?(): Promise<unknown>
   getSignedPreviewUrl(port: number, expiresInSeconds?: number): Promise<{ url: string }>
   fs: {
     createFolder(path: string, mode: string): Promise<unknown>
@@ -79,6 +82,7 @@ export type DaytonaClient = {
   volume: {
     get(name: string, create?: boolean): Promise<{ id: string; state?: string | null }>
   }
+  snapshot?: { get(name: string): Promise<{ sandboxClass?: string }> }
 }
 
 export type DaytonaProviderDeps = {
@@ -86,6 +90,7 @@ export type DaytonaProviderDeps = {
   sleep?: (ms: number) => Promise<unknown>
   now?: () => number
   randomSuffix?: () => string
+  request?: typeof fetch
 }
 
 const maxSignedPreviewExpirySeconds = 60 * 60 * 24
@@ -146,6 +151,8 @@ function toSandboxClient(sandbox: Sandbox): DaytonaSandboxClient {
     get state() {
       return sandbox.state ?? null
     },
+    get snapshot() { return sandbox.snapshot },
+    get autoDeleteInterval() { return sandbox.autoDeleteInterval },
     get target() {
       return sandbox.target ?? null
     },
@@ -157,8 +164,10 @@ function toSandboxClient(sandbox: Sandbox): DaytonaSandboxClient {
     refreshData: () => sandbox.refreshData(),
     start: (timeout) => sandbox.start(timeout),
     stop: (timeout) => sandbox.stop(timeout),
-    delete: (timeout) => sandbox.delete(timeout),
+    delete: (timeout) => sandbox.delete(timeout, true),
     pause: (timeout) => sandbox.pause(timeout),
+    setTtl: minutes => sandbox.setTtl(minutes),
+    refreshActivity: () => sandbox.refreshActivity(),
     getSignedPreviewUrl: (port, expiresInSeconds) => sandbox.getSignedPreviewUrl(port, expiresInSeconds),
     fs: {
       createFolder: (path, mode) => sandbox.fs.createFolder(path, mode),
@@ -199,6 +208,7 @@ export function createDaytonaClient(config: Pick<DaytonaProviderConfig, "apiKey"
     volume: {
       get: (name, create) => daytona.volume.get(name, create),
     },
+    snapshot: { get: name => daytona.snapshot.get(name) },
   }
 }
 
@@ -209,6 +219,34 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
   const now = deps.now ?? Date.now
   const randomSuffix = deps.randomSuffix ?? (() => randomUUID().replace(/-/g, "").slice(0, 8))
   const sandboxes = new Map<string, { sandbox: DaytonaSandboxClient; name?: string }>()
+  const verifiedSnapshots = new Map<string, Promise<void>>()
+  const leases = new Map<string, number>()
+  const activity = new Map<string, number>()
+  if (config.idleRetentionMinutes !== undefined && (!Number.isInteger(config.idleRetentionMinutes) || config.idleRetentionMinutes < 1)) throw new Error("Daytona idle retention must be a positive number of minutes")
+  async function renewLease(sandbox: DaytonaSandboxClient) {
+    const minutes = config.idleRetentionMinutes
+    const prior = leases.get(sandbox.id)
+    if (!minutes || sandbox.autoDeleteInterval === 0 || (prior !== undefined && now() - prior < 60_000)) return
+    const extend = sandbox.setTtl
+    if (!extend) throw new RuntimeProviderError({ providerId, code: "invalid_state", retryable: false, message: "Client cannot renew the computer's idle retention lease" })
+    await wrap(() => extend.call(sandbox, minutes))
+    leases.set(sandbox.id, now())
+  }
+  async function verifyMemorySnapshot(name: string | undefined) {
+    if (!config.supportsPause) return
+    const snapshots = client.snapshot
+    if (!name || !snapshots) throw new RuntimeProviderError({ providerId, code: "invalid_state", retryable: false, message: "MicroVM computers require a verifiable Linux VM snapshot" })
+    let pending = verifiedSnapshots.get(name)
+    if (!pending) {
+      pending = (async () => {
+        const image = await snapshots.get(name)
+        if (image.sandboxClass !== "linux-vm") throw new RuntimeProviderError({ providerId, code: "invalid_state", retryable: false, message: "Configured computer snapshot is not a Daytona Linux microVM" })
+      })()
+      verifiedSnapshots.set(name, pending)
+      pending.catch(() => verifiedSnapshots.delete(name))
+    }
+    await pending
+  }
 
   function wrap<T>(operation: () => Promise<T>): Promise<T> {
     return operation().catch((error: unknown) => {
@@ -218,7 +256,7 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
 
   function forget(sandboxIdOrName: string) {
     for (const [id, cached] of sandboxes) {
-      if (id === sandboxIdOrName || cached.name === sandboxIdOrName || cached.sandbox.name === sandboxIdOrName) sandboxes.delete(id)
+      if (id === sandboxIdOrName || cached.name === sandboxIdOrName || cached.sandbox.name === sandboxIdOrName) { sandboxes.delete(id); leases.delete(id); activity.delete(id) }
     }
   }
 
@@ -229,7 +267,7 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
     sandboxes.set(sandbox.id, { sandbox, name })
     if (sandboxes.size > sandboxCacheCapacity) {
       const oldest = sandboxes.keys().next().value
-      if (oldest !== undefined) sandboxes.delete(oldest)
+      if (oldest !== undefined) { sandboxes.delete(oldest); leases.delete(oldest); activity.delete(oldest) }
     }
     return sandbox
   }
@@ -275,6 +313,7 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
     try {
       sandbox = await client.get(sandboxIdOrName)
       await sandbox.refreshData()
+      await verifyMemorySnapshot(sandbox.snapshot)
       return remember(sandbox, sandboxIdOrName)
     } catch (error) {
       const mapped = toRuntimeProviderError(error, providerId)
@@ -288,6 +327,11 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
   }
 
   function createParams(spec: SandboxSpec): DaytonaCreateParams {
+    const pause = spec.lifecycle?.autoPauseMinutes
+    if (pause !== undefined && (!Number.isInteger(pause) || pause < 0 || (pause > 0 && (!config.supportsPause || spec.ephemeral)))) {
+      throw new RuntimeProviderError({ providerId, code: "invalid_state", retryable: false, message: "Auto-pause requires a persistent VM and a non-negative interval" })
+    }
+    if (pause && spec.lifecycle?.autoStopMinutes) throw new RuntimeProviderError({ providerId, code: "invalid_state", retryable: false, message: "Auto-pause and auto-stop are mutually exclusive" })
     const base = {
       name: spec.idempotencyKey,
       public: spec.public ?? false,
@@ -299,7 +343,9 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
         ...(attachment.subpath ? { subpath: attachment.subpath } : {}),
       })),
       ...(spec.ephemeral ? { ephemeral: true } : {}),
+      ...(!spec.ephemeral && config.idleRetentionMinutes ? { ttlMinutes: config.idleRetentionMinutes } : {}),
       ...(spec.lifecycle?.autoStopMinutes === undefined ? {} : { autoStopInterval: spec.lifecycle.autoStopMinutes }),
+      ...(pause === undefined ? {} : { autoPauseInterval: pause, ...(pause > 0 ? { autoStopInterval: 0 } : {}) }),
       ...(spec.lifecycle?.autoArchiveMinutes === undefined ? {} : { autoArchiveInterval: spec.lifecycle.autoArchiveMinutes }),
       ...(spec.lifecycle?.autoDeleteMinutes === undefined ? {} : { autoDeleteInterval: spec.lifecycle.autoDeleteMinutes }),
     }
@@ -336,7 +382,6 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
     const sandbox = remember(await wrap(() => client.create(createParams(spec), { timeout: seconds(createTimeoutMs) })), spec.idempotencyKey)
     try {
       const exec = await execOn(sandbox, { command: `sh -lc ${shellQuote(command)}`, detach: false, timeoutMs: opts.timeoutMs })
-      // The helper's toolbox disappears on deletion; capture the result first.
       return {
         exitCode: await exec.exitCode(),
         logs: await exec.logs().catch(() => ({ stdout: "", stderr: "" })),
@@ -478,7 +523,7 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
   const capabilities: ProviderCapabilities = {
     stopResume: true,
     persistentStorage: true,
-    memorySnapshotRestore: false,
+    memorySnapshotRestore: config.supportsPause === true && ["vm", "microvm"].includes(config.platform?.isolation ?? ""),
     warmPool: false,
     endpointKind: "signed-expiring",
     exec: true,
@@ -489,7 +534,10 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
   const storage: SandboxStorage = {
     async ensureVolume(name, opts) {
       const volumeName = slug(name).slice(0, 63)
-      await wrap(() => client.volume.get(volumeName, true))
+      const ensured = await wrap(() => client.volume.get(volumeName, true))
+      if (ensured.state === "ready") {
+        return { providerId, id: ensured.id, name: volumeName }
+      }
       const startedAt = now()
       while (now() - startedAt < opts.timeoutMs) {
         const volume = await wrap(() => client.volume.get(volumeName))
@@ -567,6 +615,7 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
     describe: () => capabilities,
     currentImage,
     async create(spec, opts) {
+      if (!spec.ephemeral) await verifyMemorySnapshot(spec.image?.id)
       const sandbox = remember(await wrap(() => client.create(createParams(spec), { timeout: seconds(opts.timeoutMs) })), spec.idempotencyKey)
       return handleOf(sandbox)
     },
@@ -599,7 +648,6 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
       const labels = query.labels ?? {}
       return wrap(async () => {
         const seen = new Set<string>()
-        // Exhaust the iterator before callers delete anything and shift its pages.
         for await (const entry of client.list({ labels: { ...labels }, limit: 100 })) {
           if (seen.has(entry.id)) continue
           seen.add(entry.id)
@@ -629,6 +677,7 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
     },
     async start(handle, opts) {
       const sandbox = await resolve(handle)
+      await renewLease(sandbox)
       await wrap(() => sandbox.start(seconds(opts.timeoutMs)))
     },
     async stop(handle, opts) {
@@ -646,10 +695,13 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
       }
     },
     async exec(handle, spec) {
-      return execOn(await resolve(handle), spec)
+      const sandbox = await resolve(handle)
+      await renewLease(sandbox)
+      return execOn(sandbox, spec)
     },
     async endpoint(handle, port, opts) {
       const sandbox = await resolve(handle)
+      await renewLease(sandbox)
       const ttlSeconds = Math.max(1, Math.min(opts?.ttlSeconds ?? maxSignedPreviewExpirySeconds, maxSignedPreviewExpirySeconds))
       const issuedAt = now()
       const preview = await wrap(() => sandbox.getSignedPreviewUrl(port, ttlSeconds))
@@ -661,8 +713,6 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
       return endpoint
     },
     storage,
-    // Existing Web instances leave platform unset. Opting in to a verified
-    // Linux flavor enables the POSIX process block; no Windows shell guessing.
     blocks: {
       ...(config.platform?.os === "linux" ? {
         run: async (handle, spec) => {
@@ -675,14 +725,13 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
             })
             const command = `${spec.cwd ? `cd ${shellQuote(spec.cwd)} && ` : ""}exec env ${env.join(" ")} sh -c ${shellQuote(spec.command)}`
             const sandbox = await resolve(handle)
+            if (spec.activity !== "maintenance") await renewLease(sandbox)
             const download = sandbox.fs.downloadFile
             if (!download) throw new RuntimeProviderError({ providerId, code: "invalid_state", retryable: false, message: "Exact run output requires file downloads" })
             const directory = `/tmp/openwork-run-${randomUUID()}`
             await wrap(() => sandbox.fs.createFolder(directory, "700"))
             let completed = false
             try {
-              // Session logs normalize line endings. Capture process streams as
-              // bytes so run preserves trailing whitespace and separates stderr.
               const script = `(${command}) >${shellQuote(`${directory}/stdout`)} 2>${shellQuote(`${directory}/stderr`)}`
               const exec = await execOn(sandbox, { script, detach: false, timeoutMs: spec.timeoutMs })
               const exitCode = await exec.exitCode()
@@ -692,8 +741,6 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
               const stderr = await wrap(() => download(`${directory}/stderr`, seconds(spec.timeoutMs)))
               return { exitCode, stdout: Buffer.from(stdout).toString("utf8"), stderr: Buffer.from(stderr).toString("utf8") }
             } finally {
-              // An unacknowledged launch might still write these files. Do not
-              // delete them or repeat the command while its outcome is unknown.
               if (completed) await wrap(() => sandbox.fs.deleteFile(directory, true)).catch(() => undefined)
             }
           })(), spec.timeoutMs, () => new RuntimeProviderError({ providerId, code: "timeout", retryable: false, message: "Run exceeded its deadline; execution outcome may be unknown, do not retry" }))
@@ -702,6 +749,7 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
       files: {
         async read(handle, path, opts) {
           const sandbox = await resolve(handle)
+          await renewLease(sandbox)
           const download = sandbox.fs.downloadFile
           if (!download) throw new RuntimeProviderError({ providerId, code: "invalid_state", retryable: false, message: "Client does not implement file downloads" })
           return wrap(() => download(path, seconds(opts.timeoutMs)))
@@ -709,6 +757,7 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
         async write(handle, path, bytes, opts) {
           if (opts.mode !== undefined && (!Number.isInteger(opts.mode) || opts.mode < 0 || opts.mode > 0o777)) throw new RuntimeProviderError({ providerId, code: "invalid_state", retryable: false, message: "File mode must be 000-777" })
           const sandbox = await resolve(handle)
+          await renewLease(sandbox)
           await wrap(() => sandbox.fs.uploadFile(Buffer.from(bytes), path, seconds(opts.timeoutMs)))
           const mode = opts.mode
           if (mode !== undefined) await wrap(() => sandbox.fs.setFilePermissions(path, { mode: mode.toString(8).padStart(3, "0") }))
@@ -721,18 +770,40 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
             const info = await boundedScriptOperation(wrap(() => details(path)), opts.timeoutMs, () => new RuntimeProviderError({ providerId, code: "timeout", message: "File metadata timed out", retryable: false }))
             return { size: info.size, kind: info.isDir ? "directory" : "file" }
           } catch (error) {
-            // A missing sandbox is NOT a missing file.
             if (toRuntimeProviderError(error, providerId).code === "not_found" && await provider.get(handle.ref)) return null
             throw error
           }
         },
       },
       ...(config.supportsPause ? {
+        activity: async (handle, opts) => {
+          await boundedScriptOperation((async () => {
+            const sandbox = await resolve(handle)
+            const prior = activity.get(sandbox.id)
+            if (prior !== undefined && now() - prior < 15_000) return
+            await wrap(() => sandbox.refreshData())
+            if (sandbox.state !== "started") return
+            const touch = sandbox.refreshActivity
+            if (!touch) throw new RuntimeProviderError({ providerId, code: "invalid_state", retryable: false, message: "Client cannot record computer activity" })
+            await wrap(() => touch.call(sandbox))
+            await renewLease(sandbox)
+            activity.set(sandbox.id, now())
+          })(), opts.timeoutMs, () => new RuntimeProviderError({ providerId, code: "timeout", retryable: false, message: "Recording computer activity timed out" }))
+        },
+        snapshots: memorySnapshots(config, sandboxIdOf, deps.request),
         pause: async (handle, opts) => {
+          const deadline = now() + opts.timeoutMs
           const sandbox = await resolve(handle)
           const pause = sandbox.pause
           if (!pause) throw new RuntimeProviderError({ providerId, code: "invalid_state", retryable: false, message: "Client does not implement pause" })
           await wrap(() => pause(seconds(opts.timeoutMs)))
+          for (;;) {
+            await wrap(() => sandbox.refreshData())
+            if (sandbox.state === "paused") return
+            if (["stopped", "archived", "error", "destroyed"].includes(sandbox.state ?? "")) throw new RuntimeProviderError({ providerId, code: "invalid_state", retryable: false, message: "The computer did not preserve memory while pausing" })
+            if (now() >= deadline) throw new RuntimeProviderError({ providerId, code: "timeout", retryable: false, message: "The computer has not confirmed paused; compute may still be billed" })
+            await sleep(Math.min(Math.max(config.pollIntervalMs, 250), deadline - now()))
+          }
         },
       } : {}),
     },

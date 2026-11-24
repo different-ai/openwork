@@ -84,7 +84,7 @@ export function sharedDaytonaExec(provider: SandboxProvider, info: (id: string) 
 export async function createWorldDaytonaExec(): Promise<DaytonaExec> {
   const auth = await worldDaytonaAuth();
   if (auth.mode === "cli") return defaultDaytonaExec;
-  const config: DaytonaProviderConfig = { ...auth, target: "us", snapshot: null, image: "node:20-bookworm", resources: { cpu: 2, memoryGb: 4, diskGb: 8 }, pollIntervalMs: 100, helperCreateTimeoutMs: 120_000, platform: { os: "linux", isolation: "container" } };
+  const config: DaytonaProviderConfig = { ...auth, target: "us", snapshot: null, image: "node:24.22.1-bookworm", resources: { cpu: 2, memoryGb: 4, diskGb: 8 }, pollIntervalMs: 100, helperCreateTimeoutMs: 120_000, platform: { os: "linux", isolation: "container" } };
   const client = createDaytonaClient(config);
   const provider = createDaytonaProvider(config, { client });
   return sharedDaytonaExec(provider, async id => {

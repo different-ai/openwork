@@ -131,7 +131,7 @@ async function counterProof(
   const query = tx
     .select()
     .from(B)
-    .where(bucketWindow(scope, target.timeframe, start))
+    .where(bucketWindow(scope, target.timeframe, start, target.providerScope ?? ""))
   const [bucket] = await (apply ? query.for("update") : query)
   if (!bucket) return { timeframe: target.timeframe, kind: "empty_counter", amount: 0, receipts: 0 }
   const receipts = await tx
@@ -170,7 +170,7 @@ async function reconcileOne(
   input: GatewayUsageReconciliationInput,
   entry: GatewayUsageReconciliationEntry,
 ): Promise<{ status: Status; proof?: Awaited<ReturnType<typeof counterProof>>[] }> {
-  await activeUsageMember(tx, input.actor, true, input.apply === true)
+  await activeUsageMember(tx, input.actor, true)
   const validated = await validatedRow(tx, input, entry, input.apply === true)
   if (!validated) return { status: "missing" }
   const { row, scope, snapshot } = validated
@@ -209,7 +209,9 @@ async function reconcileOne(
     .set({ historyUnknown: true })
     .where(
       or(
-        ...ordered.map((target) => bucketWindow(scope, target.timeframe, new Date(target.startAt))),
+        ...ordered.map((target) =>
+          bucketWindow(scope, target.timeframe, new Date(target.startAt), target.providerScope ?? ""),
+        ),
       ),
     )
   const attributed = { ...row, metadata: { ...row.metadata, gateway_usage: snapshot } }

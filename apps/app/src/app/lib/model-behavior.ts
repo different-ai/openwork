@@ -24,8 +24,6 @@ function defaultBehaviorOption(): ModelBehaviorOption {
 }
 
 export const normalizeModelBehaviorValue = (value: string | null) => {
-  // Variant IDs are opaque catalog keys. Changing case or treating a named
-  // variant as an alias can make a supported selection fail native resolution.
   return value?.trim() ? value : null;
 };
 
@@ -34,8 +32,6 @@ const getVariantKeys = (model: ProviderModel | undefined) => Object.entries(mode
 
 export const FAST_PRICING_WARNING = "Fast uses priority processing at higher pricing. Effort is unchanged.";
 
-/** Verified engine materializers advertise these combinations. No inference from
- * model names or raw catalog modes, and no extra session/queue state. */
 export function getModelBehaviorControls<T extends Pick<ModelBehaviorOption, "value">>(options: readonly T[], value: string | null) {
   const hasFast = options.some((option) => option.value === FAST_DEFAULT_VARIANT);
   const standard = options.filter((option) => !hasFast || !option.value?.startsWith(FAST_VARIANT_PREFIX));
@@ -104,7 +100,6 @@ const getBehaviorTitle = (
 
 const getVariantLabel = (key: string) => key.charAt(0).toUpperCase() + key.slice(1);
 
-/** Cycle supplied choices, including the provider's Default (null). */
 export const nextModelBehaviorValue = (
   options: readonly Pick<ModelBehaviorOption, "value">[],
   current: string | null,
@@ -115,7 +110,6 @@ export const nextModelBehaviorValue = (
   return values[(currentIndex + 1) % values.length] ?? null;
 };
 
-/** Cycle supplied choices backward, including Default. */
 export const previousModelBehaviorValue = (
   options: readonly Pick<ModelBehaviorOption, "value">[],
   current: string | null,
@@ -172,7 +166,6 @@ export const getModelBehaviorOptions = (
   })];
 };
 
-/** For an explicit model switch only; never sanitize a saved same-model choice. */
 export const sanitizeModelBehaviorValue = (
   providerID: string,
   model: ProviderModel,
@@ -184,7 +177,6 @@ export const sanitizeModelBehaviorValue = (
     : null;
 };
 
-/** Describe a saved choice without changing it or treating missing metadata as rejection. */
 export const getModelBehaviorSelection = (
   suppliedOptions: readonly { value: string | null; label: string; description?: string }[],
   value: string | null,

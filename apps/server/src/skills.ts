@@ -151,15 +151,10 @@ async function listSkillsInDir(dir: string, scope: "project" | "global"): Promis
 
       const skillPath = join(dir, entry.name, "SKILL.md");
       if (await exists(skillPath)) {
-        // Direct skill: <dir>/<name>/SKILL.md
         const item = await parseSkillEntry(skillPath, entry.name, scope);
         return item ? [item] : [];
       }
 
-      // Domain/category folder: <dir>/<domain>/<name>/SKILL.md – scan one level deeper.
-      // This supports the convention where global skills are organised as
-      //   skills/<domain>/<skill-name>/SKILL.md
-      // in addition to the flat   skills/<skill-name>/SKILL.md  layout.
       const domainDir = join(dir, entry.name);
       let subEntries: Dirent[];
       try {
@@ -185,6 +180,16 @@ async function listSkillsInDir(dir: string, scope: "project" | "global"): Promis
   return groups.flat();
 }
 
+export function globalSkillDirectories() {
+  const home = homedir();
+  return {
+    openwork: join(home, ".config", "opencode", "skills"),
+    claude: join(home, ".claude", "skills"),
+    agents: join(home, ".agents", "skills"),
+    agentLegacy: join(home, ".agent", "skills"),
+  };
+}
+
 export async function listSkills(workspaceRoot: string, includeGlobal: boolean): Promise<SkillItem[]> {
   const roots = await findWorkspaceRoots(workspaceRoot);
   const dirs: { dir: string; scope: "project" | "global" }[] = [];
@@ -196,14 +201,8 @@ export async function listSkills(workspaceRoot: string, includeGlobal: boolean):
   }
 
   if (includeGlobal) {
-    const globalOpenWork = join(homedir(), ".config", "opencode", "skills");
-    const globalClaude = join(homedir(), ".claude", "skills");
-    const globalAgents = join(homedir(), ".agents", "skills");
-    const globalAgentLegacy = join(homedir(), ".agent", "skills");
-    dirs.push({ dir: globalOpenWork, scope: "global" });
-    dirs.push({ dir: globalClaude, scope: "global" });
-    dirs.push({ dir: globalAgents, scope: "global" });
-    dirs.push({ dir: globalAgentLegacy, scope: "global" });
+    const global = globalSkillDirectories();
+    for (const dir of [global.openwork, global.claude, global.agents, global.agentLegacy]) dirs.push({ dir, scope: "global" });
   }
 
   const groups = await Promise.all(dirs.map(({ dir, scope }) => listSkillsInDir(dir, scope)));
@@ -282,9 +281,6 @@ export async function deleteSkill(workspaceRoot: string, name: string): Promise<
     await rm(flatDir, { recursive: true, force: true });
     return { path: flatDir };
   }
-  // Nested layout: skills/<domain>/<name>/SKILL.md (e.g. skills installed by
-  // marketplace plugin bundles are namespaced under a plugin folder). Listing
-  // supports this layout, so deletion must resolve it the same way.
   const items = await listSkills(workspaceRoot, false);
   const item = items.find((skill) => skill.name === trimmed && skill.scope === "project");
   if (!item) {

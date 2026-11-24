@@ -13,7 +13,6 @@ export type DenListRowProps = {
   onClick?: () => void;
   ariaLabel?: string;
   tone?: DenListRowTone;
-  /** Temporary emphasis, e.g. a row targeted by a deep link. */
   focused?: boolean;
   dataAttributes?: Record<string, string | undefined>;
 };

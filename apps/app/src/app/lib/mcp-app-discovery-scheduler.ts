@@ -3,7 +3,6 @@ import { mcpAppResolutionRetryDelayMs } from "./mcp-app-resolution"
 import { OpenworkServerError, type OpenworkMcpAppLaunchReference, type OpenworkMcpAppResource } from "./openwork-server"
 import type { McpAppOrigin } from "../../components/chat/mcp-app-origin"
 
-// Canonical JSON also keeps equivalent React inputs from restarting discovery.
 export function mcpAppDiscoverySignature(value: unknown): string {
   return JSON.stringify(value, (_key, entry: unknown) => {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry
@@ -15,7 +14,6 @@ type Outcome = { app: null } | { error: unknown }
 type Scope = { busy: boolean; cached?: { outcome: Outcome; until: number }; manualAfter: number }
 type Job = { scope: Scope; start: () => void }
 
-/** Only negative outcomes are shared. A successful resource/lease belongs to one subscriber. */
 export function createMcpAppDiscoveryScheduler(now = Date.now) {
   const clients = new WeakMap<object, Map<string, Scope>>()
   const queue = new Set<Job>()
@@ -35,11 +33,11 @@ export function createMcpAppDiscoveryScheduler(now = Date.now) {
     manual: boolean,
     receive: (app: OpenworkMcpAppResource | null) => void,
     fail: (error: unknown) => void,
+    credentialRevision = 0,
   ): () => void {
     let scopes = clients.get(origin.client)
     if (!scopes) { scopes = new Map(); clients.set(origin.client, scopes) }
-    // Client objects capture endpoint/auth at construction. Never merge clients by URL.
-    const key = mcpAppDiscoverySignature([origin.workspaceId, origin.sessionId, origin.engine, origin.readOnly, toolName, launch])
+    const key = mcpAppDiscoverySignature([origin.workspaceId, origin.sessionId, origin.engine, origin.readOnly, toolName, launch, credentialRevision])
     const queuedScopes = new Set([...queue].map(job => job.scope))
     for (const [key, scope] of scopes) {
       if (!scope.busy && !queuedScopes.has(scope)
@@ -48,7 +46,6 @@ export function createMcpAppDiscoveryScheduler(now = Date.now) {
     let scope = scopes.get(key)
     if (!scope) { scope = { busy: false, manualAfter: 0 }; scopes.set(key, scope) }
     const state = scope
-    // One explicit bypass per exact scope per second, not one per historical frame.
     const bypass = manual && now() >= state.manualAfter && !state.busy
     if (bypass) { state.cached = undefined; state.manualAfter = now() + 1_000 }
     const queueTiming = startMcpAppTiming("chat.discovery-queue")
@@ -74,7 +71,6 @@ export function createMcpAppDiscoveryScheduler(now = Date.now) {
         queueMicrotask(drain)
       }
       const negative = (outcome: Outcome) => {
-        // Warm-up failures must get a fresh retry budget on the next mount.
         state.cached = "error" in outcome && mcpAppResolutionRetryDelayMs(outcome.error, 0) !== null
           ? undefined : { outcome, until: now() + 30_000 }
         publish(outcome)
@@ -85,7 +81,6 @@ export function createMcpAppDiscoveryScheduler(now = Date.now) {
         void origin.client.resolveMcpApp(origin.workspaceId, toolName, launch ?? undefined, origin).then(({ app }) => {
           resolvedTiming()
           if (!app) { negative({ app: null }); return }
-          // Never retain a successful launch, including when its original view went away.
           if (cancelled) {
             if (app.launchId) void origin.client.releaseMcpApp(origin.workspaceId, app.launchId).catch(() => undefined)
           } else receive(app)
@@ -107,7 +102,6 @@ export function createMcpAppDiscoveryScheduler(now = Date.now) {
       cancelled = true
       queue.delete(job)
       if (timer !== undefined) { window.clearTimeout(timer); timer = undefined; finish?.() }
-      // An already dispatched request retains its slot until it settles.
     }
   }
 }

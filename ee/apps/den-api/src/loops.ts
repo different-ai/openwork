@@ -56,7 +56,6 @@ export async function syncDenSignupContact(input: {
         detail = payload.message
       }
     } catch {
-      // Ignore non-JSON error bodies from Loops.
     }
 
     logger.warn("failed to sync Loops contact", { reason: detail })

@@ -1,4 +1,4 @@
-CREATE TABLE `feature_rollout` (
+CREATE TABLE IF NOT EXISTS `feature_rollout` (
 	`feature_key` varchar(64) NOT NULL,
 	`enabled` boolean NOT NULL,
 	`killed` boolean NOT NULL DEFAULT false,
@@ -8,7 +8,7 @@ CREATE TABLE `feature_rollout` (
 	CONSTRAINT `feature_rollout_feature_key` PRIMARY KEY(`feature_key`)
 );
 --> statement-breakpoint
-CREATE TABLE `organization_feature` (
+CREATE TABLE IF NOT EXISTS `organization_feature` (
 	`organization_id` varchar(64) NOT NULL,
 	`feature_key` varchar(64) NOT NULL,
 	`enabled` boolean NOT NULL,
@@ -25,12 +25,12 @@ CREATE TABLE `organization_feature` (
 -- Idempotent: INSERT IGNORE never replaces a row that already exists.
 INSERT IGNORE INTO `organization_feature` (`organization_id`, `feature_key`, `enabled`, `source`)
 SELECT `o`.`id`, `k`.`feature_key`,
-  JSON_EXTRACT(`o`.`doc`, CONCAT('$.capabilities.', `k`.`feature_key`)) = CAST('true' AS JSON),
+  JSON_EXTRACT(`o`.`doc`, CONCAT('$.capabilities.', `k`.`feature_key`)) = JSON_EXTRACT('true', '$'),
   'migration'
 FROM (
   SELECT `id`,
     CASE
-      WHEN JSON_TYPE(`metadata`) = 'STRING' AND JSON_VALID(JSON_UNQUOTE(`metadata`)) THEN CAST(JSON_UNQUOTE(`metadata`) AS JSON)
+      WHEN JSON_TYPE(`metadata`) = 'STRING' AND JSON_VALID(JSON_UNQUOTE(`metadata`)) THEN JSON_EXTRACT(JSON_UNQUOTE(`metadata`), '$')
       ELSE `metadata`
     END AS `doc`
   FROM `organization`
@@ -50,15 +50,18 @@ WHERE JSON_TYPE(JSON_EXTRACT(`o`.`doc`, CONCAT('$.capabilities.', `k`.`feature_k
 --> statement-breakpoint
 -- Connect also honored two older flat aliases when capabilities.mcpConnections
 -- was not a boolean: any literal true enabled it, otherwise a literal false disabled it.
+-- Guard each alias: MariaDB otherwise compares the JSON string "true" as true too.
 INSERT IGNORE INTO `organization_feature` (`organization_id`, `feature_key`, `enabled`, `source`)
 SELECT `o`.`id`, 'mcpConnections',
-  JSON_EXTRACT(`o`.`doc`, '$.connectEnabled') <=> CAST('true' AS JSON)
-    OR JSON_EXTRACT(`o`.`doc`, '$.mcpConnectionsEnabled') <=> CAST('true' AS JSON),
+  (JSON_TYPE(JSON_EXTRACT(`o`.`doc`, '$.connectEnabled')) = 'BOOLEAN'
+    AND JSON_EXTRACT(`o`.`doc`, '$.connectEnabled') <=> JSON_EXTRACT('true', '$'))
+  OR (JSON_TYPE(JSON_EXTRACT(`o`.`doc`, '$.mcpConnectionsEnabled')) = 'BOOLEAN'
+    AND JSON_EXTRACT(`o`.`doc`, '$.mcpConnectionsEnabled') <=> JSON_EXTRACT('true', '$')),
   'migration'
 FROM (
   SELECT `id`,
     CASE
-      WHEN JSON_TYPE(`metadata`) = 'STRING' AND JSON_VALID(JSON_UNQUOTE(`metadata`)) THEN CAST(JSON_UNQUOTE(`metadata`) AS JSON)
+      WHEN JSON_TYPE(`metadata`) = 'STRING' AND JSON_VALID(JSON_UNQUOTE(`metadata`)) THEN JSON_EXTRACT(JSON_UNQUOTE(`metadata`), '$')
       ELSE `metadata`
     END AS `doc`
   FROM `organization`

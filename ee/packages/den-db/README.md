@@ -9,37 +9,75 @@
 - Always generate new migrations with Drizzle from this package.
 - Do not create migrations from `den-api`, `den-controller`, or other apps.
 
-## Commands
+## How Den stores an organization's default model
 
-Generate a migration after editing the schema:
+An admin saves the model for everyone with `PUT /v1/org/default-model/everyone`.
+The response and the settings page's next `GET /v1/org/default-model` both
+need to show the saved choice.
 
-```bash
-pnpm --dir ee/packages/den-db db:generate
+| Database decision | How the default model works |
+| --- | --- |
+| Tenant key | The route takes `organization_id` from the caller's verified organization membership. It requires `inference.manage` to save and `inference.view` to read. Two organizations can each have an `everyone` default. |
+| Lookup index | The unique index `org_default_model_scope (organization_id, scope_key)` matches the save's two equality predicates. The settings query filters on the leading `organization_id` column to load all defaults for that organization. A team override uses the team ID as its scope key. |
+| Duplicate writes | The transaction locks the matching row with `SELECT … FOR UPDATE`, updates it in place, or inserts it when absent. The unique index enforces one row per organization and scope. The route retries once on a duplicate-key error. Repeating a save keeps the same row ID, though its update timestamp can change. Saving `null` removes that scope's default. |
+| Read routing | The write transaction runs on the primary. Both the PUT response and the separate settings GET call `listDefaultModelSettings`, which reads defaults, teams, and memberships through `db.$primary`. A new GET cannot rely on the previous request's write to select the primary. |
+
+The [schema](src/schema/default-models.ts), [store](../../apps/den-api/src/default-model.ts),
+and [HTTP routes](../../apps/den-api/src/routes/org/default-model.ts) implement the example.
+The [API test](../../apps/den-api/test/api/org-default-model.api.test.ts) saves
+different defaults in two organizations, holds the replica at its pre-write
+snapshot, and checks the immediate GET and the row ID after a repeated PUT.
+It also checks that another organization's owner cannot read or clear the setting.
+
+## Install or upgrade Den
+
+| Database and starting state | What to run | What happens |
+| --- | --- | --- |
+| Local MySQL | Run `pnpm dev:web-local`. To inspect first, set a loopback `DATABASE_URL` and run `pnpm --dir ee/packages/den-db db:migrate:local --check`. | On first startup, the runner replays from the historical foundation. On upgrade, it checks the schema and journal before applying pending SQL. It runs repairs and verifies the final schema and receipts before services start. Stop other connections before applying. See [local startup safety](#local-startup-safety). |
+| Hosted PlanetScale | The [Den DB Migrate workflow](../../../.github/workflows/den-db-migrate.yml) runs on selected pushes to `dev`, on a schedule, or by manual dispatch. | On the existing production branch it opens a DDL window for pending migrations, runs `db:migrate`, and restores safe migrations. Check the workflow result for confirmation that safe migrations were re-enabled. |
+| Self-hosted Den, empty database | Run the release image's migration job before starting Den. It executes `node /app/ee/packages/den-db/dist/scripts/bootstrap.js`. | Bootstrap installs the image's current-schema snapshot and records the bundled migration history as its baseline. The historical chain starts by altering existing tables. |
+| Self-hosted Den, existing database | Run the same migration job from the **new** release before rolling out its services. For a pending 0097, follow the [0097 upgrade preconditions](#production-0097-upgrade-preconditions) first. | Bootstrap checks recorded history and applies pending migrations. An existing schema without a journal or with an unknown history needs deliberate recovery. Inspect an interrupted migration before retrying. |
+
+Hosted `db:migrate` applies journaled SQL, runs schema repairs, then reconciles
+default permission sets. The workflow also runs reconciliation separately so
+permission catalog changes take effect even when there is no pending migration.
+
+The self-hosted job runs schema repairs and attempts permission reconciliation
+on fresh installs as well as upgrades. Reconciliation fills missing default
+Member and Admin permission rows and is idempotent. Bootstrap logs a
+reconciliation failure and continues. If it reports one, correct the cause and
+rerun `pnpm --dir ee/packages/den-db db:reconcile-permissions` with the same
+database configuration from a source checkout. The local migration runner
+handles schema and receipts only.
+
+## Development commands
+
+- Generate SQL after a schema edit with `pnpm --dir ee/packages/den-db db:generate`.
+- Apply the guarded local upgrade directly with `pnpm --dir ee/packages/den-db db:migrate:local` and a loopback `DATABASE_URL`.
+- Use `pnpm --dir ee/packages/den-db db:push` only on a disposable development database. Direct schema pushes do not record the migration history used by upgrades.
+- To run self-hosted bootstrap from a source checkout, build the workspace dependencies with `pnpm --filter '@openwork-ee/den-db^...' --if-present run build`, then run `pnpm --dir ee/packages/den-db db:bootstrap` against the intended database.
+
+## Verify installs and upgrades locally
+
+The [MySQL fixture](test/migration-preserved-tables.mysql.test.ts) uses Linux
+MySQL 8.4 with case-sensitive table names (`lower_case_table_names=0`).
+Set `OPENWORK_MIGRATION_TEST_MYSQL_URL` to a disposable loopback MySQL URL
+whose database name begins with `exp_`. The fixture account needs permission
+to create and drop temporary databases on that server. The test skips if the
+variable is absent.
+
+Run from the repository root with workspace dependencies installed.
+
+```sh
+pnpm --filter '@openwork-ee/den-db...' --if-present run build
+pnpm --dir ee/packages/den-db exec node --conditions=development --import tsx --test test/migration-preserved-tables.mysql.test.ts
 ```
 
-Apply schema directly to a development database:
-
-```bash
-pnpm --dir ee/packages/den-db db:push
-```
-
-Run Drizzle migrations against a configured database:
-
-```bash
-pnpm --dir ee/packages/den-db db:migrate
-```
-
-Install or upgrade a production database, including empty first installs:
-
-```bash
-pnpm --dir ee/packages/den-db db:bootstrap
-```
-
-Containerized production installs run the precompiled artifact directly:
-
-```bash
-node /app/ee/packages/den-db/dist/scripts/bootstrap.js
-```
+Historical replay preserves the legacy dashboard and access-grant tables.
+A fresh install from the packaged snapshot omits both. The fixture checks
+both fresh layouts. For upgrades it seeds a dashboard and its access grant
+at migration 0147, runs the local and packaged upgrade paths on separate
+databases, and checks the rows and ordered migration receipts again at restart.
 
 ## Production 0097 upgrade preconditions
 
@@ -88,7 +126,8 @@ refused rather than treating incomplete metadata visibility as proof of absence.
 Affected table/column collations must match the database defaults. The runner does
 not change engine settings, PK requirements, grants, encryption or TLS.
 
-History must be the exact canonical hash/timestamp prefix. Unknown, superseded,
+History must be the exact canonical hash/timestamp prefix; the only exceptions
+are released bodies listed in `scripts/superseded-migrations.ts`. Unknown, superseded,
 unjournaled, nonempty intermediate or partial-0097 states require separately
 reviewed recovery; bootstrap does not repair, replay partial DDL, or baseline them.
 A failed or uncertain completion must be inspected before any restart. For callers
@@ -139,6 +178,23 @@ local env vars — see `.env.example`):
 | `DATABASE_HOST` | PlanetScale host (e.g. `aws.connect.psdb.cloud`) |
 | `DATABASE_USERNAME` | PlanetScale branch password username |
 | `DATABASE_PASSWORD` | PlanetScale branch password |
+
+### Read replicas
+
+`createDenDb` always returns `db` wrapped in Drizzle's
+[`withReplicas`](https://orm.drizzle.team/docs/read-replicas). Reads
+(`select`, `selectDistinct`, `$count`, `with`, `query`) go to the replica;
+writes, `execute` and transactions go to the primary.
+
+Den API and the Gateway read optional `DATABASE_READ_USERNAME` and
+`DATABASE_READ_PASSWORD`: replica credentials for the same host as the primary
+(`DATABASE_HOST`, or the host in `DATABASE_URL`). Without both, the replica *is*
+the primary, so self-hosted and single-credential deployments behave as before.
+
+Replicas can lag the primary slightly. A read that must see a write made
+moments earlier should use `db.$primary.select()...`; Better Auth's adapter is
+pinned to `db.$primary` for this reason. Migration and maintenance scripts
+don't pass replica credentials and always use the primary.
 
 ### One-time baseline
 

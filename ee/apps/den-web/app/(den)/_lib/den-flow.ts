@@ -1,7 +1,11 @@
-import { denApiCredentials, denBrowserEndpoint } from "./den-api-origin";
+import { workflowRunPreviewSchema, type WorkflowRunPreview } from "@openwork/types/workflows";
+import { seatPlanQuoteSchema, type SeatPlanQuote } from "@openwork/types/den/billing-plans";
+import { denApiCredentials, denBrowserEndpoint, isSameOriginBrowserRequest } from "./den-api-origin";
 import { getAuthResumeUrl } from "./auth-resume";
 import { ORG_SCOPE_HEADER, getRequestOrgScope, shouldPinOrgScopePath } from "./org-scope";
 import { getRuntimeConfig } from "./runtime-config";
+import { getSafeMemberReturnTo } from "./member-auth-routing";
+import { workbotAuthReturnTo } from "../dashboard/_lib/workbot-team-link";
 
 export type AuthMode = "sign-in" | "sign-up";
 export type SocialAuthProvider = "github" | "google";
@@ -21,6 +25,7 @@ export type OrgPaymentRequiredError = {
   message: string;
   currentCount: number;
   freeSeatCount: number;
+  quote: SeatPlanQuote | null;
 };
 
 export type AuthUser = {
@@ -73,6 +78,23 @@ export class DenRequestCanceledError extends Error {
   }
 }
 
+export type WorkflowRun = {
+  id: string;
+  workflow: WorkflowRunPreview | null;
+  source: string;
+  status: "succeeded" | "failed";
+  errorKind: string | null;
+  errorMessage: string | null;
+  toolCallCount: number;
+  toolCalls: Array<{ name: string }>;
+  durationMs: number;
+  startedAt: string;
+  finishedAt: string;
+  createdAt: string;
+  orgMembershipId: string | null;
+};
+
+
 type PosthogClient = {
   capture?: (eventName: string, properties?: Record<string, unknown>) => void;
   identify?: (distinctId: string, properties?: Record<string, unknown>) => void;
@@ -119,7 +141,6 @@ export function trackPosthogEvent(eventName: string, properties: Record<string, 
   try {
     window.posthog?.capture?.(eventName, properties);
   } catch {
-    // Ignore analytics delivery failures.
   }
 }
 
@@ -134,7 +155,6 @@ export function identifyPosthogUser(user: AuthUser) {
       name: user.name ?? undefined
     });
   } catch {
-    // Ignore analytics delivery failures.
   }
 }
 
@@ -146,7 +166,6 @@ export function resetPosthogUser() {
   try {
     window.posthog?.reset?.();
   } catch {
-    // Ignore analytics delivery failures.
   }
 }
 
@@ -162,7 +181,7 @@ export function getSocialProviderLabel(provider: SocialAuthProvider): string {
   return provider === "github" ? "GitHub" : "Google";
 }
 
-export function getSocialCallbackUrl(authCallbackBaseUrl = ""): string {
+export function getSocialCallbackUrl(authCallbackBaseUrl = "", requestedReturnTo?: string | null): string {
   try {
     const origin = authCallbackBaseUrl || (typeof window !== "undefined" ? window.location.origin : "");
     if (!origin) {
@@ -183,6 +202,12 @@ export function getSocialCallbackUrl(authCallbackBaseUrl = ""): string {
           callbackUrl.searchParams.set(key, value);
         }
       }
+      const returnTo = getSafeMemberReturnTo(requestedReturnTo === undefined ? params.get("returnTo") : requestedReturnTo);
+      if (returnTo) {
+        callbackUrl.searchParams.set("returnTo", returnTo);
+      }
+      const workbotReturnTo = workbotAuthReturnTo(params.get("workbotReturnTo"));
+      if (workbotReturnTo) callbackUrl.searchParams.set("workbotReturnTo", workbotReturnTo);
     }
     return callbackUrl.toString();
   } catch {
@@ -190,7 +215,6 @@ export function getSocialCallbackUrl(authCallbackBaseUrl = ""): string {
       try {
         return new URL("/", authCallbackBaseUrl).toString();
       } catch {
-        // Fall through to the hosted default when the configured URL is invalid.
       }
     }
     return typeof window !== "undefined" ? `${window.location.origin}/` : "/";
@@ -302,7 +326,17 @@ export function getOrgPaymentRequiredError(payload: unknown): OrgPaymentRequired
     message: payload.message,
     currentCount: payload.currentCount,
     freeSeatCount: payload.freeSeatCount,
+    quote: seatPlanQuote(payload.quote),
   };
+}
+
+function seatPlanQuote(value: unknown): SeatPlanQuote | null {
+  const parsed = seatPlanQuoteSchema.safeParse(value);
+  return parsed.success ? parsed.data : null;
+}
+
+export function freePlanUserLimitMessage(freeSeatCount: number): string {
+  return `The Free plan is limited to ${freeSeatCount} users, counting pending invitations. Upgrade to the Team plan from Billing to invite more people.`;
 }
 
 export function getReauthRequiredError(payload: unknown, response: Response): ReauthRequiredError | null {
@@ -316,7 +350,23 @@ export function getReauthRequiredError(payload: unknown, response: Response): Re
   );
 }
 
+export class SsoSessionRequiredError extends Error {
+  readonly signInPath: string;
+
+  constructor(message: string, signInPath: string) {
+    super(message);
+    this.name = "SsoSessionRequiredError";
+    this.signInPath = signInPath;
+  }
+}
+
 export function getRequestError(payload: unknown, response: Response, fallback: string) {
+  if (
+    response.status === 409 && isRecord(payload) && payload.error === "sso_session_required"
+    && typeof payload.signInPath === "string" && /^\/sso\/[a-zA-Z0-9_%.-]+$/.test(payload.signInPath)
+  ) {
+    return new SsoSessionRequiredError(getErrorMessage(payload, fallback), payload.signInPath);
+  }
   return getReauthRequiredError(payload, response) ?? new Error(getErrorMessage(payload, fallback));
 }
 
@@ -351,9 +401,58 @@ export function getToken(payload: unknown): string | null {
   return typeof payload.token === "string" ? payload.token : null;
 }
 
-export async function requestJson(path: string, init: RequestInit = {}, timeoutMs = 30000) {
+function parseWorkflowRun(value: unknown): WorkflowRun | null {
+  if (
+    !isRecord(value)
+    || typeof value.id !== "string"
+    || typeof value.source !== "string"
+    || (value.status !== "succeeded" && value.status !== "failed")
+    || typeof value.toolCallCount !== "number"
+    || typeof value.durationMs !== "number"
+    || typeof value.startedAt !== "string"
+    || typeof value.finishedAt !== "string"
+    || typeof value.createdAt !== "string"
+  ) {
+    return null;
+  }
+
+  const toolCalls = Array.isArray(value.toolCalls)
+    ? value.toolCalls.flatMap((call) =>
+        isRecord(call) && typeof call.name === "string" ? [{ name: call.name }] : [],
+      )
+    : [];
+  const workflow = workflowRunPreviewSchema.safeParse(value.workflow);
+
+  return {
+    id: value.id,
+    workflow: workflow.success ? workflow.data : null,
+    source: value.source,
+    status: value.status,
+    errorKind: typeof value.errorKind === "string" ? value.errorKind : null,
+    errorMessage: typeof value.errorMessage === "string" ? value.errorMessage : null,
+    toolCallCount: value.toolCallCount,
+    toolCalls,
+    durationMs: value.durationMs,
+    startedAt: value.startedAt,
+    finishedAt: value.finishedAt,
+    createdAt: value.createdAt,
+    orgMembershipId: typeof value.orgMembershipId === "string" ? value.orgMembershipId : null,
+  };
+}
+
+export function getWorkflowRuns(payload: unknown): WorkflowRun[] {
+  if (!isRecord(payload) || !Array.isArray(payload.runs)) {
+    return [];
+  }
+  return payload.runs.flatMap((run) => {
+    const parsed = parseWorkflowRun(run);
+    return parsed ? [parsed] : [];
+  });
+}
+
+export async function requestResponse(path: string, init: RequestInit = {}, timeoutMs = 30000): Promise<Response> {
   const headers = new Headers(init.headers);
-  headers.set("Accept", "application/json");
+  if (!headers.has("Accept")) headers.set("Accept", "application/json");
 
   if (init.body && !(init.body instanceof FormData) && !headers.has("Content-Type")) {
     headers.set("Content-Type", "application/json");
@@ -381,7 +480,7 @@ export async function requestJson(path: string, init: RequestInit = {}, timeoutM
 
   let response: Response;
   try {
-    if (typeof window !== "undefined") {
+    if (typeof window !== "undefined" && !isSameOriginBrowserRequest(path)) {
       await getRuntimeConfig();
     }
     const endpoint = path.startsWith("/api/auth/") ? path : denBrowserEndpoint(path);
@@ -398,8 +497,6 @@ export async function requestJson(path: string, init: RequestInit = {}, timeoutM
       }).catch(() => null);
     }
   } catch (error) {
-    // Only the deadline created by this helper becomes a timeout. An abort
-    // supplied by a caller becomes a distinct cancellation error.
     if (didReachDashboardDeadline) {
       throw new DenRequestTimeoutError(timeoutMs, error);
     }
@@ -413,6 +510,11 @@ export async function requestJson(path: string, init: RequestInit = {}, timeoutM
     }
   }
 
+  return response;
+}
+
+export async function requestJson(path: string, init: RequestInit = {}, timeoutMs = 30000) {
+  const response = await requestResponse(path, init, timeoutMs);
   const text = await response.text();
   let payload: unknown = null;
 

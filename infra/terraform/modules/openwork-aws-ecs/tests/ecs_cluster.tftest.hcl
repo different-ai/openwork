@@ -35,8 +35,15 @@ mock_provider "aws" {
 
 mock_provider "random" {}
 
+override_resource {
+  target = aws_lambda_invocation.migrate
+  values = { result = "{\"exitCode\":0,\"image\":\"ghcr.io/different-ai/openwork-den-api@sha256:0942e02a8e2033151e982f51b24926fe5090807b7f7480d77f2c4fc5b806737e\"}" }
+}
+
 variables {
-  openwork_version    = "0.0.0-test"
+  openwork_version    = "0.18.58"
+  write_only_secrets  = false # exercise preserved legacy state path
+  database_ca_bundle  = "-----BEGIN CERTIFICATE-----test"
   vpc_id              = "vpc-123"
   alb_subnet_ids      = ["subnet-a", "subnet-b"]
   service_subnet_ids  = ["subnet-a", "subnet-b"]
@@ -92,4 +99,18 @@ run "rejects_non_arn" {
   }
 
   expect_failures = [var.ecs_cluster_arn]
+}
+
+run "prefixes_service_names_in_a_shared_cluster" {
+  command = apply
+
+  variables {
+    ecs_cluster_arn     = "arn:aws:ecs:us-east-1:123456789012:cluster/platform"
+    service_name_prefix = "ow-1234-"
+  }
+
+  assert {
+    condition     = aws_ecs_service.api.name == "ow-1234-den-api" && aws_ecs_service.web.name == "ow-1234-den-web"
+    error_message = "service_name_prefix should prefix every ECS service name."
+  }
 }

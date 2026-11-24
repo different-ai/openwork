@@ -18,7 +18,7 @@ export function sandboxBlockConformanceCases(factory: () => SandboxProvider | Pr
     name: `block ${block}: observable behavior`,
     async run() {
       await using(async (p, spec) => {
-        withBlocks(p, [block], "conformance") // check before allocating compute
+        withBlocks(p, [block], "conformance")
         const h = await p.create(spec, opts)
         try {
           if (block === "run") {

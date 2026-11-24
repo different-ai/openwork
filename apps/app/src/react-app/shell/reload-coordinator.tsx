@@ -19,13 +19,9 @@ import {
 import { useSystemState } from "@/react-app/kernel/system-state";
 import { notifyAlert, notifyEvent } from "./notifications";
 
-/** Debounce before an auto-reload, so bursts (an agent writing several
- *  skills) collapse into one engine dispose. */
 const AUTO_RELOAD_DEBOUNCE_MS = 1500;
-/** Minimum spacing between consecutive auto-reloads. */
 const AUTO_RELOAD_COOLDOWN_MS = 5000;
 
-/** One coalesced center entry tracks the pending → applied lifecycle. */
 const RELOAD_DEDUPE_KEY = "engine-reload";
 const RELOAD_ERROR_DEDUPE_KEY = "engine-reload-error";
 
@@ -79,7 +75,6 @@ function describeTrigger(
   return "Config changed. Reload to apply.";
 }
 
-/** Past-tense copy for the "reload happened automatically" receipt. */
 function describeApplied(trigger: ReloadTrigger | null): string {
   if (!trigger) return "Latest configuration changes are now active.";
 
@@ -111,13 +106,6 @@ const LIVE_ACTIVITY_STATUSES: SessionActivityStatus[] = [
   "waiting",
 ];
 
-/**
- * Real-time "anything in flight?" signal across all workspaces. The route
- * session lists used for `activeSessions` refresh on a slower cadence, so
- * the SSE-fed activity store is the authoritative gate before disposing the
- * engine: it flips busy on task submit and also covers sessions waiting on
- * permission/question prompts (a dispose would orphan those).
- */
 function hasLiveSessionActivity(
   statusesByWorkspaceId: Record<string, Record<string, SessionActivityStatus>>,
 ): boolean {
@@ -130,7 +118,6 @@ type ReloadSession = { id: string; title: string };
 
 export type WorkspaceReloadControls = {
   workspaceId: string;
-  /** Return true when the selected engine observes these changes live. */
   applyLiveChanges?: () => Promise<boolean>;
   canReloadWorkspaceEngine: () => boolean;
   reloadWorkspaceEngine: () => Promise<boolean>;
@@ -212,9 +199,6 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
   }, []);
   const ignoreError = useCallback(() => {}, []);
 
-  // Receipt for a completed reload. Runs for auto and manual reloads alike,
-  // but only when changes were actually pending (settings' bare "Reload
-  // engine" button shouldn't generate noise).
   const handleReloadComplete = useCallback(() => {
     if (!hadPendingReloadRef.current) return;
     const trigger = pendingReloadTriggerRef.current;
@@ -277,7 +261,6 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
     return () => window.removeEventListener("openwork-reload-required", handler);
   }, [markReloadRequired]);
 
-  // Track what is pending so the post-reload receipt can describe it.
   useEffect(() => {
     if (systemState.reload.reloadPending) {
       hadPendingReloadRef.current = true;
@@ -294,19 +277,11 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
     activeSessions.length === 0 && !activityBlocked && pendingAdmissions === 0 &&
     !orgOnboardingVisible;
 
-  // Auto-reload when idle. Reloading is a cheap in-process engine rebuild
-  // (no window reload, drafts survive), so instead of nagging with a
-  // "Reload required" toast we just do it and drop a receipt in the
-  // notification center. Sessions that are running keep blocking, exactly
-  // like the old toast gating did.
   useEffect(() => {
     if (!reloadIdle) return;
     if (systemState.reload.reloadBusy) return;
 
     if (!systemState.canReloadWorkspaceEngine) {
-      // Reload controls unavailable: surface the
-      // pending change quietly; auto-reload picks it up once controls
-      // register again.
       notifyEvent({
         kind: "reload",
         severity: "info",
@@ -317,8 +292,6 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
       return;
     }
 
-    // A failed attempt parks the pending state for manual retry (from the
-    // alert toast or the center entry) instead of retry-looping.
     if (systemState.reload.reloadError) return;
 
     const delay = Math.max(
@@ -326,12 +299,6 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
       lastAutoReloadAtRef.current + AUTO_RELOAD_COOLDOWN_MS - Date.now(),
     );
     const timer = window.setTimeout(() => {
-      // Re-check at fire time: a task may have started during the debounce
-      // window. The effect re-runs when activity ends and reschedules.
-      // A newly submitted task is already busy in the app before OpenCode's
-      // status endpoint reports it. Even a rollover-capable server can see
-      // that gap as idle and dispose the instance. Automatic reloads wait;
-      // explicit reloads can still use the server's busy-session rollover.
       if (pendingAdmissionsRef.current > 0 || hasLiveSessionActivity(useSessionActivityStore.getState().statusesByWorkspaceId)) {
         return;
       }
@@ -341,9 +308,6 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
     return () => window.clearTimeout(timer);
   }, [reloadIdle, systemState]);
 
-  // Changes pending while tasks are running: quiet center entry instead of
-  // a toast. The same dedupe key means the eventual "applied" receipt
-  // replaces it.
   useEffect(() => {
     if (!systemState.reload.reloadPending) return;
     if (allowsBusyReload) return;
@@ -357,8 +321,6 @@ export function ReloadCoordinatorProvider({ children }: { children: ReactNode })
     });
   }, [allowsBusyReload, systemState.reload.reloadPending, activeSessions.length, activityBlocked]);
 
-  // Reload failures are the one case that still warrants a toast (Alert
-  // class): transient toast with Retry + persistent center entry.
   useEffect(() => {
     const error = systemState.reload.reloadError;
     if (!error) {

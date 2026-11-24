@@ -13,6 +13,7 @@ import {
   supportLabel,
   supportTotals,
   type CapabilityCell,
+  type CapabilityGroup,
   type ProductKey
 } from "../lib/cowork-capabilities";
 import { OpenWorkMark } from "./openwork-mark";
@@ -20,7 +21,7 @@ import { OpenWorkMark } from "./openwork-mark";
 const valueClass: Record<CapabilityCell["value"], string> = {
   yes: "font-semibold text-[var(--lp-ink)]",
   partial: "text-[var(--lp-body)]",
-  no: "text-[var(--lp-muted)] opacity-70"
+  no: "text-[var(--lp-muted)]"
 };
 
 function MatrixCell({ cell, number }: { cell: CapabilityCell; number?: number }) {
@@ -50,18 +51,22 @@ function MatrixCell({ cell, number }: { cell: CapabilityCell; number?: number })
 
 type Props = {
   caption: string;
-  /** Column whose header reads in full ink, for pages focused on it. */
   emphasis?: ProductKey;
+  groups?: string[];
 };
 
-export function CapabilityMatrix({ caption, emphasis }: Props) {
-  const footnotes = capabilityFootnotes();
+export function CapabilityMatrix({ caption, emphasis, groups }: Props) {
+  const visibleGroups: CapabilityGroup[] = groups
+    ? groups.flatMap((label) => capabilityGroups.filter((group) => group.label === label))
+    : capabilityGroups;
+  const rows = groups ? visibleGroups.flatMap((group) => group.rows) : capabilityRows;
+  const footnotes = capabilityFootnotes(rows);
   const numbers = new Map(footnotes.map((note) => [note.id, note.number]));
   const tonal = (key: ProductKey) => (key === "openwork" ? "bg-[var(--lp-tonal)]" : "");
 
   return (
     <div>
-      <p className="mb-6 max-w-[640px] text-[15px] leading-[24px] text-[var(--lp-body)]">{capabilitySubtitle()}</p>
+      <p className="mb-6 max-w-[640px] text-[15px] leading-[24px] text-[var(--lp-body)]">{capabilitySubtitle(rows)}</p>
       <div className="-mx-6 overflow-x-auto px-6 md:mx-0 md:px-0">
         <table className="w-full min-w-[340px] table-fixed border-collapse text-left text-[13px] leading-[19px] md:text-[14.5px] md:leading-[22px]">
           <caption className="sr-only">{caption}</caption>
@@ -101,7 +106,7 @@ export function CapabilityMatrix({ caption, emphasis }: Props) {
             </tr>
           </thead>
           <tbody>
-            {capabilityGroups.map((group) => (
+            {visibleGroups.map((group) => (
               <Fragment key={group.label}>
                 <tr>
                   <th
@@ -140,10 +145,10 @@ export function CapabilityMatrix({ caption, emphasis }: Props) {
           <tfoot>
             <tr className="border-t-2 border-[var(--lp-ink)]">
               <th scope="row" className="sticky left-0 z-10 bg-[var(--lp-page)] py-4 pr-3 font-semibold text-[var(--lp-ink)]">
-                Yes, of {capabilityRows.length}
+                Yes, of {rows.length}
               </th>
               {capabilityColumns.map((column) => {
-                const totals = supportTotals(column.key);
+                const totals = supportTotals(column.key, rows);
                 return (
                   <td key={column.key} className={`px-1.5 py-4 text-center tabular-nums md:px-4 ${tonal(column.key)}`}>
                     <span

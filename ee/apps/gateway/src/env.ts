@@ -1,7 +1,8 @@
 import "./load-env.js";
-import type { DenDbMode, PlanetScaleCredentials } from "@openwork-ee/den-db";
+import { readReplicaCredentialsFromEnv, type DenDbMode, type PlanetScaleCredentials } from "@openwork-ee/den-db";
 import { gatewayInteger, gatewayOrigin, parseGatewayDeploymentEnv } from "@openwork-ee/utils/gateway-env";
 import { z } from "zod";
+import { parseFeatureEnvironment } from "@openwork/features";
 import { readAutoConfig } from "./free/shared/config.js";
 
 const EnvSchema = z
@@ -13,6 +14,8 @@ const EnvSchema = z
     DATABASE_HOST: z.string().min(1).optional(),
     DATABASE_USERNAME: z.string().min(1).optional(),
     DATABASE_PASSWORD: z.string().optional(),
+    DATABASE_READ_USERNAME: z.string().optional(),
+    DATABASE_READ_PASSWORD: z.string().optional(),
     DEN_DB_ENCRYPTION_KEY: z.string().trim().min(32),
     GATEWAY_PROXY_BASE_URL: z.string().optional(),
     OPENROUTER_UPSTREAM_URL: z.string().optional(),
@@ -26,6 +29,10 @@ const EnvSchema = z
     GATEWAY_RESPONSE_HEARTBEAT_MS: z.number().int().min(1000).max(90000),
     GATEWAY_WEBHOOK_SECRET: z.string().optional(),
     GATEWAY_CREDITS_PER_DOLLAR: z.string().optional(),
+    TYPESAFE_API_KEY: z.string().optional(),
+    TYPESAFE_BASE_URL: z.string().optional(),
+    AUTO_ROUTER_JEV_MODEL: z.string().optional(),
+    AUTO_ROUTER_JEV_TIMEOUT_MS: z.string().optional(),
   })
   .superRefine((value, ctx) => {
     const mode =
@@ -58,20 +65,13 @@ export const isDevMode = process.env.OPENWORK_DEV_MODE === "1" && process.env.NO
 
 const input = {
   ...process.env,
-  // Deprecated INFERENCE_* aliases: an explicitly set GATEWAY_* value wins,
-  // including empty values (disable), and invalid values fail validation.
   PORT: gatewayInteger(process.env.GATEWAY_PORT ?? process.env.PORT ?? process.env.INFERENCE_PORT, "GATEWAY_PORT (or PORT/INFERENCE_PORT when absent)", 8791, 1, 65535),
   GATEWAY_PROXY_BASE_URL: process.env.GATEWAY_PROXY_BASE_URL ?? process.env.INFERENCE_PROXY_BASE_URL,
   GATEWAY_ADMIN_TOKEN: process.env.GATEWAY_ADMIN_TOKEN ?? process.env.INFERENCE_ADMIN_TOKEN,
   GATEWAY_UPSTREAM_TIMEOUT_MS: gatewayInteger(process.env.GATEWAY_UPSTREAM_TIMEOUT_MS ?? process.env.INFERENCE_UPSTREAM_TIMEOUT_MS, "GATEWAY_UPSTREAM_TIMEOUT_MS", 30 * 60_000, 1000, 24 * 60 * 60_000),
   GATEWAY_STREAM_IDLE_MS: gatewayInteger(process.env.GATEWAY_STREAM_IDLE_MS ?? process.env.INFERENCE_STREAM_IDLE_MS, "GATEWAY_STREAM_IDLE_MS", 120000, 1000, 900000),
-  // A proxy in front of the gateway (Cloudflare: ~100s) answers 524 when response
-  // headers take longer than its limit. Streaming requests commit their response
-  // after this long and keep it alive with SSE comments; keep it well below that limit.
   GATEWAY_RESPONSE_START_MS: gatewayInteger(process.env.GATEWAY_RESPONSE_START_MS, "GATEWAY_RESPONSE_START_MS", 20000, 1000, 24 * 60 * 60_000),
   GATEWAY_RESPONSE_HEARTBEAT_MS: gatewayInteger(process.env.GATEWAY_RESPONSE_HEARTBEAT_MS, "GATEWAY_RESPONSE_HEARTBEAT_MS", 15000, 1000, 90000),
-  // Keep below the host's SIGKILL grace (Render: maxShutdownDelaySeconds, default 30s)
-  // minus ~5s for usage writes and telemetry flush.
   GATEWAY_SHUTDOWN_DRAIN_MS: gatewayInteger(process.env.GATEWAY_SHUTDOWN_DRAIN_MS, "GATEWAY_SHUTDOWN_DRAIN_MS", 25000, 0, 600000),
   GATEWAY_CREDITS_PER_DOLLAR: process.env.GATEWAY_CREDITS_PER_DOLLAR ?? process.env.INFERENCE_CREDITS_PER_DOLLAR,
   DATABASE_URL:
@@ -88,6 +88,10 @@ const input = {
   GATEWAY_WEBHOOK_SECRET:
     process.env.GATEWAY_WEBHOOK_SECRET ?? process.env.INFERENCE_WEBHOOK_SECRET ??
     (isDevMode ? "local-dev-webhook-secret" : undefined),
+  TYPESAFE_API_KEY: process.env.TYPESAFE_API_KEY,
+  TYPESAFE_BASE_URL: process.env.TYPESAFE_BASE_URL,
+  AUTO_ROUTER_JEV_MODEL: process.env.AUTO_ROUTER_JEV_MODEL,
+  AUTO_ROUTER_JEV_TIMEOUT_MS: process.env.AUTO_ROUTER_JEV_TIMEOUT_MS,
 };
 const gatewayDeployment = parseGatewayDeploymentEnv({ ...process.env,
   DATABASE_URL: input.DATABASE_URL,
@@ -120,6 +124,11 @@ function splitCsv(value: string | undefined) {
 
 function normalizeUrl(value: string) {
   return value.replace(/\/+$/, "");
+}
+
+function parseJevTimeout(value: string | undefined) {
+  const timeout = Number(value ?? "4000");
+  return Number.isInteger(timeout) && timeout >= 200 && timeout <= 30000 ? timeout : 4000;
 }
 
 function parseCreditsPerDollar(value: string | undefined) {
@@ -157,6 +166,7 @@ export const env = {
   dbMode: (parsed.DB_MODE ??
     (parsed.DATABASE_URL ? "mysql" : "planetscale")) as DenDbMode,
   planetscale,
+  readReplica: readReplicaCredentialsFromEnv(parsed),
   dbEncryptionKey: parsed.DEN_DB_ENCRYPTION_KEY,
   proxyBaseUrl: optionalString(parsed.GATEWAY_PROXY_BASE_URL),
   openRouterUpstreamUrl,
@@ -164,4 +174,11 @@ export const env = {
   adminToken: optionalString(parsed.GATEWAY_ADMIN_TOKEN),
   webhookSecret: optionalString(parsed.GATEWAY_WEBHOOK_SECRET),
   creditsPerDollar: parseCreditsPerDollar(parsed.GATEWAY_CREDITS_PER_DOLLAR),
+  features: parseFeatureEnvironment(process.env),
+  autoRouter: {
+    typesafeApiKey: optionalString(parsed.TYPESAFE_API_KEY),
+    typesafeBaseUrl: normalizeUrl(optionalString(parsed.TYPESAFE_BASE_URL) ?? "https://api.typesafe.ai"),
+    jevModel: optionalString(parsed.AUTO_ROUTER_JEV_MODEL) ?? "jev-latest",
+    jevTimeoutMs: parseJevTimeout(parsed.AUTO_ROUTER_JEV_TIMEOUT_MS),
+  },
 };

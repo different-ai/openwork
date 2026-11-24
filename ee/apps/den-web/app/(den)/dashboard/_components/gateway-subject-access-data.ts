@@ -8,9 +8,10 @@ import { asInferenceProvider } from "./inference-provider-request";
 
 const providerListSchema = z.object({ inferenceProviders: z.array(z.unknown()) });
 
-export function useGatewayAccessProviders(orgId: string) {
+export function useGatewayAccessProviders(orgId: string, enabled = true) {
   return useQuery({
     queryKey: ["gateway-subject-access", orgId],
+    enabled,
     retry: false,
     staleTime: 0,
     gcTime: 0,

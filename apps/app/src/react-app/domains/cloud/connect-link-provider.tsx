@@ -33,13 +33,6 @@ type ConnectLinkProviderProps = {
   children: ReactNode;
 };
 
-/**
- * Global consumer for signed and short-lived exchange connect links in the
- * normal desktop app. Relays the raw URL to the Electron main process for validation,
- * walks the user through an explicit
- * confirmation, and only then lets the main process persist the new desktop
- * bootstrap config. Mirrors the den-auth-provider deep-link listener pattern.
- */
 export function ConnectLinkProvider({ children }: ConnectLinkProviderProps) {
   const [phase, setPhase] = useState<ConnectConfirmPhase | "idle">("idle");
   const [pending, setPending] = useState<PendingConnectLink | null>(null);
@@ -62,8 +55,6 @@ export function ConnectLinkProvider({ children }: ConnectLinkProviderProps) {
         setPhase("confirm");
         return;
       }
-      // Leave failed links handled — the same broken link should not
-      // re-prompt every time the queue replays it.
       setError({ code: result.code, message: result.message });
       setPhase("error");
     }).catch(() => {
@@ -77,8 +68,6 @@ export function ConnectLinkProvider({ children }: ConnectLinkProviderProps) {
       const parsed = parseConnectDeepLink(rawUrl);
       if (!parsed || handledLinksRef.current.has(parsed.key)) continue;
       beginVerify(parsed.rawUrl, parsed.key);
-      // One prompt at a time; later links can arrive again as new deep-link
-      // events after the current prompt is resolved.
       break;
     }
   }, [beginVerify]);
@@ -113,8 +102,6 @@ export function ConnectLinkProvider({ children }: ConnectLinkProviderProps) {
         setPhase("error");
         return;
       }
-      // The shell already persisted desktop-bootstrap.json; converge the
-      // renderer snapshot so DenSigninGate takes over (requireSignin flow).
       await refreshDenBootstrapConfigFromShell();
       dismiss();
     }).catch(() => {

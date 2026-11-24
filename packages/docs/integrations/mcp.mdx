@@ -1,0 +1,47 @@
+---
+title: "MCP integration"
+description: "One OpenWork MCP URL brings organization skills and connected tools into OpenCode, Cursor, Codex, Claude Code, and other compatible clients."
+---
+
+Add one URL to any MCP client to use your organization's skills, plugins, workflows, and connected tools.
+
+```text
+https://api.openworklabs.com/mcp/agent
+```
+
+Sign in with your OpenWork account in the browser and pick your organization. The agent gets what's assigned to you.
+
+## How it works across clients
+
+1. An admin shares skills and service connections with people or teams in OpenWork.
+2. Each person adds the same gateway URL to their preferred MCP client and signs in.
+3. The agent uses `search_capabilities` to find an authorized capability and `execute_capability` to use it. It can also use `list_skills` and `get_skill` to retrieve skill instructions. Clients that support the [MCP Skills extension](https://modelcontextprotocol.io/seps/2640-skills-extension) discover the same skills on their own through `skills/list`.
+4. OpenWork applies the member's access grants and connection tool settings to requests through the gateway.
+
+Your team sets things up once, instead of copying MCP settings and skills into every client.
+
+## Choose your client
+
+<CardGroup cols={2}>
+  <Card title="OpenCode" icon="terminal" href="/model-context-protocol/opencode">Connect the MCP gateway without a plugin.</Card>
+  <Card title="Cursor" icon="code" href="/model-context-protocol/cursor">Add OpenWork as a remote MCP server.</Card>
+  <Card title="Codex" icon="terminal" href="/model-context-protocol/codex">Add the gateway and sign in from Codex.</Card>
+  <Card title="Claude Code" icon="terminal" href="/model-context-protocol/claude-code">Connect your organization from Claude Code.</Card>
+  <Card title="Claude Desktop" icon="desktop" href="/model-context-protocol/claude-desktop">Add OpenWork as a custom connector.</Card>
+  <Card title="More clients" icon="plug" href="/start-here/connect-openwork-mcp">Find setup instructions for ChatGPT, VS Code, Gemini CLI, and more.</Card>
+</CardGroup>
+
+## Models and specialized plugins
+
+MCP adds tools and skills; your client keeps its own model provider. To use your organization's AI Gateway models too, use a [client plugin](/integrations/client-plugins).
+
+The [OpenCode plugin](/model-context-protocol/opencode-plugin) is ready. Cursor and Codex plugins are in progress; MCP works in both today.
+
+## Manage resources for your organization
+
+- [Share MCP connections and configure tools](/cloud/share-with-your-team/shared-mcp-connections)
+- [Publish a reusable skill](/start-here/do-work-with-it/publish-and-copy-a-skill)
+- [Share plugins and skills through collections](/cloud/share-with-your-team/collections)
+- [MCP gateway reference](/cloud/run-in-the-cloud/cloud-mcp)
+
+Gateway permissions cover what goes through OpenWork, not other tools or providers configured in the client.

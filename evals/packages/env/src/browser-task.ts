@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { promisify } from "node:util";
 import { parseBrowserTaskReply } from "@openwork/behaviors";
-import type { BrowserTaskInput, BrowserTaskReply } from "@openwork/behaviors";
+import type { BrowserTaskInput, BrowserTaskReply, PrivateValuesInput } from "@openwork/behaviors";
 import type { Surface } from "@openwork/cdp";
 
 const exec = promisify(execFile);
@@ -39,4 +39,34 @@ export async function requestBrowserTask(app: Surface, input: BrowserTaskInput):
     if(!response.ok)throw new Error('Browser task transport failed');
     return response.json();
   `));
+}
+
+/** The endpoint `use_private_values` reaches: a program or one request, with no browser tab involved. */
+export async function requestPrivateValues(app: Surface, input: PrivateValuesInput): Promise<BrowserTaskReply> {
+  if (!app.handle.profileDir) throw new Error("The isolated desktop has no profile path.");
+  return parseBrowserTaskReply(await runBrowserHost(app, `
+    const {readFile}=await import('node:fs/promises');
+    const bridge=JSON.parse(await readFile(${browserScriptValue(`${app.handle.profileDir}/electron-userdata/openwork-ui-control.json`)},'utf8'));
+    const response=await fetch(bridge.baseUrl+'/private/use',{
+      method:'POST',headers:{Authorization:'Bearer '+bridge.token,'Content-Type':'application/json'},
+      body:${browserScriptValue(JSON.stringify(input))},signal:AbortSignal.timeout(65000)
+    });
+    if(!response.ok)throw new Error('Private values transport failed');
+    return response.json();
+  `));
+}
+
+/** Exercise the same authenticated endpoint the computer_run tool uses. */
+export async function requestComputerProgram(app: Surface, input: { sessionId: string; surface: "computer" | "browser"; code: string; tabId?: string; timeoutMs?: number }): Promise<unknown> {
+  if (!app.handle.profileDir) throw new Error("The isolated desktop has no profile path.");
+  return runBrowserHost(app, `
+    const {readFile}=await import('node:fs/promises');
+    const bridge=JSON.parse(await readFile(${browserScriptValue(`${app.handle.profileDir}/electron-userdata/openwork-ui-control.json`)},'utf8'));
+    const response=await fetch(bridge.baseUrl+'/computer/program',{
+      method:'POST',headers:{Authorization:'Bearer '+bridge.token,'Content-Type':'application/json'},
+      body:${browserScriptValue(JSON.stringify(input))},signal:AbortSignal.timeout(65000)
+    });
+    if(!response.ok)throw new Error('Computer program transport failed');
+    return response.json();
+  `);
 }

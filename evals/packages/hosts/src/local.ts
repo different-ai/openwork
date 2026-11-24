@@ -340,7 +340,7 @@ function spawnDetached(command: string, args: string[], { cwd, env, logPath }: S
   return { child, pid: child.pid, exit };
 }
 
-function chromeArgs(cdpPort: number, profileDir: string, startUrl: string, headless: boolean, mouse: boolean): string[] {
+function chromeArgs(cdpPort: number, profileDir: string, startUrl: string, headless: boolean, mouse: boolean, hostRules?: string): string[] {
   const args = [
     `--remote-debugging-port=${cdpPort}`,
     `--user-data-dir=${profileDir}`,
@@ -352,9 +352,15 @@ function chromeArgs(cdpPort: number, profileDir: string, startUrl: string, headl
     // Avoid the Daytona preview h2 stall when ~28 dev chunks multiplex; h1.1 loads them, while plain-http local Den never negotiates h2.
     "--disable-http2",
     ...(mouse ? [MOUSE_POINTER_CHROME_ARG] : []),
+    ...(hostRules ? [`--host-resolver-rules=${hostRules}`] : []),
+    // Recordings: a real 2x display, so screencast frames carry device pixels (an emulated
+    // deviceScaleFactor alone still yields 1x screencast frames).
+    ...(/^[1-4]$/.test(process.env.OPENWORK_EVAL_CHROME_SCALE ?? "") ? [`--force-device-scale-factor=${process.env.OPENWORK_EVAL_CHROME_SCALE}`] : []),
     startUrl,
   ];
-  return headless ? ["--headless=new", ...args] : args;
+  // Match Linux/Windows' classic gutter on headless macOS too, without changing
+  // windowed previews. Never hide scrollbars: narrow proof must include their width.
+  return headless ? ["--headless=new", "--lang=en-US", "--disable-features=OverlayScrollbar,FluentOverlayScrollbar", ...args] : args;
 }
 
 async function waitForCdpOrExit(label: string, cdpUrl: string, spawned: SpawnedDetached, logPath: string, requirePageTarget = false): Promise<void> {
@@ -409,8 +415,9 @@ async function prepareSharedElectronResources(repoRoot: string, log: (message: s
     prepareSharedResourcesPromise = (async () => {
       const desktopRoot = join(repoRoot, "apps", "desktop");
       const scriptsRoot = join(desktopRoot, "scripts");
-      log("Preparing shared Electron sidecars once for local eval surfaces...");
+      log("Preparing shared Electron sidecars/helpers once for local eval surfaces...");
       await runPrepareScript(join(scriptsRoot, "prepare-sidecar.mjs"), join(desktopRoot, "resources", "sidecars"), desktopRoot);
+      await runPrepareScript(join(scriptsRoot, "prepare-computer-use-helper.mjs"), join(desktopRoot, "resources", "helpers"), desktopRoot);
     })();
   }
   await prepareSharedResourcesPromise;
@@ -509,6 +516,10 @@ export function electronSurfaceEnv(
   // Give local eval Electron surfaces isolated app data, config, and identity so
   // they cannot affect the user's real desktop app.
   return {
+    // Always explicit: a blank eval profile looks like a new install, which
+    // would otherwise start on OpenCode v2 instead of the selected engine. A
+    // selected `--env OPENWORK_ENGINE_V2_PREVIEW` below still wins.
+    OPENWORK_ENGINE_V2_PREVIEW: resolveEvalEngineValue(process.env.OPENWORK_EVAL_ENGINE) === "v2" ? "1" : "0",
     // Explicit `pnpm world up --env KEY` app settings come first so the
     // isolation keys below always win over a selected value.
     ...selectedAppEnv(),
@@ -526,8 +537,10 @@ export function electronSurfaceEnv(
     OPENWORK_DESKTOP_DISABLE_WORKSPACE_RECOVERY: "1",
     OPENWORK_DEV_MODE: "1",
     OPENWORK_ENV_STORE: paths.envStorePath,
-    ...(resolveEvalEngineValue(process.env.OPENWORK_EVAL_ENGINE) === "v2" ? { OPENWORK_ENGINE_V2_PREVIEW: "1" } : {}),
     OPENCODE_CONFIG_DIR: paths.opencodeConfigDir,
+    // The bundled engine resolves its discovery home separately from HOME.
+    // Do not read/install into the runner's or developer's real ~/.opencode.
+    OPENCODE_TEST_HOME: paths.homeDir,
     VITE_DISABLE_OPENWORK_MODELS: "1",
     OPENWORK_ELECTRON_APP_IDENTIFIER: options.appIdentifier,
     OPENWORK_ELECTRON_APP_NAME: options.appName,
@@ -714,6 +727,28 @@ export async function preserveSurfaceLog(handle: SurfaceHandle, logsDir: string)
   await mkdir(logsDir, { recursive: true });
   await copyFile(logPath, target);
   return target;
+}
+
+/**
+ * Copy the engine's (OpenCode's) own logs out of a surface profile before it is
+ * removed, next to the surface log and named after the same profile. The desktop
+ * log only shows that engine requests failed; these say why. Returns the copies.
+ */
+export async function preserveEngineLogs(handle: SurfaceHandle, logsDir: string): Promise<string[]> {
+  const profileRoot = handle.meta?.profileRoot ?? handle.profileDir;
+  if (!profileRoot) return [];
+  const engineLogs = join(electronProfilePaths(profileRoot).dataHome, "opencode", "log");
+  if (!existsSync(engineLogs)) return [];
+  const names = (await readdir(engineLogs)).filter((name) => name.endsWith(".log")).sort();
+  if (!names.length) return [];
+  await mkdir(logsDir, { recursive: true });
+  const kept: string[] = [];
+  for (const name of names) {
+    const target = join(logsDir, `${basename(profileRoot)}-opencode-${name}`);
+    await copyFile(join(engineLogs, name), target);
+    kept.push(target);
+  }
+  return kept;
 }
 
 export async function removeOwnedSurfaceFiles(handle: SurfaceHandle): Promise<void> {
@@ -963,10 +998,14 @@ async function ensureDisplay(repoRoot: string, env: NodeJS.ProcessEnv, log: (mes
     },
 
     async spawnChrome(name: string, opts: ChromeSurfaceOptions = {}): Promise<SurfaceHandle> {
-      await pruneStaleSurfaceProfiles(rootDir, { live: liveProfileRoots, log });
-      const profileRoot = resolve(rootDir, `${sanitizeSlug(name)}-${timestamp()}-${process.pid}`);
-      registerLiveProfileRoot(profileRoot);
-      const profileDir = join(profileRoot, "chrome-profile");
+      if (opts.profileDir !== undefined && !opts.profileDir.trim()) {
+        throw new Error("Chrome profileDir must not be empty.");
+      }
+      const callerOwnedProfile = opts.profileDir !== undefined;
+      if (!callerOwnedProfile) await pruneStaleSurfaceProfiles(rootDir, { live: liveProfileRoots, log });
+      const profileRoot = opts.profileDir ?? resolve(rootDir, `${sanitizeSlug(name)}-${timestamp()}-${process.pid}`);
+      if (!callerOwnedProfile) registerLiveProfileRoot(profileRoot);
+      const profileDir = opts.profileDir ?? join(profileRoot, "chrome-profile");
       await mkdir(profileDir, { recursive: true });
       const cdpPort = await allocateFreePort();
       const binary = resolveChromeBinary(process.env, process.platform);
@@ -975,7 +1014,11 @@ async function ensureDisplay(repoRoot: string, env: NodeJS.ProcessEnv, log: (mes
       const env: NodeJS.ProcessEnv = { ...process.env };
       const cdpUrl = `http://127.0.0.1:${cdpPort}`;
       const launch = async (headless: boolean): Promise<SpawnedDetached> => {
-        const spawned = spawnDetached(binary, chromeArgs(cdpPort, profileDir, startUrl, headless, opts.mouse === true), { cwd: profileRoot, env, logPath });
+        if (headless) {
+          await mkdir(join(profileDir, "Default"), { recursive: true });
+          await writeFile(join(profileDir, "Default", "Preferences"), JSON.stringify({ intl: { accept_languages: "en-US,en", selected_languages: "en-US,en" } }), "utf8");
+        }
+        const spawned = spawnDetached(binary, chromeArgs(cdpPort, profileDir, startUrl, headless, opts.mouse === true, opts.hostRules), { cwd: profileRoot, env, logPath });
         await writeFile(join(profileDir, "openwork-eval-chrome.pid"), `${spawned.pid}\n`, "utf8");
         try {
           await waitForCdpOrExit("Chrome", cdpUrl, spawned, logPath);
@@ -1002,7 +1045,7 @@ async function ensureDisplay(repoRoot: string, env: NodeJS.ProcessEnv, log: (mes
         cdpUrl,
         pid: spawned.pid,
         profileDir,
-        meta: { cdpPort: String(cdpPort), log: logPath, profileRoot },
+        meta: { cdpPort: String(cdpPort), log: logPath, profileRoot, profileOwner: callerOwnedProfile ? "caller" : "host" },
       };
       spawnedSurfaces.add(handle);
       return handle;
@@ -1044,6 +1087,9 @@ async function ensureDisplay(repoRoot: string, env: NodeJS.ProcessEnv, log: (mes
         await preserveSurfaceLog(handle, logsDir)
           .then((kept) => { if (kept) log(`Kept ${handle.name} log at ${kept}`); })
           .catch((error: unknown) => log(`Could not keep ${handle.name} log: ${messageText(error)}`));
+        await preserveEngineLogs(handle, logsDir)
+          .then((kept) => { if (kept.length) log(`Kept ${kept.length} ${handle.name} engine log(s) in ${logsDir}`); })
+          .catch((error: unknown) => log(`Could not keep ${handle.name} engine logs: ${messageText(error)}`));
       }
       await removeOwnedSurfaceFiles(handle);
       if (handle.meta?.profileOwner !== "caller" && handle.meta?.profileRoot) unregisterLiveProfileRoot(handle.meta.profileRoot);

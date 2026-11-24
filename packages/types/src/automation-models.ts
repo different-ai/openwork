@@ -1,5 +1,5 @@
-import { AUTOMATION_CLOUD_DEFAULT_MODEL, AUTOMATION_FREE_MODEL } from "./automations"
-import { INFERENCE_MODEL_ALIASES } from "./den/inference"
+import { AUTOMATION_CLOUD_DEFAULT_MODEL, AUTOMATION_FREE_MODEL, automationModelAllowedByProvider } from "@openwork/types/automations"
+import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference"
 
 /**
  * The models an Automation can use, from Den's usable-provider list
@@ -14,9 +14,8 @@ export type AutomationModelOption = {
   modelId: string
   providerName: string
   modelName: string
-  /** The catalog provider family (e.g. "anthropic") for the logo; the record id is often opaque. */
   logoProviderId?: string
-  accessKind: "free" | "openwork_managed" | "authorized_custom" | "cloud_default"
+  accessKind: "free" | "openwork_managed" | "authorized_custom" | "cloud_default" | "desktop_runtime"
 }
 
 /** The fields of a Den usable provider this needs. */
@@ -26,44 +25,52 @@ export type AutomationModelProvider = {
   providerId?: string
   name: string
   models: ReadonlyArray<{ id: string; name: string }>
+  providerConfig?: Record<string, unknown>
 }
 
 const freeStarterModel: AutomationModelOption = { ...AUTOMATION_FREE_MODEL, logoProviderId: "opencode", accessKind: "free" }
 
 export const cloudDefaultModelOption: AutomationModelOption = { ...AUTOMATION_CLOUD_DEFAULT_MODEL, logoProviderId: "openwork", accessKind: "cloud_default" }
 
-const KIND_ORDER: ReadonlyArray<AutomationModelOption["accessKind"]> = ["cloud_default", "free", "openwork_managed", "authorized_custom"]
+const KIND_ORDER: ReadonlyArray<AutomationModelOption["accessKind"]> = ["cloud_default", "free", "openwork_managed", "authorized_custom", "desktop_runtime"]
+
+export function compareAutomationModelOptions(left: AutomationModelOption, right: AutomationModelOption) {
+  return KIND_ORDER.indexOf(left.accessKind) - KIND_ORDER.indexOf(right.accessKind)
+    || left.providerName.localeCompare(right.providerName)
+    || left.modelName.localeCompare(right.modelName)
+}
 
 export function automationModelOptions(
   providers: readonly AutomationModelProvider[],
   options: { includeFreeStarter?: boolean; includeCloudDefault?: boolean } = {},
 ): AutomationModelOption[] {
-  const fromProviders = providers.flatMap((provider): AutomationModelOption[] => provider.source === "openwork"
-    ? Object.entries(INFERENCE_MODEL_ALIASES)
-        .filter(([, model]) => model.enabled)
-        .map(([modelId, model]) => ({
-          providerId: "openwork",
-          modelId,
+  const fromProviders = providers.flatMap((provider) => {
+    const models: AutomationModelOption[] = provider.source === "openwork"
+      ? Object.entries(INFERENCE_MODEL_ALIASES)
+          .filter(([, model]) => model.enabled)
+          .map(([modelId, model]) => ({
+            providerId: "openwork",
+            modelId,
+            providerName: provider.name,
+            modelName: model.displayName.replace(/^OpenWork:\s*/, ""),
+            logoProviderId: "openwork",
+            accessKind: "openwork_managed",
+          }))
+      : provider.models.map((model) => ({
+          providerId: provider.id,
+          modelId: model.id,
           providerName: provider.name,
-          modelName: model.displayName.replace(/^OpenWork:\s*/, ""),
-          logoProviderId: "openwork",
-          accessKind: "openwork_managed",
+          modelName: model.name,
+          logoProviderId: provider.providerId,
+          accessKind: "authorized_custom",
         }))
-    : provider.models.map((model) => ({
-        providerId: provider.id,
-        modelId: model.id,
-        providerName: provider.name,
-        modelName: model.name,
-        logoProviderId: provider.providerId,
-        accessKind: "authorized_custom",
-      })))
+    return models.filter((model) => automationModelAllowedByProvider(provider.providerConfig ?? {}, model.modelId))
+  })
   return [
     ...(options.includeCloudDefault ? [cloudDefaultModelOption] : []),
     ...(options.includeFreeStarter === false ? [] : [freeStarterModel]),
     ...fromProviders,
-  ].sort((left, right) => KIND_ORDER.indexOf(left.accessKind) - KIND_ORDER.indexOf(right.accessKind)
-    || left.providerName.localeCompare(right.providerName)
-    || left.modelName.localeCompare(right.modelName))
+  ].sort(compareAutomationModelOptions)
 }
 
 export function findAutomationModelOption(

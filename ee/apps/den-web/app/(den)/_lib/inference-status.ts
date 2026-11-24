@@ -15,6 +15,7 @@ export type InferenceStatus = {
   proxyBaseUrl: string;
   upstreamProviderConfigured: boolean;
   subscribed: boolean;
+  billingConfigured: boolean | null;
   buckets: InferenceUsageBucket[];
 };
 
@@ -67,6 +68,7 @@ export function parseInferencePayload(payload: unknown): InferenceStatus | null 
     proxyBaseUrl: typeof value.proxyBaseUrl === "string" ? value.proxyBaseUrl : "",
     upstreamProviderConfigured: value.upstreamProviderConfigured === true,
     subscribed: value.subscribed === true,
+    billingConfigured: typeof value.billingConfigured === "boolean" ? value.billingConfigured : null,
     buckets: parseUsageBuckets(value.buckets),
   };
 }

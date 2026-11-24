@@ -33,11 +33,18 @@ export async function reviewJourneys(directory, expectedSha, review) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   const { renderDesignReview, reviewDesign } = await import('../packages/test-evidence/src/design-review.ts');
-  const summaries = await reviewJourneys('evals/results/test-runs', process.env.EXPECTED_SHA, async (path, name) =>
-    renderDesignReview(name, await reviewDesign(path)));
-  const body = summaries.length
-    ? `\n## Design review (advisory)\n\n${summaries.join('\n')}`
-    : '\nDesign review: no screenshots from this commit to review.\n';
-  if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, body);
-  process.stdout.write(body);
+  const heading = '\n## Design review (advisory)\n';
+  if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, heading);
+  process.stdout.write(heading);
+  const summaries = await reviewJourneys('evals/results/test-runs', process.env.EXPECTED_SHA, async (path, name) => {
+    const summary = renderDesignReview(name, await reviewDesign(path, { checkpoint: true }));
+    process.stdout.write(summary);
+    if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, `\n${summary}`);
+    return summary;
+  });
+  if (!summaries.length) {
+    const body = '\nDesign review: no screenshots from this commit to review.\n';
+    if (process.env.GITHUB_STEP_SUMMARY) await appendFile(process.env.GITHUB_STEP_SUMMARY, body);
+    process.stdout.write(body);
+  }
 }

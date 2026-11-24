@@ -17,10 +17,6 @@ interface RegisterWorkspaceDefaultModelRoutesOptions {
   resolveWorkspaceWithoutBootstrap: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
 }
 
-/**
- * GET/PUT /workspace/:id/default-model: the model a new chat in this
- * workspace uses, so callers without the renderer's preferences can pick it.
- */
 export function registerWorkspaceDefaultModelRoutes(options: RegisterWorkspaceDefaultModelRoutesOptions): void {
   const { routes, config, jsonResponse, readJsonBody, ensureWritable, requireClientScope, resolveWorkspaceWithoutBootstrap } = options;
 

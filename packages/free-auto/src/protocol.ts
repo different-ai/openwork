@@ -10,7 +10,6 @@ export const DESKTOP_FREE_TOKEN_HEADER = "x-openwork-desktop-token";
 export const DESKTOP_FREE_PROVIDER_ID = "openwork-free";
 export const DESKTOP_FREE_MODEL_ID = "openai/gpt-6-luna";
 
-// Signed-out desktop routes.
 export const DESKTOP_FREE_SESSION_PATH = "/api/anonymous/session";
 export const DESKTOP_FREE_STATUS_PATH = "/api/anonymous/status";
 export const DESKTOP_FREE_MODELS_PATH = "/api/anonymous/v1/models";
@@ -18,7 +17,16 @@ export const DESKTOP_FREE_CHAT_PATH = "/api/anonymous/v1/chat/completions";
 export const DESKTOP_FREE_RESPONSES_PATH = "/api/anonymous/v1/responses";
 /** Like OpenCode Zen's: a client with no desktop proof sends this key (or none) and is limited by its IP. */
 export const DESKTOP_FREE_OPEN_API_KEY = "public";
-// Signed-in members use their OpenWork Models key on the regular inference routes.
+export const DESKTOP_FREE_SESSION_HEADER = "x-openwork-desktop-session";
+/**
+ * The gateway asks for desktop proof with HTTP 426, this code and
+ * `desktopProof: "required"`. Released desktops that cannot sign already show
+ * the code as "Needs an OpenWork update"; a desktop that can sign retries with proof.
+ */
+export const DESKTOP_FREE_UPDATE_CODE = "desktop_update_required";
+export function desktopFreeProofRequested(status: number, payload: Record<string, unknown>): boolean {
+  return status === 426 && payload.code === DESKTOP_FREE_UPDATE_CODE && payload.desktopProof === "required";
+}
 export const MEMBER_FREE_STATUS_PATH = "/api/v1/auto/status";
 export const MEMBER_FREE_MODELS_PATH = "/api/v1/models";
 export const MEMBER_FREE_CHAT_PATH = "/api/v1/chat/completions";
@@ -93,6 +101,7 @@ export type DesktopFreeAccessStatus = {
   modelID: typeof DESKTOP_FREE_MODEL_ID;
   allowance: {
     limitUsd: number; usedUsd: number; remainingUsd: number; resetsAt: string;
+    unlimited?: boolean;
   } | null;
   catalog?: ManagedModelRecommendation[];
   defaultPinned?: boolean;
@@ -104,3 +113,8 @@ export type DesktopFreeVersionError = {
   message: string;
 };
 export type DesktopFreeSession = { token: string; expiresAt: number; model: typeof DESKTOP_FREE_MODEL_ID };
+
+export const WORKBOT_FREE_GRANT_HEADER = "x-openwork-workbot-grant";
+export const WORKBOT_FREE_GRANT_TTL_MS = 2 * 60 * 60 * 1000;
+export const WORKBOT_FREE_GRANT_SECRET_MIN_LENGTH = 32;
+export type WorkbotFreeGrantClaims = { keyId: string; organizationId: string; memberId: string; expiresAt: number };

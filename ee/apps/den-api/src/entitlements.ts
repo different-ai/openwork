@@ -13,7 +13,7 @@ export type OrganizationPlan = {
   grandfatheredAt?: string
 }
 
-export const ENTITLEMENT_KEYS = ["sso", "desktopPolicies", "orgControls", "auditLogs"] as const
+export const ENTITLEMENT_KEYS = ["sso", "desktopPolicies", "orgControls", "analytics", "auditLogs", "scim"] as const
 export type EntitlementKey = (typeof ENTITLEMENT_KEYS)[number]
 
 export type OrganizationEntitlements = Record<EntitlementKey, boolean>
@@ -28,7 +28,9 @@ const ENTITLEMENT_FEATURE_LABELS: Record<EntitlementKey, string> = {
   sso: "SSO / SAML",
   desktopPolicies: "Desktop policies",
   orgControls: "Enforced SSO and desktop version controls",
+  analytics: "Usage analytics",
   auditLogs: "Audit logs",
+  scim: "SCIM provisioning",
 }
 
 type MetadataInput = Record<string, unknown> | string | null | undefined
@@ -92,18 +94,15 @@ export function getOrganizationEntitlements(
   const entitled = !gatingEnabled || tier === "enterprise"
 
   return {
-    // SSO / SAML is part of Team. Enforced SSO (orgControls), SCIM, and policies stay on Enterprise.
     sso: !gatingEnabled || tier === "team" || tier === "enterprise",
     desktopPolicies: entitled,
     orgControls: entitled,
+    analytics: entitled,
     auditLogs: getAuditEntitlement(metadata).enabled,
+    scim: entitled,
   }
 }
 
-/**
- * Cloud Automations on the shared headless runner are part of Team: they run
- * without an OpenWork Web computer, so they do not need the Web seat.
- */
 export function planIncludesHeadlessAutomations(metadata: MetadataInput, options: EntitlementOptions = {}): boolean {
   const gatingEnabled = options.gatingEnabled ?? env.planGatingEnabled
   const tier = parseOrganizationPlan(metadata).tier

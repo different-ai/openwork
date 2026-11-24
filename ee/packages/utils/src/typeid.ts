@@ -7,7 +7,6 @@ export const TYPE_ID_SUFFIX_LENGTH = 26
 
 const BASE32_REGEX = /^[0-9a-hjkmnp-tv-z]+$/
 
-// TypeID prefixes are persisted in DB rows; append new entries instead of changing existing values.
 export const idTypesMapNameToPrefix = {
   request: "req",
   user: "usr",
@@ -18,6 +17,7 @@ export const idTypesMapNameToPrefix = {
   rateLimit: "rli",
   org: "org",
   organization: "org",
+  organizationGrant: "ogr",
   orgMembership: "om",
   member: "om",
   invitation: "inv",
@@ -102,8 +102,6 @@ export const idTypesMapNameToPrefix = {
 
 
   tempFile: "tmpf",
-  dashboard: "dsb",
-  dashboardAccessGrant: "dsg",
   inferenceProvider: "ipr",
   inferenceProviderModel: "ipm",
   inferenceProviderCredential: "ipc",
@@ -112,6 +110,7 @@ export const idTypesMapNameToPrefix = {
   inferenceRequestLog: "irl",
   inferenceUsageRollup: "iur",
   gatewayKey: "gky",
+  gatewayApiKey: "gak",
   gatewayModelGroup: "gmg",
   gatewayModelGroupModel: "gmm",
   gatewayCredentialSet: "gcs",
@@ -122,6 +121,40 @@ export const idTypesMapNameToPrefix = {
   auditEventResource: "aer",
   auditUsageFact: "auf",
   platformAuditEvent: "pae",
+  permissionSet: "pms",
+  permissionSetPermission: "psp",
+  permissionSetTeam: "pst",
+  permissionSetMember: "psm",
+  capabilityUsageEvent: "cue",
+  capabilityUsageRollup: "cur",
+  agentPermissionPolicy: "agp",
+  agentPermissionSetting: "aps",
+  orgDefaultModel: "odm",
+  autoRouter: "aur",
+  autoRouterModel: "arm",
+  autoRouterTask: "art",
+  autoRouterAccess: "ara",
+  headlessResumeGrant: "hrsg",
+  desktopStartupReport: "dsr",
+  accountFollowUpAction: "afa",
+  orgPrompt: "osp",
+  orgPromptAccess: "ospa",
+  sandboxOrganization: "sbx",
+  mcpRegistrationStatus: "mrs",
+  mcpRegistrationEvent: "mre",
+  featureIntroState: "fis",
+  configChangeRequest: "ccr",
+  configBlobAlias: "cba",
+  configBlobExport: "cbe",
+  configApplyRun: "car",
+  denInstance: "dni",
+  workbotTeamSetting: "wts",
+  workbotUsageDay: "wud",
+  harnessFeedbackGroup: "hfg",
+  harnessFeedbackReport: "hfr",
+  remoteDevice: "rdv",
+  remoteDeviceEvent: "rde",
+  automationShare: "ats",
 } as const
 
 export const denTypeIdPrefixes = idTypesMapNameToPrefix

@@ -67,7 +67,6 @@ function usableGrant(provider: GatewayAccessProvider, grant: GatewayAccessProvid
   return provider.status !== "disabled" && group?.status !== "disabled" && credential?.status !== "disabled" && Boolean(group && credential);
 }
 
-/** Providers the subject can use today, with every rule that grants each one. */
 export function directoryAccess(providers: GatewayAccessProvider[], subject: DirectorySubject): DirectoryAccess[] {
   return providers.flatMap((provider) => {
     const sources = provider.accessGrants
@@ -78,9 +77,8 @@ export function directoryAccess(providers: GatewayAccessProvider[], subject: Dir
   });
 }
 
-/** The allowance the gateway enforces for the subject: the highest limit per timeframe across every policy that applies. */
 export function directoryLimit(policies: GatewayUsageLimitPolicy[], subject: DirectorySubject): DirectoryLimit {
-  const applicable = policies.filter((policy) => !policy.archivedAt && policy.assignments.some((assignment) => assignmentSource(subject, assignment)));
+  const applicable = policies.filter((policy) => !policy.archivedAt && !policy.providerId && policy.assignments.some((assignment) => assignmentSource(subject, assignment)));
   const winners = gatewayWinningPolicies(applicable);
   const sources = winners.flatMap(({ policy }) => {
     const [source] = uniqueSources(policy.assignments.map((assignment) => assignmentSource(subject, assignment)).filter(isSource));
@@ -107,7 +105,6 @@ function joinNames(names: string[]) {
   return names.length <= 1 ? names.join("") : `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`;
 }
 
-/** Where the enforced allowance comes from, in the words an admin uses. */
 export function limitSourceLabel(limit: DirectoryLimit, subject: DirectorySubject, teams: DenOrgTeam[]) {
   if (!limit.windows.length) return subject.type === "organization" ? "" : "Nothing pauses their models";
   const soft = limit.windows.every((window) => !window.policy.hardLimit) ? " · warns only" : "";
@@ -118,14 +115,12 @@ export function limitSourceLabel(limit: DirectoryLimit, subject: DirectorySubjec
   return `From ${joinNames(names)}${soft}`;
 }
 
-/** Why a member can use a provider, e.g. "Everyone has it" or "Through Design". */
 export function accessReason(sources: DirectorySource[], teams: DenOrgTeam[]) {
   return sources.map((source) => source.kind === "organization" ? "Everyone has it"
     : source.kind === "team" ? `Through ${teamName(teams, source.teamId)}`
       : "Given to them directly").join(" · ");
 }
 
-/** Who a provider is limited to, for providers the member cannot use. */
 export function providerAudienceLabel(provider: GatewayAccessProvider, teams: DenOrgTeam[], members: DenOrgMember[]) {
   const names = [...new Set(provider.accessGrants.filter((grant) => usableGrant(provider, grant)).map((grant) => grant.audience.type === "team"
     ? teamName(teams, grant.audience.teamId)

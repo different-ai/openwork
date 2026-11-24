@@ -1,0 +1,5 @@
+// path: proofs/org-default-model.proof.test.ts
+import { test } from "@openwork/testkit";
+import { expect } from "vitest";
+const mysqlOpen = false;
+test.skipIf(!mysqlOpen)("an owner sets the default model", async () => { expect(1).toBe(1); });

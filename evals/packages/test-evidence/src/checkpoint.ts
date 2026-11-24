@@ -1,6 +1,6 @@
 import { setTimeout as delay } from "node:timers/promises";
 import type { Surface } from "@openwork/cdp";
-import { parseEvidenceCheckpoint } from "@openwork/freestyle/checkpoint-schema";
+import { parseEvidenceCheckpoint } from "@openwork/evidence-provider/checkpoint";
 import { checkpointCapability, type CheckpointCapability } from "@openwork/env";
 import { currentTestEvidence } from "./ambient.ts";
 import { captureFrame, type ScreenshotArtifact } from "./screenshot.ts";

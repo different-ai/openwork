@@ -3,7 +3,7 @@ import { lstat, realpath } from "node:fs/promises";
 import { basename, dirname, extname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { z } from "zod";
 import { appendAgentInstructions, createInstructionSection } from "./agent-instruction-compose.js";
-import { WorkspaceFileError, openWorkspaceFileForReading, openWorkspaceFileForWriting } from "./workspace-file-identity.js";
+import { WorkspaceFileError, openWorkspaceFileForReading, openWorkspaceFileForWriting } from "../workspace-file-identity.js";
 import {
   MAX_COMPRESSED_BYTES,
   XLSX_WRITE_MAX_CELLS,
@@ -18,19 +18,6 @@ import {
   writeXlsxWorkbook,
   type XlsxSheetData,
 } from "@openwork/workbook";
-
-/**
- * OpenWork Spreadsheets Plugin
- *
- * Gives the agent first-class Excel workbook tools so it never has to shell
- * out to ad-hoc scripts or read binary .xlsx bytes through the text tools:
- * - spreadsheet_inspect: sheets, used ranges, sizes, and header rows
- * - spreadsheet_read: any sheet, A1 range, or page of rows as a Markdown grid
- * - spreadsheet_write: create or replace a plain .xlsx with one or more sheets
- *
- * Paths stay inside the active workspace, byte and cell limits are shared with
- * the Office attachment normalizer, and writes are atomic.
- */
 
 const MAX_TOOL_TEXT_CHARS = 40_000;
 const DEFAULT_READ_ROWS = 100;
@@ -107,17 +94,11 @@ function describeUnsupportedExtension(extension: string): string {
   return `Unsupported spreadsheet extension ${JSON.stringify(extension || "(none)")}; only .xlsx and .xlsm workbooks can be read.`;
 }
 
-/** The lexical location of a workspace file under the real root; no link may sit anywhere in it. */
 async function workspaceLocation(root: string, file: WorkspaceFile): Promise<{ realRoot: string; path: string }> {
   const realRoot = await realpath(root);
   return { realRoot, path: join(realRoot, ...file.relativePath.split("/")) };
 }
 
-/**
- * Read a workbook with open-then-verify ordering: the handle is obtained first
- * and its own inode is proven to be the regular file at exactly this path
- * before any bytes are read. See workspace-file-identity.ts.
- */
 async function readWorkbookFile(root: string, input: string): Promise<{ file: WorkspaceFile; bytes: Buffer }> {
   const file = resolveWorkspacePath(root, input);
   const extension = extname(file.absolutePath).toLowerCase();
@@ -133,15 +114,6 @@ async function readWorkbookFile(root: string, input: string): Promise<{ file: Wo
   }
 }
 
-/**
- * Write a workbook with open-then-verify ordering. The folder is never
- * created (so no directory is ever made through a pathname); an existing
- * file is opened without O_CREAT or O_TRUNC and must prove to be the inode
- * observed here; a new file is created with O_EXCL and must prove to be in
- * place. Bytes are written only through the proven handle. The write is not
- * atomic: a crash mid-write leaves a partial file that the next write
- * replaces.
- */
 async function writeWorkbookFile(root: string, file: WorkspaceFile, bytes: Uint8Array, overwrite: boolean): Promise<{ replaced: boolean }> {
   const label = `Destination ${JSON.stringify(file.relativePath)}`;
   const relativeFolder = dirname(file.relativePath);
@@ -238,8 +210,6 @@ const writeArgsSchema = z.object({
   overwrite: z.boolean().optional().describe("Replace an existing file at path. Without it, writing over an existing workbook fails so user files are never clobbered by accident."),
 });
 
-// Single export: the OpenCode plugin loader treats every export of a plugin
-// module as a plugin factory, so helpers must stay module-private.
 export const OpenWorkSpreadsheets = async (factoryInput?: unknown) => {
   const factoryContext = normalizeOpenCodeContext(factoryInput);
   return {

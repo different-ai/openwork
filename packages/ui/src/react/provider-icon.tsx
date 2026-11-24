@@ -1,26 +1,15 @@
 /** @jsxImportSource react */
-/**
- * A provider's brand logo (inline marks for OpenAI, Anthropic and OpenCode; Simple Icons, then the provider's
- * favicon, then a monogram). Shared by the desktop app and Workbot.
- */
 import { useEffect, useState } from "react";
 
 import { providerLogoCandidates } from "./provider-logo-src";
+import { OpenWorkMark } from "./openwork-mark";
 
 export type ProviderIconProps = {
   providerId?: string | null;
-  /**
-   * Optional provider display name. When the id is an opaque cloud id
-   * (e.g. a uuid), the name is what tells us whether it's an Anthropic /
-   * OpenAI / OpenCode provider. Ported from dev 022b68a8 ("key cloud
-   * providers by cloud id") so the icon still resolves by family.
-   */
   providerName?: string | null;
-  /** Configured provider base URL, used as a favicon source for custom providers. */
   baseUrl?: string | null;
   className?: string;
   size?: number;
-  /** Classes for the two-letter fallback; defaults to a neutral tint that works on any surface. */
   monogramClassName?: string;
 };
 
@@ -31,13 +20,12 @@ export function ProviderIcon(props: ProviderIconProps) {
   const hasProviderFamily = (family: string) =>
     normalizedId === family || normalizedName.includes(family);
 
-  const isAnthropic = hasProviderFamily("anthropic");
+  const isAnthropic = hasProviderFamily("anthropic") || normalizedId === "claude-agent";
   const isOpenAI = hasProviderFamily("openai");
   const isOpenCode = hasProviderFamily("opencode");
-  const hasInlineMark = isAnthropic || isOpenAI || isOpenCode;
+  const isOpenWork = hasProviderFamily("openwork");
+  const hasInlineMark = isAnthropic || isOpenAI || isOpenCode || isOpenWork;
 
-  // Remote logos are walked in order and each failure advances one step, so a
-  // provider only falls back to its monogram once every source is exhausted.
   const candidates = hasInlineMark
     ? []
     : providerLogoCandidates({ providerId: props.providerId, baseUrl: props.baseUrl });
@@ -58,7 +46,6 @@ export function ProviderIcon(props: ProviderIconProps) {
   })();
 
   return (
-    // Layout is inline so the logo renders the same in any host, whatever its Tailwind scans.
     <div
       className={props.className}
       style={{ display: "flex", flexShrink: 0, alignItems: "center", justifyContent: "center", borderRadius: 6, width: `${size}px`, height: `${size}px` }}
@@ -102,6 +89,8 @@ export function ProviderIcon(props: ProviderIconProps) {
           <path d="M2 17l10 5 10-5" />
           <path d="M2 12l10 5 10-5" />
         </svg>
+      ) : isOpenWork ? (
+        <OpenWorkMark size={size} />
       ) : logoUrl ? (
         <img
           src={logoUrl}
@@ -129,3 +118,4 @@ export function ProviderIcon(props: ProviderIconProps) {
 }
 
 export { providerLogoCandidates } from "./provider-logo-src";
+export { OpenWorkMark } from "./openwork-mark";

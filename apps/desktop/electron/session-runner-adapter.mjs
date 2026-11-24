@@ -1,0 +1,397 @@
+import { createHash } from "node:crypto"
+import { realpath } from "node:fs/promises"
+import path from "node:path"
+import { HEADLESS_THREAD_PENDING_ITEMS_MAX, latestStep } from "@openwork/headless-threads"
+import { parseProgress, parseReadResult, SessionRunnerError } from "@openwork/remote-sessions"
+import {
+  classifyRemoteSessionCommandError,
+  classifyRemoteSessionRequestError,
+  createWorkspaceSessionClient,
+  remoteSessionObservation,
+  remoteSessionTranscriptPage,
+  remoteSessionTurnVisible,
+  requestJson,
+  resolveAssignmentWorkspace,
+} from "./automation-runner.mjs"
+
+const NATIVE_OPERATION_TIMEOUT_MS = 15_000
+/** The bounded tail each progress observation reads. */
+const OBSERVE_MESSAGE_LIMIT = 200
+
+function latestUserId(snapshot) {
+  return [...(snapshot.messages ?? [])].reverse().find((message) => message?.role === "user")?.id ?? null
+}
+
+function modelInput(model) {
+  return model ? {
+    providerId: model.providerId,
+    modelId: model.modelId,
+    ...(model.variant ? { variant: model.variant } : {}),
+  } : undefined
+}
+
+async function resolvedDirectory(value) {
+  const directory = typeof value === "string" ? value.trim() : ""
+  if (!directory) return null
+  return path.resolve(await realpath(directory).catch(() => directory))
+}
+
+/**
+ * The engine reads a session by id whichever workspace mount is asked, so the
+ * workspace a caller names is checked against the session's own folder. A
+ * workspace that names no folder is scoped by its mount alone; in one that
+ * does, a session that names none cannot be shown to be there and is refused.
+ */
+async function sessionInWorkspace(workspace, snapshot) {
+  const root = await resolvedDirectory(workspace?.path)
+  if (!root) return true
+  const directory = await resolvedDirectory(snapshot?.directory)
+  if (!directory) return false
+  return directory === root || directory.startsWith(root.endsWith(path.sep) ? root : `${root}${path.sep}`)
+}
+
+const SESSION_UNAVAILABLE = "That session is not in this workspace on this computer."
+
+/** Only an explicit rejection proves that a native mutation did not happen. */
+function definitiveFailure(error, creating) {
+  if (error instanceof SessionRunnerError) return error
+  if (![400, 401, 403, 404, 409, 422].includes(error?.status)) return error
+  const classified = creating
+    ? classifyRemoteSessionCommandError(error)
+    : classifyRemoteSessionRequestError(error, false)
+  return new SessionRunnerError(classified.code, classified.message)
+}
+
+/**
+ * Native desktop APIs only. The shared remote-session runner owns all
+ * durability, prompt IDs, outboxes and admission, including whether a session
+ * that was started on this computer may be attached at all. It never runs a
+ * scheduled Automation and answers a permission or question only with the
+ * answer its owner gave on another device.
+ * @returns {import("@openwork/remote-sessions").HarnessAdapter}
+ */
+export function createDesktopSessionAdapter(options) {
+  const fetchImpl = options.fetchImpl ?? fetch
+  const now = options.now ?? Date.now
+  const identities = new Map()
+  const key = (receipt) => `${receipt.workspaceId}\n${receipt.sessionId}`
+  const bounded = (signal) => AbortSignal.any([signal, AbortSignal.timeout(options.operationTimeoutMs ?? NATIVE_OPERATION_TIMEOUT_MS)])
+  const runtime = async () => {
+    const local = await options.getLocalRuntime()
+    if (!local?.baseUrl || !local?.token) {
+      throw new SessionRunnerError("openwork_unreachable", "Can't reach OpenWork on your desktop. Make sure OpenWork is running.")
+    }
+    return local
+  }
+  const engine = async (local, signal) => {
+    try {
+      const status = await requestJson(fetchImpl, local.baseUrl, local.token, "/experimental/engine-v2-preview/status", { signal })
+      if (typeof status?.enabled !== "boolean" || typeof status?.chatRouting !== "boolean") {
+        throw new Error("The local runtime did not identify its chat engine")
+      }
+      return status.enabled && status.chatRouting ? "v2" : "v1"
+    } catch (error) {
+      if (error?.status === 404) return "v1"
+      throw error
+    }
+  }
+  // Credentials are read anew on every operation. Only native session identity
+  // is cached; after restart probe the actual owning engine, not just today's
+  // chat-routing setting, which might have changed since creation.
+  const snapshotFor = async (receipt, signal, limit) => {
+    const local = await runtime()
+    const known = identities.get(key(receipt))
+    const selected = known?.engine ?? await engine(local, signal)
+    const read = async (selectedEngine) => {
+      const client = createWorkspaceSessionClient(local, receipt.workspaceId, fetchImpl, false, selectedEngine)
+      const snapshot = await client.getThreadSnapshot(receipt.sessionId, { signal, ...(limit ? { limit } : {}) })
+      identities.set(key(receipt), { ...known, engine: selectedEngine })
+      return {
+        local, client, snapshot, engine: selectedEngine, model: known?.model, messageId: known?.messageId,
+        turnSeen: Boolean(known?.messageId) && known?.seenMessageId === known?.messageId,
+      }
+    }
+    try {
+      return await read(selected)
+    } catch (error) {
+      // Only a missing session permits trying the other engine. Do not turn a
+      // temporarily unreachable engine into a different native target.
+      if (error?.status !== 404) throw error
+      try {
+        return await read(selected === "v2" ? "v1" : "v2")
+      } catch (otherError) {
+        // An engine that is switched off holds no session: the first engine's
+        // "not here" stands, instead of an outage that never ends.
+        if (await previewOff(otherError, local, signal)) throw error
+        throw otherError
+      }
+    }
+  }
+  const previewOff = async (error, local, signal) => {
+    if (error?.status !== 503 || error?.body?.error !== "engine_v2_preview_not_running") return false
+    try {
+      const status = await requestJson(fetchImpl, local.baseUrl, local.token, "/experimental/engine-v2-preview/status", { signal })
+      return status?.enabled === false
+    } catch {
+      return false
+    }
+  }
+  // A computer-use approval (run a script, hand over files, type a password, set up)
+  // holds the session's tool call the way a native permission does, but only this
+  // app knows about it. An unreadable one is not reported.
+  const computerPending = (receipt) => {
+    try {
+      return options.computerRequests?.pending(receipt.sessionId) ?? null
+    } catch {
+      return null
+    }
+  }
+  // The request a running session waits on, with what is needed to answer it.
+  // An unreadable list is unknown (undefined), never "nothing pending".
+  const pendingFor = async (native, receipt, signal) => {
+    const running = native.snapshot?.status?.type === "busy" || native.snapshot?.status?.type === "retry"
+    if (!running) return null
+    // Its card expires, so it is the one to surface first.
+    const computer = computerPending(receipt)
+    if (computer) return computer
+    try {
+      return await native.client.getThreadPending(receipt.sessionId, { signal })
+    } catch (error) {
+      if (signal.aborted) throw error
+      return undefined
+    }
+  }
+  // Everything the session has open, whatever its turn is doing: a question
+  // asked without waiting stays open after the turn ended. One read gives
+  // both the list and, while a turn runs, the request it waits on, so the
+  // two always agree. An unreadable list is unknown (undefined).
+  const openRequestsFor = async (native, receipt, signal) => {
+    const running = native.snapshot?.status?.type === "busy" || native.snapshot?.status?.type === "retry"
+    // Its card expires, so it is the one to surface first.
+    const computer = computerPending(receipt)
+    let items
+    try {
+      items = [...(computer ? [computer] : []), ...await native.client.getThreadPendingItems(receipt.sessionId, { signal })]
+        .slice(0, HEADLESS_THREAD_PENDING_ITEMS_MAX)
+    } catch (error) {
+      if (signal.aborted) throw error
+    }
+    return { pending: running ? computer ?? (items ? items[0] ?? null : undefined) : null, items }
+  }
+  return {
+    // Engine selection is dynamic per command. Do not claim V2's native create
+    // deduplication for a runner that can also receive V1 workspace commands.
+    creation: "at_most_once",
+    // One adapter routes both engine versions. V1 has no atomic admission
+    // primitive, so an uncertain send must not be replayed automatically.
+    sendReplay: "at_most_once",
+    async create(command, signal) {
+      const operationSignal = bounded(signal)
+      const local = await runtime()
+      let listed
+      let selectedEngine
+      try {
+        listed = await requestJson(fetchImpl, local.baseUrl, local.token, "/workspaces", { signal: operationSignal })
+        selectedEngine = await engine(local, operationSignal)
+      } catch (error) {
+        // These are read-only preflight probes: creation has not been attempted,
+        // so their failure is definitive, unlike a lost create response below.
+        const classified = classifyRemoteSessionCommandError(error)
+        throw new SessionRunnerError(classified.code, classified.message)
+      }
+      let workspace
+      try {
+        workspace = resolveAssignmentWorkspace(listed, command.workspaceId ?? null)
+      } catch {
+        throw new SessionRunnerError("workspace_unavailable", "The selected workspace is not available on this desktop.")
+      }
+      const workspaceId = String(workspace.id)
+      const client = createWorkspaceSessionClient(local, workspaceId, fetchImpl, false, selectedEngine)
+      let created
+      try {
+        // Intentionally no prompt here: a durable native receipt must exist
+        // before the core sends the initial stable message ID.
+        const identity = selectedEngine === "v2" && options.creationOwner ? {
+          id: `ses_${createHash("sha256").update(JSON.stringify([options.creationOwner, workspaceId, command.commandId])).digest("hex")}`,
+          metadata: { openworkRemoteSessionOwner: options.creationOwner, openworkRemoteSessionCommand: command.commandId },
+        } : {}
+        created = await client.createThread({
+          title: command.title,
+          ...identity,
+          ...(command.model ? { model: modelInput(command.model) } : {}),
+          signal: operationSignal,
+        })
+      } catch (error) {
+        throw definitiveFailure(error, true)
+      }
+      const receipt = { sessionId: created.id, workspaceId }
+      identities.set(key(receipt), { engine: created.engine ?? selectedEngine, model: created.model ?? modelInput(command.model) })
+      return receipt
+    },
+    /**
+     * A session that already exists here, for the owner's other devices. The
+     * core calls this only while the owner allows all sessions. Read-only: it
+     * proves the session is in that workspace and changes nothing about it.
+     */
+    async attach(command, signal) {
+      const operationSignal = bounded(signal)
+      const receipt = { sessionId: command.sessionId, workspaceId: command.workspaceId }
+      let workspace
+      let native
+      try {
+        const local = await runtime()
+        const listed = await requestJson(fetchImpl, local.baseUrl, local.token, "/workspaces", { signal: operationSignal })
+        workspace = (Array.isArray(listed?.items) ? listed.items : []).find((item) => item?.id === command.workspaceId)
+        if (!workspace) throw new SessionRunnerError("session_unavailable", SESSION_UNAVAILABLE)
+        native = await snapshotFor(receipt, operationSignal, 1)
+      } catch (error) {
+        // Only a missing session is an answer. Anything else left the session
+        // untouched, so the core may simply look again.
+        if (error?.status === 404) throw new SessionRunnerError("session_unavailable", SESSION_UNAVAILABLE)
+        throw error
+      }
+      if (!await sessionInWorkspace(workspace, native.snapshot)) {
+        identities.delete(key(receipt))
+        throw new SessionRunnerError("session_unavailable", SESSION_UNAVAILABLE)
+      }
+      return receipt
+    },
+    async send(receipt, input, signal) {
+      const operationSignal = bounded(signal)
+      try {
+        const native = await snapshotFor(receipt, operationSignal, 50)
+        let accepted
+        try {
+          accepted = await native.client.sendTurn(receipt.sessionId, {
+            prompt: input.prompt,
+            messageId: input.messageId,
+            ...(input.model ? { model: modelInput(input.model) } : {}),
+            signal: operationSignal,
+          })
+        } catch (error) {
+          if (native.engine === "v1" && ![400, 401, 403, 404, 409, 422].includes(error?.status)) {
+            // V1 admission is check-then-send, not an atomic idempotency key.
+            // A lost prompt response cannot safely be retried as a new turn.
+            throw new SessionRunnerError("ambiguous_send", "OpenCode V1 did not confirm prompt admission. Inspect the local session; this turn must not be sent again automatically.")
+          }
+          throw error
+        }
+        identities.set(key(receipt), {
+          engine: native.engine,
+          model: input.model ? modelInput(input.model) : native.model,
+          messageId: accepted.messageId ?? input.messageId,
+        })
+        return { messageId: accepted.messageId ?? input.messageId, alreadyPresent: accepted.alreadyPresent === true }
+      } catch (error) {
+        throw definitiveFailure(error, false)
+      }
+    },
+    async read(receipt, input, signal) {
+      const operationSignal = bounded(signal)
+      try {
+        const native = await snapshotFor(receipt, operationSignal)
+        const { pending, items: pendingItems } = await openRequestsFor(native, receipt, operationSignal)
+        return parseReadResult({
+          ...remoteSessionTranscriptPage(native.snapshot, input, pending === undefined ? null : pending?.kind ?? null),
+          historyScope: "full",
+          ...(pending === undefined ? {} : { pending }),
+          ...(pendingItems === undefined ? {} : { pendingItems }),
+        })
+      } catch (error) {
+        if (error?.code === "invalid_cursor") {
+          throw new SessionRunnerError("invalid_cursor", error.message)
+        }
+        throw definitiveFailure(error, false)
+      }
+    },
+    async stop(receipt, input, signal) {
+      // The modern core pins an unguarded stop to its durable last message.
+      // Without a guard, this adapter must not abort a newer local turn.
+      if (!input.messageId) return { stopped: false, reason: null }
+      const operationSignal = bounded(signal)
+      try {
+        const native = await snapshotFor(receipt, operationSignal, 50)
+        if (input.messageId && latestUserId(native.snapshot) !== input.messageId) {
+          return { stopped: false, reason: "different_turn" }
+        }
+        const aborted = await native.client.abortThread(receipt.sessionId, { signal: operationSignal })
+        return { stopped: aborted.accepted === true, reason: null }
+      } catch (error) {
+        throw definitiveFailure(error, false)
+      }
+    },
+    /**
+     * The person's answer, through the same native reply paths a local chat uses:
+     * v1 question/permission reply, v2 form reply by field key and option value,
+     * v2 permission reply, or the computer-use approval this app holds. Any
+     * open request can be answered by its id, and a question can be dismissed.
+     * Never "always". A request no longer pending is refused.
+     */
+    async answer(receipt, input, signal) {
+      const operationSignal = bounded(signal)
+      try {
+        if (computerPending(receipt)?.requestId === input.requestId) {
+          if (input.kind === "dismiss") throw new SessionRunnerError("invalid_answer", "A permission can't be dismissed. Allow it once or reject it.")
+          if (input.kind === "permission") {
+            await options.computerRequests.answer(receipt.sessionId, input)
+            return
+          }
+        }
+        const native = await snapshotFor(receipt, operationSignal, 1)
+        await native.client.answerThread(receipt.sessionId, input, { signal: operationSignal })
+      } catch (error) {
+        if (error?.code === "stale_request" || error?.code === "invalid_answer") {
+          throw new SessionRunnerError(error.code, error.message)
+        }
+        throw definitiveFailure(error, false)
+      }
+    },
+    async observe(receipt, signal) {
+      const operationSignal = bounded(signal)
+      try {
+        let native = await snapshotFor(receipt, operationSignal, OBSERVE_MESSAGE_LIMIT)
+        // Status and messages are separate native reads. Until the accepted
+        // stable user message appears, even an idle old reply is not this turn.
+        let visible = !native.messageId || native.turnSeen || remoteSessionTurnVisible(native.snapshot, { messageId: native.messageId })
+        if (!visible && native.snapshot.messages.length > 0) {
+          // A long turn pushes its own user message out of the bounded tail. Missing from
+          // the tail is not "not sent yet": look at the whole session once before deciding.
+          const full = await snapshotFor(receipt, operationSignal)
+          if (remoteSessionTurnVisible(full.snapshot, { messageId: native.messageId })) {
+            native = full
+            visible = true
+          }
+        }
+        if (visible && native.messageId && !native.turnSeen) {
+          // Once seen, a turn's message stays sent; later tails need not contain it.
+          identities.set(key(receipt), { ...identities.get(key(receipt)), seenMessageId: native.messageId })
+        }
+        const pending = visible ? await pendingFor(native, receipt, operationSignal) : null
+        const observation = visible
+          ? remoteSessionObservation(native.snapshot, pending === undefined ? undefined : pending?.kind ?? null)
+          : { status: "running", messageCount: native.snapshot.messages.length }
+        return parseProgress({
+          ...observation,
+          // An idle snapshot with no reply is not a failed turn. The shared
+          // core uses its durable turn baseline before accepting final text.
+          status: observation.status === "silent" ? "running" : observation.status,
+          waitingFor: observation.waitingFor ?? null,
+          error: observation.error ?? null,
+          engine: native.engine,
+          ...(native.model ? { model: native.model } : {}),
+          // What it ran last, for the chat's row; only while this turn works.
+          latestStep: visible && (observation.status === "running" || observation.status === "waiting")
+            ? latestStep(native.snapshot.messages ?? [])
+            : null,
+          ...(pending === undefined ? {} : { pending: observation.status === "waiting" ? pending : null }),
+          observedAt: now(),
+        })
+      } catch (error) {
+        if (error?.status === 404) {
+          return { status: "error", error: { code: "session_not_found", message: "The local session is no longer available." }, observedAt: now() }
+        }
+        throw error
+      }
+    },
+  }
+}

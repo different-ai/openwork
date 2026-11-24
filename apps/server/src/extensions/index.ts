@@ -1,4 +1,5 @@
 import { ApiError } from "../errors.js";
+import type { PreparedDriveUploadFile } from "./approved-drive-upload.js";
 import type { EnvService } from "../env-file.js";
 import {
   googleWorkspaceCloudRequired,
@@ -38,7 +39,7 @@ export function listExperimentalExtensionActions(extensionId: string) {
     : OPENWORK_EXPERIMENTAL_EXTENSION_ACTIONS;
 }
 
-export async function callExperimentalExtensionAction(config: ServerConfig, env: EnvService, input: unknown, connectSnapshot?: ConnectSnapshot, signal?: AbortSignal) {
+export async function callExperimentalExtensionAction(config: ServerConfig, env: EnvService, input: unknown, connectSnapshot?: ConnectSnapshot, signal?: AbortSignal, approvedDriveFile?: PreparedDriveUploadFile) {
   if (!isRecord(input)) {
     throw new ApiError(400, "invalid_payload", "Expected extension action call payload");
   }
@@ -63,7 +64,7 @@ export async function callExperimentalExtensionAction(config: ServerConfig, env:
   }
 
   if (extensionId === OPENWORK_CLOUD_UPLOADS_EXTENSION_ID) {
-    const result = await callOpenWorkCloudUploadAction(config, action, args, context, { signal });
+    const result = await callOpenWorkCloudUploadAction(config, action, args, context, { signal, ...(action === "drive_upload_file" ? { approvedDriveFile } : {}) });
     if (result) return result;
   }
 

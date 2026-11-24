@@ -5,7 +5,7 @@ export default function AiGatewayLimitsLayout({ children }: { children: React.Re
   return (
     <AiGatewayScreen
       pageTab="limits"
-      pageContent={<GatewayDashboardCapabilityGuard>{children}</GatewayDashboardCapabilityGuard>}
+      pageContent={<GatewayDashboardCapabilityGuard area="limits">{children}</GatewayDashboardCapabilityGuard>}
     />
   );
 }

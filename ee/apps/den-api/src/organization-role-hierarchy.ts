@@ -12,6 +12,18 @@ export const BUILT_IN_ORGANIZATION_ROLES: readonly BuiltInOrganizationRole[] = [
   ORGANIZATION_MEMBER_ROLE,
 ]
 
+export type AssignableOrganizationRole = "super-admin" | "admin" | "member"
+
+export const ASSIGNABLE_ORGANIZATION_ROLES: readonly AssignableOrganizationRole[] = [
+  ORGANIZATION_SUPER_ADMIN_ROLE,
+  ORGANIZATION_ADMIN_ROLE,
+  ORGANIZATION_MEMBER_ROLE,
+]
+
+function canonicalRoleName(role: string) {
+  return role === ORGANIZATION_SUPER_ADMIN_ROLE ? ORGANIZATION_ADMIN_ROLE : role
+}
+
 function builtInRoleLevel(role: string) {
   switch (role) {
     case ORGANIZATION_OWNER_ROLE:
@@ -42,7 +54,15 @@ export function normalizeOrganizationRoleName(value: string) {
 }
 
 export function organizationRoleValueIncludes(roleValue: string, role: string) {
-  return splitOrganizationRoles(roleValue).includes(role)
+  const roles = splitOrganizationRoles(roleValue)
+  if (role === ORGANIZATION_SUPER_ADMIN_ROLE) return roles.includes(ORGANIZATION_SUPER_ADMIN_ROLE)
+  const wanted = canonicalRoleName(role)
+  return roles.some((entry) => canonicalRoleName(entry) === wanted)
+}
+
+export function isOrganizationSuperAdminRole(directRole: string) {
+  return organizationRoleValueIncludes(directRole, ORGANIZATION_SUPER_ADMIN_ROLE)
+    && !organizationRoleValueIncludes(directRole, ORGANIZATION_OWNER_ROLE)
 }
 
 export function organizationRoleSatisfies(assignedRole: string, requiredRole: string) {
@@ -72,6 +92,18 @@ export function organizationRoleValueSatisfies(input: {
   return roles.some((role) => organizationRoleSatisfies(role, input.requiredRole))
 }
 
+export function assignableOrganizationRole(roleValue: string): AssignableOrganizationRole | null {
+  const roles = splitOrganizationRoles(roleValue).map(normalizeOrganizationRoleName)
+  if (roles.includes(ORGANIZATION_SUPER_ADMIN_ROLE)) return ORGANIZATION_SUPER_ADMIN_ROLE
+  if (roles.includes(ORGANIZATION_ADMIN_ROLE)) return ORGANIZATION_ADMIN_ROLE
+  if (roles.includes(ORGANIZATION_MEMBER_ROLE)) return ORGANIZATION_MEMBER_ROLE
+  return null
+}
+
+export function isAssignableOrganizationRole(role: string): role is AssignableOrganizationRole {
+  return role === ORGANIZATION_SUPER_ADMIN_ROLE || role === ORGANIZATION_ADMIN_ROLE || role === ORGANIZATION_MEMBER_ROLE
+}
+
 export function shouldRevokeSessionsForRoleChange(previousRole: string, nextRole: string) {
   if (previousRole === nextRole) {
     return false
@@ -79,7 +111,6 @@ export function shouldRevokeSessionsForRoleChange(previousRole: string, nextRole
 
   const previousRoles = splitOrganizationRoles(previousRole)
   const nextRoles = splitOrganizationRoles(nextRole)
-  // Only single built-in roles have a provable ordering; ambiguous changes fail closed.
   if (previousRoles.length !== 1 || nextRoles.length !== 1) {
     return true
   }
@@ -89,6 +120,7 @@ export function shouldRevokeSessionsForRoleChange(previousRole: string, nextRole
   return previousLevel === null || nextLevel === null || nextLevel <= previousLevel
 }
 
-export function isProtectedOrganizationRoleName(role: string) {
-  return BUILT_IN_ORGANIZATION_ROLES.some((builtInRole) => builtInRole === role)
+export function isEffectiveOrganizationAdmin(input: { directRole: string; adminTeamIds: readonly string[] }): boolean {
+  if (input.adminTeamIds.length > 0) return true
+  return organizationRoleValueIncludes(input.directRole, ORGANIZATION_ADMIN_ROLE)
 }

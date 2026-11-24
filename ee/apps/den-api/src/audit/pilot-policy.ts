@@ -116,9 +116,6 @@ Coverage is limited to implemented provider configuration and audit-read emitter
 category names do not promise all security, execution or read activity is captured.
 Global DEN_AUDIT_CAPTURE_ENABLED and DEN_AUDIT_VISIBILITY_ENABLED default true;
 explicit false is a kill switch. This initializer never changes them.
-Traffic and API access require the auditLogs feature to be on for the organization,
-set only by platform admins in /admin; off means hidden and no traffic capture.
-Disabling the feature hides history without deleting data or changing captureOn.
 Ready organizations now lazily initialize missing policies ON during capture or
 GET usage, with a system audit.policy.initialized event. Temporary server defaults:
 6,000,000 retained OPERATIONS (not child events), 300-second attachment window,
@@ -190,7 +187,6 @@ export async function initializeAuditPilot(database: AuditDatabase, input: Pilot
       allowance: config.allowance, excessMode: config.excessMode, effectiveAt: now.toISOString(),
       captureStartedAt: null, attachmentWindowSeconds: config.attachmentWindowSeconds,
     }
-    // The policy primary key rejects a concurrent initialization; no lock is taken.
     await tx.insert(AuditPolicyTable).values({
       organization_id: organizationId, revision: policy.revision, source: policy.source, enabled: policy.enabled,
       categories: policy.categories, allowance: policy.allowance, excess_mode: policy.excessMode,
@@ -229,8 +225,6 @@ export async function previewPilotRetention(database: AuditDatabase, inputOrgani
       .from(AuditPolicyTable).where(eq(AuditPolicyTable.organization_id, organizationId)).limit(1)
     if (!policy) throw new AuditPilotError("audit_pilot_policy_missing")
     if (policy.excessMode === "paid_overage" || policy.source === "cloud" && policy.excessMode !== "delete_oldest") throw new AuditPilotError("audit_pilot_retention_unsupported_policy")
-    // Counted live from this transaction's read snapshot: audit_state totals are
-    // only refreshed on a schedule and can lag.
     const retained = and(eq(AuditOperationTable.organization_id, organizationId), eq(AuditOperationTable.retention_state, "retained"))
     const [count] = await tx.select({ value: sql<number>`count(*)`.mapWith(Number) }).from(AuditOperationTable).where(retained)
     const state = { retainedOperations: count?.value ?? -1 }

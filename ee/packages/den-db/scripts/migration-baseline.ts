@@ -1,8 +1,10 @@
 import { existsSync, readFileSync } from "node:fs"
+import { createHash } from "node:crypto"
 import path from "node:path"
 import { generateMySQLDrizzleJson, generateMySQLMigration } from "drizzle-kit/api"
 import { readMigrationFiles } from "drizzle-orm/migrator"
 import { ORGANIZATION_REPAIRS, type Executor } from "../src/schema-repairs.ts"
+import { receiptMatchesMigration } from "./superseded-migrations.ts"
 
 export const journalTable = "__drizzle_migrations"
 export const stateTable = "__openwork_dev_migration_state"
@@ -40,7 +42,6 @@ export function loadMigrationPlan(folder: string) {
     const migration = migrations[index]
     if (!migration || migration.folderMillis !== entry.when) throw new MigrationSafetyError("Migration journal/SQL mismatch")
     const snapshotPath = path.join(folder, "meta", `${entry.tag.slice(0, 4)}_snapshot.json`)
-    // Canonical, repository-owned Drizzle v5 snapshots, not input from the database.
     const snapshot: Snapshot | undefined = existsSync(snapshotPath)
       ? JSON.parse(readFileSync(snapshotPath, "utf8")) : undefined
     if (snapshot && (snapshot.version !== "5" || snapshot.dialect !== "mysql"
@@ -58,6 +59,7 @@ export function loadMigrationPlan(folder: string) {
     throw new MigrationSafetyError("0097_gateway_access_matrix SQL, journal entry and generated snapshot must be finalized together before local startup. No database changes made.")
   }
   if (!plan.at(-1)?.snapshot) throw new MigrationSafetyError("Missing final migration snapshot; refusing to start a partial migration plan")
+  preservedDashboardShape(plan)
   return plan
 }
 
@@ -66,7 +68,7 @@ export type MigrationPlan = ReturnType<typeof loadMigrationPlan>
 export function historyPrefix(plan: MigrationPlan, rows: Record<string, unknown>[]) {
   for (const [index, row] of rows.entries()) {
     const entry = plan[index]
-    if (!entry || row.hash !== entry.hash || Number(row.created_at) !== entry.folderMillis) {
+    if (!entry || !receiptMatchesMigration(row.hash, entry) || Number(row.created_at) !== entry.folderMillis) {
       throw new MigrationSafetyError(`Migration history is not an exact hash/timestamp prefix at receipt ${index + 1}. ${recovery}`)
     }
   }
@@ -95,9 +97,6 @@ function columnShape(type: string, nullable: boolean, value: unknown, extra: str
 }
 
 function checkExpression(value: string) {
-  // Normalize MySQL's serialization of the one matrix CHECK, keeping the OR
-  // grouping intact (stripping all parentheses would accept a weaker check).
-  // INFORMATION_SCHEMA on MySQL 8.4 escapes the known string delimiters.
   let text = value.replace(/_utf8mb4\\'(member:|team:|organization)\\'/g, "'$1'")
     .replace(/`(?:gateway_provider_access|gateway_usage_bucket|gateway_usage_consumption_event|gateway_usage_limit_assignment|gateway_usage_limit_entry|gateway_usage_tracking)`\./g, "").replace(/`|\s/g, "")
     .split(/('[^']*')/).map((part, index) => index % 2 ? part : part.toLowerCase()).join("")
@@ -143,6 +142,55 @@ export function snapshotShape(snapshot: Snapshot) {
     if (Object.keys(table.foreignKeys).length) throw new MigrationSafetyError("Foreign keys need explicit local migration recognition")
   }
   return shape
+}
+
+function preservedDashboardShape(plan: MigrationPlan): Map<string, string> {
+  const names = ["dashboard", "dashboard_access_grant"]
+  const definitionHash = "ab8bd253403cbebc0365a51ff354a28ae07e3a3e6efe293a1bce2c506377e656"
+  const anchors = [
+    { tag: "0078_premium_mastermind", when: 1787667476277, hash: "253f5149181ebdc8dd6aee457cf35436b6fca05380e64f8ad3a68a1178a70714" },
+    { tag: "0147_free_auto_behavior", when: 1792104699960, hash: "d800c2060cbfbc81377f70b04918627b9af901dba492fbc7ef5658a1c8635b48" },
+  ]
+  const changed = () => new MigrationSafetyError("Preserved dashboard migration definitions changed; review physical schema expectations before startup. No database changes made.")
+  for (const anchor of anchors) {
+    const entry = plan.find((migration) => migration.tag === anchor.tag)
+    if (!entry?.snapshot || entry.folderMillis !== anchor.when
+      || createHash("sha256").update(entry.sql.join("--> statement-breakpoint")).digest("hex") !== anchor.hash) throw changed()
+  }
+  const canonical = plan.find((entry) => entry.tag === "0078_premium_mastermind")?.snapshot
+  if (!canonical || !plan.find((entry) => entry.tag === "0146_gateway_provider_usage_limits")?.snapshot) throw changed()
+  for (const entry of plan) {
+    const number = Number(entry.tag.slice(0, 4))
+    if (entry.snapshot) {
+      const tables = names.map((name) => entry.snapshot?.tables[name])
+      if (number >= 78 && number < 147) {
+        if (createHash("sha256").update(JSON.stringify(tables)).digest("hex") !== definitionHash) throw changed()
+      } else if (tables.some(Boolean)) throw changed()
+    }
+    if (number !== 78 && entry.sql.some((sql) => /\b(?:dashboard|dashboard_access_grant)\b/i.test(sql.replace(/^\s*--[^\n]*$/gm, "")))) throw changed()
+  }
+  const tables: Snapshot["tables"] = {}
+  for (const name of names) tables[name] = canonical.tables[name]
+  return snapshotShape({ ...canonical, tables })
+}
+
+export type PhysicalSchemaLayout = "historical-replay" | "snapshot-bootstrap"
+
+export function physicalSchemaShape(plan: MigrationPlan, applied: number, layout: PhysicalSchemaLayout = "historical-replay") {
+  const preserved = preservedDashboardShape(plan)
+  const entry = plan[applied - 1]
+  if (!entry?.snapshot) throw new MigrationSafetyError(`No known snapshot for the recorded history prefix. ${recovery}`)
+  const shape = snapshotShape(entry.snapshot)
+  if (Number(entry.tag.slice(0, 4)) >= 147 && layout === "historical-replay") {
+    for (const [key, value] of preserved) shape.set(key, value)
+  }
+  return shape
+}
+
+export function recordedSchemaLayout(plan: MigrationPlan, applied: number, actual: Map<string, string>): PhysicalSchemaLayout {
+  if (Number(plan[applied - 1]?.tag.slice(0, 4)) >= 147
+    && schemaDifferences(physicalSchemaShape(plan, applied, "snapshot-bootstrap"), actual).length === 0) return "snapshot-bootstrap"
+  return "historical-replay"
 }
 
 export async function inspectSchema(executor: Executor) {
@@ -210,8 +258,6 @@ export function planAuthLookupIndexRepairs(plan: MigrationPlan, actual: Map<stri
   const expected = snapshotShape(snapshot)
   const differences = schemaDifferences(expected, actual)
   if (differences.length === 0) return []
-  // This is a repair plan, not a matcher exception. Only these non-unique
-  // prefix indexes may be added, and the resulting schema must match 0096.
   const allowed = [
     { tag: "0073_young_scrambler", table: "account", name: "account_account_id_provider_id", columns: ["account_id", "provider_id"] },
     { tag: "0046_messy_reaper", table: "oauthAccessToken", name: "oauth_access_token_token", columns: ["token"] },
@@ -234,7 +280,6 @@ export function recognizeBaseline(plan: MigrationPlan, actual: Map<string, strin
   if ([...actual.keys()].some((key) => key.startsWith("table:gateway_"))) {
     throw new MigrationSafetyError(`Gateway tables exist without migration receipts (already pushed or partial 0097). Explicit recovery is required; consolidated 0097 cannot be stamped onto an old deployment. ${recovery}`)
   }
-  // Never baseline the matrix migration, even if a future snapshot matches.
   for (let index = plan.length - 1; index >= 0; index--) {
     const entry = plan[index]
     if (Number(entry.tag.slice(0, 4)) > 96 || !entry.snapshot) continue
@@ -262,8 +307,6 @@ export async function foundationSql(plan: MigrationPlan) {
   const owned = new Set([...sql.matchAll(/CREATE\s+TABLE(?:\s+IF\s+NOT\s+EXISTS)?\s+`([^`]+)`|RENAME\s+TABLE\s+`[^`]+`\s+TO\s+`([^`]+)`/gi)].map((match) => match[1] || match[2]))
   for (const [name, table] of Object.entries(foundation.tables)) {
     if (owned.has(name)) { delete foundation.tables[name]; continue }
-    // The migration chain starts after auth/system existed. Seed only those
-    // tables, excluding columns/indexes that the real replay adds later.
     for (const match of sql.matchAll(/ALTER\s+TABLE\s+`([^`]+)`\s+ADD(?:\s+COLUMN)?\s+`([^`]+)`/gi)) {
       if (match[1] === name) delete table.columns[match[2]]
     }

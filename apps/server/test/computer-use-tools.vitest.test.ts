@@ -1,0 +1,72 @@
+import { expect, test } from "vitest";
+import { z } from "zod";
+import { server } from "../src/opencode-plugins/openwork-computer-use.js";
+
+test("the agent can discover computer tools on every desktop platform, including Linux VM clients", async () => {
+  const plugin = await server();
+  expect(plugin.tool.computer_discover).toBeDefined();
+  expect(plugin.tool.computer_open).toBeDefined();
+  expect(plugin.tool.computer_act).toBeDefined();
+  expect(plugin.tool.computer_run).toBeDefined();
+  expect(plugin.tool.computer_close).toBeDefined();
+  expect(plugin.tool.computer_discover.description).toContain("selected computer");
+});
+
+test("app scripts are offered on this Mac and approved in OpenWork, not by an engine prompt", async () => {
+  const plugin = await server();
+  expect(plugin.tool.computer_script).toBeDefined();
+  expect(plugin.tool.computer_script.description).toContain("unless the person's organization asks before each script");
+  expect(Object.keys(plugin.tool.computer_script.args)).toEqual(["app", "code", "timeoutMs"]);
+});
+
+test("computer tool schemas stay valid after OpenCode v1 moves $defs to definitions", async () => {
+  const plugin = await server();
+  for (const [name, tool] of Object.entries(plugin.tool)) {
+    // Mirrors OpenCode v1's plugin conversion, which renames the root `$defs` but not the `$ref`s into it.
+    const { $defs, ...schema } = z.toJSONSchema(z.object(tool.args), { io: "input" });
+    expect(JSON.stringify({ ...schema, definitions: $defs }), name).not.toContain('"#/$defs/');
+  }
+  await expect(plugin.tool.computer_run.execute({ surface: "computer", code: "return input", input: () => 1 }, { sessionID: "s" })).rejects.toThrow();
+});
+
+test("computer_open defaults to control and offers the narrower modes only when the person asks", async () => {
+  const plugin = await server();
+  const open = z.object(plugin.tool.computer_open.args);
+  expect(open.parse({ app_id: "com.apple.TextEdit", purpose: "Write the note" }).mode).toBe("control");
+  expect(open.parse({ app_id: "com.apple.TextEdit", mode: "observe", purpose: "Read the note" }).mode).toBe("observe");
+  const description = plugin.tool.computer_open.description;
+  expect(description).toContain("defaults to control");
+  expect(description).not.toContain("prefer assist");
+  // The person answers in the chat; the turn does not end on a request to reply.
+  expect(description).toContain("ask them in this chat with the question tool");
+  // The person's own input pauses a step; it is never a reason to hand the task back.
+  expect(description).toContain("only pause a step until they are idle");
+  expect(description).toContain("never a reason to stop or ask them");
+});
+
+test("a task across apps is split into app agents that pass files by path", async () => {
+  const plugin = await server({ parallel: true });
+  const description = plugin.tool.computer_open.description;
+  expect(description).toContain("give each app to its own subagent");
+  expect(description).toContain("start each wave's agents together in one message");
+  expect(description).toContain("every agent of this chat gets the same one");
+  expect(description).toContain("check the final file yourself");
+  expect(description).toContain("OpenWork places their windows");
+});
+
+test("a Windows PC is not offered app scripting", async () => {
+  const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+  Object.defineProperty(process, "platform", { value: "win32" });
+  try {
+    const plugin = await server();
+    expect("computer_script" in plugin.tool).toBe(false);
+    expect(plugin.tool.computer_open.description).toContain("Windows PC");
+  } finally { Object.defineProperty(process, "platform", platform); }
+});
+
+test("the agent opens the person's own browser as an app when they ask for it", async () => {
+  const plugin = await server();
+  const description = plugin.tool.computer_open.description;
+  expect(description).toContain("unless the person asks for their own browser (Chrome, Safari); then open it as an app like any other");
+  expect(description).toContain("Web browser apps and remote computers take no password or code");
+});

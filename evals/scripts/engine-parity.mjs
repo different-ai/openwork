@@ -1,12 +1,21 @@
 import { spawn } from "node:child_process";
 import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { join, relative, resolve } from "node:path";
+import { join, relative, resolve, sep } from "node:path";
+import { journeyFile } from "../bin/test-files.mjs";
 import { prepareParityBinaries } from "./engine-parity-binaries.mjs";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const cases = ["PARITY-BOOT", "PARITY-STREAM", "PARITY-SKILLS", "PARITY-CONNECTORS"];
-const specs = ["engine-parity", "engine-connectors-parity"].map(name => `specs/${name}.e2e.test.ts`);
+// Resolved by basename: the journeys may live in evals/specs, evals/core or evals/proofs.
+const specNames = ["engine-parity", "engine-connectors-parity"];
+function paritySpecs() {
+  return specNames.map(name => {
+    const file = journeyFile(name);
+    if (!file) throw new Error(`Parity journey ${name}.e2e.test.ts is missing from evals/specs, evals/core and evals/proofs`);
+    return relative(join(root, "evals"), file).split(sep).join("/");
+  });
+}
 
 export function verifyRun(report, engine, required = cases) {
   const assertions = (report.testResults ?? []).flatMap(file => file.assertionResults ?? []);
@@ -29,6 +38,7 @@ async function main() {
   const iterations = Number(iterationsArg?.split("=")[1] ?? 3);
   if (!Number.isInteger(iterations) || iterations < 1 || iterations > 20) throw new Error("Iterations must be between 1 and 20");
   console.log("Checking repository-pinned native engine binaries...");
+  const specs = paritySpecs();
   const binaries = await prepareParityBinaries(root);
   const out = join(root, "evals/results/engine-parity", new Date().toISOString().replaceAll(/[:.]/g, "-"));
   await mkdir(out, { recursive: true });

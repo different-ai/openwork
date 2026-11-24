@@ -44,11 +44,11 @@ export type DenLlmProvider = {
   providerConfig: Record<string, unknown>;
   hasApiKey: boolean;
   configuredEnvKeys: string[];
-  /** The env names members' machines and cloud workers actually see for this provider. */
   runtimeEnvKeys: string[];
   createdAt: string | null;
   updatedAt: string | null;
   canManage: boolean;
+  configRedacted: boolean;
   accessibleVia: {
     orgMembershipIds: string[];
     teamIds: string[];
@@ -56,10 +56,15 @@ export type DenLlmProvider = {
   models: DenLlmProviderModel[];
   access: {
     allMembers: boolean;
+    memberCount: number;
+    membersHidden: boolean;
     members: DenLlmProviderMemberAccess[];
     teams: DenLlmProviderTeamAccess[];
   };
 };
+
+export const LLM_PROVIDER_DETAILS_HIDDEN_MESSAGE = "Details are hidden because you can't edit or use this provider.";
+export const LLM_PROVIDER_MEMBERS_HIDDEN_MESSAGE = "Names are hidden because you can't edit this provider.";
 
 export type DenModelsDevProviderSummary = {
   id: string;
@@ -97,7 +102,6 @@ function asStringList(value: unknown): string[] {
 }
 
 function asJsonRecord(value: unknown): Record<string, unknown> {
-  // Depending on the MySQL driver, JSON columns can come back as strings.
   if (typeof value === "string") {
     try {
       const parsed: unknown = JSON.parse(value);
@@ -211,6 +215,7 @@ function asLlmProvider(value: unknown): DenLlmProvider | null {
     createdAt: asIsoString(value.createdAt),
     updatedAt: asIsoString(value.updatedAt),
     canManage: value.canManage === true,
+    configRedacted: value.configRedacted === true,
     accessibleVia: {
       orgMembershipIds: asStringList(value.accessibleVia.orgMembershipIds),
       teamIds: asStringList(value.accessibleVia.teamIds),
@@ -220,7 +225,9 @@ function asLlmProvider(value: unknown): DenLlmProvider | null {
       : [],
     access: {
       allMembers: value.access.allMembers === true,
-      members: Array.isArray(value.access.members)
+      memberCount: Array.isArray(value.access.members) ? value.access.members.length : 0,
+      membersHidden: value.access.membersHidden === true,
+      members: Array.isArray(value.access.members) && value.access.membersHidden !== true
         ? value.access.members
             .map(asLlmProviderMemberAccess)
             .filter((entry): entry is DenLlmProviderMemberAccess => entry !== null)
@@ -299,11 +306,6 @@ export function getProviderDocUrl(config: Record<string, unknown>): string | nul
   return asString(config.doc);
 }
 
-/**
- * Simple Icons slugs for providers whose models.dev id does not match the CDN
- * slug. Anything missing here falls back to the provider id, then to the
- * favicon of the documentation domain, then to a monogram.
- */
 const SIMPLE_ICON_SLUG_BY_PROVIDER_ID: Record<string, string> = {
   google: "googlegemini",
   "google-vertex": "googlegemini",
@@ -438,10 +440,6 @@ function asProbeResult(value: unknown): LlmProviderProbeResult | null {
   };
 }
 
-/**
- * Probe an OpenAI-compatible endpoint through den-api: heals common URL
- * mistakes and returns the model ids the endpoint actually serves.
- */
 export async function requestLlmProviderTestConnection(input: {
   api: string;
   apiKey?: string;
@@ -510,6 +508,8 @@ export function useOrgLlmProviders(
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const scope = options.scope ?? "manageable";
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  const requestKey = `${orgId ?? ""}:${scope}`;
 
   async function loadProviders() {
     if (!orgId) {
@@ -538,6 +538,7 @@ export function useOrgLlmProviders(
       setError(loadError instanceof Error ? loadError.message : "Failed to load the provider library.");
     } finally {
       setBusy(false);
+      setLoadedKey(requestKey);
     }
   }
 
@@ -549,6 +550,7 @@ export function useOrgLlmProviders(
     llmProviders,
     busy,
     error,
+    loaded: Boolean(orgId) && loadedKey === requestKey && !busy,
     reloadProviders: loadProviders,
   };
 }

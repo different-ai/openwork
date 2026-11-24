@@ -1,47 +1,79 @@
-import { readFeatureRollouts, readFeatures, readOrganizationFeatureOverridesForMany, type FeatureDatabase } from "@openwork-ee/den-db/organization-features"
+import {
+  freeAutoDesktopProofRequiredBy,
+  readFeatures,
+  lockFeatureForMutation,
+  readOrganizationFeatureOverridesForMany,
+  readOrganizationMemberFeatureOverrides,
+  setFeatureRollout,
+  setMemberFeatureOverrides,
+  setOrganizationFeatureOverrides,
+  type FeatureDatabase,
+} from "@openwork-ee/den-db/organization-features"
+import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { eq } from "@openwork-ee/den-db/drizzle"
+import { OrganizationTable } from "@openwork-ee/den-db/schema"
 import { resolveFeatures, type FeatureKey, type FeatureMap } from "@openwork/features"
 import type { MiddlewareHandler } from "hono"
+import { cache } from "./cache.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
+import { markFeaturesUsed } from "./feature-usage.js"
 import type { OrganizationContextVariables } from "./middleware/organization-context.js"
-
-/**
- * The only way den-api asks whether a feature is on.
- *
- * Features are declared in packages/features/src/registry.ts (read
- * .opencode/skills/add-a-feature first). Never read organization metadata or
- * environment variables to decide whether a feature is on.
- */
 
 export type { FeatureKey, FeatureMap }
 
 type ReadOptions = {
+  userId?: string
   database?: FeatureDatabase
   lock?: "share"
 }
 
-/**
- * Effective on/off for every feature, for one organization. Read fresh on
- * every call, so an /admin change applies to the next request. Pass the
- * transaction (and `lock: "share"`) when the answer must stay stable until commit.
- */
-export function getOrganizationFeatures(organizationId: string, options: ReadOptions = {}): Promise<FeatureMap> {
-  return readFeatures(options.database ?? db, organizationId, env.features, { lock: options.lock })
+export async function readOrganizationForAuthorization(organizationId: string) {
+  const [organization] = await db.select().from(OrganizationTable)
+    .where(eq(OrganizationTable.id, normalizeDenTypeId("organization", organizationId)))
+    .limit(1)
+  return organization ? { organization } : null
+}
+
+export async function getOrganizationFeatures(organizationId: string, options: ReadOptions = {}): Promise<FeatureMap> {
+  if (options.database || options.lock) {
+    return readFeatures(options.database ?? db, organizationId, env.features, { lock: options.lock, userId: options.userId })
+  }
+  const id = normalizeDenTypeId("organization", organizationId)
+  const userId = options.userId ? normalizeDenTypeId("user", options.userId) : undefined
+  const { rollouts, overrides, memberOverrides } = await cache.features.state(id, userId)
+  return resolveFeatures({ ...env.features, rollouts, overrides, memberOverrides })
 }
 
 export async function organizationFeatureEnabled(organizationId: string, key: FeatureKey, options: ReadOptions = {}): Promise<boolean> {
   return (await getOrganizationFeatures(organizationId, options))[key]
 }
 
-/**
- * Effective features for several organizations, read fresh: one rollout read
- * and one override read in total, keyed by the ids as given.
- */
+export async function lockOrganizationFeatureForMutation(database: Parameters<typeof lockFeatureForMutation>[0], organizationId: string, userId: string, key: FeatureKey): Promise<boolean> {
+  return lockFeatureForMutation(database, organizationId, userId, key, env.features)
+}
+
+export async function getOrganizationFeaturesByMember(organizationId: string): Promise<{ organization: FeatureMap; forMember(memberId: string): FeatureMap }> {
+  const id = normalizeDenTypeId("organization", organizationId)
+  const [{ rollouts, overrides }, memberOverrides] = await Promise.all([
+    cache.features.state(id),
+    readOrganizationMemberFeatureOverrides(db, id),
+  ])
+  const organization = resolveFeatures({ ...env.features, rollouts, overrides })
+  return {
+    organization,
+    forMember(memberId) {
+      const own = memberOverrides.get(normalizeDenTypeId("member", memberId))
+      return own ? resolveFeatures({ ...env.features, rollouts, overrides, memberOverrides: own }) : organization
+    },
+  }
+}
+
 export async function getFeaturesForOrganizations(organizationIds: readonly string[]): Promise<Map<string, FeatureMap>> {
   const result = new Map<string, FeatureMap>()
   if (organizationIds.length === 0) return result
   const [rollouts, overrides] = await Promise.all([
-    readFeatureRollouts(db),
+    cache.features.rollouts(),
     readOrganizationFeatureOverridesForMany(db, [...organizationIds]),
   ])
   for (const organizationId of organizationIds) {
@@ -50,26 +82,56 @@ export async function getFeaturesForOrganizations(organizationIds: readonly stri
   return result
 }
 
-/**
- * Deployment-wide on/off for a feature that no organization owns: the state
- * for everyone after the kill switch and operator locks, with no organization
- * override (the same answer as GET /v1/features). Read fresh on every call.
- */
 export async function deploymentFeatureEnabled(key: FeatureKey): Promise<boolean> {
-  return (await readFeatures(db, null, env.features))[key]
+  return resolveFeatures({ ...env.features, rollouts: await cache.features.rollouts(), overrides: {} })[key]
 }
 
-/**
- * Route guard for organization routes: answers 404 `feature_disabled` as if the
- * route did not exist when the feature is off for the caller's organization. Use after
- * orgMemberRoute()/orgRoleRoute().
- */
-export function requireFeature(key: FeatureKey): MiddlewareHandler<{ Variables: Partial<OrganizationContextVariables> }> {
+export async function freeModelsNeedDesktop(organizationId: string): Promise<boolean> {
+  const deployment = resolveFeatures({ ...env.features, rollouts: await cache.features.rollouts(), overrides: {} })
+  return freeAutoDesktopProofRequiredBy(deployment, await getOrganizationFeatures(organizationId))
+}
+
+export async function updateFeatureRollout(input: Parameters<typeof setFeatureRollout>[1]) {
+  try {
+    return await setFeatureRollout(db, input)
+  } finally {
+    await cache.features.invalidate()
+  }
+}
+
+export async function updateOrganizationFeatureOverrides(input: Parameters<typeof setOrganizationFeatureOverrides>[1]) {
+  try {
+    return await setOrganizationFeatureOverrides(db, input)
+  } finally {
+    await cache.features.invalidate()
+  }
+}
+
+export async function updateMemberFeatureOverrides(input: Parameters<typeof setMemberFeatureOverrides>[1]) {
+  try {
+    return await setMemberFeatureOverrides(db, input)
+  } finally {
+    await cache.features.invalidate()
+  }
+}
+
+export function requireFeature(key: FeatureKey, message?: string): MiddlewareHandler<{ Variables: Partial<OrganizationContextVariables> }> {
   return async (c, next) => {
     const payload = c.get("organizationContext")
     if (!payload) return c.json({ error: "organization_not_found" }, 404)
-    const enabled = await organizationFeatureEnabled(payload.organization.id, key)
-    if (!enabled) return c.json({ error: "feature_disabled", feature: key }, 404)
+    if (!payload.features[key]) return c.json({ error: "feature_disabled", feature: key, ...(message ? { message } : {}) }, 404)
+    markFeaturesUsed({ organizationId: payload.organization.id, memberId: payload.currentMember.id, keys: [key] })
+    await next()
+  }
+}
+
+export function requireAnyFeature(keys: readonly [FeatureKey, ...FeatureKey[]]): MiddlewareHandler<{ Variables: Partial<OrganizationContextVariables> }> {
+  return async (c, next) => {
+    const payload = c.get("organizationContext")
+    if (!payload) return c.json({ error: "organization_not_found" }, 404)
+    const used = keys.filter((key) => payload.features[key])
+    if (used.length === 0) return c.json({ error: "feature_disabled", feature: keys[0] }, 404)
+    markFeaturesUsed({ organizationId: payload.organization.id, memberId: payload.currentMember.id, keys: used })
     await next()
   }
 }

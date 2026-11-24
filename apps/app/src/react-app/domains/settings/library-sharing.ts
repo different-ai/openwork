@@ -7,7 +7,6 @@ import type {
 import { t } from "../../../i18n";
 import type { ExtensionTaxonomy } from "./extension-taxonomy";
 
-/** Where a Library row sits: on this computer, added by the member, or shared by OpenWork. */
 export type LibrarySection = "mac" | "mine" | "openwork";
 
 export type LibraryAudience = {
@@ -18,7 +17,6 @@ export type LibraryAudience = {
 
 export const emptyLibraryAudience: LibraryAudience = { orgWide: false, teams: [], people: [] };
 
-/** Everyone the owner shared with, read from the plugin's live access grants. */
 export function libraryAudienceFromGrants(
   grants: DenLibraryAccessGrant[],
   directory: DenLibraryOrgDirectory | null,
@@ -52,7 +50,6 @@ export function isLibraryAudienceShared(audience: LibraryAudience) {
   return audience.orgWide || audience.teams.length > 0 || audience.people.length > 0;
 }
 
-/** Names the audience the way the row and toasts say it: Support, Support and Ana, everyone. */
 export function libraryAudienceName(audience: LibraryAudience): string {
   if (audience.orgWide) return t("extensions.share_audience_everyone");
   const names = [...audience.teams.map((team) => team.name), ...audience.people.map((person) => person.name)];
@@ -62,7 +59,6 @@ export function libraryAudienceName(audience: LibraryAudience): string {
   return t("extensions.share_audience_many", { first: names[0] ?? "", count: String(names.length - 1) });
 }
 
-/** How many people besides the owner get it. Teams can overlap, so this counts distinct members. */
 export function libraryAudiencePeopleCount(audience: LibraryAudience, directory: DenLibraryOrgDirectory | null): number {
   if (audience.orgWide) return Math.max(0, (directory?.members.length ?? 1) - 1);
   const ids = new Set<string>();
@@ -75,19 +71,6 @@ export function libraryAudiencePeopleCount(audience: LibraryAudience, directory:
   return ids.size;
 }
 
-/** The right-hand row caption for something the member made. */
-export function libraryOwnedCaption(audience: LibraryAudience, changedJustNow: boolean): string {
-  if (changedJustNow) {
-    return isLibraryAudienceShared(audience)
-      ? t("extensions.row_changed_just_now_shared", { audience: libraryAudienceName(audience) })
-      : t("extensions.row_changed_just_now");
-  }
-  return isLibraryAudienceShared(audience)
-    ? t("extensions.row_owned_shared", { audience: libraryAudienceName(audience) })
-    : t("extensions.row_owned_just_me");
-}
-
-/** A cloud plugin with a single skill or MCP reads as that thing, not as a plugin. */
 export function libraryCloudItemTaxonomy(kinds: string[], componentCount: number): ExtensionTaxonomy {
   const unique = [...new Set(kinds.map((kind) => kind.toLowerCase()))];
   if (unique.length === 1 && componentCount === 1) {
@@ -101,17 +84,6 @@ export function isOwnedLibraryPlugin(item: Pick<DenLibraryPluginItem, "role" | "
   return item.role === "owner" || item.edges.some((edge) => edge.kind === "mine");
 }
 
-/** Who shared an item with the member, for the From OpenWork caption. */
-export function librarySharedByCaption(item: Pick<DenLibraryPluginItem, "edges">, organizationName: string): string {
-  for (const edge of item.edges) {
-    if (edge.kind === "person" && edge.sharedByName) return t("extensions.row_shared_by", { name: edge.sharedByName });
-    if (edge.kind === "team") return t("extensions.row_cloud_from", { source: edge.teamName });
-    if (edge.kind === "catalog" && edge.marketplaceName) return t("extensions.row_cloud_from", { source: edge.marketplaceName });
-  }
-  return t("extensions.row_cloud_from", { source: organizationName });
-}
-
-/** Who else can use a connection, read from how it reached the member. */
 export function libraryConnectionAudience(edges: DenLibraryAccessEdge[], organizationName: string): string {
   if (edges.some((edge) => edge.kind === "org_wide")) return t("extensions.detail_who_everyone", { org: organizationName });
   const team = edges.find((edge) => edge.kind === "team");

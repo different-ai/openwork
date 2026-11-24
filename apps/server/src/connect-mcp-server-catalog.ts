@@ -4,6 +4,7 @@ import { z } from "zod";
 
 import { readMcpResourceText, type McpFetch } from "./connect-mcp-transport.js";
 import { readActivatedEnterpriseDenOrigin } from "./enterprise-den-origin.js";
+import type { OrganizationMcpServers } from "./organization-mcp-names.js";
 import {
   readGlobalRuntimeMcpConfig,
   readRuntimeMcpConfig,
@@ -18,11 +19,6 @@ export const CONNECT_MCP_SERVER_INDEX_URI = "openwork://connect/mcp-servers/inde
 export const CONNECT_MCP_SERVER_INDEX_SCHEMA_VERSION = "openwork.connect/mcp-servers/1";
 export const CONNECT_MCP_APP_HOST_NAME_PREFIX = "openwork-app-host-connect-";
 export const CONNECT_MCP_SERVER_NAME_PREFIX = "openwork-connect-";
-/**
- * Model-facing OpenCode MCP entries for connections an administrator exposed
- * directly. Distinct from the legacy `openwork-connect-` prefix, which every
- * projection filter still strips, so a stale legacy row can never resurface.
- */
 export const CONNECT_DIRECT_MCP_SERVER_NAME_PREFIX = "openwork-direct-";
 export const CONNECT_MCP_APP_HOST_CAPABILITY_HEADER = "x-openwork-mcp-client-capabilities";
 export const CONNECT_MCP_APP_HOST_CAPABILITY = "mcp-app-host-v1";
@@ -56,16 +52,8 @@ const appHostCredentialSchema = z.object({
 });
 
 export type OpenWorkConnectMcpServerIndex = z.output<typeof indexSchema>;
-/** Index shape as Den publishes it; `exposeDirectly` is absent from older Den releases and defaults to false. */
 export type OpenWorkConnectMcpServerIndexInput = z.input<typeof indexSchema>;
 
-/**
- * Safe to surface: no credentials or provider data. Missing auth requires a
- * fresh private App-host credential; untrusted origins require enterprise Den
- * activation (never bypass trust). Invalid catalogs/proxies require a Den
- * descriptor fix. Unavailable discovery can be retried, but does not prove an
- * auth failure. Only `empty` proves successful discovery with no servers.
- */
 export type ConnectMcpCatalogDiagnostic =
   | "ready"
   | "empty"
@@ -148,11 +136,6 @@ function normalizeAppHostProxyUrl(
   if (serverEndpoint.search || serverEndpoint.hash) return null;
   if (serverEndpoint.origin === cloudEndpoint.origin) return serverEndpoint.toString();
 
-  // Hosted Desktop talks to Den through the app-origin gateway, while Den's
-  // authenticated member index names its canonical api-origin proxy. Keep the
-  // credential on the configured app origin by translating only this exact,
-  // built-in proxy pair and exact per-connection path. Arbitrary cross-origin
-  // descriptors still fail closed.
   if (BUILTIN_APP_HOST_GATEWAY_PROXY_ORIGINS.get(cloudEndpoint.origin) !== serverEndpoint.origin) return null;
   const cloudTerminalPath = "/mcp/agent";
   if (!cloudEndpoint.pathname.endsWith(cloudTerminalPath) || cloudEndpoint.search || cloudEndpoint.hash) return null;
@@ -184,17 +167,11 @@ export async function trustedAppHostCloudEndpoint(cloudMcp: Record<string, unkno
   return activatedEnterpriseOrigin !== null && endpoint.origin === activatedEnterpriseOrigin;
 }
 
-/** Stable private App-host identifier. This must never become an OpenCode MCP key. */
 export function connectMcpAppHostName(connectionId: string): string {
   const digest = createHash("sha256").update(connectionId).digest("hex").slice(0, 12);
   return `${CONNECT_MCP_APP_HOST_NAME_PREFIX}${digest}`;
 }
 
-/**
- * OpenCode MCP key for a directly exposed connection. The readable slug tells
- * the model which service it is talking to; the digest keeps two connections
- * with the same display name apart.
- */
 export function connectDirectMcpRuntimeName(server: { connectionId: string; name: string }): string {
   const slug = server.name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
   const digest = createHash("sha256").update(server.connectionId).digest("hex").slice(0, 6);
@@ -208,15 +185,6 @@ function modelFacingHeaders(cloudMcp: Record<string, unknown>): Record<string, s
   return entries.length > 0 ? Object.fromEntries(entries) : null;
 }
 
-/**
- * Model-facing runtime entries for the directly exposed connections in an
- * index. They reuse the ordinary member credential already carried by the
- * `openwork-cloud` entry; the private App-host credential never leaves the
- * App host. `oauth: false` matches the `openwork-cloud` entry so an expired
- * bearer token during rotation yields a plain 401 instead of the engine
- * starting an interactive OAuth flow. Without a member credential there is
- * nothing to project.
- */
 export function directConnectMcpRuntimeEntries(
   cloudMcp: Record<string, unknown>,
   index: OpenWorkConnectMcpServerIndex,
@@ -232,6 +200,23 @@ export function directConnectMcpRuntimeEntries(
       headers,
       oauth: false,
     }]));
+}
+
+export async function registeredOrganizationMcpServers(
+  config: ServerConfig,
+  workspaceIds: Iterable<string>,
+): Promise<OrganizationMcpServers> {
+  const cloudMcp = await readGlobalRuntimeMcpConfig(config, "openwork-cloud");
+  if (!cloudMcp || typeof cloudMcp.url !== "string") return {};
+  const servers: OrganizationMcpServers = { "openwork-cloud": [cloudMcp.url] };
+  for (const workspaceId of new Set(workspaceIds)) {
+    const catalog = await readOpenWorkConnectMcpAppHostCatalog(config, workspaceId);
+    for (const [name, entry] of Object.entries(directConnectMcpRuntimeEntries(cloudMcp, catalog))) {
+      const urls = servers[name] ?? [];
+      if (typeof entry.url === "string" && !urls.includes(entry.url)) servers[name] = [...urls, entry.url];
+    }
+  }
+  return servers;
 }
 
 export async function readOpenWorkConnectMcpAppHostCatalog(
@@ -264,10 +249,6 @@ export async function readOpenWorkConnectMcpAppHostAuthorization(
   return privateAppHostAuthorization(credential.authorization);
 }
 
-/**
- * Local provisioning for the caller's validated effective Cloud config only;
- * never validates tokens or proves provider availability or access.
- */
 export async function readOpenWorkConnectMcpAppHostAuthorizationReady(
   config: ServerConfig,
   workspaceId: string,
@@ -296,7 +277,6 @@ export async function writeOpenWorkConnectMcpAppHostAuthorization(
   );
 }
 
-/** Private storage generation, including revoke/re-authorize cycles with the same bearer. */
 export async function readOpenWorkConnectMcpAppHostAuthorizationRevision(config: ServerConfig, workspaceId: string): Promise<number | null> {
   return (await appHostAuthorizationStore.getRow(config, workspaceId))?.updatedAt ?? null;
 }
@@ -341,8 +321,6 @@ export async function readOpenWorkConnectMcpServerIndexWithDiagnostics(
     fetcher,
     clientName: "openwork-server-connect-mcp-catalog",
   })).catch(() => null);
-  // Transport currently collapses HTTP and protocol failures. Do not guess
-  // that an unavailable discovery response means expired auth or no apps.
   if (text === null) return { index: null, diagnostic: "discovery_unavailable" };
   let value: unknown;
   try {
@@ -361,11 +339,37 @@ export async function readOpenWorkConnectMcpServerIndexWithDiagnostics(
   return { index: { ...parsed.data, servers }, diagnostic: servers.length === 0 ? "empty" : "ready" };
 }
 
-/**
- * Refreshes the private App-host catalog when a gateway launch proves the
- * cached catalog may be stale. Unlike startup reconciliation, an unavailable
- * opportunistic refresh preserves the last known-good catalog.
- */
+type CatalogRead = {
+  identity: string;
+  fetcher: McpFetch;
+  result: Promise<ConnectMcpCatalogReadResult>;
+};
+const pendingCatalogReads = new WeakMap<ServerConfig, Map<string, CatalogRead>>();
+
+async function readWorkspaceCatalog(
+  config: ServerConfig,
+  workspaceId: string,
+  cloudMcp: Record<string, unknown>,
+  authorization: string | null,
+  fetcher: McpFetch = externalFetch,
+): Promise<ConnectMcpCatalogReadResult> {
+  if (!await trustedAppHostCloudEndpoint(cloudMcp)) return { index: null, diagnostic: "untrusted_origin" };
+  const revision = await readOpenWorkConnectMcpAppHostAuthorizationRevision(config, workspaceId);
+  const identity = createHash("sha256").update(JSON.stringify([cloudMcp.url, cloudMcp.enabled, authorization, revision])).digest("hex");
+  const pending = pendingCatalogReads.get(config) ?? new Map<string, CatalogRead>();
+  const existing = pending.get(workspaceId);
+  if (existing?.identity === identity && existing.fetcher === fetcher) return existing.result;
+  const read = { identity, fetcher, result: readOpenWorkConnectMcpServerIndexWithDiagnostics(cloudMcp, authorization, fetcher) };
+  pending.set(workspaceId, read);
+  pendingCatalogReads.set(config, pending);
+  try {
+    return await read.result;
+  } finally {
+    if (pending.get(workspaceId) === read) pending.delete(workspaceId);
+    if (pending.size === 0) pendingCatalogReads.delete(config);
+  }
+}
+
 export async function refreshOpenWorkConnectMcpAppHostCatalog(
   config: ServerConfig,
   workspaceId: string,
@@ -381,7 +385,7 @@ export async function refreshOpenWorkConnectMcpAppHostCatalog(
     workspaceId,
     String(cloudMcp.url),
   );
-  const { index, diagnostic } = await readOpenWorkConnectMcpServerIndexWithDiagnostics(cloudMcp, appHostAuthorization, fetcher);
+  const { index, diagnostic } = await readWorkspaceCatalog(config, workspaceId, cloudMcp, appHostAuthorization, fetcher);
   if (!index) return { status: "unavailable", appHostNames: [], diagnostic };
 
   await writeOpenWorkConnectMcpAppHostCatalog(config, workspaceId, index);
@@ -392,12 +396,6 @@ export async function refreshOpenWorkConnectMcpAppHostCatalog(
   };
 }
 
-/**
- * Keeps provider descriptors private to the Desktop App host, projects only the
- * connections an administrator exposed directly into the model-facing runtime,
- * and removes any legacy OpenWork-owned provider endpoints. User-authored MCP
- * configurations and durable provider records are untouched.
- */
 export async function reconcileOpenWorkConnectMcpServers(input: {
   config: ServerConfig;
   workspace: WorkspaceInfo;
@@ -421,12 +419,10 @@ export async function reconcileOpenWorkConnectMcpServers(input: {
       String(input.cloudMcp.url),
     )
     : null;
-  const { index, diagnostic } = await readOpenWorkConnectMcpServerIndexWithDiagnostics(input.cloudMcp, appHostAuthorization, input.fetcher);
+  const { index, diagnostic } = await readWorkspaceCatalog(input.config, input.workspace.id, input.cloudMcp, appHostAuthorization, input.fetcher);
   const privateCatalog = index ?? emptyIndex();
   await writeOpenWorkConnectMcpAppHostCatalog(input.config, input.workspace.id, privateCatalog);
 
-  // Without a fresh index, fail closed: a connection whose direct exposure was
-  // revoked must not linger in the model-facing runtime on a stale catalog.
   const directEntries = directConnectMcpRuntimeEntries(input.cloudMcp, privateCatalog);
   let removedNames: string[] = [];
   await writeRuntimeOpencodeConfig(input.config, input.workspace.id, (current) => {

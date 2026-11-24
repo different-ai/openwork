@@ -1,7 +1,19 @@
 import * as crypto from "node:crypto";
+import { recordFreeAutoFounder, recordFreeAutoSignIn } from "@openwork-ee/den-db";
 import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy";
 import { invalidateTeamInferenceOAuth, revokeMemberGatewayCredentials } from "./llm/inference-provider-lifecycle.js";
-import { ensureMemberGatewayKey } from "./gateway-keys.js";
+import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js";
+import { removeMemberWorkbotComputersInBackground } from "./workbot/member-computers.js";
+import {
+  finishScimProvisionedMember,
+  organizationAllowsProvisioning,
+  provisionSsoMembership,
+  provisionVerifiedDomainMembership,
+  SCIM_ENTERPRISE_REQUIRED_MESSAGE,
+  scimRequestOrganizationId,
+  SSO_INVITATION_REQUIRED_MESSAGE,
+} from "./identity-provisioning.js";
+import { syncOrganizationBillingQuantities } from "./stripe-billing.js";
 import { getInitialActiveOrganizationIdForUser } from "./active-organization.js";
 import { db } from "./db.js";
 import { resolveOrganizationMemberAuthority } from "./organization-team-roles.js";
@@ -33,77 +45,84 @@ import {
   DEN_SESSION_EXPIRES_IN_SECONDS,
   DEN_SESSION_UPDATE_AGE_IN_SECONDS,
 } from "./session-lifetime.js";
-import { DEN_ACCOUNT_CONFIG } from "./account-linking-policy.js";
+import { userSessionExpiresAt } from "./session-security-lifetime.js";
+import { DEN_ACCOUNT_CONFIG, denUserConfig } from "./account-linking-policy.js";
 import { cache } from "./cache.js";
+import {
+  lastSignInCookieChange,
+  lastSignInCookieWrites,
+  ORGANIZATION_SAML_ALLOW_IDP_INITIATED,
+  ORGANIZATION_SAML_DEPRECATED_ALGORITHM_BEHAVIOR,
+  ORGANIZATION_SAML_REQUIRE_TIMESTAMPS,
+  SSO_DOMAIN_VERIFICATION_TOKEN_PREFIX,
+} from "@openwork-ee/den-sso";
+import { hashSessionTokens } from "./session-token.js";
+import { DEN_DESKTOP_DEVICE_CLIENT_ID } from "./device-clients.js";
+import { beginDesktopDeviceClaim, desktopDeviceAccessDenied, desktopDeviceLoginEnabled, guardDesktopDeviceSessions, requireDesktopDeviceClaim } from "./desktop-device-login.js";
 import { auditBetterAuthAfter, auditBetterAuthBefore, auditBetterAuthRefusal, auditBetterAuthSessionAfter, auditBetterAuthSessionBefore, BETTER_AUTH_AUDIT_AFTER_PATHS, BETTER_AUTH_AUDIT_BEFORE_PATHS, BETTER_AUTH_SESSION_AFTER_PATHS, BETTER_AUTH_SESSION_BEFORE_PATHS, noteOAuthConsentReference, noteOAuthRevocation, noteOAuthTokenIssuance, type BetterAuthHookSession } from "./audit/better-auth.js";
 import { auditUserUpdateAfter, auditUserUpdateBefore, recordAccountDeleted, recordIdentityLinked, recordIdentityUnlinked } from "./audit/domain/account.js";
 import { auditSessionMethod, auditSessionRevokeReason, recordSessionCreated, recordSessionRevoked } from "./audit/domain/sessions.js";
 import { SCIM_TOKEN_STORAGE_STRATEGY } from "./scim-token-storage.js";
+import { SCIM_EMAIL_CHANGE_REFUSAL, scimEmailChangeAllowed } from "./scim-email-change.js";
 import { createScimExistingUserLinkCheck } from "./scim-existing-user-linking.js";
-import { isCimdClientIdUrlAllowed } from "./mcp/cimd-policy.js";
+import { isUserKnownToScimOrganization, releaseStaleScimAccountForCreate } from "./scim-reprovisioning.js";
+import { fetchCimdMetadataResource, isCimdClientIdUrlAllowed } from "./mcp/cimd-policy.js";
 import { withLoopbackRedirectRelaxation } from "./mcp/cimd-loopback-redirects.js";
 import { syncDenSignupContact } from "./loops.js";
 import { sendEmail } from "./utils/email/send-email.js";
+import { organizationInviteEmailProps } from "./invitation-email.js";
 import {
   DEN_API_KEY_DEFAULT_PREFIX,
   DEN_API_KEY_EXPIRES_IN_DAYS,
   DEN_API_KEY_EXPIRES_IN_SECONDS,
-  DEN_API_KEY_RATE_LIMIT_MAX,
   DEN_API_KEY_RATE_LIMIT_TIME_WINDOW_MS,
-  revokeOrganizationApiKeysForMember,
-} from "./api-keys.js";
+} from "./api-key-constants.js";
+import { revokeOrganizationApiKeysForMember } from "./api-keys.js";
 import { revokeMembershipSessionCredentials } from "./credential-revocation.js";
 import {
-  canManageSecurityConfiguration,
   denOrganizationAccess,
   denOrganizationStaticRoles,
   validateInvitationRoleAssignment,
 } from "./organization-access.js";
+import { resolvePermissionsForMember } from "./permissions/resolve.js";
+import { roleAssignmentDenial } from "./permissions/team-grants.js";
 import {
   ORGANIZATION_ADMIN_ROLE,
+  ORGANIZATION_SUPER_ADMIN_ROLE,
   ORGANIZATION_MEMBER_ROLE,
   ORGANIZATION_OWNER_ROLE,
-  ORGANIZATION_SUPER_ADMIN_ROLE,
   normalizeOrganizationRoleName,
   organizationRoleValueIncludes,
   splitOrganizationRoles,
 } from "./organization-role-hierarchy.js";
-import {
-  getOrganizationSsoJitRole,
-  ORGANIZATION_SSO_JIT_ROLE,
-} from "./sso-jit.js";
 import { isScimDeprovisionedEmailForSsoProvider, isScimDeprovisionedIdentity, SCIM_DEPROVISIONED_SIGN_IN_MESSAGE } from "./scim-deprovisioning.js";
-import {
-  ORGANIZATION_SAML_ALLOW_IDP_INITIATED,
-  ORGANIZATION_SAML_DEPRECATED_ALGORITHM_BEHAVIOR,
-  ORGANIZATION_SAML_REQUIRE_TIMESTAMPS,
-} from "./sso-saml-policy.js";
-import { SSO_DOMAIN_VERIFICATION_TOKEN_PREFIX } from "./sso-domain-verification.js";
 import {
   authorizeOrganizationSsoSignIn,
   completeOrganizationSsoTestIntent,
-  failOrganizationSsoTestIntent,
+  failOrganizationSsoTestAuthentication,
   getSsoTestIntentIdFromCallbackUrl,
 } from "./sso-test-lifecycle.js";
 import {
-  getOrganizationContextForUser,
-  listAssignableRoles,
   reconcilePendingInvitationsForUser,
-  seedDefaultOrganizationRoles,
   validateOrganizationMemberRemovalForHook,
   validateOrganizationMemberRoleUpdate,
 } from "./orgs.js";
 import {
-  findEnterpriseAuthRequirementForEmail,
-  findEnterpriseAuthRequirementForUserId,
-} from "./enterprise-auth-requirement.js";
+  deleteSessionSsoAuthentication,
+  findNonSsoSignInBlock,
+  carrySessionSsoProofs,
+  findSsoAccessBlock,
+  recordDeviceSessionSsoAuthentication,
+  recordSessionSsoAuthentication,
+  SSO_REQUIRED_MESSAGE,
+} from "./organization-sso-access.js";
 import { normalizeLoginEmail } from "./auth-login-options.js";
 import { getAuthBodyEmail, getSingleOrgEmailSignupPolicyViolation } from "./single-org-signup-policy.js";
-import { readInitialAdminBootstrapGrantFromBody } from "./initial-admin-bootstrap.js";
+import { authorizeInitialAdminBootstrapSignup, readInitialAdminBootstrapGrantFromBody } from "./initial-admin-bootstrap.js";
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid";
 import * as schema from "@openwork-ee/den-db/schema";
 import { apiKey } from "@better-auth/api-key";
-import { cimdClientDiscovery } from "@better-auth/cimd";
+import { createCimdClientDiscovery } from "@better-auth/cimd";
 import { extendOAuthProvider, oauthProvider } from "@better-auth/oauth-provider";
 import { scim } from "@better-auth/scim";
 import { sso } from "@better-auth/sso";
@@ -122,9 +141,26 @@ import {
   takeDeviceSessionOrganization,
 } from "./device-authorization.js";
 import { WORKBOT_OAUTH_CLIENT_ID } from "./workbot/config.js";
+import { DEN_LIMITED_BETTER_AUTH_PATHS } from "./auth-rate-limits.js";
+import { MCP_SESSION_REVOKED_GRANT_DESCRIPTION } from "./oauth-token-rate-limit-observability.js";
+import { CLIENT_IP_IPV6_SUBNET, RESOLVED_CLIENT_IP_HEADER } from "./client-ip.js";
 import { ensureWorkbotOAuthClient } from "./workbot/oauth-client.js";
 
 const logger = appLogger.child({ component: "auth" });
+
+const SSO_SESSION_PATHS = new Set(["/sso/callback/:providerId", "/sso/callback", "/sso/saml2/sp/acs/:providerId", "/sso/saml2/callback/:providerId"]);
+
+async function organizationIdForSlug(slug: string | null) {
+  if (!slug) return null;
+  const [organization] = await db
+    .select({ id: schema.OrganizationTable.id })
+    .from(schema.OrganizationTable)
+    .where(eq(schema.OrganizationTable.slug, slug))
+    .limit(1);
+  return organization?.id ?? null;
+}
+
+const deviceApprovedSessionOrganizations = new Map<string, { organizationId: string; ssoProviderId: string | null; ssoAuthenticatedAt: Date | null }>();
 
 function localMcpResourceAliases(resource: string) {
   if (!env.devMode) {
@@ -171,10 +207,7 @@ export const DEN_MCP_FIRST_PARTY_CLIENT_ID = "openwork-desktop";
 const DEN_API_PUBLIC_MCP_RESOURCES = apiPublicMcpResource(env.apiPublicUrl);
 const DEN_MCP_BASE_RESOURCES = [
   DEN_MCP_RESOURCE,
-  // Audience compatibility: tokens issued before the proxied default carry
-  // the bare-origin resource (`<betterAuthUrl>/mcp`); keep accepting them.
   `${env.betterAuthUrl}/mcp`,
-  // Auto-trust the public API origin so multi-origin clients work without extra config.
   ...DEN_API_PUBLIC_MCP_RESOURCES,
   ...env.mcpAdditionalResources,
   ...localMcpResourceAliases(DEN_MCP_RESOURCE),
@@ -184,9 +217,6 @@ const DEN_MCP_BASE_RESOURCES = [
 export const DEN_MCP_LEGACY_PARENT_RESOURCES = Array.from(new Set(DEN_MCP_BASE_RESOURCES));
 export const DEN_MCP_FIRST_PARTY_RESOURCES = Array.from(new Set([
   ...DEN_MCP_BASE_RESOURCES,
-  // rmcp uses the configured concrete endpoint as the OAuth resource during
-  // token exchange. Accept the two registered child endpoints as aliases of
-  // their canonical parent resource.
   ...DEN_MCP_BASE_RESOURCES.flatMap((resource) => mcpEndpointResourceAliases(resource)),
 ]));
 export const DEN_MCP_RESOURCES = Array.from(new Set([
@@ -200,7 +230,6 @@ export const DEN_MCP_RESOURCE_CLAIM = `${env.mcpClaimNamespace}/resource`;
 export const DEN_MCP_GRANT_ID_CLAIM = `${env.mcpClaimNamespace}/grant_id`;
 export const DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX = "ow_mcp_at_";
 const DEN_MCP_REFRESH_TOKEN_PREFIX = "ow_mcp_rt_";
-const INVALID_MCP_SESSION_GRANT_DESCRIPTION = "The authorization backing this grant has been revoked. Re-authorize the connection.";
 export { DEN_MCP_SCOPES } from "./mcp/scopes.js";
 
 export function normalizeMcpOAuthResource(resource: string): string | null {
@@ -325,7 +354,6 @@ function throwMemberLifecycleError(message: string): never {
 
 const auditHookLogger = appLogger.child({ component: "better_auth_audit" });
 
-/** The cookie session of a better-auth request, for audit attribution hooks. */
 async function readAuditHookSession(token: unknown): Promise<BetterAuthHookSession> {
   const session = typeof token === "string" ? await cache.auth.session(token) : null;
   if (!session?.user.id) return null;
@@ -338,7 +366,6 @@ async function readAuditHookSession(token: unknown): Promise<BetterAuthHookSessi
   };
 }
 
-/** Session/account audit events never fail the auth flow that triggered them. */
 async function runAuditHook(name: string, run: () => Promise<void>): Promise<void> {
   if (!env.auditCaptureEnabled) return;
   try {
@@ -368,9 +395,9 @@ const RAW_BETTER_AUTH_MUTATION_DENIALS: readonly (readonly [string, string])[] =
   ["/organization/delete", "Workspace deletion through Better Auth is disabled."],
   ["/organization/update-member-role", "Use the Den member role API to change organization roles."],
   ["/organization/remove-member", "Use the Den member API to remove organization members."],
-  ["/organization/create-role", "Use the Den roles API to manage organization roles."],
-  ["/organization/update-role", "Use the Den roles API to manage organization roles."],
-  ["/organization/delete-role", "Use the Den roles API to manage organization roles."],
+  ["/organization/create-role", "Custom organization roles are not supported."],
+  ["/organization/update-role", "Custom organization roles are not supported."],
+  ["/organization/delete-role", "Custom organization roles are not supported."],
   ["/organization/create-team", "Use the Den teams API to manage teams."],
   ["/organization/update-team", "Use the Den teams API to manage teams."],
   ["/organization/remove-team", "Use the Den teams API to manage teams."],
@@ -390,6 +417,8 @@ const RAW_BETTER_AUTH_MUTATION_DENIALS: readonly (readonly [string, string])[] =
   ["/api-key/delete", "Use the Den API key API to manage organization API keys."],
   ["/scim/generate-token", "Use the Den SCIM API to manage SCIM tokens."],
   ["/scim/delete-provider-connection", "Use the Den SCIM API to manage SCIM providers."],
+  ["/device/approve", "Approve command-line sign-ins on the Den device page."],
+  ["/device/deny", "Deny command-line sign-ins on the Den device page."],
 ];
 
 export function getRawBetterAuthMutationDenial(path: string) {
@@ -405,6 +434,20 @@ export function getRawBetterAuthMutationDenial(path: string) {
 
 async function denyBetterAuthTeamMutation() {
   throw new APIError("FORBIDDEN", { message: "Use the Den teams API to manage teams and their membership." });
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+async function clampSessionExpiresAt(userId: string, expiresAt: Date, createdAt: Date) {
+  try {
+    const latest = await userSessionExpiresAt(userId, new Date(), createdAt);
+    return latest < expiresAt ? latest : expiresAt;
+  } catch (error) {
+    logger.error("session length could not be read", { user_id: userId, error });
+    return expiresAt;
+  }
 }
 
 function readStringProperty(value: unknown, propertyName: string) {
@@ -442,6 +485,20 @@ async function hasPendingInvitationForEmail(input: { invitationIdOrToken: string
     .limit(1);
 
   return Boolean(invitation);
+}
+
+function readSignUpInvite(ctx: { request?: Request; query?: unknown; body?: unknown } | null | undefined) {
+  if (!ctx) return null;
+  return readRequestQueryParam(ctx.request, "invite") ?? readStringProperty(ctx.query, "invite") ?? readStringProperty(ctx.body, "invite");
+}
+
+async function isEmailAlreadyVerified(email: string) {
+  const [user] = await db
+    .select({ emailVerified: schema.AuthUserTable.emailVerified })
+    .from(schema.AuthUserTable)
+    .where(eq(schema.AuthUserTable.email, normalizeLoginEmail(email)))
+    .limit(1);
+  return user?.emailVerified === true;
 }
 
 function normalizeRawRoleValue(roleValue: string) {
@@ -535,7 +592,49 @@ async function assertLiveMcpSessionForRefreshGrant(ctx: Parameters<Parameters<ty
     }
     throw new APIError("BAD_REQUEST", {
       error: "invalid_grant",
-      error_description: INVALID_MCP_SESSION_GRANT_DESCRIPTION,
+      error_description: MCP_SESSION_REVOKED_GRANT_DESCRIPTION,
+    });
+  }
+}
+
+async function resolveBetterAuthActor(input: { organizationId: string; userId: string }) {
+  const organizationId = normalizeDenTypeId("organization", input.organizationId);
+  const member = await cache.org.membership({
+    organizationId,
+    userId: normalizeDenTypeId("user", input.userId),
+  });
+  if (!member) {
+    return null;
+  }
+  return {
+    organizationId,
+    memberId: member.id,
+    permissions: await resolvePermissionsForMember({ organizationId, memberId: member.id }),
+  };
+}
+
+async function resolveBetterAuthActorPermissions(input: { organizationId: string; userId: string }) {
+  return (await resolveBetterAuthActor(input))?.permissions ?? null;
+}
+
+async function assertBetterAuthActorMayInvite(input: {
+  actor: NonNullable<Awaited<ReturnType<typeof resolveBetterAuthActor>>>;
+  role: string;
+}) {
+  const validation = await validateInvitationRoleAssignment({
+    role: input.role,
+    permissions: input.actor.permissions,
+    decideAdminAssignment: (role) => roleAssignmentDenial({
+      organizationId: input.actor.organizationId,
+      caller: input.actor.permissions,
+      callerMemberId: input.actor.memberId,
+      target: null,
+      nextRole: role,
+    }),
+  });
+  if (!validation.ok) {
+    throw new APIError(validation.error === "invalid_role" ? "BAD_REQUEST" : "FORBIDDEN", {
+      message: validation.message,
     });
   }
 }
@@ -545,28 +644,14 @@ async function assertBetterAuthInvitationRoleAssignment(input: {
   userId: string;
   role: string;
 }) {
-  const organizationId = normalizeDenTypeId("organization", input.organizationId);
-  const context = await getOrganizationContextForUser({
-    organizationId,
-    userId: normalizeDenTypeId("user", input.userId),
-  });
-  if (!context) {
+  const actor = await resolveBetterAuthActor(input);
+  if (!actor) {
     throw new APIError("FORBIDDEN", {
       message: "Only organization members can assign invitation roles.",
     });
   }
 
-  const validation = validateInvitationRoleAssignment({
-    role: input.role || ORGANIZATION_MEMBER_ROLE,
-    availableRoles: await listAssignableRoles(organizationId),
-    currentMember: context.currentMember,
-    roles: context.roles,
-  });
-  if (!validation.ok) {
-    throw new APIError(validation.error === "invalid_role" ? "BAD_REQUEST" : "FORBIDDEN", {
-      message: validation.message,
-    });
-  }
+  await assertBetterAuthActorMayInvite({ actor, role: input.role || ORGANIZATION_MEMBER_ROLE });
 }
 
 async function assertBetterAuthInvitationRefreshRole(input: {
@@ -579,12 +664,8 @@ async function assertBetterAuthInvitationRefreshRole(input: {
     return;
   }
 
-  const organizationId = normalizeDenTypeId("organization", input.organizationId);
-  const context = await getOrganizationContextForUser({
-    organizationId,
-    userId: normalizeDenTypeId("user", input.userId),
-  });
-  if (!context) {
+  const actor = await resolveBetterAuthActor(input);
+  if (!actor) {
     throw new APIError("FORBIDDEN", {
       message: "Only organization members can refresh invitation roles.",
     });
@@ -594,7 +675,7 @@ async function assertBetterAuthInvitationRefreshRole(input: {
     .select({ role: schema.InvitationTable.role })
     .from(schema.InvitationTable)
     .where(and(
-      eq(schema.InvitationTable.organizationId, organizationId),
+      eq(schema.InvitationTable.organizationId, actor.organizationId),
       eq(schema.InvitationTable.email, input.email.trim().toLowerCase()),
       eq(schema.InvitationTable.status, "pending"),
       gt(schema.InvitationTable.expiresAt, new Date()),
@@ -606,17 +687,7 @@ async function assertBetterAuthInvitationRefreshRole(input: {
     return;
   }
 
-  const validation = validateInvitationRoleAssignment({
-    role: invitation.role,
-    availableRoles: await listAssignableRoles(organizationId),
-    currentMember: context.currentMember,
-    roles: context.roles,
-  });
-  if (!validation.ok) {
-    throw new APIError(validation.error === "invalid_role" ? "BAD_REQUEST" : "FORBIDDEN", {
-      message: validation.message,
-    });
-  }
+  await assertBetterAuthActorMayInvite({ actor, role: invitation.role });
 }
 
 async function getOrganizationMemberRole(input: {
@@ -636,6 +707,7 @@ async function getOrganizationMemberRole(input: {
   });
   if (!authority) return null;
   return {
+    memberId: authority.id,
     role: authority.directRole,
     adminTeams: authority.adminTeams,
     isOwner: hasRole(authority.directRole, ORGANIZATION_OWNER_ROLE),
@@ -644,11 +716,6 @@ async function getOrganizationMemberRole(input: {
 
 type StoredOAuthTokenRow = { clientId?: unknown; userId?: unknown; referenceId?: unknown; scopes?: unknown };
 
-/**
- * /oauth2/revoke audit: the organization (consent referenceId) of the stored
- * refresh or opaque access token being revoked, found by the same storage hash
- * better-auth uses. JWT access tokens are stateless and are not looked up.
- */
 async function noteRevokedOAuthToken(ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0]) {
   const token = readStringProperty(ctx.body, "token");
   if (!token) return;
@@ -681,6 +748,22 @@ function getEnterpriseAuthRedirectUrl(input: {
   return url.toString();
 }
 
+async function updateLastSignInCookie(ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0]) {
+  const change = lastSignInCookieChange({
+    path: ctx.path,
+    provider: readStringProperty(ctx.params, "id") ?? readStringProperty(ctx.body, "provider"),
+    signedIn: Boolean(ctx.context.newSession),
+  });
+  if (!change) return;
+  const writes = lastSignInCookieWrites(change, {
+    secure: env.betterAuthUrl.startsWith("https:"),
+    cookieDomain: env.betterAuthCookieDomain,
+  });
+  for (const write of writes) {
+    ctx.setCookie(write.name, write.value, write.options);
+  }
+}
+
 function removeSsoTestSessionCookie(ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0]) {
   const headers = ctx.context.responseHeaders;
   if (!headers) return;
@@ -692,14 +775,44 @@ function removeSsoTestSessionCookie(ctx: Parameters<Parameters<typeof createAuth
   }
 }
 
+type AuthHookContext = Parameters<Parameters<typeof createAuthMiddleware>[0]>[0];
+
+const SSO_CARRY_COOKIE = "sso_carry";
+const SSO_CARRY_MAX_AGE_SECONDS = 10 * 60;
+
+function ssoCarryCookie(ctx: Pick<AuthHookContext, "context">) {
+  const cookie = ctx.context.createAuthCookie(SSO_CARRY_COOKIE, { maxAge: SSO_CARRY_MAX_AGE_SECONDS });
+  const secure = env.betterAuthUrl.startsWith("https:");
+  return { name: cookie.name, attributes: { ...cookie.attributes, secure, sameSite: secure ? "none" as const : "lax" as const } };
+}
+
+async function setSsoCarryCookie(ctx: AuthHookContext) {
+  if (!readStringProperty(ctx.context.returned, "url")) return;
+  const token = await ctx.getSignedCookie(ctx.context.authCookies.sessionToken.name, ctx.context.secret).catch(() => null);
+  const session = typeof token === "string" ? await cache.auth.session(token) : null;
+  if (!session) return;
+  const cookie = ssoCarryCookie(ctx);
+  await ctx.setSignedCookie(cookie.name, `${session.session.id}.${Date.now()}`, ctx.context.secret, cookie.attributes);
+}
+
+function clearSsoCarryCookie(ctx: AuthHookContext) {
+  const cookie = ssoCarryCookie(ctx);
+  ctx.setCookie(cookie.name, "", { ...cookie.attributes, maxAge: 0 });
+}
+
+async function readSsoCarrySessionId(ctx: Pick<AuthHookContext, "context" | "getSignedCookie">) {
+  const value = await ctx.getSignedCookie(ssoCarryCookie(ctx).name, ctx.context.secret).catch(() => null);
+  if (typeof value !== "string") return null;
+  const separator = value.lastIndexOf(".");
+  const issuedAt = Number(value.slice(separator + 1));
+  if (separator <= 0 || !Number.isFinite(issuedAt) || Date.now() - issuedAt > SSO_CARRY_MAX_AGE_SECONDS * 1000) return null;
+  return value.slice(0, separator);
+}
+
 export const auth = betterAuth({
   baseURL: env.betterAuthUrl,
   secret: env.betterAuthSecret,
   onAPIError: {
-    // OAuth authorization errors that cannot be returned to the client
-    // (unknown client, unregistered redirect URI, malformed request) and the
-    // other Better Auth error redirects land on Den web's branded page instead
-    // of Better Auth's built-in card (or, in production, a bare `/?error=`).
     errorURL: `${env.betterAuthUrl}/connect/error`,
   },
   trustedOrigins:
@@ -708,11 +821,12 @@ export const auth = betterAuth({
       : undefined,
   socialProviders:
     Object.keys(socialProviders).length > 0 ? socialProviders : undefined,
-  database: drizzleAdapter(db, {
-    provider: "mysql",
-    schema,
-  }),
+  database: guardDesktopDeviceSessions(
+    hashSessionTokens(drizzleAdapter(db.$primary, { provider: "mysql", schema }), { secret: env.betterAuthSecret }),
+    (database) => hashSessionTokens(drizzleAdapter(database, { provider: "mysql", schema }), { secret: env.betterAuthSecret }),
+  ),
   account: DEN_ACCOUNT_CONFIG,
+  user: denUserConfig(),
   session: {
     expiresIn: DEN_SESSION_EXPIRES_IN_SECONDS,
     updateAge: DEN_SESSION_UPDATE_AGE_IN_SECONDS,
@@ -723,24 +837,33 @@ export const auth = betterAuth({
       create: {
         before: async (user, context) => {
           const email = normalizeLoginEmail(user.email);
-          // SSO callbacks (/sso/callback/:providerId, /sso/saml2/sp/acs/:providerId)
-          // create the user before provisionUser runs, so refuse a SCIM-deprovisioned
-          // email here or the refused sign-in leaves a ghost user, session, and membership.
           const ssoProviderId = readStringProperty(context?.params, "providerId");
           if (ssoProviderId && await isScimDeprovisionedEmailForSsoProvider({ ssoProviderId, email })) {
             throw new APIError("FORBIDDEN", { message: SCIM_DEPROVISIONED_SIGN_IN_MESSAGE });
           }
+          const passwordSignup = context?.path === "/sign-up/email";
+          const verifiedByBootstrap = passwordSignup
+            && Boolean(await authorizeInitialAdminBootstrapSignup({ body: context.body, email }));
           return {
             data: {
               ...user,
               email,
+              ...(passwordSignup ? { emailVerified: verifiedByBootstrap } : {}),
             },
           };
         },
       },
       update: {
         before: async (user, context) => {
-          // Audit: remember which profile fields change (src/audit/domain/account.ts).
+          if (typeof user.email === "string" && context?.path === "/scim/v2/Users/:userId") {
+            const userId = readStringProperty(context.params, "userId");
+            const allowed = userId !== null && await scimEmailChangeAllowed({
+              userId: normalizeDenTypeId("user", userId),
+              email: user.email,
+              resolveOrganizationId: () => scimRequestOrganizationId(context.headers?.get("authorization")),
+            });
+            if (!allowed) throw new APIError("BAD_REQUEST", SCIM_EMAIL_CHANGE_REFUSAL);
+          }
           if (env.auditCaptureEnabled) auditUserUpdateBefore(user, context);
           return {
             data: typeof user.email === "string"
@@ -753,14 +876,12 @@ export const auth = betterAuth({
         },
         after: async (user, context) => {
           if (typeof user.id === "string") {
-            // User profile changes can stale cached auth payloads; clear all sessions here.
             await cache.auth.deleteSessionsForUser(normalizeDenTypeId("user", user.id));
           }
           await runAuditHook("user.update", () => auditUserUpdateAfter(user, context));
         },
       },
       delete: {
-        // Memberships still exist here; delete-user is not enabled in Den today.
         before: async (user) => {
           await runAuditHook("user.delete", () => recordAccountDeleted(user));
         },
@@ -795,9 +916,11 @@ export const auth = betterAuth({
     member: {
       create: {
         after: async (member: AuthMemberHookRow) => {
-          if (member.userId && !member.removedAt) await ensureMemberGatewayKey({
+          if (member.removedAt) return;
+          await runPostOrganizationMemberChangeHooks({
             organizationId: normalizeDenTypeId("organization", member.organizationId),
             memberId: normalizeDenTypeId("member", member.id),
+            change: "added",
           });
         },
       },
@@ -827,10 +950,14 @@ export const auth = betterAuth({
           });
         },
         after: async (member: AuthMemberHookRow) => {
+          const organizationId = normalizeDenTypeId("organization", member.organizationId);
           await revokeMemberGatewayCredentials({
-            organizationId: normalizeDenTypeId("organization", member.organizationId),
+            organizationId,
             memberId: normalizeDenTypeId("member", member.id),
           });
+          await cache.org.deleteMembers(organizationId);
+          await syncOrganizationBillingQuantities({ organizationId });
+          removeMemberWorkbotComputersInBackground({ organizationId, memberId: normalizeDenTypeId("member", member.id) });
         },
       },
     },
@@ -839,35 +966,66 @@ export const auth = betterAuth({
         before: async (session, context) => {
           const userId = normalizeDenTypeId("user", session.userId);
           const deviceCode = context?.path === "/device/token" ? readStringProperty(context.body, "device_code") : null;
-          const deviceOrganizationId = deviceCode
-            ? await takeDeviceSessionOrganization({ deviceCode, userId })
-            : null;
-          const activeOrganizationId = deviceOrganizationId ?? await getInitialActiveOrganizationIdForUser(userId);
+          const desktopDevice = context?.path === "/device/token" && readStringProperty(context.body, "client_id") === DEN_DESKTOP_DEVICE_CLIENT_ID;
+          const deviceApproval = desktopDevice
+            ? requireDesktopDeviceClaim(userId)
+            : deviceCode ? await takeDeviceSessionOrganization({ deviceCode, userId }) : null;
+          const activeOrganizationId = deviceApproval?.organizationId ?? await getInitialActiveOrganizationIdForUser(userId);
+          if (deviceApproval && !desktopDevice && typeof session.token === "string") {
+            deviceApprovedSessionOrganizations.set(session.token, deviceApproval);
+          }
           try {
-            // SSO JIT creates the raw member row before the session row, so this
-            // chokepoint can merge any matching pending invitation without blocking sign-in.
             await reconcilePendingInvitationsForUser(userId);
           } catch (error) {
             logger.error("invitation reconcile failed", { user_id: userId, error });
           }
 
+          const expiresAt = await clampSessionExpiresAt(userId, session.expiresAt, session.createdAt instanceof Date ? session.createdAt : new Date());
           return {
             data: {
               ...session,
               activeOrganizationId,
+              ...(desktopDevice ? { userAgent: DEN_DESKTOP_DEVICE_CLIENT_ID } : {}),
+              expiresAt,
             },
           };
         },
-        // Every sign-in path that creates a session row: session.created in
-        // the session's organization (src/audit/domain/sessions.ts).
         after: async (session, context) => {
+          const path = typeof context?.path === "string" ? context.path : null;
+          if (path && SSO_SESSION_PATHS.has(path) && typeof session.id === "string") {
+            await recordSessionSsoAuthentication({
+              sessionId: session.id,
+              userId: session.userId,
+              providerId: readStringProperty(context?.params, "providerId"),
+            }).catch((error) => logger.error("session SSO provenance could not be recorded", { error }));
+            const fromSessionId = context ? await readSsoCarrySessionId(context) : null;
+            if (fromSessionId) {
+              await carrySessionSsoProofs({ fromSessionId, toSessionId: session.id, userId: session.userId })
+                .catch((error) => logger.error("earlier SSO sign-ins could not be carried to the new session", { error }));
+            }
+          }
+          const desktopDevice = path === "/device/token" && readStringProperty(context?.body, "client_id") === DEN_DESKTOP_DEVICE_CLIENT_ID;
+          const deviceApproval = desktopDevice
+            ? requireDesktopDeviceClaim(normalizeDenTypeId("user", session.userId))
+            : typeof session.token === "string" ? deviceApprovedSessionOrganizations.get(session.token) : undefined;
+          if (!desktopDevice && typeof session.token === "string") deviceApprovedSessionOrganizations.delete(session.token);
+          if (deviceApproval?.ssoProviderId && typeof session.id === "string") {
+            await recordDeviceSessionSsoAuthentication({ sessionId: session.id, userId: session.userId, organizationId: deviceApproval.organizationId, providerId: deviceApproval.ssoProviderId, authenticatedAt: deviceApproval.ssoAuthenticatedAt })
+              .catch((error) => logger.error("device session SSO provenance could not be recorded", { error }));
+          }
+          await recordFreeAutoSignIn(db, { userId: normalizeDenTypeId("user", session.userId), now: session.createdAt })
+            .catch(() => logger.warn("Free Auto sign-in behavior could not be recorded."));
           await runAuditHook("session.create", () => recordSessionCreated(session, auditSessionMethod(context)));
         },
       },
       update: {
+        before: async (session, context) => {
+          const current = context?.context.session?.session;
+          if (!(session.expiresAt instanceof Date) || !current || typeof current.userId !== "string") return;
+          return { data: { ...session, expiresAt: await clampSessionExpiresAt(current.userId, session.expiresAt, new Date(current.createdAt)) } };
+        },
         after: async (session) => {
           if (typeof session.token === "string") {
-            // Better Auth session updates are the explicit invalidation point for cached sessions.
             await cache.auth.deleteSession(session.token);
           }
           if (typeof session.id === "string") {
@@ -876,15 +1034,19 @@ export const auth = betterAuth({
         },
       },
       delete: {
+        before: async (session, context) => {
+          if (context?.path === "/revoke-other-sessions" && session.id === context.context.session?.session.id) return false;
+        },
         after: async (session, context) => {
           if (typeof session.token === "string") {
-            // Sign-out deletes the backing session row, so cached hits must be cleared here.
             await cache.auth.revokeSession(session.token);
+          }
+          if (typeof session.id === "string") {
+            await deleteSessionSsoAuthentication(session.id).catch(() => undefined);
           }
           if (typeof session.id === "string") {
             await cache.auth.revokeSessionId(normalizeDenTypeId("session", session.id));
           }
-          // Fires per row, also for bulk deletes (revoke-sessions, password change).
           await runAuditHook("session.delete", () => recordSessionRevoked(session, auditSessionRevokeReason(context)));
         },
       },
@@ -892,7 +1054,17 @@ export const auth = betterAuth({
   },
   hooks: {
     before: createAuthMiddleware(async (ctx) => {
-      if (ctx.path === "/device/token") {
+      if (ctx.path === "/device/token" && readStringProperty(ctx.body, "client_id") === DEN_DESKTOP_DEVICE_CLIENT_ID) {
+        beginDesktopDeviceClaim();
+      }
+      if ((ctx.path === "/device/code" || ctx.path === "/device/token") && readStringProperty(ctx.body, "client_id") === DEN_DESKTOP_DEVICE_CLIENT_ID) {
+        const enabled = await db.transaction((tx) => desktopDeviceLoginEnabled(tx));
+        if (!enabled) {
+          if (ctx.path === "/device/code") throw new APIError("BAD_REQUEST", { error: "invalid_client", error_description: "Device sign-in is not available on this server." });
+          throw desktopDeviceAccessDenied();
+        }
+      }
+      if (ctx.path === "/device/token" && readStringProperty(ctx.body, "client_id") !== DEN_DESKTOP_DEVICE_CLIENT_ID) {
         const deviceCode = readStringProperty(ctx.body, "device_code");
         if (deviceCode) {
           await stageDeviceSessionOrganization(deviceCode);
@@ -901,9 +1073,18 @@ export const auth = betterAuth({
 
       await assertLiveMcpSessionForRefreshGrant(ctx);
 
+      if (ctx.path === "/scim/v2/Users" && ctx.request?.method === "POST") {
+        const organizationId = await scimRequestOrganizationId(ctx.headers?.get("authorization"));
+        if (organizationId && !await organizationAllowsProvisioning(organizationId, "scim")) {
+          throw new APIError("FORBIDDEN", { message: SCIM_ENTERPRISE_REQUIRED_MESSAGE });
+        }
+        if (organizationId) {
+          await releaseStaleScimAccountForCreate({ organizationId, body: ctx.body });
+        }
+      }
+
       if (ctx.path === "/oauth2/authorize") {
         const clientId = maybeString(ctx.query?.client_id);
-        // Workbot's first-party client follows DEN_WORKBOT_URL; created on its first sign-in.
         if (clientId === WORKBOT_OAUTH_CLIENT_ID) {
           await ensureWorkbotOAuthClient(ctx.context.adapter);
         }
@@ -933,8 +1114,6 @@ export const auth = betterAuth({
       if (ctx.request) {
         const deniedMutation = getRawBetterAuthMutationDenial(ctx.path);
         if (deniedMutation) {
-          // Audit the refused attempt in the caller's own organization (src/audit/better-auth.ts).
-          // Never throws and writes no intent, so the 403 below is unchanged.
           if (env.auditCaptureEnabled) {
             await auditBetterAuthRefusal({
               body: ctx.body,
@@ -944,15 +1123,10 @@ export const auth = betterAuth({
           throw new APIError("FORBIDDEN", { message: deniedMutation.message });
         }
 
-        // Audit: the organization an MCP token being revoked belongs to (its
-        // stored row, looked up by the storage hash; nothing is kept).
         if (env.auditCaptureEnabled && ctx.path === "/oauth2/revoke") {
           await runAuditHook("oauth2.revoke", () => noteRevokedOAuthToken(ctx));
         }
 
-        // Tenant audit intent before the endpoint runs (src/audit/better-auth.ts).
-        // Nothing runs while deployment capture is off; refused with 503 only
-        // when an intent append failed (a lookup error means no attribution).
         if (env.auditCaptureEnabled && BETTER_AUTH_AUDIT_BEFORE_PATHS.has(ctx.path)) {
           let audited = true;
           try {
@@ -968,8 +1142,6 @@ export const auth = betterAuth({
           }
         }
 
-        // User-scoped session/account audit (src/audit/better-auth.ts): prior
-        // session organization/team, or the account a reset token names.
         if (env.auditCaptureEnabled && BETTER_AUTH_SESSION_BEFORE_PATHS.has(ctx.path)) {
           await auditBetterAuthSessionBefore({
             path: ctx.path, request: ctx.request,
@@ -996,10 +1168,16 @@ export const auth = betterAuth({
                 message: "The organization owner cannot leave the workspace. Transfer ownership first.",
               });
             }
-            if (member?.adminTeams.length && !hasRole(member.role, ORGANIZATION_SUPER_ADMIN_ROLE)) {
-              throw new APIError("FORBIDDEN", {
-                message: "Ask a workspace owner or super-admin to remove your Admin team membership before leaving.",
+            if (member?.adminTeams.length) {
+              const permissions = await resolvePermissionsForMember({
+                organizationId: normalizeDenTypeId("organization", organizationId),
+                memberId: member.memberId,
               });
+              if (!permissions.has("teams.manage_admin")) {
+                throw new APIError("FORBIDDEN", {
+                  message: "Ask the organization owner to remove your Admin team membership before you leave.",
+                });
+              }
             }
           }
         }
@@ -1050,6 +1228,19 @@ export const auth = betterAuth({
           }
         }
 
+        if (ctx.path === "/organization/set-active") {
+          const token = await ctx.getSignedCookie(ctx.context.authCookies.sessionToken.name, ctx.context.secret).catch(() => null);
+          const session = typeof token === "string" ? await cache.auth.session(token) : null;
+          const organizationId = readStringProperty(ctx.body, "organizationId")
+            ?? await organizationIdForSlug(readStringProperty(ctx.body, "organizationSlug"));
+          if (session && organizationId) {
+            const ssoBlock = await findSsoAccessBlock({ sessionId: session.session.id, organizationId });
+            if (ssoBlock) {
+              throw new APIError("FORBIDDEN", { message: SSO_REQUIRED_MESSAGE, code: "SSO_REQUIRED", signInPath: ssoBlock.signInPath });
+            }
+          }
+        }
+
         if (ctx.path === "/sign-in/sso") {
           const token = await ctx.getSignedCookie(ctx.context.authCookies.sessionToken.name, ctx.context.secret).catch(() => null);
           const session = typeof token === "string" ? await cache.auth.session(token) : null;
@@ -1064,6 +1255,9 @@ export const auth = betterAuth({
           if (!authorization.ok) {
             throw new APIError("FORBIDDEN", { message: authorization.message });
           }
+          if (authorization.providerId && !readStringProperty(ctx.body, "providerId") && isRecord(ctx.body)) {
+            return { context: { body: { ...ctx.body, providerId: authorization.providerId } } };
+          }
         }
       }
 
@@ -1074,7 +1268,7 @@ export const auth = betterAuth({
       const email = getAuthBodyEmail(ctx.body);
       if (ctx.path === "/sign-up/email") {
         const invitationAllowsSignup = await hasPendingInvitationForEmail({
-          invitationIdOrToken: readRequestQueryParam(ctx.request, "invite") ?? readStringProperty(ctx.query, "invite") ?? readStringProperty(ctx.body, "invite"),
+          invitationIdOrToken: readSignUpInvite(ctx),
           email,
         });
         const bootstrapGrant = readInitialAdminBootstrapGrantFromBody(ctx.body);
@@ -1088,7 +1282,7 @@ export const auth = betterAuth({
         return;
       }
 
-      const requirement = await findEnterpriseAuthRequirementForEmail(email);
+      const requirement = await findNonSsoSignInBlock({ email });
       if (!requirement) {
         return;
       }
@@ -1121,8 +1315,26 @@ export const auth = betterAuth({
 
       if (ctx.path === "/device/token") {
         const deviceCode = readStringProperty(ctx.body, "device_code");
-        if (deviceCode) {
+        if (deviceCode && readStringProperty(ctx.body, "client_id") !== DEN_DESKTOP_DEVICE_CLIENT_ID) {
           clearDeviceSessionOrganization(deviceCode);
+        }
+        return;
+      }
+
+      if (ctx.path === "/sign-in/sso") {
+        await setSsoCarryCookie(ctx);
+        return;
+      }
+
+      if (SSO_SESSION_PATHS.has(ctx.path)) {
+        clearSsoCarryCookie(ctx);
+      }
+
+      if (ctx.path === "/scim/v2/Users" && ctx.request?.method === "POST") {
+        const createdUserId = readStringProperty(ctx.context.returned, "id");
+        const organizationId = await scimRequestOrganizationId(ctx.headers?.get("authorization"));
+        if (createdUserId && organizationId) {
+          await finishScimProvisionedMember({ organizationId, userId: normalizeDenTypeId("user", createdUserId) });
         }
         return;
       }
@@ -1138,17 +1350,23 @@ export const auth = betterAuth({
         return;
       }
 
+      if (ctx.path === "/sign-in/email" || ctx.path === "/sign-up/email" || ctx.path === "/sign-in/social") {
+        await updateLastSignInCookie(ctx);
+        return;
+      }
+
       if (ctx.path === "/sso/callback/:providerId" || ctx.path === "/sso/saml2/sp/acs/:providerId") {
         const callbackUrl = ctx.context.responseHeaders?.get("location") ?? null;
         const intentId = getSsoTestIntentIdFromCallbackUrl(callbackUrl);
         const providerId = readStringProperty(ctx.params, "providerId");
         if (!intentId || !providerId) {
+          await updateLastSignInCookie(ctx);
           return;
         }
 
         const newSession = ctx.context.newSession;
         if (!newSession) {
-          await failOrganizationSsoTestIntent(intentId, "authentication");
+          await failOrganizationSsoTestAuthentication(intentId);
           return;
         }
 
@@ -1172,13 +1390,18 @@ export const auth = betterAuth({
         return;
       }
 
-      const requirement = await findEnterpriseAuthRequirementForUserId(newSession.user.id);
+      const requirement = await findNonSsoSignInBlock({ email: newSession.user.email, userId: newSession.user.id });
       if (!requirement) {
+        await provisionVerifiedDomainMembership({
+          userId: normalizeDenTypeId("user", newSession.user.id),
+          email: newSession.user.email,
+          emailVerified: newSession.user.emailVerified === true,
+        });
+        await updateLastSignInCookie(ctx);
         return;
       }
 
       await ctx.context.internalAdapter.deleteSession(newSession.session.token);
-      // Enterprise auth rejection deletes the just-created session outside hooks in some adapters.
       await cache.auth.revokeSession(newSession.session.token);
       deleteSessionCookie(ctx);
       throw ctx.redirect(getEnterpriseAuthRedirectUrl({
@@ -1199,9 +1422,8 @@ export const auth = betterAuth({
       }
       : {}),
     ipAddress: {
-      ipAddressHeaders: ["x-forwarded-for", "x-real-ip", "cf-connecting-ip"],
-      trustedProxies: env.trustedProxies,
-      ipv6Subnet: 64,
+      ipAddressHeaders: [RESOLVED_CLIENT_IP_HEADER],
+      ipv6Subnet: CLIENT_IP_IPV6_SUBNET,
     },
     database: {
       generateId: (options) => {
@@ -1225,11 +1447,6 @@ export const auth = betterAuth({
             return createDenTypeId("oauthRefreshToken");
           case "oauthConsent":
             return createDenTypeId("oauthConsent");
-          // better-auth 1.7 oauth-provider models with no den typeid: without
-          // an id the drizzle adapter emits `insert ... values (default, ...)`
-          // and MySQL rejects it (no default on `id`) — the oauthResource seed
-          // storm of 2026-08-07. oauthClientResource/oauthClientAssertion use
-          // forceAllowId, but cover them for any future non-forced create.
           case "oauthResource":
           case "oauthClientResource":
           case "oauthClientAssertion":
@@ -1278,26 +1495,11 @@ export const auth = betterAuth({
     window: 60,
     max: 20,
     customRules: {
-      "/sign-in/email": {
-        window: 300,
-        max: 5,
-      },
-      "/sign-up/email": {
-        window: 3600,
-        max: env.devMode ? 100 : 5,
-      },
-      "/email-otp/send-verification-otp": {
-        window: 3600,
-        max: 5,
-      },
-      "/email-otp/verify-email": {
-        window: 300,
-        max: 10,
-      },
+      ...Object.fromEntries(DEN_LIMITED_BETTER_AUTH_PATHS.map((path) => [path, false] as const)),
       "/oauth2/token": false,
-      "/request-password-reset": {
-        window: 3600,
-        max: 5,
+      "/get-session": {
+        window: 60,
+        max: 120,
       },
     },
   },
@@ -1332,6 +1534,9 @@ export const auth = betterAuth({
       expiresIn: 600,
       allowedAttempts: 5,
       async sendVerificationOTP({ email, otp, type }) {
+        if (type === "email-verification" && await isEmailAlreadyVerified(email)) {
+          return;
+        }
         await sendEmail({
           to: email,
           template: "verification",
@@ -1344,9 +1549,6 @@ export const auth = betterAuth({
       roles: denOrganizationStaticRoles,
       creatorRole: "owner",
       requireEmailVerificationOnInvitation: env.requireEmailVerification,
-      dynamicAccessControl: {
-        enabled: true,
-      },
       teams: {
         enabled: true,
         defaultTeam: {
@@ -1357,13 +1559,14 @@ export const auth = betterAuth({
         await sendEmail({
           to: data.email,
           template: "organizationInvite",
-          props: {
+          props: organizationInviteEmailProps({
             inviteLink: buildInvitationLink(data.id),
-            invitedByName: data.inviter.user.name ?? data.inviter.user.email,
-            invitedByEmail: data.inviter.user.email,
+            inviterName: data.inviter.user.name,
+            inviterEmail: data.inviter.user.email,
+            inviteeEmail: data.email,
             organizationName: data.organization.name,
             role: data.role,
-          },
+          }),
         });
       },
       organizationHooks: {
@@ -1380,16 +1583,15 @@ export const auth = betterAuth({
           if ("plan" in metadata) {
             throw new APIError("FORBIDDEN", { message: "plan is reserved for internal platform administration." });
           }
-          // Features live in the organization_feature table and only platform
-          // admins write them. Organization metadata never turns a feature on,
-          // so a client-supplied capabilities object is dropped, not stored.
           if ("capabilities" in metadata) {
             const { capabilities: _ignored, ...retained } = metadata;
             return { data: { metadata: retained } };
           }
         },
+        afterCreateOrganization: async ({ organization, user }) => {
+          await recordFreeAutoFounder(db, normalizeDenTypeId("organization", organization.id), normalizeDenTypeId("user", user.id));
+        },
         beforeUpdateOrganization: async ({ organization }) => {
-          // A replacement without dpaSigned can erase it just as easily as an explicit false.
           if ("metadata" in organization) {
             throw new APIError("FORBIDDEN", { message: "Use the Den organization settings API to update workspace configuration." });
           }
@@ -1399,24 +1601,19 @@ export const auth = betterAuth({
         beforeDeleteTeam: denyBetterAuthTeamMutation,
         beforeAddTeamMember: denyBetterAuthTeamMutation,
         beforeRemoveTeamMember: denyBetterAuthTeamMutation,
-        afterCreateOrganization: async ({ organization }) => {
-          await seedDefaultOrganizationRoles(
-            normalizeDenTypeId("organization", organization.id),
-          );
-        },
         beforeAddMember: async ({ member }) => {
           if (readStringProperty(member, "teamId")) {
             await denyBetterAuthTeamMutation();
           }
           const role = typeof member.role === "string" ? member.role : "";
-          if (hasRole(role, ORGANIZATION_SUPER_ADMIN_ROLE)) {
+          if (hasRole(role, ORGANIZATION_ADMIN_ROLE)) {
             throw new APIError("FORBIDDEN", {
               message: "Use the Den invitation and member role APIs to grant privileged organization roles.",
             });
           }
 
           if (hasRole(role, ORGANIZATION_OWNER_ROLE)) {
-            const existingMembers = await db
+            const existingMembers = await db.$primary
               .select({ id: schema.MemberTable.id })
               .from(schema.MemberTable)
               .where(eq(schema.MemberTable.organizationId, normalizeDenTypeId("organization", member.organizationId)))
@@ -1502,15 +1699,7 @@ export const auth = betterAuth({
       consentPage: `${env.betterAuthUrl}/mcp/select-organization`,
       scopes: [...DEN_MCP_SCOPES],
       validAudiences: DEN_MCP_OAUTH_VALID_AUDIENCES,
-      // better-auth 1.7 gates every token-request `resource` parameter on the
-      // oauthResource registry (invalid_target "is not configured" otherwise;
-      // validAudiences no longer whitelists issuance). Seed all accepted MCP
-      // resource aliases at startup — seeding is idempotent (insertOnly).
       resources: [...DEN_MCP_RESOURCES],
-      // 1.7 defaults to requiring an oauthClientResource link per client per
-      // resource. Dynamically registered MCP clients never request resources
-      // at registration, so enforcement would invalid_target every DCR client.
-      // Keep pre-1.7 behavior: registry + audience validation, no per-client ACL.
       enforcePerClientResources: false,
       allowPublicClientPrelogin: true,
       allowDynamicClientRegistration: true,
@@ -1549,8 +1738,6 @@ export const auth = betterAuth({
                 ],
               }),
             });
-            // Audit (oauth_token.issued in the consent organization, after the
-            // token endpoint succeeds): identifiers only, never token material.
             const resource = resources?.[0];
             noteOAuthTokenIssuance({
               clientId: client.clientId,
@@ -1589,6 +1776,10 @@ export const auth = betterAuth({
           }
 
           const referenceId = normalizeDenTypeId("organization", activeOrganizationId);
+          const ssoBlock = await findSsoAccessBlock({ sessionId: typeof session.id === "string" ? normalizeDenTypeId("session", session.id) : null, organizationId: referenceId });
+          if (ssoBlock) {
+            throw new APIError("FORBIDDEN", { message: SSO_REQUIRED_MESSAGE });
+          }
           if (typeof session.userId === "string") noteOAuthConsentReference({ userId: session.userId, referenceId });
           return referenceId;
         },
@@ -1606,34 +1797,20 @@ export const auth = betterAuth({
         }
         return claims;
       },
-      // Better Auth refresh-family teardown and /oauth2/revoke intentionally do
-      // not remove durable consent. Already minted JWT exposure remains bounded
-      // by the configured 45-minute MCP access-token lifetime.
       prefix: {
         opaqueAccessToken: DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX,
         refreshToken: DEN_MCP_REFRESH_TOKEN_PREFIX,
         clientSecret: "ow_mcp_cs_",
       },
     }),
-    // Client ID Metadata Documents (MCP authorization spec): an MCP client may
-    // present the HTTPS URL of a JSON document it hosts as its client_id. The
-    // plugin fetches and validates the document, stores it as a public client,
-    // and advertises `client_id_metadata_document_supported` in discovery, so
-    // spec-following clients no longer need dynamic registration. DCR stays on
-    // as the fallback for clients that do not support this yet.
     {
       id: "cimd",
       init(ctx) {
         extendOAuthProvider(ctx, {
-          // Same discovery the @better-auth/cimd plugin installs, wrapped so a
-          // registered loopback redirect matches on any port (RFC 8252 §7.3),
-          // which native MCP clients such as Claude Code depend on.
-          clientDiscovery: withLoopbackRedirectRelaxation(cimdClientDiscovery({
-            // Redirect URIs are matched at authorize time and Den's MCP redirect
-            // policy still applies; native clients legitimately redirect to
-            // loopback or another origin than the one hosting their document.
+          clientDiscovery: withLoopbackRedirectRelaxation(createCimdClientDiscovery({
             originBoundFields: ["post_logout_redirect_uris", "client_uri"],
-            allowFetch: (url) => isCimdClientIdUrlAllowed(url),
+            fetchClientMetadataResource: fetchCimdMetadataResource,
+            isMetadataDocumentUrlAllowed: (url) => isCimdClientIdUrlAllowed(url),
             onClientCreated: ({ client }) => {
               logger.info("Registered MCP client from its client ID metadata document", {
                 clientId: client.clientId,
@@ -1646,14 +1823,8 @@ export const auth = betterAuth({
     },
     scim({
       linkExistingUsers: {
-        requireExistingOrgMembership: true,
-        shouldLinkUser: createScimExistingUserLinkCheck((where) => db
-          .select({ id: schema.MemberTable.id })
-          .from(schema.MemberTable)
-          .where(where)
-          .limit(1)),
+        shouldLinkUser: createScimExistingUserLinkCheck(isUserKnownToScimOrganization),
       },
-      // Group names are metadata, never organization role assignments.
       mapGroupToRoles: () => [],
       storeSCIMToken: SCIM_TOKEN_STORAGE_STRATEGY,
       requiredRole: [ORGANIZATION_OWNER_ROLE, ORGANIZATION_SUPER_ADMIN_ROLE, ORGANIZATION_ADMIN_ROLE],
@@ -1664,14 +1835,14 @@ export const auth = betterAuth({
           });
         }
 
-        const organizationContext = await getOrganizationContextForUser({
-          organizationId: normalizeDenTypeId("organization", member.organizationId),
-          userId: normalizeDenTypeId("user", member.userId),
+        const permissions = await resolveBetterAuthActorPermissions({
+          organizationId: member.organizationId,
+          userId: member.userId,
         });
 
-        if (!canManageSecurityConfiguration(organizationContext)) {
+        if (!permissions?.has("scim.manage")) {
           throw new APIError("FORBIDDEN", {
-            message: "Only workspace owners and super-admins can manage SCIM.",
+            message: "You don't have permission to manage SCIM provisioning. Ask the organization owner.",
           });
         }
       },
@@ -1684,9 +1855,7 @@ export const auth = betterAuth({
         tokenPrefix: SSO_DOMAIN_VERIFICATION_TOKEN_PREFIX,
       },
       organizationProvisioning: {
-        disabled: false,
-        defaultRole: ORGANIZATION_SSO_JIT_ROLE,
-        getRole: getOrganizationSsoJitRole,
+        disabled: true,
       },
       saml: {
         enableInResponseToValidation: true,
@@ -1743,11 +1912,13 @@ export const auth = betterAuth({
               lastSsoLoginAt: payload.lastSsoLoginAt,
             },
           });
+
+        const membership = await provisionSsoMembership({ organizationId, userId, email });
+        if (membership === "invitation_required") {
+          throw new APIError("FORBIDDEN", { message: SSO_INVITATION_REQUIRED_MESSAGE });
+        }
       },
     }),
-    // RFC 8628 device authorization for `openwork-bootstrap login`: the CLI
-    // shows a code, the person approves it on Den web's /device page, and the
-    // CLI receives a Den session token. No password ever reaches the CLI.
     deviceAuthorization({
       expiresIn: DEN_DEVICE_CODE_EXPIRES_IN,
       interval: DEN_DEVICE_CODE_POLL_INTERVAL,
@@ -1770,7 +1941,7 @@ export const auth = betterAuth({
       },
       rateLimit: {
         enabled: true,
-        maxRequests: DEN_API_KEY_RATE_LIMIT_MAX,
+        maxRequests: env.apiKeyRateLimitMax,
         timeWindow: DEN_API_KEY_RATE_LIMIT_TIME_WINDOW_MS,
       },
     }),

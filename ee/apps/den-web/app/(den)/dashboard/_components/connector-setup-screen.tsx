@@ -36,7 +36,14 @@ export function useConnectorTarget(catalogId: string): { target: ConnectorTarget
         name: preset.displayName,
         url: preset.url,
         description: shortDescription(preset.description),
-        preset: { authType: preset.authType, requiresOAuthClient: preset.requiresOAuthClient, defaultOAuthClientId: preset.defaultOAuthClientId },
+        preset: {
+          presetId: preset.presetId,
+          authType: preset.authType,
+          requiresOAuthClient: preset.requiresOAuthClient,
+          defaultOAuthClientId: preset.defaultOAuthClientId,
+          defaultOAuthScopes: preset.defaultOAuthScopes, optionalOAuthScopes: preset.optionalOAuthScopes,
+          oauthCallbackUrl: preset.oauthCallbackUrl,
+        },
       },
       loading: false,
       missing: false,
@@ -45,7 +52,6 @@ export function useConnectorTarget(catalogId: string): { target: ConnectorTarget
   }, [catalogId, customName, customUrl, presets.data, presets.error, presets.isLoading]);
 }
 
-/** A4 and A5: the checks fill in, the member signs in, and the connector is theirs. */
 export function MemberConnectorSetupScreen({ catalogId }: { catalogId: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();

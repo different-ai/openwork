@@ -8,6 +8,7 @@ export type OpenCodeContext = {
   worktree?: string;
   workspaceId?: string;
   workspaceID?: string;
+  ask?: (request: { permission: string; patterns: string[]; always: string[]; metadata: Record<string, unknown> }) => Promise<void>;
 };
 
 export type OpenWorkExtensionConnectState = {
@@ -122,7 +123,6 @@ const connectStateResponseSchema = z.object({
   }).passthrough().optional(),
 }).passthrough();
 
-// Both catalogs answer with the same envelope: a rendered prompt section.
 const connectCatalogResponseSchema = z.object({
   ok: z.literal(true),
   schemaVersion: z.number(),
@@ -131,7 +131,7 @@ const connectCatalogResponseSchema = z.object({
 
 export const OPENWORK_GOOGLE_CONNECTION_INSTRUCTION =
   `Google Workspace uses OpenWork Cloud Connect only, with the member's Google connection managed by the Cloud backend. Do not set up local Google OAuth, request Google tokens, or offer a legacy Google extension or another provider stack. OpenWork Cloud readiness alone does not establish Google connection readiness. When the user requests Google setup or the requested operation is blocked by its connection, follow the exact live Cloud connection status action returned for that connection under the openwork-cloud server instructions. Never invent a connection status, connection id, or setup action; if no live status action is available, report that limitation.
-For Google Drive uploads and Gmail attachments, Cloud search results alone do not establish that upload is unavailable. Discover the native Gmail draft schema before declaring attachments unsupported: OpenWork fulfills its attachment paths through host file transport, preserving the selected connection. Draft creation does not send email; sending is a separate, permissioned operation that requires the user's authorization. For Google Drive uploads, when OpenWork host tools are exposed, first query extension.actions with extensionId openwork-cloud-uploads. Only if drive_upload_file is returned and the user authorizes the upload, execute that exact action through openwork_execute id extension.call with extensionId openwork-cloud-uploads and args containing path and optional folderId. This host action supports files up to 4 MiB under authorized roots and preserves bytes outside model context. Drive uses the member's default Google connection and cannot select another named connection; do not substitute it for a requested account unless it is confirmed to be the default. If using the Gmail host action directly, only if gmail_create_draft_with_attachments is returned and the user authorizes draft creation, execute it with authorized paths and draft fields from its returned input schema, including the selected connectionId. It creates a reviewable draft, does not send email, and supports up to 10 files totaling 4 MiB. The bridge uses the Cloud backend member connection, not local Google credentials. Never load file bytes into model context or tool arguments, extract tokens, or use shell uploads as a fallback. If host tools or the action are absent, including in external MCP-only clients, report that limitation rather than claiming this host upload route is available. Do not retry or switch routes after an uncertain result; verify whether the draft was created first.`;
+For Google Drive uploads and Gmail attachments, Cloud search results alone do not establish that upload is unavailable. Discover the native Gmail draft schema before declaring attachments unsupported: OpenWork fulfills its attachment paths through host file transport, preserving the selected connection. Draft creation does not send email; sending is a separate, permissioned operation that requires the user's authorization. For Google Drive uploads, when OpenWork host tools are exposed, first query extension.actions with extensionId openwork-cloud-uploads. Only if drive_upload_file is returned and the user authorizes the upload, execute that exact action through openwork_execute id extension.call with extensionId openwork-cloud-uploads and args containing path and optional folderId. This host action preserves bytes outside model context under authorized roots. To read or edit whole Drive files (Office, PDF, large CSV, or Docs, Sheets and Slides as Office files), use the drive_pull_file, drive_file_status and drive_push_file tools and work on the local copy with shell tools; the drive-files Cloud skill has the details. Pass connectionId to preserve a requested Google Workspace account; omission uses the default. Files above 4 MiB use resumable transport when enabled for the organization; the host keeps the session URL out of model context. External clients with file transport may discover createGoogleDriveUploadSession and upload only the authorized file to its returned Google session URL without OAuth headers. That returned URL is a secret bearer credential (valid for up to a week): never print, share, log or persist it, and query the same session after an uncertain PUT instead of creating another session. If using the Gmail host action directly, only if gmail_create_draft_with_attachments is returned and the user authorizes draft creation, execute it with authorized paths and draft fields from its returned input schema, including the selected connectionId. It creates a reviewable draft, does not send email, and supports up to 10 files totaling 4 MiB. The bridge uses the Cloud backend member connection, not local Google credentials. Never load file bytes into model context or tool arguments, extract OAuth tokens, or improvise shell uploads as a fallback. A discovered createGoogleDriveUploadSession capability explicitly authorizes direct file transport to its returned session URL only after the user requests the upload. If host tools or the action are absent, including in external MCP-only clients, report that limitation rather than claiming this host upload route is available. Do not retry or switch routes after an uncertain result; verify whether the draft was created first.`;
 
 export const OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION =
   `If the user asks for something you cannot do with obvious built-in tools, check OpenWork extensions before saying the capability is unavailable. Use openwork_query with id extension.actions to inspect available extension actions, then openwork_execute with id extension.call for the matching action. Do not use another route to bypass a failed connection; follow its connection guidance. ${OPENWORK_GOOGLE_CONNECTION_INSTRUCTION}`;
@@ -146,14 +146,6 @@ export const OPENWORK_ON_DEMAND_DISCOVERY_INSTRUCTION =
   `For remote skills and plugin instructions, read the exact known remote skill with openwork-cloud_get_skill by its name or capability, or list every available one with openwork-cloud_list_skills; when those tools are not exposed, execute the exact known remote skill capability with openwork-cloud_execute_capability, or discover it with openwork-cloud_search_capabilities, then execute the exact returned name and follow its instructions. Discover Workflows and Automations on demand; read live before reporting their current state. Follow the openwork-cloud server instructions when its tools are exposed. No Cloud readiness probe has been performed for this prompt; do not infer that Cloud is ready, disconnected, or unavailable.
 When the user asks to create a Cloud skill, read the create-skill remote skill with openwork-cloud_get_skill and follow it to create a private Cloud plugin. For skill creation without an explicit local request, read create-skill rather than defaulting to a local copy because Cloud is unprobed. Discover share-plugin for requested sharing, or add-to-marketplace and add-user-to-marketplace when requested. Do not create both copies. ${OPENWORK_LOCAL_SKILL_AUTHORING_INSTRUCTION}`;
 
-// Cloud availability plus shared Google guidance. The base agent prompt names the two
-// Connect tools and the catalog rule, and the detailed Connect contract
-// (search-first discovery, MCP Apps, connection_status handling, schema
-// guidance, retry semantics, "a successful search proves authorization")
-// ships with the connection itself as the openwork-cloud server's MCP
-// initialize instructions — guaranteed present exactly when this "ready"
-// steering is selected. Restating either here costs characters on every
-// request and drifts.
 export const OPENWORK_CLOUD_CONNECTION_INSTRUCTION =
   `The OpenWork Cloud connection is verified ready for this exact workspace/model. The openwork-cloud server instructions in this prompt are authoritative for search-first discovery, MCP Apps, connection_status results, schema guidance, and retry rules; follow them instead of improvising. ${OPENWORK_EXTENSION_DISCOVERY_INSTRUCTION}`;
 
@@ -308,7 +300,6 @@ async function fetchOpenWorkConnectState(input: unknown, fetcher: OpenWorkFetch)
 export async function resolveOpenWorkConnectSkillInstruction(_input?: unknown, fetcher: OpenWorkFetch = fetch): Promise<string> {
   try {
     const { url, token } = requireOpenWorkServer();
-    // Connect skills are server-scoped; workspace/directory query params are unused.
     const response = await fetcher(`${url}/experimental/connect/skills`, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -322,7 +313,6 @@ export async function resolveOpenWorkConnectSkillInstruction(_input?: unknown, f
 export async function resolveOpenWorkAutomationInstruction(_input?: unknown, fetcher: OpenWorkFetch = fetch): Promise<string> {
   try {
     const { url, token } = requireOpenWorkServer();
-    // Automations are account-scoped like Connect skills, not per-workspace.
     const response = await fetcher(`${url}/experimental/connect/automations`, {
       headers: { Authorization: `Bearer ${token}` },
     });
@@ -365,7 +355,6 @@ export function composeSkillAuthoringInstruction(extensionInstruction: string): 
 }
 
 export function resetOpenWorkExtensionDiscoveryInstructionCacheForTests(): void {
-  // Retained for older tests; steering is deliberately uncached so repair is observed immediately.
 }
 
 export async function resolveOpenWorkExtensionDiscoveryInstruction(
@@ -375,10 +364,6 @@ export async function resolveOpenWorkExtensionDiscoveryInstruction(
 ): Promise<string> {
   if (engine.client) {
     try {
-      // Invariant: the OpenCode engine owns MCP registration and builds the
-      // prompt tool list, so tool-availability steering must come from that
-      // same in-process MCP state. Server health probes may fail for reasons
-      // (for example corporate TLS trust) that do not affect engine tools.
       const engineStatus = await fetchEngineMcpStatus(input, engine);
       if (engineStatus.found) return composeSteeringFromEngineMcpStatus(engineStatus.status);
     } catch {

@@ -1,14 +1,15 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { requestAdmin, type AdminResult } from "../admin-request";
+import { requestAdmin, withStoredBearer, type AdminResult } from "../admin-request";
+import { useAdminSessionCookie } from "../admin-shell";
 
-/** Mirrors `GET /v1/admin/free-auto/usage`. Amounts are micro-USD; days are UTC. */
 export type FreeAutoUsage = {
   costMicroUsd: number;
   requests: number;
   estimatedRequests: number;
   inputTokens: number;
+  cachedInputTokens: number;
   outputTokens: number;
 };
 
@@ -46,7 +47,7 @@ function isCount(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value >= 0;
 }
 function isUsage(value: unknown): value is FreeAutoUsage {
-  return isRecord(value) && ["costMicroUsd", "requests", "estimatedRequests", "inputTokens", "outputTokens"].every((key) => isCount(value[key]));
+  return isRecord(value) && ["costMicroUsd", "requests", "estimatedRequests", "inputTokens", "cachedInputTokens", "outputTokens"].every((key) => isCount(value[key]));
 }
 function isOrganization(value: unknown): value is FreeAutoOrganizationUsage {
   if (!isRecord(value) || !isUsage(value)) return false;
@@ -57,7 +58,6 @@ function isOrganization(value: unknown): value is FreeAutoOrganizationUsage {
     && (row.lastUsedAt === null || typeof row.lastUsedAt === "string");
 }
 
-/** Accepts only a complete report, so the page never renders half-understood numbers. */
 export function parseFreeAutoUsageReport(payload: unknown): FreeAutoUsageReport | null {
   if (!isRecord(payload) || !isRecord(payload.range) || !isRecord(payload.settings) || !isRecord(payload.week)) return null;
   if (!isUsage(payload.totals) || !isUsage(payload.members) || !isUsage(payload.guests)) return null;
@@ -73,26 +73,35 @@ export type FreeAutoUsageState =
   | { status: "ready"; report: FreeAutoUsageReport }
   | { status: Exclude<AdminResult<unknown>["access"], "ready">; message: string; report: FreeAutoUsageReport | null };
 
-/** Loads the report for a range; keeps the last report on screen while a new range or refresh loads. */
 export function useFreeAutoUsage(days: FreeAutoRange) {
-  const [state, setState] = useState<FreeAutoUsageState>({ status: "loading", report: null });
+  const hasSessionCookie = useAdminSessionCookie();
+  const [state, setState] = useState<FreeAutoUsageState>(() => hasSessionCookie ? { status: "loading", report: null }
+    : { status: "signed-out", message: "", report: null });
   const [nonce, setNonce] = useState(0);
   const last = useRef<FreeAutoUsageReport | null>(null);
   useEffect(() => {
     const controller = new AbortController();
+    if (nonce === 0 && !hasSessionCookie && !withStoredBearer({}).Authorization) {
+      last.current = null;
+      setState({ status: "signed-out", message: "", report: null });
+      return () => controller.abort();
+    }
     setState({ status: "loading", report: last.current });
     requestAdmin(`/v1/admin/free-auto/usage?days=${days}`, parseFreeAutoUsageReport, controller.signal)
       .then((result) => {
         if (controller.signal.aborted) return;
         if (result.access === "ready") { last.current = result.data; setState({ status: "ready", report: result.data }); }
-        else setState({ status: result.access, message: result.message, report: last.current });
+        else {
+          if (result.access !== "error") last.current = null;
+          setState({ status: result.access, message: result.message, report: last.current });
+        }
       })
       .catch((error: unknown) => {
         if (controller.signal.aborted) return;
         setState({ status: "error", message: error instanceof Error ? error.message : "The request failed.", report: last.current });
       });
     return () => controller.abort();
-  }, [days, nonce]);
+  }, [days, hasSessionCookie, nonce]);
   const refresh = useCallback(() => setNonce((value) => value + 1), []);
   return { state, refresh };
 }
@@ -117,11 +126,10 @@ function csvCell(value: string | number | boolean | null) {
   return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 
-/** One row per listed organization, amounts in USD, for spreadsheets. */
 export function organizationsCsv(report: FreeAutoUsageReport): string {
   const header = ["organization_id", "name", "subscribed", "members", "active_people", "requests", "estimated_requests",
-    "input_tokens", "output_tokens", "spend_usd", "people_at_weekly_limit", "last_used_at"];
+    "input_tokens", "cached_input_tokens", "output_tokens", "spend_usd", "people_at_weekly_limit", "last_used_at"];
   const rows = report.organizations.map((row) => [row.id, row.name, row.subscribed, row.memberCount, row.activePeople, row.requests,
-    row.estimatedRequests, row.inputTokens, row.outputTokens, (row.costMicroUsd / 1_000_000).toFixed(6), row.peopleAtWeeklyLimit, row.lastUsedAt]);
+    row.estimatedRequests, row.inputTokens, row.cachedInputTokens, row.outputTokens, (row.costMicroUsd / 1_000_000).toFixed(6), row.peopleAtWeeklyLimit, row.lastUsedAt]);
   return [header, ...rows].map((row) => row.map(csvCell).join(",")).join("\n") + "\n";
 }

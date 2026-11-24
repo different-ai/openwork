@@ -3,7 +3,7 @@ import type { JsonObject, JsonValue } from "@openwork-ee/utils/observability"
 const REDACTED = "[redacted]"
 const MAX_STRING_LENGTH = 2_000
 const MAX_DEPTH = 4
-const SENSITIVE_KEY_PATTERN = /(?:authorization|cookie|set-cookie|password|secret|token|api[-_]?key|client[-_]?secret|credential|dsn|email|header|body|query)/iu
+const SENSITIVE_KEY_PATTERN = /(?:authorization|cookie|set-cookie|password|secret|token|api[-_]?key|client[-_]?secret|credential|upload[-_]?url|dsn|email|header|body|query)/iu
 const URL_PATTERN = /https?:\/\/[^\s)"'<>\]}]+/giu
 const QUERY_PARAMS_PATTERN = /(\bparams:\s*)[^\r\n]*/giu
 

@@ -4,7 +4,7 @@ import { Popover } from "@base-ui/react/popover";
 import { Copy, Download, ExternalLink } from "lucide-react";
 import { useEffect, useState } from "react";
 import { DenButton } from "../../_components/ui/button";
-import { createOrganizationInstallLink } from "../../_lib/install-link-data";
+import { installPageUrl } from "../../_lib/install-download";
 
 export function DownloadOpenWorkButton({
   organization,
@@ -12,7 +12,7 @@ export function DownloadOpenWorkButton({
   organization?: { id: string; name: string };
 }) {
   if (organization) {
-    return <OrganizationDownloadPopover organizationId={organization.id} organizationName={organization.name} />;
+    return <OrganizationDownloadPopover organizationName={organization.name} />;
   }
 
   return (
@@ -29,14 +29,8 @@ export function DownloadOpenWorkButton({
   );
 }
 
-function OrganizationDownloadPopover({
-  organizationId,
-  organizationName,
-}: {
-  organizationId: string;
-  organizationName: string;
-}) {
-  const [busyAction, setBusyAction] = useState<"open" | "copy" | null>(null);
+function OrganizationDownloadPopover({ organizationName }: { organizationName: string }) {
+  const [copying, setCopying] = useState(false);
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -46,42 +40,27 @@ function OrganizationDownloadPopover({
     return () => window.clearTimeout(timeout);
   }, [copied]);
 
-  async function mintInstallLink() {
-    return createOrganizationInstallLink(organizationId, false);
-  }
-
-  async function handleOpenInstallPage() {
+  function handleOpenInstallPage() {
     setError(null);
-    // Open during the click, before minting, so browser popup blockers keep
-    // recognizing this as the person's action even on a slow connection.
-    const installWindow = window.open("about:blank", "_blank");
+    const installWindow = window.open(installPageUrl(), "_blank");
     if (!installWindow) {
       setError("Allow popups to open the install page, or copy the install link.");
       return;
     }
     installWindow.opener = null;
-    setBusyAction("open");
-    try {
-      installWindow.location.replace(await mintInstallLink());
-    } catch (downloadError) {
-      installWindow.close();
-      setError(downloadError instanceof Error ? downloadError.message : "Could not open the workspace install page.");
-    } finally {
-      setBusyAction(null);
-    }
   }
 
   async function handleCopyInstallLink() {
-    setBusyAction("copy");
+    setCopying(true);
     setError(null);
     setCopied(false);
     try {
-      await navigator.clipboard.writeText(await mintInstallLink());
+      await navigator.clipboard.writeText(installPageUrl());
       setCopied(true);
-    } catch (copyError) {
-      setError(copyError instanceof Error ? copyError.message : "Could not copy the workspace install link.");
+    } catch {
+      setError("Your browser didn't give permission to copy. Allow clipboard access and try again, or open the install page.");
     } finally {
-      setBusyAction(null);
+      setCopying(false);
     }
   }
 
@@ -115,9 +94,7 @@ function OrganizationDownloadPopover({
                 className="w-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-900"
                 data-testid="workspace-install-open"
                 icon={ExternalLink}
-                loading={busyAction === "open"}
-                disabled={busyAction !== null}
-                onClick={() => void handleOpenInstallPage()}
+                onClick={handleOpenInstallPage}
               >
                 Open install page
               </DenButton>
@@ -126,8 +103,8 @@ function OrganizationDownloadPopover({
                 data-testid="workspace-install-copy"
                 icon={Copy}
                 variant="secondary"
-                loading={busyAction === "copy"}
-                disabled={busyAction !== null}
+                loading={copying}
+                disabled={copying}
                 onClick={() => void handleCopyInstallLink()}
               >
                 {copied ? "Copied" : "Copy install link"}

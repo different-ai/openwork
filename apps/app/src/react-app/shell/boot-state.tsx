@@ -10,6 +10,9 @@ import {
   type ReactNode,
 } from "react";
 
+import { failStartup, markStartupStep } from "../../app/lib/startup-diagnostics";
+import { captureOnboardingEvent } from "../../app/lib/analytics";
+
 export type BootPhaseId =
   | "idle"
   | "bootstrapping-workspaces"
@@ -63,13 +66,18 @@ export function bootOverlayCanHide(phase: BootPhaseId, routeReady: boolean): boo
 
 export function BootStateProvider({ children }: { children: ReactNode }) {
   const [snapshot, setSnapshot] = useState<BootStateSnapshot>(DEFAULT_STATE);
-  // Once the main route has finished its first successful refresh (workspaces
-  // + sessions fetched), we consider the app "interactive". This is a one-way
-  // latch so subsequent background refreshes never re-show the overlay.
   const [routeReady, setRouteReady] = useState(false);
   const startedAtRef = useRef<number | null>(null);
+  const reportedPhase = useRef<BootPhaseId>("idle");
+  const recordPhase = useCallback((phase: BootPhaseId) => {
+    if (reportedPhase.current === phase) return;
+    reportedPhase.current = phase;
+    if (phase === "ready") captureOnboardingEvent("onboarding_startup_ready");
+    if (phase === "error") captureOnboardingEvent("onboarding_startup_failed", { reason: "startup_failed" });
+  }, []);
 
   const setPhase = useCallback((phase: BootPhaseId, detail?: string | null) => {
+    recordPhase(phase);
     setSnapshot((current) => {
       const nextStartedAt =
         current.phase === "idle" && phase !== "idle"
@@ -85,18 +93,24 @@ export function BootStateProvider({ children }: { children: ReactNode }) {
         error: phase === "error" ? current.error : null,
       };
     });
-  }, []);
+  }, [recordPhase]);
 
   const setError = useCallback((message: string | null) => {
+    if (message) {
+      failStartup("engine", "engine_failed");
+      recordPhase("error");
+    }
     setSnapshot((current) => ({
       ...current,
       error: message,
       phase: message ? "error" : current.phase,
       message: message ? PHASE_MESSAGES.error : current.message,
     }));
-  }, []);
+  }, [recordPhase]);
 
   const markReady = useCallback(() => {
+    markStartupStep("engine");
+    recordPhase("ready");
     setSnapshot((current) => ({
       ...current,
       phase: "ready",
@@ -105,7 +119,7 @@ export function BootStateProvider({ children }: { children: ReactNode }) {
       completedAt: Date.now(),
       error: null,
     }));
-  }, []);
+  }, [recordPhase]);
 
   const markRouteReady = useCallback(() => {
     setRouteReady(true);
@@ -127,18 +141,8 @@ export function useBootState(): BootStateContextValue {
   return value;
 }
 
-/**
- * Overlay stays up until BOTH the desktop boot hook has reported `ready` AND
- * the main route has completed its first refresh (`routeReady`). After that
- * we hold for ~160ms so the fade feels intentional instead of a flicker.
- */
 export function useBootOverlayVisible(): boolean {
   const { phase, routeReady } = useBootState();
-  // HMR can remount the provider while the route tree stays mounted. In that
-  // state the boot phase falls back to `idle`, but the already-rendered route
-  // is interactive and can mark itself ready again. Treat `idle + routeReady`
-  // the same as `ready + routeReady` so the full-screen boot overlay never
-  // becomes a permanent pointer-events blocker during development.
   const canHide = bootOverlayCanHide(phase, routeReady);
   const [visible, setVisible] = useState(!canHide);
 

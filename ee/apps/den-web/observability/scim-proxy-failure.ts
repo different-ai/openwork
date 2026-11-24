@@ -47,7 +47,6 @@ export function canonicalScimProxyPath(routePrefix: string, upstreamPrefix: stri
   if (routePrefix !== "/api/auth" || upstreamPrefix !== "api/auth") return null;
   if (targetPath !== "scim/v2" && !targetPath.startsWith("scim/v2/")) return null;
   if (targetPath.length > 2048) return "/api/auth/scim/v2/:path";
-  // No identifiers, arbitrary suffixes, or query text survive into telemetry.
   const parts = targetPath.slice("scim/v2".length).split("/").filter(Boolean);
   if (parts.length > 2) return "/api/auth/scim/v2/:path";
   const resource = parts[0];
@@ -59,7 +58,6 @@ export function canonicalScimProxyPath(routePrefix: string, upstreamPrefix: stri
 function errorField(value: unknown, key: string): unknown {
   try {
     if (typeof value !== "object" || value === null) return undefined;
-    // Do not invoke exception getters or stringify arbitrary thrown values.
     const field: unknown = Object.getOwnPropertyDescriptor(value, key)?.value;
     return field;
   } catch {
@@ -76,14 +74,11 @@ export function classifyScimProxyFailure(error: unknown, abortCause: "client" | 
     else if (error instanceof RangeError) errorName = "RangeError";
     else if (error instanceof Error) errorName = "Error";
   } catch {
-    // Hostile proxies must not interfere with the original failure response.
   }
   let causeCode: z.infer<typeof causeCodes> = "unknown";
   let knownFailure: "expect_header_unsupported" | "detached_body_buffer" | undefined;
   let current = error;
   for (let depth = 0; depth < 4; depth += 1) {
-    // Exact known messages select static labels; the message itself never leaves
-    // this function. Do not classify arbitrary text by substring or export it.
     const message = errorField(current, "message");
     if (message === "expect header not supported") knownFailure = "expect_header_unsupported";
     if (message === "Cannot perform ArrayBuffer.prototype.slice on a detached ArrayBuffer") knownFailure = "detached_body_buffer";
@@ -135,7 +130,6 @@ export async function scimProxyFailureFields(input: {
   observedBytes: number;
   expect: string | null;
 }): Promise<ScimProxyFailureFields> {
-  // Incoming reference IDs are arbitrary client text, not a trusted log field.
   const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(input.referenceId));
   const hash = Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
   const method = methods.safeParse(input.method);
@@ -166,8 +160,6 @@ export function scimProxyFailureEvent(fields: ScimProxyFailureFields): ErrorEven
 }
 
 export function scrubScimProxyFailureEvent(event: Event, hint: EventHint): ErrorEvent | null {
-  // v10.64 merges global/isolation scopes and runs RequestData before beforeSend.
-  // Rebuild instead of spreading: even SDK metadata can hold a URL/transaction.
   hint.attachments = [];
   const fields = fieldsSchema.safeParse(event.extra);
   if (!fields.success) return null;

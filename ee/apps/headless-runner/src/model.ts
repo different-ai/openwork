@@ -1,5 +1,14 @@
+import { HEADLESS_SESSION_HEADER } from "@openwork/types/den/workbot-usage"
 import { z } from "zod"
-import type { Message, ToolCall, ToolSpec } from "./types.js"
+import type { DesktopView, HeadlessModelAccess, Message, ToolCall, ToolSpec } from "./types.js"
+
+export function createModelAdapter(access: HeadlessModelAccess, options: { maxOutputTokens: number; fetch?: typeof fetch }): ModelClient {
+  const config = { ...options, baseUrl: access.baseUrl, headers: access.headers }
+  const client = access.protocol === "anthropic" ? anthropicModel(config)
+    : access.protocol === "openai-responses" ? openAIResponsesModel(config)
+    : openAIModel(config)
+  return access.model ? { ...client, complete: request => client.complete({ ...request, model: access.model ?? request.model }) } : client
+}
 
 export type ModelRequest = {
   system: string
@@ -8,26 +17,25 @@ export type ModelRequest = {
   model: string
   apiKey: string
   signal: AbortSignal
-  /** Streams the model's text as it is written. Without it the call is not streamed. */
+  sessionId?: string
   onText?: (delta: string) => void
-  /** The streamed text so far is void: the call is being retried from the start. */
   onReset?: () => void
-  /** The model started writing a call to this tool (streamed calls only), before its input is complete. */
-  onTool?: (name: string) => void
-  /**
-   * Messages after which the provider may cache the request so far (Anthropic). Without them, the request is cached
-   * up to its last message. The system prompt is always a cache point, so at most three are used.
-   */
+  onTool?: OnTool
   cacheAfter?: ReadonlySet<Message>
+  continueFrom?: string
 }
 export type ModelStep = {
+  model?: string
   text: string
   toolCalls: ToolCall[]
-  /** inputTokens includes cachedInputTokens. */
   usage: Usage
+  cutOff?: boolean
 }
 export type Usage = { inputTokens: number; cachedInputTokens: number; outputTokens: number }
-export type ModelClient = { complete(request: ModelRequest): Promise<ModelStep> }
+export type ModelClient = {
+  complete(request: ModelRequest): Promise<ModelStep>
+  continuesAnswers?: boolean
+}
 
 export class ModelError extends Error {
   constructor(
@@ -35,7 +43,6 @@ export class ModelError extends Error {
     message: string,
     readonly retryable: boolean,
     readonly retryAfterMs?: number,
-    /** What the provider said (its error message and request id), short, for logs and support; never shown as is. */
     readonly detail?: string,
   ) {
     super(message)
@@ -46,7 +53,6 @@ const errorBody = z
   .object({ error: z.union([z.string(), z.object({ type: z.string().optional(), code: z.string().nullish(), message: z.string().optional() }).loose()]).optional(), message: z.string().optional() })
   .loose()
 
-/** One line saying why a provider refused a request, from its error body, with the request id to look it up. */
 export function describeProviderError(body: string, requestId: string | null): string {
   let text = body.trim()
   try {
@@ -58,11 +64,13 @@ export function describeProviderError(body: string, requestId: string | null): s
       if (message) text = kind ? `${kind}: ${message}` : message
     }
   } catch {
-    // Not JSON: keep the text.
   }
-  // Provider messages don't carry keys, but never log one if a proxy echoes it.
   const redacted = text.replace(/\b(sk|ow_[a-z]+|key)[-_][A-Za-z0-9_-]{8,}/g, "[redacted]").replace(/\s+/g, " ").slice(0, 300)
   return requestId ? `${redacted} (request ${requestId})` : redacted
+}
+
+function sessionHeader(request: Pick<ModelRequest, "sessionId">): Record<string, string> {
+  return request.sessionId ? { [HEADLESS_SESSION_HEADER]: request.sessionId } : {}
 }
 
 type Fetch = typeof fetch
@@ -81,6 +89,28 @@ const RETRYABLE_STATUS = new Set([408, 409, 425, 429, 500, 502, 503, 504, 529])
 const MAX_ATTEMPTS = 3
 const CALL_TIMEOUT_MS = 180_000
 
+function unref<T>(timer: T): T {
+  ;(timer as { unref?: () => void }).unref?.()
+  return timer
+}
+
+function abortWhenIdle(response: Response, deadline: AbortController): Response {
+  if (!response.body) return response
+  const abort = () => deadline.abort(new Error("The model stream went quiet."))
+  let idle = unref(setTimeout(abort, CALL_TIMEOUT_MS))
+  const body = response.body.pipeThrough(
+    new TransformStream<Uint8Array, Uint8Array>({
+      transform(chunk, controller) {
+        clearTimeout(idle)
+        idle = unref(setTimeout(abort, CALL_TIMEOUT_MS))
+        controller.enqueue(chunk)
+      },
+      flush: () => clearTimeout(idle),
+    }),
+  )
+  return new Response(body, { status: response.status, statusText: response.statusText, headers: response.headers })
+}
+
 function retryAfterMs(response: Response): number | undefined {
   const header = response.headers.get("retry-after")
   if (!header) return undefined
@@ -88,7 +118,6 @@ function retryAfterMs(response: Response): number | undefined {
   return Number.isFinite(seconds) ? Math.min(seconds * 1000, 30_000) : undefined
 }
 
-/** POSTs JSON with bounded retries on transient failures and returns the successful response. Never logs secrets. */
 async function openResponse(input: {
   fetch: Fetch
   sleep: Sleep
@@ -101,25 +130,41 @@ async function openResponse(input: {
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
     if (lastError) await input.sleep(lastError.retryAfterMs ?? 1000 * 2 ** (attempt - 2), input.signal)
     let response: Response
+    const deadline = new AbortController()
+    const started = unref(setTimeout(() => deadline.abort(new Error("The model call timed out.")), CALL_TIMEOUT_MS))
     try {
       response = await input.fetch(input.url, {
         method: "POST",
         headers: { "content-type": "application/json", ...input.headers },
         body: JSON.stringify(input.body),
-        signal: AbortSignal.any([input.signal, AbortSignal.timeout(CALL_TIMEOUT_MS)]),
+        signal: AbortSignal.any([input.signal, deadline.signal]),
       })
     } catch (error) {
+      clearTimeout(started)
       if (input.signal.aborted) throw error
       lastError = new ModelError("model_unreachable", "The AI gateway could not be reached.", true)
       continue
     }
+    const streamed = (input.body as { stream?: unknown } | null)?.stream === true
+    if (response.ok && streamed) {
+      clearTimeout(started)
+      return abortWhenIdle(response, deadline)
+    }
     if (response.ok) return response
     const body = await response.text().catch(() => "")
     const requestId = response.headers.get("x-openwork-request-id") ?? response.headers.get("request-id")
+    const modelsRoute = /\/api\/v1\/(chat\/completions|responses)$/.test(new URL(input.url).pathname)
+    const freeLimit = response.status === 429 && modelsRoute
+      && response.headers.get("X-OpenWork-Error-Code") === "free_allowance_exhausted"
+      && response.headers.get("X-OpenWork-Usage-State") === "blocked"
+    const usageLimit = (response.status === 429 && ["openwork_gateway_usage_limit_exceeded", "openwork_models_allowance_reached"].includes(response.headers.get("X-OpenWork-Error-Code") ?? "") && response.headers.get("X-OpenWork-Usage-State") === "blocked")
+      || (response.status === 429 && modelsRoute && response.headers.has("x-openwork-limit-bucket-id") && response.headers.has("x-openwork-limit-window-type"))
+    const recoveryCode = freeLimit ? "model_free_allowance_exhausted" : usageLimit ? "model_usage_limit_exceeded"
+      : modelsRoute && response.status === 402 ? "model_payment_required" : null
     lastError = new ModelError(
-      `model_http_${response.status}`,
+      recoveryCode ?? `model_http_${response.status}`,
       `The AI gateway returned ${response.status}${body ? `: ${body.slice(0, 500)}` : ""}`,
-      RETRYABLE_STATUS.has(response.status),
+      recoveryCode === null && RETRYABLE_STATUS.has(response.status),
       retryAfterMs(response),
       describeProviderError(body, requestId),
     )
@@ -132,7 +177,6 @@ async function postJson(input: Parameters<typeof openResponse>[0]): Promise<unkn
   return (await openResponse(input)).json()
 }
 
-/** Server-sent events from a streamed model response: one parsed JSON `data` payload at a time. */
 async function* sseData(response: Response, signal: AbortSignal): AsyncGenerator<unknown> {
   if (!response.body) throw new ModelError("model_bad_response", "The AI gateway sent an empty stream.", true)
   const reader = response.body.pipeThrough(new TextDecoderStream()).getReader()
@@ -156,7 +200,6 @@ async function* sseData(response: Response, signal: AbortSignal): AsyncGenerator
           try {
             yield JSON.parse(data)
           } catch {
-            // A keep-alive or comment, not an event.
           }
         }
         boundary = buffer.search(/\r?\n\r?\n/)
@@ -167,7 +210,6 @@ async function* sseData(response: Response, signal: AbortSignal): AsyncGenerator
   }
 }
 
-/** Streams a call; a stream cut off mid-way is retried from the start, after telling the reader to drop its text. */
 async function withStreamRetries(request: ModelRequest, sleep: Sleep, run: () => Promise<ModelStep>): Promise<ModelStep> {
   for (let attempt = 1; ; attempt += 1) {
     try {
@@ -182,18 +224,80 @@ async function withStreamRetries(request: ModelRequest, sleep: Sleep, run: () =>
 
 const streamInterrupted = () => new ModelError("model_stream_interrupted", "The AI gateway stream ended early.", true)
 
+export const CUT_OFF_CALL =
+  "Your reply reached the output limit while writing this call, so it was cut off and not run. Send less in one call: split long code, scripts or documents into parts (for example, write a file in several pieces, then run it)."
+
+function cutOffStep(step: ModelStep, cutOff: boolean): ModelStep {
+  if (!cutOff) return step
+  return { ...step, cutOff: true, toolCalls: step.toolCalls.map((call) => (call.inputError ? { ...call, input: {}, inputError: CUT_OFF_CALL } : call)) }
+}
+
 function parseArguments(raw: string): Pick<ToolCall, "input" | "inputError"> {
   try {
     const value: unknown = JSON.parse(raw || "{}")
     const parsed = z.record(z.string(), z.unknown()).safeParse(value)
     if (parsed.success) return { input: parsed.data }
   } catch {
-    // fall through
   }
   return { input: {}, inputError: "Tool arguments were not a JSON object." }
 }
 
-// ---------------------------------------------------------------- Anthropic
+const DESCRIPTION_SCAN_CHARS = 4_096
+
+export type OnTool = (name: string, description?: string, view?: DesktopView) => void
+
+function streamedString(json: string, wanted: string): string | null {
+  if (json.length > DESCRIPTION_SCAN_CHARS) return null
+  let depth = 0
+  let expecting: "key" | "value" | null = null
+  let key = ""
+  for (let index = 0; index < json.length; index++) {
+    const char = json[index]
+    if (char === '"') {
+      let end = index + 1
+      while (end < json.length && json[end] !== '"') end += json[end] === "\\" ? 2 : 1
+      if (end >= json.length) return null
+      if (depth === 1 && expecting !== null) {
+        let value: unknown
+        try { value = JSON.parse(json.slice(index, end + 1)) } catch { return null }
+        if (expecting === "value" && key === wanted) return typeof value === "string" ? value : null
+        if (expecting === "key") key = String(value)
+        expecting = null
+      }
+      index = end
+    } else if (char === "{" || char === "[") {
+      depth++
+      if (depth === 1) expecting = char === "{" ? "key" : null
+    } else if (char === "}" || char === "]") depth--
+    else if (depth === 1 && char === ":") expecting = "value"
+    else if (depth === 1 && char === ",") expecting = "key"
+  }
+  return null
+}
+
+export function streamedDescription(json: string): string | null {
+  const value = streamedString(json, "description")
+  return value?.trim() ? value : null
+}
+
+export function streamedView(json: string): DesktopView | null {
+  const value = streamedString(json, "view")
+  return value === "browser" || value === "computer" ? value : null
+}
+
+export function toolProgress(onTool: OnTool) {
+  let view: DesktopView | undefined
+  let description: string | undefined
+  return (name: string, json: string) => {
+    if (!name || (view && description)) return
+    const nextView = view ?? streamedView(json) ?? undefined
+    const nextDescription = description ?? streamedDescription(json) ?? undefined
+    if (nextView === view && nextDescription === description) return
+    view = nextView
+    description = nextDescription
+    onTool(name, description, view)
+  }
+}
 
 type CacheControl = { cache_control?: { type: "ephemeral" } }
 type AnthropicImage = { type: "image"; source: { type: "base64"; media_type: string; data: string } }
@@ -213,16 +317,9 @@ type AnthropicBlock = CacheControl &
   )
 type AnthropicMessage = { role: "user" | "assistant"; content: AnthropicBlock[] }
 
-/**
- * A transcript every provider accepts, whatever produced it: it starts with a message from the person, each tool
- * result directly follows the call it answers, every call has its result, and no message is empty. Providers
- * refuse anything else with a 400, and the same transcript would then fail on every retry. Messages it keeps are
- * returned as they were (same objects), so callers can still recognize them. `repairs` counts what it changed.
- */
 export function normalizeTranscript(messages: readonly Message[]): { messages: Message[]; repairs: number } {
   const out: Message[] = []
   let repairs = 0
-  // The latest assistant message with tool calls, and the calls still waiting for their result.
   let open: { index: number; waiting: Set<string> } | null = null
   const settle = () => {
     if (open && open.waiting.size) {
@@ -231,7 +328,6 @@ export function normalizeTranscript(messages: readonly Message[]): { messages: M
       if (call?.role === "assistant") {
         const toolCalls = call.toolCalls.filter((entry) => !waiting.has(entry.id))
         repairs += call.toolCalls.length - toolCalls.length
-        // Nothing answered it and it said nothing: no result follows it, so it is the last message so far.
         if (toolCalls.length === 0 && !call.text.trim()) out.splice(open.index, 1)
         else out[open.index] = { ...call, toolCalls }
       }
@@ -257,13 +353,8 @@ export function normalizeTranscript(messages: readonly Message[]): { messages: M
   return { messages: out, repairs }
 }
 
-/** Anthropic allows four cache points per request; the system prompt takes one. */
 const MAX_MESSAGE_CACHE_POINTS = 3
 
-/**
- * Anthropic needs strict user/assistant alternation; adjacent same-role entries are merged. Messages in `cacheAfter`
- * end with a cache point (the newest three at most).
- */
 export function toAnthropicMessages(messages: readonly Message[], cacheAfter?: ReadonlySet<Message>): AnthropicMessage[] {
   const out: AnthropicMessage[] = []
   const cachePoints: AnthropicBlock[] = []
@@ -272,7 +363,6 @@ export function toAnthropicMessages(messages: readonly Message[], cacheAfter?: R
     const blocks: AnthropicBlock[] =
       message.role === "user"
         ? [
-            // Files first, then the question: models answer better about a document placed before the ask.
             ...(message.documents ?? []).map((document) => ({
               type: "document" as const,
               title: document.name.slice(0, 500),
@@ -282,7 +372,6 @@ export function toAnthropicMessages(messages: readonly Message[], cacheAfter?: R
               type: "image" as const,
               source: { type: "base64" as const, media_type: image.mediaType, data: image.data },
             })),
-            // An empty text block is refused; a message of only files has none.
             ...(message.text.trim() ? [{ type: "text" as const, text: message.text }] : []),
           ]
         : message.role === "tool"
@@ -290,7 +379,6 @@ export function toAnthropicMessages(messages: readonly Message[], cacheAfter?: R
               {
                 type: "tool_result",
                 tool_use_id: message.callId,
-                // Tool results may carry text, image, and document blocks: a PDF a tool returned is read as-is.
                 content: message.images?.length || message.documents?.length
                   ? [
                       { type: "text" as const, text: message.output },
@@ -309,7 +397,6 @@ export function toAnthropicMessages(messages: readonly Message[], cacheAfter?: R
               },
             ]
           : [
-              // Whitespace-only text is refused too.
               ...(message.text.trim() ? [{ type: "text" as const, text: message.text }] : []),
               ...message.toolCalls.map((call) => ({
                 type: "tool_use" as const,
@@ -329,7 +416,11 @@ export function toAnthropicMessages(messages: readonly Message[], cacheAfter?: R
   return out
 }
 
+const reportedModel = (value: string | null | undefined) => value && /^[A-Za-z0-9][A-Za-z0-9_./:@+-]{0,127}$/.test(value) ? value : undefined
+
 const anthropicResponse = z.object({
+  model: z.string().nullish(),
+  stop_reason: z.string().nullish(),
   content: z.array(
     z.discriminatedUnion("type", [
       z.object({ type: z.literal("text"), text: z.string() }),
@@ -349,11 +440,6 @@ const anthropicResponse = z.object({
     .optional(),
 })
 
-/**
- * Every agent step resends the whole conversation. Two cache breakpoints (the
- * system prompt + tools, and the newest message) let each step reuse the
- * previous prefix, which is most of the input cost of a multi-step turn.
- */
 function withCacheBreakpoint(messages: AnthropicMessage[]): AnthropicMessage[] {
   const last = messages.at(-1)
   const block = last?.content.at(-1)
@@ -365,10 +451,10 @@ const anthropicEvent = z
   .object({
     type: z.string(),
     index: z.number().optional(),
-    message: z.object({ usage: z.record(z.string(), z.unknown()).optional() }).loose().optional(),
+    message: z.object({ model: z.string().nullish(), usage: z.record(z.string(), z.unknown()).optional() }).loose().optional(),
     content_block: z.object({ type: z.string(), id: z.string().optional(), name: z.string().optional() }).loose().optional(),
     delta: z
-      .object({ type: z.string().optional(), text: z.string().optional(), partial_json: z.string().optional() })
+      .object({ type: z.string().optional(), text: z.string().optional(), partial_json: z.string().optional(), stop_reason: z.string().nullish() })
       .loose()
       .optional(),
     usage: z.record(z.string(), z.unknown()).optional(),
@@ -378,21 +464,23 @@ const anthropicEvent = z
 
 const tokenCount = (value: unknown) => (typeof value === "number" ? value : 0)
 
-/** Assembles a streamed Anthropic Messages response into the same step a non-streamed call returns. */
 async function readAnthropicStream(
   response: Response,
   signal: AbortSignal,
   onText: (delta: string) => void,
-  onTool: (name: string) => void = () => undefined,
+  onTool: OnTool = () => undefined,
 ): Promise<ModelStep> {
-  const blocks = new Map<number, { kind: "text"; text: string } | { kind: "tool"; id: string; name: string; json: string } | { kind: "other" }>()
+  const blocks = new Map<number, { kind: "text"; text: string } | { kind: "tool"; id: string; name: string; json: string; progress: ReturnType<typeof toolProgress> } | { kind: "other" }>()
   const usage: Usage = { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 }
   let stopped = false
+  let stopReason: string | null | undefined
+  let model: string | undefined
   try {
     for await (const raw of sseData(response, signal)) {
       const event = anthropicEvent.safeParse(raw)
       if (!event.success) continue
       const value = event.data
+      if (value.type === "message_start") model = reportedModel(value.message?.model)
       if (value.type === "message_start" && value.message?.usage) {
         const start = value.message.usage
         usage.cachedInputTokens = tokenCount(start.cache_read_input_tokens)
@@ -405,7 +493,7 @@ async function readAnthropicStream(
           block.type === "text"
             ? { kind: "text", text: "" }
             : block.type === "tool_use" && block.id && block.name
-              ? { kind: "tool", id: block.id, name: block.name, json: "" }
+              ? { kind: "tool", id: block.id, name: block.name, json: "", progress: toolProgress(onTool) }
               : { kind: "other" },
         )
         if (block.type === "tool_use" && block.name) onTool(block.name)
@@ -416,9 +504,11 @@ async function readAnthropicStream(
           onText(value.delta.text)
         } else if (block?.kind === "tool" && value.delta.partial_json) {
           block.json += value.delta.partial_json
+          block.progress(block.name, block.json)
         }
-      } else if (value.type === "message_delta" && value.usage) {
-        usage.outputTokens = tokenCount(value.usage.output_tokens) || usage.outputTokens
+      } else if (value.type === "message_delta") {
+        stopReason = value.delta?.stop_reason ?? stopReason
+        if (value.usage) usage.outputTokens = tokenCount(value.usage.output_tokens) || usage.outputTokens
       } else if (value.type === "message_stop") {
         stopped = true
       } else if (value.type === "error") {
@@ -438,11 +528,12 @@ async function readAnthropicStream(
   }
   if (!stopped) throw streamInterrupted()
   const ordered = [...blocks.entries()].sort(([left], [right]) => left - right).map(([, block]) => block)
-  return {
+  return cutOffStep({
+    ...(model ? { model } : {}),
     text: ordered.flatMap((block) => (block.kind === "text" ? [block.text] : [])).join(""),
     toolCalls: ordered.flatMap((block) => (block.kind === "tool" ? [{ id: block.id, name: block.name, ...parseArguments(block.json) }] : [])),
     usage,
-  }
+  }, stopReason === "max_tokens")
 }
 
 export function anthropicModel(options: {
@@ -450,34 +541,42 @@ export function anthropicModel(options: {
   maxOutputTokens: number
   fetch?: Fetch
   sleep?: Sleep
+  headers?: Record<string, string>
 }): ModelClient {
   const sleep = options.sleep ?? defaultSleep
-  const call = (request: ModelRequest, stream: boolean) => ({
-    fetch: options.fetch ?? fetch,
-    sleep,
-    url: `${options.baseUrl}/messages`,
-    headers: { "x-api-key": request.apiKey, "anthropic-version": "2023-06-01" },
-    signal: request.signal,
-    body: {
-      model: request.model,
-      max_tokens: options.maxOutputTokens,
-      ...(stream ? { stream: true } : {}),
-      system: [{ type: "text", text: request.system, cache_control: { type: "ephemeral" } }],
-      messages: request.cacheAfter ? toAnthropicMessages(request.messages, request.cacheAfter) : withCacheBreakpoint(toAnthropicMessages(request.messages)),
-      ...(request.tools.length
-        ? { tools: request.tools.map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.inputSchema })) }
-        : {}),
-    },
-  })
+  const call = (request: ModelRequest, stream: boolean, continued: string) => {
+    const messages = request.cacheAfter ? toAnthropicMessages(request.messages, request.cacheAfter) : withCacheBreakpoint(toAnthropicMessages(request.messages))
+    return {
+      fetch: options.fetch ?? fetch,
+      sleep,
+      url: `${options.baseUrl}/messages`,
+      headers: { ...options.headers, "x-api-key": request.apiKey, "anthropic-version": "2023-06-01", ...sessionHeader(request) },
+      signal: request.signal,
+      body: {
+        model: request.model,
+        max_tokens: options.maxOutputTokens,
+        ...(stream ? { stream: true } : {}),
+        system: [{ type: "text", text: request.system, cache_control: { type: "ephemeral" } }],
+        messages: continued ? [...messages, { role: "assistant", content: [{ type: "text", text: continued }] }] : messages,
+        ...(request.tools.length
+          ? { tools: request.tools.map((tool) => ({ name: tool.name, description: tool.description, input_schema: tool.inputSchema })) }
+          : {}),
+      },
+    }
+  }
   return {
+    continuesAnswers: true,
     async complete(request) {
+      const last = request.messages.at(-1)
+      const continued = last && last.role !== "assistant" ? (request.continueFrom ?? "").trimEnd() : ""
       if (request.onText) {
         const onText = request.onText
-        return withStreamRetries(request, sleep, async () =>
-          readAnthropicStream(await openResponse(call(request, true)), request.signal, onText, request.onTool),
+        const step = await withStreamRetries(request, sleep, async () =>
+          readAnthropicStream(await openResponse(call(request, true, continued)), request.signal, onText, request.onTool),
         )
+        return continued ? { ...step, text: continued + step.text } : step
       }
-      const json = await postJson(call(request, false))
+      const json = await postJson(call(request, false, continued))
       const parsed = anthropicResponse.safeParse(json)
       if (!parsed.success) throw new ModelError("model_bad_response", "Unexpected response from the AI gateway.", false)
       const text: string[] = []
@@ -493,8 +592,9 @@ export function anthropicModel(options: {
           )
         }
       }
-      return {
-        text: text.join(""),
+      return cutOffStep({
+        ...(reportedModel(parsed.data.model) ? { model: reportedModel(parsed.data.model) } : {}),
+        text: continued + text.join(""),
         toolCalls,
         usage: {
           inputTokens:
@@ -504,12 +604,10 @@ export function anthropicModel(options: {
           cachedInputTokens: parsed.data.usage?.cache_read_input_tokens ?? 0,
           outputTokens: parsed.data.usage?.output_tokens ?? 0,
         },
-      }
+      }, parsed.data.stop_reason === "max_tokens")
     },
   }
 }
-
-// ------------------------------------------------- OpenAI chat completions
 
 type OpenAIContentPart =
   | { type: "text"; text: string }
@@ -526,7 +624,6 @@ type OpenAIMessage =
 
 export function toOpenAIMessages(system: string, messages: readonly Message[]): OpenAIMessage[] {
   const out: OpenAIMessage[] = [{ role: "system", content: system }]
-  // OpenAI refuses a tool message that doesn't answer the assistant message before it, as Anthropic does.
   for (const message of normalizeTranscript(messages).messages) {
     if (message.role === "user") {
       if (!message.images?.length && !message.documents?.length) out.push({ role: "user", content: message.text })
@@ -548,7 +645,6 @@ export function toOpenAIMessages(system: string, messages: readonly Message[]): 
     }
     else if (message.role === "tool") {
       out.push({ role: "tool", tool_call_id: message.callId, content: message.output })
-      // Chat Completions tool messages are text-only, so images and PDFs follow as user content.
       if (message.images?.length || message.documents?.length)
         out.push({
           role: "user",
@@ -585,6 +681,7 @@ export function toOpenAIMessages(system: string, messages: readonly Message[]): 
 }
 
 const openAIResponse = z.object({
+  model: z.string().nullish(),
   choices: z
     .array(
       z.object({
@@ -595,6 +692,7 @@ const openAIResponse = z.object({
             .nullable()
             .optional(),
         }),
+        finish_reason: z.string().nullish(),
       }),
     )
     .min(1),
@@ -610,6 +708,7 @@ const openAIResponse = z.object({
 
 const openAIChunk = z
   .object({
+    model: z.string().nullish(),
     choices: z
       .array(
         z
@@ -641,37 +740,43 @@ const openAIChunk = z
   })
   .loose()
 
-/** Assembles a streamed Chat Completions response into the same step a non-streamed call returns. */
 async function readOpenAIStream(
   response: Response,
   signal: AbortSignal,
   onText: (delta: string) => void,
-  onTool: (name: string) => void = () => undefined,
+  onTool: OnTool = () => undefined,
 ): Promise<ModelStep> {
   let text = ""
-  const calls = new Map<number, { id: string; name: string; args: string }>()
+  const calls = new Map<number, { id: string; name: string; args: string; progress: ReturnType<typeof toolProgress> }>()
   const usage: Usage = { inputTokens: 0, cachedInputTokens: 0, outputTokens: 0 }
   let finished = false
+  let cutOff = false
+  let model: string | undefined
   try {
     for await (const raw of sseData(response, signal)) {
       const chunk = openAIChunk.safeParse(raw)
       if (!chunk.success) continue
+      model = reportedModel(chunk.data.model) ?? model
       const choice = chunk.data.choices?.[0]
       if (choice?.delta?.content) {
         text += choice.delta.content
         onText(choice.delta.content)
       }
       for (const part of choice?.delta?.tool_calls ?? []) {
-        const entry = calls.get(part.index) ?? { id: "", name: "", args: "" }
+        const entry = calls.get(part.index) ?? { id: "", name: "", args: "", progress: toolProgress(onTool) }
         if (part.id) entry.id = part.id
         if (part.function?.name) {
           if (!entry.name) onTool(part.function.name)
           entry.name += part.function.name
         }
-        if (part.function?.arguments) entry.args += part.function.arguments
+        if (part.function?.arguments) {
+          entry.args += part.function.arguments
+          entry.progress(entry.name, entry.args)
+        }
         calls.set(part.index, entry)
       }
       if (choice?.finish_reason) finished = true
+      if (choice?.finish_reason === "length") cutOff = true
       if (chunk.data.usage) {
         usage.inputTokens = chunk.data.usage.prompt_tokens ?? 0
         usage.cachedInputTokens = chunk.data.usage.prompt_tokens_details?.cached_tokens ?? 0
@@ -683,16 +788,17 @@ async function readOpenAIStream(
     throw streamInterrupted()
   }
   if (!finished) throw streamInterrupted()
-  return {
+  return cutOffStep({
+    ...(model ? { model } : {}),
     text,
     toolCalls: [...calls.entries()]
       .sort(([left], [right]) => left - right)
       .map(([, call]) => ({ id: call.id, name: call.name, ...parseArguments(call.args) })),
     usage,
-  }
+  }, cutOff)
 }
 
-export function openAIModel(options: { baseUrl: string; maxOutputTokens: number; fetch?: Fetch; sleep?: Sleep }): ModelClient {
+export function openAIModel(options: { baseUrl: string; maxOutputTokens: number; fetch?: Fetch; sleep?: Sleep; headers?: Record<string, string> }): ModelClient {
   return {
     async complete(request) {
       const sleep = options.sleep ?? defaultSleep
@@ -700,11 +806,10 @@ export function openAIModel(options: { baseUrl: string; maxOutputTokens: number;
         fetch: options.fetch ?? fetch,
         sleep,
         url: `${options.baseUrl}/chat/completions`,
-        headers: { authorization: `Bearer ${request.apiKey}` },
+        headers: { ...options.headers, authorization: `Bearer ${request.apiKey}`, ...sessionHeader(request) },
         signal: request.signal,
         body: {
           model: request.model,
-          // max_completion_tokens is OpenAI's current output cap (max_tokens is rejected by newer models).
           max_completion_tokens: options.maxOutputTokens,
           ...(stream ? { stream: true, stream_options: { include_usage: true } } : {}),
           messages: toOpenAIMessages(request.system, request.messages),
@@ -726,7 +831,8 @@ export function openAIModel(options: { baseUrl: string; maxOutputTokens: number;
       const parsed = openAIResponse.safeParse(json)
       if (!parsed.success) throw new ModelError("model_bad_response", "Unexpected response from the AI gateway.", false)
       const message = parsed.data.choices[0].message
-      return {
+      return cutOffStep({
+        ...(reportedModel(parsed.data.model) ? { model: reportedModel(parsed.data.model) } : {}),
         text: message.content ?? "",
         toolCalls: (message.tool_calls ?? []).map((call) => ({
           id: call.id,
@@ -738,24 +844,200 @@ export function openAIModel(options: { baseUrl: string; maxOutputTokens: number;
           cachedInputTokens: parsed.data.usage?.prompt_tokens_details?.cached_tokens ?? 0,
           outputTokens: parsed.data.usage?.completion_tokens ?? 0,
         },
-      }
+      }, parsed.data.choices[0].finish_reason === "length")
     },
   }
 }
 
-// ------------------------------------------------------------ model list
+type ResponsesContent =
+  | { type: "input_text"; text: string }
+  | { type: "input_image"; image_url: string }
+  | { type: "input_file"; filename: string; file_data: string }
+type ResponsesItem =
+  | { role: "user"; content: ResponsesContent[] }
+  | { role: "assistant"; content: { type: "output_text"; text: string }[] }
+  | { type: "function_call"; call_id: string; name: string; arguments: string }
+  | { type: "function_call_output"; call_id: string; output: string }
+
+function responsesMedia(message: { images?: { mediaType: string; data: string }[]; documents?: { mediaType: string; data: string; name: string }[] }): ResponsesContent[] {
+  return [
+    ...(message.documents ?? []).map((document) => ({ type: "input_file" as const, filename: document.name, file_data: `data:${document.mediaType};base64,${document.data}` })),
+    ...(message.images ?? []).map((image) => ({ type: "input_image" as const, image_url: `data:${image.mediaType};base64,${image.data}` })),
+  ]
+}
+
+export function toResponsesInput(messages: readonly Message[]): ResponsesItem[] {
+  const out: ResponsesItem[] = []
+  for (const message of normalizeTranscript(messages).messages) {
+    if (message.role === "user") out.push({ role: "user", content: [...responsesMedia(message), { type: "input_text", text: message.text }] })
+    else if (message.role === "tool") {
+      out.push({ type: "function_call_output", call_id: message.callId, output: message.output })
+      const media = responsesMedia(message)
+      if (media.length)
+        out.push({ role: "user", content: [{ type: "input_text", text: `${message.documents?.length ? "Files" : "Images"} returned by ${message.name}:` }, ...media] })
+    } else {
+      if (message.text.trim()) out.push({ role: "assistant", content: [{ type: "output_text", text: message.text }] })
+      for (const call of message.toolCalls) out.push({ type: "function_call", call_id: call.id, name: call.name, arguments: JSON.stringify(call.input) })
+    }
+  }
+  return out
+}
+
+const responsesResult = z
+  .object({
+    model: z.string().nullish(),
+    status: z.string().optional(),
+    incomplete_details: z.object({ reason: z.string().nullish() }).loose().nullish(),
+    output: z.array(
+      z
+        .object({
+          type: z.string(),
+          call_id: z.string().optional(),
+          name: z.string().optional(),
+          arguments: z.string().optional(),
+          content: z.array(z.object({ type: z.string(), text: z.string().optional() }).loose()).nullable().optional(),
+        })
+        .loose(),
+    ),
+    usage: z
+      .object({
+        input_tokens: z.number().optional(),
+        output_tokens: z.number().optional(),
+        input_tokens_details: z.object({ cached_tokens: z.number().optional() }).loose().nullable().optional(),
+      })
+      .loose()
+      .nullable()
+      .optional(),
+  })
+  .loose()
+
+function responsesStep(result: z.infer<typeof responsesResult>): ModelStep {
+  let text = ""
+  const toolCalls: ToolCall[] = []
+  for (const item of result.output) {
+    if (item.type === "message") for (const part of item.content ?? []) if (part.type === "output_text" && part.text) text += part.text
+    if (item.type === "function_call" && item.call_id && item.name) toolCalls.push({ id: item.call_id, name: item.name, ...parseArguments(item.arguments ?? "") })
+  }
+  return cutOffStep({
+    text,
+    toolCalls,
+    ...(reportedModel(result.model) ? { model: reportedModel(result.model) } : {}),
+    usage: {
+      inputTokens: result.usage?.input_tokens ?? 0,
+      cachedInputTokens: result.usage?.input_tokens_details?.cached_tokens ?? 0,
+      outputTokens: result.usage?.output_tokens ?? 0,
+    },
+  }, result.status === "incomplete" && result.incomplete_details?.reason === "max_output_tokens")
+}
+
+const responsesError = z.object({ code: z.string().nullish().catch(undefined), type: z.string().nullish().catch(undefined), message: z.string().optional() }).loose()
+
+const responsesEvent = z
+  .object({
+    type: z.string(),
+    delta: z.string().optional(),
+    item: z.object({ type: z.string(), name: z.string().optional() }).loose().optional(),
+    output_index: z.number().optional(),
+    response: z.unknown().optional(),
+    message: z.string().optional(),
+    code: z.string().nullish().catch(undefined),
+    error: responsesError.nullish().catch(undefined),
+  })
+  .loose()
+
+const TRANSIENT_RESPONSES_ERRORS: ReadonlySet<string> = new Set([
+  "server_error",
+  "server_is_overloaded",
+  "overloaded",
+  "overloaded_error",
+  "rate_limit_exceeded",
+  "rate_limit_error",
+])
+
+async function readResponsesStream(
+  response: Response,
+  signal: AbortSignal,
+  onText: (delta: string) => void,
+  onTool: OnTool = () => undefined,
+): Promise<ModelStep> {
+  let final: z.infer<typeof responsesResult> | undefined
+  const calls = new Map<number, { name: string; args: string; progress: ReturnType<typeof toolProgress> }>()
+  try {
+    for await (const raw of sseData(response, signal)) {
+      const event = responsesEvent.safeParse(raw)
+      if (!event.success) continue
+      const { type } = event.data
+      if (type === "response.output_text.delta" && event.data.delta) onText(event.data.delta)
+      else if (type === "response.output_item.added" && event.data.item?.type === "function_call" && event.data.item.name) {
+        if (event.data.output_index !== undefined) calls.set(event.data.output_index, { name: event.data.item.name, args: "", progress: toolProgress(onTool) })
+        onTool(event.data.item.name)
+      } else if (type === "response.function_call_arguments.delta" && event.data.delta && event.data.output_index !== undefined) {
+        const call = calls.get(event.data.output_index)
+        if (!call) continue
+        call.args += event.data.delta
+        call.progress(call.name, call.args)
+      } else if (type === "response.completed" || type === "response.incomplete") {
+        const parsed = responsesResult.safeParse(event.data.response)
+        if (!parsed.success) throw new ModelError("model_bad_response", "Unexpected response from the AI gateway.", false)
+        final = parsed.data
+      } else if (type === "response.failed" || type === "error") {
+        const failed = z.object({ error: responsesError.nullish() }).loose().safeParse(event.data.response)
+        const error = (failed.success ? failed.data.error : undefined) ?? event.data.error
+        const reason = error?.message ?? event.data.message ?? "unknown error"
+        const transient = [error?.code, error?.type, event.data.code].some((kind) => typeof kind === "string" && TRANSIENT_RESPONSES_ERRORS.has(kind))
+        throw new ModelError(transient ? "model_stream_interrupted" : "model_failed", `The model failed: ${reason.slice(0, 300)}`, transient, undefined, reason.slice(0, 300))
+      }
+    }
+  } catch (error) {
+    if (signal.aborted || error instanceof ModelError) throw error
+    throw streamInterrupted()
+  }
+  if (!final) throw streamInterrupted()
+  return responsesStep(final)
+}
+
+export function openAIResponsesModel(options: { baseUrl: string; maxOutputTokens: number; fetch?: Fetch; sleep?: Sleep; headers?: Record<string, string> }): ModelClient {
+  return {
+    async complete(request) {
+      const sleep = options.sleep ?? defaultSleep
+      const call = (stream: boolean) => ({
+        fetch: options.fetch ?? fetch,
+        sleep,
+        url: `${options.baseUrl}/responses`,
+        headers: { ...options.headers, authorization: `Bearer ${request.apiKey}`, ...sessionHeader(request) },
+        signal: request.signal,
+        body: {
+          model: request.model,
+          instructions: request.system,
+          input: toResponsesInput(request.messages),
+          max_output_tokens: options.maxOutputTokens,
+          store: false,
+          ...(stream ? { stream: true } : {}),
+          ...(request.tools.length
+            ? {
+                tools: request.tools.map((tool) => ({ type: "function", name: tool.name, description: tool.description, parameters: tool.inputSchema, strict: false })),
+              }
+            : {}),
+        },
+      })
+      if (request.onText) {
+        const onText = request.onText
+        return withStreamRetries(request, sleep, async () => readResponsesStream(await openResponse(call(true)), request.signal, onText, request.onTool))
+      }
+      const parsed = responsesResult.safeParse(await postJson(call(false)))
+      if (!parsed.success) throw new ModelError("model_bad_response", "Unexpected response from the AI gateway.", false)
+      return responsesStep(parsed.data)
+    },
+  }
+}
 
 export type ModelOption = { id: string; name: string }
 
 const modelList = z.object({ data: z.array(z.object({ id: z.string(), name: z.string().optional() }).loose()) }).loose()
 
-/**
- * Models the configured Gateway route can serve with the runner's key, so an admin can only pick one that works.
- * Gateway names carry a "(group / credentials)" suffix that means nothing to an admin; it is dropped.
- */
 export async function fetchGatewayModels(input: {
   baseUrl: string
-  protocol: "anthropic" | "openai"
+  protocol: "anthropic" | "openai" | "openai-responses"
   apiKey: string
   fetch?: Fetch
 }): Promise<ModelOption[]> {

@@ -1,13 +1,3 @@
-// Reverse proxies in front of the gateway give up when response headers take
-// too long: Cloudflare answers 524 after ~100s without them. A streaming model
-// request can legitimately wait that long for its provider to start (queues,
-// very long prompts), and the gateway only answers once the provider does.
-//
-// For streaming requests, give the route a short window to answer normally so
-// fast failures keep their real HTTP status and headers (429 + Retry-After).
-// After that window, commit 200 text/event-stream, keep the connection alive
-// with SSE comments, and continue with whatever the route eventually returns:
-// its event stream on success, or one protocol-native error event otherwise.
 import type { GatewayRequestProtocol } from "@openwork/types/den/gateway"
 import { isEventStreamContentType, readBoundedBody } from "./relay.js"
 
@@ -16,18 +6,12 @@ export type EarlyStreamProtocol = Extract<GatewayRequestProtocol, "openai_chat" 
 type JsonRecord = Record<string, unknown>
 
 export type EarlyResponseOptions = {
-  /** The response the route would send. Must settle; a rejection becomes an error event. */
   pending: Promise<Response>
   protocol: EarlyStreamProtocol
-  /** Wait this long for `pending` before committing a held-open stream. */
   commitAfterMs: number
-  /** SSE comment interval while the provider has not answered. */
   heartbeatMs: number
-  /** Headers for a committed response, e.g. x-openwork-request-id. */
   headers: Record<string, string>
-  /** Called once when the response is committed before `pending` settled. */
   onCommit?(): void
-  /** Called when the client goes away before the route's stream takes over. */
   onCancel?(): void
 }
 
@@ -43,13 +27,12 @@ function text(value: unknown): string | null {
   return typeof value === "string" && value.trim() ? value : null
 }
 
-/** Answers with the route's response, or commits a held-open SSE response after `commitAfterMs`. */
 export async function respondBeforeUpstream(options: EarlyResponseOptions): Promise<Response> {
   let timer: ReturnType<typeof setTimeout> | undefined
   const deadline = new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), options.commitAfterMs) })
   const settled = await Promise.race([options.pending, deadline]).finally(() => clearTimeout(timer))
   if (settled) return settled
-  try { options.onCommit?.() } catch { /* Diagnostics must not affect the response. */ }
+  try { options.onCommit?.() } catch {}
   const headers = new Headers(options.headers)
   headers.set("content-type", "text/event-stream; charset=utf-8")
   headers.set("cache-control", "no-store")
@@ -85,7 +68,7 @@ function heldStream(options: EarlyResponseOptions): ReadableStream<Uint8Array> {
         controller.enqueue(encoder.encode(earlyErrorEvent(options.protocol, status, payload)))
         controller.close()
       } catch {
-        try { controller.close() } catch { /* Already closed by cancellation. */ }
+        try { controller.close() } catch {}
       }
     },
     async pull(controller) {
@@ -102,7 +85,7 @@ function heldStream(options: EarlyResponseOptions): ReadableStream<Uint8Array> {
       cancelled = true
       stopBeating()
       if (reader) await reader.cancel(reason).catch(() => {})
-      else try { options.onCancel?.() } catch { /* Cleanup must not throw into the server. */ }
+      else try { options.onCancel?.() } catch {}
     },
   }, { highWaterMark: 0 })
 }
@@ -127,11 +110,6 @@ function anthropicErrorType(status: number) {
   return "api_error"
 }
 
-/**
- * One terminal error event in the request's own streaming protocol, so the
- * client's SDK reports the provider's error instead of a parse failure. The
- * payload is the error body the route would have sent with an HTTP status.
- */
 export function earlyErrorEvent(protocol: EarlyStreamProtocol, status: number, payload: unknown): string {
   const error = isRecord(payload) && isRecord(payload.error) ? payload.error : null
   const message = text(error?.message) ?? (isRecord(payload) ? text(payload.message) : null)

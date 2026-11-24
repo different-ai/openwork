@@ -19,10 +19,6 @@ export function parseModelRef(raw: string | null): ModelRef | null {
   return { providerID, modelID: rest.join("/") };
 }
 
-/**
- * Provider ID → friendly display name.
- * Used when the backend doesn't return a provider name.
- */
 export const FRIENDLY_PROVIDER_LABELS: Record<string, string> = {
   opencode: "OpenCode",
   openai: "OpenAI",
@@ -39,13 +35,7 @@ export const FRIENDLY_PROVIDER_LABELS: Record<string, string> = {
   cohere: "Cohere",
 };
 
-/**
- * Model ID → friendly display name.
- * Matches by substring so "gpt-4.1-2025-04-14" still hits "gpt-4.1".
- * Order matters: more specific patterns first.
- */
 export const FRIENDLY_MODEL_LABELS: [pattern: string, label: string][] = [
-  // OpenAI
   ["gpt-5.5", "GPT-5.5"],
   ["gpt-5", "GPT-5"],
   ["gpt-4.1-mini", "GPT-4.1 Mini"],
@@ -64,7 +54,6 @@ export const FRIENDLY_MODEL_LABELS: [pattern: string, label: string][] = [
   ["o1", "o1"],
   ["codex-mini", "Codex Mini"],
 
-  // Anthropic
   ["claude-sonnet-4", "Claude Sonnet 4"],
   ["claude-opus-4", "Claude Opus 4"],
   ["claude-3.7-sonnet", "Claude 3.7 Sonnet"],
@@ -74,37 +63,27 @@ export const FRIENDLY_MODEL_LABELS: [pattern: string, label: string][] = [
   ["claude-3-sonnet", "Claude 3 Sonnet"],
   ["claude-3-haiku", "Claude 3 Haiku"],
 
-  // Google
   ["gemini-2.5-pro", "Gemini 2.5 Pro"],
   ["gemini-2.5-flash", "Gemini 2.5 Flash"],
   ["gemini-2.0-flash", "Gemini 2.0 Flash"],
   ["gemini-1.5-pro", "Gemini 1.5 Pro"],
   ["gemini-1.5-flash", "Gemini 1.5 Flash"],
 
-  // DeepSeek
   ["deepseek-r1", "DeepSeek R1"],
   ["deepseek-v3", "DeepSeek V3"],
   ["deepseek-chat", "DeepSeek Chat"],
 
-  // Mistral
   ["mistral-large", "Mistral Large"],
   ["mistral-medium", "Mistral Medium"],
   ["mistral-small", "Mistral Small"],
   ["codestral", "Codestral"],
 
-  // xAI
   ["grok-3", "Grok 3"],
   ["grok-2", "Grok 2"],
 
-  // OpenCode
   ["big-pickle", "Big Pickle"],
 ];
 
-/**
- * Resolve a friendly display name for a model ID.
- * Checks FRIENDLY_MODEL_LABELS first (substring match), then falls back
- * to humanizeModelLabel which title-cases the raw ID.
- */
 export function resolveModelDisplayName(modelID: string): string {
   const normalized = modelID.trim().toLowerCase();
   for (const [pattern, label] of FRIENDLY_MODEL_LABELS) {
@@ -113,9 +92,6 @@ export function resolveModelDisplayName(modelID: string): string {
   return humanizeModelLabel(modelID);
 }
 
-/**
- * Resolve a friendly display name for a provider ID.
- */
 export function resolveProviderDisplayName(providerID: string): string {
   return FRIENDLY_PROVIDER_LABELS[providerID.trim().toLowerCase()] ?? humanizeModelLabel(providerID);
 }
@@ -184,7 +160,6 @@ export function clearStartupPreference() {
     window.localStorage.removeItem(LEGACY_PREF_KEY);
     window.localStorage.removeItem(LEGACY_PREF_KEY_ALT);
   } catch {
-    // ignore
   }
 }
 
@@ -235,18 +210,6 @@ export function formatBytes(bytes: number) {
   return `${rounded} ${units[idx]}`;
 }
 
-/**
- * Convert a directory path to a forward-slash normalised form for **local**
- * comparison only (e.g. case-insensitive matching via {@link normalizeDirectoryPath}).
- *
- * **Do NOT use this when building a directory value that will be sent to the
- * OpenCode server** (session.list, session.create, mcp.status, etc.).  The
- * server compares directories with strict equality and on Windows it stores
- * native backslash paths.  Use
- * {@link import("../lib/session-scope").toSessionTransportDirectory toSessionTransportDirectory}
- * instead — it returns a branded {@link import("../lib/session-scope").TransportDirectory TransportDirectory}
- * that the compiler can enforce.
- */
 export function normalizeDirectoryQueryPath(input?: string | null) {
   const trimmed = (input ?? "").trim();
   if (!trimmed) return "";
@@ -385,7 +348,6 @@ export function isVisibleTextPart(part: Part) {
   return part.type === "text" && isUserVisiblePart(part);
 }
 
-/** Classify a tool name into a semantic category for icon selection */
 export function classifyTool(toolName: string): "read" | "edit" | "write" | "search" | "terminal" | "glob" | "task" | "skill" | "tool" {
   const lower = toolName.toLowerCase();
   if (lower === "skill") return "skill";

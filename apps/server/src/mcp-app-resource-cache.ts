@@ -2,9 +2,10 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { z } from "zod";
+import { MCP_APP_RESOURCE_MAX_BYTES } from "./mcp-app-limits.js";
 
 const resourceSchema = z.object({
-  html: z.string().max(768 * 1024),
+  html: z.string().max(MCP_APP_RESOURCE_MAX_BYTES).refine(value => Buffer.byteLength(value) <= MCP_APP_RESOURCE_MAX_BYTES),
   csp: z.object({ connectDomains: z.array(z.string()), resourceDomains: z.array(z.string()),
     frameDomains: z.array(z.string()), baseUriDomains: z.array(z.string()) }),
   prefersBorder: z.boolean(),
@@ -15,10 +16,8 @@ const MAX_BYTES = 16 * 1024 * 1024;
 const TTL_MS = 24 * 60 * 60_000;
 const digest = (resource: CachedMcpAppResource) => createHash("sha256").update(JSON.stringify(resource)).digest("hex");
 
-/** Content only: credentials, tool definitions, permissions and launch leases are never cached. */
 export function createMcpAppResourceCache(directory: string, now = Date.now) {
   const memory = new Map<string, z.infer<typeof storedSchema>>();
-  // Sized once on insert: a hit must not re-serialize every cached App.
   const sizes = new Map<string, number>();
   const remember = (key: string, value: z.infer<typeof storedSchema>) => {
     memory.delete(key); memory.set(key, value);
@@ -62,7 +61,6 @@ export function createMcpAppResourceCache(directory: string, now = Date.now) {
         const resource = resourceSchema.parse(await load());
         const value = { savedAt: now(), digest: digest(resource), resource };
         sizes.delete(key); remember(key, value);
-        // A full disk, corrupt entry or failed cache write must never prevent an App opening.
         maintenance = maintenance.then(async () => {
           await mkdir(directory, { recursive: true, mode: 0o700 });
           await writeFile(join(directory, `${key}.json`), JSON.stringify(value), { mode: 0o600 });

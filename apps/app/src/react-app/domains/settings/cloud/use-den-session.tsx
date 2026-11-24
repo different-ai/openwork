@@ -8,17 +8,21 @@ import {
   DEFAULT_DEN_BASE_URL,
   DenApiError,
   ensureDenActiveOrganization,
+  denOriginComparisonKey,
   initializeDenBootstrapConfig,
   isDenSessionRevokedError,
+  isDenSessionSnapshotCurrent,
   mergePassiveDenSettings,
   normalizeDenBaseUrl,
   readDenSettings,
   resolveDenBaseUrls,
+  selectDenActiveOrganization,
   writeDenSettings,
   type DenSettings,
   type DenOrgSummary,
 } from "@/app/lib/den";
-import { markDesktopSignInInitiated } from "@/app/lib/den-sign-in-intent";
+import { markDesktopSignInInitiated, readOrgSelectionPending } from "@/app/lib/den-sign-in-intent";
+import { clearSignInReturnTarget } from "@/app/lib/den-sign-in-return";
 import { clearDesktopBootstrapConfig } from "@/app/lib/desktop";
 import { exchangeHandoffAndSignIn } from "@/app/lib/den-handoff";
 import { parseManualAuthInput } from "@/app/lib/manual-auth-input";
@@ -30,6 +34,7 @@ import {
 import { t } from "@/i18n";
 import { useDenAuth } from "../../cloud/den-auth-provider";
 import { tryOpenBrowserAuthUrl } from "../../cloud/open-browser-auth";
+import { explainSignOutAfterDisconnect } from "../../devices/disconnected-sign-out";
 import {
   cloudSessionOrganizationFromSettings,
   useCloudSession,
@@ -63,7 +68,6 @@ async function runBeforeSignedOut(callback: UseDenSessionProps["onBeforeSignedOu
       }),
     ]);
   } catch {
-    // Best-effort cleanup must not trap the user in a signed-in state.
   } finally {
     if (timeout) clearTimeout(timeout);
   }
@@ -186,11 +190,6 @@ export function useDenSession({
       setAuthError(null);
       setSigninFallbackUrl(null);
       setStatusMessage(message ?? null);
-      // Remove ONLY the cloud (lpr_*) provider IDs from the acknowledged
-      // list. Local providers (openai, opencode) stay acknowledged so they
-      // don't re-trigger the onboarding modal. When the user signs in
-      // again, fresh cloud providers will be detected as new and surface
-      // the toast (which is the intended behavior).
       try {
         const raw = window.localStorage.getItem("openwork.acknowledgedProviders");
         if (raw) {
@@ -223,6 +222,7 @@ export function useDenSession({
     (mode: "sign-in" | "sign-up") => {
       const url = buildDenAuthUrl(baseUrl, mode);
       const usesPasteHandoff = new URL(url).searchParams.get("desktopAuth") === "1";
+      clearSignInReturnTarget();
       markDesktopSignInInitiated();
       setSigninFallbackUrl(url);
       setStatusMessage(
@@ -300,8 +300,6 @@ export function useDenSession({
     setBaseUrlError(null);
     setAuthError(null);
     try {
-      // Reset-to-default writes a default-pointing bootstrap file; clear removes
-      // bootstrap files entirely so an MDM-dropped config can win on next launch.
       await clearDesktopBootstrapConfig();
       const bootstrap = await initializeDenBootstrapConfig();
       const resolved = resolveDenBaseUrls(bootstrap);
@@ -348,10 +346,9 @@ export function useDenSession({
       .catch(async (error) => {
         if (cancelled) return;
         if (isDenSessionRevokedError(error)) {
+          explainSignOutAfterDisconnect();
           await clearSignedInState();
         }
-        // A timeout, offline state, or server failure does not invalidate the
-        // last confirmed session. Keep it available while surfacing the error.
         setAuthError(error instanceof Error ? error.message : t("den.error_no_session"));
       })
       .finally(() => {
@@ -371,11 +368,15 @@ export function useDenSession({
         return;
       }
 
+      const snapshot = readDenSettings();
+      if (snapshot.authToken !== authToken
+        || denOriginComparisonKey(snapshot.baseUrl) !== denOriginComparisonKey(baseUrl)) return;
       setOrgsBusy(true);
       if (!quiet) setOrgsError(null);
 
       try {
         const response = await client.listOrgs();
+        if (!isDenSessionSnapshotCurrent(snapshot)) return;
         setOrgs((currentOrgs) => (
           currentOrgs.length === response.orgs.length
           && currentOrgs.every((org, index) => {
@@ -388,19 +389,12 @@ export function useDenSession({
             ? currentOrgs
             : response.orgs
         ));
-        const current = activeOrgId.trim();
+        if (readOrgSelectionPending().pending) return;
+        const current = snapshot.activeOrgId?.trim() ?? "";
 
-        // Determine the next org to select:
-        // - If the user already had an org selected and it still exists, keep it.
-        // - If there's exactly one org, auto-select it (no choice needed).
-        // - Otherwise, leave blank so the user is prompted to choose.
-        let next = "";
-        if (current && response.orgs.some((org) => org.id === current)) {
-          next = current;
-        } else if (response.orgs.length === 1) {
-          next = response.orgs[0].id;
-        }
-        // else: leave next = "" so the org picker is shown
+        const next = response.orgs.find((org) => org.id === current)?.id
+          ?? response.orgs.find((org) => org.id === response.activeOrgId)?.id
+          ?? (response.orgs.length === 1 ? response.orgs[0].id : "");
 
         const nextOrg = next ? (response.orgs.find((org) => org.id === next) ?? null) : null;
         setActiveOrgId((currentId) => currentId === next ? currentId : next);
@@ -411,7 +405,6 @@ export function useDenSession({
           activeOrgSlug: nextOrg?.slug ?? null,
           activeOrgName: nextOrg?.name ?? null,
         });
-        // Push to context immediately so consumers see the new org
         if (nextOrg) {
           setActiveOrganization((currentOrg) => (
             currentOrg?.id === nextOrg.id
@@ -436,7 +429,7 @@ export function useDenSession({
         setOrgsBusy(false);
       }
     },
-    [activeOrgId, authToken, baseUrl, client, setActiveOrganization],
+    [authToken, baseUrl, client, setActiveOrganization],
   );
 
   const userId = user?.id ?? "";
@@ -453,9 +446,6 @@ export function useDenSession({
       const nextToken =
         event.detail?.token?.trim() || nextSettings.authToken?.trim() || "";
       if (event.detail?.status === "success") {
-        // Clear the pre-handoff snapshot before restoring the newly persisted
-        // organization. Clearing afterward used to erase activeOrgId and let
-        // the org refresh persist a blank selection for multi-org users.
         clearSessionState();
       }
       setBaseUrl(nextBaseUrl);
@@ -496,12 +486,11 @@ export function useDenSession({
     setAuthBusy(true);
     setAuthError(null);
     setStatusMessage(t("den.signing_in"));
+    clearSignInReturnTarget();
 
     try {
-      // The helper exchanges, persists, and dispatches the success/error session events.
       const result = await exchangeHandoffAndSignIn(parsed.grant, {
         baseUrl: nextBaseUrl,
-        // Pasted one-time codes are desktop-initiated sign-ins.
         desktopInitiated: true,
         fallbackErrorMessage: t("den.error_no_token"),
       });
@@ -553,31 +542,19 @@ export function useDenSession({
       setOrgsError(null);
 
       try {
-        // 1. Sync Den server-side (cookie/session)
-        await client.setActiveOrganization({ organizationId: nextOrg.id });
+        await selectDenActiveOrganization(nextOrg, {
+          ...readDenSettings(),
+          baseUrl,
+          authToken: authToken || null,
+        });
       } catch (error) {
         setOrgsError(error instanceof Error ? error.message : t("den.error_load_orgs"));
         setOrgsBusy(false);
         return;
       }
 
-      // 2. Persist to localStorage FIRST so any code that reads from settings
-      //    (e.g. refreshCloudOrgProviders which reads readDenSettings()) sees
-      //    the new org immediately.
-      writeDenSettings({
-        baseUrl,
-        authToken: authToken ? authToken : null,
-        activeOrgId: nextId ? nextId : null,
-        activeOrgSlug: nextOrg?.slug ?? null,
-        activeOrgName: nextOrg?.name ?? null,
-      });
-
-      // 3. Update local state
       setActiveOrgId(nextId);
 
-      // 4. Update CloudSessionProvider context IMMEDIATELY so consumers
-      //    (cloud providers / marketplace / workers views) re-fetch with
-      //    the new org without waiting for the sync effect to fire.
       setActiveOrganization({
         id: nextOrg.id,
         name: nextOrg.name,
@@ -585,21 +562,16 @@ export function useDenSession({
         slug: nextOrg.slug,
       });
 
-      // 5. Force a full server sync (Den + localStorage reconciliation)
       try {
         await ensureDenActiveOrganization({ forceServerSync: true });
       } catch {
-        // Best-effort; the explicit setActiveOrganization above already
-        // covered the critical path.
       }
 
       setOrgsBusy(false);
     },
-    [authToken, baseUrl, client, orgs, setActiveOrganization],
+    [authToken, baseUrl, orgs, setActiveOrganization],
   );
 
-  // User is signed in, orgs loaded, multiple orgs available, but none selected yet.
-  // The UI should prompt the user to pick an org before cloud features activate.
   const needsOrgSelection =
     !!authToken.trim() && !!user && !orgsBusy && orgs.length > 1 && !activeOrgId;
 

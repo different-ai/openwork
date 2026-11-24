@@ -13,20 +13,19 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ItemHeader, ItemPage } from "./item-header";
 import { useMcpConnections } from "./mcp-connections-data";
 import { PluginCreateForm } from "./plugin-create-form";
+import { PluginsSetupIntro } from "./plugins-intro-facts";
 
-/** B1: a member makes a plugin for themselves. */
 export function LibraryPluginCreateScreen() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const { orgSlug } = useOrgDashboard();
   const usable = useMcpConnections("usable");
-  // Members can bundle only connectors they added; Den returns access for exactly those.
   const ownConnections = (usable.data ?? []).filter((connection) => connection.access !== null && !connection.nativeProviderKey);
   const startWithSkill = searchParams.get("start") === "skill";
 
   return (
     <ItemPage testId="plugin-create">
-      <ItemHeader back={{ href: getLibraryRoute(orgSlug), label: "My Library" }} title={startWithSkill ? "Create a skill" : "Create a plugin"} />
+      <ItemHeader compact back={{ href: getLibraryRoute(orgSlug), label: "My Library" }} title={startWithSkill ? "Create a skill" : "Create a plugin"} />
       <PluginCreateForm
         connections={ownConnections}
         startWith={startWithSkill ? "skill" : undefined}
@@ -38,7 +37,6 @@ export function LibraryPluginCreateScreen() {
   );
 }
 
-/** D2: an admin makes a plugin, then chooses which teams get it. */
 export function AdminPluginCreateScreen() {
   const router = useRouter();
   const { orgSlug } = useOrgDashboard();
@@ -47,7 +45,8 @@ export function AdminPluginCreateScreen() {
 
   return (
     <ItemPage testId="plugin-create">
-      <ItemHeader back={{ href: getPluginsRoute(orgSlug), label: "Plugins" }} title="Create a plugin" />
+      <PluginsSetupIntro introKey="plugins.new" />
+      <ItemHeader compact back={{ href: getPluginsRoute(orgSlug), label: "Plugins" }} title="Create a plugin" />
       <PluginCreateForm
         connections={connections}
         cancelHref={getPluginsRoute(orgSlug)}

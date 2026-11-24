@@ -77,14 +77,6 @@ function stringList(value: unknown): string[] {
   return Array.isArray(value) ? value.filter((part): part is string => typeof part === "string") : [];
 }
 
-/**
- * Accept both command shapes users paste into opencode.json: OpenCode's
- * `command: ["python3", "server.py"]` and the Claude Desktop / Cursor style
- * `command: "python3", args: ["server.py"]`. Every reader downstream sees one
- * array, so a string command no longer blanks the Settings page. The
- * OpenWork server relays config entries verbatim, so its listing goes
- * through the same fold before any reader touches `command`.
- */
 export function normalizeMcpServerCommand(config: McpServerConfig): McpServerConfig {
   const rawCommand: unknown = config.command;
   if (typeof rawCommand !== "string") return config;

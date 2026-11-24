@@ -1,5 +1,7 @@
-import { parseMockGmailMime, startMockGoogleServer, type MockGoogleThread } from "./mock-google-server.ts";
+import { parseMockGmailMime, startMockGoogleServer, type MockGoogleThread, type MockTokenScopes } from "./mock-google-server.ts";
 import { trimTrailingSlashes } from "./strings.ts";
+
+export type { MockTokenScopes };
 
 export interface MockGoogleDraft {
   to: string;
@@ -28,6 +30,8 @@ export interface MockGoogleDriveUpload extends MockGoogleAttachment {
   at: string;
 }
 
+export type { MockDriveFileSeed, MockDriveFileSnapshot } from "./mock-google-drive.ts";
+
 export interface MockGoogleHandle {
   /** Base URL for DEN_GOOGLE_API_BASE_URL. */
   apiUrl: string;
@@ -36,12 +40,20 @@ export interface MockGoogleHandle {
   tokenUrl: string;
   userinfoUrl: string;
   /** Drive the real chooser page shown when prompt=select_account. Resolves once the callback has been served. */
-  chooseAccount(email: string, opts?: { timeoutMs?: number }): Promise<void>;
+  chooseAccount(email: string, opts?: { timeoutMs?: number }): Promise<{ status: number; html: string }>;
   /** Drafts attributed to ONE mailbox. Must be able to return [] as a real negative assertion. */
   draftsFor(email: string, opts?: { since?: string; timeoutMs?: number; atLeast?: number }): Promise<MockGoogleDraft[]>;
   /** Drive uploads attributed to ONE account, including provider-observed bytes. */
   driveUploadsFor(email: string, opts?: { since?: string; timeoutMs?: number; atLeast?: number }): Promise<MockGoogleDriveUpload[]>;
   authorizeRequestSince(iso: string, opts?: { timeoutMs?: number }): Promise<{ params: URLSearchParams }>;
+  /** Drive files ONE account can see, with current bytes and revisions. */
+  driveFiles(email: string): Promise<import("./mock-google-drive.ts").MockDriveFileSnapshot[]>;
+  /** Someone else edits a Drive file: new content and a new revision. */
+  editDriveFile(email: string, id: string, content: Uint8Array): Promise<void>;
+  /** Revoke every token issued for ONE account, as if the member removed the app's access. */
+  revoke(email: string): Promise<void>;
+  /** Token-endpoint requests seen so far, oldest first. */
+  tokenRequests(): Promise<Record<string, unknown>[]>;
   stop(): Promise<void>;
   [Symbol.asyncDispose](): Promise<void>;
 }
@@ -52,6 +64,10 @@ export interface StartMockGoogleOptions {
   publicUrl?: string;
   autoApprove?: boolean;
   threads?: Record<string, MockGoogleThread[]>;
+  accessTokenTtlSeconds?: number;
+  driveFiles?: Record<string, import("./mock-google-drive.ts").MockDriveFileSeed[]>;
+  /** "entra" reports token scopes the way Microsoft Entra ID does (no offline_access); add `withhold` for unconsented permissions. Default "echo". */
+  tokenScopes?: MockTokenScopes;
 }
 
 export async function startMockGoogle(options: StartMockGoogleOptions): Promise<MockGoogleHandle> {
@@ -60,7 +76,7 @@ export async function startMockGoogle(options: StartMockGoogleOptions): Promise<
   const externalUrl = options.publicUrl ? trimTrailingSlashes(options.publicUrl.trim()) || undefined : undefined;
   const local = externalUrl
     ? null
-    : await startMockGoogleServer({ accounts, port: options.port ?? 3980, autoApprove: options.autoApprove ?? true, threads: options.threads });
+    : await startMockGoogleServer({ accounts, port: options.port ?? 3980, autoApprove: options.autoApprove ?? true, threads: options.threads, accessTokenTtlSeconds: options.accessTokenTtlSeconds, driveFiles: options.driveFiles, tokenScopes: options.tokenScopes });
   const url = externalUrl ?? local?.baseUrl;
   if (!url) throw new Error("Mock Google did not expose a URL.");
   const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -233,10 +249,11 @@ export async function startMockGoogle(options: StartMockGoogleOptions): Promise<
       if (choice.status !== 302 || !callbackUrl) {
         throw new Error(`Mock Google chooser failed: HTTP ${choice.status}`);
       }
-      await fetch(callbackUrl, {
+      const page = await fetch(callbackUrl, {
         redirect: "manual",
         signal: AbortSignal.timeout(Math.max(1, deadline - Date.now())),
       });
+      return { status: page.status, html: await page.text() };
     },
     async draftsFor(email, opts = {}) {
       const timeoutMs = opts.timeoutMs ?? 120_000;
@@ -267,6 +284,21 @@ export async function startMockGoogle(options: StartMockGoogleOptions): Promise<
         await sleep(100);
       }
       throw new Error(`No GET /authorize reached the mock Google provider after ${iso}.`);
+    },
+    async driveFiles(email) {
+      const body = await json(`${url}/__mock-google/drive-files?email=${encodeURIComponent(email)}`);
+      return isRecord(body) && Array.isArray(body.files) ? body.files as import("./mock-google-drive.ts").MockDriveFileSnapshot[] : [];
+    },
+    async editDriveFile(email, id, content) {
+      const response = await fetch(`${url}/__mock-google/drive-files/edit?email=${encodeURIComponent(email)}&id=${encodeURIComponent(id)}`, { method: "POST", body: new Uint8Array(content), signal: AbortSignal.timeout(10_000) });
+      if (!response.ok) throw new Error(`Mock Google edit failed: HTTP ${response.status}`);
+    },
+    async revoke(email) {
+      const response = await fetch(`${url}/__mock-google/revoke?email=${encodeURIComponent(email)}`, { method: "POST", signal: AbortSignal.timeout(10_000) });
+      if (!response.ok) throw new Error(`Mock Google revoke failed: HTTP ${response.status}`);
+    },
+    async tokenRequests() {
+      return (await requests()).filter((entry) => entry.method === "POST" && entry.path === "/token");
     },
     stop,
     [Symbol.asyncDispose]: stop,

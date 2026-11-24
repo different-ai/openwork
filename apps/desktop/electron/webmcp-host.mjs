@@ -378,31 +378,10 @@ async function settleWithTimeout(promise, timeoutMs, kind) {
   }
 }
 
-export function summarizeWebMcpInput(input) {
-  const redactPattern = /(authorization|cookie|credential|password|secret|token|api.?key)/i;
-  const visit = (value, depth = 0) => {
-    if (depth > 3) return "[nested value]";
-    if (Array.isArray(value)) return value.slice(0, 10).map((item) => visit(item, depth + 1));
-    if (value && typeof value === "object") {
-      return Object.fromEntries(
-        Object.entries(value)
-          .slice(0, 30)
-          .map(([key, child]) => [key, redactPattern.test(key) ? "[redacted]" : visit(child, depth + 1)]),
-      );
-    }
-    if (typeof value === "string" && value.length > 240) return `${value.slice(0, 237)}...`;
-    return value;
-  };
-  const summary = JSON.stringify(visit(input), null, 2);
-  return summary.length > 2_000 ? `${summary.slice(0, 1_997)}...` : summary;
-}
-
 export function createWebMcpBroker(/** @type {any} */ {
   getTab,
   getActiveTabId,
   assertTabAccess,
-  confirmExecution,
-  confirmResultDisclosure,
   onActivity,
   onToolCountChanged,
   onToolsChanged,
@@ -413,9 +392,15 @@ export function createWebMcpBroker(/** @type {any} */ {
   discoveryTimeoutMs = DEFAULT_DISCOVERY_TIMEOUT_MS,
   executionTimeoutMs = DEFAULT_EXECUTION_TIMEOUT_MS,
   createHandle = randomHandle,
+  // Tool descriptors, results and errors are website text. Whatever leaves the broker, to its
+  // caller or through a callback, passes through `redact` first; the copies it keeps to check a
+  // tool against its page stay as the page wrote them.
+  redact = (value) => value,
 } = {}) {
   const handles = new Map();
   const activeExecutions = new Map();
+  const reportActivity = (activity) => onActivity?.(redact(activity));
+  const reportTools = (tabId, tools) => onToolsChanged?.(tabId, redact(tools));
 
   async function frameIsEligible(frame) {
     if (typeof isFrameAllowed !== "function") return true;
@@ -503,7 +488,7 @@ export function createWebMcpBroker(/** @type {any} */ {
         return { toolId, ...item.descriptor };
       });
       onToolCountChanged?.(tabId, tools.length);
-      onToolsChanged?.(tabId, tools.map((tool) => ({
+      reportTools(tabId, tools.map((tool) => ({
         toolId: tool.toolId,
         name: tool.name,
         title: tool.title,
@@ -533,7 +518,7 @@ export function createWebMcpBroker(/** @type {any} */ {
       const { tools: discovered } = await inspectTab(tab);
       if (revision !== tab.webMcpRevision) return 0;
       onToolCountChanged?.(tabId, discovered.length);
-      onToolsChanged?.(tabId, discovered.map((tool) => ({
+      reportTools(tabId, discovered.map((tool) => ({
         name: tool.descriptor.name,
         title: tool.descriptor.title,
         origin: tool.descriptor.origin,
@@ -618,31 +603,17 @@ export function createWebMcpBroker(/** @type {any} */ {
         throw new WebMcpBrokerError("canceled", "The WebMCP execution was canceled before it started.");
       }
 
-      // Every website tool needs the person's approval. The site's readOnlyHint
-      // is its own claim about its own code, so it is shown in the prompt as
-      // advisory context and never lets a call skip confirmation.
-      const allowed = await confirmExecution?.({
-        tabId: entry.tabId,
-        signal,
-        tool: { toolId, ...current.descriptor },
-        input: clonedInput,
-        inputSummary: summarizeWebMcpInput(clonedInput),
-      });
-      if (!allowed) {
-        throw new WebMcpBrokerError("user_denied", "The user did not approve this website action.");
-      }
-
       if ((Number.isInteger(tab.webMcpRevision) ? tab.webMcpRevision : 0) !== entry.revision) {
         handles.delete(toolId);
-        throw new WebMcpBrokerError("stale_tool", "The website navigated while approval was pending. List tools again.");
+        throw new WebMcpBrokerError("stale_tool", "The website navigated after the tool was listed. List tools again.");
       }
       if (!listFramesForTab(tab).includes(frame)) {
         handles.delete(toolId);
-        throw new WebMcpBrokerError("stale_tool", "The tool frame disappeared while approval was pending. List tools again.");
+        throw new WebMcpBrokerError("stale_tool", "The tool frame disappeared. List tools again.");
       }
       if (!await frameIsEligible(frame)) {
         handles.delete(toolId);
-        throw new WebMcpBrokerError("stale_tool", "The frame lost WebMCP permission while approval was pending. List tools again.");
+        throw new WebMcpBrokerError("stale_tool", "The frame lost WebMCP permission. List tools again.");
       }
 
       await assertTabAccess?.(entry.tabId, sessionId);
@@ -697,21 +668,10 @@ export function createWebMcpBroker(/** @type {any} */ {
       } catch {
         throw new WebMcpBrokerError("invalid_result", "The website returned a WebMCP result that is not valid JSON.");
       }
-      // An approved callback can still return cookies or account secrets under
-      // arbitrary names. Keep its complete bounded result local until the user
-      // explicitly agrees to disclose it to this conversation's model provider.
       if (executionTimer) clearTimeout(executionTimer);
-      if (signal?.aborted) throw new WebMcpBrokerError("canceled", "Result sharing was canceled.");
       await assertTabAccess?.(entry.tabId, sessionId);
-      const disclose = await settleWithTimeout(Promise.resolve(confirmResultDisclosure?.({
-        tabId: entry.tabId, signal, tool: current.descriptor, resultText: JSON.stringify(result, null, 2),
-      })), executionTimeoutMs, "disclosure");
-      if (!disclose || signal?.aborted) {
-        throw new WebMcpBrokerError("result_withheld", "The website callback ran, but its result was not shared. Verify the page before deciding what remains; do not repeat the action.");
-      }
-      await assertTabAccess?.(entry.tabId, sessionId);
-      if (signal?.aborted) throw new WebMcpBrokerError("canceled", "Result sharing was canceled.");
-      onActivity?.({
+      if (signal?.aborted) throw new WebMcpBrokerError("canceled", "The WebMCP execution was canceled.");
+      reportActivity({
         tabId: entry.tabId,
         name: current.descriptor.name,
         origin: current.descriptor.origin,
@@ -735,7 +695,7 @@ export function createWebMcpBroker(/** @type {any} */ {
       };
     } catch (error) {
       if (activityTabId && currentDescriptor) {
-        onActivity?.({
+        reportActivity({
           tabId: activityTabId,
           name: currentDescriptor.name,
           origin: currentDescriptor.origin,
@@ -762,9 +722,9 @@ export function createWebMcpBroker(/** @type {any} */ {
   }
 
   return {
-    executeTool,
+    executeTool: async (args, options) => redact(await executeTool(args, options)),
     invalidateTab,
-    listTools,
+    listTools: async (args) => redact(await listTools(args)),
     refreshTabToolCount,
   };
 }

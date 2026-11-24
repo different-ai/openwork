@@ -1,21 +1,18 @@
-import { AUTOMATION_FREE_MODEL } from "@openwork/types/automations"
+import { AUTOMATION_FREE_MODEL, type AutomationExecutionTarget } from "@openwork/types/automations"
+import type { AutomationAuthorityFailure } from "./authority.js"
 
 type ModelSelection = { providerId: string; modelId: string }
-type ModelAccessFailure = {
-  code: "owner_membership_lost" | "model_access_lost" | "provider_unavailable"
-}
+type ModelAccessFailure = Pick<AutomationAuthorityFailure, "code" | "reason">
 
-/**
- * The legacy free model was accepted by already-published desktop clients.
- * Den may turn its policy revocation into `needs_attention` only after the
- * caller or runner advertises support for that state. Other authority losses
- * remain fail-closed for every client generation.
- */
 export function shouldApplyAutomationModelAccessFailure(input: {
   model: ModelSelection
   failure: ModelAccessFailure
   modelAttentionCapable: boolean
+  executionTarget?: AutomationExecutionTarget
 }): boolean {
+  if (input.failure.code === "model_access_lost" && input.failure.reason === "provider_model_disabled") {
+    return input.executionTarget === "cloud"
+  }
   if (input.modelAttentionCapable) return true
   return input.failure.code !== "model_access_lost"
     || input.model.providerId !== AUTOMATION_FREE_MODEL.providerId

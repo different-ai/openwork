@@ -6,7 +6,7 @@ import {
   MCP_AUTHORIZATION_TIMEOUT_MESSAGE,
   MCP_AUTHORIZATION_UNCONFIRMED_CONNECTED_MESSAGE,
   MCP_AUTHORIZATION_WINDOW_CLOSED_MESSAGE,
-  resolveMcpAuthorizationPollOutcome,
+  pollMcpAuthorization,
 } from "./mcp-account-authorization-state";
 import {
   McpOAuthStartError,
@@ -64,12 +64,13 @@ export function useMcpAccountAuthorization(onConnected?: () => void) {
     setPollingConnectionId(connectionId);
     const startedAt = Date.now();
     pollTimer.current = setInterval(async () => {
-      const result = await refetch();
-      const connection = result.data?.find((entry) => entry.id === connectionId);
-      const outcome = resolveMcpAuthorizationPollOutcome({
-        connected: Boolean(connection?.connectedForMe && connection.needsReconnect !== true),
-        authorizationWindowClosed: authorizationTab.closed,
-        elapsedMs: Date.now() - startedAt,
+      const outcome = await pollMcpAuthorization({
+        authorizationWindow: authorizationTab,
+        readConnected: async () => {
+          const connection = (await refetch()).data?.find((entry) => entry.id === connectionId);
+          return Boolean(connection?.connectedForMe && connection.needsReconnect !== true);
+        },
+        startedAt,
         timeoutMs: OAUTH_POLL_TIMEOUT_MS,
       });
       if (outcome === "connected") {

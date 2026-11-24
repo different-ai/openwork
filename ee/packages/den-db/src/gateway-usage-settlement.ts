@@ -69,7 +69,9 @@ async function applyCharges(
     .from(B)
     .where(
       or(
-        ...ordered.map((target) => bucketWindow(event, target.timeframe, new Date(target.startAt))),
+        ...ordered.map((target) =>
+          bucketWindow(event, target.timeframe, new Date(target.startAt), target.providerScope ?? ""),
+        ),
       ),
     )
     .for("update")
@@ -173,6 +175,7 @@ async function legacyTargets(tx: UsageTx, event: typeof E.$inferSelect) {
     policyRevision:
       charges.find((charge) => charge.bucketId === bucket.id)?.policyRevision ??
       bucket.policyRevision,
+    ...(bucket.providerScope ? { providerScope: bucket.providerScope } : {}),
   }))
   validateUsageSnapshot({ version: 1, buckets: targets }, event, event.admittedAt)
   return targets

@@ -1,16 +1,3 @@
-/**
- * Kent-style instruction primitives for OpenWork system-prompt composition.
- *
- * create  — build one named section
- * combine — merge sections in order, one id wins (first non-empty)
- * delete  — drop a section by id
- * expand  — replace a section body with derived text when present
- * compose — combine sections and return their prompt bodies
- *
- * Sections are the unit of overlap control: routing/tools/skills/session each
- * own one id so transforms stop stacking contradictory brochure text.
- */
-
 export type AgentInstructionSection = {
   id: string;
   body: string;
@@ -75,18 +62,6 @@ export function composeAgentInstructions(...groups: AgentInstructionSectionGroup
   return instructions;
 }
 
-/**
- * Extend the engine's system prompt in place from an
- * `experimental.chat.system.transform` hook.
- *
- * OpenCode sends every entry of `system` as its own `role: "system"` message.
- * Several chat templates behind OpenAI-compatible endpoints reject any system
- * message after the first ("System message must be at the beginning."), so
- * OpenWork folds its instructions into the existing entry instead of pushing a
- * second one. The engine alone sends a single system message; this keeps that
- * shape intact. Sections are separated by a blank line so each heading starts
- * its own paragraph instead of trailing the previous sentence.
- */
 export function appendAgentInstructions(system: string[], ...groups: AgentInstructionSectionGroup[]): void {
   const body = composeAgentInstructions(...groups).join("\n\n");
   if (!body) return;

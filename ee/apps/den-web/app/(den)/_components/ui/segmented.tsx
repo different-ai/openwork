@@ -12,15 +12,16 @@ export type DenSegmentedProps<T extends string> = {
   onChange: (value: T) => void;
   "aria-label": string;
   className?: string;
+  optionTestId?: (value: T) => string;
 };
 
-/** A compact radio group for switching between related options. */
 export function DenSegmented<T extends string>({
   options,
   value,
   onChange,
   "aria-label": ariaLabel,
   className = "",
+  optionTestId,
 }: DenSegmentedProps<T>) {
   return (
     <div
@@ -39,6 +40,7 @@ export function DenSegmented<T extends string>({
             type="button"
             role="radio"
             aria-checked={active}
+            data-testid={optionTestId?.(option.value)}
             disabled={option.disabled}
             onClick={() => onChange(option.value)}
             className={[

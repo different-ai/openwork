@@ -1,27 +1,23 @@
 "use client";
 
 import { Check } from "lucide-react";
-import { useEffect, useState, type CSSProperties, type ReactNode } from "react";
-import { useWorkbotConnections, type WorkbotConnection } from "./data";
+import { useState, type CSSProperties, type ReactNode } from "react";
+import { type WorkbotConnection } from "./data";
+import { useWorkbotConnect, WorkbotConnectionButton } from "./connect";
 import { AppMark } from "./files";
 import { OpenWorkMark } from "./mark";
 
 /**
  * The first thing a person sees, once, before the conversation: a quiet hello, then (when their admins set any up)
- * their everyday apps to connect. Nothing to read about the interface (DESIGN P1); one primary action per step.
+ * their apps to connect, everyday ones first. Nothing to read about the interface (DESIGN P1); one primary action per step.
  * Each step's parts rise in one after another (V6: 200ms, ease-out, staggered), and leave together.
  */
 export function Welcome({ name, firstName, onBegin, onDone }: { name: string; firstName: string | null; onBegin: () => void; onDone: () => void }) {
   const [step, setStep] = useState<"hello" | "connect">("hello");
   const [leaving, setLeaving] = useState(false);
-  const [waitingFor, setWaitingFor] = useState<string | null>(null);
-  const connections = useWorkbotConnections({ enabled: true, waiting: waitingFor !== null });
+  const connect = useWorkbotConnect();
+  const { connections } = connect;
   const list = connections.data ?? [];
-
-  // Stop re-reading once the app the person went to connect is ready.
-  useEffect(() => {
-    if (waitingFor && list.find((connection) => connection.id === waitingFor)?.ready) setWaitingFor(null);
-  }, [list, waitingFor]);
 
   const leaveTo = (next: () => void) => {
     setLeaving(true);
@@ -36,9 +32,11 @@ export function Welcome({ name, firstName, onBegin, onDone }: { name: string; fi
     leaveTo(onDone);
   };
   const getStarted = () => {
-    // Nothing set up to connect (or the list isn't back yet and failed): straight to the conversation.
-    if (list.length === 0) finish();
-    else leaveTo(() => setStep("connect"));
+    if (list.length === 0 && !connections.isError) finish();
+    else {
+      if (list.length > 0 && list.every((connection) => connection.ready)) onBegin();
+      leaveTo(() => setStep("connect"));
+    }
   };
 
   return (
@@ -68,13 +66,8 @@ export function Welcome({ name, firstName, onBegin, onDone }: { name: string; fi
         ) : (
           <ConnectStep
             connections={list}
-            waitingFor={waitingFor}
+            connect={connect}
             leaving={leaving}
-            onConnect={(connection) => {
-              if (!connection.connectUrl) return;
-              window.open(connection.connectUrl, "_blank", "noopener");
-              setWaitingFor(connection.id);
-            }}
             onContinue={finish}
           />
         )}
@@ -85,12 +78,11 @@ export function Welcome({ name, firstName, onBegin, onDone }: { name: string; fi
 
 function ConnectStep(props: {
   connections: WorkbotConnection[];
-  waitingFor: string | null;
+  connect: ReturnType<typeof useWorkbotConnect>;
   leaving: boolean;
-  onConnect: (connection: WorkbotConnection) => void;
   onContinue: () => void;
 }) {
-  const allReady = props.connections.every((connection) => connection.ready);
+  const allReady = props.connections.length > 0 && props.connections.every((connection) => connection.ready);
   return (
     <>
       <Rise order={0}>
@@ -102,11 +94,12 @@ function ConnectStep(props: {
         <p className="pt-2 text-[14px] leading-5 text-[var(--wb-muted)]">Set up for you by your team.</p>
       </Rise>
       <Rise order={2}>
-        <ul className="mt-7 w-[min(400px,calc(100vw-48px))] overflow-hidden rounded-[16px] bg-[var(--wb-surface)] text-left shadow-[var(--wb-card-shadow)]">
+        {props.connect.connections.isError && <p role="alert" className="pt-4 text-[13px] text-[var(--wb-muted)]">Couldn&apos;t verify your connections. <button type="button" onClick={() => void props.connect.connections.refetch()}>Try again</button></p>}
+        <ul className="mt-7 max-h-[min(420px,50dvh)] w-[min(400px,calc(100vw-48px))] overflow-y-auto rounded-[16px] bg-[var(--wb-surface)] text-left shadow-[var(--wb-card-shadow)]">
           {props.connections.map((connection, index) => (
-            <li key={connection.id} className={`flex h-14 items-center gap-3 px-4 ${index > 0 ? "border-t border-[var(--wb-row-line)]" : ""}`}>
+            <li key={connection.id} className={`flex min-h-14 flex-wrap items-center gap-3 px-4 py-3 ${index > 0 ? "border-t border-[var(--wb-row-line)]" : ""}`}>
               <span aria-hidden className="grid size-8 shrink-0 place-items-center rounded-[9px] bg-[var(--wb-chip)]">
-                <AppMark name={APP_NAMES[connection.app]} size={18} />
+                <AppMark name={connection.app === "other" ? connection.name : APP_NAMES[connection.app]} size={18} />
               </span>
               <span className="min-w-0 flex-1 truncate text-[14px] font-medium leading-5 text-[var(--wb-text)]">{connection.name}</span>
               {connection.ready ? (
@@ -116,20 +109,7 @@ function ConnectStep(props: {
                   </span>
                   Connected
                 </span>
-              ) : props.waitingFor === connection.id ? (
-                <span className="workbot-shimmer shrink-0 pr-1 text-[13px] leading-4" role="status">
-                  Finish in the new tab
-                </span>
-              ) : (
-                <button
-                  type="button"
-                  onClick={() => props.onConnect(connection)}
-                  disabled={!connection.connectUrl}
-                  className="h-8 shrink-0 rounded-full px-3.5 text-[13px] font-medium text-[var(--wb-text)] shadow-[0_0_0_1px_var(--wb-ring)] transition-[box-shadow,background-color] duration-150 ease-out hover:bg-[var(--wb-chip)] disabled:opacity-50 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
-                >
-                  Connect
-                </button>
-              )}
+              ) : <WorkbotConnectionButton connection={connection} flow={props.connect} />}
             </li>
           ))}
         </ul>
@@ -154,9 +134,8 @@ function ConnectStep(props: {
   );
 }
 
-const APP_NAMES: Record<WorkbotConnection["app"], string> = { gmail: "Gmail", slack: "Slack", microsoft: "Microsoft 365" };
+const APP_NAMES: Record<Exclude<WorkbotConnection["app"], "other">, string> = { gmail: "Gmail", googleCalendar: "Google Calendar", slack: "Slack", microsoft: "Microsoft 365" };
 
-/** One part of a step, rising in after the parts before it. */
 function Rise({ order, children }: { order: number; children: ReactNode }) {
   const style: CSSProperties = { animationDelay: `${80 + order * 70}ms` };
   return (
@@ -172,7 +151,7 @@ function PrimaryButton({ onClick, disabled, children }: { onClick: () => void; d
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="h-11 min-w-[168px] rounded-full bg-[var(--wb-ink)] px-6 text-[14px] font-medium text-[var(--wb-on-ink)] shadow-[0_6px_16px_-8px_#01162780] transition-[transform,opacity] duration-150 ease-out hover:opacity-90 active:scale-[0.98] disabled:opacity-60 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
+      className="h-11 min-w-[168px] rounded-full bg-[var(--wb-ink)] px-6 text-[14px] font-medium text-[var(--wb-on-ink)] transition-[transform,opacity] duration-150 ease-out hover:opacity-90 active:scale-[0.98] disabled:opacity-60 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]"
     >
       {children}
     </button>

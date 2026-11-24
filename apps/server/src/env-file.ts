@@ -5,20 +5,8 @@ import { openworkEnvStorePath } from "@openwork/paths";
 
 import { ensureDir, exists } from "./utils.js";
 
-// User-level environment variables, persisted so the desktop shell can inject
-// them into every spawned child (OpenCode and OpenWork server).
-// Motivation: Linux GUI launches don't inherit shell env, so users set
-// ANTHROPIC_API_KEY / GCLOUD_* / GCP_* in .bashrc and hit silent auth failures.
-// Scope: user/machine, not workspace. Not synced to the cloud.
-
 const ENV_KEY_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
-// Keys reserved for internal wiring by the desktop shell and server. This UI
-// is for service credentials, not OpenWork/OpenCode runtime knobs; users who
-// need OPENCODE_* process settings should set them from the launching shell.
-// We refuse writes to these and strip them when reading for injection, so a
-// tampered file cannot shadow auth credentials, token paths, or process
-// identity.
 const RESERVED_PREFIXES = ["OPENWORK_", "OPENCODE_"] as const;
 const PERSISTABLE_INTERNAL_KEYS = new Set([
   "OPENWORK_API_KEY",
@@ -43,12 +31,17 @@ export function isValidEnvKey(key: string): boolean {
   return ENV_KEY_PATTERN.test(key);
 }
 
-export function isReservedEnvKey(key: string): boolean {
-  return isInternalEnvKey(key) && !PERSISTABLE_INTERNAL_KEYS.has(key);
+function envName(key: string, platform: NodeJS.Platform): string {
+  return platform === "win32" ? key.toUpperCase() : key;
 }
 
-function isInternalEnvKey(key: string): boolean {
-  return RESERVED_PREFIXES.some((prefix) => key.startsWith(prefix));
+export function isReservedEnvKey(key: string, platform: NodeJS.Platform = process.platform): boolean {
+  return isInternalEnvKey(key, platform) && !PERSISTABLE_INTERNAL_KEYS.has(envName(key, platform));
+}
+
+function isInternalEnvKey(key: string, platform: NodeJS.Platform = process.platform): boolean {
+  const name = envName(key, platform);
+  return RESERVED_PREFIXES.some((prefix) => name.startsWith(prefix));
 }
 
 export function resolveDefaultEnvStorePath(): string {
@@ -131,7 +124,6 @@ async function writeStore(path: string, variables: EnvRecord[]): Promise<void> {
   try {
     await chmod(tempPath, 0o600);
   } catch (error) {
-    // chmod is a no-op on Windows; values may still contain secrets.
     if (platform() !== "win32") {
       await rm(tempPath, { force: true }).catch(() => {});
       throw error;
@@ -146,7 +138,6 @@ async function writeStore(path: string, variables: EnvRecord[]): Promise<void> {
   try {
     await chmod(path, 0o600);
   } catch (error) {
-    // chmod is a no-op on Windows; values may still contain secrets.
     if (platform() !== "win32") throw error;
   }
 }
@@ -166,8 +157,11 @@ export class EnvService {
     return () => { this.changeListeners.delete(listener); };
   }
 
-  constructor(options?: { path?: string }) {
+  private readonly platform: NodeJS.Platform;
+
+  constructor(options?: { path?: string; platform?: NodeJS.Platform }) {
     this.path = options?.path ? resolve(options.path) : resolveDefaultEnvStorePath();
+    this.platform = options?.platform ?? process.platform;
   }
 
   private async ensureLoaded(): Promise<void> {
@@ -203,15 +197,15 @@ export class EnvService {
     return this.enqueueMutation(async () => {
       await this.ensureLoaded();
       const now = Date.now();
-      const next = new Map(this.variables.map((entry) => [entry.key, entry] as const));
+      const next = new Map(this.variables.map((entry) => [envName(entry.key, this.platform), entry] as const));
       for (const entry of entries) {
         if (!isValidEnvKey(entry.key)) {
           throw new InvalidEnvKeyError(entry.key, "invalid_env_key");
         }
-        if (isReservedEnvKey(entry.key)) {
+        if (isReservedEnvKey(entry.key, this.platform)) {
           throw new InvalidEnvKeyError(entry.key, "reserved_env_key");
         }
-        next.set(entry.key, { key: entry.key, value: entry.value, updatedAt: now });
+        next.set(envName(entry.key, this.platform), { key: entry.key, value: entry.value, updatedAt: now });
       }
       const nextVariables = Array.from(next.values()).sort((a, b) => a.key.localeCompare(b.key));
       await writeStore(this.path, nextVariables);
@@ -224,7 +218,8 @@ export class EnvService {
     return this.enqueueMutation(async () => {
       await this.ensureLoaded();
       const before = this.variables.length;
-      const nextVariables = this.variables.filter((entry) => entry.key !== key);
+      const name = envName(key, this.platform);
+      const nextVariables = this.variables.filter((entry) => envName(entry.key, this.platform) !== name);
       if (nextVariables.length === before) return false;
       await writeStore(this.path, nextVariables);
       this.variables = nextVariables;
@@ -233,8 +228,6 @@ export class EnvService {
     });
   }
 
-  // Used by the Electron shell at spawn time. Keep desktop runtime injection
-  // in sync on path resolution and reserved-keys policy.
   static async readForInjection(overridePath?: string): Promise<Record<string, string>> {
     const path = overridePath?.trim() ? resolve(overridePath.trim()) : resolveDefaultEnvStorePath();
     const store = await readStore(path, { tolerateInvalid: true });

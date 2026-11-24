@@ -26,37 +26,12 @@ export function cloudInstallerFileName(platform: InstallPlatform | null, version
   return installerFileName(platform, version)?.replace(/^openwork-enterprise-/, "openwork-cloud-") ?? null;
 }
 
-export function buildInstallDownloadHref(apiUrl: string, platform: InstallPlatform, token: string) {
-  const url = new URL(apiUrl);
-  const basePath = url.pathname.replace(/\/+$/, "");
-  url.pathname = `${basePath}/v1/install/${platform}`;
-  url.search = `?token=${encodeURIComponent(token)}`;
-  url.hash = "";
-  return url.toString();
+export function installPageUrl() {
+  return new URL("/install", window.location.origin).toString();
 }
 
-export function buildAuthenticatedInstallDownloadHref(apiUrl: string, platform: InstallPlatform) {
-  const url = new URL(apiUrl);
-  const basePath = url.pathname.replace(/\/+$/, "");
-  url.pathname = `${basePath}/v1/me/install/${platform}`;
-  url.search = "";
-  url.hash = "";
-  return url.toString();
-}
-
-export function buildBrowserInstallDownloadHref(apiUrl: string, platform: InstallPlatform, token: string | null) {
-  return token
-    ? buildInstallDownloadHref(apiUrl, platform, token)
-    : denBrowserEndpoint(`/v1/me/install/${platform}`);
-}
-
-export function installTokenFromPageUrl(value: string) {
-  try {
-    const token = new URL(value).searchParams.get("token")?.trim() ?? "";
-    return token || null;
-  } catch {
-    return null;
-  }
+export function installDownloadHref(platform: InstallPlatform) {
+  return denBrowserEndpoint(`/v1/me/install/${platform}`);
 }
 
 export function detectedInstallPlatform(detected: DetectedInstallerPlatform | null): InstallPlatform | null {
@@ -74,21 +49,4 @@ export function downloadCtaLabel(os: DetectedInstallerOs | null) {
   if (os === "windows") return "Download for Windows";
   if (os === "linux") return "Download for Linux";
   return "Download for macOS";
-}
-
-export function installerApiUrlFromConfig(payload: unknown) {
-  if (!payload || typeof payload !== "object" || !("apiUrl" in payload)) {
-    return null;
-  }
-
-  const apiUrl = payload.apiUrl;
-  if (typeof apiUrl !== "string" || !apiUrl.trim()) {
-    return null;
-  }
-
-  try {
-    return new URL(apiUrl.trim()).toString();
-  } catch {
-    return null;
-  }
 }

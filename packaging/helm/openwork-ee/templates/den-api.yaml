@@ -122,7 +122,7 @@ spec:
             {{- if .Values.customCa.enabled }}
             {{- include "openwork-ee.customCa.env" . | nindent 12 }}
             {{- end }}
-            {{- if .Values.denApi.auditUsage.enabled }}
+            {{- if include "openwork-ee.denMaintenanceEnabled" . }}
             - name: DEN_MAINTENANCE_TOKEN
               valueFrom:
                 secretKeyRef:

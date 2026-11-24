@@ -48,20 +48,14 @@ function ServiceMark({ name, iconUrl }: { name: string; iconUrl: string | null |
   )
 }
 
-/**
- * Native presentation of one OpenWork connection report in the transcript.
- * One state-first line (P1/P2), flat (S1), 40px row (S2), at most two verb
- * labels (C1/T4); blocked states are neutral with a lock (C5); the raw failure
- * lives behind an icon-only disclosure (T2/P3).
- */
-export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectScope, connectorIdentities, allowDiscovery = false }: {
+export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectScope, connectorIdentities, allowDiscovery = false, subject }: {
   callbacks?: ChatToolReconnectCallbacks
   part: DynamicToolUIPart
   reconnectCallbacks?: ChatToolReconnectCallbacks
   reconnectScope?: string
   connectorIdentities?: ConnectorToolIdentity[]
-  /** Read the connection from ordinary discovery too; only for a bound native question. */
   allowDiscovery?: boolean
+  subject?: string
 }) {
   const messageList = useOptionalMessageList()
   const found = connectionFromChatToolPart(part, { allowDiscovery })
@@ -85,9 +79,6 @@ export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectS
   const iconUrl = identity?.iconUrl
   const readOnly = messageList?.readOnly ?? false
   const skipped = reconnectState === "skipped"
-  // The tool result is a snapshot from when the step ran; the live org
-  // connection list says whether this member is connected now, so a card
-  // signed in earlier stays connected after leaving and reopening the session.
   const connected = connection.state === "connected" || reconnectState === "connected" || identity?.connectedForMe === true
   const settled = connected || skipped
   const opening = !settled && reconnectState === "opening"
@@ -95,6 +86,9 @@ export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectS
   const failed = !settled && reconnectState === "failed"
   const blocked = !settled && !action
   const verb = action?.label ?? "Connect"
+  const again = connection.state === "reauth_required"
+  const idleTitle = subject && action ? `Sign in to ${name}${again ? " again" : ""} to use ${subject}`
+    : decisionAvailable ? `${verb} ${name} to continue` : `${verb} ${name}`
   const title = skipped ? `Skipped ${name}`
     : connected ? action?.credentialKind === "personal_key" ? `${name}: key saved` : `${name} connected`
     : blocked ? blockedTitle(connection)
@@ -102,8 +96,10 @@ export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectS
     : waiting ? `Finish signing in to ${name} in your browser`
     : failed ? `${name} sign-in didn't finish`
     : action?.credentialKind === "personal_key" ? `${verb} for ${name}${decisionAvailable ? " to continue" : ""}`
-    : decisionAvailable ? `${verb} ${name} to continue` : `${verb} ${name}`
-  const primaryLabel = waiting ? "Open sign-in again" : failed ? "Try again" : decisionAvailable ? "Authenticate" : verb
+    : idleTitle
+  const signIn = subject && action?.credentialKind !== "personal_key"
+  const primaryLabel = waiting ? "Open sign-in again" : failed ? "Try again" : decisionAvailable ? "Authenticate"
+    : signIn ? again ? "Sign in again" : "Sign in" : verb
   const actionable = !readOnly && (!settled || decisionAvailable)
   const showDetails = actionable && Boolean(reconnectError)
 

@@ -10,6 +10,11 @@ They are starter manifests, not a second Helm chart. Copy them to a private
 deployment repository, replace every `REPLACE_*` value, and follow
 `docs/gcp-cloud-run.md`. Never commit rendered manifests or secret values.
 
+Helm's maintenance CronJobs have no manifest here. Set `DEN_MAINTENANCE_TOKEN`
+on Den API and add a daily Cloud Scheduler job for the audit usage refresh, as
+described under *Scheduled maintenance jobs* in
+`packages/docs/self-host/deploy-to-your-cloud/overview.mdx`.
+
 The API image now accepts a percent-encoded Cloud SQL socket in `DATABASE_URL`:
 
 ```text

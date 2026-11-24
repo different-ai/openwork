@@ -9,12 +9,14 @@ import { isDesktopRuntime } from "@/app/utils";
 import { ConnectLinkProvider } from "@/react-app/domains/cloud/connect-link-provider";
 import { DenAuthProvider } from "@/react-app/domains/cloud/den-auth-provider";
 import { AutoRejectedTurnRecoveryBridge } from "@/react-app/domains/cloud/auto-access-ui";
+import { FreeAutoAnalyticsBridge } from "@/react-app/domains/cloud/free-auto-analytics-bridge";
 import { AutomationRunnerBridge } from "@/react-app/domains/automations/automation-runner-bridge";
 import { GlobalQueueDrainerBridge } from "@/react-app/domains/session/sync/global-queue-drainer-bridge";
 import { BrandThemeProvider } from "@/react-app/domains/cloud/brand-theme";
 import { DesktopConfigProvider } from "@/react-app/domains/cloud/desktop-config-provider";
 import { RestrictionNoticeProvider } from "@/react-app/domains/cloud/restriction-notice-provider";
 import { LocalProvider } from "@/react-app/kernel/local-provider";
+import { KeepAwakeBridge } from "@/react-app/domains/session/status/keep-awake-bridge";
 import { ServerProvider } from "@/react-app/kernel/server-provider";
 import { ArchitectureMismatchGate } from "./architecture-mismatch-gate";
 import { BootStateProvider } from "./boot-state";
@@ -53,11 +55,6 @@ type AppProvidersProps = {
   children: ReactNode;
 };
 
-// One provider tree for every activation state. The runtime bridges below
-// (DesktopRuntimeBoot, AutomationRunnerBridge,
-// GlobalQueueDrainerBridge) each render nothing until enterprise activation
-// completes, so AppRoot-level consumers such as DesktopUpdaterProvider always
-// find the same contexts and nothing privileged starts before activation.
 export function EnterpriseAwareAppProviders({ children }: AppProvidersProps) {
   return (
     <>
@@ -70,6 +67,8 @@ export function EnterpriseAwareAppProviders({ children }: AppProvidersProps) {
                 <AutomationRunnerBridge />
                 <GlobalQueueDrainerBridge />
                 <AutoRejectedTurnRecoveryBridge />
+                <FreeAutoAnalyticsBridge />
+                <KeepAwakeBridge />
                 <ReloadCoordinatorProvider>{children}</ReloadCoordinatorProvider>
                 <LinkOpenDialog />
                 <Toaster />
@@ -86,9 +85,6 @@ export function AppProviders({ children }: AppProvidersProps) {
   hydrateOpenworkServerSettingsFromEnv();
 
   useEffect(() => {
-    // Start the dev observability forwarder. Reads the current openwork-server
-    // URL on every flush so reconnects after port changes still work. In prod
-    // builds `startDebugLogger` is a no-op.
     startDebugLogger({
       serverUrl: async () => (await resolveOpenworkConnection()).normalizedBaseUrl,
     });

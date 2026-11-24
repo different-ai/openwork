@@ -1,15 +1,11 @@
-/**
- * `openwork-server web`: run the OpenWork web UI and API from one process on
- * one origin, with a server-managed OpenCode engine. This is the self-host
- * path (`npm i -g openwork-server && openwork-server web`).
- */
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { existsSync } from "node:fs";
 import { randomBytes } from "node:crypto";
 import { chmod, mkdir, mkdtemp, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { openworkServerDataDir } from "@openwork/paths";
+import { startupPhase, startupPhaseSync } from "./startup-phase.js";
 
 export const OPENCODE_GITHUB_REPO = "anomalyco/opencode";
 const NPM_PACKAGE = "openwork-server";
@@ -25,11 +21,6 @@ async function isDirectory(path: string): Promise<boolean> {
   return (await stat(path).catch(() => null))?.isDirectory() ?? false;
 }
 
-/**
- * Where the published package lives. The npm launcher (bin/openwork-server.mjs)
- * passes it explicitly; a compiled binary run directly sits at
- * <root>/dist/bin/openwork-server; in a source checkout there is no package.
- */
 export async function resolvePackageRoot(input: {
   env: NodeJS.ProcessEnv;
   execPath: string;
@@ -43,7 +34,6 @@ export async function resolvePackageRoot(input: {
   return null;
 }
 
-/** The static UI bundle: explicit env, bundled `web/`, or apps/app/dist in a checkout. */
 export async function resolveWebRoot(input: {
   env: NodeJS.ProcessEnv;
   packageRoot: string | null;
@@ -60,7 +50,6 @@ export async function resolveWebRoot(input: {
   return null;
 }
 
-/** OpenCode plugins shipped next to the compiled binary. Null in a checkout (the ts path is used). */
 export async function resolveBundledPluginDir(packageRoot: string | null): Promise<string | null> {
   if (!packageRoot) return null;
   const dir = join(packageRoot, "dist", "opencode-plugins");
@@ -85,6 +74,10 @@ export function opencodeReleaseUrl(version: string, asset: string, repo = OPENCO
 }
 
 export function readBinaryVersion(bin: string): string | null {
+  return startupPhaseSync("engine.version-probe", () => readBinaryVersionInner(bin));
+}
+
+function readBinaryVersionInner(bin: string): string | null {
   try {
     const result = spawnSync(bin, ["--version"], { encoding: "utf8", timeout: 10_000 });
     if (result.status !== 0 || !result.stdout) return null;
@@ -113,11 +106,6 @@ async function findFile(root: string, name: string): Promise<string | null> {
   return null;
 }
 
-/**
- * Windows ships bsdtar as System32\tar.exe, which extracts .zip. A Git Bash or
- * MSYS PATH puts GNU tar first instead: it cannot read .zip and treats a
- * drive-letter path such as C:\... as a remote host ("Cannot connect to C:").
- */
 function tarCommand(): string {
   if (process.platform !== "win32") return "tar";
   const systemRoot = process.env.SystemRoot?.trim() || process.env.windir?.trim() || "C:\\Windows";
@@ -125,16 +113,41 @@ function tarCommand(): string {
   return existsSync(bsdtar) ? bsdtar : "tar";
 }
 
-function extractArchive(archive: string, asset: string, destination: string): void {
+export async function extractArchive(
+  archive: string,
+  asset: string,
+  destination: string,
+  options: {
+    spawnImpl?: (command: string, args: readonly string[], options: SpawnOptions) => ChildProcess;
+    timeoutMs?: number;
+  } = {},
+): Promise<void> {
   const useUnzip = asset.endsWith(".zip") && process.platform !== "win32";
   const command = useUnzip ? "unzip" : tarCommand();
-  // Relative paths keep drive letters out of tar's archive argument.
   const cwd = dirname(archive);
   const target = relative(cwd, destination) || ".";
   const args = useUnzip ? ["-q", archive, "-d", destination] : ["-xf", basename(archive), "-C", target];
-  const result = spawnSync(command, args, { cwd, stdio: "inherit" });
-  if (result.error) throw result.error;
-  if (result.status !== 0) throw new Error(`${command} exited with ${result.status} while extracting ${asset}`);
+  await new Promise<void>((resolve, reject) => {
+    const child = (options.spawnImpl ?? spawn)(command, args, {
+      cwd, windowsHide: true, stdio: ["ignore", "ignore", "inherit"],
+    });
+    const timeoutMs = options.timeoutMs ?? 5 * 60_000;
+    let timedOut = false;
+    const timer = setTimeout(() => {
+      timedOut = true;
+      child.kill("SIGKILL");
+    }, timeoutMs);
+    child.once("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once("close", (code, signal) => {
+      clearTimeout(timer);
+      if (timedOut) reject(new Error(`${command} timed out after ${timeoutMs} ms while extracting ${asset}`));
+      else if (code !== 0) reject(new Error(`${command} exited with ${code ?? signal} while extracting ${asset}`));
+      else resolve();
+    });
+  });
 }
 
 const RENAME_RETRY_CODES = new Set(["EBUSY", "EPERM", "EACCES"]);
@@ -144,12 +157,6 @@ function errorCode(error: unknown): string | undefined {
   return typeof error.code === "string" ? error.code : undefined;
 }
 
-/**
- * Rename, retrying while Windows still holds the file. Right after the new
- * engine runs `--version`, antivirus scanning or the exiting process's image
- * handle can keep opencode.exe locked for a few seconds, and a plain rename
- * fails with EBUSY and stops the server on first run.
- */
 export async function renameWithRetry(
   from: string,
   to: string,
@@ -176,12 +183,6 @@ export async function renameWithRetry(
   }
 }
 
-/**
- * Make sure the pinned OpenCode version is installed under the data dir and
- * return its path. An explicit OPENWORK_OPENCODE_BIN always wins (bring your
- * own engine); otherwise the version the server was released with is
- * downloaded once and reused.
- */
 export async function ensureManagedEngine(input: {
   env: NodeJS.ProcessEnv;
   expectedVersion: string;
@@ -225,7 +226,7 @@ export async function ensureManagedEngine(input: {
     await writeFile(archive, new Uint8Array(await response.arrayBuffer()));
     const extractDir = join(stagingDir, "extract");
     await mkdir(extractDir, { recursive: true });
-    extractArchive(archive, asset, extractDir);
+    await extractArchive(archive, asset, extractDir);
     const extracted = await findFile(extractDir, binaryName);
     if (!extracted) throw new Error(`Archive ${asset} did not contain ${binaryName}`);
     await mkdir(dirname(bin), { recursive: true });
@@ -245,7 +246,6 @@ export async function ensureManagedEngine(input: {
   }
 }
 
-/** OpenCode's global config folder: `$XDG_CONFIG_HOME/opencode`, else `~/.config/opencode` (all platforms). */
 export function opencodeGlobalConfigDir(env: NodeJS.ProcessEnv, home: string = homedir()): string {
   const xdgConfig = env.XDG_CONFIG_HOME?.trim() || join(home, ".config");
   return join(xdgConfig, "opencode");
@@ -261,16 +261,15 @@ export type PluginDepsSeedResult =
   | { seeded: true; durationMs: number }
   | { seeded: false; reason: "no-archive" | "already-set-up" | "failed"; error?: string };
 
-/**
- * OpenCode blocks the first folder load on `npm install @opencode-ai/plugin`
- * into its global config folder whenever plugins are configured, and OpenWork
- * always configures plugins: 10-15 s on Windows. The npm package ships that
- * exact install pre-resolved; on a fresh profile (no node_modules, manifest or
- * lockfile yet) unpack it so OpenCode finds the dependency already installed.
- * Any existing install state is left to OpenCode. Never throws: on failure
- * OpenCode installs as before.
- */
 export async function seedOpencodePluginDeps(input: {
+  archive: string;
+  configDir: string;
+  now?: () => number;
+}): Promise<PluginDepsSeedResult> {
+  return startupPhase("plugin-deps.seed", () => seedOpencodePluginDepsInner(input));
+}
+
+async function seedOpencodePluginDepsInner(input: {
   archive: string;
   configDir: string;
   now?: () => number;
@@ -285,9 +284,8 @@ export async function seedOpencodePluginDeps(input: {
   try {
     await mkdir(input.configDir, { recursive: true });
     staging = await mkdtemp(join(input.configDir, ".openwork-plugin-deps-"));
-    extractArchive(input.archive, basename(input.archive), staging);
-    // node_modules first: if this stops part-way, OpenCode sees an
-    // incomplete lockfile and runs its own install, as it would have.
+    const destination = staging;
+    await startupPhase("plugin-deps.extract", () => extractArchive(input.archive, basename(input.archive), destination));
     for (const name of OPENCODE_INSTALL_STATE) {
       await renameWithRetry(join(staging, name), join(input.configDir, name));
     }
@@ -297,6 +295,31 @@ export async function seedOpencodePluginDeps(input: {
   } finally {
     if (staging) await rm(staging, { recursive: true, force: true }).catch(() => undefined);
   }
+}
+
+export async function seedManagedOpencodePluginDeps(input: {
+  archive: string;
+  cwd: string;
+  workspaceDirs?: readonly string[];
+  env: NodeJS.ProcessEnv;
+}): Promise<Array<{ configDir: string; result: PluginDepsSeedResult }>> {
+  if (!await isFile(input.archive)) return [];
+  const home = input.env.HOME?.trim() || homedir();
+  const discoveryHome = input.env.OPENCODE_TEST_HOME ?? home;
+  const configDirs = new Set([
+    resolve(input.cwd, opencodeGlobalConfigDir(input.env, home)),
+  ]);
+  const explicit = input.env.OPENCODE_CONFIG_DIR;
+  if (explicit) configDirs.add(resolve(input.cwd, explicit));
+  for (const directory of [input.cwd, ...(input.workspaceDirs ?? []), discoveryHome]) {
+    const configDir = resolve(input.cwd, directory, ".opencode");
+    if (await isDirectory(configDir)) configDirs.add(configDir);
+  }
+  const results: Array<{ configDir: string; result: PluginDepsSeedResult }> = [];
+  for (const configDir of configDirs) {
+    results.push({ configDir, result: await seedOpencodePluginDeps({ archive: input.archive, configDir }) });
+  }
+  return results;
 }
 
 type PersistedTokens = { token: string; hostToken: string };
@@ -311,10 +334,6 @@ function isPersistedTokens(value: unknown): value is PersistedTokens {
   return typeof token === "string" && token.length > 0 && typeof hostToken === "string" && hostToken.length > 0;
 }
 
-/**
- * Tokens for the web deployment survive restarts so the desktop app's
- * "connect custom remote" and any saved browser state keep working.
- */
 export async function loadOrCreateWebTokens(input: {
   env: NodeJS.ProcessEnv;
   dataDir?: string;
@@ -325,7 +344,6 @@ export async function loadOrCreateWebTokens(input: {
     const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
     if (isPersistedTokens(parsed)) return { ...parsed, path, created: false };
   } catch {
-    // Missing or unreadable: mint below.
   }
   const tokens: PersistedTokens = {
     token: randomBytes(32).toString("hex"),
@@ -351,7 +369,6 @@ export function isReleaseVersion(version: string): boolean {
   return /^\d+\.\d+\.\d+$/.test(version.replace(/^v/, ""));
 }
 
-/** Best-effort: returns the newer published version, or null when current, unknown, or offline. */
 export type FetchLike = (url: string, init?: RequestInit) => Promise<Response>;
 
 export async function checkForUpdate(input: {
@@ -379,13 +396,11 @@ export function updateHint(latest: string): string {
   return `Update available: openwork-server ${latest}. Run: npm i -g ${NPM_PACKAGE}@latest`;
 }
 
-/** Open a URL in the default browser without blocking; failures are ignored. */
 export function openInBrowser(url: string): void {
   const command = process.platform === "darwin" ? "open" : process.platform === "win32" ? "cmd" : "xdg-open";
   const args = process.platform === "win32" ? ["/c", "start", "", url] : [url];
   try {
     spawn(command, args, { stdio: "ignore", detached: true }).unref();
   } catch {
-    // No browser available; the URL is printed anyway.
   }
 }

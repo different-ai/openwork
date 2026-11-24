@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto"
 import { Buffer } from "node:buffer"
 import { Client } from "@modelcontextprotocol/sdk/client/index.js"
+import { db } from "../db.js"
 import { env } from "../env.js"
 import { parseGrantedOAuthScopes } from "./oauth-credentials.js"
 import { createGuardedFetch, createRealmSafeFetch } from "./url-guard.js"
+import { parseStoredExternalMcpRequestHeaders, withExternalMcpRequestHeaders } from "./external-mcp-request-headers.js"
 import {
   type OAuthClientProvider,
   UnauthorizedError,
@@ -41,22 +43,6 @@ import {
   withExternalMcpToolCallInspection,
   type ExternalMcpToolCallInspector,
 } from "./external-mcp-tool-inspection.js"
-
-/**
- * Real MCP client for "add any MCP server" (External MCP Connections) —
- * as opposed to generic-oauth.ts, which only fits native providers with a
- * FIXED, admin-configured OAuth app (Google Workspace). Third-party MCP
- * servers (Notion, Linear, ...) don't have a pre-shared client_id: they
- * need RFC 9728 discovery + RFC 7591 dynamic client registration, which is
- * exactly what the MCP SDK's own OAuthClientProvider/auth() machinery
- * implements. This file is the one OAuthClientProvider implementation,
- * backed by our own tables, that every external connection uses.
- *
- * Dynamically-registered client info is stored in OrgOAuthClientTable
- * (providerId = the connection's own row id) — the same table used for
- * admin-configured native-provider clients, since the shape (client id +
- * optional secret + free-form extras) is identical either way.
- */
 
 const CLIENT_NAME = "OpenWork"
 const EXTERNAL_MCP_CALL_TIMEOUT_MS = 30_000
@@ -103,11 +89,6 @@ function assertExternalMcpLifecycleActive(input: {
   throw error
 }
 
-/**
- * The MCP SDK owns OAuth discovery, registration, refresh, and finishAuth
- * fetches. finishAuth accepts no RequestOptions, so bind the transport fetch
- * itself to the lifecycle signal instead of relying on the outer promise race.
- */
 export function bindExternalMcpFetchToLifecycle(
   baseFetch: (url: string | URL, init?: RequestInit) => Promise<Response>,
   deadline: ExternalMcpLifecycleDeadline,
@@ -170,11 +151,6 @@ export async function runExternalMcpRequestWithinDeadline<T>(input: {
   })
 }
 
-/**
- * Which member's credential this session should use, for connections with
- * credentialMode "per_member". Absent for "shared" connections (tokens live
- * on the connection row itself).
- */
 export type ExternalMcpMemberContext = {
   orgMembershipId: DenTypeId<"member">
 }
@@ -187,7 +163,6 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
   private readonly diagnostic: ExternalMcpDiagnosticTracker
   private readonly lifecycleDeadline?: ExternalMcpLifecycleDeadline
   private tokenExchangeCodeVerifier: string | null = null
-  /** Captured by redirectToAuthorization so the HTTP route can hand it back to the admin's browser instead of actually redirecting anything server-side. */
   lastAuthorizeUrl: string | null = null
 
   constructor(
@@ -232,20 +207,7 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
     return this.redirectUri
   }
 
-  /**
-   * The SDK includes whatever this returns as the standard OAuth `state`
-   * param, and — critically — every spec-compliant authorization server
-   * (real or our stand-in) echoes `state` back verbatim on redirect. Our
-   * own signed state token (which encodes which connection this is for)
-   * MUST travel as this standard param, not a custom one: a custom param
-   * would simply be dropped by any real server, since only `state` is
-   * required to be preserved.
-   */
   state(): string {
-    // Only reached when a fresh authorize URL is actually being built (i.e.
-    // connect/start, which always supplies signedState); this fallback only
-    // exists to satisfy the type when connect() is attempted opportunistically
-    // with an existing valid token and no authorization step is needed.
     return this.signedState ?? randomUUID()
   }
 
@@ -324,7 +286,6 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
         ...(this.tokenExchangeCodeVerifier ? { expectedPendingCodeVerifier: this.tokenExchangeCodeVerifier } : {}),
         changes: {
           accessToken: tokens.access_token,
-          // Most providers omit refresh_token on refresh responses; keep the existing one.
           refreshToken: tokens.refresh_token ?? existing?.refreshToken ?? null,
           tokenType: tokens.token_type ?? null,
           ...(tokens.scope === undefined && !this.tokenExchangeCodeVerifier
@@ -353,12 +314,10 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
     })
     if (!saved) throw new Error("The external MCP connection identity changed during token persistence.")
     this.tokenExchangeCodeVerifier = null
-    // Refresh the in-memory row so a subsequent tokens()/refresh in the same
-    // connection attempt sees the just-saved values.
     const refreshed = await getExternalMcpConnection({
       organizationId: this.connection.organizationId,
       connectionId: this.connection.id,
-    })
+    }, db.$primary)
     if (refreshed) this.connection = refreshed
     this.diagnostic.passed("AUTH_TOKEN_ACQUISITION")
   }
@@ -389,7 +348,7 @@ export class ExternalMcpOAuthProvider implements OAuthClientProvider {
         const refreshed = await getExternalMcpConnection({
           organizationId: this.connection.organizationId,
           connectionId: this.connection.id,
-        })
+        }, db.$primary)
         if (refreshed) this.connection = refreshed
       }
     }
@@ -465,17 +424,17 @@ function buildTransport(
   const provider = connection.authType === "oauth"
     ? new ExternalMcpOAuthProvider(connection, redirectUri, signedState, member, diagnostic, lifecycleDeadline)
     : undefined
-  const guardedFetch = env.allowPrivateMcpUrls ? createRealmSafeFetch() : createGuardedFetch()
+  const guardedFetch = withExternalMcpRequestHeaders(
+    env.allowPrivateMcpUrls ? createRealmSafeFetch() : createGuardedFetch(),
+    connection.url,
+    parseStoredExternalMcpRequestHeaders(connection.requestHeaders),
+  )
   const lifecycleFetch = lifecycleDeadline
     ? bindExternalMcpFetchToLifecycle(guardedFetch, lifecycleDeadline, diagnostic)
     : guardedFetch
   const diagnosticFetch = createExternalMcpDiagnosticFetch({ fetch: lifecycleFetch, endpoint: connection.url, tracker: diagnostic })
   const transport = new StreamableHTTPClientTransport(new URL(connection.url), {
     authProvider: provider,
-    // SSRF guard: every outbound request (the MCP endpoint itself, but also
-    // discovery documents and token endpoints the SDK follows to OTHER
-    // hosts) is checked against private/reserved address ranges at request
-    // time. Hosted-deployment protection; self-hosted/dev opt out via env.
     fetch: toolCallInspector ? toolCallInspector.observeFetch(diagnosticFetch) : diagnosticFetch,
     requestInit: connection.authType === "apikey" && connection.apiKey
       ? { headers: { authorization: `${connection.apiKeyAuthScheme === "token" ? "Token" : "Bearer"} ${connection.apiKey}` } }
@@ -532,9 +491,6 @@ function measureSerializedJson(
       continue
     }
     if (typeof current === "string") {
-      // Two quote bytes plus the UTF-8 payload. Escaping can only make the
-      // serialized value larger, so account for the exact JSON string when
-      // it contains characters that need escaping.
       const serialized = JSON.stringify(current)
       if (!add(utf8Bytes(serialized))) return { ok: false, reason: "size" }
       continue
@@ -755,16 +711,6 @@ export type ExternalMcpConnectResult =
   | { status: "connected" }
   | { status: "needs_auth"; authorizeUrl: string }
 
-/**
- * Attempts to connect. For authType "none"/"apikey" this either succeeds or
- * throws. For "oauth", if there's no valid token yet, the SDK's transport
- * drives discovery (+ dynamic client registration if needed) and returns the
- * authorize URL to send the admin's browser to — no token exchange happens
- * yet, that's connect/callback's job. `signedState` (our own signed token
- * identifying which connection this is for) is passed through as the
- * standard OAuth `state` param, since that's the only param guaranteed to
- * round-trip back to connect/callback on any spec-compliant server.
- */
 export async function connectExternalMcp(
   connection: ExternalMcpConnectionRow,
   redirectUri: string,
@@ -798,17 +744,12 @@ export async function connectExternalMcp(
       diagnostic.begin("AUTH_USER_OR_WORKLOAD")
       result = { status: "needs_auth", authorizeUrl: provider.lastAuthorizeUrl }
     } else {
-      // Freeze the causal phase before close() can perform any additional
-      // transport work and move the tracker to another lifecycle phase.
       primaryError = diagnostic.error(error)
     }
   } finally {
     try {
       await client.close()
     } catch (error) {
-      // Never replace the causal handshake error. A close failure after a
-      // successful connection is its own lifecycle diagnostic; closing an
-      // unauthenticated transport is best-effort but still always attempted.
       if (!primaryError && result?.status === "connected") {
         primaryError = diagnostic.error(error, "SHUTDOWN")
       }
@@ -819,7 +760,6 @@ export async function connectExternalMcp(
   return result
 }
 
-/** Completes the OAuth code exchange after the browser is redirected back with `code`. For per-member connections, `member` (from the signed state token) decides whose account the tokens are saved against. */
 export async function runExternalMcpAuthCompletionLifecycle(input: {
   diagnostic: ExternalMcpDiagnosticTracker
   finishAuth: () => Promise<void>
@@ -854,7 +794,6 @@ export async function runExternalMcpAuthCompletionLifecycle(input: {
       try {
         await input.invalidateTokens()
       } catch {
-        // Cleanup must not replace the causal validation diagnostic.
       }
     }
   } finally {
@@ -887,8 +826,6 @@ export async function completeExternalMcpAuth(
   await runExternalMcpAuthCompletionLifecycle({
     diagnostic,
     finishAuth: () => transport.finishAuth(code),
-    // A token response alone does not prove audience, tenant, scopes, or MCP
-    // readiness. Initialize with the newly stored credential before success.
     validateMcp: (options) => client.connect(transport, options),
     invalidateTokens: () => provider?.invalidateCredentials?.("tokens") ?? Promise.resolve(),
     close: () => client.close(),
@@ -896,11 +833,6 @@ export async function completeExternalMcpAuth(
   })
 }
 
-/**
- * Compatibility cleanup for a version-one authorization that was started by
- * the pre-enterprise runtime. Those flows stored one plaintext verifier slot,
- * so they cannot be consumed by the version-two state-hash transaction store.
- */
 export async function abandonExternalMcpAuth(
   connection: ExternalMcpConnectionRow,
   _signedState: string,

@@ -1,28 +1,11 @@
-/**
- * Catalog (models.dev) providers reach members' machines and cloud workers
- * under a provider-scoped env name: a short tag derived from the provider's
- * row id, then the catalog's declared name (`LPR_120JV_OPENAI_API_KEY`). The
- * tag only exists once the row does, so an unsaved provider shows a
- * placeholder tag in its place.
- */
-
 const PENDING_TAG = "LPR_\u00b7\u00b7\u00b7\u00b7\u00b7";
 
 export type RuntimeEnvKey = {
-    /** The scoping tag, the placeholder while unsaved, or null when the name is used as declared. */
     tag: string | null;
-    /** The name as the catalog or author declared it. */
     declared: string;
-    /** True until the provider is created and the real tag is known. */
     pending: boolean;
 };
 
-/**
- * Pair each declared env name with what the runtime will actually read.
- * `runtimeEnvKeys` comes from Den for a saved provider; a Den that predates it
- * returns none, in which case the declared name is shown as-is rather than a
- * guess.
- */
 export function resolveRuntimeEnvKeys(input: {
     declaredEnvNames: string[];
     scoped: boolean;

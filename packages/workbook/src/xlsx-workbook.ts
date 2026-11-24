@@ -77,7 +77,6 @@ export type XlsxSheetData = {
 
 export type XlsxWorkbook = {
   sheets: XlsxSheetInfo[];
-  /** Sheets declared by the workbook beyond XLSX_MAX_SHEETS, which are not read. */
   omittedSheets: number;
   sharedStringCount: number;
   styleCount: number;
@@ -184,11 +183,12 @@ function parseWorkbookSheets(workbookXml: string, relsXml: string | null): { she
   return { sheets, omittedSheets: declared.length - sheets.length };
 }
 
+const PHONETIC_RUN = /<(?:[A-Za-z_][\w.-]*:)?rPh\b(?:[^>]*\/>|[^>]*>[\s\S]*?<\/(?:[A-Za-z_][\w.-]*:)?rPh\s*>)/g;
+
 function sharedStringText(xml: string): string {
-  // Keep interior line breaks (multi-line cells) and only trim the edges; the
-  // table renderer flattens whitespace where a single line is needed.
-  const text = xmlBlocks(xml, "t").map((block) => parsedXmlText(block.inner, "")).join("").trim();
-  return text || xmlText(xml);
+  const visible = xml.replace(PHONETIC_RUN, "");
+  const text = xmlBlocks(visible, "t").map((block) => parsedXmlText(block.inner, "")).join("").trim();
+  return text || xmlText(visible);
 }
 
 function parseSharedStrings(xml: string | null): string[] {
@@ -246,8 +246,22 @@ function parseNumberFormats(stylesXml: string | null): string[] {
   });
 }
 
+const ELAPSED_TIME_TOKEN = /\[(?:h+|m+|s+)\]/i;
+
+export function isElapsedTimeFormat(format: string | undefined): boolean {
+  return !!format && ELAPSED_TIME_TOKEN.test(format.replace(/"[^"]*"/g, ""));
+}
+
+export function excelSerialToElapsedTime(serial: number): string | null {
+  if (!Number.isFinite(serial) || serial < 0) return null;
+  const totalSeconds = Math.round(serial * 86_400);
+  const hours = Math.floor(totalSeconds / 3_600);
+  return `${hours}:${pad(Math.floor((totalSeconds % 3_600) / 60))}:${pad(totalSeconds % 60)}`;
+}
+
 export function isDateNumberFormat(format: string | undefined): boolean {
   if (!format || format === "General" || format === "@") return false;
+  if (isElapsedTimeFormat(format)) return false;
   const stripped = format
     .replace(/"[^"]*"/g, "")
     .replace(/\[[^\]]*\]/g, "")
@@ -262,14 +276,11 @@ function pad(value: number, width = 2): string {
 
 export function excelSerialToIso(serial: number, date1904 = false): string | null {
   if (!Number.isFinite(serial) || serial < 0 || serial > 2_958_465) return null;
-  // Excel's 1900 date system counts a phantom 1900-02-29, so serials before
-  // that day sit one day later than the post-leap epoch implies.
   const epoch = date1904 ? EXCEL_EPOCH_1904_MS : serial < 60 ? EXCEL_EPOCH_1900_MS + MS_PER_DAY : EXCEL_EPOCH_1900_MS;
   const ms = Math.round(serial * MS_PER_DAY);
   const date = new Date(epoch + ms);
   if (Number.isNaN(date.getTime())) return null;
   const time = `${pad(date.getUTCHours())}:${pad(date.getUTCMinutes())}:${pad(date.getUTCSeconds())}`;
-  // A serial below one day carries no calendar date: it is a time of day.
   if (serial < 1 && !date1904) return time;
   const day = `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`;
   if (ms % MS_PER_DAY === 0) return day;
@@ -296,6 +307,9 @@ function displayedCellValue(type: string, rawValue: string | undefined, body: st
     return Number.isInteger(index) ? sharedStrings[index] : undefined;
   }
   if (type === "b" && rawValue !== undefined) return rawValue === "1" ? "TRUE" : "FALSE";
+  if ((type === "" || type === "n") && rawValue !== undefined && isElapsedTimeFormat(numberFormat)) {
+    return excelSerialToElapsedTime(Number(rawValue)) ?? rawValue;
+  }
   if ((type === "" || type === "n") && rawValue !== undefined && isDateNumberFormat(numberFormat)) {
     return excelSerialToIso(Number(rawValue), date1904) ?? rawValue;
   }
@@ -416,9 +430,6 @@ export function findSheet(workbook: XlsxWorkbook, selector: string | number | un
   throw new Error(`Sheet "${selector}" was not found. Available sheets: ${workbook.sheets.map((sheet) => JSON.stringify(sheet.name)).join(", ")}.`);
 }
 
-// A raw pipe would split a Markdown table cell. Swap it for the look-alike
-// box-drawing bar instead of backslash-escaping, so backslashes in paths and
-// regexes reach the model exactly as the sheet stores them.
 const TABLE_SAFE_PIPE = "\u2502";
 
 function cellText(cell: XlsxCell | undefined, formulas: boolean, maxChars: number): string {
@@ -538,17 +549,8 @@ export function sheetGridRows(sheet: XlsxSheetData, options: { maxCells?: number
 
 const CANONICAL_NUMBER = /^-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?$/;
 const FORMULA_MAX_CHARS = 8_192;
-// Functions that fetch remote data, run registered code, or pull other files
-// when a workbook recalculates. A generated report never needs them.
 const OUTSIDE_WORKBOOK_FUNCTION = /\b(DDE|WEBSERVICE|FILTERXML|RTD|CALL|REGISTER(?:\.ID)?|EXEC|SQL\.REQUEST|IMPORT(?:DATA|XML|HTML|FEED|RANGE)|IMAGE)\s*\(/i;
-// A bracket group that belongs to a sheet reference ("[Book]Sheet!A1",
-// "[Book.xlsx]シート1!A1", "'path\\[Book]Sheet'!A1", "[1]Sheet!A1") names
-// another workbook. An unquoted sheet name may contain any script, so the
-// span between "]" and "!" is anything that is not a formula operator or
-// delimiter; structured table references ("Table1[Amount]+Sheet2!A1",
-// "[@Amount]*2") are always followed by an operator or the end of the formula.
 const EXTERNAL_WORKBOOK_REFERENCE = /\[[^\]]*\][^!'"(),;+\-*/^&=<>\[\]{}]*!|'[^']*\[[^\]]*\][^']*'!/u;
-// A quoted sheet reference whose path is a URL or UNC share.
 const REMOTE_PATH_REFERENCE = /'[^']*(?::\/\/|\\\\)[^']*'!/;
 
 export function isFormulaInput(value: XlsxCellInput): value is XlsxFormulaInput {
@@ -608,7 +610,6 @@ function sanitizeSheetName(name: string | undefined, position: number, taken: Se
     .trim();
   let candidate = cleaned || `Sheet${position}`;
   let suffix = 2;
-  // Excel reserves "History" for its change-tracking sheet.
   while (taken.has(candidate.toLowerCase()) || candidate.toLowerCase() === "history") {
     const base = candidate.slice(0, SHEET_NAME_MAX_CHARS - String(suffix).length - 1);
     candidate = `${base}-${suffix}`;

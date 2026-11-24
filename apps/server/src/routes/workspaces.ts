@@ -25,11 +25,6 @@ interface RegisterWorkspaceRoutesOptions {
   ensureWritable: (config: ServerConfig) => void;
   resolveWorkspace: (config: ServerConfig, id: string) => Promise<WorkspaceInfo>;
   serializeWorkspace: (workspace: ServerConfig["workspaces"][number]) => unknown;
-  /**
-   * Dispose-free re-attach of the workspace's runtime MCPs via the engine's
-   * dynamic push. The injected engine config file is workspace-independent,
-   * so activation never reloads or disposes an engine instance.
-   */
   syncWorkspaceRuntimeMcp: (config: ServerConfig, workspace: WorkspaceInfo) => Promise<void>;
 }
 
@@ -93,7 +88,6 @@ async function persistServerWorkspaceState(config: ServerConfig): Promise<boolea
     try {
       await rm(tmpPath);
     } catch {
-      // ignore
     }
   }
 }
@@ -131,8 +125,6 @@ export function registerWorkspaceRoutes(options: RegisterWorkspaceRoutesOptions)
     await ensureWorkspaceFiles(workspacePath, preset);
 
     const workspaceId = workspaceIdForPath(workspacePath);
-    // Seed the per-workspace openwork config in the runtime DB (replaces the
-    // legacy `.opencode/openwork.json` file). No-op if a row already exists.
     await seedOpenworkWorkspaceConfigIfEmpty(
       config,
       workspaceId,
@@ -232,9 +224,6 @@ export function registerWorkspaceRoutes(options: RegisterWorkspaceRoutesOptions)
       summary: "Switched active workspace",
       timestamp: Date.now(),
     });
-    // The injected engine config file is workspace-independent, so activation
-    // never disposes or reloads an engine instance. Fire-and-forget re-attach
-    // of the activated workspace's runtime MCPs via the dynamic push.
     if (!wasActive && workspace.workspaceType === "local" && resolveWorkspaceOpencodeConnection(config, workspace).baseUrl?.trim()) {
       void syncWorkspaceRuntimeMcp(config, workspace).catch(() => undefined);
     }
@@ -251,7 +240,6 @@ export function registerWorkspaceRoutes(options: RegisterWorkspaceRoutesOptions)
     const deleted = before !== config.workspaces.length;
 
     if (deleted && workspace.workspaceType === "local") {
-      // Only remove exact matches; authorizedRoots can contain broader entries.
       config.authorizedRoots = config.authorizedRoots.filter((root) => resolve(root) !== resolve(workspace.path));
     }
     const persisted = await persistServerWorkspaceState(config);

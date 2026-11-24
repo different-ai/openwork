@@ -292,11 +292,20 @@ export async function evaluate<T>(
   return runtimeResultValue(payload) as Awaited<T>;
 }
 
+/**
+ * The page ran the call and its own code threw. CDP answered, so this is the
+ * call's result, not a stalled transport: re-attaching cannot change it, even
+ * when the page's message says "timed out".
+ */
+export class CdpPageError extends Error {
+  override name = "CdpPageError";
+}
+
 function runtimeResultValue(payload: unknown): unknown {
   if (!isRecord(payload)) throw new Error("CDP returned a malformed evaluation result");
   if (isRecord(payload.exceptionDetails)) {
     const exception = payload.exceptionDetails.exception;
-    throw new Error(
+    throw new CdpPageError(
       (isRecord(exception) && stringField(exception.description)) ||
         stringField(payload.exceptionDetails.text) ||
         "Evaluation failed.",
@@ -349,7 +358,14 @@ export async function addInitScript<T>(client: CdpClient, script: BrowserEvaluat
   let disposed = false;
   const dispose = async () => {
     if (disposed) return;
-    await client.send("Page.removeScriptToEvaluateOnNewDocument", { identifier });
+    try {
+      await client.send("Page.removeScriptToEvaluateOnNewDocument", { identifier });
+    } catch (error) {
+      // Init scripts belong to the CDP session. A cross-origin navigation can
+      // replace it before disposal; Chromium then confirms there is no script
+      // left to remove. Other cleanup failures must remain visible.
+      if (!(error instanceof Error) || error.message !== "Script not found") throw error;
+    }
     disposed = true;
   };
   return { dispose, [Symbol.asyncDispose]: dispose };
@@ -359,10 +375,24 @@ export async function navigate(client: CdpClient, url: string): Promise<void> {
   await client.send("Page.navigate", { url });
 }
 
+/**
+ * Activates a page target the way a person focuses its window. Out-of-process
+ * iframes (an MCP App's frame) are separate targets that Chrome refuses to
+ * foreground; their top-level page already is, so that refusal is not an error.
+ */
+export async function bringTargetToFront(client: CdpClient): Promise<void> {
+  try {
+    await client.send("Page.bringToFront");
+  } catch (error) {
+    if (error instanceof Error && /top-level targets/.test(error.message)) return;
+    throw error;
+  }
+}
+
 export async function captureScreenshot(client: CdpClient): Promise<Buffer> {
   // OAuth can foreground another tab. Activate this explicit target so its
   // compositor can produce the requested frame instead of stalling in the background.
-  await client.send("Page.bringToFront");
+  await bringTargetToFront(client);
   const payload = await client.send("Page.captureScreenshot", { format: "png" });
   if (!isRecord(payload) || typeof payload.data !== "string") {
     throw new Error("Page.captureScreenshot did not return base64 PNG data.");

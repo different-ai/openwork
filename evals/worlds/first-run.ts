@@ -1,44 +1,20 @@
 import { browserScript, listTargets } from "@openwork/cdp";
-import { spawn } from "node:child_process";
 import { createServer } from "node:http";
-import { chmod, mkdtemp, readdir, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
-import { app as startApp, server as startServer, resolveEvalEngine } from "@openwork/env";
+import { chmod, rm } from "node:fs/promises";
+import { join } from "node:path";
+import { resolveEvalEngine } from "@openwork/env";
 import { SkipError } from "@openwork/env";
 import type { EvalEngine, Place, Seed } from "@openwork/env";
-import { createAndSelectWorkspace, evalIn, go, waitFor as waitForBehavior } from "@openwork/behaviors";
+import { evalIn, go, waitFor as waitForBehavior } from "@openwork/behaviors";
 import { allocateFreePort } from "@openwork/cdp";
-import {
-  checkedExec,
-  chrome,
-  daytonaSandbox,
-  defaultDaytonaExec,
-  deleteSandboxes,
-  desktop,
-  enterpriseTlsEdgeDaytonaCommands,
-  localHost,
-  provisionDesktopSandbox,
-} from "@openwork/hosts";
+import { checkedExec, chrome, daytonaSandbox, defaultDaytonaExec, deleteSandboxes, desktop, localHost, provisionDesktopSandbox } from "@openwork/hosts";
 import { startEgressLab, startMockMcp } from "@openwork/labs";
 import { diagnoseEgressLabProduct } from "@openwork/behaviors";
 import { configureProvider } from "./chat.ts";
 import { sessionlessTransition } from "./sessionless-transition.ts";
 import { close, listen, readBody, sendJson, sendMockError } from "./openwork-server-cli.ts";
 import { matchVerdictExpectations } from "@openwork/matchers";
-import {
-  assignPluginToMarketplace,
-  completeDesktopHandoff,
-  createDesktopHandoffGrant,
-  createMarketplace,
-  createPluginWithSkill,
-  ensureMemberSession,
-  grantMarketplaceAccess,
-  readHandoffDeepLink,
-  readResolvedMarketplace,
-  signIn,
-  signInInBrowser,
-} from "@openwork/behaviors";
+import { assignPluginToMarketplace, createMarketplace, createPluginWithSkill, grantMarketplaceAccess, readResolvedMarketplace } from "@openwork/behaviors";
 
 // Transitional helpers for journeys whose product-specific mechanics do not yet
 // have spec primitives. Specs still import through their owned world module.
@@ -114,22 +90,6 @@ export async function appSmokeWorld(seed: Seed) {
   };
 }
 
-export async function bareFirstRunWorld(seed: Seed, { place }: { place: Place }) {
-  const app = await seed.desktop({ name: "first-run", signIn: false });
-  const url = new URL(await evalIn(app, () => location.href));
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error("The non-desktop welcome journey requires the source app's HTTP surface.");
-  }
-  url.hash = "/welcome";
-  const web = await chrome({ name: "first-run-welcome", host: place.host(), startUrl: url.href, headless: true });
-  return {
-    app,
-    web,
-    async openedUrls() { return (await listTargets(web.handle.cdpUrl)).map((target) => target.url); },
-    async [Symbol.asyncDispose]() { await web[Symbol.asyncDispose](); },
-  };
-}
-
 export async function localFirstRunWorld(seed: Seed) {
   const prompt = "Create a short welcome checklist for this OpenWork workspace. Use exactly three bullets and mention one thing I can do next.";
   const reply = "Your workspace is ready. You can draft a document next.";
@@ -171,9 +131,15 @@ export async function localFirstRunWorld(seed: Seed) {
   return { app, mock, prompt, reply };
 }
 
-export async function workspaceWorld(seed: Seed) {
-  const app = await seed.desktop({ name: "workspace-spec" });
+/**
+ * The app in headless Chrome with one workspace. Pass `surface: "electron"`
+ * only when the claim needs the desktop shell (native menus, the bridge).
+ */
+export async function workspaceWorld(seed: Seed, options: { surface?: "electron" | "web" } = {}) {
   const workspacePath = seed.tmpPath("workspace-spec");
+  const app = options.surface === "electron"
+    ? await seed.desktop({ name: "workspace-spec" })
+    : await seed.appWeb({ name: "workspace-spec", workspacePath, mouse: true });
   const workspace = await seed.workspace(app, workspacePath);
   return { app, workspace, workspacePath };
 }
@@ -357,8 +323,9 @@ export async function parentChildHeldToolWorld(seed: Seed, { place }: { place: P
   });
   const mcpUrl = await listen(proxy);
   setup.defer(async () => { release(); await close(proxy); });
-  const app = await seed.desktop({ name: "descendant-held-tool" });
-  const workspace = await seed.workspace(app, seed.tmpPath("descendant-held-tool"), { create: true });
+  const workspacePath = seed.tmpPath("descendant-held-tool");
+  const app = await seed.appWeb({ name: "descendant-held-tool", workspacePath, mouse: true });
+  const workspace = await seed.workspace(app, workspacePath);
   await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
     permission: { task: "allow", "descendant_*": "allow" },
     mcp: { descendant: { type: "remote", url: mcpUrl, enabled: true, oauth: false, timeout: 120_000 } },
@@ -387,7 +354,7 @@ export async function scopedPermissionRefreshWorld(seed: Seed) {
   const engine = resolveEvalEngine();
   const prefix = `/workspace/${encodeURIComponent(base.workspace.workspaceId)}/${engine === "v2" ? "opencode2" : "opencode"}`;
   const debuggerUrl = base.app.client.webSocketDebuggerUrl;
-  if (!debuggerUrl) throw new Error("Permission witness needs a desktop CDP endpoint");
+  if (!debuggerUrl) throw new Error("Permission witness needs the app's CDP endpoint");
   const socket = new WebSocket(debuggerUrl);
   const ready = Promise.withResolvers<void>();
   const commands = new Map<number, ReturnType<typeof Promise.withResolvers<void>>>();
@@ -451,9 +418,9 @@ export async function scopedPermissionRefreshWorld(seed: Seed) {
     await command("Network.enable");
     await command("Fetch.enable", { patterns: [{ urlPattern: `*${prefix}/api/session/*/permission*`, requestStage: "Request" }] });
     await seed.evalIn(base.app, browserScript(async (path) => {
-      const info = await window.__OPENWORK_ELECTRON__.invokeDesktop("openworkServerInfo");
-      void fetch(info.baseUrl + path, {
-        headers: { Authorization: `Bearer ${info.ownerToken}` }, signal: AbortSignal.timeout(120_000),
+      const base = "http://127.0.0.1:" + localStorage.getItem("openwork.server.port");
+      void fetch(base + path, {
+        headers: { Authorization: `Bearer ${localStorage.getItem("openwork.server.token")}` }, signal: AbortSignal.timeout(120_000),
       }).catch(() => undefined);
     }, [`${prefix}/api/session/${encodeURIComponent(unrelated.sessionId)}/permission?scope-calibration=1`]), { awaitPromise: true });
     return {
@@ -470,6 +437,28 @@ export async function scopedPermissionRefreshWorld(seed: Seed) {
   }
 }
 
+/** A one-page text-only PDF whose whole page is a link to `url`; the tall page covers the viewer's center at any zoom. */
+function linkedPdf(url: string) {
+  const text = "BT /F1 28 Tf 72 2300 Td (Open the release notes) Tj ET";
+  const objects = [
+    "<< /Type /Catalog /Pages 2 0 R >>",
+    "<< /Type /Pages /Kids [3 0 R] /Count 1 >>",
+    "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 2400] /Contents 4 0 R /Resources << /Font << /F1 5 0 R >> >> /Annots [6 0 R] >>",
+    `<< /Length ${text.length} >>\nstream\n${text}\nendstream`,
+    "<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+    `<< /Type /Annot /Subtype /Link /Rect [0 0 612 2400] /Border [0 0 0] /A << /S /URI /URI (${url}) >> >>`,
+  ];
+  let pdf = "%PDF-1.4\n";
+  const offsets = objects.map((object, index) => {
+    const offset = pdf.length;
+    pdf += `${index + 1} 0 obj\n${object}\nendobj\n`;
+    return offset;
+  });
+  const xref = pdf.length;
+  pdf += `xref\n0 ${objects.length + 1}\n0000000000 65535 f \n${offsets.map((offset) => `${String(offset).padStart(10, "0")} 00000 n \n`).join("")}`;
+  return `${pdf}trailer\n<< /Size ${objects.length + 1} /Root 1 0 R >>\nstartxref\n${xref}\n%%EOF\n`;
+}
+
 export async function artifactCodeBrowserWorld(seed: Seed) {
   const tableMarkdown = [
     "# Table interactions",
@@ -481,12 +470,14 @@ export async function artifactCodeBrowserWorld(seed: Seed) {
     "",
     "After the table",
   ].join("\n");
-  const base = await workspaceWorld(seed);
+  const pdfLinkUrl = "https://example.com/openwork-pdf-link";
+  // Asserts the native Electron context menu and the desktop PDF viewer, which a browser does not have.
+  const base = await workspaceWorld(seed, { surface: "electron" });
   const [session] = await seed.sessions(base.app, ["Artifact code browser proof"]);
   if (!session) throw new Error("Could not seed the artifact code browser session.");
   await go(base.app, `/workspace/${base.workspace.workspaceId}/session/${session.sessionId}`);
   // TODO(primitive): write workspace files through the local server fixture.
-  const wrote = await seed.evalIn(base.app, browserScript(async (workspaceId, tableMarkdown) => {
+  const wrote = await seed.evalIn(base.app, browserScript(async (workspaceId, tableMarkdown, linkedPdfContent) => {
     const port = localStorage.getItem("openwork.server.port");
     const token = localStorage.getItem("openwork.server.token");
     if (!port || !token) return false;
@@ -503,9 +494,14 @@ export async function artifactCodeBrowserWorld(seed: Seed) {
       write("src/openwork-artifact-proof.ts", "export const artifactEditor = true;\n"),
       write("config/openwork-artifact-settings.json", "{\"artifactEditor\":true}\n"),
       write("docs/table-interactions.md", tableMarkdown),
+      fetch("http://127.0.0.1:" + port + "/workspace/" + encodeURIComponent(workspaceId) + "/files/raw", {
+        method: "POST",
+        headers: { Authorization: "Bearer " + token, "Content-Type": "application/json" },
+        body: JSON.stringify({ path: "docs/release-notes.pdf", dataBase64: btoa(linkedPdfContent), baseUpdatedAt: null }),
+      }),
     ]);
     return responses.every((response) => response.ok);
-  }, [base.workspace.workspaceId, tableMarkdown]), { awaitPromise: true });
+  }, [base.workspace.workspaceId, tableMarkdown, linkedPdf(pdfLinkUrl)]), { awaitPromise: true });
   if (wrote !== true) throw new Error("Could not seed artifact code files.");
   await waitForBehavior(
     base.app,
@@ -529,6 +525,7 @@ export async function artifactCodeBrowserWorld(seed: Seed) {
   return {
     ...base,
     tableMarkdown,
+    pdfLinkUrl,
     fileLinkPath,
     // Native Electron menus are OS widgets without DOM/CDP targets. Use the
     // existing development bridge to observe and dismiss the real popup.
@@ -570,221 +567,21 @@ export async function artifactCodeBrowserWorld(seed: Seed) {
   };
 }
 
-export async function skillsLocalWorld(seed: Seed) {
-  const app = await seed.desktop({ name: "skills-local" });
-  if (!app.workspaceRoot) throw new Error("The skills desktop did not expose its checkout root.");
-  const workspace = await seed.workspace(app, app.workspaceRoot);
-  return { app, workspace };
-}
+const compatibleRecoveryCatalog = [
+  { version: "2.4.0", channel: "stable", artifact: { platform: "darwin", arch: "arm64", distribution: "public", url: "https://releases.openwork.test/v2.4.0/OpenWork-darwin-arm64.dmg" } },
+  { version: "2.3.1", channel: "stable", artifact: { platform: "darwin", arch: "arm64", distribution: "public", url: "https://releases.openwork.test/v2.3.1/OpenWork-darwin-arm64.dmg" } },
+  { version: "2.3.0", channel: "stable", artifact: { platform: "linux", arch: "x64", distribution: "public", url: "https://incompatible.invalid/OpenWork.AppImage" } },
+  { version: "2.2.9", channel: "stable", artifact: { platform: "darwin", arch: "arm64", distribution: "enterprise", url: "https://wrong-flavor.invalid/OpenWork.dmg" } },
+  { version: "2.2.8-beta.1", channel: "prerelease", artifact: { platform: "darwin", arch: "arm64", distribution: "public", url: "https://prerelease.invalid/OpenWork.dmg" } },
+];
 
-export async function firstRunBootstrapWorld(seed: Seed) {
-  const den = await seed.den({
-    org: {
-      name: "First Run Bootstrap",
-      admin: { name: "First Run Bootstrap Admin" },
-      members: { member: { name: "First Run Bootstrap Member" } },
-    },
-  });
-  const proxy = await seed.faultProxy(den);
-  proxy.faults.status("/api/den/v1/me/desktop-config", 429, { times: 5 });
-  const proxiedDen = { ...den, ref: proxy.ref };
-  const grant = await createDesktopHandoffGrant(den.members.member);
-  const app = await seed.desktop({ den: proxiedDen, signIn: false });
-  return { app, den, proxy, grant };
-}
-
-export async function firstSignInWorld(seed: Seed) {
-  const den = await seed.den({
-    org: {
-      name: "First Signin Heal",
-      admin: { name: "First Signin Admin" },
-      members: { fresh: { name: "Fresh Profile Member" } },
-    },
-  });
-  const proxy = await seed.faultProxy(den);
-  proxy.faults.status("/api/den/v1/me/orgs", 429, { times: 3 });
-  const proxiedDen = { ...den, ref: proxy.ref };
-  const grant = await createDesktopHandoffGrant(den.members.fresh);
-  const app = await seed.desktop({ den: proxiedDen, signIn: false });
-  return { app, den, proxy, grant };
-}
-
-export async function testkitAppBootWorld(_seed: Seed, { place }: { place: Place }) {
-  const stack = new AsyncDisposableStack();
-  const den = stack.use(await startServer({ place }));
-  if (!den.ports) throw new Error("The local testkit Den did not expose its ports.");
-  const app = stack.use(await startApp({ den, as: "admin", place }));
-  let closed = false;
-  const close = async () => {
-    if (closed) return;
-    closed = true;
-    await stack.disposeAsync();
-  };
-  return { app, den, ports: den.ports, close, [Symbol.asyncDispose]: close };
-}
-
-export async function unconfiguredNotificationWorld(seed: Seed) {
-  const workspacePath = await mkdtemp(join(tmpdir(), "openwork-notification-shell-"));
-  const app = await seed.desktop({ name: "opencode-unconfigured-notification" });
-  const workspace = await seed.workspace(app, workspacePath);
-  const serverToken = "owt_unconfigured_notification";
-  const repoRoot = resolve(import.meta.dirname, "../..");
-  const script = `
-    const { startServer } = await import("./src/server.ts");
-    const server = await startServer({
-      host: "0.0.0.0", port: 0, token: ${JSON.stringify(serverToken)}, corsOrigins: ["*"],
-      workspaces: [{ id: ${JSON.stringify(workspace.workspaceId)}, name: "Unconfigured workspace", path: ${JSON.stringify(workspacePath)}, preset: "starter", workspaceType: "local" }],
-      authorizedRoots: [${JSON.stringify(workspacePath)}], readOnly: false,
-      approval: { mode: "auto", timeoutMs: 30000 }, startedAt: Date.now(), tokenSource: "cli",
-      hostTokenSource: "none", logFormat: "pretty", logRequests: false,
-    });
-    console.log("UNCONFIGURED_SERVER_PORT:" + server.port);
-    setInterval(() => {}, 60000);
-  `;
-  const child = spawn("bun", ["--conditions=development", "-e", script], {
-    cwd: join(repoRoot, "apps", "server"),
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  const port = await new Promise<number>((resolvePort, reject) => {
-    const timer = setTimeout(() => reject(new Error("Unconfigured server did not report a port.")), 30_000);
-    let stdout = "";
-    let stderr = "";
-    child.stdout.setEncoding("utf8");
-    child.stderr.setEncoding("utf8");
-    child.stdout.on("data", (chunk: string) => {
-      stdout += chunk;
-      const match = stdout.match(/UNCONFIGURED_SERVER_PORT:(\d+)/);
-      if (!match?.[1]) return;
-      clearTimeout(timer);
-      resolvePort(Number(match[1]));
-    });
-    child.stderr.on("data", (chunk: string) => { stderr += chunk; });
-    child.on("exit", (code) => {
-      clearTimeout(timer);
-      reject(new Error(`Unconfigured server exited early (${code}): ${stderr.slice(0, 500)}`));
-    });
-    child.on("error", reject);
-  });
-  const configResponse = await fetch(`http://127.0.0.1:${port}/workspace/${workspace.workspaceId}/config`, {
-    headers: { authorization: `Bearer ${serverToken}` },
-  });
-  const config: unknown = await configResponse.json();
-  const opencodeConfig = isRecord(config) && isRecord(config.opencode) ? config.opencode : {};
-  const providerConfig = isRecord(opencodeConfig.provider) ? opencodeConfig.provider : {};
-  const engineResponse = await fetch(`http://127.0.0.1:${port}/workspace/${workspace.workspaceId}/opencode/session`, {
-    method: "POST",
-    headers: { authorization: `Bearer ${serverToken}`, "content-type": "application/json" },
-    body: JSON.stringify({}),
-  });
-  const engineError: unknown = await engineResponse.json();
-  // TODO(primitive): point a desktop at a caller-owned local server and observe transient notification text.
-  const switched = await evalIn(app, browserScript(async (port, serverToken) => {
-    const state = { rawSeen: document.body.innerText.includes('{"code":') };
-    const observer = new MutationObserver(() => {
-      if (document.body.innerText.includes('{"code":')) state.rawSeen = true;
-    });
-    observer.observe(document.body, { subtree: true, childList: true, characterData: true });
-    window.__issue3980NotificationProbe = { observer, state };
-    localStorage.setItem("openwork.server.urlOverride", `http://127.0.0.1.nip.io:${port}`);
-    localStorage.setItem("openwork.server.token", serverToken);
-    localStorage.removeItem("openwork.server.hostToken");
-    await window.__OPENWORK_ELECTRON__?.invokeDesktop?.("engineStop");
-    window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
-    return true;
-  }, [port, serverToken]), { awaitPromise: true, timeoutMs: 30_000 });
-  if (switched !== true) throw new Error("Could not switch the desktop to the unconfigured server.");
-  return {
-    app,
-    workspace,
-    serverToken,
-    directBaseUrl: `http://127.0.0.1:${port}`,
-    configStatus: configResponse.status,
-    opencodeConfig,
-    providerConfig,
-    engineStatus: engineResponse.status,
-    engineError,
-    async [Symbol.asyncDispose]() {
-      child.kill("SIGKILL");
-      await rm(workspacePath, { recursive: true, force: true });
-    },
-  };
-}
-
-async function installAlphaUpdateBridge(app: Awaited<ReturnType<typeof desktop>>) {
-  const installed = await evalIn(app, () => {
-    const nativeUpdater = window.__OPENWORK_ELECTRON__?.updater;
-    if (!nativeUpdater?.getChannel || !nativeUpdater.setChannel) return false;
-    const state: Window["__openworkAlphaUpdateEligibilityEvalState"] = { checks: [], currentVersion: "0.18.37-alpha.2491+64d2d37", latestVersion: "0.18.37-alpha.2492+4921a02" };
-    window.__openworkAlphaUpdateEligibilityEvalState = state;
-    localStorage.setItem("openwork.react.settings.update-auto-check", "0");
-    window.__openworkApplyDesktopConfig?.({ allowAlphaUpdates: true });
-    window.__openworkSetDesktopConfigRefreshResult?.({ allowAlphaUpdates: true });
-    window.__openworkReadDesktopVersionMetadataEval = () => ({
-      minAppVersion: "0.17.0", latestAppVersion: "0.18.35", publishedDesktopVersions: ["0.18.35"],
-    });
-    window.__openworkUpdaterEvalBridge = {
-      getChannel: () => nativeUpdater.getChannel(),
-      setChannel: (channel) => nativeUpdater.setChannel(channel),
-      check: async (channel) => {
-        state.checks.push(channel);
-        return channel === "alpha"
-          ? { available: true, channel, currentVersion: state.currentVersion, latestVersion: state.latestVersion }
-          : { available: false, channel, currentVersion: state.currentVersion, latestVersion: "0.18.35" };
-      },
-      download: async () => ({ ok: false, reason: "unused" }),
-      installAndRestart: async () => ({ ok: false, reason: "unused" }),
-      onDownloadProgress: () => () => {},
-    };
-    return true;
-  });
-  if (installed !== true) throw new Error("Could not install the controlled updater bridge.");
-}
-
-export async function alphaUpdateWorld(seed: Seed) {
-  if (process.platform !== "darwin") throw new SkipError(`run on macOS (Alpha is unavailable on ${process.platform})`);
-  const profileDir = await mkdtemp(join(tmpdir(), "openwork-alpha-update-eligibility-eval-"));
-  const host = localHost();
-  const app = await desktop({
-    name: "alpha-update-eligibility",
-    host,
-    profileDir,
-    env: { PORT: String(await allocateFreePort()) },
-  });
-  const workspace = await createAndSelectWorkspace(app, { path: join(profileDir, "workspace") });
-  await installAlphaUpdateBridge(app);
-  await go(app, `/workspace/${workspace.workspaceId}/settings/updates`);
-  return {
-    app,
-    async [Symbol.asyncDispose]() {
-      await app.stop();
-      await host[Symbol.asyncDispose]();
-      await rm(profileDir, { recursive: true, force: true });
-    },
-  };
-}
-
-export async function compatibleReleaseWorld(_seed: Seed, { place }: { place: Place }) {
-  const app = await desktop({
-    name: "compatible-release-picker",
-    host: place.host(),
-    timeoutMs: 30_000,
-    env: {
-      OPENWORK_EVAL_FATAL_DESKTOP_BOOTSTRAP_FAILURE: "EVAL_FATAL_DESKTOP_BOOTSTRAP_FAILURE",
-      OPENWORK_EVAL_RECOVERY_TARGET: "darwin-arm64-public",
-      OPENWORK_EVAL_RECOVERY_RELEASES: JSON.stringify([
-        { version: "2.4.0", channel: "stable", artifact: { platform: "darwin", arch: "arm64", distribution: "public", url: "https://releases.openwork.test/v2.4.0/OpenWork-darwin-arm64.dmg" } },
-        { version: "2.3.1", channel: "stable", artifact: { platform: "darwin", arch: "arm64", distribution: "public", url: "https://releases.openwork.test/v2.3.1/OpenWork-darwin-arm64.dmg" } },
-        { version: "2.3.0", channel: "stable", artifact: { platform: "linux", arch: "x64", distribution: "public", url: "https://incompatible.invalid/OpenWork.AppImage" } },
-        { version: "2.2.9", channel: "stable", artifact: { platform: "darwin", arch: "arm64", distribution: "enterprise", url: "https://wrong-flavor.invalid/OpenWork.dmg" } },
-        { version: "2.2.8-beta.1", channel: "prerelease", artifact: { platform: "darwin", arch: "arm64", distribution: "public", url: "https://prerelease.invalid/OpenWork.dmg" } },
-      ]),
-    },
-  });
-  const snapshot = () => evalIn(app, () => (window.__openworkRecoveryControl.snapshot()), { awaitPromise: true });
-  return { app, snapshot, async [Symbol.asyncDispose]() { await app.stop(); } };
-}
-
-export async function reliableRecoveryWorld(_seed: Seed, { place }: { place: Place }) {
+/**
+ * A desktop whose bootstrap fails fatally on a seeded profile. By default the
+ * recovery list holds one verified and one unverified candidate; with
+ * `catalog: true` it is a release catalog mixing compatible, wrong-platform,
+ * wrong-flavor and prerelease builds for darwin-arm64-public.
+ */
+export async function reliableRecoveryWorld(_seed: Seed, { place }: { place: Place }, options: { catalog?: boolean } = {}) {
   const profileDir = `/tmp/openwork-reliable-recovery-${process.pid}-${Date.now()}`;
   const provisioned = place.kind === "daytona"
     ? await provisionDesktopSandbox({
@@ -808,10 +605,12 @@ export async function reliableRecoveryWorld(_seed: Seed, { place }: { place: Pla
     timeoutMs: 30_000,
     env: {
       OPENWORK_EVAL_FATAL_DESKTOP_BOOTSTRAP_FAILURE: "EVAL_FATAL_DESKTOP_BOOTSTRAP_FAILURE: dlopen(/private/tmp/runtime.node): invalid code signature",
-      OPENWORK_EVAL_RECOVERY_CANDIDATES: JSON.stringify([
-        { version: "1.8.2", verified: true, artifactUrl: "https://releases.openwork.test/v1.8.2/OpenWork-darwin-arm64.dmg" },
-        { version: "1.8.1", verified: false, artifactUrl: "https://tampered.invalid/OpenWork.dmg" },
-      ]),
+      ...(options.catalog
+        ? { OPENWORK_EVAL_RECOVERY_TARGET: "darwin-arm64-public", OPENWORK_EVAL_RECOVERY_RELEASES: JSON.stringify(compatibleRecoveryCatalog) }
+        : { OPENWORK_EVAL_RECOVERY_CANDIDATES: JSON.stringify([
+          { version: "1.8.2", verified: true, artifactUrl: "https://releases.openwork.test/v1.8.2/OpenWork-darwin-arm64.dmg" },
+          { version: "1.8.1", verified: false, artifactUrl: "https://tampered.invalid/OpenWork.dmg" },
+        ]) }),
     },
   });
   const snapshot = () => evalIn(app, () => (window.__openworkRecoveryControl.snapshot()), { awaitPromise: true });
@@ -855,217 +654,12 @@ export async function renderCrashWorld(seed: Seed) {
   };
 }
 
-async function installUpdaterRaceBridge(app: Awaited<ReturnType<typeof desktop>>, delayStable: boolean) {
-  const installed = await evalIn(app, browserScript((delayStable) => {
-    const nativeUpdater = window.__OPENWORK_ELECTRON__?.updater;
-    if (!nativeUpdater?.getChannel || !nativeUpdater.setChannel) return false;
-    const state: Window["__openworkUpdaterEvalState"] = { checks: [], setChannels: [], stableStarted: false, finishStable: null };
-    window.__openworkUpdaterEvalState = state;
-    window.__openworkApplyDesktopConfig?.({ allowAlphaUpdates: true });
-    window.__openworkSetDesktopConfigRefreshResult?.({ allowAlphaUpdates: true });
-    window.__openworkUpdaterEvalBridge = {
-      getChannel: () => nativeUpdater.getChannel(),
-      setChannel: async (channel) => { state.setChannels.push(channel); return nativeUpdater.setChannel(channel); },
-      check: async (channel) => {
-        state.checks.push(channel);
-        if (delayStable && channel === "stable") {
-          state.stableStarted = true;
-          return new Promise((resolve) => { state.finishStable = () => resolve({ available: true, channel: "stable", currentVersion: "0.18.0", latestVersion: "9.9.9" }); });
-        }
-        return { available: false, channel, currentVersion: "0.18.0", latestVersion: channel === "alpha" ? "0.18.0-alpha.1" : "0.18.0" };
-      },
-      download: async () => ({ ok: false, reason: "unused" }),
-      installAndRestart: async () => ({ ok: false, reason: "unused" }),
-      onDownloadProgress: () => () => {},
-    };
-    return true;
-  }, [delayStable]));
-  if (installed !== true) throw new Error("Could not install updater race bridge.");
-}
-
-export async function updaterChannelWorld(_seed: Seed) {
-  if (process.platform !== "darwin") throw new SkipError(`run on macOS (Alpha is unavailable on ${process.platform})`);
-  const profileDir = await mkdtemp(join(tmpdir(), "openwork-updater-channel-eval-"));
-  const host = localHost();
-  const env = { PORT: String(await allocateFreePort()) };
-  const app = await desktop({ name: "updater-channel-selection", host, profileDir, env });
-  const workspace = await createAndSelectWorkspace(app, { path: join(profileDir, "workspace") });
-  await installUpdaterRaceBridge(app, true);
-  await go(app, `/workspace/${workspace.workspaceId}/settings/updates`);
-  let active = app;
-  const relaunch = async () => {
-    await active.client.send("Browser.close").catch((error: unknown) => {
-      const message = error instanceof Error ? error.message : String(error);
-      if (!/CDP websocket (?:failed|closed)/i.test(message)) throw error;
-    });
-    const deadline = Date.now() + 30_000;
-    while (Date.now() < deadline) {
-      const stopped = await fetch(`${active.handle.cdpUrl.replace(/\/$/, "")}/json/version`, {
-        signal: AbortSignal.timeout(1_000),
-      }).then(() => false, () => true);
-      if (stopped) break;
-      await new Promise((resolveDelay) => setTimeout(resolveDelay, 250));
-    }
-    await active.stop();
-    active = await desktop({ name: "updater-channel-selection", host, profileDir, env });
-    await go(active, "/session");
-    await installUpdaterRaceBridge(active, false);
-    await go(active, `/workspace/${workspace.workspaceId}/settings/updates`);
-    await waitForBehavior(active, () => (window.location.hash.includes("/settings/updates") && Boolean(document.querySelector<HTMLElement>('[aria-label="Release channel"]'))), {
-      timeoutMs: 60_000,
-      label: "relaunched Updates page",
-    });
-    return active;
-  };
-  return {
-    app,
-    relaunch,
-    async [Symbol.asyncDispose]() {
-      await active.stop();
-      await host[Symbol.asyncDispose]();
-      await rm(profileDir, { recursive: true, force: true });
-    },
-  };
-}
-
 function shellQuote(value: string): string {
   return `'${value.replace(/'/g, `'"'"'`)}'`;
 }
 
 function remoteCommand(sandbox: string, command: string): string[] {
   return ["exec", sandbox, "--", `bash -lc ${shellQuote(command)}`];
-}
-
-async function cleanup(label: string, action: () => PromiseLike<unknown>): Promise<void> {
-  try {
-    await action();
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(`[openwork/testkit] ${label} cleanup failed: ${message}`);
-  }
-}
-
-export async function enterpriseTlsWorld(seed: Seed, { place }: { place: Place }) {
-  const den = await seed.den();
-  const provisioned = await provisionDesktopSandbox({
-    ref: process.env.OPENWORK_EVAL_REF?.trim() || process.env.GITHUB_SHA?.trim() || "dev",
-    name: "den-behind-enterprise-tls",
-    reuse: process.env.OPENWORK_EVAL_DAYTONA_SANDBOX?.trim(),
-    log: (line) => console.error(`[openwork/testkit] ${line}`),
-  });
-  const profileDir = `/workspace/.openwork-daytona/profiles/enterprise-tls-${process.pid}-${Date.now()}`;
-  const edge = enterpriseTlsEdgeDaytonaCommands({ sandboxId: provisioned.sandbox, upstream: den.ref.webUrl });
-  let edgeStarted = false;
-  let rootInstallAttempted = false;
-  let rawApp: Awaited<ReturnType<typeof desktop>> | null = null;
-  let trustedApp: Awaited<ReturnType<typeof startApp>> | null = null;
-  const host = daytonaSandbox(provisioned.sandbox);
-
-  const dispose = async () => {
-    if (trustedApp) await cleanup("dispose trusted enterprise TLS app", () => trustedApp?.[Symbol.asyncDispose]() ?? Promise.resolve());
-    if (rawApp) await cleanup("dispose pre-trust enterprise TLS app", () => rawApp?.stop() ?? Promise.resolve());
-    await cleanup("remove caller-owned enterprise TLS profile", () => checkedExec(
-      defaultDaytonaExec,
-      ["exec", provisioned.sandbox, "--", "rm", "-rf", profileDir],
-      `remove caller-owned profile ${profileDir}`,
-      { timeoutMs: 30_000 },
-    ));
-    if (rootInstallAttempted) {
-      await cleanup("remove enterprise TLS root", () => checkedExec(defaultDaytonaExec, edge.removeRoot, "remove enterprise TLS root", { timeoutMs: 120_000 }));
-    }
-    if (edgeStarted) {
-      await cleanup("stop enterprise TLS edge", () => checkedExec(defaultDaytonaExec, edge.stop, "stop enterprise TLS edge", { timeoutMs: 30_000 }));
-    }
-    await cleanup("dispose Daytona desktop host", () => host[Symbol.asyncDispose]());
-    if (provisioned.created) await cleanup("delete Daytona desktop sandbox", () => deleteSandboxes([provisioned.sandbox]));
-  };
-
-  try {
-    for (const [index, command] of edge.prepare.entries()) {
-      await checkedExec(defaultDaytonaExec, command, `prepare enterprise TLS edge chunk ${index + 1}/${edge.prepare.length}`, { timeoutMs: 30_000 });
-    }
-    await checkedExec(defaultDaytonaExec, edge.start, "start enterprise TLS edge", { timeoutMs: 120_000 });
-    edgeStarted = true;
-    await checkedExec(defaultDaytonaExec, edge.probe, "probe enterprise TLS edge", { timeoutMs: 30_000 });
-    rawApp = await desktop({
-      name: "enterprise-tls-before-os-trust",
-      host,
-      profileDir,
-      bootstrap: { baseUrl: edge.candidateUrl, requireSignin: false },
-    });
-    // TODO(primitive): seed a named workspace in a caller-owned desktop profile.
-    const seededWorkspaceNames = await seed.evalIn(
-      rawApp,
-      browserScript((folderPath) => window.__OPENWORK_ELECTRON__.invokeDesktop("workspaceCreate", {
-        folderPath,
-        name: "enterprise-tls-profile-continuity"
-      }).then((state) => state.workspaces.map((workspace) => workspace.displayName)), [`${profileDir}/continuity-workspace`]),
-      { awaitPromise: true },
-    );
-    if (!Array.isArray(seededWorkspaceNames) || !seededWorkspaceNames.includes("enterprise-tls-profile-continuity")) {
-      throw new Error("Could not seed the enterprise TLS continuity workspace.");
-    }
-    await waitForBehavior(
-      rawApp,
-      () => (window.__openworkControl?.listActions?.().some((action) => action.id === "auth.exchange-grant")),
-      { timeoutMs: 60_000, label: "pre-trust sign-in reachability action" },
-    );
-    const grant = await createDesktopHandoffGrant(den.admin);
-    const app = rawApp;
-    return {
-      app,
-      den,
-      edge,
-      grant,
-      profileDir,
-      async installTrust() {
-        await app.stop();
-        rawApp = null;
-        rootInstallAttempted = true;
-        await checkedExec(
-          defaultDaytonaExec,
-          edge.installRoot,
-          "ENTERPRISE_TLS_ROOT_INSTALL_REQUIRED (root and update-ca-certificates)",
-          { timeoutMs: 120_000 },
-        );
-        const candidateDen = { ...den, ref: { webUrl: edge.candidateUrl, apiUrl: `${edge.candidateUrl}/api/den` } };
-        trustedApp = await startApp({ den: candidateDen, as: "admin", place, host, profileDir });
-        return trustedApp;
-      },
-      inspectBundle() {
-        const bundlePath = `${profileDir}/electron-userdata/system-ca-bundle.pem`;
-        return checkedExec(
-          defaultDaytonaExec,
-          remoteCommand(provisioned.sandbox, [
-            "set -euo pipefail",
-            `test -s ${shellQuote(bundlePath)}`,
-            `/usr/bin/openssl crl2pkcs7 -nocrl -certfile ${shellQuote(bundlePath)} | /usr/bin/openssl pkcs7 -print_certs -noout`,
-          ].join("; ")),
-          "inspect product-generated profile system CA bundle",
-          { timeoutMs: 30_000 },
-        );
-      },
-      probeSelectiveTrust(encodedProbe: string) {
-        const bundlePath = `${profileDir}/electron-userdata/system-ca-bundle.pem`;
-        return checkedExec(
-          defaultDaytonaExec,
-          remoteCommand(
-            provisioned.sandbox,
-            `export NODE_EXTRA_CA_CERTS=${shellQuote(bundlePath)}; /usr/bin/env node --input-type=module -e "\$(printf %s ${shellQuote(encodedProbe)} | base64 -d)" ${shellQuote(edge.candidateUrl)} ${shellQuote(edge.negativeUrl)}`,
-          ),
-          "probe selective trust with product-generated CA bundle",
-          { timeoutMs: 30_000 },
-        );
-      },
-      readEdgeRequests() {
-        return checkedExec(defaultDaytonaExec, edge.requests, "read enterprise TLS edge requests", { timeoutMs: 30_000 });
-      },
-      [Symbol.asyncDispose]: dispose,
-    };
-  } catch (error) {
-    await dispose();
-    throw error;
-  }
 }
 
 export async function appDenTlsFaultWorld(_seed: Seed, { place }: { place: Place }) {
@@ -1295,129 +889,6 @@ export async function toolTesterWorld(seed: Seed) {
     // TODO(primitive): assert a visible button's disabled state.
     async runToolDisabled(): Promise<boolean> {
       return await seed.evalIn(web, () => ([...document.querySelectorAll("button")].some((button) => button.textContent?.trim() === "Run tool" && button.disabled))) === true;
-    },
-  };
-}
-
-export async function managedVaultWorld(_seed: Seed, { place }: { place: Place }) {
-  const stamp = Date.now();
-  const profileDir = await mkdtemp(join(tmpdir(), "openwork-vault-recovery-"));
-  const workspacePath = join(tmpdir(), `openwork-vault-recovery-ws-${stamp}`);
-  const names = { managedA: `vault-a-${stamp}`, managedB: `vault-b-${stamp}`, plain: `plain-${stamp}` };
-  const keys = {
-    one: `openwork-eval-secure-storage-key-one-${stamp}`,
-    two: `openwork-eval-secure-storage-key-two-${stamp}`,
-  };
-  const mock = await startMockMcp({ port: await allocateFreePort() });
-  let app = await desktop({ name: "managed-vault-recovery", host: place.host(), profileDir, env: { OPENWORK_ENCRYPTION_KEY: keys.one } });
-  const workspace = await createAndSelectWorkspace(app, { path: workspacePath });
-  const serverTarget = async (surface = app) => {
-    const deadline = Date.now() + 120_000;
-    while (Date.now() < deadline) {
-      const info = await evalIn(surface, () => (window.__OPENWORK_ELECTRON__?.invokeDesktop?.("openworkServerInfo")), {
-        awaitPromise: true,
-        timeoutMs: 15_000,
-      }).catch(() => null);
-      if (isRecord(info)) {
-        const baseUrl = String(info.baseUrl ?? "").replace(/\/+$/, "");
-        const token = String(info.ownerToken ?? info.clientToken ?? "");
-        if (baseUrl && token) return { baseUrl, token };
-      }
-      await new Promise((resolveDelay) => setTimeout(resolveDelay, 1_000));
-    }
-    throw new Error("embedded openwork-server credentials not ready");
-  };
-  const api = async (target: { baseUrl: string; token: string }, method: string, path: string, payload?: unknown) => {
-    const response = await fetch(`${target.baseUrl}${path}`, {
-      method,
-      headers: { authorization: `Bearer ${target.token}`, ...(payload === undefined ? {} : { "content-type": "application/json" }) },
-      ...(payload === undefined ? {} : { body: JSON.stringify(payload) }),
-      signal: AbortSignal.timeout(20_000),
-    });
-    return { status: response.status, body: await response.json().catch(() => null) };
-  };
-  const completeOAuth = async (authorizeUrl: string) => {
-    const authorization = await fetch(authorizeUrl, { redirect: "manual", signal: AbortSignal.timeout(20_000) });
-    const callbackUrl = authorization.headers.get("location");
-    if (authorization.status !== 302 || !callbackUrl) throw new Error("The mock IdP did not redirect to a callback URL.");
-    if (!callbackUrl.includes("/mcp/oauth/callback")) throw new Error(`Managed OAuth returned an unexpected callback URL: ${callbackUrl}`);
-    const callback = await fetch(callbackUrl, { signal: AbortSignal.timeout(20_000) });
-    if (!callback.ok) throw new Error(`Managed OAuth callback failed: ${callback.status}`);
-  };
-  const managedPath = (name: string) => `/workspace/${encodeURIComponent(workspace.workspaceId)}/mcp/${encodeURIComponent(name)}/managed`;
-  const waitManaged = async (target: { baseUrl: string; token: string }, name: string, wanted: string) => {
-    const deadline = Date.now() + 60_000;
-    while (Date.now() < deadline) {
-      const result = await api(target, "GET", managedPath(name));
-      if (isRecord(result.body) && result.body.status === wanted) return result.body;
-      await new Promise((resolveDelay) => setTimeout(resolveDelay, 1_000));
-    }
-    throw new Error(`Managed connection ${name} did not reach ${wanted}.`);
-  };
-  const firstTarget = await serverTarget(app);
-  const workspaceMcpPath = `/workspace/${encodeURIComponent(workspace.workspaceId)}/mcp`;
-  for (const name of [names.managedA, names.managedB]) {
-    const started = await api(firstTarget, "POST", `${workspaceMcpPath}/managed`, {
-      name,
-      url: mock.mcpUrl,
-      oauth: { applicationType: "native", requestedScopes: ["mcp:read", "mcp:write"] },
-    });
-    if (started.status !== 201 || !isRecord(started.body) || started.body.status !== "needs_auth" || typeof started.body.authorizeUrl !== "string") {
-      throw new Error(`Could not create managed MCP ${name}: ${JSON.stringify(started.body)}`);
-    }
-    await completeOAuth(started.body.authorizeUrl);
-    const connected = await waitManaged(firstTarget, name, "connected");
-    if (connected.hasCredential !== true || connected.enabled !== true) {
-      throw new Error(`Managed MCP ${name} did not retain its credential: ${JSON.stringify(connected)}`);
-    }
-  }
-  const plain = await api(firstTarget, "POST", workspaceMcpPath, {
-    name: names.plain,
-    config: { type: "remote", url: mock.mcpUrl, enabled: true, oauth: false },
-  });
-  if (plain.status !== 200) throw new Error(`Could not add ordinary MCP: ${JSON.stringify(plain.body)}`);
-  const relaunch = async () => {
-    await app.stop();
-    app = await desktop({ name: "managed-vault-recovery", host: place.host(), profileDir, env: { OPENWORK_ENCRYPTION_KEY: keys.two } });
-    return app;
-  };
-  const openMcpSettings = async (surface = app) => {
-    await go(surface, `/workspace/${workspace.workspaceId}/settings/mcp`);
-  };
-  const reconnect = async (target: { baseUrl: string; token: string }, name: string) => {
-    const restarted = await api(target, "POST", `${managedPath(name)}/connect`);
-    if (restarted.status !== 200 || !isRecord(restarted.body) || typeof restarted.body.authorizeUrl !== "string") {
-      throw new Error(`Could not reconnect ${name}: ${JSON.stringify(restarted.body)}`);
-    }
-    await completeOAuth(restarted.body.authorizeUrl);
-    return waitManaged(target, name, "connected");
-  };
-  const vaultFiles = async () => (await readdir(profileDir, { recursive: true }))
-    .map(String)
-    .filter((entry) => entry.endsWith("local-managed-mcp-vault.json"))
-    .map((entry) => join(profileDir, entry));
-  return {
-    app,
-    mock,
-    profileDir,
-    workspacePath,
-    workspace,
-    names,
-    serverTarget,
-    api,
-    managedPath,
-    workspaceMcpPath,
-    waitManaged,
-    firstTarget,
-    relaunch,
-    openMcpSettings,
-    reconnect,
-    vaultFiles,
-    async [Symbol.asyncDispose]() {
-      await app.stop().catch(() => undefined);
-      await mock[Symbol.asyncDispose]();
-      await rm(profileDir, { recursive: true, force: true });
-      await rm(workspacePath, { recursive: true, force: true });
     },
   };
 }

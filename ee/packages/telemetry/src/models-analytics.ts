@@ -1,8 +1,6 @@
 import { createHash } from "node:crypto"
 import type { createDenDb } from "@openwork-ee/den-db"
 import { and, eq, sql } from "@openwork-ee/den-db/drizzle"
-import { readFeatures } from "@openwork-ee/den-db/organization-features"
-import { parseFeatureEnvironment } from "@openwork/features"
 import { ModelsAnalyticsEventTable, ModelsAnalyticsSettingsTable, OrganizationTable, OrgSubscriptionTable } from "@openwork-ee/den-db/schema"
 import { modelsAnalyticsEventSchema, type ModelsAnalyticsEvent } from "@openwork-ee/telemetry-contracts"
 
@@ -20,13 +18,9 @@ export async function readModelsAnalyticsSettings(db: Db, orgId: ModelsAnalytics
   const [subscription] = await db.select({ status: OrgSubscriptionTable.status })
     .from(OrgSubscriptionTable).where(and(eq(OrgSubscriptionTable.organization_id, orgId), eq(OrgSubscriptionTable.type, "inference"))).limit(1)
   const metadata = record(org?.metadata)
-  // Shared by den-api and the gateway, which receive the same DEN_DEPLOYMENT /
-  // DEN_FEATURE_* configuration; den-api validates it at boot.
-  const available = org ? (await readFeatures(db, orgId, parseFeatureEnvironment(process.env))).modelsAnalytics : false
+  const available = org !== undefined
   const subscribed = subscription?.status === "active" || subscription?.status === "trialing"
   const modelsEnabled = record(metadata.inference).enabled === true
-  // Unreleased organizations do not touch the new tables. This also keeps
-  // existing Models traffic working during an application-first rollout.
   const settings = available ? (await db.select().from(ModelsAnalyticsSettingsTable)
     .where(eq(ModelsAnalyticsSettingsTable.org_id, orgId)).limit(1))[0] : undefined
   return {
@@ -55,8 +49,6 @@ export async function appendModelsAnalyticsEvents(db: Db, input: {
     && Date.parse(event.timestamp) <= now + 60_000)
   if (!events.length) return
   await db.transaction(async (tx) => {
-    // Serialize collection with opt-out. Once disabling returns, an in-flight
-    // inference response cannot append under an older consent decision.
     const [current] = await tx.select({ enabled: ModelsAnalyticsSettingsTable.enabled, consentedAt: ModelsAnalyticsSettingsTable.consented_at })
       .from(ModelsAnalyticsSettingsTable).where(eq(ModelsAnalyticsSettingsTable.org_id, input.orgId)).limit(1).for("update")
     if (!current?.enabled || current.consentedAt?.getTime() !== consentedAt) return
@@ -78,11 +70,9 @@ function missingTable(error: unknown): boolean {
 }
 
 export async function deleteModelsAnalyticsForOrganization(tx: Pick<Db, "delete">, orgId: ModelsAnalyticsOrgId) {
-  // Lock/remove consent first so an in-flight append cannot recreate history.
   for (const table of [ModelsAnalyticsSettingsTable, ModelsAnalyticsEventTable]) {
     try { await tx.delete(table).where(eq(table.org_id, orgId)) }
     catch (error) {
-      // Existing organization deletion also works before the additive migration.
       if (!missingTable(error)) throw error
     }
   }

@@ -2,15 +2,15 @@ import { addInitScript, allocateFreePorts, browserScript, reattachSurface, reloa
 import { CATALOG_FAST_VARIANT, FAST_DEFAULT_VARIANT, fastVariantId } from "@openwork/types/cloud-model-fast";
 import { spawn } from "node:child_process";
 import { mkdtempSync, realpathSync } from "node:fs";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { evalIn, assertNoLiveSecret, liveOpenAiEnabled, liveOpenAiModel, liveProviderId, provisionLiveOpenAi } from "@openwork/behaviors";
+import { evalIn, go, assertNoLiveSecret, liveOpenAiEnabled, liveOpenAiModel, liveProviderId, provisionLiveOpenAi } from "@openwork/behaviors";
 import { resolveEvalEngine, SkipError, type Seed } from "@openwork/env";
 import type { MockAgentWorkload, MockMcpHandle } from "@openwork/labs";
 import { chatContinuity } from "./chat-continuity.ts";
 import { readDefaultDesktopPolicy } from "./desktop-policies.ts";
+import { denForAppWeb, signedInAppWeb } from "./signed-in-app-web.ts";
 
 const repoRoot = resolve(import.meta.dirname, "../..");
 
@@ -68,68 +68,6 @@ function recordValue(value: unknown, key: string): unknown {
   return isRecord(value) ? value[key] : undefined;
 }
 
-async function listen(server: Server): Promise<string> {
-  await new Promise<void>((resolveListen, reject) => {
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", resolveListen);
-  });
-  const address = server.address();
-  if (!address || typeof address === "string") throw new Error("Mock server did not bind a TCP port.");
-  return `http://127.0.0.1:${address.port}`;
-}
-
-async function close(server: Server): Promise<void> {
-  server.closeAllConnections();
-  await new Promise<void>((resolveClose, reject) => server.close((error) => error ? reject(error) : resolveClose()));
-}
-
-function readBody(request: IncomingMessage): Promise<string> {
-  request.setEncoding("utf8");
-  return new Promise((resolveBody, reject) => {
-    let body = "";
-    request.on("data", (chunk: string) => { body += chunk; });
-    request.on("end", () => resolveBody(body));
-    request.on("error", reject);
-  });
-}
-
-function sendJson(response: ServerResponse, status: number, body: unknown): void {
-  response.writeHead(status, {
-    "access-control-allow-origin": "*",
-    "content-type": "application/json",
-    "cache-control": "no-store",
-  });
-  response.end(JSON.stringify(body));
-}
-
-function completionChunk(id: string, content: string, finishReason: string | null) {
-  return {
-    id,
-    object: "chat.completion.chunk",
-    choices: [{ index: 0, delta: content ? { content } : {}, finish_reason: finishReason }],
-  };
-}
-
-function sendStream(response: ServerResponse, chunks: unknown[], intervalMs = 0): void {
-  response.writeHead(200, {
-    "content-type": "text/event-stream",
-    "cache-control": "no-cache",
-    connection: "keep-alive",
-  });
-  let index = 0;
-  const writeNext = () => {
-    const chunk = chunks[index];
-    if (chunk !== undefined) {
-      response.write(`data: ${JSON.stringify(chunk)}\n\n`);
-      index += 1;
-      setTimeout(writeNext, intervalMs);
-      return;
-    }
-    response.end("data: [DONE]\n\n");
-  };
-  writeNext();
-}
-
 export async function configureProvider(
   seed: Seed,
   app: Surface,
@@ -140,7 +78,7 @@ export async function configureProvider(
   engine = resolveEvalEngine(),
 ): Promise<void> {
   // TODO(primitive): configure a workspace provider and select its model.
-  const result = await seed.evalIn(app, browserScript(async (workspaceId, providerId, modelId, defaultModel, opencodeJson) => {
+  const result = await seed.evalIn(app, browserScript(async (workspaceId, providerId, modelId, defaultModel, opencodeJson, engine) => {
     const port = localStorage.getItem("openwork.server.port");
     const token = localStorage.getItem("openwork.server.token");
     if (!port || !token) return "missing local server credentials";
@@ -173,8 +111,11 @@ export async function configureProvider(
       body: JSON.stringify({ opencode }),
     });
     if (patched !== "ok") return patched;
-    const reloaded = await request("/workspace/" + encodeURIComponent(workspaceId) + "/engine/reload", { method: "POST" });
-    if (reloaded !== "ok") return reloaded;
+    // V2 observes runtime config writes itself; this route reloads only the legacy engine.
+    if (engine !== "v2") {
+      const reloaded = await request("/workspace/" + encodeURIComponent(workspaceId) + "/engine/reload", { method: "POST" });
+      if (reloaded !== "ok") return reloaded;
+    }
     const raw = localStorage.getItem("openwork.preferences");
     let preferences: Record<string, unknown> = {};
     try { preferences = raw ? JSON.parse(raw) : {}; } catch { preferences = {}; }
@@ -188,11 +129,15 @@ export async function configureProvider(
     localStorage.setItem("openwork.defaultModel", defaultModel);
     localStorage.removeItem("openwork.sessionModels." + workspaceId);
     return "ok";
-  }, [workspaceId, providerId, modelId, `${providerId}/${modelId}`, JSON.stringify(opencode)]), { awaitPromise: true, timeoutMs: 120_000 });
+  }, [workspaceId, providerId, modelId, `${providerId}/${modelId}`, JSON.stringify(opencode), engine]), { awaitPromise: true, timeoutMs: 120_000 });
   if (result !== "ok") throw new Error(`Provider configuration failed: ${String(result)}`);
   // Wait for navigation before starting the model-readiness evaluation;
   // scheduling location.reload() can run that evaluation in the old document.
   await reload(app);
+  // Provider data is visibility-gated. OAuth or another fixture window can
+  // retain foreground focus across reload, so activate the configured target
+  // before observing its model picker, just as a person opening the app does.
+  await app.client.send("Page.bringToFront");
   // The display name the app gives the configured model once its provider list
   // contains it; a fixture provider declares it in opencode.json, a live one is
   // read from the engine catalog.
@@ -238,10 +183,19 @@ export async function configureProvider(
           const configured = configuredName ?? catalogName ?? modelId;
           // The app never shows an opaque gateway id as a name: it reads "<Provider> model" instead.
           const name = /^(gwm|ipr)_/.test(configured) ? (providerName ? providerName + " model" : "Model") : configured;
-          const chip = document.querySelector<HTMLElement>('button[aria-label="Change model"]');
+          // Retained conversations keep their composers mounted. Read the
+          // model a person can actually see, not a hidden earlier workspace's
+          // first button (which can legitimately still say "Select model").
+          const chip = [...document.querySelectorAll<HTMLElement>('button[aria-label="Change model"]')].find((element) => {
+            const rect = element.getBoundingClientRect();
+            const style = getComputedStyle(element);
+            return rect.width > 0 && rect.height > 0 && rect.bottom > 0 && rect.top < innerHeight
+              && rect.right > 0 && rect.left < innerWidth && style.display !== "none"
+              && style.visibility !== "hidden" && !element.closest('[aria-hidden="true"]');
+          });
           const chipText = chip?.innerText.trim() ?? "";
           const stored = localStorage.getItem("openwork.defaultModel");
-          observed = JSON.stringify({ composerModel: chipText, storedDefault: stored, expected: { name, ref: expectedRef } });
+          observed = JSON.stringify({ composerModel: chipText, storedDefault: stored, focused: document.hasFocus(), visibility: document.visibilityState, route: location.hash, expected: { name, ref: expectedRef } });
           if (stored === expectedRef && chipText.startsWith(name)) return true;
         }
       } catch {}
@@ -302,25 +256,29 @@ async function seedSessionRetry(
 }
 
 export async function emptyChat(seed: Seed) {
-  const app = await seed.desktop({ name: "chat-empty" });
-  const workspace = await seed.workspace(app, seed.tmpPath("chat-empty"));
+  const workspacePath = seed.tmpPath("chat-empty");
+  const app = await seed.appWeb({ name: "chat-empty", workspacePath, mouse: true });
+  const workspace = await seed.workspace(app, workspacePath);
   const session = await seedSessionRetry(seed, app);
   return { app, workspace, session };
 }
 
 export async function paletteSessionActions(seed: Seed) {
-  const app = await seed.desktop({ name: "command-palette-pin-rename" });
-  const workspace = await seed.workspace(app, seed.tmpPath("command-palette-pin-rename"));
+  const workspacePath = seed.tmpPath("command-palette-pin-rename");
+  const app = await seed.appWeb({ name: "command-palette-pin-rename", workspacePath, mouse: true });
+  const workspace = await seed.workspace(app, workspacePath);
   const session = await seedSessionRetry(seed, app, { title: "Palette pin rename probe" });
   return { app, workspace, session };
 }
 
-async function splitPaneQuestions(
+export async function splitPaneQuestions(
   seed: Seed,
   name: string,
   agentWorkloads: MockAgentWorkload[],
   policy: Record<string, unknown> = { permission: { question: "allow" } },
-  surface: AppSurface = "electron",
+  // The app in headless Chrome by default; pass "electron" only for a world
+  // whose claim needs the desktop main process (quit and relaunch).
+  surface: AppSurface = "web",
   options: { createWorkspace?: boolean } = {},
 ) {
   const providerId = "split-send-mock";
@@ -339,6 +297,8 @@ async function splitPaneQuestions(
       name,
       workspacePath,
       mocks: { agent: mock },
+      // A fine, hover-capable pointer, as in the desktop app these journeys came from.
+      mouse: true,
     });
     app = web;
     const configured = web.mocks.agent;
@@ -355,8 +315,9 @@ async function splitPaneQuestions(
   // Daytona; the engine then merges the repo's `.opencode/opencode.json`
   // (`"permission": "allow"`) after the workspace's own opencode.json, so a
   // workspace `bash: "ask"` never holds (observed agent ruleset
-  // `[* allow, bash ask, * allow]`; the last match wins).
-  const workspace = await seed.workspace(app, workspacePath, options.createWorkspace ? { create: true } : {});
+  // `[* allow, bash ask, * allow]`; the last match wins). The app in a browser
+  // already starts on the declared path, so it never adopts that default.
+  const workspace = await seed.workspace(app, workspacePath, options.createWorkspace && surface === "electron" ? { create: true } : {});
   // Arrange an allowed native question tool independently of custom-agent defaults.
   // TODO(primitive): write workspace fixture files through a first-class seed API.
   const questionPolicyWritten = await seed.evalIn(app, browserScript(async (workspaceId, content) => {
@@ -371,6 +332,7 @@ async function splitPaneQuestions(
   }, [workspace.workspaceId, JSON.stringify(policy)]), { awaitPromise: true });
   if (questionPolicyWritten !== true) throw new Error("Could not arrange the question-tool policy.");
   await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
+    ...policy,
     provider: {
       [providerId]: {
         npm: "@ai-sdk/openai-compatible",
@@ -459,14 +421,36 @@ export async function abandonedQuestion(seed: Seed) {
 }
 
 /** Real provider errors and automatic recovery, without synthetic UI events. */
-export async function sessionProviderErrorRecovery(seed: Seed) {
+export async function sessionProviderErrorRecovery(seed: Seed, options: { terminalRejection?: boolean; retiredSavedModel?: boolean } = {}) {
   const prompt = "Prepare a short reliability summary.";
   const reply = "The reliability summary is ready.";
+  // Opt-in: a prompt the provider always refuses with a non-retryable 400 before any text.
+  const rejected = { prompt: "Summarize the rejected reliability report.", message: "The provider rejected this request before writing an answer." };
   const base = await splitPaneQuestions(seed, "session-provider-error-recovery", [{
     promptMarker: prompt, latestUserTurn: true, serverErrorAttempts: 2, finalReply: reply, steps: [],
-  }]);
+  }, ...(options.terminalRejection ? [{
+    promptMarker: rejected.prompt, latestUserTurn: true, terminalErrorMessage: rejected.message, finalReply: "Never served.", steps: [],
+  }] : [])]);
   const session = await seedSessionRetry(seed, base.app, { title: "Response recovery" });
-  return { ...base, session, prompt, reply };
+  // Opt-in: the person chose a model earlier that this provider has since dropped.
+  const models = { kept: { providerID: "split-send-mock", modelID: "split-send-model", name: "Split send model" }, retired: { providerID: "split-send-mock", modelID: "retired-model" } };
+  if (options.retiredSavedModel) {
+    const ref = `${models.retired.providerID}/${models.retired.modelID}`;
+    const saved = await seed.evalIn(base.app, browserScript((workspaceId, ref) => {
+      const raw = localStorage.getItem("openwork.preferences");
+      let preferences: Record<string, unknown> = {};
+      try { preferences = raw ? JSON.parse(raw) : {}; } catch { preferences = {}; }
+      const [providerID, modelID] = ref.split("/");
+      localStorage.setItem("openwork.preferences", JSON.stringify({ ...preferences, defaultModel: { providerID, modelID }, modelVariant: null }));
+      localStorage.setItem("openwork.defaultModel", ref);
+      localStorage.setItem("openwork.modelChoice.explicit", "1");
+      localStorage.removeItem("openwork.sessionModels." + workspaceId);
+      return localStorage.getItem("openwork.defaultModel");
+    }, [base.workspace.workspaceId, ref]));
+    if (saved !== ref) throw new Error(`Saving the retired default failed: ${String(saved)}`);
+    await reload(base.app);
+  }
+  return { ...base, session, prompt, reply, rejected, models };
 }
 
 /** Real native permissions and a provider retry, without synthetic UI events. */
@@ -485,7 +469,7 @@ export async function permissionStopRecovery(seed: Seed) {
       } }],
     })),
     { promptMarker: followup.prompt, latestUserTurn: true, finalReply: followup.reply, steps: [] },
-  ], { permission: { bash: "ask" } }, "electron", { createWorkspace: true });
+  ], { permission: { bash: "ask" } }, "web", { createWorkspace: true });
   const stoppedSession = await seedSessionRetry(seed, base.app, { title: "Stop permission task" });
   const otherSession = await seedSessionRetry(seed, base.app, { title: "Keep permission task" });
   return { ...base, engine, retry, followup, stopped: { ...stopped, ...stoppedSession }, other: { ...other, ...otherSession } };
@@ -507,7 +491,7 @@ export async function restartUpdateTaskWorld(seed: Seed) {
     })),
     { promptMarker: completed.prompt, latestUserTurn: true, finalReply: completed.reply, steps: [] },
     { promptMarker: recovery.marker, latestUserTurn: true, finalReply: recovery.reply, steps: [] },
-  ], { permission: { bash: "allow" } });
+  ], { permission: { bash: "allow" } }, "electron");
   const activeSession = await seedSessionRetry(seed, base.app, { title: active.title });
   const stoppedSession = await seedSessionRetry(seed, base.app, { title: stopped.title });
   const completedSession = await seedSessionRetry(seed, base.app, { title: completed.title });
@@ -634,14 +618,10 @@ export async function shimmerChat(seed: Seed) {
   return base;
 }
 
-export async function focusContinuity(seed: Seed) {
-  const app = await seed.desktop({ name: "composer-focus-continuity" });
-  const workspace = await seed.workspace(app, seed.tmpPath("composer-focus-continuity"));
-  const session = await seedSessionRetry(seed, app);
-  return { app, workspace, session };
-}
-
-async function seedModelPicker(seed: Seed, options: { disabledAutoDesktop?: boolean; disableAutoByEnvironment?: boolean } = {}) {
+async function seedModelPicker(seed: Seed, options: { disabledAutoDesktop?: boolean; disableAutoByEnvironment?: boolean; openWorkModels?: boolean } = {}) {
+  // Free Auto and organization OpenWork Models are separate entitlement states.
+  // Members with OpenWork Models pick them directly instead of seeing free Auto.
+  const openWorkModels = options.openWorkModels ?? options.disabledAutoDesktop ?? false;
   const [webPort] = await allocateFreePorts(1);
   if (!webPort) throw new Error("No app-web port available for the picker fixture");
   const den = await seed.den({
@@ -710,13 +690,13 @@ async function seedModelPicker(seed: Seed, options: { disabledAutoDesktop?: bool
   const organization = { providerID: organizationProviderId, modelID: "organization-model" };
   const providerOptions = { baseURL: `${witness.url}/v1`, apiKey: "synthetic-picker-key" };
   await configureProvider(seed, app, workspace.workspaceId, organization.providerID, organization.modelID, {
-    enabled_providers: [auto.providerID, byok.providerID, organization.providerID, "openwork"],
+    enabled_providers: [auto.providerID, byok.providerID, organization.providerID, ...(openWorkModels ? ["openwork"] : [])],
     provider: {
       // Native Auto belongs to the local relay; do not replace it with a mock BYOK provider.
       ...(options.disabledAutoDesktop ? {} : { [auto.providerID]: { npm: "@ai-sdk/openai-compatible", name: "OpenWork Free", options: providerOptions,
         models: { [auto.modelID]: { name: "GPT-6 Luna" } } } }),
-      openwork: { npm: "@ai-sdk/openai-compatible", name: "OpenWork Models", options: providerOptions,
-        models: { "hosted-model": { name: "Hosted witness" } } },
+      ...(openWorkModels ? { openwork: { npm: "@ai-sdk/openai-compatible", name: "OpenWork Models", options: providerOptions,
+        models: { "hosted-model": { name: "Hosted witness" } } } } : {}),
       [byok.providerID]: { npm: "@ai-sdk/openai-compatible", name: "BYOK provider", options: providerOptions,
         models: { [byok.modelID]: { name: "BYOK witness" }, [favorite.modelID]: { name: "Pinned witness" }, [recent.modelID]: { name: "Recent witness" } } },
       [organization.providerID]: { npm: "@ai-sdk/openai-compatible", name: "Organization provider", options: providerOptions,
@@ -736,6 +716,67 @@ async function seedModelPicker(seed: Seed, options: { disabledAutoDesktop?: bool
 
 export function modelPicker(seed: Seed) {
   return seedModelPicker(seed);
+}
+
+export function modelPickerWithOpenWorkModels(seed: Seed) {
+  return seedModelPicker(seed, { openWorkModels: true });
+}
+
+/**
+ * A signed-out member offered free Auto and a BYOK model, where the free-access
+ * check that runs before an Auto send can be held, so the member can change
+ * model before the message leaves.
+ */
+export async function autoSendModelChange(seed: Seed) {
+  const workspacePath = seed.tmpPath("auto-send-model-change");
+  const app = await seed.appWeb({
+    name: "auto-send-model-change",
+    workspacePath,
+    mocks: { agent: seed.mock({ isolatedProcessEnv: true }) },
+  });
+  const witness = app.mocks.agent;
+  if (!witness) throw new Error("Missing Auto send model witness");
+  const workspace = await seed.workspace(app, workspacePath);
+  const auto = { providerID: "openwork-free", modelID: "openai/gpt-6-luna" };
+  const byok = { providerID: "auto-send-byok", modelID: "byok-model" };
+  const providerOptions = { baseURL: `${witness.url}/v1`, apiKey: "synthetic-auto-send-key" };
+  // No OpenWork Models provider: with one, members pick it instead of free Auto.
+  await configureProvider(seed, app, workspace.workspaceId, byok.providerID, byok.modelID, {
+    enabled_providers: [auto.providerID, byok.providerID],
+    provider: {
+      [auto.providerID]: { npm: "@ai-sdk/openai-compatible", name: "OpenWork Free", options: providerOptions,
+        models: { [auto.modelID]: { name: "GPT-6 Luna" } } },
+      [byok.providerID]: { npm: "@ai-sdk/openai-compatible", name: "BYOK provider", options: providerOptions,
+        models: { [byok.modelID]: { name: "BYOK witness" } } },
+    },
+  });
+  const session = await seedSessionRetry(seed, app, { title: "Send with Auto" });
+  return {
+    app, workspace, session, auto, byok,
+    requests: () => witness.agentRequests(),
+    async holdAutoCheck() {
+      await seed.evalIn(app, () => {
+        const originalFetch = window.fetch;
+        let release = () => {};
+        const gate = new Promise<void>((resolve) => {
+          const timer = setTimeout(resolve, 60_000);
+          release = () => { clearTimeout(timer); resolve(); };
+        });
+        const fault = { attempts: 0, release: () => { release(); window.fetch = originalFetch; } };
+        window.__openworkSubmissionFault = fault;
+        window.fetch = async (input, init) => {
+          const url = input instanceof Request ? input.url : String(input);
+          if (/\/anonymous-inference\/preflight(\?|$)/.test(url)) {
+            fault.attempts++;
+            await gate;
+          }
+          return originalFetch(input, init);
+        };
+      });
+    },
+    autoCheckAttempts: () => seed.evalIn(app, () => window.__openworkSubmissionFault?.attempts ?? 0),
+    releaseAutoCheck: () => seed.evalIn(app, () => window.__openworkSubmissionFault?.release()),
+  };
 }
 
 /** The picker world plus the chord that opens the command palette on this platform. */
@@ -774,7 +815,7 @@ export function modelPickerDeploymentDisabledAuto(seed: Seed) {
  */
 export async function modelAccessPicker(seed: Seed) {
   const mock = seed.mock({});
-  const den = await seed.den({ mocks: { agent: mock } });
+  const { den, webPort } = await denForAppWeb(seed, { mocks: { agent: mock } });
   const witness = den.mocks.agent;
   const created = await seed.api(den.admin, "/v1/llm-providers", {
     method: "POST",
@@ -792,8 +833,7 @@ export async function modelAccessPicker(seed: Seed) {
   const provider = isRecord(created.body) && isRecord(created.body.llmProvider) ? created.body.llmProvider : null;
   const organizationProviderId = provider && typeof provider.id === "string" ? provider.id : null;
   if (created.response.status !== 201 || !organizationProviderId) throw new Error(`Organization provider setup failed: HTTP ${created.response.status}`);
-  const app = await seed.desktop({ name: "model-access-picker", den, as: "admin" });
-  const workspace = await seed.workspace(app, seed.tmpPath("model-access-picker"), { create: true });
+  const { app, workspace } = await signedInAppWeb(seed, { name: "model-access-picker", den, webPort, workspacePath: seed.tmpPath("model-access-picker") });
   const personal = { providerID: "personal-byok", modelID: "byok-model" };
   // A key the member added on this device before the policy existed. The org's model stays the default.
   const added = await seed.evalIn(app, browserScript(async (workspaceId, opencodeJson) => {
@@ -937,7 +977,7 @@ export async function modelPickerEffortWeb(seed: Seed) {
 
 export async function connectionsMenu(seed: Seed) {
   const connector = seed.mock();
-  const den = await seed.den({ mocks: { connector } });
+  const { den, webPort } = await denForAppWeb(seed, { mocks: { connector } });
   const connections: { id: string; name: string }[] = [];
   for (const name of ["HubSpot", "GitHub", "Slack"]) {
     connections.push(await seed.orgConnection(den.admin, {
@@ -948,7 +988,7 @@ export async function connectionsMenu(seed: Seed) {
       access: { orgWide: true },
     }));
   }
-  const app = await seed.desktop({ den, as: "admin" });
+  const { app } = await signedInAppWeb(seed, { name: "composer-connections-menu", den, webPort, workspacePath: seed.tmpPath("composer-connections-menu") });
   const session = await seedSessionRetry(seed, app);
   return { app, den, session, connections };
 }
@@ -1024,6 +1064,8 @@ export async function attachmentUpload(seed: Seed) {
       }],
     }],
   });
+  // Desktop: in the app in a browser the pending upload fails ("expected 8
+  // bytes, wrote 0") before the thread can settle; see the migration notes.
   const den = await seed.den({ mocks: { agent: mock } });
   const approvalTimeoutMs = 3_000;
   const gateway = await startManualApprovalServer(approvalTimeoutMs);
@@ -1078,8 +1120,8 @@ export async function attachmentUpload(seed: Seed) {
           window.fetch = async (input, init) => {
             const url = input instanceof Request ? input.url : String(input);
             const method = init?.method ?? (input instanceof Request ? input.method : "GET");
-            // The client posts multipart to /workspace/<id>/inbox with the target
-            // path as a form field, not a query parameter.
+            // The client posts the file to /workspace/<id>/inbox with the target
+            // path as a query parameter; a multipart retry carries it as a form field.
             const formPath = init?.body instanceof FormData ? String(init.body.get("path") ?? "") : "";
             if (method === "POST" && /\/inbox(\?|$)/.test(url) && `${url} ${formPath}`.includes("chat-attachments")) {
               fault.attempts++;
@@ -1107,95 +1149,6 @@ export async function attachmentUpload(seed: Seed) {
   }
 }
 
-export const renderCycleFirstReply = "Historical response is complete.";
-export const renderCycleMarker = "STREAM_RENDER_CYCLE";
-export const renderCycleChunks = Array.from({ length: 48 }, (_, index) => `chunk-${index + 1} `);
-
-export async function renderCycle(seed: Seed) {
-  const providerId = "chat-render-cycle-mock";
-  const modelId = "chat-render-cycle-model";
-  const requests: string[] = [];
-  let completionIndex = 0;
-  const provider = createServer((request, response) => {
-    const url = request.url ?? "";
-    requests.push(`${request.method ?? "UNKNOWN"} ${url}`);
-    if (request.method === "GET" && url.startsWith("/v1/models")) {
-      sendJson(response, 200, { object: "list", data: [{ id: modelId, object: "model" }] });
-      return;
-    }
-    if (request.method !== "POST" || (url !== "/v1/chat/completions" && url !== "/chat/completions")) {
-      sendJson(response, 404, { error: { message: "not found" } });
-      return;
-    }
-    void readBody(request).then((body) => {
-      const streaming = body.includes(renderCycleMarker);
-      const contents = streaming ? renderCycleChunks : [renderCycleFirstReply];
-      completionIndex += 1;
-      const id = `chatcmpl-render-cycle-${completionIndex}`;
-      const chunks = [
-        { id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] },
-        ...contents.map((content) => completionChunk(id, content, null)),
-        completionChunk(id, "", "stop"),
-      ];
-      setTimeout(() => sendStream(response, chunks, streaming ? 35 : 0), streaming ? 0 : 1_000);
-    });
-  });
-  const baseUrl = await listen(provider);
-  try {
-    const app = await seed.desktop({ name: "chat-render-cycle-stability", model: `${providerId}/${modelId}` });
-    const workspace = await seed.workspace(app, seed.tmpPath("chat-render-cycle"));
-    await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
-      provider: {
-        [providerId]: {
-          npm: "@ai-sdk/openai-compatible",
-          name: "Chat render-cycle mock",
-          options: { baseURL: `${baseUrl}/v1`, apiKey: "sk-chat-render-cycle" },
-          models: { [modelId]: { name: "Chat render-cycle model" } },
-        },
-      },
-    });
-    // TODO(primitive): enable the renderer profiler before desktop launch.
-    await seed.evalIn(app, () => {
-      localStorage.setItem("openwork.debug.profiler", "1");
-      localStorage.removeItem("openwork.debug.profilerOverlay");
-      location.reload();
-      return true;
-    });
-    const controlsReady = await seed.evalIn(app, async () => {
-      const deadline = Date.now() + 30000;
-      while (Date.now() < deadline) {
-        if (window.__openworkControl?.listActions().some((action) => action.id === "session.create_task" && !action.disabled)) return true;
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-      return false;
-    }, { awaitPromise: true, timeoutMs: 120_000 });
-    if (controlsReady !== true) throw new Error("Session controls did not return after enabling the profiler.");
-    const session = await seedSessionRetry(seed, app);
-    await seed.composerText(app, `Reply with exactly: ${renderCycleFirstReply}`);
-    // TODO(primitive): send an arranged historical turn and await its completion.
-    const historical = await seed.evalIn(app, browserScript(async (expectedReply) => {
-      const sent = await window.__openworkControl.execute("composer.send", null);
-      if (!sent?.ok) throw new Error(String(sent?.error ?? "composer.send failed"));
-      const deadline = Date.now() + 30000;
-      while (Date.now() < deadline) {
-        if (document.body.innerText.includes(expectedReply)) return true;
-        await new Promise((resolve) => setTimeout(resolve, 100));
-      }
-      return false;
-    }, [renderCycleFirstReply]), { awaitPromise: true, timeoutMs: 120_000 });
-    if (historical !== true) throw new Error(`Historical turn did not complete. Requests: ${requests.join("; ")}`);
-    return {
-      app,
-      workspace,
-      session,
-      async [Symbol.asyncDispose]() { await close(provider); },
-    };
-  } catch (error) {
-    await close(provider);
-    throw error;
-  }
-}
-
 export async function streamedToolHistory(seed: Seed) {
   if (resolveEvalEngine() !== "v1") throw new SkipError("native v1 transcript history (OPENWORK_EVAL_ENGINE=v1)");
   const providerId = "streamed-history-mock";
@@ -1215,9 +1168,8 @@ export async function streamedToolHistory(seed: Seed) {
     promptMarker: prompt, latestUserTurn: true, finalReply: answer, finalReplyChunkSize: 2,
     steps: [{ tool: "bash", arguments: { command: command(latestTool), description: "Read the latest history result" } }],
   }] });
-  const den = await seed.den({ mocks: { agent: mock } });
-  const app = await seed.desktop({ name: "streamed-tool-history", den, as: "admin", model: `${providerId}/${modelId}` });
-  const workspace = await seed.workspace(app, seed.tmpPath("streamed-tool-history"));
+  const { den, webPort } = await denForAppWeb(seed, { mocks: { agent: mock } });
+  const { app, workspace } = await signedInAppWeb(seed, { name: "streamed-tool-history", den, webPort, workspacePath: seed.tmpPath("streamed-tool-history") });
   const profile = await seed.api(den.admin, "/v1/me");
   if (!profile.response.ok || !isRecord(profile.body) || !isRecord(profile.body.user)
     || typeof profile.body.user.id !== "string" || !profile.body.user.id.trim()) {
@@ -1295,6 +1247,98 @@ export const streamedMarkdownAnswer = [
   "Closing paragraph epsilon.",
 ].join("\n");
 
+export const quotedDraftMarker = "QUOTED_DRAFT_ANSWER";
+/** The reply a person asked for, written one line each with "•" bullets. */
+export const quotedDraft = [
+  "Hi team,",
+  "Quick update on the launch:",
+  "• Docs are live",
+  "• Pricing page ships Friday",
+  "• Support macros updated",
+  "",
+  "Thanks!",
+].join("\n");
+export const quotedDraftCommand = "pnpm release --dry-run";
+/** A plain paragraph written one line each, with no blank lines between them. */
+export const quotedDraftChecklist = [
+  "Before you send it:",
+  "Dates match the calendar",
+  "Every link opens",
+].join("\n");
+export const quotedDraftAnswer = [
+  "Here is a reply you can send:",
+  "",
+  ...quotedDraft.split("\n").map((line) => (line ? `> ${line}` : ">")),
+  "",
+  "Then run:",
+  "",
+  "```sh",
+  quotedDraftCommand,
+  "```",
+  "",
+  quotedDraftChecklist,
+].join("\n");
+
+/** An answer that quotes a draft to paste elsewhere, next to a code block. */
+export async function quotedDraftChat(seed: Seed) {
+  const providerId = "quoted-draft-mock";
+  const modelId = "quoted-draft-model";
+  const mock = seed.mock({
+    agentWorkloads: [{ promptMarker: quotedDraftMarker, latestUserTurn: true, finalReply: quotedDraftAnswer, steps: [] }],
+  });
+  const workspacePath = seed.tmpPath("quoted-draft");
+  const app = await seed.appWeb({ name: "quoted-draft", workspacePath, mocks: { agent: mock } });
+  const agentMock = app.mocks.agent;
+  if (!agentMock) throw new Error("The app-web fixture did not boot its quoted-draft model.");
+  const workspace = await seed.workspace(app, workspacePath);
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, { provider: {
+    [providerId]: {
+      npm: "@ai-sdk/openai-compatible", name: "Quoted draft mock",
+      options: { baseURL: `${agentMock.url}/v1`, apiKey: "sk-quoted-draft" },
+      models: { [modelId]: { name: "Quoted draft model" } },
+    },
+  } });
+  // Headless Chrome only lets the page write and read the clipboard once granted.
+  await app.client.send("Browser.grantPermissions", {
+    origin: new URL(app.webUrl).origin, permissions: ["clipboardReadWrite", "clipboardSanitizedWrite"],
+  });
+  return {
+    app,
+    workspace,
+    providerReplies: async () => (await agentMock.agentRequests({ promptMarker: quotedDraftMarker }))
+      .filter((request) => request.kind === "final").length,
+    // TODO(primitive): probe.clipboard should expose this read-only witness without browser evaluation.
+    readClipboard: () => seed.evalIn(app, () => navigator.clipboard.readText(), { awaitPromise: true }),
+  };
+}
+
+export const plainTimestampsMarker = "PLAIN_TIMESTAMPS_ANSWER";
+/** Times whose ":18:" is also an emoji name (🔞), next to a real shortcode. */
+export const plainTimestampsLine = "I'll correlate the crash at 14:18:07 PDT (21:18:07Z).";
+export const plainTimestampsAnswer = [plainTimestampsLine, "", "Found it :tada:"].join("\n");
+
+/** An answer that quotes clock times and ends with one emoji shortcode. */
+export async function plainTimestampsChat(seed: Seed) {
+  const providerId = "plain-timestamps-mock";
+  const modelId = "plain-timestamps-model";
+  const mock = seed.mock({
+    agentWorkloads: [{ promptMarker: plainTimestampsMarker, latestUserTurn: true, finalReply: plainTimestampsAnswer, steps: [] }],
+  });
+  const workspacePath = seed.tmpPath("plain-timestamps");
+  const app = await seed.appWeb({ name: "plain-timestamps", workspacePath, mocks: { agent: mock } });
+  const agentMock = app.mocks.agent;
+  if (!agentMock) throw new Error("The app-web fixture did not boot its plain-timestamps model.");
+  const workspace = await seed.workspace(app, workspacePath);
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, { provider: {
+    [providerId]: {
+      npm: "@ai-sdk/openai-compatible", name: "Plain timestamps mock",
+      options: { baseURL: `${agentMock.url}/v1`, apiKey: "sk-plain-timestamps" },
+      models: { [modelId]: { name: "Plain timestamps model" } },
+    },
+  } });
+  return { app, workspace };
+}
+
 /**
  * The answer arrives in small content deltas from the shared agent mock, which
  * the placement boots next to Den so the engine can reach it on Daytona too.
@@ -1313,9 +1357,8 @@ export async function streamedMarkdown(seed: Seed) {
       steps: [],
     }],
   });
-  const den = await seed.den({ mocks: { agent: mock } });
-  const app = await seed.desktop({ den, as: "admin", model: `${providerId}/${modelId}` });
-  const workspace = await seed.workspace(app, seed.tmpPath("streamed-markdown-answer"));
+  const { den, webPort } = await denForAppWeb(seed, { mocks: { agent: mock } });
+  const { app, workspace } = await signedInAppWeb(seed, { name: "streamed-markdown-answer", den, webPort, workspacePath: seed.tmpPath("streamed-markdown-answer") });
   await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
     provider: {
       [providerId]: {
@@ -1399,578 +1442,19 @@ export async function streamedMarkdown(seed: Seed) {
   };
 }
 
-const htmlToolName = "explode_html";
-export const htmlClosingReply = "The session recovered after the failed upstream call.";
-export const htmlSummary = "Upstream returned an HTML error page (502 Bad Gateway)";
-const htmlError = `<!DOCTYPE html><html><head><title>502 Bad Gateway</title></head><body><h1>502 Bad Gateway</h1>${"Z".repeat(1_024 * 1_024)}</body></html>`;
-
-export async function clampHtml(seed: Seed) {
-  const providerId = "clamp-html-errors-mock";
-  const modelId = "clamp-html-errors-model";
-  let toolsListed = 0;
-  let toolCalls = 0;
-  let closingRounds = 0;
-  const mock = createServer((request, response) => {
-    void (async () => {
-      const url = new URL(request.url ?? "/", "http://127.0.0.1");
-      if (request.method === "GET" && url.pathname === "/v1/models") {
-        sendJson(response, 200, { object: "list", data: [{ id: modelId, object: "model" }] });
-        return;
-      }
-      if (url.pathname === "/mcp") {
-        if (request.method === "GET") {
-          sendJson(response, 405, { error: "method_not_allowed" });
-          return;
-        }
-        const raw = await readBody(request);
-        const parsed: unknown = raw.trim() ? JSON.parse(raw) : {};
-        const messages = Array.isArray(parsed) ? parsed : [parsed];
-        const replies: Record<string, unknown>[] = [];
-        let delayMs = 0;
-        for (const candidate of messages) {
-          if (!isRecord(candidate)) continue;
-          if (candidate.method === "tools/list") toolsListed += 1;
-          if (candidate.method === "tools/call") {
-            toolCalls += 1;
-            delayMs = 4_000;
-          }
-          if (candidate.id === undefined) continue;
-          const method = typeof candidate.method === "string" ? candidate.method : "";
-          if (method === "initialize") replies.push({
-            jsonrpc: "2.0", id: candidate.id,
-            result: { protocolVersion: "2025-06-18", capabilities: { tools: {} }, serverInfo: { name: "html-error-mcp", version: "1.0.0" } },
-          });
-          else if (method === "tools/list") replies.push({
-            jsonrpc: "2.0", id: candidate.id,
-            result: { tools: [{ name: htmlToolName, title: "HTML upstream failure", description: "Returns a deterministic upstream HTML error page.", inputSchema: { type: "object", properties: {}, additionalProperties: false } }] },
-          });
-          else if (method === "tools/call") replies.push({ jsonrpc: "2.0", id: candidate.id, error: { code: -32_000, message: htmlError } });
-          else replies.push({ jsonrpc: "2.0", id: candidate.id, result: {} });
-        }
-        if (replies.length === 0) {
-          response.writeHead(202, { "access-control-allow-origin": "*" });
-          response.end();
-          return;
-        }
-        if (delayMs) await new Promise((resolveDelay) => setTimeout(resolveDelay, delayMs));
-        sendJson(response, 200, Array.isArray(parsed) ? replies : replies[0]);
-        return;
-      }
-      if (request.method === "POST" && (url.pathname === "/v1/chat/completions" || url.pathname === "/chat/completions")) {
-        const raw = await readBody(request);
-        const parsed: unknown = JSON.parse(raw);
-        if (!isRecord(parsed)) throw new Error("Mock provider received a non-object request.");
-        const requestTools = parsed.tools;
-        const id = "chatcmpl-clamp-html-errors";
-        if (!Array.isArray(requestTools) || requestTools.length === 0) {
-          sendStream(response, [{ id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] }, completionChunk(id, "Session title", null), completionChunk(id, "", "stop")], 400);
-          return;
-        }
-        const messages = parsed.messages;
-        if (Array.isArray(messages) && messages.some((message) => recordValue(message, "role") === "tool")) {
-          closingRounds += 1;
-          sendStream(response, [{ id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] }, completionChunk(id, htmlClosingReply, null), completionChunk(id, "", "stop")], 400);
-          return;
-        }
-        let toolName: string | null = null;
-        for (const tool of requestTools) {
-          const fn = recordValue(tool, "function");
-          const name = recordValue(fn, "name");
-          if (typeof name === "string" && name.endsWith(htmlToolName)) toolName = name;
-        }
-        if (!toolName) {
-          sendStream(response, [{ id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] }, completionChunk(id, "The deterministic MCP error tool was unavailable.", null), completionChunk(id, "", "stop")], 400);
-          return;
-        }
-        sendStream(response, [
-          { id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] },
-          { id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { tool_calls: [{ index: 0, id: "call_html_error", type: "function", function: { name: toolName, arguments: "{}" } }] }, finish_reason: null }] },
-          { id, object: "chat.completion.chunk", choices: [{ index: 0, delta: {}, finish_reason: "tool_calls" }] },
-        ], 400);
-        return;
-      }
-      sendJson(response, 404, { error: { message: "not found" } });
-    })().catch((error: unknown) => {
-      if (!response.headersSent) sendJson(response, 500, { error: String(error) });
-      else response.destroy(error instanceof Error ? error : undefined);
-    });
-  });
-  const baseUrl = await listen(mock);
-  try {
-    const app = await seed.desktop({ name: "clamp-html-errors", model: `${providerId}/${modelId}` });
-    const workspace = await seed.workspace(app, seed.tmpPath("clamp-html-errors"));
-    await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
-      provider: {
-        [providerId]: {
-          npm: "@ai-sdk/openai-compatible", name: "Clamp HTML errors mock",
-          options: { baseURL: `${baseUrl}/v1`, apiKey: "sk-clamp-html-errors" },
-          models: { [modelId]: { name: "Clamp HTML errors model", tool_call: true } },
-        },
-      },
-      mcp: { "html-error": { type: "remote", url: `${baseUrl}/mcp`, enabled: true, oauth: false } },
-    });
-    const session = await seedSessionRetry(seed, app);
-    return {
-      app,
-      workspace,
-      session,
-      counts: () => ({ toolsListed, toolCalls, closingRounds }),
-      async [Symbol.asyncDispose]() { await close(mock); },
-    };
-  } catch (error) {
-    await close(mock);
-    throw error;
-  }
-}
-
-type QueueRequest = { rawBody: string; lastUserText: string };
-
-function lastUserText(rawBody: string): string {
-  let parsed: unknown;
-  try { parsed = JSON.parse(rawBody); } catch { return ""; }
-  if (!isRecord(parsed) || !Array.isArray(parsed.messages)) return "";
-  for (let index = parsed.messages.length - 1; index >= 0; index -= 1) {
-    const message = parsed.messages[index];
-    if (!isRecord(message) || message.role !== "user") continue;
-    if (typeof message.content === "string") return message.content;
-    if (Array.isArray(message.content)) return message.content.flatMap((part) => (
-      isRecord(part) && part.type === "text" && typeof part.text === "string" ? [part.text] : []
-    )).join("");
-  }
-  return "";
-}
-
-async function writeProviderConfig(path: string, providerId: string, modelId: string, modelName: string, baseUrl: string): Promise<void> {
-  await mkdir(path, { recursive: true });
-  await writeFile(join(path, "opencode.json"), `${JSON.stringify({
-    $schema: "https://opencode.ai/config.json",
-    provider: {
-      [providerId]: {
-        npm: "@ai-sdk/openai-compatible",
-        name: modelName,
-        options: { baseURL: baseUrl, apiKey: "sk-openwork-eval" },
-        models: { [modelId]: { name: modelName } },
-      },
-    },
-  }, null, 2)}\n`);
-}
-
-async function selectModelInWorld(seed: Seed, app: Awaited<ReturnType<Seed["desktop"]>>, modelName: string): Promise<void> {
-  // TODO(primitive): select a model as arranged state.
-  const selected = await seed.evalIn(app, browserScript(async (modelName) => {
-    const deadline = Date.now() + 60000;
-    if (!document.querySelector<HTMLInputElement>('input[placeholder="Search providers and models..."]')) {
-      const result = await window.__openworkControl.execute("session.model_picker.open", null);
-      if (!result?.ok) return false;
-    }
-    while (Date.now() < deadline) {
-      const input = document.querySelector<HTMLInputElement>('input[placeholder="Search providers and models..."]');
-      if (input instanceof HTMLInputElement && input.value !== modelName) {
-        const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-        setter?.call(input, modelName);
-        input.dispatchEvent(new Event("input", { bubbles: true }));
-      }
-      const dialog = document.querySelector<HTMLElement>('[data-slot="dialog-content"]');
-      const item = [...(dialog?.querySelectorAll("button") ?? [])]
-        .find((candidate) => !candidate.disabled && (candidate.textContent ?? "").includes(modelName));
-      if (item instanceof HTMLElement) {
-        item.click();
-        while (Date.now() < deadline) {
-          if (!document.querySelector<HTMLInputElement>('input[placeholder="Search providers and models..."]')) return true;
-          await new Promise((resolve) => setTimeout(resolve, 100));
-        }
-        return false;
-      }
-      await new Promise((resolve) => setTimeout(resolve, 100));
-    }
-    return false;
-  }, [modelName]), { awaitPromise: true, timeoutMs: 120_000 });
-  if (selected !== true) throw new Error(`Model ${modelName} was not selectable.`);
-}
-
 export const awayFirstPrompt = "away-drain first task";
 export const awayQueuedPrompt = "away-drain queued follow-up";
-export const awayFirstReply = "away-drain first reply";
-export const awayQueuedReply = "away-drain queued reply";
-
-export async function queuedDrainAway(seed: Seed) {
-  const providerId = "away-drain-mock";
-  const modelId = "away-drain-model";
-  const modelName = "Away drain model";
-  const requests: QueueRequest[] = [];
-  let releaseFirst: () => void = () => undefined;
-  const firstGate = new Promise<void>((resolveGate) => { releaseFirst = resolveGate; });
-  const provider = createServer((request, response) => {
-    const url = request.url ?? "";
-    if (request.method === "GET" && url.startsWith("/v1/models")) {
-      sendJson(response, 200, { object: "list", data: [{ id: modelId, object: "model" }] });
-      return;
-    }
-    if (request.method !== "POST" || (url !== "/v1/chat/completions" && url !== "/chat/completions")) {
-      sendJson(response, 404, { error: { message: "not found" } });
-      return;
-    }
-    void readBody(request).then((rawBody) => {
-      let parsed: unknown;
-      try { parsed = JSON.parse(rawBody); } catch { parsed = null; }
-      const isMain = isRecord(parsed) && Array.isArray(parsed.tools) && parsed.tools.length > 0;
-      if (isMain) requests.push({ rawBody, lastUserText: lastUserText(rawBody) });
-      const reply = !isMain ? "Away drain session title" : rawBody.includes(awayQueuedPrompt) ? awayQueuedReply : awayFirstReply;
-      const id = `chatcmpl-away-drain-${requests.length}`;
-      response.writeHead(200, { "content-type": "text/event-stream", "cache-control": "no-cache", connection: "keep-alive" });
-      response.write(`data: ${JSON.stringify({ id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] })}\n\n`);
-      const finish = () => {
-        response.write(`data: ${JSON.stringify(completionChunk(id, reply, null))}\n\n`);
-        response.write(`data: ${JSON.stringify(completionChunk(id, "", "stop"))}\n\n`);
-        response.end("data: [DONE]\n\n");
-      };
-      if (isMain && !rawBody.includes(awayQueuedPrompt)) void firstGate.then(finish);
-      else setTimeout(finish, 200);
-    });
-  });
-  const baseUrl = await listen(provider);
-  try {
-    const workspacePathA = seed.tmpPath("away-drain-a");
-    const workspacePathB = seed.tmpPath("away-drain-b");
-    await Promise.all([
-      writeProviderConfig(workspacePathA, providerId, modelId, modelName, `${baseUrl}/v1`),
-      writeProviderConfig(workspacePathB, providerId, modelId, modelName, `${baseUrl}/v1`),
-    ]);
-    const app = await seed.desktop({ name: "queued-drain-while-away", model: `${providerId}/${modelId}` });
-    const workspaceA = await seed.workspace(app, workspacePathA);
-    const sessionA = await seedSessionRetry(seed, app, { title: "Chat A" });
-    await selectModelInWorld(seed, app, modelName);
-    return {
-      app,
-      workspaceA,
-      workspacePathB,
-      sessionA,
-      requests,
-      releaseFirst,
-      async [Symbol.asyncDispose]() {
-        releaseFirst();
-        await close(provider);
-      },
-    };
-  } catch (error) {
-    releaseFirst();
-    await close(provider);
-    throw error;
-  }
-}
-
-type SequentialRequestLabel = "first" | "one" | "two" | "unexpected";
-type SequentialRequest = { label: SequentialRequestLabel; lastUserText: string };
-
-export const sequentialFirstPrompt = "Start the long deterministic task for sequential queue proof.";
-export const sequentialQueuedOne = "Queued follow-up ONE for sequential drain proof.";
-export const sequentialQueuedTwo = "Queued follow-up TWO for sequential drain proof.";
-export const sequentialReplies = [
-  "Deterministic long-task reply.",
-  "Deterministic drain-one reply.",
-  "Deterministic drain-two reply.",
-];
-
-export async function queuedSequential(seed: Seed) {
-  const providerId = "sequential-queue-mock";
-  const modelId = "sequential-queue-model";
-  const modelName = "Sequential queue model";
-  const requests: SequentialRequest[] = [];
-  let releaseFirst: () => void = () => undefined;
-  let releaseOne: () => void = () => undefined;
-  const firstGate = new Promise<void>((resolveGate) => { releaseFirst = resolveGate; });
-  const oneGate = new Promise<void>((resolveGate) => { releaseOne = resolveGate; });
-  const classify = (rawBody: string): SequentialRequestLabel => {
-    if (rawBody.includes(sequentialQueuedTwo)) return "two";
-    if (rawBody.includes(sequentialQueuedOne)) return "one";
-    if (rawBody.includes(sequentialFirstPrompt)) return "first";
-    return "unexpected";
-  };
-  const provider = createServer((request, response) => {
-    const url = request.url ?? "";
-    if (request.method === "GET" && url.startsWith("/v1/models")) {
-      sendJson(response, 200, { object: "list", data: [{ id: modelId, object: "model" }] });
-      return;
-    }
-    if (request.method !== "POST" || (url !== "/v1/chat/completions" && url !== "/chat/completions")) {
-      sendJson(response, 404, { error: { message: "not found" } });
-      return;
-    }
-    void readBody(request).then((rawBody) => {
-      let parsed: unknown;
-      try { parsed = JSON.parse(rawBody); } catch { parsed = null; }
-      const isMain = isRecord(parsed) && Array.isArray(parsed.tools) && parsed.tools.length > 0;
-      const label = classify(rawBody);
-      if (isMain) requests.push({ label, lastUserText: lastUserText(rawBody) });
-      const reply = !isMain
-        ? "Session title"
-        : label === "first" ? sequentialReplies[0]
-          : label === "one" ? sequentialReplies[1]
-            : label === "two" ? sequentialReplies[2]
-              : `Unexpected completion for: ${rawBody.slice(0, 200)}`;
-      const id = `chatcmpl-sequential-queue-${requests.length}`;
-      response.writeHead(200, {
-        "content-type": "text/event-stream",
-        "cache-control": "no-cache",
-        connection: "keep-alive",
-      });
-      const write = (chunk: unknown): void => {
-        if (!response.writableEnded) response.write(`data: ${JSON.stringify(chunk)}\n\n`);
-      };
-      write({ id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] });
-      const finish = (): void => {
-        write(completionChunk(id, reply, null));
-        setTimeout(() => {
-          write(completionChunk(id, "", "stop"));
-          setTimeout(() => {
-            if (!response.writableEnded) response.end("data: [DONE]\n\n");
-          }, 300);
-        }, 300);
-      };
-      if (isMain && label === "first") void firstGate.then(finish);
-      else if (isMain && label === "one") void oneGate.then(finish);
-      else setTimeout(finish, 400);
-    });
-  });
-  const baseUrl = await listen(provider);
-  try {
-    const workspacePath = seed.tmpPath("sequential-queue");
-    await writeProviderConfig(workspacePath, providerId, modelId, modelName, `${baseUrl}/v1`);
-    const app = await seed.desktop({ name: "sequential-queue", model: `${providerId}/${modelId}` });
-    const workspace = await seed.workspace(app, workspacePath);
-    const session = await seedSessionRetry(seed, app);
-    await selectModelInWorld(seed, app, modelName);
-    return {
-      app,
-      workspace,
-      session,
-      requests,
-      releaseFirst,
-      releaseOne,
-      async [Symbol.asyncDispose]() {
-        releaseFirst();
-        releaseOne();
-        await close(provider);
-      },
-    };
-  } catch (error) {
-    releaseFirst();
-    releaseOne();
-    await close(provider);
-    throw error;
-  }
-}
-
-async function configureCrossWorkspaces(
-  seed: Seed,
-  app: Awaited<ReturnType<Seed["desktop"]>>,
-  workspaceIds: string[],
-  baseUrl: string,
-): Promise<void> {
-  // TODO(primitive): configure one provider across several workspaces and select its model.
-  const configured = await seed.evalIn(app, browserScript(async (workspaceIdsJson, providerBaseUrl) => {
-    const port = localStorage.getItem("openwork.server.port");
-    const token = localStorage.getItem("openwork.server.token");
-    if (!port || !token) return "missing local server credentials";
-    const workspaceIds = JSON.parse(workspaceIdsJson);
-    const root = "http://127.0.0.1:" + port;
-    const headers = { Authorization: "Bearer " + token, "Content-Type": "application/json" };
-    for (const workspaceId of workspaceIds) {
-      const patch = await fetch(root + "/workspace/" + encodeURIComponent(workspaceId) + "/config", {
-        method: "PATCH",
-        headers,
-        body: JSON.stringify({
-          opencode: {
-            permission: { bash: "allow" },
-            provider: {
-              "composer-switch-mock": {
-                npm: "@ai-sdk/openai-compatible",
-                name: "Composer switch model",
-                options: { baseURL: providerBaseUrl, apiKey: "sk-composer-switch" },
-                models: { "composer-switch-model": { name: "Composer switch model", tool_call: true } },
-              },
-            },
-          },
-        }),
-      });
-      if (!patch.ok) return "config:" + patch.status + ":" + (await patch.text()).slice(0, 300);
-      const reload = await fetch(root + "/workspace/" + encodeURIComponent(workspaceId) + "/engine/reload", { method: "POST", headers });
-      if (!reload.ok && reload.status !== 504) return "reload:" + reload.status + ":" + (await reload.text()).slice(0, 300);
-    }
-    const raw = localStorage.getItem("openwork.preferences");
-    let preferences: Record<string, unknown> = {};
-    try { preferences = raw ? JSON.parse(raw) : {}; } catch { preferences = {}; }
-    if (!preferences || typeof preferences !== "object" || Array.isArray(preferences)) preferences = {};
-    localStorage.setItem("openwork.preferences", JSON.stringify({
-      ...preferences,
-      defaultModel: { providerID: "composer-switch-mock", modelID: "composer-switch-model" },
-      modelVariant: null,
-      providerStepCompleted: true,
-    }));
-    localStorage.setItem("openwork.defaultModel", "composer-switch-mock/composer-switch-model");
-    return "ok";
-  }, [JSON.stringify(workspaceIds), `${baseUrl}/v1`]), { awaitPromise: true, timeoutMs: 180_000 });
-  if (configured !== "ok") throw new Error(`Cross-workspace provider configuration failed: ${String(configured)}`);
-  await seed.evalIn(app, () => { location.reload(); return true; });
-}
-
-export async function crossWorkspace(seed: Seed) {
-  const runId = `${Date.now().toString(36)}-${process.pid}`;
-  const sendMarker = `COMPOSER-SWITCH-SEND-${runId}`;
-  const agent = seed.mock({
-    agentWorkloads: [{
-      promptMarker: sendMarker,
-      finalReply: `DONE-${sendMarker}`,
-      steps: [{
-        tool: "bash",
-        arguments: {
-          command: `printf '%s\\n' 'ACK-${sendMarker}'`,
-          timeout: 30_000,
-          description: "Acknowledge the composer switch prompt",
-        },
-      }],
-    }],
-  });
-  const den = await seed.den({
-    mocks: { agent },
-    org: {
-      name: "Composer Switch",
-      admin: { name: "Switch Admin" },
-      members: { member: { name: "Switch Member" } },
-    },
-  });
-  const app = await seed.desktop({ den, as: "member" });
-  const workspaceB = await seed.workspace(app, seed.tmpPath(`composer-switch-${runId}-b`));
-  const B1 = await seed.session(app);
-  const B2 = await seed.session(app);
-  await arrangeControl(seed, app, "session.rename", { sessionId: B1.sessionId, title: "Chat B1" });
-  await arrangeControl(seed, app, "session.rename", { sessionId: B2.sessionId, title: "Chat B2" });
-  const workspaceA = await seed.workspace(app, seed.tmpPath(`composer-switch-${runId}-a`));
-  const A1 = await seed.session(app);
-  const A2 = await seed.session(app);
-  await arrangeControl(seed, app, "session.rename", { sessionId: A1.sessionId, title: "Chat A1" });
-  await arrangeControl(seed, app, "session.rename", { sessionId: A2.sessionId, title: "Chat A2" });
-  if (new Set([A1.sessionId, A2.sessionId, B1.sessionId, B2.sessionId]).size !== 4) {
-    throw new Error("Four distinct cross-workspace sessions were not created.");
-  }
-  await configureCrossWorkspaces(seed, app, [workspaceA.workspaceId, workspaceB.workspaceId], den.mocks.agent.url);
-  await selectModelInWorld(seed, app, "Composer switch model");
-  return {
-    app,
-    sendMarker,
-    chats: {
-      A1: { ...A1, title: "Chat A1", workspaceId: workspaceA.workspaceId },
-      A2: { ...A2, title: "Chat A2", workspaceId: workspaceA.workspaceId },
-      B1: { ...B1, title: "Chat B1", workspaceId: workspaceB.workspaceId },
-      B2: { ...B2, title: "Chat B2", workspaceId: workspaceB.workspaceId },
-    },
-  };
-}
-
-export async function markdownArtifact(seed: Seed) {
-  const app = await seed.desktop({ name: "markdown-editor-autosave" });
-  const workspace = await seed.workspace(app, seed.tmpPath("markdown-editor-autosave"));
-  const session = await seedSessionRetry(seed, app);
-  try {
-    await arrangeControl(seed, app, "browser.open_url", { url: "about:blank" });
-  } catch {
-    // The browser can report ERR_ABORTED after it has already mounted the artifact side panel.
-  }
-  await arrangeControl(seed, app, "eval.artifact_tabs.seed_overflow", { count: 12 });
-  return { app, workspace, session };
-}
-
-export async function mermaidChat(seed: Seed) {
-  const app = await seed.desktop({ name: "mermaid-rendering" });
-  const workspace = await seed.workspace(app, seed.tmpPath("mermaid-rendering"));
-  const session = await seedSessionRetry(seed, app, { title: "Mermaid rendering proof" });
-  await arrangeControl(seed, app, "eval.mermaid.set_theme", { mode: "light" });
-  await arrangeControl(seed, app, "eval.markdown_primitive.seed_chat");
-  return { app, workspace, session };
-}
-
-export const safeFirstPrompt = "First turn for safe edit proof.";
-export const safeSecondPrompt = "Second turn that should be replaced.";
-export const safeEditedPrompt = "Edited second turn that replaces the original.";
-export const safeLegacyPrompt = "Legacy session restore proof.";
-export const safeReplies = [
-  "Deterministic first reply.",
-  "Deterministic second reply.",
-  "Deterministic edited reply.",
-  "Deterministic legacy reply.",
-];
-
-export async function safeEdit(seed: Seed) {
-  const providerId = "safe-edit-resend-mock";
-  const modelId = "safe-edit-resend-model";
-  let mainCompletionCount = 0;
-  const provider = createServer((request, response) => {
-    const url = request.url ?? "";
-    if (request.method === "GET" && url.startsWith("/v1/models")) {
-      sendJson(response, 200, { object: "list", data: [{ id: modelId, object: "model" }] });
-      return;
-    }
-    if (request.method !== "POST" || (url !== "/v1/chat/completions" && url !== "/chat/completions")) {
-      sendJson(response, 404, { error: { message: "not found" } });
-      return;
-    }
-    void readBody(request).then((rawBody) => {
-      let parsed: unknown;
-      try { parsed = JSON.parse(rawBody); } catch { parsed = null; }
-      const isMain = isRecord(parsed) && Array.isArray(parsed.tools) && parsed.tools.length > 0;
-      const reply = !isMain
-        ? "Session title"
-        : rawBody.includes(safeEditedPrompt) ? safeReplies[2]
-          : rawBody.includes(safeSecondPrompt) ? safeReplies[1]
-            : rawBody.includes(safeLegacyPrompt) ? safeReplies[3]
-              : rawBody.includes(safeFirstPrompt) ? safeReplies[0]
-                : `Unexpected completion for: ${rawBody.slice(0, 200)}`;
-      if (isMain) mainCompletionCount += 1;
-      const id = `chatcmpl-safe-edit-${mainCompletionCount}`;
-      const chunks = [
-        { id, object: "chat.completion.chunk", choices: [{ index: 0, delta: { role: "assistant" }, finish_reason: null }] },
-        completionChunk(id, reply, null),
-        completionChunk(id, "", "stop"),
-      ];
-      sendStream(response, chunks, 400);
-    });
-  });
-  const baseUrl = await listen(provider);
-  try {
-    const app = await seed.desktop({ name: "safe-edit-resend", model: `${providerId}/${modelId}` });
-    const workspace = await seed.workspace(app, seed.tmpPath("safe-edit-resend"));
-    await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
-      provider: {
-        [providerId]: {
-          npm: "@ai-sdk/openai-compatible",
-          name: "Safe edit resend mock",
-          options: { baseURL: `${baseUrl}/v1`, apiKey: "sk-safe-edit-resend" },
-          models: { [modelId]: { name: "Safe edit resend model" } },
-        },
-      },
-    });
-    const session = await seedSessionRetry(seed, app);
-    return {
-      app,
-      workspace,
-      session,
-      mainCompletionCount: () => mainCompletionCount,
-      async [Symbol.asyncDispose]() { await close(provider); },
-    };
-  } catch (error) {
-    await close(provider);
-    throw error;
-  }
-}
 
 export async function sessionErrorCard(seed: Seed) {
-  const app = await seed.desktop({ name: "session-error-technical-details" });
-  const workspace = await seed.workspace(app, seed.tmpPath("session-error-details"));
+  const workspacePath = seed.tmpPath("session-error-details");
+  const app = await seed.appWeb({ name: "session-error-technical-details", workspacePath, mouse: true });
+  const workspace = await seed.workspace(app, workspacePath);
   const session = await seedSessionRetry(seed, app, { title: "Session error proof" });
   await arrangeControl(seed, app, "eval.session_error.seed");
   return {
     app, workspace, session,
     seedStorageError: (kind: "disk-full" | "database-error", surface: "transcript" | "banner" = "transcript") => arrangeControl(seed, app, "eval.session_error.seed", { kind, surface }),
+    failSnapshot: () => failSessionSnapshot(seed, app),
   };
 }
 
@@ -1983,7 +1467,7 @@ export async function sessionSubmitErrorIsolation(seed: Seed) {
   const sessionB = await seedSessionRetry(seed, base.app, { title: "Independent task B" });
   const sessionA = await seedSessionRetry(seed, base.app, { title: "Storage failure task A" });
   const endpoint = base.app.client.webSocketDebuggerUrl;
-  if (!endpoint) throw new Error("Submit fault requires the desktop CDP endpoint");
+  if (!endpoint) throw new Error("Submit fault requires the app's CDP endpoint");
   const origin = await evalIn(base.app, () => "http://127.0.0.1:" + localStorage.getItem("openwork.server.port"));
   const paths = (id: string) => ["workspace", "w"].flatMap(mount => ["opencode", "opencode2/api"].map(engine =>
     `/${mount}/${encodeURIComponent(base.workspace.workspaceId)}/${engine}/session/${encodeURIComponent(id)}/prompt_async`));
@@ -2090,10 +1574,17 @@ export async function sessionSubmitErrorIsolation(seed: Seed) {
 }
 
 export async function snapshotFailure(seed: Seed) {
-  const app = await seed.desktop({ name: "composer-snapshot-failure" });
-  const workspace = await seed.workspace(app, seed.tmpPath("composer-snapshot-failure"));
+  const workspacePath = seed.tmpPath("composer-snapshot-failure");
+  const app = await seed.appWeb({ name: "composer-snapshot-failure", workspacePath, mouse: true });
+  const workspace = await seed.workspace(app, workspacePath);
   const session = await seedSessionRetry(seed, app, { title: "Composer snapshot failure proof" });
   await arrangeControl(seed, app, "eval.chat_transcript.seed");
+  await failSessionSnapshot(seed, app);
+  return { app, workspace, session };
+}
+
+/** Put the open session's snapshot query into error, as a failed history read does. */
+async function failSessionSnapshot(seed: Seed, app: Surface) {
   const failureJson = await seed.evalIn(app, browserScript(async () => {
     const deadline = Date.now() + 30000;
     while (Date.now() < deadline) {
@@ -2110,7 +1601,6 @@ export async function snapshotFailure(seed: Seed) {
   if (!isRecord(failure) || failure.isError !== true) {
     throw new Error(`Session snapshot failure was not established: ${JSON.stringify(failure)}`);
   }
-  return { app, workspace, session };
 }
 
 /** More stored messages than OpenCode's `limit`-paged transcript read used to fetch. */
@@ -2121,10 +1611,14 @@ export const longHistoryFirst = "LONG-HISTORY-FIRST-MESSAGE 7c31";
 export const longHistoryLast = "LONG-HISTORY-LAST-MESSAGE 7c31";
 
 /** A long stored conversation opened cold, from another selected session. */
-export async function longHistory(seed: Seed, options: { holdAncillaryReads?: boolean } = {}) {
+export async function longHistory(seed: Seed, options: { holdAncillaryReads?: boolean; surface?: AppSurface } = {}) {
   if (resolveEvalEngine() !== "v1") throw new SkipError("native v1 stored history (OPENWORK_EVAL_ENGINE=v1)");
-  const app = await seed.desktop({ name: "session-full-history" });
-  const workspace = await seed.workspace(app, seed.tmpPath("session-full-history"));
+  const workspacePath = seed.tmpPath("session-full-history");
+  // The desktop surface only for prompt recall across a main-process relaunch.
+  const app = options.surface === "electron"
+    ? await seed.desktop({ name: "session-full-history" })
+    : await seed.appWeb({ name: "session-full-history", workspacePath, mouse: true });
+  const workspace = await seed.workspace(app, workspacePath);
   const createStoredSession = (title: string) => seed.evalIn(app, browserScript(async (workspaceId, title) => {
     const port = localStorage.getItem("openwork.server.port");
     const token = localStorage.getItem("openwork.server.token");
@@ -2169,11 +1663,7 @@ export async function longHistory(seed: Seed, options: { holdAncillaryReads?: bo
   const other = options.holdAncillaryReads
     ? await createStoredSession(longHistoryOtherTitle)
     : await seedSessionRetry(seed, app, { title: longHistoryOtherTitle });
-  if (options.holdAncillaryReads) {
-    await seed.evalIn(app, browserScript((workspaceId, sessionId) => {
-      location.hash = `/workspace/${encodeURIComponent(workspaceId)}/session/${encodeURIComponent(sessionId)}`;
-    }, [workspace.workspaceId, other.sessionId]));
-  }
+  if (options.holdAncillaryReads) await go(app, `/workspace/${encodeURIComponent(workspace.workspaceId)}/session/${encodeURIComponent(other.sessionId)}`);
   const ancillaryFaultKey = `openwork.eval.long-history-ancillary.${session.sessionId}`;
   const ancillaryFault = options.holdAncillaryReads
     ? await addInitScript(app.client, browserScript((workspaceId, sessionId, storageKey, count, last) => {
@@ -2501,14 +1991,6 @@ async function warmHistoryFault(seed: Seed, app: Surface, workspaceId: string, s
   };
 }
 
-export async function taskActivity(seed: Seed) {
-  const app = await seed.desktop({ name: "task-activity-shimmer" });
-  const workspace = await seed.workspace(app, seed.tmpPath("task-activity-shimmer"));
-  const session = await seedSessionRetry(seed, app);
-  await arrangeControl(seed, app, "eval.task_activity.seed", { withFollowup: true });
-  return { app, workspace, session };
-}
-
 async function stoppingFeedbackFault(
   seed: Seed,
   app: Surface,
@@ -2683,11 +2165,27 @@ async function stoppingFeedbackFault(
   };
 }
 
-export async function unfinishedToolsWeb(seed: Seed) {
+export async function unfinishedToolsWeb(seed: Seed, options: { editRunning?: boolean } = {}) {
   const engine = resolveEvalEngine();
   const prompt = "Hold the native tool open for Stop feedback proof.";
   const warmup = { prompt: "Create the Stop feedback fixture.", reply: "Stop feedback fixture ready." };
+  // Opt-in turns whose answers stream one chunk and then hold, so a person can
+  // edit or queue behind a turn that is still running.
+  const editRunning = {
+    original: "Review the initial draft EDIT-RUNNING", partial: "Review in progress.", neverReleased: "Unfinished answer that must never show.",
+    edited: "Review the corrected draft EDIT-RUNNING", answer: "Corrected review is ready.",
+    held: "Keep this turn running EDIT-RUNNING", heldPartial: "Still working on it.", followup: "A later follow-up EDIT-RUNNING",
+  };
+  const held = (promptMarker: string, partial: string): MockAgentWorkload => ({
+    promptMarker, latestUserTurn: true, steps: [], finalReply: `${partial} ${editRunning.neverReleased}`,
+    finalReplyChunks: [`${partial} `, editRunning.neverReleased], finalReplyInitiallyReleasedChunks: 1,
+  });
   const base = await splitPaneQuestions(seed, "unfinished-tool-lifecycle", [
+    ...(options.editRunning ? [
+      held(editRunning.original, editRunning.partial),
+      { promptMarker: editRunning.edited, latestUserTurn: true, finalReply: editRunning.answer, steps: [] },
+      held(editRunning.held, editRunning.heldPartial),
+    ] : []),
     { promptMarker: warmup.prompt, latestUserTurn: true, finalReply: warmup.reply, steps: [] },
     {
       promptMarker: prompt,
@@ -2709,6 +2207,7 @@ export async function unfinishedToolsWeb(seed: Seed) {
     session,
     prompt,
     warmup,
+    editRunning,
     engine,
     startStopFault: () => stoppingFeedbackFault(seed, base.app, base.workspace.workspaceId, session.sessionId),
     nativeStatus: () => seed.evalIn(base.app, browserScript(async (statusPath, sessionId) => {
@@ -2764,7 +2263,7 @@ export async function computerMentions(seed: Seed) {
       { promptMarker: "COMPUTER-PLAIN-TASK", finalReply: "Received computer task.", steps: [] },
     ],
   });
-  const den = await seed.den({ mocks: { agent: mock }, env: { DEN_AUTOMATIONS_ENABLED: "true" } });
+  const { den, webPort } = await denForAppWeb(seed, { mocks: { agent: mock }, env: { DEN_AUTOMATIONS_ENABLED: "true" } });
   const created = await seed.api(den.admin, "/v1/automations", {
     method: "POST",
     body: JSON.stringify({
@@ -2775,8 +2274,7 @@ export async function computerMentions(seed: Seed) {
     }),
   });
   if (created.response.status !== 201) throw new Error(`Automation setup failed: ${created.text}`);
-  const app = await seed.desktop({ den, as: "admin", model: `${providerId}/${modelId}` });
-  const workspace = await seed.workspace(app, seed.tmpPath("computer-mentions"));
+  const { app, workspace } = await signedInAppWeb(seed, { name: "computer-mentions", den, webPort, workspacePath: seed.tmpPath("computer-mentions") });
   await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, {
     permission: { "computer_witness_*": "allow" },
     mcp: { computer_witness: { type: "remote", url: den.mocks.agent.mcpUrl, enabled: true, oauth: false } },
@@ -2931,11 +2429,10 @@ export async function workspaceEngineUpgrade(seed: Seed) {
 export async function skillLifecycle(seed: Seed) {
   const live = liveOpenAiEnabled();
   const orgName = "Skill lifecycle";
-  const den = await seed.den({ org: { name: orgName }, mocks: { model: seed.mock({}) } });
+  const { den, webPort } = await denForAppWeb(seed, { org: { name: orgName }, mocks: { model: seed.mock({}) } });
   const managed = await provisionLiveOpenAi(den.admin, orgName);
   try {
-    const app = await seed.desktop({ den, as: "admin" });
-    const workspace = await seed.workspace(app, seed.tmpPath("skill-lifecycle"));
+    const { app, workspace } = await signedInAppWeb(seed, { name: "skill-lifecycle", den, webPort, workspacePath: seed.tmpPath("skill-lifecycle") });
     const request = async (path: string) => {
       const response = await seed.evalIn(app, browserScript(async (path) => {
         const response = await fetch("http://127.0.0.1:" + localStorage.getItem("openwork.server.port") + path, {
@@ -2969,8 +2466,7 @@ export async function skillLifecycle(seed: Seed) {
       } } } : {}),
     }, "v2");
     const session = await seedSessionRetry(seed, app, { title: "Release report" });
-    // OAuth leaves the native app behind the browser on macOS. CDP keyboard
-    // input needs renderer focus even when this isolated test window is hidden.
+    // CDP keyboard input needs page focus even when the browser has none.
     await app.client.send("Emulation.setFocusEmulationEnabled", { enabled: true });
     const skillName = "release-briefing";
     return {
@@ -3022,4 +2518,32 @@ export async function skillLifecycle(seed: Seed) {
     await managed[Symbol.asyncDispose]();
     throw error;
   }
+}
+
+export const emojiShortcodesMarker = "EMOJI_SHORTCODES_ANSWER";
+/** Real GitHub shortcodes next to plain words that only look like shortcodes. */
+export const emojiShortcodesAnswer = "Shipped :rocket: :fire: :white_check_mark:\n\nBack :home: for a :test: run.";
+export const emojiShortcodesRendered = "Shipped 🚀 🔥 ✅";
+export const emojiShortcodesPlainLine = "Back :home: for a :test: run.";
+
+/** An answer that mixes emoji shortcodes with words wrapped in colons. */
+export async function emojiShortcodesChat(seed: Seed) {
+  const providerId = "emoji-shortcodes-mock";
+  const modelId = "emoji-shortcodes-model";
+  const mock = seed.mock({
+    agentWorkloads: [{ promptMarker: emojiShortcodesMarker, latestUserTurn: true, finalReply: emojiShortcodesAnswer, steps: [] }],
+  });
+  const workspacePath = seed.tmpPath("emoji-shortcodes");
+  const app = await seed.appWeb({ name: "emoji-shortcodes", workspacePath, mocks: { agent: mock } });
+  const agentMock = app.mocks.agent;
+  if (!agentMock) throw new Error("The app-web fixture did not boot its emoji-shortcodes model.");
+  const workspace = await seed.workspace(app, workspacePath);
+  await configureProvider(seed, app, workspace.workspaceId, providerId, modelId, { provider: {
+    [providerId]: {
+      npm: "@ai-sdk/openai-compatible", name: "Emoji shortcodes mock",
+      options: { baseURL: `${agentMock.url}/v1`, apiKey: "sk-emoji-shortcodes" },
+      models: { [modelId]: { name: "Emoji shortcodes model" } },
+    },
+  } });
+  return { app, workspace };
 }

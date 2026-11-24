@@ -8,22 +8,14 @@ import fr from "./locales/fr";
 import ca from "./locales/ca";
 import es from "./locales/es";
 import ru from "./locales/ru";
+import it from "./locales/it";
 export const LANGUAGE_PREF_KEY = "openwork.language";
 
-/**
- * Supported languages
- */
-export type Language = "en" | "ja" | "zh" | "vi" | "pt-BR" | "th" | "fr" | "ca" | "es" | "ru";
+export type Language = "en" | "ja" | "zh" | "vi" | "pt-BR" | "th" | "fr" | "ca" | "es" | "ru" | "it";
 export type Locale = Language;
 
-/**
- * All supported languages - single source of truth
- */
-export const LANGUAGES: Language[] = ["en", "ja", "zh", "vi", "pt-BR", "th", "fr", "ca", "es", "ru"];
+export const LANGUAGES: Language[] = ["en", "ja", "zh", "vi", "pt-BR", "th", "fr", "ca", "es", "ru", "it"];
 
-/**
- * Language options for UI - single source of truth
- */
 export const LANGUAGE_OPTIONS = [
   { value: "en" as Language, label: "English", nativeName: "English" },
   { value: "ja" as Language, label: "Japanese", nativeName: "日本語" },
@@ -35,15 +27,11 @@ export const LANGUAGE_OPTIONS = [
   { value: "ca" as Language, label: "Catalan", nativeName: "Català" },
   { value: "es" as Language, label: "Spanish", nativeName: "Español" },
   { value: "ru" as Language, label: "Russian", nativeName: "Русский" },
+  { value: "it" as Language, label: "Italian", nativeName: "Italiano" },
 ] as const;
 
 const PLURAL_SUFFIX_EMPTY_LANGUAGES = new Set<Language>(["ja", "zh", "th"]);
 
-/**
- * Current translation strings use an English-style plural suffix placeholder.
- * Some locales render the noun without a visible plural marker, so we keep
- * that suffix empty for them.
- */
 export const pluralSuffix = (locale: Language, count: number): string => {
   if (PLURAL_SUFFIX_EMPTY_LANGUAGES.has(locale)) {
     return "";
@@ -52,9 +40,6 @@ export const pluralSuffix = (locale: Language, count: number): string => {
   return count === 1 ? "" : "s";
 };
 
-/**
- * Translation maps
- */
 const TRANSLATIONS: Record<Language, Record<string, string>> = {
   en,
   ja,
@@ -66,29 +51,20 @@ const TRANSLATIONS: Record<Language, Record<string, string>> = {
   ca,
   es,
   ru,
+  it,
 };
 
-/**
- * Type guard to validate if a value is a Language
- * Replaces long chains like: value === "en" || value === "zh"
- */
 export const isLanguage = (value: unknown): value is Language => {
   return typeof value === "string" && LANGUAGES.includes(value as Language);
 };
 
 let localeValue: Language = "en";
 
-/**
- * Get current locale
- */
 export const currentLocale = (): Language => locale();
 function locale(): Language {
   return localeValue;
 }
 
-/**
- * Set locale and persist to localStorage
- */
 export const setLocale = (newLocale: Language) => {
   if (!isLanguage(newLocale)) {
     console.warn(`Invalid locale: ${newLocale}, falling back to "en"`);
@@ -101,7 +77,6 @@ export const setLocale = (newLocale: Language) => {
     document.documentElement.setAttribute("lang", newLocale);
   }
 
-  // Persist to localStorage
   if (typeof window !== "undefined") {
     try {
       window.localStorage.setItem(LANGUAGE_PREF_KEY, newLocale);
@@ -111,9 +86,6 @@ export const setLocale = (newLocale: Language) => {
   }
 };
 
-/**
- * Resolve a translation entry with the locale → English → null fallback chain.
- */
 const lookupEntry = (loc: Language, candidateKey: string): string | null => {
   if (TRANSLATIONS[loc]?.[candidateKey]) return TRANSLATIONS[loc][candidateKey];
   if (loc !== "en" && TRANSLATIONS.en?.[candidateKey]) return TRANSLATIONS.en[candidateKey];
@@ -131,18 +103,12 @@ const pluralRulesByLanguage: Record<Language, Intl.PluralRules> = {
   ca: new Intl.PluralRules("ca"),
   es: new Intl.PluralRules("es"),
   ru: new Intl.PluralRules("ru"),
+  it: new Intl.PluralRules("it"),
 };
 const pluralRule = (loc: Language, count: number): Intl.LDMLPluralRule => {
   return pluralRulesByLanguage[loc].select(count);
 };
 
-/**
- * Pick the right key variant for a count. Tries `${key}_zero` (only when count === 0),
- * then `${key}_${rule}` (e.g. `_one` / `_other`), then `${key}_other`, then the bare
- * key. Asian locales (no grammatical plural) define only the bare key and hit the
- * final step. Each candidate runs through the locale → English fallback so an
- * untranslated key still resolves to the English `_one` / `_other` variant.
- */
 const resolvePluralKey = (loc: Language, key: string, count: number): string => {
   const candidates: string[] = [];
   if (count === 0) candidates.push(`${key}_zero`);
@@ -154,13 +120,6 @@ const resolvePluralKey = (loc: Language, key: string, count: number): string => 
   return key;
 };
 
-/**
- * Translation function with fallback behavior.
- * - Locale fallback: target language → English → key itself.
- * - Plural fallback: when params include a numeric `count`, the lookup picks
- *   `${key}_one` / `${key}_other` (or `${key}_zero` when count === 0) per
- *   `Intl.PluralRules`, and falls back to the bare key when no variants exist.
- */
 type TranslationParams = Record<string, string | number> & { lng?: Language };
 
 export const t = (
@@ -186,15 +145,11 @@ export const t = (
   let out = result;
   for (const [k, v] of Object.entries(params)) {
     if (k === "lng") continue;
-    out = out.replace(`{${k}}`, String(v));
+    out = out.split(`{${k}}`).join(String(v));
   }
   return out;
 };
 
-/**
- * Initialize locale from localStorage
- * Call this during app initialization
- */
 export const initLocale = (): Language => {
   if (typeof window === "undefined") {
     return "en";

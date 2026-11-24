@@ -1,5 +1,15 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 
+// Google's real error shapes for spreadsheet IDs that a valid token cannot read.
+const googleRefusals: Record<string, [number, unknown]> = {
+  "/v4/spreadsheets/scope-missing-1": [403, { error: { code: 403, message: "Request had insufficient authentication scopes.", status: "PERMISSION_DENIED",
+    details: [{ "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason: "ACCESS_TOKEN_SCOPE_INSUFFICIENT", domain: "googleapis.com", metadata: { service: "sheets.googleapis.com" } }] } }],
+  "/v4/spreadsheets/api-disabled-1": [403, { error: { code: 403, message: "Google Sheets API has not been used in project 123 before or it is disabled.", status: "PERMISSION_DENIED",
+    details: [{ "@type": "type.googleapis.com/google.rpc.ErrorInfo", reason: "SERVICE_DISABLED", domain: "googleapis.com", metadata: { service: "sheets.googleapis.com", serviceTitle: "Google Sheets API", consumer: "projects/123" } }] } }],
+  "/v4/spreadsheets/office-file-1": [400, { error: { code: 400, message: "This operation is not supported for this document", status: "FAILED_PRECONDITION" } }],
+  "/v4/spreadsheets/not-shared-1": [403, { error: { code: 403, message: "The caller does not have permission", status: "PERMISSION_DENIED" } }],
+};
+
 // A deliberately small provider, not a Den substitute. Only exact fixture
 // resources exist; valid OAuth credentials identify the account on every call.
 export function serviceActionsWitness() {
@@ -46,7 +56,7 @@ export function serviceActionsWitness() {
         "/drive/v3/files", "/drive/v3/files/file-1", "/v1.0/me/messages/outlook-draft-1/send",
         "/v1.0/me/messages/outlook-message-1", "/v1.0/me/messages/outlook-message-1/createReply", "/v1.0/me/messages/outlook-message-1/move",
         "/v1.0/me/events/outlook-event-1", "/v1.0/me/events/outlook-event-1/cancel",
-        "/v1.0/me/drive/items/item-1", "/v1.0/me/drive/items/parent-2/children"];
+        "/v1.0/me/drive/items/item-1", "/v1.0/me/drive/items/parent-2/children", ...Object.keys(googleRefusals)];
       if (!known.includes(path)) return false;
       const method = request.method ?? "GET";
       // Preserve the existing MIME/attachment draft-creation witness.
@@ -62,6 +72,8 @@ export function serviceActionsWitness() {
         return true;
       };
       if (!email || !tokenId) return reply(401, { error: "invalid_token" });
+      const refusal = googleRefusals[path];
+      if (refusal) return reply(...refusal);
       const state = account(email);
       const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null && !Array.isArray(value);
       const fields = isRecord(body) ? body : {};

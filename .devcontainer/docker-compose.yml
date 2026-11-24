@@ -4,7 +4,7 @@
 #
 # Services:
 #   - MySQL 8.4 for the Den database
-#   - Workspace container with Node 20, Electron deps, Xvfb, noVNC
+#   - Workspace container with Node 24.22.1, Electron deps, Xvfb, noVNC
 #
 # Ports:
 #   - 5173  App Vite dev server (HMR)

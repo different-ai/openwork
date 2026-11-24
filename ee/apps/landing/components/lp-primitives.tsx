@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { DownloadLink } from "./download-link";
 
 type LpSectionHeaderProps = {
+  id?: string;
   label: string;
   heading: string;
   headingLines?: string[];
@@ -10,6 +11,7 @@ type LpSectionHeaderProps = {
 };
 
 export function LpSectionHeader({
+  id,
   label,
   heading,
   headingLines,
@@ -25,6 +27,7 @@ export function LpSectionHeader({
           {label}
         </div>
         <h2
+          id={id}
           className={`font-light tracking-[-0.015em] text-[var(--lp-ink)] ${
             size === "small"
               ? "text-[36px] leading-[42px]"
@@ -71,13 +74,15 @@ export function LpTonalCard({ children, className }: LpContainerProps) {
 type LpArrowLinkProps = {
   href: string;
   children: ReactNode;
+  external?: boolean;
 };
 
-export function LpArrowLink({ href, children }: LpArrowLinkProps) {
+export function LpArrowLink({ href, children, external = false }: LpArrowLinkProps) {
   const Component = href === "/download" ? DownloadLink : "a";
   return (
     <Component
       href={href}
+      {...(external ? { target: "_blank", rel: "noreferrer" } : {})}
       className="group inline-flex items-center gap-1.5 text-[14px] font-medium text-[var(--lp-ink)]"
     >
       <span>{children}</span>

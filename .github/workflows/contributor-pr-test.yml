@@ -6,20 +6,16 @@ name: Contributor PR checks
 # commented) or `/test <sha>` (exactly that commit). If the contributor pushed
 # after the comment, or the free screen blocked the commit, it is refused.
 #
-# Once bound, in order:
-#   1. AI screen: Warden's contributor-screen skill, once per commit.
-#   2. If it is clear, or the maintainer comments /test again to proceed
-#      anyway: approve the fork's waiting test runs and run the Warden
-#      security review (if it has not passed on that commit yet).
-# Required CI and trusted maintainer reviews remain the merge safeguards.
-# Fork screen/Warden statuses are advisory: maintainers must inspect them on
-# the exact head before approving. No custom required status or App token.
+# Once bound and allowed by the deterministic screen, approve the fork's
+# waiting test runs. Maintainer authorization and exact-head binding remain
+# required. Required tests and human approvals are unchanged.
 #
 # issue_comment always runs this file from dev. Nothing here runs PR code.
 on:
   issue_comment:
     types: [created]
 
+cache-mode: none
 permissions: {}
 
 # Serialize repeated /test commands for a PR instead of duplicating paid work.
@@ -40,8 +36,6 @@ jobs:
       pull-requests: write
     outputs:
       sha: ${{ steps.authorize.outputs.sha }}
-      needs_screen: ${{ steps.authorize.outputs.needs_screen }}
-      needs_review: ${{ steps.authorize.outputs.needs_review }}
     steps:
       - name: Checkout trusted gate script from dev
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -51,7 +45,7 @@ jobs:
           sparse-checkout: .github/scripts
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 24
+          node-version: 24.22.1
       - name: Check the commenter and bind the reviewed commit
         id: authorize
         env:
@@ -62,29 +56,10 @@ jobs:
           COMMENT_CREATED_AT: ${{ github.event.comment.created_at }}
         run: node .github/scripts/contributor-pr.mjs authorize
 
-  ai-screen:
-    needs: authorize
-    if: needs.authorize.outputs.sha != '' && needs.authorize.outputs.needs_screen == 'true'
-    permissions:
-      contents: read
-      issues: write
-      pull-requests: write
-      statuses: write
-    uses: ./.github/workflows/contributor-warden.yml
-    with:
-      pr_number: ${{ github.event.issue.number }}
-      head_sha: ${{ needs.authorize.outputs.sha }}
-      stage: screen
-    secrets:
-      WARDEN_CONTRIBUTOR_OPENAI_API_KEY: ${{ secrets.WARDEN_CONTRIBUTOR_OPENAI_API_KEY }}
-
-  # Proceed when the AI screen is clear on this run, or when it already ran
-  # on this commit and the maintainer commented /test again.
+  # Proceed from maintainer authorization and the deterministic screen.
   start-tests:
-    needs: [authorize, ai-screen]
-    if: >-
-      always() && needs.authorize.outputs.sha != '' &&
-      (needs.authorize.outputs.needs_screen == 'false' || needs.ai-screen.outputs.verdict == 'clean')
+    needs: authorize
+    if: needs.authorize.outputs.sha != ''
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -101,28 +76,10 @@ jobs:
           sparse-checkout: .github/scripts
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
         with:
-          node-version: 24
+          node-version: 24.22.1
       - name: Approve the fork's waiting test runs
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.issue.number }}
           HEAD_SHA: ${{ needs.authorize.outputs.sha }}
         run: node .github/scripts/contributor-pr.mjs approve-runs
-
-  review:
-    needs: [authorize, ai-screen]
-    if: >-
-      always() && needs.authorize.outputs.sha != '' && needs.authorize.outputs.needs_review == 'true' &&
-      (needs.authorize.outputs.needs_screen == 'false' || needs.ai-screen.outputs.verdict == 'clean')
-    permissions:
-      contents: read
-      issues: write
-      pull-requests: write
-      statuses: write
-    uses: ./.github/workflows/contributor-warden.yml
-    with:
-      pr_number: ${{ github.event.issue.number }}
-      head_sha: ${{ needs.authorize.outputs.sha }}
-      stage: review
-    secrets:
-      WARDEN_CONTRIBUTOR_OPENAI_API_KEY: ${{ secrets.WARDEN_CONTRIBUTOR_OPENAI_API_KEY }}

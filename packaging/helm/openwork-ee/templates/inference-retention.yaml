@@ -1,6 +1,8 @@
 {{- include "openwork-ee.gateway.validate" . }}
 {{- $gateway := include "openwork-ee.gateway" . | fromYaml }}
 {{- if and $gateway.enabled $gateway.retention.enabled }}
+{{- /* Reused values from older charts may lack the batch keys; fall back to the chart defaults. */}}
+{{- $batch := dict "maxBucketsPerRun" (int (default 48 $gateway.retention.maxBucketsPerRun)) "maxSourceRowsPerBucket" (int (default 5000 $gateway.retention.maxSourceRowsPerBucket)) }}
 apiVersion: batch/v1
 kind: CronJob
 metadata:
@@ -17,7 +19,7 @@ spec:
   jobTemplate:
     spec:
       backoffLimit: 2
-      activeDeadlineSeconds: 600
+      activeDeadlineSeconds: 900
       template:
         spec:
           restartPolicy: Never
@@ -35,19 +37,23 @@ spec:
                   try {
                     const response = await fetch(process.env.ROLLUP_URL, {
                       method: "POST",
-                      headers: { authorization: `Bearer ${process.env.GATEWAY_ADMIN_TOKEN}` },
-                      signal: AbortSignal.timeout(180000),
+                      headers: { authorization: `Bearer ${process.env.GATEWAY_ADMIN_TOKEN}`, "content-type": "application/json" },
+                      body: process.env.ROLLUP_BODY,
+                      signal: AbortSignal.timeout(600000),
                     });
-                    await response.body?.cancel();
-                    if (!response.ok) throw new Error();
-                    console.log("Gateway retention batch completed");
-                  } catch {
-                    console.error("Gateway retention batch failed");
+                    const body = await response.text();
+                    if (!response.ok) throw new Error(String(response.status));
+                    // The summary is row and bucket counts only.
+                    console.log("Gateway retention batch completed", body);
+                  } catch (error) {
+                    console.error("Gateway retention batch failed", error instanceof Error ? error.message : "");
                     process.exitCode = 1;
                   }
               env:
                 - name: ROLLUP_URL
                   value: "http://{{ include "openwork-ee.inferenceServiceName" . }}:{{ $gateway.service.port }}/internal/rollups/run"
+                - name: ROLLUP_BODY
+                  value: {{ toJson $batch | quote }}
                 {{- range $name := list "GATEWAY_ADMIN_TOKEN" "INFERENCE_ADMIN_TOKEN" }}
                 - name: {{ $name }}
                   valueFrom:

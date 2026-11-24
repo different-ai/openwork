@@ -23,13 +23,8 @@ import {
 } from "@openwork/types/automations";
 import { automationModelOptions } from "@openwork/types/automation-models";
 import { z } from "zod";
+import { workbotSettingsSchema } from "@openwork/types/den/workbot-settings";
 import { workbotHost } from "./host";
-
-/**
- * Workbot's Calendar data: the person's Automations, runs and meetings, all through Workbot's server
- * (`/v1/workbot/calendar/...`), which forwards Den's own routes. The shapes are Den's, so the shared
- * @openwork/calendar adapters and reconciliation work unchanged.
- */
 
 const PREFIX = "/v1/workbot/calendar";
 
@@ -170,10 +165,28 @@ export function useAutomationModels(options: { includeCloudDefault: boolean }) {
     queryFn: () => calendarJson(providerNamesSchema, "/v1/llm-providers"),
     staleTime: 5 * 60_000,
   });
-  const models = useMemo(
-    () => automationModelOptions(query.data?.llmProviders ?? [], { includeFreeStarter: false, includeCloudDefault: options.includeCloudDefault }),
-    [options.includeCloudDefault, query.data],
-  );
+  const host = workbotHost();
+  const identity = host.identity;
+  const settings = useQuery({
+    queryKey: [...calendarKey, "organization-default-model", host.homeHref, identity?.organizationId ?? null, identity?.principalId ?? null],
+    queryFn: () => calendarJson(workbotSettingsSchema, "/v1/org/workbot-settings"),
+    enabled: options.includeCloudDefault && identity !== undefined,
+    retry: false,
+    staleTime: 0,
+    gcTime: 0,
+    refetchOnMount: "always",
+    refetchOnWindowFocus: "always",
+    refetchInterval: 60_000,
+  });
+  const authorizedSettings = identity && !settings.isError && !settings.isFetching ? settings.data : undefined;
+  const models = useMemo(() => {
+    const available = automationModelOptions(query.data?.llmProviders ?? [], { includeFreeStarter: false, includeCloudDefault: options.includeCloudDefault });
+    const resolvedId = authorizedSettings?.modelAvailable ? authorizedSettings.model ?? authorizedSettings.defaultModel : authorizedSettings?.defaultModel;
+    const resolvedName = authorizedSettings?.models.find((model) => model.id === resolvedId)?.name;
+    return available.map((option) => option.accessKind === "cloud_default"
+      ? { ...option, modelName: resolvedName ? `Organization default (${resolvedName})` : "Organization default" }
+      : option);
+  }, [options.includeCloudDefault, query.data, authorizedSettings]);
   return { models, isLoading: query.isLoading, error: query.error };
 }
 

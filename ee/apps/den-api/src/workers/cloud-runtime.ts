@@ -12,17 +12,8 @@ import { createDatabaseRuntimeInstanceStore } from "./cloud-runtime-store.js"
 
 export type CloudRuntimeProviderId = typeof env.provisionerMode
 
-/**
- * Providers that run OpenWork Cloud instances through the runtime contract.
- * `render` and `stub` predate the contract and keep their legacy paths in
- * `provisioner.ts`.
- * The member Cloud API already required hasDaytonaProvisioner before this
- * registry: leaving those legacy modes unregistered preserves its 404 boundary.
- * Generic Render/stub worker provisioning is separate and remains supported.
- */
 const providers: Record<string, {
   credentialConfigured: () => boolean
-  /** The pinned image version new instances boot; configuration, not a credential. */
   imageVersion: () => string | null
   endpointKind: ProviderEndpointKind
   create: () => SandboxProvider
@@ -36,6 +27,8 @@ const providers: Record<string, {
       apiUrl: env.daytona.apiUrl,
       target: env.daytona.target,
       snapshot: env.daytona.snapshot ?? null,
+      ...(env.daytona.sandboxClass === "linux-vm" ? { platform: { os: "linux", isolation: "microvm" }, supportsPause: true } : {}),
+      ...(env.daytona.sandboxClass === "linux-vm" && env.daytona.autoDeleteInterval > 0 ? { idleRetentionMinutes: env.daytona.autoDeleteInterval } : {}),
       image: env.daytona.image,
       resources: {
         cpu: env.daytona.resources.cpu,
@@ -50,11 +43,9 @@ const providers: Record<string, {
 
 export type CloudRuntimeAvailabilityOptions = {
   provisionerMode?: CloudRuntimeProviderId
-  /** Test seam: overrides the configured provider credential presence. */
   daytonaApiKey?: string
 }
 
-/** A contract provider is selected, regardless of credentials. */
 export function cloudRuntimeConfigured(options: CloudRuntimeAvailabilityOptions = {}) {
   return (options.provisionerMode ?? env.provisionerMode) in providers
 }
@@ -63,7 +54,6 @@ export function isCloudRuntimeProviderId(providerId: string) {
   return providerId in providers
 }
 
-/** A contract provider is selected and its credentials are present. */
 export function cloudRuntimeAvailable(options: CloudRuntimeAvailabilityOptions = {}) {
   const providerId = options.provisionerMode ?? env.provisionerMode
   const entry = providers[providerId]
@@ -77,6 +67,17 @@ export function cloudRuntimeAvailable(options: CloudRuntimeAvailabilityOptions =
 function workerActivityHeartbeatUrl(workerId: string) {
   const base = env.workerActivityBaseUrl.replace(/\/+$/, "")
   return `${base}/v1/workers/${encodeURIComponent(workerId)}/activity-heartbeat`
+}
+
+export function documentsEditorForWorkers() {
+  const config = env.documentsOffice
+  if (config.mode !== "cloud-worker" || !config.hostOrigin || !config.callbackBaseUrl) return null
+  const wopi = new URL(config.callbackBaseUrl)
+  return {
+    port: config.workerPort,
+    wopiHost: `${wopi.protocol}//${wopi.hostname}:${wopi.port || (wopi.protocol === "https:" ? "443" : "80")}`,
+    frameAncestor: new URL(config.hostOrigin).origin,
+  }
 }
 
 export function cloudRuntimeOrchestratorConfig(): CloudRuntimeOrchestratorConfig {
@@ -94,8 +95,9 @@ export function cloudRuntimeOrchestratorConfig(): CloudRuntimeOrchestratorConfig
     port: runtime.openworkPort,
     publicEndpoint: runtime.public,
     lifecycle: {
-      autoStopMinutes: runtime.autoStopInterval,
-      autoArchiveMinutes: runtime.autoArchiveInterval,
+      ...(runtime.sandboxClass === "linux-vm"
+        ? { autoStopMinutes: 0, autoPauseMinutes: runtime.autoPauseInterval }
+        : { autoStopMinutes: runtime.autoStopInterval, autoArchiveMinutes: runtime.autoArchiveInterval }),
       autoDeleteMinutes: runtime.autoDeleteInterval,
     },
     resources: {
@@ -111,7 +113,9 @@ export function cloudRuntimeOrchestratorConfig(): CloudRuntimeOrchestratorConfig
     healthcheckTimeoutMs: runtime.healthcheckTimeoutMs,
     pollIntervalMs: runtime.pollIntervalMs,
     activityHeartbeatUrl: workerActivityHeartbeatUrl,
+    documentsEditor: documentsEditorForWorkers() ?? undefined,
     bootstrap: {
+      ...(runtime.sandboxClass === "linux-vm" ? { cloudComputerDisplay: ":99" } : {}),
       imageDescription: "Daytona runtime image",
       rebuildHint: "rebuild and republish the Daytona snapshot",
     },
@@ -121,24 +125,20 @@ export function cloudRuntimeOrchestratorConfig(): CloudRuntimeOrchestratorConfig
 let cachedStore: RuntimeInstanceStore | null = null
 let cachedRuntime: CloudRuntimeOrchestrator | null = null
 
-/** Instance records are readable even before a provider is selected. */
 export function cloudRuntimeStore(): RuntimeInstanceStore {
   cachedStore ??= createDatabaseRuntimeInstanceStore({ endpointKind: cloudRuntimeEndpointKind() })
   return cachedStore
 }
 
-/** How the selected provider's endpoints behave; clients use this instead of the provider name. */
 export function cloudRuntimeEndpointKind(): ProviderEndpointKind {
   return endpointKindForProvider(env.provisionerMode)
 }
 
-/** Endpoint behaviour recorded for an instance row, keyed by the provider that created it. */
 export function endpointKindForProvider(providerId: string): ProviderEndpointKind {
   const entry = providers[providerId]
   return entry ? entry.endpointKind : "stable"
 }
 
-/** The selected provider behind Den's lifecycle policy. Throws when no contract provider is configured. */
 export function getCloudRuntime(): CloudRuntimeOrchestrator {
   if (cachedRuntime) return cachedRuntime
   const entry = providers[env.provisionerMode]
@@ -157,7 +157,6 @@ export function getCloudRuntime(): CloudRuntimeOrchestrator {
   return cachedRuntime
 }
 
-/** The image version new instances boot, or `null` without a configured provider or pin. */
 export function currentCloudImageVersion(options: CloudRuntimeAvailabilityOptions = {}) {
   const entry = providers[options.provisionerMode ?? env.provisionerMode]
   return entry ? entry.imageVersion() : null

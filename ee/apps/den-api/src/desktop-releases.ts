@@ -98,15 +98,29 @@ function releasesUrl() {
   return `${baseUrl}/repos/${repositoryPath}/releases?per_page=100`
 }
 
-// A self-hosted (single-org) Den must never hand out a desktop newer than
-// itself by default, so it installs its own release instead of GitHub latest.
-// Dev and commit builds have no stable release tag and keep runtime discovery.
 function singleOrgDenReleaseTag() {
   if (env.orgMode === "multi_org") {
     return null
   }
   const releaseTag = `v${env.serviceVersion}`
   return DESKTOP_RELEASE_TAG_PATTERN.test(releaseTag) ? releaseTag : null
+}
+
+function capToSingleOrgDenRelease(metadata: DesktopReleaseMetadata): DesktopReleaseMetadata {
+  const denReleaseTag = singleOrgDenReleaseTag()
+  if (!denReleaseTag) {
+    return metadata
+  }
+
+  const denVersion = denReleaseTag.slice(1)
+  const publishedDesktopVersions = metadata.publishedDesktopVersions.filter(
+    (version) => compareStableVersions(version, denVersion) <= 0,
+  )
+  return {
+    ...metadata,
+    latestAppVersion: publishedDesktopVersions[0] ?? denVersion,
+    publishedDesktopVersions: publishedDesktopVersions.length ? publishedDesktopVersions : [denVersion],
+  }
 }
 
 export function createDesktopReleaseSource() {
@@ -143,6 +157,10 @@ export function createDesktopReleaseSource() {
   }
 
   async function getDesktopReleaseMetadata(): Promise<DesktopReleaseMetadata> {
+    return capToSingleOrgDenRelease(await getPublishedDesktopReleaseMetadata())
+  }
+
+  async function getPublishedDesktopReleaseMetadata(): Promise<DesktopReleaseMetadata> {
     if (env.desktopReleasesMode === "static") {
       return staticReleaseMetadata()
     }

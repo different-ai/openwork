@@ -48,7 +48,7 @@ function surface(page: LayoutSnapshot | "broken"): Surface {
       if (method === "Page.captureScreenshot") return { data: PNG.toString("base64") };
       if (method === "Runtime.evaluate") {
         const expression = JSON.stringify(params ?? {});
-        if (expression.includes("createTreeWalker")) {
+        if (expression.includes("createTreeWalker") && !expression.includes("visibleText")) {
           if (page === "broken") throw new Error("layout unavailable");
           return { result: { value: page } };
         }
@@ -136,6 +136,72 @@ test("the design review writes advisory notes per screenshot and the report show
     const stale = await assembleReview({ testRunDirs: [outDir] });
     const staleImage = stale.report.evidence.find((item) => item.kind === "image");
     expect(staleImage?.kind === "image" ? staleImage.designNotes : undefined).toBeUndefined();
+  } finally {
+    await rm(outDir, { recursive: true, force: true });
+  }
+});
+
+test("checkpoints retain completed critiques and measured notes before a queued model call, without changing failed assertions", async () => {
+  const outDir = await mkdtemp(join(tmpdir(), "design-checkpoint-"));
+  try {
+    const evidence = createTestEvidence({ name: "partial advisory review", outDir });
+    await withTestEvidence(evidence, async () => {
+      await screenshot(surface(libraryBefore), { caption: "first completed screen" });
+      await screenshot(surface(libraryBefore), { caption: "second pending screen" });
+      await screenshot(surface(libraryBefore), { caption: "third concurrent screen" });
+      await screenshot(surface(libraryBefore), { caption: "fourth queued screen" });
+      evidence.recordAssertionEvidence("mandatory screenshot assertion", "missing content", false);
+    });
+    evidence.setOutcome("failed");
+    await evidence.close();
+    const original = await readFile(join(outDir, "test-run.json"), "utf8");
+    let calls = 0;
+    let releaseConcurrent: () => void = () => { throw new Error("Promise not initialized"); };
+    const concurrent = new Promise<void>((resolve) => { releaseConcurrent = resolve; });
+    const review = await reviewTestRunDesign(outDir, {
+      checkpoint: true,
+      bypassCache: true,
+      vision: { model: "checkpoint-unit-model", ask: async ({ prompt }) => {
+        calls += 1;
+        if (prompt.includes('Screen: "first completed screen"')) return JSON.stringify({ findings: [{
+          rule: "OW-LIST-HEADER", severity: "medium", title: "Column headers on a plain list", evidence: "The first screen has column headers",
+        }] });
+        if (prompt.includes('Screen: "second pending screen"')) {
+          await concurrent;
+          throw new Error("simulated model timeout");
+        }
+        if (prompt.includes('Screen: "third concurrent screen"')) {
+          await concurrent;
+          return JSON.stringify({ findings: [] });
+        }
+        // The fourth critique can start only after one of the first three has
+        // completed AND its checkpoint is durable. The other two stay blocked.
+        try {
+          const checkpoint = JSON.parse(await readFile(join(outDir, "design-review.json"), "utf8"));
+          expect(Object.values(checkpoint.notes).flat()).toEqual(expect.arrayContaining([
+            expect.objectContaining({ source: "vision", rule: "OW-LIST-HEADER" }),
+            expect.objectContaining({ source: "layout", rule: "layout.split-row" }),
+          ]));
+          expect(Object.keys(checkpoint.notes)).toHaveLength(4);
+          expect(checkpoint.errors).toEqual([
+            "second pending screen: advisory critique not completed",
+            "third concurrent screen: advisory critique not completed",
+            "fourth queued screen: advisory critique not completed",
+          ]);
+          expect(await readFile(join(outDir, "test-run.json"), "utf8")).toBe(original);
+        } finally {
+          releaseConcurrent();
+        }
+        return JSON.stringify({ findings: [] });
+      } },
+    });
+    expect(calls).toBe(4);
+    expect(review.errors).toEqual(["second pending screen: simulated model timeout"]);
+    expect(Object.values(review.notes).flat().filter(note => note.source === "vision")).toHaveLength(1);
+    expect(Object.values(review.notes).flat().find(note => note.source === "layout")?.detail).toMatch(/Also on 3 later screenshots\.$/);
+    expect(await readFile(join(outDir, "test-run.json"), "utf8")).toBe(original);
+    const { report } = await assembleReview({ testRunDirs: [outDir] });
+    expect(renderReviewComment(report)).toContain("Selected evidence: **Failed**");
   } finally {
     await rm(outDir, { recursive: true, force: true });
   }

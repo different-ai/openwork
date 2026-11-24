@@ -78,24 +78,32 @@ export function collectLayout(limit: number): LayoutSnapshot {
     const data = paint.getImageData(0, 0, 1, 1).data;
     return [data[0] ?? 0, data[1] ?? 0, data[2] ?? 0, (data[3] ?? 0) / 255];
   };
-  for (let node = walker.nextNode(); node; node = walker.nextNode()) {
+  const isPainted = (element: Element): boolean => {
+    // display:contents has no box of its own, but its text can still be painted.
+    let boxElement = element;
+    while (getComputedStyle(boxElement).display === "contents" && boxElement.parentElement) boxElement = boxElement.parentElement;
+    if (typeof boxElement.checkVisibility === "function"
+      && !boxElement.checkVisibility({ contentVisibilityAuto: true })) return false;
+    // Chromium can retain non-zero Range rects inside closed details. Only its
+    // first direct summary stays painted; a nested or second summary does not.
+    // Keep this fallback for browsers without checkVisibility, and check every
+    // ancestor so an inner summary cannot escape a closed outer disclosure.
+    for (let current: Element | null = element; current; current = current.parentElement) {
+      if (!current.matches("details:not([open])")) continue;
+      const summary = Array.from(current.children).find((child) => child.tagName === "SUMMARY");
+      if (!summary?.contains(element)) return false;
+    }
+    return true;
+  };
+  textNodes: for (let node = walker.nextNode(); node; node = walker.nextNode()) {
     const text = (node.textContent ?? "").replace(/\s+/g, " ").trim();
     const element = node.parentElement;
     if (!text || !element) continue;
-    const range = document.createRange();
-    range.selectNodeContents(node);
-    const rect = range.getBoundingClientRect();
-    if (rect.width < 1 || rect.height < 1) continue;
-    if (rect.bottom < 0 || rect.top > viewportHeight || rect.right < 0 || rect.left > viewportWidth) continue;
     const style = getComputedStyle(element);
-    if (style.visibility === "hidden" || style.visibility === "collapse") continue;
+    if (style.visibility === "hidden" || style.visibility === "collapse" || !isPainted(element)) continue;
     let opacity = 1;
     let background = "";
-    let left = rect.left;
-    let top = rect.top;
-    let right = rect.right;
-    let bottom = rect.bottom;
-    let clipped = false;
+    const clips: DOMRect[] = [];
     for (let current: Element | null = element; current; current = current.parentElement) {
       const currentStyle = getComputedStyle(current);
       opacity *= Number.parseFloat(currentStyle.opacity) || 0;
@@ -104,19 +112,9 @@ export function collectLayout(limit: number): LayoutSnapshot {
         if (fill && fill[3] > 0.5) background = `rgb(${fill[0]}, ${fill[1]}, ${fill[2]})`;
       }
       if (current !== element.ownerDocument.documentElement
-        && (currentStyle.overflowX !== "visible" || currentStyle.overflowY !== "visible")) {
-        const clip = current.getBoundingClientRect();
-        if (rect.left < clip.left - 1 || rect.right > clip.right + 1 || rect.top < clip.top - 1 || rect.bottom > clip.bottom + 1) clipped = true;
-        left = Math.max(left, clip.left);
-        top = Math.max(top, clip.top);
-        right = Math.min(right, clip.right);
-        bottom = Math.min(bottom, clip.bottom);
-      }
+        && (currentStyle.overflowX !== "visible" || currentStyle.overflowY !== "visible")) clips.push(current.getBoundingClientRect());
     }
-    if (opacity < 0.05 || right - left < 1 || bottom - top < 1) continue;
-    // Text under a modal, popover or sticky bar is not what the person sees.
-    const hit = document.elementFromPoint((left + right) / 2, (top + bottom) / 2);
-    if (hit && !element.contains(hit) && !hit.contains(element)) continue;
+    if (opacity < 0.05) continue;
     const control = element.closest("button, a, input, select, textarea, label, [role=button], [role=tab], [role=menuitem], [role=option], [role=switch], [role=checkbox]");
     // Nearest attribute a person put there on purpose: data-testid first, then
     // any other data-* that is not UI-library state, then an aria-label.
@@ -135,35 +133,59 @@ export function collectLayout(limit: number): LayoutSnapshot {
       }
     }
     const ink = srgb(style.color);
-    if (boxes.length >= limit) {
-      truncated = true;
-      break;
+    const range = document.createRange();
+    range.selectNodeContents(node);
+    // A wrapped node's bounding rect unions its lines and covers neighbouring
+    // inline text that is not overlapped on screen. Measure each real fragment.
+    for (const rect of Array.from(range.getClientRects())) {
+      if (rect.width < 1 || rect.height < 1) continue;
+      if (rect.bottom < 0 || rect.top > viewportHeight || rect.right < 0 || rect.left > viewportWidth) continue;
+      let left = rect.left;
+      let top = rect.top;
+      let right = rect.right;
+      let bottom = rect.bottom;
+      let clipped = false;
+      for (const clip of clips) {
+        if (rect.left < clip.left - 1 || rect.right > clip.right + 1 || rect.top < clip.top - 1 || rect.bottom > clip.bottom + 1) clipped = true;
+        left = Math.max(left, clip.left);
+        top = Math.max(top, clip.top);
+        right = Math.min(right, clip.right);
+        bottom = Math.min(bottom, clip.bottom);
+      }
+      if (right - left < 1 || bottom - top < 1) continue;
+      // Text under a modal, popover or sticky bar is not what the person sees.
+      const hit = document.elementFromPoint((left + right) / 2, (top + bottom) / 2);
+      if (hit && !element.contains(hit) && !hit.contains(element)) continue;
+      if (boxes.length >= limit) {
+        truncated = true;
+        break textNodes;
+      }
+      boxes.push({
+        text: text.slice(0, 80),
+        x: round(left),
+        y: round(top),
+        width: round(right - left),
+        height: round(bottom - top),
+        fontSize: Number.parseFloat(style.fontSize) || 0,
+        fontWeight: Number.parseInt(style.fontWeight, 10) || 400,
+        color: ink ? `rgba(${ink[0]}, ${ink[1]}, ${ink[2]}, ${round(ink[3] * 100) / 100})` : style.color,
+        background: background || "rgb(255, 255, 255)",
+        opacity: round(opacity),
+        interactive: control !== null,
+        controlWidth: control ? round(control.getBoundingClientRect().width) : 0,
+        disabled: element.closest("[disabled], [aria-disabled=true]") !== null,
+        clipped,
+        anchor,
+        classes: (element.getAttribute("class") ?? "").replace(/\s+/g, " ").trim().slice(0, 160),
+      });
     }
-    boxes.push({
-      text: text.slice(0, 80),
-      x: round(left),
-      y: round(top),
-      width: round(right - left),
-      height: round(bottom - top),
-      fontSize: Number.parseFloat(style.fontSize) || 0,
-      fontWeight: Number.parseInt(style.fontWeight, 10) || 400,
-      color: ink ? `rgba(${ink[0]}, ${ink[1]}, ${ink[2]}, ${round(ink[3] * 100) / 100})` : style.color,
-      background: background || "rgb(255, 255, 255)",
-      opacity: round(opacity),
-      interactive: control !== null,
-      controlWidth: control ? round(control.getBoundingClientRect().width) : 0,
-      disabled: element.closest("[disabled], [aria-disabled=true]") !== null,
-      clipped,
-      anchor,
-      classes: (element.getAttribute("class") ?? "").replace(/\s+/g, " ").trim().slice(0, 160),
-    });
   }
   const images: LayoutRect[] = [];
   for (const media of Array.from(document.querySelectorAll("img, video, canvas, picture, iframe"))) {
     const rect = media.getBoundingClientRect();
     const width = Math.min(rect.right, viewportWidth) - Math.max(rect.left, 0);
     const height = Math.min(rect.bottom, viewportHeight) - Math.max(rect.top, 0);
-    if (width >= 96 && height >= 96 && getComputedStyle(media).visibility === "visible") {
+    if (width >= 96 && height >= 96 && getComputedStyle(media).visibility === "visible" && isPainted(media)) {
       images.push({ x: round(Math.max(rect.left, 0)), y: round(Math.max(rect.top, 0)), width: round(width), height: round(height) });
     }
   }

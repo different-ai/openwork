@@ -16,12 +16,15 @@
       "default": "./dist/client.js"
     }
   },
-  "files": ["dist", "README.md"],
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
     "generate": "node script/generate.mjs",
-    "generate:check": "node script/generate.mjs --check",
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit"
+    "generate:check": "node ../../scripts/den-contract.mjs && tsc -p tsconfig.json --noEmit",
+    "build": "node ../../scripts/den-contract.mjs --if-needed && tsc -p tsconfig.json",
+    "typecheck": "node ../../scripts/den-contract.mjs --if-needed && tsc -p tsconfig.json --noEmit"
   },
   "devDependencies": {
     "@hey-api/openapi-ts": "0.97.3",

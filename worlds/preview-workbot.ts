@@ -1,4 +1,4 @@
-export const summary = "Workbot with Den sign-in and the headless runner: the seeded Acme org with demo Slack, Gmail, Calendar, Notion and Linear; -- --live adds a real model, the computer and an MCP App; -- --calendar adds the desktop and Workbot Calendars.";
+export const summary = "Workbot with Den sign-in and the headless runner: the seeded Acme org with demo Slack, Gmail, Calendar, Notion and Linear; -- --live adds a real model locally; Daytona -- --computer-snapshot <name> adds a managed desktop; -- --calendar adds seeded Automations, model choices and mock meetings to Workbot's Calendar locally; -- --open-workplace makes Open Outlook, Open Calendar and Open Drive each person's Microsoft 365 locally.";
 export const supportedTargets = ["local/host", "daytona/linux", "freestyle/linux"];
 
 import { execFile } from "node:child_process";
@@ -6,10 +6,10 @@ import { promisify } from "node:util";
 import { fileURLToPath } from "node:url";
 
 import { hold } from "../packages/world/src/hold.ts";
-import { output, secret } from "../packages/world/src/outputs.ts";
+import { normalizeOutputs, output, secret } from "../packages/world/src/outputs.ts";
 import { resolvePlace } from "../evals/packages/env/src/place.ts";
 import { bootWorkbot, parseWorkbotOptions, probeWorkbot, workbotOutputs } from "./lib/workbot.ts";
-import { bootCalendarDesktop, calendarOutputs, startCalendarMockProcess } from "./lib/calendar.ts";
+import { calendarOutputs, startCalendarMockProcess } from "./lib/calendar.ts";
 
 const NAME = "preview-workbot";
 
@@ -22,13 +22,13 @@ const NAME = "preview-workbot";
 export async function main(argv = process.argv.slice(2)): Promise<void> {
   // Production adapters expose compiled exports. Prepare them once on the
   // controller before selecting a remote transport; no cloud work happens here.
-  await promisify(execFile)("pnpm", ["--filter", "@openwork/freestyle", "build"], { cwd: fileURLToPath(new URL("..", import.meta.url)), timeout: 180_000, maxBuffer: 16 * 1024 * 1024 });
+  await promisify(execFile)("pnpm", ["--filter", "@openwork/world-freestyle", "build"], { cwd: fileURLToPath(new URL("..", import.meta.url)), timeout: 180_000, maxBuffer: 16 * 1024 * 1024 });
   await promisify(execFile)("pnpm", ["--filter", "@openwork/sandbox-daytona", "build"], { cwd: fileURLToPath(new URL("..", import.meta.url)), timeout: 180_000, maxBuffer: 16 * 1024 * 1024 });
   await using stack = new AsyncDisposableStack();
   if (process.env.OPENWORK_WORLD_PLACE === "freestyle") {
     const { parseAppWebOptions } = await import("./lib/app-web-options.ts");
-    const { ensureSnapshot } = await import("../packages/freestyle/src/builder.ts");
-    const { launchPreview, deletePreview } = await import("../packages/freestyle/src/index.ts");
+    const { ensureSnapshot } = await import("../packages/world-freestyle/src/builder.ts");
+    const { launchPreview, deletePreview } = await import("../packages/world-freestyle/src/index.ts");
     const { trackResource } = await import("../packages/world/src/ledger.ts");
     const options = parseAppWebOptions(argv, process.env);
     if (!options.ref) throw new Error("preview-workbot on Freestyle requires --source ref:dev or sha:<full-pushed-sha>.");
@@ -40,25 +40,31 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
     return;
   }
   const place = resolvePlace();
+  const parsed = parseWorkbotOptions(argv);
   if (place.kind === "daytona") {
+    if (parsed.openWorkplace) throw new Error("--open-workplace runs locally only: the sign-in page must reach your browser.");
     const { bootWorkbotOnDaytona } = await import("./lib/workbot.ts");
-    await hold({ name: NAME, outputs: await bootWorkbotOnDaytona(stack, place) });
+    const outputs = await bootWorkbotOnDaytona(stack, place, parsed);
+    const expires = normalizeOutputs(outputs).values.expires;
+    const timer = parsed.computerSnapshot && expires ? setTimeout(() => process.kill(process.pid, "SIGTERM"), Math.max(1, Date.parse(expires) - Date.now())) : undefined;
+    timer?.unref();
+    try { await hold({ name: NAME, outputs }); }
+    finally { if (timer) clearTimeout(timer); }
     return;
   }
   // `-- --live`: a real model, Workbot's own computer and an MCP App, for feeling the product (local only).
-  const parsed = parseWorkbotOptions(argv);
+  if (parsed.computerSnapshot) throw new Error("--computer-snapshot requires --place daytona.");
   // --calendar: the mock starts first so Workbot can read meetings from it.
   const mock = parsed.calendar ? await startCalendarMockProcess(stack) : null;
   const options = { ...parsed, ...(mock ? { workbotCalendarMockUrl: mock.baseUrl } : {}) };
   const world = await bootWorkbot(stack, undefined, options);
   const proof = await probeWorkbot(world);
   const verified = world.live ? `Signed in through Den; ${proof.reply}` : `Signed in through Den and answered: ${proof.reply}`;
-  // `-- --calendar`: the desktop Calendar over Workbot's Acme org, its seeded Automations and the calendar mock.
-  let calendar = {};
-  if (mock) {
-    const desktop = await bootCalendarDesktop(stack, { den: world.den, place, mock });
-    calendar = { ...calendarOutputs(mock, desktop), workbotCalendar: output(`${world.workbotUrl}/calendar`, { group: "Calendar", note: "Workbot's Calendar tab (sign in as alex@acme.test); meetings come from the mock" }) };
-  }
+  // `-- --calendar`: Workbot's Calendar over the Acme org, its seeded Automations and the calendar mock.
+  const calendar = mock ? {
+    ...calendarOutputs(mock),
+    workbotCalendar: output(`${world.workbotUrl}/calendar`, { group: "Calendar", note: "Workbot's Calendar tab (sign in as alex@acme.test); meetings come from the mock" }),
+  } : {};
   await hold({ name: NAME, outputs: workbotOutputs(world, { verified: output(verified, { group: "Verification" }), ...calendar }) });
 }
 

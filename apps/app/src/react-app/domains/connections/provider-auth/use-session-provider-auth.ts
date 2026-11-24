@@ -1,7 +1,3 @@
-// Session-route wiring for the provider-auth store: a stable store instance
-// fed by a latest-values ref, lifecycle (start/dispose), Zen-restriction sync,
-// workspace-change resync, the post-onboarding auto-open latch, and cloud
-// provider auto-sync. Extracted verbatim from session-route.tsx.
 import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from "react";
 import type { ProviderListResponse } from "@opencode-ai/sdk/v2/client";
 
@@ -16,12 +12,13 @@ import { useReloadCoordinator } from "@/react-app/shell/reload-coordinator";
 import { type RouteWorkspace, workspaceLabel } from "@/react-app/shell/route-workspaces";
 import { reconcilePolicyDisabledProviders } from "@/react-app/domains/connections/policy-provider-reconcile";
 import {
-  refreshOrganizationModels,
   shouldWaitForCloudProviderSyncBeforePolicyReconcile,
   type OrganizationModelsRefreshReason,
 } from "./managed-models-recovery";
 import { createSessionOpenworkServer, type SessionServerEndpoint } from "./session-openwork-server";
 import { createProviderAuthStore, useProviderAuthStoreSnapshot } from "./store";
+import { useLiveProviderSync } from "./use-live-provider-sync";
+import { skipsLegacyProviderRefresh } from "./live-provider-sync";
 
 const emptyWorkspaceDisplay: WorkspaceDisplay = {
   id: "",
@@ -42,17 +39,7 @@ export type UseSessionProviderAuthInput = {
   selectedWorkspaceEndpoint: ResolvedWorkspaceEndpoint | null;
   selectedWorkspaceRoot: string;
   selectedWorkspaceId: string;
-  /**
-   * The local server and its managed engine, addressed without a workspace.
-   * Set only while no workspace exists, so organization providers sync at
-   * sign-in the same way Settings syncs them.
-   */
   engineRootServer?: SessionServerEndpoint | null;
-  /**
-   * Live host token of the local OpenWork server (desktop runtime host info).
-   * Enables the server-side provider sync path: PUT /den-session and
-   * POST /cloud-provider-sync/run are host-token routes.
-   */
   localServerHostToken?: string;
   localServerGeneration?: number | null;
   setProviders: (value: ProviderListItem[]) => void;
@@ -82,6 +69,12 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
     setDisabledProviderIds,
   } = input;
   const denAuth = useDenAuth();
+  const liveProviderSync = useLiveProviderSync(
+    selectedWorkspaceEndpoint?.client ?? engineRootServer?.client ?? null,
+    opencodeBaseUrl,
+  );
+  const liveProviderSyncRef = useRef(liveProviderSync);
+  liveProviderSyncRef.current = liveProviderSync;
   const checkDesktopRestriction = useCheckDesktopRestriction();
   const reloadCoordinator = useReloadCoordinator();
   const { markReloadRequired } = reloadCoordinator;
@@ -118,13 +111,11 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
     localServerGeneration,
   };
 
-  // Depend on the stable callback, not the coordinator object: the context
-  // value identity changes on every reload flip, and recreating this store
-  // triggers a spurious cloud provider sync pass that amplified the
-  // dispose/create loop.
   const store = useMemo(
     () =>
       createProviderAuthStore({
+        nativeOpenworkClient: () => stateRef.current.selectedWorkspaceEndpoint?.client ?? null,
+        nativeWorkspaceId: () => stateRef.current.selectedWorkspaceEndpoint?.workspaceId ?? null,
         client: () => stateRef.current.opencodeClient,
         providers: () => stateRef.current.providers,
         providerDefaults: () => stateRef.current.providerDefaults,
@@ -141,10 +132,6 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
             : emptyWorkspaceDisplay,
         selectedWorkspaceRoot: () => stateRef.current.selectedWorkspaceRoot,
         runtimeWorkspaceId: () => stateRef.current.selectedWorkspaceEndpoint?.workspaceId ?? null,
-        // Truthful endpoint-backed snapshot: local endpoints expose the
-        // server's providerSync capability and host-token auth so sign-in
-        // pushes the Den session to the local server and sync runs
-        // server-side.
         openworkServer: createSessionOpenworkServer({
           endpoint: () => stateRef.current.selectedWorkspaceEndpoint ?? stateRef.current.engineRootServer ?? null,
           hostToken: () => stateRef.current.localServerHostToken ?? "",
@@ -195,17 +182,19 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
       ? completedCloudProviderSync
       : null;
   const cloudProviderSyncReady = Boolean(currentCloudProviderSync);
-  const loadCloudProviderSync = useCallback((reason: OrganizationModelsRefreshReason) => (
-    refreshOrganizationModels({
-      runCloudProviderSync: store.runCloudProviderSync,
-      refreshProviders: () => store.refreshProviders({ force: true }),
-    }, reason)
-  ), [store]);
+  const loadCloudProviderSync = useCallback(async (reason: OrganizationModelsRefreshReason) => {
+    const result = await store.runCloudProviderSync(reason);
+    if (liveProviderSyncRef.current || result?.outcome === "handled_live") return null;
+    return store.refreshProviders({ force: true });
+  }, [store]);
   const refreshCloudProviderSync = useCallback(async (reason: OrganizationModelsRefreshReason) => {
+    if (skipsLegacyProviderRefresh(reason, liveProviderSyncRef.current)) return null;
     const providerList = await loadCloudProviderSync(reason);
     setCompletedCloudProviderSync({ context: cloudProviderSyncContext, providerList });
     return providerList;
   }, [cloudProviderSyncContext, loadCloudProviderSync]);
+
+  useEffect(() => { store.syncFromOptions(); }, [store]);
 
   useEffect(() => {
     store.start();
@@ -302,12 +291,9 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
     };
   }, [cloudProviderSyncContext, loadCloudProviderSync]);
 
-  // After onboarding, auto-open the provider modal if no providers are connected.
-  // The welcome route appends ?onboarding=1 to the session URL after workspace creation.
   useEffect(() => {
     const hash = window.location.hash;
     if (!hash.includes("onboarding=1")) return;
-    // Strip the param so it doesn't re-trigger.
     window.location.hash = hash.replace(/[?&]onboarding=1/, "");
     onboardingProviderAuthPendingRef.current = true;
   }, []);
@@ -320,11 +306,6 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
     void store.openProviderAuthModal({ returnFocusTarget: "composer" });
   }, [selectedWorkspaceEndpoint, store]);
 
-  // Session is where forced sign-in lands. Keep org-managed cloud providers in
-  // sync here so sign-in applies opencode.json changes before Settings opens.
-  // Route every lifecycle trigger through the snapshot-publishing wrapper:
-  // refreshing only the engine leaves selected-model availability stale until
-  // this route is recreated by a restart or sign-out.
   useCloudProviderAutoSync(refreshCloudProviderSync);
   const snapshot = useProviderAuthStoreSnapshot(store);
 
@@ -332,7 +313,8 @@ export function useSessionProviderAuth(input: UseSessionProviderAuthInput) {
     store,
     snapshot,
     cloudProviderSyncReady,
-    cloudProviderList: currentCloudProviderSync?.providerList ?? null,
+    cloudProviderList: liveProviderSync ? null : currentCloudProviderSync?.providerList ?? null,
     refreshCloudProviderSync,
+    liveProviderSync,
   };
 }

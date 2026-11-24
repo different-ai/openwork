@@ -1,4 +1,5 @@
 import type { UIMessage } from "ai";
+import { parseLocalPathReference } from "./local-path";
 
 type OpenTargetKind = "url" | "file";
 export type OpenTargetPreview = "browser" | "markdown" | "code" | "sheet" | "slides" | "document" | "image" | "pdf" | "html" | "text" | "external";
@@ -24,11 +25,13 @@ export type OpenTarget = {
   confidence: number;
   reason: string;
   exists?: boolean;
+  pathHints?: string[];
+  resolvedPath?: string;
+  fileScope?: "workspace" | "conversation";
   size?: number;
   updatedAt?: number;
 };
 
-/** Explicit links preserve the full address, unlike URLs extracted from prose. */
 export function openTargetFromUrl(href: string): OpenTarget | null {
   const value = href.trim();
   try {
@@ -54,6 +57,8 @@ export function sameOpenTargets(left: OpenTarget[], right: OpenTarget[]): boolea
       && target.confidence === other.confidence
       && target.reason === other.reason
       && target.exists === other.exists
+      && target.resolvedPath === other.resolvedPath
+      && target.fileScope === other.fileScope
       && target.size === other.size
       && target.updatedAt === other.updatedAt;
   });
@@ -147,29 +152,23 @@ function textWithoutRedundantMarkdownLinkLabels(text: string) {
   return text.replace(MARKDOWN_LINK_PATTERN, (match, label: string, href: string) => {
     const cleanLabel = label.trim();
     const cleanHref = href.trim();
-    return cleanLabel === basename(cleanHref) ? `[](${cleanHref})` : match;
+    return cleanLabel === basename(filePathFromLinkHref(cleanHref)) ? `[](${cleanHref})` : match;
   });
 }
 
-/**
- * Chat attachments are uploaded into the workspace inbox and referenced by
- * `file://` URLs on message file parts. Decoding the URL here lets those
- * attachments resolve as openable artifacts (regex path scanning cannot,
- * because attachment filenames often contain spaces).
- */
+export function filePathFromLinkHref(href: string): string {
+  return parseLocalPathReference(href, { decode: true })?.path ?? href.trim();
+}
+
 export function filePathFromFileUrl(url: string): string | null {
-  if (!url.startsWith("file://")) return null;
-  try {
-    const pathname = decodeURIComponent(new URL(url).pathname);
-    if (!pathname) return null;
-    return /^\/[A-Za-z]:\//.test(pathname) ? pathname.slice(1) : pathname;
-  } catch {
-    return null;
-  }
+  if (!/^file:\/\//i.test(url)) return null;
+  return parseLocalPathReference(url)?.path ?? null;
 }
 
 function targetFromFile(path: string, confidence: number, reason: string): OpenTarget | null {
-  const normalized = normalizePath(path).replace(/[.,;:]+$/, "");
+  const reference = parseLocalPathReference(path);
+  if (!reference) return null;
+  const normalized = normalizePath(reference.path);
   if (!normalized || normalized.length > 500 || !normalized.includes(".")) return null;
   return {
     id: `file:${normalized.toLowerCase()}`,
@@ -191,7 +190,6 @@ function targetFromUrl(url: string, confidence: number, reason: string): OpenTar
       clean = parsed.origin;
     }
   } catch {
-    // Keep the stripped value; regex extraction already validated the shape.
   }
   if (!clean) return null;
   return {
@@ -247,7 +245,7 @@ function scanText(
     if (/^(?:https?|wss?):\/\//i.test(href)) {
       addTarget(map, targetFromUrl(href, confidence, reason));
     } else if (options.includeFiles) {
-      addTarget(map, targetFromFile(href, confidence, reason));
+      addTarget(map, targetFromFile(filePathFromLinkHref(href), confidence, reason));
     }
   }
 
@@ -338,11 +336,9 @@ function addFileValues(map: Map<string, OpenTarget>, values: string[], confidenc
   }
 }
 
-// Session sync replaces changed parts; unchanged tools survive text-only deltas.
 const partOpenTargets = new WeakMap<UIMessage["parts"][number], Map<string, OpenTarget[]>>();
 
 function extractPartOpenTargets(part: UIMessage["parts"][number], confidence: number, includeFileMentions: boolean) {
-  // Only text extraction depends on message role or file-mention options.
   const key = part.type === "text" ? `${confidence}:${includeFileMentions}` : "default";
   let variants = partOpenTargets.get(part);
   const cached = variants?.get(key);
@@ -409,6 +405,31 @@ function extractPartOpenTargets(part: UIMessage["parts"][number], confidence: nu
   return extracted;
 }
 
+export function deriveSessionFileEvidence(messages: UIMessage[]): OpenTarget[] {
+  const targets = new Map<string, OpenTarget>();
+  for (const message of messages) {
+    for (const part of message.parts) {
+      if (part.type !== "dynamic-tool" || part.state !== "output-available" || isDiscoveryTool(part.toolName)) continue;
+      const metadata = part.callProviderMetadata?.openwork;
+      const mcpResult = metadata?.mcpResult;
+      const failed = (isObject(part.output) && (part.output.error || part.output.isError === true || part.output.ok === false))
+        || (isObject(mcpResult) && mcpResult.isError === true);
+      if (failed) continue;
+      const destinations = Array.isArray(metadata?.workspacePaths)
+        ? metadata.workspacePaths.flatMap((entry) => isObject(entry) && typeof entry.resolved === "string" ? [entry.resolved] : [])
+        : typeof metadata?.fileDestination === "string" ? [metadata.fileDestination] : [];
+      const values = destinations.length ? destinations
+        : [...[part.input, part.output].flatMap(collectNestedFileMetadataValues), ...collectPatchFileValues(part.input)];
+      for (const value of values) {
+        const reference = parseLocalPathReference(value);
+        const target = reference && targetFromFile(reference.path, 95, "session tool metadata");
+        if (target && reference) addTarget(targets, { ...target, id: `file:${reference.path}`, value: reference.path });
+      }
+    }
+  }
+  return Array.from(targets.values());
+}
+
 export function deriveOpenTargets(messages: UIMessage[], options: DeriveOpenTargetsOptions = {}): OpenTarget[] {
   const targets = new Map<string, OpenTarget>();
   const includeFileMentions = options.includeFileMentions === true;
@@ -425,6 +446,5 @@ export function deriveOpenTargets(messages: UIMessage[], options: DeriveOpenTarg
   return Array.from(targets.values())
     .filter(isArtifactTarget)
     .sort((left, right) => right.confidence - left.confidence)
-    // Callers may attach verification metadata or otherwise mutate their targets.
     .map((target) => ({ ...target }));
 }

@@ -1,0 +1,84 @@
+name: Core journeys
+
+# Runs every core journey in evals/core (listed in evals/journeys.ts) nightly
+# on dev and on demand. PRs and dev pushes run no journeys: a journey
+# regression is reported here once a day. Packaged journeys run in packaged
+# smoke; core-chat needs a Freestyle world and runs nightly in "Freestyle
+# world check".
+on:
+  schedule:
+    - cron: "17 8 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: core-journeys-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  list:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    outputs:
+      matrix: ${{ steps.list.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - id: list
+        # Packaged journeys need a packaged desktop binary (packaged smoke runs
+        # them); core-chat needs a Freestyle world (Freestyle world check runs it).
+        run: |
+          set -euo pipefail
+          specs=$(find evals/core -maxdepth 1 -name '*.e2e.test.ts' ! -name 'packaged-*' ! -name 'app-smoke.e2e.test.ts' ! -name 'core-chat.e2e.test.ts' | sort)
+          test -n "$specs"
+          printf 'matrix=%s\n' "$(printf '%s\n' $specs | jq -Rsc 'split("\n") | map(select(length > 0)) | {include: map({spec: ., name: (split("/") | last | sub("\\.e2e\\.test\\.ts$"; ""))})}')" >> "$GITHUB_OUTPUT"
+
+  journey:
+    name: ${{ matrix.name }}
+    needs: list
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      max-parallel: 12
+      matrix: ${{ fromJSON(needs.list.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+      - uses: ./.github/actions/setup-tests
+      - uses: ./.github/actions/setup-browser
+        with:
+          oauth-handoff: "true"
+      - name: Build local Den dependencies
+        uses: ./.github/actions/den-deps
+      - name: Run the journey
+        timeout-minutes: 20
+        env:
+          SPEC: ${{ matrix.spec }}
+          OPENWORK_EVAL_BUILD_REVIEW_APP: "1"
+          OPENWORK_EVAL_CONTAINER_ELECTRON: "1"
+        run: |
+          set -euo pipefail
+          test "$(id -u)" -ne 0
+          if node evals/scripts/run-parity-proof.mjs --supports "$SPEC"; then
+            xvfb-run -a node evals/scripts/run-parity-proof.mjs "$SPEC"
+          else
+            xvfb-run -a node evals/bin/evals.mjs "${SPEC#evals/}" --local
+          fi
+      - name: Save testkit and Vitest records
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: core-journey-${{ github.run_attempt }}-${{ matrix.name }}
+          path: |
+            evals/results/test-runs/
+            evals/results/.testkit/cli-run-*.json
+          include-hidden-files: true
+          retention-days: 7
+          if-no-files-found: warn

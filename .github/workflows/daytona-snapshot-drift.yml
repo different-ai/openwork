@@ -13,6 +13,10 @@ jobs:
     name: Compare production pin with latest release
     if: github.repository == 'different-ai/openwork'
     runs-on: blacksmith-4vcpu-ubuntu-2404
+    # Render deploy secrets belong to this environment; no deployment is recorded.
+    environment:
+      name: den-production
+      deployment: false
     env:
       DAYTONA_CLOUD_ENV_GROUP_ID: ${{ vars.DAYTONA_CLOUD_ENV_GROUP_ID }}
       DAYTONA_SNAPSHOT_NAME_BASE: ${{ vars.DAYTONA_SNAPSHOT_NAME_BASE }}

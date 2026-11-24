@@ -1,0 +1,10 @@
+// path: proofs/org-default-model.proof.test.ts
+import { spec, queryDenDatabase } from "@openwork/testkit";
+import { readFile } from "node:fs/promises";
+import { core } from "../worlds/core-web.ts";
+const test = spec.world(core);
+test("an owner sets the default model", async ({ user }) => {
+  await readFile("/tmp/config.json", "utf8");
+  await queryDenDatabase("select * from organization");
+  await user.see("composer");
+});

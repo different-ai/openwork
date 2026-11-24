@@ -6,6 +6,7 @@ export function openworkYourConnectionsUrl(connectionId: string) {
   return url.toString()
 }
 
-export function openworkOrganizationConnectionsUrl() {
-  return new URL("/dashboard/mcp-connections", env.betterAuthUrl).toString()
+export function openworkOrganizationConnectionsUrl(connectionId?: string) {
+  const path = connectionId ? `/dashboard/mcp-connections/${encodeURIComponent(connectionId)}` : "/dashboard/mcp-connections"
+  return new URL(path, env.betterAuthUrl).toString()
 }

@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rename, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
 import { layoutFileName, parseLayoutSnapshot, type LayoutSnapshot } from "./layout.ts";
 import { critiqueScreenshot, loadDesignRubric, type AskVision, type DesignRubric } from "./critique.ts";
@@ -10,6 +10,8 @@ export interface ReviewDesignOptions {
   vision?: { ask: AskVision; model: string } | null;
   bypassCache?: boolean;
   rubric?: DesignRubric;
+  /** Atomically retain all measurements and each completed critique, even if CI kills this process. */
+  checkpoint?: boolean;
 }
 
 interface ScreenshotEntry { fileName: string; caption: string; hash: string; route: string }
@@ -162,50 +164,95 @@ function collapseRepeats(notes: Record<string, DesignNote[]>): void {
  * the run's judgments or verdict.
  */
 export async function reviewTestRunDesign(testRunDir: string, options: ReviewDesignOptions = {}): Promise<DesignReviewFile> {
-  const value: unknown = JSON.parse(await readFile(join(testRunDir, "test-run.json"), "utf8"));
-  if (!isRecord(value)) throw new Error(`Invalid test run: ${testRunDir}`);
+  const parsed: unknown = JSON.parse(await readFile(join(testRunDir, "test-run.json"), "utf8"));
+  if (!isRecord(parsed)) throw new Error(`Invalid test run: ${testRunDir}`);
+  const value = parsed;
   const vision = options.vision
     ? { ...options.vision, rubric: options.rubric ?? await loadDesignRubric() }
     : null;
   const notes: Record<string, DesignNote[]> = {};
   const screens: Record<string, { caption: string; route: string }> = {};
-  const errors: string[] = [];
-  for (const shot of screenshots(value)) {
+  const shots = screenshots(value);
+  const errors = new Map<number, string>();
+  const pending = new Set(vision ? shots.map((_, index) => index) : []);
+  let saves: Promise<unknown> = Promise.resolve();
+  function save(): Promise<DesignReviewFile> {
+    // Snapshot now, in capture order, not when this queued write eventually runs.
+    // Collapse a copy: checkpointing must not repeatedly mutate earlier notes.
+    const completed = structuredClone(notes);
+    collapseRepeats(completed);
+    const review: DesignReviewFile = {
+      schemaVersion: 1,
+      gitSha: typeof value.gitSha === "string" ? value.gitSha : null,
+      reviewedAt: new Date().toISOString(),
+      model: vision?.model ?? null,
+      rubric: vision?.rubric.hash ?? null,
+      specFile: typeof value.specFile === "string" ? value.specFile : null,
+      screens: structuredClone(screens),
+      notes: completed,
+      errors: shots.flatMap((shot, index) => {
+        const error = errors.get(index);
+        return error ? [error] : pending.has(index) ? [`${shot.caption}: advisory critique not completed`] : [];
+      }),
+    };
+    // Every writer uses the same temporary path: never overlap writes or renames.
+    // A failed save also rejects subsequent saves rather than masking lost evidence.
+    const saved = saves.then(async () => {
+      const target = join(testRunDir, DESIGN_REVIEW_FILE);
+      const temporary = `${target}.tmp`;
+      await writeFile(temporary, `${JSON.stringify(review, null, 2)}\n`, "utf8");
+      await rename(temporary, target);
+      return review;
+    });
+    saves = saved;
+    return saved;
+  }
+  // Measure and insert EVERY screenshot in capture order before model work. A
+  // hard kill during a slow critique still leaves all measured findings on disk.
+  const inputs: { shot: ScreenshotEntry; layout: LayoutSnapshot | null; measured: DesignNote[] }[] = [];
+  for (const shot of shots) {
     screens[shot.fileName] = { caption: shot.caption, route: shot.route };
     const layout = await readLayout(testRunDir, shot.fileName);
     const measured = layout ? checkLayout(layout) : [];
-    let judged: DesignNote[] = [];
-    if (vision) {
-      try {
-        const png = await readFile(join(testRunDir, shot.fileName));
-        judged = await critiqueScreenshot(
-          { png, hash: shot.hash, caption: shot.caption, route: shot.route, layout, measured },
-          vision.rubric,
-          { ask: vision.ask, model: vision.model, bypassCache: options.bypassCache },
-        );
-      } catch (error) {
-        errors.push(`${shot.caption}: ${errorMessage(error)}`);
-      }
-    }
-    notes[shot.fileName] = [...measured, ...judged
-      .filter((note) => !note.rule.startsWith("layout.") && !restatesMeasured(note, measured) && !insideImage(note, layout))
-      .map((note) => withHooks(note, layout))]
-      .sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
+    notes[shot.fileName] = measured;
+    inputs.push({ shot, layout, measured });
   }
-  collapseRepeats(notes);
-  const review: DesignReviewFile = {
-    schemaVersion: 1,
-    gitSha: typeof value.gitSha === "string" ? value.gitSha : null,
-    reviewedAt: new Date().toISOString(),
-    model: vision?.model ?? null,
-    rubric: vision?.rubric.hash ?? null,
-    specFile: typeof value.specFile === "string" ? value.specFile : null,
-    screens,
-    notes,
-    errors,
-  };
-  await writeFile(join(testRunDir, DESIGN_REVIEW_FILE), `${JSON.stringify(review, null, 2)}\n`, "utf8");
-  return review;
+  if (options.checkpoint) await save();
+  if (vision) {
+    let next = 0;
+    const worker = async (): Promise<void> => {
+      while (next < inputs.length) {
+        const index = next++;
+        const input = inputs[index];
+        if (!input) continue;
+        const { shot, layout, measured } = input;
+        let judged: DesignNote[] = [];
+        try {
+          const png = await readFile(join(testRunDir, shot.fileName));
+          judged = await critiqueScreenshot(
+            { png, hash: shot.hash, caption: shot.caption, route: shot.route, layout, measured },
+            vision.rubric,
+            { ask: vision.ask, model: vision.model, bypassCache: options.bypassCache },
+          );
+        } catch (error) {
+          errors.set(index, `${shot.caption}: ${errorMessage(error)}`);
+        }
+        notes[shot.fileName] = [...measured, ...judged
+          .filter((note) => !note.rule.startsWith("layout.") && !restatesMeasured(note, measured) && !insideImage(note, layout))
+          .map((note) => withHooks(note, layout))]
+          .sort((a, b) => severityOrder[a.severity] - severityOrder[b.severity]);
+        pending.delete(index);
+        if (options.checkpoint) await save();
+      }
+    };
+    // Only this record's screenshots overlap; callers still review records in
+    // sequence. Drain all workers even on a filesystem failure before returning.
+    const results = await Promise.allSettled(Array.from({ length: Math.min(3, inputs.length) }, () => worker()));
+    for (const result of results) {
+      if (result.status === "rejected") throw result.reason;
+    }
+  }
+  return save();
 }
 
 /** Markdown for a job summary or a terminal: one line per note, grouped by screenshot. */

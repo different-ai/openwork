@@ -1,5 +1,10 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { chmod, mkdir } from "node:fs/promises";
 import net from "node:net";
+import { homedir } from "node:os";
+import { join, relative, resolve, isAbsolute } from "node:path";
+import { deleteEnv, mergeEnv } from "@openwork/paths";
+import { startupPhase } from "./startup-phase.js";
 import { randomUUID } from "node:crypto";
 import { appendEngineOutputTail, createEngineStartupLineReader } from "./engine-output.js";
 
@@ -72,13 +77,11 @@ export function createManagedProcessClose(
       try {
         child.kill("SIGTERM");
       } catch {
-        // Re-check through the exit event before escalating.
       }
       if (await waitForExit(options.termTimeoutMs ?? 1_000)) return;
       try {
         child.kill("SIGKILL");
       } catch {
-        // Re-check below; kill can race a natural exit.
       }
       if (!await waitForExit(options.killTimeoutMs ?? 500)) {
         throw new Error("Managed OpenCode process did not exit after SIGKILL");
@@ -128,6 +131,7 @@ type ManagedOpencodeServerOptions = {
   excludedPorts?: number[];
   timeoutMs?: number;
   env?: Record<string, string | undefined>;
+  stateDir?: string;
 };
 
 class ManagedOpencodeExitError extends Error {
@@ -147,6 +151,46 @@ function isRetryableAddressInUseExit(error: unknown): boolean {
     error.addressInUse;
 }
 
+type ForeignStorage = "database" | "config";
+
+const FOREIGN_DATABASE_EXIT = /Database is not empty and has no session table/;
+const FOREIGN_CONFIG_EXIT = /Configuration is invalid at (.+?)\s*(?:\n|$)[\s\S]*V2 permissions are not supported by OpenCode V1/;
+
+function globalOpencodeConfigDir(env: NodeJS.ProcessEnv): string {
+  return join(env.XDG_CONFIG_HOME?.trim() || join(env.HOME?.trim() || homedir(), ".config"), "opencode");
+}
+
+function isInside(parent: string, child: string): boolean {
+  const path = relative(resolve(parent), resolve(child));
+  return path === "" || (!path.startsWith("..") && !isAbsolute(path));
+}
+
+function foreignStorageExit(error: unknown, env: NodeJS.ProcessEnv): ForeignStorage | null {
+  if (!(error instanceof ManagedOpencodeExitError) || error.exitCode !== 1) return null;
+  if (!env.OPENCODE_DB?.trim() && FOREIGN_DATABASE_EXIT.test(error.message)) return "database";
+  const config = error.message.match(FOREIGN_CONFIG_EXIT)?.[1]?.trim();
+  if (config && isInside(globalOpencodeConfigDir(env), config)) return "config";
+  return null;
+}
+
+let isolatedDatabase: string | undefined;
+
+export function isolatedOpencodeV1Database(): string | undefined {
+  return isolatedDatabase;
+}
+
+async function isolatedEngineStorageEnv(stateDir: string, storage: ForeignStorage): Promise<Record<string, string>> {
+  await mkdir(stateDir, { recursive: true, mode: 0o700 });
+  await chmod(stateDir, 0o700);
+  if (storage === "database") {
+    isolatedDatabase = join(stateDir, "opencode.db");
+    return { OPENCODE_DB: isolatedDatabase };
+  }
+  const xdgConfig = join(stateDir, "xdg-config");
+  await mkdir(join(xdgConfig, "opencode"), { recursive: true, mode: 0o700 });
+  return { XDG_CONFIG_HOME: xdgConfig };
+}
+
 async function startManagedOpencodeServer(
   options: ManagedOpencodeServerOptions,
   hostname: string,
@@ -156,21 +200,14 @@ async function startManagedOpencodeServer(
   const password = randomSecret();
   const args = ["serve", "--hostname", hostname, "--port", String(port), "--cors", "*"];
   const command = options.bin?.trim() || "opencode";
-  // The engine's in-process npm installs use Arborist, which audits by default.
-  // That audit POST depends on npm's advisories endpoint, which has been observed
-  // to hang for the full five-minute registry timeout, so first-run must not wait.
-  // @npmcli/config reads npm_config_* settings from the environment.
   const engineEnvDefaults = { npm_config_audit: "false" };
-  const env: NodeJS.ProcessEnv = {
-    ...process.env,
-    ...engineEnvDefaults,
-    ...options.env,
-    OPENCODE_SERVER_USERNAME: username,
-    OPENCODE_SERVER_PASSWORD: password,
-  };
-  // The managed engine needs its own provider environment, but never the key
-  // that decrypts OpenWork-owned OAuth credentials.
-  delete env.OPENWORK_ENCRYPTION_KEY;
+  const env: NodeJS.ProcessEnv = mergeEnv([
+    process.env,
+    engineEnvDefaults,
+    options.env,
+    { OPENCODE_SERVER_USERNAME: username, OPENCODE_SERVER_PASSWORD: password },
+  ]);
+  deleteEnv(env, "OPENWORK_ENCRYPTION_KEY");
   const injectedEnv = Object.entries({
     ...engineEnvDefaults,
     ...(options.env ?? {}),
@@ -201,9 +238,6 @@ async function startManagedOpencodeServer(
       let addressInUse = false;
       const output = () => `stdout:\n${stdout}\nstderr:\n${stderr}`;
       const collect = (tail: string, text: string) => {
-        // Remember the retry signal even if later diagnostics evict it. Keep
-        // stream boundaries separate, including a token split across chunks.
-        // Do not invent a word boundary where the overlap was cut.
         addressInUse ||= /\bEADDRINUSE\b[\s\S]/.test((tail.length > 16 ? "_" : "") + tail.slice(-16) + text);
         return appendEngineOutputTail(tail, text);
       };
@@ -237,7 +271,6 @@ async function startManagedOpencodeServer(
           addressInUse || /\bEADDRINUSE$/.test(stdout) || /\bEADDRINUSE$/.test(stderr)));
       };
       child.stdout?.on("data", (chunk) => {
-        // Keep draining both pipes after startup, without decoding or parsing.
         if (settled) return;
         const text = chunk.toString();
         stdout = collect(stdout, text);
@@ -248,8 +281,6 @@ async function startManagedOpencodeServer(
         stderr = collect(stderr, chunk.toString());
       });
       child.on("error", fail);
-      // ChildProcess can emit "exit" before its stdio pipes have drained. Wait
-      // for "close" so retry classification includes every diagnostic line.
       child.once("close", onClose);
     });
   } catch (error) {
@@ -274,16 +305,30 @@ async function startManagedOpencodeServer(
 }
 
 export async function createManagedOpencodeServer(options: ManagedOpencodeServerOptions): Promise<ManagedOpencodeServer> {
+  return startupPhase("engine.v1.serve", () => createManagedOpencodeServerInner(options));
+}
+
+async function createManagedOpencodeServerInner(options: ManagedOpencodeServerOptions): Promise<ManagedOpencodeServer> {
   const hostname = options.hostname ?? "127.0.0.1";
-  const port = options.port ?? await findFreePort(hostname, options.excludedPorts);
-  try {
-    return await startManagedOpencodeServer(options, hostname, port);
-  } catch (error) {
-    // The automatic free-port probe is necessarily racy. Retry exactly once on
-    // the one startup failure that a new port can safely fix; explicit ports
-    // and all other code-1 exits remain actionable.
-    if (options.port !== undefined || !isRetryableAddressInUseExit(error)) throw error;
-    const retryPort = await findFreePort(hostname, [...(options.excludedPorts ?? []), port]);
-    return startManagedOpencodeServer(options, hostname, retryPort);
+  let port = options.port ?? await findFreePort(hostname, options.excludedPorts);
+  let env = options.env;
+  const retried = new Set<"port" | ForeignStorage>();
+  for (;;) {
+    try {
+      return await startManagedOpencodeServer({ ...options, env }, hostname, port);
+    } catch (error) {
+      if (options.port === undefined && !retried.has("port") && isRetryableAddressInUseExit(error)) {
+        retried.add("port");
+        port = await findFreePort(hostname, [...(options.excludedPorts ?? []), port]);
+        continue;
+      }
+      const storage = options.stateDir ? foreignStorageExit(error, mergeEnv([process.env, env])) : null;
+      if (options.stateDir && storage && !retried.has(storage)) {
+        retried.add(storage);
+        env = { ...env, ...(await isolatedEngineStorageEnv(options.stateDir, storage)) };
+        continue;
+      }
+      throw error;
+    }
   }
 }

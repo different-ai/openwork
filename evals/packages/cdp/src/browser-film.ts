@@ -119,11 +119,13 @@ export async function captureBrowserFilm(surface: Surface, directory: string) {
       downloadPath: `/tmp/openwork-film-downloads-${randomUUID()}`,
       eventsEnabled: true,
     });
+    // Recordings can ask for full-resolution frames (e.g. with OPENWORK_EVAL_CHROME_SCALE=2) so close-ups stay sharp.
+    const filmMax = /^(\d+)x(\d+)$/.exec(process.env.OPENWORK_FILM_MAX_SIZE ?? "");
     await send("Page.startScreencast", {
       format: "jpeg",
-      quality: 90,
-      maxWidth: 1600,
-      maxHeight: 1200,
+      quality: Number(process.env.OPENWORK_FILM_QUALITY ?? 90),
+      maxWidth: filmMax ? Number(filmMax[1]) : 1600,
+      maxHeight: filmMax ? Number(filmMax[2]) : 1200,
       everyNthFrame: 1,
     });
   } catch (error) {

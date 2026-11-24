@@ -22,10 +22,6 @@ OpenWork offers two Bedrock providers. Both work with either way of authenticati
 
 With **Each member signs in**, each person approves OpenWork once in their browser with your organization's IAM Identity Center (and through it, Okta, Microsoft Entra ID, Google Workspace or another identity provider you federated). Gateway keeps their sign-in on the server, renews it, and exchanges it for short-lived AWS credentials of the permission set you choose. Nobody needs the AWS CLI, a named profile, or an `~/.aws` folder.
 
-<Info>
-  **Each member signs in** for Amazon Bedrock is rolling out. If the option shows **AWS sign-in isn't turned on for your organization yet**, ask your OpenWork platform administrator to turn on **AI Gateway: AWS and Microsoft sign-in** for your organization in `/admin`. Self-hosted operators can turn it on for the whole install with the Helm value `config.features.gatewayCloudSignIn`.
-</Info>
-
 ## Set up AWS
 
 You do these steps once per AWS organization. You need permission to manage Bedrock model access and IAM Identity Center.
@@ -137,7 +133,6 @@ People's browsers also reach your AWS access portal (`*.awsapps.com`) and, if fe
 
 | What you see | What to check |
 | --- | --- |
-| **AWS sign-in isn't turned on for your organization yet** | Ask your OpenWork platform administrator to turn on **AI Gateway: AWS and Microsoft sign-in** for your organization. |
 | **IAM Identity Center rejected the sign-in** right after **Continue to AWS** | The access portal URL and Identity Center region. The region is where Identity Center is enabled, not necessarily the Bedrock region. |
 | **Your AWS user is not assigned this permission set in this account** | Assign the person, or a group they belong to, to the permission set on the AWS account you entered. |
 | Sign-in works, but requests say **AWS denied access to this Bedrock model** | The permission set's policy, model access in the provider's region, and for Bedrock (OpenAI) the Mantle permission. |

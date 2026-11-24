@@ -19,8 +19,6 @@ function mergeMessageParts(snapshotMessage: UIMessage, cachedMessage: UIMessage)
   const parts = snapshotMessage.parts.map((part, index) => {
     if (part.type === "dynamic-tool") {
       const cached = cachedTools.get(part.toolCallId);
-      // A call cannot return from a terminal result to streaming input. Keep
-      // snapshot authority for terminal-to-terminal updates and other calls.
       if (cached?.toolName === part.toolName
         && (cached.state === "output-available" || cached.state === "output-error")
         && (part.state === "input-streaming" || part.state === "input-available")) return cached;
@@ -69,7 +67,7 @@ function mergeSnapshotMessageWithCached(snapshotMessage: UIMessage, cachedMessag
   return result;
 }
 
-function messageCreated(message: UIMessage) {
+export function messageCreated(message: UIMessage) {
   const metadata = message.metadata;
   if (!metadata || typeof metadata !== "object" || !("opencode" in metadata)) return null;
 
@@ -132,8 +130,6 @@ function mergeMissingMessagesByChronology(messages: UIMessage[], missing: UIMess
       if (created === null || !Number.isFinite(created) || byCreated.has(created)) break;
       byCreated.set(created, message);
     }
-    // Unique finite timestamps make the final order independent of insertion order.
-    // Ties and missing/invalid timestamps must retain the source-neighbor insertion rules.
     if (byCreated.size === messages.length + missing.length) {
       return [...byCreated]
         .sort(([a], [b]) => a - b)

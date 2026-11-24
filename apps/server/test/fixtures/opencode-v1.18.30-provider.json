@@ -1,0 +1,739 @@
+{
+  "all": [
+    {
+      "id": "openrouter",
+      "name": "OpenRouter",
+      "source": "api",
+      "env": [
+        "OPENROUTER_API_KEY"
+      ],
+      "key": "sk-or-catalog-copy-must-not-be-used",
+      "options": {
+        "headers": {
+          "HTTP-Referer": "https://opencode.ai/",
+          "X-Title": "opencode"
+        }
+      },
+      "models": {
+        "arcee-ai/trinity-large-thinking": {
+          "id": "arcee-ai/trinity-large-thinking",
+          "providerID": "openrouter",
+          "api": {
+            "id": "arcee-ai/trinity-large-thinking",
+            "url": "https://openrouter.ai/api/v1",
+            "npm": "@openrouter/ai-sdk-provider"
+          },
+          "name": "Trinity Large Thinking",
+          "family": "trinity",
+          "capabilities": {
+            "temperature": true,
+            "reasoning": true,
+            "attachment": false,
+            "toolcall": true,
+            "input": {
+              "text": true,
+              "audio": false,
+              "image": false,
+              "video": false,
+              "pdf": false
+            },
+            "output": {
+              "text": true,
+              "audio": false,
+              "image": false,
+              "video": false,
+              "pdf": false
+            },
+            "interleaved": false
+          },
+          "cost": {
+            "input": 0.25,
+            "output": 0.8,
+            "cache": {
+              "read": 0.06,
+              "write": 0
+            }
+          },
+          "limit": {
+            "context": 262144,
+            "output": 80000
+          },
+          "status": "active",
+          "options": {},
+          "headers": {},
+          "release_date": "2026-04-01",
+          "variants": {}
+        },
+        "deepseek/deepseek-v4.1-flash": {
+          "id": "deepseek/deepseek-v4.1-flash",
+          "providerID": "openrouter",
+          "api": {
+            "id": "deepseek/deepseek-v4.1-flash",
+            "url": "https://openrouter.ai/api/v1",
+            "npm": "@openrouter/ai-sdk-provider"
+          },
+          "name": "DeepSeek V4.1 Flash",
+          "family": "deepseek-flash",
+          "capabilities": {
+            "temperature": true,
+            "reasoning": true,
+            "attachment": true,
+            "toolcall": true,
+            "input": {
+              "text": true,
+              "audio": false,
+              "image": true,
+              "video": false,
+              "pdf": false
+            },
+            "output": {
+              "text": true,
+              "audio": false,
+              "image": false,
+              "video": false,
+              "pdf": false
+            },
+            "interleaved": false
+          },
+          "cost": {
+            "input": 0.02,
+            "output": 1,
+            "cache": {
+              "read": 0.015,
+              "write": 0
+            }
+          },
+          "limit": {
+            "context": 1048576,
+            "output": 943718
+          },
+          "status": "active",
+          "options": {},
+          "headers": {},
+          "release_date": "2026-09-10",
+          "variants": {
+            "none": {
+              "reasoning": {
+                "effort": "none"
+              }
+            },
+            "low": {
+              "reasoning": {
+                "effort": "low"
+              }
+            },
+            "high": {
+              "reasoning": {
+                "effort": "high"
+              }
+            },
+            "max": {
+              "reasoning": {
+                "effort": "max"
+              }
+            }
+          }
+        },
+        "scaledown/summarize": {
+          "id": "scaledown/summarize",
+          "providerID": "openrouter",
+          "api": {
+            "id": "scaledown/summarize",
+            "url": "https://openrouter.ai/api/v1",
+            "npm": "@openrouter/ai-sdk-provider"
+          },
+          "name": "Summarize",
+          "capabilities": {
+            "temperature": false,
+            "reasoning": false,
+            "attachment": true,
+            "toolcall": false,
+            "input": {
+              "text": true,
+              "audio": false,
+              "image": true,
+              "video": false,
+              "pdf": true
+            },
+            "output": {
+              "text": true,
+              "audio": false,
+              "image": false,
+              "video": false,
+              "pdf": false
+            },
+            "interleaved": false
+          },
+          "cost": {
+            "input": 0.04,
+            "output": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 4000
+          },
+          "status": "active",
+          "options": {},
+          "headers": {},
+          "release_date": "2026-10-13",
+          "variants": {}
+        },
+        "bytedance-seed/seed-1.6": {
+          "id": "bytedance-seed/seed-1.6",
+          "providerID": "openrouter",
+          "api": {
+            "id": "bytedance-seed/seed-1.6",
+            "url": "https://openrouter.ai/api/v1",
+            "npm": "@openrouter/ai-sdk-provider"
+          },
+          "name": "Seed 1.6",
+          "family": "seed",
+          "capabilities": {
+            "temperature": true,
+            "reasoning": true,
+            "attachment": true,
+            "toolcall": true,
+            "input": {
+              "text": true,
+              "audio": false,
+              "image": true,
+              "video": true,
+              "pdf": false
+            },
+            "output": {
+              "text": true,
+              "audio": false,
+              "image": false,
+              "video": false,
+              "pdf": false
+            },
+            "interleaved": false
+          },
+          "cost": {
+            "input": 0.25,
+            "output": 2,
+            "cache": {
+              "read": 0,
+              "write": 0
+            },
+            "tiers": [
+              {
+                "input": 0.5,
+                "output": 4,
+                "cache": {
+                  "read": 0,
+                  "write": 0
+                },
+                "tier": {
+                  "type": "context",
+                  "size": 128000
+                }
+              }
+            ]
+          },
+          "limit": {
+            "context": 262144,
+            "output": 32768
+          },
+          "status": "deprecated",
+          "options": {},
+          "headers": {},
+          "release_date": "2025-10-15",
+          "variants": {
+            "low": {
+              "reasoning": {
+                "effort": "low"
+              }
+            },
+            "medium": {
+              "reasoning": {
+                "effort": "medium"
+              }
+            },
+            "high": {
+              "reasoning": {
+                "effort": "high"
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "openai",
+      "name": "OpenAI",
+      "source": "custom",
+      "env": [
+        "OPENAI_API_KEY"
+      ],
+      "options": {
+        "apiKey": "opencode-oauth-dummy-key",
+        "headerTimeout": 300000
+      },
+      "models": {
+        "gpt-5.6-terra": {
+          "id": "gpt-5.6-terra",
+          "providerID": "openai",
+          "api": {
+            "id": "gpt-5.6-terra",
+            "url": "",
+            "npm": "@ai-sdk/openai"
+          },
+          "name": "GPT-5.6 Terra",
+          "family": "gpt-terra",
+          "capabilities": {
+            "temperature": false,
+            "reasoning": true,
+            "attachment": true,
+            "toolcall": true,
+            "input": {
+              "text": true,
+              "audio": false,
+              "image": true,
+              "video": false,
+              "pdf": true
+            },
+            "output": {
+              "text": true,
+              "audio": false,
+              "image": false,
+              "video": false,
+              "pdf": false
+            },
+            "interleaved": false
+          },
+          "cost": {
+            "input": 0,
+            "output": 0,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "limit": {
+            "context": 400000,
+            "input": 272000,
+            "output": 128000
+          },
+          "status": "active",
+          "options": {},
+          "headers": {},
+          "release_date": "2026-07-09",
+          "variants": {
+            "none": {
+              "reasoningEffort": "none",
+              "reasoningSummary": "auto",
+              "include": [
+                "reasoning.encrypted_content"
+              ]
+            },
+            "low": {
+              "reasoningEffort": "low",
+              "reasoningSummary": "auto",
+              "include": [
+                "reasoning.encrypted_content"
+              ]
+            },
+            "medium": {
+              "reasoningEffort": "medium",
+              "reasoningSummary": "auto",
+              "include": [
+                "reasoning.encrypted_content"
+              ]
+            },
+            "high": {
+              "reasoningEffort": "high",
+              "reasoningSummary": "auto",
+              "include": [
+                "reasoning.encrypted_content"
+              ]
+            },
+            "xhigh": {
+              "reasoningEffort": "xhigh",
+              "reasoningSummary": "auto",
+              "include": [
+                "reasoning.encrypted_content"
+              ]
+            },
+            "max": {
+              "reasoningEffort": "max",
+              "reasoningSummary": "auto",
+              "include": [
+                "reasoning.encrypted_content"
+              ]
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "anthropic",
+      "name": "Anthropic",
+      "source": "custom",
+      "env": [
+        "ANTHROPIC_API_KEY"
+      ],
+      "options": {},
+      "models": {
+        "claude-haiku-4-5-20251001": {
+          "id": "claude-haiku-4-5-20251001",
+          "providerID": "anthropic",
+          "api": {
+            "id": "claude-haiku-4-5-20251001",
+            "url": "",
+            "npm": "@ai-sdk/anthropic"
+          },
+          "name": "Claude Haiku 4.5",
+          "family": "claude-haiku",
+          "capabilities": {
+            "temperature": true,
+            "reasoning": true,
+            "attachment": true,
+            "toolcall": true,
+            "input": {
+              "text": true,
+              "audio": false,
+              "image": true,
+              "video": false,
+              "pdf": true
+            },
+            "output": {
+              "text": true,
+              "audio": false,
+              "image": false,
+              "video": false,
+              "pdf": false
+            },
+            "interleaved": false
+          },
+          "cost": {
+            "input": 1,
+            "output": 5,
+            "cache": {
+              "read": 0.1,
+              "write": 1.25
+            }
+          },
+          "limit": {
+            "context": 200000,
+            "output": 64000
+          },
+          "status": "active",
+          "options": {},
+          "headers": {},
+          "release_date": "2025-10-15",
+          "variants": {
+            "high": {
+              "thinking": {
+                "type": "enabled",
+                "budgetTokens": 16000
+              }
+            },
+            "max": {
+              "thinking": {
+                "type": "enabled",
+                "budgetTokens": 31999
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "id": "google",
+      "name": "Google",
+      "source": "custom",
+      "env": [
+        "GOOGLE_API_KEY",
+        "GOOGLE_GENERATIVE_AI_API_KEY",
+        "GEMINI_API_KEY"
+      ],
+      "options": {},
+      "models": {
+        "gemini-omni-flash-preview": {
+          "id": "gemini-omni-flash-preview",
+          "providerID": "google",
+          "api": {
+            "id": "gemini-omni-flash-preview",
+            "url": "",
+            "npm": "@ai-sdk/google"
+          },
+          "name": "Gemini Omni Flash Preview",
+          "family": "gemini",
+          "capabilities": {
+            "temperature": true,
+            "reasoning": true,
+            "attachment": true,
+            "toolcall": false,
+            "input": {
+              "text": true,
+              "audio": false,
+              "image": true,
+              "video": true,
+              "pdf": false
+            },
+            "output": {
+              "text": false,
+              "audio": false,
+              "image": false,
+              "video": true,
+              "pdf": false
+            },
+            "interleaved": false
+          },
+          "cost": {
+            "input": 1.5,
+            "output": 17.5,
+            "cache": {
+              "read": 0,
+              "write": 0
+            }
+          },
+          "limit": {
+            "context": 131072,
+            "output": 65536
+          },
+          "status": "active",
+          "options": {},
+          "headers": {},
+          "release_date": "2026-06-30",
+          "variants": {}
+        }
+      }
+    },
+    {
+      "id": "github-copilot",
+      "name": "GitHub Copilot",
+      "source": "custom",
+      "env": [
+        "GITHUB_TOKEN"
+      ],
+      "options": {},
+      "models": {
+        "claude-haiku-5.5": {
+          "id": "claude-haiku-5.5",
+          "providerID": "github-copilot",
+          "api": {
+            "id": "claude-haiku-5.5",
+            "url": "https://api.githubcopilot.com/v1",
+            "npm": "@ai-sdk/anthropic"
+          },
+          "name": "Claude Haiku 5.5",
+          "family": "claude-haiku",
+          "capabilities": {
+            "temperature": false,
+            "reasoning": true,
+            "attachment": true,
+            "toolcall": true,
+            "input": {
+              "text": true,
+              "audio": false,
+              "image": true,
+              "video": false,
+              "pdf": true
+            },
+            "output": {
+              "text": true,
+              "audio": false,
+              "image": false,
+              "video": false,
+              "pdf": false
+            },
+            "interleaved": false
+          },
+          "cost": {
+            "input": 0.1,
+            "output": 0.5,
+            "cache": {
+              "read": 0.01,
+              "write": 0.125
+            },
+            "tiers": [
+              {
+                "input": 0.5,
+                "output": 2.5,
+                "cache": {
+                  "read": 0.05,
+                  "write": 0.625
+                },
+                "tier": {
+                  "type": "context",
+                  "size": 100000
+                }
+              }
+            ]
+          },
+          "limit": {
+            "context": 1000000,
+            "output": 128000
+          },
+          "status": "active",
+          "options": {},
+          "headers": {},
+          "release_date": "2026-10-07",
+          "variants": {
+            "low": {
+              "thinking": {
+                "type": "adaptive",
+                "display": "summarized"
+              },
+              "effort": "low"
+            },
+            "medium": {
+              "thinking": {
+                "type": "adaptive",
+                "display": "summarized"
+              },
+              "effort": "medium"
+            },
+            "high": {
+              "thinking": {
+                "type": "adaptive",
+                "display": "summarized"
+              },
+              "effort": "high"
+            },
+            "xhigh": {
+              "thinking": {
+                "type": "adaptive",
+                "display": "summarized"
+              },
+              "effort": "xhigh"
+            },
+            "max": {
+              "thinking": {
+                "type": "adaptive",
+                "display": "summarized"
+              },
+              "effort": "max"
+            }
+          }
+        },
+        "gpt-5.6-terra": {
+          "id": "gpt-5.6-terra",
+          "providerID": "github-copilot",
+          "api": {
+            "id": "gpt-5.6-terra",
+            "url": "https://api.githubcopilot.com",
+            "npm": "@ai-sdk/openai"
+          },
+          "name": "GPT-5.6 Terra",
+          "family": "gpt-terra",
+          "capabilities": {
+            "temperature": false,
+            "reasoning": true,
+            "attachment": true,
+            "toolcall": true,
+            "input": {
+              "text": true,
+              "audio": false,
+              "image": true,
+              "video": false,
+              "pdf": true
+            },
+            "output": {
+              "text": true,
+              "audio": false,
+              "image": false,
+              "video": false,
+              "pdf": false
+            },
+            "interleaved": false
+          },
+          "cost": {
+            "input": 2,
+            "output": 12,
+            "cache": {
+              "read": 0.2,
+              "write": 2.5
+            },
+            "tiers": [
+              {
+                "input": 4,
+                "output": 18,
+                "cache": {
+                  "read": 0.4,
+                  "write": 5
+                },
+                "tier": {
+                  "type": "context",
+                  "size": 272000
+                }
+              }
+            ],
+            "experimentalOver200K": {
+              "input": 4,
+              "output": 18,
+              "cache": {
+                "read": 0.4,
+                "write": 5
+              }
+            }
+          },
+          "limit": {
+            "context": 1050000,
+            "input": 922000,
+            "output": 128000
+          },
+          "status": "active",
+          "options": {},
+          "headers": {},
+          "release_date": "2026-07-09",
+          "variants": {
+            "none": {
+              "reasoningEffort": "none",
+              "reasoningSummary": "auto",
+              "include": [
+                "reasoning.encrypted_content"
+              ]
+            },
+            "low": {
+              "reasoningEffort": "low",
+              "reasoningSummary": "auto",
+              "include": [
+                "reasoning.encrypted_content"
+              ]
+            },
+            "medium": {
+              "reasoningEffort": "medium",
+              "reasoningSummary": "auto",
+              "include": [
+                "reasoning.encrypted_content"
+              ]
+            },
+            "high": {
+              "reasoningEffort": "high",
+              "reasoningSummary": "auto",
+              "include": [
+                "reasoning.encrypted_content"
+              ]
+            },
+            "xhigh": {
+              "reasoningEffort": "xhigh",
+              "reasoningSummary": "auto",
+              "include": [
+                "reasoning.encrypted_content"
+              ]
+            },
+            "max": {
+              "reasoningEffort": "max",
+              "reasoningSummary": "auto",
+              "include": [
+                "reasoning.encrypted_content"
+              ]
+            }
+          }
+        }
+      }
+    }
+  ],
+  "connected": [
+    "openai",
+    "openrouter"
+  ],
+  "default": {}
+}

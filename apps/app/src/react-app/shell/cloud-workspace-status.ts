@@ -36,7 +36,6 @@ export type CloudWorkspaceViewModel = {
 
 export type CloudWorkspaceMainContentDecision = "takeover" | "error" | "content";
 
-/** Long waits expose a status check without restarting a healthy boot. */
 export const CLOUD_WORKSPACE_SLOW_BOOT_MS = 45_000;
 
 export function cloudWorkspaceBootIsSlow(elapsedMs: number): boolean {
@@ -115,18 +114,10 @@ export function cloudWorkspaceUpdateAvailable(instance: DenCloudInstance | null)
   return instance.imageVersion === null || instance.imageVersion !== instance.latestVersion;
 }
 
-/** A tab hidden this long counts as the person having stepped away. */
 export const CLOUD_AUTO_UPDATE_HIDDEN_MS = 5 * 60_000;
-/** A visible tab with no pointer or keyboard input this long counts the same. */
 export const CLOUD_AUTO_UPDATE_INPUT_IDLE_MS = 10 * 60_000;
-/** After the server defers an update, wait at least this long before asking again. */
 export const CLOUD_AUTO_UPDATE_DEFERRED_RETRY_MS = 5 * 60_000;
 
-/**
- * Whether the person is away from this tab: hidden long enough, or visible
- * but untouched long enough. An update restarts the workspace, so it must
- * never start the moment someone is reading or typing.
- */
 export function isUserAway(input: {
   hiddenSinceMs: number | null;
   lastInputAtMs: number;
@@ -140,11 +131,6 @@ export function isUserAway(input: {
   return input.nowMs - input.lastInputAtMs >= idleMs;
 }
 
-// Stopped instances already recycle on wake; this only nudges running stale instances.
-// It waits until the person is away and no client-visible run is active, honors the
-// retry window after a server-side deferral, and otherwise attempts once per target
-// version so failed or already_current attempts cannot retry-loop. The server makes
-// the authoritative busy check for other tabs, devices, remote sessions, and Automations.
 export function shouldAutoUpdateCloudWorkspace(input: {
   gatewayMode: boolean;
   visible: boolean;
@@ -182,10 +168,6 @@ export function cloudWorkspaceStatusHasReadyContent(variant: CloudWorkspacePillV
   return variant === "ready" || variant === "stale";
 }
 
-/**
- * Gateway boot is owned by the workspace takeover. Showing the generic overlay
- * at the same time stacks two wait indicators on first load.
- */
 export function shouldSuppressBootOverlayForGateway(input: {
   gatewayMode: boolean;
   signedIn: boolean;

@@ -4,11 +4,22 @@ import {
   type SkillCreatedPayload,
 } from "@openwork/types/skill-created-app"
 import { z } from "zod"
+import { SKILL_FILE_MAX_BYTES, SKILL_FILES_MAX_COUNT, SKILL_FILES_MAX_TOTAL_BYTES } from "../skill-files.js"
 
 export { skillCreatedPayloadSchema } from "@openwork/types/skill-created-app"
 
 export const CREATE_SKILL_TOOL_NAME = "create_skill"
 export const UPDATE_SKILL_TOOL_NAME = "update_skill"
+
+const skillSavedOutputSchema = skillCreatedPayloadSchema.extend({
+  schemaVersion: skillCreatedPayloadSchema.shape.schemaVersion.describe("Version of the saved-skill response format."),
+  mode: skillCreatedPayloadSchema.shape.mode.describe("Whether the skill was created or updated; omitted means created."),
+  name: skillCreatedPayloadSchema.shape.name.describe("Saved skill title derived from its SKILL.md."),
+  pluginId: skillCreatedPayloadSchema.shape.pluginId.describe("Identifier of the new Plugin on create, or a visible associated Plugin on update."),
+  skillId: skillCreatedPayloadSchema.shape.skillId.describe("Skill config object identifier; use this for subsequent update_skill calls."),
+  description: skillCreatedPayloadSchema.shape.description.describe("Saved skill summary derived from its SKILL.md."),
+  libraryUrl: skillCreatedPayloadSchema.shape.libraryUrl.describe("Link to the Plugin in the OpenWork library, or null when unavailable."),
+})
 
 export type CreateSkillResult =
   | { ok: true; payload: SkillCreatedPayload }
@@ -42,10 +53,18 @@ function skillSavedToolResult(result: CreateSkillResult): CallToolResult {
   }
 }
 
+const skillFilesInputSchema = z.array(z.object({
+  path: z.string().min(1).max(255).describe("Path relative to the skill's folder, e.g. references/GUIDE.md, scripts/run.py, assets/logo.png or templates/report.docx. Not SKILL.md."),
+  text: z.string().max(SKILL_FILE_MAX_BYTES).optional().describe("The complete UTF-8 text of a text file."),
+  base64: z.string().max(Math.ceil(SKILL_FILE_MAX_BYTES / 3) * 4 + 64).optional().describe("The complete contents of any file, base64-encoded: use it for images, fonts, office templates and other binary files."),
+})).max(SKILL_FILES_MAX_COUNT)
+
+export type SkillFileInput = z.infer<typeof skillFilesInputSchema>[number]
+
 export function registerAgentSkillTools(input: {
   server: McpServer
-  create: (request: { pluginName: string; skillMarkdown: string }) => Promise<CreateSkillResult>
-  update?: (request: { skillId: string; skillMarkdown: string; reason?: string }) => Promise<CreateSkillResult>
+  create: (request: { pluginName: string; skillMarkdown: string; files?: SkillFileInput[] }) => Promise<CreateSkillResult>
+  update?: (request: { skillId: string; skillMarkdown: string; files?: SkillFileInput[]; reason?: string }) => Promise<CreateSkillResult>
 }) {
   input.server.registerTool(
     CREATE_SKILL_TOOL_NAME,
@@ -53,9 +72,9 @@ export function registerAgentSkillTools(input: {
       title: "Create skill",
       description: [
         "Create one private OpenWork Cloud skill in a new Plugin.",
-        "Pass a complete SKILL.md with valid frontmatter and instructions.",
-        "The skill is immediately available to its creator; this does not publish it to a Marketplace or share it.",
-        "Returns the saved skill details and a text confirmation.",
+        "Requires an active OpenWork Cloud membership, mcp:write scope, and permission to create Plugins and config objects. Pass a complete SKILL.md with valid name and description frontmatter and instructions, and optionally the supporting files it refers to (references, scripts, templates, images, fonts), each as text or base64.",
+        "Creates persistent Plugin and skill records, not a draft; the skill is immediately available to its creator. This does not publish it to a Marketplace or share it.",
+        "Returns structured saved-skill details: schemaVersion, optional mode (omitted means created), name, description, pluginId, skillId, and libraryUrl (or null), plus a text confirmation. Failures return an error code and message with isError.",
       ].join(" "),
       annotations: {
         readOnlyHint: false,
@@ -65,11 +84,12 @@ export function registerAgentSkillTools(input: {
       },
       inputSchema: z.object({
         pluginName: z.string().trim().min(1).max(255).describe("Display name for the new Plugin."),
-        skillMarkdown: z.string().trim().min(1).max(1_048_576).describe("Complete SKILL.md source, including frontmatter and instructions."),
+        skillMarkdown: z.string().trim().min(1).max(1_048_576).describe("The skill document to save: YAML frontmatter with name and description, followed by Markdown instructions telling an agent how and when to perform the task."),
+        files: skillFilesInputSchema.optional().describe(`Supporting files saved beside SKILL.md, which should name each one by its path. Each needs text or base64. At most ${SKILL_FILES_MAX_COUNT} files, ${SKILL_FILE_MAX_BYTES / 1024 / 1024} MiB each and ${SKILL_FILES_MAX_TOTAL_BYTES / 1024 / 1024} MiB in total.`),
       }),
-      outputSchema: skillCreatedPayloadSchema,
+      outputSchema: skillSavedOutputSchema,
     },
-    async ({ pluginName, skillMarkdown }) => skillSavedToolResult(await input.create({ pluginName, skillMarkdown })),
+    async ({ pluginName, skillMarkdown, files }) => skillSavedToolResult(await input.create({ pluginName, skillMarkdown, ...(files ? { files } : {}) })),
   )
   if (!input.update) return
   const update = input.update
@@ -78,23 +98,25 @@ export function registerAgentSkillTools(input: {
     {
       title: "Update skill",
       description: [
-        "Update one existing OpenWork Cloud skill by creating a new immutable version, without creating a duplicate Plugin.",
-        "Pass the skill's config object id and the complete replacement SKILL.md.",
-        "Returns the saved skill details and a text confirmation.",
+        "Publish a new immutable version of an existing OpenWork Cloud skill, without creating a duplicate Plugin or changing its sharing grants.",
+        "Requires an active OpenWork Cloud membership, mcp:write scope, and editor access to the skill. Pass its config object id and the complete replacement SKILL.md, not a patch. Supporting files are kept unless files is passed, which replaces all of them (an empty list removes them).",
+        "Immediately replaces the latest instructions for users with access and may remove stale required-connection bindings. Earlier immutable versions remain in history; this tool cannot overwrite or erase a published version. To undo the content change, publish another version with the previous content. Repeated calls create additional versions.",
+        "Returns structured saved-skill details: schemaVersion, mode (updated), name, description, pluginId (a visible associated Plugin), skillId, and libraryUrl (or null), plus a text confirmation. Failures return an error code and message with isError; a failure resolving saved details can occur after the version was written.",
       ].join(" "),
       annotations: {
         readOnlyHint: false,
-        destructiveHint: false,
+        destructiveHint: true,
         idempotentHint: false,
         openWorldHint: false,
       },
       inputSchema: z.object({
         skillId: z.string().trim().min(1).max(160).describe("The existing skill's config object id (cob_…)."),
         skillMarkdown: z.string().trim().min(1).max(1_048_576).describe("Complete replacement SKILL.md source, including frontmatter and instructions."),
-        reason: z.string().trim().min(1).max(255).optional().describe("Optional short reason recorded on the new version."),
+        files: skillFilesInputSchema.optional().describe("The complete replacement set of supporting files, each as text or base64. Omit to keep the current files."),
+        reason: z.string().trim().min(1).max(255).optional().describe("Why the skill is being changed; recorded as the new version's source revision reference for traceability."),
       }),
-      outputSchema: skillCreatedPayloadSchema,
+      outputSchema: skillSavedOutputSchema,
     },
-    async ({ skillId, skillMarkdown, reason }) => skillSavedToolResult(await update({ skillId, skillMarkdown, reason })),
+    async ({ skillId, skillMarkdown, files, reason }) => skillSavedToolResult(await update({ skillId, skillMarkdown, reason, ...(files ? { files } : {}) })),
   )
 }

@@ -19,9 +19,9 @@ export function connectionNeedsOAuthClientConfiguration(
 export function marketplaceConnectionSetupTarget(
   connection: ExternalMcpConnection,
   presets: ExternalMcpPreset[],
-  isAdmin: boolean,
+  canManageConnections: boolean,
 ): { connectionId: string; pluginId: string } | null {
-  if (!isAdmin || !marketplaceConnectionNeedsAdminSetup(connection, presets)) return null;
+  if (!canManageConnections || !marketplaceConnectionNeedsAdminSetup(connection, presets)) return null;
   const pluginId = connection.identityManagedBy[0]?.pluginId;
   return pluginId ? { connectionId: connection.id, pluginId } : null;
 }

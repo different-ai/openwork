@@ -62,8 +62,8 @@ metadata does not require a new Plain field schema; update the API's allowlisted
 context inputs and it will be included in the JSON automatically.
 
 **Configure the schemas before deploying this change.** Plain rejects thread
-fields whose keys/types do not match the workspace's schemas. Using Node 22.18+
-from `ee/apps/landing`:
+fields whose keys/types do not match the workspace's schemas. Using stable Node.js
+24.x (24.22.1 or newer within that major) from `ee/apps/landing`:
 
 1. Preview the definitions with `pnpm plain:setup-fields`. This makes no API calls.
 2. Set `PLAIN_SETUP_API_KEY` in your shell to a key with

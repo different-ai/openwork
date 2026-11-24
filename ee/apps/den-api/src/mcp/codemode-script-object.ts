@@ -1,10 +1,25 @@
 import { AjvJsonSchemaValidator } from "@modelcontextprotocol/sdk/validation/ajv"
 import type { JsonSchemaType } from "@modelcontextprotocol/sdk/validation"
+import { SCHEMA_CHECK_TIME_LIMIT_MS, SCHEMA_CHECK_TOO_SLOW_MESSAGE, TimeLimitExceededError, runWithTimeLimit } from "../time-limit.js"
 
 export type JsonSchemaObject = JsonSchemaType
 
+export type CodemodeLanguage = "codemode-js" | "ecmascript"
+
+const CODEMODE_LANGUAGES: readonly string[] = ["codemode-js", "ecmascript"] satisfies CodemodeLanguage[]
+
+function isCodemodeLanguage(value: unknown): value is CodemodeLanguage {
+  return typeof value === "string" && CODEMODE_LANGUAGES.includes(value)
+}
+
+export function workflowCodeRules(language: CodemodeLanguage): string {
+  return language === "ecmascript"
+    ? "Test a confined function body in standard JavaScript (ECMAScript); TypeScript annotations are rejected because they are not JavaScript. End with return of JSON-safe data. No imports, fetch, process or host access; use tools for external work and Promise.all for independent calls. Await every call, including writes: calls nothing awaits are cancelled when the program returns, and rejections nothing awaits appear only as warning: log lines."
+    : "Test a confined JavaScript function body; end with return of JSON-safe data. No imports, fetch, process or host access; use tools for external work and Promise.all for independent calls."
+}
+
 export type CodemodeScriptPayload = {
-  language: "codemode-js"
+  language: CodemodeLanguage
   inputSchema?: JsonSchemaObject
   outputSchema?: JsonSchemaObject
   exampleInput?: unknown
@@ -74,8 +89,9 @@ export function parseCodemodeScriptPayload(normalizedPayloadJson: unknown):
   if (!isRecord(normalizedPayloadJson) || !hasOnlyKeys(normalizedPayloadJson, ["language", "inputSchema", "outputSchema", "exampleInput", "requiredCapabilities", "limits"])) {
     return { ok: false, message: "The Workflow payload must contain only language, inputSchema, outputSchema, exampleInput, requiredCapabilities, and limits." }
   }
-  if (normalizedPayloadJson.language !== "codemode-js") {
-    return { ok: false, message: "The Workflow language must be codemode-js." }
+  const language = normalizedPayloadJson.language
+  if (!isCodemodeLanguage(language)) {
+    return { ok: false, message: "The Workflow language must be codemode-js or ecmascript." }
   }
   if (normalizedPayloadJson.inputSchema !== undefined && !isJsonSchemaObject(normalizedPayloadJson.inputSchema)) {
     return { ok: false, message: "The Workflow inputSchema must be a JSON Schema object." }
@@ -128,7 +144,7 @@ export function parseCodemodeScriptPayload(normalizedPayloadJson: unknown):
   return {
     ok: true,
     payload: {
-      language: "codemode-js",
+      language,
       ...(normalizedPayloadJson.inputSchema === undefined ? {} : { inputSchema: normalizedPayloadJson.inputSchema }),
       ...(normalizedPayloadJson.outputSchema === undefined ? {} : { outputSchema: normalizedPayloadJson.outputSchema }),
       ...(normalizedPayloadJson.exampleInput === undefined ? {} : { exampleInput: normalizedPayloadJson.exampleInput }),
@@ -147,7 +163,7 @@ export function validateCodemodeScriptInput(schema: JsonSchemaObject, value: unk
     if (hasAsyncSchema(schema)) {
       return { ok: false, error: "invalid_schema", message: "Asynchronous Workflow schemas are not supported." }
     }
-    const result = new AjvJsonSchemaValidator().getValidator<unknown>(schema)(value)
+    const result = runWithTimeLimit(() => new AjvJsonSchemaValidator().getValidator<unknown>(schema)(value), SCHEMA_CHECK_TIME_LIMIT_MS)
     if (result.valid) return { ok: true }
     return {
       ok: false,
@@ -160,7 +176,10 @@ export function validateCodemodeScriptInput(schema: JsonSchemaObject, value: unk
           : result.errorMessage,
       }],
     }
-  } catch {
+  } catch (error) {
+    if (error instanceof TimeLimitExceededError) {
+      return { ok: false, error: "invalid_arguments", issues: [{ path: "/", keyword: "schema_validation", message: SCHEMA_CHECK_TOO_SLOW_MESSAGE }] }
+    }
     return {
       ok: false,
       error: "invalid_schema",

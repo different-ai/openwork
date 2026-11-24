@@ -1,6 +1,12 @@
 import { boolean, double, index, int, json, mysqlTable, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
 import { denTypeIdColumn, encryptedTextColumn } from "../columns"
 
+/**
+ * Task analytics consent and the existing Langfuse integration's encrypted configuration.
+ * @deprecated 2026-10-14 — Deprecated: the Task analytics UI and its taskAnalyticsUi flag were removed.
+ * Most likely delete within 4 weeks (by 2026-11-11) unless an org depends on it.
+ * Keep consent, credentials and existing exports working until that dependency review.
+ */
 export const ModelsAnalyticsSettingsTable = mysqlTable("models_analytics_settings", {
   org_id: denTypeIdColumn("organization", "org_id").notNull().primaryKey(),
   enabled: boolean("enabled").notNull().default(false),
@@ -14,8 +20,13 @@ export const ModelsAnalyticsSettingsTable = mysqlTable("models_analytics_setting
   langfuse_secret_key: encryptedTextColumn("langfuse_secret_key"),
 })
 
-// Immutable events, deduplicated within an authenticated organization/member.
-// Multiple values of the same dimension in one task never replace each other.
+/**
+ * Immutable events, deduplicated within an authenticated organization/member.
+ * Multiple values of the same dimension in one task never replace each other.
+ * @deprecated 2026-10-14 — Deprecated: the Task analytics UI and its taskAnalyticsUi flag were removed.
+ * Most likely delete within 4 weeks (by 2026-11-11) unless an org depends on it.
+ * Retain event history and export receipts while runtime collection and exports still use them.
+ */
 export const ModelsAnalyticsEventTable = mysqlTable("models_analytics_event", {
   id: varchar("id", { length: 64 }).notNull().primaryKey(),
   event_id: varchar("event_id", { length: 128 }).notNull(),

@@ -1,10 +1,7 @@
-import { AdminShell } from "../../components/admin/admin-shell";
-import { DenAdminPanel } from "../../components/den-admin-panel";
+import { AdminDataPage } from "../../components/admin/admin-data-page";
+
+export const metadata = { title: "Overview | OpenWork admin" };
 
 export default function AdminPage() {
-  return (
-    <AdminShell active="overview">
-      <DenAdminPanel />
-    </AdminShell>
-  );
+  return <AdminDataPage section="overview" />;
 }

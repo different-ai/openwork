@@ -1,6 +1,7 @@
 /** @jsxImportSource react */
 import { useMemo, useState } from "react"
 import { createPortal } from "react-dom"
+import { featureAnalytics } from "@/app/lib/analytics"
 import { useQuery } from "@tanstack/react-query"
 import {
   AlertCircle,
@@ -30,6 +31,7 @@ import type {
 } from "@openwork/types/automations"
 import { AUTOMATION_FREE_MODEL, automationScheduleSchema } from "@openwork/types/automations"
 
+import { markFeatureUsed, readDenSettings } from "@/app/lib/den"
 import { isDesktopRuntime } from "@/app/lib/runtime-env"
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert"
 import { Badge } from "@/components/ui/badge"
@@ -46,26 +48,31 @@ import {
 import { Input } from "@/components/ui/input"
 import { Skeleton } from "@/components/ui/skeleton"
 import { toast } from "@/components/ui/sonner"
-import { CloudSignInBanner, CloudSignInBannerIcon } from "@/react-app/domains/cloud/cloud-sign-in-banner"
+import { CloudSignInEmptyState } from "@/react-app/domains/cloud/cloud-sign-in-banner"
 import { useDenAuth } from "@/react-app/domains/cloud/den-auth-provider"
+import { usePlatform } from "@/react-app/kernel/platform"
 import { t } from "../../../i18n"
 import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal"
 import { automationCreationPlacement } from "./automation-availability"
 import { resolveAutomationPlacement } from "./automation-placement"
 import { AutomationEditor } from "./automation-editor"
+import { AutomationShareButton } from "./automation-share-button"
+import { SharedAutomationsSection } from "./shared-automations-section"
 import { automationEditChoices, useAutomationEditorSetup } from "./use-automation-editor-setup"
 import {
   ACTIVE_RUN_STATUSES,
   AUTOMATIONS_FAST_POLL_MS,
   describeAutomationError,
   useAutomationActions,
+  useAutomationArchiveRestoreEnabled,
   useAutomationDetailQuery,
   useAutomationListQuery,
   useAutomationRunsQuery,
   useAutomationsDenContext,
+  useAutomationSharingEnabled,
 } from "./use-automations"
 import { automationExecutionThreadRoute, automationExecutionIdentity, automationLocalSessionRoute } from "./automation-cloud-thread"
-import { automationRunNotice, formatAutomationSchedule, formatAutomationTime, runStatusLabel } from "./automation-format"
+import { automationRunConnectionFix, automationRunNotice, formatAutomationSchedule, formatAutomationTime, runStatusLabel } from "./automation-format"
 import type { AutomationModelOption, AutomationProviderCatalog } from "./automation-model-options"
 import { describeAutomationModel } from "./automation-model-options"
 
@@ -97,7 +104,6 @@ function ExecutionIcon({ run }: { run: AutomationRun }) {
 
 const describeError = describeAutomationError
 
-/** Editor defaults for a pinned-Workflow Automation, which has no instructions or model of its own. */
 function inputDefaults(models: readonly AutomationModelOption[]): CreateAutomation {
   const first = models[0] ?? AUTOMATION_FREE_MODEL
   return {
@@ -108,7 +114,6 @@ function inputDefaults(models: readonly AutomationModelOption[]): CreateAutomati
   }
 }
 
-/** Name, instructions and schedule handed over from the Calendar (`?create=1&name&instructions&schedule`). */
 function calendarPrefill(params: URLSearchParams): Pick<CreateAutomation, "name" | "instructions" | "schedule"> | null {
   const schedule = automationScheduleSchema.safeParse(safeJson(params.get("schedule")))
   const name = params.get("name")?.trim() ?? ""
@@ -169,12 +174,11 @@ function LoadingState() {
 export function AutomationsPage(props: {
   providerCatalog?: AutomationProviderCatalog
   workspaceId?: string | null
-  /** Titlebar slot for New Automation, matching Library and Dashboard. */
   headerActionsTarget?: HTMLElement | null
-  /** Opens OpenWork Cloud sign-in, the same action Library offers when signed out. */
   onSignIn?: () => void
 } = {}) {
   const denAuth = useDenAuth()
+  const platform = usePlatform()
   const navigate = useNavigate()
   const openProviderSettings = () => navigate(props.workspaceId?.trim() ? workspaceSettingsRoute(props.workspaceId.trim(), "ai") : globalSettingsRoute("ai"))
   const [searchParams, setSearchParams] = useSearchParams()
@@ -184,33 +188,30 @@ export function AutomationsPage(props: {
   const [archiveOpen, setArchiveOpen] = useState(false)
 
   const denContext = useAutomationsDenContext()
+  const sharingEnabled = useAutomationSharingEnabled(denContext)
+  const archiveRestoreEnabled = useAutomationArchiveRestoreEnabled(denContext)
+  const [archivedFilter, setArchivedFilter] = useState(false)
+  const showArchived = archiveRestoreEnabled && archivedFilter
   const { client, organizationId, ready, queryRoot } = denContext
   const { busyAction, setBusyAction, refresh, act } = useAutomationActions(denContext)
   const selectedId = searchParams.get("automation")?.trim() || null
   const selectedRunId = searchParams.get("run")?.trim() || null
   const selectedThreadId = searchParams.get("thread")?.trim() || null
   const creating = searchParams.get("create") === "1"
-  // A Den "Automate this Workflow" link lands here with the exact version to pin.
   const workflowId = searchParams.get("workflow")?.trim() || null
   const workflowVersionId = searchParams.get("version")?.trim() || null
-  // The Calendar's "More options" lands here with what the person already typed and picked.
   const prefill = calendarPrefill(searchParams)
   const placement = automationCreationPlacement()
 
   const listQuery = useAutomationListQuery(denContext)
-  const { placementChoices, cloudRunAvailable, cloudOptions, connectedAccounts, modelsByPlacement, modelsFor } = useAutomationEditorSetup(denContext, props.providerCatalog)
+  const { placementChoices, cloudRunAvailable, cloudOptions, connectedAccounts, modelsByPlacement, modelsByPlacementFor, modelsFor } = useAutomationEditorSetup(denContext, props.providerCatalog, props.workspaceId)
   const runnerPresenceQuery = useQuery({
     queryKey: [...queryRoot, "runner-presence"],
     queryFn: () => client!.getAutomationDesktopRunnerPresence(organizationId!),
     enabled: ready,
-    // A failed probe waits for the next interval instead of retrying, and a
-    // Den without the route answers null once — there is nothing to poll.
     retry: false,
     refetchInterval: (queryState) => (queryState.state.data === null ? false : 60_000),
   })
-  // Only a Den that positively reports no desktop earns the warning. A Den too
-  // old to answer, or one that has not answered yet, leaves presence unknown,
-  // and claiming there is no desktop on that basis would be worse than silence.
   const noDesktopConnected = runnerPresenceQuery.data?.connected === false
   const detailQuery = useAutomationDetailQuery(denContext, selectedId)
   const runsQuery = useAutomationRunsQuery(denContext, selectedId)
@@ -231,13 +232,13 @@ export function AutomationsPage(props: {
 
   const filteredItems = useMemo(() => {
     const normalized = query.trim().toLowerCase()
-    const items = listQuery.data?.items.filter((item) => item.automation.state !== "archived") ?? []
+    const items = listQuery.data?.items.filter((item) => (item.automation.state === "archived") === showArchived) ?? []
     if (!normalized) return items
     return items.filter((item) => (
       item.automation.name.toLowerCase().includes(normalized)
       || item.revision.instructions.toLowerCase().includes(normalized)
     ))
-  }, [listQuery.data, query])
+  }, [listQuery.data, query, showArchived])
 
   const openAutomation = (automationId: string | null) => {
     const next = new URLSearchParams()
@@ -249,22 +250,14 @@ export function AutomationsPage(props: {
 
   if (denAuth.status === "checking") return <LoadingState />
   if (!denAuth.isSignedIn) {
-    // Automations live in OpenWork Cloud: signed out, nothing here calls Den,
-    // and the page leads with the same sign-in banner as Library.
     return (
-      <div className="mx-auto w-full max-w-5xl space-y-5 px-6 py-8 sm:px-8" data-automations-signed-out>
-        <CloudSignInBanner
-          testId="automations-sign-in-banner"
-          media={<CloudSignInBannerIcon><Clock3 /></CloudSignInBannerIcon>}
-          message={t("automations.sign_in_banner")}
+      <div className="h-full w-full" data-automations-signed-out>
+        <CloudSignInEmptyState
+          testId="automations-sign-in"
+          icon={<Clock3 />}
+          title={t("automations.signed_out_title")}
           onSignIn={props.onSignIn}
         />
-        <Empty>
-          <EmptyHeader>
-            <EmptyMedia variant="icon"><CalendarClock /></EmptyMedia>
-            <EmptyTitle>No Automations yet</EmptyTitle>
-          </EmptyHeader>
-        </Empty>
       </div>
     )
   }
@@ -294,14 +287,11 @@ export function AutomationsPage(props: {
   }
 
   if (creating) {
-    // Only a Workflow the person can run may be pinned; Den enforces the same
-    // bar on create, this just keeps a viewer from reaching a form that fails.
-    const workflow = placement === "cloud" && workflowId && workflowQuery.data?.canRun ? workflowQuery.data : undefined
+    const workflow = placement === "cloud" && workflowId && workflowQuery.data?.canSchedule ? workflowQuery.data : undefined
     const workflowVersion = workflow
       ? workflow.versions.find((version) => version.id === workflowVersionId) ?? workflow.currentVersion
       : undefined
     if (placement === "cloud" && workflowId && workflowQuery.isLoading) return <LoadingState />
-    // A Workflow runs only in the cloud, so its form keeps the fixed placement.
     const createChoices = workflowId ? [] : placementChoices
     const createPlacement = resolveAutomationPlacement(placement, createChoices)
     return (
@@ -321,8 +311,8 @@ export function AutomationsPage(props: {
         </div>
         {placement === "cloud" && workflowId && workflowQuery.error ? (
           <Alert variant="warning"><AlertCircle /><AlertTitle>Workflow unavailable</AlertTitle><AlertDescription>{describeError(workflowQuery.error)}</AlertDescription></Alert>
-        ) : placement === "cloud" && workflowId && workflowQuery.data && !workflowQuery.data.canRun ? (
-          <Alert variant="warning"><AlertCircle /><AlertTitle>You can read this Workflow but not run it</AlertTitle><AlertDescription>Ask a Workflow manager for run access to schedule it. You can still create an ordinary Automation below.</AlertDescription></Alert>
+        ) : placement === "cloud" && workflowId && workflowQuery.data && !workflowQuery.data.canSchedule ? (
+          <Alert variant="warning"><AlertCircle /><AlertTitle>You can run this Workflow manually, but not schedule it</AlertTitle><AlertDescription>Ask a Workflow manager for scheduling access. You can still create an ordinary Automation below.</AlertDescription></Alert>
         ) : null}
         <AutomationEditor
           key={workflowVersion?.id ?? "agent"}
@@ -346,9 +336,6 @@ export function AutomationsPage(props: {
           onSave={async (input, chosenPlacement) => {
             setBusyAction("create")
             try {
-              // Pin the local workspace the person is creating from; targeting
-              // must not follow whichever workspace is active at run time. A
-              // browser has no local workspace, so its desktop runs stay unpinned.
               const workspaceId = isDesktopRuntime() ? props.workspaceId?.trim() || null : null
               const detail = chosenPlacement === "cloud"
                 ? await client.createCloudAutomation(organizationId, {
@@ -366,6 +353,7 @@ export function AutomationsPage(props: {
                     ...input,
                     ...(workspaceId ? { workspaceId } : {}),
                   })
+              featureAnalytics.automationCreated(chosenPlacement)
               await refresh()
               openAutomation(detail.automation.id)
               toast.success("Automation created and active")
@@ -398,18 +386,17 @@ export function AutomationsPage(props: {
     const runs = runsQuery.data?.items ?? []
     const selectedReceipt = receiptQuery.data?.run.id === selectedRunId ? receiptQuery.data : undefined
     const runNotice = selectedReceipt ? automationRunNotice(selectedReceipt.run) : null
+    const connectionFix = selectedReceipt ? automationRunConnectionFix(selectedReceipt.run, selectedReceipt.events, readDenSettings().baseUrl) : null
     const receiptIsLoading = receiptQuery.isLoading || (receiptQuery.isFetching && !selectedReceipt)
     const threadMatches = !selectedThreadId || selectedReceipt?.run.executionThread?.id === selectedThreadId
     const localSessionRoute = selectedReceipt?.run.executionThread
       ? automationLocalSessionRoute(selectedReceipt.run.executionThread)
       : null
 
-    const editable = detail.revision.action?.kind !== "saved_script"
+    const editable = task.state !== "archived" && detail.revision.action?.kind !== "saved_script"
     const detailPlacement = detail.revision.executionTarget ?? "desktop"
 
     if (editing && editable) {
-      // Where it runs now is always a choice, so an Automation whose target
-      // went away can still be moved to the one that exists.
       const editChoices = automationEditChoices(detailPlacement, placementChoices)
       return (
         <div className="mx-auto max-w-3xl space-y-5 p-6">
@@ -428,8 +415,8 @@ export function AutomationsPage(props: {
             initialKey={detail.revision.id}
             busy={busyAction === "update"}
             openModelPickerOnMount={repairingModel}
-            modelOptions={modelsFor(detailPlacement)}
-            modelOptionsByPlacement={modelsByPlacement}
+            modelOptions={modelsFor(detailPlacement, detail.revision.workspaceId)}
+            modelOptionsByPlacement={modelsByPlacementFor(detail.revision.workspaceId)}
             providerCatalog={props.providerCatalog}
             submitLabel="Save changes"
             onCancel={() => {
@@ -443,7 +430,6 @@ export function AutomationsPage(props: {
                 await client.updateAutomation(organizationId, task.id, chosenPlacement === detailPlacement ? input : {
                   ...input,
                   executionTarget: chosenPlacement,
-                  // Moving to the desktops from here pins it to this workspace, as creating here does.
                   ...(chosenPlacement === "desktop" && localWorkspaceId ? { workspaceId: localWorkspaceId } : {}),
                 })
                 await refresh()
@@ -477,6 +463,9 @@ export function AutomationsPage(props: {
             </div>
           </div>
           <div className="flex flex-wrap gap-2">
+            {sharingEnabled && task.state !== "archived" ? (
+              <AutomationShareButton key={`${organizationId}:${task.id}`} context={denContext} automation={task} refresh={refresh} />
+            ) : null}
             {editable ? <Button variant="outline" onClick={() => {
               setRepairingModel(false)
               setEditing(true)
@@ -501,12 +490,23 @@ export function AutomationsPage(props: {
               >
                 <Play />Activate
               </Button>
+            ) : task.state === "archived" && archiveRestoreEnabled ? (
+              <Button
+                variant="outline"
+                disabled={busyAction !== null}
+                onClick={() => void act("restore", async () => {
+                  await client.deactivateAutomation(organizationId, task.id)
+                  markFeatureUsed("automationArchiveRestore")
+                }, t("automations.restored"))}
+              >
+                {t("automations.restore")}
+              </Button>
             ) : null}
-            {detailPlacement === "desktop" && cloudRunAvailable ? (
+            {task.state !== "archived" && detailPlacement === "desktop" && cloudRunAvailable ? (
               <Button
                 variant="outline"
                 data-automation-run-in-cloud
-                disabled={busyAction !== null || task.state === "archived" || task.state === "needs_attention"}
+                disabled={busyAction !== null || task.state === "needs_attention"}
                 onClick={() => void act("run-cloud", async () => {
                   const run = await client.runAutomationNow(organizationId, task.id, { executionTarget: "cloud" })
                   setSearchParams(new URLSearchParams({ automation: task.id, run: run.id }))
@@ -515,19 +515,23 @@ export function AutomationsPage(props: {
                 <Cloud />Run in cloud
               </Button>
             ) : null}
-            <Button
-              disabled={busyAction !== null || task.state === "archived" || task.state === "needs_attention"}
-              onClick={() => void act("run", async () => {
-                const run = await client.runAutomationNow(organizationId, task.id)
-                const next = new URLSearchParams({ automation: task.id, run: run.id })
-                setSearchParams(next)
-              }, "Automation queued")}
-            >
-              <Play />Run now
-            </Button>
-            <Button variant="ghost" size="icon" aria-label="Archive Automation" onClick={() => setArchiveOpen(true)}>
-              <Archive />
-            </Button>
+            {task.state !== "archived" ? (
+              <>
+                <Button
+                  disabled={busyAction !== null || task.state === "needs_attention"}
+                  onClick={() => void act("run", async () => {
+                    const run = await client.runAutomationNow(organizationId, task.id)
+                    const next = new URLSearchParams({ automation: task.id, run: run.id })
+                    setSearchParams(next)
+                  }, "Automation queued")}
+                >
+                  <Play />Run now
+                </Button>
+                <Button variant="ghost" size="icon" aria-label="Archive Automation" onClick={() => setArchiveOpen(true)}>
+                  <Archive />
+                </Button>
+              </>
+            ) : null}
           </div>
         </div>
 
@@ -590,7 +594,7 @@ export function AutomationsPage(props: {
                 <CardDescription>{detail.revision.executionTarget === "cloud" ? "Runs on your cloud computer, even when your desktop is offline." : "Runs on your desktop computer. Keep OpenWork open and connected at the scheduled time."}</CardDescription>
               </CardHeader>
               <CardContent className="grid gap-3 text-sm sm:grid-cols-2">
-                <div className="min-w-0"><span className="text-muted-foreground">Model</span><p className="break-words">{describeAutomationModel(detail.revision.model, modelsFor(detailPlacement))}</p></div>
+                <div className="min-w-0"><span className="text-muted-foreground">Model</span><p className="break-words">{describeAutomationModel(detail.revision.model, modelsFor(detailPlacement, detail.revision.workspaceId))}</p></div>
                 <div className="min-w-0"><span className="text-muted-foreground">Next run</span><p className="break-words">{task.state === "needs_attention" ? "No future run scheduled" : formatAutomationTime(task.nextDueAt)}</p></div>
                 <div className="min-w-0"><span className="text-muted-foreground">Runtime limit</span><p className="break-words">{Math.round(detail.revision.maximumRuntimeMs / 60_000)} minutes</p></div>
                 <div className="min-w-0"><span className="text-muted-foreground">Integrations</span><p className="break-words">Your available OpenWork Connect tools</p></div>
@@ -692,7 +696,19 @@ export function AutomationsPage(props: {
                     <Alert variant={runNotice.variant} data-automation-run-notice={selectedReceipt.run.id} data-variant={runNotice.variant}>
                       <AlertCircle />
                       <AlertTitle>{runNotice.title}</AlertTitle>
-                      <AlertDescription>{runNotice.message}</AlertDescription>
+                      <AlertDescription>
+                        <p>{runNotice.message}</p>
+                        {connectionFix ? (
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            className="mt-2"
+                            data-automation-connection-fix={selectedReceipt.run.id}
+                            onClick={() => platform.openLink(connectionFix.url)}
+                          >{connectionFix.label}</Button>
+                        ) : null}
+                      </AlertDescription>
                     </Alert>
                   ) : null}
                   {selectedReceipt.run.resultSummary ? (
@@ -737,34 +753,41 @@ export function AutomationsPage(props: {
     )
   }
 
-  // The page title lives in the titlebar; New Automation sits beside it there,
-  // as Library and Dashboard place their add controls.
   const newAutomation = <Button onClick={() => setSearchParams(new URLSearchParams({ create: "1" }))}><Plus />New Automation</Button>
   return (
     <div className="mx-auto w-full max-w-5xl space-y-5 px-6 py-8 sm:px-8">
       {props.headerActionsTarget
         ? createPortal(newAutomation, props.headerActionsTarget)
         : props.headerActionsTarget === undefined ? <div className="flex justify-end">{newAutomation}</div> : null}
-      <div className="relative max-w-md">
-        <Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" />
-        <Input className="pl-9" value={query} placeholder="Search Automations" onChange={(event) => setQuery(event.currentTarget.value)} />
+      <div className="flex max-w-md items-center gap-2">
+        <div className="relative flex-1">
+          <Search className="pointer-events-none absolute left-3 top-2.5 size-4 text-muted-foreground" />
+          <Input className="pl-9" value={query} placeholder="Search Automations" onChange={(event) => setQuery(event.currentTarget.value)} />
+        </div>
+        {archiveRestoreEnabled ? (
+          <Button variant={showArchived ? "secondary" : "outline"} aria-pressed={showArchived} onClick={() => setArchivedFilter(!showArchived)}>
+            <Archive />{t("automations.archived")}
+          </Button>
+        ) : null}
       </div>
       {filteredItems.length === 0 ? (
         <Empty>
           <EmptyHeader>
             <EmptyMedia variant="icon"><CalendarClock /></EmptyMedia>
-            <EmptyTitle>{query ? "No matching Automations" : "No Automations yet"}</EmptyTitle>
-            <EmptyDescription>
-              {query
-                ? "Try a different search."
-                : placementChoices.length > 1
-                  ? "Create a task that runs on your desktops or in the cloud."
-                  : placement === "cloud"
-                    ? "Create a task that runs on your cloud computer, even when your desktop is offline."
-                    : "Create a task for this desktop computer. For tasks that run while it’s offline, create a cloud automation in OpenWork Web."}
-            </EmptyDescription>
+            <EmptyTitle>{query ? "No matching Automations" : showArchived ? t("automations.no_archived") : "No Automations yet"}</EmptyTitle>
+            {query || !showArchived ? (
+              <EmptyDescription>
+                {query
+                  ? "Try a different search."
+                  : placementChoices.length > 1
+                    ? "Create a task that runs on your desktops or in the cloud."
+                    : placement === "cloud"
+                      ? "Create a task that runs on your cloud computer, even when your desktop is offline."
+                      : "Create a task for this desktop computer. For tasks that run while it’s offline, create a cloud automation in OpenWork Web."}
+              </EmptyDescription>
+            ) : null}
           </EmptyHeader>
-          {!query ? <EmptyContent><Button onClick={() => setSearchParams(new URLSearchParams({ create: "1" }))}><Plus />New Automation</Button></EmptyContent> : null}
+          {!query && !showArchived ? <EmptyContent><Button onClick={() => setSearchParams(new URLSearchParams({ create: "1" }))}><Plus />New Automation</Button></EmptyContent> : null}
         </Empty>
       ) : (
         <div className="grid gap-3 md:grid-cols-2">
@@ -801,6 +824,9 @@ export function AutomationsPage(props: {
           ))}
         </div>
       )}
+      {sharingEnabled && !showArchived ? (
+        <SharedAutomationsSection key={organizationId} context={denContext} search={query} refresh={refresh} openAutomation={openAutomation} />
+      ) : null}
     </div>
   )
 }

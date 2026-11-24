@@ -22,21 +22,8 @@ import { recordUserSessionsRevokedBySystem } from "./audit/domain/sessions.js"
 import { cache } from "./cache.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
+import { sessionTokenDigest } from "./session-token.js"
 import { getDenAuthIssuer } from "./mcp/jwt-policy.js"
-
-/**
- * "Provision now, claim later" for agent-created workspaces.
- *
- * `POST /v1/bootstrap/workspace` creates a sign-in-less agent user as the
- * setup member and returns a pre-claim identity assertion (a signed JWT bound
- * to that workspace and to Den's token endpoint). The agent exchanges it with
- * the RFC 7523 JWT-bearer grant for a short-lived MCP access token that only
- * carries pre-claim capabilities. A person later claims the workspace with an
- * RFC 8628-style user code; the claim revokes the assertion and every token
- * minted from it.
- *
- * The assertion and the tokens are bearer secrets. Never log them.
- */
 
 export const JWT_BEARER_GRANT_TYPE = "urn:ietf:params:oauth:grant-type:jwt-bearer"
 export const PRECLAIM_ASSERTION_TYPE = "openwork-preclaim+jwt"
@@ -44,14 +31,12 @@ export const PRECLAIM_SCOPE = "mcp:read mcp:write"
 export const PRECLAIM_ACCESS_TOKEN_TTL_SECONDS = 15 * 60
 export const CLAIM_CODE_TTL_SECONDS = 15 * 60
 export const CLAIM_CODE_POLL_INTERVAL_SECONDS = 5
-/** Reserved domain: agent users can never receive mail or sign in. */
 export const PRECLAIM_AGENT_EMAIL_DOMAIN = "agents.openwork.invalid"
 export const PRECLAIM_CLIENT_ID = "openwork-preclaim"
 
 const USER_CODE_CHARSET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
 
 function assertionKey(): Uint8Array {
-  // Derived so the raw Better Auth secret never signs anything else here.
   return new Uint8Array(createHmac("sha256", env.betterAuthSecret).update("openwork:preclaim-assertion:v1").digest())
 }
 
@@ -59,7 +44,6 @@ export function preclaimIssuer(): string {
   return getDenAuthIssuer(env.betterAuthUrl)
 }
 
-/** The only audience an assertion is valid for: Den's OAuth token endpoint. */
 export function preclaimAssertionAudience(): string {
   return `${preclaimIssuer()}/oauth2/token`
 }
@@ -113,11 +97,6 @@ export type PreclaimAssertionCheck =
   | { ok: true; bootstrap: BootstrapRow; revoked: boolean }
   | { ok: false; error: "invalid_grant"; description: string }
 
-/**
- * Verify signature, audience, issuer, expiry, and that the jti is the one the
- * workspace still recognizes. `revoked` reports a claimed/expired workspace so
- * callers that only report claim state can still answer.
- */
 export async function verifyPreclaimAssertion(assertion: string, now = new Date()): Promise<PreclaimAssertionCheck> {
   let payload: Record<string, unknown>
   try {
@@ -143,7 +122,7 @@ export async function verifyPreclaimAssertion(assertion: string, now = new Date(
   } catch {
     return { ok: false, error: "invalid_grant", description: "The assertion is missing its workspace." }
   }
-  const [bootstrap] = await db
+  const [bootstrap] = await db.$primary
     .select()
     .from(WorkspaceBootstrapTable)
     .where(eq(WorkspaceBootstrapTable.id, normalizeDenTypeId("workspaceBootstrap", normalizedBootstrapId)))
@@ -166,11 +145,6 @@ export type JwtBearerResult =
   | { ok: true; body: PreclaimTokenResponse }
   | { ok: false; status: 400; body: { error: "invalid_grant" | "invalid_request"; error_description: string } }
 
-/**
- * RFC 7523 JWT-bearer grant: trade a live pre-claim assertion for a
- * short-lived MCP access token for the workspace's agent user. No refresh
- * token is issued; the agent re-exchanges the assertion instead.
- */
 export async function exchangePreclaimAssertion(assertion: string, now = new Date()): Promise<JwtBearerResult> {
   const checked = await verifyPreclaimAssertion(assertion, now)
   if (!checked.ok) {
@@ -187,7 +161,7 @@ export async function exchangePreclaimAssertion(assertion: string, now = new Dat
     id: sessionId,
     userId: agentUserId,
     activeOrganizationId: bootstrap.organizationId,
-    token: randomBytes(32).toString("base64url"),
+    token: sessionTokenDigest(randomBytes(32).toString("base64url")),
     expiresAt,
     ipAddress: null,
     userAgent: "openwork-preclaim",
@@ -217,7 +191,6 @@ export async function exchangePreclaimAssertion(assertion: string, now = new Dat
   }
 }
 
-/** Returns the provisional workspace this user acts for, or null for everyone else. */
 export async function findPreclaimWorkspaceForUser(input: { userId: string; email?: string | null }) {
   if (input.email !== undefined && !isPreclaimAgentEmail(input.email)) return null
   let userId: string
@@ -226,7 +199,7 @@ export async function findPreclaimWorkspaceForUser(input: { userId: string; emai
   } catch {
     return null
   }
-  const [row] = await db
+  const [row] = await db.$primary
     .select({ id: WorkspaceBootstrapTable.id, organizationId: WorkspaceBootstrapTable.organizationId, status: WorkspaceBootstrapTable.status })
     .from(WorkspaceBootstrapTable)
     .where(eq(WorkspaceBootstrapTable.agentUserId, normalizeDenTypeId("user", userId)))
@@ -258,13 +231,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null
 }
 
-/**
- * Pre-claim capabilities, as an allowlist. Reads are allowed; writes are
- * limited to skills, plugins, marketplaces, install links, and member-level
- * MCP connections that need no sign-in. Everything else (billing,
- * invitations, members, roles, shared credentials, AI providers, SSO, SCIM,
- * API keys) needs a person, so it returns `requires_claim`.
- */
 export async function preclaimActionAllowed(request: PreclaimRequest): Promise<boolean> {
   const method = request.method.toUpperCase()
   if (method === "GET" || method === "HEAD" || method === "OPTIONS") return true
@@ -286,7 +252,6 @@ export type ClaimCodeIssue = {
   interval: number
 }
 
-/** Mint a claim code, cancelling any earlier code that was never used. */
 export async function issueClaimCode(bootstrap: BootstrapRow, now = new Date()): Promise<ClaimCodeIssue> {
   const userCode = generateUserCode()
   await db.transaction(async (tx) => {
@@ -360,11 +325,6 @@ export async function lookupClaimCode(userCode: string, now = new Date()): Promi
   return { ok: true, ...row }
 }
 
-/**
- * End every pre-claim credential for a workspace: the assertion stops
- * exchanging (credentialsRevokedAt) and each agent session behind an MCP
- * token is deleted, so already-minted tokens fail session liveness.
- */
 export async function revokePreclaimCredentials(bootstrapId: string, now = new Date()): Promise<void> {
   const [bootstrap] = await db
     .select({ agentUserId: WorkspaceBootstrapTable.agentUserId })
@@ -377,7 +337,7 @@ export async function revokePreclaimCredentials(bootstrapId: string, now = new D
     .where(and(eq(WorkspaceBootstrapTable.id, normalizeDenTypeId("workspaceBootstrap", bootstrapId)), isNull(WorkspaceBootstrapTable.credentialsRevokedAt)))
   if (!bootstrap?.agentUserId) return
   const agentUserId = normalizeDenTypeId("user", bootstrap.agentUserId)
-  const sessions = await db
+  const sessions = await db.$primary
     .select({ id: AuthSessionTable.id, token: AuthSessionTable.token, userId: AuthSessionTable.userId, expiresAt: AuthSessionTable.expiresAt, activeOrganizationId: AuthSessionTable.activeOrganizationId })
     .from(AuthSessionTable)
     .where(eq(AuthSessionTable.userId, agentUserId))
@@ -386,18 +346,9 @@ export async function revokePreclaimCredentials(bootstrapId: string, now = new D
     await cache.auth.revokeSession(session.token)
     await cache.auth.revokeSessionId(normalizeDenTypeId("session", session.id))
   }
-  // Direct delete of the setup agent's sessions: session.revoked in the agent's
-  // active memberships (system actor; never fails the cleanup).
   await recordUserSessionsRevokedBySystem({ userId: agentUserId, sessions, reasonCode: "bootstrap_credentials_revoked", system: "den-api.workspace-bootstrap" })
 }
 
-/**
- * Remove the sign-in-less setup agent once a workspace has an owner or has
- * expired: its membership is removed and detached, and the agent user and any
- * accounts are deleted, so it can never count as a seat or appear as a member.
- * The bootstrap keeps the agent id so the old assertion can still read the
- * final claim state.
- */
 export async function retirePreclaimAgent(bootstrapId: string, now = new Date()): Promise<void> {
   const [bootstrap] = await db
     .select({ agentUserId: WorkspaceBootstrapTable.agentUserId, setupMemberId: WorkspaceBootstrapTable.setupMemberId })
@@ -420,10 +371,6 @@ export async function retirePreclaimAgent(bootstrapId: string, now = new Date())
   })
 }
 
-/**
- * Expiry cleanup: end pre-claim credentials and retire the setup agent for
- * provisional workspaces nobody claimed in time. Runs in small batches.
- */
 export async function retireExpiredPreclaimWorkspaces(now = new Date(), limit = 25): Promise<number> {
   const expired = await db
     .select({ id: WorkspaceBootstrapTable.id })
@@ -441,7 +388,6 @@ export async function retireExpiredPreclaimWorkspaces(now = new Date(), limit = 
   return expired.length
 }
 
-/** Create the sign-in-less agent user that acts as the setup member. */
 export function agentUserValues(bootstrapId: string) {
   return {
     id: createDenTypeId("user"),

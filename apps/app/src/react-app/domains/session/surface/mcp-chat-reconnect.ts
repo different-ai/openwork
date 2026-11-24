@@ -33,8 +33,13 @@ export function isCurrentChatConnectionDecision(
   if (!owner || request.owner !== owner || request.sessionId !== sessionId || !request.requestId) return false
   const turnIndex = messages.findLastIndex(message => message.role === "user")
   if (turnIndex < 0 || messages[turnIndex].id !== request.turnId) return false
-  return messages.slice(turnIndex + 1).some(message => message.role === "assistant"
-    && message.parts.some(part => part.type === "dynamic-tool" && part.toolCallId === request.toolCallId))
+  return isLatestTurnToolCall(messages, request.toolCallId)
+}
+
+export function isLatestTurnToolCall(messages: readonly UIMessage[], toolCallId: string): boolean {
+  const turnIndex = messages.findLastIndex(message => message.role === "user")
+  return turnIndex >= 0 && messages.slice(turnIndex + 1).some(message => message.role === "assistant"
+    && message.parts.some(part => part.type === "dynamic-tool" && part.toolCallId === toolCallId))
 }
 
 const reservedConnectionQuestionItemSchema = z.object({
@@ -50,12 +55,6 @@ export function isReservedConnectionQuestion(question: unknown): boolean {
   return parsed.success && parsed.data.questions.some(item => reservedConnectionQuestionItemSchema.safeParse(item).success)
 }
 
-/**
- * The question the standard composer panel answers. A reserved connection
- * question leaves the panel only while a native card is bound to it; an
- * unbound one falls back to the ordinary Authenticate/Skip panel so the turn
- * never dead-ends.
- */
 export function composerQuestionForConnectionDecision<T>(
   question: T | null | undefined,
   decision: ChatConnectionDecisionRequest | null,
@@ -96,9 +95,6 @@ export function nativeChatConnectionDecision(input: {
     return matches ? [part.toolCallId] : []
   }))
   if (questionTool && questionParts.length !== 1) return null
-  // The question pauses the turn, so a blocker reported by ordinary discovery
-  // (no `intent: "connect"`) counts here. The latest report for a connection
-  // wins and hosts the card; earlier reports stay quiet sentence lines.
   const connections = new Map<string, { connection: ConnectionActionPayload; toolCallId: string; oauth: boolean }>()
   for (const message of currentMessages) {
     for (const part of message.parts) {
@@ -169,8 +165,10 @@ export async function authenticateChatConnection(input: {
   return "connected"
 }
 
+export const CHAT_CONNECTION_CONTINUE_PROMPT = "I've connected it. Go ahead."
+
 export const CHAT_MCP_RECONNECT_POLL_INTERVAL_MS = 2_000
-export const CHAT_MCP_RECONNECT_TIMEOUT_MS = 90_000
+export const CHAT_MCP_RECONNECT_TIMEOUT_MS = 3 * 60_000
 
 export type ChatMcpReconnectScope = {
   baseUrl: string
@@ -227,8 +225,6 @@ export async function waitForFreshMcpAuthorization(input: {
       if (connection && hasFreshMcpAuthorization(connection, input.previousConnectedAt)) return connection
     } catch (error) {
       if (error instanceof Error && error.message.startsWith("The active OpenWork Cloud account changed")) throw error
-      // A transient list failure should not turn a successful browser callback
-      // into a false failure. Keep polling until the bounded timeout.
     }
     await sleep(intervalMs)
   }

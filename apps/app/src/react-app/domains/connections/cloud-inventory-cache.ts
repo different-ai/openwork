@@ -1,4 +1,5 @@
 import { createDenClient, readDenSettings, type DenExternalMcpConnection } from "@/app/lib/den";
+import { markStartupStep, trackStartupOrgTools } from "@/app/lib/startup-diagnostics";
 import {
   EMPTY_CONNECT_CAPABILITY_INVENTORY,
   listAssignedConnectCapabilities,
@@ -13,32 +14,17 @@ export type OrgMcpConnectionClient = {
   ) => Promise<DenExternalMcpConnection[]>;
 };
 
-/**
- * What the organization gives this member — Connect capabilities and external
- * MCP connections — is the slowest part of the Extensions inventory: each one
- * is a Den round-trip (marketplaces, then every resolved marketplace, then
- * every resolved plugin). The composer and Settings both need it, and Settings
- * remounts every time the extensions side panel opens, so without a cache the
- * "Ready to use" group waits on the same fan-out again and again.
- *
- * These caches are module-scoped on purpose: they outlive the components that
- * read them, so a view can paint the last known inventory on its first frame
- * and revalidate behind it.
- */
-
 export type CloudInventoryScope = {
   baseUrl: string;
   organizationId: string;
 };
 
-/** How long a cached answer is served without going back to Den. */
 const DEFAULT_MAX_AGE_MS = 60_000;
 
 export function cloudInventoryScopeKey(scope: CloudInventoryScope) {
   return `${scope.baseUrl}\n${scope.organizationId}`;
 }
 
-/** The scope of the signed-in member, or null when there is nothing to fetch. */
 export function readCloudInventoryScope(): CloudInventoryScope | null {
   const settings = readDenSettings();
   const token = settings.authToken?.trim() ?? "";
@@ -57,6 +43,7 @@ type CacheSlot<T> = {
 type ScopedCache<T, C> = {
   read: (scope: CloudInventoryScope) => T | null;
   load: (input: { client: C; scope: CloudInventoryScope; maxAgeMs?: number }) => Promise<T>;
+  seed: (scope: CloudInventoryScope, value: T) => void;
   clear: () => void;
 };
 
@@ -92,10 +79,14 @@ function createScopedCache<T, C>(
         if (slot === pending) slot = { key, value, fetchedAt: Date.now(), inflight: null };
         return value;
       } catch (error) {
-        // Keep the last good answer so a flaky refresh does not blank the list.
         if (slot === pending) slot = { ...pending, inflight: null };
         throw error;
       }
+    },
+    seed(scope, value) {
+      const key = cloudInventoryScopeKey(scope);
+      if (slot && slot.key === key && slot.inflight) return;
+      slot = { key, value, fetchedAt: Date.now(), inflight: null };
     },
     clear() {
       slot = null;
@@ -118,7 +109,6 @@ const orgMcpConnectionsCache = createScopedCache<DenExternalMcpConnection[], Org
   ({ client, scope }) => client.listMcpConnections(scope.organizationId, "usable"),
 );
 
-/** Last known Connect inventory for this scope, without fetching. */
 export function readCachedConnectCapabilities(scope: CloudInventoryScope) {
   return connectCapabilitiesCache.read(scope);
 }
@@ -128,10 +118,11 @@ export function loadConnectCapabilities(input: {
   scope: CloudInventoryScope;
   maxAgeMs?: number;
 }) {
-  return connectCapabilitiesCache.load(input);
+  const loading = connectCapabilitiesCache.load(input);
+  trackStartupOrgTools(loading);
+  return loading;
 }
 
-/** Last known organization MCP connections for this scope, without fetching. */
 export function readCachedOrgMcpConnections(scope: CloudInventoryScope) {
   return orgMcpConnectionsCache.read(scope);
 }
@@ -146,12 +137,27 @@ export function loadOrgMcpConnections(input: {
 
 export const CLOUD_INVENTORY_CHANGED_EVENT = "openwork-cloud-inventory-changed";
 
-export function clearCloudInventoryCache() {
-  connectCapabilitiesCache.clear();
-  orgMcpConnectionsCache.clear();
+function notifyCloudInventoryChanged() {
   if (typeof window !== "undefined") {
     window.dispatchEvent(new Event(CLOUD_INVENTORY_CHANGED_EVENT));
   }
+}
+
+export function clearCloudInventoryCache() {
+  connectCapabilitiesCache.clear();
+  orgMcpConnectionsCache.clear();
+  notifyCloudInventoryChanged();
+}
+
+export function storeCloudInventory(
+  scope: CloudInventoryScope,
+  loaded: { capabilities: ConnectCapabilityInventory; connections: DenExternalMcpConnection[] },
+  options: { changed: boolean },
+) {
+  connectCapabilitiesCache.seed(scope, loaded.capabilities);
+  orgMcpConnectionsCache.seed(scope, loaded.connections);
+  markStartupStep("org_tools");
+  if (options.changed) notifyCloudInventoryChanged();
 }
 
 function denClientForCurrentSession() {
@@ -162,11 +168,6 @@ function denClientForCurrentSession() {
   });
 }
 
-/**
- * Connect inventory for the signed-in member, empty when signed out. Callers
- * that only need the capabilities (composer tool lists) use this instead of
- * building a scope and client themselves.
- */
 export async function loadSessionConnectCapabilities(): Promise<ConnectCapabilityInventory> {
   const scope = readCloudInventoryScope();
   if (!scope) return EMPTY_CONNECT_CAPABILITY_INVENTORY;
@@ -177,11 +178,6 @@ export async function loadSessionConnectCapabilities(): Promise<ConnectCapabilit
   }
 }
 
-/**
- * Warm both caches for the signed-in member. Called at app start and whenever
- * the Den session changes, so the Extensions inventory has its organization
- * rows ready before the user ever opens Settings.
- */
 export function prefetchCloudInventory() {
   const scope = readCloudInventoryScope();
   if (!scope) return;

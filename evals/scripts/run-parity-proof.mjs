@@ -1,39 +1,36 @@
 import { spawn } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { resolve } from "node:path";
+import { basename, resolve } from "node:path";
+import { journeyFile, testName } from "../bin/test-files.mjs";
 import { prepareParityBinaries } from "./engine-parity-binaries.mjs";
 
+// Keyed by basename: a journey can live in evals/specs, evals/core or evals/proofs.
 const specs = new Set([
-  "evals/specs/opencode-v2-context-activity.e2e.test.ts",
-  "evals/specs/opencode-v2-tool-discovery.e2e.test.ts",
-  "evals/specs/edit-running-message.e2e.test.ts",
-  "evals/specs/opencode-v2-session-home.e2e.test.ts",
-  "evals/specs/anthropic-gateway-effort.e2e.test.ts",
-  "evals/specs/session-archive-undo.e2e.test.ts",
-  "evals/specs/engine-parity.e2e.test.ts",
-  "evals/specs/opencode-v2-skill-jit.e2e.test.ts",
-  "evals/specs/opencode-v2-reads-during-mcp-startup.e2e.test.ts",
-  "evals/specs/opencode-v2-send-during-connection-refresh.e2e.test.ts",
-  "evals/specs/engine-provider-filters.e2e.test.ts",
-  "evals/specs/engine-connectors-parity.e2e.test.ts",
-  "evals/specs/connector-tool-call-branding.e2e.test.ts",
-  "evals/specs/engine-live-desktop.e2e.test.ts",
-  "evals/specs/engine-live-launch.e2e.test.ts",
-  "evals/specs/engine-live-parity.e2e.test.ts",
-  "evals/specs/agent-visibility-journey.e2e.test.ts",
-  "evals/specs/agent-background-journey.e2e.test.ts",
-  "evals/specs/agent-connection-journey.e2e.test.ts",
-  "evals/specs/sent-message-matches-composer.e2e.test.ts",
-  "evals/specs/agent-connection-sign-in-journey.e2e.test.ts",
-  "evals/specs/opencode-v2-built-in-browser.e2e.test.ts",
+  "agent-connection-journey.e2e.test.ts",
+  "secure-keys-in-chat.e2e.test.ts",
+  "agent-permissions.e2e.test.ts",
 ]);
 
+const v2Only = new Set([
+  // Agent permissions are enforced by OpenCode v2 only.
+  "agent-permissions.e2e.test.ts",
+]);
+
+/** Basename of a supported parity spec given its basename or a path in any journey folder; undefined when unsupported. */
+export function parityProofName(spec) {
+  const name = basename(spec);
+  if (!specs.has(name)) return undefined;
+  if (spec !== name && !/^(?:evals\/)?(?:specs|core|proofs)\/[^/]+$/.test(spec)) return undefined;
+  return name;
+}
+
 export function parityProofPlan(spec) {
-  if (!specs.has(spec)) throw new Error(`Unsupported parity proof: ${spec}`);
-  const engines = ["evals/specs/opencode-v2-context-activity.e2e.test.ts", "evals/specs/opencode-v2-tool-discovery.e2e.test.ts", "evals/specs/opencode-v2-session-home.e2e.test.ts", "evals/specs/opencode-v2-skill-jit.e2e.test.ts",
-    "evals/specs/engine-provider-filters.e2e.test.ts", "evals/specs/opencode-v2-reads-during-mcp-startup.e2e.test.ts", "evals/specs/opencode-v2-send-during-connection-refresh.e2e.test.ts",
-    "evals/specs/agent-background-journey.e2e.test.ts", "evals/specs/opencode-v2-built-in-browser.e2e.test.ts"].includes(spec) ? ["v2"] : ["v1", "v2"];
-  return engines.map(engine => ({ engine, args: ["evals/bin/evals.mjs", spec.slice("evals/".length), "--local", "--engine", engine] }));
+  const name = parityProofName(spec);
+  if (!name) throw new Error(`Unsupported parity proof: ${spec}`);
+  const file = journeyFile(name);
+  if (!file) throw new Error(`Parity proof spec is missing from evals/specs, evals/core and evals/proofs: ${name}`);
+  const engines = v2Only.has(name) ? ["v2"] : ["v1", "v2"];
+  return engines.map(engine => ({ engine, args: ["evals/bin/evals.mjs", testName(file), "--local", "--engine", engine] }));
 }
 
 export async function runParityProof(spec, dependencies = {}) {
@@ -56,7 +53,7 @@ export async function runParityProof(spec, dependencies = {}) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const args = process.argv.slice(2);
-  if (args.length === 2 && args[0] === "--supports") process.exitCode = specs.has(args[1]) ? 0 : 1;
+  if (args.length === 2 && args[0] === "--supports") process.exitCode = parityProofName(args[1]) ? 0 : 1;
   else if (args.length === 1) process.exitCode = await runParityProof(args[0]);
-  else throw new Error("Usage: run-parity-proof.mjs [--supports] evals/specs/<spec>.e2e.test.ts");
+  else throw new Error("Usage: run-parity-proof.mjs [--supports] evals/(specs|core|proofs)/<spec>.e2e.test.ts");
 }

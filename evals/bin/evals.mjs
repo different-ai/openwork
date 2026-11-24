@@ -349,14 +349,14 @@ export function resolveTestNames(names, files = journeyFiles()) {
   const resolved = [];
 
   for (const name of names) {
-    const normalized = name.replace(/^\.\//, "").replace(/^specs\//, "");
+    const normalized = name.replace(/^\.\//, "").replace(/^(?:evals\/)?(?:specs|core|proofs)\//, "");
     let matches = entries.filter((entry) => entry.relative === normalized);
     if (matches.length === 0) {
       matches = entries.filter((entry) => entry.relative === `scenarios/${normalized}/e2e.test.ts`);
     }
     if (matches.length === 0) {
       matches = entries.filter((entry) =>
-        entry.base === `${normalized}.e2e.test.ts`
+        entry.base === `${normalized}.e2e.test.ts` || entry.base === `${normalized}.proof.test.ts`
       );
     }
     if (matches.length === 0) {

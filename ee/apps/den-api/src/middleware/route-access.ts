@@ -1,14 +1,19 @@
+import type { PermissionKey } from "@openwork/types/den/permissions"
 import type { MiddlewareHandler } from "hono"
 import { beginAuditRequest } from "../audit/request-capture.js"
 import { INSUFFICIENT_SCOPE_CHALLENGE, requiresAdminError } from "../agent-error-envelope.js"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { getMcpResourceContext, verifyMcpRequest } from "../mcp/auth.js"
-import { DEN_MCP_WRITE_SCOPE } from "../mcp/scopes.js"
+import { DEN_MCP_READ_SCOPE, DEN_MCP_WRITE_SCOPE } from "../mcp/scopes.js"
 import { getOrganizationContextForUser } from "../orgs.js"
 import { organizationRoleValueSatisfies } from "../organization-role-hierarchy.js"
+import { checkMemberPermission } from "../permissions/check.js"
+import { organizationPrivilegedSessionMaxAgeMs } from "../privileged-session.js"
 import type { AuthContextVariables } from "../session.js"
 import { requireAdminMiddleware } from "./admin.js"
 import { requireUserMiddleware, requireUserSessionMiddleware } from "./current-user.js"
+import { memberPermissionsForOrganizationContext, type MemberPermissionsVariables } from "./member-permissions.js"
+import type { MemberTeamsContext } from "./member-teams.js"
 import { resolveOrganizationContextMiddleware, type OrganizationContextVariables } from "./organization-context.js"
 import { resolveUserOrganizationsMiddleware, type UserOrganizationsContext } from "./user-organizations.js"
 
@@ -17,38 +22,48 @@ type OrgRoleContext = {
   role: string
 }
 
-type RouteAccessVariables = AuthContextVariables & Partial<OrganizationContextVariables> & Partial<UserOrganizationsContext>
+type RouteAccessVariables =
+  & AuthContextVariables
+  & Partial<OrganizationContextVariables>
+  & Partial<UserOrganizationsContext>
+  & Partial<MemberTeamsContext>
+  & Partial<MemberPermissionsVariables>
 
-const cloudTransportRouteHandler: MiddlewareHandler<{ Variables: OrganizationContextVariables }> = async (c, next) => {
-  const principal = await verifyMcpRequest(
-    c.req.raw.headers,
-    getMcpResourceContext(c.req.raw, "agent"),
-  )
-  if (principal instanceof Response) {
-    return principal
-  }
-  if (!principal.scopes.has(DEN_MCP_WRITE_SCOPE)) {
-    return c.json({
-      error: "insufficient_mcp_scope",
-      requiredScope: DEN_MCP_WRITE_SCOPE,
-    }, 403)
-  }
+function createCloudTransportRouteHandler(requiredScope: typeof DEN_MCP_READ_SCOPE | typeof DEN_MCP_WRITE_SCOPE): MiddlewareHandler<{ Variables: OrganizationContextVariables }> {
+  return async (c, next) => {
+    const principal = await verifyMcpRequest(
+      c.req.raw.headers,
+      getMcpResourceContext(c.req.raw, "agent"),
+    )
+    if (principal instanceof Response) {
+      return principal
+    }
+    if (!principal.scopes.has(requiredScope)) {
+      return c.json({
+        error: "insufficient_mcp_scope",
+        requiredScope,
+      }, 403)
+    }
 
-  const organizationContext = await getOrganizationContextForUser({
-    userId: normalizeDenTypeId("user", principal.userId),
-    organizationId: normalizeDenTypeId("organization", principal.organizationId),
-  })
-  if (!organizationContext) {
-    return c.json({ error: "mcp_membership_revoked" }, 403)
-  }
+    const organizationContext = await getOrganizationContextForUser({
+      userId: normalizeDenTypeId("user", principal.userId),
+      organizationId: normalizeDenTypeId("organization", principal.organizationId),
+    })
+    if (!organizationContext) {
+      return c.json({ error: "mcp_membership_revoked" }, 403)
+    }
 
-  c.set("organizationContext", organizationContext)
-  const auditBlocked = await beginAuditRequest(c, { origin: "mcp" })
-  if (auditBlocked) {
-    return auditBlocked
+    c.set("organizationContext", organizationContext)
+    const auditBlocked = await beginAuditRequest(c, { origin: "mcp" })
+    if (auditBlocked) {
+      return auditBlocked
+    }
+    await next()
   }
-  await next()
 }
+
+const cloudTransportRouteHandler = createCloudTransportRouteHandler(DEN_MCP_WRITE_SCOPE)
+const cloudTransportReadRouteHandler = createCloudTransportRouteHandler(DEN_MCP_READ_SCOPE)
 
 const explicitAuthGuardHandlers = new WeakSet<object>([
   requireAdminMiddleware,
@@ -57,15 +72,8 @@ const explicitAuthGuardHandlers = new WeakSet<object>([
   resolveOrganizationContextMiddleware,
   resolveUserOrganizationsMiddleware,
   cloudTransportRouteHandler,
+  cloudTransportReadRouteHandler,
 ])
-
-/**
- * Den API routes are deny-by-default: every `app.get/post/patch/delete/all/on`
- * registration must include one explicit access policy marker from this file.
- * Public routes use `publicRoute`; token, webhook, and delegated proxy routes
- * use their named markers and perform their specialized verification in the
- * handler. Common user/org/admin markers execute the shared guard middleware.
- */
 
 export function verifyOrgRole(input: { roles: readonly string[]; userContext: OrgRoleContext }) {
   if (input.roles.includes("member")) {
@@ -92,6 +100,10 @@ export const tokenRoute: MiddlewareHandler = async (_c, next) => {
 
 export function cloudTransportRoute(): typeof cloudTransportRouteHandler {
   return cloudTransportRouteHandler
+}
+
+export function cloudTransportReadRoute(): typeof cloudTransportReadRouteHandler {
+  return cloudTransportReadRouteHandler
 }
 
 export const delegatedRoute: MiddlewareHandler = async (_c, next) => {
@@ -153,4 +165,47 @@ export function orgRoleRoute(roles: readonly string[]): MiddlewareHandler<{ Vari
   }
   explicitAuthGuardHandlers.add(handler)
   return handler
+}
+
+type RouteAccessContext = Parameters<MiddlewareHandler<{ Variables: RouteAccessVariables }>>[0]
+
+async function enforceOrgPermission(c: RouteAccessContext, key: PermissionKey): Promise<Response | undefined> {
+  const payload = c.get("organizationContext")
+  if (!payload) return c.json({ error: "organization_not_found" }, 404)
+
+  const permissions = c.get("memberPermissions")
+    ?? await memberPermissionsForOrganizationContext(payload, c.get("memberTeams"))
+  c.set("memberPermissions", permissions)
+
+  const check = checkMemberPermission({ apiKey: c.get("apiKey"), session: c.get("session") }, permissions, key, {
+    maxAgeMs: organizationPrivilegedSessionMaxAgeMs(payload),
+  })
+  if (check.ok) return undefined
+  if (check.response.error === "forbidden") {
+    c.header("WWW-Authenticate", INSUFFICIENT_SCOPE_CHALLENGE)
+  }
+  return c.json(check.response, 403)
+}
+
+export function orgPermissionRoute(key: PermissionKey): MiddlewareHandler<{ Variables: RouteAccessVariables }> {
+  const handler: MiddlewareHandler<{ Variables: RouteAccessVariables }> = async (c, next) => {
+    let permissionResponse: Response | undefined
+    const contextResponse = await resolveOrganizationContextMiddleware(c, async () => {
+      permissionResponse = await enforceOrgPermission(c, key)
+      if (permissionResponse) return
+      await next()
+    })
+
+    return contextResponse ?? permissionResponse
+  }
+  explicitAuthGuardHandlers.add(handler)
+  return handler
+}
+
+export function requireOrgPermission(key: PermissionKey): MiddlewareHandler<{ Variables: RouteAccessVariables }> {
+  return async (c, next) => {
+    const response = await enforceOrgPermission(c, key)
+    if (response) return response
+    await next()
+  }
 }

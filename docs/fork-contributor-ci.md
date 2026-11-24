@@ -21,39 +21,23 @@ comparisons at GitHub's 300-file limit or with an incomplete count fail
 closed and require a maintainer carry. Renames out of protected paths count.
 The bot identity is never an exemption for a fork.
 
-Only after authorization does sandboxed AI screening use a dedicated,
-spend-limited key through a restricted proxy. Clear AI screening (or a
-second maintainer `/test` after reading findings) permits test-run approval
-and sandboxed Warden review. Test approval rechecks the immutable file list,
-current fork head and target, then approves only this PR's waiting
-`pull_request` run IDs on that SHA and fork repository. A later push cannot
-change the code associated with those run IDs. Paid review also checks the
-fetched head and exits without model calls when it is stale. Repeated
-`/test` workflows are serialized per PR.
+After authorization, test approval rechecks the immutable file list, current
+fork head and target, then approves only this PR's waiting `pull_request` run
+IDs on that SHA and fork repository. A later push cannot change the code
+associated with those run IDs. Repeated `/test` workflows are serialized per
+PR.
 
-There is **no `contributor-pr-required` status writer, App token minting,
-warden-clearance environment dependency or final status polling job** in
-this flow. The other contributor statuses remain useful advisory reports.
-Do not delete the Warden App credentials or environment: ordinary
-`warden-clearance.yml` still uses them.
+There is **no `contributor-pr-required` status writer or final status
+polling job** in this flow, and no App token. The contributor screen status
+remains a useful advisory report.
 
-## Security tradeoff: review is the merge authorization
-
-Removing the combined status is intentional, but not equivalent to keeping
-an automatically enforced fork Warden requirement. A fork with passing CI
-and the required trusted review can merge even if its advisory Warden
-status is absent or failed. Maintainers must read the screen/Warden reports
-on the current head **before** approving. `/test` authorizes spending and
-test execution; it is not a GitHub PR approval.
-
-The existing status-source settings use `integration_id: 15368` for both
-`contributor-pr-required` and `openwork-tests-required`. That is the GitHub
-Actions App, not a private Warden-only identity. It does not distinguish a
-trusted target workflow from a fork-edited workflow with the same check
-name. Therefore the old status must not be described as an unforgeable
-private-App gate. `/test` refuses machinery changes, and maintainers must
-carry such changes to a trusted same-repository branch instead. Never use
-GitHub's manual Approve workflows button to bypass that restriction.
+`/test` authorizes spending and test execution; it is not a GitHub PR
+approval. The free screen status remains advisory.
+`openwork-tests-required` comes from the GitHub Actions App and does not
+distinguish a trusted workflow from a fork-edited one with the same name,
+which is why `/test` refuses machinery changes and maintainers must carry
+them to a trusted same-repository branch. Never use GitHub's manual Approve
+workflows button to bypass that restriction.
 
 Required repository setting: Settings → Actions → General → **Require
 approval for all outside collaborators**. First-time-only approval does
@@ -63,10 +47,10 @@ trusted maintainer from deliberately bypassing policy. Members and existing
 repository collaborators may be exempt from GitHub's outside-collaborator
 approval setting: their fork `pull_request` jobs can start automatically.
 This design treats those identities as trusted; do not promise that every
-possible fork needs `/test` to consume a CI runner. Model-key workflows in
+possible fork needs `/test` to consume a CI runner.
 this contributor flow still require `/test` regardless of identity.
 
-If the requirement is **server-enforced Warden clearance before every fork
+If the requirement is **server-enforced review clearance before every fork
 merge**, removal alone is insufficient. The smallest alternative is a
 fork-only, SHA-bound human approval posted by a trusted reviewer after the
 reports are clear (the existing required-review rule supplies the merge
@@ -165,7 +149,7 @@ node --test .github/scripts/contributor-pr.test.mjs \
   .github/scripts/contributor-screen.test.mjs
 actionlint -shellcheck= .github/workflows/contributor-pr.yml \
   .github/workflows/contributor-pr-test.yml \
-  .github/workflows/contributor-warden.yml
+  .github/workflows/contributor-screen.yml
 ```
 
 The CLI tests use a local fake GitHub API to check actual requests and

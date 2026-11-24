@@ -5,15 +5,9 @@ import { ChevronLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { t } from "../../../../i18n";
 
-/**
- * The frame every Library step shares: back to Library, where you are, one
- * title, the form, then a footer with a quiet note and the actions. Escape
- * goes back.
- */
 export function LibraryPage(props: {
   title: string;
   children: ReactNode;
-  /** Steps between Library and this page, e.g. Add a connector › Slack. */
   crumbs?: Array<{ label: string; onClick?: () => void }>;
   icon?: ReactNode;
   subtitle?: string;
@@ -37,7 +31,7 @@ export function LibraryPage(props: {
     <section
       data-testid={props.testId}
       aria-labelledby="library-page-title"
-      className="mx-auto flex w-full max-w-3xl flex-col animate-in fade-in duration-300"
+      className="mx-auto flex w-full min-w-0 max-w-3xl flex-col animate-in fade-in duration-300"
     >
       <nav aria-label={t("extensions.page_breadcrumb")} className="mb-4 flex min-w-0 items-center gap-1 text-sm text-muted-foreground">
         <Button
@@ -81,9 +75,9 @@ export function LibraryPage(props: {
       </div>
       <div className="mt-6 flex flex-col gap-5">{props.children}</div>
       {props.actions ? (
-        <div className="mt-7 flex items-center gap-2 border-t border-dls-border pt-4">
-          {props.footerNote ? <p className="me-auto text-xs text-dls-secondary">{props.footerNote}</p> : <span className="me-auto" />}
-          {props.actions}
+        <div className="mt-7 flex flex-wrap items-center gap-x-2 gap-y-3 border-t border-dls-border pt-4">
+          {props.footerNote ? <p className="me-auto min-w-0 flex-1 basis-56 text-xs text-dls-secondary">{props.footerNote}</p> : <span className="me-auto" />}
+          <div className="ms-auto flex min-w-0 max-w-full items-center gap-2">{props.actions}</div>
         </div>
       ) : null}
     </section>

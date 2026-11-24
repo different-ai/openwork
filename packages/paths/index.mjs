@@ -67,12 +67,74 @@ function optionPlatform(opts) {
   return opts?.platform ?? process.platform;
 }
 
-function envValue(env, key) {
-  return String(env?.[key] ?? "").trim();
+// Windows environment names are case-insensitive (`Path` and `PATH` are one
+// variable), but plain objects copied from process.env are not. On Windows
+// these helpers match names case-insensitively and let the last write win, as
+// assigning to the real environment does. Other platforms keep exact names.
+function sameEnvName(left, right, platform) {
+  return platform === "win32" ? left.toUpperCase() === right.toUpperCase() : left === right;
 }
 
-function envRawValue(env, key) {
-  const value = env?.[key];
+/** Returns the spelling `env` uses for `name`, or undefined when unset. */
+export function envKey(env, name, opts) {
+  if (!env) return undefined;
+  const platform = optionPlatform(opts);
+  if (platform !== "win32") return Object.prototype.hasOwnProperty.call(env, name) ? name : undefined;
+  let found;
+  for (const key of Object.keys(env)) {
+    if (sameEnvName(key, name, platform)) found = key;
+  }
+  return found;
+}
+
+/** Removes `name` from `env`, including every other spelling of it on Windows. */
+export function deleteEnv(env, name, opts) {
+  const platform = optionPlatform(opts);
+  for (const key of Object.keys(env)) {
+    if (sameEnvName(key, name, platform)) delete env[key];
+  }
+  return env;
+}
+
+/** Sets `name` in `env`, keeping the spelling it already has on Windows. */
+export function setEnv(env, name, value, opts) {
+  const key = envKey(env, name, opts) ?? name;
+  deleteEnv(env, name, opts);
+  env[key] = value;
+  return env;
+}
+
+/**
+ * Merges environment layers so later layers win. On Windows a later `PATH`
+ * replaces an earlier `Path` instead of producing two entries, which a child
+ * process would otherwise resolve by spelling rather than by layer order.
+ */
+export function mergeEnv(layers, opts) {
+  const merged = {};
+  if (optionPlatform(opts) !== "win32") return Object.assign(merged, ...layers);
+  const keys = new Map();
+  for (const layer of layers) {
+    for (const [name, value] of Object.entries(layer ?? {})) {
+      const folded = name.toUpperCase();
+      const key = keys.get(folded) ?? name;
+      keys.set(folded, key);
+      merged[key] = value;
+    }
+  }
+  return merged;
+}
+
+function envLookup(env, key, opts) {
+  const name = envKey(env, key, opts);
+  return name === undefined ? undefined : env[name];
+}
+
+function envValue(env, key, opts) {
+  return String(envLookup(env, key, opts) ?? "").trim();
+}
+
+function envRawValue(env, key, opts) {
+  const value = envLookup(env, key, opts);
   return typeof value === "string" ? value : "";
 }
 
@@ -82,8 +144,8 @@ function optionHomeDir(opts) {
   const env = optionEnv(opts);
   const platform = optionPlatform(opts);
   const fromEnv = platform === "win32"
-    ? envValue(env, "USERPROFILE") || envValue(env, "HOME")
-    : envValue(env, "HOME");
+    ? envValue(env, "USERPROFILE", opts) || envValue(env, "HOME", opts)
+    : envValue(env, "HOME", opts);
   return fromEnv || homedir();
 }
 
@@ -93,11 +155,11 @@ function defaultOpenworkConfigDir(opts) {
   const paths = pathApi(platform);
   const homeDir = optionHomeDir(opts);
   if (platform === "win32") {
-    const appData = envValue(env, "APPDATA");
+    const appData = envValue(env, "APPDATA", opts);
     const root = appData || paths.join(homeDir, "AppData", "Roaming");
     return paths.join(root, "openwork");
   }
-  const xdgConfigHome = envValue(env, "XDG_CONFIG_HOME");
+  const xdgConfigHome = envValue(env, "XDG_CONFIG_HOME", opts);
   const root = xdgConfigHome || paths.join(homeDir, ".config");
   return paths.join(root, "openwork");
 }
@@ -106,7 +168,7 @@ export function openworkConfigDir(opts) {
   const env = optionEnv(opts);
   const platform = optionPlatform(opts);
   const paths = pathApi(platform);
-  const override = envValue(env, "OPENWORK_SERVER_CONFIG");
+  const override = envValue(env, "OPENWORK_SERVER_CONFIG", opts);
   if (override) return paths.dirname(paths.resolve(override));
   return defaultOpenworkConfigDir(opts);
 }
@@ -115,7 +177,7 @@ export function openworkServerConfigPath(opts) {
   const env = optionEnv(opts);
   const platform = optionPlatform(opts);
   const paths = pathApi(platform);
-  const override = envValue(env, "OPENWORK_SERVER_CONFIG");
+  const override = envValue(env, "OPENWORK_SERVER_CONFIG", opts);
   if (override) return paths.resolve(override);
   return paths.join(defaultOpenworkConfigDir(opts), "server.json");
 }
@@ -124,7 +186,7 @@ export function openworkEnvStorePath(opts) {
   const env = optionEnv(opts);
   const platform = optionPlatform(opts);
   const paths = pathApi(platform);
-  const override = envValue(env, "OPENWORK_ENV_STORE");
+  const override = envValue(env, "OPENWORK_ENV_STORE", opts);
   if (override) return paths.resolve(override);
   return paths.join(defaultOpenworkConfigDir(opts), "env.json");
 }
@@ -140,10 +202,10 @@ export function globalOpencodeConfigDir(opts) {
   const env = optionEnv(opts);
   const platform = optionPlatform(opts);
   const paths = pathApi(platform);
-  const configuredDirectory = envRawValue(env, "OPENCODE_CONFIG_DIR");
+  const configuredDirectory = envRawValue(env, "OPENCODE_CONFIG_DIR", opts);
   if (safeConfigRoot(configuredDirectory, paths)) return configuredDirectory;
 
-  const configuredRoot = envRawValue(env, "XDG_CONFIG_HOME");
+  const configuredRoot = envRawValue(env, "XDG_CONFIG_HOME", opts);
   const configRoot = safeConfigRoot(configuredRoot, paths)
     ? configuredRoot
     : paths.join(optionHomeDir(opts), ".config");
@@ -181,10 +243,10 @@ function desktopConfigDir(opts) {
   const env = optionEnv(opts);
   const platform = optionPlatform(opts);
   const paths = pathApi(platform);
-  const xdgConfigHome = envValue(env, "XDG_CONFIG_HOME");
+  const xdgConfigHome = envValue(env, "XDG_CONFIG_HOME", opts);
   if (xdgConfigHome) return xdgConfigHome;
   if (platform === "win32") {
-    const localAppData = envValue(env, "LOCALAPPDATA");
+    const localAppData = envValue(env, "LOCALAPPDATA", opts);
     if (localAppData) return localAppData;
     return paths.join(optionHomeDir(opts), "AppData", "Local");
   }
@@ -195,9 +257,9 @@ export function desktopBootstrapPath(opts) {
   const env = optionEnv(opts);
   const platform = optionPlatform(opts);
   const paths = pathApi(platform);
-  const override = envValue(env, "OPENWORK_DESKTOP_BOOTSTRAP_PATH");
+  const override = envValue(env, "OPENWORK_DESKTOP_BOOTSTRAP_PATH", opts);
   if (override) return override;
-  if (envValue(env, "OPENWORK_DEV_MODE") === "1" && opts?.userDataDir) {
+  if (envValue(env, "OPENWORK_DEV_MODE", opts) === "1" && opts?.userDataDir) {
     return paths.join(opts.userDataDir, "openwork-dev-data", "home", ".config", "openwork", "desktop-bootstrap.json");
   }
   return paths.join(desktopConfigDir(opts), "openwork", "desktop-bootstrap.json");
@@ -225,7 +287,7 @@ export function openworkServerDataDir(opts) {
   const env = optionEnv(opts);
   const platform = optionPlatform(opts);
   const paths = pathApi(platform);
-  const override = envValue(env, "OPENWORK_DATA_DIR");
+  const override = envValue(env, "OPENWORK_DATA_DIR", opts);
   if (override) return expandHomePath(override, opts);
   return paths.join(optionHomeDir(opts), ".openwork", "openwork-server");
 }
@@ -236,12 +298,12 @@ export function opencodeDataDirs(opts) {
   const paths = pathApi(platform);
   const homeDir = optionHomeDir(opts);
   const dirs = [];
-  const xdgDataHome = envValue(env, "XDG_DATA_HOME");
+  const xdgDataHome = envValue(env, "XDG_DATA_HOME", opts);
   if (xdgDataHome) dirs.push(paths.join(xdgDataHome, "opencode"));
   dirs.push(paths.join(homeDir, ".local", "share", "opencode"));
   if (platform === "darwin") dirs.push(paths.join(homeDir, "Library", "Application Support", "opencode"));
   if (platform === "win32") {
-    const appData = envValue(env, "APPDATA") || paths.join(homeDir, "AppData", "Roaming");
+    const appData = envValue(env, "APPDATA", opts) || paths.join(homeDir, "AppData", "Roaming");
     dirs.push(paths.join(appData, "opencode"));
   }
   return Array.from(new Set(dirs));
@@ -258,14 +320,14 @@ export function opencodeDbCandidates(opts) {
   const platform = optionPlatform(opts);
   const paths = pathApi(platform);
   const dirs = Array.from(new Set([...(opts?.dataDirs ?? []), ...opencodeDataDirs(opts)]));
-  const override = envValue(env, "OPENCODE_DB");
+  const override = envValue(env, "OPENCODE_DB", opts);
   if (override) {
     if (paths.isAbsolute(override)) return [override];
     return dirs.map((dir) => paths.join(dir, override));
   }
 
-  const channel = envValue(env, "OPENCODE_CHANNEL") || opts?.defaultChannel || "local";
-  const names = channel === "latest" || channel === "beta" || truthy(envValue(env, "OPENCODE_DISABLE_CHANNEL_DB"))
+  const channel = envValue(env, "OPENCODE_CHANNEL", opts) || opts?.defaultChannel || "local";
+  const names = channel === "latest" || channel === "beta" || truthy(envValue(env, "OPENCODE_DISABLE_CHANNEL_DB", opts))
     ? ["opencode.db"]
     : [`opencode-${channel.replace(/[^a-zA-Z0-9._-]/g, "-")}.db`, "opencode.db"];
   return dirs.flatMap((dir) => names.map((name) => paths.join(dir, name)));
@@ -276,7 +338,7 @@ export function opencodeCacheDirs(opts) {
   const platform = optionPlatform(opts);
   const paths = pathApi(platform);
   const dirs = [];
-  const xdgCacheHome = envValue(env, "XDG_CACHE_HOME");
+  const xdgCacheHome = envValue(env, "XDG_CACHE_HOME", opts);
   if (xdgCacheHome) dirs.push(paths.join(xdgCacheHome, "opencode"));
   dirs.push(paths.join(optionHomeDir(opts), ".cache", "opencode"));
   return Array.from(new Set(dirs));

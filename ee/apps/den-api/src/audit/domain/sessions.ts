@@ -9,21 +9,6 @@ import { appendAuditEventInOwnTransaction, auditResourceId, currentAuditChangeCa
 import { appendDomainChangesAfterCommit } from "./legacy.js"
 import { auditChanges, fieldOf, organizationParent, relatedResource, stringOf, targetResource, timeOf } from "./snapshot.js"
 
-// session.created / session.handed_off / session.revoked /
-// session.organization_entered / desktop_handoff.created (change) and
-// session.sign_in_failed (security). Session events land in the session's
-// active organization after the owner's active membership there is verified
-// (src/audit/fanout.ts), or in every active membership when the session has
-// no organization (it can act in all of them); organization-scoped credential
-// revocation lands in the affected organization; failed sign-ins fan out to
-// every active membership of the targeted account. Never the session token, IP, user agent,
-// submitted email, password, OTP or any hash of them.
-// Chokepoints (src/auth.ts): databaseHooks.session.create.after (every sign-in
-// path creating a session row), databaseHooks.session.delete.after (fires per
-// row for single and bulk deletes: sign-out, revoke-session(s),
-// revoke-other-sessions, password change), the org switch handlers, and
-// hooks.after for failed sign-ins.
-
 export type AuditSessionMethod = "password" | "email_otp" | `social:${string}` | "sso" | "device" | "desktop_handoff" | "other"
 
 const logger = appLogger.child({ component: "audit_session_events" })
@@ -39,7 +24,6 @@ function socialMethod(providerId: string | null): AuditSessionMethod {
   return providerId && PROVIDER_ID.test(providerId) ? `social:${providerId}` : "social:unknown"
 }
 
-/** Sign-in method of the better-auth endpoint that created the session (databaseHooks context). */
 export function auditSessionMethod(context: unknown): AuditSessionMethod {
   const path = stringOf(context, "path")
   if (path === "/sign-in/email" || path === "/sign-up/email") return "password"
@@ -55,7 +39,6 @@ function sessionResources(sessionId: string) {
   return (membership: AuditUserMembership) => [targetResource("session", sessionId), relatedResource("member", membership.memberId), organizationParent(membership.organizationId)]
 }
 
-/** The session's active organization, or undefined: no organization fans the event out to every active membership. */
 function sessionOrganization(session: unknown): string | undefined {
   return stringOf(session, "activeOrganizationId") ?? undefined
 }
@@ -64,12 +47,6 @@ function isExpired(expiresAt: string | null) {
   return expiresAt !== null && Date.parse(expiresAt) <= Date.now()
 }
 
-/**
- * databaseHooks.session.create.after: `session.created` in the new session's
- * active organization. A session without one (a member of several
- * organizations signing in) can act in all of them, so the event fans out to
- * every organization where the user is an active member.
- */
 export async function recordSessionCreated(session: unknown, method: AuditSessionMethod): Promise<void> {
   if (!env.auditCaptureEnabled) return
   const userId = stringOf(session, "userId")
@@ -82,11 +59,6 @@ export async function recordSessionCreated(session: unknown, method: AuditSessio
   })
 }
 
-/**
- * Desktop handoff exchange: the desktop receives an EXISTING web session, so
- * no second session.created; `session.handed_off` (method desktop_handoff) in
- * the session's organization, or every active membership when it has none.
- */
 export async function recordSessionHandedOff(session: Readonly<{ id: string; userId: string; expiresAt: Date; activeOrganizationId: string | null }>): Promise<void> {
   if (!env.auditCaptureEnabled) return
   const sessionId = auditResourceId(session.id)
@@ -97,12 +69,6 @@ export async function recordSessionHandedOff(session: Readonly<{ id: string; use
   })
 }
 
-/**
- * POST /v1/auth/desktop-handoff: `desktop_handoff.created` (the grant itself is
- * a bearer secret: never recorded; the handed-over session is the target).
- * With an organization the request is attributed there first, so the event
- * joins its operation; without one it fans out to every active membership.
- */
 export async function recordDesktopHandoffCreated(input: Readonly<{ userId: string; sessionId: string; organizationId: string | null; expiresAt: Date; returnUrlApproved: boolean }>): Promise<void> {
   if (!env.auditCaptureEnabled) return
   const sessionId = auditResourceId(input.sessionId)
@@ -113,17 +79,11 @@ export async function recordDesktopHandoffCreated(input: Readonly<{ userId: stri
   })
 }
 
-/** reasonCode of a better-auth session delete (databaseHooks context path). */
 export function auditSessionRevokeReason(context: unknown): string {
   const path = stringOf(context, "path")
   return (path && REVOKE_REASONS[path]) ?? "other"
 }
 
-/**
- * databaseHooks.session.delete.after: `session.revoked` in the deleted
- * session's active organization (every active membership when it has none).
- * Expired rows swept on read are not revocations.
- */
 export async function recordSessionRevoked(session: unknown, reasonCode: string): Promise<void> {
   if (!env.auditCaptureEnabled) return
   const userId = stringOf(session, "userId")
@@ -137,14 +97,8 @@ export async function recordSessionRevoked(session: unknown, reasonCode: string)
   })
 }
 
-/** A session row deleted by Den directly (no better-auth delete hook fires). */
 export type DirectlyDeletedSession = Readonly<{ id: string; userId: string; expiresAt: Date; activeOrganizationId: string | null }>
 
-/**
- * One session.revoked change event for a row Den deleted directly. Same
- * idempotency key as the better-auth hook path, so the two can never record
- * one row twice within a request operation.
- */
 export function sessionRevokedEvent(input: Readonly<{ organizationId: string; memberId: string | null; session: DirectlyDeletedSession; reasonCode: string; requestId: string | null }>): AuditChangeEventInput {
   const sessionId = auditResourceId(input.session.id)
   return {
@@ -155,17 +109,6 @@ export function sessionRevokedEvent(input: Readonly<{ organizationId: string; me
   }
 }
 
-/**
- * Organization-scoped credential revocation (member removed, role or
- * permissions changed, ownership transferred): Den deletes every session of
- * the user directly, outside better-auth. `session.revoked` per live session
- * in the AFFECTED organization only. With the current request captured for
- * that organization the events join its operation (actor = whoever made the
- * change); otherwise an own operation with system actor
- * den-api.credential-revocation. Appended after the deletes committed (the
- * revocation never waits on, or rolls back for, audit): a failure logs
- * [audit-outcome-lost].
- */
 export async function recordOrganizationSessionsRevoked(input: Readonly<{ organizationId: string; memberId: string | null; userId: string; sessions: readonly DirectlyDeletedSession[]; reasonCode: string }>): Promise<void> {
   if (!env.auditCaptureEnabled) return
   const live = input.sessions.filter((session) => !isExpired(session.expiresAt.toISOString()))
@@ -192,11 +135,6 @@ export async function recordOrganizationSessionsRevoked(input: Readonly<{ organi
 
 const CREDENTIAL_REVOCATION_ACTOR = "den-api.credential-revocation"
 
-/**
- * User-wide direct deletions by a Den process (bootstrap agent cleanup):
- * `session.revoked` fanned out to every organization where the user is still
- * an active member, system actor, own operation per organization.
- */
 export async function recordUserSessionsRevokedBySystem(input: Readonly<{ userId: string; sessions: readonly DirectlyDeletedSession[]; reasonCode: string; system: string }>): Promise<void> {
   if (!env.auditCaptureEnabled) return
   for (const session of input.sessions) {
@@ -210,12 +148,6 @@ export async function recordUserSessionsRevokedBySystem(input: Readonly<{ userId
   }
 }
 
-/**
- * POST /v1/me/active-organization, better-auth organization/set-active and
- * organization/set-active-team: `session.organization_entered` in the
- * destination organization only. The previous organization is never recorded
- * (the destination's admins must not learn other memberships).
- */
 export async function recordSessionOrganizationEntered(input: Readonly<{ userId: string; organizationId: string; sessionId: string | null; teamId?: string | null }>): Promise<void> {
   if (!env.auditCaptureEnabled) return
   const sessionId = auditResourceId(input.sessionId)
@@ -229,9 +161,7 @@ export async function recordSessionOrganizationEntered(input: Readonly<{ userId:
 }
 
 export type AuditSignInFailure = Readonly<{
-  /** Submitted email; only used to find the account, never stored. */
   email?: string | null
-  /** Account already known server-side (e.g. from a reset-password token). */
   userId?: string | null
   method: "password" | "email_otp" | "password_reset" | "email_otp_password_reset"
   error: unknown
@@ -250,7 +180,6 @@ function failureOf(error: unknown): { outcome: "denied" | "failed"; reasonCode: 
   return { outcome: status === 401 || status === 403 || reasonCode === "invalid_credentials" || reasonCode === "invalid_otp" ? "denied" : "failed", reasonCode }
 }
 
-/** Account id for a submitted email (lookup only; the email is never stored). */
 export async function findAuditUserIdByEmail(email: string): Promise<string | null> {
   const [user] = await db.select({ id: AuthUserTable.id }).from(AuthUserTable).where(eq(AuthUserTable.email, normalizeLoginEmail(email))).limit(1)
   return user?.id ?? null
@@ -258,7 +187,6 @@ export async function findAuditUserIdByEmail(email: string): Promise<string | nu
 
 async function recordSignInFailedNow(input: AuditSignInFailure, requestId: string | null): Promise<void> {
   const userId = input.userId ?? (input.email ? await findAuditUserIdByEmail(input.email) : null)
-  // No account: nothing is recorded anywhere (existence is never revealed).
   if (!userId) return
   const targetUserId = userId
   const { outcome, reasonCode } = failureOf(input.error)
@@ -269,12 +197,6 @@ async function recordSignInFailedNow(input: AuditSignInFailure, requestId: strin
   })
 }
 
-/**
- * hooks.after once the failure response is decided: runs detached so neither
- * the status, the body nor the response timing depends on whether the account
- * exists or is a member of a flagged organization. Known trade-off: anyone who
- * guesses a member's email can append these events (no rate limit).
- */
 export function recordSignInFailed(input: AuditSignInFailure): void {
   if (!env.auditCaptureEnabled) return
   const requestId = currentAuditRequestId()

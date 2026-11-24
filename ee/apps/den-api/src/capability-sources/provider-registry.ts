@@ -1,14 +1,3 @@
-/**
- * Registry of native OAuth providers — capability sources Den implements
- * itself against a classic OAuth2 authorization-code flow (as opposed to
- * external MCP connections, which are discovered dynamically at connect
- * time and never need a registry entry — see ../external-mcp/ ).
- *
- * Adding a new native provider is: one entry here, plus whatever capability
- * routes call `getValidAccessToken(providerId, ...)`. No new tables, no new
- * OAuth plumbing — `generic-oauth.ts` drives every provider the same way.
- */
-
 import { MICROSOFT_365_DEFAULT_FEATURES } from "@openwork/types/den/microsoft-365"
 import { env } from "../env.js"
 
@@ -18,19 +7,15 @@ export type NativeOAuthProviderConfig = {
   authorizeUrl: string
   tokenUrl: string
   userinfoUrl?: string
-  /** Display-only endpoint shown on connection cards. */
   websiteUrl: string
   defaultScopes: string[]
   defaultFeatures?: string[]
   optionalFeatures?: Record<string, string[]>
-  /** Google (and most modern providers) support PKCE even for confidential clients; harmless to always send. */
   usesPkce: boolean
-  /** Extra fixed authorize-url params beyond client_id/redirect_uri/response_type/scope/state/PKCE. */
   extraAuthorizeParams?: Record<string, string>
-  /** OrgOAuthClient.extra key used to bind authorize and token endpoints to one tenant. */
   tenantIdExtraKey?: string
-  /** Higher provider scopes that satisfy a narrower required scope. */
   scopeImplications?: Record<string, string[]>
+  unreportedScopes?: string[]
 }
 
 export const NATIVE_OAUTH_PROVIDERS: Record<string, NativeOAuthProviderConfig> = {
@@ -97,6 +82,7 @@ export const NATIVE_OAUTH_PROVIDERS: Record<string, NativeOAuthProviderConfig> =
       filesWrite: ["Files.ReadWrite"],
       filesReadAll: ["Files.Read.All"],
       filesFull: ["Files.ReadWrite.All"],
+      sitesRead: ["Sites.Read.All"],
       teamsChatRead: ["Chat.Read"],
       teamsChatSend: ["Chat.Read", "ChatMessage.Send"],
     },
@@ -106,10 +92,12 @@ export const NATIVE_OAUTH_PROVIDERS: Record<string, NativeOAuthProviderConfig> =
       "Files.ReadWrite": ["Files.Read"],
       "Files.Read.All": ["Files.Read"],
       "Files.ReadWrite.All": ["Files.Read", "Files.ReadWrite", "Files.Read.All"],
+      "Sites.ReadWrite.All": ["Sites.Read.All"],
       "Chat.ReadWrite": ["Chat.Read", "ChatMessage.Send"],
     },
     usesPkce: true,
     tenantIdExtraKey: "tenantId",
+    unreportedScopes: ["openid", "profile", "email", "offline_access"],
   },
 }
 

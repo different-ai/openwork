@@ -22,6 +22,7 @@ const member = () => denTypeIdColumn("member", "member_id").notNull()
 const timeframe = () => mysqlEnum("timeframe", ["day", "week", "month"]).notNull()
 const money = (name: string) => bigint(name, { mode: "number" }).notNull().default(0)
 const date = (name: string) => timestamp(name, { fsp: 3 }).notNull()
+const providerScope = () => varchar("provider_scope", { length: 64 }).notNull().default("")
 
 export const GatewayUsagePolicyTable = mysqlTable(
   "gateway_usage_limit_policy",
@@ -32,12 +33,16 @@ export const GatewayUsagePolicyTable = mysqlTable(
     hardLimit: boolean("hard_limit").notNull().default(true),
     allowRequestReset: boolean("allow_request_reset").notNull().default(true),
     revision: int("revision").notNull().default(1),
+    inferenceProviderId: denTypeIdColumn("inferenceProvider", "inference_provider_id"),
     archivedAt: timestamp("archived_at", { fsp: 3 }),
     createdAt: date("created_at"),
     updatedAt: date("updated_at"),
     createdBy: member(),
   },
-  (t) => [index("gateway_usage_policy_org").on(t.organizationId)],
+  (t) => [
+    index("gateway_usage_policy_org").on(t.organizationId),
+    index("gateway_usage_policy_provider").on(t.organizationId, t.inferenceProviderId),
+  ],
 )
 export const GatewayUsageLimitTable = mysqlTable(
   "gateway_usage_limit_entry",
@@ -114,6 +119,7 @@ export const GatewayUsageBucketTable = mysqlTable(
     id: id(),
     organizationId: org(),
     memberId: member(),
+    providerScope: providerScope(),
     timeframe: timeframe(),
     startAt: date("start_at"),
     resetAt: date("reset_at"),
@@ -131,9 +137,10 @@ export const GatewayUsageBucketTable = mysqlTable(
     allowRequestReset: boolean("allow_request_reset").notNull(),
   },
   (t) => [
-    uniqueIndex("gateway_usage_bucket_window").on(
+    uniqueIndex("gateway_usage_bucket_scope_window").on(
       t.organizationId,
       t.memberId,
+      t.providerScope,
       t.timeframe,
       t.startAt,
     ),
@@ -210,6 +217,7 @@ export const GatewayUsageResetTable = mysqlTable(
     bucketId: varchar("bucket_id", { length: 64 }).notNull(),
     policyId: varchar("policy_id", { length: 64 }).notNull(),
     policyRevision: int("policy_revision").notNull(),
+    providerScope: providerScope(),
     timeframe: timeframe(),
     policyName: varchar("policy_name", { length: 120 }).notNull(),
     reason: text("reason").notNull(),

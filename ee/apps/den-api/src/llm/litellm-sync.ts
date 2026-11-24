@@ -1,32 +1,14 @@
-/**
- * LiteLLM gateway providers.
- *
- * Organization key mode: one LiteLLM key for everyone. Its /v1/models list is
- * the catalog, one "All LiteLLM models" group carries it, and admins grant
- * that group like any other provider. Spend is tracked and limited by OpenWork.
- *
- * Per-user key mode: an admin key syncs the catalog and team model sets; each
- * member then connects their own LiteLLM key. Their key's /v1/models list
- * picks the shared group with exactly that model set (one group per distinct
- * set, named after the LiteLLM team when known) and a member grant is created
- * for it. Admin grants on the empty "Can connect a LiteLLM key" group decide
- * who may connect. LiteLLM budgets those keys, so OpenWork spend tracking is off.
- *
- * Network calls happen before any transaction; apply steps take the caller's
- * provider lock and recheck what they depend on.
- */
 import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { GatewayCredentialSetTable, GatewayModelGroupModelTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderTable, MemberTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, isDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import { gatewayAudienceKey } from "@openwork-ee/utils/gateway-routing"
-import { LITELLM_ADMIN_CREDENTIAL_SUBJECT, isLiteLlmProviderId } from "@openwork-ee/utils/litellm-catalog"
+import { gatewayAudienceKey, LITELLM_ADMIN_CREDENTIAL_SUBJECT, isLiteLlmProviderId } from "@openwork-ee/gateway-catalog"
 import type { GatewayAudience } from "@openwork/types/den/gateway"
 import { db } from "../db.js"
-import { GatewayWriteError, writeGatewayGrant, writeGatewayGroup, writeGatewayModels, type GatewayMemberId, type GatewayProvider, type GatewaySet, type GatewayTx } from "./gateway-matrix.js"
+import { GatewayWriteError, writeGatewayGrant, writeGatewayGroup, writeGatewayModels, writeGatewaySet, type GatewayMemberId, type GatewayProvider, type GatewaySet, type GatewayTx } from "./gateway-matrix.js"
 import { effectiveGatewayGrants, memberGatewayTeams } from "./inference-provider-lifecycle.js"
 import { LiteLlmError, createLiteLlmClient, liteLlmCatalogModels, liteLlmModelSetKey, liteLlmPersonalModels, liteLlmTeamModels, normalizeLiteLlmBaseUrl, type LiteLlmClient, type LiteLlmEndpoints, type LiteLlmModel, type LiteLlmTeam } from "./litellm.js"
 export { readLiteLlmSettings, liteLlmCatalogProvider, type LiteLlmSettings } from "./litellm-settings.js"
-import { readLiteLlmSettings, type LiteLlmSettings } from "./litellm-settings.js"
+import { isLiteLlmEntraSignIn, readLiteLlmSettings, type LiteLlmSettings } from "./litellm-settings.js"
 
 export type LiteLlmMode = "org" | "member"
 type Credential = typeof GatewayProviderCredentialTable.$inferSelect
@@ -44,6 +26,12 @@ export function requireSettings(provider: GatewayProvider): LiteLlmSettings {
   return settings
 }
 
+function requireKeySettings(provider: GatewayProvider): LiteLlmSettings {
+  const settings = requireSettings(provider)
+  if (isLiteLlmEntraSignIn(settings)) throw new GatewayWriteError(409, "litellm_sync_unavailable", "This provider uses Microsoft sign-in, so OpenWork has no LiteLLM key to read its models with. Edit its model list instead.")
+  return settings
+}
+
 export function liteLlmEndpoints(provider: Pick<GatewayProvider, "settings">): LiteLlmEndpoints {
   const base = provider.settings.upstreamBaseUrl
   if (typeof base !== "string") throw new GatewayWriteError(409, "litellm_not_configured", "This LiteLLM provider has no proxy URL.")
@@ -55,7 +43,7 @@ export function liteLlmErrorResponse(error: LiteLlmError): GatewayWriteError {
   return new GatewayWriteError(status, `litellm_${error.code}`, error.message)
 }
 
-export async function activeSet(database: GatewayTx | typeof db, provider: GatewayProvider, settings: LiteLlmSettings): Promise<GatewaySet> {
+export async function activeSet(database: GatewayTx | typeof db | typeof db.$primary, provider: GatewayProvider, settings: LiteLlmSettings): Promise<GatewaySet> {
   const [set] = await database.select().from(GatewayCredentialSetTable)
     .where(and(eq(GatewayCredentialSetTable.id, normalizeDenTypeId("gatewayCredentialSet", settings.credentialSetId)), eq(GatewayCredentialSetTable.gateway_provider_id, provider.id)))
   if (!set || set.credential_mode !== settings.mode) throw new GatewayWriteError(409, "litellm_credential_set_changed", "The LiteLLM credential set changed. Recreate the provider to switch modes.")
@@ -66,8 +54,7 @@ function apiKeyOf(credential: Credential | undefined): string | null {
   return credential && credential.status === "active" && credential.kind === "api_key" && credential.secret.trim() ? credential.secret : null
 }
 
-/** The key used to sync: the organization key, or the admin key in per-user mode. */
-export async function syncKey(database: GatewayTx | typeof db, set: GatewaySet, mode: LiteLlmMode) {
+export async function syncKey(database: GatewayTx | typeof db | typeof db.$primary, set: GatewaySet, mode: LiteLlmMode) {
   const subject = mode === "org" ? "org" : LITELLM_ADMIN_CREDENTIAL_SUBJECT
   const [row] = await database.select().from(GatewayProviderCredentialTable)
     .where(and(eq(GatewayProviderCredentialTable.credential_set_id, set.id), eq(GatewayProviderCredentialTable.subject, subject), isNull(GatewayProviderCredentialTable.org_membership_id)))
@@ -91,12 +78,6 @@ export type LiteLlmSyncPlan = {
   members: MemberMatch[]
 }
 
-/**
- * What a member key can reach. A key that reaches nothing is rejected up front.
- * LiteLLM's /v1/models over-reports for a key without a team: it lists every
- * proxy model even when the owner may call only some. With the admin key, the
- * owner's own model list narrows it to what LiteLLM will actually serve.
- */
 export async function verifyLiteLlmKey(client: LiteLlmClient, key: string, adminKey: string | null = null) {
   let models = await client.listModels(key)
   const info = models.length ? await client.keyInfo(key) : null
@@ -112,10 +93,9 @@ export async function verifyLiteLlmKey(client: LiteLlmClient, key: string, admin
   return { models, teamId: info?.teamId ?? null }
 }
 
-/** The stored admin key of a per-person LiteLLM provider, for checks that need it. */
 export async function liteLlmAdminKey(provider: GatewayProvider): Promise<string | null> {
   const settings = requireSettings(provider)
-  if (settings.mode !== "member") return null
+  if (settings.mode !== "member" || isLiteLlmEntraSignIn(settings)) return null
   const set = await activeSet(db, provider, settings)
   try { return (await syncKey(db, set, settings.mode)).key } catch { return null }
 }
@@ -132,7 +112,6 @@ async function mapLimited<T, R>(items: T[], limit: number, run: (item: T) => Pro
   return results
 }
 
-/** Catalog (and, in per-user mode, teams) visible to the sync key. Verifies the key. */
 export async function planLiteLlmCatalog(client: LiteLlmClient, mode: LiteLlmMode, key: string): Promise<Pick<LiteLlmSyncPlan, "catalog" | "teams" | "teamsAvailable">> {
   const modelIds = await client.listModels(key)
   if (!modelIds.length) throw new LiteLlmError("no_models", mode === "org" ? "The organization LiteLLM key has no models it can use." : "The LiteLLM admin key lists no models.")
@@ -140,7 +119,6 @@ export async function planLiteLlmCatalog(client: LiteLlmClient, mode: LiteLlmMod
   if (!catalog.length) throw new LiteLlmError("no_models", "LiteLLM lists no chat models for this key.")
   let teams: LiteLlmTeam[] = []
   let teamsAvailable = false
-  // Per-person modes read users, teams and keys, so the key must be an admin key.
   if (mode === "member") {
     teams = (await client.requireAdmin(key)).slice(0, 1000)
     teamsAvailable = true
@@ -148,13 +126,11 @@ export async function planLiteLlmCatalog(client: LiteLlmClient, mode: LiteLlmMod
   return { catalog, teams, teamsAvailable }
 }
 
-/** Network half of a sync. Holds no locks; applyLiteLlmSync rechecks every input. */
 export async function planLiteLlmSync(provider: GatewayProvider, client: LiteLlmClient = createLiteLlmClient(liteLlmEndpoints(provider))): Promise<LiteLlmSyncPlan> {
-  const settings = requireSettings(provider)
-  const set = await activeSet(db, provider, settings)
-  const { credential, key } = await syncKey(db, set, settings.mode)
+  const settings = requireKeySettings(provider)
+  const set = await activeSet(db.$primary, provider, settings)
+  const { credential, key } = await syncKey(db.$primary, set, settings.mode)
   const catalog = await planLiteLlmCatalog(client, settings.mode, key)
-  // Issued keys are reconciled per person by litellm-issued.ts, not matched here.
   const members = settings.mode === "member" && settings.keySource === "personal" ? await planMemberMatches(set, client, key) : []
   return { mode: settings.mode, setId: set.id, syncCredential: { id: credential.id, secret: credential.secret }, ...catalog, members }
 }
@@ -189,8 +165,7 @@ export async function saveSettings(tx: GatewayTx, provider: GatewayProvider, set
   provider.updated_at = updated_at
 }
 
-/** Creates or refreshes the group for `key`. Admin renames survive later syncs. */
-export async function ensureGroup(tx: GatewayTx, provider: GatewayProvider, settings: LiteLlmSettings, key: string, name: string, description: string, modelIds: string[]): Promise<GroupId> {
+export async function ensureGroup(tx: GatewayTx, provider: GatewayProvider, settings: Pick<LiteLlmSettings, "groups">, key: string, name: string, description: string, modelIds: string[]): Promise<GroupId> {
   const known = settings.groups[key]
   const [existing] = known && isDenTypeId("gatewayModelGroup", known) ? await tx.select().from(GatewayModelGroupTable)
     .where(and(eq(GatewayModelGroupTable.id, known), eq(GatewayModelGroupTable.gateway_provider_id, provider.id))) : []
@@ -203,14 +178,7 @@ export function groupName(modelIds: string[], alias: string | null) {
   return alias ? `LiteLLM · ${alias}`.slice(0, 255) : `LiteLLM · ${modelIds.length} model${modelIds.length === 1 ? "" : "s"}`
 }
 
-/**
- * Whether a member may connect their own LiteLLM key (personal) or have one
- * created (issued). Only an admin grant of this provider's access group counts
- * ("Can connect a LiteLLM key" / "Gets a LiteLLM key"). A grant of any other
- * group, such as one team's models, never makes a member eligible: otherwise
- * their key could pull them into a broader group through an automatic grant.
- */
-export async function memberEligible(tx: GatewayTx | typeof db, provider: GatewayProvider, set: GatewaySet, memberId: GatewayMemberId, settings: LiteLlmSettings) {
+export async function memberEligible(tx: GatewayTx | typeof db | typeof db.$primary, provider: GatewayProvider, set: GatewaySet, memberId: GatewayMemberId, settings: Pick<LiteLlmSettings, "groups">) {
   const accessGroupId = settings.groups[SIGN_IN_GROUP_KEY]
   if (!accessGroupId || !isDenTypeId("gatewayModelGroup", accessGroupId)) return false
   const [member] = await tx.select({ id: MemberTable.id }).from(MemberTable)
@@ -238,7 +206,6 @@ export type LiteLlmAssignment =
   | { kind: "assigned"; modelGroupId: GroupId; modelGroupName: string; modelIds: string[] }
   | { kind: "not_eligible" | "no_models" }
 
-/** Points a member at the shared group for their key's model set. Caller holds the provider lock. */
 async function assignMember(tx: GatewayTx, provider: GatewayProvider, set: GatewaySet, settings: LiteLlmSettings, memberId: GatewayMemberId, models: string[], teamId: string | null): Promise<LiteLlmAssignment> {
   if (!await memberEligible(tx, provider, set, memberId, settings)) {
     await dropAssignment(tx, provider, settings, memberId)
@@ -260,7 +227,6 @@ async function assignMember(tx: GatewayTx, provider: GatewayProvider, set: Gatew
     eq(GatewayProviderAccessTable.gateway_provider_id, provider.id), eq(GatewayProviderAccessTable.model_group_id, groupId),
     eq(GatewayProviderAccessTable.credential_set_id, set.id), eq(GatewayProviderAccessTable.audience_key, gatewayAudienceKey(audience))))
   if (previous && previous.grantId !== (current?.id ?? null)) await dropAssignment(tx, provider, settings, memberId)
-  // An admin may already grant this exact group to the member; reuse, never own, that grant.
   const grantId = current ? (previous?.grantId === current.id ? current.id : null)
     : await writeGatewayGrant(tx, provider, { modelGroupId: groupId, credentialSetId: set.id, audience })
   settings.members[memberId] = { grantId, groupId, teamId, matchedAt: new Date().toISOString() }
@@ -287,10 +253,9 @@ export type LiteLlmSyncResult = {
   warnings: string[]
 }
 
-/** Database half of a sync. Caller holds the provider lock (providerTransaction). */
 export async function applyLiteLlmSync(tx: GatewayTx, lockedProvider: GatewayProvider, plan: LiteLlmSyncPlan): Promise<LiteLlmSyncResult> {
   const provider = await loadProviderForUpdate(tx, lockedProvider)
-  const settings = requireSettings(provider)
+  const settings = requireKeySettings(provider)
   const set = await activeSet(tx, provider, settings)
   if (set.id !== plan.setId || settings.mode !== plan.mode) throw new GatewayWriteError(409, "litellm_credential_set_changed", "The LiteLLM configuration changed during sync. Sync again.")
   const { credential } = await syncKey(tx, set, settings.mode)
@@ -325,7 +290,6 @@ export async function applyLiteLlmSync(tx: GatewayTx, lockedProvider: GatewayPro
   for (const match of plan.members) {
     if (match.kind === "unavailable") { members.unavailable += 1; continue }
     const [row] = await tx.select().from(GatewayProviderCredentialTable).where(eq(GatewayProviderCredentialTable.id, match.credentialId)).for("update")
-    // The member replaced or removed their key during the sync; their own save already matched it.
     if (!row || row.secret !== match.secret || row.status !== "active") { members.unavailable += 1; continue }
     if (match.kind === "rejected") {
       await tx.update(GatewayProviderCredentialTable).set({ status: "revoked", secret: "{}", last_error: "litellm_key_rejected", updated_at: new Date() }).where(eq(GatewayProviderCredentialTable.id, row.id))
@@ -337,7 +301,6 @@ export async function applyLiteLlmSync(tx: GatewayTx, lockedProvider: GatewayPro
     if (result.kind === "assigned") members.matched += 1
     else members.removed += 1
   }
-  // Members whose eligibility was removed since they connected lose their automatic grant.
   for (const memberId of Object.keys(settings.members)) {
     if (!isDenTypeId("member", memberId)) { await dropAssignment(tx, provider, settings, memberId); continue }
     if (!await memberEligible(tx, provider, set, memberId, settings)) { await dropAssignment(tx, provider, settings, memberId); members.removed += 1 }
@@ -354,7 +317,6 @@ export async function applyLiteLlmSync(tx: GatewayTx, lockedProvider: GatewayPro
   return { modelCount: plan.catalog.length, groupCount: Object.keys(settings.groups).length, teamCount: settings.teams.length, members, warnings }
 }
 
-/** Records a failed sync without touching the last good catalog. */
 export async function recordLiteLlmSyncError(providerId: GatewayProvider["id"], message: string) {
   await db.transaction(async (tx) => {
     const [provider] = await tx.select().from(GatewayProviderTable).where(eq(GatewayProviderTable.id, providerId)).for("update")
@@ -373,10 +335,6 @@ export type LiteLlmCreateInput = {
   creatorId: GatewayMemberId
 }
 
-/**
- * Inserts a LiteLLM provider, its single credential set and its initial sync.
- * The caller verified the key with planLiteLlmCreate and holds the member lock.
- */
 export async function createLiteLlmProvider(tx: GatewayTx, provider: GatewayProvider, input: LiteLlmCreateInput, plan: Pick<LiteLlmSyncPlan, "catalog" | "teams" | "teamsAvailable">) {
   await tx.insert(GatewayProviderTable).values(provider)
   const set: GatewaySet = {
@@ -393,6 +351,68 @@ export async function createLiteLlmProvider(tx: GatewayTx, provider: GatewayProv
   if (!groupId) throw new GatewayWriteError(409, "litellm_group_missing")
   for (const audience of input.audiences) await writeGatewayGrant(tx, provider, { modelGroupId: groupId, credentialSetId: set.id, audience })
   return { setId: set.id, result }
+}
+
+export const LITELLM_ENTRA_SET_NAME = "Microsoft sign-in"
+
+export type LiteLlmEntraSignIn = { tenantId: string; clientId: string; clientSecret: string }
+
+export function emptyEntraSettings(scope: string): LiteLlmSettings {
+  return { ...emptySettings("member", "pending", { keySource: "entra", issueStrategy: "per_team", mirrorFallback: "per_team" }), entraScope: scope }
+}
+
+function entraResult(settings: LiteLlmSettings): LiteLlmSyncResult {
+  return { modelCount: settings.catalog.length, groupCount: Object.keys(settings.groups).length, teamCount: 0, members: { matched: 0, rejected: 0, unavailable: 0, removed: 0 }, warnings: [] }
+}
+
+function requireEntraSettings(provider: GatewayProvider) {
+  const settings = requireSettings(provider)
+  if (!isLiteLlmEntraSignIn(settings)) throw new GatewayWriteError(409, "litellm_not_entra", "Only LiteLLM providers that use Microsoft sign-in have these settings.")
+  return settings
+}
+
+async function writeEntraModels(tx: GatewayTx, provider: GatewayProvider, settings: LiteLlmSettings, models: LiteLlmModel[]): Promise<GroupId> {
+  settings.catalog = models
+  await writeGatewayModels(tx, provider, models)
+  return ensureGroup(tx, provider, settings, ALL_MODELS_GROUP_KEY, "All LiteLLM models", "Every model on this provider's list.", models.map((model) => model.id))
+}
+
+export async function createLiteLlmEntraProvider(tx: GatewayTx, provider: GatewayProvider, input: { signIn: LiteLlmEntraSignIn; models: LiteLlmModel[]; audiences: GatewayAudience[]; creatorId: GatewayMemberId }): Promise<LiteLlmSyncResult> {
+  const settings = requireEntraSettings(provider)
+  await tx.insert(GatewayProviderTable).values(provider)
+  const set = await writeGatewaySet(tx, provider,
+    { name: LITELLM_ENTRA_SET_NAME, credentialMode: "member", oauthTenantId: input.signIn.tenantId, oauthClientId: input.signIn.clientId, oauthClientSecret: input.signIn.clientSecret },
+    { createdByOrgMembershipId: input.creatorId }, { liteLlmEntraSignIn: { scopeChanged: false } })
+  settings.credentialSetId = set.id
+  const groupId = await writeEntraModels(tx, provider, settings, input.models)
+  await saveSettings(tx, provider, settings)
+  for (const audience of input.audiences) await writeGatewayGrant(tx, provider, { modelGroupId: groupId, credentialSetId: set.id, audience })
+  return entraResult(settings)
+}
+
+export async function updateLiteLlmEntraProvider(tx: GatewayTx, lockedProvider: GatewayProvider, input: Partial<LiteLlmEntraSignIn> & { scope?: string; models?: LiteLlmModel[] }) {
+  const provider = await loadProviderForUpdate(tx, lockedProvider)
+  const settings = requireEntraSettings(provider)
+  const set = await activeSet(tx, provider, settings)
+  const scopeChanged = input.scope !== undefined && input.scope !== settings.entraScope
+  if (input.scope !== undefined && scopeChanged) {
+    settings.entraScope = input.scope
+    await saveSettings(tx, provider, settings)
+  }
+  const revoked = scopeChanged || input.tenantId !== undefined || input.clientId !== undefined || input.clientSecret !== undefined
+    ? (await writeGatewaySet(tx, provider, { oauthTenantId: input.tenantId, oauthClientId: input.clientId, oauthClientSecret: input.clientSecret }, set.id, { liteLlmEntraSignIn: { scopeChanged } })).revoked
+    : []
+  if (input.models) {
+    await writeEntraModels(tx, provider, settings, input.models)
+    const pinned = (provider.pinned_model_ids ?? []).filter((id) => input.models?.some((model) => model.id === id))
+    if (pinned.length !== (provider.pinned_model_ids ?? []).length) {
+      await tx.update(GatewayProviderTable).set({ pinned_model_ids: pinned }).where(eq(GatewayProviderTable.id, provider.id))
+      provider.pinned_model_ids = pinned
+    }
+  }
+  await saveSettings(tx, provider, settings)
+  Object.assign(lockedProvider, provider)
+  return { sync: entraResult(settings), revoked }
 }
 
 export function emptySettings(mode: LiteLlmMode, credentialSetId: string, issue?: Pick<LiteLlmSettings, "keySource" | "issueStrategy" | "mirrorFallback">): LiteLlmSettings {
@@ -414,7 +434,6 @@ export async function upsertKeyRow(tx: GatewayTx, provider: GatewayProvider, set
   return row
 }
 
-/** Changes how OpenWork creates keys. The next reconcile replaces keys created the old way. */
 export async function updateLiteLlmIssueSettings(tx: GatewayTx, lockedProvider: GatewayProvider, input: Partial<Pick<LiteLlmSettings, "issueStrategy" | "mirrorFallback">>) {
   const provider = await loadProviderForUpdate(tx, lockedProvider)
   const settings = requireSettings(provider)
@@ -423,26 +442,24 @@ export async function updateLiteLlmIssueSettings(tx: GatewayTx, lockedProvider: 
   Object.assign(lockedProvider, provider)
 }
 
-/** Replaces the organization key (org mode) or admin key (per-user mode). Verify first. */
 export async function replaceLiteLlmSyncKey(tx: GatewayTx, provider: GatewayProvider, apiKey: string) {
-  const settings = requireSettings(provider)
+  const settings = requireKeySettings(provider)
   const set = await activeSet(tx, provider, settings)
   await upsertKeyRow(tx, provider, set, settings.mode === "org" ? "org" : LITELLM_ADMIN_CREDENTIAL_SUBJECT, null, apiKey)
   await tx.update(GatewayCredentialSetTable).set({ updated_at: new Date() }).where(eq(GatewayCredentialSetTable.id, set.id))
 }
 
-/** The per-user set a member may connect to. */
 export async function liteLlmMemberSet(database: GatewayTx | typeof db, provider: GatewayProvider, credentialSetId?: string) {
   const settings = requireSettings(provider)
   if (settings.mode !== "member") throw new GatewayWriteError(409, "litellm_org_key_mode", "This LiteLLM provider uses one organization key; there is nothing to connect.")
   if (settings.keySource === "issued") throw new GatewayWriteError(409, "litellm_keys_managed", "OpenWork creates your LiteLLM key for this provider; there is nothing to paste.")
+  if (isLiteLlmEntraSignIn(settings)) throw new GatewayWriteError(409, "litellm_microsoft_sign_in", "This provider uses Microsoft sign-in, not a LiteLLM key. Select Connect in OpenWork to sign in.")
   if (credentialSetId !== undefined && credentialSetId !== settings.credentialSetId) throw new GatewayWriteError(404, "credential_set_not_found")
   const set = await activeSet(database, provider, settings)
   if (set.status !== "active") throw new GatewayWriteError(403, "forbidden", "Personal LiteLLM keys are turned off for this provider.")
   return set
 }
 
-/** Stores a member's verified key and assigns their group. Caller holds the provider lock. */
 export async function connectLiteLlmMemberKey(tx: GatewayTx, lockedProvider: GatewayProvider, memberId: GatewayMemberId, apiKey: string, verified: { models: string[]; teamId: string | null }): Promise<LiteLlmAssignment> {
   const provider = await loadProviderForUpdate(tx, lockedProvider)
   const settings = requireSettings(provider)
@@ -459,7 +476,6 @@ export async function connectLiteLlmMemberKey(tx: GatewayTx, lockedProvider: Gat
   return assignment
 }
 
-/** Removes a member's key and automatic grant. Caller holds the provider lock. */
 export async function disconnectLiteLlmMember(tx: GatewayTx, lockedProvider: GatewayProvider, memberId: GatewayMemberId) {
   const provider = await loadProviderForUpdate(tx, lockedProvider)
   const settings = readLiteLlmSettings(provider.settings)
@@ -468,10 +484,6 @@ export async function disconnectLiteLlmMember(tx: GatewayTx, lockedProvider: Gat
   await saveSettings(tx, provider, settings)
 }
 
-/**
- * Drops automatic grants of members who are no longer allowed to connect,
- * after an admin edits or removes access grants. Caller holds the provider lock.
- */
 export async function pruneLiteLlmAssignments(tx: GatewayTx, lockedProvider: GatewayProvider) {
   if (!isLiteLlmProviderId(lockedProvider.provider_id)) return
   const provider = await loadProviderForUpdate(tx, lockedProvider)

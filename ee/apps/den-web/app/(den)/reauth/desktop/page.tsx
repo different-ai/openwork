@@ -14,6 +14,7 @@ function DesktopReauth() {
   const [identity, setIdentity] = useState<URLSearchParams | null>(null);
   useEffect(() => { setIdentity(new URLSearchParams(window.location.hash.slice(1))); }, [nonce]);
   const userId = identity?.get("userId") ?? "";
+  const organizationId = identity?.get("orgId") || null;
   const [email, setEmail] = useState("");
   const [emailInput, setEmailInput] = useState("");
   const [loadingSession, setLoadingSession] = useState(true);
@@ -28,18 +29,13 @@ function DesktopReauth() {
       const currentUser = getUser(result.payload);
       if (active && result.response.ok && currentUser?.id === userId) setEmail(currentUser.email);
     }).catch(() => {
-      // A missing browser session can still verify using the email form.
     }).finally(() => { if (active) setLoadingSession(false); });
     return () => { active = false; };
   }, [userId]);
-  // The account reference is a hint, never a credential. Both surfaces validate
-  // the signed-in identity; sharing rechecks authorization server-side.
   const user = useMemo(() => ({ id: userId, email, name: null, authProviders: ["email", "google", "github"] }), [userId, email]);
   const valid = /^[a-f0-9-]{36}$/i.test(nonce) && Boolean(userId);
 
   async function verified() {
-    // Read the cookie just created by browser sign-in, through that same origin.
-    // API discovery and a legacy web bearer token must not select another session.
     const me = await requestJson("/api/auth/get-session", { method: "GET" });
     if (!me.response.ok || !getUser(me.payload)) throw new Error("Your browser session could not be confirmed. Try verification again.");
     if (getUser(me.payload)?.id !== userId) throw new Error(`Sign in as ${email} to confirm this share.`);
@@ -71,7 +67,7 @@ function DesktopReauth() {
           <DenButton variant="secondary" onClick={() => void navigator.clipboard.writeText(link).then(() => setCopied(true)).catch(() => setCopied(false))}>{copied ? "Copied" : "Copy verification link"}</DenButton>
         </> : <p>Complete the security check to return to your pending share.</p>}
     </div>
-    <ReauthDialog open={valid && !loadingSession && Boolean(email) && !cancelled && !link} user={user} orgContext={null} onCancel={() => setCancelled(true)} onVerified={verified}
+    <ReauthDialog open={valid && !loadingSession && Boolean(email) && !cancelled && !link} user={user} orgContext={null} organizationId={organizationId} onCancel={() => setCancelled(true)} onVerified={verified}
       title="Confirm your identity to share apps" description="After verification, return to OpenWork to finish sharing your selected apps." />
   </div>;
 }

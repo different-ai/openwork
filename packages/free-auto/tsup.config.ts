@@ -2,7 +2,7 @@ import { defineConfig } from "tsup"
 
 export default defineConfig({
   clean: true,
-  dts: true,
+  dts: false,
   entry: {
     index: "src/index.ts",
     accounting: "src/accounting.ts",
@@ -10,6 +10,5 @@ export default defineConfig({
   },
   format: ["esm"],
   target: "es2022",
-  // Electron main and the desktop relay load dist/*.js at runtime; keep workspace packages external.
   external: ["@openwork/types"],
 })

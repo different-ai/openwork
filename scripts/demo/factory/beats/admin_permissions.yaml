@@ -1,0 +1,20 @@
+id: admin_permissions
+title: "Show permissions in the admin console"
+surface: admin
+label: REAL
+status: draft
+requires: [admin_signed_in]
+do:
+  - {type: manual, instruction: "Open the approved team permissions view without making changes."}
+  - {type: show, seconds: 5}
+say: "Show the permissions the fixture actually grants."
+paste: {}
+see: "The saved grant scope is team-only."
+checks:
+  - {"type": "admin_setting_equals", "setting": "connector_grant_scope", "value": "team"}
+reset: []
+fallback: Skip until verified on the rehearsal desktop; make no live claim.
+expect_seconds: 45
+questions:
+  - {question: Is this part of the verified live sequence?, answer: No. This is a rehearsal placeholder until its expected result is verified.}
+avoid: ["Do not edit grants or imply enforcement without proof."]

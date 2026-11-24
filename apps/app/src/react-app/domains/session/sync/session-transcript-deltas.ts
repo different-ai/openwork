@@ -29,11 +29,6 @@ export function getPartMetadataId(part: UIMessage["parts"][number]) {
   return typeof partId === "string" ? partId : null;
 }
 
-/**
- * Infer the role of a message shell created before its message.updated event.
- * Chat sessions alternate, so the new message normally has the opposite role
- * from the most recent known message.
- */
 export function inferStubRole(messages: UIMessage[]): UIMessage["role"] {
   const lastMessage = messages[messages.length - 1];
   if (!lastMessage) return "user";
@@ -53,11 +48,6 @@ function indexMessageParts(parts: UIMessage["parts"]) {
   return indexById;
 }
 
-/**
- * Apply a frame's coalesced text deltas with one transcript clone and one
- * parts clone per touched message. Message and part indexes are built once,
- * avoiding repeated full-transcript scans in long sessions.
- */
 export function applyPendingDeltasToTranscript(
   messages: UIMessage[],
   items: PendingDelta[],

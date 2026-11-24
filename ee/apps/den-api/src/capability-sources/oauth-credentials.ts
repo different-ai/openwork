@@ -1,4 +1,4 @@
-import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import {
   ConnectedAccountTable,
   MemberTable,
@@ -6,15 +6,12 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
+import { requestRead, requestReadMany } from "../request-reads.js"
+import { isSandboxMicrosoftClient, resolveSandboxMicrosoftEndpoints, type SandboxMicrosoftEndpoints } from "./sandbox-microsoft-endpoints.js"
 
-/**
- * Generic, provider-agnostic reads/writes for the two credential tables.
- * These are the only functions that touch OrgOAuthClientTable /
- * ConnectedAccountTable directly — every provider (native or external MCP)
- * goes through this same, single implementation.
- */
-
-export type OrgOAuthClientRow = typeof OrgOAuthClientTable.$inferSelect
+export type OrgOAuthClientRow = typeof OrgOAuthClientTable.$inferSelect & {
+  sandboxEndpoints?: SandboxMicrosoftEndpoints
+}
 export type ConnectedAccountRow = typeof ConnectedAccountTable.$inferSelect
 
 type OrganizationId = DenTypeId<"organization">
@@ -49,8 +46,10 @@ export function parseGrantedOAuthScopes(scope: string | undefined): string[] | n
   return scope === undefined ? null : scope.split(" ").filter(Boolean)
 }
 
-function normalizeOrgOAuthClientRow(row: OrgOAuthClientRow): OrgOAuthClientRow {
-  return { ...row, extra: normalizeOAuthClientExtra(row.extra) }
+async function normalizeOrgOAuthClientRow(row: OrgOAuthClientRow): Promise<OrgOAuthClientRow> {
+  const normalized = { ...row, extra: normalizeOAuthClientExtra(row.extra) }
+  if (!isSandboxMicrosoftClient(normalized.extra)) return normalized
+  return { ...normalized, sandboxEndpoints: await resolveSandboxMicrosoftEndpoints(normalized.organizationId) }
 }
 
 function normalizeConnectedAccountRow(row: ConnectedAccountRow): ConnectedAccountRow {
@@ -82,13 +81,35 @@ function connectedAccountChanges(input: ConnectedAccountUpsertInput) {
   }
 }
 
-export async function getOrgOAuthClient(organizationId: OrganizationId, providerId: string): Promise<OrgOAuthClientRow | null> {
-  const rows = await db
+function orgOAuthClientReadKey(organizationId: OrganizationId, providerId: string) {
+  return `org-oauth-client:${organizationId}:${providerId}`
+}
+
+export function getOrgOAuthClient(organizationId: OrganizationId, providerId: string): Promise<OrgOAuthClientRow | null> {
+  return requestRead(orgOAuthClientReadKey(organizationId, providerId), () => readOrgOAuthClient(organizationId, providerId))
+}
+
+export function getOrgOAuthClients(organizationId: OrganizationId, providerIds: readonly string[]): Promise<Map<string, OrgOAuthClientRow | null>> {
+  return requestReadMany(providerIds, (providerId) => orgOAuthClientReadKey(organizationId, providerId), async (missing) => {
+    const rows = await db
+      .select()
+      .from(OrgOAuthClientTable)
+      .where(and(eq(OrgOAuthClientTable.organizationId, organizationId), inArray(OrgOAuthClientTable.providerId, missing)))
+    return new Map(await Promise.all(rows.map(async (row) => [row.providerId, await normalizeOrgOAuthClientRow(row)] as const)))
+  }, null)
+}
+
+export function getOrgOAuthClientFromPrimary(organizationId: OrganizationId, providerId: string): Promise<OrgOAuthClientRow | null> {
+  return readOrgOAuthClient(organizationId, providerId, db.$primary)
+}
+
+async function readOrgOAuthClient(organizationId: OrganizationId, providerId: string, database: typeof db.$primary = db): Promise<OrgOAuthClientRow | null> {
+  const rows = await database
     .select()
     .from(OrgOAuthClientTable)
     .where(and(eq(OrgOAuthClientTable.organizationId, organizationId), eq(OrgOAuthClientTable.providerId, providerId)))
     .limit(1)
-  return rows[0] ? normalizeOrgOAuthClientRow(rows[0]) : null
+  return rows[0] ? await normalizeOrgOAuthClientRow(rows[0]) : null
 }
 
 export async function deleteOrgOAuthClient(organizationId: OrganizationId, providerId: string): Promise<void> {
@@ -105,8 +126,9 @@ export async function upsertOrgOAuthClient(input: {
   clientSecret?: string | null
   extra?: Record<string, unknown> | null
   createdByOrgMembershipId: OrgMembershipId
+  id?: DenTypeId<"orgOAuthClient">
 }): Promise<OrgOAuthClientRow> {
-  const existing = await getOrgOAuthClient(input.organizationId, input.providerId)
+  const existing = await readOrgOAuthClient(input.organizationId, input.providerId, db.$primary)
   if (existing) {
     await db
       .update(OrgOAuthClientTable)
@@ -116,10 +138,10 @@ export async function upsertOrgOAuthClient(input: {
         ...(input.extra !== undefined ? { extra: input.extra } : {}),
       })
       .where(eq(OrgOAuthClientTable.id, existing.id))
-    return (await getOrgOAuthClient(input.organizationId, input.providerId))!
+    return (await readOrgOAuthClient(input.organizationId, input.providerId, db.$primary))!
   }
 
-  const id = createDenTypeId("orgOAuthClient")
+  const id = input.id ?? createDenTypeId("orgOAuthClient")
   await db.insert(OrgOAuthClientTable).values({
     id,
     organizationId: input.organizationId,
@@ -129,7 +151,33 @@ export async function upsertOrgOAuthClient(input: {
     extra: input.extra ?? null,
     createdByOrgMembershipId: input.createdByOrgMembershipId,
   })
-  return (await getOrgOAuthClient(input.organizationId, input.providerId))!
+  return (await readOrgOAuthClient(input.organizationId, input.providerId, db.$primary))!
+}
+
+export function getConnectedAccountForListing(input: Parameters<typeof getConnectedAccount>[0]): Promise<ConnectedAccountRow | null> {
+  return requestRead(connectedAccountReadKey(input), () => readConnectedAccount(input, db))
+}
+
+export function getConnectedAccountsForListing(input: {
+  organizationId: OrganizationId
+  orgMembershipId: OrgMembershipId
+  providerIds: readonly string[]
+}): Promise<Map<string, ConnectedAccountRow | null>> {
+  return requestReadMany(input.providerIds, (providerId) => connectedAccountReadKey({ ...input, providerId }), async (missing) => {
+    const rows = await db
+      .select()
+      .from(ConnectedAccountTable)
+      .where(and(
+        eq(ConnectedAccountTable.organizationId, input.organizationId),
+        eq(ConnectedAccountTable.orgMembershipId, input.orgMembershipId),
+        inArray(ConnectedAccountTable.providerId, missing),
+      ))
+    return new Map(rows.map((row) => [row.providerId, normalizeConnectedAccountRow(row)]))
+  }, null)
+}
+
+function connectedAccountReadKey(input: { organizationId: OrganizationId; orgMembershipId: OrgMembershipId; providerId: string }) {
+  return `connected-account:${input.organizationId}:${input.orgMembershipId}:${input.providerId}`
 }
 
 export async function getConnectedAccount(input: {
@@ -137,7 +185,15 @@ export async function getConnectedAccount(input: {
   orgMembershipId: OrgMembershipId
   providerId: string
 }): Promise<ConnectedAccountRow | null> {
-  const rows = await db
+  return readConnectedAccount(input, db.$primary)
+}
+
+async function readConnectedAccount(input: {
+  organizationId: OrganizationId
+  orgMembershipId: OrgMembershipId
+  providerId: string
+}, database: typeof db.$primary): Promise<ConnectedAccountRow | null> {
+  const rows = await database
     .select()
     .from(ConnectedAccountTable)
     .where(and(
@@ -149,7 +205,6 @@ export async function getConnectedAccount(input: {
   return rows[0] ? normalizeConnectedAccountRow(rows[0]) : null
 }
 
-/** Upsert used both to stash a pending PKCE verifier before redirect, and to save real tokens after exchange. */
 export async function upsertConnectedAccount(input: ConnectedAccountUpsertInput): Promise<ConnectedAccountRow> {
   const existing = await getConnectedAccount(input)
   if (existing) {
@@ -177,11 +232,6 @@ export async function upsertConnectedAccount(input: ConnectedAccountUpsertInput)
   return (await getConnectedAccount(input))!
 }
 
-/**
- * Update-only credential persistence shared by callback completion and token
- * refresh. The member and exact account are locked before comparing secrets in
- * memory (encrypted DB columns cannot be used as equality predicates).
- */
 async function updateExistingConnectedAccountForActiveMember(
   input: ConnectedAccountUpsertInput & {
     expectedAccountId: ConnectedAccountRow["id"]
@@ -226,8 +276,6 @@ async function updateExistingConnectedAccountForActiveMember(
       .update(ConnectedAccountTable)
       .set({
         ...connectedAccountChanges(input),
-        // Only a completed authorization advances the member's connection marker.
-        // Keep it distinct even if two completions share a millisecond.
         ...(input.expectedPendingCodeVerifier !== undefined
           ? { connectedAt: new Date(Math.max(Date.now(), existing.connectedAt.getTime() + 1)) }
           : {}),
@@ -247,11 +295,6 @@ async function updateExistingConnectedAccountForActiveMember(
   })
 }
 
-/**
- * A late callback can only finish the exact pending request it exchanged. A
- * disconnect, client rotation, newer connect attempt, or member removal wins
- * by deleting/changing the row before this update-only transaction commits.
- */
 export async function completeConnectedAccountForActiveMember(
   input: ConnectedAccountUpsertInput & {
     expectedAccountId: ConnectedAccountRow["id"]
@@ -261,7 +304,6 @@ export async function completeConnectedAccountForActiveMember(
   return updateExistingConnectedAccountForActiveMember(input)
 }
 
-/** A remote refresh can update only the exact active grant it started from. */
 export async function refreshConnectedAccountForActiveMember(
   input: ConnectedAccountUpsertInput & {
     expectedAccountId: ConnectedAccountRow["id"]
@@ -270,6 +312,61 @@ export async function refreshConnectedAccountForActiveMember(
   },
 ): Promise<ConnectedAccountRow | null> {
   return updateExistingConnectedAccountForActiveMember(input)
+}
+
+export async function refreshConnectedAccountExclusively(input: {
+  organizationId: OrganizationId
+  orgMembershipId: OrgMembershipId
+  providerId: string
+  expectedAccountId: ConnectedAccountRow["id"]
+  isAccessTokenFresh: (expiresAt: Date | null) => boolean
+  refresh: (refreshToken: string) => Promise<{
+    accessToken: string
+    refreshToken?: string
+    tokenType?: string
+    expiresAt: Date | null
+  } | null>
+}): Promise<ConnectedAccountRow | null> {
+  return db.transaction(async (tx) => {
+    const [member] = await tx
+      .select({ id: MemberTable.id })
+      .from(MemberTable)
+      .where(and(
+        eq(MemberTable.id, input.orgMembershipId),
+        eq(MemberTable.organizationId, input.organizationId),
+        isNull(MemberTable.removedAt),
+      ))
+      .limit(1)
+    if (!member) return null
+
+    const accountKey = and(
+      eq(ConnectedAccountTable.organizationId, input.organizationId),
+      eq(ConnectedAccountTable.orgMembershipId, input.orgMembershipId),
+      eq(ConnectedAccountTable.providerId, input.providerId),
+    )
+    const [account] = await tx.select().from(ConnectedAccountTable).where(accountKey).limit(1).for("update")
+    if (!account || account.id !== input.expectedAccountId || !account.accessToken) return null
+    if (input.isAccessTokenFresh(account.expiresAt)) return normalizeConnectedAccountRow(account)
+    if (!account.refreshToken) return null
+
+    const refreshed = await input.refresh(account.refreshToken)
+    await tx
+      .update(ConnectedAccountTable)
+      .set(connectedAccountChanges({
+        ...input,
+        ...(refreshed ? {
+          accessToken: refreshed.accessToken,
+          refreshToken: refreshed.refreshToken ?? account.refreshToken,
+          tokenType: refreshed.tokenType ?? account.tokenType,
+          expiresAt: refreshed.expiresAt,
+        } : { accessToken: null, refreshToken: null, expiresAt: null }),
+      }))
+      .where(eq(ConnectedAccountTable.id, account.id))
+    if (!refreshed) return null
+
+    const [saved] = await tx.select().from(ConnectedAccountTable).where(accountKey).limit(1)
+    return saved ? normalizeConnectedAccountRow(saved) : null
+  })
 }
 
 export async function disconnectAccount(input: {

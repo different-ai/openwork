@@ -1,5 +1,5 @@
-import { DesktopPolicyEditorScreen } from "../../../_components/desktop-policy-editor-screen";
+import { DesktopPolicyRoute } from "../../../_components/desktop-policy-route";
 
 export default function NewDesktopPolicyPage() {
-  return <DesktopPolicyEditorScreen />;
+  return <DesktopPolicyRoute editor />;
 }

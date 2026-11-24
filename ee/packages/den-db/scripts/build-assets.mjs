@@ -42,6 +42,8 @@ function generateCurrentSchemaSql() {
 mkdirSync(distDir, { recursive: true })
 rmSync(distMigrationsDir, { recursive: true, force: true })
 cpSync(migrationsDir, distMigrationsDir, { recursive: true })
+mkdirSync(path.join(distDir, "scripts"), { recursive: true })
+cpSync(path.join(packageDir, "scripts/administrator-recovery.sql"), path.join(distDir, "scripts/administrator-recovery.sql"))
 writeFileSync(currentSchemaPath, generateCurrentSchemaSql())
 
 console.log(`[den-db] copied migrations to ${path.relative(packageDir, distMigrationsDir)}`)

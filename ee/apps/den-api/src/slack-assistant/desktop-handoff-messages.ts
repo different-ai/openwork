@@ -1,38 +1,16 @@
-/**
- * What a Slack thread is told about work it handed to the member's desktop.
- * Pure functions: the sweep in desktop-handoff.ts decides when to post.
- */
+import { excerpt, markdownToMrkdwn, markdownToPlainText, SECTION_TEXT_LIMIT, slackSafeText, splitSlackText } from "./slack-text.js"
 
-/** How much of the desktop's answer goes into the thread; the full answer stays in OpenWork. */
-export const FINISHED_TEXT_LIMIT = 600
+export { excerpt, slackSafeText } from "./slack-text.js"
+
 const ERROR_TEXT_LIMIT = 300
+const NOTIFICATION_TEXT_LIMIT = 300
+const MAX_SECTIONS = 50
 
-/**
- * Model and desktop text is untrusted. Escaping `&`, `<` and `>` turns Slack's
- * control sequences (`<@U…>`, `<!here>`, `<!subteam^…>`, `<https://…|label>`)
- * into plain text, and a zero-width space keeps `@here`, `@channel` and
- * `@everyone` from ever being read as a broadcast.
- */
-export function slackSafeText(text: string) {
-  return text
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replace(/@(here|channel|everyone)\b/gi, "@\u200b$1")
+export type SlackMessage = {
+  text: string
+  blocks?: Array<{ type: "section"; text: { type: "mrkdwn"; text: string } }>
 }
 
-/** Shortens on a word boundary and closes a code block the cut left open. */
-export function excerpt(text: string, limit: number) {
-  const trimmed = text.trim()
-  if (trimmed.length <= limit) return trimmed
-  const cut = trimmed.slice(0, limit)
-  const boundary = cut.lastIndexOf(" ")
-  let short = `${(boundary > limit * 0.6 ? cut.slice(0, boundary) : cut).trimEnd()}…`
-  if ((short.match(/```/g) ?? []).length % 2 === 1) short += "\n```"
-  return short
-}
-
-/** Mentions the person so Slack notifies them; anything that is not a Slack user id is left out. */
 function mention(recipientUserId: string) {
   return /^[UW][A-Z0-9]{2,}$/.test(recipientUserId) ? `<@${recipientUserId}> ` : ""
 }
@@ -41,33 +19,55 @@ function sentence(text: string) {
   return text.trim().replace(/[.!?\s]+$/, "")
 }
 
+function reason(message: string | null) {
+  return message?.trim() ? `: ${markdownToMrkdwn(sentence(excerpt(markdownToPlainText(message), ERROR_TEXT_LIMIT)))}` : ""
+}
+
+function section(text: string) {
+  return { type: "section" as const, text: { type: "mrkdwn" as const, text } }
+}
+
+function finishedMessage(to: string, finalText: string): SlackMessage {
+  const answer = markdownToMrkdwn(finalText)
+  const startsWithBlock = /^\s*(#{1,6}\s|[-*+]\s|\d+[.)]\s|>|```|~~~|\|)/.test(finalText.trim())
+  const lead = `${to}Your desktop finished:${startsWithBlock ? "\n" : " "}`
+  const parts = splitSlackText(`${lead}${answer}`, SECTION_TEXT_LIMIT)
+  const shown = parts.length > MAX_SECTIONS
+    ? [...parts.slice(0, MAX_SECTIONS - 1), "_The rest of this answer is in OpenWork on that computer._"]
+    : parts
+  return {
+    text: `${to}Your desktop finished: ${slackSafeText(excerpt(markdownToPlainText(finalText), NOTIFICATION_TEXT_LIMIT))}`,
+    blocks: shown.map(section),
+  }
+}
+
 export type DesktopHandoffNotice =
   | { kind: "finished"; finalText: string | null }
   | { kind: "failed"; message: string | null }
   | { kind: "waiting"; waitingFor: "permission" | "question" | null }
   | { kind: "expired" }
-  | { kind: "undeliverable"; message: string | null }
+  | { kind: "undeliverable"; message: string | null; code?: string | null }
 
-export function desktopHandoffMessage(recipientUserId: string, notice: DesktopHandoffNotice) {
+export function desktopHandoffMessage(recipientUserId: string, notice: DesktopHandoffNotice): SlackMessage {
   const to = mention(recipientUserId)
   switch (notice.kind) {
-    case "finished": {
-      const answer = notice.finalText?.trim() ? slackSafeText(excerpt(notice.finalText, FINISHED_TEXT_LIMIT)) : ""
-      return answer ? `${to}Your desktop finished: ${answer}` : `${to}Your desktop finished.`
-    }
-    case "failed": {
-      const reason = notice.message?.trim() ? `: ${slackSafeText(sentence(excerpt(notice.message, ERROR_TEXT_LIMIT)))}` : ""
-      return `${to}The task on your desktop failed${reason}. It's still open in OpenWork on that computer.`
-    }
+    case "finished":
+      return notice.finalText?.trim() ? finishedMessage(to, notice.finalText) : { text: `${to}Your desktop finished.` }
+    case "failed":
+      return { text: `${to}The task on your desktop failed${reason(notice.message)}. It's still open in OpenWork on that computer.` }
     case "waiting":
-      return notice.waitingFor === "question"
-        ? `${to}Your desktop is waiting for you to answer a question in OpenWork.`
-        : `${to}Your desktop is waiting for you to approve something in OpenWork.`
+      return {
+        text: notice.waitingFor === "question"
+          ? `${to}Your desktop is waiting for you to answer a question in OpenWork.`
+          : `${to}Your desktop is waiting for you to approve something in OpenWork.`,
+      }
     case "expired":
-      return `${to}Your desktop didn't pick up the task in time, so it didn't run. Make sure OpenWork is open on that computer, then ask again.`
+      return { text: `${to}Your desktop didn't pick up the task in time, so it didn't run. Make sure OpenWork is open on that computer, then ask again.` }
     case "undeliverable": {
-      const reason = notice.message?.trim() ? `: ${slackSafeText(sentence(excerpt(notice.message, ERROR_TEXT_LIMIT)))}` : ""
-      return `${to}The task couldn't start on your desktop${reason}.`
+      if (notice.code === "openwork_unreachable") {
+        return { text: `${to}Couldn't start the task: OpenWork isn't running on your desktop. Open it, then ask me again.` }
+      }
+      return { text: `${to}The task couldn't start on your desktop${reason(notice.message)}.` }
     }
   }
 }

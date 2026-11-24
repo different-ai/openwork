@@ -81,7 +81,6 @@ export function IntegrationsPanel() {
                 key={meta.provider}
                 className="overflow-hidden rounded-2xl border border-gray-100 bg-white"
               >
-                {/* Header */}
                 <div
                   className={`flex items-start gap-4 px-6 py-5 ${isConnected ? "border-b border-gray-100" : ""}`}
                 >
@@ -126,7 +125,6 @@ export function IntegrationsPanel() {
                   </div>
                 </div>
 
-                {/* Body: connected accounts + repos */}
                 {isConnected ? (
                   <div className="divide-y divide-gray-100">
                     {providerConnections.map((connection) => (

@@ -87,7 +87,6 @@ function writeStoredString(key: string, value: string): void {
   try {
     window.localStorage.setItem(key, value);
   } catch {
-    // ignore persistence failures
   }
 }
 
@@ -96,7 +95,6 @@ function clearStoredString(key: string): void {
   try {
     window.localStorage.removeItem(key);
   } catch {
-    // ignore persistence failures
   }
 }
 
@@ -117,7 +115,6 @@ function clearOpenworkLocalStorageForReset(mode: ResetModalMode): void {
       window.localStorage.setItem("openwork.preferences", JSON.stringify(prefs));
     }
   } catch {
-    // ignore persistence failures
   }
 }
 
@@ -289,8 +286,6 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
   const [nukePreviewBusy, setNukePreviewBusy] = useState(false);
   const [nukeDialogOpen, setNukeDialogOpen] = useState(false);
   const [nukeConfirmationText, setNukeConfirmationText] = useState("");
-  // Opt-in: the bootstrap / organization server config is only wiped when the
-  // user explicitly asks for it. The IPC contract still speaks "preserve".
   const [nukeDeleteBootstrap, setNukeDeleteBootstrap] = useState(false);
   const [nukeManifestPreview, setNukeManifestPreview] = useState<NukeManifestPreview | null>(null);
   const [engineSource, setEngineSourceState] = useState<"path" | "sidecar" | "custom">(readEngineSource);
@@ -341,9 +336,6 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
     return () => window.clearInterval(interval);
   }, [developerMode, refreshEngineInfo]);
 
-  // Surface the agent-first install's non-secret prepared summary (org + first
-  // skill) in the runtime debug report so install verification has one place to
-  // read it without a dedicated diagnostics screen.
   useEffect(() => {
     if (!developerMode || !isDesktopRuntime()) return;
     let cancelled = false;
@@ -708,11 +700,6 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       );
     }
 
-    // Collect ALL local workspace paths so openwork-server is started with
-    // --workspace <path> for every registered local workspace. Mirrors the
-    // Solid reference (context/workspace.ts::resolveWorkspacePaths) so that
-    // `client.listWorkspaces()` later returns the full set, not just the
-    // active one.
     const workspacePaths = [workspacePath];
     const workspacePathSet = new Set(workspacePaths);
     try {
@@ -725,7 +712,6 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
         }
       }
     } catch {
-      // best-effort: fall back to just the active workspace path
     }
 
     const info = await engineStartCmd(workspacePath, {
@@ -734,8 +720,6 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
       opencodeEnableExa: readOpencodeEnableExa(),
     });
 
-    // engine_start restarts openwork-server on a NEW port and lets that server
-    // manage OpenCode. Re-read host info and persist the fresh URL/token.
     try {
       const hostInfo = (await openworkServerInfoCmd()) as {
         baseUrl?: string;
@@ -756,7 +740,6 @@ export function useDebugViewModel(options: UseDebugViewModelOptions) {
         }
       }
     } catch {
-      // best-effort: if this fails, the host-info poller will catch up in ~10s.
     }
 
     await openworkServerStore.reconnectOpenworkServer();

@@ -14,22 +14,13 @@ import type { CurrentToolLifecycle } from "./current-tool-lifecycle"
 
 export type AnyToolPart = ToolUIPart | DynamicToolUIPart
 
-/**
- * A thought that happened inside an aggregate run, anchored to its
- * chronological slot: `afterIndex` is how many of the run's tool calls
- * had already happened when the model produced it.
- */
 export type AggregateThought = {
   afterIndex: number
   text: string
   isStreaming: boolean
+  durationMs?: number | null
 }
 
-/**
- * Paper "Recurring actions · aggregate + latest": consecutive tool calls
- * of the same families (commands, file edits, reads, searches) collapse
- * into one aggregate line. Prose from the model always breaks a group.
- */
 export type ToolFamily = "command" | "edit" | "read" | "search"
 
 export type ToolAggregateLifecycle =
@@ -39,16 +30,6 @@ export type ToolAggregateLifecycle =
   | "completed"
   | "failed"
 
-/**
- * Classify only lifecycle facts available to an aggregate tool row.
- *
- * A terminal tool part directly proves completion or failure. An unfinished
- * part is running/waiting only while the current-session observer says so.
- * The observer's generic `interrupted` state merges idle/remount gaps with
- * real session errors, so it is not proof that a process stopped. Keep that
- * case honest until a terminal tool result arrives; directly observed aborts
- * and infrastructure errors remain owned by the session error presentation.
- */
 export function getToolAggregateLifecycle(
   parts: AnyToolPart[],
   currentLifecycle: CurrentToolLifecycle | null,
@@ -78,7 +59,19 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
+export function getWorkspacePathResolutions(part: AnyToolPart): { requested: string; resolved: string }[] {
+  const paths = part.callProviderMetadata?.openwork?.workspacePaths
+  if (Array.isArray(paths)) return paths.flatMap(path => isRecord(path) && typeof path.requested === "string" && typeof path.resolved === "string"
+    ? [{ requested: path.requested, resolved: path.resolved }] : [])
+  const destination = part.callProviderMetadata?.openwork?.fileDestination
+  const requested = isRecord(part.input) ? part.input.filePath : undefined
+  return typeof destination === "string" && typeof requested === "string" && requested !== destination && !/^(?:[\\/]|[a-z]:)/i.test(requested)
+    ? [{ requested, resolved: destination }] : []
+}
+
 function filePathOf(part: AnyToolPart): string | null {
+  const destination = part.callProviderMetadata?.openwork?.fileDestination
+  if (typeof destination === "string" && destination) return destination
   if (!isRecord(part.input)) return null
   const value = part.input.filePath
   return typeof value === "string" && value ? value : null
@@ -119,10 +112,6 @@ export function getAggregateCountSummary(parts: AnyToolPart[]): string {
   return pieces.join(", ")
 }
 
-/**
- * "Editing 3 files, running 8 commands" / "Edited 3 files, ran 8 commands".
- * File counts are unique paths; searches and commands are call counts.
- */
 export function getAggregateSummary(parts: AnyToolPart[], tense: "present" | "past"): string {
   const commands = parts.filter((part) => getToolFamily(part) === "command").length
   const editPaths = new Set<string>()
@@ -173,24 +162,19 @@ export function fileName(path: string): string {
   return segments[segments.length - 1] || path
 }
 
-/**
- * File-family rows render as "Edited <name>" with the name clickable
- * (absolute path stays in the tooltip, opens in the artifact view).
- */
 export function getAggregateRowFile(part: AnyToolPart): { verb: string; path: string } | null {
   const running = isToolPartInFlight(part)
   const path = filePathOf(part)
   if (!path) return null
   if (isEditToolPart(part)) return { verb: running ? "Editing" : "Edited", path }
-  if (isWriteToolPart(part)) return { verb: running ? "Writing" : "Wrote", path }
+  if (isWriteToolPart(part)) {
+    const failed = part.state === "output-error" || part.state === "output-denied"
+    return { verb: failed ? "Write failed:" : running ? "Writing" : "Wrote", path }
+  }
   if (isReadToolPart(part)) return { verb: running ? "Reading" : "Read", path }
   return null
 }
 
-/**
- * Search-family rows render as "Searched code in <scope>" above the exact
- * pattern, so the pattern is never clipped by a summary label.
- */
 export function getAggregateRowSearch(
   part: AnyToolPart,
 ): { verb: string; pattern: string; scope: string | null } | null {
@@ -212,7 +196,6 @@ export function getAggregateRowSearch(
   }
 }
 
-/** Monospace action text for an expanded aggregate row. */
 export function getAggregateRowLabel(part: AnyToolPart): string {
   if (isBashToolPart(part)) {
     const command = part.input?.command?.trim()
@@ -221,7 +204,6 @@ export function getAggregateRowLabel(part: AnyToolPart): string {
   return getToolActivityLabel(part)
 }
 
-/** The single latest in-flight call — the one the self-replacing current-action line names. */
 export function getAggregateNowPart(parts: AnyToolPart[]): AnyToolPart | null {
   for (let index = parts.length - 1; index >= 0; index -= 1) {
     const part = parts[index]

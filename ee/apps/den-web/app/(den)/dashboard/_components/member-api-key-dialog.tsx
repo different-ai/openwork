@@ -24,7 +24,6 @@ export function MemberApiKeyDialog({ target, onClose, onSaved }: {
           data-ph-no-capture
           className="fixed left-1/2 top-1/2 z-50 w-[calc(100%-2rem)] max-w-[420px] -translate-x-1/2 -translate-y-1/2 rounded-2xl border border-gray-100 bg-white p-5 outline-none"
         >
-          {/* Keyed by connection: a new target always starts from an empty form. */}
           {target ? <MemberApiKeyForm key={target.id} target={target} onClose={onClose} onSaved={onSaved} /> : null}
         </Dialog.Popup>
       </Dialog.Portal>
@@ -45,11 +44,9 @@ function MemberApiKeyForm({ target, onClose, onSaved }: {
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
 
-  // The connection belongs to the organization the dialog opened in.
   useEffect(() => {
     if (orgId !== openedForOrgId) onClose();
   }, [orgId, openedForOrgId, onClose]);
-  // Drop the submitted key from mutation state when the form goes away.
   useEffect(() => reset, [reset]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -74,7 +71,6 @@ function MemberApiKeyForm({ target, onClose, onSaved }: {
     try {
       await onSaved?.();
     } catch {
-      // The key is already stored. A failed refresh must not recast that save as a failure.
     }
   }
 
@@ -99,7 +95,7 @@ function MemberApiKeyForm({ target, onClose, onSaved }: {
               data-ph-no-capture
               maxLength={MEMBER_API_KEY_MAX_LENGTH}
               value={apiKey}
-              onChange={(event) => setApiKey(event.target.value)}
+              onChange={setApiKey}
               disabled={save.isPending}
               autoFocus
             />

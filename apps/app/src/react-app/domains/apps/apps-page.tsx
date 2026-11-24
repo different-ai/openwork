@@ -5,7 +5,6 @@ import type { DashboardLaunchEndpoint } from "../dashboard/mcp-app-tile";
 import { AppArtifact } from "./app-artifact";
 import { useAppsClient } from "./use-apps";
 
-/** Retain old app links, with Dashboard as the only library. */
 export function AppsPage({ onNewApp, fallbackEndpoints }: { onNewApp: (prompt: string) => Promise<void>; fallbackEndpoints?: DashboardLaunchEndpoint[] }) {
   const { appId } = useParams();
   const { scope } = useAppsClient();

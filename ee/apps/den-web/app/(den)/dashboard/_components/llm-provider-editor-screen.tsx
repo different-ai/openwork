@@ -14,6 +14,7 @@ import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenButton } from "../../_components/ui/button";
 import { DenCombobox } from "../../_components/ui/combobox";
 import { DenInput } from "../../_components/ui/input";
+import { DenSecretInput } from "../../_components/ui/secret-input";
 import { DenSelectableRow } from "../../_components/ui/selectable-row";
 import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
 import { UnderlineTabs } from "../../_components/ui/tabs";
@@ -22,6 +23,8 @@ import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-fl
 import {
     getLlmProviderRoute,
     getLlmProvidersRoute,
+    getLibraryRoute,
+    getLibraryLlmProviderRoute,
 } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
@@ -77,11 +80,15 @@ function getLockMemberId(
 
 export function LlmProviderEditorScreen({
     llmProviderId,
+    library = false,
 }: {
     llmProviderId?: string;
+    library?: boolean;
 }) {
     const router = useRouter();
     const { orgId, orgSlug, orgContext, runReauthableAction } = useOrgDashboard();
+    const providerRoute = (id: string) => library ? getLibraryLlmProviderRoute(orgSlug, id) : getLlmProviderRoute(orgSlug, id);
+    const listRoute = library ? `${getLibraryRoute(orgSlug)}?show=models` : getLlmProvidersRoute(orgSlug);
     const { llmProviders, busy, error, reloadProviders } =
         useOrgLlmProviders(orgId);
     const provider = useMemo(
@@ -104,8 +111,6 @@ export function LlmProviderEditorScreen({
     const [detailBusy, setDetailBusy] = useState(false);
     const [detailError, setDetailError] = useState<string | null>(null);
     const [providerName, setProviderName] = useState("");
-    // False while the name still tracks the automatic "<Provider> — key N"
-    // value; any manual rename flips it permanently (clearing reverts).
     const [nameTouched, setNameTouched] = useState(false);
     const [allMembers, setAllMembers] = useState(false);
     const [selectedModelIds, setSelectedModelIds] = useState<string[]>([]);
@@ -125,9 +130,6 @@ export function LlmProviderEditorScreen({
     const [customModelQuery, setCustomModelQuery] = useState("");
     const [customManualModels, setCustomManualModels] = useState(false);
     const lastProbeKeyRef = useRef("");
-    // Azure catalog providers: once resource name + key are present, the
-    // resource is asked for its deployments and those become the only
-    // pickable models (the models.dev list is ignored).
     const [azureProbeState, setAzureProbeState] = useState<"idle" | "probing" | "ok" | "failed">("idle");
     const [azureProbeResult, setAzureProbeResult] = useState<LlmProviderProbeResult | null>(null);
     const lastAzureProbeKeyRef = useRef("");
@@ -139,8 +141,6 @@ export function LlmProviderEditorScreen({
     const [saveError, setSaveError] = useState<string | null>(null);
     const [verifyBusy, setVerifyBusy] = useState(false);
     const [verifyFailures, setVerifyFailures] = useState<LlmProviderModelVerification[]>([]);
-    // Verification outcome for the exact inputs it ran against, so a second
-    // click ("Save anyway") does not re-run completions.
     const verifiedRef = useRef<{ key: string; npm: string } | null>(null);
 
     useEffect(() => {
@@ -198,9 +198,6 @@ export function LlmProviderEditorScreen({
                     : buildCustomProviderTemplate(),
             );
             if (provider.source === "custom") {
-                // Reopen simple configs in the guided form; anything richer
-                // (per-model metadata, custom npm, provider options) opens in
-                // the JSON editor so no data is dropped.
                 const guided = readGuidedCustomProviderFields({
                     ...provider.providerConfig,
                     models: provider.models.map((entry) => entry.config),
@@ -290,10 +287,6 @@ export function LlmProviderEditorScreen({
     const currentMemberId = orgContext?.currentMember.id ?? null;
     const lockedMemberId = getLockMemberId(provider, currentMemberId);
 
-    // Azure catalog providers: models.dev lists the whole Azure catalog, but
-    // chat/completions only accepts the *deployments* on the admin's
-    // resource. Read resource name + key from the credential inputs and ask
-    // the resource what it serves.
     const isAzureCatalog =
         source === "models_dev" &&
         catalogDetail !== null &&
@@ -340,7 +333,6 @@ export function LlmProviderEditorScreen({
                     setAzureProbeResult(result);
                     setAzureProbeState(result.ok ? "ok" : "failed");
                     if (result.ok) {
-                        // Drop selections the resource does not actually serve.
                         setSelectedModelIds((current) =>
                             current.filter((id) =>
                                 result.models.some((model) => model.id === id),
@@ -357,8 +349,6 @@ export function LlmProviderEditorScreen({
         return () => window.clearTimeout(timer);
     }, [isAzureCatalog, azureResourceName, azureApiKey]);
 
-    // The models offered for a catalog provider: the resource's real
-    // deployments when the Azure probe succeeded, models.dev otherwise.
     const catalogModelOptions = useMemo(() => {
         if (isAzureCatalog && azureProbeState === "ok" && azureProbeResult) {
             return azureProbeResult.models.map((model) => ({
@@ -375,17 +365,12 @@ export function LlmProviderEditorScreen({
         [catalogProviders],
     );
 
-    // The provider id only derives from the name once the admin actually
-    // typed a name — the automatic "<Provider> — key N" value is not a slug
-    // source, otherwise the two fields would derive from each other.
     const resolvedCustomProviderId = customProviderIdTouched
         ? customProviderId.trim()
         : nameTouched
           ? slugifyProviderId(providerName)
           : "";
 
-    // Automatic name: "<Provider> — key N", where N counts this org's other
-    // keys for the same provider. Manual renames win until cleared.
     const customHostName = (() => {
         try {
             return new URL(customBaseUrl.trim()).hostname;
@@ -410,9 +395,6 @@ export function LlmProviderEditorScreen({
     const autoName = autoNameBasis ? `${autoNameBasis} — key ${keyNumber}` : "";
     const effectiveName = nameTouched && providerName.trim() ? providerName.trim() : autoName;
 
-    // The env var names the selected provider reads. More than one name means
-    // the credential section renders one input per env key and saves them as
-    // an `apiKeys` map instead of the single legacy `apiKey` string.
     const credentialEnvNames =
         source === "models_dev"
             ? catalogDetail
@@ -428,15 +410,11 @@ export function LlmProviderEditorScreen({
                     : []
               : readEnvNamesFromCustomProviderText(customConfigText);
 
-    // The credential used to probe/verify the endpoint. Multi-env providers
-    // follow the models.dev env[0] convention (same as the desktop client).
     const probeCredential =
         credentialEnvNames.length > 1
             ? (apiKeyValues[credentialEnvNames[0]] ?? "").trim()
             : apiKey.trim();
 
-    // Models used for save/validation: picked from the probed endpoint list
-    // when available, or parsed from the manual text fallback.
     const resolvedCustomModelIds =
         probeState === "ok" && !customManualModels
             ? selectedCustomModelIds
@@ -445,8 +423,6 @@ export function LlmProviderEditorScreen({
     const summaryModelCount =
         source === "models_dev" ? selectedModelIds.length : resolvedCustomModelIds.length;
 
-    // "Save anyway" stays armed only while the inputs still match the run
-    // that produced the failures; any edit re-verifies on the next save.
     const currentVerifyKey = [
         customBaseUrl.trim(),
         probeCredential,
@@ -455,9 +431,6 @@ export function LlmProviderEditorScreen({
     const saveAnywayArmed =
         verifyFailures.length > 0 && verifiedRef.current?.key === currentVerifyKey;
 
-    // Probe the endpoint as soon as base URL + key are present (debounced):
-    // heals common URL mistakes and loads the models the endpoint actually
-    // serves, so users pick deployments instead of guessing ids.
     useEffect(() => {
         if (source !== "custom" || customMode !== "form") return;
         const api = customBaseUrl.trim();
@@ -479,13 +452,9 @@ export function LlmProviderEditorScreen({
                     setProbeState(result.ok ? "ok" : "failed");
                     if (result.ok) {
                         if (result.normalizedApi && result.normalizedApi !== api) {
-                            // Pre-mark the healed URL as probed so updating the
-                            // field does not schedule a redundant probe.
                             lastProbeKeyRef.current = `${result.normalizedApi}::${key}`;
                             setCustomBaseUrl(result.normalizedApi);
                         }
-                        // Keep previously chosen/stored ids selected when they
-                        // still exist on the endpoint.
                         setSelectedCustomModelIds((current) => {
                             const base = current.length
                                 ? current
@@ -599,10 +568,6 @@ export function LlmProviderEditorScreen({
             return;
         }
 
-        // Verify-on-save: run one real completion per picked model. Models
-        // that reject max_tokens (GPT-5/o-series on Azure) silently switch
-        // the provider to the OpenAI request shape; models that fail both
-        // shapes surface a per-model message and require "Save anyway".
         let guidedNpm: string | null = null;
         if (source === "custom" && customMode === "form" && probeCredential) {
             const verifyKey = [
@@ -641,8 +606,6 @@ export function LlmProviderEditorScreen({
                         return;
                     }
                 } catch {
-                    // Verification is a safety net, not a gate: if the check
-                    // itself errors (network, timeout), fall through to save.
                     verifiedRef.current = { key: verifyKey, npm: "@ai-sdk/openai-compatible" };
                     setVerifyFailures([]);
                 } finally {
@@ -681,8 +644,6 @@ export function LlmProviderEditorScreen({
             }
 
             if (credentialEnvNames.length > 1) {
-                // Per-env values. Blank inputs are omitted so the server keeps
-                // whatever is already stored for those env keys.
                 const entries = credentialEnvNames
                     .map((envName) => [envName, (apiKeyValues[envName] ?? "").trim()] as const)
                     .filter(([, value]) => value.length > 0);
@@ -731,7 +692,7 @@ export function LlmProviderEditorScreen({
             }
 
             await reloadProviders();
-            router.push(getLlmProviderRoute(orgSlug, nextProviderId));
+            router.push(providerRoute(nextProviderId));
             router.refresh();
             });
         } catch (nextError) {
@@ -777,8 +738,6 @@ export function LlmProviderEditorScreen({
     const providerEnv = catalogDetail
         ? getProviderEnvNames(catalogDetail.config)
         : [];
-    // What members' machines will actually read: catalog providers get a
-    // provider-specific tag once the row exists; until then it is a placeholder.
     const runtimeEnvKeys = resolveRuntimeEnvKeys({
         declaredEnvNames: providerEnv,
         scoped: source === "models_dev",
@@ -786,8 +745,6 @@ export function LlmProviderEditorScreen({
         runtimeEnvKeys: provider?.runtimeEnvKeys ?? [],
     });
 
-    // Credential inputs shared by the standalone Credential section and the
-    // guided custom form (where they render inline, before the endpoint).
     const credentialFields = credentialEnvNames.length > 1 ? (
                     <div className="grid gap-6">
                         <p className="text-[14px] text-gray-500">
@@ -829,25 +786,36 @@ export function LlmProviderEditorScreen({
                                             </span>
                                         ) : null}
                                      </span>
-                                     <DenInput
-                                        type={isAzureResourceName ? "text" : "password"}
-                                        value={apiKeyValues[envName] ?? ""}
-                                        onChange={(event) =>
-                                            setApiKeyValues((current) => ({
-                                                ...current,
-                                                [envName]: isAzureResourceName
-                                                    ? normalizeAzureResourceNameInput(event.target.value)
-                                                    : event.target.value,
-                                            }))
-                                        }
-                                        placeholder={
-                                            configured
-                                                ? "Leave blank to keep current value"
-                                                : isAzureResourceName
-                                                  ? "Paste the resource name or Azure Foundry project URL"
-                                                  : `Paste the ${envName} value`
-                                        }
-                                    />
+                                     {isAzureResourceName ? (
+                                        <DenInput
+                                            type="text"
+                                            value={apiKeyValues[envName] ?? ""}
+                                            onChange={(event) =>
+                                                setApiKeyValues((current) => ({
+                                                    ...current,
+                                                    [envName]: normalizeAzureResourceNameInput(event.target.value),
+                                                }))
+                                            }
+                                            placeholder={
+                                                configured
+                                                    ? "Leave blank to keep current value"
+                                                    : "Paste the resource name or Azure Foundry project URL"
+                                            }
+                                        />
+                                    ) : (
+                                        <DenSecretInput
+                                            autoComplete="new-password"
+                                            value={apiKeyValues[envName] ?? ""}
+                                            onChange={(value) =>
+                                                setApiKeyValues((current) => ({
+                                                    ...current,
+                                                    [envName]: value,
+                                                }))
+                                            }
+                                            saved={configured}
+                                            placeholder={`Paste the ${envName} value`}
+                                        />
+                                    )}
                                 </label>
                             );
                         })}
@@ -857,15 +825,12 @@ export function LlmProviderEditorScreen({
                         <span className="text-[14px] font-medium text-gray-700">
                             API key / credential
                         </span>
-                        <DenInput
-                            type="password"
+                        <DenSecretInput
+                            autoComplete="new-password"
                             value={apiKey}
-                            onChange={(event) => setApiKey(event.target.value)}
-                            placeholder={
-                                provider?.hasApiKey
-                                    ? "Leave blank to keep current credential"
-                                    : "Paste the provider credential"
-                            }
+                            onChange={setApiKey}
+                            saved={provider?.hasApiKey === true}
+                            placeholder="Paste the provider credential"
                         />
                     </label>
                 );
@@ -895,8 +860,8 @@ export function LlmProviderEditorScreen({
                 <Link
                     href={
                         provider
-                            ? getLlmProviderRoute(orgSlug, provider.id)
-                            : getLlmProvidersRoute(orgSlug)
+                            ? providerRoute(provider.id)
+                            : listRoute
                     }
                     className="inline-flex items-center gap-2 text-[15px] font-medium text-gray-500 transition hover:text-gray-900"
                 >
@@ -1213,6 +1178,7 @@ export function LlmProviderEditorScreen({
                             Custom provider JSON / JSONC
                         </span>
                         <DenTextarea
+                            aria-label="Custom provider JSON / JSONC"
                             value={customConfigText}
                             onChange={(event) =>
                                 setCustomConfigText(event.target.value)
@@ -1261,8 +1227,6 @@ export function LlmProviderEditorScreen({
                 </div>
             </section>
 
-            {/* The guided custom form collects the credential inline (before
-                the endpoint, so the probe can run as the admin types). */}
             {source === "custom" && customMode === "form" ? null : (
                 <section className="mb-8 rounded-[36px] border border-gray-200 bg-white p-8 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.24)]">
                     <div className="mb-6 flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
@@ -1418,8 +1382,8 @@ export function LlmProviderEditorScreen({
                 <Link
                     href={
                         provider
-                            ? getLlmProviderRoute(orgSlug, provider.id)
-                            : getLlmProvidersRoute(orgSlug)
+                            ? providerRoute(provider.id)
+                            : listRoute
                     }
                     className="px-2 text-[13px] font-medium text-gray-500 transition hover:text-gray-900"
                 >

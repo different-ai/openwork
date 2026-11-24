@@ -32,7 +32,8 @@ export type AuditFilters = Partial<{
 
 type AuditCursor = { cursor: string | null; snapshot: string | null; cursors: string[]; ids: string[] };
 const firstPage: AuditCursor = { cursor: null, snapshot: null, cursors: [], ids: [] };
-const defaults = { retry: false, gcTime: 0, staleTime: 0, refetchOnWindowFocus: false };
+const retryUnavailableOnce = (failureCount: number, error: Error) => failureCount < 1 && error instanceof AuditReadError && error.status === 503;
+const defaults = { retry: retryUnavailableOnce, gcTime: 0, staleTime: 0, refetchOnWindowFocus: false };
 export const auditPageSize = 50;
 
 export class AuditReadError extends Error {
@@ -181,9 +182,11 @@ export function useAuditCapture(scope: AuditScope, onAccessError: (error: AuditR
   const dashboard = useOrgDashboard();
   const member = dashboard.orgContext?.currentMember;
   const auditLogs = dashboard.orgContext?.capabilities.auditLogs === true;
+  const memberAccess = member ? getOrgAccessFlags(member.role, member.isOwner, member.permissions) : null;
+  const canChange = memberAccess?.canManageAuditCapture === true;
   const allowed = dashboard.orgId === scope.orgId && dashboard.orgContext?.organization.id === scope.orgId
     && auditLogs
-    && member?.id === scope.memberId && getOrgAccessFlags(member.role, member.isOwner).isAdmin
+    && member?.id === scope.memberId && memberAccess?.canViewAuditLogs === true
     && !dashboard.orgBusy && !dashboard.orgError && dashboard.mutationBusy !== "switch-organization";
   const sessionRef = useRef<CaptureSession | null>(null);
   const [feedback, setFeedback] = useState<CaptureFeedback | null>(null);
@@ -193,7 +196,7 @@ export function useAuditCapture(scope: AuditScope, onAccessError: (error: AuditR
     const session: CaptureSession = { active: allowed, busy: false, controller: new AbortController() };
     sessionRef.current = session;
     return () => { session.active = false; session.controller.abort(); };
-  }, [allowed, auditLogs, scope.orgId, scope.memberId, member?.userId, member?.role, member?.isOwner]);
+  }, [allowed, auditLogs, scope.orgId, scope.memberId, member?.userId, member?.role, member?.isOwner, member?.permissions]);
 
   const isCurrent = (session: CaptureSession) => session.active && sessionRef.current === session;
   async function refreshStatus(session = sessionRef.current, keepFeedback = false) {
@@ -225,7 +228,7 @@ export function useAuditCapture(scope: AuditScope, onAccessError: (error: AuditR
     mutationFn: async (captureOn: boolean) => {
       const session = sessionRef.current;
       const usage = query.data;
-      if (!session || !isCurrent(session) || session.busy || refreshing || needsRefresh || query.isFetching || query.isError || !usage
+      if (!canChange || !session || !isCurrent(session) || session.busy || refreshing || needsRefresh || query.isFetching || query.isError || !usage
         || captureOn === usage.captureOn || (captureOn && auditCaptureLockReason(usage))) return;
       session.busy = true;
       setFeedback(null);
@@ -282,7 +285,8 @@ export function useAuditCapture(scope: AuditScope, onAccessError: (error: AuditR
   const busy = mutation.isPending || refreshing || query.isFetching;
   return {
     query, feedback, needsRefresh, busy,
-    disabled: !allowed || busy || needsRefresh || query.isError || !query.data
+    canChange,
+    disabled: !allowed || !canChange || busy || needsRefresh || query.isError || !query.data
       || (!query.data.captureOn && Boolean(auditCaptureLockReason(query.data))),
     change: (captureOn: boolean) => mutation.mutate(captureOn),
     refresh: () => { if (!mutation.isPending && !refreshing) void refreshStatus(); },

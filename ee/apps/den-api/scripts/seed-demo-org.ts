@@ -22,10 +22,9 @@ import { auth } from "../src/auth.js"
 import { db } from "../src/db.js"
 import { ensureDefaultDesktopPolicyForOrganization } from "../src/desktop-policies.js"
 import { env } from "../src/env.js"
-import { seedDefaultOrganizationRoles } from "../src/orgs.js"
 import { updateOrganizationMetadata } from "../src/organization-metadata.js"
 import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy"
-import { calculateOrganizationSeatBillingCounts } from "../src/stripe-billing.js"
+import { calculateOrganizationBillingQuantities } from "../src/billing-quantities.js"
 import { resetDemoAutomations, seedDemoAutomations } from "./seed-demo-automations.js"
 
 const RESET_MODE = process.argv.includes("--reset")
@@ -351,7 +350,6 @@ async function ensureOrganization(ownerUserId: UserId): Promise<OrganizationId> 
         updatedAt: new Date(),
       })
       .where(eq(OrganizationTable.id, existing[0].id))
-    await seedDefaultOrganizationRoles(existing[0].id)
     const ownerMemberId = await ensureMember(existing[0].id, ownerUserId, "owner")
     await ensureDefaultDesktopPolicyForOrganization({
       organizationId: existing[0].id,
@@ -369,7 +367,6 @@ async function ensureOrganization(ownerUserId: UserId): Promise<OrganizationId> 
     name: DEMO_ORG_NAME,
     slug: DEMO_ORG_SLUG,
   })
-  await seedDefaultOrganizationRoles(id)
   const ownerMemberId = await ensureMember(id, ownerUserId, "owner")
   await ensureDefaultDesktopPolicyForOrganization({
     organizationId: id,
@@ -424,7 +421,7 @@ async function ensureTeamMember(teamId: TeamId, orgMembershipId: MemberId) {
 async function ensureDemoSeatSubscription(input: { createdByOrgMembershipId: MemberId; memberCount: number; organizationId: OrganizationId }) {
   const now = new Date()
   const currentPeriodEnd = new Date(now.getTime() + 1000 * 60 * 60 * 24 * 30)
-  const quantity = calculateOrganizationSeatBillingCounts({ memberCount: input.memberCount }).chargeable
+  const quantity = calculateOrganizationBillingQuantities({ users: input.memberCount }).seats.chargeable
   await db.insert(OrgSubscriptionTable).values({
     cancel_at_period_end: false,
     canceled_at: null,

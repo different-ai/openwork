@@ -4,17 +4,7 @@ import { formatAttachmentBytes } from "@/app/lib/v2-prompt-context";
 import { humanizeCapabilityName } from "./composer-plus-menu-model";
 import { composerConnectorLogoUrls } from "./composer-connector-logos";
 import { composerPillTitle, type ComposerPill } from "./composer-pills";
-
-/**
- * How composer chips look. The composer draws them as raw Lexical DOM and the
- * transcript and queue draw them with React; both read this module, so a chip
- * looks the same before and after it is sent.
- *
- * - Badges (skills, agents, connectors, apps, computers, file mentions, pasted
- *   text): one neutral 26px style; only the 18px icon slot carries color.
- * - File chips (non-image attachments): 40px, a 28px type icon, the name, and
- *   the type and size.
- */
+import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 
 type IconElement = readonly [tag: "path" | "rect" | "circle" | "line", attrs: Readonly<Record<string, string>>];
 
@@ -23,7 +13,6 @@ const FILE_OUTLINE: IconElement[] = [
   ["path", { d: "M14 2v5a1 1 0 0 0 1 1h5" }],
 ];
 
-/** Lucide shapes (24px grid) shared by the DOM and React renderers. */
 export const CHIP_ICONS = {
   book: [
     ["path", { d: "M12 7v14" }],
@@ -47,6 +36,7 @@ export const CHIP_ICONS = {
   monitor: [["rect", { width: "20", height: "14", x: "2", y: "3", rx: "2" }], ["line", { x1: "8", x2: "16", y1: "21", y2: "21" }], ["line", { x1: "12", x2: "12", y1: "17", y2: "21" }]],
   cloud: [["path", { d: "M17.5 19H9a7 7 0 1 1 6.71-9h1.79a4.5 4.5 0 1 1 0 9Z" }]],
   chevron: [["path", { d: "m9 18 6-6-6-6" }]],
+  "message-square": [["path", { d: "M22 17a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 21.286V5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2z" }]],
 } satisfies Record<string, IconElement[]>;
 
 export type ChipIcon = keyof typeof CHIP_ICONS;
@@ -54,15 +44,12 @@ export type ChipIcon = keyof typeof CHIP_ICONS;
 export type BadgeTone = "violet" | "sky" | "cyan" | "gray";
 
 export type ComposerBadge = {
-  /** Stable kind, exposed as `data-composer-badge`. */
-  kind: "skill" | "connect-skill" | "connector" | "computer" | "agent" | "file" | "pasted";
+  kind: "skill" | "connect-skill" | "connector" | "computer" | "session" | "agent" | "file" | "pasted";
   label: string;
-  /** Muted detail after the label, e.g. "42 lines". */
   meta?: string;
   title: string;
   tone: BadgeTone;
-  slot: { icon: ChipIcon } | { initial: string } | { logoUrls: string[]; fallback: ChipIcon };
-  /** Shows a chevron: the badge opens a preview. */
+  slot: { icon: ChipIcon } | { initial: string } | { logoUrls: string[]; fallback: ChipIcon; invertInDark?: boolean };
   disclosure?: boolean;
 };
 
@@ -93,7 +80,20 @@ export function composerPillBadge(pill: ComposerPill): ComposerBadge {
       return { kind: "connector", label: pill.name, title, tone: "gray", slot: { logoUrls: composerConnectorLogoUrls({ name: pill.name }), fallback: "plug" } };
     case "computer":
       return { kind: "computer", label: `@${pill.target}`, title, tone: "sky", slot: { icon: pill.target === "cloud" ? "cloud" : "monitor" } };
+    case "session":
+      return sessionReferenceBadge(pill.title);
   }
+}
+
+function openworkMarkSlot(): ComposerBadge["slot"] {
+  return { logoUrls: [resolveExtensionIconSrc("/openwork-sidebar-mark.svg")], fallback: "message-square", invertInDark: true };
+}
+
+export function sessionReferenceBadge(title: string, options?: { unavailable?: boolean }): ComposerBadge {
+  const label = title.trim() || "Untitled task";
+  return options?.unavailable
+    ? { kind: "session", label, meta: "Unavailable", title: `Task unavailable: ${label}`, tone: "gray", slot: openworkMarkSlot() }
+    : { kind: "session", label, title: `Task: ${label}`, tone: "gray", slot: openworkMarkSlot() };
 }
 
 export function agentBadge(name: string): ComposerBadge {
@@ -135,7 +135,6 @@ export function attachmentChipIcon(filename: string, mime: string): ChipIcon {
   return "file";
 }
 
-/** "MP4 · 18.4 MB"; the size is left out when unknown. */
 export function attachmentChipMeta(input: { filename: string; mime: string; bytes?: number }): string {
   const type = getMediaBadge({ filename: input.filename, mediaType: input.mime }) ?? "File";
   return input.bytes === undefined ? type : `${type} · ${formatAttachmentBytes(input.bytes)}`;
@@ -164,7 +163,10 @@ function span(className: string, text?: string) {
   return element;
 }
 
-/** A logo carries its own color; icons and initials sit on the badge's tone. */
+export function composerBadgeLogoClass(slot: ComposerBadge["slot"]) {
+  return "invertInDark" in slot && slot.invertInDark ? "size-3.5 object-contain dark:invert" : "size-3.5 object-contain";
+}
+
 export function composerBadgeSlotClass(badge: ComposerBadge, showsLogo: boolean) {
   return showsLogo ? COMPOSER_BADGE_SLOT_CLASS : `${COMPOSER_BADGE_SLOT_CLASS} ${COMPOSER_BADGE_TONE_CLASS[badge.tone]}`;
 }
@@ -185,7 +187,7 @@ function createBadgeSlotDom(badge: ComposerBadge) {
   const img = document.createElement("img");
   img.alt = "";
   img.decoding = "async";
-  img.className = "size-3.5 object-contain";
+  img.className = composerBadgeLogoClass(content);
   let attempt = 0;
   img.src = logoUrls[0] ?? "";
   img.addEventListener("error", () => {
@@ -202,7 +204,6 @@ function createBadgeSlotDom(badge: ComposerBadge) {
   return slot;
 }
 
-/** Fill `dom` with a badge. The composer's Lexical nodes own the outer element. */
 export function renderComposerBadgeDom(dom: HTMLElement, badge: ComposerBadge, disclosure?: HTMLElement) {
   dom.className = COMPOSER_BADGE_CLASS;
   dom.title = badge.title;
@@ -212,7 +213,6 @@ export function renderComposerBadgeDom(dom: HTMLElement, badge: ComposerBadge, d
   if (disclosure) dom.append(disclosure);
 }
 
-/** Fill `dom` with a file chip's icon, name and type. */
 export function renderAttachmentFileChipDom(dom: HTMLElement, input: { filename: string; mime: string; bytes?: number }) {
   dom.className = ATTACHMENT_CHIP_CLASS;
   const icon = span(ATTACHMENT_CHIP_ICON_CLASS);

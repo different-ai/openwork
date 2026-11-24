@@ -19,19 +19,12 @@ export function setDenApiOriginOverride(input: string | null | undefined) {
   denApiOriginOverride = normalizeOrigin(input);
 }
 
-// Browser-facing API origin. DEN_API_PUBLIC_URL is the origin the browser can
-// reach (runtime-config hands it to clients); DEN_API_BASE is the server-side
-// upstream, which in containers is an in-network URL the browser cannot reach.
-// Prefer the public one and keep DEN_API_BASE as the documented fallback.
-// Mirrored in next-config-den-api-redirects.cjs (keep in sync).
 function configuredDenApiOrigin(): string | null {
   for (const value of [process.env.DEN_API_PUBLIC_URL, process.env.DEN_API_BASE]) {
     const configuredOrigin = value?.trim();
     if (!configuredOrigin) continue;
     try {
       const url = new URL(configuredOrigin);
-      // Scheme-less values like `localhost:18788` parse with a `localhost:`
-      // scheme and an opaque "null" origin; skip them like the build-time rule.
       if (url.protocol === "http:" || url.protocol === "https:") return url.origin;
     } catch {}
   }
@@ -117,13 +110,15 @@ export function denApiCredentials(endpoint: string, path = endpoint): RequestCre
   return denApiCredentialsForEndpoint(endpoint, window.location.origin, path);
 }
 
-// Browser sessions belong to the web host, which need not be a parent of the
-// public API host. Keep cookie-authenticated JSON requests on that origin;
-// canonical API URLs remain available through denApiEndpoint for other clients.
+export function isSameOriginBrowserRequest(path: string): boolean {
+  if (path.startsWith("/api/auth/")) return true;
+  return path.startsWith("/v1/") && !isPublicDenApiPath(path);
+}
+
 export function denBrowserEndpoint(path: string): string {
   if (typeof window !== "undefined") {
     if (path.startsWith("/api/auth/")) return path;
-    if (path.startsWith("/v1/") && !isPublicDenApiPath(path)) return `/api/browser${path}`;
+    if (isSameOriginBrowserRequest(path)) return `/api/browser${path}`;
   }
   return denApiEndpoint(path);
 }

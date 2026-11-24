@@ -4,7 +4,7 @@ import { GatewayDashboardCapabilityGuard } from "../../../_components/gateway-da
 export default function AiGatewayProvidersLayout({ children }: { children: React.ReactNode }) {
   return (
     <AiGatewayScreen
-      providerContent={<GatewayDashboardCapabilityGuard>{children}</GatewayDashboardCapabilityGuard>}
+      providerContent={<GatewayDashboardCapabilityGuard area="providers">{children}</GatewayDashboardCapabilityGuard>}
     />
   );
 }

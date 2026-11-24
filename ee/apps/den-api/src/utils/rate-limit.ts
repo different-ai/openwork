@@ -2,15 +2,11 @@ import { and, eq, lt, or, sql } from "@openwork-ee/den-db/drizzle"
 import { RateLimitTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
+import { requestClientIpKey } from "../request-client-ip.js"
 
 type RateLimitRow = {
   count: number
   lastRequest: number
-}
-
-function requestAddress(headers: Headers) {
-  const forwarded = headers.get("x-forwarded-for")?.split(",")[0]?.trim()
-  return forwarded || headers.get("x-real-ip")?.trim() || "unknown"
 }
 
 function retryAfterSeconds(row: RateLimitRow, maxRequests: number, windowMs: number, now: number) {
@@ -74,7 +70,7 @@ function changedRows(result: unknown): number | null {
 }
 
 async function readRateLimit(key: string): Promise<RateLimitRow | null> {
-  const [row] = await db
+  const [row] = await db.$primary
     .select({ count: RateLimitTable.count, lastRequest: RateLimitTable.lastRequest })
     .from(RateLimitTable)
     .where(eq(RateLimitTable.key, key))
@@ -151,6 +147,61 @@ export async function checkRateLimit(key: string, maxRequests: number, windowMs:
   return claimExistingRateLimit(key, maxRequests, windowMs, now, existingRow)
 }
 
+function fixedWindowRetryAfterSeconds(row: RateLimitRow, maxRequests: number, windowMs: number, now: number) {
+  const remaining = row.lastRequest + windowMs - now
+  if (remaining > 0 && row.count >= maxRequests) {
+    return Math.max(1, Math.ceil(remaining / 1000))
+  }
+  return null
+}
+
+async function claimFixedWindowRateLimit(key: string, maxRequests: number, windowMs: number, now: number) {
+  const ended = sql`${now} - ${RateLimitTable.lastRequest} >= ${windowMs}`
+  const result: unknown = await db
+    .update(RateLimitTable)
+    .set({
+      count: sql<number>`IF(${ended}, 1, ${RateLimitTable.count} + 1)`,
+      lastRequest: sql<number>`IF(${ended}, ${now}, ${RateLimitTable.lastRequest})`,
+    })
+    .where(and(eq(RateLimitTable.key, key), or(ended, lt(RateLimitTable.count, maxRequests))))
+
+  const rows = changedRows(result)
+  return rows !== null && rows > 0
+}
+
+const FIXED_WINDOW_CLAIM_ATTEMPTS = 3
+
+export async function checkFixedWindowRateLimit(key: string, maxRequests: number, windowMs: number, now: number, consume = true): Promise<number | null> {
+  let row = await readRateLimit(key)
+  if (!consume) {
+    return row ? fixedWindowRetryAfterSeconds(row, maxRequests, windowMs, now) : null
+  }
+
+  for (let attempt = 0; attempt < FIXED_WINDOW_CLAIM_ATTEMPTS; attempt += 1) {
+    if (row) {
+      const retryAfter = fixedWindowRetryAfterSeconds(row, maxRequests, windowMs, now)
+      if (retryAfter !== null) {
+        return retryAfter
+      }
+      if (await claimFixedWindowRateLimit(key, maxRequests, windowMs, now)) {
+        return null
+      }
+    } else {
+      try {
+        await insertRateLimit(key, now)
+        return null
+      } catch (error) {
+        if (!isDuplicateKeyError(error)) {
+          throw error
+        }
+      }
+    }
+    row = await readRateLimit(key)
+  }
+
+  return row ? fixedWindowRetryAfterSeconds(row, maxRequests, windowMs, now) ?? 1 : 1
+}
+
 export function enforceRateLimit(headers: Headers, scope: string, maxRequests: number, windowMs: number, now = Date.now()) {
-  return checkRateLimit(`${scope}:${requestAddress(headers)}`, maxRequests, windowMs, now)
+  return checkRateLimit(`${scope}:${requestClientIpKey(headers)}`, maxRequests, windowMs, now)
 }

@@ -35,9 +35,6 @@ export function normalizeExactHttpsOrigin(value: string): string | null {
   }
 
   const written = (trimmed.endsWith("/") ? trimmed.slice(0, -1) : trimmed).toLowerCase()
-  // Reject inputs whose written form differs from the parsed origin beyond a
-  // trailing slash or an explicit default port (for example "https://host/?"
-  // or "https://host#"). "https://host:443" is the same origin as "https://host".
   const equivalentForms = [url.origin.toLowerCase()]
   if (url.port === "") equivalentForms.push(`${url.origin.toLowerCase()}:443`)
   if (!equivalentForms.includes(written)) return null

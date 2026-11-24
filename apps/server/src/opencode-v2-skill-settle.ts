@@ -6,7 +6,6 @@ function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Native scan pattern relative to a skill root: `{*.md,**\/SKILL.md}`. */
 async function scanSkillFiles(directory: string): Promise<string[]> {
   const files: string[] = [];
   const visit = async (current: string, top: boolean): Promise<void> => {
@@ -26,7 +25,6 @@ async function scanSkillFiles(directory: string): Promise<string[]> {
   return files;
 }
 
-/** Name and body the engine publishes for a skill file, or null when it would skip the file. */
 function nativeSkill(path: string, content: string): { name: string; body: string } | null {
   let parsed: { data: Record<string, unknown>; body: string };
   try {
@@ -42,18 +40,6 @@ function nativeSkill(path: string, content: string): { name: string; body: strin
   return { name: name ?? fallback, body: parsed.body.trim() };
 }
 
-/**
- * After OpenWork itself installs, edits or removes workspace skills, give the
- * engine's own file watcher a moment to reflect them, so the next turn sees
- * the change. The watcher normally takes about 200 ms.
- *
- * This runs on OpenWork's skill write routes only, never before a prompt: the
- * engine alone decides which skills a turn sees, exactly as when `opencode2`
- * runs directly. Only `.opencode/skills` is compared, the one folder OpenWork
- * writes and the one the engine ranks first. A skill the engine serves under
- * the same name from another file counts as reflected. Never throws; returns
- * whether the engine caught up before the deadline.
- */
 export async function waitForEngineSkillChanges(
   directory: string,
   readNative: () => Promise<unknown>,
@@ -61,7 +47,6 @@ export async function waitForEngineSkillChanges(
 ): Promise<boolean> {
   const root = await realpath(directory).catch(() => directory);
   const skillRoot = join(root, ".opencode", "skills");
-  // Deleted files cannot be resolved; map the configured spelling onto the real root.
   const canonical = async (path: string) => realpath(path).catch(() =>
     path.startsWith(directory + sep) ? join(root, path.slice(directory.length + 1)) : path);
   const onDisk = new Set<string>();
@@ -83,9 +68,9 @@ export async function waitForEngineSkillChanges(
     }
     if (!record(payload) || !Array.isArray(payload.data)) return false;
     const native = await Promise.all(payload.data.filter(record)
-      .filter((skill) => typeof skill.location === "string" && typeof skill.content === "string")
+      .filter((skill) => typeof skill.path === "string" && typeof skill.content === "string")
       .map(async (skill) => ({
-        path: await canonical(String(skill.location)),
+        path: await canonical(String(skill.path)),
         name: typeof skill.name === "string" ? skill.name : undefined,
         content: String(skill.content).trim(),
       })));

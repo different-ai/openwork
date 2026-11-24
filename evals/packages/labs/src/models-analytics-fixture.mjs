@@ -13,7 +13,43 @@ async function arrange(command, orgId, inferenceUrl) {
     const { and, eq, sql } = await import("../../../../ee/packages/den-db/src/drizzle.ts");
     const { createDenTypeId, normalizeDenTypeId } = await import("../../../../ee/packages/utils/src/typeid.ts");
     const id = normalizeDenTypeId("organization", orgId);
-    if (command === "before-migration") {
+    if (command === "surface-settings" || command === "surface-settings-empty") {
+        const [member] = await db.select().from(schema.MemberTable).where(eq(schema.MemberTable.organizationId, id)).limit(1);
+        const consentedAt = new Date("2026-10-01T00:00:00.000Z");
+        await db.insert(schema.ModelsAnalyticsSettingsTable).values({
+            org_id: id, enabled: true, consented_at: consentedAt, consented_by: member.id, consent_version: 1,
+            ...(command === "surface-settings" ? {
+                export_enabled: true, export_enabled_at: consentedAt, langfuse_host: "https://analytics.example.com",
+                langfuse_public_key: "synthetic-public-key", langfuse_secret_key: "synthetic-secret-key",
+            } : {}),
+        });
+        if (command === "surface-settings") {
+            const timestamp = new Date();
+            const event = { id: "retained-surface-event", type: "model.call", timestamp: timestamp.toISOString(),
+                sessionId: "retained-session", taskId: "retained-task", model: "fixture/model", status: "completed", usageComplete: false };
+            await db.insert(schema.ModelsAnalyticsEventTable).values({
+                id: createHash("sha256").update(JSON.stringify([id, event.id])).digest("hex"),
+                event_id: event.id, org_id: id, member_id: member.id, source: "inference", type: event.type,
+                timestamp, session_id: event.sessionId, task_id: event.taskId, model: event.model, usage_complete: false,
+                payload: event, exported_at: timestamp,
+            });
+        }
+    }
+    else if (command === "assert-surface-retained") {
+        const [settings] = await db.select().from(schema.ModelsAnalyticsSettingsTable).where(eq(schema.ModelsAnalyticsSettingsTable.org_id, id));
+        const events = await db.select().from(schema.ModelsAnalyticsEventTable).where(eq(schema.ModelsAnalyticsEventTable.org_id, id));
+        if (events.length !== 1 || events[0].event_id !== "retained-surface-event" || !events[0].exported_at) {
+            throw new Error("Hiding analytics changed existing task history or its export receipt");
+        }
+        if (!settings?.enabled || !settings.export_enabled
+            || settings.export_enabled_at?.toISOString() !== "2026-10-01T00:00:00.000Z"
+            || settings.consented_at?.toISOString() !== "2026-10-01T00:00:00.000Z"
+            || settings.langfuse_host !== "https://analytics.example.com"
+            || settings.langfuse_public_key !== "synthetic-public-key" || settings.langfuse_secret_key !== "synthetic-secret-key") {
+            throw new Error("Hiding analytics changed the stored export configuration");
+        }
+    }
+    else if (command === "before-migration") {
         // This world owns a fresh disposable database with no analytics data.
         await db.execute(sql.raw("DROP TABLE models_analytics_event"));
         await db.execute(sql.raw("DROP TABLE models_analytics_settings"));

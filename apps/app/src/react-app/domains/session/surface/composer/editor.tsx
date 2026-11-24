@@ -13,6 +13,7 @@ import {
   $createParagraphNode,
   $createTextNode,
   $getNearestNodeFromDOMNode,
+  $getNodeByKey,
   $getRoot,
   $getSelection,
   $nodesOfType,
@@ -32,13 +33,13 @@ import {
   type Spread,
   TextNode,
   type EditorConfig,
+  type LexicalNode,
   type NodeKey,
 } from "lexical";
 import type { InitialConfigType } from "@lexical/react/LexicalComposer.js";
 import { decodeComposerMentionValue, encodeComposerMentionValue, type ComposerMentionKind } from "./mention-encoding";
-import { parseConnectSkillToken } from "./connect-skill-token";
-import { encodeConnectorToken, parseConnectorToken } from "./connector-token";
-import { COMPOSER_DRAFT_TOKEN_RE, COMPOSER_TOKEN_CLASS } from "./composer-pills";
+import { encodeConnectorToken } from "./connector-token";
+import { COMPOSER_DRAFT_TOKEN_RE, COMPOSER_TOKEN_CLASS, parseComposerPillToken, type ComposerPill } from "./composer-pills";
 import {
   agentBadge,
   composerPillBadge,
@@ -47,12 +48,19 @@ import {
   pastedTextBadge,
   renderAttachmentFileChipDom,
   renderComposerBadgeDom,
+  sessionReferenceBadge,
   type ComposerBadge,
 } from "./composer-chips";
+import {
+  encodeSessionReferenceToken,
+  type SessionReferenceTokenValue,
+} from "./session-reference-token";
 import { isComputerTarget } from "./computer-mentions";
 import { shouldCollapsePastedText, splitPastedText } from "./pasted-text";
 import { insertPastedText } from "./pasted-text-insertion";
 import { lineBoundaryMoveForKey } from "./line-boundary-keys";
+import { inlineMentionAtCaret, isSingleWordMentionQuery, type MentionTrigger } from "./mention-suggestions";
+import { slashTriggerAtCaret, type SlashTrigger } from "./slash-command";
 
 type PastedTextToken = { label: string; lines: number; text: string };
 
@@ -72,24 +80,33 @@ type EditorProps = {
   attachments?: ComposerAttachmentToken[];
   submitDisabled: boolean;
   placeholder: string;
+  placeholderShortcut?: string;
   onChange: (value: string) => void;
+  onInlineMentionChange?: (trigger: MentionTrigger | null) => void;
   onMentionQueryChange?: (query: string | null) => void;
+  onSlashQueryChange?: (trigger: SlashTrigger | null) => void;
+  onSessionReferenceQueryChange?: (trigger: { query: string; offset: number } | null) => void;
+  onOpenSessionReference?: (reference: { workspaceId: string; sessionId: string }) => void;
   onSubmit: (options: { queue: boolean }) => void | Promise<void>;
   onExpandPastedText?: (label: string) => void;
   onExpandAttachment?: (id: string) => void;
   onRemoveAttachment?: (id: string) => void;
   onPaste?: React.ClipboardEventHandler<HTMLDivElement>;
-  onPasteText?: (text: string) => void;
+  onPasteText?: (text: string, draftOffset?: number) => void;
   onDrop?: React.DragEventHandler<HTMLDivElement>;
   onDragOver?: React.DragEventHandler<HTMLDivElement>;
   onDragLeave?: React.DragEventHandler<HTMLDivElement>;
 };
 
 export type LexicalPromptEditorHandle = {
+  replaceSlashAtSelection: (trigger: SlashTrigger, choice: { kind: "command"; name: string } | { kind: "skill"; name: string; token?: string }) => boolean;
   insertSkillAtSelection: (skillName: string, skillToken?: string) => void;
-  insertMentionAtSelection: (kind: ComposerMentionKind, value: string) => string | null;
+  insertMentionAtSelection: (kind: ComposerMentionKind, value: string, inline?: boolean) => string | null;
   insertConnectorAtSelection: (connectorName: string) => void;
+  insertSessionReferenceAtSelection: (reference: SessionReferenceTokenValue, inline?: boolean) => string | null;
   insertFileMentionAtSelection: (path: string) => string;
+  draftOffsetAtSelection: () => number | null;
+  draftSelectionRange: () => { start: number; end: number } | null;
 };
 
 type SerializedComposerMentionNode = Spread<
@@ -273,6 +290,11 @@ function $createComposerSlashCommandNode(commandName: string) {
   return $applyNodeReplacement(new ComposerSlashCommandNode(commandName));
 }
 
+function skillNodePill(name: string, token: string): ComposerPill {
+  const pill = parseComposerPillToken(token);
+  return pill?.kind === "connect-skill" || pill?.kind === "skill" ? pill : { kind: "skill", name };
+}
+
 class ComposerSkillNode extends TextNode {
   __skillName: string;
   __skillToken: string;
@@ -307,15 +329,15 @@ class ComposerSkillNode extends TextNode {
 
   override createDOM(_config: EditorConfig) {
     const dom = document.createElement("span");
-    renderComposerBadgeDom(dom, composerPillBadge({ kind: "skill", name: this.__skillName }));
+    renderComposerBadgeDom(dom, composerPillBadge(skillNodePill(this.__skillName, this.__skillToken)));
     dom.contentEditable = "false";
     dom.setAttribute("spellcheck", "false");
     return dom;
   }
 
   override updateDOM(prevNode: ComposerSkillNode, dom: HTMLElement) {
-    if (prevNode.__skillName !== this.__skillName) {
-      renderComposerBadgeDom(dom, composerPillBadge({ kind: "skill", name: this.__skillName }));
+    if (prevNode.__skillName !== this.__skillName || prevNode.__skillToken !== this.__skillToken) {
+      renderComposerBadgeDom(dom, composerPillBadge(skillNodePill(this.__skillName, this.__skillToken)));
     }
     return false;
   }
@@ -350,7 +372,6 @@ type SerializedComposerConnectorNode = Spread<
   SerializedTextNode
 >;
 
-/** `[connector GitHub]` — the connection a seeded prompt is about, shown as a chip. */
 class ComposerConnectorNode extends TextNode {
   __connectorName: string;
 
@@ -418,7 +439,100 @@ function $createComposerConnectorNode(connectorName: string) {
   return $applyNodeReplacement(new ComposerConnectorNode(connectorName));
 }
 
-/** The chevron expands the pasted text back into the draft (see PasteChipPlugin). */
+type SerializedComposerSessionReferenceNode = Spread<
+  {
+    workspaceId: string;
+    sessionId: string;
+    sessionTitle: string;
+    type: "composer-session-reference";
+    version: 1;
+  },
+  SerializedTextNode
+>;
+
+function renderSessionReferenceDom(dom: HTMLElement, value: SessionReferenceTokenValue) {
+  renderComposerBadgeDom(dom, sessionReferenceBadge(value.title));
+  dom.classList.add("cursor-pointer", "hover:bg-accent");
+  dom.title = `Open task: ${value.title || value.sessionId}`;
+  dom.setAttribute("role", "link");
+  dom.setAttribute("aria-label", `Open task: ${value.title || value.sessionId}`);
+  dom.dataset.sessionReferenceWorkspace = value.workspaceId;
+  dom.dataset.sessionReferenceSession = value.sessionId;
+}
+
+class ComposerSessionReferenceNode extends TextNode {
+  __reference: SessionReferenceTokenValue;
+
+  static override getType() {
+    return "composer-session-reference";
+  }
+
+  static override clone(node: ComposerSessionReferenceNode) {
+    return new ComposerSessionReferenceNode(node.__reference, node.__key);
+  }
+
+  static override importJSON(serializedNode: SerializedComposerSessionReferenceNode) {
+    return $createComposerSessionReferenceNode({
+      workspaceId: serializedNode.workspaceId,
+      sessionId: serializedNode.sessionId,
+      title: serializedNode.sessionTitle,
+    });
+  }
+
+  constructor(reference: SessionReferenceTokenValue = { workspaceId: "", sessionId: "", title: "" }, key?: NodeKey) {
+    super(encodeSessionReferenceToken(reference) ?? "", key);
+    this.__reference = reference;
+  }
+
+  override exportJSON(): SerializedComposerSessionReferenceNode {
+    return {
+      ...super.exportJSON(),
+      workspaceId: this.__reference.workspaceId,
+      sessionId: this.__reference.sessionId,
+      sessionTitle: this.__reference.title,
+      type: "composer-session-reference",
+      version: 1,
+    };
+  }
+
+  override createDOM(_config: EditorConfig) {
+    const dom = document.createElement("span");
+    renderSessionReferenceDom(dom, this.__reference);
+    dom.contentEditable = "false";
+    dom.setAttribute("spellcheck", "false");
+    return dom;
+  }
+
+  override updateDOM(prevNode: ComposerSessionReferenceNode, dom: HTMLElement) {
+    const prev = prevNode.__reference;
+    const next = this.__reference;
+    if (prev.workspaceId !== next.workspaceId || prev.sessionId !== next.sessionId || prev.title !== next.title) {
+      renderSessionReferenceDom(dom, next);
+    }
+    return false;
+  }
+
+  override canInsertTextBefore(): false {
+    return false;
+  }
+
+  override canInsertTextAfter(): false {
+    return false;
+  }
+
+  override isTextEntity(): true {
+    return true;
+  }
+
+  override isToken(): true {
+    return true;
+  }
+}
+
+function $createComposerSessionReferenceNode(reference: SessionReferenceTokenValue) {
+  return $applyNodeReplacement(new ComposerSessionReferenceNode(reference));
+}
+
 function renderPastedTextChipDom(dom: HTMLElement, label: string, lines: number) {
   const expand = document.createElement("button");
   expand.type = "button";
@@ -527,7 +641,6 @@ function createAttachmentChipDom(attachment: ComposerAttachmentToken) {
   dom.dataset.attachmentStatus = "ready";
 
   if (attachment.kind === "image" && attachment.previewUrl) {
-    // Clicking the thumbnail opens the full-size lightbox (see AttachmentChipPlugin).
     const expand = document.createElement("button");
     expand.type = "button";
     expand.className = "h-10 w-10 cursor-zoom-in overflow-hidden rounded-xl border border-border/70 transition-opacity hover:opacity-90";
@@ -547,9 +660,6 @@ function createAttachmentChipDom(attachment: ComposerAttachmentToken) {
     dom.append(chip);
   }
 
-  // Upload progress overlay: hidden by default, toggled through the chip's
-  // data-attachment-status attribute while the draft's attachments are being
-  // compressed/uploaded at send time (see syncAttachmentChipStatus).
   const spinner = document.createElement("span");
   spinner.dataset.attachmentSpinner = "true";
   spinner.className = "absolute inset-0 hidden items-center justify-center rounded-xl bg-background/60";
@@ -577,12 +687,6 @@ function createAttachmentChipDom(attachment: ComposerAttachmentToken) {
   return dom;
 }
 
-/**
- * Toggle the uploading overlay on every attachment chip inside `root`.
- * Chips are raw Lexical token DOM (not React), so status is synced by
- * attribute instead of a re-render. Exported for the composer, which flips
- * this while a draft with attachments is being uploaded/sent.
- */
 export function syncAttachmentChipStatus(root: HTMLElement, status: "uploading" | "ready") {
   for (const chip of root.querySelectorAll<HTMLElement>("[data-attachment-id]")) {
     chip.dataset.attachmentStatus = status;
@@ -751,6 +855,7 @@ type ComposerInlineTokenNode =
   | ComposerSlashCommandNode
   | ComposerSkillNode
   | ComposerConnectorNode
+  | ComposerSessionReferenceNode
   | ComposerPastedTextNode
   | ComposerAttachmentNode;
 
@@ -759,6 +864,7 @@ function isComposerInlineTokenNode(node: unknown): node is ComposerInlineTokenNo
     || node instanceof ComposerSlashCommandNode
     || node instanceof ComposerSkillNode
     || node instanceof ComposerConnectorNode
+    || node instanceof ComposerSessionReferenceNode
     || node instanceof ComposerPastedTextNode
     || node instanceof ComposerAttachmentNode;
 }
@@ -787,10 +893,6 @@ function appendSegmentWithNewlines(
   paragraph: ReturnType<typeof $createParagraphNode>,
   segment: string,
 ) {
-  // Preserve newlines in plain text segments. A single paragraph cannot
-  // render "\n" as a line break in contenteditable, so we split on "\n"
-  // and start a new paragraph per line. Return the paragraph the caller
-  // should keep appending to (i.e. the last one we produced).
   if (!segment.includes("\n")) {
     paragraph.append($createTextNode(segment));
     return paragraph;
@@ -833,9 +935,21 @@ function setPrompt(
   const attachmentsById = new Map((attachments ?? []).map((item) => [item.id, item]));
   for (const segment of segments) {
     if (!segment) continue;
-    const connectorName = parseConnectorToken(segment);
-    if (connectorName) {
-      paragraph.append($createComposerConnectorNode(connectorName));
+    const pill = parseComposerPillToken(segment);
+    if (pill?.kind === "connector") {
+      paragraph.append($createComposerConnectorNode(pill.name));
+      continue;
+    }
+    if (pill?.kind === "session") {
+      paragraph.append($createComposerSessionReferenceNode(pill));
+      continue;
+    }
+    if (pill?.kind === "connect-skill") {
+      paragraph.append($createComposerSkillNode(pill.slug, segment));
+      continue;
+    }
+    if (pill?.kind === "skill") {
+      paragraph.append($createComposerSkillNode(pill.name));
       continue;
     }
     const attachmentMatch = segment.match(/^\[attachment (.+)\]$/);
@@ -854,16 +968,6 @@ function setPrompt(
         continue;
       }
     }
-    const connectSkill = parseConnectSkillToken(segment);
-    if (connectSkill) {
-      paragraph.append($createComposerSkillNode(connectSkill.slug, segment));
-      continue;
-    }
-    const skillMatch = segment.match(/^\[skill (.+)\]$/);
-    if (skillMatch?.[1]) {
-      paragraph.append($createComposerSkillNode(skillMatch[1]));
-      continue;
-    }
     if (segment.startsWith("@")) {
       const token = decodeComposerMentionValue(segment.slice(1));
       const kind = mentions[token];
@@ -876,7 +980,12 @@ function setPrompt(
   }
 }
 
-function mentionAtSelection() {
+const TRIGGER_QUERY_RE = {
+  "@": { before: /(?<!\S)@([^\s@]*)$/, after: /^[^\s@]*/ },
+  "#": { before: /(?<!\S)#((?:[^\s#][^#\n]*)?)$/, after: /^[^\s#]*/ },
+} as const;
+
+function editableTextAtSelection() {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return null;
   let node = selection.anchor.getNode();
@@ -888,16 +997,72 @@ function mentionAtSelection() {
     end = node.getTextContentSize();
   }
   if (!$isTextNode(node) || isComposerInlineTokenNode(node)) return null;
-  const text = node.getTextContent();
-  const match = text.slice(0, end).match(/(?<!\S)@([^\s@]*)$/);
-  if (!match) return null;
-  const remaining = text.slice(end).match(/^[^\s@]*/)?.[0] ?? "";
-  return { node, start: end - match[0].length, end: end + remaining.length, query: match[1] ?? "" };
+  return { node, caret: end };
 }
 
-function insertMentionAtSelection(kind: ComposerMentionKind, value: string) {
-  const match = mentionAtSelection();
+function triggerQueryAtSelection(trigger: keyof typeof TRIGGER_QUERY_RE) {
+  const point = editableTextAtSelection();
+  if (!point) return null;
+  const { node, caret: end } = point;
+  const text = node.getTextContent();
+  const patterns = TRIGGER_QUERY_RE[trigger];
+  const match = text.slice(0, end).match(patterns.before);
+  if (!match) return null;
+  const remaining = text.slice(end).match(patterns.after)?.[0] ?? "";
+  return { node, start: end - match[0].length, end: end + remaining.length, caret: end, query: match[1] ?? "" };
+}
+
+function inlineTriggerAtSelection(find: (text: string, caret: number) => { query: string; offset: number; end: number } | null) {
+  const point = editableTextAtSelection();
+  const caret = $draftOffsetAtSelection();
+  if (!point || caret === null) return null;
+  const { node } = point;
+  const boundary = node.getPreviousSibling()?.getTextContent().slice(-1) ?? "";
+  const match = find(boundary + node.getTextContent(), boundary.length + point.caret);
+  if (!match || match.offset < boundary.length) return null;
+  const start = match.offset - boundary.length;
+  return { node, start, end: match.end - boundary.length, trigger: { query: match.query, offset: caret - (point.caret - start) } };
+}
+
+function slashAtSelection() {
+  return inlineTriggerAtSelection(slashTriggerAtCaret);
+}
+
+function inlineMentionAtSelection() {
+  return inlineTriggerAtSelection(inlineMentionAtCaret);
+}
+
+function mentionAtSelection() {
+  return triggerQueryAtSelection("@");
+}
+
+function sessionReferenceQueryAtSelection() {
+  return triggerQueryAtSelection("#");
+}
+
+function sessionReferenceTriggerAtSelection() {
+  const match = sessionReferenceQueryAtSelection();
+  if (!match) return null;
+  const caret = $draftOffsetAtSelection();
+  return { query: match.query, offset: caret === null ? -1 : caret - (match.caret - match.start) };
+}
+
+function insertSessionReferenceAtSelection(reference: SessionReferenceTokenValue, inline: boolean) {
+  const match = inline ? inlineMentionAtSelection() : sessionReferenceQueryAtSelection();
+  if (!match || !encodeSessionReferenceToken(reference)) return false;
+  const end = match.end + (match.node.getTextContent()[match.end] === " " ? 1 : 0);
+  const selection = match.node.select(match.start, end);
+  const chip = $createComposerSessionReferenceNode(reference);
+  const space = $createTextNode(" ");
+  selection.insertNodes([chip, space]);
+  space.selectEnd();
+  return true;
+}
+
+function insertMentionAtSelection(kind: ComposerMentionKind, value: string, inline: boolean) {
+  const match = inline ? inlineMentionAtSelection() : mentionAtSelection();
   if (!match) return false;
+  if ("trigger" in match && !isSingleWordMentionQuery(match.trigger.query)) return false;
   const end = match.end + (kind !== "agent" && match.node.getTextContent()[match.end] === " " ? 1 : 0);
   const selection = match.node.select(match.start, end);
   if (kind === "agent") {
@@ -949,18 +1114,61 @@ function insertSkillAtSelection(skillName: string, skillToken?: string) {
   setSelectionAfterNode(spaceNode);
 }
 
-// Serialize the current editor state to the external draft string. Lexical's
-// root.getTextContent() joins element children with "\n\n" (its "text content
-// mode" for the root node), which causes single newlines typed/pasted by the
-// user to round-trip as double newlines and quickly corrupts the draft. We
-// walk root children ourselves and join with a single "\n" so every newline
-// the user sees onscreen is preserved exactly in the stored draft.
 function serializePromptFromRoot(): string {
   const root = $getRoot();
   return root
     .getChildren()
     .map((child) => child.getTextContent())
     .join("\n");
+}
+
+function $draftOffsetAtSelection(edge: "start" | "end" = "start"): number | null {
+  const selection = $getSelection();
+  if (!$isRangeSelection(selection)) return null;
+  const point = edge === "start"
+    ? selection.isBackward() ? selection.focus : selection.anchor
+    : selection.isBackward() ? selection.anchor : selection.focus;
+  const node = point.getNode();
+  const paragraphs = $getRoot().getChildren();
+  const before = (nodes: LexicalNode[]) => nodes.reduce((sum, child) => sum + child.getTextContentSize(), 0);
+  if (node.is($getRoot())) return before(paragraphs.slice(0, point.offset)) + point.offset;
+  const paragraph = node.getTopLevelElement();
+  if (!paragraph) return null;
+  const index = paragraphs.findIndex((child) => child.is(paragraph));
+  let offset = before(paragraphs.slice(0, index)) + index;
+  if (node.is(paragraph) && $isElementNode(paragraph)) return offset + before(paragraph.getChildren().slice(0, point.offset));
+  offset += before(node.getPreviousSiblings());
+  if (!$isTextNode(node)) return offset;
+  return offset + (isComposerInlineTokenNode(node) && point.offset > 0 ? node.getTextContentSize() : point.offset);
+}
+
+function $selectDraftOffset(offset: number) {
+  let remaining = offset;
+  const paragraphs = $getRoot().getChildren();
+  for (const [index, paragraph] of paragraphs.entries()) {
+    const size = paragraph.getTextContentSize();
+    if (remaining > size && index < paragraphs.length - 1) {
+      remaining -= size + 1;
+      continue;
+    }
+    if (!$isElementNode(paragraph)) return false;
+    const children = paragraph.getChildren();
+    for (const [childIndex, child] of children.entries()) {
+      if (remaining <= 0) {
+        paragraph.select(childIndex, childIndex);
+        return true;
+      }
+      const childSize = child.getTextContentSize();
+      if (remaining < childSize && $isTextNode(child) && !isComposerInlineTokenNode(child)) {
+        child.select(remaining, remaining);
+        return true;
+      }
+      remaining -= childSize;
+    }
+    paragraph.select(children.length, children.length);
+    return true;
+  }
+  return false;
 }
 
 function SyncPlugin(props: {
@@ -973,35 +1181,16 @@ function SyncPlugin(props: {
   const valueRef = useRef(props.value);
 
   useEffect(() => {
-    // When the external value is cleared (e.g. after sending a message),
-    // always force-rebuild the editor to remove any stale chip nodes.
-    // The valueRef check can false-positive when both refs converge to ""
-    // through different paths (SyncPlugin vs OnChange).
-    //
-    // NOTE: serializePromptFromRoot() calls $getRoot() which requires an
-    // active editor state. Outside of editor.update()/editor.read() we
-    // must wrap it in editor.getEditorState().read().
-    const currentText = editor.getEditorState().read(() => serializePromptFromRoot());
+    const [currentText, caretOffset] = editor.getEditorState().read(() => [serializePromptFromRoot(), $draftOffsetAtSelection()] as const);
     const forceRebuild = !props.value.trim() && currentText.trim() !== "";
     if (!forceRebuild && valueRef.current === props.value) return;
     valueRef.current = props.value;
-    // Check whether the editor already reflects the desired state BEFORE
-    // entering editor.update(). Even a bail-out inside editor.update()
-    // triggers Lexical's reconciliation cycle which can normalise the DOM
-    // selection and reset the cursor (e.g. after a multi-line paste the
-    // cursor jumps to position 0 instead of staying after the pasted
-    // content). The read() above already gave us `currentText` — reuse it.
     if (!forceRebuild && currentText === props.value) return;
     editor.update(() => {
-      // Double-check inside the update in case another queued update
-      // changed the state between the read above and this callback.
       if (!forceRebuild && serializePromptFromRoot() === props.value) return;
       setPrompt(props.value, props.mentions, props.pastedText, props.attachments);
-      // $getRoot().selectEnd() doesn't work when the last node is a
-      // token (chip) — Lexical can't position a cursor inside a token,
-      // so the selection collapses to position 0. Use element-level
-      // selection instead: place the cursor *after* the last child of
-      // the last paragraph.
+      const tail = caretOffset === null ? "" : currentText.slice(caretOffset);
+      if (!forceRebuild && tail && props.value.endsWith(tail) && $selectDraftOffset(props.value.length - tail.length)) return;
       const lastParagraph = $getRoot().getLastChild();
       if ($isElementNode(lastParagraph)) {
         const childCount = lastParagraph.getChildrenSize();
@@ -1028,17 +1217,10 @@ function SubmitPlugin(props: { onSubmit: (options: { queue: boolean }) => void |
       KEY_ENTER_COMMAND,
       (event: KeyboardEvent | null) => {
         if (props.disabled) return false;
-        // IME composition guard: three signals keep this reliable across
-        // Chrome, Safari, and WebKit. While IME is mid-character, Enter
-        // must always fall through to the editor so the composition can
-        // commit.
         if (event?.isComposing === true || event?.keyCode === 229) return false;
-        // Shift+Enter inserts a newline — let the editor handle it.
         if (event?.shiftKey) return false;
         const selection = $getSelection();
         if (!$isRangeSelection(selection)) return false;
-        // Plain Enter submits. Cmd/Ctrl+Enter is the modifier: while the
-        // agent is busy, Enter queues and the modifier steers.
         event?.preventDefault();
         void onSubmitRef.current({ queue: event?.metaKey === true || event?.ctrlKey === true });
         return true;
@@ -1090,7 +1272,7 @@ function pastedTextWouldOverflowEditor(text: string, editorElement: HTMLElement 
   }
 }
 
-function PasteChipPlugin(props: { onPasteText?: (text: string) => void }) {
+function PasteChipPlugin(props: { onPasteText?: (text: string, draftOffset?: number) => void }) {
   const [editor] = useLexicalComposerContext();
   const onPasteTextRef = useRef(props.onPasteText);
 
@@ -1103,7 +1285,6 @@ function PasteChipPlugin(props: { onPasteText?: (text: string) => void }) {
       PASTE_COMMAND,
       (event: ClipboardEvent) => {
         if (event.defaultPrevented) return false;
-        // Only handle plain-text pastes; files and URI lists are handled in the React onPaste.
         const files = event.clipboardData?.files;
         if (files && files.length > 0) return false;
         if (event.clipboardData?.getData("text/uri-list").trim()) return false;
@@ -1113,7 +1294,7 @@ function PasteChipPlugin(props: { onPasteText?: (text: string) => void }) {
         if (shouldCollapsePastedText(text, wouldOverflowComposer)) {
           if (!onPasteTextRef.current) return false;
           event.preventDefault();
-          onPasteTextRef.current(text);
+          onPasteTextRef.current(text, $draftOffsetAtSelection() ?? undefined);
           return true;
         }
         event.preventDefault();
@@ -1201,18 +1382,12 @@ function MentionChipNavigationPlugin() {
         if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
         const anchorNode = selection.anchor.getNode();
 
-        // --- Slash command chip: atomic delete ---
-        // When cursor is in the text node right after a slash chip,
-        // remove the chip (and any trailing whitespace text) in one action.
         if ($isTextNode(anchorNode)) {
           const previous = anchorNode.getPreviousSibling();
           if (previous instanceof ComposerSlashCommandNode) {
-            // At offset 0: cursor is right after the chip -> remove chip
-            // At offset > 0 but text is only whitespace: also remove chip
             const textBefore = anchorNode.getTextContent().slice(0, selection.anchor.offset);
             if (selection.anchor.offset === 0 || textBefore.trim() === "") {
               previous.remove();
-              // Also remove the whitespace-only prefix
               if (selection.anchor.offset > 0) {
                 const remaining = anchorNode.getTextContent().slice(selection.anchor.offset);
                 if (remaining) {
@@ -1230,7 +1405,6 @@ function MentionChipNavigationPlugin() {
           }
         }
 
-        // --- Mention / pasted-text / attachment chips: atomic delete ---
         if ($isTextNode(anchorNode) && selection.anchor.offset === 0) {
           const previous = anchorNode.getPreviousSibling();
           if (isComposerInlineTokenNode(previous) && !(previous instanceof ComposerSlashCommandNode)) {
@@ -1307,8 +1481,6 @@ function MentionChipNavigationPlugin() {
   return null;
 }
 
-// Home / End move the caret to the line boundary (Shift extends). See
-// lineBoundaryMoveForKey for why Chromium on macOS does not do this itself.
 function LineBoundaryKeysPlugin() {
   const [editor] = useLexicalComposerContext();
 
@@ -1331,24 +1503,115 @@ function LineBoundaryKeysPlugin() {
   return null;
 }
 
+function $isLivePoint(point: { key: NodeKey; offset: number; type: "text" | "element" }): boolean {
+  const node = $getNodeByKey(point.key);
+  if (!node || !node.isAttached()) return false;
+  if (point.type === "text") return $isTextNode(node) && point.offset <= node.getTextContentSize();
+  return $isElementNode(node) && point.offset <= node.getChildrenSize();
+}
+
+function $isCaretAtPromptStart(selection = $getSelection()): boolean {
+  if (!$isRangeSelection(selection) || !selection.isCollapsed() || selection.anchor.offset !== 0) return false;
+  if (!$isLivePoint(selection.anchor)) return false;
+  const node = selection.anchor.getNode();
+  const first = $getRoot().getFirstDescendant();
+  return node.is($getRoot()) || node.is($getRoot().getFirstChild()) || Boolean(first && node.is(first));
+}
+
+function KeepCaretOnRefocusPlugin() {
+  const [editor] = useLexicalComposerContext();
+
+  useEffect(() => {
+    let saved: { selection: ReturnType<typeof $createRangeSelection>; text: string } | null = null;
+    let pointerFocus = false;
+    const unregisterUpdate = editor.registerUpdateListener(({ editorState }) => {
+      editorState.read(() => {
+        const selection = $getSelection();
+        const text = $getRoot().getTextContent();
+        if ($isRangeSelection(selection)) saved = { selection: selection.clone(), text };
+        else if (saved && saved.text !== text) saved = null;
+      });
+    });
+    const onPointerDown = () => { pointerFocus = true; };
+    const onBlur = () => { pointerFocus = false; };
+    const onFocus = () => {
+      const fromPointer = pointerFocus;
+      pointerFocus = false;
+      const restore = saved;
+      if (fromPointer || !restore) return;
+      requestAnimationFrame(() => {
+        if (document.activeElement !== editor.getRootElement()) return;
+        editor.update(() => {
+          if ($getRoot().getTextContent() !== restore.text) return;
+          if (!$isLivePoint(restore.selection.anchor) || !$isLivePoint(restore.selection.focus)) return;
+          if (!$isCaretAtPromptStart() || $isCaretAtPromptStart(restore.selection)) return;
+          $setSelection(restore.selection.clone());
+        });
+      });
+    };
+    const unregisterRoot = editor.registerRootListener((root, previous) => {
+      previous?.removeEventListener("pointerdown", onPointerDown, true);
+      previous?.removeEventListener("focus", onFocus);
+      previous?.removeEventListener("blur", onBlur);
+      root?.addEventListener("pointerdown", onPointerDown, true);
+      root?.addEventListener("focus", onFocus);
+      root?.addEventListener("blur", onBlur);
+    });
+    return () => {
+      unregisterUpdate();
+      unregisterRoot();
+      const root = editor.getRootElement();
+      root?.removeEventListener("pointerdown", onPointerDown, true);
+      root?.removeEventListener("focus", onFocus);
+      root?.removeEventListener("blur", onBlur);
+    };
+  }, [editor]);
+
+  return null;
+}
+
 function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEditorHandle> }) {
   const [editor] = useLexicalComposerContext();
 
   useImperativeHandle(props.editorRef, () => ({
+    replaceSlashAtSelection(trigger, choice) {
+      let replaced = false;
+      editor.update(() => {
+        const match = slashAtSelection();
+        if (!match || match.trigger.offset !== trigger.offset || match.trigger.query !== trigger.query) return;
+        if (choice.kind === "command" && trigger.offset !== 0) return;
+        const chip = choice.kind === "skill"
+          ? $createComposerSkillNode(choice.name, choice.token)
+          : $createComposerSlashCommandNode(choice.name);
+        const end = match.end + (match.node.getTextContent()[match.end] === " " ? 1 : 0);
+        const space = $createTextNode(" ");
+        match.node.select(match.start, end).insertNodes([chip, space]);
+        space.selectEnd();
+        replaced = true;
+      }, { discrete: true });
+      return replaced;
+    },
     insertSkillAtSelection(skillName: string, skillToken?: string) {
       editor.update(() => insertSkillAtSelection(skillName, skillToken));
       editor.focus();
     },
-    insertMentionAtSelection(kind: ComposerMentionKind, value: string) {
+    insertMentionAtSelection(kind, value, inline = false) {
       let draft: string | null = null;
       editor.update(() => {
-        if (insertMentionAtSelection(kind, value)) draft = serializePromptFromRoot();
+        if (insertMentionAtSelection(kind, value, inline)) draft = serializePromptFromRoot();
       }, { discrete: true });
       return draft;
     },
     insertConnectorAtSelection(connectorName: string) {
       editor.update(() => insertTokenAtSelection($createComposerConnectorNode(connectorName)));
       editor.focus();
+    },
+    insertSessionReferenceAtSelection(reference, inline = false) {
+      let draft: string | null = null;
+      editor.update(() => {
+        if (insertSessionReferenceAtSelection(reference, inline)) draft = serializePromptFromRoot();
+      }, { discrete: true });
+      return draft;
     },
     insertFileMentionAtSelection(path: string) {
       let draft = "";
@@ -1358,6 +1621,16 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
       }, { discrete: true });
       editor.focus();
       return draft;
+    },
+    draftOffsetAtSelection() {
+      return editor.getEditorState().read(() => $draftOffsetAtSelection());
+    },
+    draftSelectionRange() {
+      return editor.getEditorState().read(() => {
+        const start = $draftOffsetAtSelection();
+        const end = $draftOffsetAtSelection("end");
+        return start === null || end === null ? null : { start, end };
+      });
     },
   }), [editor]);
 
@@ -1410,10 +1683,56 @@ function AttachmentChipPlugin(props: { onRemoveAttachment?: (id: string) => void
   return null;
 }
 
+function sessionReferenceChip(target: EventTarget | null) {
+  if (!(target instanceof Element)) return null;
+  const chip = target.closest("[data-session-reference-session]");
+  return chip instanceof HTMLElement ? chip : null;
+}
+
+function SessionReferenceChipPlugin(props: { onOpenSessionReference?: (reference: { workspaceId: string; sessionId: string }) => void }) {
+  const [editor] = useLexicalComposerContext();
+  const onOpenRef = useRef(props.onOpenSessionReference);
+
+  useEffect(() => {
+    onOpenRef.current = props.onOpenSessionReference;
+  }, [props.onOpenSessionReference]);
+
+  useEffect(() => {
+    const handleMouseDown = (event: MouseEvent) => {
+      if (!onOpenRef.current || !sessionReferenceChip(event.target)) return;
+      event.preventDefault();
+      event.stopPropagation();
+    };
+
+    const handleClick = (event: MouseEvent) => {
+      const chip = sessionReferenceChip(event.target);
+      const workspaceId = chip?.dataset.sessionReferenceWorkspace;
+      const sessionId = chip?.dataset.sessionReferenceSession;
+      const open = onOpenRef.current;
+      if (!open || !workspaceId || !sessionId) return;
+      event.preventDefault();
+      event.stopPropagation();
+      open({ workspaceId, sessionId });
+    };
+
+    return editor.registerRootListener((rootElement, previousRootElement) => {
+      previousRootElement?.removeEventListener("mousedown", handleMouseDown, true);
+      previousRootElement?.removeEventListener("click", handleClick, true);
+      rootElement?.addEventListener("mousedown", handleMouseDown, true);
+      rootElement?.addEventListener("click", handleClick, true);
+    });
+  }, [editor]);
+
+  return null;
+}
+
 export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorProps>(function LexicalPromptEditor(props, ref) {
   const valueRef = useRef(props.value);
   const onChangeRef = useRef(props.onChange);
+  const onInlineMentionChangeRef = useRef(props.onInlineMentionChange);
   const onMentionQueryChangeRef = useRef(props.onMentionQueryChange);
+  const onSlashQueryChangeRef = useRef(props.onSlashQueryChange);
+  const onSessionReferenceQueryChangeRef = useRef(props.onSessionReferenceQueryChange);
 
   useEffect(() => {
     valueRef.current = props.value;
@@ -1421,8 +1740,11 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
 
   useEffect(() => {
     onChangeRef.current = props.onChange;
+    onInlineMentionChangeRef.current = props.onInlineMentionChange;
     onMentionQueryChangeRef.current = props.onMentionQueryChange;
-  }, [props.onChange, props.onMentionQueryChange]);
+    onSlashQueryChangeRef.current = props.onSlashQueryChange;
+    onSessionReferenceQueryChangeRef.current = props.onSessionReferenceQueryChange;
+  }, [props.onChange, props.onInlineMentionChange, props.onMentionQueryChange, props.onSlashQueryChange, props.onSessionReferenceQueryChange]);
 
   const initialConfig = useMemo(
     () => ({
@@ -1431,7 +1753,7 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
         throw error;
       },
       editable: true,
-      nodes: [ComposerMentionNode, ComposerSlashCommandNode, ComposerSkillNode, ComposerConnectorNode, ComposerPastedTextNode, ComposerAttachmentNode],
+      nodes: [ComposerMentionNode, ComposerSlashCommandNode, ComposerSkillNode, ComposerConnectorNode, ComposerSessionReferenceNode, ComposerPastedTextNode, ComposerAttachmentNode],
       editorState: () => {
         setPrompt(props.value, props.mentions, props.pastedText, props.attachments);
       },
@@ -1442,7 +1764,10 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
   const syncPromptFromEditorState = useCallback(
     (state: Parameters<NonNullable<React.ComponentProps<typeof OnChangePlugin>["onChange"]>>[0]) => {
       state.read(() => {
+        onInlineMentionChangeRef.current?.(inlineMentionAtSelection()?.trigger ?? null);
         onMentionQueryChangeRef.current?.(mentionAtSelection()?.query ?? null);
+        onSlashQueryChangeRef.current?.(slashAtSelection()?.trigger ?? null);
+        onSessionReferenceQueryChangeRef.current?.(sessionReferenceTriggerAtSelection());
         const next = serializePromptFromRoot();
         if (next === valueRef.current) return;
         valueRef.current = next;
@@ -1454,16 +1779,11 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
 
   return (
     <LexicalComposer initialConfig={initialConfig}>
-      {/*
-        Tight start, bounded growth:
-        - min-h holds the editor to a single-line look until the user starts typing.
-        - max-h caps the composer — long pastes / multi-paragraph drafts scroll
-          inside the editor instead of pushing the transcript out of view.
-      */}
-      <div className="relative">
+      <div className="group/prompt-editor relative">
         <PlainTextPlugin
           contentEditable={
             <ContentEditable
+              data-composer-editor=""
               className="min-h-6 max-h-[min(160px,30dvh)] lg:min-h-[60px] lg:max-h-[280px] w-full resize-none overflow-y-auto bg-transparent text-base leading-6 text-dls-text outline-none placeholder:text-dls-secondary lg:text-[13px] lg:leading-[1.55] [&_p]:min-h-[1.5rem] [&_p]:m-0"
               aria-placeholder={props.placeholder}
               placeholder={<span />}
@@ -1476,6 +1796,11 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
           placeholder={
             <div className="pointer-events-none absolute left-0 top-0 text-base leading-6 text-dls-secondary/70 lg:text-[13px] lg:leading-[1.55]">
               {props.placeholder}
+              {props.placeholderShortcut ? (
+                <kbd className="ml-2 hidden rounded border border-dls-border px-1 py-0.5 font-sans text-[11px] leading-none group-has-[[data-composer-editor]:focus]/prompt-editor:inline">
+                  {props.placeholderShortcut}
+                </kbd>
+              ) : null}
             </div>
           }
           ErrorBoundary={LexicalErrorBoundary}
@@ -1492,8 +1817,10 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
         <PasteChipPlugin onPasteText={props.onPasteText} />
         <PastedTextExpandPlugin pastedText={props.pastedText} onExpandPastedText={props.onExpandPastedText} />
         <AttachmentChipPlugin onRemoveAttachment={props.onRemoveAttachment} onExpandAttachment={props.onExpandAttachment} />
+        <SessionReferenceChipPlugin onOpenSessionReference={props.onOpenSessionReference} />
         <MentionChipNavigationPlugin />
         <LineBoundaryKeysPlugin />
+        <KeepCaretOnRefocusPlugin />
         <ImperativeHandlePlugin editorRef={ref} />
       </div>
     </LexicalComposer>

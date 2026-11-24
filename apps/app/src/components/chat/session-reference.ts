@@ -27,13 +27,20 @@ export type SessionReference = SessionReferenceIdentity & {
 export type SessionReferenceMetadata = {
   id: string;
   title?: string | null;
-  time?: { archived?: number | null };
+  parentID?: string | null;
+  time?: { archived?: number | null; created?: number | null; updated?: number | null };
 };
 
 export type SessionReferenceInventory = {
   workspaceId: string;
+  workspaceTitle?: string;
   available: boolean;
   sessions: readonly SessionReferenceMetadata[];
+};
+
+export type SessionReferenceCandidate = SessionReference & {
+  workspaceTitle: string;
+  updatedAt: number;
 };
 
 export type ParsedSessionReference = {
@@ -89,6 +96,7 @@ export function isSessionReferenceInventoryCurrent(
 export function createSessionReferenceIndex(inventories: readonly SessionReferenceInventory[]) {
   const byPair = new Map<string, SessionReference>();
   const bySessionId = new Map<string, SessionReference | undefined>();
+  const candidates: SessionReferenceCandidate[] = [];
   const unavailableWorkspaceIds = new Set(inventories.filter((inventory) => !inventory.available).map((inventory) => inventory.workspaceId));
   for (const inventory of inventories) {
     if (unavailableWorkspaceIds.has(inventory.workspaceId)) continue;
@@ -104,11 +112,17 @@ export function createSessionReferenceIndex(inventories: readonly SessionReferen
       };
       byPair.set(key, reference);
       bySessionId.set(session.id, bySessionId.has(session.id) ? undefined : reference);
+      if (!session.parentID) {
+        candidates.push({
+          ...reference,
+          workspaceTitle: inventory.workspaceTitle?.trim() || inventory.workspaceId,
+          updatedAt: session.time?.updated ?? session.time?.created ?? 0,
+        });
+      }
     }
   }
+  candidates.sort((a, b) => Number(a.archived) - Number(b.archived) || b.updatedAt - a.updatedAt);
   return {
-    // Ignore inventory ordering and activity-only metadata so a title resolver
-    // does not invalidate every memoized message on unrelated session events.
     revision: JSON.stringify([
       [...unavailableWorkspaceIds].sort(),
       [...byPair.entries()].sort(([a], [b]) => a.localeCompare(b)),
@@ -122,6 +136,9 @@ export function createSessionReferenceIndex(inventories: readonly SessionReferen
     },
     get(reference: SessionReferenceIdentity): SessionReference | undefined {
       return byPair.get(sessionReferenceKey(reference));
+    },
+    candidates(): readonly SessionReferenceCandidate[] {
+      return candidates;
     },
   };
 }

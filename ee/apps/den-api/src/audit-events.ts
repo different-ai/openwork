@@ -5,6 +5,9 @@ import { appLogger } from "./observability/logger.js"
 import { AUDIT_ALERT_OPERATIONAL_MARKER } from "./operational-log-markers.js"
 
 export const ORGANIZATION_AUDIT_ACTIONS = {
+  benefitSettingUpdated: "organization.benefit_setting.updated",
+  benefitGrantCreated: "organization.benefit_grant.created",
+  benefitGrantRevoked: "organization.benefit_grant.revoked",
   apiKeyCreated: "organization.api_key.created",
   apiKeyDeleted: "organization.api_key.deleted",
   invitationCreated: "organization.invitation.created",
@@ -29,6 +32,12 @@ export const ORGANIZATION_AUDIT_ACTIONS = {
   dpaSignedUpdated: "organization.dpa_signed.updated",
   webOriginApproved: "organization.web_origin.approved",
   webOriginRemoved: "organization.web_origin.removed",
+  permissionSetCreated: "organization.permission_set.created",
+  permissionSetPermissionsChanged: "organization.permission_set.permissions_changed",
+  permissionSetArchived: "organization.permission_set.archived",
+  permissionSetRenamed: "organization.permission_set.renamed",
+  permissionSetTeamsChanged: "organization.permission_set.teams_changed",
+  permissionSetMembersChanged: "organization.permission_set.members_changed",
 }
 
 export type OrganizationAuditAction = typeof ORGANIZATION_AUDIT_ACTIONS[keyof typeof ORGANIZATION_AUDIT_ACTIONS]
@@ -77,9 +86,10 @@ export function isOrganizationAuditAlertAction(action: OrganizationAuditAction) 
     case ORGANIZATION_AUDIT_ACTIONS.dpaSignedUpdated:
     case ORGANIZATION_AUDIT_ACTIONS.webOriginApproved:
     case ORGANIZATION_AUDIT_ACTIONS.webOriginRemoved:
+    case ORGANIZATION_AUDIT_ACTIONS.permissionSetCreated:
+    case ORGANIZATION_AUDIT_ACTIONS.permissionSetPermissionsChanged:
+    case ORGANIZATION_AUDIT_ACTIONS.permissionSetArchived:
       return true
-    // Intentionally unchanged by the operation audit work: ownership transfer
-    // has never raised an operator [audit-alert]; widening that contract is out of scope.
     case ORGANIZATION_AUDIT_ACTIONS.memberOwnershipTransferred:
     case ORGANIZATION_AUDIT_ACTIONS.scimReconciliationRun:
       return false
@@ -100,11 +110,6 @@ export function logOrganizationAuditEvent(event: OrganizationAuditEvent) {
   logOrganizationAuditAlert({ auditEventId: event.id, organizationId: event.org_id, actorUserId: event.actor_user_id ?? null, action: event.action, payload: event.payload })
 }
 
-/**
- * The `[audit-alert]` operator contract, independent of which store recorded the
- * action: the legacy row id, or the operation change event id (null when the
- * bridged action changed nothing) plus the request id.
- */
 export function logOrganizationAuditAlert(input: {
   auditEventId: string | null
   organizationId: string

@@ -21,7 +21,7 @@ import { fileURLToPath } from "node:url";
 import { browserScript } from "@openwork/cdp";
 import { evalIn } from "@openwork/behaviors";
 import { freestyleEvidenceWeb } from "@openwork/env";
-import { devHead, ensureEvidenceSnapshot } from "../../packages/freestyle/src/evidence-builder.ts";
+import { devHead, ensureEvidenceSnapshot } from "../../packages/world-freestyle/src/evidence-builder.ts";
 
 const root = fileURLToPath(new URL("../../", import.meta.url));
 const git = (args: string[], cwd = root) => execFileSync("git", args, { cwd, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] }).trim();
@@ -107,7 +107,7 @@ try {
         } finally { await live.stop(); }
       }
       const testStart = performance.now();
-      const run = spawnSync(process.execPath, ["evals/bin/evals.mjs", "specs/core-chat.e2e.test.ts", "--local", "--engine", "v1", "--surface", "web"], {
+      const run = spawnSync(process.execPath, ["evals/bin/evals.mjs", "core-chat.e2e.test.ts", "--local", "--engine", "v1", "--surface", "web"], {
         cwd: root, encoding: "utf8", env: { ...process.env, OPENWORK_EVIDENCE_SOURCE_SHA: sha },
       });
       testSeconds = seconds(testStart);

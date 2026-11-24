@@ -1,8 +1,8 @@
 # Design review
 
-Every evidence screenshot gets an advisory design review, so a layout problem
-does not depend on the spec author noticing it. It never changes a test's
-verdict.
+An advisory design review of evidence screenshots, so a layout problem does
+not depend on the spec author noticing it. It never changes a test's verdict.
+It runs locally (see Run it); PR CI does not run it.
 
 Two passes, because each catches what the other misses:
 
@@ -37,14 +37,11 @@ its rule, the spec step that took the screenshot, where in the code to look
 (the DOM hook and class list of the boxes involved) and the command that
 reproduces it, plus the same notes as JSON. The images stay in the report;
 nothing is posted twice and the verdict never changes. `pnpm --dir evals design:review -- --test-run latest --json` gives the
-same entries locally. The `fix-design-notes` skill is the loop: read the
+same entries locally. The loop: read the
 check, reproduce, fix, re-run, push.
 
 ## In CI
 
-The trusted `judge-vision` job in `pr-proof.yml` runs
-`evals/scripts/design-review-journeys.mjs` after judging screenshot claims.
-Notes go to the job summary and into the proof record. The trusted publisher
-adds them to the Evidence preview check; the review report shows them on each screenshot (count in the gallery,
-outlined regions, notes and code hooks in the viewer). The step is
-`continue-on-error`: a finding or a provider error never fails the job.
+PR CI no longer runs the design review or judges screenshot claims (the
+`judge-vision` job was removed to cut time to green). Run
+`pnpm --dir evals design:review -- --test-run latest` locally with a model key.

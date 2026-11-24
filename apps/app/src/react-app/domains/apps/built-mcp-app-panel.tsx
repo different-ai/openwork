@@ -1,9 +1,12 @@
+import { useRef } from "react";
+import { featureAnalytics } from "@/app/lib/analytics";
 import { McpAppFrame } from "@/components/chat/mcp-app-frame";
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 import { X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { McpAppPanelTab } from "../session/panel/panel-tab-store";
 import { BuiltAppShareButton } from "./built-app-share-button";
+import { BuiltAppPinButton } from "./built-app-pin-button";
 import { builtAppSummary } from "./built-mcp-app-model";
 
 export function BuiltMcpAppPanel({
@@ -14,6 +17,7 @@ export function BuiltMcpAppPanel({
   onClose: () => void;
 }) {
   const summary = builtAppSummary(tab.part);
+  const opened = useRef(false);
   return (
     <section
       className="min-h-0 flex-1 overflow-y-auto"
@@ -27,6 +31,7 @@ export function BuiltMcpAppPanel({
           <span role="status" className={`shrink-0 text-xs ${tab.updating ? "text-muted-foreground" : "text-emerald-700 dark:text-emerald-400"}`}>{tab.updating ? "Updating" : "Ready"}</span>
         </div>
         <div className="flex items-center gap-1">
+          <BuiltAppPinButton appId={tab.appId} />
           {!tab.origin.readOnly && summary ? (
             <BuiltAppShareButton
               pluginId={summary.pluginId}
@@ -48,7 +53,11 @@ export function BuiltMcpAppPanel({
         </div>
       </header>
       <div className={`p-3 ${tab.updating ? "opacity-60" : ""}`} aria-busy={tab.updating || undefined}>
-        <McpAppFrame part={tab.part} origin={tab.origin} />
+        <McpAppFrame part={tab.part} origin={tab.origin} onReady={() => {
+          if (opened.current) return;
+          opened.current = true;
+          featureAnalytics.artifactOpened();
+        }} />
       </div>
     </section>
   );

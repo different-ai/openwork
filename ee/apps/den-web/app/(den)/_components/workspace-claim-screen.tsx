@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { Check, Copy, ExternalLink } from "lucide-react";
-import { getErrorMessage, requestJson } from "../_lib/den-flow";
+import { freePlanUserLimitMessage, getErrorMessage, getOrgLimitError, getOrgPaymentRequiredError, requestJson } from "../_lib/den-flow";
 import {
   PENDING_WORKSPACE_CLAIM_STORAGE_KEY,
   getOrgDashboardRoute,
@@ -68,8 +68,6 @@ function pluralize(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
-// Teammates saved with the workspace come back on accept, so invites survive a
-// sign-up or verification round trip that drops the `invite` URL parameter.
 function teammatesToInvite(fromUrl: readonly string[], payload: unknown): string[] {
   const saved =
     typeof payload === "object" && payload !== null && Array.isArray((payload as { teammateEmails?: unknown }).teammateEmails)
@@ -87,6 +85,20 @@ async function inviteTeammates(inviteEmails: readonly string[]): Promise<string>
 
   const succeeded = results.filter((result) => result.status === "fulfilled" && result.value.response.ok).length;
   const failed = inviteEmails.length - succeeded;
+  const freePlanLimit = results
+    .map((result) => (result.status === "fulfilled" ? getOrgPaymentRequiredError(result.value.payload) : null))
+    .find((limit) => limit !== null);
+  if (freePlanLimit) {
+    const invited = succeeded > 0 ? `Invited ${pluralize(succeeded, "teammate")}. ` : "";
+    return `${invited}${freePlanUserLimitMessage(freePlanLimit.freeSeatCount)}`;
+  }
+  const planLimit = results
+    .map((result) => (result.status === "fulfilled" ? getOrgLimitError(result.value.payload) : null))
+    .find((limit) => limit !== null);
+  if (planLimit) {
+    const invited = succeeded > 0 ? `Invited ${pluralize(succeeded, "teammate")}. ` : "";
+    return `${invited}${planLimit.message}`;
+  }
 
   if (failed === 0) {
     return `Invited ${pluralize(succeeded, "teammate")}.`;
@@ -120,7 +132,6 @@ export function WorkspaceClaimScreen({
   const autoClaimAttempted = useRef(false);
   const isLoopback = typeof window !== "undefined" && (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1");
 
-  // Persist the token so sign-in / sign-up returns the user to this page.
   useEffect(() => {
     if (typeof window === "undefined") {
       return;
@@ -175,22 +186,11 @@ export function WorkspaceClaimScreen({
 
       const toInvite = teammatesToInvite(inviteEmails, payload);
       if (toInvite.length > 0) {
-        // The claim above just made this account the owner (and set it as
-        // the session's active organization), so it can now invite
-        // teammates through the same endpoint Manage Members uses. Show the
-        // result briefly before moving on - this is best-effort: a failed
-        // invite never blocks the claim, the owner can always retry from
-        // Manage Members.
         const summary = await inviteTeammates(toInvite);
         setInviteSummary(summary);
         await new Promise((resolveDelay) => setTimeout(resolveDelay, 1400));
       }
 
-      // Don't navigate away immediately - offer to sign the already-running
-      // desktop app in with zero retyped credentials, reusing the same
-      // one-time handoff grant the normal "connect desktop" flow already
-      // uses. The human chooses; we never auto-redirect them into an OS
-      // "open this link?" prompt without asking.
       setClaimedOrg(parseAcceptedClaim(payload));
     } catch (error) {
       setClaimError(error instanceof Error ? error.message : "Could not claim the workspace.");
@@ -292,7 +292,6 @@ export function WorkspaceClaimScreen({
     return <LoadingCard title="Loading workspace claim." body="Checking your account state..." />;
   }
 
-  // Signed out: collect credentials, then resume on this page automatically.
   if (!user) {
     return (
       <section className="den-page py-6 lg:py-10">
@@ -307,9 +306,6 @@ export function WorkspaceClaimScreen({
 
           <AuthPanel
             eyebrow="Workspace owner"
-            // Prefill only - never locked. The claim token (not the email) is
-            // what authorizes accepting this claim, so the human can still
-            // claim with a different email if they want to.
             prefilledEmail={prefilledEmail}
             prefillKey={token}
             signUpContent={{
@@ -328,8 +324,6 @@ export function WorkspaceClaimScreen({
     );
   }
 
-  // Claimed: offer to sign the desktop app in with zero retyped credentials,
-  // or continue in the browser.
   if (claimedOrg) {
     return (
       <section
@@ -399,7 +393,6 @@ export function WorkspaceClaimScreen({
     );
   }
 
-  // Signed in: confirm ownership.
   return (
     <section className="den-page py-6 lg:py-10">
       <div className="den-frame mx-auto grid max-w-[34rem] gap-6 p-6 md:p-8">

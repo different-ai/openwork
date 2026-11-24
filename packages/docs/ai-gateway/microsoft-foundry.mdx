@@ -8,10 +8,6 @@ Connect **Claude on Microsoft Foundry** to OpenWork AI Gateway. Members pick Cla
 
 In OpenWork this is the **Microsoft Foundry (Claude)** provider, `microsoft-foundry`. For GPT and other Azure OpenAI deployments, use the **Azure** provider instead.
 
-<Info>
-  Microsoft Foundry is rolling out. If it is missing from **Add a provider**, ask your OpenWork platform administrator to turn on **AI Gateway: AWS and Microsoft sign-in** for your organization in `/admin`. Self-hosted operators can turn it on for the whole install with the Helm value `config.features.gatewayCloudSignIn`.
-</Info>
-
 ## Choose how people authenticate
 
 | Scenario | Choose | Per-person identity in Azure | What you set up |
@@ -103,7 +99,7 @@ For self-hosted deployments, Den and Gateway must reach `login.microsoftonline.c
 
 | What you see | What to check |
 | --- | --- |
-| Microsoft Foundry isn't in **Add a provider** | Ask your OpenWork platform administrator to turn on **AI Gateway: AWS and Microsoft sign-in** for your organization. |
+| Microsoft Foundry isn't in **Add a provider** | Only organization owners and admins can add providers. On a self-hosted install, check that Den API and Den Web run the same release. |
 | `AADSTS50011` in the browser | The redirect URI is missing or different: copy it again from the provider's **Key** section into the app registration's **Web** platform. |
 | `AADSTS65001` | Select **Grant admin consent** on the app registration's **API permissions** page. |
 | `AADSTS650057` | Add the **Azure Cognitive Services → user_impersonation** permission. |

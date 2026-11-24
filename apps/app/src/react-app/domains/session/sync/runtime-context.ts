@@ -1,28 +1,8 @@
-/**
- * User-context facts the app knows and the engine cannot: the person's time
- * zone, local calendar date, and locale. The engine's own `<env>` line carries
- * the date of the machine running it, which on a Cloud workspace is a UTC
- * container, so relative dates ("today", "tonight", "this week") and default
- * Automation zones need this block to resolve for the person instead.
- *
- * Only stable facts are rendered. The system prompt is one cached block per
- * request, so nothing that changes within a day (wall-clock time, run state)
- * belongs here; the date line moves once per local midnight, like the
- * engine's own.
- *
- * Kept dependency-free so unit tests and specs can import it directly.
- */
-
 export type OpenworkRuntimeFacts = {
-  /** IANA zone, for example America/Los_Angeles. */
   timeZone: string;
-  /** Offset of that zone at `now`, for example UTC-07:00. */
   utcOffset: string;
-  /** Calendar date in that zone, ISO style: 2026-09-02. */
   localDate: string;
-  /** English weekday name in that zone, for example Wednesday. */
   weekday: string;
-  /** BCP 47 tag, for example en-US. */
   locale: string;
 };
 
@@ -68,11 +48,6 @@ function formatOffset(minutesEastOfUtc: number): string {
   return `UTC${sign}${hours}:${minutes}`;
 }
 
-/**
- * Offset of `timeZone` at `now`, derived from the zone itself rather than the
- * host's `getTimezoneOffset()`, so an explicitly supplied zone stays correct
- * on a host in another zone.
- */
 function offsetFor(timeZone: string, now: Date): string {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone,
@@ -110,8 +85,6 @@ export function readOpenworkRuntimeFacts(input: OpenworkRuntimeFactsInput = {}):
       weekday: "long",
     }).formatToParts(now);
   } catch {
-    // An unknown zone name (stale OS data, unusual embedder) must not break
-    // sending a message; fall back to UTC and say so through the zone itself.
     timeZone = FALLBACK_TIME_ZONE;
     dateParts = new Intl.DateTimeFormat("en-US", {
       timeZone,

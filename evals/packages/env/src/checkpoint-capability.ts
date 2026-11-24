@@ -1,5 +1,5 @@
 import type { Surface } from "@openwork/cdp";
-import type { EvidenceCheckpoint } from "@openwork/freestyle/checkpoint-schema";
+import type { EvidenceCheckpoint } from "@openwork/evidence-provider/checkpoint";
 
 /**
  * Starts a snapshot of the world behind a surface. Resolves once the provider has
@@ -16,8 +16,8 @@ export interface CheckpointCapability {
 }
 
 /**
- * Worlds that can snapshot themselves advertise it under this key. Only
- * Freestyle-backed worlds do; checkpoints requested on other worlds are skipped
+ * Worlds that can snapshot themselves advertise it under this key: the Freestyle
+ * and Daytona evidence worlds do; checkpoints requested on other worlds are skipped
  * with a warning and the test runs normally. Specs never branch on placement.
  */
 export const checkpointCapability = Symbol.for("openwork.checkpointCapability");

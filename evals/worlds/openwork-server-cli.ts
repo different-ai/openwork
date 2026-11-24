@@ -83,11 +83,11 @@ export function stopChild(child: ChildProcess): Promise<void> {
  * chunk goes to `sink`; `listening` resolves with the base URL once the server
  * reports its port, or rejects when the process exits first.
  */
-export function bootServer(env: NodeJS.ProcessEnv, token: string, workspace: string, sink: (chunk: string) => void, options?: { configPath?: string; preload?: string }): { child: ChildProcess; listening: Promise<string> } {
+export function bootServer(env: NodeJS.ProcessEnv, token: string, workspace: string, sink: (chunk: string) => void, options?: { configPath?: string; preload?: string; entrypoint?: string }): { child: ChildProcess; listening: Promise<string> } {
   const child = spawn("bun", [
     "--conditions=development",
     ...(options?.preload ? ["--preload", options.preload] : []),
-    "src/cli.ts",
+    options?.entrypoint ?? "src/cli.ts",
     "--host", "127.0.0.1",
     "--port", "0",
     "--token", token,

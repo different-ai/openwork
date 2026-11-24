@@ -9,7 +9,7 @@ import { env } from "../env.js"
 import { firstForwardedValue, publicRequestUrl, trustedForwardedOrigin } from "../request-url.js"
 
 const TOKEN_TTL_MS = 12 * 60 * 60_000
-const TOKEN_ROUTE_SUFFIX = "/v1/automation-runners/token"
+const TOKEN_ROUTE_SUFFIXES = ["/v1/automation-runners/token", "/v1/session-runners/token"]
 const DEN_WEB_PROXY_PREFIX = "/api/den"
 
 export type AutomationRunnerIdentity = {
@@ -35,10 +35,11 @@ function normalizeRunnerAudience(value: string): string | null {
 
 export function automationRunnerAudienceFromRequestUrl(requestUrl: string): string {
   const parsed = new URL(requestUrl)
-  if (!["http:", "https:"].includes(parsed.protocol) || !parsed.pathname.endsWith(TOKEN_ROUTE_SUFFIX)) {
+  const suffix = TOKEN_ROUTE_SUFFIXES.find((candidate) => parsed.pathname.endsWith(candidate))
+  if (!["http:", "https:"].includes(parsed.protocol) || !suffix) {
     throw new Error("automation_runner_audience_invalid")
   }
-  parsed.pathname = parsed.pathname.slice(0, -TOKEN_ROUTE_SUFFIX.length) || "/"
+  parsed.pathname = parsed.pathname.slice(0, -suffix.length) || "/"
   parsed.search = ""
   parsed.hash = ""
   const audience = normalizeRunnerAudience(parsed.toString())
@@ -46,15 +47,6 @@ export function automationRunnerAudienceFromRequestUrl(requestUrl: string): stri
   return audience
 }
 
-/**
- * Bind proxied runner credentials to the public Den route the desktop will
- * actually use. The Den Web proxy strips caller-supplied forwarding headers
- * and writes its own, while trustedForwardedOrigin limits the destination to
- * configured first-party origins. Direct API requests keep their request URL,
- * resolved through the public scheme because hosted deployments terminate TLS
- * ahead of this process: desktops reject a plaintext runner destination, so an
- * http audience would silently disconnect every runner behind such a proxy.
- */
 export function automationRunnerAudienceFromRequest(
   request: Request,
   options: { trustedOrigins: readonly string[] },

@@ -1,0 +1,31 @@
+---
+title: "Specialized client plugins"
+description: "The OpenCode plugin brings OpenWork AI Gateway models and MCP resources into one client. Cursor and Codex integrations are in progress."
+---
+
+An [MCP connection](/integrations/mcp) gives your client skills and tools. A client plugin also adds your organization's AI Gateway models to the model picker, with one sign-in.
+
+## OpenCode — ready
+
+Install [`opencode-openwork`](https://www.npmjs.com/package/opencode-openwork) in OpenCode 2. No desktop app needed.
+
+```sh
+opencode plugin add opencode-openwork
+opencode auth login openwork
+```
+
+Choose **Browser**, sign in, pick your organization, and approve the matching code. OpenCode then loads your models, skills, and tools every time it starts.
+
+Requirements, checks, self-hosted setup, and sign-out: [OpenCode plugin guide](/model-context-protocol/opencode-plugin).
+
+## Cursor — in progress
+
+A Cursor plugin with AI Gateway models is in progress. Skills and tools work today through MCP: [connect Cursor](/model-context-protocol/cursor).
+
+## Codex — in progress
+
+A Codex plugin with AI Gateway models is in progress. Skills and tools work today through MCP: [connect Codex](/model-context-protocol/codex).
+
+## Other clients
+
+Use the [MCP integration](/integrations/mcp). The client keeps its own model provider.

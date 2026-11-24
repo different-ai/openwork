@@ -1,25 +1,12 @@
-/**
- * What each maintained world accepts on each target, and ready-to-run commands
- * by intent. `pnpm world help <name> --json` publishes this so an agent can
- * choose a world, placement, seed and source in one call instead of reading the
- * recipes. `world up` composes `--source`/`--seed` from the same entries. The
- * world scripts still enforce every rule; tests keep this catalog in step with
- * them and parse every example command.
- */
-
 import type { SourceKind } from "./source.ts";
 
 /** A `--source` spec kind as typed on the command line: `ref:` resolves to a `sha` before launch. */
 export type GuideSourceKind = SourceKind | "ref";
 
 export interface WorldTargetGuide {
-  /** A `supportedTargets` entry, for example `freestyle/linux`. */
   target: string;
-  /** Seeds accepted on this target; empty when the world takes no seed. */
   seeds: readonly string[];
-  /** Source kinds accepted on this target. */
   sources: readonly GuideSourceKind[];
-  /** What an omitted `--source` means here. Absent when a source is required. */
   defaultSource?: string;
   note?: string;
 }
@@ -30,9 +17,7 @@ export interface WorldExample {
 }
 
 export interface WorldGuide {
-  /** How `world up` composes `--source`/`--seed` for this world. */
   family: "preview" | "web";
-  /** `--source` components; `*` is the unnamed default component. */
   components: readonly string[];
   targets: readonly WorldTargetGuide[];
   examples: readonly WorldExample[];
@@ -54,6 +39,7 @@ export const SEED_MEANINGS: Readonly<Record<string, string>> = {
   team: "A seeded organization owner with demo Slack, Notion, Linear, Google Calendar and Gmail (in-memory Acme Robotics data) plus real Notion and Linear connectors (individual accounts stay unconnected).",
   restricted: "The team seed with Den's canonical restricted desktop policy applied.",
   workspace: "The team seed; with a desktop (preview-full) it is signed in to a workspace with the demo apps ready.",
+  plans: "Organizations in each plan situation that limits who may join (an Enterprise trial set to 20 users with 5, Free at its limit, an Enterprise plan for 6 users, Team paid in a loopback test-mode Stripe), all owned by the test account, which is also this Den's platform admin.",
   blank: "Exact published release bytes with a completely blank, unseeded profile.",
 };
 
@@ -70,7 +56,7 @@ export const WORLD_GUIDES: Readonly<Record<string, WorldGuide>> = {
     family: "preview",
     components: ["desktop"],
     targets: [
-      { target: "local/host", seeds: ["fresh"], sources: ["local"], defaultSource: LOCAL, note: "A native desktop window on this computer; no Den or account." },
+      { target: "local/host", seeds: ["fresh"], sources: ["local"], defaultSource: LOCAL, note: "Opens and focuses a desktop window on this computer; no Den or account. To check app UI without a window, use dev-app-web (headless)." },
       { target: "daytona/linux", seeds: ["fresh", "blank"], sources: ["sha", "ref", "release"], defaultSource: DEV, note: "Linux Electron in a private noVNC viewer. fresh builds a pushed commit; blank runs exact published release bytes." },
       { target: "daytona/windows", seeds: ["blank"], sources: ["release"], note: "Only an exact published Windows x64 release in a private VM." },
       { target: "freestyle/linux", seeds: ["fresh"], sources: ["sha", "ref"], defaultSource: DEV, note: "Signed-out desktop snapshot of a pushed commit: no Den, releases or --env app settings." },
@@ -80,24 +66,26 @@ export const WORLD_GUIDES: Readonly<Record<string, WorldGuide>> = {
       { intent: "Latest dev (alpha) desktop on Daytona (accepts --env app settings)", command: `${UP} preview-desktop --place daytona --stage <stage> ${DETACH}` },
       { intent: "Exact published Linux release with a blank profile", command: `${UP} preview-desktop --place daytona --stage <stage> --source desktop=release:<x.y.z>/<distribution> --seed blank ${DETACH}` },
       { intent: "Exact published Windows release", command: `${UP} preview-desktop --place daytona --os windows --stage <stage> --source desktop=release:<x.y.z>/<distribution> --seed blank ${DETACH}` },
-      { intent: "This checkout as a native desktop window", command: `${UP} preview-desktop --stage <stage>` },
+      { intent: "This checkout as a native desktop window (opens a window on this computer; only when asked)", command: `${UP} preview-desktop --stage <stage>` },
     ],
     caveats: [
       "The desktop app alone: for a signed-in desktop use preview-full --seed workspace.",
       NO_MODELS,
       "Remote desktops are Linux (or a published Windows release), not a macOS parity check.",
+      "For app UI that does not need the desktop shell, prefer `pnpm world up dev-app-web --detach -- --browser`: the app in headless Chrome with a CDP address, nothing on screen.",
     ],
   },
   "preview-den": {
     family: "preview",
     components: ["den"],
     targets: [
-      { target: "local/host", seeds: DEN_SEEDS, sources: ["local"], defaultSource: LOCAL, note: "Den on this computer's MySQL and Redis." },
+      { target: "local/host", seeds: [...DEN_SEEDS, "plans"], sources: ["local"], defaultSource: LOCAL, note: "Den on this computer's MySQL and Redis. plans runs a loopback test-mode Stripe, so it is local only." },
       { target: "daytona/linux", seeds: DEN_SEEDS, sources: ["sha", "ref"], defaultSource: DEV, note: "Den in a private Daytona sandbox." },
     ],
     examples: [
       { intent: "Den signup and onboarding from latest dev", command: `${UP} preview-den --place daytona --stage <stage> --seed fresh ${DETACH}` },
       { intent: "Seeded team administration (demo apps plus real connectors)", command: `${UP} preview-den --place daytona --stage <stage> --seed team ${DETACH}` },
+      { intent: "Every plan and seat situation, to check /admin Billing and the customer's Billing and invite screens", command: `${UP} preview-den --stage <stage> --seed plans ${DETACH}` },
       { intent: "A specific pushed commit", command: `${UP} preview-den --place daytona --stage <stage> --source den=sha:<full-pushed-sha> --seed fresh ${DETACH}` },
     ],
     caveats: ["Den alone: no desktop app. Mail stays in the preview's development outbox."],
@@ -106,7 +94,7 @@ export const WORLD_GUIDES: Readonly<Record<string, WorldGuide>> = {
     family: "preview",
     components: ["den", "desktop"],
     targets: [
-      { target: "local/host", seeds: DEN_SEEDS, sources: ["local"], defaultSource: LOCAL, note: "Den on this computer's MySQL and Redis plus a native desktop window." },
+      { target: "local/host", seeds: DEN_SEEDS, sources: ["local"], defaultSource: LOCAL, note: "Den on this computer's MySQL and Redis plus a desktop window that opens and takes focus on this computer." },
       { target: "daytona/linux", seeds: DEN_SEEDS, sources: ["sha", "ref"], defaultSource: DEV, note: "Two private Daytona sandboxes: Den plus a Linux desktop wired to it. Select a commit with --source den=...; the desktop builds from the same commit." },
     ],
     examples: [
@@ -158,7 +146,7 @@ export const WORLD_GUIDES: Readonly<Record<string, WorldGuide>> = {
     examples: [
       { intent: "Workbot, Den and the headless runner from this checkout", command: `${UP} preview-workbot --stage <stage>` },
       { intent: "Feel Workbot for real: a real model, its own computer and an MCP App (local; keys from env or Infisical)", command: `${UP} preview-workbot --stage <stage> ${DETACH} -- --live` },
-      { intent: "The Calendar in Workbot and the desktop over Workbot's Acme org: seeded Automations, the calendar mock and a signed-in desktop (local)", command: `${UP} preview-workbot --stage <stage> ${DETACH} -- --calendar` },
+      { intent: "Workbot's Calendar over the Acme org: seeded Automations, model choices and mock meetings (local)", command: `${UP} preview-workbot --stage <stage> ${DETACH} -- --calendar` },
       { intent: "Workbot from latest dev on Daytona", command: `${UP} preview-workbot --place daytona --stage <stage> ${DETACH}` },
       { intent: "Workbot on Freestyle", command: `${UP} preview-workbot --place freestyle --stage <stage> --source ref:dev ${DETACH}` },
     ],

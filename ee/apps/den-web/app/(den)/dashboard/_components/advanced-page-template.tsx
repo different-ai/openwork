@@ -9,6 +9,7 @@ import {
   getDesktopPoliciesRoute,
   getMarketplacesRoute,
 } from "../../_lib/den-org";
+import { desktopPolicyScreenRemoved } from "../_lib/desktop-policy-screen-rollout";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 export type AdvancedTab = "collections" | "desktop-policies" | "brand-appearance";
@@ -27,7 +28,7 @@ const ADVANCED_DESCRIPTIONS: Record<AdvancedTab, string> = {
 
 export function AdvancedPageTemplate({ tab, children }: { tab: AdvancedTab; children: React.ReactNode }) {
   const router = useRouter();
-  const { orgSlug } = useOrgDashboard();
+  const { orgSlug, orgContext } = useOrgDashboard();
 
   function routeFor(next: AdvancedTab) {
     const routes: Record<AdvancedTab, string> = {
@@ -42,11 +43,10 @@ export function AdvancedPageTemplate({ tab, children }: { tab: AdvancedTab; chil
     <DashboardPageTemplate
       title="Advanced"
       description={ADVANCED_DESCRIPTIONS[tab]}
-      colors={["#F1F5F9", "#0F172A", "#475569", "#CBD5E1"]}
     >
       <div data-testid="advanced-tabs" className="mb-6">
         <UnderlineTabs
-          tabs={ADVANCED_TABS}
+          tabs={ADVANCED_TABS.filter((entry) => entry.value !== "desktop-policies" || !desktopPolicyScreenRemoved(orgContext))}
           activeTab={tab}
           onChange={(next) => router.push(routeFor(next))}
         />

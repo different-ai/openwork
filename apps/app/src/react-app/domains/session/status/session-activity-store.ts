@@ -8,7 +8,6 @@ import { t } from "../../../../i18n";
 
 export type SessionActivityStatus = "idle" | "thinking" | "responding" | "error" | "compacting" | "waiting";
 
-/** What an unanswered request is asking the person for. */
 export type SessionWaitingKind = "permission" | "question";
 
 type SessionMessageRole = "assistant" | "system" | "user";
@@ -26,8 +25,6 @@ type SessionActivityRecord = {
   retrying: boolean;
   runStatusAt: number;
   runStartedAt: number;
-  // Only an active run first discovered by a read may inherit persisted age.
-  // Live status/admission writes cancel this pending hydration, even on ties.
   runHydrationAfter: number | null;
   transcriptActivity: TranscriptActivity | null;
   lastProgressAt: number;
@@ -40,10 +37,13 @@ type SessionActivityRecord = {
   compacting: boolean;
   waitingPermissionIds: string[];
   waitingQuestionIds: string[];
+  waits: WaitInterval[];
   messageRoles: Record<string, SessionMessageRole>;
   childSessionIds: string[];
   updatedAt: number;
 };
+
+export type WaitInterval = { start: number; end?: number };
 
 type SessionLike = {
   id: string;
@@ -55,11 +55,6 @@ type SessionLike = {
 type SessionActivityStore = {
   recordsByWorkspaceId: Record<string, Record<string, SessionActivityRecord>>;
   statusesByWorkspaceId: Record<string, Record<string, SessionActivityStatus>>;
-  /**
-   * Sessions with an unanswered permission or question, by what they ask for.
-   * Derived like `statusesByWorkspaceId` so a parent roll-up can subscribe
-   * without re-rendering on every transcript progress write.
-   */
   waitingByWorkspaceId: Record<string, Record<string, SessionWaitingKind>>;
   getStatus: (workspaceId: string, sessionId: string) => SessionActivityStatus;
   getSessionError: (workspaceId: string, sessionId: string) => string | null;
@@ -80,7 +75,7 @@ type SessionActivityStore = {
     options?: { snapshotStartedAt?: number },
   ) => void;
   markMessageRole: (workspaceId: string, sessionId: string, messageId: string, role: SessionMessageRole) => void;
-  markAssistantOutput: (workspaceId: string, sessionId: string, messageId?: string, options?: { allowUnknownMessageRole?: boolean }) => void;
+  markAssistantOutput: (workspaceId: string, sessionId: string, messageId?: string, options?: { allowUnknownMessageRole?: boolean; markDeltaProgress?: boolean }) => void;
   setWaitingRequest: (workspaceId: string, sessionId: string, kind: "permission" | "question", requestId: string, waiting: boolean) => void;
   replaceWaitingRequests: (workspaceId: string, sessionId: string, kind: "permission" | "question", requestIds: string[]) => void;
   setError: (workspaceId: string, sessionId: string, message?: string) => void;
@@ -107,6 +102,7 @@ const createRecord = (): SessionActivityRecord => ({
   compacting: false,
   waitingPermissionIds: [],
   waitingQuestionIds: [],
+  waits: [],
   messageRoles: {},
   childSessionIds: [],
   updatedAt: 0,
@@ -212,11 +208,25 @@ function sameActivityRecord(
     && current.compacting === next.compacting
     && sameStrings(current.waitingPermissionIds, next.waitingPermissionIds)
     && sameStrings(current.waitingQuestionIds, next.waitingQuestionIds)
+    && current.waits === next.waits
     && sameMessageRoles(current.messageRoles, next.messageRoles)
     && sameStrings(current.childSessionIds, next.childSessionIds);
 }
 
 type SessionActivityDerivedState = Pick<SessionActivityStore, "recordsByWorkspaceId" | "statusesByWorkspaceId" | "waitingByWorkspaceId">;
+
+const MAX_WAIT_INTERVALS = 50;
+
+function withWaits(record: SessionActivityRecord): SessionActivityRecord {
+  const waiting = waitingKindForRecord(record) !== undefined;
+  const last = record.waits.at(-1);
+  if (waiting === (last !== undefined && last.end === undefined)) return record;
+  const now = Date.now();
+  const waits = waiting
+    ? [...record.waits, { start: now }]
+    : [...record.waits.slice(0, -1), { start: last!.start, end: now }];
+  return { ...record, waits: waits.slice(-MAX_WAIT_INTERVALS) };
+}
 
 function updateRecord(
   state: SessionActivityDerivedState,
@@ -226,7 +236,7 @@ function updateRecord(
 ): SessionActivityDerivedState {
   const workspaceRecords = state.recordsByWorkspaceId[workspaceId] ?? {};
   const currentRecord = workspaceRecords[sessionId];
-  const nextRecord = updater(currentRecord ?? createRecord());
+  const nextRecord = withWaits(updater(currentRecord ?? createRecord()));
   const status = statusForRecord(nextRecord);
   if (currentRecord && sameActivityRecord(currentRecord, nextRecord, status)) return state;
   const recordWithStatus = { ...nextRecord, status, updatedAt: Date.now() };
@@ -243,10 +253,6 @@ function updateRecord(
   };
 }
 
-// Message roles are only consulted while a run is active to decide whether a
-// streaming part belongs to an assistant message. Without a cap the dict grows
-// by one entry per message for a session's whole lifetime, so keep only the
-// most recently marked messages.
 export const MAX_TRACKED_MESSAGE_ROLES = 200;
 
 function withMessageRole(
@@ -277,8 +283,6 @@ function reconcileTranscriptActivity(record: SessionActivityRecord): SessionActi
   const snapshot = record.transcriptActivity;
   if (!record.runActive || !snapshot) return record;
   const hydrateRun = typeof record.runHydrationAfter === "number" && snapshot.startedAt > record.runHydrationAfter;
-  // Fresh history can reveal output for an already observed live run, but only
-  // a run first discovered by a read may inherit its persisted execution age.
   const assistantOutput = record.assistantOutput
     || ((hydrateRun || snapshot.startedAt > record.runStatusAt) && snapshot.assistantOutput);
   if (!hydrateRun && assistantOutput === record.assistantOutput) return record;
@@ -355,8 +359,6 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
       const normalized = normalizeRunStatus(status);
       const runActive = normalized === "running" || normalized === "retry";
       const snapshotStartedAt = options?.snapshotStartedAt;
-      // Order snapshot seeds against live writes so stale idle cannot kill a
-      // live spinner and stale busy cannot resurrect a run that already ended.
       if (typeof snapshotStartedAt === "number" && snapshotStartedAt < record.runStatusAt) return record;
       if (typeof snapshotStartedAt !== "number" && !runActive && record.status !== "idle") return record;
       return reconcileTranscriptActivity({
@@ -436,8 +438,6 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
           activeStartedAt: progress.activeStartedAt,
         },
       });
-      // History may have established progress before status arrived. Activity
-      // enrichment must still run when its fingerprint is already known.
       if (!progressChanged) return next;
       const hydratedActiveStartedAt = snapshot && snapshotStartedAt === undefined
         && record.progressRevision === null && next.runActive && next.runHydrationAfter !== null
@@ -445,9 +445,6 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
         : 0;
       return {
         ...next,
-        // Snapshot fetch time establishes ordering, not execution age. Only a
-        // persisted in-flight part can move the first hydrated run anchor back;
-        // old terminal transcript rows must not age a newer accepted run.
         runStartedAt: hydratedActiveStartedAt > 0
           ? Math.min(record.runStartedAt || hydratedActiveStartedAt, hydratedActiveStartedAt)
           : next.runStartedAt,
@@ -480,7 +477,11 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
       if (!record.runActive) return record;
       if (message && record.messageRoles[message] && record.messageRoles[message] !== "assistant") return record;
       if (message && !record.messageRoles[message] && options?.allowUnknownMessageRole !== true) return record;
-      return { ...record, assistantOutput: true };
+      return {
+        ...record,
+        assistantOutput: true,
+        lastProgressAt: options?.markDeltaProgress ? Math.max(record.lastProgressAt, Date.now()) : record.lastProgressAt,
+      };
     }));
   },
   setWaitingRequest: (workspaceId, sessionId, kind, requestId, waiting) => {

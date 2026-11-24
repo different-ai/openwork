@@ -2,6 +2,8 @@
 import type * as React from "react";
 import { Loader2 } from "lucide-react";
 
+import { Skeleton } from "@/components/ui/skeleton";
+import { t } from "@/i18n";
 import { cn } from "@/lib/utils";
 import { MarkdownBlock } from "../surface/markdown";
 
@@ -11,6 +13,16 @@ export function PreviewLoading({ className, ...props }: PreviewLoadingProps) {
   return (
     <div className={cn("flex h-full items-center justify-center text-muted-foreground", className)} {...props}>
       <Loader2 className="size-4 animate-spin" />
+    </div>
+  );
+}
+
+export function OfficePreviewLoading() {
+  return (
+    <div role="status" aria-label={t("artifact.office_loading")} className="space-y-3 p-4">
+      <Skeleton className="h-4 w-1/2" />
+      <Skeleton className="h-16 w-full" />
+      <Skeleton className="h-16 w-full" />
     </div>
   );
 }
@@ -69,9 +81,6 @@ interface BinaryHTMLPreviewProps {
 
 type HTMLPreviewProps = { className?: string } & (TextHTMLPreviewProps | BinaryHTMLPreviewProps);
 
-// Workspace HTML is untrusted. srcdoc and app-created blob: URLs inherit the
-// app's origin, so the frame must never get allow-same-origin: it would run as
-// the main window and reach the desktop bridge. Scripts run in an opaque origin.
 export const HTML_PREVIEW_SANDBOX = "allow-scripts";
 
 export function HTMLPreview({ className, ...props }: HTMLPreviewProps) {
@@ -89,10 +98,7 @@ interface PdfPreviewProps {
 }
 
 export function PdfPreview({ url, title, className }: PdfPreviewProps) {
-  // Chromium's built-in PDF viewer (enabled via webPreferences.plugins) renders
-  // reliably through <embed>; <object>/sandboxed <iframe> show a blank frame.
-  // The blob URL comes from a trusted workspace file.
-  return <embed src={url} type="application/pdf" title={title} className={cn("h-full w-full border-0", className)} />;
+  return <embed src={url} type="application/pdf" title={title} data-testid="artifact-pdf-preview" className={cn("h-full w-full border-0", className)} />;
 }
 
 interface ImagePreviewProps extends React.ComponentProps<"div"> {

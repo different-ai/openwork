@@ -1,7 +1,3 @@
-/** Recover only explicitly rejected, optional title-generation parameters.
- * The private correlation header is removed before every provider request.
- * No prompts, response bodies, URLs, or credentials enter diagnostics.
- */
 const HEADER = "x-openwork-title-attempt";
 const DEADLINE_MS = 60_000;
 const MAX_ERROR_BYTES = 16_384;
@@ -57,11 +53,11 @@ async function errorBody(response: Response): Promise<unknown> {
       if (size > MAX_ERROR_BYTES) return null;
       text += decoder.decode(chunk.value, { stream: true });
     }
-    return JSON.parse(text + decoder.decode());
+    text += decoder.decode();
+    try { return JSON.parse(text); } catch { return text; }
   } catch {
     return null;
   } finally {
-    // A clone's tee can wait for the original consumer when cancelled.
     void reader.cancel().catch(() => undefined);
   }
 }
@@ -71,7 +67,6 @@ function correction(body: string, value: unknown): { body: string; parameter: st
   const error = value.error;
   if (error.code !== "unsupported_value" && error.code !== "unsupported_parameter") return null;
   const parameter = error.param;
-  // Never change identity, content, tools, token limits, or required parameters.
   if (parameter !== "reasoning.effort" && parameter !== "reasoning_effort"
     && parameter !== "temperature" && parameter !== "top_p") return null;
   let parsed: unknown;
@@ -81,8 +76,6 @@ function correction(body: string, value: unknown): { body: string; parameter: st
   const key = parameter === "reasoning.effort" ? "effort" : parameter;
   if (!record(target) || !Object.hasOwn(target, key)) return null;
 
-  // Provider text is used only to recognize a fixed vocabulary of effort values.
-  // If it supplies no recognizable list, let the same model use its default.
   const message = typeof error.message === "string" ? error.message : "";
   const supported = /Supported values are:\s*([^\n]+)/i.exec(message)?.[1] ?? "";
   const efforts = new Set([...supported.matchAll(/['"](none|minimal|low|medium|high|xhigh|max)['"]/g)]
@@ -94,7 +87,12 @@ function correction(body: string, value: unknown): { body: string; parameter: st
   return { body: JSON.stringify(parsed), parameter };
 }
 
-function failure(status: number): string {
+function failure(status: number, value?: unknown): string {
+  const messages = typeof value === "string" ? [value] : record(value) ? [value.message, value.__type] : [];
+  if (status === 403 && messages.some((part) =>
+    typeof part === "string" && /SignatureDoesNotMatch|signature we calculated does not match/i.test(part))) {
+    return "signature_rejected";
+  }
   if (status === 401 || status === 403) return "access_rejected";
   if (status === 404) return "model_or_endpoint_missing";
   if (status === 429) return "rate_or_quota_limited";
@@ -110,19 +108,19 @@ function install() {
     const headers = new Headers(init?.headers ?? (input instanceof Request ? input.headers : undefined));
     const id = headers.get(HEADER);
     if (!id) return base(input, init);
-    headers.delete(HEADER);
+    if (!/^AWS4-HMAC-SHA256\s/i.test(headers.get("authorization") ?? "")) headers.delete(HEADER);
     const externalSignal = init?.signal ?? (input instanceof Request ? input.signal : undefined);
     const deadline = AbortSignal.timeout(DEADLINE_MS);
     const options = { ...init, headers, signal: externalSignal ? AbortSignal.any([externalSignal, deadline]) : deadline };
     const attempt = attempts.get(id);
-    // Unknown/expired markers must still never reach a provider.
     if (!attempt) return base(input, options);
     try {
       const response = await base(input, options);
       if (!response.ok) {
-        report(attempt, failure(response.status), response.status);
+        const value = response.status === 400 || response.status === 403 ? await errorBody(response) : null;
+        report(attempt, failure(response.status, value), response.status);
         if (!attempt.retried && response.status === 400 && typeof init?.body === "string") {
-          const recovered = correction(init.body, await errorBody(response));
+          const recovered = correction(init.body, value);
           if (recovered && attempts.get(id) === attempt && !options.signal.aborted) {
             attempt.retried = true;
             report(attempt, "retrying_parameter", response.status, recovered.parameter);
@@ -130,7 +128,8 @@ function install() {
             const retryHeaders = new Headers(headers);
             retryHeaders.delete("content-length");
             const retry = await base(input, { ...options, headers: retryHeaders, body: recovered.body });
-            report(attempt, retry.ok ? "accepted_after_recovery" : failure(retry.status), retry.status);
+            const retryError = retry.status === 403 ? await errorBody(retry) : null;
+            report(attempt, retry.ok ? "accepted_after_recovery" : failure(retry.status, retryError), retry.status);
             return retry;
           }
         }
@@ -144,7 +143,6 @@ function install() {
   globalThis.fetch = Object.assign(patched, base);
 }
 
-// Only export the factory: the engine treats every export as a plugin.
 export const OpenWorkTitleRecovery = async (input: {
   client: { app: { log: (input: { body: {
     service: string; level: "info" | "warn"; message: string; extra: Diagnostic;

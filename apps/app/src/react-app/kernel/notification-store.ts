@@ -1,9 +1,3 @@
-// Persistent notification center store. Background/system events land here
-// (instead of interrupting with toasts) and survive reloads via localStorage.
-// Actions are serializable descriptors — not callbacks — so entries can be
-// acted on after an app restart. See shell/notifications.ts for the
-// notifyEvent/notifyAlert entry points and shell/notification-center.tsx for
-// the bell UI.
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
 
@@ -32,12 +26,10 @@ export type AppNotification = {
   severity: NotificationSeverity;
   title: string;
   body?: string;
-  /** How many times this entry was coalesced via dedupeKey. */
   count: number;
   createdAt: number;
   updatedAt: number;
   readAt: number | null;
-  /** Unread entries with the same key merge instead of stacking. */
   dedupeKey?: string;
   action?: NotificationAction;
   actionLabel?: string;
@@ -94,7 +86,6 @@ function isAction(value: unknown): value is NotificationAction {
   return false;
 }
 
-/** Rebuild persisted entries defensively so corrupt storage never breaks boot. */
 function sanitizeNotifications(value: unknown): AppNotification[] {
   if (!Array.isArray(value)) return [];
   const notifications: AppNotification[] = [];
@@ -197,8 +188,6 @@ export const useNotificationStore = create<NotificationStore>()(
       name: PERSISTED_NOTIFICATION_STORE_KEY,
       version: 1,
       storage: createJSONStorage(() => localStorage),
-      // Old cloud/provider rows have no member identity and cannot be safely
-      // migrated into a scoped feed. Device/system notices keep their actions.
       migrate: (persistedState) => ({
         notifications: sanitizeNotifications(
           typeof persistedState === "object" && persistedState !== null

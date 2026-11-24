@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 
 export type DenOptionCardProps = {
   type: "radio" | "checkbox";
-  /** Required for radios so the browser groups them. */
   name?: string;
   checked: boolean;
   onChange: (checked: boolean) => void;
@@ -12,10 +11,6 @@ export type DenOptionCardProps = {
   testId?: string;
 };
 
-/**
- * Selectable card wrapping a native input, so keyboard, screen readers and
- * end-to-end flows keep working against a real radio or checkbox.
- */
 export function DenOptionCard({
   type,
   name,

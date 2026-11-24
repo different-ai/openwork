@@ -1,0 +1,53 @@
+{
+  "name": "@openwork/managed-deployments",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test src/*.test.ts",
+    "typecheck": "tsc --noEmit",
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "exports": {
+    "./schema": {
+      "types": {
+        "openwork-build": "./dist/types/src/schema.d.ts",
+        "default": "./src/schema.ts"
+      },
+      "default": "./src/schema.ts"
+    },
+    "./configuration": {
+      "types": {
+        "openwork-build": "./dist/types/src/configuration.d.ts",
+        "default": "./src/configuration.ts"
+      },
+      "default": "./src/configuration.ts"
+    },
+    "./lifecycle": {
+      "types": {
+        "openwork-build": "./dist/types/src/lifecycle.d.ts",
+        "default": "./src/lifecycle.ts"
+      },
+      "default": "./src/lifecycle.ts"
+    },
+    "./gcp": {
+      "types": {
+        "openwork-build": "./dist/types/src/gcp.d.ts",
+        "default": "./src/gcp.ts"
+      },
+      "default": "./src/gcp.ts"
+    },
+    "./aws": {
+      "types": {
+        "openwork-build": "./dist/types/src/aws.d.ts",
+        "default": "./src/aws.ts"
+      },
+      "default": "./src/aws.ts"
+    }
+  },
+  "dependencies": {
+    "zod": "^4.6.6",
+    "jose": "6.2.8",
+    "fast-xml-parser": "5.12.0"
+  }
+}

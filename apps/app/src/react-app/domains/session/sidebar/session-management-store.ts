@@ -1,15 +1,6 @@
-/**
- * Zustand store for session management primitives (pin, manual order, custom
- * group mirror + expanded state). Persisted to localStorage via
- * zustand/middleware/persist.
- *
- * Archive is server-side (OpenCode session.time.archived). Session groups are
- * synced server-side; this store keeps a local optimistic mirror plus UI-only
- * collapsed state. Components import it directly with selectors, avoiding
- * context/prop drilling.
- */
 import { create } from "zustand";
 import { createJSONStorage, persist } from "zustand/middleware";
+import { sessionManagementStorage } from "./session-management-storage";
 
 export type SessionGroupDefinition = {
   id: string;
@@ -58,9 +49,29 @@ type SessionGroupSyncStatus = {
   deferredServerSync?: SessionGroupDeferredServerSync;
 };
 
+export type FeedPlacement = { key: number; at: number };
+
+export type SidebarView = "workspaces" | "feed";
+
+export type FeedFolder = { workspaceId: string; groupId: string };
+
+export const FEED_GROUP_BY_OPTIONS = ["day", "activity", "none"] as const;
+export type FeedGroupBy = (typeof FEED_GROUP_BY_OPTIONS)[number];
+export const DEFAULT_FEED_GROUP_BY: FeedGroupBy = "day";
+
+export const FEED_SORT_BY_OPTIONS = ["activity", "created"] as const;
+export type FeedSortBy = (typeof FEED_SORT_BY_OPTIONS)[number];
+export const DEFAULT_FEED_SORT_BY: FeedSortBy = "activity";
+
 type SessionManagementState = {
   pinnedIds: string[];
   unreadIds: string[];
+  workedAtById: Record<string, number>;
+  feedPlacementById: Record<string, FeedPlacement>;
+  sidebarView: SidebarView;
+  feedFolders: FeedFolder[];
+  feedGroupBy: FeedGroupBy;
+  feedSortBy: FeedSortBy;
   orderByWorkspace: Record<string, string[]>;
   groupsByWorkspace: Record<string, WorkspaceGroupState>;
 };
@@ -70,6 +81,12 @@ type SessionManagementActions = {
   reorderPins: (sessionIds: string[]) => void;
   markUnread: (sessionId: string) => void;
   clearUnread: (sessionId: string) => void;
+  noteActivity: (sessionId: string) => void;
+  placeInFeed: (sessionId: string, key: number) => void;
+  setSidebarView: (view: SidebarView) => void;
+  setFeedGroupBy: (groupBy: FeedGroupBy) => void;
+  setFeedSortBy: (sortBy: FeedSortBy) => void;
+  toggleFeedFolder: (workspaceId: string, groupId: string) => void;
   reorderSessions: (workspaceId: string, sessionIds: string[]) => void;
   assignGroup: (workspaceId: string, sessionId: string, groupId: string | null) => void;
   createGroup: (workspaceId: string, label: string) => void;
@@ -77,7 +94,6 @@ type SessionManagementActions = {
   reorderGroups: (workspaceId: string, groupIds: string[]) => void;
   toggleGroupExpanded: (workspaceId: string, groupId: string) => void;
   replaceWorkspaceGroups: (workspaceId: string, state: SessionGroupServerState) => void;
-  /** Remove a group definition and move its sessions to another group or ungrouped. */
   removeGroup: (workspaceId: string, groupId: string, destinationGroupId?: string | null) => void;
   forgetWorkspace: (workspaceId: string) => void;
 };
@@ -177,7 +193,6 @@ function reportSyncError(error: unknown): void {
   console.warn("[session-groups] server sync failed", error);
 }
 
-/** First send cannot proceed until its captured group has been assigned. */
 export async function assignNewSessionGroup(workspaceId: string, sessionId: string, groupId: string | null): Promise<void> {
   if (groupId && !useSessionManagementStore.getState().groupsByWorkspace[workspaceId]?.groups.some((group) => group.id === groupId)) {
     throw new Error("Group is unavailable. Choose another destination.");
@@ -206,21 +221,23 @@ function syncServerState(request: Promise<SessionGroupServerState | null> | unde
 
 export const useSessionManagementStore = create<SessionManagementStore>()(
   persist(
-    (set) => ({
+    (set, get) => ({
       pinnedIds: [],
       unreadIds: [],
+      workedAtById: {},
+      feedPlacementById: {},
+      sidebarView: "workspaces",
+      feedFolders: [],
+      feedGroupBy: DEFAULT_FEED_GROUP_BY,
+      feedSortBy: DEFAULT_FEED_SORT_BY,
       orderByWorkspace: {},
       groupsByWorkspace: {},
 
       togglePin: (sessionId) =>
         set((state) => {
           const idx = state.pinnedIds.indexOf(sessionId);
-          return {
-            pinnedIds:
-              idx >= 0
-                ? state.pinnedIds.filter((id) => id !== sessionId)
-                : [...state.pinnedIds, sessionId],
-          };
+          if (idx >= 0) return { pinnedIds: state.pinnedIds.filter((id) => id !== sessionId) };
+          return { pinnedIds: [...state.pinnedIds, sessionId] };
         }),
 
       reorderPins: (sessionIds) =>
@@ -242,6 +259,32 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
             ? { unreadIds: state.unreadIds.filter((id) => id !== sessionId) }
             : state
         )),
+
+      noteActivity: (sessionId) =>
+        set((state) => ({ workedAtById: { ...state.workedAtById, [sessionId]: Date.now() } })),
+
+      placeInFeed: (sessionId, key) =>
+        set((state) => (Number.isFinite(key)
+          ? { feedPlacementById: { ...state.feedPlacementById, [sessionId]: { key, at: Date.now() } } }
+          : state)),
+
+      toggleFeedFolder: (workspaceId, groupId) =>
+        set((state) => {
+          const pinned = state.feedFolders.some((folder) => folder.workspaceId === workspaceId && folder.groupId === groupId);
+          return {
+            feedFolders: pinned
+              ? state.feedFolders.filter((folder) => folder.workspaceId !== workspaceId || folder.groupId !== groupId)
+              : [...state.feedFolders, { workspaceId, groupId }],
+          };
+        }),
+
+      setSidebarView: (view) => set({ sidebarView: view === "feed" ? "feed" : "workspaces" }),
+
+      setFeedGroupBy: (groupBy) =>
+        set({ feedGroupBy: FEED_GROUP_BY_OPTIONS.includes(groupBy) ? groupBy : DEFAULT_FEED_GROUP_BY }),
+
+      setFeedSortBy: (sortBy) =>
+        set({ feedSortBy: FEED_SORT_BY_OPTIONS.includes(sortBy) ? sortBy : DEFAULT_FEED_SORT_BY }),
 
       reorderSessions: (workspaceId, sessionIds) =>
         set((state) => (
@@ -421,14 +464,10 @@ export const useSessionManagementStore = create<SessionManagementStore>()(
     }),
     {
       name: "openwork.react.sessionManagement",
-      storage: createJSONStorage(() => localStorage),
+      storage: createJSONStorage(sessionManagementStorage),
     },
   ),
 );
-
-// ---------------------------------------------------------------------------
-// Selectors (keep render-stable references via shallow selectors)
-// ---------------------------------------------------------------------------
 
 const EMPTY_PINNED = new Set<string>();
 const EMPTY_UNREAD = new Set<string>();
@@ -436,8 +475,6 @@ const EMPTY_ORDER: string[] = [];
 
 export function usePinnedSessionIds(): Set<string> {
   const ids = useSessionManagementStore((s) => s.pinnedIds);
-  // Derive a Set; reference-stable when the array is the same object.
-  // Consumers only need membership checks so Set is ideal.
   return ids.length ? new Set(ids) : EMPTY_PINNED;
 }
 

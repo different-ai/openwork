@@ -2,7 +2,7 @@ import { callFunctionOnSurface, evaluateOnSurface } from "./surface.ts";
 import type { Surface } from "./surface.ts";
 import type { CdpClient } from "./cdp.ts";
 
-export type TargetRole = "button" | "link" | "textbox" | "checkbox" | "switch" | "menuitem" | "tab" | "option" | "separator" | "combobox" | "listbox" | "alert" | "heading" | "progressbar" | "radio";
+export type TargetRole = "button" | "link" | "textbox" | "checkbox" | "switch" | "menuitem" | "tab" | "option" | "separator" | "combobox" | "listbox" | "alert" | "heading" | "progressbar" | "radio" | "dialog";
 export type TargetMatcher = string | RegExp;
 
 export type Target = string | {
@@ -65,6 +65,30 @@ export async function readDom(surface: Surface, selector: string) {
     throw new Error("DOM inspection returned an invalid snapshot.");
   }
   return snapshot;
+}
+
+/** Browser-native file selection. Uses the real file input/change path without opening an OS picker or evaluating app state. */
+export async function attachFiles(surface: Surface, selector: string, files: string[]): Promise<void> {
+  const documentSnapshot = await surface.client.send("DOM.getDocument", { depth: 0 });
+  const root = isRecord(documentSnapshot) && isRecord(documentSnapshot.root) ? numberField(documentSnapshot.root, "nodeId") : null;
+  if (!root) throw new Error("The file picker document is unavailable");
+  const result = await surface.client.send("DOM.querySelectorAll", { nodeId: root, selector });
+  const nodes = isRecord(result) && Array.isArray(result.nodeIds) ? result.nodeIds : [];
+  if (nodes.length !== 1 || typeof nodes[0] !== "number") throw new Error(`Expected one file input for ${selector}; found ${nodes.length}`);
+  const unavailable = await callFunctionOnSurface(surface, (selector) => {
+    const input = document.querySelector(selector);
+    if (!(input instanceof HTMLInputElement) || input.type !== "file" || !input.isConnected) return "not an available file input";
+    // :disabled includes inherited fieldset disabling (and respects the first-legend exception).
+    if (input.matches(":disabled") || input.closest('[aria-disabled="true"], [inert]')) return "disabled";
+    // A file input itself is intentionally hidden by most pickers; an unavailable parent surface is not.
+    for (let parent = input.parentElement; parent; parent = parent.parentElement) {
+      const style = getComputedStyle(parent);
+      if (parent.getAttribute("aria-hidden") === "true" || style.display === "none" || style.visibility === "hidden" || style.visibility === "collapse") return "unavailable parent surface";
+    }
+    return null;
+  }, [selector]);
+  if (unavailable !== null) throw new Error(`File input unavailable: ${unavailable}`);
+  await surface.client.send("DOM.setFileInputFiles", { nodeId: nodes[0], files });
 }
 
 interface SerializedMatcher {
@@ -132,6 +156,8 @@ const KEY_CODES: Readonly<Record<string, { code: string; virtualKeyCode: number 
   PageDown: { code: "PageDown", virtualKeyCode: 34 },
   Space: { code: "Space", virtualKeyCode: 32 },
 };
+
+export type ClickModifier = "Alt" | "Control" | "Meta" | "Shift";
 
 const MODIFIERS: Readonly<Record<string, number>> = {
   Alt: 1,
@@ -346,6 +372,7 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
       if (explicit) return explicit;
       const tag = element.tagName.toLowerCase();
       if (tag === "button") return "button";
+      if (tag === "dialog") return "dialog";
       if (tag === "select") return element instanceof HTMLSelectElement && (element.multiple || element.size > 1) ? "listbox" : "combobox";
       if (/^h[1-6]$/.test(tag)) return "heading";
       if (tag === "a" && element.hasAttribute("href")) return "link";
@@ -390,7 +417,7 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
         ? 'h1, h2, h3, h4, h5, h6, [role="heading"]'
         : target.text && !target.role && !target.label && !target.placeholder && !target.testId
           ? 'body *'
-          : 'button, a[href], input, textarea, select, [role="combobox"], [role="listbox"], [contenteditable="true"], [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="switch"], [role="menuitem"], [role="tab"], [role="option"], [role="separator"], [role="alert"], [role="progressbar"], [role="radio"], [data-testid]';
+          : 'button, a[href], input, textarea, select, [role="combobox"], [role="listbox"], [contenteditable="true"], [role="button"], [role="link"], [role="textbox"], [role="checkbox"], [role="switch"], [role="menuitem"], [role="tab"], [role="option"], [role="separator"], [role="alert"], [role="progressbar"], [role="radio"], [role="dialog"], dialog, [data-testid]';
     const candidates = [...document.querySelectorAll<HTMLElement>(selector)].filter((element: Element) => {
       if (target.role && implicitRole(element) !== target.role) return false;
       if (target.placeholder !== undefined && (element.getAttribute("placeholder") ?? element.getAttribute("aria-placeholder")) !== target.placeholder) return false;
@@ -418,7 +445,11 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
         matches = starts.length === 1 ? starts : [];
       }
     }
-    const element = matches[target.nth];
+    // Retained conversations leave hidden controls in DOM order. A person's
+    // target is the rendered control; a hidden earlier composer must not steal
+    // clicks or draft verification from the selected conversation.
+    const visibleMatches = matches.filter(rendered);
+    const element = visibleMatches[target.nth] ?? (visibleMatches.length === 0 ? matches[target.nth] : undefined);
     if (!element) {
       // Miss diagnostics: every rendered element of the requested role (or every rendered
       // button/link for role-less targets), so a miss shows the page's real controls rather
@@ -536,13 +567,22 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
 export async function clickAt(
   surface: Surface,
   point: Point,
-  options: { button?: "left" | "right" | "middle"; clickCount?: number } = {},
+  options: { button?: "left" | "right" | "middle"; clickCount?: number; modifiers?: readonly ClickModifier[] } = {},
 ): Promise<void> {
   const button = options.button ?? "left";
   const clickCount = options.clickCount ?? 1;
+  // Held keys ride on the mouse events themselves, as Shift-click or Cmd-click does for a person.
+  const modifiers = (options.modifiers ?? []).reduce((mask, key) => mask | (MODIFIERS[key] ?? 0), 0);
+  // A person activates the window they click. Electron can leave an admin or
+  // OAuth window foregrounded; synthetic input alone does not activate this
+  // target, and subsequent insertText can otherwise be silently discarded.
+  // An isolated frame (an MCP App) has no window of its own to activate.
+  await surface.client.send("Page.bringToFront").catch((cause: unknown) => {
+    if (!String(cause).includes("only be executed on top-level targets")) throw cause;
+  });
   await surface.client.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y, button: "none" });
-  await surface.client.send("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button, clickCount });
-  await surface.client.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button, clickCount });
+  await surface.client.send("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button, clickCount, modifiers });
+  await surface.client.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button, clickCount, modifiers });
 }
 
 export async function typeText(surface: Surface, text: string): Promise<void> {
@@ -662,7 +702,7 @@ function assertInteractive(found: Located): void {
 export async function clickTarget(
   surface: Surface,
   target: Target,
-  options: { timeoutMs?: number; mustHitTest?: boolean; button?: "left" | "right" | "middle"; clickCount?: number } = {},
+  options: { timeoutMs?: number; mustHitTest?: boolean; button?: "left" | "right" | "middle"; clickCount?: number; modifiers?: readonly ClickModifier[] } = {},
 ): Promise<Located> {
   const mustHitTest = options.mustHitTest ?? true;
   const found = await waitForLocated(surface, target, { timeoutMs: options.timeoutMs, mustHitTest });
@@ -673,7 +713,7 @@ export async function clickTarget(
     const covering = fresh.covering ? ` Covered by ${fresh.covering.tag}${fresh.covering.text ? ` text=${JSON.stringify(fresh.covering.text)}` : ""}.` : "";
     throw new Error(`Target ${JSON.stringify(fresh.name)} moved before the click could be dispatched: ${describeRect(found.rect)} → ${describeRect(fresh.rect)} (visible=${fresh.visible}, hitTestOk=${fresh.hitTestOk}).${covering}`);
   }
-  await clickAt(surface, fresh.center, { button: options.button, clickCount: options.clickCount });
+  await clickAt(surface, fresh.center, { button: options.button, clickCount: options.clickCount, modifiers: options.modifiers });
   return fresh;
 }
 

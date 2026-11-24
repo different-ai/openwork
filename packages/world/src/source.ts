@@ -86,9 +86,6 @@ export type RefResolver = (ref: string) => Promise<string>;
 /** Resolve a branch or tag on origin to its current commit SHA. */
 export function gitRefResolver(cwd: string): RefResolver {
   return async (ref) => {
-    // Never put the requested ref in git argv. Git accepts command overrides
-    // such as --upload-pack; selecting an exact ref from its output keeps the
-    // only variable input out of the command line altogether.
     const requested = parseSourceSpec(`ref:${ref}`);
     if (requested.kind !== "ref") throw new Error("A branch ref is required.");
     const { stdout } = await promisify(execFile)("git", ["ls-remote", "--heads", "origin"], {

@@ -34,8 +34,6 @@ const ESTIMATED_HEIGHT = 240
 const MAX_CACHED_VIEWPORTS = 12
 const MAX_CACHED_GROUPS = 2048
 const heightCache = new Map<string, Map<string, number>>()
-// Existing reading-anchor and session controllers own scroll writes. TanStack
-// observes their actual offset; its initial connection must not restore it again.
 const observeOnlyScroll = () => {}
 type ThreadVirtualizer = Virtualizer<HTMLDivElement, HTMLDivElement>
 type Segment = { key: string; index: number; height: number; placeholder: boolean }
@@ -83,12 +81,12 @@ function VirtualGroups<T>(props: ProgressiveMessageListProps<T>) {
     const element = instance.scrollElement
     let active = true
     const sync = () => {
-      if (active && element && element.clientHeight > 0 && element.clientWidth > 0 && element.scrollTop !== instance.scrollOffset) callback(element.scrollTop, false)
+      if (active && element && bridge.current?.isMeasurable() && element.scrollTop !== instance.scrollOffset) callback(element.scrollTop, false)
     }
     syncOffset.current = sync
     sync()
     const unsubscribe = observeElementOffset(instance, (offset, isScrolling) => {
-      if (active && element && element.clientHeight > 0 && element.clientWidth > 0) callback(element.scrollTop ?? offset, isScrolling)
+      if (active && element && bridge.current?.isMeasurable()) callback(element.scrollTop ?? offset, isScrolling)
     })
     return () => {
       active = false
@@ -102,8 +100,6 @@ function VirtualGroups<T>(props: ProgressiveMessageListProps<T>) {
       const width = instance.scrollElement?.clientWidth ?? rect.width
       const changed = previous?.width !== width || previous?.height !== rect.height
       previous = { width, height: rect.height }
-      // A transient zero-size layout is not an empty transcript. Keep the last
-      // window and refresh its origin/offset on reveal, even at the same width.
       if (width <= 0 || rect.height <= 0) return
       setWidth(width)
       callback(rect)
@@ -153,7 +149,7 @@ function VirtualGroups<T>(props: ProgressiveMessageListProps<T>) {
   }, [identityKeys, priorityIndex, anchorIndex, viewport?.revealAll, Boolean(viewport), revision])
   const measureElement = React.useCallback((node: HTMLDivElement, entry: ResizeObserverEntry | undefined, instance: ThreadVirtualizer) => {
     const index = instance.indexFromElement(node)
-    if (!viewport?.scrollRef.current?.clientHeight || !viewport.scrollRef.current.clientWidth) {
+    if (!viewport?.scrollRef.current?.clientHeight || !viewport.scrollRef.current.clientWidth || !node.parentElement?.getBoundingClientRect().width) {
       return instance.measurementsCache[index]?.size ?? estimateSize(index)
     }
     const height = entry?.borderBoxSize[0]?.blockSize ?? node.getBoundingClientRect().height
@@ -196,8 +192,10 @@ function VirtualGroups<T>(props: ProgressiveMessageListProps<T>) {
     const offset = bridge.current?.contentOffset()
     if (offset !== undefined && offset !== scrollMargin) setScrollMargin(offset)
   })
+  const measuredEstimates = React.useRef<typeof estimates | null>(null)
   React.useLayoutEffect(() => {
-    virtualizer.measure()
+    if (measuredEstimates.current !== estimates) virtualizer.measure()
+    measuredEstimates.current = estimates
     bridge.current?.measureMounted()
   }, [virtualizer, estimates])
   React.useLayoutEffect(() => { syncOffset.current?.() })
@@ -242,10 +240,16 @@ type MeasuredGroupsProps<T> = ProgressiveMessageListProps<T> & {
 class MeasuredGroups<T> extends React.Component<MeasuredGroupsProps<T>> {
   private container: HTMLDivElement | null = null
   private list = React.createRef<HTMLDivElement>()
+  private layoutObserver: ResizeObserver | null = null
+  private measurable = false
+
+  isMeasurable() {
+    return Boolean(this.container?.clientHeight && this.container.clientWidth && this.list.current?.getBoundingClientRect().width)
+  }
 
   contentOffset() {
     const list = this.list.current
-    if (!list || !this.container?.clientHeight || !this.container.clientWidth) return undefined
+    if (!list || !this.isMeasurable() || !this.container) return undefined
     const style = window.getComputedStyle(list)
     let top = list.getBoundingClientRect().top + (Number.parseFloat(style.borderTopWidth) || 0) + (Number.parseFloat(style.paddingTop) || 0)
     if (this.props.header) {
@@ -344,7 +348,12 @@ class MeasuredGroups<T> extends React.Component<MeasuredGroupsProps<T>> {
       this.frame = null
       if (!this.active) return
       this.connectViewport()
-      if (this.container && (!this.container.clientHeight || !this.container.clientWidth)) return
+      if (!this.isMeasurable()) return
+      if (!this.measurable) {
+        this.measurable = true
+        this.measureMounted()
+        this.props.viewport?.onReady?.()
+      }
       this.pendingInteraction.clear()
       if (this.props.anchorIndex >= 0 || this.props.viewport?.historyComplete) this.waitingForAnchor = false
       this.props.refresh()
@@ -373,14 +382,26 @@ class MeasuredGroups<T> extends React.Component<MeasuredGroupsProps<T>> {
     document.addEventListener("selectionchange", this.schedule)
     document.addEventListener("focusin", this.schedule)
     document.addEventListener("focusout", this.schedule)
+    this.measurable = this.isMeasurable()
+    this.layoutObserver = new ResizeObserver(() => {
+      if (!this.active) return
+      const measurable = this.isMeasurable()
+      const revealed = measurable && !this.measurable
+      this.measurable = measurable
+      if (!revealed) return
+      this.measureMounted()
+      this.props.refresh()
+      this.props.viewport?.onReady?.()
+    })
+    if (this.list.current) this.layoutObserver.observe(this.list.current)
     this.measureMounted()
-    this.props.viewport?.onReady?.()
+    if (this.measurable) this.props.viewport?.onReady?.()
     if (!this.container) this.schedule()
   }
 
   getSnapshotBeforeUpdate(): ReadingPosition | null {
     const container = this.container
-    if (!container || sameStructure(this.committed, this.props.segments)) return null
+    if (!container || !this.isMeasurable() || sameStructure(this.committed, this.props.segments)) return null
     const bounds = container.getBoundingClientRect()
     const sticky = Boolean(this.props.viewport?.stickyBottom()) && container.scrollHeight - container.scrollTop - container.clientHeight <= 1
     const reserved = [...this.nodes.values()].some((node) => {
@@ -405,7 +426,7 @@ class MeasuredGroups<T> extends React.Component<MeasuredGroupsProps<T>> {
     this.committed = this.props.segments
     if (previous.keys !== this.props.keys || this.waitingForAnchor && (this.props.anchorIndex >= 0 || this.props.viewport?.historyComplete)) this.schedule()
     const container = this.container
-    if (container && snapshot) {
+    if (container && snapshot && this.isMeasurable()) {
       const element = snapshot.element?.isConnected ? snapshot.element
         : [...container.querySelectorAll<HTMLElement>("[data-message-id]")].find((node) => node.dataset.messageId === snapshot.messageId)
       const top = snapshot.sticky && this.props.viewport?.stickyBottom()
@@ -415,7 +436,7 @@ class MeasuredGroups<T> extends React.Component<MeasuredGroupsProps<T>> {
       if (Math.abs(container.scrollTop - top) > 0.5) container.scrollTop = top
     }
     this.measureMounted()
-    if (changed) this.props.viewport?.onReady?.()
+    if (changed && this.isMeasurable()) this.props.viewport?.onReady?.()
   }
 
   componentWillUnmount() {
@@ -429,6 +450,7 @@ class MeasuredGroups<T> extends React.Component<MeasuredGroupsProps<T>> {
     document.removeEventListener("focusout", this.schedule)
     this.container = null
     this.interactions?.disconnect()
+    this.layoutObserver?.disconnect()
   }
 
   render() {

@@ -40,6 +40,8 @@ export interface SeedAppWebOptions {
   name?: string;
   mocks?: Record<string, MockBoot>;
   headless?: boolean;
+  /** Report a hover-capable mouse even where headless Chrome finds no pointer device. See `ChromeSurfaceOptions.mouse`. */
+  mouse?: boolean;
 }
 
 /** A test-owned real app-web stack. This is distinct from seed.web(), which drives Den. */
@@ -227,6 +229,7 @@ export async function appWeb(options: SeedAppWebOptions & { place: Place }): Pro
         host: options.place.host(),
         startUrl: "about:blank",
         headless: options.headless ?? true,
+        mouse: options.mouse,
       });
       if (browser.handle.kind !== "chrome") throw new Error("App-web requires a chrome handle.");
       const sandbox = browser.handle.sandboxId;
@@ -272,10 +275,15 @@ export async function appWeb(options: SeedAppWebOptions & { place: Place }): Pro
         host: options.place.host(),
         startUrl: "about:blank",
         headless: options.headless ?? true,
+        mouse: options.mouse,
       });
       if (browser.handle.kind !== "chrome") throw new Error("App-web requires a chrome handle.");
       browser.handle.meta = { ...browser.handle.meta, actualSourceSha: localSourceSha };
     }
+    // A person's app window has focus. Headless Chrome otherwise reports an
+    // unfocused page, and keyboard shortcuts pressed before any click are lost.
+    await browser.client.send("Emulation.setFocusEmulationEnabled", { enabled: true });
+    await browser.client.send("Page.bringToFront");
     // Observe entry-bundle failures before navigation. The static startup page
     // survives a broken module load, so a DOM timeout alone hides the cause.
     await addInitScript(browser.client, () => {

@@ -26,11 +26,13 @@ export const databaseBrandAssetStorage: BrandAssetStorage = {
       .onDuplicateKeyUpdate({ set: { bytes: value } })
   },
   async read(key) {
-    const [asset] = await db
+    const lookup = (database: typeof db.$primary) => database
       .select({ bytes: OrganizationBrandAssetTable.bytes })
       .from(OrganizationBrandAssetTable)
       .where(eq(OrganizationBrandAssetTable.id, storageId(key)))
       .limit(1)
+    const replica = await lookup(db)
+    const [asset] = replica[0] ? replica : await lookup(db.$primary)
     return asset ? Uint8Array.from(asset.bytes).buffer : null
   },
 }

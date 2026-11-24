@@ -6,6 +6,7 @@ import { AppBridge } from "@modelcontextprotocol/ext-apps/app-bridge"
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js"
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js"
 import type { DynamicToolUIPart } from "ai"
+import { mcpAppResourceUri } from "@openwork/types/mcp-app"
 
 import {
   createOpenworkServerClient,
@@ -17,8 +18,10 @@ import {
 import { formatMcpAppDiagnostic, safeMcpAppDiagnosticMessage } from "../src/components/chat/mcp-app-diagnostics"
 import type { McpAppSandboxViewProps } from "../src/components/chat/mcp-app-frame"
 import * as mcpAppOrigin from "../src/components/chat/mcp-app-origin"
+import { markCloudCredentialRefreshed } from "../src/react-app/domains/connections/cloud-credential-revision"
 
-GlobalRegistrator.register({ url: "https://web.example/" })
+// happy-dom 21 loads no iframe page by default, so frames would have no window to talk to.
+GlobalRegistrator.register({ url: "https://web.example/", settings: { enableIframePageLoading: true } })
 afterAll(() => GlobalRegistrator.unregister())
 const { MessageListProvider } = await import("../src/components/chat/message-list-provider")
 const { WorkspaceProvider } = await import("../src/react-app/shell/workspace-provider")
@@ -26,14 +29,20 @@ const { useUiStateStore } = await import("../src/react-app/shell/ui-state-store"
 const { usePanelTabStore } = await import("../src/react-app/domains/session/panel/panel-tab-store")
 const { useSessionActivityStore } = await import("../src/react-app/domains/session/status/session-activity-store")
 const { McpAppTile } = await import("../src/react-app/domains/dashboard/mcp-app-tile")
-const { removeDashboardTileCache } = await import("../src/react-app/domains/dashboard/dashboard-tile-cache")
-const { flushDashboardTileCacheStorage } = await import("../src/app/lib/dashboard-cache-storage")
+const { DASHBOARD_AUTO_REFRESH_INTERVAL_MS, readDashboardTileCache, rememberDashboardTileRead, removeDashboardTileCache, writeDashboardTileCache } = await import("../src/react-app/domains/dashboard/dashboard-tile-cache")
+const { RetainedArtifactSurface } = await import("../src/react-app/domains/dashboard/retained-artifact-surface")
+const { reconcileMemberAccess, resetMemberAccessSession, setMemberAccessScope, trackMemberAccessCheck } = await import("../src/react-app/domains/dashboard/mcp-app-member-access")
+const { flushDashboardTileCacheStorage, resetDashboardTileCacheMemory } = await import("../src/app/lib/dashboard-cache-storage")
+const { setMcpAppDocumentBackend } = await import("../src/app/lib/mcp-app-document-store")
+const { cachedMcpAppResult, forgetMcpAppResult, rememberMcpAppResult } = await import("../src/app/lib/mcp-app-result-cache")
+const { createMcpAppPresentationCache, mcpAppPresentationScope } = await import("../src/app/lib/mcp-app-presentation-cache")
 const {
   buildMcpAppCsp,
   hasPreservedMcpAppResult,
   gatewayMcpAppLaunch,
   isActionableMcpAppResolutionError,
   isNativeConnectionAppLaunch,
+  McpAppDiagnosticNotice,
   McpAppFrame,
   McpAppSandboxView,
   secureMcpAppHtml,
@@ -113,7 +122,7 @@ async function startupFixture(options: Pick<McpAppSandboxViewProps, "presentatio
     mcpAppSandbox: app => ({ url: `about:blank#${app.toolName}`, expectedOrigin: "https://sandbox.example", sandbox: "allow-scripts allow-same-origin" }),
   }
   const sandboxSpy = spyOn(client, "mcpAppSandbox")
-  const views = Array.from({ length: 6 }, (_, index) => createElement(McpAppSandboxView, {
+  const views = Array.from({ length: 7 }, (_, index) => createElement(McpAppSandboxView, {
     key: index,
     origin: { client, workspaceId: `workspace-${index % 2}`, sessionId: null, readOnly: true },
     app: fixture({ toolName: `render-${index}` }), toolName: `render-${index}`,
@@ -168,6 +177,46 @@ async function startupFixture(options: Pick<McpAppSandboxViewProps, "presentatio
   }
 }
 
+describe("MCP App connection diagnostics", () => {
+  test.each(["server_unavailable", "mcp_unreachable"])("v2 keeps %s compact without feature or organization context", async causeCode => {
+    const host = await startupFixture()
+    const retry = jest.fn()
+    try {
+      await host.renderElement(createElement(McpAppDiagnosticNotice, {
+        engine: "v2", notice: "Interactive view unavailable.", onRetry: retry,
+        error: { code: "MCP_APP_RESOURCE_RESOLUTION_FAILED", causeCode, stage: "resource-resolution",
+          message: "Connection or protocol negotiation failed", toolName: "read_report", elapsedMs: 1, checkpoints: [] },
+      }))
+      expect(host.container.querySelector("p")?.textContent).toBe("View unavailable")
+      expect(host.container.querySelector("summary")?.textContent).toBe("Technical details")
+      expect(host.container.querySelector("details")?.open).toBe(false)
+      expect(host.container.querySelector("pre")?.textContent).toContain("Connection or protocol negotiation failed")
+      const button = host.container.querySelector("button")
+      expect(button?.textContent).toBe("Retry view")
+      await act(async () => button?.click())
+      expect(retry).toHaveBeenCalledTimes(1)
+    } finally { await host.dispose() }
+  })
+
+  test.each([
+    { engine: "v1", causeCode: "mcp_unreachable" },
+    { engine: undefined, causeCode: "mcp_unreachable" },
+    { engine: "v2", causeCode: "access_denied" },
+  ] satisfies Array<{ engine: "v1" | "v2" | undefined; causeCode: string }>)("preserves full diagnostics for $engine / $causeCode", async ({ engine, causeCode }) => {
+    const host = await startupFixture()
+    try {
+      await host.renderElement(createElement(McpAppDiagnosticNotice, {
+        engine, notice: "Interactive view unavailable.", onRetry: jest.fn(),
+        error: { code: "MCP_APP_RESOURCE_RESOLUTION_FAILED", causeCode, stage: "resource-resolution",
+          message: "Original failure reason", toolName: "read_report", elapsedMs: 1, checkpoints: [] },
+      }))
+      expect(host.container.querySelector("p")?.textContent).toContain("Original failure reason")
+      expect(host.container.querySelector("summary")?.textContent).toContain("MCP_APP_RESOURCE_RESOLUTION_FAILED")
+      expect(host.container.querySelector("button")?.textContent).toBe("Retry")
+    } finally { await host.dispose() }
+  })
+})
+
 describe("MCP App startup scheduling", () => {
   test("cached HTML exposes pending tools, waits for a live lease, and never reuses cached authority", async () => {
     const host = await startupFixture()
@@ -190,127 +239,206 @@ describe("MCP App startup scheduling", () => {
     } finally { call.mockRestore(); await host.dispose() }
   })
 
-  test("starts at most two Apps across workspaces and advances FIFO only after initialization", async () => {
-    const host = await startupFixture()
+  test("starts at most four Apps across workspaces and advances FIFO only after initialization", async () => {
+    // Dashboard tiles start without waiting to scroll into view; chat Apps share the same queue.
+    const host = await startupFixture({ presentation: "dashboard" })
     try {
-      await host.render([0, 1, 2, 3, 4])
-      expect([0, 1, 2, 3, 4].map(id => host.frame(id).getAttribute("src"))).toEqual(["about:blank#render-0", "about:blank#render-1", null, null, null])
-      expect(host.deadlines).toEqual([10_000, 10_000])
-      await host.notify(2, "ui/notifications/sandbox-proxy-ready")
+      await host.render([0, 1, 2, 3, 4, 5])
+      expect([0, 1, 2, 3, 4, 5].map(id => host.frame(id).getAttribute("src"))).toEqual([
+        "about:blank#render-0", "about:blank#render-1", "about:blank#render-2", "about:blank#render-3", null, null,
+      ])
+      expect(host.deadlines).toEqual([10_000, 10_000, 10_000, 10_000])
+      await host.notify(4, "ui/notifications/sandbox-proxy-ready")
       await host.notify(0, "ui/notifications/sandbox-proxy-ready", "https://wrong.example")
       expect(host.connectSpy).not.toHaveBeenCalled()
-      await host.notify(0, "ui/notifications/sandbox-proxy-ready")
-      await host.notify(1, "ui/notifications/sandbox-proxy-ready")
-      expect(host.resourceSpy).toHaveBeenCalledTimes(2)
-      expect(host.frame(2).getAttribute("src")).toBeNull()
-      await act(async () => { host.bridges[1].oninitialized?.() })
-      expect(host.frame(2).getAttribute("src")).toBe("about:blank#render-2")
-      expect(host.frame(3).getAttribute("src")).toBeNull()
-      await act(async () => { host.bridges[1].oninitialized?.() })
-      expect(host.frame(3).getAttribute("src")).toBeNull()
-      await act(async () => { host.bridges[0].oninitialized?.() })
-      expect(host.frame(3).getAttribute("src")).toBe("about:blank#render-3")
+      for (const id of [0, 1, 2, 3]) await host.notify(id, "ui/notifications/sandbox-proxy-ready")
+      expect(host.resourceSpy).toHaveBeenCalledTimes(4)
       expect(host.frame(4).getAttribute("src")).toBeNull()
-      expect(host.inputSpy).toHaveBeenCalledTimes(2)
-      expect(host.resultSpy).toHaveBeenCalledTimes(2)
+      await act(async () => { host.bridges[1].oninitialized?.() })
+      expect(host.frame(4).getAttribute("src")).toBe("about:blank#render-4")
+      expect(host.frame(5).getAttribute("src")).toBeNull()
+      await act(async () => { host.bridges[1].oninitialized?.() })
+      expect(host.frame(5).getAttribute("src")).toBeNull()
+      await act(async () => { host.bridges[0].oninitialized?.() })
+      expect(host.frame(5).getAttribute("src")).toBe("about:blank#render-5")
+      for (const id of [2, 3]) await act(async () => { host.bridges[id].oninitialized?.() })
+      expect(host.inputSpy).toHaveBeenCalledTimes(4)
+      expect(host.resultSpy).toHaveBeenCalledTimes(4)
       await host.advance(10_000)
-      expect(host.errorSpy.mock.calls.map(([, diagnostic]) => diagnostic.toolName)).toEqual(["render-2", "render-3"])
-      expect(host.frame(0).getAttribute("src")).toBe("about:blank#render-0")
-      expect(host.frame(1).getAttribute("src")).toBe("about:blank#render-1")
+      expect(host.errorSpy.mock.calls.map(([, diagnostic]) => diagnostic.toolName)).toEqual(["render-4", "render-5"])
+      for (const id of [0, 1, 2, 3]) expect(host.frame(id).getAttribute("src")).toBe(`about:blank#render-${id}`)
     } finally { await host.dispose() }
   })
 
-  test("gives each navigation ten seconds, excludes queue time, and never retries a timed-out startup", async () => {
+  test.each(["same", "changed"])("a cached chat preview goes live in place only for the same document (%s)", async (document) => {
+    // Inline Apps wait for IntersectionObserver, which happy-dom never fires.
+    const intersectionObserver = Reflect.get(globalThis, "IntersectionObserver")
+    Reflect.set(globalThis, "IntersectionObserver", undefined)
     const host = await startupFixture()
+    const appId = `cob_0${"0".repeat(25)}`
+    const resourceUri = mcpAppResourceUri(appId, `cov_0${"0".repeat(25)}`)
+    const launch = { connectionId: appId, toolName: "open_app", resourceUri, arguments: {} }
+    const saved: OpenworkMcpAppResource = fixture({ launchId: undefined, serverName: "openwork-app-host-connect-fixture", toolName: "open_app", resourceUri })
+    const live = fixture({ ...saved, launchId: "live-lease", ...(document === "changed" ? { html: "<p>changed</p>" } : {}) })
+    const discovery = Promise.withResolvers<{ app: OpenworkMcpAppResource | null }>()
+    const resolveSpy = spyOn(host.client, "resolveMcpApp").mockImplementation(() => discovery.promise)
+    const callSpy = spyOn(host.client, "callMcpAppTool").mockResolvedValue({ content: [] })
+    const releaseSpy = spyOn(host.client, "releaseMcpApp").mockResolvedValue({ released: true })
+    const actionContext = { requestId: 1, signal: new AbortController().signal,
+      sendNotification: async () => {}, sendRequest: async () => { throw new Error("Unexpected request") } }
+    const settle = async (done: () => boolean) => {
+      for (let turn = 0; turn < 50 && !done(); turn += 1) await act(async () => { await new Promise(resolve => setImmediate(resolve)) })
+    }
+    const part: DynamicToolUIPart = {
+      type: "dynamic-tool", toolName: "render-0", toolCallId: "preview-launch", state: "output-available", input: {}, output: "ok",
+      callProviderMetadata: { openwork: { mcpResult: { content: [{ type: "text", text: "ok" }], _meta: { "openwork/mcpApp": launch } } } },
+    }
     try {
-      await host.render([0, 1, 2, 3, 4])
+      localStorage.setItem("openwork.den.authToken", "preview-fixture-token")
+      const scope = await mcpAppPresentationScope({ client: host.client, workspaceId: "fixture", sessionId: null, readOnly: false })
+      if (!scope) throw new Error("Missing presentation scope")
+      await createMcpAppPresentationCache(scope, "fixture").write(launch, saved)
+      await host.renderElement(createElement(MessageListProvider, {
+        client: host.client, workspaceId: "fixture", sessionId: "session_fixture", mcpAppEngine: "v2",
+        showThinking: false, developerMode: false, displaySuggestions: false, providerConnectedCount: 0,
+        dispatchAction: () => {}, setPrompt: () => {}, onRevertToUserMessage: () => {},
+        onForkAtMessage: () => {}, onEditUserMessage: () => {},
+        onMcpReconnect: async () => { throw new Error("Unexpected reconnect") },
+        onMcpReopenAuthorization: async () => {},
+        children: createElement(McpAppFrame, { part }),
+      }))
+      await settle(() => host.container.querySelector("iframe") !== null)
+      const iframe = host.frame(0)
+      expect(iframe.hasAttribute("inert")).toBe(true)
+      expect(resolveSpy).toHaveBeenCalledTimes(1)
+      await host.notify(0, "ui/notifications/sandbox-proxy-ready")
+      await host.notify(0, "ui/notifications/sandbox-resource-accepted")
+      await act(async () => { host.bridges[0].oninitialized?.() })
+      // The preview may ask now, but nothing runs before the live lease.
+      const pending = host.bridges[0].oncalltool?.({ name: "read_detail" }, actionContext)
+      await settle(() => false)
+      expect(callSpy).not.toHaveBeenCalled()
+      await act(async () => discovery.resolve({ app: live }))
+      await settle(() => document === "same" ? callSpy.mock.calls.length > 0 : host.srcAssignments.length > 1)
+      expect(host.frame(0)).toBe(iframe)
+      expect(iframe.hasAttribute("inert")).toBe(false)
+      if (document === "same") {
+        await expect(pending).resolves.toEqual({ content: [] })
+        expect(callSpy.mock.calls[0][1]).toMatchObject({ launchId: "live-lease", name: "read_detail" })
+        expect(host.srcAssignments).toHaveLength(1)
+        expect(host.sandboxSpy).toHaveBeenCalledTimes(1)
+        expect(host.connectSpy).toHaveBeenCalledTimes(1)
+        expect(host.teardownSpy).not.toHaveBeenCalled()
+        // A chat card cannot renew its lease in place: a stale one retires the view as for any live App.
+        callSpy.mockRejectedValueOnce(new OpenworkServerError(422, "stale_launch_context", "This App launch has expired."))
+        await expect(host.bridges[0].oncalltool?.({ name: "read_summary" }, actionContext)).rejects.toThrow("expired")
+        await settle(() => host.container.querySelector("iframe") === null)
+        expect(host.errorSpy.mock.calls.map(([message]) => message)).toContain("[OpenWork MCP App] MCP_APP_LAUNCH_CONTEXT_STALE")
+      } else {
+        // A different document starts its own sandbox; the preview's call never runs.
+        expect(host.srcAssignments).toHaveLength(2)
+        expect(host.sandboxSpy).toHaveBeenCalledTimes(2)
+        expect(host.teardownSpy).toHaveBeenCalledTimes(1)
+        expect(callSpy).not.toHaveBeenCalled()
+      }
+      expect(releaseSpy).not.toHaveBeenCalled()
+    } finally {
+      localStorage.removeItem("openwork.den.authToken")
+      try {
+        await host.renderElement(createElement("div"))
+        flushDashboardTileCacheStorage()
+        await host.dispose()
+      } finally {
+        for (const spy of [resolveSpy, callSpy, releaseSpy]) spy.mockRestore()
+        Reflect.set(globalThis, "IntersectionObserver", intersectionObserver)
+      }
+    }
+  })
+
+  test("gives each navigation ten seconds, excludes queue time, and never retries a timed-out startup", async () => {
+    const host = await startupFixture({ presentation: "dashboard" })
+    try {
+      await host.render([0, 1, 2, 3, 4, 5])
       await host.advance(9_999)
       expect(host.errorSpy).not.toHaveBeenCalled()
       await host.advance(1)
-      expect(host.errorSpy).toHaveBeenCalledTimes(2)
-      expect(host.deadlines).toEqual([10_000, 10_000, 20_000, 20_000])
-      expect(host.frame(2).getAttribute("src")).toBe("about:blank#render-2")
-      expect(host.frame(4).getAttribute("src")).toBeNull()
-      await host.advance(9_999)
-      expect(host.errorSpy).toHaveBeenCalledTimes(2)
-      await host.advance(1)
       expect(host.errorSpy).toHaveBeenCalledTimes(4)
-      expect(host.deadlines).toEqual([10_000, 10_000, 20_000, 20_000, 30_000])
+      expect(host.deadlines).toEqual([10_000, 10_000, 10_000, 10_000, 20_000, 20_000])
+      expect(host.frame(4).getAttribute("src")).toBe("about:blank#render-4")
+      expect(host.frame(5).getAttribute("src")).toBe("about:blank#render-5")
       await host.advance(9_999)
       expect(host.errorSpy).toHaveBeenCalledTimes(4)
       await host.advance(1)
-      expect(host.errorSpy).toHaveBeenCalledTimes(5)
+      expect(host.errorSpy).toHaveBeenCalledTimes(6)
       for (const [, diagnostic] of host.errorSpy.mock.calls) {
         expect(diagnostic).toMatchObject({ code: "MCP_APP_SANDBOX_PROXY_TIMEOUT", message: expect.stringContaining("within 10 seconds") })
       }
       await host.advance(60_000)
-      expect(host.deadlines).toHaveLength(5)
+      expect(host.deadlines).toHaveLength(6)
       expect(host.timers.size).toBe(0)
       expect(host.connectSpy).not.toHaveBeenCalled()
       expect(host.teardownSpy).not.toHaveBeenCalled()
-      expect(host.closeSpy).toHaveBeenCalledTimes(5)
+      expect(host.closeSpy).toHaveBeenCalledTimes(6)
     } finally { await host.dispose() }
   })
 
   test("cancels queued unmounts and does not navigate siblings during a whole-view teardown", async () => {
-    const host = await startupFixture()
+    const host = await startupFixture({ presentation: "dashboard" })
     try {
-      await host.render([0, 1, 2, 3, 4])
-      await host.render([0, 1, 3, 4])
-      expect(host.deadlines).toHaveLength(2)
-      await host.render([1, 3, 4])
-      expect(host.frame(3).getAttribute("src")).toBe("about:blank#render-3")
-      expect(host.frame(4).getAttribute("src")).toBeNull()
-      expect(host.deadlines).toHaveLength(3)
+      await host.render([0, 1, 2, 3, 4, 5, 6])
+      await host.render([0, 1, 2, 3, 5, 6])
+      expect(host.deadlines).toHaveLength(4)
+      await host.render([1, 2, 3, 5, 6])
+      expect(host.frame(5).getAttribute("src")).toBe("about:blank#render-5")
+      expect(host.frame(6).getAttribute("src")).toBeNull()
+      expect(host.deadlines).toHaveLength(5)
       await host.render([])
-      expect(host.deadlines).toHaveLength(3)
+      expect(host.deadlines).toHaveLength(5)
       expect(host.timers.size).toBe(0)
-      await host.render([0, 1, 2])
-      expect(host.frame(0).getAttribute("src")).toBe("about:blank#render-0")
-      expect(host.frame(1).getAttribute("src")).toBe("about:blank#render-1")
-      expect(host.frame(2).getAttribute("src")).toBeNull()
+      await host.render([0, 1, 2, 3, 4])
+      for (const id of [0, 1, 2, 3]) expect(host.frame(id).getAttribute("src")).toBe(`about:blank#render-${id}`)
+      expect(host.frame(4).getAttribute("src")).toBeNull()
     } finally { await host.dispose() }
   })
 
   test.each(["failure", "initialize-timeout", "teardown"])("releases a startup slot on %s and ignores late callbacks", async mode => {
-    const host = await startupFixture()
+    const host = await startupFixture({ presentation: "dashboard" })
     try {
-      await host.render([0, 1, 2])
-      await host.notify(0, "ui/notifications/sandbox-proxy-ready")
-      await host.notify(1, "ui/notifications/sandbox-proxy-ready")
-      await host.notify(0, "ui/notifications/sandbox-resource-accepted")
-      await host.notify(1, "ui/notifications/sandbox-resource-accepted")
+      await host.render([0, 1, 2, 3, 4])
+      for (const id of [0, 1, 2, 3]) await host.notify(id, "ui/notifications/sandbox-proxy-ready")
+      for (const id of [0, 1, 2, 3]) await host.notify(id, "ui/notifications/sandbox-resource-accepted")
+      expect(host.frame(4).getAttribute("src")).toBeNull()
       if (mode === "failure") await host.notify(0, "ui/notifications/sandbox-diagnostic")
       else if (mode === "teardown") await act(async () => { await host.bridges[0].onrequestteardown?.({}) })
       else {
         await host.advance(10_000)
-        expect(host.errorSpy).toHaveBeenCalledTimes(2)
+        expect(host.errorSpy).toHaveBeenCalledTimes(4)
         for (const [, diagnostic] of host.errorSpy.mock.calls) expect(diagnostic.code).toBe("MCP_APP_INITIALIZE_TIMEOUT")
       }
-      expect(host.frame(2).getAttribute("src")).toBe("about:blank#render-2")
+      expect(host.frame(4).getAttribute("src")).toBe("about:blank#render-4")
       const timerCount = host.timers.size
       await act(async () => { host.bridges[0].oninitialized?.() })
       expect(host.inputSpy).not.toHaveBeenCalled()
       expect(host.timers.size).toBe(timerCount)
-      expect(host.resourceSpy).toHaveBeenCalledTimes(2)
-      expect(host.failures).toEqual(mode === "teardown" ? [] : mode === "failure" ? [0] : [0, 1])
+      expect(host.resourceSpy).toHaveBeenCalledTimes(4)
+      expect(host.failures).toEqual(mode === "teardown" ? [] : mode === "failure" ? [0] : [0, 1, 2, 3])
     } finally { await host.dispose() }
   })
 
   test.each(["connect", "delivery"])("unmount during pending %s cannot deliver or recreate startup timers", async mode => {
-    const host = await startupFixture()
+    const host = await startupFixture({ presentation: "dashboard" })
     let finish: (() => void) | undefined
     const pending = new Promise<void>(resolve => { finish = resolve })
     try {
       if (mode === "connect") host.connectSpy.mockImplementationOnce(() => pending)
       else host.resourceSpy.mockImplementationOnce(() => pending)
-      await host.render([0, 1, 2])
+      await host.render([0, 1, 2, 3, 4])
       await host.notify(0, "ui/notifications/sandbox-proxy-ready")
-      await host.render([1, 2])
-      expect(host.frame(2).getAttribute("src")).toBe("about:blank#render-2")
+      await host.render([1, 2, 3, 4])
+      expect(host.frame(4).getAttribute("src")).toBe("about:blank#render-4")
       await act(async () => { finish?.() })
       expect(host.resourceSpy).toHaveBeenCalledTimes(mode === "connect" ? 0 : 1)
-      expect(host.timers.size).toBe(2)
+      expect(host.timers.size).toBe(4)
       await host.render([])
       await host.advance(60_000)
       expect(host.errorSpy).not.toHaveBeenCalled()
@@ -499,6 +627,685 @@ describe("MCP App retry ownership", () => {
       }
     }
     expect([...released].sort()).toEqual(["render-0-1", "render-0-2", "render-1-1"])
+  })
+
+  test("a saved dashboard view relaunches when its lease goes stale and keeps the App on screen", async () => {
+    const host = await startupFixture()
+    const scope = "stale-lease"
+    const launches: string[] = []
+    const calls: Array<Parameters<OpenworkServerClient["callMcpAppTool"]>[1]> = []
+    const resolveSpy = spyOn(host.client, "resolveMcpApp").mockImplementation(async () => {
+      launches.push(`lease-${launches.length + 1}`)
+      return { app: fixture({ toolName: "render-0", launchId: launches.at(-1) }) }
+    })
+    const releaseSpy = spyOn(host.client, "releaseMcpApp").mockResolvedValue({ released: true })
+    const callSpy = spyOn(host.client, "callMcpAppTool").mockImplementation(async (_workspace, request) => {
+      calls.push(request)
+      // The host replaced the first lease, as a credential renewal or server restart does.
+      if (request.launchId === "lease-1" && request.name === "read_detail") {
+        throw new OpenworkServerError(422, "stale_launch_context", "This App launch has expired, closed, or changed.")
+      }
+      return { content: [] }
+    })
+    writeDashboardTileCache(scope, "stale-0", {
+      argumentsSignature: "{}", cachedAt: Date.now(), workspaceId: "fixture",
+      app: fixture({ toolName: "render-0", launchId: undefined }), result: { content: [] },
+    })
+    const actionContext = { requestId: 1, signal: new AbortController().signal,
+      sendNotification: async () => {}, sendRequest: async () => { throw new Error("Unexpected request") } }
+    try {
+      await host.renderElement(createElement(WorkspaceProvider, {
+        client: null, openworkServerClient: host.client, workspaceId: "fixture", selectedWorkspaceRoot: "/fixture",
+      }, createElement(McpAppTile, {
+        entry: { kind: "mcp", id: "stale-0", title: "Stale 0", serverName: "fixture", toolName: "render-0",
+          projectedToolName: "render-0", resourceUri: fixture().resourceUri, autoLaunch: true },
+        cacheScopeKey: scope,
+      })))
+      await host.notify(0, "ui/notifications/sandbox-proxy-ready")
+      await act(async () => { host.bridges[0].oninitialized?.() })
+      expect(launches).toEqual(["lease-1"])
+      const answer = host.bridges[0].oncalltool?.({ name: "read_detail" }, actionContext)
+      // The stale call asks the tile to refresh; let React run that launch.
+      await act(async () => { await new Promise(resolve => setImmediate(resolve)) })
+      await expect(answer).resolves.toEqual({ content: [] })
+      await act(async () => {})
+      expect(launches).toEqual(["lease-1", "lease-2"])
+      expect(calls.filter(call => call.name === "read_detail").map(call => call.launchId)).toEqual(["lease-1", "lease-2"])
+      expect(releaseSpy.mock.calls.map(([, id]) => id)).toEqual(["lease-1"])
+      expect(host.bridges).toHaveLength(1)
+      expect(host.failures).toEqual([])
+    } finally {
+      removeDashboardTileCache(scope, "stale-0")
+      flushDashboardTileCacheStorage()
+      try { await host.dispose() } finally {
+        for (const spy of [resolveSpy, releaseSpy, callSpy]) spy.mockRestore()
+      }
+    }
+  })
+})
+
+describe("MCP App stored reads on a saved tile", () => {
+  const checked = { "openwork/readOnly": true, "openwork/providerIdentity": "provider-1" }
+  const storedRead = { name: "read_detail", arguments: {}, _meta: { "openwork/cache": "read" } }
+  const actionContext = { requestId: 1, signal: new AbortController().signal,
+    sendNotification: async () => {}, sendRequest: async () => { throw new Error("Unexpected request") } }
+  const settle = async () => { await act(async () => { await new Promise(resolve => setImmediate(resolve)) }) }
+  const member = { baseUrl: "den", organizationId: "org_saved_tile", memberId: "member" }
+  type ToolCall = Parameters<OpenworkServerClient["callMcpAppTool"]>[1]
+
+  /** A tile restored from storage, with a stored result when asked, up to the point its App can ask for that result. */
+  async function savedTile(options: {
+    stored?: boolean
+    /** Stops short of the App starting, for a test about what shows meanwhile. */
+    starts?: boolean
+    storedRead?: boolean
+    /** Whether this session has compared the member's access yet. */
+    confirmed?: boolean
+    /** A check of the member's access under way as the tile opens. */
+    checking?: Promise<unknown>
+    /** What the host offers when one of the App's tools changed. */
+    fix?: (tool: string) => Promise<void>
+    resolve: () => Promise<{ app: OpenworkMcpAppResource }>
+    run: (request: ToolCall) => Promise<Awaited<ReturnType<OpenworkServerClient["callMcpAppTool"]>>>
+  }) {
+    const host = await startupFixture()
+    const scope = "stored-read"
+    const app = fixture({ toolName: "render-0", launchId: undefined })
+    const origin = { client: host.client, workspaceId: "fixture", sessionId: null, readOnly: true }
+    const calls: ToolCall[] = []
+    const spies = [
+      spyOn(host.client, "resolveMcpApp").mockImplementation(options.resolve),
+      spyOn(host.client, "releaseMcpApp").mockResolvedValue({ released: true }),
+      spyOn(host.client, "callMcpAppTool").mockImplementation(async (_workspace, request) => { calls.push(request); return await options.run(request) }),
+    ]
+    localStorage.setItem("openwork.den.authToken", "stored-read-token")
+    localStorage.setItem("openwork.den.activeOrgId", "org_saved_tile")
+    writeDashboardTileCache(scope, "stored-0", {
+      argumentsSignature: "{}", cachedAt: Date.now(), workspaceId: "fixture", app, result: { content: [] },
+    })
+    if (options.stored !== false) {
+      await rememberMcpAppResult(origin, app, "read_detail", {}, { content: [{ type: "text", text: "stored" }], _meta: checked })
+    }
+    resetMemberAccessSession()
+    setMemberAccessScope(member)
+    if (options.confirmed !== false) reconcileMemberAccess(member, null, { capabilities: { plugins: [] }, connections: [] })
+    if (options.storedRead) {
+      rememberDashboardTileRead(scope, "stored-0", { name: "read_detail", arguments: {} },
+        { providerIdentity: "provider-1", result: { content: [{ type: "text", text: "stored" }] } })
+    }
+    if (options.checking) trackMemberAccessCheck(options.checking)
+    const render = () => host.renderElement(createElement(WorkspaceProvider, {
+      client: null, openworkServerClient: host.client, workspaceId: "fixture", selectedWorkspaceRoot: "/fixture",
+    }, createElement(McpAppTile, {
+      entry: { kind: "mcp", id: "stored-0", title: "Stored 0", serverName: "fixture", toolName: "render-0",
+        projectedToolName: "render-0", resourceUri: fixture().resourceUri, autoLaunch: true },
+      cacheScopeKey: scope,
+      onFixChangedTool: options.fix,
+    })))
+    await render()
+    const start = async () => {
+      await host.notify(0, "ui/notifications/sandbox-proxy-ready")
+      await act(async () => { host.bridges[0].oninitialized?.() })
+    }
+    if (options.starts !== false) await start()
+    return {
+      host, calls, start, rerender: render,
+      storedReads: () => readDashboardTileCache(scope, "stored-0")?.storedReads ?? [],
+      /** Waits for the tile to drop its stored result, which it does behind an answer. */
+      async forgotten() {
+        for (let turn = 0; turn < 100 && await cachedMcpAppResult(origin, app, "read_detail", {}); turn += 1) await settle()
+        return !await cachedMcpAppResult(origin, app, "read_detail", {})
+      },
+      ask: (request: { name: string; arguments: Record<string, unknown>; _meta?: Record<string, unknown> } = storedRead) => {
+        const answer = host.bridges[0].oncalltool?.(request, actionContext)
+        if (!answer) throw new Error("The tile takes no tool calls")
+        return answer
+      },
+      async close() {
+        await forgetMcpAppResult(origin, app, "read_detail", {})
+        resetMemberAccessSession()
+        localStorage.removeItem("openwork.den.activeOrgId")
+        localStorage.removeItem("openwork.den.authToken")
+        removeDashboardTileCache(scope, "stored-0")
+        flushDashboardTileCacheStorage()
+        try { await host.dispose() } finally { for (const spy of spies) spy.mockRestore() }
+      },
+    }
+  }
+
+  test("before access is compared, a stored result answers while the launch is still running its reads, and the tool does not run", async () => {
+    const launch = Promise.withResolvers<{ content: [] }>()
+    const tile = await savedTile({
+      confirmed: false,
+      resolve: async () => ({ app: fixture({ toolName: "render-0", launchId: "lease-1" }) }),
+      run: async request => request.checkOnly ? { content: [], _meta: checked } : request.name === "render-0" ? await launch.promise : { content: [] },
+    })
+    try {
+      const answer = await tile.ask()
+      expect(answer.content).toEqual([{ type: "text", text: "stored" }])
+      expect(answer._meta?.["openwork/cached"]).toBe(true)
+      expect(tile.calls.filter(call => call.checkOnly).map(call => call.launchId)).toEqual(["lease-1"])
+      expect(tile.calls.filter(call => call.name === "read_detail" && !call.checkOnly)).toEqual([])
+    } finally {
+      await act(async () => { launch.resolve({ content: [] }) })
+      await tile.close()
+    }
+  })
+
+  test("nothing stored answers at once, before there is a lease", async () => {
+    const discovery = Promise.withResolvers<{ app: OpenworkMcpAppResource }>()
+    const tile = await savedTile({ stored: false, resolve: () => discovery.promise, run: async () => ({ content: [] }) })
+    try {
+      const answer = await tile.ask()
+      expect(answer.isError).toBe(true)
+      expect(answer._meta?.["openwork/cached"]).toBe(false)
+      expect(tile.calls).toEqual([])
+    } finally {
+      await act(async () => { discovery.resolve({ app: fixture({ toolName: "render-0", launchId: "lease-1" }) }) })
+      await tile.close()
+    }
+  })
+
+  test("before access is compared, a stored result waits for a lease and a current check", async () => {
+    const discovery = Promise.withResolvers<{ app: OpenworkMcpAppResource }>()
+    const launch = Promise.withResolvers<{ content: [] }>()
+    const tile = await savedTile({
+      confirmed: false,
+      resolve: () => discovery.promise,
+      run: async request => request.checkOnly ? { content: [], _meta: checked } : await launch.promise,
+    })
+    try {
+      let answered = false
+      const answer = tile.ask().then(result => { answered = true; return result })
+      await settle()
+      expect(answered).toBe(false)
+      expect(tile.calls).toEqual([])
+      await act(async () => { discovery.resolve({ app: fixture({ toolName: "render-0", launchId: "lease-1" }) }) })
+      expect((await answer).content).toEqual([{ type: "text", text: "stored" }])
+    } finally {
+      await act(async () => { launch.resolve({ content: [] }) })
+      await tile.close()
+    }
+  })
+
+  test.each([
+    ["another provider identity", { content: [], _meta: { ...checked, "openwork/providerIdentity": "provider-2" } }],
+    ["a refused check", new OpenworkServerError(403, "tool_denied", "Forbidden")],
+  ])("before access is compared, %s shows nothing and drops the stored result", async (_name, outcome) => {
+    const launch = Promise.withResolvers<{ content: [] }>()
+    const tile = await savedTile({
+      confirmed: false,
+      resolve: async () => ({ app: fixture({ toolName: "render-0", launchId: "lease-1" }) }),
+      run: async request => {
+        if (!request.checkOnly) return await launch.promise
+        if (outcome instanceof Error) throw outcome
+        return outcome
+      },
+    })
+    try {
+      const refused = await tile.ask()
+      expect(refused.content).toEqual([])
+      expect(refused._meta?.["openwork/cached"]).toBe(false)
+      expect(await tile.forgotten()).toBe(true)
+      const checks = tile.calls.filter(call => call.checkOnly).length
+      expect((await tile.ask())._meta?.["openwork/cached"]).toBe(false)
+      expect(tile.calls.filter(call => call.checkOnly)).toHaveLength(checks)
+    } finally {
+      await act(async () => { launch.resolve({ content: [] }) })
+      await tile.close()
+    }
+  })
+
+  test("before access is compared, a launch that fails before its lease never answers from storage", async () => {
+    const discovery = Promise.withResolvers<{ app: OpenworkMcpAppResource }>()
+    const tile = await savedTile({ confirmed: false, resolve: () => discovery.promise, run: async () => ({ content: [] }) })
+    try {
+      const answer = tile.ask().then(() => "answered", (cause: Error) => cause.message)
+      await settle()
+      await act(async () => { discovery.reject(new OpenworkServerError(403, "tool_denied", "Forbidden")) })
+      expect(await answer).toContain("closed or changed")
+      expect(tile.calls).toEqual([])
+    } finally { await tile.close() }
+  })
+
+  test("a launch that fails after its lease stops handing that lease out", async () => {
+    const launch = Promise.withResolvers<{ content: [] }>()
+    const tile = await savedTile({
+      resolve: async () => ({ app: fixture({ toolName: "render-0", launchId: "lease-1" }) }),
+      run: async request => request.checkOnly ? { content: [], _meta: checked } : await launch.promise,
+    })
+    try {
+      await settle()
+      await act(async () => { launch.reject(new OpenworkServerError(403, "tool_denied", "Forbidden")) })
+      await settle()
+      await expect(tile.ask()).rejects.toThrow("closed or changed")
+      expect(tile.calls.filter(call => call.checkOnly)).toEqual([])
+    } finally { await tile.close() }
+  })
+
+  test("once access is compared, a stored result answers before there is any lease, and the check follows", async () => {
+    const discovery = Promise.withResolvers<{ app: OpenworkMcpAppResource }>()
+    const tile = await savedTile({
+      resolve: () => discovery.promise,
+      run: async request => request.checkOnly ? { content: [], _meta: checked } : { content: [] },
+    })
+    try {
+      const answer = await tile.ask()
+      expect(answer.content).toEqual([{ type: "text", text: "stored" }])
+      expect(answer._meta?.["openwork/cached"]).toBe(true)
+      expect(tile.calls).toEqual([])
+      await act(async () => { discovery.resolve({ app: fixture({ toolName: "render-0", launchId: "lease-1" }) }) })
+      await settle()
+      expect(tile.calls.filter(call => call.checkOnly).map(call => call.launchId)).toEqual(["lease-1"])
+      expect(tile.calls.filter(call => call.name === "read_detail" && !call.checkOnly)).toEqual([])
+      expect((await tile.ask())._meta?.["openwork/cached"]).toBe(true)
+    } finally { await tile.close() }
+  })
+
+  test.each([
+    ["another provider identity", { content: [], _meta: { ...checked, "openwork/providerIdentity": "provider-2" } }],
+    ["a refused check", new OpenworkServerError(403, "tool_denied", "Forbidden")],
+  ])("once access is compared, %s drops a stored result that already showed", async (_name, outcome) => {
+    const tile = await savedTile({
+      resolve: async () => ({ app: fixture({ toolName: "render-0", launchId: "lease-1" }) }),
+      run: async request => {
+        if (!request.checkOnly) return { content: [] }
+        if (outcome instanceof Error) throw outcome
+        return outcome
+      },
+    })
+    try {
+      expect((await tile.ask()).content).toEqual([{ type: "text", text: "stored" }])
+      expect(await tile.forgotten()).toBe(true)
+      const checks = tile.calls.filter(call => call.checkOnly).length
+      expect(checks).toBe(1)
+      expect((await tile.ask())._meta?.["openwork/cached"]).toBe(false)
+      expect(tile.calls.filter(call => call.checkOnly)).toHaveLength(checks)
+    } finally { await tile.close() }
+  })
+
+  test("a live App's stored read still waits for its check, even once access is compared", async () => {
+    const check = Promise.withResolvers<{ content: []; _meta: typeof checked }>()
+    const checking = Promise.withResolvers<void>()
+    const tile = await savedTile({
+      starts: false,
+      resolve: async () => ({ app: fixture({ toolName: "render-0", launchId: "lease-0" }) }),
+      run: async request => {
+        if (!request.checkOnly) return { content: [] }
+        checking.resolve()
+        return await check.promise
+      },
+    })
+    try {
+      await tile.host.renderElement(createElement(WorkspaceProvider, {
+        client: null, openworkServerClient: tile.host.client, workspaceId: "fixture", selectedWorkspaceRoot: "/fixture",
+      }, createElement(McpAppSandboxView, {
+        origin: { client: tile.host.client, workspaceId: "fixture", sessionId: null, readOnly: false },
+        app: fixture({ toolName: "render-0", launchId: "lease-1" }), toolName: "render-0",
+        inputArguments: {}, result: { content: [] }, unavailableNotice: "Unavailable", presentation: "dashboard",
+      })))
+      await tile.host.notify(0, "ui/notifications/sandbox-proxy-ready")
+      const bridges = tile.host.bridges.length
+      expect(bridges).toBeGreaterThan(0)
+      let answered = false
+      const answer = tile.host.bridges[bridges - 1].oncalltool?.(storedRead, actionContext).then(result => { answered = true; return result })
+      await act(async () => { await checking.promise })
+      await settle()
+      expect(answered).toBe(false)
+      expect(tile.calls.filter(call => call.checkOnly).map(call => call.launchId)).toEqual(["lease-1"])
+      await act(async () => { check.resolve({ content: [], _meta: checked }) })
+      expect((await answer)?.content).toEqual([{ type: "text", text: "stored" }])
+    } finally { await tile.close() }
+  })
+
+  test("what the App last loaded arrives as it starts, before there is any lease", async () => {
+    const discovery = Promise.withResolvers<{ app: OpenworkMcpAppResource }>()
+    const tile = await savedTile({ storedRead: true, resolve: () => discovery.promise, run: async () => ({ content: [] }) })
+    try {
+      await settle()
+      expect(tile.calls).toEqual([])
+      const delivered = tile.host.resultSpy.mock.calls.at(-1)?.[0]
+      expect(delivered?._meta?.["openwork/initialResults"]).toMatchObject([{ name: "read_detail", arguments: {}, result: { content: [{ type: "text", text: "stored" }] } }])
+    } finally {
+      await act(async () => { discovery.resolve({ app: fixture({ toolName: "render-0", launchId: "lease-1" }) }) })
+      await tile.close()
+    }
+  })
+
+  test("stored data stays hidden until this session has compared the member's access", async () => {
+    const discovery = Promise.withResolvers<{ app: OpenworkMcpAppResource }>()
+    const tile = await savedTile({ storedRead: true, confirmed: false, resolve: () => discovery.promise, run: async () => ({ content: [] }) })
+    try {
+      await settle()
+      expect(tile.host.resultSpy).toHaveBeenCalled()
+      expect(tile.host.resultSpy.mock.calls.at(-1)?.[0]._meta?.["openwork/initialResults"]).toBeUndefined()
+      expect(tile.host.container.querySelector("iframe")).not.toBeNull()
+    } finally {
+      await act(async () => { discovery.resolve({ app: fixture({ toolName: "render-0", launchId: "lease-1" }) }) })
+      await tile.close()
+    }
+  })
+
+  test("a saved tile waits for a check under way, then shows stored data if it passes", async () => {
+    const check = Promise.withResolvers<void>()
+    const discovery = Promise.withResolvers<{ app: OpenworkMcpAppResource }>()
+    const held = await savedTile({ storedRead: true, confirmed: false, starts: false, checking: check.promise, resolve: () => discovery.promise, run: async () => ({ content: [] }) })
+    try {
+      await settle()
+      expect(held.host.container.querySelector("[data-dashboard-tile]")).toBeNull()
+      reconcileMemberAccess(member, null, { capabilities: { plugins: [] }, connections: [] })
+      await act(async () => { check.resolve() })
+      await settle()
+      await held.start()
+      await settle()
+      expect(held.host.resultSpy.mock.calls.at(-1)?.[0]._meta?.["openwork/initialResults"]).toMatchObject([{ name: "read_detail" }])
+    } finally {
+      await act(async () => { discovery.resolve({ app: fixture({ toolName: "render-0", launchId: "lease-1" }) }) })
+      await held.close()
+    }
+  })
+
+  test("a later check never closes a tile that is already open", async () => {
+    const discovery = Promise.withResolvers<{ app: OpenworkMcpAppResource }>()
+    const tile = await savedTile({ storedRead: true, confirmed: false, resolve: () => discovery.promise, run: async () => ({ content: [] }) })
+    const frame = tile.host.frame(0)
+    const check = Promise.withResolvers<void>()
+    try {
+      trackMemberAccessCheck(check.promise)
+      await tile.rerender()
+      await settle()
+      expect(tile.host.frame(0)).toBe(frame)
+    } finally {
+      await act(async () => { check.resolve(); discovery.resolve({ app: fixture({ toolName: "render-0", launchId: "lease-1" }) }) })
+      await tile.close()
+    }
+  })
+
+  test("the live launch replaces stored data, so nothing stale passes as fresh", async () => {
+    const launch = Promise.withResolvers<{ content: []; _meta: Record<string, unknown> }>()
+    const tile = await savedTile({
+      storedRead: true,
+      resolve: async () => ({ app: fixture({ toolName: "render-0", launchId: "lease-1" }) }),
+      run: async () => await launch.promise,
+    })
+    try {
+      await settle()
+      await act(async () => { launch.resolve({ content: [], _meta: {} }) })
+      await settle()
+      const delivered = tile.host.resultSpy.mock.calls.at(-1)?.[0]
+      expect(delivered?._meta?.["openwork/launchedAt"]).toBeString()
+      expect(delivered?._meta?.["openwork/initialResults"]).toBeUndefined()
+      expect(tile.storedReads()).toHaveLength(1)
+    } finally { await tile.close() }
+  })
+
+  test("a read the App asks to keep is stored for its next start, and a failed one is forgotten", async () => {
+    let next: "ok" | "throws" | "errors" = "ok"
+    const tile = await savedTile({
+      stored: false,
+      resolve: async () => ({ app: fixture({ toolName: "render-0", launchId: "lease-1" }) }),
+      run: async request => {
+        if (request.name === "render-0") return { content: [] }
+        if (next === "throws") throw new OpenworkServerError(403, "tool_denied", "Forbidden")
+        if (next === "errors") return { content: [], isError: true, _meta: checked }
+        return { content: [{ type: "text", text: "fresh" }], _meta: checked }
+      },
+    })
+    // A load runs once per open, so reading again takes a click.
+    const keep = { name: "read_detail", arguments: {}, _meta: { "openwork/cache": "store" } }
+    const again = { ...keep, _meta: { ...keep._meta, "openwork/userInteraction": true } }
+    try {
+      await settle()
+      await tile.ask(keep)
+      expect(tile.storedReads().map(read => [read.name, read.providerIdentity, read.result.content])).toEqual([["read_detail", "provider-1", [{ type: "text", text: "fresh" }]]])
+      next = "throws"
+      expect(await tile.ask(again).then(() => "answered", (cause: Error) => cause.message)).toContain("Forbidden")
+      expect(tile.storedReads()).toEqual([])
+      next = "ok"
+      await tile.ask(again)
+      expect(tile.storedReads()).toHaveLength(1)
+      next = "errors"
+      await tile.ask(again)
+      expect(tile.storedReads()).toEqual([])
+    } finally { await tile.close() }
+  })
+
+  test.each([true, false])("a call refused because its tool changed offers Fix with agent only when the host can (%j)", async offered => {
+    const refusal = { isError: true, content: [{ type: "text", text: JSON.stringify({
+      error: "policy_blocked", reason: "app_needs_update", tool: "read_detail", message: "read_detail now takes different inputs." }) }] }
+    const fixes: string[] = []
+    const tile = await savedTile({
+      stored: false,
+      resolve: async () => ({ app: fixture({ toolName: "render-0", launchId: "lease-1" }) }),
+      run: async request => request.name === "render-0" ? { content: [] } : refusal,
+      ...(offered ? { fix: async (tool: string) => { fixes.push(tool) } } : {}),
+    })
+    try {
+      await settle()
+      expect(tile.host.container.querySelector("[data-testid=mcp-app-changed-tool]")).toBeNull()
+      expect(await tile.ask({ name: "read_detail", arguments: {}, _meta: { "openwork/userInteraction": true } })).toEqual(refusal)
+      await settle()
+      const row = tile.host.container.querySelector("[data-testid=mcp-app-changed-tool]")
+      expect(row === null).toBe(!offered)
+      if (offered) {
+        await act(async () => row?.querySelector("button")?.click())
+        expect(fixes).toEqual(["read_detail"])
+      }
+    } finally { await tile.close() }
+  })
+
+  test("a result not marked read-only is never stored", async () => {
+    const tile = await savedTile({
+      stored: false,
+      resolve: async () => ({ app: fixture({ toolName: "render-0", launchId: "lease-1" }) }),
+      run: async request => request.name === "render-0" ? { content: [] } : { content: [{ type: "text", text: "private" }], _meta: { "openwork/readOnly": false, "openwork/providerIdentity": "provider-1" } },
+    })
+    try {
+      await settle()
+      await tile.ask({ name: "read_detail", arguments: {}, _meta: { "openwork/cache": "store" } })
+      expect(tile.storedReads()).toEqual([])
+    } finally { await tile.close() }
+  })
+
+  test("a saved App shows no placeholder while it starts, unless the start turns out slow", async () => {
+    const launch = Promise.withResolvers<{ content: [] }>()
+    const tile = await savedTile({
+      starts: false,
+      resolve: async () => ({ app: fixture({ toolName: "render-0", launchId: "lease-1" }) }),
+      run: async () => await launch.promise,
+    })
+    const placeholder = () => tile.host.container.querySelector("[data-dashboard-loading]")
+    const status = () => [...tile.host.container.querySelectorAll('[role="status"]')].map(item => item.textContent).join(" ")
+    try {
+      await settle()
+      expect(placeholder()).toBeNull()
+      expect(status()).toContain("Loading Stored 0")
+      expect(tile.host.container.querySelector("[data-dashboard-tile]")?.getAttribute("aria-busy")).toBe("true")
+      await tile.host.advance(249)
+      expect(placeholder()).toBeNull()
+      await tile.host.advance(1)
+      expect(placeholder()).not.toBeNull()
+      await tile.start()
+      await settle()
+      expect(placeholder()).toBeNull()
+    } finally {
+      await act(async () => { launch.resolve({ content: [] }) })
+      await tile.close()
+    }
+  })
+
+  test("a saved App that starts in time never shows the placeholder", async () => {
+    const launch = Promise.withResolvers<{ content: [] }>()
+    const tile = await savedTile({
+      resolve: async () => ({ app: fixture({ toolName: "render-0", launchId: "lease-1" }) }),
+      run: async () => await launch.promise,
+    })
+    try {
+      await settle()
+      await tile.host.advance(1_000)
+      expect(tile.host.container.querySelector("[data-dashboard-loading]")).toBeNull()
+    } finally {
+      await act(async () => { launch.resolve({ content: [] }) })
+      await tile.close()
+    }
+  })
+
+  test("a first open with nothing saved still shows its placeholder at once", async () => {
+    const host = await startupFixture()
+    const discovery = Promise.withResolvers<{ app: OpenworkMcpAppResource }>()
+    const spies = [
+      spyOn(host.client, "resolveMcpApp").mockImplementation(() => discovery.promise),
+      spyOn(host.client, "releaseMcpApp").mockResolvedValue({ released: true }),
+      spyOn(host.client, "callMcpAppTool").mockResolvedValue({ content: [] }),
+    ]
+    try {
+      await host.renderElement(createElement(WorkspaceProvider, {
+        client: null, openworkServerClient: host.client, workspaceId: "fixture", selectedWorkspaceRoot: "/fixture",
+      }, createElement(McpAppTile, {
+        entry: { kind: "mcp", id: "first-open", title: "First open", serverName: "fixture", toolName: "render-0",
+          projectedToolName: "render-0", resourceUri: fixture().resourceUri, autoLaunch: true },
+        cacheScopeKey: "first-open",
+      })))
+      expect(host.container.querySelector("[data-dashboard-loading]")).not.toBeNull()
+    } finally {
+      await act(async () => { discovery.resolve({ app: fixture({ toolName: "render-0", launchId: "first-1" }) }) })
+      await settle()
+      removeDashboardTileCache("first-open", "first-open")
+      flushDashboardTileCacheStorage()
+      try { await host.dispose() } finally { for (const spy of spies) spy.mockRestore() }
+    }
+  })
+
+  test("an App kept out of view makes no calls and catches up when it comes back", async () => {
+    const host = await startupFixture()
+    const scope = "kept-out-of-view"
+    const launches: string[] = []
+    const spies = [
+      spyOn(host.client, "resolveMcpApp").mockImplementation(async () => {
+        const launchId = `kept-${launches.length + 1}`
+        launches.push(launchId)
+        return { app: fixture({ toolName: "render-0", launchId }) }
+      }),
+      spyOn(host.client, "releaseMcpApp").mockResolvedValue({ released: true }),
+      spyOn(host.client, "callMcpAppTool").mockResolvedValue({ content: [] }),
+    ]
+    const view = (active: boolean) => createElement(WorkspaceProvider, {
+      client: null, openworkServerClient: host.client, workspaceId: "fixture", selectedWorkspaceRoot: "/fixture",
+    }, createElement(RetainedArtifactSurface, { active }, createElement(McpAppTile, {
+      entry: { kind: "mcp", id: "kept-0", title: "Kept 0", serverName: "fixture", toolName: "render-0",
+        projectedToolName: "render-0", resourceUri: fixture().resourceUri, autoLaunch: true },
+      cacheScopeKey: scope,
+    })))
+    try {
+      await host.renderElement(view(true))
+      await settle()
+      expect(launches).toEqual(["kept-1"])
+      await host.renderElement(view(false))
+      await host.advance(DASHBOARD_AUTO_REFRESH_INTERVAL_MS + 1)
+      await act(async () => { window.dispatchEvent(new Event("focus")) })
+      await settle()
+      expect(launches).toEqual(["kept-1"])
+      await host.renderElement(view(true))
+      await settle()
+      expect(launches).toEqual(["kept-1", "kept-2"])
+    } finally {
+      removeDashboardTileCache(scope, "kept-0")
+      flushDashboardTileCacheStorage()
+      try { await host.dispose() } finally { for (const spy of spies) spy.mockRestore() }
+    }
+  })
+
+  test("an ordinary tool call still waits for the launch to finish", async () => {
+    const launch = Promise.withResolvers<{ content: [] }>()
+    const tile = await savedTile({
+      resolve: async () => ({ app: fixture({ toolName: "render-0", launchId: "lease-1" }) }),
+      run: async request => request.name === "render-0" ? await launch.promise : { content: [] },
+    })
+    try {
+      const answer = tile.ask({ name: "read_detail", arguments: {} })
+      await settle()
+      expect(tile.calls.map(call => call.name)).toEqual(["render-0"])
+      await act(async () => { launch.resolve({ content: [] }) })
+      await expect(answer).resolves.toEqual({ content: [] })
+      expect(tile.calls.map(call => call.name)).toEqual(["render-0", "read_detail"])
+    } finally { await tile.close() }
+  })
+
+  test("a stored read during a refresh uses the lease the tile already holds", async () => {
+    const refresh = Promise.withResolvers<{ content: [] }>()
+    let launches = 0
+    const tile = await savedTile({
+      confirmed: false,
+      resolve: async () => ({ app: fixture({ toolName: "render-0", launchId: "lease-1",
+        refresh: { resourceDigest: "a".repeat(64), expiresAt: Number.MAX_SAFE_INTEGER } }) }),
+      run: async request => {
+        if (request.checkOnly) return { content: [], _meta: checked }
+        launches += 1
+        return launches === 1 ? { content: [] } : await refresh.promise
+      },
+    })
+    try {
+      await settle()
+      await tile.host.advance(5 * 60_000 + 1)
+      await act(async () => { window.dispatchEvent(new Event("focus")) })
+      await settle()
+      expect(tile.calls.filter(call => !call.checkOnly)).toHaveLength(2)
+      expect((await tile.ask()).content).toEqual([{ type: "text", text: "stored" }])
+      expect(tile.calls.filter(call => call.checkOnly).map(call => call.launchId)).toEqual(["lease-1"])
+    } finally {
+      await act(async () => { refresh.resolve({ content: [] }) })
+      await tile.close()
+    }
+  })
+})
+
+describe("MCP App documents after a restart", () => {
+  test("a saved tile renders from its stored document before any launch, and waits for it rather than opening blank", async () => {
+    const documents = new Map<string, string>()
+    const read = Promise.withResolvers<void>()
+    setMcpAppDocumentBackend({
+      read: async key => { await read.promise; return documents.get(key) ?? null },
+      save: async (html, size) => { documents.set(size.key, html) },
+      sizes: async () => [],
+      remove: async keys => { for (const key of keys) documents.delete(key) },
+      clear: async () => { documents.clear() },
+    })
+    const host = await startupFixture()
+    const discovery = Promise.withResolvers<{ app: OpenworkMcpAppResource }>()
+    const spies = [
+      spyOn(host.client, "resolveMcpApp").mockImplementation(() => discovery.promise),
+      spyOn(host.client, "releaseMcpApp").mockResolvedValue({ released: true }),
+      spyOn(host.client, "callMcpAppTool").mockResolvedValue({ content: [] }),
+    ]
+    const scope = "restored-tile"
+    const app = fixture({ toolName: "render-0", launchId: undefined })
+    const settle = async () => { await act(async () => { await new Promise(resolve => setImmediate(resolve)) }) }
+    writeDashboardTileCache(scope, "restored-0", { argumentsSignature: "{}", cachedAt: Date.now(), workspaceId: "fixture", app, result: { content: [] } })
+    await settle()
+    flushDashboardTileCacheStorage()
+    resetDashboardTileCacheMemory()
+    try {
+      await host.renderElement(createElement(WorkspaceProvider, {
+        client: null, openworkServerClient: host.client, workspaceId: "fixture", selectedWorkspaceRoot: "/fixture",
+      }, createElement(McpAppTile, {
+        entry: { kind: "mcp", id: "restored-0", title: "Restored 0", serverName: "fixture", toolName: "render-0",
+          projectedToolName: "render-0", resourceUri: fixture().resourceUri, autoLaunch: true },
+        cacheScopeKey: scope,
+      })))
+      expect(host.container.querySelector("[data-dashboard-tile]")).toBeNull()
+      expect(spies[0]).not.toHaveBeenCalled()
+      await act(async () => { read.resolve() })
+      await settle()
+      expect(host.container.querySelector("iframe")).not.toBeNull()
+      await host.notify(0, "ui/notifications/sandbox-proxy-ready")
+      expect(host.resourceSpy.mock.calls.at(-1)?.[0].html).toContain("<title>Fixture</title>")
+    } finally {
+      await act(async () => { discovery.resolve({ app: fixture({ toolName: "render-0", launchId: "restored-1" }) }) })
+      await settle()
+      removeDashboardTileCache(scope, "restored-0")
+      flushDashboardTileCacheStorage()
+      try { await host.dispose() } finally { for (const spy of spies) spy.mockRestore() }
+    }
   })
 })
 
@@ -1184,6 +1991,72 @@ describe("MCP App resolution", () => {
     }
   })
 
+  const credentialScope = { serverBaseUrl: "https://server.example", workspaceId: "fixture" }
+
+  test.each([false, true])("recovers a Cloud authentication failure on matching credential refresh (installation before failure: %j)", async early => {
+    const host = resolutionFixture(true)
+    const pending = Promise.withResolvers<{ app: OpenworkMcpAppResource | null }>()
+    const timer = spyOn(window, "setTimeout")
+    host.resolveSpy.mockImplementationOnce(() => pending.promise).mockResolvedValue({ app: fixture() })
+    const reject = () => pending.reject(new OpenworkServerError(401, "mcp_auth_required", "This App's connection needs authentication."))
+    try {
+      await host.render()
+      if (!early) await act(async () => { reject() })
+      expect(host.resolveSpy).toHaveBeenCalledTimes(1)
+      expect(host.container.querySelector("iframe")).toBeNull()
+      expect(timer.mock.calls.some(([, delay]) => delay === 1_000 || delay === 3_000)).toBe(false)
+      await act(async () => {
+        markCloudCredentialRefreshed({ ...credentialScope, workspaceId: "other-workspace" })
+        markCloudCredentialRefreshed({ ...credentialScope, serverBaseUrl: "https://other.example" })
+      })
+      expect(host.resolveSpy).toHaveBeenCalledTimes(1)
+      await act(async () => { markCloudCredentialRefreshed(credentialScope) })
+      if (early) {
+        expect(host.resolveSpy).toHaveBeenCalledTimes(1)
+        await act(async () => { reject() })
+      }
+      expect(host.resolveSpy).toHaveBeenCalledTimes(2)
+      expect(host.resolveSpy.mock.calls[1]).toEqual(host.resolveSpy.mock.calls[0])
+      expect(host.container.querySelector('[role="status"]')).toBeNull()
+      expect(host.container.querySelector("iframe")).not.toBeNull()
+      await act(async () => { markCloudCredentialRefreshed(credentialScope) })
+      expect(host.resolveSpy).toHaveBeenCalledTimes(2)
+      expect(host.callSpy).not.toHaveBeenCalled()
+    } finally { await host.dispose(); timer.mockRestore() }
+  })
+
+  test.each(["access-denied", "other-failure", "local-provider", "healthy", "unmounted"])("credential refresh leaves %s chat views alone", async scenario => {
+    const host = resolutionFixture(scenario !== "local-provider")
+    if (scenario === "healthy") host.resolveSpy.mockResolvedValue({ app: fixture() })
+    else host.resolveSpy.mockRejectedValue(new OpenworkServerError(
+      scenario === "access-denied" ? 403 : 401,
+      scenario === "access-denied" ? "mcp_access_denied" : scenario === "other-failure" ? "unexpected_failure" : "mcp_auth_required",
+      "This view is unavailable.",
+    ))
+    try {
+      await host.render()
+      if (scenario === "unmounted") await host.unmountFrame()
+      await act(async () => { markCloudCredentialRefreshed(credentialScope) })
+      expect(host.resolveSpy).toHaveBeenCalledTimes(1)
+      expect(host.callSpy).not.toHaveBeenCalled()
+    } finally { await host.dispose() }
+  })
+
+  test("a still-rejected chat view waits for another credential installation after one retry", async () => {
+    const host = resolutionFixture(true)
+    host.resolveSpy.mockRejectedValue(new OpenworkServerError(401, "mcp_auth_required", "Sign in to this connection."))
+    try {
+      await host.render()
+      await act(async () => { markCloudCredentialRefreshed(credentialScope) })
+      expect(host.resolveSpy).toHaveBeenCalledTimes(2)
+      await act(async () => { await Promise.resolve() })
+      expect(host.resolveSpy).toHaveBeenCalledTimes(2)
+      await act(async () => { markCloudCredentialRefreshed(credentialScope) })
+      expect(host.resolveSpy).toHaveBeenCalledTimes(3)
+      expect(host.callSpy).not.toHaveBeenCalled()
+    } finally { await host.dispose() }
+  })
+
   test.each([
     new Error("Request timed out."),
     new OpenworkServerError(500, "unexpected_failure", "Discovery failed: Bearer fixture-secret"),
@@ -1227,6 +2100,18 @@ describe("MCP App resolution", () => {
       expect(host.container.querySelector("iframe")).toBeNull()
       expect(host.errorSpy).not.toHaveBeenCalled()
       expect(host.callSpy).not.toHaveBeenCalled()
+    } finally { await host.dispose() }
+  })
+
+  test.each(["", " \n\t"])("does not mount a blank iframe for an empty App document (%j)", async html => {
+    const host = resolutionFixture(true)
+    host.resolveSpy.mockResolvedValue({ app: fixture({ html }) })
+    try {
+      await host.render()
+      expect(host.resolveSpy).toHaveBeenCalledTimes(1)
+      expect(host.container.querySelector("iframe")).toBeNull()
+      expect(host.container.querySelector("[data-mcp-app-resource]")).toBeNull()
+      expect(host.container.textContent).toBe("")
     } finally { await host.dispose() }
   })
 
@@ -1883,6 +2768,23 @@ describe("MCP App iframe policy", () => {
     expect(sandbox.sandbox).toBe(sandboxFlags)
     expect(sandbox.url).not.toContain("private-")
     expect(new URL(sandbox.url).searchParams.get("hostOrigin")).toBe(normalizeMcpAppHostOrigin(hostOrigin))
+  })
+
+  test("names the sandbox page version so the browser can keep that page", () => {
+    const previous = process.env.VITE_OPENWORK_MCP_APP_SANDBOX_VERSION
+    try {
+      const client = createOpenworkServerClient({ baseUrl: "http://localhost:61856" })
+      process.env.VITE_OPENWORK_MCP_APP_SANDBOX_VERSION = "0123456789abcdef"
+      const url = new URL(client.mcpAppSandbox(fixture(), "file://").url)
+      expect(url.pathname).toBe("/mcp-apps/sandbox.html")
+      expect(url.searchParams.get("v")).toBe("0123456789abcdef")
+      expect(url.searchParams.get("csp")).toBe(JSON.stringify(fixture().csp))
+      delete process.env.VITE_OPENWORK_MCP_APP_SANDBOX_VERSION
+      expect(new URL(client.mcpAppSandbox(fixture(), "file://").url).searchParams.has("v")).toBe(false)
+    } finally {
+      if (previous === undefined) delete process.env.VITE_OPENWORK_MCP_APP_SANDBOX_VERSION
+      else process.env.VITE_OPENWORK_MCP_APP_SANDBOX_VERSION = previous
+    }
   })
 
   test("uses the opaque message origin for packaged file hosts", () => {

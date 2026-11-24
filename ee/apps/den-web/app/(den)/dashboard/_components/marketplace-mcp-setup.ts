@@ -114,7 +114,7 @@ export type PluginReadinessConnectionAction = {
 
 export function pluginReadinessConnectionAction(
   connection: MarketplacePluginCloudReadinessConnection,
-  isAdmin: boolean,
+  canManageConnections: boolean,
 ): PluginReadinessConnectionAction | null {
   if (connection.id && connection.credentialMode === "per_member" && connection.connectedForMe === false) {
     return {
@@ -124,7 +124,7 @@ export function pluginReadinessConnectionAction(
       type: "connect_member",
     };
   }
-  if (isAdmin && connection.id && connection.credentialMode === "shared" && connection.connectedForMe === false) {
+  if (canManageConnections && connection.id && connection.credentialMode === "shared" && connection.connectedForMe === false) {
     return {
       connectionId: connection.id,
       label: "Connect",

@@ -1,0 +1,9 @@
+// path: proofs/composer-draft.proof.test.ts
+import { spec } from "@openwork/testkit";
+import { coreWebWorld } from "../worlds/core-web.ts";
+const test = spec.world(coreWebWorld);
+test("a person who reloads keeps their unsent draft", async ({ user, probe }) => {
+  await user.type("composer", "half a thought");
+  await user.reload();
+  await probe.eventually(() => user.see({ text: "half a thought" }), { within: 10_000, label: "draft restored" });
+});
