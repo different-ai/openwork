@@ -7,6 +7,7 @@ import {
   json,
   mysqlEnum,
   mysqlTable,
+  primaryKey,
   smallint,
   timestamp,
   uniqueIndex,
@@ -555,11 +556,17 @@ export const FreeAutoOrgFounderTable = mysqlTable("free_auto_org_founder", {
   founder_user_id: denTypeIdColumn("user", "founder_user_id").notNull(),
 }, (table) => [index("free_auto_org_founder_user").on(table.founder_user_id)])
 
-export const WorkspaceCreateLimitOverrideTable = mysqlTable("workspace_create_limit_override", {
-  user_id: denTypeIdColumn("user", "user_id").notNull().primaryKey(),
+export const WorkspaceCreateLimitRuleTable = mysqlTable("workspace_create_limit_rule", {
+  scope: mysqlEnum("scope", ["email", "domain"]).notNull(),
+  value: varchar("value", { length: 320 }).notNull(),
   workspace_limit: int("workspace_limit"),
   set_by_user_id: denTypeIdColumn("user", "set_by_user_id").notNull(),
   updated_at: timestamp("updated_at", { fsp: 3 }).notNull().default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
+}, (table) => [primaryKey({ columns: [table.scope, table.value] })])
+
+/** One row per normalized email identity, locked while that person creates a workspace. */
+export const WorkspaceCreateIdentityTable = mysqlTable("workspace_create_identity", {
+  identity: varchar("identity", { length: 320 }).notNull().primaryKey(),
 })
 
 export const InferenceFreeUsageTable = mysqlTable("inference_free_usage", {

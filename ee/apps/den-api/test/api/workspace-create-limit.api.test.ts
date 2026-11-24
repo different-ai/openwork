@@ -13,8 +13,13 @@ const admin = await den.signUp("Platform Admin", process.env.DEN_BOOTSTRAP_ADMIN
 before(() => updateFeatureRollout({ key: "workspaceCreateLimit", enabled: true, defaultEnabled: false }))
 
 const create = (person: Session, name: string) => den.request(person.token, "POST", "/v1/org", { body: { name } })
-const setLimit = (actor: Session, person: Session, limit: number | null | "default") =>
-  den.request(actor.token, "PUT", `/v1/admin/users/${person.userId}/workspace-limit`, { body: { limit } })
+const rules = "/v1/admin/limits/workspace-creation/rules"
+const setRule = (actor: Session, scope: "email" | "domain", value: string, limit: number | null) =>
+  den.request(actor.token, "PUT", rules, { body: { scope, value, limit } })
+const removeRule = (scope: "email" | "domain", value: string) =>
+  den.request(admin.token, "DELETE", `${rules}/${scope}/${encodeURIComponent(value)}`)
+const run = Math.random().toString(36).slice(2, 8)
+const domain = `acme-${run}.test`
 
 function assertRefused(call: Awaited<ReturnType<typeof create>>, limit: number) {
   assert.equal(call.status, 403, summary(call))
@@ -37,19 +42,59 @@ test("three workspaces succeed, the fourth is refused with the typed error and r
   assert.equal(field(status.body, "limit"), 3)
 })
 
-test("an admin override allows more, removing the limit allows any number, and only admins can set it", async () => {
-  const person = await den.signUp("Override person")
-  for (const name of ["One", "Two", "Three"]) assert.equal((await create(person, name)).status, 201)
-  assert.equal((await setLimit(person, person, 10)).status, 403)
-  const raised = await setLimit(admin, person, 4)
-  assert.equal(raised.status, 200, summary(raised))
-  assert.equal(field(raised.body, "override"), true)
-  assert.equal((await create(person, "Four")).status, 201)
-  assertRefused(await create(person, "Five"), 4)
-  assert.equal((await setLimit(admin, person, null)).status, 200)
-  assert.equal((await create(person, "Five")).status, 201)
-  assert.equal((await setLimit(admin, person, "default")).status, 200)
-  assertRefused(await create(person, "Six"), 3)
+test("an email rule beats a domain rule, a domain rule applies to each person, and changes are audited", async () => {
+  assert.equal((await setRule(await den.signUp("Not admin"), "domain", domain, 10)).status, 403)
+  const domainRule = await setRule(admin, "domain", `@${domain.toUpperCase()}`, 2)
+  assert.equal(domainRule.status, 200, summary(domainRule))
+  assert.deepEqual(list(field(domainRule.body, "rules")).map(rule => [rule.scope, rule.value, rule.limit]), [["domain", domain, 2]])
+  const bob = await den.signUp("Bob", `bob-${run}@${domain}`)
+  const carol = await den.signUp("Carol", `carol-${run}@${domain}`)
+  for (const person of [bob, carol]) {
+    for (const name of ["One", "Two"]) assert.equal((await create(person, name)).status, 201)
+    assertRefused(await create(person, "Three"), 2)
+  }
+  assert.equal((await setRule(admin, "email", `Bob-${run}+vip@${domain}`, 4)).status, 200)
+  assert.equal((await create(bob, "Three")).status, 201)
+  assert.equal((await create(bob, "Four")).status, 201)
+  assertRefused(await create(bob, "Five"), 4)
+  assertRefused(await create(carol, "Three"), 2)
+  assert.equal((await setRule(admin, "email", `bob-${run}@${domain}`, null)).status, 200)
+  assert.equal((await create(bob, "Five")).status, 201)
+  assert.equal((await removeRule("email", `bob-${run}@${domain}`)).status, 200)
+  assert.equal((await removeRule("email", `bob-${run}@${domain}`)).status, 404)
+  assertRefused(await create(bob, "Six"), 2)
+  assert.equal((await removeRule("domain", domain)).status, 200)
+  assert.equal((await create(carol, "Three")).status, 201)
+  assert.equal((await setRule(admin, "email", "not-an-email", 3)).status, 400)
+  const audited = await db.$primary.select({ action: PlatformAuditEventTable.action }).from(PlatformAuditEventTable)
+    .where(eq(PlatformAuditEventTable.actor_id, normalizeDenTypeId("user", admin.userId)))
+  const actions = audited.map(row => row.action)
+  assert.equal(actions.filter(action => action.startsWith("platform.workspace_create_limit.rule.set.")).length >= 4, true, actions.join(", "))
+  assert.equal(actions.filter(action => action.startsWith("platform.workspace_create_limit.rule.remove.")).length >= 2, true, actions.join(", "))
+})
+
+test("plus aliases and Gmail dot variants share one count", async () => {
+  const local = `alice${run}`
+  const first = await den.signUp("Alice", `${local}+1@gmail.com`)
+  const second = await den.signUp("Alice alias", `${local}+xyz@googlemail.com`)
+  const dotted = await den.signUp("Alice dots", `${local.slice(0, 2)}.${local.slice(2)}@gmail.com`)
+  assert.equal((await create(first, "One")).status, 201)
+  assert.equal((await create(second, "Two")).status, 201)
+  assert.equal((await create(dotted, "Three")).status, 201)
+  for (const person of [first, second, dotted]) assertRefused(await create(person, "Four"), 3)
+  const status = await den.request(admin.token, "GET", `/v1/admin/users/${second.userId}/workspace-limit`)
+  assert.equal(field(status.body, "identity"), `${local}@gmail.com`)
+  assert.equal(field(status.body, "created"), 3)
+  assert.equal((await setRule(admin, "email", `${local.slice(0, 3)}.${local.slice(3)}+other@gmail.com`, 4)).status, 200)
+  assert.equal((await create(dotted, "Four")).status, 201)
+  assertRefused(await create(first, "Five"), 4)
+})
+
+test("alias accounts creating at the same time cannot exceed the limit together", async () => {
+  const local = `dana${run}`
+  const people = await Promise.all(["a", "b", "c"].map(tag => den.signUp(`Dana ${tag}`, `${local}+${tag}@${domain}`)))
+  const results = await Promise.all(people.flatMap(person => [create(person, "Parallel one"), create(person, "Parallel two")]))
+  assert.deepEqual(results.map(call => call.status).sort(), [201, 201, 201, 403, 403, 403], results.map(summary).join("\n"))
 })
 
 test("handing ownership to someone else does not reset the founder's count", async () => {

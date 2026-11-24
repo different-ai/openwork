@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "66a6617d-72ac-4f64-b825-af9f678d7823",
+  "id": "cd661a24-2aeb-42e8-b65b-d6ef89dc69dc",
   "prevId": "78d63ff0-c1ec-40e3-802b-cd8a4a04b851",
   "tables": {
     "admin_metric_refresh_lease": {
@@ -8356,12 +8356,43 @@
       "uniqueConstraints": {},
       "checkConstraint": {}
     },
-    "workspace_create_limit_override": {
-      "name": "workspace_create_limit_override",
+    "workspace_create_identity": {
+      "name": "workspace_create_identity",
       "columns": {
-        "user_id": {
-          "name": "user_id",
-          "type": "varchar(64)",
+        "identity": {
+          "name": "identity",
+          "type": "varchar(320)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        }
+      },
+      "indexes": {},
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "workspace_create_identity_identity": {
+          "name": "workspace_create_identity_identity",
+          "columns": [
+            "identity"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
+    "workspace_create_limit_rule": {
+      "name": "workspace_create_limit_rule",
+      "columns": {
+        "scope": {
+          "name": "scope",
+          "type": "enum('email','domain')",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "value": {
+          "name": "value",
+          "type": "varchar(320)",
           "primaryKey": false,
           "notNull": true,
           "autoincrement": false
@@ -8392,10 +8423,11 @@
       "indexes": {},
       "foreignKeys": {},
       "compositePrimaryKeys": {
-        "workspace_create_limit_override_user_id": {
-          "name": "workspace_create_limit_override_user_id",
+        "workspace_create_limit_rule_scope_value_pk": {
+          "name": "workspace_create_limit_rule_scope_value_pk",
           "columns": [
-            "user_id"
+            "scope",
+            "value"
           ]
         }
       },

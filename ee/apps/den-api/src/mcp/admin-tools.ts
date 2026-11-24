@@ -16,7 +16,7 @@ import { runPlatformAdminPlatformAction, runPlatformAdminServiceAction, type Pla
 import { readWorkbotAdoptionReport, workbotAdoptionInputSchema } from "../workbot/adoption-report.js"
 import { assertReadOnlySql, isDatabaseTimeLimitError, withDatabaseTimeLimit } from "./admin-query-limit.js"
 import { DEN_MCP_WRITE_SCOPE } from "./scopes.js"
-import { readWorkspaceCreateLimitStatus, setWorkspaceCreateLimitOverride } from "../workspace-create-limit.js"
+import { normalizeRuleValue, readWorkspaceLimitSettings, removeWorkspaceLimitRule, setWorkspaceLimitRule } from "../workspace-create-limit.js"
 import { buildRetentionCohorts } from "../admin-metrics/definitions.js"
 import { readTaskUserWindows } from "../admin-metrics/metrics.js"
 import { normalizeRows } from "../admin-metrics/sql.js"
@@ -518,23 +518,25 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
   )
 
   server.registerTool(
-    "den_set_user_workspace_limit",
+    "den_set_workspace_limit_rule",
     {
       description:
-        "Admin write tool: raise, remove, or restore how many workspaces one person can create in the rolling window (enforced while the workspaceCreateLimit feature is on). limit=number sets it, limit=null removes the limit, limit='default' restores the deployment limit. Returns the effective limit and the person's current count.",
+        "Admin write tool: set how many workspaces matching people can create in the rolling window (enforced while the workspaceCreateLimit feature is on). scope='email' targets one person (aliases like alice+x@ and Gmail dots count as the same person); scope='domain' gives each person at that domain the limit. The most specific rule wins over the deployment default. limit=number sets it, null removes the limit for them, 'remove' deletes the rule.",
       inputSchema: z.object({
-        userId: z.string().min(1).describe("User id, e.g. user_..."),
-        limit: z.union([z.number().int().min(1).max(10_000), z.null(), z.literal("default")]).describe("New limit, null for no limit, or 'default'"),
+        scope: z.enum(["email", "domain"]).describe("email or domain"),
+        value: z.string().min(3).max(320).describe("Email address or domain, e.g. alice@acme.com or acme.com"),
+        limit: z.union([z.number().int().min(1).max(10_000), z.null(), z.literal("remove")]).describe("New limit, null for no limit, or 'remove'"),
       }),
     },
-    async ({ userId, limit }) =>
-      writeScopeMissing("den_set_user_workspace_limit") ?? run(async () => {
-        if (!isDenTypeId("user", userId)) throw new Error("Invalid user id")
-        const id = normalizeDenTypeId("user", userId)
-        if (!await readWorkspaceCreateLimitStatus(id)) throw new Error(`No user found for ${userId}`)
-        await runPlatformAdminPlatformAction("workspace_create_limit.set", requireAdmin(), { type: "user", id }, () =>
-          setWorkspaceCreateLimitOverride({ userId: id, limit, setByUserId: normalizeDenTypeId("user", requireAdmin().userId) }))
-        return { ok: true, ...await readWorkspaceCreateLimitStatus(id) }
+    async ({ scope, value, limit }) =>
+      writeScopeMissing("den_set_workspace_limit_rule") ?? run(async () => {
+        const normalized = normalizeRuleValue(scope, value)
+        if (!normalized) throw new Error(scope === "email" ? "Invalid email address" : "Invalid domain")
+        await runPlatformAdminPlatformAction("workspace_create_limit.rule.set", requireAdmin(), { type: "workspace_create_limit_rule", id: `${scope}:${normalized}` }, async () => {
+          if (limit === "remove") await removeWorkspaceLimitRule(scope, normalized)
+          else await setWorkspaceLimitRule({ scope, value: normalized, limit, setByUserId: normalizeDenTypeId("user", requireAdmin().userId) })
+        })
+        return { ok: true, ...await readWorkspaceLimitSettings() }
       }),
   )
 

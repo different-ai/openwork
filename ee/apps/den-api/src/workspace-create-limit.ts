@@ -1,7 +1,22 @@
-import { and, count, eq, gte } from "@openwork-ee/den-db/drizzle"
+import { and, count, eq, gte, inArray, or, sql, type SQL } from "@openwork-ee/den-db/drizzle"
 import { z } from "zod"
 import { recordFreeAutoFounder } from "@openwork-ee/den-db"
-import { AuthUserTable, FreeAutoOrgFounderTable, MemberTable, OrganizationTable, WorkspaceCreateLimitOverrideTable } from "@openwork-ee/den-db/schema"
+import {
+  AuthUserTable,
+  FreeAutoOrgFounderTable,
+  MemberTable,
+  OrganizationTable,
+  WorkspaceCreateIdentityTable,
+  WorkspaceCreateLimitRuleTable,
+} from "@openwork-ee/den-db/schema"
+import {
+  normalizeEmailDomain,
+  normalizeEmailIdentity,
+  type WorkspaceLimitRule,
+  type WorkspaceLimitRuleInput,
+  type WorkspaceLimitRuleScope,
+  type WorkspaceLimitSettings,
+} from "@openwork/types/den/admin-limits"
 import type { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { writePlatformAuditEvent } from "./audit/request-capture.js"
 import { db } from "./db.js"
@@ -9,6 +24,7 @@ import { env } from "./env.js"
 import { deploymentFeatureEnabled } from "./features.js"
 
 type UserId = ReturnType<typeof normalizeDenTypeId<"user">>
+type Reader = Pick<typeof db, "select">
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
 
 export type WorkspaceLimitReached = { error: "workspace_limit_reached"; message: string; limit: number; windowDays: number; contact: string }
@@ -38,41 +54,77 @@ export function workspaceLimitReachedBody(limit: number): WorkspaceLimitReached 
   }
 }
 
-/** The effective limit for one person, or null when they can create any number. */
-export async function readWorkspaceCreateLimit(reader: Pick<typeof db, "select">, userId: UserId): Promise<number | null> {
-  const [override] = await reader
-    .select({ limit: WorkspaceCreateLimitOverrideTable.workspace_limit })
-    .from(WorkspaceCreateLimitOverrideTable)
-    .where(eq(WorkspaceCreateLimitOverrideTable.user_id, userId))
-    .limit(1)
-  const limit = override ? override.limit : env.workspaceCreateLimit.limit
-  return limit && limit > 0 ? limit : null
+/** SQL twin of normalizeEmailIdentity, so accounts created with +aliases or Gmail dots count as one person. */
+const lowered = sql`LOWER(TRIM(${AuthUserTable.email}))`
+const emailDomain = sql`SUBSTRING_INDEX(${lowered}, '@', -1)`
+const emailBase = sql`SUBSTRING_INDEX(SUBSTRING_INDEX(${lowered}, '@', 1), '+', 1)`
+const emailIdentity = sql`CASE WHEN ${emailDomain} IN ('gmail.com', 'googlemail.com')
+  THEN CONCAT(REPLACE(${emailBase}, '.', ''), '@gmail.com') ELSE CONCAT(${emailBase}, '@', ${emailDomain}) END`
+
+type Person = { userId: UserId; identity: string | null }
+
+async function readPerson(reader: Reader, userId: UserId): Promise<Person | null> {
+  const [user] = await reader.select({ email: AuthUserTable.email }).from(AuthUserTable).where(eq(AuthUserTable.id, userId)).limit(1)
+  return user ? { userId, identity: normalizeEmailIdentity(user.email) } : null
 }
 
-/** Workspaces this person founded inside the window. Founder records survive ownership transfers. */
-export async function countFoundedWorkspaces(reader: Pick<typeof db, "select">, userId: UserId): Promise<number> {
-  const conditions = [eq(FreeAutoOrgFounderTable.founder_user_id, userId)]
+type ResolvedLimit = { limit: number | null; rule: WorkspaceLimitRuleScope | null }
+
+/** Most specific first: the person's email, then their email domain, then the deployment default. */
+async function resolveLimit(reader: Reader, person: Person): Promise<ResolvedLimit> {
+  const fallback = env.workspaceCreateLimit.limit > 0 ? env.workspaceCreateLimit.limit : null
+  if (!person.identity) return { limit: fallback, rule: null }
+  const domain = person.identity.split("@")[1] ?? ""
+  const rules = await reader
+    .select({ scope: WorkspaceCreateLimitRuleTable.scope, limit: WorkspaceCreateLimitRuleTable.workspace_limit })
+    .from(WorkspaceCreateLimitRuleTable)
+    .where(or(
+      and(eq(WorkspaceCreateLimitRuleTable.scope, "email"), eq(WorkspaceCreateLimitRuleTable.value, person.identity)),
+      and(eq(WorkspaceCreateLimitRuleTable.scope, "domain"), eq(WorkspaceCreateLimitRuleTable.value, domain)),
+    ))
+  const match = rules.find(rule => rule.scope === "email") ?? rules.find(rule => rule.scope === "domain")
+  return match ? { limit: match.limit, rule: match.scope } : { limit: fallback, rule: null }
+}
+
+/** Workspaces founded inside the window by every account that normalizes to this person's email. */
+async function countFounded(reader: Reader, person: Person): Promise<number> {
+  const conditions: SQL[] = []
   if (env.workspaceCreateLimit.windowDays > 0) {
     conditions.push(gte(OrganizationTable.createdAt, new Date(Date.now() - env.workspaceCreateLimit.windowDays * 86_400_000)))
+  }
+  if (person.identity) {
+    const domain = person.identity.split("@")[1] ?? ""
+    const domains = domain === "gmail.com" ? ["gmail.com", "googlemail.com"] : [domain]
+    conditions.push(inArray(emailDomain, domains), sql`${emailIdentity} = ${person.identity}`)
+  } else {
+    conditions.push(eq(FreeAutoOrgFounderTable.founder_user_id, person.userId))
   }
   const [row] = await reader
     .select({ value: count() })
     .from(FreeAutoOrgFounderTable)
     .innerJoin(OrganizationTable, eq(OrganizationTable.id, FreeAutoOrgFounderTable.organization_id))
+    .innerJoin(AuthUserTable, eq(AuthUserTable.id, FreeAutoOrgFounderTable.founder_user_id))
     .where(and(...conditions))
   return row?.value ?? 0
 }
 
 /**
- * Call inside the transaction that records the new founder. Locking the person's user row
- * serializes their concurrent creations, so the count cannot be read stale by a parallel request.
+ * Call inside the transaction that records the new founder. Locking one row per normalized email
+ * serializes concurrent creations by the same person, including from different alias accounts.
  */
 export async function assertWorkspaceCreateAllowed(tx: Tx, userId: UserId): Promise<void> {
   if (!await deploymentFeatureEnabled("workspaceCreateLimit")) return
-  await tx.select({ id: AuthUserTable.id }).from(AuthUserTable).where(eq(AuthUserTable.id, userId)).limit(1).for("update")
-  const limit = await readWorkspaceCreateLimit(tx, userId)
+  // Take the locks before any plain read: under REPEATABLE READ the first plain read fixes the snapshot the count uses.
+  const [user] = await tx.select({ email: AuthUserTable.email }).from(AuthUserTable).where(eq(AuthUserTable.id, userId)).limit(1).for("update")
+  if (!user) return
+  const person: Person = { userId, identity: normalizeEmailIdentity(user.email) }
+  if (person.identity) {
+    await tx.insert(WorkspaceCreateIdentityTable).values({ identity: person.identity })
+      .onDuplicateKeyUpdate({ set: { identity: sql`${WorkspaceCreateIdentityTable.identity}` } })
+  }
+  const { limit } = await resolveLimit(tx, person)
   if (limit === null) return
-  if (await countFoundedWorkspaces(tx, userId) >= limit) throw new WorkspaceLimitReachedError(workspaceLimitReachedBody(limit))
+  if (await countFounded(tx, person) >= limit) throw new WorkspaceLimitReachedError(workspaceLimitReachedBody(limit))
 }
 
 /**
@@ -98,37 +150,64 @@ export async function recordFounderWithinLimit(organizationId: ReturnType<typeof
 
 export const workspaceCreateLimitStatusSchema = z.object({
   userId: z.string(),
+  identity: z.string().nullable().describe("Normalized email the count and rules use."),
   enforcementEnabled: z.boolean(),
   limit: z.number().int().positive().nullable().describe("Effective limit. Null means no limit."),
-  override: z.boolean().describe("True when a platform admin set this person's limit."),
-  created: z.number().int().min(0).describe("Workspaces this person founded inside the window."),
+  rule: z.enum(["email", "domain"]).nullable().describe("Which rule set the limit, or null for the deployment default."),
+  created: z.number().int().min(0).describe("Workspaces this person founded inside the window, across alias accounts."),
   windowDays: z.number().int().min(0),
 }).meta({ ref: "WorkspaceCreateLimitStatus" })
 
 export async function readWorkspaceCreateLimitStatus(userId: UserId): Promise<z.infer<typeof workspaceCreateLimitStatusSchema> | null> {
-  const [user] = await db.select({ id: AuthUserTable.id }).from(AuthUserTable).where(eq(AuthUserTable.id, userId)).limit(1)
-  if (!user) return null
-  const [override] = await db.select({ id: WorkspaceCreateLimitOverrideTable.user_id }).from(WorkspaceCreateLimitOverrideTable)
-    .where(eq(WorkspaceCreateLimitOverrideTable.user_id, userId)).limit(1)
+  const person = await readPerson(db, userId)
+  if (!person) return null
+  const resolved = await resolveLimit(db, person)
   return {
     userId,
+    identity: person.identity,
     enforcementEnabled: await deploymentFeatureEnabled("workspaceCreateLimit"),
-    limit: await readWorkspaceCreateLimit(db, userId),
-    override: Boolean(override),
-    created: await countFoundedWorkspaces(db, userId),
+    limit: resolved.limit,
+    rule: resolved.rule,
+    created: await countFounded(db, person),
     windowDays: env.workspaceCreateLimit.windowDays,
   }
 }
 
-/** limit: a number raises or lowers it, null removes it, "default" restores the deployment limit. */
-export async function setWorkspaceCreateLimitOverride(input: { userId: UserId; limit: number | null | "default"; setByUserId: UserId }) {
-  if (input.limit === "default") {
-    await db.delete(WorkspaceCreateLimitOverrideTable).where(eq(WorkspaceCreateLimitOverrideTable.user_id, input.userId))
-    return
+export function normalizeRuleValue(scope: WorkspaceLimitRuleScope, value: string): string | null {
+  return scope === "email" ? normalizeEmailIdentity(value) : normalizeEmailDomain(value)
+}
+
+export async function readWorkspaceLimitSettings(): Promise<WorkspaceLimitSettings> {
+  const rows = await db.select().from(WorkspaceCreateLimitRuleTable)
+  const rules: WorkspaceLimitRule[] = rows
+    .map(row => ({ id: `${row.scope}:${row.value}`, scope: row.scope, value: row.value, limit: row.workspace_limit, updatedAt: row.updated_at.toISOString() }))
+    .sort((a, b) => a.scope.localeCompare(b.scope) || a.value.localeCompare(b.value))
+  return {
+    enforcementEnabled: await deploymentFeatureEnabled("workspaceCreateLimit"),
+    defaultLimit: env.workspaceCreateLimit.limit,
+    windowDays: env.workspaceCreateLimit.windowDays,
+    rules,
   }
-  await db.insert(WorkspaceCreateLimitOverrideTable)
-    .values({ user_id: input.userId, workspace_limit: input.limit, set_by_user_id: input.setByUserId })
+}
+
+/** Adds or replaces the rule for one normalized email or domain. Returns null for an unusable value. */
+export async function setWorkspaceLimitRule(input: WorkspaceLimitRuleInput & { setByUserId: UserId }): Promise<string | null> {
+  const value = normalizeRuleValue(input.scope, input.value)
+  if (!value) return null
+  await db.insert(WorkspaceCreateLimitRuleTable)
+    .values({ scope: input.scope, value, workspace_limit: input.limit, set_by_user_id: input.setByUserId })
     .onDuplicateKeyUpdate({ set: { workspace_limit: input.limit, set_by_user_id: input.setByUserId } })
+  return value
+}
+
+export async function removeWorkspaceLimitRule(scope: WorkspaceLimitRuleScope, value: string): Promise<boolean> {
+  const normalized = normalizeRuleValue(scope, value)
+  if (!normalized) return false
+  const match = and(eq(WorkspaceCreateLimitRuleTable.scope, scope), eq(WorkspaceCreateLimitRuleTable.value, normalized))
+  const [existing] = await db.select({ value: WorkspaceCreateLimitRuleTable.value }).from(WorkspaceCreateLimitRuleTable).where(match).limit(1)
+  if (!existing) return false
+  await db.delete(WorkspaceCreateLimitRuleTable).where(match)
+  return true
 }
 
 export async function recordWorkspaceLimitReached(input: { requestId: unknown; method: string; route: string; userId: UserId }) {
