@@ -12,7 +12,7 @@ import { AuditUnavailableError, auditUnavailableToolResult, runMcpServiceAction,
 import type { AuditServiceActionName } from "../audit/service-actions.js"
 import { isPlatformAdminUserId } from "../middleware/admin.js"
 import { mcpPrincipalCredentialId, type McpPrincipal } from "./auth.js"
-import { catalogOperationAvailableToCapabilities } from "./catalog-availability.js"
+import { catalogOperationAvailableToCapabilities, filterGmailThreadRead } from "./catalog-availability.js"
 import type { McpToolOperation } from "./catalog.js"
 import {
   executeAdminCapability,
@@ -160,7 +160,7 @@ export type CapabilityRegistryContextInput = {
   member: McpMemberIdentity | null
   redirectUriBase: string
   generatedArtifactViewsEnabled: boolean
-  organizationFeatures: Partial<Pick<FeatureMap, "managedDeployments">>
+  organizationFeatures: Partial<Pick<FeatureMap, "managedDeployments" | "gmailThreadRead">>
   audit?: McpAuditPrincipal | null
   usageSource: CapabilityUsageSource
 }
@@ -182,7 +182,7 @@ export function createCapabilityRegistryContext(input: CapabilityRegistryContext
   return {
     app: input.app,
     env: input.env,
-    catalog: input.catalog,
+    catalog: filterGmailThreadRead(input.catalog, input.organizationFeatures.gmailThreadRead),
     principal: input.principal,
     organizationId: input.organizationId,
     member: input.member,

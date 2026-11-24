@@ -28,6 +28,7 @@ import {
   type ExecuteCapabilityToolResult,
 } from "./capability-registry.js"
 import type { McpToolOperation } from "./catalog.js"
+import { filterGmailThreadRead } from "./catalog-availability.js"
 import { denInputJsonSchema } from "./codemode-tools.js"
 import { connectionActionAppMeta, connectionActionPayloadFromStatus, connectionActionTextFallback } from "./connection-action.js"
 import {
@@ -285,7 +286,7 @@ export function createConnectionServerHandler(input: { revision: InventoryRevisi
 
 export type ConnectionServerRouteDeps = {
   verify: (request: Request, requestId: string) => Promise<McpPrincipal | Response>
-  features: (organizationId: string, userId: string) => Promise<Pick<FeatureMap, "connectionMcpServers" | "managedDeployments">>
+  features: (organizationId: string, userId: string) => Promise<Pick<FeatureMap, "connectionMcpServers" | "managedDeployments"> & Partial<Pick<FeatureMap, "gmailThreadRead">>>
   member: typeof resolveMcpMemberIdentity
   catalog: (app: Hono, env: unknown) => Promise<readonly McpToolOperation[]>
   sources: ConnectionServerSources
@@ -339,7 +340,7 @@ export function registerConnectionServerRoutes<T extends { Variables: RequestIdV
       member,
       connectionId: c.req.param("connectionId"),
       redirectUriBase,
-      catalog,
+      catalog: filterGmailThreadRead(catalog, features.gmailThreadRead),
     }, deps.sources)
     if (!connection) return connectionUnavailableResponse(c.req.raw)
 

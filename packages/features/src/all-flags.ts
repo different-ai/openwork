@@ -26,6 +26,7 @@ export { default as freeAutoSafetyPauses } from "@openwork/features/flags/free-a
 export { default as freeAutoSharedBudgets } from "@openwork/features/flags/free-auto-shared-budgets"
 export { default as fundedModelAccountSuspensions } from "@openwork/features/flags/funded-model-account-suspensions"
 export { default as gatewayOpenCodeSetup } from "@openwork/features/flags/gateway-open-code-setup"
+export { default as gmailThreadRead } from "@openwork/features/flags/gmail-thread-read"
 export { default as importOpencodeConnections } from "@openwork/features/flags/import-opencode-connections"
 export { default as litellmEntraMemberSignIn } from "@openwork/features/flags/litellm-entra-member-sign-in"
 export { default as lowStorageWarning } from "@openwork/features/flags/low-storage-warning"

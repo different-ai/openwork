@@ -61,6 +61,7 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   read(`${GW}/gmail-labels`, "capability.gmail.label.list", GWK, res("gmail_label"), CAP),
   access("GET", `${GW}/gmail-messages`, "capability.gmail.message.search", GWK, res("gmail_message"), CAP_CONTENT),
   access("GET", `${GW}/gmail-message/:messageId`, "capability.gmail.message.read", GWK, res("gmail_message", "messageId"), CAP_CONTENT),
+  access("GET", `${GW}/gmail-thread/:threadId`, "capability.gmail.thread.read", GWK, res("gmail_thread", "threadId"), CAP_CONTENT),
   access("GET", `${GW}/gmail-attachment/:messageId/:attachmentId`, "capability.gmail.attachment.download", GWK, res("gmail_attachment", "attachmentId"), `${CAP} Response carries attachment bytes.`),
   access("GET", `${GW}/gmail-drafts`, "capability.gmail.draft.list", GWK, res("gmail_draft"), CAP_CONTENT),
   access("GET", `${GW}/gmail-draft/:draftId`, "capability.gmail.draft.read", GWK, res("gmail_draft", "draftId"), `${CAP} Response carries draft content incl. raw MIME.`),
