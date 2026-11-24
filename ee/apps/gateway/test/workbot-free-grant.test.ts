@@ -32,11 +32,11 @@ test("a grant verifies only for its own key, organization and member, and only u
 test("with desktop proof required, a Den-signed Workbot grant replaces desktop proof for that member's key only", async () => {
   const config = readAutoConfig({ INFERENCE_FREE_ENABLED: "true", INFERENCE_FREE_OPENAI_API_KEY: "fixture",
     ANONYMOUS_ACCOUNTING_IDENTITY_KEY: "fixture-accounting-identity-key-000000", WORKBOT_FREE_GRANT_SECRET: secret })
-  const admitted: boolean[] = []
+  const admitted: string[] = []
   const store: FreeAllowanceStore = { family: "member", safetyPaused: async () => false, consumeNonce: async () => "accepted",
     consumeSession: async () => {}, read: async () => ({ state: "ready", allowance: null, code: null }),
-    admit: async (_principal, _request, _choices, _desktopHash, workbot) => {
-      admitted.push(Boolean(workbot))
+    admit: async (_principal, _request, _choices, desktopHash) => {
+      admitted.push(desktopHash ?? "no desktop")
       return { ok: true, windows: [] }
     }, charge: async () => true }
   const fetch = async () => Response.json({ id: "fixture", model: config.upstreamModel, choices: [{ index: 0, finish_reason: "stop" }],
@@ -45,7 +45,7 @@ test("with desktop proof required, a Den-signed Workbot grant replaces desktop p
     organizationId: createDenTypeId("organization"), inferenceKeyId: createDenTypeId("inferenceKey") }
   const key = { id: principal.inferenceKeyId, organization_id: principal.organizationId, org_membership_id: principal.memberId,
     name: null, key_hash: "fixture", key_prefix: null, encrypted_key: null, status: "active" as const, revoked_at: null, created_at: new Date(), updated_at: new Date() }
-  const handler = createFreeMemberHandler({ config, store, fetch, clientAddress: () => "203.0.113.9", requireDesktop: async () => true,
+  const handler = createFreeMemberHandler({ config, store, fetch, clientAddress: () => "203.0.113.9", requireDesktop: () => true,
     findMember: async () => principal, defaultPinned: async () => false })
   const app = new Hono()
   app.post(MEMBER_FREE_CHAT_PATH, c => handler(c, key))
@@ -63,5 +63,5 @@ test("with desktop proof required, a Den-signed Workbot grant replaces desktop p
   const allowed = await send(signWorkbotFreeGrant(secret, claims))
   assert.equal(allowed.status, 200)
   await allowed.text()
-  assert.deepEqual(admitted, [true])
+  assert.deepEqual(admitted, ["no desktop"])
 })
