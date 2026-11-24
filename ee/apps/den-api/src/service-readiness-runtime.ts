@@ -1,6 +1,6 @@
 import { sql } from "@openwork-ee/den-db/drizzle"
 import { verifyEmailTransport } from "@openwork/email"
-import type { DeploymentServiceReadiness, OrganizationServiceReadiness } from "@openwork/types/den/service-readiness"
+import type { DeploymentServiceReadiness, OrganizationServiceReadiness, ServiceId } from "@openwork/types/den/service-readiness"
 import { Agent, fetch as undiciFetch } from "undici"
 import { db } from "./db.js"
 import { cache } from "./cache.js"
@@ -80,6 +80,11 @@ export const serviceReadiness = createReadinessController({
   load: () => cache.serviceReadiness.load(configurationFingerprint),
   save: (snapshot) => cache.serviceReadiness.save(configurationFingerprint, snapshot),
 })
+
+const configuredServices: ReadonlySet<ServiceId> = new Set(initialReadiness(readinessEnvironment, env.apiPublicUrl).services.flatMap((status) => status.configured ? [status.id] : []))
+export function configuredDeploymentServices(): ReadonlySet<ServiceId> {
+  return configuredServices
+}
 
 export function currentDeploymentServices(): DeploymentServiceReadiness {
   return { ...serviceReadiness.snapshot(), server: denServerFacts() }

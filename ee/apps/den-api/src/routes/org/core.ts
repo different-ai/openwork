@@ -16,6 +16,7 @@ import { verifyBotProtection } from "../../bot-protection.js"
 import { validateBrandIconUrl } from "../../brand-icon-validation.js"
 import { cloudHostingAvailable } from "../../capability-sources/cloud-hosting.js"
 import { db } from "../../db.js"
+import { deploymentCapabilityStates } from "../../deployment-capability-states.js"
 import { checkEntitlement, getOrganizationEntitlements, parseOrganizationPlan } from "../../entitlements.js"
 import { env } from "../../env.js"
 import { clientFeatures, clientFeaturesSchema } from "../../feature-response.js"
@@ -777,6 +778,7 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
         deploymentCapabilities: {
           ...deploymentCapabilities(),
           ...(serviceReadiness ? { serviceReadiness } : {}),
+          capabilities: deploymentCapabilityStates(features),
         },
         plan: parseOrganizationPlan(currentOrganization.metadata),
         entitlements: getOrganizationEntitlements(currentOrganization.metadata),
