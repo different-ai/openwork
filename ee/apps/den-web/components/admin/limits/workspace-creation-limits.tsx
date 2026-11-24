@@ -79,7 +79,6 @@ export function WorkspaceCreationLimits() {
     </p> : null}
     <dl className="grid max-w-md grid-cols-2 gap-y-2 text-sm">
       <dt className="text-[color:var(--dls-text-secondary)]">Default per person</dt><dd>{data.defaultLimit > 0 ? data.defaultLimit : "No limit"}</dd>
-      <dt className="text-[color:var(--dls-text-secondary)]">Window</dt><dd>{data.windowDays > 0 ? `${data.windowDays} days` : "All time"}</dd>
     </dl>
     {error ? <p role="alert" className="text-sm text-[color:var(--ow-danger)]">{error}</p> : null}
     <p role="status" aria-live="polite" className="text-sm text-[color:var(--dls-text-secondary)] empty:hidden">{notice}</p>

@@ -1,4 +1,4 @@
-import { and, count, eq, gte, inArray, or, sql, type SQL } from "@openwork-ee/den-db/drizzle"
+import { and, count, eq, inArray, or, sql, type SQL } from "@openwork-ee/den-db/drizzle"
 import { z } from "zod"
 import { recordFreeAutoFounder } from "@openwork-ee/den-db"
 import {
@@ -27,13 +27,12 @@ type UserId = ReturnType<typeof normalizeDenTypeId<"user">>
 type Reader = Pick<typeof db, "select">
 type Tx = Parameters<Parameters<typeof db.transaction>[0]>[0]
 
-export type WorkspaceLimitReached = { error: "workspace_limit_reached"; message: string; limit: number; windowDays: number; contact: string }
+export type WorkspaceLimitReached = { error: "workspace_limit_reached"; message: string; limit: number; contact: string }
 
 export const workspaceLimitReachedSchema = z.object({
   error: z.literal("workspace_limit_reached"),
   message: z.string(),
   limit: z.number().int().positive(),
-  windowDays: z.number().int().min(0).describe("Rolling window in days. 0 counts every workspace the person founded."),
   contact: z.string().describe("Where the person can ask to raise the limit, as a mailto or https link."),
 }).meta({ ref: "WorkspaceLimitReachedError" })
 
@@ -49,7 +48,6 @@ export function workspaceLimitReachedBody(limit: number): WorkspaceLimitReached 
     error: "workspace_limit_reached",
     message: `You've reached the limit of ${limit} ${noun}. Contact us to raise it.`,
     limit,
-    windowDays: env.workspaceCreateLimit.windowDays,
     contact: env.workspaceCreateLimit.contact,
   }
 }
@@ -86,9 +84,6 @@ async function resolveLimit(reader: Reader, person: Person): Promise<ResolvedLim
 
 async function countFounded(reader: Reader, person: Person): Promise<number> {
   const conditions: SQL[] = []
-  if (env.workspaceCreateLimit.windowDays > 0) {
-    conditions.push(gte(OrganizationTable.createdAt, new Date(Date.now() - env.workspaceCreateLimit.windowDays * 86_400_000)))
-  }
   if (person.identity) {
     const domain = person.identity.split("@")[1] ?? ""
     const domains = domain === "gmail.com" ? ["gmail.com", "googlemail.com"] : [domain]
@@ -142,8 +137,7 @@ export const workspaceCreateLimitStatusSchema = z.object({
   enforcementEnabled: z.boolean(),
   limit: z.number().int().positive().nullable().describe("Effective limit. Null means no limit."),
   rule: z.enum(["email", "domain"]).nullable().describe("Which rule set the limit, or null for the deployment default."),
-  created: z.number().int().min(0).describe("Workspaces this person founded inside the window, across alias accounts."),
-  windowDays: z.number().int().min(0),
+  created: z.number().int().min(0).describe("Workspaces this person founded that still exist, across alias accounts."),
 }).meta({ ref: "WorkspaceCreateLimitStatus" })
 
 export async function readWorkspaceCreateLimitStatus(userId: UserId): Promise<z.infer<typeof workspaceCreateLimitStatusSchema> | null> {
@@ -157,7 +151,6 @@ export async function readWorkspaceCreateLimitStatus(userId: UserId): Promise<z.
     limit: resolved.limit,
     rule: resolved.rule,
     created: await countFounded(db, person),
-    windowDays: env.workspaceCreateLimit.windowDays,
   }
 }
 
@@ -173,7 +166,6 @@ export async function readWorkspaceLimitSettings(): Promise<WorkspaceLimitSettin
   return {
     enforcementEnabled: await deploymentFeatureEnabled("workspaceCreateLimit"),
     defaultLimit: env.workspaceCreateLimit.limit,
-    windowDays: env.workspaceCreateLimit.windowDays,
     rules,
   }
 }

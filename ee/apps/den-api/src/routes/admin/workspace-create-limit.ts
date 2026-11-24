@@ -51,7 +51,7 @@ export function registerAdminWorkspaceCreateLimit<T extends { Variables: AuthCon
   })
 
   app.get("/v1/admin/users/:userId/workspace-limit", describeRoute({ tags, summary: "Read one person's workspace creation limit",
-    description: "Returns the normalized email, the limit that applies and which rule set it, and how many workspaces the person founded inside the window across alias accounts.",
+    description: "Returns the normalized email, the limit that applies and which rule set it, and how many workspaces the person currently has across alias accounts.",
     responses: { ...errors, ...notFound, 200: jsonResponse("Limit status.", workspaceCreateLimitStatusSchema) } }),
   adminRoute(), paramValidator(z.object({ userId: denTypeIdSchema("user") })), async c => {
     const status = await readWorkspaceCreateLimitStatus(normalizeDenTypeId("user", c.req.valid("param").userId))

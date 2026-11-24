@@ -31,7 +31,7 @@ export function normalizeEmailDomain(value: string): string | null {
 
 /** Limit kinds shown under /admin › Limits. Add a kind here, then its page and routes. */
 export const ADMIN_LIMIT_KINDS = [
-  { key: "workspace-creation", label: "Workspace creation", description: "How many workspaces one person can create in the rolling window." },
+  { key: "workspace-creation", label: "Workspace creation", description: "How many workspaces one person can have at once. Deleting one frees a slot." },
 ] as const;
 export type AdminLimitKind = typeof ADMIN_LIMIT_KINDS[number]["key"];
 
@@ -50,7 +50,6 @@ export type WorkspaceLimitRule = z.infer<typeof workspaceLimitRuleSchema>;
 export const workspaceLimitSettingsSchema = z.object({
   enforcementEnabled: z.boolean(),
   defaultLimit: z.number().int().min(0).describe("Deployment default. 0 means no limit."),
-  windowDays: z.number().int().min(0),
   rules: z.array(workspaceLimitRuleSchema),
 });
 export type WorkspaceLimitSettings = z.infer<typeof workspaceLimitSettingsSchema>;

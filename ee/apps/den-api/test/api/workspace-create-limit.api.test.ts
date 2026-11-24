@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { after, before, test } from "node:test"
 import { and, eq } from "@openwork-ee/den-db/drizzle"
-import { MemberTable, PlatformAuditEventTable } from "@openwork-ee/den-db/schema"
+import { MemberTable, OrganizationTable, PlatformAuditEventTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { bootDen, field, list, summary, text, type Session } from "./harness.js"
 
@@ -105,6 +105,18 @@ test("handing ownership to someone else does not reset the founder's count", asy
   await db.update(MemberTable).set({ role: "member" }).where(eq(MemberTable.id, normalizeDenTypeId("member", first.owner.memberId)))
   for (const name of ["Two", "Three"]) assert.equal((await create(founder, name)).status, 201)
   assertRefused(await create(founder, "Four"), 3)
+})
+
+test("old workspaces still count and deleting one frees a slot", async () => {
+  const person = await den.signUp("No window")
+  const old = await den.createOrg(person, "Last year")
+  const orgId = normalizeDenTypeId("organization", old.orgId)
+  await db.update(OrganizationTable).set({ createdAt: new Date(Date.now() - 400 * 86_400_000) }).where(eq(OrganizationTable.id, orgId))
+  for (const name of ["Two", "Three"]) assert.equal((await create(person, name)).status, 201)
+  assertRefused(await create(person, "Four"), 3)
+  await db.delete(MemberTable).where(eq(MemberTable.organizationId, orgId))
+  await db.delete(OrganizationTable).where(eq(OrganizationTable.id, orgId))
+  assert.equal((await create(person, "Four")).status, 201)
 })
 
 test("concurrent creations cannot exceed the limit", async () => {

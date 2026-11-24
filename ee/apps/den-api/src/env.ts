@@ -222,7 +222,6 @@ const EnvSchema = z.object({
   OPENAI_SAFETY_WEBHOOK_SECRET: z.string().optional(),
   OPENAI_SAFETY_READ_KEY: z.string().optional(),
   DEN_WORKSPACE_CREATE_LIMIT: z.coerce.number().int().min(0).default(3),
-  DEN_WORKSPACE_CREATE_WINDOW_DAYS: z.coerce.number().int().min(0).default(30),
   DEN_WORKSPACE_CREATE_LIMIT_CONTACT: z.string().optional(),
   STRIPE_WEBHOOK_SECRET: z.string().optional(),
   STRIPE_INFERENCE_PRICE_ID: z.string().optional(),
@@ -853,7 +852,6 @@ export const env = {
   openworkWebEnabled,
   workspaceCreateLimit: {
     limit: parsed.DEN_WORKSPACE_CREATE_LIMIT,
-    windowDays: parsed.DEN_WORKSPACE_CREATE_WINDOW_DAYS,
     contact: optionalString(parsed.DEN_WORKSPACE_CREATE_LIMIT_CONTACT) ?? "mailto:team@openworklabs.com",
   },
   openaiSafety: { webhookSecret: optionalString(parsed.OPENAI_SAFETY_WEBHOOK_SECRET), readKey: optionalString(parsed.OPENAI_SAFETY_READ_KEY) },

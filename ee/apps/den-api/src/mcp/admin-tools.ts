@@ -521,7 +521,7 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
     "den_set_workspace_limit_rule",
     {
       description:
-        "Admin write tool: set how many workspaces matching people can create in the rolling window (enforced while the workspaceCreateLimit feature is on). scope='email' targets one person (aliases like alice+x@ and Gmail dots count as the same person); scope='domain' gives each person at that domain the limit. The most specific rule wins over the deployment default. limit=number sets it, null removes the limit for them, 'remove' deletes the rule.",
+        "Admin write tool: set how many workspaces matching people can have founded at once (enforced while the workspaceCreateLimit feature is on). scope='email' targets one person (aliases like alice+x@ and Gmail dots count as the same person); scope='domain' gives each person at that domain the limit. The most specific rule wins over the deployment default. limit=number sets it, null removes the limit for them, 'remove' deletes the rule.",
       inputSchema: z.object({
         scope: z.enum(["email", "domain"]).describe("email or domain"),
         value: z.string().min(3).max(320).describe("Email address or domain, e.g. alice@acme.com or acme.com"),
