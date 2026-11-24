@@ -45,14 +45,14 @@ function errorCode(error: unknown) {
 
 export async function dispatchFreeCompletion(input: {
   config: AutoConfig; store: FreeAllowanceStore; fetch: typeof fetch;
-  principal: FreePrincipal; desktopHash?: string; prepared: { body: string; stream: boolean; choices?: number; protocol?: FreeProtocol };
+  principal: FreePrincipal; desktopHash?: string; workbot?: boolean; prepared: { body: string; stream: boolean; choices?: number; protocol?: FreeProtocol };
   signal: AbortSignal; controller: AbortController;
   startUsageLog?: (requestId: string, stream: boolean) => RequestLogRecorder;
 }) {
   const { config, store, principal, prepared, signal, controller } = input
   signal.throwIfAborted()
   const requestId = randomBytes(16).toString("hex")
-  const admission = await store.admit(principal, requestId, prepared.choices ?? 1, input.desktopHash)
+  const admission = await store.admit(principal, requestId, prepared.choices ?? 1, input.desktopHash, input.workbot ?? false)
   if (!admission.ok) {
     if (admission.code === "desktop_proof_required") return desktopChallenge(config.minimumVersion)
     if (admission.code === "free_founder_unavailable") return freeError(403, admission.code, "Included model usage is unavailable for this organization. You can use a configured or paid model.")

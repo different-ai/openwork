@@ -12,6 +12,7 @@ import { resolveDenServiceVersion } from "./service-version.js"
 import { denApiAppVersion } from "./version.js"
 import { z } from "zod"
 import { readFreeInferenceConfig } from "@openwork/types/den/inference"
+import { readWorkbotFreeGrantSecret } from "@openwork/free-auto/node"
 import { parseFeatureEnvironment } from "@openwork/features"
 import { partitionConfigSecretEnvAllowlist } from "./config-blobs/env-secrets.js"
 
@@ -857,6 +858,7 @@ export const env = {
   },
   openaiSafety: { webhookSecret: optionalString(parsed.OPENAI_SAFETY_WEBHOOK_SECRET), readKey: optionalString(parsed.OPENAI_SAFETY_READ_KEY) },
   inferenceFree: readFreeInferenceConfig(process.env),
+  workbotFreeGrantSecret: readWorkbotFreeGrantSecret(process.env),
   inferenceProxyBaseUrl: optionalString(parsed.GATEWAY_PROXY_BASE_URL) ?? "http://127.0.0.1:8791",
   modelsPublicBaseUrl: gatewayDeployment.modelsPublicBaseUrl ?? optionalString(parsed.GATEWAY_PROXY_BASE_URL) ?? "http://127.0.0.1:8791",
   gatewayEnabled: gatewayDeployment.enabled,

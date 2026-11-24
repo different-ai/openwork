@@ -21,7 +21,7 @@ export async function memberBudgetMode(database: FeatureDatabase, principal: Mem
   return scoped.freeAutoSharedBudgets ? "shared" : "personal"
 }
 
-type CrossOrgBudget = { desktopHash?: string }
+export type CrossOrgBudget = { desktopHash?: string; workbot?: boolean }
 
 export function maximumCompletionCost(config: AutoConfig, choices: number) {
   if (config.upstreamModel !== "gpt-6-luna" || choices !== 1) return null
@@ -50,7 +50,7 @@ export async function memberSharedLimit(tx: Tx, principal: MemberPrincipal, conf
   if (!fitsBudget(Number(platform.amount), amount, config.memberGlobalDailyAmount)) return "free_platform_budget_exhausted"
   if (!fitsBudget(Number(org.amount), amount, config.orgWeeklyAmount)) return "free_org_budget_exhausted"
   if (crossOrg) {
-    if (!crossOrg.desktopHash) return "desktop_proof_required"
+    if (!crossOrg.desktopHash && !crossOrg.workbot) return "desktop_proof_required"
     const [founder] = await tx.select({ userId: Founder.founder_user_id }).from(Founder)
       .where(eq(Founder.organization_id, principal.organizationId))
     if (!founder) return "free_founder_unavailable"
@@ -58,8 +58,10 @@ export async function memberSharedLimit(tx: Tx, principal: MemberPrincipal, conf
     const [founderUsage] = await tx.select(total).from(Founder).innerJoin(Usage, eq(Usage.organization_id, Founder.organization_id))
       .where(and(eq(Founder.founder_user_id, founder.userId), inWeek))
     if (!fitsBudget(Number(founderUsage.amount), amount, config.orgWeeklyAmount)) return "free_founder_budget_exhausted"
-    const [desktop] = await tx.select(total).from(Usage).where(and(eq(Usage.desktop_hash, crossOrg.desktopHash), inWeek))
-    if (!fitsBudget(Number(desktop.amount), amount, config.member.weeklyLimitAmount)) return "free_desktop_budget_exhausted"
+    if (crossOrg.desktopHash) {
+      const [desktop] = await tx.select(total).from(Usage).where(and(eq(Usage.desktop_hash, crossOrg.desktopHash), inWeek))
+      if (!fitsBudget(Number(desktop.amount), amount, config.member.weeklyLimitAmount)) return "free_desktop_budget_exhausted"
+    }
   }
   return null
 }
