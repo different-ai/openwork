@@ -1,7 +1,7 @@
 import { env } from "../env.js"
 import { createEvaluationModel, type EvaluationModel } from "../llm/evaluation-model.js"
 import { appLogger } from "../observability/logger.js"
-import { harnessFeedbackOrganizationIds, isHarnessFeedbackOrganization } from "./access.js"
+import { isHarnessFeedbackOrganization } from "./access.js"
 import { classifyHarnessFeedback } from "./classifier.js"
 import { claimDueHarnessFeedback, settleHarnessFeedback, type ClaimedHarnessFeedback } from "./repository.js"
 
@@ -11,7 +11,7 @@ const MAX_ATTEMPTS = 3
 const RETRY_BASE_MS = 60_000
 
 export async function processHarnessFeedbackReport(report: ClaimedHarnessFeedback, model: EvaluationModel, now = Date.now) {
-  if (!isHarnessFeedbackOrganization(report.organizationId) || !report.leaseExpiresAt || report.leaseExpiresAt.getTime() <= now()) return false
+  if (!(await isHarnessFeedbackOrganization(report.organizationId, { fresh: true })) || !report.leaseExpiresAt || report.leaseExpiresAt.getTime() <= now()) return false
   let judgment
   try {
     judgment = await classifyHarnessFeedback(model, report)
@@ -26,11 +26,11 @@ export async function processHarnessFeedbackReport(report: ClaimedHarnessFeedbac
   return settleHarnessFeedback(report, judgment, new Date(now()))
 }
 
-export function startHarnessFeedbackWorker() {
+export function startHarnessFeedbackWorker(makeModel = createEvaluationModel) {
   const apiKey = env.agentEvaluationApiKey
-  if (!apiKey || !harnessFeedbackOrganizationIds().length) return async () => {}
+  if (!apiKey) return async () => {}
 
-  const model = createEvaluationModel({ apiKey })
+  const model = makeModel({ apiKey })
   let inFlight: Promise<void> | undefined
   const tick = async () => {
     try {
@@ -46,9 +46,7 @@ export function startHarnessFeedbackWorker() {
       appLogger.warn("harness_feedback_queue_unavailable", {})
     }
   }
-  const timer = setInterval(() => {
-    inFlight ??= tick().finally(() => { inFlight = undefined })
-  }, TICK_MS)
+  const timer = setInterval(() => inFlight ??= tick().finally(() => { inFlight = undefined }), TICK_MS)
   timer.unref()
   return async () => {
     clearInterval(timer)

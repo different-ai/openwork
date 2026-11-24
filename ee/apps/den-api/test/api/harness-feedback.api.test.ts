@@ -5,9 +5,8 @@ import { AuthSessionTable, HarnessFeedbackGroupTable, HarnessFeedbackReportTable
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { bootDen, field, list, summary } from "./harness.js"
 
-const den = await bootDen({ env: { DEN_HARNESS_FEEDBACK_ORG_IDS: "", DEN_FEATURE_CONNECT_STANDARD_TOOLS: "true" } })
+const den = await bootDen({ env: { DEN_FEATURE_CONNECT_STANDARD_TOOLS: "true" } })
 after(() => den.close())
-const { env } = await import("../../src/env.js")
 const { db, client } = await import("../../src/db.js")
 const { HARNESS_FEEDBACK_RATE_LIMIT } = await import("../../src/harness-feedback/repository.js")
 const { mintHeadlessRunMcpToken } = await import("../../src/mcp/headless-run-token-mint.js")
@@ -24,6 +23,17 @@ const admin = await den.signUp("Platform Admin", process.env.DEN_BOOTSTRAP_ADMIN
 const tool = "harness_feedback"
 const path = "/v1/admin/harness-feedback"
 const input = { surface: "tool", tool: "demo_tool", symptom: "The tool does not explain why it needs a target.", workaround: "Read the tool guide." }
+
+async function setEnabled(id: string, enabled = true) {
+  const result = await den.request(admin.token, enabled ? "PUT" : "DELETE", `${path}/settings/organizations/${id}`)
+  assert.equal(result.status, 200, summary(result))
+  assert.equal(result.headers.get("cache-control"), "no-store")
+}
+
+async function disableAll() {
+  await setEnabled(organizationId, false)
+  await setEnabled(outsideOrgId, false)
+}
 
 async function mcp(accessToken: string, method: string, view = "search", params: object = {}) {
   return den.request(accessToken, "POST", `/mcp/agent?tools=${view}`, {
@@ -45,17 +55,20 @@ async function expectTool(accessToken: string, eligible: boolean, view = "search
 test("capture and guidance are absent with empty config or an outside organization", async () => {
   await expectTool(token, false)
   assert.notEqual((await den.callMcpTool(token, tool, input)).rpcError, null)
-  env.harnessFeedbackOrgIds.add(organizationId)
+  await setEnabled(organizationId)
   try {
+    await expectTool(token, true)
     await expectTool(otherToken, false)
     assert.notEqual((await den.callMcpTool(otherToken, tool, input)).rpcError, null)
   } finally {
-    env.harnessFeedbackOrgIds.clear()
+    await disableAll()
   }
+  await expectTool(token, false)
+  assert.notEqual((await den.callMcpTool(token, tool, input)).rpcError, null)
 })
 
 test("allowlisted members need a first-party principal", async () => {
-  env.harnessFeedbackOrgIds.add(organizationId)
+  await setEnabled(organizationId)
   try {
     const [session] = await db.$primary.select({ id: AuthSessionTable.id }).from(AuthSessionTable).where(eq(AuthSessionTable.userId, userId)).limit(1)
     assert.ok(session)
@@ -66,12 +79,12 @@ test("allowlisted members need a first-party principal", async () => {
     await expectTool(thirdParty, false)
     assert.notEqual((await den.callMcpTool(thirdParty, tool, input)).rpcError, null)
   } finally {
-    env.harnessFeedbackOrgIds.clear()
+    await disableAll()
   }
 })
 
 test("app and headless capture bounded reports, deduplicate concurrent calls, and share a member limit", async () => {
-  env.harnessFeedbackOrgIds.add(organizationId)
+  await setEnabled(organizationId)
   try {
     await expectTool(token, true)
     await expectTool(token, true, "full")
@@ -107,12 +120,12 @@ test("app and headless capture bounded reports, deduplicate concurrent calls, an
     assert.equal(rows.length, HARNESS_FEEDBACK_RATE_LIMIT - 1)
     assert.equal(rows.filter((row) => row.clientKind === "headless").length, HARNESS_FEEDBACK_RATE_LIMIT - 2)
   } finally {
-    env.harnessFeedbackOrgIds.clear()
+    await disableAll()
   }
 })
 
 test("platform admin inbox and detail are no-store and isolate groups by organization", async () => {
-  env.harnessFeedbackOrgIds.add(organizationId)
+  await setEnabled(organizationId)
   const groupId = createDenTypeId("harnessFeedbackGroup")
   const otherGroupId = createDenTypeId("harnessFeedbackGroup")
   await db.insert(HarnessFeedbackGroupTable).values([
@@ -138,14 +151,14 @@ test("platform admin inbox and detail are no-store and isolate groups by organiz
     assert.equal(field(listing.body, "summary", "reports"), HARNESS_FEEDBACK_RATE_LIMIT)
     assert.ok(!listing.text.includes(outsideOrgId) && !listing.text.includes(input.symptom))
     assert.equal((await den.request(admin.token, "GET", `${path}/${outsideOrgId}/${otherGroupId}`)).status, 404)
-    env.harnessFeedbackOrgIds.add(outsideOrgId)
+    await setEnabled(outsideOrgId)
     assert.equal((await den.request(admin.token, "GET", `${path}/${outsideOrgId}/${groupId}`)).status, 404)
     const detail = await den.request(admin.token, "GET", detailPath)
     assert.equal(detail.status, 200, summary(detail))
     assert.equal(detail.headers.get("cache-control"), "no-store")
     assert.ok(detail.text.includes(input.symptom) && detail.text.includes(input.workaround) && !detail.text.includes(outsideOrgId))
   } finally {
-    env.harnessFeedbackOrgIds.clear()
+    await disableAll()
   }
 })
 
@@ -159,7 +172,7 @@ test("admin can read an ungrouped report that needs review without exposing its 
     { ...report, id: outsideReportId, organizationId: outsideOrgId },
     { ...report, id: groupedReportId, groupId: createDenTypeId("harnessFeedbackGroup"), state: "classified" },
   ])
-  env.harnessFeedbackOrgIds.add(organizationId)
+  await setEnabled(organizationId)
   try {
     const detailPath = `${path}/reports/${organizationId}/${reportId}`
     assert.equal((await den.request(null, "GET", detailPath)).status, 401)
@@ -178,12 +191,12 @@ test("admin can read an ungrouped report that needs review without exposing its 
     assert.equal(detail.headers.get("cache-control"), "no-store")
     assert.ok(detail.text.includes(input.symptom) && detail.text.includes(input.workaround))
   } finally {
-    env.harnessFeedbackOrgIds.clear()
+    await disableAll()
   }
 })
 
 test("removed members cannot list or submit feedback even with a previously issued token", async () => {
-  env.harnessFeedbackOrgIds.add(organizationId)
+  await setEnabled(organizationId)
   try {
     await db.update(MemberTable).set({ removedAt: new Date() }).where(eq(MemberTable.id, memberId))
     const listed = await mcp(token, "tools/list")
@@ -191,7 +204,7 @@ test("removed members cannot list or submit feedback even with a previously issu
     const call = await den.callMcpTool(token, tool, input)
     assert.ok(call.status === 403 || call.rpcError !== null)
   } finally {
-    env.harnessFeedbackOrgIds.clear()
+    await disableAll()
   }
 })
 
@@ -200,8 +213,8 @@ test("only platform admins can requeue a failed group in the matching allowliste
   const group = { id, organizationId, title: "Tool error", surface: "tool", fingerprint: id,
     notifyState: "failed", notifyAttempts: 3 } satisfies typeof HarnessFeedbackGroupTable.$inferInsert
   await db.insert(HarnessFeedbackGroupTable).values(group)
-  env.harnessFeedbackOrgIds.add(organizationId)
-  env.harnessFeedbackOrgIds.add(outsideOrgId)
+  await setEnabled(organizationId)
+  await setEnabled(outsideOrgId)
   try {
     const retry = `${path}/${organizationId}/${id}/retry`
     assert.equal((await den.request(null, "POST", retry)).status, 401)
@@ -218,6 +231,6 @@ test("only platform admins can requeue a failed group in the matching allowliste
     assert.equal(row?.notifyState, "pending")
     assert.equal(row?.notifyAttempts, 0)
   } finally {
-    env.harnessFeedbackOrgIds.clear()
+    await disableAll()
   }
 })

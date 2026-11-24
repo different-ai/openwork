@@ -2,20 +2,28 @@ import assert from "node:assert/strict"
 import { after, test } from "node:test"
 import { eq } from "@openwork-ee/den-db/drizzle"
 import { HarnessFeedbackGroupTable as Groups, HarnessFeedbackReportTable as Reports } from "@openwork-ee/den-db/schema"
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
+import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { EvaluationModel } from "../../src/llm/evaluation-model.js"
-import { bootDen } from "./harness.js"
+import { bootDen, summary } from "./harness.js"
 
-const organizationId = createDenTypeId("organization")
 const outsideOrgId = createDenTypeId("organization")
 const memberId = createDenTypeId("member")
-const den = await bootDen({ env: { DEN_HARNESS_FEEDBACK_ORG_IDS: organizationId, DEN_AGENT_EVALUATION_API_KEY: "" } })
+const den = await bootDen({ env: { DEN_AGENT_EVALUATION_API_KEY: "" } })
 after(() => den.close())
 const { db } = await import("../../src/db.js")
 const { claimDueHarnessFeedback } = await import("../../src/harness-feedback/repository.js")
 const { processHarnessFeedbackReport, startHarnessFeedbackWorker } = await import("../../src/harness-feedback/worker.js")
 const { harnessFeedbackGroupKey } = await import("../../src/harness-feedback/grouping.js")
 const { env } = await import("../../src/env.js")
+
+const context = await den.createOrg(await den.signUp("Worker Fixture Owner"), "Worker Fixture Organization")
+const organizationId = normalizeDenTypeId("organization", context.orgId)
+const admin = await den.signUp("Platform Admin", process.env.DEN_BOOTSTRAP_ADMIN_EMAILS)
+async function setEnabled(enabled: boolean) {
+  const result = await den.request(admin.token, enabled ? "PUT" : "DELETE", `/v1/admin/harness-feedback/settings/organizations/${organizationId}`)
+  assert.equal(result.status, 200, summary(result))
+}
+await setEnabled(true)
 
 let time = Date.now()
 const clock = () => time
@@ -163,7 +171,7 @@ test("does not settle a replaced lease or classify after allowlist removal", asy
   }
   assert.equal(await processHarnessFeedbackReport(current, replacedDuringEvaluation, clock), false)
   assert.equal((await readReport(id)).groupId, null)
-  env.harnessFeedbackOrgIds.clear()
+  await setEnabled(false)
   try {
     assert.deepEqual(await claimDueHarnessFeedback(1, now()), [])
     const report = await readReport(id)
@@ -175,22 +183,34 @@ test("does not settle a replaced lease or classify after allowlist removal", asy
     }, clock), false)
     assert.equal(calls, 0)
   } finally {
-    env.harnessFeedbackOrgIds.add(organizationId)
+    await db.delete(Reports).where(eq(Reports.id, id))
+    await setEnabled(true)
   }
 })
 
-test("does not start a timer without the evaluation key or an allowlist", async (t) => {
-  const setIntervalMock = t.mock.method(globalThis, "setInterval", () => { throw new Error("unexpected timer") })
+test("running worker picks up enabled organizations, but needs the evaluation key to start", async (t) => {
+  const timers = t.mock.method(globalThis, "setInterval")
   await startHarnessFeedbackWorker()()
+  assert.equal(timers.mock.callCount(), 0)
   const apiKey = env.agentEvaluationApiKey
   env.agentEvaluationApiKey = "fixture-key"
-  env.harnessFeedbackOrgIds.clear()
+  await setEnabled(false)
+  const id = await addReport({ nextAttemptAt: new Date(Date.now() - 1_000) })
+  let calls = 0
+  const stop = startHarnessFeedbackWorker(() => async (request) => { calls++; return clear(request) })
   try {
-    await startHarnessFeedbackWorker()()
-    assert.equal(setIntervalMock.mock.callCount(), 0)
+    const tick = timers.mock.calls[0]?.arguments[0]
+    assert.ok(tick)
+    await tick()
+    assert.equal(calls, 0)
+    assert.equal((await readReport(id)).state, "pending")
+    await setEnabled(true)
+    await tick()
+    assert.equal(calls, 1)
+    assert.equal((await readReport(id)).state, "classified")
   } finally {
+    await stop()
     env.agentEvaluationApiKey = apiKey
-    env.harnessFeedbackOrgIds.add(organizationId)
   }
 })
 

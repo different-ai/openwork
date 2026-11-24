@@ -20,8 +20,8 @@ const inputSchema = z.strictObject({
   workaround: shortDescription.optional().describe("How you continued, without user data."),
 })
 
-function eligibleIdentity(principal: McpPrincipal): HarnessFeedbackIdentity | null {
-  if (!isHarnessFeedbackOrganization(principal.organizationId) || !isFirstPartyMcpPrincipal(principal)) return null
+async function eligibleIdentity(principal: McpPrincipal, fresh = false): Promise<HarnessFeedbackIdentity | null> {
+  if (!isFirstPartyMcpPrincipal(principal) || !(await isHarnessFeedbackOrganization(principal.organizationId, { fresh }))) return null
   return {
     organizationId: normalizeDenTypeId("organization", principal.organizationId),
     userId: normalizeDenTypeId("user", principal.userId),
@@ -30,8 +30,12 @@ function eligibleIdentity(principal: McpPrincipal): HarnessFeedbackIdentity | nu
 }
 
 export async function harnessFeedbackAvailable(principal: McpPrincipal): Promise<boolean> {
-  const identity = eligibleIdentity(principal)
-  return identity !== null && (await findHarnessFeedbackMember(identity)) !== null
+  try {
+    const identity = await eligibleIdentity(principal)
+    return identity !== null && (await findHarnessFeedbackMember(identity)) !== null
+  } catch {
+    return false
+  }
 }
 
 function receipt(text: string, isError = false): CallToolResult {
@@ -45,10 +49,10 @@ export function registerHarnessFeedbackTool(server: McpServer, principal: McpPri
     annotations: { readOnlyHint: false, destructiveHint: false, openWorldHint: false },
     inputSchema,
   }, async (args) => {
-    const identity = eligibleIdentity(principal)
     const forbidden = () => receipt("Harness feedback is not available. Continue your task.", true)
-    if (!identity) return forbidden()
     try {
+      const identity = await eligibleIdentity(principal, true)
+      if (!identity) return forbidden()
       const result = await captureHarnessFeedback(identity, args)
       switch (result.kind) {
         case "stored": return receipt("Feedback recorded. Continue your task.")

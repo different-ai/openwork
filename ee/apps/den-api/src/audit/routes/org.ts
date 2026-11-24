@@ -251,6 +251,8 @@ export const orgAuditRoutes: readonly AuditRouteDeclaration[] = [
   member("GET", "/v1/me/install/:platform", "tenant_access", "install_artifact.download", "install.distribution", "install_artifact", "platform"),
   member("POST", "/v1/orgs/:organizationId/install-links", "tenant_change", "install_link.create", "install.distribution", "install_link", null, { notes: "Path organizationId only seeds context; attribute to organizationContext. Returns the normal install page address; creates nothing." }),
 
+  admin("PUT", "/v1/admin/harness-feedback/settings/organizations/:organizationId", "tenant_change", "harness_feedback.organization.enable"),
+  admin("DELETE", "/v1/admin/harness-feedback/settings/organizations/:organizationId", "tenant_change", "harness_feedback.organization.disable"),
   admin("GET", "/v1/admin/organizations/:organizationId", "tenant_read", "organization.admin_detail.read"),
   admin("GET", "/v1/admin/organizations/:organizationId/insights", "tenant_read", "organization.admin_insights.read"),
   admin("GET", "/v1/admin/organizations/:organizationId/usage", "tenant_read", "organization.admin_usage.read"),

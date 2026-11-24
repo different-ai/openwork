@@ -12,6 +12,7 @@ import { DenPageHeader } from "../../../app/(den)/_components/ui/page-header";
 import { sendAdmin } from "../admin-request";
 import { AdminAccessScreen } from "../admin-access-screen";
 import { useAdminReport } from "../use-admin-report";
+import { HarnessFeedbackSettings } from "./harness-feedback-settings";
 import { formatCount } from "../free-auto-usage/format";
 
 const PATH = "/v1/admin/harness-feedback";
@@ -189,6 +190,7 @@ export function HarnessFeedbackPage({ selectedGroup }: { selectedGroup?: string 
         <DenPageHeader title="Harness feedback" size="compact" />
         <DenButton size="sm" variant="secondary" icon={RefreshCw} loading={result.status === "loading"} onClick={refresh}>Refresh</DenButton>
       </div>
+      <HarnessFeedbackSettings revision={revision} refresh={refresh} />
       {result.status === "error" ? <DenNotice message="Couldn't refresh feedback. The last loaded results are still shown." /> : null}
       {!data ? <div role="status" aria-label="Loading feedback" className="h-48 animate-pulse rounded-lg bg-gray-100 motion-reduce:animate-none" /> : (
         <>

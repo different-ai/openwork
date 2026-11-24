@@ -7,6 +7,19 @@ export const HARNESS_FEEDBACK_STATES: readonly ["pending", "classified", "reject
   ["pending", "classified", "rejected", "needs_review"]
 export const HARNESS_FEEDBACK_NOTIFY_STATES: readonly ["pending", "delivered", "failed"] = ["pending", "delivered", "failed"]
 
+export const HarnessFeedbackOrganizationTable = mysqlTable("harness_feedback_organization", {
+  organizationId: denTypeIdColumn("organization", "organization_id").primaryKey(),
+  enabledBy: denTypeIdColumn("user", "enabled_by").notNull(),
+  enabledAt: timestamp("enabled_at", { fsp: 3 }).notNull().defaultNow(),
+})
+
+export const HarnessFeedbackSlackTable = mysqlTable("harness_feedback_slack", {
+  id: varchar("id", { length: 16, enum: ["default"] }).primaryKey(),
+  webhookUrl: encryptedMediumTextColumn("webhook_url").notNull(),
+  updatedBy: denTypeIdColumn("user", "updated_by").notNull(),
+  updatedAt: timestamp("updated_at", { fsp: 3 }).notNull().defaultNow(),
+})
+
 export const HarnessFeedbackGroupTable = mysqlTable("harness_feedback_group", {
   id: denTypeIdColumn("harnessFeedbackGroup", "id").primaryKey(),
   organizationId: denTypeIdColumn("organization", "organization_id").notNull(),

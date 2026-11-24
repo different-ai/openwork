@@ -83,7 +83,7 @@ export async function requestAdmin<T>(path: string, parse: (payload: unknown) =>
   return data === null ? { access: "error", message: "The server returned data this page does not understand." } : { access: "ready", data };
 }
 
-export async function sendAdmin(path: string, method: "PUT" | "POST" | "PATCH", body?: unknown, signal?: AbortSignal): Promise<{ ok: true; payload: unknown } | { ok: false; message: string; status: number; code?: string; retryAfterSeconds?: number }> {
+export async function sendAdmin(path: string, method: "PUT" | "POST" | "PATCH" | "DELETE", body?: unknown, signal?: AbortSignal): Promise<{ ok: true; payload: unknown } | { ok: false; message: string; status: number; code?: string; retryAfterSeconds?: number }> {
   const endpoint = denBrowserEndpoint(path);
   const response = await fetch(endpoint, {
     method,

@@ -61,7 +61,7 @@ const LEASE_MS = 60_000
 export type ClaimedHarnessFeedback = typeof Reports.$inferSelect & { leaseOwner: string }
 
 export async function claimDueHarnessFeedback(limit: number, now: Date): Promise<ClaimedHarnessFeedback[]> {
-  const organizationIds = harnessFeedbackOrganizationIds()
+  const organizationIds = await harnessFeedbackOrganizationIds()
   if (!organizationIds.length || limit <= 0) return []
   return db.transaction(async (tx) => {
     const rows = await tx.select().from(Reports).where(and(
@@ -81,7 +81,7 @@ type Settlement = Awaited<ReturnType<typeof classifyHarnessFeedback>> | {
 }
 
 export async function settleHarnessFeedback(report: ClaimedHarnessFeedback, settlement: Settlement, now: Date) {
-  if (!isHarnessFeedbackOrganization(report.organizationId)) return false
+  if (!(await isHarnessFeedbackOrganization(report.organizationId, { fresh: true }))) return false
   return db.transaction(async (tx) => {
     const [row] = await tx.select({ id: Reports.id }).from(Reports).where(and(
       eq(Reports.id, report.id), eq(Reports.organizationId, report.organizationId), eq(Reports.state, "pending"),
@@ -128,8 +128,8 @@ function sessionTimestampFromEpochMs(epochMs: number) {
   return sql`from_unixtime(${epochMs / 1000})`
 }
 
-export async function claimDueHarnessFeedbackGroups(limit: number, now: Date) {
-  const organizationIds = harnessFeedbackOrganizationIds()
+export async function claimDueHarnessFeedbackGroups(limit: number, now: Date, enabledIds?: DenTypeId<"organization">[]) {
+  const organizationIds = enabledIds ?? await harnessFeedbackOrganizationIds()
   if (!organizationIds.length || !Number.isSafeInteger(limit) || limit <= 0) return []
   return db.transaction(async (tx) => {
     const rows = await tx.select(groupNotificationFields).from(Groups).where(and(
