@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { installerRevisionSchema } from "@openwork/managed-deployments/schema"
 
 export const managedInstallerProviderSchema = z.enum(["aws", "gcp"])
 export type ManagedInstallerProvider = z.infer<typeof managedInstallerProviderSchema>
@@ -13,7 +14,8 @@ const httpsUrl = z.string().max(2048).url().refine(value => {
 }, "Use an HTTPS address without credentials or a fragment.")
 
 export const managedInstallerCoordinatesSchema = z.object({
-  version: z.string().max(80).regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/), templateUrl: httpsUrl, bundleUrl: httpsUrl, bundleSha256: hash,
+  version: z.string().max(80).regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/), installerRevision: installerRevisionSchema.optional(),
+  templateUrl: httpsUrl, bundleUrl: httpsUrl, bundleSha256: hash,
 }).strict()
 export type ManagedInstallerCoordinates = z.infer<typeof managedInstallerCoordinatesSchema>
 
@@ -26,7 +28,7 @@ export type ManagedInstallerQualification = z.infer<typeof managedInstallerQuali
 export const managedInstallerHistorySchema = z.object({
   id: z.string(), provider: managedInstallerProviderSchema,
   action: z.enum(["source_saved", "approval_saved", "pinned", "reset"]),
-  version: z.string().nullable(), actor: z.string(), createdAt: z.iso.datetime(),
+  version: z.string().nullable(), installerRevision: installerRevisionSchema.optional(), actor: z.string(), createdAt: z.iso.datetime(),
   manifestSha256: hash.nullable(), qualification: managedInstallerQualificationSchema.nullable(),
 })
 
@@ -57,7 +59,7 @@ export const managedInstallerApprovalInputSchema = z.object({
   expectedRevision: hash,
 }).strict()
 export const managedInstallerValidationInputSchema = z.object({
-  provider: managedInstallerProviderSchema, version, expectedRevision: hash,
+  provider: managedInstallerProviderSchema, version, installerRevision: installerRevisionSchema.optional(), expectedRevision: hash,
 }).strict()
 export const managedInstallerValidationSchema = z.object({
   id: z.string().uuid(), provider: managedInstallerProviderSchema,

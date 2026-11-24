@@ -1,4 +1,5 @@
 import { z } from "zod"
+import { MAX_INSTALLER_REVISION } from "@openwork/managed-deployments/installer-release"
 
 /**
  * Provider-neutral managed deployment contract. Only the `target` object and
@@ -218,6 +219,8 @@ export const healthCheckSchema = z.object({
   code: healthCheckCodeSchema.optional(),
 }).strict()
 export const versionSchema = z.string().regex(/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/).max(80)
+/** The installer's own revision for one app version. A release or record without one is revision 1. */
+export const installerRevisionSchema = z.number().int().min(1).max(MAX_INSTALLER_REVISION)
 export const healthReportSchema = z.object({
   nonce: z.string().regex(/^[a-f0-9]{32}$/).optional(),
   version: versionSchema.optional(),
@@ -285,6 +288,7 @@ export const deploymentRunSchema = z.object({
   id: z.string().uuid(),
   kind: deploymentRunKindSchema,
   version: z.string(),
+  installerRevision: installerRevisionSchema.default(1),
   state: deploymentRunStateSchema,
   createdAt: z.string().datetime(),
   lastSeenAt: z.string().datetime().nullable(),
@@ -303,7 +307,9 @@ const managedDeploymentViewSchema = z.object({
   webUrl: z.string().url(),
   consoleUrl: z.string().url(),
   installedVersion: versionSchema.nullable(),
+  installedInstallerRevision: installerRevisionSchema.nullable().default(null),
   availableVersion: versionSchema.nullable(),
+  availableInstallerRevision: installerRevisionSchema.nullable().default(null),
   updateAvailable: z.boolean(),
   health: deploymentHealthSchema,
   run: deploymentRunSchema.nullable(),
