@@ -72,7 +72,6 @@ export const resolveUserOrganizationsMiddleware: MiddlewareHandler<{
   const apiKey = c.get("apiKey")
   const apiKeyScopedOrganizationId = getApiKeyScopedOrganizationId(apiKey)
   const headerOrganizationId = getRequestScopedOrganizationId(c.req.raw.headers)
-  // A session bound to one organization lists and acts in that organization only.
   const scopedOrganizationId = apiKeyScopedOrganizationId ?? session?.organizationScopeId ?? headerOrganizationId
   const resolved = await resolveUserOrganizations({
     activeOrganizationId: scopedOrganizationId ?? session?.activeOrganizationId ?? null,

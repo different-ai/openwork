@@ -101,11 +101,6 @@ const updateProfileResponseSchema = z.object({
   user: z.object({}).passthrough(),
 }).meta({ ref: "UpdateCurrentUserProfileResponse" })
 
-/**
- * A session bound to one organization (session-token.ts) is always active
- * there. Clients still name their organization after signing in, so naming
- * the bound one succeeds without a write; any other is refused.
- */
 const keepBoundSessionOrganization: MiddlewareHandler<{ Variables: AuthContextVariables }> = async (c, next) => {
   const user = c.get("user")
   const boundOrganizationId = c.get("session")?.organizationScopeId

@@ -720,11 +720,6 @@ async function checkEmailAuthRateLimit(request: Request, invitationSignupAllowed
   return authRateLimitedResponse(result)
 }
 
-/**
- * Better Auth's own endpoints act on the whole account (password, sessions,
- * organizations, consent). A session bound to one organization may only read
- * itself and sign out there.
- */
 function organizationBoundSessionMayCall(request: Request) {
   const path = getBetterAuthProxyPath(new URL(request.url).pathname)
   const method = request.method.toUpperCase()

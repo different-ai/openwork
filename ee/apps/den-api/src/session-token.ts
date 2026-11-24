@@ -44,39 +44,22 @@ export function unsealSessionTokenReference(secret: string, value: string): stri
   return timingSafeEqual(expected, presented) ? sealed[1] : null
 }
 
-/**
- * Organization-bound session tokens.
- *
- * A session handed to a website an organization approved must work in that
- * organization only. Its token names the organization: `ow_org_session_`,
- * the organization id, `_`, then 32 random letters and digits. The session
- * table keeps the hash of the whole token, so the organization cannot be
- * swapped without the token no longer matching any row. Ordinary session
- * tokens are 32 letters and digits and never carry this prefix.
- */
 const ORGANIZATION_SESSION_TOKEN_PREFIX = "ow_org_session_"
 const ORGANIZATION_SESSION_TOKEN = /^ow_org_session_(org_[0-9a-z]{26})_([0-9A-Za-z]{32})$/
 const TOKEN_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
 
-/** A new ordinary session token: 32 random letters and digits, the shape Better Auth issues. */
 export function createSessionToken(): string {
   let token = ""
   for (let index = 0; index < 32; index += 1) token += TOKEN_ALPHABET[randomInt(TOKEN_ALPHABET.length)]
   return token
 }
 
-/** A new token for a session that works only in `organizationId`. */
 export function createOrganizationSessionToken(organizationId: string): string {
   const token = `${ORGANIZATION_SESSION_TOKEN_PREFIX}${organizationId}_${createSessionToken()}`
   if (!ORGANIZATION_SESSION_TOKEN.test(token)) throw new Error("The organization id cannot be written into a session token.")
   return token
 }
 
-/**
- * The organization a session token is bound to, or null for an ordinary
- * session token. A token that starts like a bound one but is malformed is
- * bound to no organization ("") so it can never act as an ordinary session.
- */
 export function sessionTokenOrganizationScope(token: string): string | null {
   if (!token.startsWith(ORGANIZATION_SESSION_TOKEN_PREFIX)) return null
   return ORGANIZATION_SESSION_TOKEN.exec(token)?.[1] ?? ""

@@ -19,12 +19,6 @@ type AuthSessionValue = {
   session: Omit<CachedAuthSession["session"], "id" | "token"> & {
     id: string
     token: string
-    /**
-     * Set when the session works in one organization only (a session handed to
-     * a website that organization approved; see session-token.ts). Such a
-     * session is refused wherever a request is not resolved inside that
-     * organization.
-     */
     organizationScopeId?: CachedAuthSession["session"]["activeOrganizationId"]
   }
 }
@@ -338,7 +332,6 @@ function sessionRequestContext(context?: Context): SessionRequestContext | undef
 }
 
 async function getSessionFromToken(token: string, requestContext?: SessionRequestContext): Promise<AuthSessionLike> {
-  // Shaped like an organization-bound token but naming no organization: never a session.
   if (sessionTokenOrganizationScope(token) === "") {
     return null
   }
@@ -395,13 +388,8 @@ async function getSessionFromToken(token: string, requestContext?: SessionReques
   return bearerSessionValue(renewed)
 }
 
-/**
- * Whether the request presents a session bound to one organization
- * (session-token.ts), as the resolved session or as its bearer token.
- */
-export function requestHasOrganizationBoundSession(c: Context): boolean {
-  const resolved = c.var as Partial<AuthContextVariables>
-  if (resolved.session?.organizationScopeId) return true
+export function requestHasOrganizationBoundSession(c: Context<{ Variables: Partial<AuthContextVariables> }>): boolean {
+  if (c.get("session")?.organizationScopeId) return true
   const bearerToken = readBearerToken(c.req.raw.headers)
   return bearerToken !== null && sessionTokenOrganizationScope(bearerToken) !== null
 }

@@ -91,7 +91,6 @@ const organizationWebsiteRefusedSchema = z.object({
   message: z.string(),
 }).meta({ ref: "DesktopHandoffOrganizationWebsiteRefusedError" })
 
-// Expired grants are deleted a day later, a few at a time as new ones are created.
 const HANDOFF_GRANT_RETENTION_MS = 24 * 60 * 60 * 1000
 const HANDOFF_GRANT_PURGE_BATCH = 200
 
@@ -486,7 +485,6 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
 
     const input = c.req.valid("json")
     let approvedReturnUrl: string | null = null
-    // Set when an organization approved the website: its session is bound to that organization.
     let boundOrganizationId: WorkerOrgId | null = null
     if (input.returnUrl !== undefined) {
       const approval = await resolveWebHandoffApproval({
@@ -535,8 +533,6 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
       if (!audited.ok) return audited.response
     }
 
-    // The grant names the signed-in session and never holds its token: the
-    // exchange gives the recipient a session of its own.
     const grant = randomBytes(24).toString("base64url")
     const expiresAt = new Date(Date.now() + 5 * 60 * 1000)
     await db.insert(DesktopHandoffGrantTable).values({
@@ -702,10 +698,6 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
         return null
       }
 
-      // The recipient's own session. It keeps the sign-in time of the session
-      // it came from, so it is no fresher for step-up checks and ends by the
-      // same maximum length. One for an organization's website is bound to
-      // that organization by its token (session-token.ts).
       const token = grant.organizationId ? createOrganizationSessionToken(grant.organizationId) : createSessionToken()
       const sessionId = createDenTypeId("session")
       const expiresAt = await userSessionExpiresAt(row.session.userId, now, row.session.createdAt)
@@ -759,7 +751,6 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
         })
       }
       const activeOrg = resolved.orgs.find((org) => org.id === resolved.activeOrgId) ?? null
-      // A bound session names its own organization or none: never another one.
       organization = activeOrg && (!exchange.boundOrganizationId || activeOrg.id === exchange.boundOrganizationId)
         ? { id: activeOrg.id, slug: activeOrg.slug, name: activeOrg.name }
         : null

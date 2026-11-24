@@ -116,9 +116,8 @@ export const requireAdminMiddleware: MiddlewareHandler<{ Variables: AuthContextV
     return c.json({ error: "unauthorized" }, 401) as never
   }
 
-  // A session bound to one organization never carries platform authority.
   if (c.get("session")?.organizationScopeId) {
-    return c.json({ error: "forbidden" }, 403) as never
+    return c.json({ error: "forbidden" }, 403)
   }
 
   const email = normalizeEmail(user.email)

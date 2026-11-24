@@ -16,7 +16,6 @@ import { TemporaryAuthNotice } from "./temporary-auth-notice";
 import { MemberAuthCheckError } from "./member-auth-guard";
 import { DenButton } from "./ui/button";
 
-/** Shown before signing in to a website an organization approved: nothing is sent until the person continues. */
 function WebsiteSignInConfirmation() {
   const { user, authError, webAuthConfirmation, confirmWebAuthHandoff, cancelWebAuthHandoff } = useDenFlow();
   if (!webAuthConfirmation) {

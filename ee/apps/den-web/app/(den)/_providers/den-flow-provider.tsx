@@ -106,7 +106,6 @@ type DenFlowContextValue = {
   continueSetup: (organizationId: string | null, route: string) => void;
   completeSetup: (organizationId: string) => Promise<boolean>;
   webAuthRequested: boolean;
-  /** Set when the return website is one an organization approved: the person confirms it before signing in there. */
   webAuthConfirmation: { host: string; organizationName: string } | null;
   confirmWebAuthHandoff: () => void;
   cancelWebAuthHandoff: () => void;
@@ -638,8 +637,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify(confirmed ? { returnUrl: webAuthReturnUrl, confirmed: true } : { returnUrl: webAuthReturnUrl })
       });
 
-      // A website an organization approved: nothing is handed over until the
-      // person confirms it by name.
       if (response.status === 409 && isRecord(payload) && payload.error === "confirmation_required" && typeof payload.returnHost === "string") {
         setWebAuthConfirmation({
           host: payload.returnHost,
