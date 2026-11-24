@@ -1,5 +1,6 @@
 import { libraryConnectorLink, myAgentLink } from "../agent-links.js"
 import { markFeaturesUsed } from "../feature-usage.js"
+import { assertFundedUserAllowed } from "../openai-safety/account-suspensions.js"
 import { env } from "../env.js"
 import { appLogger } from "../observability/logger.js"
 import { readMemberGmailArrivals, readMemberGoogleCalendar } from "../routes/org/google-workspace.js"
@@ -87,13 +88,19 @@ export function defaultAgentWakeDeps(): AgentBriefWakeDeps {
       markFeaturesUsed({ organizationId, memberId, keys: ["workbotAgentCheckGate"] })
       return {
         mail: (input) => readMemberGmailArrivals({ organizationId, orgMembershipId: memberId, ...input }),
-        model: checkGateModel,
+        model: checkGateModel ? async (request, skipAt) => {
+          await assertFundedUserAllowed(userId)
+          return checkGateModel(request, skipAt)
+        } : null,
       }
     },
     sendCheck: async ({ organizationId, memberId, userId }) => {
       if (!sendCheck || !(await agentSendCheckAllowed(organizationId, userId))) return null
       markFeaturesUsed({ organizationId, memberId, keys: ["workbotAgentSendCheck"] })
-      return sendCheck
+      return async (input) => {
+        await assertFundedUserAllowed(userId)
+        return sendCheck(input)
+      }
     },
     readTools: (input) => listConnectionToolsForMember({ organizationId: input.organizationId, memberId: input.memberId, connectionId: input.connection.id }),
   }

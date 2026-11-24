@@ -112,3 +112,65 @@ test("an organization notice can be investigated from a recorded request without
   assert.equal((await start()).status, 200)
   assert.equal(field(detail.body, "state"), "review")
 })
+
+test("verified provider account holds cover funded routes across memberships and replacement keys", async () => {
+  const { Hono } = await import("hono")
+  const { registerProxyRoutes } = await import("../../../gateway/src/proxy.js")
+  const { fundedModelGuard } = await import("../../../gateway/src/funded-model-access.js")
+  const { createInferenceBearerKey, inferenceBearerKeyLookupDigest } = await import("@openwork-ee/utils/inference-bearer-key")
+  const { InferenceKeyTable, SandboxOrganizationTable } = await import("@openwork-ee/den-db/schema")
+  const { assertFundedUserAllowed } = await import("../../src/openai-safety/account-suspensions.js")
+  const first = await den.createOrg(member, "First workspace")
+  const other = await den.createOrg(admin, "Team workspace")
+  const joined = await den.join(admin, other.orgId, member)
+  const api = (id: string) => "/v1/admin/users/" + id + "/funded-model-suspensions"
+  const apply = (token: string, id: string, reference: string) => den.request(token, "POST", api(id), { body: { reference, verified: "provider_requested_account_suspension" } })
+  const release = (reference: string) => den.request(admin.token, "POST", api(member.userId) + "/release", { body: {
+    reference, releaseReference: "R-fixture", verified: "provider_authorized_reinstatement",
+  } })
+  const keyFor = async (orgId: string, memberId: string) => {
+    const key = createInferenceBearerKey()
+    await db.insert(InferenceKeyTable).values({ id: createDenTypeId("inferenceKey"), organization_id: normalizeDenTypeId("organization", orgId),
+      org_membership_id: normalizeDenTypeId("member", memberId), key_hash: await inferenceBearerKeyLookupDigest(key) })
+    return key.value
+  }
+  const gateway = new Hono()
+  registerProxyRoutes(gateway)
+  const send = (key: string, path: string, model: string) => gateway.request("/api/v1/" + path, { method: "POST", headers: {
+    authorization: "Bearer " + key, "content-type": "application/json",
+  }, body: JSON.stringify({ model, messages: [{ role: "user", content: "fixture" }] }) })
+  const initialKey = await keyFor(first.orgId, first.owner.memberId)
+  const memberScope = { organizationId: other.orgId, orgMembershipId: joined.memberId }
+  const guard = fundedModelGuard(db)
+  assert.equal((await apply(member.token, member.userId, "C-request")).status, 403)
+  const pending = await apply(admin.token, member.userId, "C-request")
+  assert.equal(pending.status, 200)
+  assert.equal(field(pending.body, "enforcementEnabled"), false)
+  assert.equal(await guard(memberScope, { kind: "managed" }), null)
+  await setFeatureRollout(db, { key: "fundedModelAccountSuspensions", enabled: true, defaultEnabled: false })
+  assert.equal((await apply(admin.token, admin.userId, "C-request")).status, 409)
+  assert.equal((await apply(admin.token, member.userId, "C-request")).status, 200)
+  assert.equal((await apply(admin.token, member.userId, "C-second-hold")).status, 200)
+  for (const [key, endpoint, model] of [[initialKey, "chat/completions", "openwork/auto"], [await keyFor(other.orgId, joined.memberId), "responses", "openwork/auto"], [await keyFor(first.orgId, first.owner.memberId), "chat/completions", "paid-model"]]) {
+    const denied = await send(key, endpoint, model)
+    assert.equal(denied.status, 403)
+    assert.equal(field(await denied.json(), "error", "code"), "funded_model_account_suspended")
+  }
+  assert.equal(await guard({ ...memberScope, orgMembershipId: other.owner.memberId }, { kind: "managed" }), null)
+  assert.equal((await guard({ ...memberScope, orgMembershipId: null }, { kind: "managed" }))?.status, 503)
+  await assert.rejects(assertFundedUserAllowed(member.userId), /funded_model_account_suspended/)
+  assert.equal(await guard(memberScope, { kind: "sandbox" }), null)
+  const set = createDenTypeId("gatewayCredentialSet")
+  await db.insert(SandboxOrganizationTable).values({ id: createDenTypeId("sandboxOrganization"), organizationId: normalizeDenTypeId("organization", other.orgId),
+    joinToken: "fixture", memberLimit: 8, expiresAt: new Date(Date.now() + 86400000), createdByUserId: normalizeDenTypeId("user", admin.userId), sponsoredSetId: set })
+  assert.equal((await guard(memberScope, { kind: "sandbox", credentialSetId: set }))?.status, 403)
+  assert.equal(await guard(memberScope, { kind: "sandbox", credentialSetId: createDenTypeId("gatewayCredentialSet") }), null)
+  assert.equal((await release("C-request")).status, 200)
+  assert.equal((await apply(admin.token, member.userId, "C-request")).status, 409)
+  assert.equal((await guard(memberScope, { kind: "managed" }))?.status, 403)
+  assert.equal((await release("C-second-hold")).status, 200)
+  assert.equal(await guard(memberScope, { kind: "managed" }), null)
+  const status = await den.request(admin.token, "GET", api(member.userId))
+  assert.equal(field(status.body, "suspended"), false)
+  assert.equal(field(status.body, "enforcementEnabled"), true)
+})

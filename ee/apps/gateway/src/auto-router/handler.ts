@@ -35,6 +35,7 @@ export type AutoTarget = {
 }
 
 export type AutoRouterDependencies = {
+  fundedAccess?: () => Promise<Response | null> | undefined
   loadConfig: LoadAutoRouterConfig
   loadMemberGatewayAccess: (identity: GatewayContext) => Promise<GatewayMemberAccessRow[]>
   catalog: ProviderCatalog
@@ -253,6 +254,8 @@ export async function handleAutoRequest(input: {
   dependencies: AutoRouterDependencies
 }): Promise<Response> {
   const { request, body, routerId, identity, dependencies } = input
+  const denied = await dependencies.fundedAccess?.()
+  if (denied) return denied
   if (!dependencies.routingConfigured) {
     return autoRouterError("notConfigured")
   }

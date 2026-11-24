@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "c5c257a7-1214-4b06-ab45-cffb0baf8925",
+  "id": "16d83578-c7b9-424b-9d1a-5a012131c459",
   "prevId": "78d63ff0-c1ec-40e3-802b-cd8a4a04b851",
   "tables": {
     "admin_metric_refresh_lease": {
@@ -6685,6 +6685,89 @@
       "uniqueConstraints": {},
       "checkConstraint": {}
     },
+    "funded_model_suspension": {
+      "name": "funded_model_suspension",
+      "columns": {
+        "reference_hash": {
+          "name": "reference_hash",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "provider_reference": {
+          "name": "provider_reference",
+          "type": "varchar(128)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "user_id": {
+          "name": "user_id",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "suspended_by": {
+          "name": "suspended_by",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false
+        },
+        "suspended_at": {
+          "name": "suspended_at",
+          "type": "timestamp(3)",
+          "primaryKey": false,
+          "notNull": true,
+          "autoincrement": false,
+          "default": "(now())"
+        },
+        "released_at": {
+          "name": "released_at",
+          "type": "timestamp(3)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "released_by": {
+          "name": "released_by",
+          "type": "varchar(64)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "release_reference": {
+          "name": "release_reference",
+          "type": "varchar(128)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        }
+      },
+      "indexes": {
+        "funded_model_suspension_user": {
+          "name": "funded_model_suspension_user",
+          "columns": [
+            "user_id",
+            "released_at"
+          ],
+          "isUnique": false
+        }
+      },
+      "foreignKeys": {},
+      "compositePrimaryKeys": {
+        "funded_model_suspension_reference_hash": {
+          "name": "funded_model_suspension_reference_hash",
+          "columns": [
+            "reference_hash"
+          ]
+        }
+      },
+      "uniqueConstraints": {},
+      "checkConstraint": {}
+    },
     "gateway_request_logs": {
       "name": "gateway_request_logs",
       "columns": {
@@ -11212,25 +11295,11 @@
           "notNull": true,
           "autoincrement": false
         },
-        "session_id": {
-          "name": "session_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "session_token": {
           "name": "session_token",
           "type": "text",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "autoincrement": false
         },
         "expires_at": {
@@ -12978,6 +13047,13 @@
         "model_credit_usd": {
           "name": "model_credit_usd",
           "type": "int",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
+        "sponsored_set_id": {
+          "name": "sponsored_set_id",
+          "type": "varchar(64)",
           "primaryKey": false,
           "notNull": false,
           "autoincrement": false
