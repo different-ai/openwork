@@ -21,6 +21,7 @@ export { default as desktopOnlyFreeAuto } from "@openwork/features/flags/desktop
 export { default as desktopSystemProxy } from "@openwork/features/flags/desktop-system-proxy"
 export { default as followUpSuggestions } from "@openwork/features/flags/follow-up-suggestions"
 export { default as freeAutoCrossOrgBudgets } from "@openwork/features/flags/free-auto-cross-org-budgets"
+export { default as freeAutoSafetyCases } from "@openwork/features/flags/free-auto-safety-cases"
 export { default as freeAutoSafetyPauses } from "@openwork/features/flags/free-auto-safety-pauses"
 export { default as freeAutoSharedBudgets } from "@openwork/features/flags/free-auto-shared-budgets"
 export { default as gatewayOpenCodeSetup } from "@openwork/features/flags/gateway-open-code-setup"

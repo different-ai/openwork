@@ -1464,6 +1464,13 @@
       "when": 1795465730458,
       "tag": "0209_free_auto_founder_budgets",
       "breakpoints": true
+    },
+    {
+      "idx": 210,
+      "version": "5",
+      "when": 1795467811847,
+      "tag": "0210_free_auto_safety_cases",
+      "breakpoints": true
     }
   ]
 }

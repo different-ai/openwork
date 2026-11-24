@@ -98,7 +98,7 @@ export async function dispatchFreeCompletion(input: {
   if (paused) {
     if (admission.reserved) await charge(null, true)
     await usageLog?.finish({ status: 403, outcome: "upstream_error", errorCode: "free_safety_paused" })
-    return freeError(403, "free_safety_paused", "Free model access is paused for safety review.")
+    return freeError(403, "free_safety_paused", "Free model access is restricted. Contact OpenWork support for review.")
   }
   let response: Response
   let headerTimedOut = false
