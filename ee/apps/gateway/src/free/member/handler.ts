@@ -62,12 +62,12 @@ export function createFreeMemberHandler(dependencies: FreeMemberDependencies = d
         const address = dependencies.clientAddress?.(c)
         const token = c.req.header(DESKTOP_FREE_SESSION_HEADER)
         const auth = c.req.header("authorization")
-        if (!address || !token || !auth?.startsWith("Bearer ")) return desktopChallenge()
+        if (!address || !token || !auth?.startsWith("Bearer ")) return desktopChallenge(config.minimumVersion)
         const session = verifyAnonymousToken(token, address, config)
-        if (!session || session.credentialHash !== sha256Hex(auth)) return desktopChallenge()
+        if (!session || session.credentialHash !== sha256Hex(auth)) return desktopChallenge(config.minimumVersion)
         const gate = await checkDesktopFreeRequest(c.req.raw, bodyHash, { config, consumeNonce: store.consumeNonce }, session)
         if (gate.error) return gate.error
-        if (gate.proof.version !== 3 || gate.versionError) return desktopChallenge()
+        if (gate.proof.version !== 3 || gate.versionError) return desktopChallenge(config.minimumVersion)
         desktopHash = session.installationHash
         return null
       }

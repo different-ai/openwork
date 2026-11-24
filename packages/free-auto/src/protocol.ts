@@ -18,7 +18,15 @@ export const DESKTOP_FREE_RESPONSES_PATH = "/api/anonymous/v1/responses";
 /** Like OpenCode Zen's: a client with no desktop proof sends this key (or none) and is limited by its IP. */
 export const DESKTOP_FREE_OPEN_API_KEY = "public";
 export const DESKTOP_FREE_SESSION_HEADER = "x-openwork-desktop-session";
-export const DESKTOP_FREE_REQUIRED_CODE = "desktop_proof_required";
+/**
+ * The gateway asks for desktop proof with HTTP 426, this code and
+ * `desktopProof: "required"`. Released desktops that cannot sign already show
+ * the code as "Needs an OpenWork update"; a desktop that can sign retries with proof.
+ */
+export const DESKTOP_FREE_UPDATE_CODE = "desktop_update_required";
+export function desktopFreeProofRequested(status: number, payload: Record<string, unknown>): boolean {
+  return status === 426 && payload.code === DESKTOP_FREE_UPDATE_CODE && payload.desktopProof === "required";
+}
 export const MEMBER_FREE_STATUS_PATH = "/api/v1/auto/status";
 export const MEMBER_FREE_MODELS_PATH = "/api/v1/models";
 export const MEMBER_FREE_CHAT_PATH = "/api/v1/chat/completions";

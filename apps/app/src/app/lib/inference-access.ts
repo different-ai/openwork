@@ -43,7 +43,7 @@ export function freeAutoSwitchedOff(status: { code?: string | null } | null | un
   return status?.code === "free_disabled" || status?.code === "inference_disabled";
 }
 
-const NOT_OFFERED_CODES = ["free_not_enrolled", "free_not_offered", "admin_disabled", "not_eligible", "member_free_policy_denied", "managed_models_disabled_for_dpa", "desktop_build_unverified"];
+const NOT_OFFERED_CODES = ["free_not_enrolled", "free_not_offered", "admin_disabled", "not_eligible", "member_free_policy_denied", "managed_models_disabled_for_dpa", "desktop_build_unverified", "desktop_app_required"];
 export function autoNotOffered(status: { code?: string | null } | null | undefined): boolean {
   return typeof status?.code === "string" && NOT_OFFERED_CODES.includes(status.code);
 }
@@ -56,6 +56,7 @@ function notOfferedCopy(code?: string | null) {
     case "free_not_enrolled": return { subtitle: "Not on for your organization yet", detail: "Your organization hasn’t turned on OpenWork Free yet. An admin can turn it on. Other models still work." };
     case "free_not_offered": case "admin_disabled": return { subtitle: "Turned off by your organization", detail: "Your organization has turned off OpenWork Free. Other models still work." };
     case "managed_models_disabled_for_dpa": return { subtitle: "Not available for your organization", detail: "OpenWork Free isn’t available under your organization’s data agreement. Other models still work." };
+    case "desktop_app_required": return { subtitle: "Desktop app only", detail: "OpenWork Free works in the OpenWork desktop app. Other models still work." };
     default: return { subtitle: "Not available for this account", detail: "OpenWork Free isn’t available for this account. Other models still work." };
   }
 }
