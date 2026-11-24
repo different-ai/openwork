@@ -1,9 +1,12 @@
 import { parseArgs } from "node:util"
+import * as apiKeys from "./commands/api-keys.ts"
+import * as audit from "./commands/audit.ts"
 import * as auth from "./commands/auth.ts"
 import * as config from "./commands/config.ts"
 import * as invitations from "./commands/invitations.ts"
 import * as members from "./commands/members.ts"
 import * as org from "./commands/org.ts"
+import * as teams from "./commands/teams.ts"
 import type { Context, Flags } from "./context.ts"
 import { CliError, processIo, type Io } from "./io.ts"
 
@@ -35,12 +38,27 @@ const COMMANDS: Record<string, Record<string, Command>> = {
     cancel: { usage: "invitations cancel <id-or-email> [--force]", summary: "Cancel a pending invitation", run: invitations.cancel },
     link: { usage: "invitations link <id-or-email>", summary: "Print a pending invitation's join link", run: invitations.link },
   },
+  teams: {
+    list: { usage: "teams list", summary: "List teams and who is in them", run: teams.list },
+    create: { usage: "teams create <name> [--members <emails>]", summary: "Create a team", run: teams.create },
+    update: { usage: "teams update <id-or-name> [--name <new-name>] [--add <emails>] [--remove <emails>]", summary: "Rename a team or change its members", run: teams.update },
+    delete: { usage: "teams delete <id-or-name> [--force]", summary: "Delete a team", run: teams.remove },
+  },
+  "api-keys": {
+    list: { usage: "api-keys list", summary: "List the organization's API keys", run: apiKeys.list },
+    create: { usage: "api-keys create <name> [--type standard|config] [--scopes <a,b>] [--areas <a,b>]", summary: "Create an API key or a config token, shown once", run: apiKeys.create },
+    delete: { usage: "api-keys delete <id-or-name> [--force]", summary: "Delete an API key", run: apiKeys.remove },
+  },
+  audit: {
+    list: { usage: "audit list [--from <date>] [--to <date>] [--action <name>] [--actor <user-id>] [--outcome <outcome>] [--limit <n>] [--cursor <cursor>]", summary: "List recorded operations, newest first", run: audit.list },
+    export: { usage: "audit export [--format ndjson|csv] [--out <file>] [--from <date>] [--to <date>] [--action <name>] [--actor <user-id>] [--outcome <outcome>]", summary: "Download every recorded event", run: audit.exportEvents },
+  },
   config: {
     areas: { usage: "config areas", summary: "List the configuration areas you can export or import", run: config.areas },
     pull: { usage: "config pull [--areas <a,b>] [--out <file>]", summary: "Download the organization's configuration as a file", run: config.pull },
     diff: { usage: "config diff <file> [--mode merge|mirror]", summary: "Show what importing a file would change", run: config.diff },
     push: { usage: "config push <file> [--mode merge|mirror] [--title <text>]", summary: "Upload a file as a change request for review", run: config.push },
-    deploy: { usage: "config deploy <file> | --request <id> [--force]", summary: "Apply a file or an uploaded change request, and wait", run: config.deploy },
+    deploy: { usage: "config deploy <file> [--mode merge|mirror] [--title <text>] | --request <id>", summary: "Apply a file or an uploaded change request, and wait", run: config.deploy },
     requests: { usage: "config requests", summary: "List open change requests", run: config.requests },
     status: { usage: "config status <request-id>", summary: "Show a change request and its last apply", run: config.status },
     cancel: { usage: "config cancel <request-id> [--force]", summary: "Withdraw an open change request", run: config.cancel },
@@ -65,19 +83,26 @@ const ENVIRONMENT = [
   "  OPENWORK_API_URL     The API for a self-hosted OpenWork",
 ]
 
-function commandLines(resources: string[]): string[] {
+function withoutOptions(usage: string): string {
+  return usage.split(/ \[?--/)[0] ?? usage
+}
+
+function commandLines(resources: string[], complete: boolean): string[] {
   const commands = resources.flatMap((resource) => Object.values(COMMANDS[resource] ?? {}))
-  const width = Math.max(...commands.map((command) => command.usage.length))
-  return commands.map((command) => `  openwork ${command.usage.padEnd(width)}  ${command.summary}`)
+  if (complete) return commands.flatMap((command) => [`  openwork ${command.usage}`, `      ${command.summary}`])
+  const usages = commands.map((command) => withoutOptions(command.usage))
+  const width = Math.max(...usages.map((usage) => usage.length))
+  return commands.map((command, index) => `  openwork ${(usages[index] ?? "").padEnd(width)}  ${command.summary}`)
 }
 
 export function helpText(resource?: string): string {
-  const resources = resource && COMMANDS[resource] ? [resource] : Object.keys(COMMANDS)
+  const oneGroup = resource !== undefined && COMMANDS[resource] !== undefined
   return [
     "openwork: sign in to OpenWork Cloud, administer an organization and deploy its configuration",
     "",
     "Usage:",
-    ...commandLines(resources),
+    ...commandLines(oneGroup ? [resource] : Object.keys(COMMANDS), oneGroup),
+    ...(oneGroup ? [] : ["", "Run `openwork help <group>` for a group's options, for example `openwork help config`."]),
     "",
     "Options:",
     ...GLOBAL_OPTIONS,
@@ -85,6 +110,18 @@ export function helpText(resource?: string): string {
     "Environment:",
     ...ENVIRONMENT,
   ].join("\n")
+}
+
+const TEXT_OPTIONS = [
+  "profile", "org", "role", "team", "base-url", "areas", "out", "mode", "title", "request", "members", "name", "add", "remove",
+  "type", "scopes", "from", "to", "action", "actor", "outcome", "limit", "cursor", "format",
+] as const
+const OPTIONS_EVERY_COMMAND_TAKES = new Set(["json", "profile", "org", "dry-run", "force", "help", "version"])
+
+function refuseOptionsTheCommandDoesNotTake(command: Command, given: string[]): void {
+  const taken = new Set((command.usage.match(/--[a-z-]+/g) ?? []).map((option) => option.slice(2)))
+  const stray = given.find((option) => !OPTIONS_EVERY_COMMAND_TAKES.has(option) && !taken.has(option))
+  if (stray) throw new CliError("usage", `--${stray} is not an option of this command. Usage: openwork ${command.usage}`)
 }
 
 function parse(argv: string[]) {
@@ -98,21 +135,17 @@ function parse(argv: string[]) {
         "dry-run": { type: "boolean" },
         help: { type: "boolean", short: "h" },
         version: { type: "boolean", short: "v" },
-        profile: { type: "string" },
-        org: { type: "string" },
-        role: { type: "string" },
-        team: { type: "string" },
-        "base-url": { type: "string" },
-        areas: { type: "string" },
-        out: { type: "string" },
-        mode: { type: "string" },
-        title: { type: "string" },
-        request: { type: "string" },
+        ...Object.fromEntries(TEXT_OPTIONS.map((option) => [option, { type: "string" } as const])),
       },
     })
   } catch (error) {
     throw new CliError("usage", error instanceof Error ? error.message : String(error))
   }
+}
+
+function textOption(values: Record<string, unknown>, name: (typeof TEXT_OPTIONS)[number]): string | undefined {
+  const value = values[name]
+  return typeof value === "string" ? value : undefined
 }
 
 function report(io: Io, json: boolean, error: unknown): void {
@@ -145,20 +178,35 @@ export async function main(argv: string[], io: Io = processIo()): Promise<number
     }
     const command = verbs[verb]
     if (!command) throw new CliError("usage", `Unknown command "${resource} ${verb}". Try: ${Object.keys(verbs).join(", ")}.`)
+    refuseOptionsTheCommandDoesNotTake(command, Object.keys(values))
     const flags: Flags = {
       json,
       force: values.force === true,
       dryRun: values["dry-run"] === true,
-      profile: values.profile,
-      org: values.org,
-      role: values.role,
-      team: values.team,
-      baseUrl: values["base-url"],
-      areas: values.areas,
-      out: values.out,
-      mode: values.mode,
-      title: values.title,
-      request: values.request,
+      profile: textOption(values, "profile"),
+      org: textOption(values, "org"),
+      role: textOption(values, "role"),
+      team: textOption(values, "team"),
+      baseUrl: textOption(values, "base-url"),
+      areas: textOption(values, "areas"),
+      out: textOption(values, "out"),
+      mode: textOption(values, "mode"),
+      title: textOption(values, "title"),
+      request: textOption(values, "request"),
+      members: textOption(values, "members"),
+      name: textOption(values, "name"),
+      add: textOption(values, "add"),
+      remove: textOption(values, "remove"),
+      type: textOption(values, "type"),
+      scopes: textOption(values, "scopes"),
+      from: textOption(values, "from"),
+      to: textOption(values, "to"),
+      action: textOption(values, "action"),
+      actor: textOption(values, "actor"),
+      outcome: textOption(values, "outcome"),
+      limit: textOption(values, "limit"),
+      cursor: textOption(values, "cursor"),
+      format: textOption(values, "format"),
     }
     await command.run({ io, flags, json, args })
     return 0

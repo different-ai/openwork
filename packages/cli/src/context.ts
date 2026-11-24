@@ -19,6 +19,20 @@ export type Flags = {
   mode?: string
   title?: string
   request?: string
+  members?: string
+  name?: string
+  add?: string
+  remove?: string
+  type?: string
+  scopes?: string
+  from?: string
+  to?: string
+  action?: string
+  actor?: string
+  outcome?: string
+  limit?: string
+  cursor?: string
+  format?: string
 }
 
 export type Context = { io: Io; flags: Flags; json: boolean; args: string[] }
@@ -28,6 +42,10 @@ export function oneArg(context: Context, name: string): string {
   const [value, ...rest] = context.args
   if (!value || rest.length) throw new CliError("usage", `Expected exactly one ${name}.`)
   return value
+}
+
+export function splitList(value: string | undefined): string[] {
+  return (value ?? "").split(",").map((entry) => entry.trim()).filter((entry) => entry !== "")
 }
 
 export function noArgs(context: Context): void {

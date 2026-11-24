@@ -5,7 +5,7 @@ import type { Io } from "../src/io.ts"
 import { main } from "../src/main.ts"
 
 export type Call = { method: string; path: string; query: string; headers: Headers; body: unknown }
-export type Reply = { status?: number; body?: unknown }
+export type Reply = { status?: number; body?: unknown; text?: string; headers?: Record<string, string> }
 export type Route = (call: Call) => Reply | undefined
 
 export const ORG = { id: "organization_1", name: "Acme", slug: "acme", role: "owner", planTier: "team", memberCount: 2, isActive: true }
@@ -41,7 +41,7 @@ export function harness(options: { interactive?: boolean; env?: Record<string, s
       const call: Call = { method: init?.method ?? "GET", path: url.pathname, query: url.search, headers: new Headers(init?.headers), body: init?.body ? JSON.parse(String(init.body)) : undefined }
       calls.push(call)
       const reply = options.routes?.(call) ?? builtIn(call)
-      return new Response(reply.body === undefined ? null : JSON.stringify(reply.body), { status: reply.status ?? 200 })
+      return new Response(reply.text ?? (reply.body === undefined ? null : JSON.stringify(reply.body)), { status: reply.status ?? 200, headers: reply.headers })
     },
   }
   function builtIn(call: Call): Reply {

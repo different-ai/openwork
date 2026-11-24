@@ -67,6 +67,30 @@ Results go to stdout; prompts, progress and errors go to stderr.
   then finishes the change. In a script it stops and tells you to run
   `openwork auth login --force`. API keys are exempt.
 
+## Teams, API keys and audit history
+
+```bash
+openwork teams list
+openwork teams create Design --members kim@example.com,sam@example.com
+openwork teams update Design --add ada@example.com --remove sam@example.com
+openwork api-keys create reports
+openwork api-keys create deploy --scopes config:export,config:submit
+openwork audit list --from 2026-11-01 --action member.role_updated
+openwork audit export --format csv --out audit.csv
+```
+
+- **Teams** are named by id or by name, and people by id or email. `teams update`
+  applies `--add` and `--remove` to the team's current members.
+- **API keys** are printed once, when created. Naming `--scopes` makes a config
+  token for `openwork config`; `--areas` limits it to some configuration areas.
+- **Audit history** needs audit logs to be on for the organization. `audit list`
+  shows one page of operations, newest first, and the option to ask for the next.
+  `audit export` downloads every event of one snapshot, as NDJSON or CSV, to
+  stdout or to `--out`.
+
+A command refuses an option it does not take, and shows its usage, instead of
+ignoring it.
+
 ## Configuration as a file
 
 An organization's configuration (teams, roles, connectors, AI providers,

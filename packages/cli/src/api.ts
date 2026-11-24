@@ -27,7 +27,7 @@ export class ApiError extends CliError {
 }
 
 export type RequestOptions = { method?: string; body?: unknown; headers?: Record<string, string> }
-export type RawResponse = { status: number; body: unknown; headers: Headers }
+export type RawResponse = { status: number; body: unknown; text: string; headers: Headers }
 
 const REQUEST_TIMEOUT_MS = 60_000
 
@@ -54,7 +54,7 @@ export async function rawRequest(io: Io, baseUrl: string, path: string, options:
       body = { message: answer.slice(0, 500) }
     }
   }
-  return { status: response.status, body, headers: response.headers }
+  return { status: response.status, body, text: answer, headers: response.headers }
 }
 
 export function authHeaders(session: Session): Record<string, string> {
@@ -70,9 +70,19 @@ function rejectedCredential(session: Session): string {
   return `${session.source} was rejected. Check its value.`
 }
 
-export async function api(io: Io, session: Session, method: string, path: string, body?: unknown): Promise<unknown> {
+async function send(io: Io, session: Session, method: string, path: string, body?: unknown): Promise<RawResponse> {
   const response = await rawRequest(io, session.baseUrl, path, { method, body, headers: authHeaders(session) })
   if (response.status === 401) throw new CliError("not_signed_in", rejectedCredential(session), response.body)
   if (response.status >= 400) throw new ApiError(response.status, response.body)
-  return response.body
+  return response
+}
+
+export async function api(io: Io, session: Session, method: string, path: string, body?: unknown): Promise<unknown> {
+  return (await send(io, session, method, path, body)).body
+}
+
+/** A signed-in download whose body is not JSON, such as an audit export page. */
+export async function apiText(io: Io, session: Session, path: string): Promise<{ text: string; headers: Headers }> {
+  const response = await send(io, session, "GET", path)
+  return { text: response.text, headers: response.headers }
 }

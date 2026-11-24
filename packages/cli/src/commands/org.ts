@@ -27,7 +27,7 @@ export async function get(context: Context): Promise<void> {
     owner: details.ownerEmail,
     members: details.members.length,
     pendingInvitations: details.invitations.filter((invitation) => invitation.status === "pending").length,
-    teams: details.teamCount,
+    teams: details.teams.length,
     yourRole: details.yourRole,
     yourPermissions: details.yourPermissions,
   }
