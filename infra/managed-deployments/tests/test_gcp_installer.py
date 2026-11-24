@@ -8,6 +8,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tarfile
@@ -81,6 +82,16 @@ class BootstrapTests(unittest.TestCase):
     def test_validation_and_names_match_api(self):
         self.assertEqual(install.validate(args()), "ow-123456781234")
         self.assertEqual(install.name(DEPLOYMENT) + "-runner@test-project.iam.gserviceaccount.com", ENV["RUNNER_SERVICE_ACCOUNT"])
+
+    def test_every_region_the_form_offers_passes_validation(self):
+        schema = (ROOT / "packages/managed-deployments/src/schema.ts").read_text()
+        regions = json.loads(re.search(r"gcpRegionSchema = z\.enum\((\[[^\]]+\])\)", schema).group(1))
+        self.assertIn("asia-east2", regions)
+        for region in regions:
+            with self.subTest(region=region):
+                value_args = args()
+                value_args.region = region
+                self.assertEqual(install.validate(value_args), "ow-123456781234")
 
     def test_invalid_launch_values(self):
         for field, value in [("deployment_id", "../../x"), ("project_id", "test-project;rm"),

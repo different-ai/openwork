@@ -403,11 +403,19 @@ image set with a live upgrade. Use a genuinely newer isolated test installer for
 Den Update; same-version protection stays unchanged.
 
 Use a dedicated billing-enabled project, a supported region, and an already
-public authoritative Cloud DNS zone for the chosen address. The form requires
+public authoritative Cloud DNS zone for the chosen address. The region list is
+`gcpRegionSchema` in `packages/managed-deployments/src/schema.ts`. It includes
+`asia-east2` (Hong Kong) on the strength of Google's public region lists; no
+live install has run there yet. Cloud SQL backups keep Google's default
+location, the nearest multi-region, in every region except `asia-east2`, where
+they are stored in the region because no backup multi-region contains Hong
+Kong. Residency there is still incomplete: secrets replicate globally and the
+load balancer is global. The form requires
 both project ID and number, zone name, domain, first administrator email, and
 cost/permission consent. IAM permissions are project-wide in this initial
 profile; do not use a shared production project. See
-`infra/managed-deployments/gcp/README.md` for permissions and policy limits.
+`infra/managed-deployments/gcp/README.md` for permissions, policy limits and
+the backup-location limits.
 
 1. Build a local reviewed installer for an exact published image version:
    `node infra/managed-deployments/tools/build-release.mjs gcp <version> <dir>`.
