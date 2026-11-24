@@ -52,10 +52,9 @@ class AdoptionTests(unittest.TestCase):
                 if resource["type"] == "google_sql_database_instance":
                     self.assertEqual(change["after"]["database_version"], "MYSQL_8_0")
                     self.assertEqual(change["after"]["name"], change["before"]["name"])
-                    self.assertEqual(change["actions"], ["update"])
                     self.assertFalse(change.get("replace_paths"))
-                    self.assertIsNone(change["before"]["settings"][0]["backup_configuration"][0]["location"])
-                    self.assertEqual(change["after"]["settings"][0]["backup_configuration"][0]["location"], "us-central1")
+                    self.assertEqual(change["after"]["settings"][0]["backup_configuration"], change["before"]["settings"][0]["backup_configuration"])
+                    self.assertIsNone(change["after"]["settings"][0]["backup_configuration"][0]["location"])
 
     def test_secret_updates_unknown_passwords_major_upgrades_and_service_replacement_are_blocked(self):
         for kind, change in [

@@ -149,8 +149,9 @@ for address moves, customer re-approval, grant scope, maintenance and live gates
 The offline managed checks are not a new live certification of this module.
 
 **Backup location is opt-in.** `database.backup_location` is unset by default, so
-direct users see no change in their plan. The managed installer sets it to the
-deployment's region.
+direct users see no change in their plan. The managed installer sets it only
+for `asia-east2`, which no Cloud SQL backup multi-region contains; its other
+regions keep the default.
 
 **Database disk default: 10 → 20 GB.** Existing direct users who omitted
 `database.disk_size_gb` will see an in-place storage increase in their next plan.

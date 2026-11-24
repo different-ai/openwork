@@ -49,8 +49,8 @@ run "contract_and_security" {
     error_message = "Existing managed service names must be preserved."
   }
   assert {
-    condition     = module.platform.database_backup_location == "us-central1"
-    error_message = "Managed database backups must be stored in the deployment's region."
+    condition     = module.platform.database_backup_location == null
+    error_message = "A region inside a Cloud SQL backup multi-region must keep Google's default backup location."
   }
 }
 run "hong_kong_region" {
@@ -73,11 +73,26 @@ run "hong_kong_region" {
   }
   assert {
     condition     = module.platform.database_backup_location == "asia-east2"
-    error_message = "Managed database backups must be stored in the deployment's region."
+    error_message = "Hong Kong database backups must be stored in Hong Kong."
   }
   assert {
     condition     = alltrue([for binding in google_cloud_run_v2_service_iam_member.public : binding.location == "asia-east2"])
     error_message = "Public service access must be planned in the chosen region."
+  }
+}
+run "european_region_keeps_default_backup_location" {
+  command = plan
+  variables {
+    region = "europe-west1"
+    images = {
+      den_api = "europe-west1-docker.pkg.dev/test-project/ow-123456781234/den_api@sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+      den_web = "europe-west1-docker.pkg.dev/test-project/ow-123456781234/den_web@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+      health  = "europe-west1-docker.pkg.dev/test-project/ow-123456781234/health@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+    }
+  }
+  assert {
+    condition     = module.platform.database_backup_location == null
+    error_message = "A region inside a Cloud SQL backup multi-region must keep Google's default backup location."
   }
 }
 run "wrong_project_is_blocked" {
