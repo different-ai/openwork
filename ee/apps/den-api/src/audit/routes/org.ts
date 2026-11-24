@@ -231,6 +231,7 @@ export const orgAuditRoutes: readonly AuditRouteDeclaration[] = [
 
   member("GET", "/v1/managed-deployments/configuration", "tenant_read", "managed_deployment.configuration.read", "managed_deployment", "managed_deployment", null),
   member("GET", "/v1/managed-deployments", "tenant_read", "managed_deployment.list", "managed_deployment", "managed_deployment", null),
+  member("GET", "/v1/managed-deployments/:deploymentId/capabilities", "tenant_read", "managed_deployment.capabilities.read", "managed_deployment", "managed_deployment", "deploymentId"),
   member("PUT", "/v1/managed-deployments/aws-sign-in", "tenant_change", "managed_deployment.aws_sign_in.update", "managed_deployment", "managed_deployment", null, { notes: "Saves or removes the organization's AWS access portal and role; AWS links then open through it." }),
   member("POST", "/v1/managed-deployments", "tenant_change", "managed_deployment.create", "managed_deployment", "managed_deployment", null),
   member("DELETE", "/v1/managed-deployments/:deploymentId", "tenant_change", "managed_deployment.delete", "managed_deployment", "managed_deployment", "deploymentId", { notes: "Only never-approved records; installed deployments answer 409." }),
