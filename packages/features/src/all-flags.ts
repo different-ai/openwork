@@ -16,6 +16,7 @@ export { default as connectEngineTools } from "@openwork/features/flags/connect-
 export { default as connectStandardTools } from "@openwork/features/flags/connect-standard-tools"
 export { default as connectionMcpServers } from "@openwork/features/flags/connection-mcp-servers"
 export { default as connectionSelectedScopesOnly } from "@openwork/features/flags/connection-selected-scopes-only"
+export { default as connectorCatalogRecovery } from "@openwork/features/flags/connector-catalog-recovery"
 export { default as denGreySidebar } from "@openwork/features/flags/den-grey-sidebar"
 export { default as desktopOnlyFreeAuto } from "@openwork/features/flags/desktop-only-free-auto"
 export { default as desktopSystemProxy } from "@openwork/features/flags/desktop-system-proxy"

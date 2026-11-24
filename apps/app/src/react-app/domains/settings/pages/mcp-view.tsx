@@ -64,7 +64,7 @@ import {
   revealDesktopItemInDir,
   type OpencodeConfigFile,
 } from "../../../../app/lib/desktop";
-import { readDenSettings, type DenExternalMcpPreset } from "../../../../app/lib/den";
+import { markFeatureUsed, readDenSettings, type DenExternalMcpPreset } from "../../../../app/lib/den";
 import { providerSetupProblem } from "../../connections/connection-sign-in-problem";
 import type { OrgMcpConnectOptions } from "../../connections/use-org-mcp-connections";
 import { denConnectorSetupUrl } from "../../../../app/lib/den-dashboard-links";
@@ -144,6 +144,7 @@ import {
   connectorSummary,
   LibraryConnectorCatalogPage,
   type LibraryConnectorCatalogSignIn,
+  type LibraryConnectorCatalogState,
   LibraryConnectorSetupPage,
   type LibraryConnectorSetupInput,
 } from "./library-connector-pages";
@@ -202,6 +203,7 @@ export type McpViewProps = {
   mcpConnectingName: string | null;
   managedOAuthAvailable?: boolean;
   allowManageExtensions: boolean;
+  connectorCatalogRecovery: boolean;
   quickConnect: McpDirectoryInfo[];
   connectMcp: (entry: McpDirectoryInfo) => Promise<McpConnectResult>;
   authorizeMcp: (entry: McpServerEntry) => void;
@@ -1942,9 +1944,24 @@ export function McpView(props: McpViewProps) {
     );
   }
   if (screen.kind === "catalog") {
+    let loadState: LibraryConnectorCatalogState | undefined;
+    if (props.connectorCatalogRecovery && identity?.organizationId === activeOrganizationId) {
+      loadState = { kind: "ready" };
+      if (connectorPresetsQuery.data === undefined) {
+        if (connectorPresetsQuery.isFetching) {
+          loadState = { kind: "loading" };
+        } else if (connectorPresetsQuery.isError) {
+          loadState = { kind: "error", onRetry: () => {
+            markFeatureUsed("connectorCatalogRecovery");
+            void connectorPresetsQuery.refetch();
+          } };
+        }
+      }
+    }
     return (
       <LibraryConnectorCatalogPage
         presets={connectorPresets}
+        loadState={loadState}
         addedUrls={addedConnectorUrls}
         signInsByUrl={connectorSignInsByUrl}
         onBack={toList}

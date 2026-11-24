@@ -59,8 +59,14 @@ export type LibraryConnectorCatalogSignIn = {
   onOpenSettings?: (url: string) => void;
 };
 
+export type LibraryConnectorCatalogState =
+  | { kind: "loading" }
+  | { kind: "error"; onRetry: () => void }
+  | { kind: "ready" };
+
 export function LibraryConnectorCatalogPage(props: {
   presets: DenExternalMcpPreset[];
+  loadState?: LibraryConnectorCatalogState;
   addedUrls: Set<string>;
   signInsByUrl?: ReadonlyMap<string, LibraryConnectorCatalogSignIn>;
   onBack: () => void;
@@ -71,6 +77,12 @@ export function LibraryConnectorCatalogPage(props: {
   const needle = query.trim().toLowerCase();
   const visible = props.presets.filter((preset) =>
     !needle || `${preset.displayName} ${preset.description}`.toLowerCase().includes(needle));
+  const { loadState } = props;
+  const emptyMessage = !loadState
+    ? t("extensions.connector_catalog_empty")
+    : props.presets.length === 0
+      ? t("extensions.connector_catalog_no_connectors")
+      : t("extensions.connector_catalog_no_matches");
   return (
     <LibraryPage
       title={t("extensions.connector_catalog_title")}
@@ -140,8 +152,18 @@ export function LibraryConnectorCatalogPage(props: {
             </div>
           );
         })}
-        {visible.length === 0 ? (
-          <p className="py-6 text-center text-sm text-dls-secondary">{t("extensions.connector_catalog_empty")}</p>
+        {loadState?.kind === "loading" ? (
+          <p role="status" className="flex items-center justify-center gap-2 py-6 text-sm text-dls-secondary">
+            <Loader2 aria-hidden="true" size={14} className="animate-spin motion-reduce:animate-none" />
+            {t("extensions.connector_catalog_loading")}
+          </p>
+        ) : loadState?.kind === "error" ? (
+          <div className="flex flex-col items-center gap-2 py-6">
+            <p role="alert" className="text-sm text-dls-text">{t("extensions.connector_catalog_error")}</p>
+            <Button variant="outline" size="sm" onClick={loadState.onRetry}>{t("common.retry")}</Button>
+          </div>
+        ) : visible.length === 0 ? (
+          <p role={loadState ? "status" : undefined} className="py-6 text-center text-sm text-dls-secondary">{emptyMessage}</p>
         ) : null}
       </div>
       <div className="flex items-center gap-3 rounded-xl border border-dashed border-dls-border px-3 py-3">

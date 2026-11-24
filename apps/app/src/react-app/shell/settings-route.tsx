@@ -168,6 +168,7 @@ import {
   isSettingsTabAllowed,
 } from "@/app/cloud/desktop-app-restrictions";
 import { useCheckDesktopRestriction, useDesktopConfig } from "@/react-app/domains/cloud/desktop-config-provider";
+import { useOrgFeature } from "@/react-app/domains/cloud/use-org-feature";
 import { useRestrictionNotice } from "@/react-app/domains/cloud/restriction-notice-provider";
 import { useCloudProviderAutoSync } from "@/react-app/domains/cloud/use-cloud-provider-auto-sync";
 import {
@@ -837,6 +838,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
   const providerAuthSnapshot = useProviderAuthStoreSnapshot(providerAuthStore);
   useEffect(() => { providerAuthStore.syncFromOptions(); }, [providerAuthStore]);
   const cloudSession = useCloudSession();
+  const connectorCatalogRecovery = useOrgFeature("connectorCatalogRecovery", { active: route.tab === "extensions" });
   const liveGatewayProviders = cloudSession.isSignedIn ? providerAuthSnapshot.liveGatewayProviders : null;
   const settingsImportedCloudProviders = useMemo(
     () => liveGatewayProviders === null
@@ -2518,6 +2520,7 @@ function SettingsRouteContent(props: SettingsSurfaceProps = {}) {
                 managedOAuthAvailable={connectionsSnapshot.managedOAuthAvailable}
                 mcpConnectingName={connectionsSnapshot.mcpConnectingName}
                 allowManageExtensions={allowManageExtensions}
+                connectorCatalogRecovery={connectorCatalogRecovery}
                 quickConnect={extensionItems.quickConnectEntries}
                 enablementContext={enablementContext}
                 builtInExtensionsDisabled={builtInExtensionsDisabled}
