@@ -1,0 +1,26 @@
+{
+  "name": "@openwork/cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The openwork command: sign in to OpenWork Cloud and administer an organization",
+  "type": "module",
+  "bin": {
+    "openwork": "bin/openwork.mjs"
+  },
+  "files": [
+    "bin",
+    "src",
+    "README.md"
+  ],
+  "scripts": {
+    "test": "node --test test/*.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0"
+  },
+  "engines": {
+    "node": ">=24.22.1 <25"
+  }
+}
