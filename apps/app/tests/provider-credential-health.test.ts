@@ -207,6 +207,20 @@ test("the native adapter retains a confirmed 401 even when the engine omits the 
   }
 });
 
+test("the native adapter keeps the Gateway's sign-in reply so chat asks the member to sign in", async () => {
+  const { mapV2SessionError } = await import("../src/app/lib/opencode-v2-adapter");
+  const message = "Google requires you to sign in again. Reconnect your Vertex account in My Library.";
+  const body = { error: { message, type: "invalid_request_error", code: "openwork_auth_required", provider_id: "ipr_fixture", credential_set_id: "set_fixture" } };
+  const mapped = mapV2SessionError({ type: "provider.auth", message, status: 401, response: { body: JSON.stringify(body) } });
+  expect(presentOpencodeSessionError(mapped)).toMatchObject({
+    kind: "gateway-auth-required",
+    title: "Sign in to keep using this model",
+    description: message,
+    connectUrl: null,
+  });
+  expect(isProviderCredentialRejection(mapped)).toBe(false);
+});
+
 test("durable assistant outcomes recover missed lifecycle events without reviving stale verdicts", () => {
   const failure = { info: { role: "assistant", providerID: provider, time: { created: 101, completed: 102 }, error: { name: "APIError", data: { statusCode: 401, message: "User not found." } } } };
   observeProviderCredentialMessages(workspace, [failure]);

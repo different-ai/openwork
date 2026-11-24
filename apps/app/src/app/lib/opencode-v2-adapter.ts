@@ -1186,7 +1186,8 @@ export function mapV2SessionError(value: unknown): UnknownError | ApiError {
   const statuses = [readNumber(value, "statusCode"), readNumber(value, "status"), readNumber(data, "status"),
     readNumber(readRecord(value, "response"), "status"), readNumber(readRecord(data, "response"), "status")];
   const statusCode = reportedStatus === 429 ? statuses.find((status) => status !== undefined && status !== 429) ?? reportedStatus : reportedStatus ?? statuses.find((status) => status !== undefined);
-  const responseBody = readString(data, "responseBody") ?? readString(value, "responseBody");
+  const responseBody = readString(data, "responseBody") ?? readString(value, "responseBody")
+    ?? readString(readRecord(data, "response"), "body") ?? readString(readRecord(value, "response"), "body");
   if (statusCode !== undefined) {
     const rawHeaders = readRecord(data, "responseHeaders");
     const responseHeaders: Record<string, string> = {};
