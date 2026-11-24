@@ -160,6 +160,8 @@ export const platformAuditRoutes: readonly AuditRouteDeclaration[] = [
   readOnly("/v1/admin/free-auto/safety-cases/:caseId", "platform.free_auto_safety_case.inspect", "platform.admin", "free_auto_safety_case", "caseId", ADMIN),
   platform("POST", "/v1/admin/free-auto/safety-cases/import", "platform.free_auto_safety_case.import", "platform.admin", "free_auto_safety_case", null, ADMIN),
   platform("POST", "/v1/admin/free-auto/safety-cases/:caseId/decision", "platform.free_auto_safety_case.decide", "platform.admin", "free_auto_safety_case", "caseId", ADMIN),
+  readOnly("/v1/admin/users/:userId/workspace-limit", "platform.workspace_create_limit.read", "platform.admin", "user", "userId", ADMIN),
+  platform("PUT", "/v1/admin/users/:userId/workspace-limit", "platform.workspace_create_limit.set", "platform.admin", "user", "userId", `${ADMIN} Stores a per-account workspace creation limit override (workspace_create_limit_override). The admin MCP tool den_set_user_workspace_limit makes the same change (method SERVICE, route service:workspace_create_limit.set).`),
   platform("PUT", "/v1/admin/free-auto/safety-pause", "platform.free_auto_safety_pause.set", "platform.admin", "free_auto_safety_pause", null, ADMIN),
   platform("GET", "/v1/admin/free-auto/usage", "platform.free_auto_usage.read", "platform.admin", "platform_report", null, ADMIN),
   platform("GET", "/v1/admin/mcp-registration", "platform.mcp_registration.read", "platform.admin", "platform_report", null, ADMIN),

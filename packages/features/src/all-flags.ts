@@ -64,3 +64,4 @@ export { default as workbotEnableAllConnectors } from "@openwork/features/flags/
 export { default as workbotMobile } from "@openwork/features/flags/workbot-mobile"
 export { default as workbotProfileComputers } from "@openwork/features/flags/workbot-profile-computers"
 export { default as workbotWorkspaceAssistant } from "@openwork/features/flags/workbot-workspace-assistant"
+export { default as workspaceCreateLimit } from "@openwork/features/flags/workspace-create-limit"

@@ -251,6 +251,13 @@ export function formatSubscriptionStatus(status: string): string {
     .join(" ");
 }
 
+/** The contact link Den sends when a person reached their workspace creation limit. */
+export function getWorkspaceLimitContact(payload: unknown): string | null {
+  if (!isRecord(payload) || payload.error !== "workspace_limit_reached") return null;
+  const contact = payload.contact;
+  return typeof contact === "string" && /^(mailto:|https:\/\/)/.test(contact) ? contact : null;
+}
+
 export function getErrorMessage(payload: unknown, fallback: string): string {
   if (typeof payload === "string" && payload.trim().length > 0) {
     const trimmed = payload.trim();

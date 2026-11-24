@@ -16,6 +16,7 @@ import {
   SetupStatus,
 } from "../../(den)/_components/setup-frame-parts";
 import { denApiCredentials, denBrowserEndpoint } from "../../(den)/_lib/den-api-origin";
+import { getWorkspaceLimitContact } from "../../(den)/_lib/den-flow";
 import {
   MCP_OAUTH_RESTART_MESSAGE,
   describeMcpOAuthError,
@@ -160,6 +161,7 @@ export default function McpSelectOrganizationPage() {
   const [flowState, setFlowState] = useState<FlowState>("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [createErrorContact, setCreateErrorContact] = useState<string | null>(null);
   const [workspaceName, setWorkspaceName] = useState("");
   const [email, setEmail] = useState<string | null>(null);
 
@@ -274,13 +276,16 @@ export default function McpSelectOrganizationPage() {
     if (name.length < 2) return;
     setFlowState("submitting");
     setCreateError(null);
+    setCreateErrorContact(null);
     setErrorMessage(null);
 
     const created = await requestJson("/v1/org", { method: "POST", body: JSON.stringify({ name }) });
     const org = created.response.ok ? parseCreatedOrg(created.payload) : null;
     if (!org) {
       setFlowState(invitations.length ? "ready" : "empty");
-      setCreateError("Could not create the workspace. Try again.");
+      const limitContact = getWorkspaceLimitContact(created.payload);
+      setCreateErrorContact(limitContact);
+      setCreateError(limitContact ? getErrorMessage(created.payload, "Could not create the workspace. Try again.") : "Could not create the workspace. Try again.");
       return;
     }
 
@@ -403,7 +408,8 @@ export default function McpSelectOrganizationPage() {
             required
             disabled={isBusy}
           />
-          {createError ? <SetupErrorLine>{createError}</SetupErrorLine> : null}
+          {createError && createErrorContact ? <p role="status" className="m-0 text-[13px] leading-5 text-[var(--dls-text-secondary)]">{createError} <a href={createErrorContact} className="font-medium text-[var(--dls-text-primary)] underline">Contact us</a></p> : null}
+          {createError && !createErrorContact ? <SetupErrorLine>{createError}</SetupErrorLine> : null}
           {invitations.length > 0 ? (
             <SetupQuietButton className="self-start text-[var(--setup-ink-soft)]" onClick={() => setCreateInstead(false)} disabled={isBusy}>
               Join {invitations.length === 1 ? invitations[0]?.organizationName : "an invited workspace"} instead

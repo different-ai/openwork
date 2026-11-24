@@ -1,4 +1,4 @@
-import { relations } from "drizzle-orm"
+import { relations, sql } from "drizzle-orm"
 import {
   bigint,
   boolean,
@@ -554,6 +554,13 @@ export const FreeAutoOrgFounderTable = mysqlTable("free_auto_org_founder", {
   organization_id: denTypeIdColumn("organization", "organization_id").notNull().primaryKey(),
   founder_user_id: denTypeIdColumn("user", "founder_user_id").notNull(),
 }, (table) => [index("free_auto_org_founder_user").on(table.founder_user_id)])
+
+export const WorkspaceCreateLimitOverrideTable = mysqlTable("workspace_create_limit_override", {
+  user_id: denTypeIdColumn("user", "user_id").notNull().primaryKey(),
+  workspace_limit: int("workspace_limit"),
+  set_by_user_id: denTypeIdColumn("user", "set_by_user_id").notNull(),
+  updated_at: timestamp("updated_at", { fsp: 3 }).notNull().default(sql`CURRENT_TIMESTAMP(3) ON UPDATE CURRENT_TIMESTAMP(3)`),
+})
 
 export const InferenceFreeUsageTable = mysqlTable("inference_free_usage", {
   desktop_hash: varchar("desktop_hash", { length: 64 }),

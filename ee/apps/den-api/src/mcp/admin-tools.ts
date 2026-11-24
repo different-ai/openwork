@@ -16,6 +16,7 @@ import { runPlatformAdminPlatformAction, runPlatformAdminServiceAction, type Pla
 import { readWorkbotAdoptionReport, workbotAdoptionInputSchema } from "../workbot/adoption-report.js"
 import { assertReadOnlySql, isDatabaseTimeLimitError, withDatabaseTimeLimit } from "./admin-query-limit.js"
 import { DEN_MCP_WRITE_SCOPE } from "./scopes.js"
+import { readWorkspaceCreateLimitStatus, setWorkspaceCreateLimitOverride } from "../workspace-create-limit.js"
 import { buildRetentionCohorts } from "../admin-metrics/definitions.js"
 import { readTaskUserWindows } from "../admin-metrics/metrics.js"
 import { normalizeRows } from "../admin-metrics/sql.js"
@@ -513,6 +514,27 @@ export function registerAdminMcpTools(server: McpServer, admin: AdminToolCaller 
         const rollouts = await runPlatformAdminPlatformAction("feature.rollout.set", requireAdmin(), { type: "feature", id: feature }, () =>
           updateFeatureRollout({ key: feature, enabled, killed, defaultEnabled: featureDefinition(feature).default, updatedByUserId: requireAdmin().userId }))
         return { ok: true, feature, ...featureRollout(feature, rollouts) }
+      }),
+  )
+
+  server.registerTool(
+    "den_set_user_workspace_limit",
+    {
+      description:
+        "Admin write tool: raise, remove, or restore how many workspaces one person can create in the rolling window (enforced while the workspaceCreateLimit feature is on). limit=number sets it, limit=null removes the limit, limit='default' restores the deployment limit. Returns the effective limit and the person's current count.",
+      inputSchema: z.object({
+        userId: z.string().min(1).describe("User id, e.g. user_..."),
+        limit: z.union([z.number().int().min(1).max(10_000), z.null(), z.literal("default")]).describe("New limit, null for no limit, or 'default'"),
+      }),
+    },
+    async ({ userId, limit }) =>
+      writeScopeMissing("den_set_user_workspace_limit") ?? run(async () => {
+        if (!isDenTypeId("user", userId)) throw new Error("Invalid user id")
+        const id = normalizeDenTypeId("user", userId)
+        if (!await readWorkspaceCreateLimitStatus(id)) throw new Error(`No user found for ${userId}`)
+        await runPlatformAdminPlatformAction("workspace_create_limit.set", requireAdmin(), { type: "user", id }, () =>
+          setWorkspaceCreateLimitOverride({ userId: id, limit, setByUserId: normalizeDenTypeId("user", requireAdmin().userId) }))
+        return { ok: true, ...await readWorkspaceCreateLimitStatus(id) }
       }),
   )
 
