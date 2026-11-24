@@ -113,3 +113,8 @@ export type DesktopFreeVersionError = {
   message: string;
 };
 export type DesktopFreeSession = { token: string; expiresAt: number; model: typeof DESKTOP_FREE_MODEL_ID };
+
+export const WORKBOT_FREE_GRANT_HEADER = "x-openwork-workbot-grant";
+export const WORKBOT_FREE_GRANT_TTL_MS = 2 * 60 * 60 * 1000;
+export const WORKBOT_FREE_GRANT_SECRET_MIN_LENGTH = 32;
+export type WorkbotFreeGrantClaims = { keyId: string; organizationId: string; memberId: string; expiresAt: number };

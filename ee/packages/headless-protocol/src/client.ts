@@ -52,6 +52,7 @@ export const headlessModelAccessSchema = z.strictObject({
   apiKey: z.string().min(1).max(4096),
   protocol: z.enum(["anthropic", "openai", "openai-responses"]),
   model: z.string().trim().min(1).max(512).optional(),
+  headers: z.object({ "x-openwork-workbot-grant": z.string().min(1).max(1024) }).partial().optional(),
 })
 export type HeadlessModelAccess = z.infer<typeof headlessModelAccessSchema>
 
