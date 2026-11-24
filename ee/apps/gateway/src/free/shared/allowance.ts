@@ -182,7 +182,7 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
       const now = new Date()
       await capacity.run(() => database.transaction(async (tx) => { await identityActivity(tx, { kind: "installation", id: installationHash }, now) }))
     },
-    async read(principal: FreePrincipal, desktopHash?: string): Promise<Pick<DesktopFreeAccessStatus, "state" | "code" | "allowance">> {
+    async read(principal: FreePrincipal, desktopHash?: string, workbot = false): Promise<Pick<DesktopFreeAccessStatus, "state" | "code" | "allowance">> {
       if (!owns(principal)) return { state: "unavailable", code: "free_principal_rejected", allowance: null }
       const result = await capacity.run(() => database.transaction(async (tx) => {
         if (!await memberFreePrincipalAllowed(principal, tx)) return null
@@ -190,7 +190,7 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
         if (!result.code && principal.kind === "member") {
           const mode = await memberBudgetMode(tx, principal)
           if (mode !== "personal") result.code = await memberSharedLimit(tx, principal, config,
-            maximumCompletionCost(config, 1) ?? 1, result.now, mode === "cross-org" ? { desktopHash } : undefined)
+            maximumCompletionCost(config, 1) ?? 1, result.now, mode === "cross-org" ? { desktopHash, workbot } : undefined)
         }
         return result
       }))
@@ -202,14 +202,14 @@ export function createFreeAllowanceStore(config: AutoConfig, family: FreeAllowan
       if (code) return { state: "unavailable", code, allowance }
       return { state: "ready", code: null, allowance }
     },
-    async admit(principal: FreePrincipal, requestId: string, choices: number, desktopHash?: string): Promise<FreeAdmission> {
+    async admit(principal: FreePrincipal, requestId: string, choices: number, desktopHash?: string, workbot = false): Promise<FreeAdmission> {
       if (!owns(principal)) return { ok: false, code: "free_principal_rejected" }
       const mode = principal.kind === "member" ? await memberBudgetMode(database.$primary, principal) : "personal"
       if (principal.kind === "member" && mode !== "personal") {
         const cost = maximumCompletionCost(config, choices)
         if (cost === null) return { ok: false, code: "free_request_outside_budget" }
         return capacity.run(() => database.transaction(async (tx): Promise<FreeAdmission> => {
-          const code = await reserveMemberBudget(tx, principal, config, requestId, cost, mode === "cross-org" ? { desktopHash } : undefined)
+          const code = await reserveMemberBudget(tx, principal, config, requestId, cost, mode === "cross-org" ? { desktopHash, workbot } : undefined)
           if (code) return { ok: false, code }
           if (!await memberFreePrincipalAllowed(principal, tx)) throw new Error("Member eligibility changed")
           return { ok: true, windows: [], reserved: true }
