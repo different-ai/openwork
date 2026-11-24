@@ -67,6 +67,15 @@ wake: schedule (morning + ~3h)  ─┐
    member. Text is cleaned first: no `@channel`/`@here`/user mentions, and links only to the member's own Google
    workspace and the sites of the services behind the sources it read, from a fixed list (slack.com, linear.app…).
 
+## Enable connected connectors together
+
+With `workbotEnableAllConnectors` enabled on Cloud or self-hosted, members can open **My bot → What it reads → Enable all connected apps**. This turns on the connected connectors they can choose, skipping any known to have no read-only tools. Members can turn all their optional sources off together, including the calendar when their admin lets them choose. Admins can enable all allowed apps for everyone or turn them off together in the connector policy for Everyone or a team. Bulk enable preserves explicit bans. Turning off the rollout hides the bulk action and preserves each member's saved choices. Feature owner: `reachjalil`.
+
+![Admin connector policies after turning all apps off](./bulk-connector-policy.png)
+
+
+![Connected apps in My bot with the bulk enable button](./enable-connected.png)
+
 ## Sources, not categories
 
 Items are a source and an id there, not one of four categories. The four responsibilities are presets the agent always

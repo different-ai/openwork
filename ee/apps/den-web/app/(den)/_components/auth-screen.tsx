@@ -9,7 +9,7 @@ import { AuthPanel } from "./auth-panel";
 import { OnboardingTexture } from "./onboarding-texture";
 import { McpAppFact, McpStoryTiles, mcpStoryCopy } from "../../mcp/mcp-story";
 import { useMcpClient } from "../../mcp/use-mcp-client";
-import { isWorkbotSignIn } from "../../mcp/workbot-sign-in";
+import { isSignInOnly, isWorkbotSignIn } from "../../mcp/workbot-sign-in";
 import { SetupFrame } from "./setup-frame";
 import { SetupFacts, SetupPanelBody, SetupSkeletonRows } from "./setup-frame-parts";
 import { TemporaryAuthNotice } from "./temporary-auth-notice";
@@ -112,7 +112,6 @@ export function AuthScreen({ agentSignIn = false }: { agentSignIn?: boolean }) {
     <SetupFrame
       step="account"
       panelVisual={<OnboardingTexture />}
-      // The sign-up panel carries its own heading (P2).
       title=""
       description="One account for your desktop, your tools, and your team."
     >
@@ -138,11 +137,6 @@ export function AuthScreen({ agentSignIn = false }: { agentSignIn?: boolean }) {
   );
 }
 
-/**
- * Sign-up while an agent waits (A7): the story names the app that asked, and
- * the panel keeps "Signing in for" above the sign-in so the person never
- * loses track of why they are here.
- */
 function AgentSignInScreen({ status }: { status: "checking" | "redirecting" | "error" | null }) {
   const [oauthQuery, setOauthQuery] = useState("");
   useEffect(() => {
@@ -151,6 +145,7 @@ function AgentSignInScreen({ status }: { status: "checking" | "redirecting" | "e
   const client = useMcpClient(oauthQuery);
   const story = mcpStoryCopy(client);
   const workbot = isWorkbotSignIn(oauthQuery);
+  const signInOnly = isSignInOnly(oauthQuery);
   return (
     <SetupFrame
       workbot={workbot}
@@ -172,7 +167,14 @@ function AgentSignInScreen({ status }: { status: "checking" | "redirecting" | "e
                 bare
                 emailFirstFlow
                 socialFirst
-                emailStepContent={workbot ? { title: "Sign in to Workbot" } : { title: "Create your account.", copy: "Already have an account? Enter your email and we\u2019ll find it." }}
+                signInOnly={signInOnly}
+                emailStepContent={
+                  signInOnly
+                    ? { title: workbot ? "Sign in to Workbot" : "Sign in to OpenWork", copy: "Use your existing OpenWork account. To get one, ask your workspace admin." }
+                    : workbot
+                      ? { title: "Sign in to Workbot" }
+                      : { title: "Create your account.", copy: "Already have an account? Enter your email and we\u2019ll find it." }
+                }
               />
             )}
           </SetupPanelBody>

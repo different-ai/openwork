@@ -1,0 +1,20 @@
+id: scim_provisioning
+title: Show sample SCIM provisioning
+surface: admin
+label: REAL
+status: grounded
+requires: [admin_signed_in, scim_fixture_ready]
+do:
+  - {type: manual, instruction: 'Use the approved isolated SCIM fixture helper off camera; refresh Members to show the provisioned employee and team.'}
+  - {type: show, seconds: 5}
+say: The identity provider can provision a sample employee and a group. This is an isolated fixture.
+paste: {}
+see: The fixture employee and team appear in Members after refreshing.
+checks:
+  - {type: scim_member_exists, name: '{{scim_employee}}', team: '{{scim_team}}'}
+reset: [Use the approved cleanup to remove only the fixture’s user and group.]
+fallback: Skip provisioning and use a verified screenshot from an isolated rehearsal.
+expect_seconds: 60
+questions:
+  - {question: Does this prove SSO login for the new user?, answer: 'No. It shows provisioning, not first sign-in.'}
+avoid: [Do not show credentials, use the SCIM health tab, or test the fixture user’s login.]

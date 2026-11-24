@@ -8,7 +8,6 @@ export default defineConfig({
   target: "es2022",
   clean: true,
   dts: false,
-  // Keep both interpreters and their matching Effect runtime inside the desktop artifact.
   external: ["typescript"],
   noExternal: ["@openwork/codemode", "@opencode/codemode", "effect", "acorn", "zod"],
 })

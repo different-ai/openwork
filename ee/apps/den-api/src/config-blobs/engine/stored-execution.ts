@@ -1,9 +1,3 @@
-/**
- * The execution plan as stored (encrypted) on a change request next to its
- * plan. Apply runs it instead of re-planning against every area: it re-reads
- * only the items it writes (see `./apply-check.ts`). Parsed strictly on read;
- * anything that doesn't parse makes the caller fall back to a full re-plan.
- */
 import {
   CONFIG_MATCH_TIERS,
   CONFIG_PLAN_OPS,
@@ -24,7 +18,7 @@ const configItemSchema = z.object({
 const resolutionSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("target"), id: z.string(), via: z.enum(["target", "decision"]) }),
   z.object({ kind: z.literal("planned"), area: configAreaKeySchema, ref: z.string() }),
-  z.object({ kind: z.literal("drop") }),
+  z.object({ kind: z.literal("drop"), entry: z.literal(true).optional() }),
   z.object({ kind: z.literal("invite"), email: z.string() }),
   z.object({ kind: z.literal("unresolved"), reason: z.string() }),
 ])
@@ -69,7 +63,6 @@ const executionPlanSchema = z.object({
   ops: z.array(executionOpSchema),
 })
 
-/** The stored execution plan, or null when it is missing, malformed or for another plan hash. */
 export function parseStoredExecution(value: unknown, planHash: string | null): ExecutionPlan | null {
   if (value === null || value === undefined || !planHash) return null
   const parsed = executionPlanSchema.safeParse(value)

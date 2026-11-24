@@ -12,7 +12,7 @@ export function instrument(provider: SandboxProvider, observe: (event: SandboxOp
         outcome = "ok"
         return result
       } finally {
-        try { observe({ providerId: provider.id, operation: name, durationMs: now() - started, outcome }) } catch { /* observers are best-effort */ }
+        try { observe({ providerId: provider.id, operation: name, durationMs: now() - started, outcome }) } catch {}
       }
     }
   }

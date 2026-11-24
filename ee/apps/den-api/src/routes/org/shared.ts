@@ -7,7 +7,6 @@ import { memberPermissionsForOrganizationContext } from "../../middleware/member
 import { checkMemberPermission, type PermissionCheckOptions, type PermissionCheckResult } from "../../permissions/check.js"
 import type { MemberPermissions } from "../../permissions/effective.js"
 import { env } from "../../env.js"
-import { invitationEmailProof } from "../../invitation-email.js"
 import { denTypeIdSchema } from "../../openapi.js"
 import {
   normalizeOrganizationRoleName,
@@ -49,28 +48,15 @@ export { permissionDeniedMessage } from "../../permissions/effective.js"
 
 type PermissionRouteVariables = Pick<AuthContextVariables, "apiKey" | "session"> & Partial<OrganizationContextVariables>
 
-/** Any Hono context for an organization route (orgMemberRoute, orgRoleRoute, orgPermissionRoute, cloudTransportRoute). */
 export type PermissionRouteContext = {
   get: <K extends keyof PermissionRouteVariables>(key: K) => PermissionRouteVariables[K]
 }
 
-/**
- * The caller's effective permissions for this request, resolved at most once
- * per request (shared with orgPermissionRoute and resolveMemberPermissionsMiddleware).
- * Null without an organization context.
- */
 export async function memberPermissionsForRequest(c: PermissionRouteContext): Promise<MemberPermissions | null> {
   const payload = c.get("organizationContext")
   return payload ? memberPermissionsForOrganizationContext(payload) : null
 }
 
-/**
- * In-handler permission check for conditional cases (depends on the body or
- * the target row). Same result shape as the ensure* helpers, so call sites stay
- *   const permission = await requirePermission(c, "teams.manage_admin")
- *   if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response), permissionFailureHeaders(permission.response))
- * Includes the recent sign-in check for sensitive keys.
- */
 export async function requirePermission(
   c: PermissionRouteContext,
   key: PermissionKey,
@@ -84,7 +70,6 @@ export async function requirePermission(
   })
 }
 
-/** Whether the caller holds `key`. No recent sign-in check: use for visibility and filtering, not for sensitive writes. */
 export async function hasPermission(c: PermissionRouteContext, key: PermissionKey): Promise<boolean> {
   const permissions = await memberPermissionsForRequest(c)
   return permissions?.has(key) ?? false
@@ -122,17 +107,6 @@ const createNanoid = customAlphabet("0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefg
 
 export function buildInvitationLink(inviteToken: string) {
   return new URL(`/join-org?invite=${encodeURIComponent(inviteToken)}`, getInvitationOrigin()).toString()
-}
-
-/**
- * The join link for the invitation email only. It adds the proof that the
- * link reached the invited mailbox (invitation-email.ts), so it must never be
- * returned by an API or shown to the inviter.
- */
-export function buildInvitationEmailLink(inviteToken: string, email: string) {
-  const link = new URL(buildInvitationLink(inviteToken))
-  link.searchParams.set("inviteProof", invitationEmailProof({ inviteToken, email }))
-  return link.toString()
 }
 
 export function ensureOwner(c: PrivilegedOrgRouteContext) {

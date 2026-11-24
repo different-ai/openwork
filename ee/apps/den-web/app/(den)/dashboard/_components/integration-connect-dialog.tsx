@@ -22,21 +22,6 @@ import {
   useIntegrationRepos,
 } from "./integration-data";
 
-/**
- * IntegrationConnectDialog
- *
- * Walks the user through a realistic OAuth-style connect flow entirely in-app:
- *   1. authorize        — eyebrow scopes + "Authorize" button (mocks the IdP redirect)
- *   2. select_account   — pick a personal account or an org/workspace
- *   3. select_repos     — pick one or more repos to expose
- *   4. connecting       — spinner while the mutation resolves
- *   5. connected        — success card with a "Done" CTA
- *
- * No real redirect to GitHub/Bitbucket — the "Authorize" step just advances
- * the wizard. All progress is stateful client-side so the walkthrough feels
- * real and the final React Query cache ends up in a correct state.
- */
-
 type Step = "authorize" | "select_account" | "select_repos" | "connecting" | "connected";
 
 const STEP_ORDER: Step[] = ["authorize", "select_account", "select_repos", "connecting", "connected"];
@@ -67,7 +52,6 @@ export function IntegrationConnectDialog({
   const reposQuery = useIntegrationRepos(provider ?? "github", selectedAccount?.id ?? null);
   const connectMutation = useConnectIntegration();
 
-  // Reset the wizard every time the dialog is re-opened.
   useEffect(() => {
     if (open) {
       setStep("authorize");
@@ -78,8 +62,6 @@ export function IntegrationConnectDialog({
     }
   }, [open, provider]);
 
-  // Filtered repos for the select step. Must stay above the early return so the
-  // hook count is stable when the dialog opens/closes (React #300/#310).
   const filteredRepos = useMemo(() => {
     const repos = reposQuery.data ?? [];
     const normalized = repoQuery.trim().toLowerCase();
@@ -145,7 +127,6 @@ export function IntegrationConnectDialog({
       aria-label={`Connect ${meta.name}`}
     >
       <div className="relative w-full max-w-lg rounded-[28px] border border-gray-200 bg-white p-6 shadow-[0_24px_80px_-32px_rgba(15,23,42,0.45)]">
-        {/* Close */}
         <button
           type="button"
           onClick={onClose}
@@ -155,7 +136,6 @@ export function IntegrationConnectDialog({
           <X className="h-4 w-4" />
         </button>
 
-        {/* Header */}
         <div className="grid gap-2 pr-8">
           <p className="text-[12px] font-semibold uppercase tracking-[0.18em] text-gray-400">
             {progressLabel}
@@ -171,7 +151,6 @@ export function IntegrationConnectDialog({
           </div>
         </div>
 
-        {/* Body */}
         <div className="mt-6">
           {step === "authorize" ? (
             <AuthorizeStep scopes={meta.scopes} providerName={meta.name} />
@@ -205,14 +184,12 @@ export function IntegrationConnectDialog({
           )}
         </div>
 
-        {/* Error */}
         {localError ? (
           <div className="mt-4 rounded-2xl border border-red-200 bg-red-50 px-4 py-3 text-[13px] text-red-700">
             {localError}
           </div>
         ) : null}
 
-        {/* Footer actions */}
         <div className="mt-6 flex flex-col gap-3 sm:flex-row sm:justify-end">
           {step === "authorize" ? (
             <>
@@ -261,8 +238,6 @@ export function IntegrationConnectDialog({
     </div>
   );
 }
-
-// ── Step components ────────────────────────────────────────────────────────
 
 function ProviderBadge({ provider }: { provider: IntegrationProvider }) {
   const bg = provider === "github" ? "bg-[#0f172a]" : "bg-[#2684FF]";

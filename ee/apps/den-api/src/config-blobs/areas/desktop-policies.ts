@@ -1,19 +1,3 @@
-/**
- * `desktop-policies`: desktop policies and who they apply to.
- *
- * Exported per policy: name, whether it is the default policy, enabled,
- * priority, the normalized policy document (settings, access limits,
- * execution restrictions, onboarding prompts) and its assignments (roles,
- * teams, people by email). Nothing in a policy is secret.
- *
- * The default policy exists in every organization and matches by the natural
- * key "default". As in the dashboard, only its document can change: its name,
- * priority and assignments are fixed and it can't be disabled or deleted.
- *
- * Applies through the same handlers as POST/PATCH/DELETE /v1/desktop-policies
- * (`createDesktopPolicy`, `updateDesktopPolicy`, `deleteDesktopPolicy`),
- * including the Enterprise plan check.
- */
 import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { DesktopPolicyMemberTable, DesktopPolicyTable } from "@openwork-ee/den-db/schema"
 import { denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -135,7 +119,6 @@ export const desktopPoliciesArea = defineConfigArea({
 
       let targetId = op.kind === "update" ? op.targetId : null
       if (op.kind === "create" && spec.isDefault) {
-        // Every organization has exactly one default policy: an unmatched one in a blob updates it.
         targetId = await ensureDefaultDesktopPolicyForOrganization({ organizationId: payload.organization.id, createdByOrgMemberId: payload.currentMember.id })
         warnings.push("Applied to this organization's existing default policy.")
       }
@@ -146,7 +129,6 @@ export const desktopPoliciesArea = defineConfigArea({
         )).limit(1)
         if (!existing) throw new ConfigApplyError("desktop_policy_not_found", `The policy "${op.item.name}" no longer exists.`, 404)
         const isDefault = existing.isDefault === true
-        // An update writes only the parts the plan changes; the default policy matched by a create compares everything.
         const inScope = (path: string) => op.kind !== "update" || touches(op.changes, path)
         if (isDefault && inScope("assignments") && (spec.assignments.roles.length > 0 || memberIds.length > 0 || teamIds.length > 0)) {
           warnings.push("The default policy applies to everyone; its assignments were not changed.")
@@ -163,7 +145,6 @@ export const desktopPoliciesArea = defineConfigArea({
         ]
         const [first, ...rest] = fieldSteps
         if (first) {
-          // One row: the fields that do not change are sent as stored, so only the changed ones differ.
           const fieldsInput: DesktopPolicyWriteInput = {
             ...input,
             policyName: fieldSteps.some((step) => step.target === "name") ? input.policyName : existing.policyName,
@@ -171,7 +152,6 @@ export const desktopPoliciesArea = defineConfigArea({
             priority: fieldSteps.some((step) => step.target === "priority") ? input.priority : existing.priority,
             policy: fieldSteps.some((step) => step.target === "policy") ? input.policy : storedPolicy,
           }
-          // Full replacement of the document, like the keyed PUT: omitted onboarding prompts are not kept.
           await log.run(first, async () => {
             await expectRouteOk(await updateDesktopPolicy(c, payload, existing.id, fieldsInput, true, { fields: true, assignments: false }), `Update "${op.item.name}"`)
           })
@@ -189,7 +169,6 @@ export const desktopPoliciesArea = defineConfigArea({
           ]
           const [firstAssignment, ...otherAssignments] = steps
           if (firstAssignment) {
-            // Only the assignments that are added or removed are written (updateDesktopPolicy diffs them).
             await log.run(firstAssignment, async () => {
               await expectRouteOk(await updateDesktopPolicy(c, payload, existing.id, input, true, { fields: false, assignments: true }), `Update the assignments of "${op.item.name}"`)
             }, "assignments")
@@ -212,7 +191,6 @@ export const desktopPoliciesArea = defineConfigArea({
   },
 })
 
-/** "settings.x, accessLimits" from the plan's changes under `policy`. */
 function changedPolicyFields(changes: readonly ConfigFieldChange[] | null): string | undefined {
   if (!changes) return undefined
   const fields = [...new Set(changes.filter((change) => change.path.startsWith("policy.")).map((change) => change.path.slice("policy.".length)))]

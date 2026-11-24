@@ -3,10 +3,6 @@ import { SERVICE_LABELS } from "@openwork/types/den/service-readiness"
 
 const MAX_ATTENTION = 200
 
-/**
- * The summary at the top of Settings › Diagnostics, derived only from the
- * sections the caller can see. Errors first; otherwise in section order.
- */
 export function deriveDiagnosticsAttention(sections: Pick<OrgDiagnostics, "desktop" | "providers" | "connectors" | "installation">): DiagnosticsAttention[] {
   const items: DiagnosticsAttention[] = []
 

@@ -36,7 +36,6 @@ export async function verifyGcpIdentity(input: {
   audience: string
   email: string
   now?: Date
-  // Local key resolver for isolated cryptographic tests. Routes always use the fixed Google JWKS.
   keyResolver?: Parameters<typeof jwtVerify>[1]
 }) {
   const now = input.now ?? new Date()
@@ -64,8 +63,6 @@ export type GcpLaunch = {
 }
 function quoteShell(value: string) { return `'${value.replaceAll("'", `'\\''`)}'` }
 
-// This bootstrap is trusted command text, not code loaded from the archive.
-// Validate the entire archive and its inventory before writing any member.
 const safeExtraction = String.raw`import hashlib, json, sys, tarfile
 from pathlib import Path
 archive, destination, version = Path(sys.argv[1]), Path(sys.argv[2]), sys.argv[3]

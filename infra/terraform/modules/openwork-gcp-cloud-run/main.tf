@@ -75,7 +75,7 @@ locals {
     SMTP_PORT                          = tostring(var.smtp.port)
     SMTP_USER                          = var.smtp.username
     SMTP_SECURE                        = local.bool[var.smtp.secure]
-  }, var.extra_environment)
+  }, local.ai_gateway_environment, var.extra_environment)
 
   # Cloud Run reserves PORT and sets it from the container port.
   environment_list = { for k, v in local.environment : k => v if v != "" && k != "PORT" }

@@ -1,9 +1,12 @@
-/**
- * Catalan translations (Català)
- * Professional terms (Skills, Plugins, Commands, Sessions, OpenCode, OpenPackage, OpenWork) are NOT translated
- */
-
 export default {
+  "artifact.office_empty": "Aquest fitxer no conté text llegible. Obre’l en una altra aplicació per veure l’original.",
+  "artifact.office_empty_slide": "Aquesta diapositiva no conté text llegible.",
+  "artifact.office_loading": "S’està carregant l’esquema de text",
+  "artifact.office_slide": "Diapositiva {number}",
+  "artifact.office_text_only": "Només es mostra l’esquema de text, sense maquetació, imatges ni colors.",
+  "artifact.office_too_large": "El fitxer és massa gran per previsualitzar-lo. Obre’l en una altra aplicació per veure’l sencer.",
+  "artifact.office_truncated": "No es mostra part del text perquè la previsualització ha arribat al límit.",
+  "artifact.office_unreadable": "No s’ha pogut llegir el fitxer. Prova d’obrir-lo en una altra aplicació.",
   "app.error_audit_load": "No s'ha pogut carregar el registre d'auditoria.",
   "app.error_connect_first": "Connecta't a aquest worker abans d'aplicar canvis de runtime.",
   "app.error_request_failed": "La sol·licitud ha fallat",
@@ -521,7 +524,6 @@ export default {
   "settings.group_workspace": "Workspace",
   "settings.hide_titlebar": "Amaga la barra de títol",
   "settings.hide_titlebar_desc": "Amaga la barra de títol de la finestra. Útil en gestors de finestres en mosaic",
-  "settings.join_discord": "Uneix-te a Discord",
   "settings.language": "Llengua",
   "settings.language.description": "Tria l'idioma que prefereixes",
   "settings.last_error": "Últim error",

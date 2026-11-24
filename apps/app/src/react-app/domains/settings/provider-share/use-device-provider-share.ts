@@ -15,21 +15,13 @@ import {
 } from "./device-provider-share";
 
 export type DeviceProviderShare = {
-  /** The signed-in person's organization is ready. */
   enabled: boolean;
   options: DeviceShareOptions | null;
-  /** Per device provider id: shareable, or already shared. */
   rows: ReadonlyMap<string, DeviceProviderShareRow>;
-  /** What the organization section offers while nothing is shared. */
   emptyState: OrganizationShareEmptyState;
-  /** Ask Den again, after a share or a change of sign-in. */
   refresh: () => Promise<unknown>;
 };
 
-/**
- * What this person can share from this device. Signed out or Den unreachable: nothing
- * is offered, and Settings › AI Providers reads exactly as before.
- */
 export function useDeviceProviderShare(input: {
   providers: readonly ShareableDeviceProvider[];
   health: (providerId: string) => ProviderCredentialHealth;
@@ -50,12 +42,8 @@ export function useDeviceProviderShare(input: {
     staleTime: 30_000,
     retry: false,
   });
-  // Verification replaces the token without changing account/org identity.
-  // Ask with the fresh client after that commit rather than retaining an old
-  // verificationRequired result in this identity-scoped cache.
   const refetch = query.refetch;
   useEffect(() => { if (enabled) void refetch(); }, [context.client, enabled, refetch]);
-  // `enabled: false` stops fetching, not cache reads.
   const options = enabled && !query.isError ? query.data ?? null : null;
   return useMemo(() => ({
     enabled,

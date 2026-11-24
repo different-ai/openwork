@@ -1,20 +1,3 @@
-/**
- * Config-blob area `members.prompts`: the system prompts on the Prompts tab
- * of Everyone and of each team.
- *
- * - One item per prompt (`org_prompt`), with its text and who it applies to
- *   (`org_prompt_access`): everyone, teams (refs to `members.teams`) and
- *   people (`people/<email>`). The dashboard makes one prompt per scope; a
- *   prompt assigned to several is carried as it is.
- * - The text is encrypted at rest because it is confidential, not a
- *   credential: it IS exported (decision D1), and the area says so.
- * - Matched by scope (Everyone, or the one team it is for) when it has one.
- * - Apply writes on `ctx.db` in one transaction, locking the organization's
- *   prompts as prompts.ts does: the text and name only when they changed, and
- *   one access row per assignment added or removed. Prompts record no domain
- *   audit change of their own (the routes rely on request evidence), so
- *   neither does the apply.
- */
 import { and, asc, eq, inArray } from "@openwork-ee/den-db/drizzle"
 import { OrgPromptAccessTable, OrgPromptTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -38,7 +21,6 @@ import {
 const AREA = "members.prompts"
 
 const specSchema = z.object({
-  /** The prompt text members' agents follow. Confidential: encrypted at rest on both sides. */
   content: z.string().max(ORG_PROMPT_MAX_LENGTH).refine((value) => value.trim().length > 0, { message: "Write a prompt." }),
   assignment: z.object({
     everyone: z.boolean().default(false),
@@ -78,7 +60,6 @@ async function readPrompts(ctx: ConfigAreaContext, ids?: string[]): Promise<Conf
   return rows.map((row): ConfigItem => {
     const grants = access.filter((grant) => grant.promptId === row.id)
     const refs = audienceRefs({
-      // Grants to a team or member that no longer exists are left out.
       teamIds: grants.flatMap((grant) => (grant.teamId && teamNames.has(grant.teamId) ? [grant.teamId] : [])),
       memberIds: grants.flatMap((grant) => (grant.memberId ? [grant.memberId] : [])),
       teamNames,
@@ -93,7 +74,6 @@ async function readPrompts(ctx: ConfigAreaContext, ids?: string[]): Promise<Conf
   })
 }
 
-/** Everyone, or `team:<name>` for a prompt for exactly one team (how the dashboard makes them). */
 function promptScopeKey(item: ConfigItem): string | null {
   const assignment = isJsonObject(item.spec.assignment) ? item.spec.assignment : {}
   const teams = Array.isArray(assignment.teams) ? assignment.teams : []
@@ -126,7 +106,6 @@ function parseApplySpec(spec: { [key: string]: unknown }, name: string): { conte
 
 type Tx = Parameters<Parameters<ConfigAreaContext["db"]["transaction"]>[0]>[0]
 
-/** Locks the organization's prompts, as prompts.ts does before it writes one. */
 async function lockPrompts(tx: Tx, organizationId: ReturnType<typeof normalizeDenTypeId<"organization">>) {
   await tx.select({ id: OrgPromptTable.id }).from(OrgPromptTable).where(eq(OrgPromptTable.organizationId, organizationId)).for("update")
 }
@@ -162,7 +141,6 @@ export const membersPromptsArea = defineConfigArea({
   naturalKeys: [{ label: "scope", get: promptScopeKey }],
   secretFields: [],
   containsConfidentialContent: true,
-  // Every write goes through ctx.db in one transaction.
   transactional: true,
   irreversible: () => [],
 
@@ -234,7 +212,6 @@ export const membersPromptsArea = defineConfigArea({
       return { localId: promptId, steps }
     }
 
-    // update: only the fields the plan names.
     const promptId = normalizeDenTypeId("orgPrompt", op.targetId)
     const writeContent = touches(op.changes, "content")
     const writeEveryone = touches(op.changes, "assignment.everyone")
@@ -306,7 +283,6 @@ export const membersPromptsArea = defineConfigArea({
         }
       })
     } catch (error) {
-      // The transaction rolled back: nothing of this item was written.
       throw asItemError(error, [])
     }
     return { localId: promptId, steps }

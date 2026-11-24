@@ -20,7 +20,9 @@ Keys live in **Settings › API Keys** in OpenWork Cloud.
   only a hash, so it can't show the key again.
 - **Expires after 90 days.** Create a new key before then. You can't choose a
   different expiry.
-- **Rate limited.** Each key can make up to 600 requests a minute.
+- **Rate limited.** Each key can make up to 600 requests a minute. On a
+  self-hosted installation you can change this; see
+  [Change the rate limit](#change-the-rate-limit-self-hosted).
 
 ## Who can create keys
 
@@ -57,6 +59,7 @@ session tokens, so an API key there is rejected.
 
 On a self-hosted installation, use your own Den API address instead of
 `api.openworklabs.com`. The **API** tab of these docs lists every endpoint.
+To use a key for audit history, see [Download audit history with the API](/cloud/export-audit-logs).
 
 ## Delete a key
 
@@ -64,11 +67,30 @@ In **Settings › API Keys**, click **Delete** next to the key. It stops working
 at once. People with **Manage API keys** can delete any key in the
 organization, not only their own.
 
-OpenWork also turns a person's keys off by itself when they're removed from the
-organization, their role or permissions change, or ownership is transferred.
+OpenWork also turns a person's keys off for an organization when they're
+removed from it, their role changes, or ownership is transferred. Changing
+permissions without changing the role does not revoke the keys.
 
 Creating, deleting and revoking keys is recorded in
 [Audit logs](/cloud/audit-logs).
+
+## Change the rate limit (self-hosted)
+
+On a self-hosted installation, set `DEN_API_KEY_RATE_LIMIT_MAX` on the Den API
+to the number of requests each key may make per minute. Leave it unset to keep
+the default of 600.
+
+With the Helm chart, set it in your values file:
+
+```yaml
+config:
+  auth:
+    apiKeyRateLimitMax: 1200
+```
+
+The limit is saved on each key when it's created, so it applies to keys created
+after the change. Existing keys keep their old limit: delete and recreate them to
+pick up the new one.
 
 ## Good practice
 

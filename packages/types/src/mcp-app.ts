@@ -55,8 +55,6 @@ export const mcpAppToolDeclarationSchema = z.object({
 const toolDeclarationsSchema = z.array(mcpAppToolDeclarationSchema).max(MCP_APP_MAX_TOOLS)
   .refine((tools) => new Set(tools.map((tool) => tool.name)).size === tools.length, "Tool names must be unique.")
 
-// No per-tool size cap: provider schemas (e.g. Notion's query tool) can be
-// large. The revision storage cap and transport limits bound the total.
 const jsonSchemaObject = z.record(z.string(), z.json())
   .refine((schema) => schema.type === "object", "Tool input schemas must describe an object.")
 
@@ -83,11 +81,8 @@ export const mcpAppAuthoringSchema = mcpAppSourceSchema.extend({
   cssSource: mcpAppSourceSchema.shape.cssSource.optional(),
   textFallback: textFallbackSchema,
   tools: toolDeclarationsSchema.optional(),
-  /** Serve the App at its public MCP URL, with no sign-in. Only an App without tools can be public. */
   public: z.boolean().optional(),
-  /** The App is written to also work as a web page: a browser opening its MCP URL shows it full page. */
   site: z.boolean().optional(),
-  /** Friendly name for the public URL, /mcp/public/apps/<name>, unique across the deployment. */
   publicName: mcpAppPublicNameSchema.optional(),
 })
 
@@ -137,11 +132,8 @@ export const mcpAppCompiledRevisionSchema = z.object({
   compilerName: z.literal("openwork-react-mcp-app"),
   compilerVersion: z.string().min(1).max(64),
   reactVersion: z.string().min(1).max(64),
-  /** The App reads initial results from its launch, so opening it loads them. */
   loadsWithLaunch: z.literal(true).optional(),
-  /** Marked public by an editor: served without sign-in at mcpAppPublicPath while it has no tools. */
   public: z.literal(true).optional(),
-  /** Its author made it work as a web page, so a browser opening its MCP URL gets the App instead of a refusal. */
   site: z.literal(true).optional(),
 }).strict().refine((value) => byteLength(JSON.stringify(value)) <= MCP_APP_MAX_STORAGE_BYTES)
 
@@ -163,7 +155,6 @@ export const mcpAppSummarySchema = z.object({
   textFallback: textFallbackSchema,
   toolName: z.literal(MCP_APP_LAUNCH_TOOL_NAME),
   resourceUri: z.string(),
-  /** Path of the App's own MCP server, relative to the Den API origin. */
   serverPath: z.string(),
   tools: z.array(mcpAppToolSummarySchema),
 }).strict()

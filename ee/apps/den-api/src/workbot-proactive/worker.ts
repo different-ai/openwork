@@ -1,4 +1,4 @@
-import { libraryConnectorLink } from "../agent-links.js"
+import { libraryConnectorLink, myAgentLink } from "../agent-links.js"
 import { markFeaturesUsed } from "../feature-usage.js"
 import { env } from "../env.js"
 import { appLogger } from "../observability/logger.js"
@@ -6,7 +6,7 @@ import { readMemberGmailArrivals, readMemberGoogleCalendar } from "../routes/org
 import { organizationCloudModel } from "../workbot/model.js"
 import { resolveMemberTeamAgent, teamAgentPolicy } from "../workbot/team-settings.js"
 import { readWorkbotDirectMessages } from "../slack-assistant/direct-message.js"
-import { activeMemberUser, agentBriefAllowed, agentCheckGateAllowed, agentSendCheckAllowed, listAgentCandidates, memberFirstName, proactiveAllowed, readProactiveSettings } from "./access.js"
+import { activeMemberUser, agentBriefAllowed, agentCheckGateAllowed, agentSendCheckAllowed, agentStoppedSourcesAllowed, listAgentCandidates, memberFirstName, proactiveAllowed, readProactiveSettings } from "./access.js"
 import { deliverAgentMessage, destinationBlock } from "./deliver.js"
 import {
   agentSentSince,
@@ -34,12 +34,6 @@ import { agentMessageId, agentMessageSessionId, agentSessionId, defaultAgentTurn
 import { wakeAgent, type AgentWakeOutcome } from "./wake.js"
 import { AGENT_MESSAGE_SCOPES, wakeAgentBrief, type AgentBriefWakeDeps } from "./wake-brief.js"
 
-/**
- * The agents' loop: claims agents whose `next_wake_at` is due and wakes each one. Today's agent (wake.ts) wakes on
- * its schedule and calendar events; with `workbotAgentBrief` (wake-brief.ts) on its one rhythm and the extra checks
- * it asked for with request_check, which Den caps, keeps inside the member's hours and shows in My bot.
- */
-
 const TICK_MS = 15_000
 const MAX_CONCURRENT_WAKES = 4
 const DISCOVERY_MS = 10 * 60_000
@@ -47,7 +41,6 @@ const LEDGER_RETENTION_MS = 30 * 24 * 3_600_000
 
 export function defaultAgentWakeDeps(): AgentBriefWakeDeps {
   const turnDeps = defaultAgentTurnDeps()
-  // One evaluation model for the check gate and the send check, where the deployment has its key.
   const evaluationModel = env.agentEvaluationApiKey ? createEvaluationModel({ apiKey: env.agentEvaluationApiKey }) : null
   const checkGateModel = evaluationModel ? createCheckGateModel(evaluationModel) : null
   const sendCheck = evaluationModel ? createAgentSendCheck(evaluationModel) : null
@@ -56,8 +49,6 @@ export function defaultAgentWakeDeps(): AgentBriefWakeDeps {
     allowed: (organizationId, userId) => proactiveAllowed(organizationId, userId),
     settings: readProactiveSettings,
     template: readAgentTemplate,
-    // The team half of resolveMemberAgentPolicy: with workbotTeamSettings off it reads nothing, and the
-    // organization's policy and template are read above exactly as before.
     teamPolicy: async (member) => teamAgentPolicy(await resolveMemberTeamAgent(member)),
     user: activeMemberUser,
     calendar: readMemberGoogleCalendar,
@@ -78,6 +69,11 @@ export function defaultAgentWakeDeps(): AgentBriefWakeDeps {
     connections: listMemberConnections,
     connectedMembers: countConnectedMembers,
     connectLink: libraryConnectorLink,
+    stoppedSources: async ({ organizationId, memberId, userId }) => {
+      if (!(await agentStoppedSourcesAllowed(organizationId, userId))) return null
+      markFeaturesUsed({ organizationId, memberId, keys: ["workbotAgentStoppedSources"] })
+      return { link: myAgentLink() }
+    },
     briefOn: (organizationId, userId) => agentBriefAllowed(organizationId, userId),
     person: memberFirstName,
     check: (input) => runAgentSessionTurn(input, turnDeps),
@@ -86,7 +82,6 @@ export function defaultAgentWakeDeps(): AgentBriefWakeDeps {
     endMessageSession: (sessionId) => endAgentMessageSession(sessionId, turnDeps),
     conversation: (input) => readWorkbotDirectMessages({ organizationId: input.organizationId, userId: input.userId, since: input.since }),
     requestedChecks: readAgentCheckRequests,
-    // A gate that is about to look for a member is that member using the feature, for /admin › Features.
     checkGate: async ({ organizationId, memberId, userId }) => {
       if (!(await agentCheckGateAllowed(organizationId, userId))) return null
       markFeaturesUsed({ organizationId, memberId, keys: ["workbotAgentCheckGate"] })
@@ -95,7 +90,6 @@ export function defaultAgentWakeDeps(): AgentBriefWakeDeps {
         model: checkGateModel,
       }
     },
-    // A check that is about to read a member's messages is that member using the feature, too.
     sendCheck: async ({ organizationId, memberId, userId }) => {
       if (!sendCheck || !(await agentSendCheckAllowed(organizationId, userId))) return null
       markFeaturesUsed({ organizationId, memberId, keys: ["workbotAgentSendCheck"] })
@@ -105,17 +99,12 @@ export function defaultAgentWakeDeps(): AgentBriefWakeDeps {
   }
 }
 
-/**
- * Which agent wakes: the brief's (`workbotAgentBrief`, on top of `workbotProactive`) or today's. Decided per wake, so
- * turning the feature off falls back on the next tick, with the member's state, notes and ledger kept.
- */
 export async function wakeMemberAgent(row: AgentInstanceRow, deps: AgentBriefWakeDeps): Promise<AgentWakeOutcome> {
   const userId = await deps.user(row.organizationId, row.memberId).catch(() => null)
   const brief = userId ? await deps.briefOn(row.organizationId, userId).catch(() => false) : false
   return brief ? wakeAgentBrief(row, deps) : wakeAgent(row, deps)
 }
 
-/** Gives every active member of an organization where agents are on, for everyone or for a team, an agent row. */
 export async function discoverAgents() {
   for (const candidate of await listAgentCandidates()) await ensureAgentInstances(candidate.organizationId, candidate.memberIds)
 }

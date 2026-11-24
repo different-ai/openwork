@@ -15,10 +15,6 @@ import { liveStatus } from "./activity";
 
 const requestJson = (path: string, init?: RequestInit, timeoutMs?: number) => workbotHost().requestJson(path, init, timeoutMs);
 
-/**
- * The chat the page shows: null for the person's main chat, or the id of one of their side chats. Everything the
- * page reads and sends is for this chat.
- */
 const WorkbotChatContext = createContext<string | null>(null);
 export const WorkbotChatProvider = WorkbotChatContext.Provider;
 export function useWorkbotChat() {
@@ -47,27 +43,18 @@ const stepSchema = z.object({
   startedAt: z.number().nullable(),
   finishedAt: z.number().nullable(),
   updates: z.array(z.string()).default([]),
-  /** Work in the computer's browser; absent for its other apps (and from older servers). */
   surface: z.literal("browser").optional(),
-  /** Commands on the computer with no screen to watch (running Blender from the command line); absent for screen work. */
   background: z.literal(true).optional(),
-  /** Whether Workbot put this screen work in front of the person: the last value it gave; absent when it gave none. */
   shown: z.boolean().optional(),
-  /** Web pages it opened in the browser, each with a stable id for its link (/browser/<id>). */
   pages: z.array(z.object({ id: z.string(), url: z.string(), title: z.string() })).optional(),
-  /** Work in a connected app: which of its tools ran, in plain words ("Web search"). Older servers omit it. */
   detail: z.string().optional(),
-  /** The connected app's website ("exa.ai"), for its logo when its name alone finds none. */
   site: z.string().optional(),
-  /** Work on another of the person's computers (a remote task). */
   remote: z.literal(true).optional(),
-  /** Work in OpenWork itself (remote tasks, workflows, skills, Automations, Apps): one OpenWork logo. Older servers omit it. */
   openwork: z.literal(true).optional(),
 });
 export type WorkbotStep = z.infer<typeof stepSchema>;
 export type WorkbotPage = NonNullable<WorkbotStep["pages"]>[number];
 const partSchema = z.discriminatedUnion("kind", [
-  /** `step`: the model call the words came from, so the page keeps one bubble per call. Older servers omit it. */
   z.object({ kind: z.literal("text"), text: z.string(), step: z.number().optional() }),
   z.object({ kind: z.literal("steps"), steps: z.array(stepSchema) }),
 ]);
@@ -80,10 +67,8 @@ const taskSchema = z.object({
   finishedAt: z.number().nullable(),
   update: z.string().nullable().default(null),
   updates: z.array(z.string()).default([]),
-  /** Its steps so far in plain words, newest last (the last 12); older servers send none. */
   steps: z.array(z.object({ label: z.string(), done: z.boolean(), at: z.number().nullable() })).default([]),
   stepsDone: z.number().default(0),
-  /** The latest thing it wrote, on one line, while it works. */
   note: z.string().nullable().default(null),
 });
 export type WorkbotTask = z.infer<typeof taskSchema>;
@@ -92,25 +77,20 @@ const turnSchema = z.object({
   text: z.string(),
   context: workbotViewContextSchema.optional(),
   navigation: z.array(z.object({ id: z.string(), fileId: workbotDocumentNavigationSchema.shape.fileId })).default([]),
+  teaching: z.object({ id: z.string() }).optional(),
   sentAt: z.number().nullable(),
   finishedAt: z.number().nullable(),
   status: z.enum(["queued", "working", "done", "failed", "stopped"]),
   attachments: z.array(z.object({ id: z.string(), name: z.string(), mediaType: z.string(), size: z.number(), updatedAt: z.number().optional() })),
-  /** Files Workbot made or revised while answering, to open from the answer. `updatedAt` moves with each revision. */
   outputs: z.array(z.object({ id: z.string(), name: z.string(), mediaType: z.string(), size: z.number(), updatedAt: z.number().optional() })).default([]),
-  /** The emoji Workbot reacted to the message with, shown on the person's bubble. */
   reaction: z.string().nullable().default(null),
   parts: z.array(partSchema),
   modelSteps: z.number(),
   error: z.string().nullable(),
   modelIssue: z.enum(["free_limit", "usage_limit", "payment_required"]).optional(),
-  /** A failed message that can work if answered again: "Try again" answers it again in place. */
   retryable: z.boolean().default(true),
-  /** Bigger jobs this message handed to background tasks: shown where they started until they report back. */
   tasks: z.array(taskSchema).default([]),
-  /** Workbot's first hello: it spoke first, so there is no message from the person above it. */
   greeting: z.boolean().default(false),
-  /** Things the person could ask next, offered as buttons under the hello. */
   suggestions: z.array(z.string()).default([]),
 });
 export type WorkbotTurn = z.infer<typeof turnSchema>;
@@ -143,7 +123,6 @@ async function fetchThread(chat: string | null, turns: number) {
   return thread;
 }
 
-/** The page this device kept for the chat, when it still reads as a conversation. */
 function keptThread(chat: string | null) {
   const parsed = threadSchema.safeParse(loadThreadSnapshot(workbotHost().identity, chat));
   return parsed.success && parsed.data.available ? parsed.data : undefined;
@@ -167,12 +146,10 @@ export function useWorkbotThread(input: { turns: number; awaiting: boolean; live
   return useQuery({
     queryKey: threadKey(chat, input.turns),
     queryFn: () => fetchThread(chat, input.turns),
-    // The previous window while a larger one is read; on a first open, what this device kept.
     placeholderData: (previous) => previous ?? (keptThread(chat)),
     refetchInterval: (query) => {
       const data = query.state.data;
       const busy = input.awaiting || (data?.available === true && data.status === "busy");
-      // A background task working alone doesn't make the conversation busy, but its progress is worth following.
       const tasks = data?.available === true && data.turns.some((turn) => turn.tasks.some((task) => task.status === "queued" || task.status === "working" || task.status === "paused"));
       if (input.live) return busy ? 10_000 : tasks ? 15_000 : 60_000;
       return busy ? 1_500 : tasks ? 5_000 : 20_000;
@@ -182,18 +159,11 @@ export function useWorkbotThread(input: { turns: number; awaiting: boolean; live
   });
 }
 
-/** Reply text streamed for one turn's model call `step`, before that call is stored. */
 /** A model call in progress: its text so far, and whether it has started a step (its computer, or anything else). */
 export type LiveText = {
   step: number;
   text: string;
-  /**
-   * `background`: commands on its computer, with no screen to watch. `surface`: which screen that work is on (its
-   * browser or the rest of its computer), once the call has said; absent until then, and the page doesn't guess.
-   * `update`: what that computer work is doing, in its own words, before the step is stored.
-   */
   working?: { on: "computer" | "other"; since: number; background?: true; surface?: "browser" | "computer"; update?: string };
-  /** What earlier model calls of this turn wrote, kept until the conversation's next read has it. */
   earlier?: Array<{ step: number; text: string }>;
 };
 
@@ -263,7 +233,6 @@ export function useWorkbotLive(enabled: boolean): { connected: boolean; live: Wo
   const [connected, setConnected] = useState(false);
   const [live] = useState(createLiveStore);
   const refetching = useRef<{ running: boolean; again: boolean }>({ running: false, again: false });
-  // Workbot isn't on for the organization: no stream until the page is shown again or a re-read finds it on.
   const [off, setOff] = useState(false);
 
   useEffect(() => {
@@ -287,11 +256,9 @@ export function useWorkbotLive(enabled: boolean): { connected: boolean; live: Wo
 
   useEffect(() => {
     if (!enabled || off) return;
-    // Another chat: none of the text streaming in the last one belongs here.
     live.update((current) => (Object.keys(current).length ? {} : current));
     const controller = new AbortController();
     const readiness = workbotLiveReadiness.subscribe(chat);
-    // Waits that end as soon as the page leaves.
     const sleep = (ms: number) =>
       new Promise<void>((resolve) => {
         const done = () => {
@@ -350,7 +317,6 @@ export function useWorkbotLive(enabled: boolean): { connected: boolean; live: Wo
         const previous = current[value.messageId];
         if (previous && value.step < previous.step) return current;
         const sameStep = previous?.step === value.step;
-        // A finished model call's words stay until the conversation's next read has them, so they never blink out.
         const earlier = !sameStep && previous?.text ? [...(previous.earlier ?? []), { step: previous.step, text: previous.text }].slice(-3) : (previous?.earlier ?? []);
         if (value.type === "working") {
           return { ...current, [value.messageId]: { step: value.step, text: sameStep ? previous.text : "", earlier, working: nextWorking(sameStep ? previous.working : undefined, value) } };
@@ -361,7 +327,6 @@ export function useWorkbotLive(enabled: boolean): { connected: boolean; live: Wo
     };
 
     const run = async () => {
-      // Refused or failed tries in a row; a stream that opens starts the count again.
       let failures = 0;
       while (!controller.signal.aborted) {
         let opened = false;
@@ -371,7 +336,6 @@ export function useWorkbotLive(enabled: boolean): { connected: boolean; live: Wo
           if (!response.ok || !response.body) {
             retryAfter = retryAfterMs(response.headers.get("Retry-After"));
             if (liveStreamOff(response.status, await response.json().catch(() => null))) {
-              // Trying again won't help until Workbot is turned on; the conversation's own reads show that it's off.
               setOff(true);
               return;
             }
@@ -380,7 +344,6 @@ export function useWorkbotLive(enabled: boolean): { connected: boolean; live: Wo
           opened = true;
           failures = 0;
           setConnected(true);
-          // Anything missed while disconnected is picked up by one re-read.
           void refresh();
           const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
           let buffer = "";
@@ -399,14 +362,12 @@ export function useWorkbotLive(enabled: boolean): { connected: boolean; live: Wo
             }
           }
         } catch {
-          // Reconnect below.
         }
         readiness.disconnect();
         setConnected(false);
         if (controller.signal.aborted) break;
         if (!opened) failures += 1;
         await sleep(liveRetryDelay(failures, retryAfter));
-        // Nobody sees a hidden page's live text, and the conversation is re-read when the stream opens again.
         if (failures > 0) await untilShown();
       }
     };
@@ -427,7 +388,6 @@ export class WorkbotSendError extends Error {
 /** The most one message can carry (the runner's limit); longer text goes as a file. */
 export const MAX_MESSAGE_CHARS = WORKBOT_MAX_MESSAGE_CHARS;
 
-/** Why sending was refused, in the person's words. */
 function sendRefused(status: number, payload: unknown) {
   const access = workbotAccessFailureSchema.safeParse(payload);
   if (access.success) return new WorkbotSendError("Workbot's model access needs attention.", status, access.data.reason);
@@ -444,7 +404,6 @@ export function useSendWorkbotMessage() {
   return useMutation({
     mutationFn: async (input: { id: string; text: string; attachments?: string[]; context?: WorkbotViewContext; teachingId?: string; teachingStepId?: number }) => {
       if (input.text.length > MAX_MESSAGE_CHARS) throw new WorkbotSendError("That's too long for one message. Send it as a file instead.", 400);
-      // Avoid racing the first streamed words on mount, but never make an unavailable stream block sending.
       await workbotLiveReadiness.wait(chat);
       const timeZone = Intl.DateTimeFormat().resolvedOptions().timeZone;
       const { response, payload } = await requestJson(inChat("/v1/workbot/messages", chat), {
@@ -454,7 +413,6 @@ export function useSendWorkbotMessage() {
       if (!response.ok) throw sendRefused(response.status, payload);
     },
     onSettled: async () => {
-      // A side chat's first message starts it, so it joins the list.
       if (chat) void queryClient.invalidateQueries({ queryKey: workbotChatsKey });
       await queryClient.invalidateQueries({ queryKey: workbotQueryKey });
     },
@@ -533,13 +491,12 @@ const connectionsSchema = z.object({
   connections: z.array(z.object({
     id: z.string(),
     name: z.string(),
-    app: z.enum(["gmail", "googleCalendar", "slack", "microsoft"]),
+    app: z.enum(["gmail", "googleCalendar", "slack", "microsoft", "other"]).catch("other"),
     ready: z.boolean(),
     connectUrl: z.string().nullable(),
     nativeProviderKey: z.string().nullable().optional(),
     connectMode: z.enum(["inline", "external", "admin"]).optional(),
   })),
-  /** Every app the person can use, connected or not; older Dens leave it out. */
   apps: z.array(z.object({
     id: z.string(),
     name: z.string(),
@@ -580,7 +537,6 @@ function connectionsQuery(input: { enabled: boolean; waiting: boolean }) {
     enabled: input.enabled,
     queryFn: async (): Promise<WorkbotConnectionsPayload> => {
       const { response, payload } = await requestJson("/v1/workbot/connections", { method: "GET" }, 15_000);
-      // Hosts without this route just have nothing to connect here.
       if (!response.ok) throw new Error("Couldn't verify your connections. Try again.");
       return connectionsSchema.parse(payload);
     },
@@ -599,7 +555,7 @@ export function useWorkbotApps(input: { enabled: boolean; waiting: boolean }) {
 }
 
 /**
- * The Gmail, Slack and Microsoft 365 connections the person's admins set up, for the welcome screen. While the
+ * The connections the person's admins set up (Gmail, Slack and Microsoft 365 first, then any other app), for the welcome screen. While the
  * person is connecting one in another tab it is re-read every two seconds, until it is ready.
  */
 export function useWorkbotConnections(input: { enabled: boolean; waiting: boolean }) {
@@ -660,7 +616,6 @@ export function useStartWorkbot() {
   });
 }
 
-/** What went wrong deleting or editing a message, in the person's words. */
 function messageChangeError(status: number, payload: unknown, fallback: string) {
   if (status === 409 && typeof payload === "object" && payload !== null && "error" in payload && payload.error === "busy") {
     return "Workbot is still working on this. Stop it first.";
@@ -789,7 +744,6 @@ export async function fetchWorkbotFileUrl(id: string, chat: string | null, inlin
   const response = await hostFetch(inChat(`/v1/workbot/files/${id}${inline ? "?inline=1" : ""}`, chat));
   if (!response.ok) throw new Error("This file is no longer available.");
   const blob = await response.blob();
-  // A URL shown in a frame or tab gets the type its reader expects, never one stored with the file.
   return URL.createObjectURL(type ? new Blob([blob], { type }) : blob);
 }
 

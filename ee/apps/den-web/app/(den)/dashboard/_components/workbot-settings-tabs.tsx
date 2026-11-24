@@ -3,7 +3,6 @@
 import { UnderlineTabs } from "../../_components/ui/tabs";
 import { WORKBOT_SETTINGS_TAB_PURPOSE, WORKBOT_SETTINGS_TABS, type WorkbotSettingsTab } from "./workbot-settings-tabs-model";
 
-/** General, Proactive Mode and Connectors, with one sentence on what the open tab is for: on Manage › Workbot and on a team's (or Everyone's) Workbot section. */
 export function WorkbotSettingsTabs({ activeTab, onChange }: { activeTab: WorkbotSettingsTab; onChange: (tab: WorkbotSettingsTab) => void }) {
   return (
     <div data-testid="workbot-settings-tabs">

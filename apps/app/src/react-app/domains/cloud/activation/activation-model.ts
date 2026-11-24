@@ -10,20 +10,13 @@ import {
   type ActivationStepId,
 } from "@openwork/types/den/activation";
 
-/**
- * The Desktop "Get set up" card: what it shows for a checklist Den computed, and
- * when this app reports a step only it can observe. Pure, so the rules are unit-tested.
- */
-
 export type ActivationRowAction = "invite" | "skill" | "provider" | "gateway" | "connect";
 
 export type ActivationRow = {
   id: ActivationStepId;
   title: string;
   state: "done" | "open" | "locked";
-  /** State in a person's words (done) or who can do it (locked). */
   line: string | null;
-  /** At most one action, only for an open step. */
   action: { kind: ActivationRowAction; label: string } | null;
 };
 
@@ -39,7 +32,6 @@ export type ActivationCardModel =
   | { presentation: "hidden" }
   | { presentation: "next" | "full"; done: number; total: number; next: string | null; rows: ActivationRow[]; dismissed: boolean };
 
-/** `hidden`: the person chose Hide setup on this device, which removes the card entirely. */
 export function activationCardModel(state: ActivationState | null | undefined, options: { hidden?: boolean } = {}): ActivationCardModel {
   const presentation = activationChecklistPresentation(state);
   if (presentation === "hidden" || !state || options.hidden) return { presentation: "hidden" };
@@ -64,20 +56,12 @@ export function activationCardModel(state: ActivationState | null | undefined, o
   };
 }
 
-/**
- * Report only while Den shows the checklist for this person and the step is still open: nothing is sent when the
- * checklist is unavailable, before it loaded, or once Den already counts the step.
- */
 export function shouldReportActivationEvent(state: ActivationState | null | undefined, step: ActivationClientEvent): boolean {
   if (!state) return false;
   if (step === "dismiss") return !state.dismissed;
   return orderedActivationSteps(state).some((entry) => entry.id === step && !entry.done);
 }
 
-/**
- * One report per step and scope at a time; a failure is swallowed (it never affects the person) and may be retried
- * on the next occurrence, since Den ignores repeats anyway.
- */
 export function createActivationReporter<Scope extends { key: string }>(input: {
   readState: (scope: Scope) => ActivationState | null | undefined;
   send: (scope: Scope, step: ActivationClientEvent, durationMs: number | undefined) => Promise<ActivationState | null>;
@@ -101,16 +85,8 @@ export function createActivationReporter<Scope extends { key: string }>(input: {
   };
 }
 
-/** The engine's built-in models: usable with no key of the person's own, so their id alone proves no setup. */
 const BUILT_IN_PROVIDER_ID = "opencode";
 
-/**
- * Whether a model provider the person set up on this device has served a completed answer, from the outcomes the
- * app already keeps per workspace and provider (`useProviderCredentialHealth`: "verified" is recorded only when an
- * answer from that provider finished without an error, and is dropped when its key changes or is rejected).
- * Counted only for workspaces that run on this device, and never for providers the organization or OpenWork
- * supplies (`managed`) or the engine's built-in models.
- */
 export function hasVerifiedDeviceProvider(
   health: {
     entries: Readonly<Record<string, { status: string }>>;
@@ -130,21 +106,14 @@ export function hasVerifiedDeviceProvider(
   });
 }
 
-/**
- * Whether the engine that serves chats reports a connection of the person's own as connected. Connections OpenWork
- * adds for the organization (`openwork-cloud`, `openwork-direct-*`) are Den's to count, and anything else named for
- * OpenWork is left out too, so only a connection the person added can check the step off.
- */
 export function hasDeviceConnection(statuses: Readonly<Record<string, { status: string }>> | null | undefined): boolean {
   return Object.entries(statuses ?? {}).some(([name, entry]) => entry.status === "connected" && !name.trim().toLowerCase().startsWith("openwork"));
 }
 
-/** Composer draft parts that run a skill (a local skill or one assigned through OpenWork). */
 export function draftUsesSkill(parts: readonly { type: string }[] | undefined): boolean {
   return Boolean(parts?.some((part) => part.type === "skill" || part.type === "connect-skill"));
 }
 
-/** Where Hide setup is remembered on this device: one person in one organization on one Den. */
 export function activationHiddenStorageKey(input: { origin: string; organizationId: string; principalId: string }): string {
   return `openwork.activation.hidden:${input.origin}:${input.organizationId}:${input.principalId}`;
 }

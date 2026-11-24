@@ -22,19 +22,6 @@ import {
   type RemoteSessionExecuteDeps,
 } from "../../mcp/remote-session-capabilities.js"
 
-/**
- * The member's own remote sessions, for OpenWork's apps. The desktop chat
- * follows a task it started on another computer through these: one batched
- * status call for every task it shows, and the transcript, follow-ups and
- * stop only when the person opens one. They run the same capabilities agents
- * call through MCP (`remote-session:*`), so both see the same receipts.
- *
- * With `remoteSessionAccess`, `GET /v1/sessions` lists the member's sessions
- * across their own computers and `/attach` reaches one that was started on a
- * computer, where its owner and the organization allow it.
- */
-
-/** Waiting status calls one member may hold at once; more answer immediately. */
 const WAITING_STATUS_CALLS_PER_MEMBER = 4
 
 const remoteSessionResultSchema = z.object({}).passthrough().meta({ ref: "RemoteSessionResult" })
@@ -74,7 +61,6 @@ export function registerRemoteSessionRoutes<T extends { Variables: Partial<Organ
       action,
       organizationId: context.organization.id,
       userId: context.currentMember.userId,
-      // The member acts on their own receipts; there is no narrower token scope here.
       hasWriteScope: true,
       body,
       signal,
@@ -101,7 +87,6 @@ export function registerRemoteSessionRoutes<T extends { Variables: Partial<Organ
       const body = c.req.valid("json")
       const member = c.get("organizationContext")?.currentMember.id ?? ""
       const held = waiting.get(member) ?? 0
-      // A client that opens more waiting calls than it needs gets plain answers, never more held requests.
       const wait = (body.waitMs ?? 0) > 0 && held < WAITING_STATUS_CALLS_PER_MEMBER
       if (wait) waiting.set(member, held + 1)
       try {

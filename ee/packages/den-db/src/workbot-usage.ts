@@ -5,9 +5,6 @@ import type { createDenDb } from "./client"
 import { GatewayRequestLogTable as raw } from "./schema/inference"
 import { WorkbotUsageDayTable as day } from "./schema/workbot-usage"
 
-// How a gateway request log counts as Workbot usage (packages/types/src/den/workbot-usage.ts): the fold the
-// gateway's rollup runs into workbot_usage_day, and the sums Den's read applies to the logs not folded yet.
-
 function sum(expression: ReturnType<typeof sql>) {
   return sql<number>`coalesce(sum(${expression}), 0)`.mapWith(Number)
 }
@@ -17,7 +14,6 @@ export const workbotRawSession = sql<string>`json_unquote(json_extract(${raw.met
 
 export const workbotRawSums = {
   request_count: sql<number>`count(*)`.mapWith(Number),
-  // A finished request the gateway could not price. Refused and aborted requests cost nothing and are not "unpriced".
   unpriced_request_count: sum(sql`case when ${raw.completed_at} is not null and ${raw.outcome} = 'ok' and ${raw.cost_micro_usd} is null then 1 else 0 end`),
   input_tokens: sum(sql`coalesce(${raw.input_tokens}, 0)`),
   output_tokens: sum(sql`coalesce(${raw.output_tokens}, 0)`),
@@ -42,7 +38,6 @@ export type WorkbotUsageAggregate = Pick<WorkbotUsageDayRow, "organization_id" |
 export function buildWorkbotUsageDayRows(dayStart: Date, groups: readonly WorkbotUsageAggregate[]): WorkbotUsageDayRow[] {
   const rows = new Map<string, WorkbotUsageDayRow & Record<WorkbotUsageSumColumn, number>>()
   for (const group of groups) {
-    // Only what the gateway accepted as a conversation id at request time counts as Workbot.
     if (!parseHeadlessSessionHeader(group.session)) continue
     for (const column of WORKBOT_USAGE_SUM_COLUMNS) {
       if (!Number.isSafeInteger(group[column]) || group[column] < 0) throw new Error("Workbot usage sum is out of range")

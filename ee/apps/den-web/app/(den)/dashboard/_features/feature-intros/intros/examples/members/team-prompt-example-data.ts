@@ -1,5 +1,3 @@
-/** Sample data only: no API calls (DESIGN.md I7). In the order agents receive them: Everyone's first. */
-
 export const teamPromptExampleRows: ReadonlyArray<{ title: string; state: string; content: string }> = [
   {
     title: "Prompt for everyone",

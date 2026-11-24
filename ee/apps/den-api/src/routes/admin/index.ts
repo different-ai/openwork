@@ -1,3 +1,4 @@
+import { registerAdminManagedReleaseRoutes } from "./managed-releases.js"
 import { registerAdminMcpRegistrationRoutes } from "./mcp-registration.js"
 import { and, asc, desc, eq, gte, inArray, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import { expireUsageRequestsForMembers } from "@openwork-ee/den-db/gateway-usage-limits"
@@ -48,12 +49,15 @@ import { getOrganizationPlanStates } from "../../organization-plan-state.js"
 import { organizationPlanStateSchema, type PlanPaidBy } from "@openwork/types/den/billing-plans"
 import { adminRoute, jsonValidator, queryValidator } from "../../middleware/index.js"
 import { registerAdminFreeAutoConversionsRoutes } from "./free-auto-conversions.js"
+import { registerAdminSafetyCases } from "./free-auto-safety-cases.js"
 import { registerAdminFreeAutoUsageRoutes } from "./free-auto-usage.js"
 import { registerAdminSecurityRoutes } from "./security.js"
 import { registerAdminDashboardRoute } from "./dashboard.js"
 import { registerAdminControlCenterRoutes } from "./control-center.js"
 import { registerAdminOpportunitiesRoute } from "./opportunities.js"
 import { registerAdminServiceReadinessRoutes } from "./services.js"
+import { registerAdminComputerFleetRoutes } from "./computer-fleet.js"
+import { registerAdminRunnerFleetRoutes } from "./runner-fleet.js"
 import { registerAdminOrganizationDetailRoutes } from "./organization-detail.js"
 import { registerAdminSandboxOrganizationRoutes } from "./sandbox-organizations.js"
 import { denTypeIdSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
@@ -157,8 +161,6 @@ const updateOrganizationDpaSchema = z.object({
   reason: z.string().trim().min(3).max(500),
 }).strict()
 
-// Generated from the feature registry (packages/features/src/registry.ts):
-// every registry key is accepted; unknown and retired keys are ignored.
 const updateOrganizationCapabilitiesSchema = z.object({
   capabilities: z.object({
     ...mapFeatures(() => z.boolean().nullable().optional()),
@@ -442,12 +444,6 @@ async function recordAdminMemberRemoval(member: MemberAuditRow & { organizationI
   }
 }
 
-/**
- * Admin user deletion deletes every session row directly (no better-auth hook):
- * session.revoked (reasonCode admin_user_deleted) per live session in each
- * organization the user was an active member of, actor = this admin, origin
- * platform_admin. Appended after the commit; a failed append logs [audit-outcome-lost].
- */
 async function recordAdminSessionsRevoked(member: { id: string; organizationId: OrganizationId }, sessions: readonly DirectlyDeletedSession[], adminUserId: UserId) {
   const live = sessions.filter((session) => session.expiresAt.getTime() > Date.now())
   if (live.length === 0) return
@@ -569,7 +565,6 @@ type AdminOrganizationRow = {
   freeSeatCount: number
   seatsFreeAdditional: number
   billableSeatCount: number
-  /** Users the plan allows (organization-plan.ts); null when nothing limits it. */
   userLimit: number | null
   endsAt: string | null
   ended: boolean
@@ -1381,8 +1376,6 @@ export async function loadAdminInitialOverviewPayload(user: AdminOverviewViewer,
 }
 
 
-// Admin mutation routes parse their JSON bodies in the handler with the schemas
-// above, so their descriptions spell out the accepted fields.
 const adminRequestErrorSchema = z.object({
   error: z.literal("invalid_request"),
   message: z.string(),
@@ -1398,6 +1391,8 @@ const adminRouteErrors = {
 }
 
 export function registerAdminRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
+  registerAdminManagedReleaseRoutes(app)
+  registerAdminSafetyCases(app)
   registerAdminFreeAutoUsageRoutes(app)
   registerAdminFreeAutoConversionsRoutes(app)
   registerAdminSecurityRoutes(app)
@@ -1409,6 +1404,8 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
   registerAdminControlCenterRoutes(app)
   registerAdminOpportunitiesRoute(app)
   registerAdminServiceReadinessRoutes(app)
+  registerAdminRunnerFleetRoutes(app)
+  registerAdminComputerFleetRoutes(app)
   registerAdminSandboxOrganizationRoutes(app)
   app.post(
     "/v1/admin/admins",
@@ -1647,7 +1644,6 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         const memberships = await tx.select({ organizationId: MemberTable.organizationId }).from(MemberTable)
           .where(and(eq(MemberTable.userId, userId), isNull(MemberTable.removedAt)))
         if (memberships.length === 0) return 0
-        // Same order as admission/settlement: policies before ledger, buckets and charges.
         await tx.select({ id: InferenceOrgLimitPolicyTable.id }).from(InferenceOrgLimitPolicyTable)
           .where(inArray(InferenceOrgLimitPolicyTable.organization_id, memberships.map((member) => member.organizationId)))
           .orderBy(asc(InferenceOrgLimitPolicyTable.organization_id), asc(InferenceOrgLimitPolicyTable.window_type)).for("update")
@@ -1684,7 +1680,6 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
             .where(eq(InferenceOrgUsageBucketTable.id, bucketId))
         }
         if (charges.length > 0) {
-          // Keep the identity so retries cannot resurrect intentionally forgiven usage.
           await tx.update(InferenceUsageLedgerBucketChargeTable).set({ amount: 0 }).where(inArray(
             InferenceUsageLedgerBucketChargeTable.id,
             charges.map((charge) => charge.id),
@@ -1742,10 +1737,6 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         .select({ id: AuthSessionTable.id, token: AuthSessionTable.token, userId: AuthSessionTable.userId, expiresAt: AuthSessionTable.expiresAt, activeOrganizationId: AuthSessionTable.activeOrganizationId })
         .from(AuthSessionTable)
         .where(eq(AuthSessionTable.userId, userId))
-      // Grant tombstones must cover exactly the deleted consent set. Snapshot
-      // the ids inside the transaction with a locking read so a concurrently
-      // authorized consent cannot slip between the snapshot and the delete
-      // (Warden RUD-WDK).
       const { oauthConsentRows, gatewayCredentials } = await db.transaction(async (tx) => {
         const members = await tx.select({ id: MemberTable.id }).from(MemberTable)
           .where(eq(MemberTable.userId, userId)).orderBy(MemberTable.id).for("update")
@@ -1766,7 +1757,6 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         await tx.delete(AuthSessionTable).where(eq(AuthSessionTable.userId, userId))
         await tx.delete(AuthAccountTable).where(eq(AuthAccountTable.userId, userId))
         await tx.delete(DesktopHandoffGrantTable).where(eq(DesktopHandoffGrantTable.user_id, userId))
-        // Each table on its own: one not migrated yet holds no rows; the other's rows must still go.
         await unlessResumeTableMissing("headless_resume_grant", () => tx.delete(HeadlessResumeGrantTable).where(eq(HeadlessResumeGrantTable.userId, userId)))
         await unlessResumeTableMissing("headless_resume_revocation", () => tx.delete(HeadlessResumeRevocationTable).where(eq(HeadlessResumeRevocationTable.userId, userId)))
         await tx.delete(ExternalIdentityTable).where(eq(ExternalIdentityTable.userId, userId))
@@ -1790,19 +1780,11 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         await tx.delete(AuthUserTable).where(eq(AuthUserTable.id, userId))
         return { oauthConsentRows: consentRows, gatewayCredentials: credentials }
       })
-      // Alternate member-removal path: each affected organization gets the same
-      // member.removed evidence as DELETE /v1/members/:memberId (members emitter,
-      // single writer), actor = this admin, origin platform_admin. Appended after
-      // the commit: one transaction cannot take several organizations' audit
-      // locks in order after the member row locks; a failed append logs
-      // [audit-outcome-lost].
       for (const membership of activeMembershipRows) {
         await recordAdminMemberRemoval(membership, currentUser.id)
         await recordAdminSessionsRevoked(membership, sessionRows, currentUser.id)
       }
       await revokeUpstreamCredentials(gatewayCredentials)
-      // Auth session cache hits intentionally avoid a DB liveness check; user deletion must clear
-      // both token and session-id cache entries for every deleted session instead.
       await Promise.all(sessionRows.flatMap((session) => [
         cache.auth.revokeSession(session.token),
         cache.auth.revokeSessionId(session.id),
@@ -1810,7 +1792,6 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
       await Promise.all(oauthConsentRows.map((consent) => cache.auth.revokeGrant(consent.id)))
 
       const organizationIds = Array.from(new Set(activeMembershipRows.map((row) => row.organizationId).filter(isOrganizationId)))
-      // Admin user deletion soft-removes memberships; clear affected org membership caches.
       await Promise.all(organizationIds.map((organizationId) => cache.org.deleteMembers(organizationId)))
       for (const organizationId of organizationIds) {
         await syncOrganizationBillingQuantities({ organizationId })
@@ -1900,7 +1881,6 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         return c.json({ error: "not_found", message: "Organization not found." }, 404)
       }
 
-      // Kept for older clients; /admin sets this with the plan ("Users allowed" on Free). Ignored while a Team or Enterprise plan is set.
       const seatsFreeAdditional = body.data.totalFreeSeats - DEFAULT_ORGANIZATION_FREE_SEAT_COUNT
       await updateOrganizationMetadata(organizationId, (current) => ({
         ...current,
@@ -1976,7 +1956,6 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
         await tx.update(OrganizationTable)
           .set({ metadata: { ...metadata, dpaSigned: body.dpaSigned } })
           .where(eq(OrganizationTable.id, organizationId))
-        // Legacy row keeps its reason; the change event records only reasonProvided.
         const audit = await writeLegacyOrChangesInTx(tx, capture, {
           organizationId,
           actorUserId,
@@ -2250,10 +2229,6 @@ export function registerAdminRoutes<T extends { Variables: AuthContextVariables 
       if (!featureAvailableOn(key.data, env.features.deployment)) {
         return c.json({ error: "invalid_request", message: `${key.data} is not part of this deployment.` }, 400)
       }
-      // Turning Permissions on for everyone does not seed here: that could be
-      // every organization. Each organization's default sets are created on
-      // first use by permission resolution (ensureDefaultPermissionSets), and
-      // deploy-time reconciliation keeps existing sets current.
       const rollouts = await updateFeatureRollout({
         key: key.data,
         enabled: body.data.enabled,

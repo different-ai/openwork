@@ -1766,6 +1766,10 @@ export function createDesktopAutomationRunner(options) {
     const controller = new AbortController()
     const active = { assignment, controller }
     state.active = active
+    const reportLifecycle = (event) => {
+      try { options.onRunLifecycle?.(event) } catch {}
+    }
+    reportLifecycle({ phase: "started" })
     let sequence = 0
     const event = (type, payload) => runnerRequest(
       state,
@@ -1846,6 +1850,7 @@ export function createDesktopAutomationRunner(options) {
       heartbeatStopped = true
       clearTimeout(heartbeatTimer)
     }
+    reportLifecycle({ phase: "finished", outcome: result.status })
     // Terminal delivery must terminate: reconcile (and with it the whole
     // runner) waits on this step, so a hung or transiently failing request
     // here would otherwise wedge the desktop until the app restarts. Each

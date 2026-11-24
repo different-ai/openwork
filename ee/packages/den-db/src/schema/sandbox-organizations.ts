@@ -9,14 +9,10 @@ import { denTypeIdColumn } from "../columns"
 export const SandboxOrganizationTable = mysqlTable("sandbox_organization", {
   id: denTypeIdColumn("sandboxOrganization", "id").notNull().primaryKey(),
   organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
-  /** Bearer join secret; rotating it replaces the link. */
   joinToken: varchar("join_token", { length: 64 }).notNull(),
-  /** Base URL of the fictional workplace service the connectors point at, e.g. https://workplace.example/. */
   connectorBaseUrl: varchar("connector_base_url", { length: 2048 }),
   memberLimit: int("member_limit").notNull(),
-  /** The sandbox's own OpenRouter key (its hash, never the key), when the deployment mints one per sandbox. */
   modelKeyHash: varchar("model_key_hash", { length: 128 }),
-  /** That key's spending cap in US dollars. */
   modelCreditUsd: int("model_credit_usd"),
   expiresAt: timestamp("expires_at", { fsp: 3 }).notNull(),
   closedAt: timestamp("closed_at", { fsp: 3 }),

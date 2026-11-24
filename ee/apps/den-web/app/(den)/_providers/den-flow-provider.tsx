@@ -33,7 +33,6 @@ import {
   rememberDesktopHandoffGrant,
 } from "../_lib/desktop-handoff";
 import {
-  PENDING_ORG_INVITATION_PROOF_STORAGE_KEY,
   PENDING_ORG_INVITATION_STORAGE_KEY,
   PENDING_WORKSPACE_CLAIM_STORAGE_KEY,
   getInferenceRoute,
@@ -121,7 +120,6 @@ type DenFlowContextValue = {
   cancelVerification: () => void;
   beginSocialAuth: (provider: SocialAuthProvider, options?: { loginHint: string }) => Promise<void>;
   signOut: () => Promise<void>;
-  /** Re-checks the session with Den; clears the signed-in user when it is gone. */
   revalidateSession: () => Promise<AuthUser | null>;
   updateUserProfile: (input: { firstName: string; lastName: string }) => Promise<AuthUser>;
   resolveUserLandingRoute: () => Promise<string | null>;
@@ -148,16 +146,6 @@ function getPendingOrgInvitationId() {
 
   const invitationId = window.sessionStorage.getItem(PENDING_ORG_INVITATION_STORAGE_KEY)?.trim() ?? "";
   return invitationId || null;
-}
-
-/** The emailed link's proof, only when it was stored for this invitation. */
-function getPendingOrgInvitationProof(invitationId: string | null) {
-  if (typeof window === "undefined" || !invitationId) {
-    return null;
-  }
-
-  const [storedFor, proof] = (window.sessionStorage.getItem(PENDING_ORG_INVITATION_PROOF_STORAGE_KEY) ?? "").split("\n");
-  return storedFor === invitationId && proof ? proof : null;
 }
 
 function getPendingWorkspaceClaimToken() {
@@ -200,8 +188,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   const continuationRef = useRef<SetupContinuation | null>(null);
   const handoffBusyRef = useRef(false);
   const sessionEpochRef = useRef(0);
-  // The first session check starts alongside runtime config; hydration still
-  // commits only after config loads, so guards see both together.
   const earlySessionRequestRef = useRef<EarlySessionRequest | null>(null);
   const landingGenerationRef = useRef(0);
   const [authMode, setAuthModeState] = useState<AuthMode>("sign-up");
@@ -328,11 +314,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   ): Promise<AuthNavigationResult> {
     let payload = payloadOverride;
 
-    // Verifying an email proves the mailbox but does not sign anyone in:
-    // /email-otp/verify-email answers with `token: null` and sets no cookie.
-    // Exchange the password the person just typed for a session in sign-in
-    // as well as sign-up, or an existing account that verifies from the
-    // sign-in form is shown as signed in without a session (ENG-550).
     if (payload === undefined || (!getToken(payload) && Boolean(password))) {
       const signInBody = {
         email: trimmedEmail,
@@ -363,8 +344,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     }
 
     let authenticatedUser: AuthUser | null = null;
-    // A user object alone is not a session: the verify-email reply carries one
-    // with `token: null`. Trust it only next to a token; otherwise ask Den.
     const payloadUser = token ? getUser(payload) : null;
     if (payloadUser) {
       authenticatedUser = payloadUser;
@@ -375,9 +354,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       if (refreshed) {
         authenticatedUser = refreshed;
       } else if (getUser(payload)) {
-        // Verified, but there is no password to exchange for a session. Keep
-        // the person on the sign-in step instead of a signed-in screen that
-        // every request would reject.
         setAuthMode("sign-in");
         setAuthInfo(`Email verified. Sign in as ${trimmedEmail} to continue.`);
         return null;
@@ -695,16 +671,10 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   }
 
   async function resolveUserLandingRoute() {
-    // Deliberately ignores desktopAuthRequested: callers that auto-redirect
-    // (auth-screen) gate on it themselves, while explicit actions — the
-    // "Go to dashboard" button on the signed-in handoff card — must resolve
-    // a destination even mid desktop handoff.
     if (!runtimeConfigLoaded || !sessionHydrated || !user) {
       return null;
     }
 
-    // A prior normal login must not carry its picker request into an explicit
-    // invitation, claim, setup, or install continuation.
     consumeOrgSelectionRequest();
     const pendingClaimToken = getPendingWorkspaceClaimToken();
     if (pendingClaimToken) {
@@ -811,9 +781,8 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       if (trimmedEmail && await redirectToRequiredSso(trimmedEmail)) {
         return null;
       }
-      const pendingInvitationProof = getPendingOrgInvitationProof(pendingInvitationId);
       const endpoint = submitMode === "sign-up" && pendingInvitationId
-        ? `/api/auth/sign-up/email?invite=${encodeURIComponent(pendingInvitationId)}${pendingInvitationProof ? `&inviteProof=${encodeURIComponent(pendingInvitationProof)}` : ""}`
+        ? `/api/auth/sign-up/email?invite=${encodeURIComponent(pendingInvitationId)}`
         : submitMode === "sign-up"
           ? "/api/auth/sign-up/email"
           : "/api/auth/sign-in/email";
@@ -836,8 +805,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       });
 
       if (!response.ok) {
-        // Only better-auth's unverified-email refusal means a code was sent;
-        // any other 403 (SSO-managed, sign-up policy) is a plain error.
         if (response.status === 403 && !isSingleOrgMode && isEmailNotVerifiedError(payload)) {
           openVerificationStep(trimmedEmail, `Enter the 6-digit code we sent to ${trimmedEmail} to finish verifying your email.`);
         }
@@ -858,9 +825,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
 
       const token = getToken(payload);
 
-      // Signing up from an invitation link can verify the email right away
-      // (inviteLinkVerifiesEmail). Den still answers without a session, so
-      // exchange the password for one instead of asking for an emailed code.
       if (submitMode === "sign-up" && !token && signUpReturnedVerifiedUser(payload)) {
         return await finalizeEmailPasswordSignIn(submitMode, trimmedEmail, payload);
       }
@@ -986,7 +950,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
         body: JSON.stringify({})
       });
     } catch {
-      // Ignore transport issues and clear local state anyway.
     } finally {
       setAuthBusy(false);
     }
@@ -1007,7 +970,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     if (typeof window !== "undefined") {
       window.sessionStorage.removeItem(PENDING_SOCIAL_SIGNUP_STORAGE_KEY);
       window.sessionStorage.removeItem(PENDING_ORG_INVITATION_STORAGE_KEY);
-      window.sessionStorage.removeItem(PENDING_ORG_INVITATION_PROOF_STORAGE_KEY);
       window.sessionStorage.removeItem(PENDING_WORKSPACE_CLAIM_STORAGE_KEY);
     }
   }
@@ -1088,10 +1050,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
     const invitationId = params.get("invite")?.trim() ?? "";
     if (invitationId) {
       window.sessionStorage.setItem(PENDING_ORG_INVITATION_STORAGE_KEY, invitationId);
-      const invitationProof = params.get("inviteProof")?.trim() ?? "";
-      if (invitationProof) {
-        window.sessionStorage.setItem(PENDING_ORG_INVITATION_PROOF_STORAGE_KEY, `${invitationId}\n${invitationProof}`);
-      }
     }
 
     const requestedIntent = normalizeAuthIntentParam(params.get("intent"));
@@ -1101,7 +1059,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   }, []);
 
   useEffect(() => {
-    // Left behind by the removed cloud worker screen; clear them from browsers that still have them.
     window.localStorage.removeItem("openwork:web:last-worker");
     window.localStorage.removeItem("openwork:web:onboarding-intent");
   }, []);
@@ -1117,7 +1074,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (runtimeConfigLoaded) return;
     const request = requestSession(authToken);
-    // Consumed by the hydration effect below; never leave a rejection unhandled.
     request.catch(() => undefined);
     earlySessionRequestRef.current = { token: authToken, epoch: sessionEpochRef.current, request };
   }, [authToken, runtimeConfigLoaded]);
@@ -1159,7 +1115,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   }, [authToken, runtimeConfigLoaded]);
 
   useEffect(() => {
-    // Invalidate a pending preference restore on account/session changes or unmount.
     return () => { landingGenerationRef.current += 1; };
   }, [user?.id, authToken, sessionHydrated]);
 
@@ -1217,7 +1172,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     if (!runtimeConfigLoaded || !sessionHydrated || authBusy || !desktopAuthRequested || !user || continuation?.userId !== user.id
       || setupPending || desktopRedirectUrl || desktopRedirectBusy || desktopRedirectAttempted) return;
-    // Invitation acceptance and workspace claims own their explicit handoffs.
     if (pathname === "/join-org" || pathname === "/workspace-claim") return;
     const pendingClaim = getPendingWorkspaceClaimToken();
     const pendingInvitation = getPendingOrgInvitationId();
@@ -1229,7 +1183,6 @@ export function DenFlowProvider({ children }: { children: ReactNode }) {
       router.replace(getJoinOrgRoute(pendingInvitation));
       return;
     }
-    // Failed config fetches return the single-org fallback, not a deployment decision.
     if (runtimeConfig === EMPTY_RUNTIME_CONFIG) {
       setAuthError("Could not load workspace configuration. Refresh to try again.");
       setDesktopRedirectAttempted(true);

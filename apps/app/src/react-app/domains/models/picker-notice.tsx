@@ -2,10 +2,6 @@ import type { ReactNode } from "react";
 import { CircleAlert } from "lucide-react";
 import { cn } from "@/lib/utils";
 
-/**
- * The one notice row under the model list (Paper "Availability and recovery"): an alert icon, one or two
- * sentences, and at most one action. `error` is for a failed catalog load; everything else stays neutral (C5).
- */
 export function PickerNotice({ tone = "neutral", role = "status", action, children, testId }: {
   tone?: "neutral" | "error";
   role?: "status" | "alert";

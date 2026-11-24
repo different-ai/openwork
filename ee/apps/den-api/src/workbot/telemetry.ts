@@ -6,7 +6,6 @@ import { headlessRunnerConfig, telemetryFailureCode, telemetryModelId } from "@o
 import { z } from "zod"
 import { db } from "../db.js"
 
-/** Service-only facts. No text, names, email, prompts, tokens or arbitrary properties. */
 export const workbotTelemetrySchema = z.discriminatedUnion("event", [
   z.object({ event: z.literal("signed_in"), id: z.string().regex(/^[A-Za-z0-9_-]{16,128}$/), timestamp: z.number().int().nonnegative().optional() }).strict(),
   z.object({
@@ -38,7 +37,6 @@ type Facts = {
   app_id?: string
 }
 
-/** The existing runner service credential proves these facts came from a service, not a member's browser. */
 export function workbotTelemetryServiceAuthorized(value: string | undefined) {
   const expected = headlessRunnerConfig()?.token
   if (!expected || !value) return false
@@ -51,18 +49,15 @@ export function workbotMainSession(actor: WorkbotTelemetryActor) {
   return `hs_wb_${createHash("sha256").update(`workbot:${actor.organizationId}:${actor.memberId}`).digest("hex").slice(0, 40)}`
 }
 
-/** Stable primary keys, including under parallel tabs and HTTP retries; no schema change or check-then-insert race. */
 export function workbotEventIdentity(actor: WorkbotTelemetryActor, type: string, key: string) {
   const hash = createHash("sha256").update(JSON.stringify([actor.organizationId, actor.memberId, type, key])).digest("hex")
   return { id: eventIdFromHex(hash.slice(0, 32)), sessionId: `wb:${hash}` }
 }
 
-/** The same identity scheme for any at-most-once member fact (for example a Get set up step): one row per key. */
 export function stableTelemetryEventId(actor: WorkbotTelemetryActor, type: string, key: string) {
   return workbotEventIdentity(actor, type, key).id
 }
 
-/** Encode 128 public identifier bits as a TypeID; this is not credential/password storage. */
 function eventIdFromHex(hex: string) {
   let value = BigInt(`0x${hex}`)
   const alphabet = "0123456789abcdefghjkmnpqrstvwxyz"
@@ -74,7 +69,6 @@ function eventIdFromHex(hex: string) {
   return normalizeDenTypeId("telemetryEvent", `tev_${suffix}`)
 }
 
-/** Best effort, atomically paired with its bounded facts. First sightings never overwrite earlier counts. */
 export async function recordWorkbotEvent(actor: WorkbotTelemetryActor, type: string, key: string, facts: Facts = {}, timestamp = Date.now()) {
   return writeWorkbotEvent(actor, type, workbotEventIdentity(actor, type, key), facts, timestamp)
 }
@@ -103,14 +97,12 @@ async function writeWorkbotEvent(actor: WorkbotTelemetryActor, type: string, ide
       }
     })
   } catch {
-    // Product flows never depend on telemetry. No error payload (which can contain values) is logged.
     console.warn("[workbot] telemetry_not_recorded")
   }
 }
 
 export async function recordWorkbotTelemetry(actor: WorkbotTelemetryActor, event: WorkbotTelemetry, readyCount: () => Promise<number | null>) {
   if (event.event === "signed_in") {
-    // Preserve the sign-in instant even when the readiness snapshot takes longer than the greeting.
     const at = event.timestamp ?? Date.now()
     return recordWorkbotEvent(actor, "workbot.signed_in", event.id, { ready_count: await readyCount().catch(() => null) }, at)
   }
@@ -131,7 +123,6 @@ export async function recordWorkbotTelemetry(actor: WorkbotTelemetryActor, event
   }, event.timestamp)
 }
 
-/** Only the public transaction nonce leaves OAuth. Never hash, store or accept its signed state/token. */
 export async function recordWorkbotConnection(actor: WorkbotTelemetryActor, input: { attemptId: string; connectionId: string; appId: string }) {
   const nonce = z.uuid().safeParse(input.attemptId)
   if (!nonce.success) return

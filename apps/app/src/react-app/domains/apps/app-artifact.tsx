@@ -1,4 +1,5 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
+import { featureAnalytics } from "@/app/lib/analytics";
 import { useNavigate } from "react-router";
 import { AppActionsMenu, getAppUpdatePrompt } from "./app-actions-menu";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -45,6 +46,15 @@ export function AppArtifact({ appId, revisionId, receiptId, onClose, onAsk, fall
     },
   });
   const app = query.isError ? undefined : query.data;
+  const openedApp = useRef<string | null>(null);
+  const recordOpenedApp = (node: HTMLElement | null) => {
+    if (!node || !app?.revision || app.runError || openedApp.current === appId) return;
+    const ready = Boolean(app.html && app.payload)
+      || (app.view.activeRevisionId === app.revision.id && isLiveGeneratedApp(app.view));
+    if (!ready) return;
+    openedApp.current = appId;
+    featureAnalytics.artifactOpened();
+  };
   const toolName = `openwork-cloud_run_artifact_${appId}`;
   const connectionOutput = app?.runError?.connectionCard;
   const connection = connectionCardPayloadFromChatToolResult(toolName, connectionOutput);
@@ -72,7 +82,7 @@ export function AppArtifact({ appId, revisionId, receiptId, onClose, onAsk, fall
   if (!client || !orgId) return <p className="p-6 text-sm text-muted-foreground">Sign in to open this artifact.</p>;
   if (query.isPending) return <p className="flex items-center gap-2 p-6 text-sm" role="status"><Loader2 className="size-4 animate-spin" />Preparing artifact preview…</p>;
   if (!app) return <div className="space-y-3 p-6"><p role="alert" className="text-sm">{query.error instanceof Error ? query.error.message : "This artifact could not be opened."}</p><Button variant="outline" onClick={() => void query.refetch()}>Try again</Button></div>;
-  return <section className="flex h-full min-h-0 flex-col bg-background" aria-label={`${app.view.title} app`}>
+  return <section ref={recordOpenedApp} className="flex h-full min-h-0 flex-col bg-background" aria-label={`${app.view.title} app`}>
     <header className="flex items-center gap-2 border-b px-4 py-3" data-app-header>
       <div className="min-w-0 flex-1">
         <h2 className="truncate text-sm font-medium" title={app.view.title}>{app.view.title}</h2>

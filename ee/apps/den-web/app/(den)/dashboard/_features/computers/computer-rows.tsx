@@ -9,52 +9,23 @@ import { StatusDot, TimeAgo, focusRing, hairline, secondaryText } from "./comput
 import { isFormerOwner, ownerEmail, ownerLabel, versionLabel, type ComputerOwner, type DeviceTone } from "./computers-format";
 import { REMOTE_ACCESS_LABEL, remoteAccessNote, remoteAccessValue, type RemoteAccessVoice } from "./remote-access";
 
-/*
- * The one row language of Computers and My Computers: flat rows
- * on the page with a hairline between them, a small leading tile, a name over
- * one muted line, fixed lanes on the right so rows line up, then at most one
- * control. No cards, so the lists read the same on a tinted or a white canvas.
- *
- * Rows are an ARIA table (`role="table"` on plain elements), so each lane is
- * announced under its column label. Lanes leave as the list gets narrower,
- * measured against the list itself rather than the window.
- */
-
-/** Lane widths. Literal classes, so Tailwind generates each one. A lane's label and its cells share the class. */
 export const LANE = {
-  /** Whose computer it is. The first lane to go on a narrow list. */
   owner: "hidden w-52 @2xl:flex @5xl:w-60",
-  /** Dot and word, with one muted line under it where there is room. */
   status: "flex w-[120px] @md:w-40 @5xl:w-48",
-  /** Last contact, in a team list that also shows owners. */
   teamTime: "hidden w-24 @3xl:block",
-  /** App version, in a team list that also shows owners. */
   teamVersion: "hidden w-24 @4xl:block",
-  /** An instance's version: as wide as a computer's version, menu and chevron lanes together, so both team lists line up. */
   instanceVersion: "hidden w-[164px] @4xl:block",
-  /** What other devices can do on a member's own computer. On a narrower list it moves to a line under the row. */
   remoteAccess: "hidden w-52 @2xl:flex",
-  /** Last contact, in a member's own list. */
   time: "hidden w-24 @3xl:block",
-  /** App version, in a member's own list. */
   version: "hidden w-24 @4xl:block",
 } as const;
 
 const laneBase = "min-w-0 shrink-0 text-[13px] leading-5";
 
-/*
- * The row's look, for the few lists that are not an ARIA table (My Library and
- * Connectors group their rows under headings): they build their own markup
- * and take these, so every list reads the same.
- */
-/** A row: 48px (DESIGN.md S2), a hairline under it. */
 export const ROW_CLASS = `flex min-h-[49px] items-center gap-3 border-b ${hairline} py-1.5`;
-/** The row's name. */
 export const ROW_NAME_CLASS = "block max-w-full truncate text-left text-[13px] font-medium leading-5 text-[color:var(--dls-text-primary)]";
-/** The one muted line under the name. */
 export const ROW_SECOND_LINE_CLASS = `truncate text-[12px] leading-4 ${secondaryText}`;
 
-/** The list: a quiet row of column labels, then the rows. */
 export function RowList({ label, header, children, testId, busy }: {
   label: string;
   header?: ReactNode;
@@ -68,7 +39,6 @@ export function RowList({ label, header, children, testId, busy }: {
   </div>;
 }
 
-/** Column labels over the lanes. `menu` and `chevron` reserve the trailing lanes the rows below have. */
 export function RowListHeader({ lead, children, menu = false, chevron = false }: {
   lead: string;
   children?: ReactNode;
@@ -87,19 +57,16 @@ export function RowLaneLabel({ lane, children }: { lane: string; children: React
   return <span role="columnheader" className={`min-w-0 shrink-0 truncate ${lane}`}>{children}</span>;
 }
 
-/** One lane's value in a row. */
 export function RowLane({ lane, children, title, className = "" }: { lane: string; children: ReactNode; title?: string; className?: string }) {
   return <div role="cell" title={title} className={`${laneBase} ${lane} ${className}`}>{children}</div>;
 }
 
-/** The 32px leading tile: a quiet icon for what the row is. */
 export function RowTile({ icon: Icon }: { icon: LucideIcon }) {
   return <span aria-hidden="true" className={`flex size-8 shrink-0 items-center justify-center rounded-lg bg-[var(--dls-hover)] ${secondaryText}`}>
     <Icon size={16} strokeWidth={1.5} />
   </span>;
 }
 
-/** A laptop for a Mac or PC, a cloud for Workbot's computer, a server for other virtual computers. */
 export function computerIcon(device: { kind: RemoteDeviceKind; provider: RemoteDeviceProvider }): LucideIcon {
   if (device.kind === "desktop") return Laptop;
   return device.provider === "workbot" ? Cloud : Server;
@@ -107,26 +74,14 @@ export function computerIcon(device: { kind: RemoteDeviceKind; provider: RemoteD
 
 export type RowToggle = {
   expanded: boolean;
-  /** The id of the region the row opens. */
   controls: string;
   onToggle: () => void;
 };
 
-/**
- * One row. With `toggle` its name is the button that opens the detail under
- * it, and a click anywhere on the row that is not on a control does the same.
- */
 export function ListRow({ icon, lead, name, href, scroll, stretch = true, linkLabel, badge, secondLine, lanes, below, action, toggle, testId, rowTestId, rowData, children }: {
-  /** What the row is, as a quiet icon in the 32px tile. */
   icon?: LucideIcon;
-  /**
-   * Who or what the row is, in the same 32px lane: a person's initials, a
-   * service's logo. Rows that are all the same kind of thing use this, so the
-   * lane tells them apart instead of repeating one icon.
-   */
   lead?: ReactNode;
   name: ReactNode;
-  /** A resource page, instead of an inline disclosure. The whole row opens it unless `stretch` is false. */
   href?: string;
   scroll?: boolean;
   stretch?: boolean;
@@ -134,33 +89,24 @@ export function ListRow({ icon, lead, name, href, scroll, stretch = true, linkLa
   badge?: ReactNode;
   secondLine?: ReactNode;
   lanes?: ReactNode;
-  /** A line across the row, under it, for what a lane says on a wide list and has no room for on a narrow one. */
   below?: ReactNode;
-  /** The row's menu or lock, in a fixed 28px lane. Leave undefined for a list whose rows have none. */
   action?: ReactNode;
   toggle?: RowToggle;
-  /** On the name: the element a person, or a test, presses to open the row. */
   testId?: string;
   rowTestId?: string;
-  /** data-* attributes on the row. */
   rowData?: Record<`data-${string}`, string | undefined>;
-  /** The open detail, under the row. */
   children?: ReactNode;
 }) {
   function rowClick(event: MouseEvent<HTMLDivElement>) {
     if (!toggle) return;
     const target = event.target;
-    // Menus and dialogs are portaled: their clicks reach here through React, not through the row's own elements.
     if (!(target instanceof Element) || !event.currentTarget.contains(target)) return;
     if (target.closest("button, a, input, textarea, select, summary, [role=button], [role=checkbox], [role=switch], [contenteditable=true]")) return;
-    // Someone selecting the name to copy it is not opening the row.
     if (window.getSelection()?.toString()) return;
     toggle.onToggle();
   }
   const nameClass = ROW_NAME_CLASS;
   const title = typeof name === "string" ? name : undefined;
-  // Only controls rise above the stretched link: clicking plain lane text/whitespace still opens the row.
-  // Isolate each row so its overlay cannot intercept a neighboring row's controls.
   const stretched = Boolean(href && stretch && !toggle);
   return <>
     <div role="row" data-testid={rowTestId} {...rowData} data-open={toggle?.expanded || undefined} onClick={toggle ? rowClick : undefined}
@@ -181,7 +127,6 @@ export function ListRow({ icon, lead, name, href, scroll, stretch = true, linkLa
       </div>
       {lanes}
       {action !== undefined ? <div role="cell" className={`flex w-7 shrink-0 justify-end ${href ? "relative z-[1]" : ""}`}>{action}</div> : null}
-      {/* On a narrow list the name alone opens the row; the chevron's lane goes to the name. */}
       {toggle ? <span aria-hidden="true" className={`hidden w-4 shrink-0 justify-end @md:flex ${secondaryText} transition-colors duration-150 group-hover:text-[color:var(--dls-text-primary)]`}>
         <ChevronRight size={16} strokeWidth={1.5} className={`transition-transform duration-150 motion-reduce:transition-none ${toggle.expanded ? "rotate-90" : ""}`} />
       </span> : null}
@@ -191,11 +136,6 @@ export function ListRow({ icon, lead, name, href, scroll, stretch = true, linkLa
   </>;
 }
 
-/**
- * The status lane: a dot and a word, with one muted line under it where there
- * is room. Disconnected is neutral with an unplug mark instead of a dot: it
- * was blocked on purpose, which is not an error.
- */
 export function StatusLane({ lane = LANE.status, label, tone, detail, disconnected = false }: {
   lane?: string;
   label: string;
@@ -212,7 +152,6 @@ export function StatusLane({ lane = LANE.status, label, tone, detail, disconnect
   </RowLane>;
 }
 
-/** Whose computer it is: a small initial and a name. Never a placeholder address. */
 export function OwnerLane({ device, lane = LANE.owner }: {
   device: ComputerOwner;
   lane?: string;
@@ -228,19 +167,16 @@ export function OwnerLane({ device, lane = LANE.owner }: {
   </RowLane>;
 }
 
-/** Last contact: relative, with the full date and time on hover. */
 export function TimeLane({ lane, iso, now, never = "Never" }: { lane: string; iso: string | null; now: number; never?: string }) {
   return <RowLane lane={lane} className={`truncate tabular-nums ${secondaryText}`}>
     {iso ? <TimeAgo iso={iso} now={now} /> : never}
   </RowLane>;
 }
 
-/** The short version, with the full string on hover. */
 export function VersionLane({ lane, version }: { lane: string; version: string | null }) {
   return <RowLane lane={lane} title={version ?? undefined} className={`truncate tabular-nums ${secondaryText}`}>{versionLabel(version)}</RowLane>;
 }
 
-/** Rows the size of the real ones while a list loads. */
 export function RowListSkeleton({ rows = 4 }: { rows?: number }) {
   return <div aria-hidden="true">
     {Array.from({ length: rows }, (_, index) => <div key={index} className={`flex min-h-[49px] items-center gap-3 border-b ${hairline} py-1.5`}>
@@ -251,11 +187,6 @@ export function RowListSkeleton({ rows = 4 }: { rows?: number }) {
   </div>;
 }
 
-/**
- * What other devices can do on a computer, as a lane: the value, with the
- * reason under it when something other than the owner's choice decides it.
- * Nothing for a computer that takes no tasks this way.
- */
 export function RemoteAccessLane({ access, voice = "owner", lane = LANE.remoteAccess }: {
   access: RemoteDeviceAccess | null;
   voice?: RemoteAccessVoice;
@@ -269,10 +200,6 @@ export function RemoteAccessLane({ access, voice = "owner", lane = LANE.remoteAc
   </RowLane>;
 }
 
-/**
- * The same, as a line across a row for `ListRow`'s `below`, on a list too
- * narrow for the lane. It carries the label the lane's column gives it there.
- */
 export function RemoteAccessBelow({ access, voice = "owner" }: { access: RemoteDeviceAccess | null; voice?: RemoteAccessVoice }) {
   if (!access) return null;
   const note = remoteAccessNote(access, voice);

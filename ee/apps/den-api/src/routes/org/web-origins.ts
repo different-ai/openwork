@@ -28,8 +28,6 @@ const WEB_ORIGIN_ALREADY_APPROVED_MESSAGE = "This origin is already approved."
 const WEB_ORIGIN_LIMIT_REACHED_MESSAGE = `This organization already has ${ORGANIZATION_WEB_ORIGIN_LIMIT} approved web origins. Remove one before adding another.`
 const WEB_ORIGIN_NOT_FOUND_MESSAGE = "This approved origin no longer exists."
 
-// OpenAPI-only view of the shared contract: den-web parses responses with the
-// shared schema, so the `date-time` format is declared here instead of there.
 const organizationWebOriginDocumentSchema = organizationWebOriginSchema.extend({
   createdAt: z.string().datetime(),
 }).meta({ ref: "OrganizationWebOrigin" })

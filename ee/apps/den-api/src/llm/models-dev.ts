@@ -1,5 +1,4 @@
-import { withBedrockMantleProvider } from "@openwork-ee/utils/bedrock-mantle-catalog"
-import { withMicrosoftFoundryProvider } from "@openwork-ee/utils/microsoft-foundry-catalog"
+import { withBedrockMantleProvider, withMicrosoftFoundryProvider } from "@openwork-ee/gateway-catalog"
 
 const MODELS_DEV_API_URL = "https://models.openworklabs.com/api.json"
 const MODELS_DEV_CACHE_TTL_MS = 1000 * 60 * 10
@@ -73,8 +72,6 @@ async function fetchModelsDevCatalog() {
     throw new Error("models.dev returned an invalid payload")
   }
 
-  // Mantle and Foundry Claude models need their own SDK per gateway provider; see
-  // bedrock-mantle-catalog and microsoft-foundry-catalog.
   const providers = Object.entries(withMicrosoftFoundryProvider(withBedrockMantleProvider(payload)))
     .map(([providerKey, rawProvider]) => {
       if (!isRecord(rawProvider)) {
@@ -125,8 +122,6 @@ async function fetchModelsDevCatalog() {
   return nextCache
 }
 
-// Only the public catalog is shared. Provider configuration and authorization
-// still run independently for every request. Failed refreshes remain retryable.
 let modelsDevInflight: Promise<ModelsDevCatalog> | null = null
 
 async function loadModelsDevCatalog() {
@@ -153,12 +148,10 @@ export async function getModelsDevProvider(providerId: string): Promise<ModelsDe
   return catalog.providersById.get(providerId) ?? null
 }
 
-/** Every provider with its models, from one cached catalog read. */
 export async function getModelsDevCatalogProviders(): Promise<readonly ModelsDevProvider[]> {
   return (await loadModelsDevCatalog()).providers
 }
 
-/** Resolve several providers from a single cached catalog read. */
 export async function getModelsDevProviders(providerIds: readonly string[]): Promise<ModelsDevProvider[]> {
   const catalog = await loadModelsDevCatalog()
   return [...new Set(providerIds)].flatMap((id) => {

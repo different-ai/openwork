@@ -8,11 +8,8 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 type Props = {
   feature: string;
-  /** Feature-specific state only; guidance for the current actor is added below. */
   detail?: string;
-  /** Lowest plan that includes the feature. Team features link to billing; Enterprise features link to sales. */
   plan?: "team" | "enterprise";
-  /** Billing page for the Team upgrade. Required when plan is "team". */
   billingHref?: string;
 };
 

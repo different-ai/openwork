@@ -22,8 +22,6 @@ export default function AdminDashboardLayout({
     orgContext?.currentMember.permissions,
   );
   const canManageDeploymentServices = orgContext?.canManageDeploymentServices === true;
-  // Any organization permission opens the admin area; installation administrators
-  // also open Diagnostics for its Installation section, whatever their role.
   const canUseAdminArea = access.canViewSettings || (pathname === getDiagnosticsRoute() && canManageDeploymentServices);
   const canUseAdminRoute = canOpenAdminRoute(pathname, access, canManageDeploymentServices);
 

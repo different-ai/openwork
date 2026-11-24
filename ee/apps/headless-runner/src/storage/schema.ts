@@ -1,10 +1,6 @@
 import type { SqlDriver } from "../sql.js"
 import { addColumn } from "./migrations.js"
 
-/**
- * Migration 2: session storage (sealed segments, large bodies, the Den index outbox). Additive and repeatable; an
- * older runner ignores all of it (it sees the hot rows, which stay valid on their own).
- */
 export function storageSchema(db: SqlDriver) {
   db.exec(`
     CREATE TABLE IF NOT EXISTS segments (
@@ -56,11 +52,7 @@ export function storageSchema(db: SqlDriver) {
       attempt INTEGER NOT NULL DEFAULT 0
     );
   `)
-  // Hot bytes of a session's transcript and prompts, kept as it changes (NULL until first counted: databases from
-  // before this migration are counted in the background, never on a turn's path).
   addColumn(db, "sessions", "hot_bytes", "INTEGER")
-  // The Den index capability from the session's latest turn token (opaque; never logged or exported).
   addColumn(db, "sessions", "index_capability", "TEXT")
-  // The session's last index snapshot version (per session, only grows).
   addColumn(db, "sessions", "index_version", "INTEGER")
 }

@@ -8,8 +8,6 @@ type Context = {
   model: { transform(callback: (editor: ModelEditor) => void): Promise<{ dispose(): Promise<void> }> };
 };
 
-// Filter the active model collection after provider discovery, including built-in
-// and subsequently refreshed models. Stable V2 exposes this through model.transform.
 export default {
   id: "openwork.provider-filters",
   async setup(context: Context) {

@@ -22,7 +22,6 @@ export function registerMcpEventRoutes<T extends Env>(app: Hono<T>) {
   }), signedWebhookRoute, (c) => receiveMcpEvent(c.req.raw, c.req.param("subscriptionId"), {
     find: async (id) => {
       const subscription = /^[a-f0-9]{48}$/.test(id) ? await findSubscription(id) : null
-      // Internal sources enter the receipt queue directly and have no public webhook credential.
       return subscription?.source === "connection" ? subscription : null
     },
     enabled: async (subscription) => {

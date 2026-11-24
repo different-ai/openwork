@@ -1,14 +1,3 @@
-/**
- * OpenWork Cloud MCP through Den's MCP gateway, the same way the desktop does:
- *
- * - `openwork-cloud` → `<api>/mcp/agent` (search_capabilities / execute_capability …)
- * - `openwork-direct-<slug>-<hash>` → `<api>/mcp/agent/connections/<id>` for each
- *   connection an administrator exposed directly.
- *
- * Both carry the member's first-party MCP token (`POST /v1/mcp/token`, 7 days).
- * The connection list is an MCP resource on /mcp/agent; with an ordinary token
- * Den returns only directly exposed, ready connections.
- */
 import { createHash } from "node:crypto"
 import { DenUrlError, denRequest, isAllowedApiBaseUrl, isRecord, normalizeBaseUrl, type DenSession, type Fetch } from "./den.ts"
 import type { RemoteMcpConfig } from "./opencode.ts"
@@ -22,7 +11,6 @@ export const MCP_TOKEN_REFRESH_MARGIN_MS = 24 * 60 * 60 * 1000
 
 export interface McpToken {
   readonly token: string
-  /** Milliseconds since the epoch. */
   readonly expiresAt: number
 }
 
@@ -67,10 +55,8 @@ export function mcpServerEntries(input: {
   token: string
   servers: readonly DirectServer[]
 }): Record<string, RemoteMcpConfig> {
-  // Never hand OpenCode a bearer for a plain-HTTP remote host.
   if (!isAllowedApiBaseUrl(input.apiBaseUrl)) return {}
   const headers = { Authorization: `Bearer ${input.token}` }
-  // oauth:false — the bearer is ours; OpenCode must not start its own MCP OAuth flow on a 401.
   const entries: Record<string, RemoteMcpConfig> = {
     [CLOUD_SERVER_NAME]: { type: "remote", url: agentUrl(input.apiBaseUrl), headers, oauth: false },
   }
@@ -79,9 +65,6 @@ export function mcpServerEntries(input: {
   }
   return entries
 }
-
-// ---- Minimal Streamable HTTP client for the index resource ----
-// Ported from apps/server/src/connect-mcp-transport.ts.
 
 function parseJsonOrText(raw: string): unknown {
   try {
@@ -127,7 +110,6 @@ async function readMcpPayload(response: Response, requestId?: number): Promise<u
       }
     }
   } finally {
-    // A server may keep the stream open after the result. Never wait for EOF.
     void reader.cancel().catch(() => {})
     reader.releaseLock()
   }
@@ -215,7 +197,6 @@ export function parseServerIndex(text: string, apiBaseUrl: string): DirectServer
     } catch {
       continue
     }
-    // Only ever send the member's token to the Den it was issued by.
     if (parsed.origin !== origin || !parsed.pathname.startsWith("/mcp/agent/connections/")) continue
     servers.push({ connectionId, name, url: parsed.toString() })
   }

@@ -1,13 +1,4 @@
-/**
- * AI Gateway custom OpenAI-compatible providers:
- * reading `GET {baseUrl}/models`, turning each entry into a models.dev-shaped
- * model record and matching it against the models.dev `openrouter` provider.
- *
- * Parsing, mapping and matching are pure. The fetch is egress-guarded (public
- * HTTPS or operator-allowlisted origins, guarded DNS, no redirects), time-boxed
- * and size-capped. Nothing here logs or returns the API key.
- */
-import { createInferenceEgressFetch } from "@openwork-ee/utils/inference-egress"
+import { createInferenceEgressFetch } from "@openwork-ee/gateway-upstreams"
 import {
   GATEWAY_CUSTOM_MATCH_PROVIDER_ID,
   GATEWAY_CUSTOM_MAX_MODELS,
@@ -27,9 +18,7 @@ type JsonRecord = Record<string, unknown>
 
 export const CUSTOM_DISCOVERY_TIMEOUT_MS = 10_000
 export const CUSTOM_DISCOVERY_MAX_BYTES = 5 * 1024 * 1024
-/** Used when neither /models nor a models.dev match says how large the context is. */
 export const CUSTOM_DEFAULT_CONTEXT = 128_000
-/** Used when nothing says how many tokens a reply may have (capped at the context). */
 export const CUSTOM_DEFAULT_OUTPUT = 8_192
 
 const DETAIL_KEYS = ["name", "context_length", "pricing", "architecture", "top_provider", "supported_parameters"] as const
@@ -51,7 +40,6 @@ function readStringList(value: unknown): string[] | null {
   return Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : null
 }
 
-/** `file` is OpenRouter's name for documents; models.dev calls it `pdf`. Unknown modalities are dropped. */
 export function mapModalities(value: unknown): GatewayCustomModality[] | null {
   const list = readStringList(value)
   if (!list) return null
@@ -65,12 +53,6 @@ export function mapModalities(value: unknown): GatewayCustomModality[] | null {
   return mapped
 }
 
-/**
- * OpenRouter-style prices are USD per token as strings; models.dev uses USD per
- * million tokens. Zero, negative (OpenRouter's "-1" for variable pricing) and
- * unparseable values are dropped. Rounded to 12 significant digits to remove
- * float noise (0.0000025 * 1e6 is 2.4999999999999996).
- */
 export function perTokenToPerMillion(value: unknown): number | null {
   const number = typeof value === "string" && value.trim() ? Number(value) : value
   if (typeof number !== "number" || !Number.isFinite(number) || number <= 0) return null
@@ -80,14 +62,12 @@ export function perTokenToPerMillion(value: unknown): number | null {
 export type CustomModelsEntry = {
   id: string
   canonicalSlug: string | null
-  /** True when the entry carries any OpenRouter-style detail beyond its id. */
   detailed: boolean
   name: string | null
   context: number | null
   output: number | null
   input: GatewayCustomModality[] | null
   outputModalities: GatewayCustomModality[] | null
-  /** Null when the entry has no supported_parameters list. */
   parameters: string[] | null
   cost: NonNullable<GatewayCustomModel["cost"]> | null
 }
@@ -127,7 +107,6 @@ function readEntry(raw: JsonRecord): CustomModelsEntry | null {
   }
 }
 
-/** Reads an OpenAI-compatible `/models` body. At most GATEWAY_CUSTOM_MAX_MODELS distinct ids are kept. */
 export function parseModelsResponse(body: unknown): ParsedModelsResponse {
   if (!isRecord(body) || !Array.isArray(body.data)) return { status: "unavailable", reason: "The provider's model list has no data list." }
   const entries: CustomModelsEntry[] = []
@@ -151,12 +130,6 @@ function loose(value: string): string {
   return value.toLowerCase().replace(/[-_.:]/g, "")
 }
 
-/**
- * Finds the models.dev OpenRouter model for an upstream id: exact id, then
- * canonical_slug, then the unique model with the same last path segment, then
- * the unique one with the same segment ignoring case and `-`, `_`, `.`, `:`.
- * Ambiguous matches return null.
- */
 export function matchOpenRouterModel(entry: { id: string; canonicalSlug?: string | null }, catalog: readonly ModelsDevModel[]): { model: ModelsDevModel; by: GatewayCustomModelMatch["by"] } | null {
   const exact = catalog.find((model) => model.id === entry.id)
   if (exact) return { model: exact, by: "id" }
@@ -169,7 +142,6 @@ export function matchOpenRouterModel(entry: { id: string; canonicalSlug?: string
   if (!suffix) return null
   const bySuffix = catalog.filter((model) => lastSegment(model.id) === suffix)
   if (bySuffix.length === 1 && bySuffix[0]) return { model: bySuffix[0], by: "suffix" }
-  // A looser comparison only widens the candidates, so an ambiguous suffix stays ambiguous.
   if (bySuffix.length > 1) return null
   const key = loose(suffix)
   if (!key) return null
@@ -205,7 +177,6 @@ function limits(context: number | null, output: number | null): GatewayCustomMod
   return { context: resolvedContext, output: Math.min(output ?? CUSTOM_DEFAULT_OUTPUT, resolvedContext) }
 }
 
-/** A models.dev model record as a custom model with the upstream id. Null when it is not usable. */
 export function customModelFromModelsDev(id: string, record: JsonRecord): GatewayCustomModel | null {
   const modalities = isRecord(record.modalities) ? record.modalities : {}
   const input = mapModalities(modalities.input)
@@ -231,11 +202,6 @@ export function customModelFromModelsDev(id: string, record: JsonRecord): Gatewa
   return parsed.success ? parsed.data : null
 }
 
-/**
- * Settings for one `/models` entry: the models.dev match as the base, with the
- * entry's own limits, modalities and cost on top. Without a match, settings
- * come from the entry alone when it is detailed, else null (only the id is known).
- */
 export function suggestCustomModel(entry: CustomModelsEntry, match: ModelsDevModel | null): GatewayCustomModel | null {
   const base = match ? customModelFromModelsDev(entry.id, match.config) : null
   if (!base && !entry.detailed) return null
@@ -263,7 +229,6 @@ export function suggestCustomModel(entry: CustomModelsEntry, match: ModelsDevMod
   return parsed.success ? parsed.data : base
 }
 
-/** Suggested settings and matches for every listed model. */
 export function discoveredModels(entries: readonly CustomModelsEntry[], catalog: readonly ModelsDevModel[]): GatewayCustomDiscoveredModel[] {
   return entries.map((entry) => {
     const match = matchOpenRouterModel(entry, catalog)
@@ -309,7 +274,6 @@ async function readCappedText(response: Response, maxBytes: number): Promise<str
   return Buffer.concat(chunks).toString("utf8")
 }
 
-/** `GET {baseUrl}/models` with the key. Never throws for upstream problems; never includes the key in a reason. */
 export async function fetchCustomProviderModels(input: { baseUrl: string; apiKey: string }, deps: { fetch?: typeof fetch; timeoutMs?: number; maxBytes?: number } = {}): Promise<FetchOutcome> {
   const fetcher = deps.fetch ?? createInferenceEgressFetch()
   const maxBytes = deps.maxBytes ?? CUSTOM_DISCOVERY_MAX_BYTES
@@ -341,11 +305,6 @@ export async function fetchCustomProviderModels(input: { baseUrl: string; apiKey
   }
 }
 
-/**
- * Fetches, parses and matches. `loadMatchCatalog` returns the models.dev
- * OpenRouter models; when it fails, models are returned without matches.
- * `baseUrl` must already be normalized and checked by the caller.
- */
 export async function discoverCustomProviderModels(
   input: { baseUrl: string; apiKey: string },
   deps: { fetch?: typeof fetch; timeoutMs?: number; maxBytes?: number; loadMatchCatalog: () => Promise<readonly ModelsDevModel[]> },

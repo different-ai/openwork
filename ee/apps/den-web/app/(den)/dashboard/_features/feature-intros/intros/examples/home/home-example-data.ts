@@ -2,8 +2,6 @@ import type { ExampleProvider } from "../ai-gateway/example-parts";
 import { ANTHROPIC, OPENAI } from "../ai-gateway/gateway-example-data";
 import type { ExampleService } from "../example-parts";
 
-/** Sample data only: no API calls (DESIGN.md I7). */
-
 export const homeExample = {
   org: "Acme",
   people: { active: 18, total: 24 },

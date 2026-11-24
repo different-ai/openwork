@@ -1,25 +1,11 @@
-// Picks the model and thinking level for one Smart request.
-//
-// Jev scores how well the prompt fits every task of the router (0..1 each).
-// Each model's total is the sum of its tasks' scores, so a model with two
-// good matches beats one with a single slightly better match. The highest
-// total wins; ties go to the model listed first. Jev also scores how much
-// reasoning the prompt needs, mapped onto the levels the chosen model allows.
-//
-// A turn starts with a user message and may continue through many requests
-// (tool results). Jev is asked once per turn; continuations reuse the turn's
-// choice so the model, its thinking and its prompt cache stay consistent.
 import { autoRouterTaskKey, autoRouterTaskQuestionKey, type AutoRouterThinkingLevel } from "@openwork/types/den/auto-router"
 import type { AskJev, JevScores, JevTask } from "./jev.js"
 
 export type AutoCandidate = {
-  /** The model's position in the router; lower wins ties and is the fallback. */
   modelIndex: number
-  /** The `auto_router_model` row id. */
   routeId: string
   modelName: string
   tasks: string[]
-  /** The thinking levels this model allows (`default` plus its catalog efforts). */
   thinkingLevels: AutoRouterThinkingLevel[]
 }
 
@@ -27,7 +13,6 @@ export type AutoDecision = {
   candidate: AutoCandidate
   thinkingLevel: AutoRouterThinkingLevel
   reason: "jev" | "turn" | "fallback"
-  /** Each candidate's summed task score, by route id, when Jev answered. */
   totals?: Map<string, number>
 }
 
@@ -37,15 +22,9 @@ const TURN_CACHE_MS = 60 * 60_000
 const TURN_CACHE_LIMIT = 20_000
 const turnChoices = new Map<string, CachedChoice>()
 
-/** Effort levels from least to most reasoning. `default` is not on the scale. */
 const EFFORT_SCALE: AutoRouterThinkingLevel[] = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
-/** Where each Jev thinking level (none, light, moderate, deep) lands on the scale. */
 const JEV_THINKING_TARGETS: AutoRouterThinkingLevel[] = ["none", "low", "medium", "high"]
 
-/**
- * The model's own level closest to what Jev asked for; ties go to more
- * reasoning. `default` when the model takes no effort levels or Jev gave none.
- */
 export function thinkingLevelFor(score: number | null, allowed: readonly AutoRouterThinkingLevel[]): AutoRouterThinkingLevel {
   const efforts = allowed.filter((level) => level !== "default")
   if (score === null || efforts.length === 0) return "default"
@@ -63,13 +42,11 @@ export function thinkingLevelFor(score: number | null, allowed: readonly AutoRou
   return best
 }
 
-/** The fallback: the first model the member can use, at the provider's default thinking. */
 export function fallbackDecision(candidates: AutoCandidate[]): AutoDecision | null {
   const first = [...candidates].sort((a, b) => a.modelIndex - b.modelIndex)[0]
   return first ? { candidate: first, thinkingLevel: "default", reason: "fallback" } : null
 }
 
-/** One Jev question per distinct task (case-insensitive) across the candidates, in model order. */
 export function jevTasks(candidates: AutoCandidate[]): { tasks: JevTask[]; keyOf: Map<string, string> } {
   const tasks: JevTask[] = []
   const keyOf = new Map<string, string>()
@@ -85,7 +62,6 @@ export function jevTasks(candidates: AutoCandidate[]): { tasks: JevTask[]; keyOf
   return { tasks, keyOf }
 }
 
-/** Sums each candidate's task scores; the highest total wins, ties to the first listed. */
 export function scoreCandidates(candidates: AutoCandidate[], scores: JevScores, keyOf: Map<string, string>) {
   const totals = new Map<string, number>()
   let best: AutoCandidate | null = null
@@ -120,11 +96,6 @@ function remember(turnKey: string, chosen: AutoDecision, now: number) {
 
 export type TurnChoice = { routeId: string; thinking: AutoRouterThinkingLevel }
 
-/**
- * The turn's choice shared by every gateway instance, so a continuation that
- * lands on another instance keeps the turn's model (and its replayable
- * reasoning) instead of asking Jev again.
- */
 export type SharedTurnChoices = {
   recall(turnKey: string): Promise<TurnChoice | null>
   remember(turnKey: string, choice: TurnChoice): Promise<void>
@@ -134,9 +105,7 @@ export async function decideAutoRoute(input: {
   candidates: AutoCandidate[]
   prompt: string
   context: string | null
-  /** True when the request continues a turn (its last message is not the user's). */
   continuation: boolean
-  /** Identifies the conversation turn for reuse; null disables reuse. */
   turnKey: string | null
   askJev: AskJev
   signal?: AbortSignal
@@ -158,7 +127,6 @@ export async function decideAutoRoute(input: {
   }
   let chosen: AutoDecision | null = null
   if (input.candidates.length > 0 && input.prompt.trim()) {
-    // One usable model: Jev only decides how much it should think.
     const { tasks, keyOf } = input.candidates.length === 1 ? { tasks: [], keyOf: new Map<string, string>() } : jevTasks(input.candidates)
     try {
       const scores = await input.askJev({ prompt: input.prompt, context: input.context, tasks, signal: input.signal })
@@ -180,7 +148,6 @@ export async function decideAutoRoute(input: {
   return chosen
 }
 
-/** Test hook: forget every remembered turn. */
 export function clearAutoTurnChoices() {
   turnChoices.clear()
 }

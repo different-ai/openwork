@@ -17,7 +17,6 @@ export async function nativeAccess(actor: NativeActor) {
 }
 const statusSchema = z.object({ threads: z.array(z.object({ state: z.enum(["starting", "running", "waiting", "idle", "error"]).optional(), stale: z.boolean().optional(), sessionId: z.string().nullable().optional(), waitingFor: z.string().nullable().optional(), pending: z.object({ requestId: z.string() }).nullable().optional(), error: z.object({ code: z.string() }).nullable().optional() })) })
 
-/** Reuse the existing authorization paths. Reading a source never starts a session or provisions a computer. */
 export async function readNativeSource(actor: NativeActor, name: string, args: unknown, originSessionId?: string) {
   if (!nativeNameSchema.safeParse(name).success) throw new NativeEventError(-32023, "Unknown event", { kind: "event" })
   await nativeAccess(actor)

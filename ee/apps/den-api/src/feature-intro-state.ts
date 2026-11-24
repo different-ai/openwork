@@ -1,9 +1,5 @@
 import type { FeatureIntroEventType, FeatureIntroState } from "@openwork/types/den/feature-intros"
 
-/**
- * Pure rules for feature intro state (packages/types/src/den/feature-intros.ts), kept apart from the
- * database so they are tested on their own (test/feature-intro-state.test.ts).
- */
 export type FeatureIntroTimestamps = {
   introVersion: number
   firstSeenAt: Date | null
@@ -15,10 +11,6 @@ export type FeatureIntroTimestamps = {
 
 const EMPTY_TIMESTAMPS = { firstSeenAt: null, lastSeenAt: null, dismissedAt: null, ctaClickedAt: null, completedAt: null } as const
 
-/**
- * The state after one event, or null when nothing changes (an event for an older intro version than the one
- * stored). A newer version starts from empty timestamps, so the intro shows again.
- */
 export function applyFeatureIntroEvent(
   current: FeatureIntroTimestamps | null,
   event: { introVersion: number; type: FeatureIntroEventType },

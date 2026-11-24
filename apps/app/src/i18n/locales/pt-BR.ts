@@ -1,9 +1,12 @@
-/**
- * Traduções para português do Brasil
- * Termos profissionais (Skills, Plugins, Commands, Sessions, OpenCode, OpenPackage, OpenWork) NÃO são traduzidos
- */
-
 export default {
+  "artifact.office_empty": "Não há texto legível neste arquivo. Abra-o em outro aplicativo para ver o original.",
+  "artifact.office_empty_slide": "Não há texto legível neste slide.",
+  "artifact.office_loading": "Carregando a estrutura do texto",
+  "artifact.office_slide": "Slide {number}",
+  "artifact.office_text_only": "Apenas a estrutura do texto. O layout, as imagens e as cores não são exibidos.",
+  "artifact.office_too_large": "O arquivo é grande demais para a prévia. Abra-o em outro aplicativo para ver o conteúdo completo.",
+  "artifact.office_truncated": "Parte do texto não é exibida porque a prévia atingiu o limite.",
+  "artifact.office_unreadable": "Não foi possível ler este arquivo. Tente abri-lo em outro aplicativo.",
   "app.error_audit_load": "Falha ao carregar o log de auditoria.",
   "app.error_connect_first": "Conecte a este worker antes de aplicar alterações de runtime.",
   "app.error_request_failed": "Falha na requisição",
@@ -521,7 +524,6 @@ export default {
   "settings.group_workspace": "Workspace",
   "settings.hide_titlebar": "Ocultar barra de título",
   "settings.hide_titlebar_desc": "Oculta a barra de título da janela. Útil para gerenciadores de janelas tipo tiling",
-  "settings.join_discord": "Entrar no Discord",
   "settings.language": "Idioma",
   "settings.language.description": "Escolha seu idioma preferido",
   "settings.last_error": "Último erro",

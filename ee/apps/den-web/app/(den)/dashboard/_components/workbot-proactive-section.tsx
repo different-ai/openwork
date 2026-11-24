@@ -26,17 +26,8 @@ import { useSaveWorkbotProactive, useWorkbotProactive } from "./workbot-proactiv
 import { PROACTIVE_PREVIEW_KINDS, WorkbotProactivePreview } from "./workbot-proactive-preview";
 import { WorkbotProactiveSources } from "./workbot-proactive-sources";
 import { WorkbotAgentSettingsGroups } from "./workbot-agent-settings-groups";
-import { getLibraryConnectorRoute } from "../../_lib/den-org";
+import { getLibraryConnectorRoute, orgFeatureEnabled } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-
-/**
- * Manage › Workbot › Your agent: every member gets a background agent that reads their calendar and the connectors
- * they turn on, on a schedule, and messages them only when something needs them. One switch (Proactive Mode), what
- * agents tell people about, where messages go, when and how often, a preview, and the connectors agents read.
- *
- * Members › Teams › Everyone (or a team) › Workbot shows the same section for a `scope`: Everyone's policy, or one
- * team's own, which starts from Everyone's the first time the team changes a control.
- */
 
 const EVERYONE: AgentPolicyScope = { kind: "everyone" };
 
@@ -105,12 +96,10 @@ export function WorkbotProactivePanel({
   onChange: (change: WorkbotProactiveSettingsInput) => void;
   connectorsHref: string;
   initialPreview?: AgentResponsibility;
-  /** Whose policy the rows show: Everyone's, or one team's. */
   scope?: AgentPolicyScope;
 }) {
   const ids = { destination: useId(), days: useId(), cap: useId(), members: useId() };
   const [preview, setPreview] = useState<AgentResponsibility>(initialPreview);
-  // With Your agent's brief on (the server sends `brief`), one rhythm and a text replace the message types.
   if (view.brief) return <WorkbotAgentSettingsGroups view={view} brief={view.brief} canManage={canManage} saving={saving} onChange={onChange} connectorsHref={connectorsHref} scope={scope} />;
   const switchLabel = AGENTS_SWITCH_LABEL;
   const { settings, template, slackReady, runnerReady } = view;
@@ -269,24 +258,18 @@ function errorMessage(error: unknown, fallback: string): string {
 }
 
 export function WorkbotProactiveSection({ orgId, canManage, connectorsHref, scope = EVERYONE, headerAside, belowHeader, busy = false, onEdit, show = "all" }: {
-  /** With Workbot's settings in tabs: only how agents work ("policy"), or only the connectors they read ("sources"). */
   show?: WorkbotAgentsPart;
   orgId: string;
   canManage: boolean;
   connectorsHref: string;
-  /** Whose policy: Everyone's (the default), or one team's. */
   scope?: AgentPolicyScope;
-  /** Beside the heading: where the policy comes from, and the way back to Everyone's. */
   headerAside?: ReactNode;
-  /** Lines of state under the heading. */
   belowHeader?: ReactNode;
-  /** Something else is saving this policy, so its controls wait. */
   busy?: boolean;
-  /** A control was changed and its save started. */
   onEdit?: () => void;
 }) {
   const query = useWorkbotProactive(orgId, Boolean(orgId), scope);
-  const { orgSlug } = useOrgDashboard();
+  const { orgSlug, orgContext } = useOrgDashboard();
   const save = useSaveWorkbotProactive(orgId, scope);
   const headingId = useId();
   const saving = save.isPending || busy;
@@ -294,7 +277,6 @@ export function WorkbotProactiveSection({ orgId, canManage, connectorsHref, scop
     onEdit?.();
     save.mutate(next);
   };
-  // In a tab, the tab already names the part: no heading on its own, and beside a team's chip it says whose settings these are.
   const inTab = show !== "all";
   const heading = <h2 id={headingId} className="px-1 text-[13px] font-medium text-gray-500">{inTab ? (show === "sources" ? "Connectors" : "Proactive Mode") : "Members' agents"}</h2>;
 
@@ -330,7 +312,7 @@ export function WorkbotProactiveSection({ orgId, canManage, connectorsHref, scop
             />
           )}
           {show === "policy" ? null : (
-            <WorkbotProactiveSources view={query.data} canManage={canManage} saving={saving} onChange={change} heading={show !== "sources"}
+            <WorkbotProactiveSources bulkControls={orgFeatureEnabled(orgContext, "workbotEnableAllConnectors")} view={query.data} canManage={canManage} saving={saving} onChange={change} heading={show !== "sources"}
               tools={{ orgId, scope, connectorHref: (connectionId) => getLibraryConnectorRoute(orgSlug, connectionId) }} />
           )}
         </div>

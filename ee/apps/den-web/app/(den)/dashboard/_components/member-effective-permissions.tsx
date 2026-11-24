@@ -10,10 +10,6 @@ import { useMemberPermissions, type MemberPermissions } from "./permissions-data
 import { PermissionAreaSection, PermissionRowsSkeleton, permissionAreas } from "./permissions-ui";
 import { permissionSourceRoleLabel } from "./team-roles";
 
-/**
- * Whether the signed-in member may see this member's effective permissions:
- * they hold `permissions.view` or it is themselves.
- */
 export function canViewMemberPermissions(orgContext: DenOrgContext | null, memberId: string): boolean {
   if (!orgContext) return false;
   if (orgContext.currentMember.id === memberId) return true;
@@ -28,17 +24,14 @@ type Entry = MemberPermissions["permissions"][number];
 type Source = Entry["sources"][number];
 
 function SourceLink({ source, orgSlug, linked }: { source: Source; orgSlug: string | null; linked: boolean; }) {
-  // each source reads as the role that gives it.
   const label = permissionSourceRoleLabel(source);
   if (!source.setId || !linked) return <>{label}</>;
   return <Link className="underline-offset-2 hover:text-gray-900 hover:underline" href={getPermissionSetRoute(orgSlug, source.setId)}>{label}</Link>;
 }
 
-/** "Effective permissions" for one member, each with where it comes from. */
 export function MemberEffectivePermissions({ memberId, memberName }: { memberId: string; memberName: string }) {
   const { orgId, orgSlug, orgContext } = useOrgDashboard();
   const query = useMemberPermissions(orgId, memberId, true);
-  // Set pages need permissions.view; someone reading only their own sees plain labels.
   const linked = orgContext ? viewerCanViewPermissions(orgContext) : false;
 
   if (query.isPending) return <PermissionRowsSkeleton rows={4} label={`Loading permissions for ${memberName}`} />;

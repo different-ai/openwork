@@ -43,7 +43,6 @@ function savedAccess(provider: DenInferenceProviderDetails): AccessDraft {
   return { orgWide: access.allMembers, memberIds: access.memberIds, teamIds: access.teamIds };
 }
 
-/** A saved custom OpenAI-compatible provider: connection, models with every setting, re-fetch, access, remove. */
 export function CustomProviderManageScreen({ provider, reload, embedded = false }: { provider: DenInferenceProviderDetails; reload: () => Promise<void>; embedded?: boolean }) {
   const Heading = embedded ? "h2" : "h1";
   const router = useRouter();
@@ -65,7 +64,6 @@ export function CustomProviderManageScreen({ provider, reload, embedded = false 
   const [fieldError, setFieldError] = useState<{ field: ConnectionField; message: string } | null>(null);
   const [access, setAccess] = useState<AccessDraft>(initialAccess);
   const [discoveryStatus, setDiscoveryStatus] = useState<GatewayCustomDiscoveryStatus | null>(null);
-  /** Ids the provider listed at its last answered fetch, saved or on screen; hand-added models are never in it. */
   const [listedModelIds, setListedModelIds] = useState<string[]>(() => custom?.discovery.listedModelIds ?? []);
   const [refetching, setRefetching] = useState(false);
   const [refetchNotice, setRefetchNotice] = useState<{ tone: "info" | "neutral" | "error"; message: string } | null>(null);
@@ -94,7 +92,6 @@ export function CustomProviderManageScreen({ provider, reload, embedded = false 
   const selected = drafts.filter((draft) => draft.selected);
   const endpoint = chatCompletionsUrl(baseUrl);
   const busy = saving || removing || refetching;
-  /** The tested model's display name when it has one, else its id. */
   const testedModelLabel = (modelId: string) => drafts.find((draft) => draft.settings.id.trim() === modelId)?.settings.name.trim() || modelId;
 
   const editDraft = (key: string, change: (draft: ModelDraft) => ModelDraft) => {
@@ -112,7 +109,6 @@ export function CustomProviderManageScreen({ provider, reload, embedded = false 
     try {
       await runReauthableAction("refetch-custom-provider-models", async () => {
         const urlChanged = normalizedBaseUrl !== null && normalizedBaseUrl !== custom.baseUrl;
-        // A new key or URL on screen is not saved yet; re-fetching uses what is saved unless the URL changed.
         const response = apiKey.trim() && normalizedBaseUrl
           ? await discoverCustomProviderModels({ baseUrl: normalizedBaseUrl, apiKey: apiKey.trim() })
           : await discoverCustomProviderModels({ inferenceProviderId: provider.id, ...(urlChanged ? { baseUrl: normalizedBaseUrl } : {}) });

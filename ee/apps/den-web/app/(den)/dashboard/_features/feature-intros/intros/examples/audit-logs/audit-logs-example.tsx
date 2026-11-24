@@ -5,7 +5,6 @@ import { ExampleAvatar, ExampleCaption, ExampleRow, ExampleRows } from "../examp
 import { useExampleStep } from "../use-example-step";
 import { auditLogsExampleRows } from "./audit-logs-example-data";
 
-/** Section example: recent changes as the Audit logs list words them, with who, what, result and when. */
 export function AuditLogsExample() {
   const step = useExampleStep(auditLogsExampleRows.length);
 

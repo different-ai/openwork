@@ -5,13 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Empty, EmptyContent, EmptyHeader, EmptyMedia, EmptyTitle } from "@/components/ui/empty";
 import { t } from "../../../i18n";
 
-/**
- * Signed out, a page that needs OpenWork Cloud has one primary action:
- * signing in. Library keeps its local list, so it leads with this banner above
- * what signing in unlocks.
- */
 export function CloudSignInBanner(props: {
-  /** Leading visual: Library shows the connectors it unlocks. */
   media: ReactNode;
   message: string;
   onSignIn?: () => void;
@@ -30,14 +24,7 @@ export function CloudSignInBanner(props: {
   );
 }
 
-/**
- * Signed out, Artifacts and Automations have nothing of their own to list:
- * everything on them lives in OpenWork Cloud. The whole page is this one empty
- * state: a single line saying what signing in gives, and the same sign-in
- * action as Library's banner.
- */
 export function CloudSignInEmptyState(props: {
-  /** The page's sidebar icon. */
   icon: ReactNode;
   title: string;
   onSignIn?: () => void;

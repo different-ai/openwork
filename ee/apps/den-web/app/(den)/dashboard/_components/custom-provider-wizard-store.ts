@@ -1,10 +1,3 @@
-/**
- * State for the four-step "Add a custom provider" wizard. One in-memory
- * Zustand store per wizard: moving between steps never loses anything, and
- * the key never reaches localStorage or the URL. Nothing is written to den-api
- * until Add.
- */
-
 import { createStore } from "zustand/vanilla";
 import { normalizeGatewayCustomBaseUrl, type GatewayCustomDiscoverResponse, type GatewayCustomTestResponse } from "@openwork/types/den/gateway-custom-providers";
 import {
@@ -43,15 +36,12 @@ export type WizardData = {
   name: string;
   baseUrl: string;
   apiKey: string;
-  /** A field or model to point at, with the message that sent the admin there. */
   highlight: WizardHighlight;
   message: string | null;
   discovery: WizardDiscovery;
-  /** Ids the last answered fetch listed; only these can be flagged "no longer listed". Sent on create. */
   listedModelIds: string[];
   models: ModelDraft[];
   nextKey: number;
-  /** The model whose settings are open. */
   expandedKey: string | null;
   testModelKey: string | null;
   test: WizardTest;
@@ -64,7 +54,6 @@ export type WizardActions = {
   setApiKey: (value: string) => void;
   setAccess: (value: WizardAccess) => void;
   goTo: (step: WizardStep) => void;
-  /** Validates the current step; on success moves on, otherwise points at what to fix. Returns whether it moved. */
   next: () => boolean;
   back: () => void;
   discoveryStarted: (connection: string) => void;
@@ -81,7 +70,6 @@ export type WizardActions = {
   setExpanded: (key: string | null) => void;
   setTestModel: (key: string) => void;
   testStarted: (fingerprint: string) => void;
-  /** Keeps the result only if nothing changed while it ran; a failure sends the admin to the step that caused it. */
   testFinished: (fingerprint: string, result: GatewayCustomTestResponse) => void;
 };
 
@@ -93,7 +81,6 @@ export const INITIAL_WIZARD: WizardData = {
   test: { state: "idle" }, access: { orgWide: true, memberIds: [], teamIds: [] },
 };
 
-/** Identifies the connection a discovery ran for; a different one needs a new fetch. */
 export function connectionKey(state: Pick<WizardData, "baseUrl" | "apiKey">): string {
   return JSON.stringify([normalizeGatewayCustomBaseUrl(state.baseUrl) ?? state.baseUrl.trim(), state.apiKey.trim()]);
 }
@@ -110,12 +97,10 @@ export function wizardFingerprint(state: WizardData): string {
   return testFingerprint({ baseUrl: state.baseUrl, apiKey: state.apiKey, drafts: state.models, testModelKey: wizardTestModelKey(state) });
 }
 
-/** The last test passed with exactly what is on screen now. */
 export function wizardTestPassed(state: WizardData): boolean {
   return state.test.state === "done" && state.test.result.ok && state.test.fingerprint === wizardFingerprint(state);
 }
 
-/** The last test result, only while it still describes what is on screen. */
 export function currentTestResult(state: WizardData): GatewayCustomTestResponse | null {
   return state.test.state === "done" && state.test.fingerprint === wizardFingerprint(state) ? state.test.result : null;
 }
@@ -173,7 +158,6 @@ export function createWizardStore(initial: Partial<WizardData> = {}) {
       discoveryFinished: (connection, response) => {
         if (get().discovery.state !== "loading" || connectionKey(get()) !== connection) return;
         const models = mergeDiscoveredModels(get().models, response.models, response.status, { selectMatched: true, makeKey, previouslyListed: new Set(get().listedModelIds) });
-        // An unavailable answer learned nothing, so the last listed ids stay.
         const listedModelIds = response.status === "unavailable" ? get().listedModelIds : [...new Set(response.models.map((entry) => entry.id))];
         set({ discovery: { state: "done", connection, response }, listedModelIds, models });
       },

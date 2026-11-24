@@ -29,7 +29,6 @@ export function ProviderLogo({ provider, size = "sm" }: { provider: Pick<Library
   );
 }
 
-/** One provider in My Library, with the one thing the person can do about it on the right. */
 export function LibraryModelRow({ provider, signIn }: { provider: LibraryModelProvider; signIn: ModelSignIn }) {
   const { orgSlug } = useOrgDashboard();
   const waiting = signIn.waitingFor === provider.id;
@@ -63,7 +62,6 @@ function stateLine(provider: LibraryModelProvider, waiting: boolean): { text: st
   return { text: "Your organization signs in for everyone.", dot: "bg-emerald-600" };
 }
 
-/** A provider's page in My Library: which account is in use and every model it gives the person. */
 export function LibraryModelProviderScreen({ providerId }: { providerId: string }) {
   const { orgSlug } = useOrgDashboard();
   const models = useLibraryModels();

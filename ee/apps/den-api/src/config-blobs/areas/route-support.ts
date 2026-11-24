@@ -1,26 +1,7 @@
-/**
- * Shared helpers for the config-blob adapters that apply through existing
- * route handlers (connectors, BYOK providers, desktop policies, collections).
- *
- * Those handlers take a Hono context (`c.json`, `c.get("organizationContext")`,
- * `c.get("session")`). `configRouteContext` builds a real Hono `Context` for
- * the applying member, so the handler runs its own validation, permission
- * checks and side effects exactly as for a dashboard request, and the adapter
- * reads its `Response`.
- *
- * Audit: generic request capture (the route middleware) does not run here.
- * The service runs the whole apply inside runWithAuditJobChangeCapture
- * (config-blobs/service.ts → audit/request-capture.ts): `auditChangeCapture(c)`
- * for this synthetic context, and `currentAuditChangeCapture()`, return the
- * apply's `tenant_job` operation capture, so every domain change event the
- * handlers emit joins that one operation (jobRunId = change request id).
- * Handlers that only record request evidence leave nothing per item; the
- * apply report and before-snapshot cover them.
- */
 import { randomUUID } from "node:crypto"
 import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, InvitationTable, MemberTable, TeamTable } from "@openwork-ee/den-db/schema"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { isDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import {
   configRefSchema,
   configSecretSchema,
@@ -33,7 +14,7 @@ import { Context } from "hono"
 import { z } from "zod"
 import { getOrganizationContextForUser, type OrganizationContext } from "../../orgs.js"
 import type { OrgRouteVariables } from "../../routes/org/shared.js"
-import { ConfigApplyItemError, type ConfigApplyOp, type ConfigApplyResult, type ConfigAreaContext, type ConfigDb } from "../area.js"
+import { ConfigApplyItemError, type ConfigApplyOp, type ConfigApplyResult, type ConfigAreaContext, type ConfigDb, type ConfigPreflightResult } from "../area.js"
 
 export type JsonObject = { [key: string]: unknown }
 
@@ -41,7 +22,6 @@ export function isJsonObject(value: unknown): value is JsonObject {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-/** A failed apply step. `code` is the route's error code when it came from one. */
 export class ConfigApplyError extends Error {
   constructor(readonly code: string, message: string, readonly status?: number, readonly field?: string) {
     super(message)
@@ -49,25 +29,18 @@ export class ConfigApplyError extends Error {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Field changes and apply steps
-
-/** Whether `path` is `prefix` or lies under it ("models[id=x].name" is under "models"). */
 export function pathUnder(path: string, prefix: string): boolean {
   return path === prefix || path.startsWith(`${prefix}.`) || path.startsWith(`${prefix}[`)
 }
 
-/** Whether any change (or new secret value) touches one of `prefixes`, either above or below it. */
 export function touches(changes: readonly ConfigFieldChange[], ...prefixes: string[]): boolean {
   return changes.some((change) => prefixes.some((prefix) => pathUnder(change.path, prefix) || pathUnder(prefix, change.path)))
 }
 
-/** The changes of an op (empty for creates and deletes). */
 export function opChanges(op: ConfigApplyOp): ConfigFieldChange[] {
   return op.kind === "update" ? op.changes : []
 }
 
-/** Changes plus the secret paths of an update, as one list of touched paths. */
 export function opTouched(op: ConfigApplyOp): ConfigFieldChange[] {
   if (op.kind !== "update") return []
   return [...op.changes, ...op.secretPaths.map((path) => ({ path }))]
@@ -85,11 +58,6 @@ function errorStatus(error: unknown): number | undefined {
   return typeof error.status === "number" ? error.status : undefined
 }
 
-/**
- * Any error from an apply turned into a `ConfigApplyItemError`: route and
- * service errors keep their code, status and message; `where` names the write
- * that failed. An error that already is one keeps its own step and field.
- */
 export function configItemError(error: unknown, stepsDone: readonly ConfigApplyStep[], where: { step?: ConfigApplyStep; field?: string } = {}): ConfigApplyItemError {
   if (error instanceof ConfigApplyItemError) {
     if (error.stepsDone.length > 0 || stepsDone.length === 0) return error
@@ -106,7 +74,6 @@ export function configItemError(error: unknown, stepsDone: readonly ConfigApplyS
   }, [...stepsDone])
 }
 
-/** The ConfigApplyItemError for a failed route response (code, status and message from its body). */
 export async function routeFailure(response: Response, action: string, stepsDone: readonly ConfigApplyStep[] = [], where: { step?: ConfigApplyStep; field?: string } = {}): Promise<ConfigApplyItemError> {
   try {
     await expectRouteOk(response, action)
@@ -116,16 +83,11 @@ export async function routeFailure(response: Response, action: string, stepsDone
   }
 }
 
-/** The spec field a step target names: "models[gpt-5]" → "models", "access.teams" → "access.teams". */
 function stepField(target: string): string {
   const bracket = target.indexOf("[")
   return bracket >= 0 ? target.slice(0, bracket) : target
 }
 
-/**
- * The writes of one item, in order. `run` performs a write and records it; a
- * failing write throws ConfigApplyItemError naming it, with the steps already done.
- */
 export class ConfigStepLog {
   readonly steps: ConfigApplyStep[] = []
 
@@ -145,7 +107,6 @@ export class ConfigStepLog {
   }
 }
 
-/** Runs an adapter's apply with a step log: steps are returned, and any error becomes a ConfigApplyItemError with them. */
 export async function applyWithSteps(apply: (log: ConfigStepLog) => Promise<Omit<ConfigApplyResult, "steps">>): Promise<ConfigApplyResult> {
   const log = new ConfigStepLog()
   try {
@@ -156,7 +117,6 @@ export async function applyWithSteps(apply: (log: ConfigStepLog) => Promise<Omit
   }
 }
 
-/** A step for set-valued fields: one `add` / `remove` step per element. */
 export function setSteps(target: string, added: readonly string[], removed: readonly string[]): ConfigApplyStep[] {
   return [
     ...added.map((detail): ConfigApplyStep => ({ action: "add", target, detail })),
@@ -164,10 +124,6 @@ export function setSteps(target: string, added: readonly string[], removed: read
   ]
 }
 
-// ---------------------------------------------------------------------------
-// Running route handlers outside a request
-
-/** Session id of the synthetic session an apply runs under. Not `mcp_internal`: no agent-only restrictions apply. */
 export const CONFIG_APPLY_SESSION_ID = "config_blob_apply"
 
 export type ConfigRouteEnv = { Variables: OrgRouteVariables }
@@ -178,19 +134,6 @@ export type ConfigRouteContext = {
   requestId: string
 }
 
-/**
- * A Hono context for the applying member. The session counts as freshly
- * signed in, because approving was the step-up:
- * - approving or applying from the dashboard needs a recent sign-in
- *   (routes/org/config-blobs.ts → `requireApprovalStepUp`), whatever the
- *   areas; a config token approves without one (D3: it has no session);
- * - the worker only applies while the last approval is under 24 hours old
- *   (service.ts → `CONFIG_APPROVAL_MAX_AGE_MS`); older, the request goes
- *   back to review with its approvals dropped ("approval expired").
- * Using the approver's real sign-in time instead would make every apply
- * queued a few minutes after approval fail the handlers' own fresh-session
- * checks.
- */
 export async function configRouteContext(ctx: ConfigAreaContext): Promise<ConfigRouteContext> {
   const userId = normalizeDenTypeId("user", ctx.actor.userId)
   const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
@@ -202,6 +145,7 @@ export async function configRouteContext(ctx: ConfigAreaContext): Promise<Config
   const c = new Context<ConfigRouteEnv>(new Request("http://config-blobs.invalid/apply"))
   c.set("organizationContext", payload)
   c.set("apiKey", null)
+  c.set("signInSessionId", null)
   c.set("session", {
     id: CONFIG_APPLY_SESSION_ID,
     token: CONFIG_APPLY_SESSION_ID,
@@ -228,7 +172,6 @@ async function readResponseBody(response: Response): Promise<unknown> {
   }
 }
 
-/** The JSON body of a successful route response; throws ConfigApplyError with the route's error otherwise. */
 export async function expectRouteOk(response: Response, action: string): Promise<JsonObject> {
   const body = await readResponseBody(response)
   if (response.status < 300) return isJsonObject(body) ? body : {}
@@ -237,18 +180,12 @@ export async function expectRouteOk(response: Response, action: string): Promise
   throw new ConfigApplyError(code, routeErrorMessage(action, message, response.status), response.status)
 }
 
-/**
- * A failed route's message, said once: `Create "Docs": <message>`, or the
- * message alone when it already names what was acted on (`Could not validate
- * "Docs": …`), or `Create "Docs" failed (500).` when the route gave none.
- */
 export function routeErrorMessage(action: string, message: string | null, status: number): string {
   if (!message) return `${action} failed (${status}).`
   const subject = actionSubject(action)
   return subject && message.includes(subject) ? message : `${action}: ${message}`
 }
 
-/** What an action label acts on: the quoted name (`Update "Docs"` → `Docs`), else what follows the verb. */
 function actionSubject(action: string): string | null {
   const quoted = /"([^"]+)"/.exec(action)
   if (quoted?.[1]) return quoted[1]
@@ -263,13 +200,9 @@ export function stringField(body: JsonObject, ...path: string[]): string {
   return current
 }
 
-// ---------------------------------------------------------------------------
-// Spec shapes
-
 export const specRefSchema = configRefSchema
 export const specSecretSchema = configSecretSchema
 
-/** Team and people references, the way every area with grants exports them. */
 export const specAudienceSchema = z.object({
   teams: z.array(specRefSchema).max(500),
   members: z.array(specRefSchema).max(500),
@@ -287,11 +220,6 @@ export function secretPlaceholder(area: string, itemId: string, field: string, s
   return { $secret: `${area}/${itemId}/${field}`, set }
 }
 
-/**
- * Local ids of resolved references. The engine adds `id` to every `$ref` it
- * resolved and removes the ones the admin dropped, so a ref without `id` here
- * is a bug upstream: refuse rather than silently narrow access.
- */
 export function resolvedRefIds(value: unknown, label: string): string[] {
   if (value === undefined || value === null) return []
   if (!Array.isArray(value)) throw new ConfigApplyError("invalid_spec", `${label} must be a list.`)
@@ -302,7 +230,6 @@ export function resolvedRefIds(value: unknown, label: string): string[] {
   })
 }
 
-/** The decision for one secret field at apply time. A raw `keep`/`unset` placeholder is accepted too. */
 export function resolvedSecret(value: unknown, label: string): ResolvedConfigSecret | null {
   if (value === undefined || value === null) return null
   if (!isJsonObject(value) || typeof value.$secret !== "string") {
@@ -315,24 +242,16 @@ export function resolvedSecret(value: unknown, label: string): ResolvedConfigSec
   throw new ConfigApplyError("needs_input", `${label} has no decision (keep, value or unset).`)
 }
 
-/** The new value to write, `undefined` to keep the stored one, `null` to clear it. */
 export function secretWrite(secret: ResolvedConfigSecret | null): string | null | undefined {
   if (!secret || secret.decision === "keep") return undefined
   if (secret.decision === "unset") return null
   return secret.value
 }
 
-/** Whether a placeholder says a value is stored (`{ $secret, set: true }`). */
 export function secretIsSet(value: unknown): boolean {
   return isJsonObject(value) && value.set === true
 }
 
-/**
- * Irreversible effects of one secret decision, for `irreversible(op)`: a new
- * value overwrites the stored one, "unset" deletes it. Never throws: a
- * placeholder without a decision (not resolved yet) has no effect to report.
- * `previous` is the placeholder the target exported (whether a value is stored).
- */
 export function secretEffects(value: unknown, label: string, previous?: unknown): string[] {
   if (!isJsonObject(value)) return []
   const stored = previous === undefined || secretIsSet(previous)
@@ -342,16 +261,11 @@ export function secretEffects(value: unknown, label: string, previous?: unknown)
   return []
 }
 
-/** Parses the item spec at apply time: refs carry `id`, secrets carry decisions, so only the shape of plain fields is checked. */
 export function specObject(value: unknown): JsonObject {
   if (!isJsonObject(value)) throw new ConfigApplyError("invalid_spec", "spec must be an object.")
   return value
 }
 
-// ---------------------------------------------------------------------------
-// Reads shared by the serializers
-
-/** Email (lowercased) of each member: their account email, or their invitation's for invited members. */
 export async function loadMemberEmails(db: ConfigDb, organizationId: string, memberIds: readonly string[]): Promise<Map<string, string>> {
   const ids = [...new Set(memberIds)].map((id) => normalizeDenTypeId("member", id))
   if (ids.length === 0) return new Map()
@@ -369,6 +283,26 @@ export async function loadMemberEmails(db: ConfigDb, organizationId: string, mem
   return out
 }
 
+export const OWN_MANAGER_ACCESS_KEPT = "Your own manager access was kept."
+
+export async function ownManagerAccessPreflight(ctx: ConfigAreaContext, op: ConfigApplyOp): Promise<ConfigPreflightResult | null> {
+  if (op.kind !== "update") return null
+  const change = op.changes.find((entry) => entry.path === "access.members.manager")
+  const removed = (change?.removed ?? []).flatMap((entry) => {
+    if (typeof entry === "string") return [entry]
+    return isJsonObject(entry) && typeof entry.$ref === "string" ? [entry.$ref] : []
+  })
+  if (removed.length === 0) return null
+  const memberId = normalizeDenTypeId("member", ctx.actor.memberId)
+  const email = (await loadMemberEmails(ctx.db, ctx.organizationId, [memberId])).get(memberId)
+  const own = new Set([`people/${memberId}`, ...(email ? [personRef(email).$ref] : [])])
+  if (!removed.some((ref) => own.has(ref))) return null
+  const only = op.secretPaths.length === 0 && op.changes.length === 1 && removed.length === 1 && (change?.added ?? []).length === 0
+  return only
+    ? { skip: "Nothing to change: only your own manager access differs, and an import keeps it." }
+    : { warnings: ["Your own manager access will be kept."] }
+}
+
 export async function loadTeamNames(db: ConfigDb, organizationId: string, teamIds: readonly string[]): Promise<Map<string, string>> {
   const ids = [...new Set(teamIds)].map((id) => normalizeDenTypeId("team", id))
   if (ids.length === 0) return new Map()
@@ -379,7 +313,6 @@ export async function loadTeamNames(db: ConfigDb, organizationId: string, teamId
   return new Map(rows.map((row) => [row.id, row.name]))
 }
 
-/** Team refs sorted by id, people refs sorted by email (stable exports). Members without an email are skipped. */
 export function audienceRefs(input: {
   teamIds: readonly string[]
   memberIds: readonly string[]
@@ -394,14 +327,12 @@ export function audienceRefs(input: {
   return { teams, members: emails.map(personRef) }
 }
 
-/** Added and removed ids between the ids stored now and the ids wanted. */
 export function idDiff(current: Iterable<string>, wanted: Iterable<string>): { added: string[]; removed: string[] } {
   const now = new Set(current)
   const next = new Set(wanted)
   return { added: [...next].filter((id) => !now.has(id)), removed: [...now].filter((id) => !next.has(id)) }
 }
 
-/** `add` / `remove` steps for team and people grants, named by team name and email. */
 export async function audienceSteps(db: ConfigDb, organizationId: string, target: string, diff: {
   teams?: { added: string[]; removed: string[] }
   members?: { added: string[]; removed: string[] }

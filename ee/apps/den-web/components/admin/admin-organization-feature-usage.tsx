@@ -28,7 +28,6 @@ export type AdminFeatureUsage = {
   enabledMembers: number;
   usedLast7Days: number;
   usedLast30Days: number;
-  /** Latest change that could affect this organization; null when never changed or from older servers. */
   lastChange: AdminFeatureChange | null;
   members: AdminFeatureUsageMember[];
 };
@@ -59,7 +58,6 @@ function parseMember(value: unknown): AdminFeatureUsageMember | null {
   };
 }
 
-/** GET /v1/admin/organizations/:id/feature-usage; unknown feature keys (newer server) are dropped. */
 export function parseAdminOrganizationFeatureUsage(payload: unknown): AdminOrganizationFeatureUsage | null {
   if (!isRecord(payload) || !Array.isArray(payload.features)) return null;
   const features = payload.features.flatMap((entry): AdminFeatureUsage[] => {
@@ -70,14 +68,12 @@ export function parseAdminOrganizationFeatureUsage(payload: unknown): AdminOrgan
   return { activeMembers: count(payload.activeMembers), features, generatedAt: typeof payload.generatedAt === "string" ? payload.generatedAt : new Date().toISOString() };
 }
 
-/** Most used first, then most enabled; registry order breaks ties. */
 export function sortFeatureUsage(features: readonly AdminFeatureUsage[]): AdminFeatureUsage[] {
   return features.map((feature, index) => ({ feature, index }))
     .sort((a, b) => b.feature.usedLast30Days - a.feature.usedLast30Days || b.feature.members.length - a.feature.members.length || b.feature.enabledMembers - a.feature.enabledMembers || a.index - b.index)
     .map(({ feature }) => feature);
 }
 
-/** "On for" cell: "3 of 12 members", "1 of 1 member". */
 export const onFor = (enabled: number, total: number) => `${enabled} of ${total} ${total === 1 ? "member" : "members"}`;
 
 const day = (value: string) => new Date(value).toLocaleDateString(undefined, { day: "numeric", month: "short", year: "numeric" });
@@ -89,13 +85,11 @@ export type FeatureUsageGroup = { id: string; label: string; features: AdminFeat
 export type MemberFeatureUse = Omit<AdminFeatureUsageMember, "memberId" | "name" | "email"> & { key: FeatureKey };
 export type MemberFeatureUsage = { memberId: string; name: string | null; email: string | null; lastUsedAt: string; uses: MemberFeatureUse[] };
 
-/** Features added to the registry this recently lead the default view. */
 export const NEW_FEATURE_DAYS = 14;
 const DAY_MS = 24 * 60 * 60 * 1000;
 const addedAt = (key: FeatureKey) => `${FEATURES[key].added}T00:00:00.000Z`;
 export const isNewFeature = (key: FeatureKey, now = Date.now()) => now - Date.parse(addedAt(key)) < NEW_FEATURE_DAYS * DAY_MS;
 
-/** New features, newest first, then everything else in the order given. */
 export function splitNewFeatures(features: readonly AdminFeatureUsage[], now = Date.now()): { fresh: AdminFeatureUsage[]; rest: AdminFeatureUsage[] } {
   const fresh = features.filter((feature) => isNewFeature(feature.key, now)).sort((a, b) => FEATURES[b.key].added.localeCompare(FEATURES[a.key].added));
   return { fresh, rest: features.filter((feature) => !isNewFeature(feature.key, now)) };
@@ -125,7 +119,6 @@ function hasStatus(feature: AdminFeatureUsage, status: FeatureUsageStatus, activ
   }
 }
 
-/** Status and category always apply; search matches a feature's name or key, or a member who used it. */
 export function filterFeatureUsage(features: readonly AdminFeatureUsage[], filter: FeatureUsageFilter, activeMembers: number, now = Date.now()): AdminFeatureUsage[] {
   const query = filter.search.trim().toLowerCase();
   return features.filter((feature) => hasStatus(feature, filter.status, activeMembers, now)
@@ -133,7 +126,6 @@ export function filterFeatureUsage(features: readonly AdminFeatureUsage[], filte
     && (!query || matches(query, FEATURES[feature.key].label, feature.key) || feature.members.some((member) => matches(query, member.name, member.email))));
 }
 
-/** When the feature was turned on for this organization: its latest change, when that turned it on and it is still on. */
 export function turnedOnAt(feature: AdminFeatureUsage): string | null {
   const change = feature.lastChange;
   return change && feature.enabledMembers > 0 && (change.action === "on" || change.action === "restored") ? change.at : null;
@@ -141,7 +133,6 @@ export function turnedOnAt(feature: AdminFeatureUsage): string | null {
 
 export const monthLabel = (iso: string) => new Intl.DateTimeFormat(undefined, { month: "long", year: "numeric", timeZone: "UTC" }).format(new Date(iso));
 
-/** UTC calendar months, newest first; features without a date go last, still on before off. */
 export function groupFeatureUsage(features: readonly AdminFeatureUsage[], grouping: "turnedOn" | "added"): FeatureUsageGroup[] {
   const dated = features.map((feature) => ({ feature, at: grouping === "added" ? addedAt(feature.key) : turnedOnAt(feature) }))
     .sort((a, b) => (b.at ?? "").localeCompare(a.at ?? ""));
@@ -157,7 +148,6 @@ export function groupFeatureUsage(features: readonly AdminFeatureUsage[], groupi
   return [...groups.values()].sort((a, b) => rank(a.id) - rank(b.id));
 }
 
-/** Each member who used a listed feature, most recent use first. A search on a member's name keeps all their features. */
 export function groupUsageByMember(features: readonly AdminFeatureUsage[], search = ""): MemberFeatureUsage[] {
   const query = search.trim().toLowerCase();
   const people = new Map<string, MemberFeatureUsage>();

@@ -6,7 +6,6 @@ import { ExampleCaption, ExampleGroupLabel, ExampleRow, ExampleRows, ExampleServ
 import { GITHUB } from "./plugins-example-data";
 import { sourcesExampleAccount, sourcesExampleRepos, sourcesExampleUpdate } from "./sources-example-data";
 
-/** Sources example: a connected GitHub account, its repositories, and a change arriving on its own. */
 export function PluginSourcesExample() {
   const step = useExampleStep(sourcesExampleRepos.length + 1);
 

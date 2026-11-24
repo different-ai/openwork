@@ -1,20 +1,6 @@
 import { BlockList, isIP } from "node:net"
 import { CLIENT_IP_SIGNATURE_HEADER, SIGNED_CLIENT_IP_HEADER, verifyClientIpSignature } from "@openwork-ee/utils/client-ip-signature"
 
-/**
- * One answer to "which address sent this request", shared by Better Auth and
- * every Den rate limit so they can never disagree about who a caller is.
- *
- * An address Den Web signed with the shared secret wins: Den Web runs on a host
- * whose outgoing addresses change, so the proxy chain would only name that host.
- * Otherwise headers are read the way Better Auth reads them: `x-forwarded-for`
- * with trusted proxies gives the right-most address that is not one of them;
- * without trusted proxies only a single-entry header is used (a multi-entry
- * chain's left-most value is the client's own claim). Any other header is
- * taken as one address.
- */
-
-/** Set by den-api before calling Better Auth; the only header Better Auth reads. */
 export const RESOLVED_CLIENT_IP_HEADER = "x-openwork-resolved-client-ip"
 
 export const DEFAULT_CLIENT_IP_HEADERS = ["x-forwarded-for", "x-real-ip", "cf-connecting-ip"] as const
@@ -23,17 +9,14 @@ export const CLIENT_IP_IPV6_SUBNET = 64
 export type ClientIpSource = "signed" | "header" | "none"
 
 export type ClientIpResolution = {
-  /** Normalized address (IPv6 reduced to its /64), or null when none can be trusted. */
   ip: string | null
   source: ClientIpSource
-  /** The header the address came from. */
   header: string | null
 }
 
 export type ClientIpOptions = {
   headers: readonly string[]
   trustedProxies: readonly string[]
-  /** Secret shared with Den Web; unset means a signed address is never trusted. */
   signedClientIpSecret?: string | null
   now?: number
 }
@@ -77,7 +60,6 @@ function expandIpv6(ip: string) {
   return [...left, ...Array<string>(missing).fill("0"), ...right].map((group) => group.padStart(4, "0").toLowerCase())
 }
 
-/** Unwraps IPv4-mapped IPv6 and reduces IPv6 to its /64 (one household or office). */
 export function normalizeClientIp(value: string): string | null {
   const ip = value.trim()
   const family = isIP(ip)
@@ -133,16 +115,10 @@ export function resolveClientIp(headers: Headers, options: ClientIpOptions): Cli
   return { ip: null, source: "none", header: null }
 }
 
-/** The address part of a rate-limit key. Requests without a usable address share one bucket. */
 export function clientIpRateLimitKey(resolution: ClientIpResolution) {
   return resolution.ip ?? "unknown"
 }
 
-/**
- * The request as Better Auth should see it: the resolved address in the one
- * header Better Auth is configured to read. A caller-supplied value of that
- * header is always dropped, so it cannot be used to choose a rate-limit bucket.
- */
 export function withResolvedClientIp(request: Request, resolution: ClientIpResolution) {
   const headers = new Headers(request.headers)
   headers.delete(RESOLVED_CLIENT_IP_HEADER)

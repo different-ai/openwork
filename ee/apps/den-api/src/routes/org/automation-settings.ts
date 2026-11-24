@@ -16,13 +16,9 @@ import type { OrganizationContext } from "../../orgs.js"
 import type { OrgRouteVariables } from "./shared.js"
 
 const automationSettingsViewSchema = z.object({
-  /** What the organization chose. */
   settings: organizationAutomationSettingsSchema,
-  /** What members can run now: the choice, the deployment's own switch and, for Cloud, its headless runner. */
   available: organizationAutomationSettingsSchema,
-  /** The deployment runs Automations at all (DEN_AUTOMATIONS_ENABLED). */
   deploymentEnabled: z.boolean(),
-  /** The deployment has a headless runner, which Cloud Automations need. */
   headlessRunnerConfigured: z.boolean(),
 }).meta({ ref: "OrganizationAutomationSettings" })
 
@@ -42,10 +38,6 @@ function view(metadata: unknown) {
   }
 }
 
-/**
- * PUT /v1/org/automation-settings without the HTTP layer (also used by
- * config-blob imports, src/config-blobs/areas/settings-general.ts).
- */
 export async function saveOrganizationAutomationSettings(organizationId: OrganizationContext["organization"]["id"], input: Partial<OrganizationAutomationSettings>) {
   if (input.cloud === true && !headlessAutomationsConfigured()) {
     return { ok: false as const, error: "headless_runner_required" as const, message: "Cloud Automations need OpenWork's headless runner on this deployment. Ask your OpenWork operator to set it up." }
@@ -54,7 +46,6 @@ export async function saveOrganizationAutomationSettings(organizationId: Organiz
   return { ok: true as const, metadata }
 }
 
-/** Settings › Automations: whether members may create and run Desktop and Cloud Automations. */
 export function registerOrgAutomationSettingsRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get(
     "/v1/org/automation-settings",

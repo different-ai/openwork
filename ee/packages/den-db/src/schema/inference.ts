@@ -46,8 +46,6 @@ export const InferenceKeyTable = mysqlTable(
     name: varchar("name", { length: 255 }),
     key_hash: varchar("key_hash", { length: 255 }).notNull(),
     key_prefix: varchar("key_prefix", { length: 32 }),
-    // Raw `ow_inf_` key (encrypted) so den-api can hand it back to the member's
-    // desktop without materializing an llm_provider row. Null on legacy rows.
     encrypted_key: encryptedTextColumn("encrypted_key"),
     status: mysqlEnum("status", InferenceKeyStatus).notNull().default("active"),
     revoked_at: timestamp("revoked_at", { fsp: 3 }),
@@ -107,7 +105,6 @@ export const InferenceOrgUsageBucketTable = mysqlTable(
   ],
 )
 
-// Stores organization-owned upstream provider credentials used by the inference proxy.
 export const InferenceOrgUpstreamProviderKeyTable = mysqlTable(
   "inference_org_upstream_provider_keys",
   {
@@ -190,9 +187,6 @@ export const InferenceUsageLedgerBucketChargeTable = mysqlTable(
   ],
 )
 
-// One row per proxied request (OpenWork/OpenRouter route and org-provider route).
-// Never stores prompt or completion content.
-// No team ID is recorded; team usage is grouped by current memberships.
 export const GatewayRequestLogTable = mysqlTable(
   "gateway_request_logs",
   {
@@ -201,14 +195,12 @@ export const GatewayRequestLogTable = mysqlTable(
     org_membership_id: denTypeIdColumn("member", "org_membership_id").notNull(),
     inference_key_id: denTypeIdColumn("inferenceKey", "inference_key_id"),
     gateway_key_id: denTypeIdColumn("gatewayKey", "gateway_key_id"),
-    // Set instead of gateway_key_id when a member's own API key made the request.
     gateway_api_key_id: denTypeIdColumn("gatewayApiKey", "gateway_api_key_id"),
     gateway_provider_id: denTypeIdColumn("inferenceProvider", "gateway_provider_id"),
     gateway_provider_credential_id: denTypeIdColumn(
       "inferenceProviderCredential",
       "gateway_provider_credential_id",
     ),
-    // Historical rows retain unknown selection, not invented default grants.
     model_group_id: denTypeIdColumn("gatewayModelGroup", "model_group_id"),
     credential_set_id: denTypeIdColumn("gatewayCredentialSet", "credential_set_id"),
     access_grant_id: denTypeIdColumn("inferenceProviderAccess", "access_grant_id"),
@@ -244,8 +236,6 @@ export const GatewayRequestLogTable = mysqlTable(
   },
   (table) => [
     uniqueIndex("gateway_request_logs_openwork_request_id").on(table.openwork_request_id),
-    // Route precedes time so per-route usage reads skip other routes' rows;
-    // organization-only lookups still use the leading column.
     index("gateway_request_logs_org_route_started").on(table.organization_id, table.route, table.started_at),
     index("gateway_request_logs_member_started").on(table.org_membership_id, table.started_at),
     index("gateway_request_logs_provider_started").on(
@@ -256,21 +246,16 @@ export const GatewayRequestLogTable = mysqlTable(
   ],
 )
 
-// A permanent singleton record: INSERT ... ON DUPLICATE KEY UPDATE holds an
-// InnoDB exclusive lock through commit, coordinating hourly AND daily consumers.
 export const GatewayRollupLockTable = mysqlTable("gateway_rollup_lock", {
   id: int("id").notNull().primaryKey(),
 })
 
-// Hour/day aggregates of gateway_request_logs, one row per dimension combination per bucket.
 export const GatewayUsageRollupTable = mysqlTable(
   "gateway_usage_rollups",
   {
     id: denTypeIdColumn("inferenceUsageRollup", "id").notNull().primaryKey(),
     granularity: mysqlEnum("granularity", GATEWAY_ROLLUP_GRANULARITIES).notNull(),
     bucket_start: timestamp("bucket_start", { fsp: 3 }).notNull(),
-    // New aggregation uses gatewayRollupDimensionKey, including group/set/grant.
-    // Preserve old hashes and NULL selection dimensions as historical unknowns.
     dimension_key: varchar("dimension_key", { length: 64 }).notNull(),
     organization_id: denTypeIdColumn("organization", "organization_id").notNull(),
     org_membership_id: denTypeIdColumn("member", "org_membership_id").notNull(),
@@ -300,12 +285,9 @@ export const GatewayUsageRollupTable = mysqlTable(
     request_bytes: bigint("request_bytes", { mode: "number" }).notNull().default(0),
     response_bytes: bigint("response_bytes", { mode: "number" }).notNull().default(0),
     source_row_count: int("source_row_count").notNull().default(0),
-    // NULL means an older rollup whose observation counts cannot be recovered.
-    // New batches explicitly write zero when the measurement was not observed.
     input_tokens_count: bigint("input_tokens_count", { mode: "number" }),
     output_tokens_count: bigint("output_tokens_count", { mode: "number" }),
     total_tokens_count: bigint("total_tokens_count", { mode: "number" }),
-    // Missing total-token observations by outcome; NULL for older summaries.
     uncountable_ok_count: bigint("uncountable_ok_count", { mode: "number" }),
     uncountable_upstream_error_count: bigint("uncountable_upstream_error_count", { mode: "number" }),
     uncountable_upstream_unreachable_count: bigint("uncountable_upstream_unreachable_count", { mode: "number" }),
@@ -483,12 +465,8 @@ export const gatewayUsageRollupRelations = relations(GatewayUsageRollupTable, ({
   }),
 }))
 
-// Free Auto follows the paid Models pattern: check each window's used total against its limit before a
-// request, then charge the real cost once afterwards. Nothing is held in advance.
 const freeAccountingWindows = ["weekly", "daily", "monthly"] as const
 
-// Signed-out desktop Auto. Guests have no account, organization or membership,
-// so nothing here references them: identities are keyed HMACs of the machine and IP.
 export const AnonymousInferenceUsageBucketTable = mysqlTable("anonymous_inference_usage_buckets", {
   id: varchar("id", { length: 64 }).notNull().primaryKey(),
   scope: mysqlEnum("scope", ["installation", "global"]).notNull(),
@@ -508,10 +486,8 @@ export const AnonymousInferenceUsageTable = mysqlTable("anonymous_inference_usag
   model_id: varchar("model_id", { length: 255 }).notNull(),
   amount: bigint("amount", { mode: "number" }).notNull(),
   input_tokens: int("input_tokens"),
-  /** The part of input_tokens OpenAI served from its prompt cache, billed at the cached input price. */
   cached_input_tokens: int("cached_input_tokens"),
   output_tokens: int("output_tokens"),
-  /** No usage report arrived, so the fixed estimate was charged. */
   estimated: boolean("estimated").notNull().default(false),
   created_at: timestamps.created_at,
 }, (table) => [uniqueIndex("anonymous_inference_usage_completion").on(table.completion_id),
@@ -538,8 +514,33 @@ export const DesktopFreeProofNonceTable = mysqlTable("desktop_free_proof_nonces"
   expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
 }, (table) => [index("desktop_free_proof_nonce_expiry").on(table.expires_at)])
 
-// Signed-in, unsubscribed members. They authenticate with their OpenWork Models
-// key (InferenceKeyTable); these tables only hold their free weekly allowance.
+export const FreeAutoSafetyCaseTable = mysqlTable("free_auto_safety_case", {
+  case_key: varchar("case_key", { length: 64 }).notNull().primaryKey(),
+  case_id: varchar("case_id", { length: 128 }).notNull(),
+  identifier: varchar("identifier", { length: 64 }),
+  notice: mysqlEnum("notice", ["warning", "deactivation", "local_review"]).notNull(),
+  reason: varchar("reason", { length: 100 }),
+  state: mysqlEnum("state", ["review", "blocked", "closed"]).notNull(),
+  issued_at: timestamp("issued_at", { fsp: 3 }).notNull(),
+  reviewer_id: denTypeIdColumn("user", "reviewer_id"),
+  decision: varchar("decision", { length: 40 }),
+  review_history: json("review_history").$type<{ decision: string; reviewerId: string; at: string }[]>(),
+  ...timestamps,
+}, t => [index("free_auto_safety_case_enforce").on(t.identifier, t.state), index("free_auto_safety_case_queue").on(t.state, t.issued_at)])
+
+export const FreeAutoSafetyMemberTable = mysqlTable("free_auto_safety_member", {
+  identifier: varchar("identifier", { length: 64 }).notNull().primaryKey(),
+  user_id: denTypeIdColumn("user", "user_id").notNull(),
+})
+
+export const FreeAutoSafetyPauseTable = mysqlTable("free_auto_safety_pause", {
+  identifier: varchar("identifier", { length: 64 }).notNull().primaryKey(),
+  expires_at: timestamp("expires_at", { fsp: 3 }).notNull(),
+  actor_id: denTypeIdColumn("user", "actor_id").notNull(),
+  reason: varchar("reason", { length: 32 }).notNull(),
+  updated_at: timestamps.updated_at,
+})
+
 export const InferenceFreeUsageBucketTable = mysqlTable("inference_free_usage_buckets", {
   id: varchar("id", { length: 64 }).notNull().primaryKey(),
   identity_hash: varchar("identity_hash", { length: 64 }).notNull(),
@@ -549,7 +550,13 @@ export const InferenceFreeUsageBucketTable = mysqlTable("inference_free_usage_bu
   used_amount: bigint("used_amount", { mode: "number" }).notNull().default(0),
 }, (table) => [uniqueIndex("inference_free_usage_identity_window").on(table.identity_hash, table.window_start_at)])
 
+export const FreeAutoOrgFounderTable = mysqlTable("free_auto_org_founder", {
+  organization_id: denTypeIdColumn("organization", "organization_id").notNull().primaryKey(),
+  founder_user_id: denTypeIdColumn("user", "founder_user_id").notNull(),
+}, (table) => [index("free_auto_org_founder_user").on(table.founder_user_id)])
+
 export const InferenceFreeUsageTable = mysqlTable("inference_free_usage", {
+  desktop_hash: varchar("desktop_hash", { length: 64 }),
   request_id: varchar("request_id", { length: 64 }).notNull().primaryKey(),
   completion_id: varchar("completion_id", { length: 255 }),
   principal_hash: varchar("principal_hash", { length: 64 }).notNull(),
@@ -559,13 +566,14 @@ export const InferenceFreeUsageTable = mysqlTable("inference_free_usage", {
   model_id: varchar("model_id", { length: 255 }).notNull(),
   amount: bigint("amount", { mode: "number" }).notNull(),
   input_tokens: int("input_tokens"),
-  /** The part of input_tokens OpenAI served from its prompt cache, billed at the cached input price. */
   cached_input_tokens: int("cached_input_tokens"),
   output_tokens: int("output_tokens"),
   estimated: boolean("estimated").notNull().default(false),
   created_at: timestamps.created_at,
 }, (table) => [uniqueIndex("inference_free_usage_completion").on(table.completion_id),
   index("inference_free_usage_principal_created").on(table.principal_hash, table.created_at),
+  index("inference_free_usage_created_amount").on(table.created_at, table.amount),
+  index("inference_free_usage_desktop_created").on(table.desktop_hash, table.created_at),
   index("inference_free_usage_org_created").on(table.organization_id, table.created_at)])
 
 export const inferenceKey = InferenceKeyTable

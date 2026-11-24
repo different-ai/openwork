@@ -31,10 +31,8 @@ export function BrowserExperience({ children }: { children: ReactNode }) {
   const task = opened?.kind === "browser" ? opened.task : null;
   const file = opened?.kind === "file" ? opened.file : null;
   const view = opened?.kind === "browser" ? opened.view : "browser";
-  // Each view is its own rollout: a screen opens only for a view this person has.
   const surface = useRetainedSurface(task !== null ? computerViews(workbotHost()).includes(view) : file !== null);
   const stop = useStopWorkbot();
-  // Focus goes back to what opened the panel (a card in the chat) when it closes.
   const opener = useRef<HTMLElement | null>(null);
   const remember = () => { if (document.activeElement instanceof HTMLElement && !opener.current) opener.current = document.activeElement; };
   const open = useCallback((next: BrowserPreviewTask, nextView: ScreenView = "browser") => { remember(); setOpened({ kind: "browser", view: nextView, task: next }); setExpanded(false); setIncludeContext(true); }, []);
@@ -52,7 +50,6 @@ export function BrowserExperience({ children }: { children: ReactNode }) {
     opener.current = null;
     if (back?.isConnected) requestAnimationFrame(() => back.focus({ preventScroll: true }));
   }, []);
-  // Esc closes the desktop panel; the phone sheet's dialog closes itself. An open menu or dialog takes Esc first.
   useEffect(() => {
     if (!wide || !file) return;
     const onKey = (event: KeyboardEvent) => {
@@ -73,7 +70,6 @@ export function BrowserExperience({ children }: { children: ReactNode }) {
     <OpenFileContext.Provider value={openFile}>
     <OpenFileIdContext.Provider value={surface.open ? file?.id ?? null : null}>
     <div className="flex h-full min-h-0 min-w-0 flex-1" data-workbot-browser-layout>
-      {/* Beside a panel the chat keeps a readable column (about 600px on a large screen); the panel takes the rest. */}
       <div className={`min-h-0 min-w-0 ${wide && panelOpen ? `${expanded ? "hidden" : ""} w-[clamp(400px,33vw,600px)] shrink-0` : "flex-1"}`}>{children}</div>
       {wide && panelOpen ? <aside
         className={`workbot ${file ? "workbot-panel-enter" : ""} flex min-h-0 min-w-0 flex-1 flex-col border-l border-[var(--wb-hairline)] bg-[var(--wb-bg)]`}

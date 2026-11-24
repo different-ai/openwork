@@ -1,12 +1,7 @@
-/**
- * Stored TrueFoundry state (gateway_providers.settings.truefoundry) and the
- * catalog derived from it. Kept free of gateway-matrix imports so the matrix
- * can resolve TrueFoundry catalogs without an import cycle.
- */
 import { z } from "zod"
 import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, GatewayProviderCredentialTable, GatewayTrueFoundryUserTable, MemberTable } from "@openwork-ee/den-db/schema"
-import { TRUEFOUNDRY_ADMIN_CREDENTIAL_SUBJECT, TRUEFOUNDRY_DOC_URL, TRUEFOUNDRY_ENV, TRUEFOUNDRY_NPM, TRUEFOUNDRY_PROVIDER_ID, TRUEFOUNDRY_PROVIDER_NAME, isTrueFoundryProviderId } from "@openwork-ee/utils/truefoundry-catalog"
+import { TRUEFOUNDRY_ADMIN_CREDENTIAL_SUBJECT, TRUEFOUNDRY_DOC_URL, TRUEFOUNDRY_ENV, TRUEFOUNDRY_NPM, TRUEFOUNDRY_PROVIDER_ID, TRUEFOUNDRY_PROVIDER_NAME, isTrueFoundryProviderId } from "@openwork-ee/gateway-catalog"
 import type { GatewayTrueFoundryAttentionReason, GatewayTrueFoundryStatus } from "@openwork/types/den/gateway"
 import { db } from "../db.js"
 import type { ModelsDevProvider } from "./models-dev.js"
@@ -14,13 +9,13 @@ import type { ModelsDevProvider } from "./models-dev.js"
 const storedModelSchema = z.object({ id: z.string().min(1).max(255), name: z.string().min(1).max(255), config: z.record(z.string(), z.unknown()) })
 const settingsSchema = z.object({
   version: z.literal(1),
-  /** Control plane root, e.g. https://acme.truefoundry.cloud. The gateway base is settings.upstreamBaseUrl. */
   controlPlaneUrl: z.string().min(1).max(2048),
   credentialSetId: z.string().min(1),
-  /** Add allowed people missing from TrueFoundry as TrueFoundry users before creating their token. */
   createMissingUsers: z.boolean().default(false),
+  trackUsageCosts: z.boolean().default(false),
   catalog: z.array(storedModelSchema).max(500),
-  /** Stable key -> model group id: "signin" is the access group, "models:<hash>" one group per model set. */
+  upstream: z.array(storedModelSchema).max(500).optional(),
+  selectedModelIds: z.array(z.string().min(1).max(255)).max(500).nullable().default(null),
   groups: z.record(z.string(), z.string()),
   lastSyncedAt: z.string().nullable(),
   lastSyncError: z.string().nullable(),
@@ -32,7 +27,16 @@ export function readTrueFoundrySettings(settings: Record<string, unknown>): True
   return parsed.success ? parsed.data : null
 }
 
-/** Catalog provider for the gateway matrix, from the last successful sync. */
+export function trueFoundryUpstreamModels(settings: Pick<TrueFoundrySettings, "catalog" | "upstream">): TrueFoundrySettings["catalog"] {
+  return settings.upstream ?? settings.catalog
+}
+
+export function selectTrueFoundryModels<T extends { id: string }>(upstream: readonly T[], selectedModelIds: readonly string[] | null): T[] {
+  if (selectedModelIds === null) return [...upstream]
+  const picked = new Set(selectedModelIds)
+  return upstream.filter((model) => picked.has(model.id))
+}
+
 export function trueFoundryCatalogProvider(provider: { settings: Record<string, unknown> }): ModelsDevProvider {
   return {
     id: TRUEFOUNDRY_PROVIDER_ID, name: TRUEFOUNDRY_PROVIDER_NAME, npm: TRUEFOUNDRY_NPM, env: [...TRUEFOUNDRY_ENV], doc: TRUEFOUNDRY_DOC_URL, api: null,
@@ -47,7 +51,6 @@ function attentionReason(status: string): GatewayTrueFoundryAttentionReason | nu
   return TRUEFOUNDRY_ATTENTION_STATUSES.find((reason) => reason === status) ?? null
 }
 
-/** Read-only management view. Never includes keys or tokens. */
 export async function trueFoundryStatus(provider: { id: typeof GatewayTrueFoundryUserTable.$inferSelect.gateway_provider_id; provider_id: string; settings: Record<string, unknown> }, primary = false): Promise<GatewayTrueFoundryStatus | undefined> {
   const settings = isTrueFoundryProviderId(provider.provider_id) ? readTrueFoundrySettings(provider.settings) : null
   if (!settings) return undefined
@@ -63,10 +66,13 @@ export async function trueFoundryStatus(provider: { id: typeof GatewayTrueFoundr
     controlPlaneUrl: settings.controlPlaneUrl,
     gatewayBaseUrl: typeof provider.settings.upstreamBaseUrl === "string" ? provider.settings.upstreamBaseUrl : null,
     createMissingUsers: settings.createMissingUsers,
+    trackUsageCosts: settings.trackUsageCosts,
     hasAdminKey: admin?.status === "active",
     lastSyncedAt: settings.lastSyncedAt,
     lastSyncError: settings.lastSyncError,
     modelCount: settings.catalog.length,
+    availableModels: trueFoundryUpstreamModels(settings).map((model) => ({ id: model.id, name: model.name })),
+    selectedModelIds: settings.selectedModelIds,
     activeMemberCount: rows.filter((row) => row.status === "active").length,
     createdUserCount: rows.filter((row) => row.created !== null && row.status !== "revoked").length,
     attentionCount: attentionRows.length,

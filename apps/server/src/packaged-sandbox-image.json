@@ -1,0 +1,9 @@
+{
+  "repository": "docker.io/library/alpine",
+  "tag": "3.22",
+  "indexDigest": "sha256:49340b346798875b5592e5d420241f2f9cfba5f47e62ebb1446a1b34734e898f",
+  "manifests": {
+    "arm64": "sha256:e233f2058b0628266762f745a2c17e623b418e0090f47d223909d1f9a7d4367e",
+    "x64": "sha256:9db2934886712d877c932e07249c75a59e6ca27adfbccc05261987a17bef2d63"
+  }
+}

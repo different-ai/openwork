@@ -4,19 +4,13 @@ import { defineFeatureIntro, type FeatureIntroContext } from "../types";
 import { docsPage } from "./docs";
 import { ApiKeysExample } from "./examples/settings/api-keys-example";
 
-/**
- * Facts Settings › API Keys reports from data it already loads (`GET /v1/api-keys`).
- * A missing fact means "not loaded yet": the intro never takes over the page on a guess.
- */
 export type ApiKeysFacts = {
-  /** Keys in the organization, anyone's. */
   apiKeys?: number;
 };
 
 type Ctx = FeatureIntroContext<ApiKeysFacts>;
 
 const PATH = getApiKeysRoute();
-/** `?new=1` opens the Issue a new key form (DESIGN.md I5). */
 export const API_KEYS_NEW_ROUTE = `${PATH}?new=1`;
 
 export const apiKeysIntros = [
@@ -42,7 +36,6 @@ export const apiKeysIntros = [
       { when: (ctx: Ctx) => ctx.can("canManageApiKeys"), label: "Create an API key", href: API_KEYS_NEW_ROUTE },
       { when: () => true, label: "Create an API key", href: API_KEYS_NEW_ROUTE, locked: { reason: permissionLockReason("api_keys.manage") } },
     ],
-    // Full screen only once the list has loaded and is empty.
     setupState: (ctx) => {
       if (ctx.facts.apiKeys === undefined) return "done";
       return ctx.facts.apiKeys > 0 ? "done" : "none";

@@ -74,14 +74,12 @@ function SignInChoice({ name, value, onChange, disabled, kind = "oauth", sharedD
   );
 }
 
-/** Draft credentials belong to one server and organization, never the next connector visited. */
 export function AdminConnectorSetupScreen({ catalogId }: { catalogId: string }) {
   const { orgId } = useOrgDashboard();
   const params = useSearchParams();
   return <AdminConnectorSetupFlow key={`${orgId ?? ""}:${catalogId}:${params.get("url") ?? ""}`} catalogId={catalogId} />;
 }
 
-/** C3 and C4: the admin connects the server, then chooses account mode and access. */
 function AdminConnectorSetupFlow({ catalogId }: { catalogId: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();
@@ -91,7 +89,6 @@ function AdminConnectorSetupFlow({ catalogId }: { catalogId: string }) {
     ? getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions).canShareWithEveryone
     : false;
   const { target: catalogTarget, loading, missing, failed } = useConnectorTarget(catalogId);
-  // Guided Slack setup: the admin's explicit access choice becomes the new connection's scopes.
   const [slackScopeChoice, setSlackScopeChoice] = useState<SlackScopeChoice | null>(null);
   const target = useMemo(() => withSlackScopeChoice(catalogTarget, slackScopeChoice), [catalogTarget, slackScopeChoice]);
   const updateConnection = useUpdateMcpConnection();
@@ -105,7 +102,6 @@ function AdminConnectorSetupFlow({ catalogId }: { catalogId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [confirmSwitch, setConfirmSwitch] = useState(false);
   const [showOAuthApp, setShowOAuthApp] = useState(false);
-  // A custom connector first shows what OpenWork detected and lets the admin pick another route.
   const isCustom = catalogId === "custom";
   const presets = useMcpConnectionPresets();
   const callbackUrl = presets.data?.find((preset) => preset.oauthCallbackUrl)?.oauthCallbackUrl ?? undefined;
@@ -163,7 +159,6 @@ function AdminConnectorSetupFlow({ catalogId }: { catalogId: string }) {
   const ready = (setup.allDone || setup.skipped) && Boolean(connection);
   const stepNumber = slackSetup.slack ? slackSetup.progress.step : setup.stepNumber;
   const stepTotal = slackSetup.slack ? slackSetup.progress.total : setup.checks.length;
-  // @openwork in Slack needs each person's own Slack sign-in and this OpenWork's assistant runner.
   const assistantOffered = slackSetup.slack && slackSetup.assistant?.eligible === true && !slackSetup.assistant.installed;
   const assistantAvailable = assistantOffered && slackSetup.assistant?.runnerAvailable === true && chosenMode === "per_member";
   const assistantLock = !assistantOffered ? null
@@ -237,9 +232,6 @@ function AdminConnectorSetupFlow({ catalogId }: { catalogId: string }) {
     setError(null);
     try {
       await saveAccess(connection.id, access);
-      // Individual-key setup publishes the connection; each person's key is
-      // checked when they enroll it, not against an admin's nonexistent key.
-      // Added anyway: a failing check is expected, so it never blocks the add.
       const checked = usesIndividualKeys
         ? null
         : setup.skipped

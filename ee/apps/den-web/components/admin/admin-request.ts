@@ -2,17 +2,12 @@ import { denApiCredentials, denBrowserEndpoint } from "../../app/(den)/_lib/den-
 
 const AUTH_TOKEN_STORAGE_KEY = "openwork:web:auth-token";
 
-/**
- * Keeps password-login bearer credentials alongside the web-host session
- * cookie; the same-origin browser proxy forwards both to Den API.
- */
 export function withStoredBearer(headers: Record<string, string>): Record<string, string> {
   if (typeof window === "undefined") return headers;
   try {
     const token = window.localStorage.getItem(AUTH_TOKEN_STORAGE_KEY)?.trim();
     return token ? { ...headers, Authorization: `Bearer ${token}` } : headers;
   } catch {
-    // Cookie sign-in still works when browser storage is unavailable.
     return headers;
   }
 }
@@ -36,7 +31,39 @@ function responseCode(payload: unknown): string | undefined {
   return undefined;
 }
 
-/** GET an admin endpoint and map the response to the access states every admin page shows. */
+const FORBIDDEN_MESSAGES: Record<string, string> = {
+  forbidden: "This account is not on the OpenWork admin allowlist.",
+  admin_email_unverified: "This account's email address is not verified. Verify it, then retry.",
+  admin_email_required: "This account has no email address to check against the admin allowlist.",
+};
+
+export function adminForbiddenMessage(payload: unknown): string {
+  const code = responseCode(payload);
+  if (code && Object.hasOwn(FORBIDDEN_MESSAGES, code)) return FORBIDDEN_MESSAGES[code];
+  if (payload && typeof payload === "object" && "message" in payload && typeof payload.message === "string" && payload.message) return payload.message;
+  return "This account cannot open this admin page.";
+}
+
+export async function requestSignedInEmail(signal?: AbortSignal): Promise<string | null> {
+  try {
+    const endpoint = denBrowserEndpoint("/v1/me");
+    const response = await fetch(endpoint, {
+      method: "GET",
+      cache: "no-store",
+      credentials: denApiCredentials(endpoint),
+      signal,
+      headers: withStoredBearer({ Accept: "application/json" }),
+    });
+    if (!response.ok) return null;
+    const payload: unknown = await response.json();
+    const user = payload && typeof payload === "object" && "user" in payload ? payload.user : null;
+    const email = user && typeof user === "object" && "email" in user ? user.email : null;
+    return typeof email === "string" && email ? email : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function requestAdmin<T>(path: string, parse: (payload: unknown) => T | null, signal?: AbortSignal): Promise<AdminResult<T>> {
   const endpoint = denBrowserEndpoint(path);
   const response = await fetch(endpoint, {
@@ -50,13 +77,12 @@ export async function requestAdmin<T>(path: string, parse: (payload: unknown) =>
   let payload: unknown = null;
   try { payload = text ? JSON.parse(text) : null; } catch { payload = text; }
   if (response.status === 401) return { access: "signed-out", message: "Sign in with an OpenWork admin account to continue." };
-  if (response.status === 403) return { access: "forbidden", message: "This account is not on the OpenWork admin allowlist." };
+  if (response.status === 403) return { access: "forbidden", message: adminForbiddenMessage(payload), status: 403, code: responseCode(payload) };
   if (!response.ok) return { access: "error", message: errorMessage(payload, `The request failed with status ${response.status}.`), status: response.status, code: responseCode(payload) };
   const data = parse(payload);
   return data === null ? { access: "error", message: "The server returned data this page does not understand." } : { access: "ready", data };
 }
 
-/** PUT/POST JSON to an admin endpoint; returns the parsed payload or the server's error message. */
 export async function sendAdmin(path: string, method: "PUT" | "POST" | "PATCH", body?: unknown, signal?: AbortSignal): Promise<{ ok: true; payload: unknown } | { ok: false; message: string; status: number; code?: string; retryAfterSeconds?: number }> {
   const endpoint = denBrowserEndpoint(path);
   const response = await fetch(endpoint, {
@@ -73,7 +99,8 @@ export async function sendAdmin(path: string, method: "PUT" | "POST" | "PATCH", 
     const retryAfter = response.headers.get("Retry-After");
     const seconds = retryAfter && /^\d+$/.test(retryAfter) ? Number(retryAfter) : null;
     const retryAfterSeconds = seconds !== null && Number.isSafeInteger(seconds) && seconds > 0 && seconds <= 3_600 ? seconds : undefined;
-    return { ok: false, message: errorMessage(payload, `The request failed with status ${response.status}.`), status: response.status, code: responseCode(payload), retryAfterSeconds };
+    const message = response.status === 403 ? adminForbiddenMessage(payload) : errorMessage(payload, `The request failed with status ${response.status}.`);
+    return { ok: false, message, status: response.status, code: responseCode(payload), retryAfterSeconds };
   }
   return { ok: true, payload };
 }

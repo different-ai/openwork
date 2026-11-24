@@ -16,7 +16,6 @@ import { documentEditorKey } from "./queries"
 export function DocumentEditorTab(props: Parameters<typeof BasicDocumentEditorTab>[0]) {
   const [editing, setEditing] = useState(false)
   const [officeReady, setOfficeReady] = useState(false)
-  // A combined editor names which providers have the full Office editor; OneDrive files edit inline.
   const office = officeMimeTypes.has(props.item.mimeType) && (props.editor.hasOffice?.(props.item.id) ?? true) ? props.editor.office : undefined
   const fullEditor = editing && office
   return <div className="ow-document-mode" hidden={!props.active}>
@@ -28,11 +27,9 @@ export function DocumentEditorTab(props: Parameters<typeof BasicDocumentEditorTa
 }
 
 function BasicDocumentEditorTab({ toolbarHost, item, editor, enabled, editingEnabled = false, editing = false, onEdit, showActions = true, active, scope, connectionsHref, renderConnect, onDirtyChange, onSavingChange, onControlsChange, onClose }: { toolbarHost?: HTMLElement | null; item: DocumentItem; editor: DocumentsEditor; enabled: boolean; editingEnabled?: boolean; editing?: boolean; onEdit?(): void; showActions?: boolean; active: boolean; scope: readonly string[]; connectionsHref?: string | null; renderConnect?(connectionId?: string, reconnect?: boolean): ReactNode; onDirtyChange?(id: string, dirty: boolean): void; onSavingChange?(id: string, saving: boolean): void; onResourceChange?(tabId: string, resource: DocumentItem): void; onControlsChange?: DocumentTabControlsChange; onClose(): void }) {
-  // Where this file is saved, in the words people see: "Drive" or "OneDrive".
   const storage = item.source?.storage ?? "Drive"
   const [sheetId, setSheetId] = useState<string>()
   const [startRow, setStartRow] = useState(1)
-  // Pin the selected Drive account without changing the query identity after its first response.
   const connection = useRef<string>(undefined)
   const connectionId = connection.current
   const [draft, setDraft] = useState<Record<string, string>>({})
@@ -64,7 +61,6 @@ function BasicDocumentEditorTab({ toolbarHost, item, editor, enabled, editingEna
     retry: false, gcTime: 0, staleTime: Infinity, refetchOnWindowFocus: false,
   })
   const data = query.data
-  // A read made ahead of the click (on hover) pins the account the same way as the tab's own first read.
   if (data) connection.current ??= data.connectionId
   useEffect(() => {
     if (!dirty) return
@@ -87,7 +83,6 @@ function BasicDocumentEditorTab({ toolbarHost, item, editor, enabled, editingEna
     setSaving(true); setError(null); setNeedsConnection(false)
     try {
       await editor.save(item.id, payload)
-      // A save can have succeeded even if reloading fails; never retry the write automatically.
       setDraft({}); setFormulas(new Set()); setSaved(true)
       if (closing) onClose()
       else await query.refetch()
@@ -115,7 +110,6 @@ function BasicDocumentEditorTab({ toolbarHost, item, editor, enabled, editingEna
       </>}
   </section>
 }
-/** A1-style column name (1 → A, 27 → AA). Local, so the editor doesn't load the Office reader with the page. */
 function columnLetters(column: number) {
   let value = column
   let letters = ""
@@ -165,7 +159,6 @@ function RichDocument({ data, draft, readonly, change }: { data: TextDocument; d
 }
 function DocumentPreview({ data, editor, item }: { data: Extract<EditorDocument, { kind: "preview" }>; editor: DocumentsEditor; item: DocumentItem }) {
   const url = `${editor.contentUrl(item.id)}?connectionId=${encodeURIComponent(data.connectionId)}`
-  // Keep one mounted viewer while its protected file bytes load, including Slides' PDF export.
   const pdf = data.mimeType === "application/pdf" || data.mimeType === "application/vnd.google-apps.presentation"
   if (pdf || ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(data.mimeType)) return <BinaryPreview key={url} url={url} item={item} pdf={pdf} />
   if (data.media) return <MediaPreview key={url} url={url} item={item} kind={data.media} />
@@ -182,11 +175,9 @@ function BinaryPreview({ url, item, pdf }: { url: string; item: DocumentItem; pd
   </div>
 }
 
-/** A video or audio file in the browser's own player. A file it can't play keeps the link to the original. */
 function MediaPreview({ url, item, kind }: { url: string; item: DocumentItem; kind: "video" | "audio" }) {
   const [failed, setFailed] = useState(false)
   const player = useRef<HTMLVideoElement & HTMLAudioElement>(null)
-  // Playback stops when its tab or Documents itself is no longer on screen, so nothing plays unseen.
   useEffect(() => {
     const element = player.current
     if (!element || typeof IntersectionObserver === "undefined") return

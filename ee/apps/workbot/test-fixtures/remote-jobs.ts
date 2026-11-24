@@ -1,6 +1,5 @@
 import type { WorkbotRemoteJob } from "@openwork/types/workbot-remote-jobs"
 
-/** UI-only deterministic fixtures; no registered computer is contacted or stopped. */
 export function fixtureRemoteJobs(stopped = false): WorkbotRemoteJob[] {
   const now = Date.now()
   const job = (id: string, state: "running" | "waiting" | "idle", startedAt: number, title: string, latestStep: string): WorkbotRemoteJob => ({
@@ -17,10 +16,6 @@ export function fixtureRemoteJobs(stopped = false): WorkbotRemoteJob[] {
   ]
 }
 
-/**
- * Production on Nov 8: the last status refresh failed, so every row carries its last verified state (stale).
- * Titles mirror the reported rows; nothing is contacted.
- */
 export function fixtureStaleRemoteJobs(): WorkbotRemoteJob[] {
   const now = Date.now()
   const job = (id: string, state: "running" | "idle", startedAt: number, title: string, checkedAgo: number, preview: string | null = null): WorkbotRemoteJob => ({

@@ -138,8 +138,6 @@ export function JoinOrgSuccess({
     setActionError(null);
 
     try {
-      // Joining made this organization active, so the signed-in install routes
-      // serve its approved desktop version.
       const { response, payload } = await requestJson("/v1/me/install-config", { method: "GET" }, 12000);
       if (!response.ok) {
         throw new Error(getInstallConfigErrorMessage(payload, response.status));

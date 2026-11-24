@@ -1,23 +1,3 @@
-/**
- * Shared by the `plugins.*` config-blob areas (plugins-skills.ts,
- * plugins-plugins.ts, plugins-sources.ts): the plugin-system actor, access
- * grants by role, and the "org-shared vs personal" rule.
- *
- * Org-shared vs personal (what the plugins areas export):
- * every plugin and config object is an org row with a creator; My Library is
- * just what is shared with a member. A row is **personal** while only its
- * creator can reach it (its only active grant is the creator's own person
- * grant, which the store adds on create). It is **org-shared** when:
- * - a plugin: it has any other active grant (a team, another person,
- *   everyone), is in a collection (`marketplace_plugin`), or a source maps
- *   into it (`connector_mapping.plugin_id`);
- * - a config object: it has any other active grant, or it is an active
- *   member of an org-shared plugin.
- * Personal rows are never exported and an import never touches them.
- * Workflows / scripts (Library › Workflows, their own versioned service) and
- * authored MCP Apps (compiled through create_app / update_app) are not part
- * of `plugins.skills` at all, nor are the personal "Workflows" plugins.
- */
 import { and, eq, inArray, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
 import {
   ConfigObjectAccessGrantTable,
@@ -31,30 +11,29 @@ import {
   PluginTable,
 } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import type { ConfigApplyStep, ConfigRef } from "@openwork/types/den/config-blobs"
+import { configItemKeySchema, type ConfigApplyStep, type ConfigRef } from "@openwork/types/den/config-blobs"
 import { z } from "zod"
 import { listTeamsForMember } from "../../member-teams.js"
 import type { PluginArchActorContext } from "../../routes/org/plugin-system/access.js"
 import { createResourceAccessGrant, deleteResourceAccessGrant } from "../../routes/org/plugin-system/store.js"
-import type { ConfigAreaContext, ConfigDb } from "../area.js"
+import { assignDefaultExternalKey, setExternalKey, type KeyedItem, type KeyedKind } from "../../routes/org/plugin-system/external-keys.js"
+import type { ConfigApplyOp, ConfigAreaContext, ConfigDb, ConfigItem } from "../area.js"
 import {
   ConfigApplyError,
   configRouteContext,
   isJsonObject,
   loadMemberEmails,
   loadTeamNames,
+  OWN_MANAGER_ACCESS_KEPT,
   personRef,
   resolvedRefIds,
   specRefSchema,
   teamRef,
+  touches,
   type ConfigStepLog,
   type JsonObject,
 } from "./route-support.js"
 
-// ---------------------------------------------------------------------------
-// Actor
-
-/** The plugin-system actor for the applying member, as the plugin routes build it. */
 export async function pluginArchActor(ctx: ConfigAreaContext): Promise<PluginArchActorContext> {
   const { payload, c } = await configRouteContext(ctx)
   return {
@@ -63,9 +42,6 @@ export async function pluginArchActor(ctx: ConfigAreaContext): Promise<PluginArc
     session: c.get("session"),
   }
 }
-
-// ---------------------------------------------------------------------------
-// Access grants by role
 
 export const ACCESS_ROLES = ["viewer", "editor", "manager"] as const
 export type AccessRole = (typeof ACCESS_ROLES)[number]
@@ -76,7 +52,6 @@ const byRoleSchema = z.object({
   manager: z.array(specRefSchema).max(500).default([]),
 }).strict()
 
-/** `orgWide`: the role everyone in the organization has, or null. Teams and people by role. */
 export const accessByRoleSchema = z.object({
   orgWide: z.enum(ACCESS_ROLES).nullable().default(null),
   teams: byRoleSchema.default({ viewer: [], editor: [], manager: [] }),
@@ -96,7 +71,6 @@ export type GrantRow = {
 
 export type GrantKind = "config_object" | "plugin" | "connector_instance"
 
-/** Active grants of these resources. */
 export async function loadGrants(db: ConfigDb, kind: GrantKind, organizationId: string, resourceIds: readonly string[]): Promise<GrantRow[]> {
   const ids = [...new Set(resourceIds)]
   if (ids.length === 0) return []
@@ -135,7 +109,6 @@ export async function loadAudienceNames(db: ConfigDb, organizationId: string, gr
   return { teamNames, memberEmails }
 }
 
-/** Grants as refs by role, sorted (stable exports). People without an email are left out. */
 export function accessSpec(grants: readonly GrantRow[], names: AudienceNames): AccessByRole {
   let orgWide: AccessRole | null = null
   const teams: Record<AccessRole, Array<{ id: string; name: string | undefined }>> = { viewer: [], editor: [], manager: [] }
@@ -176,7 +149,6 @@ function refLabels(value: unknown): string[] {
   })
 }
 
-/** The grants the resolved spec asks for. Higher roles win when a team or person is listed twice. */
 function desiredGrants(access: unknown): DesiredGrant[] {
   const spec = isJsonObject(access) ? access : {}
   const teams = isJsonObject(spec.teams) ? spec.teams : {}
@@ -206,12 +178,6 @@ function grantTargetField(key: string): string {
   return key.startsWith("team:") ? "access.teams" : "access.members"
 }
 
-/**
- * Make the active grants of one resource exactly the spec's, through the same
- * store calls as the access routes (role checks, org-wide permission, plugin
- * MCP access re-sync). Only grants that differ are written. The applying
- * member's own manager grant is kept, as in the dashboard.
- */
 export async function applyAccess(input: {
   ctx: ConfigAreaContext
   actor: PluginArchActorContext
@@ -253,7 +219,7 @@ export async function applyAccess(input: {
     const key = grantKey(grant)
     if (desiredKeys.has(key)) continue
     if (grant.orgMembershipId === self && grant.role === "manager") {
-      input.warnings.push("Your own manager access was kept.")
+      input.warnings.push(OWN_MANAGER_ACCESS_KEPT)
       continue
     }
     const detail = grant.orgWide ? "everyone" : grant.teamId ?? grant.orgMembershipId ?? grant.id
@@ -269,24 +235,16 @@ export async function applyAccess(input: {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Org-shared vs personal
-
-/** Whether a grant is the creator's own person grant (the one the store adds on create). */
 function isCreatorGrant(grant: GrantRow, creatorId: string): boolean {
   return !grant.orgWide && !grant.teamId && grant.orgMembershipId === creatorId
 }
 
 export type SharedPlugins = {
-  /** Org-shared plugin ids. */
   ids: Set<string>
-  /** Plugins a source maps into (their contents come from that source). */
   sourceMapped: Set<string>
-  /** Plugins the OpenWork Marketplace seeds into every organization. */
   builtIn: Set<string>
 }
 
-/** Every live plugin of the organization, and which of them are org-shared. */
 export async function loadSharedPlugins(db: ConfigDb, organizationId: string): Promise<{ rows: Array<typeof PluginTable.$inferSelect>; shared: SharedPlugins }> {
   const orgId = normalizeDenTypeId("organization", organizationId)
   const rows = await db.select().from(PluginTable).where(and(eq(PluginTable.organizationId, orgId), isNull(PluginTable.deletedAt), inArray(PluginTable.status, ["active", "inactive", "archived"])))
@@ -319,10 +277,8 @@ export async function loadSharedPlugins(db: ConfigDb, organizationId: string): P
   return { rows, shared }
 }
 
-/** Object types `plugins.skills` carries. Workflows and scripts belong to Library › Workflows. */
 export const EXPORTED_OBJECT_TYPES = ["skill", "agent", "command", "tool", "mcp", "hook", "context", "custom", "app"] as const
 
-/** Org-shared config object ids among `objectIds` (creator ids alongside). */
 export async function sharedConfigObjectIds(input: {
   db: ConfigDb
   organizationId: string
@@ -349,7 +305,6 @@ export async function sharedConfigObjectIds(input: {
   return out
 }
 
-/** Live config objects (not deleted) of the exported types. */
 export async function loadConfigObjects(db: ConfigDb, organizationId: string, ids: readonly string[] | null) {
   const orgId = normalizeDenTypeId("organization", organizationId)
   if (ids && ids.length === 0) return []
@@ -362,17 +317,12 @@ export async function loadConfigObjects(db: ConfigDb, organizationId: string, id
   ))
 }
 
-// ---------------------------------------------------------------------------
-// Small helpers
-
-/** The local id of a resolved single ref, or null when the ref is null/absent. */
 export function resolvedRefId(value: unknown, label: string): string | null {
   if (value === null || value === undefined) return null
   const [id] = resolvedRefIds([value], label)
   return id ?? null
 }
 
-/** The target ids referenced by an exported (unresolved) ref list: "<area>/<id>" → id. */
 export function exportedRefIds(value: unknown): string[] {
   if (!Array.isArray(value)) return []
   return value.flatMap((entry) => isJsonObject(entry) && typeof entry.$ref === "string" ? [entry.$ref.slice(entry.$ref.indexOf("/") + 1)] : [])
@@ -399,9 +349,6 @@ function sortKeys(value: unknown): unknown {
   return out
 }
 
-// ---------------------------------------------------------------------------
-// Similarity (names are not unique in the plugins areas)
-
 export function normalizeText(value: string): string {
   return value.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, " ").trim()
 }
@@ -417,19 +364,16 @@ export function jaccard(left: ReadonlySet<string>, right: ReadonlySet<string>): 
   return shared / (left.size + right.size - shared)
 }
 
-/** 1 for equal names (case, spaces, punctuation ignored), else token overlap. */
 export function nameSimilarity(left: string, right: string): number {
   if (normalizeText(left) === normalizeText(right)) return 1
   return jaccard(tokens(left), tokens(right))
 }
 
-/** The text without a leading `---` frontmatter block (SKILL.md, agents, commands): names and descriptions are compared apart. */
 function withoutFrontmatter(text: string): string {
   const match = /^\s*---\r?\n[\s\S]*?\r?\n---[ \t]*(?:\r?\n|$)/.exec(text)
   return match ? text.slice(match[0].length) : text
 }
 
-/** Share of equal non-empty lines between two texts (order ignored, frontmatter left out). */
 export function textOverlap(left: string | null, right: string | null): number {
   if (left === null || right === null) return 0
   if (left === right) return 1
@@ -437,7 +381,6 @@ export function textOverlap(left: string | null, right: string | null): number {
   return jaccard(lines(left), lines(right))
 }
 
-/** Leaf paths → JSON values of a plain object. */
 function leaves(value: unknown, prefix = "", out = new Map<string, string>()): Map<string, string> {
   if (isJsonObject(value)) {
     for (const [key, entry] of Object.entries(value)) leaves(entry, prefix ? `${prefix}.${key}` : key, out)
@@ -449,7 +392,6 @@ function leaves(value: unknown, prefix = "", out = new Map<string, string>()): M
   return out
 }
 
-/** Share of equal leaf fields between two JSON values. */
 export function jsonOverlap(left: unknown, right: unknown): number {
   if (left === null || left === undefined || right === null || right === undefined) return 0
   const a = leaves(left)
@@ -458,4 +400,25 @@ export function jsonOverlap(left: unknown, right: unknown): number {
   let equal = 0
   for (const [path, value] of a) if (b.get(path) === value) equal += 1
   return equal / Math.max(a.size, b.size)
+}
+
+export function itemKey(key: string | null | undefined): string | undefined {
+  const parsed = key ? configItemKeySchema.safeParse(key) : null
+  return parsed?.success ? parsed.data : undefined
+}
+
+export async function ensureItemKeys(kind: KeyedKind, organizationId: string, items: ConfigItem[]): Promise<ConfigItem[]> {
+  const out: ConfigItem[] = []
+  for (const item of items) {
+    out.push(item.key ? item : { ...item, key: await assignDefaultExternalKey({ kind, organizationId, id: item.id }, item.name) })
+  }
+  return out
+}
+
+export async function adoptItemKey(item: KeyedItem, op: Extract<ConfigApplyOp, { kind: "update" }>, log: ConfigStepLog, warnings: string[]): Promise<void> {
+  if (op.previous.key || !touches(op.changes, "key")) return
+  const key = itemKey(op.item.key)
+  if (!key) return
+  const taken = !await log.run({ action: "update", target: item.kind === "plugin" ? "plugin" : "config object", detail: `key ${key}` }, () => setExternalKey(item, key, { onlyWhenUnset: true }))
+  if (taken) warnings.push(`The key "${key}" is already used by another item here, so "${op.previous.name}" keeps no key for now.`)
 }

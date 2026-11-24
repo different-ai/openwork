@@ -13,11 +13,6 @@ import {
 } from "@openwork/types/den/config-blobs"
 import { compatJsonColumn, denTypeIdColumn, encryptedColumn, timestamps } from "../columns"
 
-/**
- * Config blobs (docs/features/config-blobs/): org config export / import.
- * Blobs, plans and snapshots carry confidential content (skills, prompts), so
- * they are encrypted at rest. Secret inputs are encrypted and cleared after use.
- */
 const encryptedJsonColumn = <TData>(name: string) => encryptedColumn<TData>(name, {
   dataType: "mediumtext",
   serialize: JSON.stringify,
@@ -27,7 +22,6 @@ const encryptedJsonColumn = <TData>(name: string) => encryptedColumn<TData>(name
 export type ConfigChangeRequestApproval = {
   memberId: string
   at: string
-  /** Set when the approval came through a config token (it still counts for its issuing member). */
   apiKeyId?: string | null
 }
 
@@ -51,7 +45,6 @@ export const ConfigChangeRequestTable = mysqlTable(
     createdByMemberId: denTypeIdColumn("member", "created_by_member_id"),
     apiKeyId: varchar("api_key_id", { length: 64 }),
     apiKeyName: varchar("api_key_name", { length: 255 }),
-    /** The uploaded blob as received. May be invalid (status `invalid`). */
     blob: encryptedJsonColumn<unknown>("blob").notNull(),
     sourceInstanceId: varchar("source_instance_id", { length: 100 }),
     sourceOrgId: varchar("source_org_id", { length: 100 }),
@@ -63,25 +56,12 @@ export const ConfigChangeRequestTable = mysqlTable(
     plan: encryptedJsonColumn<ConfigPlan>("plan"),
     planHash: varchar("plan_hash", { length: 80 }),
     decisions: compatJsonColumn<ConfigDecisions>("decisions"),
-    /** Write-only secret values and decisions; deleted after apply, cancel or expiry. */
     secretInputs: encryptedJsonColumn<ConfigSecretInput[]>("secret_inputs"),
     approvals: compatJsonColumn<ConfigChangeRequestApproval[]>("approvals").notNull(),
     approvedPlanHash: varchar("approved_plan_hash", { length: 80 }),
     applyRequestedBy: compatJsonColumn<ConfigChangeRequestApplyRequest>("apply_requested_by"),
     autoApply: boolean("auto_apply").notNull().default(false),
-    /**
-     * The execution plan that goes with `plan` (ops, resolved refs, secret
-     * decisions, never secret values): apply runs it after re-reading only the
-     * items it writes, instead of re-exporting every area. Validated on read
-     * (den-api `config-blobs/engine/stored-execution.ts`).
-     */
     execution: encryptedJsonColumn<unknown>("execution"),
-    /**
-     * The items an apply was about to write, as they were just before (a blob
-     * whose scope is the areas written): the source of "Restore previous config".
-     * Written once, before the first write; creates are not in it (they did not
-     * exist; the restore deletes them from the apply report).
-     */
     beforeSnapshot: encryptedJsonColumn<unknown>("before_snapshot"),
     errors: compatJsonColumn<string[]>("errors").notNull(),
     leaseOwner: varchar("lease_owner", { length: 64 }),
@@ -117,7 +97,6 @@ export const ConfigApplyRunTable = mysqlTable(
     requestedByMemberId: denTypeIdColumn("member", "requested_by_member_id"),
     requestedByApiKeyId: varchar("requested_by_api_key_id", { length: 64 }),
     runsAsMemberId: denTypeIdColumn("member", "runs_as_member_id"),
-    /** ConfigApplyReport. Encrypted: step details and failures name configuration. */
     report: encryptedJsonColumn<ConfigApplyReport>("report").notNull(),
     failureArea: varchar("failure_area", { length: 64 }).$type<ConfigAreaKey>(),
     failureRef: varchar("failure_ref", { length: 200 }),

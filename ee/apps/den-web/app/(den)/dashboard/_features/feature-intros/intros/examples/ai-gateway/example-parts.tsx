@@ -1,16 +1,10 @@
 import { DenBrandMark } from "../../../../../../_components/ui/brand-mark";
 import { getProviderIconSlug } from "../../../../../_components/llm-provider-data";
 
-/*
- * AI Gateway pieces for the live examples (DESIGN.md I7). The generic rows,
- * captions and avatars are shared by every section in `../example-parts`.
- */
-
 export { ExampleAvatar, ExampleCaption, ExampleGroupLabel, ExampleRow, ExampleRows } from "../example-parts";
 
 export type ExampleProvider = { providerId: string; name: string };
 
-/** Same brand tile and logo lookup as the provider rows on AI Providers. */
 export function ExampleProviderMark({ provider, size = "md" }: { provider: ExampleProvider; size?: "sm" | "md" }) {
   return (
     <DenBrandMark

@@ -5,15 +5,9 @@ import { ChevronLeft } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { t } from "../../../../i18n";
 
-/**
- * The frame every Library step shares: back to Library, where you are, one
- * title, the form, then a footer with a quiet note and the actions. Escape
- * goes back.
- */
 export function LibraryPage(props: {
   title: string;
   children: ReactNode;
-  /** Steps between Library and this page, e.g. Add a connector › Slack. */
   crumbs?: Array<{ label: string; onClick?: () => void }>;
   icon?: ReactNode;
   subtitle?: string;

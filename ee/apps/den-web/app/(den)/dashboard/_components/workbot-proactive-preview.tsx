@@ -1,10 +1,5 @@
 import { AGENT_RESPONSIBILITY_COPY, type AgentResponsibility } from "@openwork/types/den/workbot-proactive";
 
-/**
- * A sample message as members get it: plain text from their agent, in a DM from the Workbot Slack app. The agent
- * writes the real ones; these use a fictional meeting and company and follow the meeting lead time. Not interactive.
- */
-
 export const PROACTIVE_PREVIEW_KINDS: { value: AgentResponsibility; label: string }[] = [
   { value: "morning_brief", label: AGENT_RESPONSIBILITY_COPY.morning_brief.label },
   { value: "meeting_prep", label: AGENT_RESPONSIBILITY_COPY.meeting_prep.label },
@@ -34,7 +29,6 @@ function sampleLines(kind: AgentResponsibility, leadMinutes: number): string[] {
   ];
 }
 
-/** When the sample arrives: the brief at 8:02 AM, a meeting at 2:00 PM minus the lead time, the rest mid-morning. */
 export function previewTime(kind: AgentResponsibility, leadMinutes: number) {
   if (kind === "morning_brief") return "8:02 AM";
   if (kind === "calendar_changes") return "10:12 AM";
@@ -44,7 +38,6 @@ export function previewTime(kind: AgentResponsibility, leadMinutes: number) {
   return `${hour > 12 ? hour - 12 : hour}:${String(minutes % 60).padStart(2, "0")} ${hour >= 12 ? "PM" : "AM"}`;
 }
 
-/** The DM comes from the Workbot Slack app's own bot, so members are notified. */
 export function WorkbotProactivePreview({ kind, leadMinutes }: { kind: AgentResponsibility; leadMinutes: number }) {
   return (
     <div className="flex gap-3 rounded-xl bg-gray-50 px-4 py-3 text-[13px] leading-5 text-gray-900" data-testid="workbot-proactive-preview" data-kind={kind}>

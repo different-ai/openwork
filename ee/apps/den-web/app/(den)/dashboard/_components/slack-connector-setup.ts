@@ -1,7 +1,6 @@
 import type { ConnectionReadiness } from "./mcp-connections-data";
 import type { SetupCheckStatus } from "./setup-checks";
 
-/** Where admins create and manage Slack apps. */
 export const SLACK_APPS_URL = "https://api.slack.com/apps";
 
 export function isSlackMcpUrl(url: string): boolean {
@@ -23,12 +22,6 @@ export type SlackUserOAuthManifest = {
   };
 };
 
-/**
- * The Slack app each member signs in through: user OAuth only, OpenWork's
- * redirect URL, the user scopes the connector asks for, and Slack's MCP
- * switch (`settings.is_mcp_enabled`) on. No bot pieces: the optional
- * @openwork assistant adds those later from its own section.
- */
 export function slackUserOAuthManifest(input: { redirectUrl: string; scopes: readonly string[] }): SlackUserOAuthManifest {
   return {
     display_information: {
@@ -48,35 +41,20 @@ export function slackUserOAuthManifest(input: { redirectUrl: string; scopes: rea
   };
 }
 
-/** Slack's documented share link: opens "Create an app" with this manifest filled in. */
 export function slackCreateAppUrl(manifest: SlackUserOAuthManifest): string {
   return `${SLACK_APPS_URL}?new_app=1&manifest_json=${encodeURIComponent(JSON.stringify(manifest))}`;
 }
 
-/**
- * What OpenWork may do in Slack, chosen explicitly by the admin before any
- * Slack app manifest or connection exists. Nothing is preselected.
- */
 export type SlackScopeChoice = "read_and_act" | "read_only";
 
 type SlackPresetScopes = { defaultOAuthScopes?: readonly string[]; optionalOAuthScopes?: readonly string[] };
 
-/**
- * The user scopes for a choice: "Read and act" is everything Slack's MCP
- * server offers (the preset's default plus its optional scopes); "Read only"
- * is the same set without any `:write` scope. No choice, no scopes.
- */
 export function slackScopesFor(choice: SlackScopeChoice | null, preset: SlackPresetScopes | null | undefined): string[] {
   if (!choice) return [];
   const all = [...new Set([...(preset?.defaultOAuthScopes ?? []), ...(preset?.optionalOAuthScopes ?? [])])];
   return choice === "read_and_act" ? all : all.filter((scope) => !scope.endsWith(":write"));
 }
 
-/**
- * The setup target with the admin's explicit choice saved as the scopes the
- * new connection requests. Without a choice (or without the guided preset's
- * optional list) the target is unchanged, so only the preset's minimum applies.
- */
 export function withSlackScopeChoice<T extends { preset?: SlackPresetScopes | null; requestedScopes?: readonly string[] }>(
   target: T | null,
   choice: SlackScopeChoice | null,
@@ -85,30 +63,20 @@ export function withSlackScopeChoice<T extends { preset?: SlackPresetScopes | nu
   return { ...target, requestedScopes: slackScopesFor(choice, target.preset) };
 }
 
-/** What Den knows about the optional @openwork assistant for this connection. */
 export type SlackAssistantStatus = "hidden" | "waiting" | "unavailable" | "installed";
 
 export type SlackSetupInput = {
-  /** The redirect URL to register; null when this deployment has no public API address. */
   callbackUrl: string | null;
-  /** The admin's choice; null until they pick one. */
   scopeChoice: SlackScopeChoice | null;
-  /** The scopes for that choice, which the manifest and the new connection both use. */
   scopes: readonly string[];
-  /** Scopes saved on the connection once it exists. */
   savedScopeCount: number | null;
-  /** The client ID (and secret) are saved on the connection. */
   appSaved: boolean;
-  /** The admin marked Agents › MCP as on. Den can't see it before someone signs in. */
   mcpConfirmed: boolean;
   signedIn: boolean;
   signingIn: boolean;
   signInError: string | null;
-  /** The Slack account the admin signed in as, when known. */
   accountLabel: string | null;
-  /** The admin's own recorded check after signing in. Null: not checked yet. */
   readiness: Pick<ConnectionReadiness, "status" | "failure" | "reason"> | null;
-  /** A check is running right now. */
   checking: boolean;
   assistant: SlackAssistantStatus;
 };
@@ -120,9 +88,7 @@ export type SlackSetupStep = {
   title: string;
   description: string;
   status: SetupCheckStatus;
-  /** Optional steps never hold up adding Slack and are not counted. */
   optional?: boolean;
-  /** What the step offers right now; the screen turns these into controls. */
   offers: SlackSetupOffer[];
 };
 
@@ -137,17 +103,10 @@ export type SlackSetupOffer =
   | "sign-in-again"
   | "check-again";
 
-/** Slack answered sign-in but refused MCP: what Slack does when the app's Agents › MCP switch is off. */
 export function slackMcpRefused(readiness: SlackSetupInput["readiness"]): boolean {
   return readiness?.status === "could_not_verify" && readiness.failure === "tools_unreadable";
 }
 
-/**
- * The guided Slack checklist, in the order an admin does it. Each step shows
- * what Den actually knows: the app and its MCP switch can't be seen until
- * someone signs in, so they say "not checked yet" until the first check, then
- * show its real result.
- */
 export function slackSetupSteps(input: SlackSetupInput): SlackSetupStep[] {
   const { readiness } = input;
   const ready = input.signedIn && readiness?.status === "ready";
@@ -272,14 +231,12 @@ export function slackSetupSteps(input: SlackSetupInput): SlackSetupStep[] {
   return [...steps, assistant];
 }
 
-/** "Step 2 of 4": the first required step not done yet. */
 export function slackSetupProgress(steps: readonly SlackSetupStep[]): { step: number; total: number; done: boolean } {
   const required = steps.filter((step) => !step.optional);
   const index = required.findIndex((step) => step.status !== "done");
   return { step: index === -1 ? required.length : index + 1, total: required.length, done: index === -1 };
 }
 
-/** The assistant step from the setup read: shown only for an eligible connection. */
 export function slackAssistantStatus(setup: { eligible: boolean; runnerAvailable: boolean; installed: boolean } | null | undefined): SlackAssistantStatus {
   if (!setup?.eligible) return "hidden";
   if (setup.installed) return "installed";

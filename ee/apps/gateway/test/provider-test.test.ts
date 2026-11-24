@@ -1,8 +1,8 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import { createProviderCatalog } from "../src/provider-catalog.js"
+import { createProviderCatalog } from "@openwork-ee/gateway-catalog"
 import { Hono } from "hono"
-import { signProviderTest } from "@openwork-ee/utils/provider-test-signature"
+import { signProviderTest } from "@openwork-ee/gateway-upstreams"
 import { registerProviderTestRoute, runProviderTest } from "../src/provider-test.js"
 import type { ProviderTestDependencies, ProviderTestEnv } from "../src/provider-test.js"
 

@@ -8,13 +8,6 @@ import {
 } from "@openwork/types/den/permissions"
 import type { PermissionChangeSource, PermissionSetPermissionTable, PermissionSetTable, PermissionStatus } from "./schema/permissions"
 
-/**
- * Pure permission state helpers (no database). Imported by permissions.ts and
- * re-exported from it; also importable on its own as
- * `@openwork-ee/den-db/permission-states` (e.g. from plain Node tests).
- * See docs/permissions/overview.md, sections 5 and 8.
- */
-
 type OrganizationId = typeof PermissionSetTable.$inferSelect.organizationId
 type PermissionSetId = typeof PermissionSetTable.$inferSelect.id
 type OrgMembershipId = NonNullable<typeof PermissionSetPermissionTable.$inferSelect.changedByOrgMembershipId>
@@ -31,7 +24,6 @@ export type PermissionHistoryRow<TSetId extends string = string> = {
 /** Current status per key for one set, including keys no longer in the catalog. */
 export type PermissionKeyStates = ReadonlyMap<string, PermissionStatus>
 
-/** Later by created_at, then by id (TypeIDs are UUIDv7, so id order is time order). */
 function isLaterPermissionRow(candidate: PermissionHistoryRow, current: PermissionHistoryRow) {
   const difference = candidate.createdAt.getTime() - current.createdAt.getTime()
   if (difference !== 0) return difference > 0

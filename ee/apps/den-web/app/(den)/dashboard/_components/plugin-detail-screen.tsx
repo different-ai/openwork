@@ -84,7 +84,6 @@ export function PluginDetailScreen({
   }
 
   const libraryItem = libraryQuery.data?.find((item) => item.type === "plugin" && item.id === plugin.id);
-  // Creator, a manager on this plugin, or `sharing.manage_all` (manager on everything shared).
   const canManagePlugin = (plugin.createdByOrgMembershipId !== null && plugin.createdByOrgMembershipId === orgContext?.currentMember.id)
     || (libraryItem?.type === "plugin" && libraryItem.role === "manager")
     || access.canManageAllShared;
@@ -186,7 +185,6 @@ function EditPluginDialog({
       });
       onSaved();
     } catch {
-      // The mutation error is rendered in the dialog.
     }
   }
 

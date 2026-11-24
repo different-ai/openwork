@@ -1,22 +1,3 @@
-/**
- * People references for callers who may not read the member directory
- * (format.md › People).
- *
- * Every area can carry `{ $ref: "people/<email>", name }` (grants,
- * assignments). Who may read other members' emails and names in a config
- * blob is the `members.people` area's view rule; anyone else gets the same
- * references as `{ $ref: "people/<member id>" }`, with no name, and plans,
- * reports and errors with those emails and names replaced.
- *
- * Import resolves either form. `namePeopleByEmail` turns `people/<member
- * id>` back into `people/<email>` for members of the TARGET organization
- * before planning, so a redacted export re-imported into its own
- * organization compares equal to what is there (no changes). A member id of
- * another organization stays as written: the reference is unresolved, and the
- * admin chooses a member or drops it (an id can't be invited).
- *
- * Pure: the member map comes in (normalized email → member id).
- */
 import {
   CONFIG_AREA_KEYS,
   findConfigShapeProblem,
@@ -43,9 +24,7 @@ import { findRefs, isEmailHandle, PEOPLE_AREA, rewriteRefs } from "./refs.js"
 import { isPlainObject, isUnsafeKey, normalizeEmail } from "./util.js"
 
 const PEOPLE_PREFIX = "people/"
-/** Shown instead of an email or name the caller may not read. */
 export const HIDDEN_PERSON = "(hidden)"
-/** The handle of a person who is not a member here (`people/hidden`): never resolves. */
 const HIDDEN_HANDLE = "hidden"
 const EMAIL_PATTERN = /[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}/gi
 
@@ -54,17 +33,12 @@ function personTarget(ref: string): string | null {
   return parsed?.area === "people" ? parsed.target : null
 }
 
-/** Member id → email, from the member map (the first email of a member wins). */
 function emailsById(people: ReadonlyMap<string, string>): Map<string, string> {
   const out = new Map<string, string>()
   for (const [email, id] of people) if (!out.has(id)) out.set(id, email)
   return out
 }
 
-/**
- * The blob's areas with `people/<member id>` written as `people/<email>`
- * for members of the target organization; other references unchanged.
- */
 export function namePeopleByEmail(
   blobAreas: Partial<Record<ConfigAreaKey, ConfigBlobArea>>,
   people: ReadonlyMap<string, string>,
@@ -83,7 +57,6 @@ export function namePeopleByEmail(
     out[key] = {
       ...area,
       items: area.items.map((item) => {
-        // Only items that name someone by id are copied; a spec planning will refuse (forbidden keys, depth) stays as written.
         const byId = findRefs(item.spec).some((ref) => {
           const target = personTarget(ref.ref)
           return target !== null && !isEmailHandle(target)
@@ -98,25 +71,15 @@ export function namePeopleByEmail(
 }
 
 export type PeopleRedactor = {
-  /** A spec (or any JSON) with people refs as `people/<member id>` and no name hints. Nothing else changes. */
   refs: (value: unknown) => unknown
   spec: (spec: ConfigSpec) => ConfigSpec
   blob: (blob: ConfigBlob) => ConfigBlob
-  /** Text with the emails of people (members, and anyone a people ref names) and their name hints hidden. */
   text: (value: string) => string
   plan: (plan: ConfigPlan) => ConfigPlan
-  /** Also drops the names of who requested and who ran the apply (member ids stay). */
   report: (report: ConfigApplyReport) => ConfigApplyReport
-  /** Errors with people hidden, and the creator's and approvers' names dropped (member ids stay). */
   summary: (summary: ConfigChangeRequestSummary) => ConfigChangeRequestSummary
 }
 
-/**
- * `people`: the organization's members, normalized email → member id.
- * Display redaction (`text`, `plan`, `report`) also hides every email and
- * name hint a people reference in that value carries, so call it once per
- * value it is shown with.
- */
 export function createPeopleRedactor(people: ReadonlyMap<string, string>): PeopleRedactor {
   const handleFor = (target: string): string => (isEmailHandle(target) ? people.get(normalizeEmail(target)) ?? HIDDEN_HANDLE : target)
   const refs = (value: unknown): unknown => rewriteRefs(value, (_path, ref) => {
@@ -132,7 +95,6 @@ export function createPeopleRedactor(people: ReadonlyMap<string, string>): Peopl
     return isPlainObject(out) ? out : {}
   }
 
-  /** Emails and names that people refs in a value carry: hidden in its text too. */
   const collect = (value: unknown, emails: Set<string>, names: Set<string>): void => {
     if (Array.isArray(value)) {
       for (const element of value) collect(element, emails, names)
@@ -191,6 +153,7 @@ export function createPeopleRedactor(people: ReadonlyMap<string, string>): Peopl
     if (target === null) return ref
     const out: ConfigPlanRef = { path: ref.path, ref: `${PEOPLE_PREFIX}${handleFor(target)}`, resolvedId: ref.resolvedId, via: ref.via }
     if (ref.decision !== undefined) out.decision = ref.decision
+    if (ref.refuses !== undefined) out.refuses = ref.refuses
     return out
   }
 
@@ -243,11 +206,17 @@ export function createPeopleRedactor(people: ReadonlyMap<string, string>): Peopl
     text: (value) => display(null).text(value),
     plan: (plan) => {
       const view = display(plan)
-      return {
+      const out: ConfigPlan = {
         ...plan,
         issues: plan.issues.map((issue) => ({ ...issue, message: view.text(issue.message) })),
         areas: plan.areas.map((area) => ({ ...area, items: area.items.map((item) => planItem(view, item)) })),
       }
+      if (plan.refTargets) {
+        out.refTargets = plan.refTargets
+          .filter((entry) => entry.area !== PEOPLE_AREA)
+          .map((entry) => ({ ...entry, items: entry.items.map((item) => ({ ...item, name: view.text(item.name) })) }))
+      }
+      return out
     },
     report: (report) => {
       const view = display(report)
@@ -258,7 +227,6 @@ export function createPeopleRedactor(people: ReadonlyMap<string, string>): Peopl
           : null,
         items: report.items.map((item) => reportItem(view, item)),
         warnings: report.warnings.map(view.text),
-        // Who asked for and who ran the apply: member ids stay, names go.
         requestedBy: report.requestedBy ? { ...report.requestedBy, name: null } : null,
         runsAs: report.runsAs ? { ...report.runsAs, name: null } : null,
       }
@@ -266,7 +234,6 @@ export function createPeopleRedactor(people: ReadonlyMap<string, string>): Peopl
     summary: (summary) => ({
       ...summary,
       errors: summary.errors.map(display(null).text),
-      // Creator and approvers: member ids stay, names go.
       createdBy: { ...summary.createdBy, name: null },
       approvals: summary.approvals.map((approval) => ({ ...approval, name: null })),
     }),

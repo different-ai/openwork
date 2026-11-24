@@ -1,0 +1,26 @@
+id: report_spreadsheet
+title: Return to the finished Excel report
+surface: desktop
+label: SEEDED
+status: grounded
+requires: [report_started]
+provides: [report_shown]
+do:
+  - {type: return_to_chat, turn: report}
+  - {type: wait_turn, turn: report, timeout_seconds: 300}
+  - {type: open_file_link, match: '{{report_file}}'}
+  - {type: show, turn: report, seconds: 8}
+say: Here’s the workbook. We kept committed pilots and conditional expansion separate, and kept the next steps and sources with the analysis.
+paste: {}
+see: The new Excel workbook opens; committed and conditional are separate $768,000 figures.
+checks:
+  - {type: turn_succeeded, turn: report}
+  - {type: file_created, turn: report, glob: '{{report_file}}'}
+  - {type: xlsx_has_value, turn: report, glob: '{{report_file}}', value: 768000, near: committed}
+  - {type: xlsx_has_value, turn: report, glob: '{{report_file}}', value: 768000, near: conditional}
+reset: []
+fallback: Stay on the Artifact or run receipt until the report completes. If necessary, switch to the earlier sample report and state its origin.
+expect_seconds: 35
+questions:
+  - {question: Can I export this?, answer: 'Yes. This is a real Excel workbook, not a chat screenshot.'}
+avoid: [Do not present the retained workbook as the new output.]

@@ -16,22 +16,10 @@ import { changeAgentCheckRequests } from "../workbot-proactive/repository.js"
 import { resolveMemberAgentPolicy } from "../workbot/team-settings.js"
 import { agentReadAllowlist } from "./agent-read-sources.js"
 
-/**
- * `request_check(at, why)`: a member's agent asks for one extra check before something time-sensitive ("check again at
- * 1:45, before the 2 PM with Northwind"), in place of a fixed meeting-prep lead time (`workbotAgentBrief`).
- *
- * Only the agent's own background check sees it: a token Den minted with the agent's read allowlist and at least one
- * source (the check, never the messenger, which reads nothing), for an active member with both features on. It
- * changes only that member's own agent schedule. Den caps it at the organization's extra checks per day, keeps it inside
- * the member's hours and outside quiet hours, makes a second request within ten minutes the same one, and shows it in
- * My bot ("Next check 1:45 PM: before your 2 PM with Northwind").
- */
-
 export const REQUEST_CHECK_TOOL_NAME = "request_check"
 
 const REQUEST_CHECK_DESCRIPTION = "Your agent's background check only: ask for one extra check at a time today or tomorrow, when timing matters before your next scheduled check (a meeting at 2 PM, a deadline at 5). Den keeps it inside the member's hours, caps extra checks per day and shows the reason in My bot. Asking again for about the same time changes nothing."
 
-/** Whether this MCP request may see request_check: the agent's own check token, a member, and both features on. */
 export function agentCheckRequestsAvailable(input: { scopes: ReadonlySet<string>; member: boolean; workbotAgentBrief: boolean }): boolean {
   const allowlist = agentReadAllowlist(input.scopes)
   return Boolean(input.member && input.workbotAgentBrief && allowlist && (allowlist.kinds.size > 0 || allowlist.connectionIds.size > 0))
@@ -41,7 +29,6 @@ function clockOf(at: number, timeZone: string) {
   return new Intl.DateTimeFormat("en-US", { timeZone, hour: "numeric", minute: "2-digit" }).format(at)
 }
 
-/** The tool's answer, one plain sentence the model can act on. */
 export function describeCheckRequest(decision: AgentCheckRequestDecision, timeZone: string, perDay: number): { ok: boolean; text: string } {
   if (decision.kind === "accepted") return { ok: true, text: `Extra check set for ${clockOf(decision.request.at, timeZone)} (${decision.usedThatDay} of ${perDay} that day).` }
   if (decision.kind === "duplicate") return { ok: true, text: `Already set for ${clockOf(decision.request.at, timeZone)}.` }
@@ -49,13 +36,11 @@ export function describeCheckRequest(decision: AgentCheckRequestDecision, timeZo
   return { ok: false, text: decision.message }
 }
 
-/** Plans and saves one request under the agent row's lock. */
 export async function requestAgentCheck(input: { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member">; userId: DenTypeId<"user">; at: string; why: string; now?: number }): Promise<{ ok: boolean; text: string }> {
   if (!(await proactiveAllowed(input.organizationId, input.userId)) || !(await agentBriefAllowed(input.organizationId, input.userId))) {
     return { ok: false, text: "Extra checks aren't on for this member." }
   }
   const now = input.now ?? Date.now()
-  // The member's own policy (their team's, else the organization's): the same rhythm and limits their checks follow.
   const { settings, template } = await resolveMemberAgentPolicy({ organizationId: input.organizationId, memberId: input.memberId, userId: input.userId })
   const brief = resolveAgentBrief(settings, template)
   return changeAgentCheckRequests(input.memberId, (row, state) => {

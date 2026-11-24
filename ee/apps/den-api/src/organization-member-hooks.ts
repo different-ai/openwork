@@ -13,21 +13,18 @@ export type OrganizationMemberChange = "added" | "removed"
 type OrganizationMemberChangeHookInput = {
   organizationId: OrgId
   memberId: MemberId
-  /** Members plus unexpired pending invitations: the same users billing counts. */
   memberCount: number
   change: OrganizationMemberChange
 }
 
 type OrganizationMemberChangeHook = (input: OrganizationMemberChangeHookInput) => Promise<void>
 
-/** Someone who was removed keeps no cloud computer. */
 const removeWorkbotComputersAfterRemoval: OrganizationMemberChangeHook = async (input) => {
   if (input.change === "removed") removeMemberWorkbotComputersInBackground(input)
 }
 
 const organizationMemberChangeHooks: OrganizationMemberChangeHook[] = [
   syncInferenceAfterMemberChange,
-  // Team seats, OpenWork Models and OpenWork Web follow the same user count.
   syncOrganizationBillingQuantities,
   removeWorkbotComputersAfterRemoval,
 ]
@@ -37,7 +34,6 @@ export async function runPostOrganizationMemberChangeHooks(input: {
   memberId: MemberId
   change: OrganizationMemberChange
 }) {
-  // Member add/remove changes both list rendering and membership auth decisions.
   await cache.org.deleteMembers(input.organizationId)
   const memberCount = await countBillingUsers(input.organizationId)
   for (const hook of organizationMemberChangeHooks) {

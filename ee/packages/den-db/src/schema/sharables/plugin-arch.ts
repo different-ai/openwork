@@ -1,17 +1,19 @@
 import { relations, sql } from "drizzle-orm"
 import {
   boolean,
+  char,
   index,
   int,
   json,
   mysqlEnum,
   mysqlTable,
+  primaryKey,
   text,
   timestamp,
   uniqueIndex,
   varchar,
 } from "drizzle-orm/mysql-core"
-import { denTypeIdColumn, encryptedColumn, encryptedMediumTextColumn } from "../../columns"
+import { denTypeIdColumn, encryptedColumn, encryptedMediumBlobColumn, encryptedMediumTextColumn } from "../../columns"
 import { MemberTable, OrganizationTable } from "../org"
 import { TeamTable } from "../teams"
 
@@ -44,6 +46,7 @@ export const ConfigObjectTable = mysqlTable(
   {
     id: denTypeIdColumn("configObject", "id").notNull().primaryKey(),
     organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    externalKey: varchar("external_key", { length: 128 }),
     objectType: mysqlEnum("object_type", configObjectTypeValues).notNull(),
     sourceMode: mysqlEnum("source_mode", configObjectSourceModeValues).notNull(),
     title: varchar("title", { length: 255 }).notNull(),
@@ -61,6 +64,7 @@ export const ConfigObjectTable = mysqlTable(
   },
   (table) => [
     index("config_object_organization_id").on(table.organizationId),
+    uniqueIndex("config_object_org_external_key").on(table.organizationId, table.externalKey),
     index("config_object_type").on(table.objectType),
     index("config_object_source_mode").on(table.sourceMode),
     index("config_object_status").on(table.status),
@@ -95,11 +99,31 @@ export const ConfigObjectVersionTable = mysqlTable(
   ],
 )
 
+/**
+ * The contents of skills' supporting files, stored once per organization and
+ * keyed by their sha256. A skill version lists its files as { path, sha256,
+ * size } in normalizedPayloadJson.files, so a new version that keeps a file
+ * reuses its row, and reading a version's file list never loads contents.
+ * Rows are written before the version that names them and never changed.
+ */
+export const SkillFileBlobTable = mysqlTable(
+  "skill_file_blob",
+  {
+    organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    sha256: char("sha256", { length: 64 }).notNull(),
+    size: int("size").notNull(),
+    bytes: encryptedMediumBlobColumn("bytes").notNull(),
+    createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
+  },
+  (table) => [primaryKey({ name: "skill_file_blob_pk", columns: [table.organizationId, table.sha256] })],
+)
+
 export const PluginTable = mysqlTable(
   "plugin",
   {
     id: denTypeIdColumn("plugin", "id").notNull().primaryKey(),
     organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
+    externalKey: varchar("external_key", { length: 128 }),
     name: varchar("name", { length: 255 }).notNull(),
     description: text("description"),
     sourceRepositoryUrl: varchar("source_repository_url", { length: 1024 }),
@@ -113,6 +137,7 @@ export const PluginTable = mysqlTable(
   },
   (table) => [
     index("plugin_organization_id").on(table.organizationId),
+    uniqueIndex("plugin_org_external_key").on(table.organizationId, table.externalKey),
     index("plugin_created_by_org_membership_id").on(table.createdByOrgMembershipId),
     index("plugin_status").on(table.status),
     index("plugin_status_created_at").on(table.status, table.createdAt),

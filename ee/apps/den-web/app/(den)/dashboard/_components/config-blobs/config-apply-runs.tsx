@@ -26,15 +26,9 @@ const ITEM_ICONS: Record<ConfigApplyReportItem["status"], { icon: LucideIcon; cl
   skipped: { icon: CircleDashed, className: "text-gray-400" },
 };
 
-/**
- * "Apply runs": one row per apply attempt (newest first), each opening its
- * report: per item what was written, and for the failed item what failed,
- * where, what was already written and what was not reached.
- */
 export function ConfigApplyRuns({ runs, areaLabel, canRestore }: {
   runs: readonly ConfigApplyReport[];
   areaLabel: (area: ConfigAreaKey) => string;
-  /** Whether "Restore previous config" is offered on this request (named in the next steps). */
   canRestore: boolean;
 }) {
   if (runs.length === 0) return null;

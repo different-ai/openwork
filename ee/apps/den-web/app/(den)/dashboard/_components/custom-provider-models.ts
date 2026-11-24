@@ -1,10 +1,3 @@
-/**
- * Pure helpers for AI Gateway custom OpenAI-compatible providers:
- * the model settings form, models.dev
- * templates, merging a fresh `/models` answer into the list, test
- * fingerprints and where a failed test sends the admin. No React, no fetch.
- */
-
 import {
   gatewayCustomModalitySchema,
   gatewayCustomModelSchema,
@@ -21,15 +14,12 @@ import type { GatewayAccessGrant, GatewayAccessGrantWrite } from "@openwork/type
 
 export const CUSTOM_MODALITIES: readonly GatewayCustomModality[] = gatewayCustomModalitySchema.options;
 
-/** The settings form for one model. Numbers stay text while the admin types. */
 export type ModelSettingsDraft = {
   id: string;
   name: string;
   attachment: boolean;
   reasoning: boolean;
-  /** Reasoning can be switched on and off per request. */
   reasoningToggle: boolean;
-  /** Effort values, comma separated ("low, medium, high"). Empty means none. */
   reasoningEfforts: string;
   toolCall: boolean;
   structuredOutput: boolean;
@@ -44,27 +34,20 @@ export type ModelSettingsDraft = {
   costCacheWrite: string;
 };
 
-/** Where a model's settings came from, shown next to it. */
 export type ModelOrigin =
   | { kind: "matched"; match: GatewayCustomModelMatch }
-  /** Listed by the provider with details, no models.dev match. */
   | { kind: "listed" }
-  /** Listed by the provider, nothing known beyond the id. */
   | { kind: "unknown" }
   | { kind: "template"; templateId: string; templateName: string }
   | { kind: "custom" }
   | { kind: "saved" };
 
 export type ModelDraft = {
-  /** Stable local key; the id itself is editable. */
   key: string;
   settings: ModelSettingsDraft;
   origin: ModelOrigin;
-  /** Included in the provider. */
   selected: boolean;
-  /** Settings were filled in (from a match, a template, the provider or by hand). */
   configured: boolean;
-  /** The provider's latest `/models` answer no longer lists this id. */
   missing: boolean;
 };
 
@@ -76,9 +59,6 @@ export const EMPTY_MODEL_SETTINGS: ModelSettingsDraft = {
   context: "", outputLimit: "", costInput: "", costOutput: "", costCacheRead: "", costCacheWrite: "",
 };
 
-// --- Number parsing ---
-
-/** "128000", "128,000", "128k" or "1M" → a positive whole number of tokens; null when invalid. */
 export function parseTokenCount(input: string): number | null {
   const text = input.trim().replace(/[,_\s]/g, "").toLowerCase();
   const match = /^(\d+(?:\.\d+)?)([km]?)$/.exec(text);
@@ -87,7 +67,6 @@ export function parseTokenCount(input: string): number | null {
   return Number.isInteger(value) && value > 0 ? value : null;
 }
 
-/** USD per million tokens. Empty → undefined (not set); "$1.25" → 1.25; invalid or negative → null. */
 export function parseCost(input: string): number | undefined | null {
   const text = input.trim().replace(/^\$/, "").replace(/,/g, "");
   if (!text) return undefined;
@@ -100,12 +79,9 @@ function formatNumber(value: number | undefined): string {
   return value === undefined ? "" : String(value);
 }
 
-/** "low, medium,high" → ["low", "medium", "high"], de-duplicated. */
 export function parseEffortValues(input: string): string[] {
   return [...new Set(input.split(",").map((value) => value.trim()).filter(Boolean))];
 }
-
-// --- Conversions ---
 
 export function settingsFromModel(model: GatewayCustomModel): ModelSettingsDraft {
   const options = model.reasoning_options ?? [];
@@ -151,10 +127,6 @@ function readCost(value: unknown): string {
   return typeof value === "number" && Number.isFinite(value) && value > 0 ? String(value) : "";
 }
 
-/**
- * Settings copied from a models.dev catalog model (the `openrouter` list),
- * used as a template. Missing limits stay empty for the admin to fill in.
- */
 export function settingsFromCatalogModel(model: { id: string; name: string; config: Record<string, unknown> }): ModelSettingsDraft {
   const config = model.config;
   const modalities = isRecord(config.modalities) ? config.modalities : {};
@@ -187,7 +159,6 @@ export function settingsFromCatalogModel(model: { id: string; name: string; conf
   };
 }
 
-/** Copies a template's settings onto a model, keeping the model's own id (and name when set). */
 export function applyTemplateSettings(current: ModelSettingsDraft, template: ModelSettingsDraft): ModelSettingsDraft {
   return { ...template, id: current.id || template.id, name: current.name || template.name };
 }
@@ -196,7 +167,6 @@ export type ModelDraftResult =
   | { ok: true; model: GatewayCustomModel }
   | { ok: false; field: ModelSettingsField; message: string };
 
-/** The saved record for one model, or the first field to fix. */
 export function modelFromSettings(settings: ModelSettingsDraft): ModelDraftResult {
   const id = settings.id.trim();
   if (!id) return { ok: false, field: "id", message: "Enter the model ID the provider expects." };
@@ -247,7 +217,6 @@ export type ModelsCheck =
   | { ok: true; models: GatewayCustomModel[] }
   | { ok: false; key: string | null; field: ModelSettingsField | null; message: string };
 
-/** Every included model is complete, ids are unique, and there is at least one. */
 export function checkSelectedModels(drafts: readonly ModelDraft[]): ModelsCheck {
   const selected = drafts.filter((draft) => draft.selected);
   if (!selected.length) return { ok: false, key: null, field: null, message: "Pick at least one model." };
@@ -266,8 +235,6 @@ export function checkSelectedModels(drafts: readonly ModelDraft[]): ModelsCheck 
   return { ok: true, models };
 }
 
-// --- Discovery ---
-
 export function draftFromDiscovered(entry: GatewayCustomDiscoveredModel, key: string, selectMatched: boolean): ModelDraft {
   if (entry.model) {
     return {
@@ -282,14 +249,6 @@ export function draftFromDiscovered(entry: GatewayCustomDiscoveredModel, key: st
   return { key, settings: { ...EMPTY_MODEL_SETTINGS, id: entry.id }, origin: { kind: "unknown" }, selected: false, configured: false, missing: false };
 }
 
-/**
- * Folds a `/models` answer into the current list. Existing models and every
- * edit stay; ids the provider newly lists are added (ticked only when
- * `selectMatched` and matched to models.dev). Ids the provider listed last
- * time (`previouslyListed`) and no longer lists are flagged as missing, never
- * removed; models added by hand were never listed, so they are never flagged.
- * An unavailable answer changes nothing but clears no flags either.
- */
 export function mergeDiscoveredModels(
   drafts: readonly ModelDraft[],
   discovered: readonly GatewayCustomDiscoveredModel[],
@@ -309,8 +268,6 @@ export function mergeDiscoveredModels(
   return [...kept, ...added];
 }
 
-// --- Connection ---
-
 export type ConnectionField = "name" | "baseUrl" | "apiKey";
 
 export function connectionError(input: { name: string; baseUrl: string; apiKey: string; apiKeyRequired: boolean }): { field: ConnectionField; message: string } | null {
@@ -318,15 +275,10 @@ export function connectionError(input: { name: string; baseUrl: string; apiKey: 
   if (!input.baseUrl.trim()) return { field: "baseUrl", message: "Enter the provider's API URL, for example https://api.example.com/v1." };
   const normalized = normalizeGatewayCustomBaseUrl(input.baseUrl);
   if (!normalized) return { field: "baseUrl", message: "Enter a full web address that starts with https://, without a user name, ? or #." };
-  // http:// is left to den-api: it is refused unless the operator allowlisted that origin (GATEWAY_EGRESS_ALLOWED_ORIGINS).
   if (input.apiKeyRequired && !input.apiKey.trim()) return { field: "apiKey", message: "Paste the API key." };
   return null;
 }
 
-/**
- * A saved key is only ever sent to the origin it was saved for (den-api
- * refuses otherwise), so a URL on another host needs the key pasted again.
- */
 export function newOriginNeedsKey(savedBaseUrl: string, baseUrl: string, apiKey: string): boolean {
   if (apiKey.trim()) return false;
   const normalized = normalizeGatewayCustomBaseUrl(baseUrl);
@@ -334,15 +286,11 @@ export function newOriginNeedsKey(savedBaseUrl: string, baseUrl: string, apiKey:
   try { return new URL(normalized).origin !== new URL(savedBaseUrl).origin; } catch { return true; }
 }
 
-/** "Requests go to …/chat/completions", or null while the URL is incomplete. */
 export function chatCompletionsUrl(baseUrl: string): string | null {
   const normalized = normalizeGatewayCustomBaseUrl(baseUrl);
   return normalized ? `${normalized}/chat/completions` : null;
 }
 
-// --- Test ---
-
-/** Everything a test result depends on. Any change makes the last result stale. */
 export function testFingerprint(input: { baseUrl: string; apiKey: string; drafts: readonly ModelDraft[]; testModelKey: string | null }): string {
   return JSON.stringify({
     baseUrl: normalizeGatewayCustomBaseUrl(input.baseUrl) ?? input.baseUrl.trim(),
@@ -352,7 +300,6 @@ export function testFingerprint(input: { baseUrl: string; apiKey: string; drafts
   });
 }
 
-/** The selected model to test: the chosen one while it is still ticked, else the first ticked one. */
 export function resolveTestModelKey(drafts: readonly ModelDraft[], chosen: string | null): string | null {
   const selected = drafts.filter((draft) => draft.selected);
   return selected.find((draft) => draft.key === chosen)?.key ?? selected[0]?.key ?? null;
@@ -363,7 +310,6 @@ export type TestFailureTarget =
   | { step: "model"; modelKey: string }
   | null;
 
-/** Where a failed test sends the admin: the key or URL field, the model, or nowhere (stay and show it). */
 export function testFailureTarget(result: Extract<GatewayCustomTestResponse, { ok: false }>, testModelKey: string | null): TestFailureTarget {
   if (result.step === "connection") {
     const keyProblem = result.status === 401 || result.status === 403 || result.code === "unauthorized" || result.code === "forbidden" || result.code === "invalid_api_key";
@@ -373,10 +319,6 @@ export function testFailureTarget(result: Extract<GatewayCustomTestResponse, { o
   return null;
 }
 
-/**
- * A saved provider needs a passing test before saving when the URL, the key
- * or the set of model ids changes. Other setting edits save directly.
- */
 export function savedProviderNeedsTest(saved: { baseUrl: string; models: readonly GatewayCustomModel[] }, draft: { baseUrl: string; apiKey: string; models: readonly GatewayCustomModel[] }): boolean {
   if ((normalizeGatewayCustomBaseUrl(draft.baseUrl) ?? draft.baseUrl.trim()) !== saved.baseUrl) return true;
   if (draft.apiKey.trim()) return true;
@@ -384,7 +326,6 @@ export function savedProviderNeedsTest(saved: { baseUrl: string; models: readonl
   return draft.models.some((model) => !savedIds.has(model.id));
 }
 
-/** Plain words for an origin, shown under the model name. */
 export function originLabel(origin: ModelOrigin): string | null {
   switch (origin.kind) {
     case "matched": return `Settings from ${origin.match.modelId}`;
@@ -396,11 +337,8 @@ export function originLabel(origin: ModelOrigin): string | null {
   }
 }
 
-// --- Access ---
-
 type Audience = GatewayAccessGrantWrite["audience"];
 
-/** The grants to add and remove so the provider's first model group and key match "Who can use it". */
 export function accessGrantChanges(
   provider: { accessGrants: readonly GatewayAccessGrant[] },
   groupId: string,

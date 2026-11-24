@@ -33,7 +33,6 @@ const entrySchema = z.object({
   kind: z.enum(["connection", "skill", "plugin", "provider"]),
   title: labelSchema,
   detail: labelSchema,
-  // Den returns only stored creation/version dates, never updatedAt or now.
   occurredAt: z.string().datetime({ offset: true }),
   target: targetSchema,
   logo: z.object({ name: labelSchema, url: z.string().optional(), providerId: z.string().optional() }).optional(),
@@ -60,10 +59,6 @@ function hrefFor(orgSlug: string | null, target: z.infer<typeof targetSchema>): 
   }
 }
 
-/**
- * Den computes the newest five entries in one request; the web only builds
- * destinations. A recoverable snapshot of existing resources, not an audit log.
- */
 export async function fetchDashboardActivity(input: DashboardActivityInput): Promise<DashboardActivityEntry[]> {
   input.signal.throwIfAborted();
   const { activity } = responseSchema.parse(await input.request(DASHBOARD_ACTIVITY_PATH, input.signal));

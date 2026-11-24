@@ -9,7 +9,6 @@ type DenStatusScreenProps = {
   children?: ReactNode;
 };
 
-/** Branded shell for the brief handoff screens between Den and identity providers. */
 export function DenStatusScreen({ title, description, status, error, children }: DenStatusScreenProps) {
   return (
     <main className="relative isolate flex min-h-dvh items-center justify-center bg-[var(--dls-surface)] px-6 py-16 text-[var(--dls-text-primary)]">

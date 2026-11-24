@@ -42,6 +42,16 @@ If you run containers on ECS Fargate rather than Kubernetes, the Terraform modul
 
 API defaults to 1 vCPU / 2 GiB and web to 0.5 vCPU / 1 GiB. Managed RDS deletion protection defaults on. The 0.18.57/0.18.58 API/web defaults are digest-pinned; other versions and enabled optional services require digest-pinned image overrides. Database TLS verifies the certificate chain using the public regional RDS CA bundle, loaded before Node starts. The application's current MySQL parser does not enable mysql2's separate hostname identity check; full hostname verification remains an application follow-up, not a claim of this module.
 
+The optional **AI Gateway** is a separate inference service (`openwork-inference`,
+8791), not OpenWork Web's **den-gateway** proxy (8788) or Den API's MCP gateway.
+Set `ai_gateway_enabled=true`, a dedicated `ai_gateway_domain_name`, and a matching
+release's digest-pinned `ai_gateway_image`; `ai_gateway_url` returns its HTTPS
+origin (null when off). The HTTPS ALB routes desktops while Den uses private Cloud
+Map. Defaults remain off, including in the native managed installer. See the
+[Terraform AI Gateway guide](https://github.com/different-ai/openwork/blob/dev/infra/terraform/AI_GATEWAY.md)
+for DNS/ACM, shared-listener priorities, unchanged secrets and managed-install limits.
+**Live AI Gateway conformance is NotRun**; mock plans do not qualify an installation.
+
 ### Tested scenarios
 
 | Scenario | Tools / release | Result | Date |

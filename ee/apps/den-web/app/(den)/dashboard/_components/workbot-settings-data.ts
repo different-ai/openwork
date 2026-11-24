@@ -12,7 +12,6 @@ export function workbotSettingsQueryKey(orgId: string): string[] {
   return ["org-workbot-settings", orgId];
 }
 
-/** Manage › Workbot: the organization's default model and the models the headless runner serves. */
 export function useWorkbotSettings(orgId: string, enabled = true) {
   return useQuery({
     queryKey: workbotSettingsQueryKey(orgId),
@@ -55,7 +54,6 @@ export function useTestWorkbotDefaultModel(orgId: string) {
   });
 }
 
-/** One PUT of Workbot settings; a field left out of the body is unchanged. */
 function useSaveWorkbotSettings<Value>(orgId: string, save: { key: string; action: string; body: (value: Value) => WorkbotSettingsInput; what: string }) {
   const queryClient = useQueryClient();
   const { runReauthableAction } = useOrgDashboard();

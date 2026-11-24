@@ -13,6 +13,8 @@ import {
   shareNeedsReview,
   shareLockedLine,
   shareNeedsVerification,
+  shareOutcomeFacts,
+  shareOutcomeTitle,
   type ShareableDeviceProvider,
 } from "../src/react-app/domains/settings/provider-share/device-provider-share";
 
@@ -167,3 +169,22 @@ test("a member's own key never gets a Share action", () => {
 function member_options(): DeviceShareOptions {
   return { canShare: false, blocker: "no_permission", managerName: "Avery Owner", verificationRequired: false, providers: [] };
 }
+
+test("after a share the dialog reports where the provider is and what each choice does", () => {
+  const input = { providerName: "Anthropic", organizationName: "Acme" };
+  const arrived = { status: "arrived", organizationProviderId: "ipr_1", name: "OpenWork Anthropic" } as const;
+  expect(shareOutcomeTitle({ ...input, arrival: arrived })).toBe("Anthropic is shared with Acme");
+  const facts = shareOutcomeFacts({ ...input, arrival: arrived });
+  expect(facts.map((fact) => fact.label)).toEqual(["Shared as", "Use their copy", "Keep both"]);
+  expect(facts[0]?.value).toBe("OpenWork Anthropic, listed under From Acme");
+  expect(facts[1]?.value).toContain("Removes your key from this device");
+  // Not here yet is said plainly, and never reads as a failed share.
+  expect(shareOutcomeTitle({ ...input, arrival: { status: "pending" } })).toBe("Anthropic is shared, but not on this device yet");
+  expect(shareOutcomeFacts({ ...input, arrival: { status: "pending" } }).map((fact) => fact.label)).toEqual(["Shared", "This device"]);
+});
+
+test("the guided confirmation says the key is copied, not that it leaves this device", () => {
+  const guided = shareConsentFacts({ providerName: "Anthropic", organizationName: "Acme", guided: true });
+  expect(guided[1]?.value).toContain("A copy is stored encrypted in AI Gateway");
+  expect(guided[1]?.value).not.toContain("Leaves this device");
+});

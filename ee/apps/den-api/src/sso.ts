@@ -7,13 +7,10 @@ import { appendDomainChanges } from "./audit/domain/legacy.js"
 import { ssoConnectionDeletedEvent, ssoConnectionRenamedEvent, type SsoConnectionAuditState } from "./audit/domain/sso.js"
 import type { AuditChangeCapture } from "./audit/request-capture.js"
 import { db } from "./db.js"
-import { isOrganizationSsoReady } from "./sso-readiness.js"
+import { isOrganizationSsoReady, isMicrosoftEntraManagedDomain, SSO_IDENTITY_EXTRA_FIELDS, ORGANIZATION_SAML_WANT_ASSERTIONS_SIGNED } from "@openwork-ee/den-sso"
 import { env } from "./env.js"
-import { isMicrosoftEntraManagedDomain } from "./sso-entra-domain.js"
 import { parseSsoDomains } from "./sso-domains.js"
 import { oidcIssuerFromInput } from "./sso-oidc-discovery.js"
-import { SSO_IDENTITY_EXTRA_FIELDS } from "./sso-jit.js"
-import { ORGANIZATION_SAML_WANT_ASSERTIONS_SIGNED } from "./sso-saml-policy.js"
 import { createSsoConfigRevision } from "./sso-test-lifecycle.js"
 
 type SsoConnection = typeof SsoConnectionTable.$inferSelect
@@ -70,10 +67,6 @@ function authCallbackBaseUrl() {
   return env.apiPublicUrl ?? env.betterAuthUrl
 }
 
-// Better Auth builds the SAML SP metadata and AuthnRequest ACS location from
-// its own baseURL (the web origin), not from samlConfig.callbackUrl. The URLs
-// we display and store must match what the SP actually advertises to the IdP,
-// otherwise the IdP posts to the web origin and response validation rejects it.
 export function getSsoAcsUrl(providerId: string) {
   return `${env.betterAuthUrl}/api/auth/sso/saml2/sp/acs/${encodeURIComponent(providerId)}`
 }
@@ -104,11 +97,6 @@ function normalizeIssuer(value: string) {
   return value.replace(/\/$/, "")
 }
 
-/**
- * The OIDC settings an administrator entered cannot be used: discovery
- * failed, or manual endpoints are incomplete. Routes answer 400 with the
- * message, pointing at the issuer field.
- */
 export class OidcConfigurationError extends Error {
   constructor(message: string) {
     super(message)
@@ -161,7 +149,6 @@ async function resolveOidcEndpoints(input: OidcRegistrationInput) {
 }
 
 async function getSsoProviderByProviderId(providerId: string) {
-  // primary: only used to read back providers Better Auth registered moments ago.
   const rows = await db.$primary
     .select()
     .from(SsoProviderTable)
@@ -225,7 +212,6 @@ async function registerBetterAuthSsoProvider(input: OrganizationSsoRegistrationI
           spMetadata: {
             entityID: audience,
           },
-          // Better Auth always takes the SAML subject from the NameID.
           mapping: {
             email: "email",
             name: "displayName",
@@ -250,7 +236,6 @@ async function registerBetterAuthSsoProvider(input: OrganizationSsoRegistrationI
         ...oidcEndpoints,
         scopes: input.scopes ?? ["openid", "email", "profile"],
         pkce: true,
-        // Better Auth always takes the OIDC subject from `sub`.
         mapping: {
           email: "email",
           emailVerified: "email_verified",
@@ -266,7 +251,6 @@ async function registerBetterAuthSsoProvider(input: OrganizationSsoRegistrationI
 
 type SsoReader = Pick<typeof db.$primary, "select">
 
-/** Every SSO connection of the organization, oldest first. The oldest is the one the single-connection routes manage. */
 export async function listOrganizationSsoConnections(organizationId: OrganizationId, reader: SsoReader = db) {
   return reader
     .select()
@@ -275,7 +259,6 @@ export async function listOrganizationSsoConnections(organizationId: Organizatio
     .orderBy(asc(SsoConnectionTable.createdAt), asc(SsoConnectionTable.id))
 }
 
-/** The organization's oldest SSO connection: the one `/v1/sso` (single-connection) manages. */
 export async function getOrganizationSsoConnection(organizationId: OrganizationId, reader: SsoReader = db) {
   const rows = await reader
     .select()
@@ -350,7 +333,6 @@ async function cleanupLegacySsoProvider(
   await tx.delete(SsoProviderTable).where(eq(SsoProviderTable.providerId, connection.providerId))
 }
 
-/** Connection plus provider verification state for audit snapshots (never provider configuration). */
 export async function getSsoConnectionAuditState(connection: SsoConnection | null, reader: SsoReader = db): Promise<SsoConnectionAuditState | null> {
   if (!connection) return null
   const [provider] = await reader.select({ domainVerified: SsoProviderTable.domainVerified }).from(SsoProviderTable)
@@ -358,16 +340,10 @@ export async function getSsoConnectionAuditState(connection: SsoConnection | nul
   return { connection, provider: provider ?? null }
 }
 
-/** The oldest connection's audit state (single-connection routes). */
 export async function getOrganizationSsoAuditState(organizationId: OrganizationId, reader: SsoReader = db): Promise<SsoConnectionAuditState | null> {
   return getSsoConnectionAuditState(await getOrganizationSsoConnection(organizationId, reader), reader)
 }
 
-/**
- * Deletes one connection (default: the oldest) with its provider and the SSO
- * identities it created. null when there is no such connection; otherwise
- * the sso_connection.deleted event ids (capture active).
- */
 export async function deleteOrganizationSsoConnection(organizationId: OrganizationId, capture: AuditChangeCapture | null = null, target?: SsoConnection) {
   const connection = target ?? await getOrganizationSsoConnection(organizationId)
   if (!connection || connection.organizationId !== organizationId) {
@@ -386,12 +362,6 @@ export async function deleteOrganizationSsoConnection(organizationId: Organizati
   return { auditEventIds }
 }
 
-/**
- * Whether another connection of the organization already proved every one of
- * these domains, so a second identity provider for the same domains needs no
- * second DNS record. Better Auth verifies all of a provider's domains with one
- * record, so a verified provider vouches for each domain it lists.
- */
 async function domainsVerifiedByOtherConnection(input: { organizationId: OrganizationId; domains: readonly string[]; exceptConnectionId: string | null }) {
   const rows = await db.$primary
     .select({ connectionId: SsoConnectionTable.id, domain: SsoProviderTable.domain })
@@ -408,26 +378,14 @@ async function domainsVerifiedByOtherConnection(input: { organizationId: Organiz
   return input.domains.length > 0 && input.domains.every((domain) => verified.has(domain))
 }
 
-/**
- * What to register:
- * - `undefined`: the organization's oldest connection is replaced, or the
- *   first one created (the single-connection routes).
- * - `null`: a new connection is added next to any existing ones.
- * - a connection: that connection's configuration is replaced.
- */
 export type SsoRegistrationTarget = SsoConnection | null | undefined
 
 export async function registerOrganizationSsoConnection(input: OrganizationSsoRegistrationInput & {
   target?: SsoRegistrationTarget
-  /** Display name; undefined keeps the current one. */
   name?: string | null
 }) {
-  // An OIDC issuer pasted as its discovery URL is saved as the issuer itself:
-  // discovery would otherwise request the well-known path twice, and tokens
-  // name the issuer, not the discovery URL.
   if (input.kind === "oidc") input = { ...input, issuer: oidcIssuerFromInput(input.issuer) }
   const domains = parseSsoDomains(input.domain)
-  // primary throughout: each step reads back what Better Auth or the step before just wrote.
   const existing = input.target === undefined
     ? await getOrganizationSsoConnection(input.organizationId, db.$primary)
     : input.target
@@ -437,7 +395,6 @@ export async function registerOrganizationSsoConnection(input: OrganizationSsoRe
       issuer: input.issuer,
       entryPoint: input.kind === "saml" ? input.entryPoint : null,
     })
-    // Domains another connection already verified need no new DNS record.
     || await domainsVerifiedByOtherConnection({
       organizationId: input.organizationId,
       domains,
@@ -446,8 +403,6 @@ export async function registerOrganizationSsoConnection(input: OrganizationSsoRe
   const nameUpdate = input.name === undefined ? {} : { name: input.name }
 
   if (existing) {
-    // A connection added next to others is its own provider (providerId is its
-    // id); the first connection keeps the organization-derived provider id.
     const providerId = existing.providerId === existing.id ? existing.id : buildOrganizationSsoProviderId(input.organizationId)
     const existingProvider = await getSsoProviderByProviderId(providerId)
     if (!existingProvider) {
@@ -518,9 +473,6 @@ export async function registerOrganizationSsoConnection(input: OrganizationSsoRe
   }
 
   const connectionId = createDenTypeId("ssoConnection")
-  // The organization's first connection keeps the provider id it has always
-  // had; one added next to others uses its own id (short enough for the DNS
-  // verification label, which Better Auth limits to 63 characters).
   const hasOtherConnections = input.target === null
     && (await listOrganizationSsoConnections(input.organizationId, db.$primary)).length > 0
   const providerId = hasOtherConnections ? connectionId : buildOrganizationSsoProviderId(input.organizationId)
@@ -562,7 +514,6 @@ export async function registerOrganizationSsoConnection(input: OrganizationSsoRe
   return connection
 }
 
-/** Renames a connection without touching its provider, so it stays verified, tested and enabled. */
 export async function renameOrganizationSsoConnection(connection: SsoConnection, name: string | null, capture: AuditChangeCapture | null = null) {
   const auditEventIds = await db.transaction(async (tx) => {
     const [before] = capture ? await tx.select().from(SsoConnectionTable).where(eq(SsoConnectionTable.id, connection.id)).limit(1).for("update") : []

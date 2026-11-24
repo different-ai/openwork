@@ -13,20 +13,11 @@ export type Result =
 
 export type Limits = { timeoutMs: number; maxToolCalls: number; maxOutputBytes: number }
 
-// OpenWork's tools stay MCP-shaped: a description, a schema for input and an
-// optional one for output. Only here, at the engine boundary, are they turned
-// into the tool objects the standard engine takes.
 function engineTool(definition: Definition): EngineTool.Tool {
   return EngineTool.make({
     description: definition.description,
     input: definition.input,
-    // In MCP a tool without an outputSchema still returns its result. The engine
-    // returns nothing for a tool that declares no output schema, which is not
-    // standard, so the bridge declares a permissive one.
     output: definition.output ?? {},
-    // The engine shows a program every failure's message and cause. Only a
-    // ToolError's message crosses, as on OpenWork's Code Mode; anything
-    // unexpected stays generic, so host error details never reach a program.
     execute: (input) => Effect.catchCause(definition.run(input), (cause) => {
       if (Cause.hasInterruptsOnly(cause)) return Effect.interrupt
       const error = Cause.squash(cause)
@@ -44,7 +35,6 @@ function engineTools(tools: Tools): Record<string, Record<string, EngineTool.Too
 
 function diagnostic(error: Engine.Diagnostic): Diagnostic {
   return {
-    // Truncated only ever marks a warning; a failure never carries it.
     kind: error.kind === "Truncated" ? "ExecutionFailure" : error.kind,
     message: error.message,
     ...(error.location ? { location: error.location } : {}),

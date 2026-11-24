@@ -1,7 +1,5 @@
 import type { ExampleService } from "../example-parts";
 
-/** Sample data only: no API calls (DESIGN.md I7). A chat in OpenWork Web, steps read as in chat (C4). */
-
 const SLACK: ExampleService = { name: "Slack" };
 const GOOGLE_WORKSPACE: ExampleService = { name: "Google Workspace" };
 

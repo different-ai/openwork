@@ -1,8 +1,3 @@
-/**
- * Saved App documents. Each is over half a megabyte, so they live in IndexedDB
- * and leave the small localStorage budget to saved results. They are a
- * convenience: any failure here only means an App opens the ordinary way.
- */
 const DATABASE = "openwork-mcp-app-documents";
 const DOCUMENTS = "documents";
 const SIZES = "sizes";
@@ -79,7 +74,6 @@ function indexedDbBackend(): McpAppDocumentBackend {
 
 let backend = indexedDbBackend();
 
-/** For tests, which have no IndexedDB. */
 export function setMcpAppDocumentBackend(next: McpAppDocumentBackend): void {
   backend = next;
 }
@@ -107,7 +101,6 @@ export const mcpAppDocuments = {
   async remove(scopeKey: string, entryId: string): Promise<void> {
     await backend.remove([documentKey(scopeKey, entryId)]).catch(() => undefined);
   },
-  /** Sign-out: another account on this profile must not find them. */
   async clear(): Promise<void> {
     await backend.clear().catch(() => undefined);
   },

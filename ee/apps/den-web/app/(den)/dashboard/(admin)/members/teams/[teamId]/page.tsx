@@ -11,6 +11,5 @@ export default async function TeamDetailPage({
 }) {
   const { teamId } = await params;
   const { tab } = await searchParams;
-  // ?tab=agents opens the team's Agents tab, e.g. from Agent permissions.
   return <TeamDetailScreen teamId={teamId} initialTab={TABS.find((entry) => entry === tab) ?? null} />;
 }

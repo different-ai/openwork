@@ -4,8 +4,8 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { AlertDialog } from "@base-ui/react/alert-dialog";
-import { Globe, LockKeyhole, Plus, Search, User, Users } from "lucide-react";
-import type { GatewayAccessGrantWrite, GatewayCredentialSetWrite, GatewayProviderTestResult } from "@openwork/types/den/gateway";
+import { Globe, LockKeyhole, Plus, User, Users } from "lucide-react";
+import type { GatewayProviderTestResult } from "@openwork/types/den/gateway";
 import { createAuditOperationContext, type AuditOperationContext } from "@openwork/types/den/audit";
 import { DenBrandMark } from "../../_components/ui/brand-mark";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
@@ -16,6 +16,7 @@ import { DenNotice } from "../../_components/ui/notice";
 import { DenSecretInput } from "../../_components/ui/secret-input";
 import { DenSegmented } from "../../_components/ui/segmented";
 import { DenSkeleton } from "../../_components/ui/skeleton";
+import { GatewayModelScopePicker } from "./gateway-model-scope-picker";
 import { DenStickyActionBar } from "../../_components/ui/sticky-action-bar";
 import { DenSwitch } from "../../_components/ui/switch";
 import { getAiGatewayProvidersRoute, getNewAiGatewayProviderRoute } from "../../_lib/den-org";
@@ -24,8 +25,8 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ConfirmDialog } from "./item-list";
 import { deleteGatewayResource, deleteInferenceProvider, saveGatewayResource, saveInferenceProvider, testInferenceProvider, useInferenceProvider, useOrgInferenceProviders } from "./inference-provider-data";
 import {
-  accessFromGrants, buildInferenceProviderRequestBody, EMPTY_AWS_SSO, getAwsKeysError, getAwsSsoError, getMemberSignInBrand, getMemberSignInMethod, getReusableAwsKeyProviders, getNewInferenceProviderSettings, getRequiredSettingKeys, getSettingLabel,
-  isAmazonBedrockNpm, isAwsRegion, isGoogleVertexNpm, isMicrosoftTenantId, isSupportedGatewayNpm, MEMBER_SIGN_IN_DOC_URLS, trimAwsSso, type AwsKeysInput, type AwsSsoInput,
+  accessFromGrants, buildInferenceProviderRequestBody, EMPTY_AWS_SSO, filterSupportedGatewayCatalogModels, getAwsKeysError, getAwsSsoError, getMemberSignInBrand, getMemberSignInMethod, getReusableAwsKeyProviders, getNewInferenceProviderSettings, getRequiredSettingKeys, getSettingLabel,
+  isAmazonBedrockNpm, isAwsRegion, isGoogleVertexNpm, isMicrosoftTenantId, isSupportedGatewayNpm, MEMBER_SIGN_IN_DOC_URLS, syncInferenceProviderMatrix, trimAwsSso, type AwsKeysInput, type AwsSsoInput, type InferenceProviderFormInput,
 } from "./inference-provider-request";
 import { LITELLM_PROVIDER_ID } from "./litellm-provider-data";
 import { TRUEFOUNDRY_PROVIDER_ID } from "./truefoundry-provider-data";
@@ -52,15 +53,6 @@ const AWS_SSO_FIELDS: Array<{ key: keyof AwsSsoInput; label: string; placeholder
   { key: "roleName", label: "Permission set name", placeholder: "BedrockInference" },
 ];
 
-function Radio({ testId, checked, label, onSelect }: { testId: string; checked: boolean; label: string; onSelect: () => void }) {
-  return (
-    <label className={`flex flex-1 cursor-pointer items-center gap-2.5 rounded-[10px] border px-3 py-2.5 text-[13px] ${checked ? "border-gray-200 bg-gray-50 text-gray-900" : "border-gray-200 bg-white text-gray-600"}`}>
-      <input type="radio" name="gateway-models-scope" data-testid={testId} checked={checked} onChange={onSelect} className="h-4 w-4 accent-gray-900" />
-      {label}
-    </label>
-  );
-}
-
 export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProviderId, embedded = false }: { inferenceProviderId?: string; catalogProviderId?: string; embedded?: boolean }) {
   const Heading = embedded ? "h2" : "h1";
   const router = useRouter();
@@ -72,9 +64,8 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
   const [catalogAttempt, setCatalogAttempt] = useState(0);
   const [providerId, setProviderId] = useState(catalogProviderId ?? "");
   const [name, setName] = useState("");
-  const [modelIds, setModelIds] = useState<string[]>([]);
+  const [pickedModelIds, setModelIds] = useState<string[]>([]);
   const [allowAllModels, setAllowAllModels] = useState(true);
-  const [modelQuery, setModelQuery] = useState("");
   const [settings, setSettings] = useState<Record<string, string>>({});
   const [credentialMode, setCredentialMode] = useState<"org" | "member">("org");
   const [apiKey, setApiKey] = useState("");
@@ -131,7 +122,6 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
   useEffect(() => {
     setDetail(null);
     setCatalogError(null);
-    // LiteLLM and custom provider models come from the organization's own provider, not the shared catalog.
     if (!orgId || !providerId || providerId === LITELLM_PROVIDER_ID || providerId === TRUEFOUNDRY_PROVIDER_ID || isGatewayCustomProviderId(providerId)) { setCatalogBusy(false); return; }
     let cancelled = false;
     setCatalogBusy(true);
@@ -170,31 +160,28 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
   ));
   const keySaved = Boolean(configuredSet?.configured && configuredSet.credentialMode === credentialMode);
   const displayName = detail?.name ?? provider?.name ?? "provider";
-  const formInput = {
-    name, providerId, modelIds: allowAllModels ? [] : modelIds, credentialMode, status: "active" as const,
+  const models = useMemo(() => detail ? sortModelsNewestFirst(filterSupportedGatewayCatalogModels(detail.config, detail.models)) : [], [detail]);
+  const modelIds = useMemo(() => {
+    const supportedIds = new Set(models.map((model) => model.id));
+    return pickedModelIds.filter((id) => supportedIds.has(id));
+  }, [models, pickedModelIds]);
+  const formInput: InferenceProviderFormInput = {
+    name, providerId, modelIds: allowAllModels ? [] : modelIds, credentialMode, status: "active",
     settings, envNames, apiKey, apiKeyValues, serviceAccountJson, oauthClientId, oauthClientSecret, access,
     ...(signInMethod === "microsoft" ? { oauthTenantId } : {}), ...(signInMethod === "aws_sso" ? { awsSso } : {}),
     ...(bedrock ? { awsKeys, reuseCredentialFrom: reuseSource?.id ?? null } : {}),
   };
-  // Newest first, so the latest models are easy to find and the test uses a current one.
-  const models = useMemo(() => sortModelsNewestFirst(detail?.models ?? []), [detail]);
-  // A new provider with a shared key is tested before it can be added.
   const testRequired = !provider && credentialMode === "org";
-  // The first model in the list below that can answer a text prompt; with "Only the ones I pick", the first picked one.
   const testModelId = pickTestModel(models, allowAllModels ? null : modelIds);
   const configFingerprint = JSON.stringify(formInput);
   const testPassed = providerTest?.state === "done" && providerTest.result.ok;
 
-  // Any change to the configuration dismisses the last test result.
   useEffect(() => {
     if (testedConfig.current === configFingerprint) return;
     testedConfig.current = null;
     setProviderTest(null);
   }, [configFingerprint]);
-  const filteredModels = useMemo(() => {
-    const normalized = modelQuery.trim().toLowerCase();
-    return normalized ? models.filter((model) => model.name.toLowerCase().includes(normalized) || model.id.toLowerCase().includes(normalized)) : models;
-  }, [models, modelQuery]);
+  const scopeModels = useMemo(() => models.map((model) => ({ id: model.id, name: model.name, source: displayName })), [models, displayName]);
   const grantMeta = (audience: { type: "team"; teamId: string } | { type: "member"; memberId: string }) => {
     const grant = provider?.accessGrants.find((entry) => JSON.stringify(entry.audience) === JSON.stringify(audience));
     return grant ? "assigned" : "will be assigned when you save";
@@ -211,45 +198,20 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
     setRotationAcknowledged(false);
   }
 
-  /** Edits go through the matrix routes: first group, first set, and one grant per audience. */
   async function syncAccessAndCredential(auditContext: AuditOperationContext) {
     if (!provider) return;
-    const [group] = provider.modelGroups;
-    const [set] = provider.credentialSets;
-    if (!group || !set) return;
-    const groupModels = allowAllModels ? (detail?.models ?? []).map((model) => model.id) : modelIds;
-    if (groupModels.length) {
-      await saveGatewayResource(provider.id, group.id, { resource: "model-groups", body: { name: group.name, description: group.description, modelIds: groupModels, status: "active" } }, auditContext);
-    }
-    const { credential, apiKeys, oauthClientId: clientId, oauthClientSecret: clientSecret, oauthTenantId: tenantId, awsSso: ssoSettings } = buildInferenceProviderRequestBody(formInput);
-    if (credential || apiKeys || credentialMode === "member" || set.credentialMode !== credentialMode) {
-      const body: GatewayCredentialSetWrite = { name: set.name, credentialMode, status: "active", credential, apiKeys };
-      if (clientId !== undefined) body.oauthClientId = clientId;
-      if (clientSecret !== undefined) body.oauthClientSecret = clientSecret;
-      if (tenantId !== undefined) body.oauthTenantId = tenantId;
-      if (ssoSettings !== undefined) body.awsSso = ssoSettings;
-      await saveGatewayResource(provider.id, set.id, { resource: "credential-sets", body }, auditContext);
-    }
-    const desired: GatewayAccessGrantWrite["audience"][] = [
-      ...(access.allMembers ? [{ type: "organization" as const }] : []),
-      ...[...new Set(access.teamIds)].map((teamId) => ({ type: "team" as const, teamId })),
-      ...[...new Set(access.memberIds)].map((memberId) => ({ type: "member" as const, memberId })),
-    ];
-    const same = (a: GatewayAccessGrantWrite["audience"], b: GatewayAccessGrantWrite["audience"]) => JSON.stringify(a) === JSON.stringify(b);
-    const existing = provider.accessGrants.filter((grant) => grant.modelGroupId === group.id && grant.credentialSetId === set.id);
-    for (const grant of existing) if (!desired.some((audience) => same(audience, grant.audience))) await deleteGatewayResource(provider.id, "access-grants", grant.id, auditContext);
-    for (const audience of desired) {
-      if (!existing.some((grant) => same(grant.audience, audience))) {
-        await saveGatewayResource(provider.id, null, { resource: "access-grants", body: { audience, modelGroupId: group.id, credentialSetId: set.id } }, auditContext);
-      }
-    }
+    await syncInferenceProviderMatrix({
+      provider, allowAllModels, modelIds, credentialMode, access,
+      credentialBody: buildInferenceProviderRequestBody(formInput),
+      saveResource: (id, input) => saveGatewayResource(provider.id, id, input, auditContext),
+      deleteResource: (resource, id) => deleteGatewayResource(provider.id, resource, id, auditContext),
+    });
   }
 
-  /** The checks a new shared-key configuration must pass before it is tested or added. */
   function configurationError(): string | null {
     if (catalogError) return "Retry the provider catalog first.";
     if (!detail || detail.id !== providerId) return "Wait for the provider catalog to load.";
-    if (!detail.models.length) return "No models are available in this provider's catalog. Retry the catalog first.";
+    if (!models.length) return "No models are available for this provider. Retry loading the models.";
     if (!isSupportedGatewayNpm(npm)) return "This provider is not supported by AI Gateway.";
     if (!allowAllModels && !modelIds.length) return "Pick at least one model, or choose all models.";
     for (const key of getRequiredSettingKeys(npm, providerId)) if (!settings[key]?.trim()) return `${getSettingLabel(key, providerId)} is required.`;
@@ -281,7 +243,6 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
     } catch (cause) {
       result = { ok: false, model, status: null, code: "test_failed", message: cause instanceof Error ? cause.message : "Could not test the provider." };
     }
-    // A result for settings that have since changed is dropped.
     if (testedConfig.current !== fingerprint) return;
     setProviderTest(result ? { state: "done", result } : null);
   }
@@ -293,7 +254,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
     const invalid = configurationError();
     if (invalid) return setSaveError(invalid);
     const granting = access.allMembers || access.teamIds.length > 0 || access.memberIds.length > 0;
-    if (!provider && granting && credentialMode === "org" && !hasSharedKey()) return setSaveError("Paste a key before sharing these models.");
+    if (!configuredSet && granting && credentialMode === "org" && !hasSharedKey()) return setSaveError("Paste a key before sharing these models.");
     if (credentialMode === "member") {
       if (!signInMethod) return setSaveError("People can't sign in to this provider with their own account.");
       if (signInMethod === "aws_sso") {
@@ -321,6 +282,7 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
         router.refresh();
       });
     } catch (cause) {
+      if (provider) await reload().catch(() => {});
       setSaveError(cause instanceof Error ? cause.message : "Could not save the provider.");
     } finally { setSaving(false); }
   }
@@ -537,39 +499,10 @@ export function InferenceProviderEditorScreen({ inferenceProviderId, catalogProv
         <h2 id="gateway-models-heading" className={CARD_TITLE}>Models</h2>
         {catalogError ? <div data-testid="gateway-models-error"><DenNotice tone="error" presentation="inline" message={catalogError} className="mt-3" action={<DenButton size="sm" variant="secondary" data-testid="gateway-models-retry" onClick={() => { setSaveError(null); setCatalogAttempt((current) => current + 1); }}>Retry</DenButton>} /></div> : null}
         {!catalogBusy && !catalogError && detail && !models.length ? <div data-testid="gateway-models-empty"><DenNotice tone="neutral" presentation="inline" message="No models are available in this provider's catalog." className="mt-3" action={<DenButton size="sm" variant="secondary" data-testid="gateway-models-retry" onClick={() => { setSaveError(null); setCatalogAttempt((current) => current + 1); }}>Retry</DenButton>} /></div> : null}
-        <div className="mt-3 flex gap-2">
-          <Radio testId="gateway-models-all" checked={allowAllModels} label={`All ${displayName} models`} onSelect={() => setAllowAllModels(true)} />
-          <Radio testId="gateway-models-pick" checked={!allowAllModels} label="Only the ones I pick" onSelect={() => { setAllowAllModels(false); if (!provider) setModelIds([]); }} />
-        </div>
-        {!allowAllModels ? (
-          <div className="mt-3 rounded-[10px] bg-gray-50 p-2">
-            <div className="flex items-center gap-3">
-              <div className="w-[200px]"><DenInput type="search" icon={Search} value={modelQuery} onChange={(event) => setModelQuery(event.target.value)} placeholder="Filter models" className="h-8 bg-white text-[12px]" /></div>
-              {!catalogBusy && !catalogError ? <span className="text-[12px] text-gray-500" data-testid="gateway-models-count">{modelIds.length} of {models.length} selected</span> : null}
-              <span className="ml-auto flex items-center gap-3 text-[12px]">
-                <button type="button" data-testid="gateway-models-select-all" disabled={catalogBusy || Boolean(catalogError) || !models.length} className="font-medium text-gray-700 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-50" onClick={() => setModelIds(models.map((model) => model.id))}>Select all</button>
-                <button type="button" data-testid="gateway-models-clear" disabled={catalogBusy || Boolean(catalogError) || !models.length} className="font-medium text-gray-700 hover:text-gray-900 disabled:cursor-not-allowed disabled:opacity-50" onClick={() => setModelIds([])}>Clear</button>
-              </span>
-            </div>
-            <ul className="mt-2 max-h-[320px] overflow-y-auto">
-              {filteredModels.map((model) => {
-                const checked = modelIds.includes(model.id);
-                return (
-                  <li key={model.id}>
-                    <label className="flex items-center gap-3 rounded-[8px] px-2 py-1.5 hover:bg-white">
-                      <input type="checkbox" checked={checked} onChange={() => setModelIds((current) => checked ? current.filter((id) => id !== model.id) : [...current, model.id])} className="h-4 w-4 accent-emerald-600" data-testid={`gateway-model-${model.id}`} />
-                      <DenBrandMark name={displayName} simpleIconSlug={getProviderIconSlug(providerId)} serviceUrl={detail?.doc ?? null} className="h-5 w-5 rounded-[5px]" imageClassName="h-3 w-3" />
-                      <span className="min-w-0 flex-1 truncate text-[13px] text-gray-900">{model.name}</span>
-                      <span className="text-[11px] text-gray-400">{displayName}</span>
-                    </label>
-                  </li>
-                );
-              })}
-              {catalogBusy ? Array.from({ length: 4 }, (_, index) => <li key={index} className="flex items-center gap-3 px-2 py-1.5" data-testid="gateway-models-loading"><DenSkeleton className="size-4" /><DenSkeleton className="size-5 rounded" /><DenSkeleton className="h-4 flex-1" /><DenSkeleton className="h-3 w-20" /></li>) : null}
-              {!catalogBusy && !catalogError && models.length > 0 && !filteredModels.length ? <li className="px-2 py-3 text-[12px] text-gray-500" data-testid="gateway-models-filter-empty">No models match that filter. Try another name.</li> : null}
-            </ul>
-          </div>
-        ) : null}
+        <GatewayModelScopePicker allLabel={`All ${displayName} models`} allowAll={allowAllModels} onAllowAll={() => setAllowAllModels(true)}
+          onPick={() => { setAllowAllModels(false); if (!provider) setModelIds([]); }}
+          models={scopeModels} selected={modelIds} onSelectedChange={setModelIds} loading={catalogBusy} unavailable={Boolean(catalogError)}
+          icon={() => <DenBrandMark name={displayName} simpleIconSlug={getProviderIconSlug(providerId)} serviceUrl={detail?.doc ?? null} className="h-5 w-5 rounded-[5px]" imageClassName="h-3 w-3" />} />
       </section>
 
       {testRequired && providerTest?.state === "done" ? (

@@ -12,7 +12,6 @@ function normalizeEmail(value: string | null | undefined) {
   return value?.trim().toLowerCase() ?? ""
 }
 
-/** Whether an email is on the platform-admin allowlist. Shared by the admin routes middleware and the den-admin MCP endpoint. */
 export async function isAdminEmailAllowed(email: string | null | undefined): Promise<boolean> {
   const normalized = normalizeEmail(email)
   if (!normalized) {
@@ -30,7 +29,6 @@ export async function isAdminEmailAllowed(email: string | null | undefined): Pro
   return allowed.length > 0
 }
 
-/** Whether a Den user id belongs to an allowlisted platform admin. */
 export async function isPlatformAdminUserId(value: string): Promise<boolean> {
   let userId: ReturnType<typeof normalizeDenTypeId<"user">>
   try {
@@ -48,12 +46,6 @@ export async function isPlatformAdminUserId(value: string): Promise<boolean> {
   return isAdminEmailAllowed(user?.email)
 }
 
-/**
- * Whether a Den user passes the same platform-admin check as the /v1/admin
- * routes (`requireAdminMiddleware`): an allowlisted email that is verified
- * where Den verifies emails. For work done in a user's name outside an /admin
- * request, such as a config import turning organization features on.
- */
 export async function isAdminRouteUserId(value: string): Promise<boolean> {
   let userId: ReturnType<typeof normalizeDenTypeId<"user">>
   try {
@@ -72,19 +64,14 @@ export async function isAdminRouteUserId(value: string): Promise<boolean> {
   return isAdminEmailAllowed(user.email)
 }
 
-/**
- * Deployment diagnostics authority is the local operator allowlist, never an
- * organization role, ownership or permission. Setup writes this same allowlist
- * in completeInitialAdminBootstrapSignup; DEN_BOOTSTRAP_ADMIN_EMAILS is only an
- * additional seeding mechanism. Never consult the allowlist on hosted Den.
- */
 export async function isLocalDeploymentOperatorUserId(userId: string): Promise<boolean> {
   if (env.features.deployment !== "self_hosted") return false
   return isPlatformAdminUserId(userId)
 }
 
-/** A genuine Better Auth user session (not an API key or MCP token) of an allowlisted local operator. */
-export async function hasLocalDeploymentOperatorSessionAuthority(principal: AuthContextVariables): Promise<boolean> {
+type DeploymentPrincipal = Pick<AuthContextVariables, "apiKey" | "session" | "user">
+
+export async function hasLocalDeploymentOperatorSessionAuthority(principal: DeploymentPrincipal): Promise<boolean> {
   if (principal.apiKey || !principal.user?.id || !principal.session?.id || !principal.session.token) return false
   try {
     normalizeDenTypeId("session", principal.session.id)
@@ -94,14 +81,7 @@ export async function hasLocalDeploymentOperatorSessionAuthority(principal: Auth
   return isLocalDeploymentOperatorUserId(principal.user.id)
 }
 
-/**
- * Installation operator authority on self-hosted Den: an allowlisted operator's
- * genuine user session, or an API key whose owning user is that operator. An
- * API key acts for the user who created it, so only the owner's allowlist entry
- * counts; organization roles, permissions and ownership never do. Always false
- * on hosted Den, before any lookup.
- */
-export async function isLocalDeploymentOperator(principal: AuthContextVariables): Promise<boolean> {
+export async function isLocalDeploymentOperator(principal: DeploymentPrincipal): Promise<boolean> {
   if (env.features.deployment !== "self_hosted") return false
   const apiKey = principal.apiKey
   if (!apiKey) return hasLocalDeploymentOperatorSessionAuthority(principal)
@@ -115,11 +95,7 @@ export async function isLocalDeploymentOperator(principal: AuthContextVariables)
   return isLocalDeploymentOperatorUserId(userId)
 }
 
-/**
- * Caller-specific hint for GET /v1/org: the same authority the installation
- * diagnostics enforce. Advisory: lookup failures answer false, never block core.
- */
-export async function canManageDeploymentServices(principal: AuthContextVariables): Promise<boolean> {
+export async function canManageDeploymentServices(principal: DeploymentPrincipal): Promise<boolean> {
   try {
     return await isLocalDeploymentOperator(principal)
   } catch {
@@ -150,8 +126,6 @@ export const requireAdminMiddleware: MiddlewareHandler<{ Variables: AuthContextV
     return c.json({ error: "admin_email_required" }, 403) as never
   }
 
-  // The allowlist names emails, so where Den verifies emails only a proven
-  // address counts. Deployments without verification have no proof to ask for.
   if (env.requireEmailVerification && user.emailVerified !== true) {
     return c.json({ error: "admin_email_unverified" }, 403) as never
   }
@@ -160,8 +134,6 @@ export const requireAdminMiddleware: MiddlewareHandler<{ Variables: AuthContextV
     return c.json({ error: "forbidden" }, 403) as never
   }
 
-  // Routes declared `path:<param>` attribute audit evidence to the validated
-  // target organization with this platform admin as actor (origin platform_admin).
   const auditBlocked = await beginAuditRequest(c, { platformAdminUserId: user.id })
   if (auditBlocked) {
     return auditBlocked as never

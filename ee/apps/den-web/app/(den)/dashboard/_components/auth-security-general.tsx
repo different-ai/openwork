@@ -25,7 +25,6 @@ import { DenNotice } from "../../_components/ui/notice";
 import { DenSelect } from "../../_components/ui/select";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
-// The dropdown sits beside the text, and moves below it when the card is too narrow for both.
 const ROW_CLASS = "flex flex-col gap-3 rounded-[24px] border border-gray-200 bg-white px-5 py-4 @lg:flex-row @lg:items-start @lg:justify-between @lg:gap-4";
 const ROW_TEXT_CLASS = "grid min-w-0 flex-1 gap-1";
 const ROW_CONTROL_CLASS = "w-full shrink-0 @lg:w-[220px]";
@@ -55,11 +54,6 @@ export function adminReauthLabel(minutes: AdminReauthMinutes): string {
   return withDefault(label, minutes === DEFAULT_ADMIN_REAUTH_MINUTES);
 }
 
-/**
- * Settings › Auth & Security › General: how long
- * sign-ins last without activity and at most, and how recently an admin must have signed
- * in before sensitive changes (the "Confirm your identity" dialog).
- */
 export function AuthSecurityGeneral() {
   const { orgContext, mutationBusy, updateOrganizationSettings } = useOrgDashboard();
   const metadata = orgContext?.organization.metadata ?? null;

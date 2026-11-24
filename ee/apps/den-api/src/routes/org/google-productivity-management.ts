@@ -90,7 +90,6 @@ const eventSchema = z.object({
 const eventReceiptSchema = z.object({ ok: z.literal(true), calendarId: z.string(), event: eventSchema, sendUpdates: sendUpdatesSchema.optional() })
 const cancelReceiptSchema = z.object({ ok: z.literal(true), calendarId: z.string(), eventId: z.string(), cancelled: z.literal(true), sendUpdates: sendUpdatesSchema })
 
-// Restrict to finite A1 rectangles, never whole columns/rows, named ranges, or arbitrary queries.
 function rangeDimensions(value: string) {
   const match = /^(?:(?:'([^'\r\n]|'')+'|[A-Za-z_][A-Za-z0-9_ ]*)!)?\$?([A-Za-z]{1,3})\$?([1-9][0-9]{0,6})(?::\$?([A-Za-z]{1,3})\$?([1-9][0-9]{0,6}))?$/.exec(value)
   if (!match) return null
@@ -170,6 +169,7 @@ function routeDescription(operationId: string, summary: string, response: z.ZodT
     401: jsonResponse("Sign in first.", unauthorizedSchema),
     409: jsonResponse("Connect with the required provider permission.", z.object({ error: z.literal("needs_connection"), message: z.string() })),
     413: jsonResponse("Request exceeds 1 MiB.", z.object({ error: z.literal("invalid_request"), message: z.string() })),
+    ...(/sheet/i.test(operationId) ? { 429: jsonResponse("Sheets quota reached. Wait before retrying.", z.object({ error: z.literal("rate_limited"), message: z.string(), retryAfterSeconds: z.number().int().positive() })) } : {}),
     502: jsonResponse("Google did not confirm the operation; do not blindly retry mutations.", upstreamErrorSchema),
   } })
 }
@@ -255,7 +255,6 @@ export function registerGoogleProductivityManagementRoutes<T extends { Variables
     url.searchParams.set("sendUpdates", sendUpdates)
     const result = await requestGoogleAction(c, deps, calendarWriteScopes, url, { method: "DELETE" })
     if (!result.ok) return result.reply
-    // Calendar events.delete returns 204 with no resource body, unlike the other mutations.
     if (result.response.status !== 204) return unconfirmed(c, true)
     return c.json({ ok: true, calendarId, eventId, cancelled: true, sendUpdates })
   })

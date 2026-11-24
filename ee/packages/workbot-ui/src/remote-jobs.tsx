@@ -15,7 +15,6 @@ export type { WorkbotRemoteJob, WorkbotRemoteJobs } from "@openwork/types/workbo
  */
 export function retainRemoteStatuses(next: WorkbotRemoteJobs, previous?: WorkbotRemoteJobs, now = Date.now()): WorkbotRemoteJobs {
   return { ...next, jobs: next.jobs.map(job => {
-    // Older servers don't say when they checked; a fresh status was checked now.
     if (!job.stale) return job.checkedAt ? job : { ...job, checkedAt: now };
     if (job.status) return job;
     const before = previous?.jobs.find(entry => entry.key === job.key);
@@ -23,15 +22,11 @@ export function retainRemoteStatuses(next: WorkbotRemoteJobs, previous?: Workbot
   }) };
 }
 
-/** A read older than this no longer vouches for what a task is doing. */
 const OVERDUE_MS = 45_000;
 
-/** How often the list is read while a task may still change. */
 const REMOTE_JOBS_POLL_MS = 15_000;
-/** How often it is read when no task is open: finished tasks (one may be continued elsewhere), or a read that failed. */
 const REMOTE_JOBS_SLOW_MS = 60_000;
 
-/** A task whose state may still change: working, waiting or starting when last seen, or not checked yet. */
 function remoteJobOpen(job: WorkbotRemoteJob) {
   return !job.status || lastKnownActive(job);
 }
@@ -54,7 +49,6 @@ export function followConversation(queryClient: QueryClient, input: { chat: stri
   const hidden = input.hidden ?? (() => typeof document !== "undefined" && document.visibilityState === "hidden");
   const now = input.now ?? Date.now;
   const isThread = (key: QueryKey) => key[0] === workbotQueryKey[0] && key[1] === workbotQueryKey[1] && key[2] === (input.chat ?? "main");
-  // What each read of the conversation last held. A re-read that changed nothing keeps the same object.
   const seen = new Map<string, unknown>();
   for (const query of queryClient.getQueryCache().findAll({ predicate: (query) => isThread(query.queryKey) })) seen.set(query.queryHash, query.state.data);
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -74,13 +68,11 @@ export function followConversation(queryClient: QueryClient, input: { chat: stri
     const known = seen.has(event.query.queryHash);
     const changed = seen.get(event.query.queryHash) !== event.query.state.data;
     seen.set(event.query.queryHash, event.query.state.data);
-    // The first read of a window is what the list's own first read already saw.
     if (!known || !changed || timer !== undefined) return;
     const last = queryClient.getQueryState(input.remoteKey)?.dataUpdatedAt ?? 0;
     timer = setTimeout(read, Math.max(0, last + REMOTE_JOBS_POLL_MS - now()));
   });
   return {
-    /** The page is shown again: read now if the conversation changed while it was hidden. */
     shown() {
       if (missed && timer === undefined) read();
     },
@@ -126,9 +118,7 @@ export function useWorkbotRemoteJobs(enabled: boolean, options: { follow?: boole
     refetchIntervalInBackground: false,
     retry: 1,
   });
-  // Overdue only while the list is being polled: with no task open, nothing is waiting on a refresh.
   const polled = remoteJobsPollMs(query.data, query.isError) === REMOTE_JOBS_POLL_MS;
-  // Overdue is judged by the clock alone: look again the moment it becomes true, so no page has to keep time for it.
   const [, look] = useState(0);
   const updatedAt = query.dataUpdatedAt;
   useEffect(() => {
@@ -136,7 +126,6 @@ export function useWorkbotRemoteJobs(enabled: boolean, options: { follow?: boole
     const timer = window.setTimeout(() => look(Date.now()), Math.max(0, updatedAt + OVERDUE_MS - Date.now()) + 1);
     return () => window.clearTimeout(timer);
   }, [enabled, polled, updatedAt]);
-  // A failed or overdue refresh keeps every row's last state, marked stale; rows show how old it is, not a warning.
   const unverified = query.isError || (polled && Date.now() - query.dataUpdatedAt > OVERDUE_MS);
   const data = query.data && unverified ? { ...query.data, jobs: query.data.jobs.map(job => ({ ...job, stale: true })) } : query.data;
   return { ...query, data: enabled ? data : undefined };
@@ -174,7 +163,6 @@ export function remoteJobStateLabel(job: WorkbotRemoteJob) {
 
 /** The last known state's age, shown quietly only when this read couldn't refresh a task that may still change. */
 export function remoteJobUpdatedLabel(job: WorkbotRemoteJob, now = Date.now()) {
-  // A finished task's state is final; its age would only add noise.
   if (!job.stale || !job.status || job.status.state === "idle" || job.status.state === "error") return null;
   const at = job.checkedAt ?? job.status.observedAt;
   if (!at) return "Not updated just now";
@@ -182,7 +170,6 @@ export function remoteJobUpdatedLabel(job: WorkbotRemoteJob, now = Date.now()) {
   return minutes < 1 ? "Updated just now" : minutes < 60 ? `Updated ${minutes}m ago` : minutes < 48 * 60 ? `Updated ${Math.floor(minutes / 60)}h ago` : `Updated ${Math.floor(minutes / (24 * 60))}d ago`;
 }
 
-/** Working, waiting or starting by its last known state, even when this read couldn't refresh it. */
 function lastKnownActive(job: WorkbotRemoteJob) {
   const state = job.status?.state;
   return state === "starting" || state === "running" || state === "waiting";
@@ -245,7 +232,6 @@ function RemoteJobTranscript({ job }: { job: WorkbotRemoteJob }) {
 function RemoteJobRow({ job }: { job: WorkbotRemoteJob }) {
   const [open, setOpen] = useState(false);
   const state = job.status?.state;
-  // A warning only when the task truly can't be reached; a refresh that failed keeps the last state's own icon.
   const Icon = !job.status ? (job.unreachable ? CircleAlert : Clock3) : state === "waiting" ? Lock : state === "idle" ? Check : state === "error" ? CircleX : state === "starting" ? Clock3 : Monitor;
   const updated = remoteJobUpdatedLabel(job);
   const pending = job.status?.pending;

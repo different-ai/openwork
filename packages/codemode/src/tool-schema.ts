@@ -11,7 +11,6 @@ const renderLiteral = (value: unknown): string => JSON.stringify(value) ?? "unkn
  */
 export const identifierSegment = /^[A-Za-z_$][A-Za-z0-9_$]*$/
 
-/** Renders a property name as a valid TS object key: bare when an identifier, quoted otherwise. */
 const renderKey = (name: string): string => (identifierSegment.test(name) ? name : JSON.stringify(name))
 
 const effectNumberSentinel = (schema: JsonSchema) =>
@@ -27,16 +26,10 @@ const intersection = (members: ReadonlyArray<string>): string => {
   return concrete.map((member) => (member.includes(" | ") ? `(${member})` : member)).join(" & ")
 }
 
-/**
- * Recursion ceiling for schema rendering. Object, array, and union recursion all increment
- * depth, so this bounds every recursion path - pathological or structurally cyclic schemas
- * degrade to `unknown` instead of overflowing the stack (rendering must never throw).
- */
 const MAX_RENDER_DEPTH = 8
 
 type RenderContext = {
   readonly definitions: Readonly<Record<string, JsonSchema>>
-  /** Indented, JSDoc-annotated multiline rendering (search results); compact single line otherwise. */
   readonly pretty: boolean
 }
 
@@ -64,10 +57,6 @@ const hasUnresolvedRef = (
   ].some((item) => hasUnresolvedRef(item, definitions, seen, nextVisited))
 }
 
-/**
- * Schema constraints a TypeScript type cannot express natively but a model benefits from,
- * surfaced as JSDoc tags (`@deprecated`, `@default`, `@format`, `@minItems`, `@maxItems`).
- */
 const docTags = (schema: JsonSchema): Array<string> => {
   const tags: Array<string> = []
   if (schema.deprecated === true) tags.push("@deprecated")
@@ -76,7 +65,6 @@ const docTags = (schema: JsonSchema): Array<string> => {
       const rendered = JSON.stringify(schema.default)
       if (rendered !== undefined) tags.push(`@default ${rendered}`)
     } catch {
-      // unserializable default: skip rather than emit a broken tag
     }
   }
   if (typeof schema.format === "string") tags.push(`@format ${schema.format}`)
@@ -85,13 +73,6 @@ const docTags = (schema: JsonSchema): Array<string> => {
   return tags
 }
 
-/**
- * Format a schema `description` plus `tags` as a JSDoc comment at the given indent,
- * preserving multi-line text (a single line stays `/** ... *\/`; multiple lines become a
- * `*`-prefixed block). `*\/` is neutralized so nothing can close the comment early, and
- * blank leading/trailing lines are trimmed. Returns "" (else a trailing newline) so
- * callers can prepend it directly to the field line.
- */
 const jsdoc = (description: string | undefined, tags: ReadonlyArray<string>, pad: string): string => {
   const lines = [...(description === undefined ? [] : description.split("\n")), ...tags].map((line) =>
     line.replaceAll("*/", "* /").replace(/\s+$/, ""),
@@ -128,17 +109,11 @@ const renderSchema = (
   if (schema.enum) return schema.enum.map(renderLiteral).join(" | ")
   const alternatives = schema.anyOf ?? schema.oneOf
   if (alternatives) {
-    // Effect's number schema emits `anyOf: [{ type: "number" }, { const: "NaN" },
-    // { const: "Infinity" }, { const: "-Infinity" }]`. Collapse only that artifact;
-    // real JSON Schema unions such as `string | number` or `number | null` must keep
-    // every branch.
     if (
       alternatives.some((item) => item.type === "number") &&
       alternatives.every((item) => item.type === "number" || effectNumberSentinel(item))
     )
       return "number"
-    // An empty Schema.Struct({}) emits `anyOf: [{ type: "object" }, { type: "array" }]`
-    // (no properties/items); render the bare shape as {} instead of `{} | Array<unknown>`.
     if (
       alternatives.length === 2 &&
       alternatives[0]?.type === "object" &&
@@ -183,7 +158,6 @@ const renderSchema = (
       return fields.length === 0 ? "{}" : `{ ${fields.join("; ")} }`
     }
 
-    // Pretty: an indented block, each described field preceded by its JSDoc comment.
     if (properties.length === 0 && indexType === undefined) return "{}"
     const pad = "  ".repeat(depth + 1)
     const lines = properties.map(

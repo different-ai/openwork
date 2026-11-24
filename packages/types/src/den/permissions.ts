@@ -1,24 +1,6 @@
 import { z } from "zod"
 
 /**
- * Organization permission catalog shared by den-api (enforcement) and den-web
- * (editors and gating). See docs/permissions/overview.md, sections 4 and 7.
- *
- * Rules:
- * - Keys are permanent. Never reuse a key for a different meaning.
- * - Actions only the owner can ever do (delete organization, transfer
- *   ownership) are not here.
- * - Baseline member actions (things every member can do today) are not here.
- * - `defaultOn` reproduces the role checks from before Permissions: a key is
- *   `["admin"]` only when every action it gates was open to plain admins.
- *   Actions that need the owner or a super-admin are owner-only by default:
- *   `defaultOn: []`. The owner holds every key; the Super admin default set
- *   starts with every key (see `isPermissionDefaultOn`), and either can grant
- *   owner-only keys to Admin or team permissions.
- * - `sensitive` matches the old recent sign-in requirement of what it gates.
- */
-
-/**
  * The organization's built-in permission sets, in the order roles are listed:
  * Member (every member), Admin (effective admins), Billing manager (the people
  * and teams it is given to) and Super admin (direct super-admin role, and the
@@ -70,37 +52,20 @@ export type PermissionAreaKey = keyof typeof PERMISSION_AREAS
 
 export type PermissionDefinition = {
   area: PermissionAreaKey
-  /** Short, user-facing label, e.g. "Delete providers". */
   label: string
   description?: string
-  /**
-   * Code defaults (feature off) and seed/reconcile targets (feature on) for
-   * Member, Admin and Billing manager. Super admin starts on with every key
-   * regardless; read through `isPermissionDefaultOn` rather than this list.
-   */
   defaultOn: readonly PermissionDefaultSetKey[]
-  /** Can never be denied in these default sets. No key uses it today: the owner can always restore access. */
   lockedOn?: readonly "admin"[]
-  /** Requires a recent sign-in (PRIVILEGED_SESSION_MAX_AGE_MS). */
   sensitive?: boolean
-  /**
-   * Reconciliation only allows this key in a default set where `follows` is
-   * currently allowed. Must name another catalog key; checked at compile time
-   * by `PermissionFollowsTarget` and at runtime by `permissionCatalogProblems`.
-   */
   follows?: string
 }
 
 const ADMIN = ["admin"] as const
-/** Owner-only by default: the owner and super-admins hold these; nobody else does until granted. */
 const OWNER_ONLY = [] as const
-/** On for admins, and part of the Billing manager role. */
 const ADMIN_AND_BILLING_MANAGER = ["admin", "billing-manager"] as const
-/** Not on for admins, but part of the Billing manager role: still owner-only until that role is given. */
 const BILLING_MANAGER_ONLY = ["billing-manager"] as const
 
 export const PERMISSIONS = {
-  // Team computer inventory (owners always hold every permission).
   "computers.view": {
     area: "desktop",
     label: "View team computers",
@@ -115,7 +80,6 @@ export const PERMISSIONS = {
     sensitive: true,
   },
 
-  // Organization
   "organization.update": {
     area: "organization",
     label: "Edit organization settings",
@@ -143,7 +107,6 @@ export const PERMISSIONS = {
     sensitive: true,
   },
 
-  // Members and teams
   "invitations.manage": {
     area: "members",
     label: "Invite people",
@@ -185,7 +148,6 @@ export const PERMISSIONS = {
     sensitive: true,
   },
 
-  // Permissions
   "permissions.view": {
     area: "access",
     label: "View permissions",
@@ -213,7 +175,6 @@ export const PERMISSIONS = {
     sensitive: true,
   },
 
-  // Sharing
   "sharing.manage_all": {
     area: "sharing",
     label: "Manage everything shared",
@@ -227,7 +188,6 @@ export const PERMISSIONS = {
     defaultOn: ADMIN,
   },
 
-  // Security and sign-in
   "sso.view": {
     area: "security",
     label: "View single sign-on",
@@ -276,20 +236,7 @@ export const PERMISSIONS = {
     defaultOn: ADMIN,
     sensitive: true,
   },
-  "egress_diagnostics.view": {
-    area: "security",
-    label: "View network diagnostics",
-    defaultOn: ADMIN,
-  },
-  "egress_diagnostics.manage": {
-    area: "security",
-    label: "Run network diagnostics",
-    description: "Configure and run outbound network diagnostics.",
-    defaultOn: OWNER_ONLY,
-    sensitive: true,
-  },
 
-  // Desktop app
   "desktop_policies.view": {
     area: "desktop",
     label: "View desktop policies",
@@ -317,7 +264,6 @@ export const PERMISSIONS = {
     sensitive: true,
   },
 
-  // Deployments
   "deployments.view": {
     area: "deployments",
     label: "View deployments",
@@ -332,7 +278,6 @@ export const PERMISSIONS = {
     sensitive: true,
   },
 
-  // Billing
   "billing.view": {
     area: "billing",
     label: "View billing",
@@ -352,11 +297,6 @@ export const PERMISSIONS = {
     defaultOn: BILLING_MANAGER_ONLY,
     sensitive: true,
   },
-  // Read-only invoices, split from the portal so admins (and billing managers)
-  // can see and download invoices without being able to change payment
-  // details or cancel. Sensitive like the portal: invoices carry the billing
-  // address and a payment method summary. New key: reconciliation turns it on
-  // in every organization's Admin set (it was never seen there before).
   "billing_invoices.view": {
     area: "billing",
     label: "View invoices",
@@ -365,7 +305,6 @@ export const PERMISSIONS = {
     sensitive: true,
   },
 
-  // Models and providers
   "inference.view": {
     area: "models",
     label: "View OpenWork Models settings",
@@ -425,7 +364,6 @@ export const PERMISSIONS = {
     sensitive: true,
   },
 
-  // AI Gateway
   "gateway_providers.view": {
     area: "gateway",
     label: "View Gateway providers",
@@ -457,7 +395,6 @@ export const PERMISSIONS = {
     defaultOn: ADMIN,
   },
 
-  // Connections
   "connections.view": {
     area: "connections",
     label: "View all connections",
@@ -504,7 +441,6 @@ export const PERMISSIONS = {
     sensitive: true,
   },
 
-  // Plugins and marketplaces
   "marketplaces.manage": {
     area: "library",
     label: "Create and remove marketplaces",

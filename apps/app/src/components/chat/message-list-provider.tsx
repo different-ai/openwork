@@ -24,10 +24,8 @@ interface MessageListContextValue {
   readOnly: boolean
   workspaceId: string
   sessionId: string
-  /** Verified principal/org, endpoint, workspace and session; absent means no retention. */
   uiStateOwner?: string | null
   getConnectionDecision?: (toolCallId: string) => ChatConnectionDecisionBinding | null
-  /** A Connect card's sign-in landed with no question waiting on it: carry the latest turn on. */
   continueAfterConnection?: (toolCallId: string, prompt?: string) => void
   connectionQuestionToolCallId?: string | null
   showThinking: boolean
@@ -36,34 +34,22 @@ interface MessageListContextValue {
   displaySuggestions: boolean
   providerConnectedCount: number
   resolveReplyModelTitle: ReplyModelTitleResolver
-  /** Smart Model Router: the gateway's routing decisions for this session's replies. */
   autoRoutes: readonly AutoRouterReplyRoute[]
   resolveAutoRouteName: AutoRouteNameResolver
   connectorIdentities: ConnectorToolIdentity[]
-  /**
-   * True while the workspace sync layer cannot validate live run status
-   * (failed status revalidation). Working indicators must stop ticking.
-   */
   syncDegraded: boolean
   dispatchAction: (action: DispatchAction) => void
   setPrompt: (prompt: string) => void
   onRevertToUserMessage: (messageId: string) => void
-  /** Absent where a reply cannot be branched into a new chat (a task on another computer). */
   onForkAtMessage?: (messageId: string) => void | Promise<void>
   forkingMessageId?: string
-  /** `text` is the draft with chip tokens; `draft` names the chips' mentions and pasted text. */
   onEditUserMessage: (messageId: string, text: string, draft?: SentMessageDraft) => void
-  /** Open a sub-agent (child) session in the main chat surface. */
   onOpenSubagentSession?: (sessionId: string) => void
-  /** Stop one running sub-agent (child) session without stopping the parent turn. */
   onStopSubagentSession?: (sessionId: string) => void | Promise<void>
-  /** Open a task on another computer in the main pane, like a helper. Absent where it opens beside the chat. */
   onOpenRemoteTask?: (start: RemoteThreadStart) => void
-  /** Sub-agent calls the composer's Agents list shows; their Stop lives there, not on the chat row. */
   composerSubagentToolCallIds: ReadonlySet<string>
-  /** Re-submit an interrupted run by sending its recovery prompt. */
   onResumeInterrupted?: (recoveryPrompt: string) => void
-  /** Open one Library item's detail, by the same id Library rows use. Absent where there is no Library. */
+  onRunCommand?: (command: string) => void
   onOpenLibraryDetail?: (detailId: string) => void
   onMcpReconnect: (
     action: ChatToolReconnectAction,
@@ -100,6 +86,7 @@ interface MessageListProviderProps {
   onOpenRemoteTask?: (start: RemoteThreadStart) => void
   composerSubagentToolCallIds?: ReadonlySet<string>
   onResumeInterrupted?: (recoveryPrompt: string) => void
+  onRunCommand?: (command: string) => void
   onOpenLibraryDetail?: (detailId: string) => void
   onMcpReconnect: (
     action: ChatToolReconnectAction,
@@ -150,6 +137,7 @@ export function MessageListProvider({
   onOpenRemoteTask,
   composerSubagentToolCallIds = NO_TOOL_CALL_IDS,
   onResumeInterrupted,
+  onRunCommand,
   onOpenLibraryDetail,
   onMcpReconnect,
   onMcpReopenAuthorization,
@@ -164,6 +152,7 @@ export function MessageListProvider({
     onStopSubagentSession,
     onOpenRemoteTask,
     onResumeInterrupted,
+    onRunCommand,
     onOpenLibraryDetail,
     onMcpReconnect,
     onMcpReopenAuthorization,
@@ -179,6 +168,7 @@ export function MessageListProvider({
       onStopSubagentSession,
       onOpenRemoteTask,
       onResumeInterrupted,
+      onRunCommand,
       onOpenLibraryDetail,
       onMcpReconnect,
       onMcpReopenAuthorization,
@@ -193,6 +183,7 @@ export function MessageListProvider({
     onStopSubagentSession,
     onOpenRemoteTask,
     onResumeInterrupted,
+    onRunCommand,
     onOpenLibraryDetail,
     onMcpReconnect,
     onMcpReopenAuthorization,
@@ -207,6 +198,7 @@ export function MessageListProvider({
     onStopSubagentSession: (sessionId: string) => handlersRef.current.onStopSubagentSession?.(sessionId),
     onOpenRemoteTask: (start: RemoteThreadStart) => handlersRef.current.onOpenRemoteTask?.(start),
     onResumeInterrupted: (recoveryPrompt: string) => handlersRef.current.onResumeInterrupted?.(recoveryPrompt),
+    onRunCommand: (command: string) => handlersRef.current.onRunCommand?.(command),
     onOpenLibraryDetail: (detailId: string) => handlersRef.current.onOpenLibraryDetail?.(detailId),
     onMcpReconnect: (
       action: ChatToolReconnectAction,
@@ -222,12 +214,12 @@ export function MessageListProvider({
   const canStopSubagentSession = Boolean(onStopSubagentSession)
   const canOpenRemoteTask = Boolean(onOpenRemoteTask)
   const canResumeInterrupted = Boolean(onResumeInterrupted)
+  const canRunCommand = Boolean(onRunCommand)
   const canOpenLibraryDetail = Boolean(onOpenLibraryDetail)
   const mcpAppOrigin = React.useMemo<McpAppOrigin | null>(
     () => client ? { client, workspaceId, sessionId, readOnly, ...(mcpAppEngine ? { engine: mcpAppEngine } : {}) } : null,
     [client, workspaceId, sessionId, readOnly, mcpAppEngine],
   )
-  // The composer owns a workspace-scoped catalog even for background panes.
   const replyModelOptions = useModelPickerCatalogStore(state => state.bySession[sessionId]?.options)
   const resolveReplyModelTitle = React.useCallback<ReplyModelTitleResolver>(
     model => {
@@ -237,8 +229,6 @@ export function MessageListProvider({
     [replyModelOptions],
   )
   const autoRoutes = useSessionAutoRoutes(sessionId)
-  // The gateway names the routed model; older gateways send only its id,
-  // which the member's catalog may know by name.
   const resolveAutoRouteName = React.useCallback<AutoRouteNameResolver>(
     modelID => {
       const option = replyModelOptions?.find(option => option.modelID === modelID || option.modelID.endsWith(`/${modelID}`));
@@ -280,6 +270,7 @@ export function MessageListProvider({
       onResumeInterrupted: canResumeInterrupted
         ? stableHandlers.onResumeInterrupted
         : undefined,
+      onRunCommand: canRunCommand ? stableHandlers.onRunCommand : undefined,
       onOpenLibraryDetail: canOpenLibraryDetail
         ? stableHandlers.onOpenLibraryDetail
         : undefined,
@@ -311,6 +302,7 @@ export function MessageListProvider({
       canStopSubagentSession,
       canOpenRemoteTask,
       canResumeInterrupted,
+      canRunCommand,
       canOpenLibraryDetail,
     ],
   )

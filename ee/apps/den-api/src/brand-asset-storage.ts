@@ -31,7 +31,6 @@ export const databaseBrandAssetStorage: BrandAssetStorage = {
       .from(OrganizationBrandAssetTable)
       .where(eq(OrganizationBrandAssetTable.id, storageId(key)))
       .limit(1)
-    // A just-uploaded asset is fetched right away; a replica that has not caught up falls back to the primary.
     const replica = await lookup(db)
     const [asset] = replica[0] ? replica : await lookup(db.$primary)
     return asset ? Uint8Array.from(asset.bytes).buffer : null

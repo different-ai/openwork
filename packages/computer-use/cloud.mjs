@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { promisify } from "node:util";
 import { mkdir, readFile } from "node:fs/promises";
 import { join } from "node:path";
@@ -6,17 +7,57 @@ import { createComputerControl } from "./computer-control.mjs";
 import { createRemoteComputerAdapter } from "./computer-remote.mjs";
 import { createX11Driver } from "./computer-x11-driver.mjs";
 import { browserEgressStatus, createCloudBrowser } from "./chromium.mjs";
+import { BrowserSecretError, createBrowserSecrets } from "./browser-secrets.mjs";
 
 const execute = promisify(execFile);
 const failure = (code, error) => Object.assign(new Error(error), { code });
 const quote = value => `'${String(value).replaceAll("'", "'\\''")}'`;
+const SECRETS_OFF = "Secrets for the cloud browser are not available for this organization.";
+
+/** An operation's time limit whose clock stops while the operation waits for the person. */
+function operationLimit(ms) {
+  const controller = new AbortController();
+  let left = ms, since = 0, waits = 0, ended = false;
+  /** @type {NodeJS.Timeout | undefined} */
+  let timer;
+  const start = () => { since = Date.now(); timer = setTimeout(() => controller.abort(new DOMException("The operation timed out.", "TimeoutError")), left); timer.unref?.(); };
+  start();
+  return {
+    signal: controller.signal,
+    /** Stops the clock until the returned function is called. */
+    wait() {
+      if (waits++ === 0) { clearTimeout(timer); left = Math.max(0, left - (Date.now() - since)); }
+      let waiting = true;
+      return () => { if (!waiting) return; waiting = false; if (--waits === 0 && !ended && !controller.signal.aborted) start(); };
+    },
+    end() { ended = true; clearTimeout(timer); },
+  };
+}
 
 /**
  * One member-owned VM, one input lease, and the existing browser and computer contracts.
  * Programs always run standard JavaScript under the same VM authority checks.
  */
-export async function createCloudComputer({ directory, display = ":99", enabled, machine, browserEndpoint, applications, onActivity = () => {}, privateBrowsing = false }) {
+export async function createCloudComputer({ directory, display = ":99", enabled, machine, browserEndpoint, applications, onActivity = () => {}, privateBrowsing = false,
+  secretsEnabled = async () => false,
+  // How long one operation may run, not counting the time it waits for the person's answer; and how long an approval
+  // to enter a secret waits for that answer before it counts as declined.
+  operationMs = 120_000, requestMs = 300_000 }) {
+  for (const value of [operationMs, requestMs]) if (!Number.isSafeInteger(value) || value < 1 || value > 2_147_483_647) throw new Error("Computer time limits must be positive bounded milliseconds.");
   await mkdir(directory, { recursive: true, mode: 0o700 });
+  // Secret handles live in this process's memory only: never in `directory`, a command line, an environment
+  // variable or the guest log. Each belongs to one conversation and is listed, used and removed by that
+  // conversation's id alone, so the conversation that takes the computer next cannot reach it; a conversation
+  // that gets the computer back still has its own. Everything is forgotten when the computer closes or the
+  // organization's rollout is no longer verified.
+  // A secret names https websites only; loopback http is accepted where the operator's diagnostic browser may open
+  // loopback pages at all.
+  const secrets = createBrowserSecrets({ allowLoopbackHttp: privateBrowsing === true });
+  let secretsOn = false;
+  let verifications = 0;
+  let applied = 0;
+  /** Conversation -> its one open approval to enter a secret. @type {Map<string, { request: Record<string, unknown>, settle: (allowed: boolean) => void }>} */
+  const approvals = new Map();
   let owner = null;
   let paused = false;
   let generation = 0;
@@ -51,8 +92,41 @@ export async function createCloudComputer({ directory, display = ":99", enabled,
     if (closed || paused || !current || current.generation !== generation) throw failure("paused", "Computer control was interrupted. Observe again after Continue.");
     current.signal.throwIfAborted();
   }
+  function dismissApprovals() { for (const pending of [...approvals.values()]) pending.settle(false); }
+  /**
+   * Asks the person, in the conversation whose operation is running, whether a named secret may be entered on `site`.
+   * Asked every time; only the answer `allow` to this request's id is a yes. Takeover, Stop, the end of the operation,
+   * a change of conversation, the rollout turning off and closing all answer no.
+   */
+  function approveSecret(sessionId, asked, signal) {
+    return new Promise((resolve) => {
+      const operation = current;
+      if (!secretsOn || closed || paused || !operation || operation.generation !== generation || owner !== sessionId || signal?.aborted || operation.signal.aborted) { resolve(false); return; }
+      approvals.get(sessionId)?.settle(false);
+      const resume = operation.limit.wait();
+      const decline = () => pending.settle(false);
+      const pending = {
+        request: { id: randomUUID(), reason: "credential", computer: "Cloud computer", placement: "remote", standing: false,
+          credential: { site: String(asked?.site ?? ""), secret: { label: String(asked?.label ?? ""), kind: asked?.kind, field: String(asked?.field ?? "") } } },
+        settle(allowed) {
+          if (approvals.get(sessionId) !== pending) return;
+          approvals.delete(sessionId);
+          clearTimeout(timer); signal?.removeEventListener("abort", decline); operation.signal.removeEventListener("abort", decline);
+          resume(); onActivity();
+          resolve(allowed === true);
+        },
+      };
+      const timer = setTimeout(decline, requestMs);
+      timer.unref?.();
+      approvals.set(sessionId, pending);
+      signal?.addEventListener("abort", decline, { once: true });
+      operation.signal.addEventListener("abort", decline, { once: true });
+      onActivity();
+    });
+  }
   const browser = createCloudBrowser({ statePath: join(directory, "browser-tabs.json"), endpoint: browserEndpoint, privateBrowsing,
     enabled: () => !closed && !paused, assertActive,
+    secrets, secretsEnabled: () => secretsOn && !closed, approveSecret,
     verifyEgress: async () => {
       const result = await browserEgressStatus(async (command, args) => {
         const result = await localMachine.run([command, ...args].map(quote).join(" "), 5000);
@@ -66,7 +140,17 @@ export async function createCloudComputer({ directory, display = ":99", enabled,
     beforeInput: async () => { assertActive(); if (owner) await control.endTurn({ sessionId: owner }); assertActive(); },
   });
   async function authorize() {
-    const allowed = !closed && await enabled().catch(() => false);
+    const turn = ++verifications;
+    const [allowed, handles] = closed ? [false, false] : await Promise.all([enabled().catch(() => false),
+      Promise.resolve().then(secretsEnabled).then((on) => on === true, () => false)]);
+    // An answer that was asked for before the one already applied says nothing newer about the rollout.
+    if (turn > applied) {
+      applied = turn;
+      const on = allowed === true && handles && !closed;
+      // Turning off forgets every secret and placeholder; a verification that finds it still on changes nothing.
+      if (secretsOn && !on) { secrets.clear(); dismissApprovals(); }
+      secretsOn = on;
+    }
     verified = allowed;
     await control.setRemoteEnabled(allowed);
     if (!allowed) {
@@ -79,8 +163,14 @@ export async function createCloudComputer({ directory, display = ":99", enabled,
       authoritySuspended = false;
     }
   }
+  /** Every call from the person's side verifies both rollouts first, as every other call to this computer does. */
+  async function assertSecrets() {
+    await authorize().catch(() => {});
+    if (!secretsOn) throw failure("feature_disabled", SECRETS_OFF);
+  }
+  const conversation = (sessionId) => typeof sessionId === "string" && sessionId.length > 0 && sessionId.length <= 256;
   async function halt() {
-    generation++; current?.controller.abort(); browser.pause(); browser.invalidate();
+    generation++; current?.controller.abort(); dismissApprovals(); browser.pause(); browser.invalidate();
     if (owner) await control.halt({ sessionId: owner });
   }
   const authorityTimer = setInterval(() => { void authorize().catch(() => {}); }, 30_000);
@@ -93,11 +183,13 @@ export async function createCloudComputer({ directory, display = ":99", enabled,
       if (busy) throw failure("busy", "The computer is already running an operation. Wait for its receipt.");
       // Reserve the shared input rail before an awaited ownership change.
       busy = true;
+      let limit = null;
       try {
         if (owner && owner !== body.sessionId) { await halt(); browser.resume(); }
         owner = body.sessionId;
         const controller = new AbortController();
-        current = { controller, generation, signal: AbortSignal.any([signal, controller.signal, AbortSignal.timeout(120_000)]) };
+        limit = operationLimit(operationMs);
+        current = { controller, generation, limit, signal: AbortSignal.any([signal, controller.signal, limit.signal]) };
         onActivity();
         assertActive();
         if (path === "/computer/program") {
@@ -146,7 +238,37 @@ export async function createCloudComputer({ directory, display = ":99", enabled,
         const result = await control.execute(body, { signal: current.signal });
         assertActive();
         return result;
-      } finally { busy = false; current = null; onActivity(); }
+      } finally { limit?.end(); busy = false; current = null; onActivity(); }
+    },
+    // The person's side of secret handles. None of these waits for `busy`: a secret is added and an approval is
+    // answered while the operation that asked is still running.
+    secrets: {
+      async list(sessionId) { await assertSecrets(); return conversation(sessionId) ? secrets.list(sessionId) : []; },
+      /** Never throws and never repeats what was typed: the value goes to the store and nowhere else. */
+      async add(input) {
+        try { await assertSecrets(); } catch { return { ok: false, code: "feature_disabled", error: SECRETS_OFF }; }
+        try {
+          if (!conversation(input?.sessionId)) throw new BrowserSecretError("invalid_secret", "A secret belongs to one conversation. Open a conversation first.");
+          return { ok: true, secret: secrets.add({ sessionId: input.sessionId, label: input.label, kind: input.kind, origins: input.origins, value: input.value }) };
+        } catch (error) { return { ok: false, code: "invalid_secret", error: error instanceof BrowserSecretError ? error.message : "The secret could not be saved." }; }
+      },
+      async remove(sessionId, secretRef) { await assertSecrets(); return conversation(sessionId) && typeof secretRef === "string" && secrets.remove(sessionId, secretRef); },
+    },
+    /** The open approval to enter a secret in this conversation, as the chat shows it; null when there is none. */
+    async request(sessionId) {
+      await assertSecrets();
+      const pending = conversation(sessionId) ? approvals.get(sessionId) : undefined;
+      if (!pending) return null;
+      onActivity();
+      return structuredClone(pending.request);
+    },
+    /** True when this answered the conversation's open approval. A wrong id or conversation answers nothing. */
+    async answerRequest(input) {
+      await assertSecrets();
+      const pending = conversation(input?.sessionId) ? approvals.get(input.sessionId) : undefined;
+      if (!pending || typeof input.id !== "string" || pending.request.id !== input.id) return false;
+      pending.settle(input.answer === "allow");
+      return true;
     },
     async snapshot() {
       await authorize();
@@ -200,7 +322,11 @@ export async function createCloudComputer({ directory, display = ":99", enabled,
       try { onActivity(); const result = await driver.input([action]); if (result.error) throw failure("input_uncertain", `${result.error} Inspect the desktop before retrying.`); return result; }
       finally { busy = false; onActivity(); }
     },
-    async close() { closed = true; clearInterval(authorityTimer); await halt(); browser.close(); await control.reset(true); },
+    async close() {
+      closed = true; clearInterval(authorityTimer);
+      secretsOn = false; dismissApprovals(); secrets.clear();
+      await halt(); browser.close(); await control.reset(true);
+    },
   };
 }
 

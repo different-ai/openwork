@@ -31,7 +31,7 @@ import {
 import {
   getSsoDomainVerificationDnsName,
   getSsoDomainVerificationHost,
-} from "../../sso-domain-verification.js"
+} from "@openwork-ee/den-sso"
 import { createGuardedFetch, createRealmSafeFetch } from "../../capability-sources/url-guard.js"
 import { checkOidcDiscovery } from "../../sso-oidc-discovery.js"
 import { defaultSsoConnectionName, normalizeSsoDomains, parseSsoDomains, serializeSsoDomains } from "../../sso-domains.js"
@@ -47,17 +47,9 @@ import {
 import { orgMemberRoute, orgPermissionRoute, requireOrgPermission } from "../../middleware/index.js"
 import type { OrgRouteVariables } from "./shared.js"
 
-/**
- * Organization SSO. An organization may have several connections.
- * `/v1/sso/*` manages its oldest connection (kept for older clients and API
- * users). `/v1/sso/connections/*` lists them, adds more, and runs every
- * action on one connection by id. Tests start and cancel by their own intent id.
- */
-
 type SsoConnection = typeof SsoConnectionTable.$inferSelect
 type OrganizationPayload = NonNullable<OrgRouteVariables["organizationContext"]>
 
-// Private addresses are reachable only where the deployment allows them (dev mode, or the operator's opt-in).
 const oidcDiscoveryFetch = env.allowPrivateMcpUrls ? createRealmSafeFetch() : createGuardedFetch()
 
 const invalidRequestSchema = z.object({
@@ -174,13 +166,10 @@ const samlConnectionConfigSchema = z.object({
 const ssoConnectionSchema = z.object({
   id: z.string(),
   providerId: z.string(),
-  /** The saved name, or null. */
   name: z.string().nullable(),
-  /** The name sign-in shows: the saved name, else one derived from the issuer. */
   displayName: z.string(),
   kind: z.enum(["oidc", "saml"]),
   issuer: z.string().url(),
-  /** Every domain, comma separated (domains holds them as a list). */
   domain: z.string(),
   domains: z.array(z.string()),
   status: z.enum(["disabled", "enabled"]),
@@ -193,7 +182,6 @@ const ssoConnectionSchema = z.object({
   metadataUrl: z.string().url().nullable(),
   domainVerified: z.boolean(),
   domainVerificationHost: z.string(),
-  /** The TXT record name for the first domain (domainVerificationDnsNames lists one per domain). */
   domainVerificationDnsName: z.string(),
   domainVerificationDnsNames: z.array(z.object({ domain: z.string(), dnsName: z.string() })),
   oidc: oidcConnectionConfigSchema.nullable(),
@@ -366,7 +354,6 @@ async function buildConnectionPayload(connection: SsoConnection, reader: Paramet
   })
 }
 
-/** Where a `/v1/sso*` request acts: the oldest connection, or the one named in the path. */
 type ConnectionScope = "primary" | "connection"
 
 async function resolveConnection(scope: ConnectionScope, organizationId: SsoConnection["organizationId"], connectionId: string | undefined) {
@@ -392,7 +379,6 @@ export type RegistrationOutcome =
   | { ok: false; status: 400; body: ReturnType<typeof invalidRequest> | { error: "invalid_request"; details: Array<{ message: string; path: Array<string | number> }> } }
   | { ok: false; status: 402; body: Extract<ReturnType<typeof checkEntitlement>, { ok: false }>["response"] }
 
-/** Registers a new connection or replaces one's configuration, with its audit trail. */
 export async function registerConnection(request: RegistrationRequest): Promise<RegistrationOutcome> {
   const { payload } = request
   const entitlement = checkEntitlement(payload.organization.metadata, "sso")
@@ -415,15 +401,12 @@ export async function registerConnection(request: RegistrationRequest): Promise<
   let data = parsed.data
   if ("clientId" in data) {
     if (data.skipDiscovery) {
-      // Manual endpoints skip discovery, so nothing else would catch a
-      // discovery URL saved as the issuer; sign-in then fails on every token.
       if (data.issuer.includes("/.well-known/")) {
         return { ok: false, status: 400, body: invalidRequest("The issuer is the provider's base address, not its discovery URL.", ["issuer"]) }
       }
     } else {
       const check = await checkOidcDiscovery(data.issuer, oidcDiscoveryFetch)
       if (!check.ok) return { ok: false, status: 400, body: invalidRequest(check.message, ["issuer"]) }
-      // Save what the provider reports, so registration needs no second fetch.
       data = {
         ...data,
         issuer: check.issuer,
@@ -450,14 +433,10 @@ export async function registerConnection(request: RegistrationRequest): Promise<
       ? await registerOrganizationSsoConnection({ ...common, ...config, kind: "saml" })
       : await registerOrganizationSsoConnection({ ...common, ...config, kind: "oidc" })
   } catch (error) {
-    // The administrator's OIDC settings were unusable: their mistake to fix, not a server error.
     if (error instanceof OidcConfigurationError) return { ok: false, status: 400, body: invalidRequest(error.message, ["issuer"]) }
     throw error
   }
-  // Registration runs through better-auth's adapter and several short
-  // transactions: the after-snapshot is appended in a fresh transaction.
   const auditEventIds = await appendDomainChangesAfterCommit(request.capture, "sso_connection.registered", async () => {
-    // primary: the registration above just wrote it.
     const current = await getSsoConnectionAuditState(connection, db.$primary)
     return current ? [ssoConnectionRegisteredEvent(payload.organization.id, previous, current)] : []
   })

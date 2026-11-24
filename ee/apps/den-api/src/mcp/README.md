@@ -75,6 +75,16 @@ card names, which is also a tool. `connection_status` shows the card for a conne
 members may use sends `notifications/tools/list_changed` to its full-view streams
 on the same replica; the `tools/list` cache hint (60 s, private) covers the rest.
 
+The per-connection servers (`/mcp/agent/servers/<id>`, and the directly exposed
+and App host views of `/mcp/agent/connections/<id>`) advertise `listChanged`
+and tell `subscriptions/listen` streams when their organization's inventory
+changes (`inventory-event-bus.ts`): at once for a write on the same replica, and
+on the next 30 s revision check for one on another. The bounded
+search/execute view of a connection never changes, so it says
+`listChanged: false`. A client must negotiate the 2026-07-28 protocol
+(`versionNegotiation: { mode: "auto" }` in the v2 client) to listen; 2025-era
+clients are served statelessly and rely on the cache hint.
+
 ## Slack messages from the OpenWork bot
 
 `slack_send_as_bot` (`slack-send-as-bot.ts`, generally available without a

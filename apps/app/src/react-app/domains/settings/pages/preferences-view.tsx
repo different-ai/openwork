@@ -84,7 +84,6 @@ export function PreferencesView(props: PreferencesViewProps) {
           <LayoutSectionDescription>{t("settings.model_section_desc")}</LayoutSectionDescription>
         </LayoutSectionHeader>
 
-        {/* Show reasoning */}
         <LayoutSectionItem>
           <LayoutSectionItemHeader>
             <LayoutSectionItemTitle>{t("settings.show_model_reasoning")}</LayoutSectionItemTitle>
@@ -100,7 +99,6 @@ export function PreferencesView(props: PreferencesViewProps) {
           </LayoutSectionItemHeader>
         </LayoutSectionItem>
 
-        {/* Auto context compaction */}
         <LayoutSectionItem>
           <LayoutSectionItemHeader>
             <LayoutSectionItemTitle>{t("settings.auto_compact")}</LayoutSectionItemTitle>

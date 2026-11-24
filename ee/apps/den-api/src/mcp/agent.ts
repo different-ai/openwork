@@ -31,8 +31,8 @@ import { agentCheckRequestsAvailable, registerAgentCheckRequestTool } from "./ag
 import { getCatalog, protectedResourceMetadata, protectedResourceMetadataRoute } from "./index.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
 import { createScopedAgentMcpHttpHandlers, type AgentMcpAudience } from "./agent-http.js"
-import { connectionsWithheld } from "./workbot-turn-limits.js"
 import { connectToolView, connectToolViewOverride, isOpenWorkEngineClient, requestClientInfo, type ConnectClientInfo } from "./connect-tool-view.js"
+import { remoteSessionDirectTools } from "./remote-session-tools.js"
 import { CONNECTION_STATUS_TOOL_NAME, registerConnectFullTools, registerConnectionStatusTool, type CapabilityCall } from "./connect-full-tools.js"
 import { connectFullToolNamespace, loadConnectFullTools, loadConnectServices, type ConnectFullToolScope } from "./connect-full-tool-sources.js"
 import { engineToolName, withRelatedWords } from "./engine-tool-view.js"
@@ -44,9 +44,11 @@ import {
   SEARCH_CAPABILITIES_TOOL_NAME,
   type CapabilityMatch,
 } from "./search.js"
-import { resolveMcpMember, resolveMcpMemberIdentity } from "./external-capabilities.js"
-import { executeMarketplaceCapability, listAccessibleMarketplaceSkillDescriptors, listAccessibleMarketplaceSkillSources, parseMarketplaceCapabilityName, type RemoteSkillDescriptor } from "./marketplace-capabilities.js"
-import { registerSkillsExtension, resolveSkills, type ResolvedSkill } from "./skills-extension.js"
+import { mcpMemberForToken, resolveMcpMember, resolveMcpMemberIdentity } from "./external-capabilities.js"
+import { executeMarketplaceCapability, listAccessibleMarketplaceSkillDescriptors, listAccessibleMarketplaceSkillSources, parseMarketplaceCapabilityName, readMarketplaceSkillFiles, type RemoteSkillDescriptor } from "./marketplace-capabilities.js"
+import { findSkillFile, registerSkillsExtension, resolveSkills, type ResolvedSkill } from "./skills-extension.js"
+import { readSkillFileBytes } from "../skill-file-blobs.js"
+import { skillFileMimeType, skillFileText } from "../skill-files.js"
 import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
 import { automationService } from "../automations/service.js"
 import { AGENT_AUTOMATION_INDEX_LIMIT, registerAgentAutomationResources } from "./automation-index.js"
@@ -114,7 +116,7 @@ import {
 } from "./connect-mcp-server-index.js"
 import { registerAgentSkillTools } from "./skill-created-app.js"
 import { registerAgentSkillCatalogTools, standardSkillMarkdown, type RemoteSkillSource } from "./skill-tools.js"
-import { isSkillDocumentUri, readCachedSkill, rememberSkillRead, skillReadResponse } from "./skill-read-cache.js"
+import { isSkillDocumentUri, isSkillFileUri, readCachedSkill, rememberSkillRead, skillReadResponse } from "./skill-read-cache.js"
 import {
   parseSkillSyncRequest,
   skillBatchResponse,
@@ -183,8 +185,6 @@ const connectionStatusOutputSchema = openworkCloudMcpConnectionActionSchema.exte
   }),
 })
 
-// Matches take the MCP tool shape with `connectStandardTools`, and keep the older
-// fields either way for desktops released before it.
 const capabilityMatchOutputSchema = z.object({
   name: z.string(),
   description: z.string().optional(),
@@ -290,12 +290,6 @@ async function mcpRequestInfo(request: Request): Promise<{
 export const AGENT_SKILL_INDEX_URI = "skill://index.json"
 export const AGENT_SKILL_INDEX_SCHEMA = "https://schemas.agentskills.io/discovery/0.2.0/schema.json"
 
-/**
- * The skill index. With `resolved`, the index
- * says `delivery: "native"` and each entry carries its SKILL.md digest and size,
- * or why it is withheld, so OpenWork can load skills as native ones and re-read
- * a skill only when its digest changes.
- */
 export function buildAgentSkillIndex(skills: RemoteSkillDescriptor[], resolved?: ResolvedSkill[]) {
   const byCapability = new Map(resolved?.map((entry) => [entry.skill.capability, entry]))
   const listed = resolved ? skills.filter((skill) => byCapability.has(skill.capability)) : skills
@@ -315,13 +309,13 @@ export function buildAgentSkillIndex(skills: RemoteSkillDescriptor[], resolved?:
         ...(skill.marketplaceName ? { marketplaceName: skill.marketplaceName } : {}),
         ...(skill.pluginName ? { pluginName: skill.pluginName } : {}),
         ...(entry?.content ? { digest: entry.content.digest, size: entry.content.size } : {}),
+        ...(entry?.content?.files.length ? { files: entry.content.files.map((file) => ({ path: file.path, digest: file.digest, size: file.size })) } : {}),
         ...(entry?.blocked ? { setup: entry.blocked } : {}),
       }
     }),
   }
 }
 
-/** Every listed skill's authorized source in one pass: built-ins in memory, marketplace skills batched, no Library use recorded. */
 export async function resolveAgentSkills(input: {
   skills: RemoteSkillDescriptor[]
   organizationId: string
@@ -336,16 +330,10 @@ export async function resolveAgentSkills(input: {
   return resolveSkills(input.skills, sources)
 }
 
-/** The authorized SKILL.md source behind one listed descriptor, shared by the skill:// resources and get_skill. */
 export async function readRemoteSkillSource(input: {
   skill: RemoteSkillDescriptor
   organizationId: string
   member: Awaited<ReturnType<typeof resolveMcpMemberIdentity>>
-  /**
-   * Whether this read is a Library use. get_skill is the agent loading a skill
-   * to follow it; a skill:// resource read is how hosts fetch skills ahead of
-   * time (OpenWork prefetches every listed one), so it is not.
-   */
   recordUse: boolean
 }): Promise<RemoteSkillSource> {
   const builtinResult = await executeBuiltinSkillCapability(input.skill.capability, input.organizationId)
@@ -362,13 +350,16 @@ export async function readRemoteSkillSource(input: {
   if (!marketplaceResult.ok || marketplaceResult.result.kind !== "skill") return null
   const result = marketplaceResult.result
   if (typeof result.content !== "string") {
-    // Listed but withheld until its plugin is set up: say what unblocks it.
     if (typeof result.status === "string" && typeof result.hint === "string") {
       return { blocked: { status: result.status, message: result.hint, action: result.action ?? null } }
     }
     return null
   }
-  return { content: result.content, provenance: result.provenance }
+  return {
+    content: result.content,
+    provenance: result.provenance,
+    files: await readMarketplaceSkillFiles({ organizationId: input.organizationId, configObjectId: marketplace.configObjectId }),
+  }
 }
 
 const EXECUTE_CAPABILITY_TIMEOUT_MESSAGE = `The capability call exceeded ${EXECUTE_CAPABILITY_TIMEOUT_MS / 1_000}s. Retry once; if it times out again, narrow the request (fewer results, tighter query) and tell the user the service is slow — do NOT tell them to reconfigure or reconnect.`
@@ -390,7 +381,6 @@ export function capabilitySearchToolResult<T extends CapabilityMatch>(matches: T
     ...(connectorCatalog ? { connectorCatalog } : {}),
   }
   return {
-    // Compact: models read it as well as indented JSON, at about a third fewer tokens.
     content: textContent(toolShapes ? JSON.stringify(result) : JSON.stringify(result, null, 2)),
     structuredContent: result,
     ...(card ? { _meta: connectionActionAppMeta(card.connectionId) } : {}),
@@ -444,13 +434,29 @@ export function registerAgentSkillResources(input: {
   skills: RemoteSkillDescriptor[]
   organizationId: string
   member: Awaited<ReturnType<typeof resolveMcpMemberIdentity>>
-  /** Resolved skills carry digests for native delivery. */
   resolveSkills?: () => Promise<ResolvedSkill[]>
-  /** Hears each SKILL.md served, so a repeat read can skip this request's setup (skill-read-cache.ts). */
   onSkillRead?: (uri: string, text: string) => void
-  /** The client asked for the index as changes against what it holds (skill-index-sync.ts). */
   indexSync?: { revision: string | null; known?: Record<string, string> }
+  fileRead?: { uri: string; resolveSkills: () => Promise<ResolvedSkill[]> }
 }) {
+  const fileRead = input.fileRead
+  if (fileRead) {
+    input.server.registerResource("agent-skill-file", fileRead.uri, {
+      title: fileRead.uri.slice(fileRead.uri.lastIndexOf("/") + 1),
+      description: "A supporting file of an Agent Skill.",
+    }, async () => {
+      const file = findSkillFile(await fileRead.resolveSkills(), fileRead.uri)
+      if (!file) throw new ProtocolError(ProtocolErrorCode.InvalidParams, `No skill file at ${fileRead.uri} is available to you.`)
+      const bytes = await readSkillFileBytes(input.organizationId, file)
+      if (!bytes) throw new ProtocolError(ProtocolErrorCode.InternalError, `The skill file at ${fileRead.uri} could not be read. Try again.`)
+      const text = skillFileText(bytes)
+      return {
+        contents: [text !== null
+          ? { uri: file.uri, mimeType: file.mimeType, text }
+          : { uri: file.uri, mimeType: skillFileMimeType(file.path, false), blob: Buffer.from(bytes).toString("base64") }],
+      }
+    })
+  }
   input.server.registerResource("agent-skills-index", AGENT_SKILL_INDEX_URI, {
     title: "Available Agent Skills",
     description: "Authorized Agent Skills discovery index for this OpenWork member.",
@@ -496,30 +502,6 @@ export function registerAgentSkillResources(input: {
   }
 }
 
-/**
- * The minimal, harness-facing MCP surface: two capability-routing tools, one
- * first-party skill creation App, plus gated Code Mode execution and
- * standards-based Artifact presentation.
- *
- * `/mcp` (index.ts) stays exactly as it is — every catalog operation
- * individually registered, ~129 tools today. That's unchanged and still
- * useful for scripts/admin tooling that want to call a known operation by
- * name directly.
- *
- * `/mcp/agent` is a *different* endpoint for a *different* consumer: the
- * desktop app's "OpenWork Cloud Control" connection, which is what an
- * OpenCode/Claude Code/Codex-style harness actually sees. It always registers
- * `search_capabilities`, `execute_capability`, the direct skill tools
- * `list_skills` and `get_skill`, and `create_skill`, and
- * conditionally registers Code Mode and Artifact presentation tools. Workflows
- * remain discoverable and executable through the same capability-routing
- * tools instead of contributing separate contextual tools. The other ~127
- * operations are not individually callable on this endpoint.
- *
- * Clients that search large tool lists themselves can instead get the full
- * view (connect-tool-view.ts): every capability as its own tool, run by the
- * same executor, in place of search_capabilities and execute_capability.
- */
 export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables & Record<string, unknown> }>(app: Hono<T>) {
   const handlers = createScopedAgentMcpHttpHandlers(
     (error) => agentMcpLogger.warn("Agent MCP transport error", { error }),
@@ -552,8 +534,6 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
 
     const requestInfo = await mcpRequestInfo(c.req.raw)
     const method = requestInfo.method
-    // The stateless transport only acknowledges this notification; it needs
-    // none of the member state below.
     if (method === "notifications/initialized" && requestInfo.id === null) {
       return new Response(null, { status: 202 })
     }
@@ -561,11 +541,10 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     const skillReadUri = method === "resources/read" && requestInfo.id !== null && isSkillDocumentUri(requestInfo.resourceUri)
       ? requestInfo.resourceUri
       : null
-    // Several SKILL.md bodies in one read, or one a message is about to use (skill-index-sync.ts).
+    const skillFileReadUri = method === "resources/read" && isSkillFileUri(requestInfo.resourceUri) ? requestInfo.resourceUri : null
     const skillBatch = skillReadUri && requestInfo.skillSync && (requestInfo.skillSync.uris || requestInfo.skillSync.use)
       ? { uris: [...new Set([skillReadUri, ...(requestInfo.skillSync.uris ?? [])])], use: requestInfo.skillSync.use === true }
       : null
-    // Read before the index is built, so a write during the build leaves the client one revision behind, not ahead.
     const indexSync = method === "resources/read" && requestInfo.resourceUri === AGENT_SKILL_INDEX_URI ? requestInfo.skillSync : null
     const inventoryRevision = skillReadUri || indexSync ? await cache.inventory.revision(organizationId) : null
     if (indexSync?.revision && indexSync.revision === inventoryRevision && requestInfo.id !== null) {
@@ -582,16 +561,11 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     const finishIndexTiming = startMcpAppTiming("den.agent-index-read")
     const catalog = await getCatalog(app as unknown as Hono, c.env)
     const organizationFeatures = await getOrganizationFeatures(organizationId, { userId: principal.userId })
-    // External MCP connections are scoped to the calling MEMBER (grants +
-    // per-member credentials), not just the org — resolve who this token's
-    // user is within the org once per request, reusing the features just read.
     const member = await resolveMcpMember({
       userId: principal.userId,
       organizationId: principal.organizationId,
     })
-    // A Workbot turn's token names the connections an admin took away from Workbot (workbot-turn-limits.ts).
-    const withheldConnectionIds = connectionsWithheld(principal.scopes)
-    const memberIdentity = member ? { ...member.identity, ...(withheldConnectionIds ? { withheldConnectionIds } : {}) } : null
+    const memberIdentity = member ? mcpMemberForToken(member.identity, principal.scopes) : null
     const connectMcpAppHostSupported = supportsConnectMcpAppHost(
       c.req.header(CONNECT_MCP_APP_HOST_CAPABILITY_HEADER),
     ) && principal.scopes.has(DEN_MCP_APP_HOST_SCOPE)
@@ -602,13 +576,10 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       firstPartyToken,
       engineTools: organizationFeatures.connectEngineTools,
     })
-    // OpenWork's own engine on its rollout: the full view, plus a service directory and related words (engine-tool-view.ts).
     const engineTools = toolView === "full" && organizationFeatures.connectEngineTools
       && isOpenWorkEngineClient(requestInfo.clientInfo, firstPartyToken)
     const audience: AgentMcpAudience = { organizationId, userId: principal.userId, fullTools: toolView === "full" }
     const redirectUriBase = resolvePublicOrigin(c.req.raw, env.apiPublicUrl)
-    // Direct service mutations below are audited for the verified token caller
-    // (organization claim + active member), never for tool arguments.
     const auditPrincipal = mcpAuditPrincipal({
       organizationId,
       userId: principal.userId,
@@ -628,12 +599,8 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       audit: auditPrincipal,
       usageSource: "agent",
     })
-    // Building your own Apps can be turned off for the deployment; MCP Apps
-    // from connected MCP servers work either way.
     const appServersEnabled = env.appMcpServersEnabled
     const toolShapes = organizationFeatures.connectStandardTools
-    // Resolved once per request, and only by the methods that need it: the
-    // skill resources at discovery time, and list_skills / get_skill on call.
     let remoteSkillsPromise: Promise<RemoteSkillDescriptor[]> | null = null
     const loadRemoteSkills = (): Promise<RemoteSkillDescriptor[]> => {
       remoteSkillsPromise ??= (async () => [
@@ -645,8 +612,6 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       ].sort((a, b) => a.name.localeCompare(b.name) || a.capability.localeCompare(b.capability)))()
       return remoteSkillsPromise
     }
-    // Only the skill, App builder, Workflow artifact and artifact view tools act
-    // through the organization context, so it loads on first use, once per request.
     let libraryContextPromise: Promise<PluginArchActorContext | null> | null = null
     const loadLibraryContext = (): Promise<PluginArchActorContext | null> => libraryContextPromise ??= (async () => {
       if (!member) return null
@@ -656,17 +621,12 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       })
       return organizationContext ? { organizationContext, memberTeams: member.teams, session: null } : null
     })()
-    // Apps built here are each served as their own MCP server; Connect lists
-    // them in its server index, finds them in search, and builds them.
     const appAccess = { organizationId: principal.organizationId, member: memberIdentity }
     let mcpAppsPromise: Promise<McpAppEntry[]> | null = null
     const loadMcpApps = () => mcpAppsPromise ??= listAccessibleMcpApps(appAccess).catch((error: unknown) => {
       console.error("mcp_app_listing_failed", { organizationId: principal.organizationId, error: error instanceof Error ? error.message : String(error) })
       return []
     })
-    // OpenWork opens an App only through the server index, where Apps fill the
-    // room connections leave. Every usable connection may be listed, so only
-    // Apps that fit beside all of them are offered to open.
     let openableAppsPromise: Promise<McpAppEntry[]> | null = null
     const loadOpenableApps = () => openableAppsPromise ??= (async () => {
       const apps = await loadMcpApps()
@@ -679,12 +639,8 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         console.error("mcp_app_capacity_check_failed", { organizationId: principal.organizationId, error: error instanceof Error ? error.message : String(error) })
         return null
       })
-      // Without the connection count, offer every App rather than call them all past the limit.
       return connections ? apps.slice(0, connectMcpServerIndexAppCapacity(connections.length)) : apps
     })()
-    // Member skill indexes carry digests for OpenWork's native delivery.
-    // The MCP Skills Extension is served and session
-    // instructions list the member's skills, for every MCP client.
     const nativeSkills = Boolean(memberIdentity)
     const skillsExtension = Boolean(memberIdentity)
     let resolvedSkillsPromise: Promise<ResolvedSkill[]> | null = null
@@ -694,9 +650,6 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       member: memberIdentity,
     }))()
     if (skillBatch && requestInfo.id !== null) {
-      // Each body is authorized exactly as a single read is. A body for a
-      // message that uses the skill is a Library use and is never served from
-      // the read cache; a background read is neither.
       const skills = await loadRemoteSkills()
       const contents: Array<{ uri: string; text: string }> = []
       for (const uri of skillBatch.uris) {
@@ -717,10 +670,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       finishIndexTiming()
       return skillBatchResponse(requestInfo.id, contents)
     }
-    // execute_capability and every full-view tool run capabilities through this one executor.
     const executeCapabilityTool = async ({ name, arguments: args, schemaDigest, path, query, body }: CapabilityCall & { schemaDigest?: string }) => {
-      // A built App opens through its own server; anything unavailable falls
-      // through to ordinary execution and its normal error.
       const plugin = appServersEnabled ? parseMarketplaceCapabilityName(name) : null
       const definition = plugin && await isActiveMcpApp({ organizationId: principal.organizationId, appId: plugin.configObjectId })
         ? await loadMcpAppServerDefinition({ ...appAccess, appId: plugin.configObjectId }).catch(() => null)
@@ -735,8 +685,6 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           executeCapability(capabilityContext, { name, schemaDigest, path, query, body, ...(args === undefined ? {} : { arguments: args }) })
         ),
       })
-      // Only this direct call may hand off to the host's fixed Gmail upload
-      // action. Keep the explicit no-draft failure body; scripts stay errors.
       const native = parseNativeCapabilityName(name)
       if (result.isError === true
         && native?.toolName === "postCapabilitiesGoogleWorkspaceGmailDrafts"
@@ -749,7 +697,6 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
               return { ...result, isError: false }
             }
           } catch {
-            // Non-JSON and unrelated errors retain their original transport.
           }
         }
       }
@@ -762,14 +709,13 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       execute: executeCapabilityTool,
     })
     const advertisesInstructions = method === "initialize" || method === "server/discover"
-    // OpenWork's v2 engine already lists these skills natively when Den serves
-    // native delivery; listing them again here sends the model to get_skill too.
     const listsSkillsNatively = nativeSkills && supportsConnectNativeSkills(c.req.header(CONNECT_MCP_APP_HOST_CAPABILITY_HEADER))
     const server = createAgentMcpServer({
       appServers: appServersEnabled,
       toolView,
       toolShapes,
       remoteSessionStatus: Boolean(memberIdentity),
+      remoteSessionEvents: organizationFeatures.mcpThreads && organizationFeatures.nativeMcpEvents,
       canSendSlackMessages: slackSendAsBotAvailable(capabilityContext),
       myAgent: Boolean(memberIdentity && principal.scopes.has(DEN_MCP_WRITE_SCOPE)),
       myAgentBrief: organizationFeatures.workbotAgentBrief,
@@ -779,9 +725,8 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       engine: engineTools,
       services: engineTools && advertisesInstructions ? await loadConnectServices(capabilityContext) : undefined,
     })
-    if (auditPrincipal && organizationFeatures.nativeMcpEvents) registerNativeMcpEvents(server, auditPrincipal, c.req.raw, principal.scopes.has(DEN_MCP_WRITE_SCOPE))
+    if (auditPrincipal && organizationFeatures.nativeMcpEvents) registerNativeMcpEvents(server, auditPrincipal, c.req.raw, principal.scopes.has(DEN_MCP_WRITE_SCOPE), { poll: organizationFeatures.mcpThreads })
     if (skillsExtension) registerSkillsExtension(server, loadResolvedSkills)
-    // Your agent's own background check (workbotAgentBrief) may ask for one extra check; no other caller sees it.
     if (memberIdentity && agentCheckRequestsAvailable({ scopes: principal.scopes, member: true, workbotAgentBrief: organizationFeatures.workbotAgentBrief })) {
       registerAgentCheckRequestTool(server, { organizationId, memberId: memberIdentity.orgMembershipId, userId: normalizeDenTypeId("user", principal.userId), audit: auditPrincipal })
     }
@@ -814,8 +759,6 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         }
       }
       const resolveTools = (tools: Parameters<typeof resolveMcpAppTools>[1]) => resolveMcpAppTools(capabilityContext, tools)
-      // In the full view an App's tools may name full-view tools; Apps store the capability.
-      // OpenWork's engine shows `linear.list_issues` as `linear_list_issues`, so either name works there.
       const withCapabilities = async <Request extends { tools?: Parameters<typeof resolveMcpAppTools>[1] }>(request: Request): Promise<Request> => {
         const declared = request.tools ?? []
         const namespaces = new Set(declared.flatMap((tool) => connectFullToolNamespace(tool.capability) ?? []))
@@ -856,12 +799,8 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         },
       })
     }
-    // initialize and server/discover advertise static capabilities only, so the
-    // connection, App, skill and Automation resources load just for resource reads.
     if (method === "resources/list" || method === "resources/read") {
       if (memberIdentity) {
-        // Select before the per-member readiness probes so an ordinary client
-        // pays only for the connections it may actually see.
         const indexCandidates = selectConnectMcpServerIndexConnections({
           appHostClient: connectMcpAppHostSupported,
           connections: await listUsableExternalMcpConnections({
@@ -873,7 +812,6 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         })
         registerConnectMcpServerIndex({
           server,
-          // Only the App host opens Apps; every other reader gets the connection index unchanged.
           ...(appServersEnabled && connectMcpAppHostSupported ? { apps: await loadMcpApps() } : {}),
           connections: await readyExternalMcpConnectionsForMember(indexCandidates, memberIdentity.orgMembershipId),
           publicOrigin: redirectUriBase,
@@ -886,15 +824,13 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         member: memberIdentity,
         ...(nativeSkills ? { resolveSkills: loadResolvedSkills } : {}),
         ...(indexSync ? { indexSync: { revision: inventoryRevision, known: indexSync.known } } : {}),
+        ...(skillFileReadUri ? { fileRead: { uri: skillFileReadUri, resolveSkills: loadResolvedSkills } } : {}),
         ...(skillReadKey ? { onSkillRead: (uri: string, text: string) => {
           if (uri === skillReadKey.uri) rememberSkillRead(skillReadKey, text)
         } } : {}),
       })
       if (appServersEnabled) registerAppStarterResources(server)
       if (env.automations.runtimeEnabled) {
-        // Owner-scoped: the index only ever carries this member's own
-        // Automations. Without a resolved member there is no owner to scope to,
-        // and a failure here must not take the whole connection down.
         const automations = memberIdentity
           ? await automationService.list({
             organizationId: principal.organizationId,
@@ -910,9 +846,6 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
     }
 
     finishIndexTiming()
-    // Every view searches. The full view searches only for what has no tool of its
-    // own: OpenWork's API operations, whose per-route roles a list cannot check,
-    // and skills.
     const fullView = toolView === "full"
     server.registerTool(
       SEARCH_CAPABILITIES_TOOL_NAME,
@@ -953,8 +886,6 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
         if (type === "connectors") return connectorSetupToolResult()
         const boundedLimit = limit ?? 5
         const includeApps = !fullView && appServersEnabled && (type === undefined || type === "all" || type === "mcp" || type === "marketplace")
-        // Generic Marketplace search excludes authored Apps in every rollout state.
-        // An explicit connect request still finds the connection, so its card can show.
         const unlistedOnly = fullView && intent !== "connect"
         const result = await searchCapabilityRegistry(capabilityContext, { query, limit: boundedLimit, type, unlistedOnly })
         const openable = includeApps ? await loadOpenableApps() : []
@@ -984,7 +915,6 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
             ? "One object matching the match's inputSchema. For an App (kind mcp_app), an optional launch input object the App receives."
             : "One object matching the match's inputSchema."),
           schemaDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional().describe("Optional schemaDigest from the match, to report schema drift since that search."),
-          // Older inputs, accepted for a while; capabilityCallInput explains why.
           path: z.union([z.record(z.string(), z.unknown()), z.string()]).optional().describe("Older form of arguments.path; prefer arguments."),
           query: z.union([z.record(z.string(), z.unknown()), z.string()]).optional().describe("Older form of arguments.query; prefer arguments."),
           body: z.unknown().optional().describe("Older form of arguments (or arguments.body for an API operation); prefer arguments."),
@@ -996,42 +926,47 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           body: z.unknown().optional().describe(appServersEnabled
             ? "For native API capabilities, the JSON body. For external MCP capabilities, the arguments object matching argumentsSchema. For an App (kind mcp_app), an optional launch input object the App receives."
             : "For native API capabilities, the JSON body. For external MCP capabilities, the arguments object matching argumentsSchema."),
-          // Desktops built for MCP tool shapes send this whatever the flag says.
           arguments: z.unknown().optional().describe("Alternative to path/query/body: one object holding them for a native API capability, or the arguments object for an external MCP capability."),
         }),
       },
       executeCapabilityTool,
     )
     if (fullView && (method === "tools/list" || method === "tools/call")) {
-      // A tools/call loads only what it names; tools/list loads every tool.
       const namespace = requestInfo.toolName ? connectFullToolNamespace(requestInfo.toolName) : null
       const scope: ConnectFullToolScope | null = method === "tools/list" ? "list"
         : requestInfo.toolName === CONNECTION_STATUS_TOOL_NAME ? "status"
           : namespace ? { namespaces: new Set([namespace]) } : null
       if (scope) {
         const full = await loadFullTools(scope)
-        // The engine's search knows no synonyms, so its descriptions carry related words.
         const tools = engineTools ? full.tools.map((tool) => ({ ...tool, description: withRelatedWords(tool.description, tool.toolName) })) : full.tools
         registerConnectFullTools({ server, tools, execute: executeCapabilityTool })
-        // Only the list and its own call load what is not ready yet.
         if (typeof scope !== "object") registerConnectionStatusTool({ server, pending: full.pending, show: full.showPending })
       }
+    }
+
+    if (!fullView && organizationFeatures.mcpThreads && memberIdentity && !firstPartyToken && (method === "tools/list" || method === "tools/call")) {
+      registerConnectFullTools({
+        server,
+        tools: remoteSessionDirectTools({ answer: capabilityContext.remoteSessionAnswersAllowed, attach: capabilityContext.remoteSessionAttachAllowed }),
+        execute: executeCapabilityTool,
+      })
     }
 
     registerAgentSkillCatalogTools({
       server,
       listSkills: loadRemoteSkills,
-      readSkill: (skill) => readRemoteSkillSource({
+      readSkill: (skill, read) => readRemoteSkillSource({
         skill,
         organizationId: principal.organizationId,
         member: memberIdentity,
-        recordUse: true,
+        recordUse: read.file === undefined,
       }),
+      readFile: (file) => readSkillFileBytes(principal.organizationId, file),
     })
 
     registerAgentSkillTools({
       server,
-      create: async ({ pluginName, skillMarkdown }) => {
+      create: async ({ pluginName, skillMarkdown, files }) => {
         if (!principal.scopes.has(DEN_MCP_WRITE_SCOPE)) {
           return {
             ok: false,
@@ -1048,7 +983,6 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           }
         }
         try {
-          // Primary reads: each step reads back the Plugin and skill just written.
           const { plugin, memberships } = await withPrimaryReads(async () => {
             const plugin = await runMcpServiceAction("plugin.bundle.create", auditPrincipal, null, async () => {
               await requirePluginArchCapability(skillContext, "plugin.create")
@@ -1056,7 +990,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
               return createPluginBundle({
                 context: skillContext,
                 name: pluginName,
-                components: [{ type: "skill", value: { rawSourceText: skillMarkdown } }],
+                components: [{ type: "skill", value: { rawSourceText: skillMarkdown, ...(files ? { normalizedPayloadJson: { files } } : {}) } }],
               })
             })
             const memberships = await listPluginMemberships({
@@ -1099,7 +1033,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
           throw error
         }
       },
-      update: async ({ skillId, skillMarkdown, reason }) => {
+      update: async ({ skillId, skillMarkdown, files, reason }) => {
         if (!principal.scopes.has(DEN_MCP_WRITE_SCOPE)) {
           return {
             ok: false,
@@ -1126,7 +1060,7 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
                 context: skillContext,
                 configObjectId,
                 reason,
-                value: { rawSourceText: skillMarkdown },
+                value: { rawSourceText: skillMarkdown, ...(files ? { normalizedPayloadJson: { files } } : {}) },
               }),
             }
           }, { result: (value) => value.created ? null : 400 }))
@@ -1301,7 +1235,6 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       }
     }
 
-    // Keep the generic MCP App tool as the interoperable baseline.
     registerAgentWorkflowArtifactApp({
       server,
       load: loadWorkflowArtifact,
@@ -1322,9 +1255,6 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       },
     })
 
-    // This server deploys independently from Desktop. Do not advertise or
-    // serve bridge-dependent generated views until the compatible Desktop
-    // MCP Apps host has been released and the operator enables the rollout.
     const listsOrCallsGeneratedViews = method === "tools/list" || method === "tools/call"
       || method === "resources/list" || method === "resources/read"
     const artifactContext = env.generatedArtifactViewsEnabled && auditPrincipal && listsOrCallsGeneratedViews
@@ -1371,8 +1301,6 @@ export function registerAgentMcpRoutes<T extends { Variables: RequestIdVariables
       }
     }
 
-    // Only tools/list shows this description and only tools/call runs a test, so
-    // only they read the language; both then name the one the test runs in.
     const workflowLanguage = method === "tools/list" || method === "tools/call" ? await newWorkflowLanguage() : "codemode-js"
     server.registerTool(
       EXECUTE_CAPABILITY_SCRIPT_TOOL_NAME,

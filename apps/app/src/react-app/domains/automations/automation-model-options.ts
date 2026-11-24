@@ -10,10 +10,8 @@ import {
   type AutomationModelOption,
 } from "@openwork/types/automation-models"
 
-/** The local runtime's model record, with the name of the provider it belongs to. */
 export type AutomationCatalogModel = ProviderListItem["models"][string] & { providerName?: string }
 
-/** providerId → modelId → the local runtime's model record. */
 export type AutomationProviderCatalog = Record<string, Record<string, AutomationCatalogModel>>
 
 export type { AutomationModelOption }
@@ -26,18 +24,9 @@ export type ResolvedProposalModel = {
 export type AutomationModelAvailability = {
   includeFreeStarter?: boolean
   includeCloudDefault?: boolean
-  /** The executing desktop workspace's runtime catalog; when given, only models it can run are offered. */
   catalog?: AutomationProviderCatalog
 }
 
-/**
- * Den's usable-provider response is already scoped to the active member; the shared helper keeps the submitted
- * value normalized to the IDs the server revalidates.
- *
- * With the desktop runtime's catalog, the models connected only on this desktop (its own providers and the AI
- * Gateway providers synced for the member) are offered too: a Desktop Automation runs in that runtime, and Den
- * accepts them for Desktop placement only.
- */
 export function automationModelOptions(
   providers: readonly DenOrgLlmProvider[],
   options: AutomationModelAvailability = {},
@@ -51,7 +40,6 @@ export function automationModelOptions(
   ].sort(compareAutomationModelOptions)
 }
 
-/** The runtime's models from providers Den does not authorize itself; Den's own providers come from Den. */
 function desktopRuntimeModelOptions(catalog: AutomationProviderCatalog): AutomationModelOption[] {
   return Object.entries(catalog)
     .filter(([providerId]) => !isDenAuthorizedAutomationProvider(providerId))
@@ -67,7 +55,6 @@ function desktopRuntimeModelOptions(catalog: AutomationProviderCatalog): Automat
 
 export { findAutomationModelOption }
 
-/** A runtime's connected providers as an Automation catalog: providerId → modelId → model record. */
 export function automationProviderCatalog(
   providers: readonly ProviderListItem[] | undefined,
 ): AutomationProviderCatalog {
@@ -92,8 +79,6 @@ export function resolveProposalModel(
   const options = automationModelOptions(providers, availability)
   if (!proposed) {
     if (findAutomationModelOption(options, freeModel)) return { model: freeModel, resolution: "default" }
-    // No model proposed and the free starter isn't offered here (Cloud placement): use the first model this
-    // member can actually run instead of a default the server will reject.
     const first = options[0]
     return first
       ? { model: { providerId: first.providerId, modelId: first.modelId, variant: null }, resolution: "default" }
@@ -123,11 +108,6 @@ export function resolveProposalModel(
   return { model: proposed, resolution: "unavailable" }
 }
 
-/**
- * Human label for a stored Automation model. Falls back to the raw identity
- * only when the model is no longer among the ones this member can use, so a
- * revoked model stays inspectable instead of rendering as a blank.
- */
 export function describeAutomationModel(
   model: AutomationModel,
   options: readonly AutomationModelOption[],
@@ -137,14 +117,6 @@ export function describeAutomationModel(
   return model.variant ? `${name} · ${model.variant}` : name
 }
 
-/**
- * Presents the member's authorized Automation models in the shape the shared
- * model picker renders, so an Automation is configured with the same control
- * and the same reasoning levels as a chat.
- *
- * Reasoning variants are a property of the desktop runtime that will execute
- * the run, so they come from the local provider catalog.
- */
 export function automationPickerOptions(input: {
   options: readonly AutomationModelOption[]
   catalog: AutomationProviderCatalog

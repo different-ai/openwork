@@ -14,7 +14,6 @@ function DesktopReauth() {
   const [identity, setIdentity] = useState<URLSearchParams | null>(null);
   useEffect(() => { setIdentity(new URLSearchParams(window.location.hash.slice(1))); }, [nonce]);
   const userId = identity?.get("userId") ?? "";
-  // The desktop's active organization, a hint for which organization's SSO to offer. Older desktops omit it.
   const organizationId = identity?.get("orgId") || null;
   const [email, setEmail] = useState("");
   const [emailInput, setEmailInput] = useState("");
@@ -30,18 +29,13 @@ function DesktopReauth() {
       const currentUser = getUser(result.payload);
       if (active && result.response.ok && currentUser?.id === userId) setEmail(currentUser.email);
     }).catch(() => {
-      // A missing browser session can still verify using the email form.
     }).finally(() => { if (active) setLoadingSession(false); });
     return () => { active = false; };
   }, [userId]);
-  // The account reference is a hint, never a credential. Both surfaces validate
-  // the signed-in identity; sharing rechecks authorization server-side.
   const user = useMemo(() => ({ id: userId, email, name: null, authProviders: ["email", "google", "github"] }), [userId, email]);
   const valid = /^[a-f0-9-]{36}$/i.test(nonce) && Boolean(userId);
 
   async function verified() {
-    // Read the cookie just created by browser sign-in, through that same origin.
-    // API discovery and a legacy web bearer token must not select another session.
     const me = await requestJson("/api/auth/get-session", { method: "GET" });
     if (!me.response.ok || !getUser(me.payload)) throw new Error("Your browser session could not be confirmed. Try verification again.");
     if (getUser(me.payload)?.id !== userId) throw new Error(`Sign in as ${email} to confirm this share.`);

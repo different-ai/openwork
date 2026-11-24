@@ -242,23 +242,20 @@ function PersonLookup({ orgId, orgSlug }: { orgId: string; orgSlug: OrgSlug }) {
   );
 }
 
-/** One spend limit: who it applies to, its provider, amounts, what happens at the limit, and Edit. */
 export function GatewayLimitRow({ policy, orgSlug, teams, members, providers, canEdit = true, variant = "item" }: {
   policy: GatewayUsageLimitPolicy;
   orgSlug: OrgSlug;
   providers: { id: string; name: string }[] | undefined;
   canEdit?: boolean;
-  /** "row": a flat Computers row inside `GatewayLimitRows`. "item": an `li` for a `ul` panel. */
   variant?: "item" | "row";
 } & Directory) {
   const who = policyWho(policy, teams, members);
-  // Its provider was deleted: the limit caps nothing until it points at a provider again.
   const providerRemoved = policy.providerStatus === "removed";
   const secondLine = !who ? "Not applied to anyone yet" : who === policy.name ? targetKind(policy) : who;
   const provider = providerRemoved ? <>
     <DenBadge tone="warning" size="sm">Provider removed</DenBadge>
     <span className="text-[12px] text-[color:var(--dls-text-secondary)]">Not applied</span>
-  </> : <span className={variant === "row" ? "truncate" : "text-[12px] text-gray-700"}>{providerLimitLabel(policy.providerId, providers)}</span>;
+  </> : <span className={variant === "row" ? "line-clamp-2 max-w-full break-words" : "text-[12px] text-gray-700"} title={variant === "row" ? providerLimitLabel(policy.providerId, providers) : undefined}>{providerLimitLabel(policy.providerId, providers)}</span>;
   const edit = canEdit ? providerRemoved
     ? <Link href={getAiGatewayLimitRoute(orgSlug, policy.id)} aria-label={`Choose a provider for ${policy.name}`} data-testid="gateway-limit-choose-provider" className={buttonVariants({ variant: "secondary", size: "sm" })}>Choose provider</Link>
     : <Link href={getAiGatewayLimitRoute(orgSlug, policy.id)} aria-label={`Edit ${policy.name}`} data-testid="gateway-limit-edit" className={buttonVariants({ variant: "secondary", size: "sm" })}>Edit</Link> : null;
@@ -274,7 +271,7 @@ export function GatewayLimitRow({ policy, orgSlug, teams, members, providers, ca
           <RowLane lane={`${GATEWAY_LANE.limitProvider} items-center`}>
             <span className="flex min-w-0 flex-col items-start gap-0.5" data-testid="gateway-limit-provider-label">{provider}</span>
           </RowLane>
-          <RowLane lane={`${GATEWAY_LANE.limitAmount} truncate tabular-nums`}>{describeLimitAmounts(policy)} each</RowLane>
+          <RowLane lane={`${GATEWAY_LANE.limitAmount} truncate tabular-nums`} title={`${describeLimitAmounts(policy)} each`}>{describeLimitAmounts(policy)} each</RowLane>
           <RowLane lane={`${GATEWAY_LANE.limitAction} text-[color:var(--dls-text-secondary)]`}>{policy.hardLimit ? "Pauses them" : "Only warns"}</RowLane>
           {canEdit ? <RowLane lane={GATEWAY_LANE.limitEdit}>{edit}</RowLane> : null}
         </>}
@@ -298,7 +295,6 @@ export function GatewayLimitRow({ policy, orgSlug, teams, members, providers, ca
   );
 }
 
-/** Spend limits as flat Computers rows, with column labels. */
 export function GatewayLimitRows({ label, canEdit = true, children }: { label: string; canEdit?: boolean; children: ReactNode }) {
   return (
     <RowList label={label} header={<RowListHeader lead="Limit">
@@ -316,7 +312,6 @@ export function GatewayUsageLimitsSection({ orgId, orgSlug, teams, members }: { 
   const policies = useGatewayPolicies(orgId);
   const searchParams = useSearchParams();
   const deletedId = searchParams?.get("deleted") ?? null;
-  // Default limits first, then each provider's limits together.
   const active = (policies.data?.policies.filter((policy) => !policy.archivedAt) ?? [])
     .map((policy, index) => ({ policy, index }))
     .sort((a, b) => (a.policy.providerId ?? "").localeCompare(b.policy.providerId ?? "") || a.index - b.index)
@@ -329,7 +324,6 @@ export function GatewayUsageLimitsSection({ orgId, orgSlug, teams, members }: { 
       {deleted ? <DeletedLimitNote orgId={orgId} orgSlug={orgSlug} policy={deleted} /> : null}
       <GatewayLimitsQueryFeedback query={policies} label="limits" />
       {!policies.isError && policies.data && active.length === 0 ? (
-        // With feature intros on, the limits intro replaces this empty state (DESIGN.md I1).
         <FeatureIntroGate introKey="ai-gateway.limits" facts={{ policies: 0 }}>
           <div className={`${AUTOMATION_CARD_CLASS} flex flex-col items-center gap-4 p-4 py-16 text-center`} data-testid="gateway-limits-empty">
             <span className="flex h-10 w-10 items-center justify-center rounded-[10px] bg-[var(--dls-hover)] text-[color:var(--dls-text-secondary)]"><Gauge size={18} strokeWidth={1.5} aria-hidden="true" /></span>

@@ -21,7 +21,6 @@ export function usesMemberApiKey(connection: MemberApiKeyConnection): boolean {
   return connection.authType === "apikey" && connection.credentialMode === "per_member";
 }
 
-/** A stored personal key is not ready until an upstream request validates it. */
 export function personalApiKeyStatus(connection: PersonalApiKeyConnection): PersonalApiKeyStatus | null {
   if (!usesMemberApiKey(connection)) return null;
   if (connection.needsReconnect === true || connection.credentialHealth === "reconnect_required") return "reconnect_required";
@@ -43,7 +42,6 @@ export function credentialModeForAuth(
   return authType === "none" ? "shared" : selectedMode;
 }
 
-/** Member keys are opaque printable ASCII. Never trim or otherwise rewrite them. */
 export function validateMemberApiKey(apiKey: string): string | null {
   if (!apiKey) return "Paste your key.";
   if (apiKey.length > MEMBER_API_KEY_MAX_LENGTH) return "The key is too long.";

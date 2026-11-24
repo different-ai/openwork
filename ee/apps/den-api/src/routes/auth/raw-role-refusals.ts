@@ -7,11 +7,6 @@ import { attributeAuditRequest } from "../../audit/request-capture.js"
 import { publicRoute } from "../../middleware/index.js"
 import type { AuthContextVariables } from "../../session.js"
 
-// Better Auth's custom-role endpoints are no longer registered (dynamicAccessControl
-// is off), so hooks.before never sees them and Better Auth would answer 404 without
-// any tenant evidence. Den shadows them so every attempt is still refused with the
-// same 403 and recorded in the caller's own organization like the other raw
-// mutations (rawRefusalAttribution: no intent, so audit can never change the 403).
 export const RAW_ROLE_MUTATION_PATHS = [
   "/organization/create-role",
   "/organization/update-role",
@@ -29,7 +24,6 @@ function readOrganizationId(body: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : null
 }
 
-// Every caller is refused (as better-auth's hooks.before refused them), so the route itself is public.
 const refusedForEveryone: MiddlewareHandler<{ Variables: AuthContextVariables }> = publicRoute
 
 export function registerRawRoleRefusalRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {

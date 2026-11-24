@@ -84,8 +84,6 @@ function decodeDiagnosticPercentEncoding(value: string): string {
   try {
     return decodeURIComponent(value)
   } catch {
-    // One malformed UTF-8 run must not shield otherwise valid encoded ASCII
-    // delimiters or keywords elsewhere in the label.
     return value.replace(/(?:%[0-9a-f]{2})+/giu, (run) => {
       try {
         return decodeURIComponent(run)
@@ -117,9 +115,6 @@ function diagnosticTextVariants(value: string): {
     decodedCandidate = decoded
     add(decodedCandidate)
   }
-  // A label that still contains an encoded octet, or can be decoded again,
-  // is malformed or exceeded the bounded normalization we can safely reason
-  // about. Treat it as sensitive instead of allowing nesting to hide a secret.
   const percentDecodingIncomplete = diagnosticPercentOctetPattern.test(decodedCandidate)
     || decodeDiagnosticPercentEncoding(decodedCandidate).normalize("NFKC") !== decodedCandidate
 
@@ -635,10 +630,6 @@ export const agentContextDiagnosticsReportSchema = z.object({
     })
   }
 
-  // Engine registration state and agent tool policy are deliberately not
-  // preconditions here: the independent runtime probe exists to diagnose
-  // engine-side failures, and it never calls a tool. Retained runtime
-  // evidence must still prove which managed entry was probed.
   if (
     value.safety.cloudCatalogToolsListPerformed
     || value.safety.cloudSessionCleanupRequested

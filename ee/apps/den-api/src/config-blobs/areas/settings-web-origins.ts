@@ -1,12 +1,3 @@
-/**
- * Config-blob area `settings.web-origins`: approved web origins.
- *
- * One item per origin; the origin itself is the natural key. Apply calls the
- * same service functions as the routes (organization-web-origins.ts), with the
- * enclosing request's audit change capture and the legacy audit row the routes
- * write. An origin has nothing else to edit: an update that changes it removes
- * the old origin and approves the new one.
- */
 import { and, asc, eq, inArray } from "@openwork-ee/den-db/drizzle"
 import { OrganizationWebOriginTable } from "@openwork-ee/den-db/schema"
 import { denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -25,7 +16,6 @@ import { ConfigApplyError, applyWithSteps, specObject, touches } from "./route-s
 const AREA = "settings.web-origins"
 
 const webOriginSpecSchema = z.object({
-  /** Exact HTTPS origin: scheme, host and optional port. */
   origin: z.string().min(1).max(2048),
 }).strict()
 
@@ -43,7 +33,6 @@ function preferredOriginId(id: string | undefined) {
   }
 }
 
-/** The route's own permission marker (orgPermissionRoute), which the in-process call does not run. */
 async function requireActorPermission(ctx: ConfigAreaContext, key: PermissionKey) {
   const held = await resolvePermissionsForMember({
     organizationId: normalizeDenTypeId("organization", ctx.organizationId),
@@ -103,7 +92,6 @@ export const settingsWebOriginsArea = defineConfigArea({
   naturalKeys: [{ label: "origin", get: originOf }],
   uniqueFields: [{ label: "origin", get: originOf }],
   secretFields: [],
-  // The service functions open their own transactions on the global db and clear the CORS cache.
   transactional: false,
 
   async exportItems(ctx) {
@@ -129,7 +117,6 @@ export const settingsWebOriginsArea = defineConfigArea({
         return { localId: await log.run({ action: "create", target: "origin", detail: origin }, () => approve(ctx, origin, op.preferredId)) }
       }
 
-      // The origin is the only field: an update that changes it replaces the row.
       if (!touches(op.changes, "origin") || originOf(op.previous) === origin) return { localId: op.targetId }
       await log.run({ action: "remove", target: "origin", detail: op.previous.name }, () => remove(ctx, op.targetId, op.previous.name))
       const localId = await log.run({ action: "add", target: "origin", detail: origin }, () => approve(ctx, origin))

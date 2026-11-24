@@ -16,10 +16,8 @@ not for the machine that runs it.
 | --- | --- | --- |
 | Decide whether a journey is needed and design it | `write-a-spec` (this) | a spec whose titles, steps, and evidence read as the report |
 | Run it and read your own record | `run-tests` | `evals/results/test-runs/<latest>/` with the captions in order |
-| Let a reviewer click through the change | `preview-my-work` | a sandbox link in the report's **Show sandbox** panel |
+| Let a reviewer click through the change | `pnpm world help` (preview worlds) | a sandbox link in the report's **Show sandbox** panel |
 | Describe it on the PR | `open-a-pr` | an `## Evidence` line naming the spec and its before → after |
-| A proof or check is red | `diagnose-a-red-run` | classification before any code change |
-| Extra screenshots or a video outside the spec | `record-a-demo`, `upload-photo` | PR attachments (these are not proof) |
 
 ### Which lane runs your spec (and when to tag)
 
@@ -251,7 +249,7 @@ placeholder, or test id. Bound every wait; declare external requirements in
 - Your own eye passes what you designed. Run the design review on the same
   record before pushing and fix its `medium` notes, or say in the PR why the
   screen is right (`evals/design-review/README.md`; on a PR, the
-  `fix-design-notes` skill reads the notes from the Evidence preview check):
+  notes are in the Evidence preview check):
 
   ```sh
   pnpm --dir evals design:review -- --test-run latest

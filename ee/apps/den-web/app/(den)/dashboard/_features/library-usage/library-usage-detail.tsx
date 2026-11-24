@@ -32,10 +32,8 @@ import {
 } from "./library-usage-data";
 import { useLibraryUsageBreakdown } from "./use-library-usage";
 
-/** Builds a link to another usage view from the current search params. */
 export type UsageHref = (change: Record<string, string | null>) => string;
 
-/** Fixed lanes for the usage lists, so rows line up like Computers. Literal classes, so Tailwind generates each one. */
 export const USAGE_LANE = {
   uses: "w-14 tabular-nums",
   people: "hidden w-14 tabular-nums @md:block",
@@ -43,28 +41,19 @@ export const USAGE_LANE = {
   lastUsed: "hidden w-28 tabular-nums @2xl:block",
 } as const;
 
-/** The leading tile for a usage row: what kind of thing it is. */
 export const USAGE_KIND_ICON: Record<LibraryUsageKind, LucideIcon> = { skills: FileText, plugins: Package, connectors: Plug };
 
-/**
- * A usage row's lead lane says which item it is: the service's logo when the
- * name is a known one, otherwise its first letter. Never the same icon on every row.
- */
 export function UsageItemLead({ kind, name }: { kind: LibraryUsageKind; name: string }) {
-  // Usage has no provider ID or service URL: resolve only exact known names,
-  // never infer a service from a custom MCP connector's name.
   const brand = kind === "connectors" || kind === "plugins" ? brandHintFor(name) : null;
   return brand && (brand.simpleIconSlug || brand.serviceUrl)
     ? <DenBrandMark name={name} {...brand} className="size-8 rounded-lg" imageClassName="size-[18px]" />
     : <LetterTile name={name} />;
 }
 
-/** A usage list's first column: "Skill", "Plugin", "Connector" or "Person". */
 export function usageLead(kind: LibraryUsageKind) {
   return libraryUsageCopy[kind].label.replace(/s$/, "");
 }
 
-/** Column labels over the usage lanes. `people` is the item list's own lane. */
 export function UsageListHeader({ lead, people = false, tracksFailures }: { lead: string; people?: boolean; tracksFailures: boolean }) {
   return <RowListHeader lead={lead}>
     <RowLaneLabel lane={USAGE_LANE.uses}>Uses</RowLaneLabel>
@@ -74,7 +63,6 @@ export function UsageListHeader({ lead, people = false, tracksFailures }: { lead
   </RowListHeader>;
 }
 
-/** Uses, then people (item lists), failures (where the kind can fail) and when last used, each in its lane. */
 export function UsageLanes({ row, now, tracksFailures, people }: {
   row: { uses: number; failures: number | null; lastUsedAt: string | null }; now: number; tracksFailures: boolean; people?: number;
 }) {
@@ -91,12 +79,10 @@ export function UsageLanes({ row, now, tracksFailures, people }: {
   </>;
 }
 
-/** A usage list that is loading: rows the size of the real ones. */
 export function UsageRowsLoading({ label, rows = 3 }: { label: string; rows?: number }) {
   return <div role="status" aria-label={label}><RowListSkeleton rows={rows} /></div>;
 }
 
-/** Where the item is managed: its Library page, or its Connectors page. */
 export function libraryItemHref(kind: LibraryUsageKind, row: Pick<LibraryUsageRow, "id" | "pluginId">, orgSlug: string | null | undefined) {
   if (kind === "skills") return row.pluginId ? getPluginSkillRoute(orgSlug, row.pluginId, row.id) : null;
   if (kind === "plugins") return getPluginRoute(orgSlug, row.id);
@@ -115,19 +101,16 @@ function DetailHeading({ backHref, backLabel, title, action, testId }: { backHre
   </div>;
 }
 
-/** The rows of a list that is loading, flat like the list it will become. */
 function ListLoading({ label }: { label: string }) {
   return <UsageRowsLoading label={label} />;
 }
 
-/** Stat cards that are loading, in the grid the real cards will fill. */
 function StatsLoading({ cards }: { cards: number }) {
   return <div className={`grid gap-3 sm:grid-cols-2 ${cards === 4 ? "lg:grid-cols-4" : cards === 3 ? "lg:grid-cols-3" : ""}`} aria-hidden="true">
     {Array.from({ length: cards }, (_, card) => <div key={card} className={`${AUTOMATION_CARD_CLASS} p-4`}><DenSkeleton className="h-3 w-24" /><DenSkeleton className="mt-3 h-7 w-16" /></div>)}
   </div>;
 }
 
-/** The chart's frame with a placeholder where the bars will be, never loading prose. */
 function ChartLoading() {
   return <div className={`${AUTOMATION_CARD_CLASS} p-4`} role="status" aria-label="Loading uses per day" data-testid="library-usage-daily-loading">
     <DenSkeleton className="h-3.5 w-24" /><DenSkeleton className="mt-2 h-3 w-20" />
@@ -136,12 +119,10 @@ function ChartLoading() {
   </div>;
 }
 
-/** Kept counts with a way to try again when a refresh fails; the last rows stay on screen. */
 function RefreshFailed({ onRetry }: { onRetry: () => void }) {
   return <DenNotice tone="neutral" presentation="inline" message="Couldn't refresh. Showing the last counts." action={<DenButton variant="secondary" size="sm" onClick={onRetry}>Retry</DenButton>} />;
 }
 
-/** Uses per UTC day, with failures beside them where the kind can fail. */
 function DailyUses({ kind, days, scope }: { kind: LibraryUsageKind; days: LibraryUsageWindow; scope: { itemId: string } | { memberId: string } }) {
   const daily = useLibraryUsageBreakdown(kind, days, "day", scope);
   if (daily.isError && !daily.data) return <AnalyticsErrorState title="Couldn't load uses per day" onRetry={() => void daily.refetch()} retrying={daily.isFetching} />;
@@ -155,7 +136,6 @@ function DailyUses({ kind, days, scope }: { kind: LibraryUsageKind; days: Librar
   </div>;
 }
 
-/** What started the uses: agents, Workflows, Automations, Apps or live views. */
 function StartedBy({ rows }: { rows: readonly LibraryUsageBreakdownRow[] }) {
   const sources = sumLibraryUsageSources(rows);
   if (sources.length === 0) return null;
@@ -170,7 +150,6 @@ function StartedBy({ rows }: { rows: readonly LibraryUsageBreakdownRow[] }) {
   </section>;
 }
 
-/** One skill, plugin or connector: who uses it, how often per day, and what started the uses. */
 export function ItemUsageDetail({ kind, days, item, now, usageHref }: {
   kind: LibraryUsageKind; days: LibraryUsageWindow; item: LibraryUsageRow; now: number; usageHref: UsageHref;
 }) {
@@ -217,7 +196,6 @@ export function ItemUsageDetail({ kind, days, item, now, usageHref }: {
   </section>;
 }
 
-/** One person: which skills, plugins or connectors they used, how often per day, and what started the uses. */
 export function PersonUsageDetail({ kind, days, memberId, report, now, usageHref }: {
   kind: LibraryUsageKind; days: LibraryUsageWindow; memberId: string; report: LibraryUsageReport; now: number; usageHref: UsageHref;
 }) {

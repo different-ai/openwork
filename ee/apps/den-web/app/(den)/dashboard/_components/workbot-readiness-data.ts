@@ -11,7 +11,6 @@ export function workbotReadinessQueryKey(orgId: string | null): (string | null)[
   return ["org-workbot-readiness", orgId];
 }
 
-/** Content-free: whether Workbot turns need the AI Gateway and whether the organization has an active provider. */
 export async function loadWorkbotReadiness(orgId: string, signal?: AbortSignal): Promise<WorkbotReadiness> {
   const { response, payload } = await requestJson(
     workbotReadinessPath,
@@ -24,7 +23,6 @@ export async function loadWorkbotReadiness(orgId: string, signal?: AbortSignal):
   return parsed.data;
 }
 
-/** Loaded with the dashboard so clicking Workbot decides at once. Callers treat loading and errors as ready. */
 export function useWorkbotReadiness(orgId: string | null, enabled: boolean) {
   return useQuery({
     queryKey: workbotReadinessQueryKey(orgId),

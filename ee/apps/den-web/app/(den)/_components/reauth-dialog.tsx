@@ -7,7 +7,8 @@ import { DenButton, buttonVariants } from "./ui/button";
 import { DenInput } from "./ui/input";
 import { DenNotice } from "./ui/notice";
 import { type AuthUser, getErrorMessage, getUser, requestJson, type SocialAuthProvider, WORKSPACE_REAUTH_SECURITY_MESSAGE } from "../_lib/den-flow";
-import { type DenOrgContext, getRequireSsoFromMetadata, getRestrictDomainToSsoFromMetadata } from "../_lib/den-org";
+import { readOrganizationSsoPolicy } from "@openwork-ee/den-sso";
+import type { DenOrgContext } from "../_lib/den-org";
 import { type MemberSsoSignIn, type ResolvedDomainSso, parseMemberSsoSignIns, parseResolvedDomainSso, resolveReauthSsoTarget } from "../_lib/reauth-sso";
 
 function getSocialLabel(provider: SocialAuthProvider) {
@@ -67,7 +68,6 @@ export function ReauthDialog({
   open: boolean;
   user: AuthUser | null;
   orgContext: DenOrgContext | null;
-  /** The organization the change is for when there is no `orgContext` (the desktop's active organization). A hint only. */
   organizationId?: string | null;
   onCancel: () => void;
   onVerified: () => Promise<void>;
@@ -94,7 +94,7 @@ export function ReauthDialog({
     () => REAUTH_SOCIAL_PROVIDERS.filter((provider) => effectiveProviders.includes(provider)),
     [effectiveProviders],
   );
-  const organizationMetadata = orgContext?.organization.metadata ?? null;
+  const ssoPolicy = readOrganizationSsoPolicy(orgContext?.organization.metadata ?? null);
   const ssoTarget = resolveReauthSsoTarget({
     resolvedDomainSso,
     organizationId: orgContext?.organization.id ?? organizationId ?? null,
@@ -103,18 +103,16 @@ export function ReauthDialog({
       ? {
           slug: orgContext.organization.slug,
           hasSso: orgContext.authMethods.sso,
-          requireSso: getRequireSsoFromMetadata(organizationMetadata),
-          restrictDomainToSso: getRestrictDomainToSsoFromMetadata(organizationMetadata),
+          requireSso: ssoPolicy.requireSso,
+          restrictDomainToSso: ssoPolicy.restrictDomainToSso,
         }
       : null,
   });
   const ssoUrl = ssoTarget?.signInUrl ?? null;
-  // Other methods stay available unless only SSO may confirm (Require SSO,
-  // a restricted domain, or legacy SSO): those sessions would be refused.
   const ssoOnly = ssoTarget?.ssoOnly ?? false;
   const hasManagedOrgSignIn = Boolean(
     ssoUrl ||
-      getRequireSsoFromMetadata(organizationMetadata) ||
+      ssoPolicy.requireSso ||
       orgContext?.authMethods.sso ||
       orgContext?.authMethods.scim ||
       effectiveProviders.includes("sso") ||
@@ -180,14 +178,12 @@ export function ReauthDialog({
         const refreshedUser = getUser(meResult.payload);
         if (!cancelled && refreshedUser && refreshedUser.id === user?.id) {
           setProviders(refreshedUser.authProviders);
-          // Only this account's organizations: a different signed-in account's SSO cannot confirm it.
           try {
             const ssoSignInResult = await requestJson("/v1/me/sso-sign-in", { method: "GET" }, 12000);
             if (!cancelled && ssoSignInResult.response.ok) {
               setMemberSsoSignIns(parseMemberSsoSignIns(ssoSignInResult.payload));
             }
           } catch {
-            // An older Den API: the organization context is the fallback.
           }
         }
 
@@ -234,13 +230,10 @@ export function ReauthDialog({
         return;
       }
 
-      // This message only says "try again now"; the retried request still hits
-      // the server-side freshness check, so a forged message cannot bypass reauth.
       setBusy(true);
       setError(null);
       void (async () => {
         try {
-          // Verify the cookie created by the popup, not a cached web bearer token.
           const result = await requestJson("/api/auth/get-session", { method: "GET" });
           const verifiedUser = getUser(result.payload);
           if (!result.response.ok || !verifiedUser || verifiedUser.id !== user?.id) {
@@ -371,16 +364,12 @@ export function ReauthDialog({
     return null;
   }
 
-  // Portal to <body> above every other overlay: the action that needs a fresh
-  // sign-in usually comes from a confirm dialog (z-50, portaled) or the profile
-  // dialog / command palette (z-[80]), and this check has to sit on top of them.
   return createPortal(
     <div className="fixed inset-0 z-[90] flex items-center justify-center bg-slate-950/35 px-4 py-6 backdrop-blur-[2px]">
       <div
         role="dialog"
         aria-modal="true"
         aria-labelledby="reauth-dialog-title"
-        // Test seam: the reauth popup eval matches the completion message to this nonce.
         data-reauth-nonce={nonce}
         className="w-full max-w-[440px] overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_28px_80px_-36px_rgba(15,23,42,0.6)]"
       >

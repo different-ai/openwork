@@ -1,23 +1,3 @@
-/**
- * Can two adjacent runner versions serve each other during a celld switch?
- *
- * While celld moves the fleet to a new deployment, a request on one deployment can call a cell still on the other, so
- * the router (src/worker/index.ts's default export) and the `HeadlessCell` class must accept each other's calls one
- * version apart. A cell that switches also opens the SQLite the older code wrote. This builds mixed bundles from two
- * versions and runs real turns (mock model, file tool) through each on a local runtime:
- *
- *   1. old router → new cell
- *   2. new router → old cell
- *   3. old router and cell write conversations, then new router and cell read them and continue
- *
- *   tsx scripts/compat-check.ts --base <git ref> [--head <git ref>] [--runtime celld|wrangler]
- *
- * Without --head the working tree is the new version. Only the runner's own src/ and wrangler.jsonc come from each
- * version; packages bundled into it (hono, zod, @openwork-ee/headless-computer, …) are the installed ones.
- *
- * Exit 0 when compatible, or when <base> can't be built here (printed as SKIP, so a deploy is never blocked by a
- * missing old build). Exit 1 when the versions can't serve each other. Prints no credentials; it uses none.
- */
 import assert from "node:assert/strict"
 import { execFileSync, spawn, type ChildProcess } from "node:child_process"
 import { cpSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
@@ -36,7 +16,6 @@ if (!args.base) throw new Error("usage: compat-check.ts --base <git ref> [--head
 const project = join(import.meta.dirname, "..")
 const esbuild = join(project, "node_modules/.bin/esbuild")
 const annotate = process.env.GITHUB_ACTIONS === "true"
-// Inside the runner's node_modules, so the extracted sources resolve the installed packages; ignored by git.
 const work = join(project, "node_modules/.cache/compat-check", String(process.pid))
 const token = `compat_${crypto.randomUUID().replaceAll("-", "")}`
 
@@ -50,7 +29,6 @@ function skip(reason: string): never {
 }
 const fail = (reason: string) => console.log(annotate ? `::error title=Runner versions incompatible::${reason}` : `FAIL ${reason}`)
 
-/** One version's runner sources, as files on disk. */
 function checkout(label: string, ref: string | undefined) {
   const into = join(work, label)
   mkdirSync(into, { recursive: true })
@@ -61,7 +39,6 @@ function checkout(label: string, ref: string | undefined) {
   }
   const prefix = git("rev-parse", "--show-prefix").replace(/\/$/, "")
   const commit = git("rev-parse", "--verify", `${ref}^{commit}`)
-  // Run from the repository root: from a subdirectory git reads the paths relative to it, not to the tree.
   const archive = execFileSync("git", ["archive", "--format=tar", `${commit}:${prefix}`, "src", "wrangler.jsonc"], {
     cwd: git("rev-parse", "--show-toplevel"), maxBuffer: 256 * 1024 * 1024, stdio: ["ignore", "pipe", "pipe"],
   })
@@ -94,8 +71,6 @@ const readWrangler = (dir: string) => {
   return { source, config: wranglerSchema.parse(JSON.parse(source)) }
 }
 
-// ---- Versions ------------------------------------------------------------------------------------------------------
-
 let old: ReturnType<typeof checkout>
 try {
   old = checkout("base", args.base)
@@ -105,7 +80,6 @@ try {
 const current = checkout("head", args.head)
 function sameRunner(base: string, head: string | undefined) {
   try {
-    // Exits non-zero (and throws here) when src/ or wrangler.jsonc differ.
     execFileSync("git", ["diff", "--quiet", base, ...(head ? [head] : []), "--", "src", "wrangler.jsonc"], { cwd: project, stdio: "ignore" })
     return true
   } catch {
@@ -129,8 +103,6 @@ if (before.name !== after.config.name || oldClasses !== newClasses) {
 }
 console.log(`comparing ${old.name} (old) with ${current.name} (new) on ${runtime}`)
 
-// ---- Mock model: a file tool call, then a short answer ---------------------------------------------------------------
-
 const modelRequest = z.object({ messages: z.array(z.object({ role: z.string(), content: z.unknown().optional() }).loose()) })
 const model = createServer(async (request, response) => {
   try {
@@ -151,8 +123,6 @@ const model = createServer(async (request, response) => {
   }
 })
 
-// ---- Runtime --------------------------------------------------------------------------------------------------------
-
 let worker: ChildProcess | null = null
 let output = ""
 let baseUrl = ""
@@ -167,7 +137,6 @@ async function freePort() {
   return address.port
 }
 
-/** A runtime project whose Worker exports `router` and `cell` from the given versions. Keeps state across restarts. */
 function prepare(dir: string, router: string, cell: string, modelPort: number) {
   mkdirSync(dir, { recursive: true })
   const entry = join(work, `entry-${router}-${cell}.ts`)
@@ -221,8 +190,6 @@ async function stop() {
   await exited
 }
 
-// ---- Traffic: what Workbot (owner cells) and Slack/Automations (conversation cells) send ------------------------------
-
 const OWNER = "compat-org/member-a"
 const OTHER = "compat-org/member-b"
 function call(path: string, owner: string, init: RequestInit = {}) {
@@ -273,11 +240,6 @@ async function traffic() {
   return { mine, thread }
 }
 
-/**
- * A chat in its own session cell (hs_c_, Workbot with a current Den), for set-ups whose cells are the new
- * version: an old router sends it to the owner cell, which forwards it. Not with old cells: the flag goes on only after
- * the runner that serves it is live.
- */
 async function sessionCellTraffic() {
   const id = `hs_c_${crypto.randomUUID().replaceAll("-", "")}`
   await expectStatus("create a session-cell chat", await call(`/v1/sessions/${id}`, OWNER, { method: "PUT", body: JSON.stringify({ title: "Compat cell", memoryScope: "owner" }) }), 201)

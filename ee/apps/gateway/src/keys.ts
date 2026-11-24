@@ -19,7 +19,6 @@ export function constantTimeEquals(a: string, b: string) {
 
 type SelectDb = Pick<typeof db, "select">
 
-/** Replica first; a miss retries on the primary, since Den API may have created the key moments ago. */
 async function firstOrPrimary<T>(lookup: (database: SelectDb) => PromiseLike<T[]>): Promise<T[]> {
   const rows = await lookup(db)
   return rows.length > 0 ? rows : lookup(db.$primary)
@@ -63,10 +62,6 @@ export async function assertOrganizationManagedModelsAllowed(organizationId: str
 type MemberGatewayKeyRow = Pick<typeof GatewayKeyTable.$inferSelect, "id" | "organization_id" | "org_membership_id">
 type MemberApiKeyRow = Pick<typeof GatewayApiKeyTable.$inferSelect, "id" | "organization_id" | "org_membership_id">
 
-/**
- * The key a Gateway request authenticated with: the one OpenWork issues to each member's own apps
- * (gateway_keys), or a key the member created for 3rd party tools (gateway_api_keys). Both act as the member.
- */
 export type ActiveGatewayKey =
   | ({ source: "member" } & MemberGatewayKeyRow)
   | ({ source: "api_key"; lastUsedAt: Date | null } & MemberApiKeyRow)
@@ -99,10 +94,6 @@ async function lookupGatewayKey(database: SelectDb, digest: string): Promise<Act
 const API_KEY_POLICY_CACHE_MS = 15_000
 const apiKeyPolicyCache = new Map<string, { expires: number; allowed: boolean }>()
 
-/**
- * Member API keys work only while the organization's admins allow them (AI Gateway › API Keys).
- * Cached briefly: turning the setting off stops keys within this window.
- */
 async function memberApiKeysAllowed(organizationId: string): Promise<boolean> {
   const now = Date.now()
   const cached = apiKeyPolicyCache.get(organizationId)
@@ -118,7 +109,6 @@ async function memberApiKeysAllowed(organizationId: string): Promise<boolean> {
 
 const LAST_USED_RESOLUTION_MS = 60_000
 
-/** Records when a member API key was last used, at most once a minute per key. Never fails the request. */
 function touchApiKey(key: Extract<ActiveGatewayKey, { source: "api_key" }>) {
   const now = new Date()
   if (key.lastUsedAt && now.getTime() - key.lastUsedAt.getTime() < LAST_USED_RESOLUTION_MS) return
@@ -129,7 +119,6 @@ function touchApiKey(key: Extract<ActiveGatewayKey, { source: "api_key" }>) {
 
 export async function findActiveGatewayKey(key: GatewayBearerKey): Promise<ActiveGatewayKey | null> {
   const digest = await gatewayBearerKeyLookupDigest(key)
-  // Replica first; a miss retries on the primary, since Den API may have created the key moments ago.
   const found = await lookupGatewayKey(db, digest) ?? await lookupGatewayKey(db.$primary, digest)
   if (found?.source !== "api_key") return found
   if (!await memberApiKeysAllowed(found.organization_id)) return null

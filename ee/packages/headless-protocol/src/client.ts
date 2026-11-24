@@ -2,14 +2,6 @@ import { z } from "zod"
 import { demonstrationReplySchema, type DemonstrationCommand } from "@openwork/types/browser-demonstration"
 
 /**
- * The typed client for the headless runner (ee/apps/headless-runner): the one place that knows its routes,
- * response shapes and live events.
- *
- * Slack replies, cloud Automations and Workbot all run agent turns there. Each surface authorizes the member
- * first; the client then mints a short-lived, member-scoped OpenWork MCP token for every turn it sends (through the
- * caller's `mintToken`), so the runner can only reach what that member can reach, and only for the life of the turn.
- */
-/**
  * `owner` routes every call to one owner's cell on a cell runtime (ee/apps/headless-runner/OWNER-CELLS.md). The
  * Node runner ignores it. Only a trusted service sets it, from the person it already authenticated.
  */
@@ -28,7 +20,6 @@ function isSafeRunnerUrl(value: string) {
   try {
     const url = new URL(value)
     if (url.protocol === "https:") return true
-    // Render private services and local development use plain http on an internal network.
     return url.protocol === "http:" && (["127.0.0.1", "localhost", "[::1]"].includes(url.hostname) || !url.hostname.includes("."))
   } catch {
     return false
@@ -42,7 +33,6 @@ export function headlessRunnerConfig(env: Record<string, string | undefined> = p
   return { url: withoutTrailingSlashes(url), token }
 }
 
-/** Drops trailing slashes in one pass (a regex like /\/+$/ can backtrack badly on a long run of slashes). */
 function withoutTrailingSlashes(value: string) {
   let end = value.length
   while (end > 0 && value.charCodeAt(end - 1) === 47) end -= 1
@@ -61,7 +51,6 @@ export const headlessModelAccessSchema = z.strictObject({
   }),
   apiKey: z.string().min(1).max(4096),
   protocol: z.enum(["anthropic", "openai", "openai-responses"]),
-  /** Trusted route's upstream identity. The persisted selection still pins its free/paid access domain. */
   model: z.string().trim().min(1).max(512).optional(),
 })
 export type HeadlessModelAccess = z.infer<typeof headlessModelAccessSchema>
@@ -71,20 +60,11 @@ export type HeadlessRunnerActor = { userId: string; organizationId: string }
 export type HeadlessRunnerDeps = {
   config: HeadlessRunnerConfig
   fetch: typeof fetch
-  /**
-   * `sessionId` and `messageId` are the turn the token is minted for, so a caller can remember which run it belongs
-   * to. `resumeGrant` (saved step turns): a credential the runner can exchange with Den for a fresh token
-   * for this turn, so it can continue the turn on its own after a restart. `indexCapability`: what the runner presents
-   * to report the session's content-free totals and state to Den's session index.
-   */
   mintToken: (
     input: HeadlessRunnerActor & { ttlMs?: number; sessionId?: string; messageId?: string; readOnly?: boolean; scopes?: readonly string[]; model?: string; modelAccessRequired?: boolean },
   ) => Promise<{ token: string; resumeGrant?: string; modelAccess?: HeadlessModelAccess; indexCapability?: string }>
-  /** Resolve scoped turns' persisted model before minting, even when today's default is no longer accessible. */
   modelAccessRequired?: (actor: HeadlessRunnerActor) => Promise<boolean> | boolean
-  /** Optional trusted caller hook for member-scoped turns when mintToken does not supply access. */
   modelAccess?: (actor: HeadlessRunnerActor, selection?: { model?: string; modelAccessRequired?: boolean }) => Promise<HeadlessModelAccess | undefined>
-  /** The longest a minted MCP token may live; a turn asking for longer gets this. */
   maxTokenTtlMs: number
 }
 
@@ -95,26 +75,15 @@ export const runnerTurnSchema = z.object({
   messageId: z.string(),
   status: z.string(),
   model: z.string().nullable().optional(),
-  /** Nonsecret durable policy; retains scoped recovery when the current rollout is off. */
   modelAccessRequired: z.boolean().optional(),
   error: z.string().nullable(),
   usage: z.object({ inputTokens: z.number(), cachedInputTokens: z.number(), outputTokens: z.number() }).optional(),
   createdAt: z.number().optional(),
   updatedAt: z.number().optional(),
-  /**
-   * `task` for a background task (`parent` is the turn that started it, `title` its name), `report` for the turn that
-   * brings a finished task back to the conversation (`parent` is the task). Absent for turns a caller sent. Kept open
-   * like `status`.
-   */
   kind: z.string().optional(),
   parent: z.string().optional(),
   title: z.string().optional(),
-  /** What the model provider said when the turn failed, for logs and support; never shown to the person as is. */
   errorDetail: z.string().optional(),
-  /**
-   * What a caller-sent turn with no transcript yet was sent with: a message waiting behind the answer in progress, or
-   * stopped before it started. Older runners omit it.
-   */
   prompt: z.string().optional(),
 })
 export type RunnerTurn = z.infer<typeof runnerTurnSchema>
@@ -156,7 +125,6 @@ export const runnerMessageSchema = z.discriminatedUnion("role", [
     output: z.string().optional(),
     isError: z.boolean(),
     imageCount: z.number().optional(),
-    /** The App built in OpenWork that this result opened: its id and name, for the caller to show. */
     app: z.object({ id: z.string(), title: z.string() }).optional(),
   }),
 ])
@@ -171,21 +139,10 @@ const runnerSnapshotSchema = z.object({
 })
 
 export type RunnerSnapshot = {
-  /**
-   * Reading one turn (`messageId`): that turn, the background tasks it started and their reports. Otherwise the
-   * newest turns (a window; see `hasEarlier`), oldest first.
-   */
   turns: RunnerTurn[]
-  /** Transcript entries the runner returned that Den understands; unknown shapes are skipped. */
   messages: RunnerMessage[]
-  /** What the assistant wrote in the turn read (`messageId`), or in the newest turn of the window. */
   finalAssistantText: string
-  /** `busy` when the conversation (not a background task) is queued or running, including turns outside the window. */
   status?: string
-  /**
-   * Set on reads without `messageId`: whether older turns exist, read by passing the first turn's messageId as
-   * `before`. Older runners only set it when `turns` was given.
-   */
   hasEarlier?: boolean
 }
 
@@ -195,7 +152,6 @@ export const TERMINAL_TURN_STATUSES: ReadonlySet<RunnerTurnStatus> = new Set(["c
 const modelCatalogSchema = z.object({
   defaultModel: z.string(),
   models: z.array(z.object({ id: z.string(), name: z.string(), provider: z.string().optional() })),
-  /** True only after the configured gateway accepted the runner's model key. Older runners cannot prove readiness. */
   verified: z.boolean().optional(),
 })
 export type HeadlessModelCatalog = z.infer<typeof modelCatalogSchema>
@@ -213,14 +169,113 @@ export const runnerSavedFileSchema = z.object({
   size: z.number(),
   source: z.enum(["user", "agent"]),
   createdAt: z.number(),
-  /** When its bytes last changed (Workbot revised it in place); missing from older runners. */
   updatedAt: z.number().optional(),
 })
 export type RunnerSavedFile = z.infer<typeof runnerSavedFileSchema>
 
 export type RunnerResult<T> = { ok: true; value: T } | { ok: false; status: number; error: string }
 
-const REQUEST_TIMEOUT_MS = 15_000
+const COMPUTERS_TIMEOUT_MS = 30_000
+const fleetText = z.string().max(2_000).nullable()
+const fleetCount = z.number().finite().nullable()
+/** One computer as the runner's `GET /v1/computers` lists it (ee/apps/headless-runner/src/computer-fleet.ts). */
+export const runnerComputerSchema = z.object({
+  id: z.string().min(1).max(200),
+  key: fleetText,
+  source: z.enum(["gateway", "direct"]),
+  provider: z.string().min(1).max(40),
+  status: z.string().min(1).max(40),
+  statusReason: fleetText,
+  pool: fleetText,
+  backend: fleetText,
+  region: fleetText,
+  cpu: fleetCount,
+  memoryMb: fleetCount,
+  diskGb: fleetCount,
+  createdAt: fleetText,
+  updatedAt: fleetText,
+  startedAt: fleetText,
+  pausedAt: fleetText,
+  lastActivityAt: fleetText,
+  expiresAt: fleetText,
+  endedAt: fleetText,
+  attempts: fleetCount,
+  image: fleetText.default(null),
+  imageCurrent: z.boolean().nullable().default(null),
+  idleTimeoutSeconds: fleetCount.default(null),
+  idledAt: fleetText.default(null),
+  resumeRequestedAt: fleetText.default(null),
+  slotReleased: z.boolean().nullable().default(null),
+  trust: fleetText.default(null),
+  runSeconds: fleetCount.default(null),
+})
+export type RunnerComputer = z.infer<typeof runnerComputerSchema>
+/** How the runner treats one source's computers: what new ones are built from, and when it pauses and deletes them. */
+export const runnerComputerSettingsSchema = z.object({
+  image: fleetText,
+  idlePauseSeconds: z.number().finite().nonnegative(),
+  keepDays: z.number().finite().nonnegative(),
+  persistent: z.boolean(),
+})
+export type RunnerComputerSettings = z.infer<typeof runnerComputerSettingsSchema>
+export const runnerComputerSourceSchema = z.object({
+  source: z.enum(["gateway", "direct"]),
+  provider: z.string().min(1).max(40),
+  status: z.enum(["ok", "unreachable", "unsupported"]),
+  error: z.string().max(40).nullable(),
+  truncated: z.boolean(),
+  pools: z.array(z.object({ name: z.string().max(200), backend: fleetText, region: fleetText, enabled: z.boolean(), health: z.string().max(40) })).max(64),
+  settings: runnerComputerSettingsSchema.nullable().default(null),
+})
+export type RunnerComputerSource = z.infer<typeof runnerComputerSourceSchema>
+export const runnerComputerFleetSchema = z.object({
+  version: z.literal(1),
+  generatedAt: z.string().max(40),
+  sources: z.array(runnerComputerSourceSchema).max(8),
+  sandboxes: z.array(runnerComputerSchema).max(8_000),
+})
+export type RunnerComputerFleet = z.infer<typeof runnerComputerFleetSchema>
+/** One computer in full, as the runner's `GET /v1/computers/:source/:id` returns it. */
+export const runnerComputerDetailSchema = z.object({
+  version: z.literal(1),
+  generatedAt: z.string().max(40),
+  computer: runnerComputerSchema,
+  limits: z.object({
+    profile: fleetText,
+    classification: fleetText,
+    capabilities: z.array(z.string().max(200)).max(100),
+    preemptible: z.boolean().nullable(),
+    ttlSeconds: fleetCount,
+    maxRunSeconds: fleetCount,
+    maxPausedSeconds: fleetCount,
+    autoDeleteSeconds: fleetCount,
+    totalRunSeconds: fleetCount,
+  }),
+  settings: runnerComputerSettingsSchema.nullable(),
+  placement: z.object({
+    pool: fleetText,
+    strategy: fleetText,
+    outcome: fleetText,
+    reason: fleetText,
+    evaluatedAt: fleetText,
+    policies: z.array(z.string().max(200)).max(50),
+    candidates: z.array(z.object({
+      pool: z.string().max(200),
+      trust: fleetText,
+      eligible: z.boolean().nullable(),
+      hasCapacity: z.boolean().nullable(),
+      rank: fleetCount,
+      reasons: z.array(z.string().max(2_000)).max(20),
+    })).max(50),
+  }).nullable(),
+  events: z.array(z.object({ at: fleetText, action: z.string().max(200), outcome: fleetText, details: z.record(z.string(), z.string().max(2_000)) })).max(200).nullable(),
+  eventsError: z.string().max(40).nullable(),
+})
+export type RunnerComputerDetail = z.infer<typeof runnerComputerDetailSchema>
+const cellIdsSchema = z.object({ ids: z.record(z.string().max(220), z.string().regex(/^[0-9a-f]{16,128}$/)) })
+const computerRefusalSchema = z.object({ error: z.string().max(60), code: z.string().max(40).optional() })
+
+const REQUEST_TIMEOUT_MS = 20_000
 
 async function request(deps: HeadlessRunnerDeps, method: string, path: string, body?: unknown, timeoutMs = REQUEST_TIMEOUT_MS) {
   const response = await deps.fetch(`${deps.config.url}${path}`, {
@@ -257,14 +312,12 @@ export type RunnerCapabilities = {
   files?: boolean
   computer?: boolean
   desktop?: boolean
-  /** The desktop views the conversation may use, at least one: `browser`, `computer` (native apps). Omitted: unchanged. */
   desktopViews?: RunnerDesktopView[]
   reactions?: boolean
   tasks?: boolean
   documentNavigation?: boolean
-  /** The computer runs through the runner's sandbox gateway (its SANDBOX_GATEWAY) instead of the runner's own provider. */
+  teachingNavigation?: boolean
   sandboxGateway?: boolean
-  /** Trusted host rollout, not a model argument. */
   browserRecovery?: boolean
 }
 export const RUNNER_DESKTOP_VIEWS = ["browser", "computer"] as const
@@ -286,6 +339,7 @@ const capabilityFields = (input: RunnerCapabilities & RunnerSessionSettings) => 
   ...(input.reactions !== undefined ? { reactions: input.reactions } : {}),
   ...(input.tasks !== undefined ? { tasks: input.tasks } : {}),
   ...(input.documentNavigation !== undefined ? { documentNavigation: input.documentNavigation } : {}),
+  ...(input.teachingNavigation !== undefined ? { teachingNavigation: input.teachingNavigation } : {}),
   ...(input.sandboxGateway !== undefined ? { sandboxGateway: input.sandboxGateway } : {}),
   ...(input.browserRecovery !== undefined ? { browserRecovery: input.browserRecovery } : {}),
   ...(input.owner ? { owner: input.owner } : {}),
@@ -296,17 +350,11 @@ const capabilityFields = (input: RunnerCapabilities & RunnerSessionSettings) => 
   ...(input.memoryScope ? { memoryScope: input.memoryScope } : {}),
 })
 
-/** A runner older than a setting refuses it as an invalid request; any other refusal is real. */
 const unknownSetting = (status: number, payload: unknown) => status === 400 && errorCode(payload, "invalid_request") === "invalid_request"
 
-/**
- * One live event, exactly as the SSE stream's `data:` lines carry it: `ready` first on a socket, then `changed`,
- * `text` and `tool`. Kept open (like turn statuses) so a new event type never breaks a reader; callers validate.
- */
 const runnerLiveEventSchema = z.looseObject({ type: z.string() })
 export type RunnerLiveEvent = z.infer<typeof runnerLiveEventSchema>
 
-/** What `openEventsSocket` needs of a WebSocket: Node's built-in one (undici) takes request headers, so the token and owner never go in the URL. */
 type HeaderWebSocket = {
   send(data: string): void
   close(code?: number, reason?: string): void
@@ -316,10 +364,8 @@ type HeaderWebSocketConstructor = new (url: string, init: { headers: Record<stri
 function isHeaderWebSocket(value: unknown): value is HeaderWebSocketConstructor {
   return typeof value === "function"
 }
-/** The keep-alive a live-event socket sends; the runner's cell answers it without waking. */
 const SOCKET_PING = "ping"
 const SOCKET_PING_MS = 30_000
-/** A reader this far behind is dropped (the socket closes; the caller reconnects and re-reads). */
 const SOCKET_MAX_QUEUED = 10_000
 
 export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
@@ -349,25 +395,15 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       }
       const extras = { ...(input.repeats ? { repeats: input.repeats } : {}), ...capabilityFields(input) }
       let { status, payload } = await request(deps, "POST", "/v1/sessions", { ...base, ...extras })
-      // A runner older than these settings rejects them: create the session with its defaults.
       if (status === 400 && Object.keys(extras).length) ({ status, payload } = await request(deps, "POST", "/v1/sessions", base))
       const created = z.object({ id: z.string() }).safeParse(payload)
       if (status !== 201 || !created.success) return { ok: false, status, error: errorCode(payload, `headless_create_${status}`) }
       return { ok: true, value: { id: created.data.id } }
     },
 
-    /**
-     * Creates the session under a caller-chosen id (`hs_…`), or updates its
-     * title and instructions. One durable conversation per person needs no
-     * Den-side mapping: the caller derives the id.
-     */
     async putSession(
       id: string,
       input: { title?: string; instructions?: string; repeats?: RunnerRepeatLimits } & RunnerCapabilities & RunnerSessionSettings & {
-        /**
-         * Fail rather than keep the conversation without settings an older runner doesn't know. For a conversation
-         * that can only be found again through them (a side chat is listed by `owner` and `ref`).
-         */
         strict?: boolean
       } = {},
     ): Promise<RunnerResult<{ id: string; created: boolean }>> {
@@ -378,21 +414,21 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       const extras = { ...(input.repeats ? { repeats: input.repeats } : {}), ...capabilityFields(input) }
       let { status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...extras })
       let compatible: Record<string, unknown> = extras
-      // Older runners keep all other settings, without the new read-only recovery behavior.
+      if (unknownSetting(status, payload) && input.teachingNavigation !== undefined) {
+        const { teachingNavigation: _teaching, ...rest } = compatible
+        compatible = rest
+        ;({ status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...compatible }))
+      }
       if (unknownSetting(status, payload) && input.browserRecovery !== undefined) {
         const { browserRecovery: _recovery, ...rest } = compatible
         compatible = rest
         ;({ status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...compatible }))
       }
-      // An older runner has no sandbox gateway: the computer stays on the runner's own provider.
       if (unknownSetting(status, payload) && input.sandboxGateway !== undefined) {
         const { sandboxGateway: _gateway, ...rest } = compatible
         compatible = rest
         ;({ status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...compatible }))
       }
-      // An older runner can't limit the desktop to some views, so a conversation allowed fewer than all of them gets no
-      // desktop there rather than every view; it keeps its other settings. Such a conversation is never saved without
-      // turning its desktop off: if the runner won't take that either, the update fails.
       let limited = false
       if (unknownSetting(status, payload) && input.desktopViews !== undefined) {
         const { desktopViews: _views, ...rest } = compatible
@@ -400,29 +436,21 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
         compatible = limited ? { ...rest, desktop: false } : rest
         ;({ status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...compatible }))
       }
-      // An older runner has no document-navigation setting: the conversation keeps its other settings and offers links.
       if (unknownSetting(status, payload) && input.documentNavigation !== undefined) {
         const { documentNavigation: _navigation, ...rest } = compatible
         compatible = rest
         ;({ status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...compatible }))
       }
-      // An older runner has no desktop setting. Omitting an explicit off value preserves side-chat settings.
       if (unknownSetting(status, payload) && input.desktop === false && !limited) {
         const { desktop: _desktop, ...rest } = compatible
         ;({ status, payload } = await request(deps, "PUT", sessionPath(id), { ...base, ...rest }))
       }
-      // A runner older than per-session capabilities or settings rejects them: keep the conversation, without them.
       if (unknownSetting(status, payload) && Object.keys(extras).length && !input.strict && !limited) ({ status, payload } = await request(deps, "PUT", sessionPath(id), base))
       const saved = z.object({ id: z.string() }).safeParse(payload)
       if ((status !== 200 && status !== 201) || !saved.success) return { ok: false, status, error: errorCode(payload, `headless_put_${status}`) }
       return { ok: true, value: { id: saved.data.id, created: status === 201 } }
     },
 
-    /**
-     * Asks the runner to move this owner's older conversations into their own session cells, in the background
-     * (per-chat session cells). Owner-scoped: needs the client's `owner`. Idempotent; `not_needed` on a runner without
-     * cells. A runner from before session cells answers 404: reported as `unsupported`, never an error.
-     */
     async splitOwner(): Promise<RunnerResult<{ split: string }>> {
       const { status, payload } = await request(deps, "POST", "/v1/owner/split", {})
       if (status === 404 || status === 405) return { ok: true, value: { split: "unsupported" } }
@@ -431,7 +459,6 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       return { ok: true, value: parsed.data }
     },
 
-    /** One owner's conversations that have messages, most recently used first. */
     async listSessions(owner: string, options: { limit?: number } = {}): Promise<RunnerResult<{ sessions: RunnerSessionSummary[] }>> {
       const { status, payload } = await request(deps, "GET", `/v1/sessions?owner=${encodeURIComponent(owner)}&limit=${options.limit ?? 50}`)
       const parsed = z.object({ sessions: z.array(runnerSessionSummarySchema) }).safeParse(payload)
@@ -439,24 +466,18 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       return { ok: true, value: parsed.data }
     },
 
-    /** Deletes a conversation with its transcript, files and computer. Fails with `session_busy` (409) while it answers. */
     async deleteSession(id: string): Promise<RunnerResult<{ deleted: true }>> {
       const { status, payload } = await request(deps, "DELETE", sessionPath(id))
       if (status !== 204) return { ok: false, status, error: errorCode(payload, `headless_delete_${status}`) }
       return { ok: true, value: { deleted: true } }
     },
 
-    /**
-     * Deletes only a conversation's computer; its transcript, files and memory stay, and its next use makes a new one.
-     * Fails with `session_busy` (409) while it answers and `unknown_session` (404) when there is no such conversation.
-     */
     async deleteComputer(id: string): Promise<RunnerResult<{ deleted: true }>> {
       const { status, payload } = await request(deps, "DELETE", `${sessionPath(id)}/computer`, undefined, 60_000)
       if (status !== 204) return { ok: false, status, error: errorCode(payload, `headless_computer_delete_${status}`) }
       return { ok: true, value: { deleted: true } }
     },
 
-    /** The scratch files the agent wrote in the session (memory/ included, wherever it is kept): paths and sizes only. */
     async listScratchFiles(sessionId: string): Promise<RunnerResult<Array<{ path: string; size: number; updatedAt: number }>>> {
       const { status, payload } = await request(deps, "GET", `${sessionPath(sessionId)}/files`)
       const parsed = z.object({ files: z.array(z.object({ path: z.string(), size: z.number(), updatedAt: z.number() })) }).safeParse(payload)
@@ -464,7 +485,6 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       return { ok: true, value: parsed.data.files }
     },
 
-    /** Reads one scratch file the agent wrote in the session. */
     async readFile(sessionId: string, path: string): Promise<RunnerResult<{ content: string }>> {
       const response = await deps.fetch(`${deps.config.url}${sessionPath(sessionId)}/files/content?path=${encodeURIComponent(path)}`, {
         headers: runnerHeaders(deps.config),
@@ -474,14 +494,6 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       return { ok: true, value: { content: await response.text() } }
     },
 
-    /**
-     * Sends one turn with a fresh member-scoped MCP token. Re-sending the same
-     * messageId never starts a second turn; it resumes an interrupted one.
-     * `interrupt`: the conversation's answer in progress wraps up at its next safe point instead of this waiting behind
-     * it (runners from before it refuse the field, so callers send it only where it is turned on).
-     * `execution: "steps"` (saved step turns): the runner runs the turn one step at a time, so a runner deploy
-     * switches between steps instead of cutting one off. Sent only when given; older runners refuse the field.
-     */
     async sendTurn(
       actor: HeadlessRunnerActor,
       input: {
@@ -493,15 +505,7 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
         ttlMs?: number
         attachments?: string[]
         readOnly?: boolean
-        /**
-         * A read-scoped MCP token (`mcp:read`) while the session keeps its own file tools, so a background agent can
-         * keep notes in `memory/` but can't change anything through MCP. `readOnly` also removes the file tools.
-         */
         mcpReadOnly?: boolean
-        /**
-         * Extra scopes for the read-scoped token, minted by the trusted caller only (a member's background agent
-         * carries the sources it may read). Ignored without `mcpReadOnly` or `readOnly`.
-         */
         mcpScopes?: readonly string[]
         interrupt?: boolean
         execution?: "steps"
@@ -524,7 +528,6 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
         return { ...issued, modelAccess }
       }
       const persistedModel = async (): Promise<RunnerResult<{ model?: string; modelAccessRequired?: boolean }>> => {
-        // A retry's route belongs to its persisted selection, not today's organization default.
         const query = new URLSearchParams({ messageId: input.messageId, limit: "1", outputs: "none" })
         let read: Awaited<ReturnType<typeof request>>
         try {
@@ -532,7 +535,6 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
         } catch {
           return { ok: false, status: 503, error: "headless_read_unavailable" }
         }
-        // Let the ordinary send handle a missing session. An unavailable or malformed snapshot is never a fallback.
         if (read.status === 404) return { ok: true, value: {} }
         if (read.status !== 200) return { ok: false, status: read.status, error: errorCode(read.payload, `headless_read_${read.status}`) }
         const snapshot = runnerSnapshotSchema.safeParse(read.payload)
@@ -544,7 +546,6 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       const required = modelAccessRequired || (await deps.modelAccessRequired?.(actor) ?? false)
       let model = input.model
       if (required) {
-        // This must precede minting: a changed default may now be unauthorized or use an entirely different protocol.
         const original = await persistedModel()
         if (!original.ok) return original
         model = original.value.model ?? model
@@ -553,8 +554,6 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       let issued = await mint(model)
       if (required && !issued.modelAccess) return { ok: false, status: 503, error: "headless_model_access_unavailable" }
       if (!required && issued.modelAccess) {
-        // Older trusted callers that supply scoped access without the hook still get retry pinning. Legacy sends
-        // without scoped access retain their original single-request behavior.
         const original = await persistedModel()
         if (!original.ok) return original
         if ((original.value.model && original.value.model !== model) || (!modelAccessRequired && original.value.modelAccessRequired)) {
@@ -572,8 +571,6 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
         ...(input.attachments?.length ? { attachments: input.attachments } : {}),
         ...(input.interrupt ? { interrupt: true } : {}),
         ...(input.execution === "steps" ? { execution: "steps" } : {}),
-        // A grant is minted for named turns, an index capability only where the session is known;
-        // without them the body is exactly as before.
         credentials: {
           mcpToken: token,
           ...(input.readOnly ? { readOnly: true } : {}),
@@ -587,12 +584,6 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       return { ok: true, value: { state: accepted.success ? accepted.data.state : "accepted" } }
     },
 
-    /**
-     * Every read is bounded. With `messageId`: that turn's transcript (its newest `limit` messages) and the turn with
-     * its background tasks and their reports. Without it: the newest `turns` turns (30 unless given, at most 200)
-     * before `before`, with their newest `limit` messages; `hasEarlier` says whether to page back.
-     * `outputs: "none"` leaves tool outputs on the runner when a caller only needs each tool's outcome.
-     */
     async readSession(
       sessionId: string,
       input: { messageId?: string; limit?: number; outputs?: "none"; turns?: number; before?: string; expectedOwner?: string } = {},
@@ -622,7 +613,6 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       }
     },
 
-    /** Whether the runner keeps files (a blob store is configured). */
     async filesEnabled(): Promise<boolean> {
       try {
         const { status, payload } = await request(deps, "GET", "/v1/files/status")
@@ -654,7 +644,6 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       return { ok: true, value: parsed.data.files }
     },
 
-    /** The file's bytes as the runner's response, to stream to the browser. */
     async downloadFile(sessionId: string, fileId: string): Promise<Response | null> {
       const response = await deps.fetch(`${deps.config.url}${sessionPath(sessionId)}/saved-files/${encodeURIComponent(fileId)}`, {
         headers: runnerHeaders(deps.config),
@@ -667,11 +656,9 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       return response
     },
 
-    /** A file's preview (slides, documents): how many page images it has and their size; null when none. */
     async previewManifest(sessionId: string, fileId: string): Promise<{ pages: number; width: number; height: number } | null> {
       const response = await deps.fetch(`${deps.config.url}${sessionPath(sessionId)}/saved-files/${encodeURIComponent(fileId)}/preview`, {
         headers: runnerHeaders(deps.config),
-        // Rendering an older file on first open can take a while.
         signal: AbortSignal.timeout(3 * 60_000),
       })
       const payload: unknown = await response.json().catch(() => null)
@@ -679,7 +666,6 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       return response.ok && parsed.success ? parsed.data : null
     },
 
-    /** One preview page as the runner's PNG response, to stream to the browser. */
     async previewPage(sessionId: string, fileId: string, page: number): Promise<Response | null> {
       const response = await deps.fetch(`${deps.config.url}${sessionPath(sessionId)}/saved-files/${encodeURIComponent(fileId)}/preview/${page}`, {
         headers: runnerHeaders(deps.config),
@@ -697,10 +683,6 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       return status === 204
     },
 
-    /**
-     * The session's live events (server-sent events: `changed` and `text`), open until `signal` aborts.
-     * No request timeout: the stream is meant to stay open while someone watches.
-     */
     async openEvents(sessionId: string, signal: AbortSignal): Promise<Response | null> {
       const response = await deps.fetch(`${deps.config.url}${sessionPath(sessionId)}/events`, {
         headers: runnerHeaders(deps.config, { accept: "text/event-stream" }),
@@ -713,13 +695,6 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       return response
     },
 
-    /**
-     * The session's live events over a WebSocket (saved step turns): on celld the socket is hibernatable,
-     * so it keeps going while the runner's code is switched under it, and doesn't hold up that switch. Yields
-     * `{ type: "ready" }`, then each event as `openEvents` carries it, until the socket closes or `signal` aborts.
-     * Null when the runner doesn't upgrade (the Node runner, an older runner) or the socket can't open: use
-     * `openEvents` then. The token and owner go in request headers, never in the URL.
-     */
     async openEventsSocket(sessionId: string, signal: AbortSignal): Promise<AsyncIterableIterator<RunnerLiveEvent> | null> {
       const Socket: unknown = Reflect.get(globalThis, "WebSocket")
       if (!isHeaderWebSocket(Socket) || signal.aborted) return null
@@ -745,7 +720,6 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
           try {
             socket.close(1000)
           } catch {
-            // Already closed.
           }
         }
         const resume = wake
@@ -759,7 +733,6 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
         try {
           raw = JSON.parse(message.data)
         } catch {
-          // A keep-alive answer, or anything else that isn't an event.
           return
         }
         const event = runnerLiveEventSchema.safeParse(raw)
@@ -812,15 +785,6 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       return events()
     },
 
-    /**
-     * Stops one turn, or without a messageId everything running or queued in
-     * the session. `reached` is the runner answering; `stopped` is whether
-     * anything was still running or queued to stop.
-     */
-    /**
-     * Removes a message and what it led to; `andAfter` removes every later message too (editing replays from there).
-     * Fails with `turn_busy` (409) while one of them is still queued or running.
-     */
     async deleteTurns(sessionId: string, messageId: string, options: { andAfter?: boolean } = {}): Promise<RunnerResult<{ removed: string[] }>> {
       const { status, payload } = await request(deps, "DELETE", `${sessionPath(sessionId)}/turns/${encodeURIComponent(messageId)}${options.andAfter ? "?after=1" : ""}`)
       const parsed = z.object({ removed: z.array(z.string()) }).safeParse(payload)
@@ -834,7 +798,6 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       return { reached: status === 200, stopped: status === 200 && parsed.success && parsed.data.accepted }
     },
 
-    /** A bounded synthetic completion using scoped access when provided, otherwise the deployment key. Never mints an MCP token. */
     async testModel(model: string, modelAccess?: HeadlessModelAccess): Promise<HeadlessModelProbe | null> {
       const { status, payload } = await request(deps, "POST", "/v1/model-probe", { model, ...(modelAccess ? { modelAccess } : {}) })
       const result = modelProbeSchema.safeParse(payload)
@@ -842,7 +805,47 @@ export function createHeadlessRunnerClient(deps: HeadlessRunnerDeps) {
       return result.data
     },
 
-    /** Scoped catalogs use an authenticated POST; legacy deployment catalogs keep the existing GET. */
+    async cellIds(names: readonly string[]): Promise<RunnerResult<Record<string, string>>> {
+      let answer: Awaited<ReturnType<typeof request>>
+      try {
+        answer = await request(deps, "POST", "/v1/cells/ids", { names }, COMPUTERS_TIMEOUT_MS)
+      } catch (error) {
+        return { ok: false, status: 503, error: error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError") ? "timeout" : "unreachable" }
+      }
+      if (answer.status !== 200) return { ok: false, status: answer.status, error: `http_${answer.status}` }
+      const parsed = cellIdsSchema.safeParse(answer.payload)
+      return parsed.success ? { ok: true, value: parsed.data.ids } : { ok: false, status: 502, error: "invalid_response" }
+    },
+
+    async listComputers(): Promise<RunnerResult<RunnerComputerFleet>> {
+      let answer: Awaited<ReturnType<typeof request>>
+      try {
+        answer = await request(deps, "GET", "/v1/computers", undefined, COMPUTERS_TIMEOUT_MS)
+      } catch (error) {
+        return { ok: false, status: 503, error: error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError") ? "timeout" : "unreachable" }
+      }
+      if (answer.status !== 200) return { ok: false, status: answer.status, error: `http_${answer.status}` }
+      const parsed = runnerComputerFleetSchema.safeParse(answer.payload)
+      return parsed.success ? { ok: true, value: parsed.data } : { ok: false, status: 502, error: "invalid_response" }
+    },
+
+    async readComputer(source: "gateway" | "direct", id: string): Promise<RunnerResult<RunnerComputerDetail>> {
+      let answer: Awaited<ReturnType<typeof request>>
+      try {
+        answer = await request(deps, "GET", `/v1/computers/${source}/${encodeURIComponent(id)}`, undefined, COMPUTERS_TIMEOUT_MS)
+      } catch (error) {
+        return { ok: false, status: 503, error: error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError") ? "timeout" : "unreachable" }
+      }
+      if (answer.status !== 200) {
+        const refusal = computerRefusalSchema.safeParse(answer.payload)
+        const named = refusal.success && (refusal.data.error === "unknown_computer" || refusal.data.error === "invalid_computer") ? refusal.data.error : null
+        const provider = refusal.success && refusal.data.error === "provider_unreachable" ? `provider_${refusal.data.code ?? "unreachable"}` : null
+        return { ok: false, status: answer.status, error: named ?? provider ?? `http_${answer.status}` }
+      }
+      const parsed = runnerComputerDetailSchema.safeParse(answer.payload)
+      return parsed.success ? { ok: true, value: parsed.data } : { ok: false, status: 502, error: "invalid_response" }
+    },
+
     async listModels(modelAccess?: HeadlessModelAccess): Promise<HeadlessModelCatalog | null> {
       try {
         const { status, payload } = modelAccess

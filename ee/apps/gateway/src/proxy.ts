@@ -1,12 +1,13 @@
 import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import { MEMBER_FREE_STATUS_PATH, MEMBER_FREE_RESPONSES_PATH } from "@openwork/free-auto"
 import { INFERENCE_FREE_MODEL_ID } from "@openwork/types/den/inference"
-import { createInferenceEgressFetch, validateInferenceUrl } from "@openwork-ee/utils/inference-egress"
+import { createInferenceEgressFetch, validateInferenceUrl, createGcpServiceAccountTokenMinter } from "@openwork-ee/gateway-upstreams"
 import { GATEWAY_BEARER_KEY_PREFIX } from "@openwork-ee/utils/gateway-bearer-key"
 import { Hono } from "hono"
 import type { Context } from "hono"
 import { createMiddleware } from "hono/factory"
 import { env } from "./env.js"
+import { gatewayLog } from "./log.js"
 import type { assertOrganizationManagedModelsAllowed as assertOrganizationManagedModelsAllowedFn, findActiveInferenceKey as findActiveInferenceKeyFn, getOpenRouterProviderKey as getOpenRouterProviderKeyFn } from "./keys.js"
 import type { ensureUsableBuckets as ensureUsableBucketsFn } from "./limits.js"
 import {
@@ -32,18 +33,17 @@ import { gatewayModelEndpoints, gatewayModelsPath, registerGatewayRoutes } from 
 import { cursorPathPrefix } from "./cursor.js"
 import { claudeCodePathPrefix } from "./claude-code.js"
 import { codexPathPrefix } from "./codex.js"
-import { createGcpServiceAccountTokenMinter } from "./credentials/gcp-service-account.js"
 import { loadProviderCatalogFromFile } from "./provider-catalog.js"
 import { gatewayProviderTestPath, registerProviderTestRoute } from "./provider-test.js"
 import type { GatewayDependencies } from "./gateway.js"
-import { isJsonContentType, readBoundedBody, RequestBodyLimitError } from "./relay.js"
+import { describeUpstreamFetchFailure, isJsonContentType, readBoundedBody, RequestBodyLimitError } from "./relay.js"
 import { createRequestLogRecorder, insertRequestLogIntoDb, REQUEST_LOG_UNAVAILABLE_MESSAGE } from "./request-log.js"
 import { HEADLESS_SESSION_HEADER, parseHeadlessSessionHeader } from "@openwork/types/den/workbot-usage"
 import { openWorkModelsAllowanceResponse } from "./models-allowance.js"
 import type { InsertRequestLog, RequestLogRecorder, RequestLogRecorderDependencies } from "./request-log.js"
-import { createOpenAiChatSseUsageParser, parseOpenAiChatJsonUsage } from "./usage/openai-chat.js"
+import { createOpenAiChatSseUsageParser, parseOpenAiChatJsonUsage } from "@openwork-ee/gateway-protocols"
 import type { FreeMemberHandler } from "./free/member/handler.js"
-import type { ParsedUsage } from "./usage/shared.js"
+import type { ParsedUsage } from "@openwork-ee/gateway-protocols"
 
 type JsonObject = Record<string, unknown>
 type PreparedBody = {
@@ -66,10 +66,6 @@ export type InferenceEnv = { Variables: InferenceAuthVariables & OrganizationVar
 const chatCompletionsPath = "/api/v1/chat/completions"
 const modelsPath = "/api/v1/models"
 
-/**
- * Paths shared with OpenWork Models: GET /api/v1/models and the provider-less POST endpoints.
- * An ow_gw_ key there is handled by Gateway; any other key stays on OpenWork Models.
- */
 function isSharedGatewayRequest(request: Request, path: string) {
   const shared = (request.method === "GET" && path === gatewayModelsPath)
     || (request.method === "POST" && Object.hasOwn(gatewayModelEndpoints, path))
@@ -77,24 +73,16 @@ function isSharedGatewayRequest(request: Request, path: string) {
   try {
     return readOpenWorkKey(request)?.startsWith(GATEWAY_BEARER_KEY_PREFIX) === true
   } catch {
-    // Conflicting credentials are rejected by the Models authenticator.
     return false
   }
 }
 
-/**
- * Free Auto on a key whose organization pays for OpenWork Models: the Auto status check, or a request for the Auto
- * model that OpenWork Models do not serve. Those go to the free handler, which bills the member's free allowance,
- * never the organization.
- */
 async function isFreeAutoRequest(request: Request): Promise<boolean> {
   const path = new URL(request.url).pathname
   if (request.method === "GET" && path === MEMBER_FREE_STATUS_PATH) return true
   if (request.method !== "POST" || (path !== chatCompletionsPath && path !== MEMBER_FREE_RESPONSES_PATH)) return false
   try {
     const body: unknown = await request.clone().json()
-    // Once OpenWork Models list Auto's model, chat completions for it use the organization's own usage;
-    // free Auto still reaches it through the Responses API.
     return isJsonObject(body) && body.model === INFERENCE_FREE_MODEL_ID
       && (path === MEMBER_FREE_RESPONSES_PATH || !resolveModelAlias(INFERENCE_FREE_MODEL_ID))
   } catch { return false }
@@ -153,7 +141,6 @@ type ProxyDependencies = {
   reporter?: InferenceReporter
   analytics?: typeof beginModelAnalytics
   gateway?: Partial<GatewayDependencies>
-  /** Serves free Auto to members of organizations without an OpenWork Models subscription. */
   freeMember?: FreeMemberHandler
 }
 
@@ -695,11 +682,8 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
       return reject(c.json({ error: { message: "No active OpenRouter provider key configured for organization.", type: "invalid_request_error", code: "missing_provider_key" } }, 400), "missing_provider_key")
     }
 
-    // The provider validates n; only a valid requested cardinality constrains responses.
     const choiceCount = typeof prepared.body.n === "number" && Number.isSafeInteger(prepared.body.n) && prepared.body.n > 0 ? prepared.body.n : 1
     const analyticsStartedAt = Date.now()
-    // Fail closed and bound the optional analytics check; it cannot hold up
-    // inference when the analytics store is unavailable.
     let timer: ReturnType<typeof setTimeout> | undefined
     const analytics = await Promise.race([
       (async () => {
@@ -709,13 +693,12 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
       new Promise<null>((resolve) => { timer = setTimeout(() => resolve(null), 250) }),
     ]).finally(() => { if (timer) clearTimeout(timer) })
     const observeChunk = (bytes: Uint8Array) => {
-      try { analytics?.chunk(bytes) } catch { /* Optional analytics cannot interrupt inference. */ }
+      try { analytics?.chunk(bytes) } catch {}
     }
-    // Set when the client leaves a response committed before the provider answered.
     let clientGone = false
     const clientAborted = () => c.req.raw.signal.aborted || clientGone
     const finishAnalytics = (status: Parameters<AnalyticsObserver["finish"]>[0]) => {
-      try { analytics?.finish(clientAborted() ? "cancelled" : status) } catch { /* Optional analytics cannot interrupt inference. */ }
+      try { analytics?.finish(clientAborted() ? "cancelled" : status) } catch {}
     }
     const abort = new AbortController()
     const abortError = () => clientAborted()
@@ -738,7 +721,6 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
           signal: abort.signal,
           redirect: "error",
         }
-        // Re-read after every preparation await, immediately before the only dispatch.
         const dispatchRejection = await managedModelsRejection(inferenceKey.organization_id)
         if (dispatchRejection) {
           clearTimeout(headerTimeout)
@@ -748,36 +730,25 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
           return reject(dispatchRejection, "managed_models_policy_rejected")
         }
         upstream = await dependencies.fetch(upstreamUrl, upstreamInit)
-      } catch {
+      } catch (error) {
         clearTimeout(headerTimeout)
         c.req.raw.signal.removeEventListener("abort", cancel)
         finishAnalytics("failed")
-        const error = abortError() ?? inferenceError("upstream_unreachable", "The selected model could not be reached. Your work is preserved; retry when the provider recovers.")
-        logProxyError("Failed to reach OpenRouter upstream", {
-          openworkRequestId,
-          organizationId: inferenceKey.organization_id,
-          orgMembershipId: inferenceKey.org_membership_id,
-          inferenceKeyId: inferenceKey.id,
-          upstreamUrl: safeAccessUrl(upstreamUrl.toString()),
-          modelAlias: prepared.modelAlias,
-          upstreamModel: prepared.upstreamModel,
+        const failure = describeUpstreamFetchFailure(error, {
+          clientAborted: clientAborted(),
+          timedOut: abort.signal.aborted && !clientAborted(),
+          target: "the selected model's provider",
         })
-        reporter.handledError({
-          reason: error.error.code,
-          organizationId: inferenceKey.organization_id,
-          orgMembershipId: inferenceKey.org_membership_id,
-          inferenceKeyId: inferenceKey.id,
-          openworkRequestId,
-          route: c.req.path,
-          method: c.req.method,
-          headers: incomingHeaders,
-          incomingModel: prepared.incomingModel,
-          resolvedUpstreamModel: prepared.upstreamModel,
-          status: 502,
-          upstreamUrl: safeAccessUrl(upstreamUrl.toString()),
+        gatewayLog[failure.outcome === "client_aborted" ? "debug" : "warn"]("OpenRouter upstream not reached", {
+          request_id: openworkRequestId,
+          organization_id: inferenceKey.organization_id,
+          upstream_url: safeAccessUrl(upstreamUrl.toString()),
+          upstream_model: prepared.upstreamModel,
+          error_code: failure.code,
+          network_error: failure.cause,
         })
-        void recorder.finish({ status: 502, outcome: clientAborted() ? "client_aborted" : "upstream_unreachable", errorCode: error.error.code })
-        return c.json(error, 502)
+        void recorder.finish({ status: failure.status, outcome: failure.outcome, errorCode: failure.code })
+        return c.json(inferenceError(failure.code, failure.message), failure.status)
       }
       clearTimeout(headerTimeout)
 
@@ -805,8 +776,6 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
       if (retryAfter && (/^\d+$/.test(retryAfter) || Number.isFinite(Date.parse(retryAfter)))) headers.set("retry-after", retryAfter)
       if (!upstream.ok) {
         let error = upstreamError(upstream.status)
-        // Read only a bounded error envelope to classify context overflow. The
-        // provider's message and metadata never leave this scope or enter logs.
         if (upstream.status === 400) {
           const timeout = setTimeout(() => abort.abort(), Math.min(env.managedUpstreamTimeoutMs, 5000))
           try {
@@ -815,7 +784,7 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
               payload.error.code === "context_length_exceeded" ||
               (typeof payload.error.message === "string" && /maximum context length|context length.*exceed|too many tokens/i.test(payload.error.message))
             )) error = upstreamError(413)
-          } catch { /* The safe status category remains sufficient. */ }
+          } catch {}
           finally { clearTimeout(timeout) }
         }
         c.req.raw.signal.removeEventListener("abort", cancel)
@@ -852,12 +821,10 @@ export function registerProxyRoutes(app: Hono, dependencies: ProxyDependencies =
             void recorder.finish({ status: upstream.status, outcome: result.outcome === "completed" ? "ok" : result.outcome === "cancelled" ? "client_aborted" : "upstream_error", errorCode: result.code, responseBytes: result.responseBytes, upstreamRequestId: upstreamRequestId(upstream.headers) })
             try {
               reporter.completion?.({ ...result, openworkRequestId, organizationId: inferenceKey.organization_id, orgMembershipId: inferenceKey.org_membership_id, modelAlias: prepared.modelAlias })
-            } catch { /* Completion reporting must not interrupt stream cleanup. */ }
+            } catch {}
           },
         }), { headers })
       }
-      // Bound non-streaming bodies too. An HTTP 200 without a terminal choice is
-      // not a completed inference response.
       const bodyTimeout = setTimeout(() => abort.abort(), env.managedUpstreamTimeoutMs)
       try {
         const value = await readResponseJson(upstream.body, abort.signal)

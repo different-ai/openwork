@@ -1,27 +1,14 @@
 import type { AuditOrigin } from "@openwork-ee/den-db/audit-log"
 
-// Outcomes of asynchronous work that den-api endpoints (or its schedulers)
-// start. Each event is appended by src/audit/job-capture.ts:recordAuditJobOutcome
-// under a job-scoped operation (AuditContext.jobRunId → binding ["job", id],
-// requestId null), category "execution". The starting request keeps its own
-// request-bound operation (.requested/.accepted); the job operation carries the
-// background start (scheduler only) and the single terminal outcome.
-// scripts/check-audit-route-coverage.ts validates this list and
-// coverage.ts adds the event types to the supported catalog.
-
 export type AuditJobOutcomeDeclaration = Readonly<{
-  /** Full event type (not a stem). */
   eventType: string
   kind: string
-  /** Target resource type; its id is also the jobRunId. */
   target: string
   parents: readonly string[]
   actor: string
   origins: readonly AuditOrigin[]
   idempotencyKey: string
-  /** `file:function` of each emitter call site. */
   emitters: readonly string[]
-  /** Routes whose tenant_job jobOutcome points here. */
   startedBy: readonly string[]
   evidence: string
   limitations: string

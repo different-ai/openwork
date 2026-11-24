@@ -1,10 +1,3 @@
-/**
- * The public JSON Schema of the config blob (`GET /v1/config-blobs/schema/1`),
- * for editors and CI. Generated from the same Zod schemas the server
- * validates with: the envelope (`configBlobSchema`), the item shape, and each
- * area adapter's strict `specSchema` (zod v4 `z.toJSONSchema`, input side).
- * Exports point their `$schema` at this endpoint on this server.
- */
 import {
   CONFIG_BLOB_FORMAT_VERSION,
   configBlobItemSchema,
@@ -19,7 +12,6 @@ export const CONFIG_BLOB_SCHEMA_PATH = "/v1/config-blobs/schema"
 
 type JsonSchema = { [key: string]: unknown }
 
-/** The public URL of the schema for `formatVersion`, or null when this server has no public API URL configured. */
 export function configBlobSchemaUrl(formatVersion: number = CONFIG_BLOB_FORMAT_VERSION): string | null {
   const base = env.apiPublicUrl?.replace(/\/+$/, "")
   return base ? `${base}${CONFIG_BLOB_SCHEMA_PATH}/${formatVersion}` : null
@@ -51,7 +43,6 @@ function areaSchema(area: ConfigArea, itemBase: JsonSchema): JsonSchema {
 
 type AreasNode = { leaf: JsonSchema | null; children: Map<string, AreasNode> }
 
-/** `areas` as it appears in the file: area keys split on "." into nested objects. */
 function areasTreeSchema(itemBase: JsonSchema): JsonSchema {
   const root: AreasNode = { leaf: null, children: new Map() }
   for (const area of CONFIG_AREAS) {
@@ -76,7 +67,6 @@ function areasTreeSchema(itemBase: JsonSchema): JsonSchema {
 
 const cache = new Map<number, JsonSchema>()
 
-/** The JSON Schema of a whole blob for `formatVersion`, or null for a version this server doesn't know. */
 export function configBlobJsonSchema(formatVersion: number): JsonSchema | null {
   if (formatVersion !== CONFIG_BLOB_FORMAT_VERSION) return null
   const cached = cache.get(formatVersion)

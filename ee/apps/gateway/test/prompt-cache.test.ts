@@ -5,20 +5,19 @@ import assert from "node:assert/strict"
 import { test } from "node:test"
 import { Hono } from "hono"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
-import { createGatewayModelAlias } from "@openwork-ee/utils/gateway-routing"
+import { createGatewayModelAlias } from "@openwork-ee/gateway-catalog"
 import type { GatewayAccessRow } from "../src/provider-access.js"
 import type { GatewayCredential, GatewayProvider } from "../src/provider-credentials.js"
 import type { GatewayRequestLogRow } from "../src/request-log.js"
 import type { InferenceAuthVariables } from "../src/middleware/inference-auth.js"
 import type { OrganizationVariables } from "../src/middleware/org-context.js"
-import { applyClaudePromptCache, bedrockCachesModel, isAnthropicModelId } from "../src/prompt-cache.js"
-import { parseOpenAiChatJsonUsage } from "../src/usage/openai-chat.js"
+import { applyClaudePromptCache, bedrockCachesModel, isAnthropicModelId, parseOpenAiChatJsonUsage } from "@openwork-ee/gateway-protocols"
 
 // env.ts validates at import; nothing here touches a database.
 process.env.DATABASE_URL ??= "mysql://fixture:fixture@127.0.0.1:1/fixture"
 process.env.DEN_DB_ENCRYPTION_KEY ??= "fixture-encryption-key-0000000000000000"
 const { registerGatewayRoutes, gatewayPathPrefix } = await import("../src/gateway.js")
-const { createProviderCatalog } = await import("../src/provider-catalog.js")
+const { createProviderCatalog } = await import("@openwork-ee/gateway-catalog")
 
 const EPHEMERAL = { type: "ephemeral" }
 

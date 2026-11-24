@@ -5,12 +5,6 @@ import type { BrowserPresentationMode } from "@/app/lib/desktop";
 export type { BrowserPresentationMode };
 export type BrowserShownMode = "floating" | "side";
 
-/**
- * How one conversation shows its built-in browser. `side` is the docked side
- * panel, `floating` its own OS window; `returnMode` is the person's last
- * floating/side choice, used when leaving full screen. In memory only: a
- * restart starts hidden.
- */
 export type BrowserPresentation = {
   mode: BrowserPresentationMode;
   returnMode: BrowserShownMode;
@@ -19,9 +13,7 @@ export type BrowserPresentation = {
 type BrowserPresentationStore = {
   sessions: Record<string, BrowserPresentation>;
   setMode: (sessionId: string, mode: BrowserPresentationMode, returnMode?: BrowserShownMode) => void;
-  /** A new thread became a session: how it shows its browser goes with it. */
   moveSession: (from: string, to: string) => void;
-  /** Full screen never outlives its conversation or its page: fall back to `returnMode`. */
   dropFullscreen: (sessionId: string) => void;
 };
 

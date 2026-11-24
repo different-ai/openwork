@@ -1,0 +1,3 @@
+# Shared settings for MobileBuildMCP, the command-line build and simulator tool agents use here.
+enabledWorkflows: ["simulator", "ui-automation"]
+sentryDisabled: true

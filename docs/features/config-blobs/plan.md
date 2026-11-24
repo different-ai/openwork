@@ -45,7 +45,9 @@ type ConfigArea<Spec> = {
   children?: ChildCollection[];        // nested rows matched inside a parent (models, entries…)
   exportItems(ctx): Promise<Item<Spec>[]>;           // allowlist serializer
   readItems?(ctx, ids): Promise<Item<Spec>[]>;       // apply reads only the items it writes
-  preflight?(ctx, op, { secrets }): Promise<{ skip?; block?; warnings? } | null>; // plan time, reads only
+  preflight?(ctx, op, { secrets, refs }): Promise<{ skip?; block?; warnings? } | null>; // plan time, reads only
+  derivedFields?: string[];                          // never planned as a change, still hashed
+  requiredRefs?: string[];                           // a dropped one takes its array entry along; outside an array it can't be dropped
   irreversible?(op): string[];                       // what a restore can't undo, shown before approval
   comparableSpec?(spec): Spec;                       // compare instance-specific child ids by name
   apply(ctx, op: Create | Update | Delete): Promise<ApplyResult>; // calls existing domain services; writes only the plan's changes

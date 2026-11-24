@@ -11,7 +11,6 @@ import { getInstallation } from "./slack-assistant/repository.js"
 import { sandboxSlackAddresses } from "./slack-assistant/sandbox-api.js"
 
 export const SANDBOX_SLACK_EXTERNAL_KEY = "sandbox-slack"
-/** The name the sample app's bot goes by in the sample Slack: Proactive Mode sends "a DM from Workbot". */
 const SANDBOX_SLACK_BOT_NAME = "Workbot"
 
 export class SandboxSlackUnavailableError extends Error {}
@@ -25,15 +24,6 @@ const registeredAppSchema = z.object({
   signing_secret: z.string().min(16).max(500),
 })
 
-/**
- * Gives a sandbox its sample Slack: a per-person Slack connector at the sandbox's sample work apps,
- * and the Workbot Slack app installed against it with a sample bot token the workplace issues. Workbot's settings
- * then see the Slack app as installed, so Proactive Mode can be turned on; each member connects Slack once in their
- * own browser, which links them, and their agent's messages arrive on that browser's sample Slack page.
- *
- * Throws SandboxSlackUnavailableError when the workplace has no sample Slack (an older workshop) or can't be
- * reached; nothing is created then.
- */
 export async function addSandboxSlack(input: {
   organizationId: DenTypeId<"organization">
   ownerMemberId: DenTypeId<"member">
@@ -42,7 +32,6 @@ export async function addSandboxSlack(input: {
   const addresses = sandboxSlackAddresses(input.workplaceUrl)
   const existing = await getExternalMcpConnectionByExternalKey({ organizationId: input.organizationId, externalKey: SANDBOX_SLACK_EXTERNAL_KEY })
   if (existing && existing.url !== addresses.mcpUrl) throw new SandboxSlackUnavailableError("This organization already has a connector with the key sandbox-slack at another address. Remove it first.")
-  // primary: a connector added moments ago by an earlier attempt may not have its app yet.
   if (existing && (await getInstallation(existing.id, db.$primary))) return existing
 
   if (!env.allowPrivateMcpUrls) await assertPublicUrl(addresses.appsUrl)

@@ -21,7 +21,6 @@ export function TrendChart({ title, subtitle, weeks, series, intervalLabel = "We
   series: BarSeries[];
   intervalLabel?: string;
   isLoading?: boolean;
-  /** How a bar's value reads in its tooltip and the screen-reader table (money, for example). */
   formatValue?: (value: number) => string;
   emptyLabel?: string;
 }) {

@@ -1,10 +1,3 @@
-/**
- * Predefined "quick add" External MCP Connections — the same real servers
- * (and URLs) the desktop app already offers as one-click Quick Connect
- * entries (apps/app/src/app/constants.ts MCP_QUICK_CONNECT), surfaced here
- * so an org admin can add them once, org-wide, in Den, instead of every
- * device connecting to them separately.
- */
 import { mcpRegistrationStatusSchema, type McpRegistrationStatus } from "@openwork/types/den/mcp-registration"
 import { z } from "zod"
 
@@ -13,18 +6,14 @@ export type ExternalMcpPreset = {
   displayName: string
   description: string
   url: string
-  // Setup default, not an exclusive requirement when supportedAuthTypes lists alternatives.
   authType: "oauth" | "apikey" | "none"
   supportedAuthTypes?: readonly ("oauth" | "apikey" | "none")[]
   requiresOAuthClient?: boolean
   defaultOAuthClientId?: string
   authorizationServerIssuer?: string
   defaultOAuthScopes?: readonly string[]
-  /** Extra scopes the provider offers that are requested only after an admin explicitly chooses them. */
   optionalOAuthScopes?: readonly string[]
-  /** What OpenWork last learned about signing in to this provider; absent until it has been checked. */
   registrationStatus?: McpRegistrationStatus
-  /** Response only: the redirect URL an admin registers in the provider's OAuth app. */
   oauthCallbackUrl?: string
 }
 
@@ -121,9 +110,6 @@ export const EXTERNAL_MCP_PRESETS: ExternalMcpPreset[] = [
       "mpim:history",
       "users:read",
     ],
-    // The rest of the user scopes Slack's MCP server offers. Never requested by
-    // default: guided Slack setup asks the admin to choose them explicitly
-    // ("Read and act"), and that choice is saved as the connection's scopes.
     optionalOAuthScopes: [
       "canvases:read",
       "canvases:write",
@@ -172,13 +158,6 @@ export const EXTERNAL_MCP_PRESETS: ExternalMcpPreset[] = [
   },
 ]
 
-/**
- * Additional reviewed official MCP server presets. Each URL and its OAuth
- * protected-resource metadata were verified by probing the public
- * `/.well-known/oauth-protected-resource` endpoint; advertisement is not a
- * successful connection. OAuth presets reuse the existing CIMD/DCR pipeline
- * (`packages/enterprise-mcp-client`); no new auth path is added.
- */
 export const EXTERNAL_MCP_PRESETS_EXPANDED: readonly ExternalMcpPreset[] = [
   {
     presetId: "airtable",
@@ -301,20 +280,11 @@ export const EXTERNAL_MCP_PRESETS_EXPANDED: readonly ExternalMcpPreset[] = [
   },
 ]
 
-/**
- * Every known preset (core + expanded), used by `external-mcp-auth-policy`
- * so every connection to an expanded-preset server keeps its preset auth behavior.
- */
 export const ALL_EXTERNAL_MCP_PRESETS: readonly ExternalMcpPreset[] = [
   ...EXTERNAL_MCP_PRESETS,
   ...EXTERNAL_MCP_PRESETS_EXPANDED,
 ]
 
-/**
- * One preset as the catalog returns it. Presets that need a pre-registered
- * OAuth app carry the redirect URL the admin registers in it, so setup can
- * show it (and prefill a provider app manifest) before any connection exists.
- */
 export function externalMcpPresetForResponse(
   preset: ExternalMcpPreset,
   extra: { registrationStatus?: McpRegistrationStatus; oauthCallbackUrl?: string | null },
@@ -326,7 +296,6 @@ export function externalMcpPresetForResponse(
   }
 }
 
-/** Presets shown in the connector catalog and the add-connection preset list. */
 export function externalMcpPresetsForCatalog(): ExternalMcpPreset[] {
   return [...ALL_EXTERNAL_MCP_PRESETS]
 }

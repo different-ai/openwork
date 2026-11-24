@@ -40,7 +40,6 @@ type DeviceAction = { kind: "register" } | { kind: "rename" | "disconnect" | "re
 export function DevicesView() {
   const context = useAutomationsDenContext();
   const { signOut } = useCloudWorkspaceStatus();
-  // Key the contents to the sign-in, including dialogs and mutation state.
   return <DevicesContent key={`${remoteDevicesContextQueryKey(context).join(":")}:${context.ready}`} context={context} organizationName={readDenSettings().activeOrgName?.trim() || null} onSignOut={signOut} />;
 }
 
@@ -49,7 +48,6 @@ export function DevicesContent({ context, organizationName = null, onSignOut }: 
   const thisDeviceId = useThisDeviceId(context.organizationId);
   const disconnected = useThisComputerDisconnected();
   const [action, setAction] = useState<DeviceAction | null>(null);
-  /** What the last disconnect did, until the next action. */
   const [outcome, setOutcome] = useState<string | null>(null);
   const begin = (next: DeviceAction) => { setOutcome(null); setAction(next); };
   const sessionAccessSection = <SessionAccessSection />;
@@ -79,7 +77,6 @@ function DeviceRow({ device, context, thisDevice, onAction }: { device: RemoteDe
   const [open, setOpen] = useState(false);
   const detail = useRemoteDeviceDetailQuery(context, device.id, open);
   const disconnected = device.disconnectedAt !== null;
-  // This computer is disconnected by signing out of it, not from its own list.
   const canDisconnect = device.canDisconnect && !thisDevice;
   const version = shortAppVersion(device.appVersion);
   return <div className="border-b border-border py-3" data-testid="device-row">

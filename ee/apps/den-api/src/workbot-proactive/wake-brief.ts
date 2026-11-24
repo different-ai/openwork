@@ -60,61 +60,27 @@ import type { AgentSendCheck } from "./send-check.js"
 import type { MemberConnection } from "./sources.js"
 import type { AgentRawTurnResult } from "./turn.js"
 import type { AgentWakeDeps, AgentWakeOutcome } from "./wake.js"
-import { checkSources, noticeUnreadableSources, readMemberCalendar, sourcePromptService, type CheckRecordInput } from "./wake-shared.js"
-
-/**
- * One check of a member's agent under `workbotAgentBrief`: one rhythm, the brief, and two steps.
- *
- *   gates (as today) ─▶ due? the next slot on the rhythm, or an extra check the agent asked for
- *     ─▶ step 1, the check: the agent's own read-only session with its read allowlist; a findings report or NO_FINDINGS
- *     ─▶ step 2, the message, only for P0/P1 findings and while today's limit has room: a fresh tool-less turn with
- *        the member's recent Workbot DM; JSON messages or NO_REPLY, validated, retried once when malformed
- *     ─▶ Den's hard limits (decideBriefDelivery) ─▶ one Workbot DM per message, as today
- *
- * No calendar wakes and no responsibilities: the calendar is read once per check for the member's time zone and to
- * see whether Google still answers. Every dependency is injected (worker.ts wires the real ones).
- */
+import { checkSources, noticeStoppedSources, noticeUnreadableSources, readMemberCalendar, sourcePromptService, type CheckRecordInput } from "./wake-shared.js"
 
 const HOUR_MS = 3_600_000
 const CONVERSATION_DAYS = 2
 
-/** What the brief's check needs on top of today's wake. */
 export type AgentBriefWakeDeps = AgentWakeDeps & {
-  /** `workbotAgentBrief` for this member. */
   briefOn: (organizationId: DenTypeId<"organization">, userId: DenTypeId<"user">) => Promise<boolean>
-  /** The member's first name, as the prompts call them. */
   person: (organizationId: DenTypeId<"organization">, memberId: DenTypeId<"member">) => Promise<string | null>
-  /** Step 1 on the agent's own session, answered as written. */
   check: (input: { actor: { userId: string; organizationId: string }; sessionId: string; instructions: string; model: string; prompt: string; messageId: string; scopes: readonly string[] }) => Promise<AgentRawTurnResult>
-  /** Step 2: one turn in the messenger's fresh session (`turn` 1, or 2 for the retry), with no tools. */
   message: (input: { actor: { userId: string; organizationId: string }; sessionId: string; instructions: string; model: string; prompt: string; messageId: string }) => Promise<AgentRawTurnResult>
   messageSessionId: (organizationId: string, memberId: string, wakeAt: number) => string
   endMessageSession: (sessionId: string) => Promise<void>
-  /** The member's recent Workbot DM since `since`, oldest first; null when it can't be read. */
   conversation: (input: { organizationId: DenTypeId<"organization">; userId: DenTypeId<"user">; since: number }) => Promise<AgentConversationTurn[] | null>
-  /** The extra checks as stored now (request_check writes them during step 1). */
   requestedChecks: (memberId: DenTypeId<"member">) => Promise<AgentCheckRequest[]>
-  /**
-   * An MCP connection's tools as the member's account sees them (name, description, annotations), for deciding which
-   * the check may call; null when its server didn't answer.
-   */
   readTools: (input: { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member">; connection: MemberConnection }) => Promise<readonly AgentReadToolInput[] | null>
-  /**
-   * `workbotAgentCheckGate`: Den's own look at what arrived for this member (and the evaluation model, where the
-   * deployment has its key), or null while the feature is off for them. Asked only when the member's policy turned
-   * the gate on and this check is one the gate may skip.
-   */
   checkGate?: (input: { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member">; userId: DenTypeId<"user"> }) => Promise<AgentCheckGate | null>
-  /**
-   * `workbotAgentSendCheck`: the check for this member, or null while the feature is off for them or the deployment
-   * has no key for the evaluation model. Asked only when the member's policy turned the check on.
-   */
   sendCheck?: (input: { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member">; userId: DenTypeId<"user"> }) => Promise<AgentSendCheck | null>
 }
 
 type Skip = "off" | "not_allowed" | "opted_out" | "snoozed" | "outside_hours" | "quiet_hours" | "no_destination" | "slack_app_not_installed" | "member_not_linked" | "no_sources" | "nothing_due"
 
-/** The record kind for each occasion: the first check of the day keeps today's `morning`. */
 const KIND_OF: Record<AgentCheckOccasion["kind"], AgentCheckKind> = { first: "morning", scheduled: "scheduled", requested: "requested" }
 
 function iso(at: number) {
@@ -132,13 +98,11 @@ function logUsage(memberId: string, step: "check" | "message", turn: AgentRawTur
   })
 }
 
-/** The next wake: the next slot on the rhythm or the soonest extra check, whichever comes first. */
 function nextWake(scheduled: number, requests: readonly AgentCheckRequest[] | undefined) {
   const soonest = pendingCheckRequests(requests)[0]?.at
   return new Date(soonest !== undefined ? Math.min(scheduled, soonest) : scheduled)
 }
 
-/** One check for one claimed agent under `workbotAgentBrief`. Always settles it before returning. */
 export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWakeDeps): Promise<AgentWakeOutcome> {
   const now = deps.now()
   const organizationId = row.organizationId
@@ -148,7 +112,6 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
     return { status: "skipped", reason: reason === "quiet_hours" ? "outside_hours" : reason }
   }
 
-  // The member's policy, brief and template: their team's own when it has one, else the organization's.
   const own = deps.teamPolicy ? await deps.teamPolicy({ organizationId, memberId }) : null
   const settings = own?.settings ?? await deps.settings(organizationId)
   if (!settings.enabled) return skip("off", now + HOUR_MS)
@@ -203,15 +166,12 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
     return skip(blocked, now + HOUR_MS)
   }
 
-  // The member's sources, then one calendar read through the connection their calendar reads: their time zone, and
-  // whether Google still answers. No events are diffed and nothing wakes the agent early.
   const stored = parseStoredPreferences(row.preferences)
   const [listed, connectedMembers] = await Promise.all([
     deps.connections({ organizationId, memberId }).catch(() => null),
     deps.connectedMembers ? deps.connectedMembers(organizationId).catch(() => undefined) : Promise.resolve(undefined),
   ])
   const looked = await readMemberCalendar({
-    // Any connected connector, each under its own policy (`any`): no reviewed list decides what can be a source.
     sources: resolveMemberSources({ connections: listed ?? [], policy: settings.sources, choices: stored.sources, lastLook: state.lastLook, connectedMembers, mode: "any" }),
     read: (connectionId) => deps.calendar({ organizationId, orgMembershipId: memberId, connectionId, timeMin: iso(now), timeMax: iso(now + HOUR_MS) }),
     memberId,
@@ -221,7 +181,6 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
   const timeZone = typeof calendarZone === "string" && isValidTimeZone(calendarZone) ? calendarZone : storedZone ?? "UTC"
   if (!withinRhythm(rhythm, now, timeZone)) return closed(timeZone, { timeZone })
 
-  // Due: the next slot on the rhythm after the last check (now, for a new agent), or an extra check the agent asked for.
   const scheduledAt = nextScheduledCheck({ rhythm, lastCheckAt: state.lastPassAt, now, timeZone, snoozedUntil: null })
   const requested = pendingCheckRequests(state.requests).find((request) => request.at <= now)
   if (scheduledAt > now && !requested) return skip("nothing_due", nextWake(scheduledAt, state.requests).getTime(), { timeZone, failures: 0 })
@@ -238,11 +197,12 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
   }
   if (!listed) return retry("sources_unavailable")
   const ready = sources.filter((source) => readableConnections(source).length > 0)
-  const notices = await noticeUnreadableSources({
-    row, organizationId, userId, unreadable: blockedConnections(sources), othersReadable: ready.length > 0, told: state.notices, now, slot, kind, deps, record,
-  })
-  // Which tools the check may call on each connection, decided now: an admin's choice, a reviewed list, the provider's
-  // annotations, then the tool's name. Only these ride in its token; a source left with none sits this check out.
+  const notices = {
+    ...await noticeUnreadableSources({
+      row, organizationId, userId, unreadable: blockedConnections(sources), othersReadable: ready.length > 0, told: state.notices, now, slot, kind, deps, record,
+    }),
+    ...await noticeStoppedSources({ row, organizationId, userId, sources, choices: stored.sources, othersReadable: ready.length > 0, told: state.notices, now, slot, kind, deps, record }),
+  }
   const toolPlan = await planAgentTools({
     sources: ready,
     overrides: settings.sources.toolOverrides ?? {},
@@ -267,9 +227,6 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
   const briefText = agentBriefForCheck({ name, organization: brief.text, member: memberBriefLines(stored, row.overrides).lines })
   const nextAfter = nextScheduledCheck({ rhythm, lastCheckAt: now, now, timeZone, snoozedUntil: null })
 
-  // The check gate, when this policy turned it on: is this scheduled check worth running? Den looks itself at what
-  // reached the member since their agent last looked. Nothing arrived, or (with the evaluation model) only routine
-  // things: no agent turn. Anything Den can't tell runs the check, as without the gate.
   const skips = state.skips ?? 0
   const gate = settings.checkGate === true && deps.checkGate && checkGateApplies({ occasion: occasion.kind, skips }).applies
     ? await deps.checkGate({ organizationId, memberId, userId }).catch(() => null)
@@ -287,7 +244,6 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
     const plan = planCheckGate({ occasion: occasion.kind, skips, peek, brief: briefText })
     const answer = plan.kind === "ask" && gate.model ? await gate.model(plan.request, settings.checkGateThreshold) : null
     const skip = plan.kind === "skip" ? plan.why : answer?.verdict.kind === "skip" ? answer.verdict.why : null
-    // Counts and timings only: never a sender, a subject or the model's answer.
     appLogger.info("workbot_agent_check_gate", {
       member_id: memberId,
       outcome: skip ? `skip:${skip}` : plan.kind === "run" ? `run:${plan.why}` : answer ? `run:${answer.verdict.why}` : "run:no_model",
@@ -298,7 +254,6 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
       input_tokens: answer?.inputTokens ?? 0,
     })
     if (skip) {
-      // Nothing is marked as read: the next look, and the next check that runs, cover the same arrivals again.
       const requests = settleCheckRequests(state.requests ?? [], now)
       await record({ reason: "nothing_new", key: `ran:${now}`, kind })
       await deps.recordChecks({
@@ -316,7 +271,6 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
   const model = await deps.model(actor).catch(() => null)
   if (!model) return retry("model_unavailable")
 
-  // Step 1: the check. The brief is text people in OpenWork wrote; the sources are data from other people.
   const check = await deps.check({
     actor,
     sessionId: deps.sessionId(organizationId, memberId),
@@ -352,7 +306,6 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
   logUsage(memberId, "check", check)
   const report = parseCheckReport(check.text)
 
-  // The extra checks request_check saved during the turn, with the ones due by now done.
   const requests = settleCheckRequests(await deps.requestedChecks(memberId).catch(() => state.requests ?? []), now)
   const readIds = readable.map((source) => source.id)
   const nextState: AgentState = {
@@ -362,11 +315,9 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
     nextPassAt: nextAfter,
     notices,
     requests,
-    // A check that ran: the gate may skip the next ones again.
     skips: 0,
   }
 
-  // Step 2 and Den's limits, only with something worth a message.
   let outcome: { reason: AgentCheckReason; sources?: AgentMemberCheckSource[]; message?: AgentMemberCheckMessage | null; messages?: number } | null = { reason: "no_findings" }
   let sent = 0
   const sentRecords: AgentSentRecord[] = []
@@ -374,7 +325,6 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
   if (report.kind === "findings") {
     const sentToday = await deps.sentSince(memberId, new Date(zonedDayStart(now, timeZone)))
     if (sentToday >= limits.dailyCap) {
-      // The limit is a hard limit: no message turn at all. The findings stay in the agent's notes for tomorrow.
       outcome = { reason: "daily_limit" }
       delivered = "daily_limit"
     } else {
@@ -393,8 +343,6 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
       } else if (reply.kind === "quiet") {
         outcome = { reason: "findings_held" }
       } else {
-        // The send check, when this policy turned it on: each message is read once more against the brief and what
-        // the member was told today. Only a confident answer holds one; no answer sends it, as without the check.
         const sendCheck = settings.sendCheck === true && deps.sendCheck ? await deps.sendCheck({ organizationId, memberId, userId }).catch(() => null) : null
         let messages = reply.messages
         let heldForBrief = 0
@@ -403,7 +351,6 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
           const checked = await Promise.all(reply.messages.map((message) => sendCheck({ brief: briefText, message: message.text, update: message.update, toldToday, holdAt: settings.sendCheckThreshold })))
           messages = reply.messages.filter((_, index) => checked[index]?.verdict.kind !== "hold")
           heldForBrief = checked.filter((result) => result.verdict.kind === "hold" && result.verdict.reason === "brief").length
-          // Counts and timings only: never the message, the brief or the model's answer.
           appLogger.info("workbot_agent_send_check", {
             member_id: memberId,
             messages: reply.messages.length,
@@ -442,7 +389,6 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
             const id = lead ? await deps.reserve({ organizationId, memberId, item: lead.item, outcome: "pending", kind: "brief" }) : null
             if (!id) continue
             for (const entry of folded) await deps.reserve({ organizationId, memberId, item: entry.item, outcome: "folded", kind: "brief" })
-            // Right before each send: still this instance's agent, and both features still on (a kill switch wins).
             const allowedNow = (await deps.holdsLease(row)) && (await deps.allowed(organizationId, userId)) && (await deps.briefOn(organizationId, userId))
             const result = allowedNow
               ? await deps.deliver({ organizationId, userId, text: cleanAgentMessage(message.text, { limit: AGENT_BRIEF_MESSAGE_LIMIT, linkDomains }) })
@@ -461,14 +407,12 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
             }
           }
           const capped = decision.skipped.some((entry) => entry.reason === "daily_limit")
-          // Every message named only sources it didn't read: nothing it could send, not something already told.
           const unreadable = decision.skipped.length > 0 && decision.skipped.every((entry) => entry.reason === "unknown_source")
           if (unreadable) appLogger.warn("workbot_agent_message_unknown_sources", { member_id: memberId })
           delivered = sent ? "sent" : failed ? "failed" : capped ? "daily_limit" : "nothing_new"
           outcome = sent
             ? { reason: "sent", sources: checkSources(drew, sources), message: first, messages: sent }
             : lost ? null : failed ? { reason: "send_failed" } : capped ? { reason: "daily_limit" } : unreadable ? { reason: "unreadable_reply" }
-              // Everything the messenger wrote was held because the brief says to leave it out: quiet, not a repeat.
               : !messages.length && heldForBrief ? { reason: "findings_held" } : { reason: "already_told" }
         }
       }
@@ -484,17 +428,12 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
   const settled: AgentState = {
     ...nextState,
     sent: rememberSent(state.sent, sentRecords, now),
-    // The report the messenger saw, for the next check; a check with nothing to report keeps the last one.
     lastReport: report.kind === "findings" ? { at: now, text: report.report.slice(0, 4_000) } : state.lastReport ?? null,
   }
   await deps.settle(row, { state: JSON.stringify(settled), timeZone, templateVersionId: template.versionId, failures: 0, nextWakeAt: nextWake(nextAfter, requests) })
   return { status: "ran", reasons: ["scheduled"], reply: report.kind === "findings" ? "message" : "quiet", delivered }
 }
 
-/**
- * Step 2 in the messenger's fresh session: one turn, and one more when the answer isn't the JSON or NO_REPLY. The
- * session is deleted afterwards. A second malformed answer is dropped (the caller logs it).
- */
 async function writeMessages(input: {
   deps: AgentBriefWakeDeps
   actor: { userId: string; organizationId: string }
@@ -531,5 +470,4 @@ async function writeMessages(input: {
   }
 }
 
-/** The messenger's token: an agent token that may read no source at all. */
 export const AGENT_MESSAGE_SCOPES = agentReadScopes({ kinds: [], connectionIds: [] })

@@ -25,13 +25,9 @@ function readSsoTestMessage(value: unknown) {
   return value.intentId;
 }
 
-/** Where one connection's requests go: one connection by id, or adding a new one. */
 export type SsoConnectionEndpoints = {
-  /** GET → { connection }; null while adding a connection. */
   load: string | null;
-  /** POST a SAML or OIDC configuration. */
   save: (kind: FormMode) => string;
-  /** Delete, test, enable, disable and domain verification hang off this; null while adding. */
   base: string | null;
 };
 
@@ -45,17 +41,12 @@ export function ssoConnectionEndpoints(connectionId: string | null): SsoConnecti
 
 export type SsoConnectionPanelProps = {
   endpoints: SsoConnectionEndpoints;
-  /** The saved connection after every load or change (null: none). */
   onConnectionChange?: (connection: DenOrgSsoConnection | null) => void;
-  /** Adding (endpoints.load null): the new connection was saved. */
   onCreated?: (connection: DenOrgSsoConnection, domainVerificationToken: string | null) => void;
-  /** The connection was deleted. */
   onDeleted?: () => void;
-  /** A token returned when the connection was just created. */
   initialDomainVerificationToken?: string | null;
 };
 
-/** One SSO connection: its setup form, domain verification, test, enable and disable. */
 export function SsoConnectionPanel({
   endpoints,
   onConnectionChange,
@@ -99,7 +90,6 @@ export function SsoConnectionPanel({
   const [userInfoEndpoint, setUserInfoEndpoint] = useState("");
   const [tokenEndpointAuthentication, setTokenEndpointAuthentication] = useState<"" | "client_secret_basic" | "client_secret_post">("");
 
-  // The issuer field checks the provider and reports on itself.
   const [issuerCheck, setIssuerCheck] = useState<OidcIssuerCheck>({ state: "idle" });
   const issuerCheckRun = useRef(0);
 
@@ -109,7 +99,6 @@ export function SsoConnectionPanel({
     setIssuerCheck({ state: "idle" });
   }
 
-  /** Reports on the issuer under its field; the save runs the same check on the server. */
   async function checkOidcIssuer(value: string, manual: boolean) {
     const run = ++issuerCheckRun.current;
     const typed = value.trim();
@@ -133,7 +122,6 @@ export function SsoConnectionPanel({
     try {
       const { response, payload } = await requestJson("/v1/sso/oidc/check", { method: "POST", headers: getOrgScopedHeaders(), body: JSON.stringify({ issuer: typed }) }, 15000);
       if (run !== issuerCheckRun.current) return;
-      // A check that could not run says nothing: the save still checks.
       setIssuerCheck(response.ok ? parseOidcIssuerCheck(payload) : { state: "idle" });
     } catch {
       if (run === issuerCheckRun.current) setIssuerCheck({ state: "idle" });
@@ -220,7 +208,6 @@ export function SsoConnectionPanel({
     if (nextConnection.oidc) {
       setClientId(nextConnection.oidc.clientId ?? "");
       setScopes(nextConnection.oidc.scopes.length > 0 ? nextConnection.oidc.scopes.join(" ") : "openid email profile");
-      // Saved connections always store their endpoints; with the setup check the form starts from discovery again.
       setSkipDiscovery(false);
       setAuthorizationEndpoint(nextConnection.oidc.authorizationEndpoint ?? "");
       setTokenEndpoint(nextConnection.oidc.tokenEndpoint ?? "");
@@ -347,7 +334,6 @@ export function SsoConnectionPanel({
           if (!response.ok) {
             const issuerProblem = formMode === "oidc" && response.status === 400 ? issuerProblemFromSave(payload) : null;
             if (issuerProblem) {
-              // The issuer was refused: say so on its field, not in the page banner.
               issuerCheckRun.current += 1;
               setIssuerCheck({ state: "failed", message: issuerProblem });
               return;

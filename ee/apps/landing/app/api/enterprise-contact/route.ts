@@ -172,7 +172,6 @@ export async function POST(request: Request) {
         detail = errorData.message;
       }
     } catch {
-      // Ignore invalid error payloads from upstream and return a generic message.
     }
 
     return jsonResponse(request, { error: detail }, 502);
@@ -211,7 +210,6 @@ export async function POST(request: Request) {
         detail = errorData.message;
       }
     } catch {
-      // Ignore invalid error payloads from upstream and return a generic message.
     }
 
     return jsonResponse(request, { error: detail }, 502);

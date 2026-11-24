@@ -3,12 +3,10 @@
 import type { ReactNode } from "react";
 import { FilterInput } from "./item-list";
 
-/** The same collection toolbar on every Members tab. Secondary actions stay quiet. */
 export function MemberListToolbar({ collection, value, onChange, action, secondary }: {
   collection: "members" | "teams" | "roles";
   value: string;
   onChange: (value: string) => void;
-  /** Only where the page header does not hold the create action. */
   action?: ReactNode;
   secondary?: ReactNode;
 }) {

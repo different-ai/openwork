@@ -16,7 +16,6 @@ import { getProviderIconSlug, requestLlmProviderCatalog, type DenModelsDevProvid
 import { LITELLM_DOC_URL, LITELLM_PROVIDER_ID } from "./litellm-provider-data";
 import { TRUEFOUNDRY_DOC_URL, TRUEFOUNDRY_PROVIDER_ID } from "./truefoundry-provider-data";
 
-/** Plain-words taglines for the providers most orgs reach for; anything else falls back to its model count. */
 const TAGLINES: Record<string, string> = {
   openrouter: "One key, hundreds of models from every vendor",
   anthropic: "Claude models",
@@ -38,7 +37,6 @@ const FEATURED = Object.keys(TAGLINES);
 const INITIAL_ROWS = 10;
 const ANOTHER_PROVIDER = { title: "Another provider", tagline: "Anything with an OpenAI-compatible API, self-hosted included" };
 
-/** The "Another provider" row shows unless the filter rules it out. */
 export function anotherProviderMatches(query: string): boolean {
   const normalized = query.trim().toLowerCase();
   return !normalized || `${ANOTHER_PROVIDER.title} ${ANOTHER_PROVIDER.tagline} custom`.toLowerCase().includes(normalized);
@@ -48,15 +46,12 @@ export function providerTagline(provider: Pick<DenModelsDevProviderSummary, "id"
   return TAGLINES[provider.id] ?? `${provider.modelCount} ${provider.modelCount === 1 ? "model" : "models"}`;
 }
 
-/** Gateways an organization already runs (LiteLLM, TrueFoundry) are always in the first rows, never behind "Show more". */
 const ALWAYS_VISIBLE = new Set([LITELLM_PROVIDER_ID, TRUEFOUNDRY_PROVIDER_ID]);
 
-/** The first rows of the unfiltered list, plus any always-visible provider beyond them, in list order. */
 export function initialProviders<T extends { id: string }>(providers: readonly T[], rows = INITIAL_ROWS): T[] {
   return providers.filter((item, index) => index < rows || ALWAYS_VISIBLE.has(item.id));
 }
 
-/** Featured providers first in a stable order, then the rest alphabetically. */
 export function orderCatalog<T extends { id: string; name: string }>(providers: readonly T[]): T[] {
   const rank = (id: string) => { const index = FEATURED.indexOf(id); return index === -1 ? FEATURED.length : index; };
   return [...providers].sort((a, b) => rank(a.id) - rank(b.id) || a.name.localeCompare(b.name));

@@ -15,8 +15,7 @@ import { useEffect, useState, type FormEvent, type ReactNode } from "react";
 import { DenButton, buttonVariants } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 import { DenSelect } from "../../_components/ui/select";
-import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-import { getCursorSetupRoute } from "./cursor-setup-data";
+import { GatewayToolSetupRow } from "./gateway-tool-setup-dialog";
 import { BackButton, GatewayToolPicker, GatewayToolSteps, gatewayToolName, type GatewayToolId } from "./gateway-tool-setup";
 import { ItemMenu } from "./item-list";
 import { LibraryCompactSurface } from "./library-compact";
@@ -33,25 +32,16 @@ import {
   useRevokeGatewayApiKey,
 } from "./gateway-api-keys-data";
 
-/**
- * Library › Models: the viewer's own AI Gateway API keys for 3rd party
- * tools, a way to create one, and the docs on setting a tool up. Shown while the organization allows
- * member keys, or while the viewer still holds keys after it stopped, so they can revoke them.
- */
 export function MemberGatewayApiKeysSection() {
   const keys = useMyGatewayApiKeys();
   const revoke = useRevokeGatewayApiKey("mine");
-  const { orgSlug } = useOrgDashboard();
   const [creating, setCreating] = useState(false);
-  /** The key "Set up" was chosen for: the tool choice again, without the key, which can't be shown twice. */
   const [settingUp, setSettingUp] = useState<GatewayApiKey | null>(null);
   const router = useRouter();
   const searchParams = useSearchParams();
   const createRequested = searchParams.get(CREATE_GATEWAY_API_KEY_PARAM) === "1";
   const allowed = keys.data?.enabled === true;
 
-  // "Create your own key now" (AI Gateway › API Keys) lands here with ?create-key=1: open the dialog once,
-  // then drop the parameter so a reload or Back does not open it again.
   useEffect(() => {
     if (!createRequested || !keys.data) return;
     if (allowed) setCreating(true);
@@ -70,16 +60,12 @@ export function MemberGatewayApiKeysSection() {
       <section className="flex flex-col gap-1">
         <div className="flex flex-wrap items-center justify-between gap-2 px-2">
           <h2 className="flex items-center gap-2 text-[12px] font-medium leading-5 text-[var(--dls-text-secondary)]">
-            API keys for 3rd party tools
-            <span className="tabular-nums">{apiKeys.length}</span>
+            Use OpenWork AI Gateway with other tools
           </h2>
           <div className="flex items-center gap-1">
             <a href={GATEWAY_API_KEYS_DOCS_URL} target="_blank" rel="noreferrer" className={buttonVariants({ variant: "ghost", size: "sm" })} data-testid="gateway-api-keys-docs">
               How to use
             </a>
-            <DenButton size="sm" variant="ghost" href={getCursorSetupRoute(orgSlug)} data-testid="gateway-api-keys-cursor-setup">
-              Set up Cursor
-            </DenButton>
             {enabled ? (
               <DenButton size="sm" variant="secondary" icon={Plus} onClick={() => setCreating(true)} data-testid="gateway-api-keys-create">
                 Create key
@@ -87,6 +73,12 @@ export function MemberGatewayApiKeysSection() {
             ) : null}
           </div>
         </div>
+
+        <GatewayToolSetupRow enabled={enabled} baseUrl={baseUrl} />
+        <h3 className="mt-2 flex items-center gap-2 px-2 text-[12px] font-medium leading-5 text-[var(--dls-text-secondary)]">
+          Your API keys
+          <span className="tabular-nums">{apiKeys.length}</span>
+        </h3>
 
         {!enabled ? (
           <p className="flex items-center gap-1.5 px-2 py-2 text-[13px] text-gray-500" data-testid="gateway-api-keys-disabled">
@@ -97,7 +89,7 @@ export function MemberGatewayApiKeysSection() {
 
         {apiKeys.length === 0 ? (
           <p className="px-2 py-2 text-[13px] text-gray-500" data-testid="gateway-api-keys-empty">
-            Create a key to use your models in Claude Code, Codex, Cursor or any OpenAI or Anthropic compatible tool.
+            No keys yet. Pick a tool above to create one as you set it up.
           </p>
         ) : (
           <div className="flex flex-col">
@@ -179,7 +171,6 @@ function CreateGatewayApiKeyDialog({ open, baseUrl, onClose }: { open: boolean; 
           data-ph-no-capture
           className="fixed left-1/2 top-1/2 z-50 max-h-[calc(100dvh-2rem)] w-[calc(100%-2rem)] max-w-[600px] -translate-x-1/2 -translate-y-1/2 overflow-y-auto rounded-2xl border border-gray-100 bg-white p-5 outline-none"
         >
-          {/* Mounted only while open: a closed dialog forgets the key it showed. */}
           {open ? <CreateGatewayApiKeyForm baseUrl={baseUrl} onClose={onClose} /> : null}
         </Dialog.Popup>
       </Dialog.Portal>
@@ -200,11 +191,9 @@ function CreateGatewayApiKeyForm({ baseUrl, onClose }: { baseUrl: string; onClos
     try {
       setCreated(await create.mutateAsync({ name: trimmed, expiresAt: expiryFromDays(expiryDays) }));
     } catch {
-      // Shown below from the mutation's error.
     }
   }
 
-  // "Start using this key", a tool, then that tool's steps.
   if (created) {
     return (
       <GatewayToolFlow
@@ -268,10 +257,6 @@ function CreateGatewayApiKeyForm({ baseUrl, onClose }: { baseUrl: string; onClos
   );
 }
 
-/**
- * A tool, then its steps. Right after creation `apiKey` is the key; from
- * "Set up" it is null, since a key is shown once, and the steps leave a place for it.
- */
 function GatewayToolFlow({ title, subtitle, keyBlock, apiKey, baseUrl, onClose }: {
   title: string;
   subtitle: string;
@@ -309,7 +294,6 @@ function GatewayToolFlow({ title, subtitle, keyBlock, apiKey, baseUrl, onClose }
   );
 }
 
-/** "Set up" from a key's menu: the same tool choice, for a key that already exists. */
 function SetUpGatewayApiKeyDialog({ apiKey, baseUrl, onClose }: { apiKey: GatewayApiKey | null; baseUrl: string; onClose: () => void }) {
   return (
     <Dialog.Root open={apiKey !== null} onOpenChange={(next) => { if (!next) onClose(); }}>

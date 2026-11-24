@@ -1,22 +1,9 @@
-/**
- * Provider checks for Settings › Diagnostics.
- *
- * Stored facts first (credential present, expired, refused, configuration
- * errors), then, only on a live check, one read-only request per org-held
- * credential that lists models or confirms the key (AWS STS). Never a model
- * completion, never a member's credential, never an upstream body or URL in
- * the result. Probes are bounded (8 s each, at most 4 at a time) and go through
- * the inference egress guard.
- */
 import type { ProviderCheck, ProviderCheckReason, ProviderCheckState } from "@openwork/types/den/diagnostics"
 import { parseGatewayProviderSecret, type GatewayProviderCredentialKind, type GatewayProviderCredentialStatus, type GatewayProviderSecret } from "@openwork/types/den/gateway"
 import { readProviderEnvNames, selectPrimaryCredentialEnvName } from "@openwork/types/managed-provider-config"
-import { AwsSsoError, getAwsCallerIdentity } from "@openwork-ee/utils/aws-identity-center"
-import type { AwsCredentials } from "@openwork-ee/utils/aws-sigv4"
-import { isInferenceCredentialKindSupported, pickInferenceApiKeyFromMap } from "@openwork-ee/utils/inference-credentials"
-import { InferenceEgressError, isAwsRegion, validateInferenceUrl } from "@openwork-ee/utils/inference-egress"
-import { LITELLM_ADMIN_CREDENTIAL_SUBJECT, isLiteLlmProviderId } from "@openwork-ee/utils/litellm-catalog"
-import { MICROSOFT_FOUNDRY_PROVIDER_ID } from "@openwork-ee/utils/microsoft-foundry-catalog"
+import { AwsSsoError, getAwsCallerIdentity, InferenceEgressError, isAwsRegion, validateInferenceUrl } from "@openwork-ee/gateway-upstreams"
+import type { AwsCredentials } from "@openwork-ee/gateway-upstreams"
+import { isInferenceCredentialKindSupported, pickInferenceApiKeyFromMap, LITELLM_ADMIN_CREDENTIAL_SUBJECT, isLiteLlmProviderId, MICROSOFT_FOUNDRY_PROVIDER_ID, gatewaySdkFamily, type ProtocolFamily } from "@openwork-ee/gateway-catalog"
 import { gatewayUpstreamDestination } from "../credential-prompt.js"
 import { isGatewayCustomProviderId } from "@openwork/types/den/gateway-custom-providers"
 import { detectVendor, probeEndpoint } from "../llm/endpoint-probe.js"
@@ -33,7 +20,6 @@ export const PROVIDER_PROBE_CONCURRENCY = 4
 const MAX_LISTING_BYTES = 4 * 1024 * 1024
 const MAX_MISSING_MODELS = 20
 
-/** What a live check calls. Holds a credential: kept in memory for one check only, never cached or returned. */
 export type ProbeSpec =
   | { kind: "litellm"; baseUrl: string; apiKey: string }
   | { kind: "openai"; baseUrl: string; apiKey: string }
@@ -49,20 +35,13 @@ export type ProviderTarget = {
   providerId: string
   name: string
   credentialName: string | null
-  /** The row when no live result applies: a stored fact, or not checked yet. */
   fallback: Verdict
-  /** Live check; null when stored facts decide the row. */
   probe: ProbeSpec | null
-  /** Changes when the provider or its credential changes; cached live results apply only to the same version. */
   version: string
   configuredModels: string[]
-  /** Compare configured with listed models (off for Azure deployments and per-person keys). */
   compareModels: boolean
-  /** Models the comparison may flag as missing, when narrower than configuredModels (custom providers: only ids their /models listed). */
   comparableModels?: string[]
-  /** State when the live check accepts the key and no model comparison applies (per-person LiteLLM keeps member_credentials). */
   accepted: Verdict | null
-  /** How a refused egress destination reads: Gateway providers are misconfigured; desktop-reached endpoints are simply not checked. */
   egressRefusal: Verdict
   members: ProviderCheck["members"]
 }
@@ -70,7 +49,6 @@ export type ProviderTarget = {
 export type ProbeOutcome = Verdict & {
   httpStatus: number | null
   durationMs: number
-  /** Model ids the endpoint listed, or null when it does not list models (or failed). */
   served: string[] | null
 }
 
@@ -98,8 +76,6 @@ function uniqueSorted(values: Iterable<string>): string[] {
   return [...new Set(values)].sort()
 }
 
-// ── Gateway providers ─────────────────────────────────────────────────────
-
 export type GatewayProviderInput = {
   id: string
   provider_id: string
@@ -121,33 +97,30 @@ export type GatewayCredentialInput = {
   expires_at: Date | null
   last_error: string | null
   updated_at: Date
-  /** Org-held credentials only; member credentials are never read. */
   secret: string | null
 }
 export type GatewayModelInput = { gateway_provider_id: string; model_id: string }
 
 type GatewayFamily = "openai" | "anthropic" | "google" | "bedrock" | "none"
 
-const FAMILY_BY_NPM: Record<string, GatewayFamily> = {
-  "@ai-sdk/openai": "openai",
-  "@ai-sdk/openai-compatible": "openai",
-  "@ai-sdk/mistral": "openai",
-  "@ai-sdk/azure": "openai",
-  "@openrouter/ai-sdk-provider": "openai",
-  "@ai-sdk/anthropic": "anthropic",
-  "@ai-sdk/google": "google",
-  "@ai-sdk/amazon-bedrock": "bedrock",
-  "@ai-sdk/amazon-bedrock/mantle": "none",
-  "@ai-sdk/google-vertex": "none",
-  "@ai-sdk/google-vertex/anthropic": "none",
+const PROBE_BY_FAMILY: Record<ProtocolFamily, GatewayFamily> = {
+  openai: "openai",
+  openai_compatible: "openai",
+  mistral: "openai",
+  azure: "openai",
+  anthropic: "anthropic",
+  google: "google",
+  bedrock: "bedrock",
+  bedrock_mantle: "none",
+  google_vertex: "none",
+  google_vertex_anthropic: "none",
+  microsoft_foundry: "none",
 }
 
 function gatewayFamily(provider: GatewayProviderInput): GatewayFamily {
-  // Claude on Microsoft Foundry uses the Anthropic SDK against an Entra-authenticated host.
   if (provider.provider_id === MICROSOFT_FOUNDRY_PROVIDER_ID) return "none"
-  const npm = readProviderConfigNpm(provider.provider_config)
-  if (npm && Object.hasOwn(FAMILY_BY_NPM, npm)) return FAMILY_BY_NPM[npm]
-  // The gateway forwards an unknown SDK with a known API base as OpenAI-compatible.
+  const family = gatewaySdkFamily(readProviderConfigNpm(provider.provider_config))
+  if (family) return PROBE_BY_FAMILY[family]
   return readString(provider.provider_config, "api") ? "openai" : "none"
 }
 
@@ -157,7 +130,6 @@ function memberCounts(credentials: readonly GatewayCredentialInput[], now: numbe
   for (const credential of credentials) {
     if (!credential.org_membership_id || credential.status === "revoked") continue
     const oauth = credential.kind === "oauth_google" || credential.kind === "oauth_azure" || credential.kind === "aws_sso"
-    // OAuth access tokens expire hourly and refresh on use; only a failed refresh needs the person.
     const expired = !oauth && credential.expires_at !== null && credential.expires_at.getTime() <= now
     if (credential.status === "refresh_failed" || credential.last_error === "invalid_client" || expired) attention.add(credential.org_membership_id)
     else connected.add(credential.org_membership_id)
@@ -182,7 +154,6 @@ function validBase(base: string | null): string | null {
   }
 }
 
-/** Stored facts of one org-held credential, or the probe it allows. */
 function orgCredentialVerdict(provider: GatewayProviderInput, credential: GatewayCredentialInput | undefined, now: number): Verdict | { probe: ProbeSpec | null; compareModels: boolean } {
   if (!credential || credential.status === "revoked" || !credential.secret) return CREDENTIAL_MISSING
   if (credential.status === "refresh_failed" || credential.last_error === "invalid_client") return CREDENTIAL_REJECTED
@@ -208,10 +179,8 @@ function orgCredentialVerdict(provider: GatewayProviderInput, credential: Gatewa
   const apiKey = apiKeyFromSecret(secret, provider.provider_config)
   if (!apiKey) return CREDENTIAL_MISSING
   if (isGatewayCustomProviderId(provider.provider_id)) {
-    // Custom OpenAI-compatible providers: one API key, the saved address and their own model list.
     const custom = readCustomProviderSettings(provider.settings)
     if (!custom || typeof provider.settings.upstreamBaseUrl !== "string" || secret.kind !== "api_key") return CONFIGURATION_ERROR
-    // The provider had no usable /models list when it was set up: a failed listing would say nothing about the key.
     if (custom.discovery.status === "unavailable") return { probe: null, compareModels: false }
   }
   const baseUrl = validBase(gatewayUpstreamDestination(provider.provider_id, provider.provider_config, provider.settings))
@@ -252,13 +221,11 @@ function liteLlmTarget(
   if (!credential || !usable || !credential.secret) {
     const refused: Verdict = credential?.status === "refresh_failed" ? CREDENTIAL_REJECTED
       : expired && credential?.status === "active" ? { state: "key_rejected", reason: "credential_expired" } : CREDENTIAL_MISSING
-    // Without the admin key a per-person provider still serves connected people; the org key is required.
     return { ...shared, fallback: member ? stored : refused, probe: null }
   }
   return { ...shared, fallback: stored, probe: { kind: "litellm", baseUrl, apiKey: credential.secret.trim() } }
 }
 
-/** One row per active org-mode or member-mode credential set (LiteLLM: one row per provider). */
 export function buildGatewayProviderTargets(input: {
   providers: readonly GatewayProviderInput[]
   sets: readonly GatewaySetInput[]
@@ -280,7 +247,6 @@ export function buildGatewayProviderTargets(input: {
       continue
     }
     const configurationError = gatewayConfigurationError(provider.provider_config, provider.settings)
-    // A model added by hand to a custom provider was never in its /models list, so its absence there is not a failure.
     const listed = isGatewayCustomProviderId(provider.provider_id) ? readCustomProviderSettings(provider.settings)?.discovery.listedModelIds : undefined
     const comparableModels = listed ? configuredModels.filter((model) => listed.includes(model)) : undefined
     for (const set of sets) {
@@ -314,8 +280,6 @@ export function buildGatewayProviderTargets(input: {
   return targets
 }
 
-// ── Legacy (desktop-delivered) providers ──────────────────────────────────
-
 export type LegacyProviderInput = {
   id: string
   source: "models_dev" | "custom" | "openwork"
@@ -344,7 +308,6 @@ export function buildLegacyProviderTargets(input: {
 }): ProviderTarget[] {
   const targets: ProviderTarget[] = []
   for (const provider of input.providers) {
-    // The OpenWork provider row is summarized by the OpenWork Models row.
     if (provider.source === "openwork") continue
     const common = {
       id: provider.id, source: "legacy" as const, providerId: provider.providerId, name: provider.name, credentialName: null,
@@ -368,7 +331,6 @@ export function buildLegacyProviderTargets(input: {
       continue
     }
     const apiKey = legacyApiKey(provider)
-    // Den may not be able to reach an endpoint only the desktop app uses (e.g. a private network).
     const baseUrl = validBase(configured)
     if (!apiKey || !baseUrl) {
       targets.push({ ...common, fallback: apiKey ? NO_LIVE_CHECK : { state: "not_checked", reason: "credential_missing" }, probe: null, compareModels: false, members: null })
@@ -390,8 +352,6 @@ export function openWorkModelsTarget(): ProviderTarget {
   }
 }
 
-// ── Live probes ───────────────────────────────────────────────────────────
-
 export type ProbeDeps = {
   fetchImpl: typeof fetch
   timeoutMs?: number
@@ -401,7 +361,6 @@ export type ProbeDeps = {
 type ProbeFailure = { error: unknown }
 
 function statusVerdict(status: number, kind: ProbeSpec["kind"]): Verdict {
-  // Google AI Studio answers an invalid API key with 400 API_KEY_INVALID.
   if (status === 401 || status === 403 || (kind === "google" && status === 400)) return CREDENTIAL_REJECTED
   if (status === 404) return { state: "misconfigured", reason: "endpoint_not_found" }
   return { state: "unreachable", reason: "unexpected_response" }
@@ -454,7 +413,6 @@ async function listWithHeaders(fetchImpl: typeof fetch, kind: "anthropic" | "goo
   }
 }
 
-/** One bounded, read-only check. Never throws. */
 export async function runProviderProbe(probe: ProbeSpec, egressRefusal: Verdict, deps: ProbeDeps): Promise<ProbeOutcome> {
   const now = deps.now ?? Date.now
   const started = now()
@@ -535,10 +493,7 @@ export async function runProviderProbe(probe: ProbeSpec, egressRefusal: Verdict,
   }
 }
 
-// ── Results ───────────────────────────────────────────────────────────────
-
 export type EvaluatedProvider = {
-  /** Present only when a live check could run for this row. */
   probed: boolean
   version: string
   check: ProviderCheck
@@ -546,11 +501,9 @@ export type EvaluatedProvider = {
 
 const SUCCESS_STATES: ReadonlySet<ProviderCheckState> = new Set(["ready", "model_missing", "member_credentials"])
 
-/** The row for a target and its live outcome (null: no live result applies). */
 export function providerCheckFromOutcome(target: ProviderTarget, outcome: ProbeOutcome | null, checkedAt: string, previousSuccessAt: string | null): ProviderCheck {
   const base = {
     id: target.id, source: target.source,
-    // Stored names are bounded by their columns; keep the contract's bounds even for odd rows.
     providerId: target.providerId.slice(0, 128) || "unknown",
     name: target.name.trim().slice(0, 255) || target.providerId.slice(0, 255) || "Provider",
     credentialName: target.credentialName?.slice(0, 255) ?? null,
@@ -603,10 +556,6 @@ export async function mapLimited<T, R>(items: readonly T[], limit: number, run: 
   return results
 }
 
-/**
- * Rows for every target. With `live`, probes the targets that allow it (at
- * most PROVIDER_PROBE_CONCURRENCY at a time); otherwise stored facts only.
- */
 export async function evaluateProviderTargets(
   targets: readonly ProviderTarget[],
   options: { live: boolean; deps: ProbeDeps; previousSuccess?: ReadonlyMap<string, string> },

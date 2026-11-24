@@ -12,7 +12,7 @@ const INSTALLER = "C:\\ow\\release.exe";
 const INSTALL_DIR = "C:\\Users\\Administrator\\AppData\\Local\\Programs\\@openworkdesktop";
 const PROFILE = "C:\\Users\\Administrator\\AppData\\Roaming\\com.differentai.openwork";
 const LOG = "C:\\ow\\desktop.log";
-const CDP_PORT = 9223; // The packaged app overrides the requested 9222 port with 9223.
+const CDP_PORT = 9223;
 const POLL_MS = 5_000;
 
 function literal(value: string): string {
@@ -166,7 +166,7 @@ export async function provisionWindowsReleaseSandbox(options: {
     const launchCmd = "C:\\ow\\launch.cmd";
     await stage(step, "win-launch", "Launch OpenWork in the desktop session", async () => {
     await runPowerShell(exec, sandbox,
-      `${commandFile(launchCmd, ["@echo off", `"${BINARY}" --no-sandbox --remote-debugging-port=9222 > "${LOG}" 2>&1`])}\n${task("OpenWorkWorldLaunch", launchCmd)}`,
+      `${commandFile(launchCmd, ["@echo off", `set OPENWORK_ELECTRON_REMOTE_DEBUG_PORT=${CDP_PORT}`, `"${BINARY}" --no-sandbox > "${LOG}" 2>&1`])}\n${task("OpenWorkWorldLaunch", launchCmd)}`,
       "launch Windows release as interactive Administrator");
     const observed = await pollWindowsUntil(async () => {
       const output = await runPowerShell(exec, sandbox,

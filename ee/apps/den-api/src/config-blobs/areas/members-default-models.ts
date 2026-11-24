@@ -1,16 +1,3 @@
-/**
- * Config-blob area `members.default-models`: the Models tab of Everyone and
- * of each team (the model new desktop chats start with).
- *
- * - One item per stored choice: the organization default (key `everyone`) or
- *   one team's override (`team` references `members.teams`).
- * - `provider` is `"openwork"` (OpenWork Models) or a reference to the
- *   provider: `ai-gateway.byok/<lpr_…>` or `ai-gateway.providers/<ipr_…>`,
- *   so it is remapped to the target's provider on import.
- * - Apply checks the model against the target's own models exactly as the
- *   routes do (routes/org/default-model.ts: checkDefaultModelChoice over
- *   listDefaultModelOptions) and writes through saveDefaultModel.
- */
 import { and, asc, eq, inArray } from "@openwork-ee/den-db/drizzle"
 import { GatewayProviderTable, LlmProviderTable, OrgDefaultModelTable, TeamTable } from "@openwork-ee/den-db/schema"
 import { denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -41,11 +28,8 @@ const BYOK_AREA = "ai-gateway.byok"
 const GATEWAY_AREA = "ai-gateway.providers"
 
 const specSchema = z.object({
-  /** null: the organization default. Otherwise the team whose override this is. */
   team: configRefSchema.nullable().default(null),
-  /** `openwork` (OpenWork Models), or the organization's provider (`ai-gateway.byok/…`) or AI Gateway provider (`ai-gateway.providers/…`). */
   provider: z.union([z.literal(OPENWORK_MODELS_PROVIDER_ID), configRefSchema]),
-  /** The model id; for the AI Gateway, the catalog model id. */
   modelId: z.string().trim().min(1).max(255),
 }).strict()
 
@@ -100,7 +84,6 @@ async function readChoices(ctx: ConfigAreaContext, ids?: string[]): Promise<Conf
   const names = await providerNames(ctx, rows.map((row) => row.providerId))
   const items = rows.flatMap((row): ConfigItem[] => {
     const provider = providerRef(row.providerId, names)
-    // A provider id the area can't reference (not openwork / lpr_ / ipr_) has nothing to remap it to.
     if (provider === null) return []
     if (row.scopeKey === DEFAULT_MODEL_EVERYONE_SCOPE) {
       return [{ id: row.id, key: DEFAULT_MODEL_EVERYONE_SCOPE, name: "Everyone", spec: { team: null, provider, modelId: row.modelId } }]
@@ -137,7 +120,6 @@ async function currentRow(ctx: ConfigAreaContext, scope: TeamScope) {
   return row ?? null
 }
 
-/** The route's check: only models the target organization has. */
 async function checkChoice(ctx: ConfigAreaContext, choice: DefaultModelChoice) {
   const check = checkDefaultModelChoice(choice, await listDefaultModelOptions(normalizeDenTypeId("organization", ctx.organizationId)))
   if (check === "unknown_model") {
@@ -159,7 +141,6 @@ async function save(ctx: ConfigAreaContext, scope: TeamScope, model: DefaultMode
   try {
     await write()
   } catch (error) {
-    // As the route: a concurrent first save of the same scope created the row; replace it.
     if (!isDuplicateEntry(error)) throw error
     await write()
   }
@@ -194,7 +175,7 @@ export const membersDefaultModelsArea = defineConfigArea({
   uniqueFields: [{ label: "scope", get: scopeUniqueKey }],
   informationalName: true,
   secretFields: [],
-  // saveDefaultModel and the model check read and write the global db.
+  requiredRefs: ["team", "provider"],
   transactional: false,
   irreversible: () => [],
 

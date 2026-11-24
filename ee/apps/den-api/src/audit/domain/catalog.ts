@@ -1,16 +1,4 @@
-// Event types appended by domain emitters (src/audit/domain/*) through
-// appendAuditChanges or the user-membership fan-out (src/audit/fanout.ts);
-// change category unless domainEventCategories says otherwise. Every emitted action must be listed here so the
-// event-type catalog (GET /v1/audit/event-types) can filter it; the coverage
-// script checks that every LEGACY_ACTION_BRIDGE target is registered.
-
-/**
- * Emitter module per domain change action. api_key.revoked is not a legacy
- * bridge target: implicit revocation when a member's role, ownership or
- * membership changes (revokeOrganizationApiKeysForMember; enabled → false).
- */
 export const domainChangeEmitters: Readonly<Record<string, string>> = {
-  // Retired with organization grants (2026-10): nothing emits them any more; kept so past events stay filterable.
   "organization.benefit_setting.updated": "retired (organization grants)",
   "organization.benefit_grant.created": "retired (organization grants)",
   "organization.benefit_grant.revoked": "retired (organization grants)",
@@ -29,9 +17,9 @@ export const domainChangeEmitters: Readonly<Record<string, string>> = {
   "permission_set.renamed": "audit/domain/permissions.ts", "permission_set.teams_changed": "audit/domain/permissions.ts",
   "permission_set.members_changed": "audit/domain/permissions.ts",
   "agent_permission_policy.updated": "audit/domain/agent-permissions.ts", "agent_permission_policy.removed": "audit/domain/agent-permissions.ts",
-  // Organization-bound MCP OAuth tokens (consent referenceId; src/audit/better-auth.ts).
+  "managed_deployment.renamed": "audit/domain/managed-deployments.ts", "managed_deployment.configuration_change_requested": "audit/domain/managed-deployments.ts",
+  "managed_deployment.configuration_change_withdrawn": "audit/domain/managed-deployments.ts",
   "oauth_token.issued": "audit/domain/oauth-tokens.ts", "oauth_token.revoked": "audit/domain/oauth-tokens.ts",
-  // User-scoped events (attribution user_memberships, src/audit/fanout.ts).
   "session.created": "audit/domain/sessions.ts", "session.revoked": "audit/domain/sessions.ts", "session.organization_entered": "audit/domain/sessions.ts",
   "session.handed_off": "audit/domain/sessions.ts", "desktop_handoff.created": "audit/domain/sessions.ts",
   "session.sign_in_failed": "audit/domain/sessions.ts",
@@ -40,7 +28,6 @@ export const domainChangeEmitters: Readonly<Record<string, string>> = {
   "account.provider_token.accessed": "audit/domain/account.ts",
 }
 
-/** Non-change categories of domain events (everything else is "change"). */
 export const domainEventCategories: Readonly<Record<string, "security" | "access">> = {
   "session.sign_in_failed": "security", "account.provider_token.accessed": "access",
 }

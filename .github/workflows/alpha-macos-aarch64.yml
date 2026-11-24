@@ -186,9 +186,7 @@ jobs:
         continue-on-error: true
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
-          key: macos-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            macos-pnpm-
+          key: alpha-release-${{ runner.os }}-${{ runner.arch }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
 
       - name: Install dependencies
         run: pnpm --filter @openwork/desktop... --filter @openwork/app... --filter openwork-server... install --frozen-lockfile --prefer-offline
@@ -274,6 +272,7 @@ jobs:
         env:
           TARGET: aarch64-apple-darwin
           OPENWORK_REUSE_NATIVE_HELPERS: "true"
+          VITE_OPENWORK_OFFICIAL_RELEASE: ${{ github.repository == 'different-ai/openwork' && '1' || '0' }}
         run: |
           set -euo pipefail
           # Capture provenance at build start, not when the rolling release or
@@ -281,6 +280,12 @@ jobs:
           echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "started_at=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
           pnpm --filter @openwork/desktop build:electron
+
+      - name: Prepare desktop free model release proof
+        if: github.repository == 'different-ai/openwork'
+        env:
+          DESKTOP_FREE_RELEASE_KEY: ${{ secrets.DESKTOP_FREE_RELEASE_KEY }}
+        run: node apps/desktop/scripts/prepare-desktop-free-release.mjs
 
       - name: Package Electron alpha (macOS, signed + notarized)
         if: env.MACOS_NOTARIZE == 'true'
@@ -501,9 +506,7 @@ jobs:
         continue-on-error: true
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
-          key: Windows-electron-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            Windows-electron-pnpm-
+          key: alpha-release-${{ runner.os }}-${{ runner.arch }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
 
       - name: Install dependencies
         run: pnpm --filter @openwork/desktop... --filter @openwork/app... --filter openwork-server... install --frozen-lockfile --prefer-offline
@@ -529,11 +532,18 @@ jobs:
         id: alpha-build
         env:
           TARGET: x86_64-pc-windows-msvc
+          VITE_OPENWORK_OFFICIAL_RELEASE: ${{ github.repository == 'different-ai/openwork' && '1' || '0' }}
         run: |
           set -euo pipefail
           echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           echo "started_at=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "$GITHUB_OUTPUT"
           pnpm --filter @openwork/desktop build:electron
+
+      - name: Prepare desktop free model release proof
+        if: github.repository == 'different-ai/openwork'
+        env:
+          DESKTOP_FREE_RELEASE_KEY: ${{ secrets.DESKTOP_FREE_RELEASE_KEY }}
+        run: node apps/desktop/scripts/prepare-desktop-free-release.mjs
 
       - name: Test Windows signing scripts
         shell: pwsh

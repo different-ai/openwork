@@ -3,6 +3,7 @@ import * as React from "react";
 import type { WorkspaceConnectionState } from "../../../../app/types";
 import type { SessionNumberShortcutOs } from "../../../shell/session-number-shortcuts";
 import type { SessionWaitingKind } from "../status/session-activity-store";
+import type { SessionTree } from "./session-tree";
 
 export type SidebarContextValue = {
   draftScope?: string | null;
@@ -11,7 +12,6 @@ export type SidebarContextValue = {
   developerMode: boolean;
   showSessionActions?: boolean;
   sessionStatusById?: Record<string, string>;
-  /** Why a row needs the person when a delegated child, not the session itself, is asking. */
   sessionAttentionLabelById?: Record<string, string>;
   sessionAttentionSourceById?: Record<string, "child" | "descendant">;
   sessionAttentionKindById?: Record<string, SessionWaitingKind>;
@@ -26,6 +26,9 @@ export type SidebarContextValue = {
   onOpenRenameSession?: (sessionId: string, workspaceId: string) => void;
   onOpenDeleteSession?: (sessionId: string, workspaceId: string) => void;
   onArchiveSession?: (sessionId: string, archived: boolean, workspaceId: string) => void;
+  onArchiveSessions?: (sessions: { workspaceId: string; sessionId: string }[], archived: boolean) => void;
+  multiSelectEnabled: boolean;
+  isSessionArchived: (workspaceId: string, sessionId: string) => boolean;
   archiveDisabledReason?: string;
   onOpenCreateGroupModal?: (workspaceId: string) => void;
   onOpenRenameWorkspace: (workspaceId: string) => void;
@@ -36,6 +39,7 @@ export type SidebarContextValue = {
   expandedWorkspaceIds: Set<string>;
   sessionNumberShortcutOs: SessionNumberShortcutOs;
   sessionNumberShortcutByTarget: ReadonlyMap<string, number>;
+  sessionTreeFor: (workspaceId: string) => SessionTree;
 };
 
 export const SidebarContext = React.createContext<SidebarContextValue | null>(null);

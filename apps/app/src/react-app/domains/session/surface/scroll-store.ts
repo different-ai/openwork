@@ -11,7 +11,6 @@ export type SessionHistoryPagePosition = {
   lineage: (string | null)[];
 };
 
-// Geometry and nearby IDs only: never persist transcript text or tool results.
 export type SessionScrollGeometry = {
   owner: string;
   scrollHeight: number;
@@ -37,8 +36,6 @@ type ManualSessionScrollState = {
 };
 
 export type SessionScrollState = (StickyBottomSessionScrollState | ManualSessionScrollState) & {
-  // Also retain ownership on legacy entries until claimed, even if their
-  // optional geometry is evicted before the conversation is reopened.
   owner?: string;
 };
 
@@ -134,7 +131,6 @@ function persistSessionScrollState(sessions: SessionScrollStateById): void {
   if (globalThis.window === undefined) return;
 
   try {
-    // Clipped-message controls are presentation state, not a reading position.
     const positions = Object.fromEntries(Object.entries(sessions).map(([id, state]) => [id,
       state.mode === "manual"
         ? { mode: state.mode, scrollTop: state.scrollTop, anchor: state.anchor, owner: state.owner, geometry: state.geometry }
@@ -258,8 +254,6 @@ export const useSessionScrollStore = create<SessionScrollStore>((set) => ({
     if (!legacy || (legacyOwner && legacyOwner !== owner)) return state;
     const key = sessionScrollKey(sessionId, owner);
     const sessions = { ...state.sessions };
-    // Geometry-free v1 positions have no recoverable owner. Claim them once,
-    // never copy them into every workspace exposing the same session ID.
     sessions[key] ??= { ...legacy, owner };
     delete sessions[sessionId];
     schedulePersistence(legacy, sessions[key], true);
@@ -272,7 +266,6 @@ export const useSessionScrollStore = create<SessionScrollStore>((set) => ({
     const updated = { ...current, owner: next.owner, geometry: next };
     schedulePersistence(current, updated);
     const sessions = { ...state.sessions, [sessionId]: updated };
-    // Keep positions indefinitely, but bound the heavier geometry hints.
     const older = Object.keys(sessions).filter((id) => id !== sessionId && sessions[id].geometry);
     for (const id of older.slice(0, Math.max(0, older.length - 63))) {
       const { geometry: _geometry, ...position } = sessions[id];

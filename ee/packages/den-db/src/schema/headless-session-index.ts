@@ -13,23 +13,18 @@ import { denTypeIdColumn } from "../columns"
 export const HeadlessSessionIndexTable = mysqlTable(
   "headless_session_index",
   {
-    /** The runner session id (`hs_…`). */
     sessionId: varchar("session_id", { length: 128 }).notNull().primaryKey(),
     organizationId: denTypeIdColumn("organization", "org_id").notNull(),
-    /** The member the conversation belongs to; null when the capability named none. */
     memberId: denTypeIdColumn("member", "member_id"),
     kind: mysqlEnum("kind", ["workbot", "slack", "automation"]).notNull(),
-    /** The conversation's name as the runner shows it (its first answer names it); at most 200 characters. */
     title: varchar("title", { length: 200 }).notNull().default(""),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull(),
     updatedAt: timestamp("updated_at", { fsp: 3 }).notNull(),
     hotBytes: bigint("hot_bytes", { mode: "number" }).notNull().default(0),
     segmentCount: int("segment_count").notNull().default(0),
     totalBytes: bigint("total_bytes", { mode: "number" }).notNull().default(0),
-    /** When the turn now running started; null when none is. Stuck-turn detection reads it (alerting is Phase 3). */
     activeTurnSince: timestamp("active_turn_since", { fsp: 3 }),
     deletedAt: timestamp("deleted_at", { fsp: 3 }),
-    /** The runner's per-session snapshot version; an update with a version at or below it changes nothing. */
     version: bigint("version", { mode: "number" }).notNull(),
     retentionClass: varchar("retention_class", { length: 64 }),
     legalHold: boolean("legal_hold").notNull().default(false),

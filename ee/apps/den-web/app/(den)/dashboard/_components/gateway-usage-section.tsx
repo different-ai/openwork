@@ -42,7 +42,6 @@ export function GatewayUsageSection({ orgId }: { orgId: string }) {
       ? typeof day.costValues[series.id] === "number"
       : (day.values[series.id] ?? 0) > 0))
     : [];
-  // Keep assignments in this mounted section while the chart reloads for filters.
   const colors = useSeriesColors(usage?.series.map((series) => series.id) ?? [], `${orgId}:${groupBy}`);
   const chartDays = usage?.daily.map((day) => ({
     date: day.date,

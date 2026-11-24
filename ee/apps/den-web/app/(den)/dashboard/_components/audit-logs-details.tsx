@@ -47,7 +47,6 @@ function auditSentenceNoun(value: string): string {
   return auditLabel(value).replace(/^[A-Z](?=[a-z])/, (letter) => letter.toLowerCase());
 }
 
-/** The stored action remains verbatim in Technical details. */
 export function auditActionSentence(action: string): string {
   const parts = action.split(".");
   const ending = parts.pop() ?? "";
@@ -74,7 +73,6 @@ export function auditActionSentence(action: string): string {
     granted: "granted", revoked: "revoked", started: "started", completed: "completed",
   };
   if (past[ending]) return `${past[ending]} ${auditSentenceNoun(parts.join("."))}`;
-  // Only known reads get read wording. An unknown requested/attempted action may be a mutation.
   if (parts.join(".") === "audit.operations" && (ending === "requested" || ending === "attempted")) {
     return `${ending === "requested" ? "requested" : "attempted"} audit operations read`;
   }
@@ -89,7 +87,6 @@ export const auditOriginLabels: Record<AuditOperationSummary["origin"], string> 
   api: "API", cloud_ui: "Cloud UI", mcp: "Agent (MCP)", scheduler: "Scheduler", webhook: "Webhook", platform_admin: "Platform admin",
 };
 
-/** An outcome in the Computers status language: a dot and a word. Color only for what needs attention. */
 export function auditOutcomeStatus(outcome: AuditOperationSummary["outcome"] | AuditEventEnvelope["outcome"]): { label: string; tone: "success" | "warning" | "danger" | "neutral" } {
   return { label: auditOutcomeLabels[outcome], tone: outcome === "failed" ? "danger" : outcome === "partial" || outcome === "denied" ? "warning" : outcome === "succeeded" ? "success" : "neutral" };
 }
@@ -245,8 +242,6 @@ export function AuditUsageFacts({ usage, captureControl }: { usage: AuditUsageRe
     { label: "Recorded events", value: usage.eventCount.toLocaleString() },
     { label: "Oldest available history", value: <AuditTime value={usage.oldestAvailableAt} /> },
     { label: "Logical storage", value: `${usage.logicalBytes.toLocaleString()} bytes (not disk usage)` },
-    // Retained operations, recorded events and logical storage are recomputed by a
-    // daily refresh (den-audit-usage), not on every write.
     { label: "Totals last refreshed", value: usage.measuredAt ? <><AuditTime value={usage.measuredAt} />, refreshed daily</> : "Not yet, refreshed daily" },
     { label: "Policy source", value: policy ? policy.source === "operator" ? "Instance operator" : "Cloud" : "Not configured" },
     { label: "Categories", value: policy ? policy.categories.map(auditLabel).join(", ") || "None" : "Not configured" },

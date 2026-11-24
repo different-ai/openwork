@@ -16,7 +16,6 @@ import {
   type LibraryUsageWindow,
 } from "./library-usage-data";
 
-/** True when the signed-in member can view usage analytics. */
 export function useLibraryUsageAvailable() {
   const { orgContext } = useOrgDashboard();
   const member = orgContext?.currentMember;
@@ -37,14 +36,12 @@ export function useLibraryUsage(kind: LibraryUsageKind, days: LibraryUsageWindow
       if (!response.ok) throw new Error(getErrorMessage(payload, `Could not load usage (${response.status}).`));
       return libraryUsageReportSchema.parse(payload);
     },
-    // Keep the last counts while switching range; never show another view's rows.
     placeholderData: (previous) => previous?.kind === kind ? keepPreviousData(previous) : undefined,
     retry: false,
     staleTime: 60_000,
   });
 }
 
-/** One item's or one person's uses grouped by member, item or day. */
 export function useLibraryUsageBreakdown(kind: LibraryUsageKind, days: LibraryUsageWindow, groupBy: LibraryUsageGrouping, scope: LibraryUsageScope) {
   const { orgId, orgContext, orgBusy, orgError, mutationBusy } = useOrgDashboard();
   const available = useLibraryUsageAvailable();
@@ -60,7 +57,6 @@ export function useLibraryUsageBreakdown(kind: LibraryUsageKind, days: LibraryUs
       if (!response.ok) throw new Error(getErrorMessage(payload, `Could not load usage (${response.status}).`));
       return { scopeKey, groupBy, ...libraryUsageBreakdownSchema.parse(payload) };
     },
-    // Keep the last counts while switching range, never another item's, person's or grouping's.
     placeholderData: (previous) => previous?.kind === kind && previous.scopeKey === scopeKey && previous.groupBy === groupBy ? keepPreviousData(previous) : undefined,
     retry: false,
     staleTime: 60_000,

@@ -31,19 +31,12 @@ import { connectionStatusMatch } from "./native-capabilities.js"
 import { listRemoteSessionCapabilities } from "./remote-session-capabilities.js"
 import { SLACK_SEND_AS_BOT_ARGUMENTS_SCHEMA, SLACK_SEND_AS_BOT_CAPABILITY, SLACK_SEND_AS_BOT_SUMMARY } from "./slack-send-as-bot.js"
 
-// The same bounds capability search gives one provider probe.
 const LIST_LIFECYCLE_TIMEOUT_MS = 8_000
 const LIST_REQUEST_TIMEOUT_MS = 5_000
-const READ_ONLY_REMOTE_SESSION_ACTIONS = new Set(["read", "list", "targets", "status"])
+export const READ_ONLY_REMOTE_SESSION_ACTIONS = new Set(["read", "list", "targets", "status"])
 
-/**
- * What a full-view request needs: the whole list (`tools/list`), some
- * namespaces' tools (a `tools/call` resolves only its own), or only the
- * connections that are not ready (a connection_status call).
- */
 export type ConnectFullToolScope = "list" | "status" | { namespaces: ReadonlySet<string> }
 
-/** The namespace a full-view tool name belongs to, or null for a name without one. */
 export function connectFullToolNamespace(name: string): string | null {
   const separator = name.indexOf(".")
   return separator > 0 ? name.slice(0, separator) : null
@@ -79,11 +72,6 @@ async function enumerated(ctx: CapabilityRegistryContext, kind: CapabilitySource
   return "excluded" in result ? [] : result
 }
 
-/**
- * The provider's tools for one ready connection, from the tools cache search
- * shares when it can, so listing does not probe every provider each time.
- * Null when the provider cannot list them now.
- */
 async function connectionTools(
   ctx: CapabilityRegistryContext,
   connection: ExternalMcpConnectionRow,
@@ -111,7 +99,6 @@ async function connectionTools(
   }
 }
 
-/** Connections the member may use but cannot call yet, under the namespace connection_status takes for each. */
 function pendingConnections(
   namespaceContext: CodemodeConnectionNamespaceContext,
   external: readonly ExternalMcpConnectionRow[],
@@ -136,12 +123,6 @@ function pendingConnections(
   return { pendingSources, pending }
 }
 
-/**
- * The services the member may use, for the engine's directory
- * (engine-tool-view.ts): each ready connection under the namespace of its
- * tools, and each pending one under the namespace connection_status takes.
- * Readiness is checked without listing any provider's tools.
- */
 export async function loadConnectServices(ctx: CapabilityRegistryContext): Promise<ConnectService[]> {
   const member = ctx.member
   if (!member) return []
@@ -158,18 +139,9 @@ export async function loadConnectServices(ctx: CapabilityRegistryContext): Promi
   return [...ready, ...pending.map(({ namespace, name }) => ({ namespace, name, ready: false }))]
 }
 
-/**
- * Every capability the calling member may use, as full-view tools, built from
- * the capability registry's own sources: native Google/Microsoft operations
- * and platform-admin tools as Code Mode enumerates them, ready external MCP
- * connections' tools under their tool policy, the member's Workflows and
- * Apps, remote sessions, and slack_send_as_bot. Each tool names the capability
- * execute_capability runs.
- */
 export async function loadConnectFullTools(input: {
   ctx: CapabilityRegistryContext
   scope: ConnectFullToolScope
-  /** Apps this member can open; none when building Apps is off. */
   apps: () => Promise<McpAppEntry[]>
   execute: (call: CapabilityCall) => Promise<ExecuteCapabilityToolResult>
 }): Promise<LoadedConnectFullTools> {
@@ -179,10 +151,6 @@ export async function loadConnectFullTools(input: {
   const namespaceContext = await ctx.resolveNamespaceContext()
   const candidates: ConnectFullToolCandidate[] = []
 
-  // OpenWork's own API operations stay in search_capabilities, which the full
-  // view keeps for them: whether a member may call one depends on per-route
-  // roles a list cannot check. The exception is the key request a connection
-  // card tells the agent to run.
   if (scope !== "status") {
     if (wants("den")) {
       const keyRequest = ctx.catalog.filter((operation) => operation.name === CONNECTION_KEY_REQUEST_CAPABILITY)
@@ -192,9 +160,7 @@ export async function loadConnectFullTools(input: {
     candidates.push(...leafCandidates((await enumerated(ctx, "native")).filter((leaf) => wants(leaf.namespace))))
   }
 
-  // Connections whose tools are all disabled are left out entirely, as in search.
   const external = namespaceContext.externalMcpConnections.filter((connection) => !connection.toolPolicy?.allDisabled)
-  // The whole list and connection_status need every connection's readiness; a tools/call only its own.
   const readyIds = typeof scope === "object" || !member
     ? null
     : new Set((await readyExternalMcpConnectionsForMember(external, member.orgMembershipId)).map((connection) => connection.id))
@@ -283,7 +249,6 @@ export async function loadConnectFullTools(input: {
       const id = pending.find((entry) => entry.namespace === connection.namespace)?.id
       const source = id ? pendingSources.get(id) : undefined
       if (source?.kind === "externalMcp") {
-        // The live probe and card the connection's status capability returns.
         return input.execute({ name: buildExternalCapabilityName(source.connection.id, "*") })
       }
       const status = source?.kind === "native" ? connectionStatusMatch(source.entry, 1).connectionStatus : undefined

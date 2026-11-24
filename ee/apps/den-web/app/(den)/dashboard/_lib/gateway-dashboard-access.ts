@@ -1,10 +1,6 @@
 import { getPermissionDefinition, type PermissionKey } from "@openwork/types/den/permissions";
 import { type DenOrgAccessFlags, type DenOrgContext, getOrgAccessFlags } from "../../_lib/den-org";
 
-/**
- * A part of the AI Gateway dashboard, named after the API reads it makes.
- * `any` is the Gateway as a whole: reachable with at least one Gateway permission.
- */
 export type GatewayDashboardArea = "any" | "overview" | "providers" | "manage-providers" | "limits" | "manage-limits" | "people";
 
 const GATEWAY_AREA_KEYS: Record<Exclude<GatewayDashboardArea, "any">, readonly PermissionKey[]> = {
@@ -34,7 +30,6 @@ export function canOpenGatewayArea(access: DenOrgAccessFlags, area: GatewayDashb
   return GATEWAY_AREA_KEYS[area].every((key) => holds(access, key));
 }
 
-/** Plain reason shown where a Gateway area is locked (DESIGN.md P4). */
 export function gatewayAreaLockedMessage(area: GatewayDashboardArea): string {
   const labels = area === "any" ? [] : GATEWAY_AREA_KEYS[area].map((key) => `“${getPermissionDefinition(key).label}”`);
   const needs = labels.length === 0
@@ -43,7 +38,6 @@ export function gatewayAreaLockedMessage(area: GatewayDashboardArea): string {
   return `This needs ${needs}. Ask an organization owner or admin for access.`;
 }
 
-/** Never use retained capabilities while the active workspace is unresolved. */
 export function getGatewayDashboardAccess({
   orgId,
   orgContext,

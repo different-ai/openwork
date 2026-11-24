@@ -2,7 +2,10 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <!-- interactive-widget: on Android the keyboard resizes the page itself, so the message box sits on top of it.
+         Left to cover the page, the keyboard hid part of the box in Chrome with gesture navigation.
+         Safari ignores the key; viewport.ts fits the page to its keyboard. -->
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" />
     <meta name="theme-color" content="#fbfcfd" />
     <meta name="robots" content="noindex, nofollow, noarchive" />
     <title>Workbot</title>

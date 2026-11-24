@@ -78,23 +78,12 @@ export type RecoveryActionResult = {
   reason?: string;
 };
 
-/**
- * What its owner's other devices can do on this computer: nothing (`off`),
- * start tasks (`created`), or also open sessions started here (`all`). The
- * choice is kept per organization.
- */
 export type RemoteSessionAccessState = {
-  /** The owner's choice for the organization this computer is connected to; null while they have not chosen. */
   mode: RemoteSessionAccessMode | null;
-  /** The most the organization allows; null until its server says. */
   ceiling: RemoteSessionAccessMode | null;
-  /** What applies right now. */
   effective: RemoteSessionAccessMode;
-  /** The organization's server accepted this computer for sessions started here. */
   supported: boolean;
-  /** A computer whose owner has not chosen takes nothing. */
   optIn: boolean;
-  /** This computer is connected to an organization, so a choice can be made. */
   connected: boolean;
 };
 
@@ -104,10 +93,6 @@ export type SpeechDictationEvent =
   | { id: string; type: "level"; level: number }
   | { id: string; type: "status"; status: "installing"; progress?: number }
   | { id: string; type: "error"; code: string };
-
-// ---------------------------------------------------------------------------
-// Electron bridge surface
-// ---------------------------------------------------------------------------
 
 declare global {
   interface Window {
@@ -131,7 +116,7 @@ declare global {
         onEvent?: (callback: (payload: SpeechDictationEvent) => void) => () => void;
       };
       automationRunner?: {
-        /** `computer_disconnected`: Den refuses this computer until someone signs in on it again. */
+        onRunLifecycle?: (callback: (event: unknown) => void) => () => void;
         onCredentialRejected?: (
           callback: (rejection?: { reason: "computer_disconnected" | "credential_rejected" }) => void,
         ) => () => void;
@@ -234,12 +219,8 @@ declare global {
           options?: { sessionId?: string | null },
         ) => Promise<OpenBrowserUrlResult>;
         setVisibleSession?: (sessionId: string | null) => Promise<string | null>;
-        /** Tells the host how the visible conversation shows its browser, so Escape inside a full-screen page can leave full screen. */
         setPresentation?: (sessionId: string | null, mode: BrowserPresentationMode) => Promise<boolean>;
-        /** A small JPEG preview of the visible conversation's on-screen tab, or null when none may be captured. */
-        /** Brings the popped-out browser window to the front. Only for the person's own action. */
         focusWindow?: () => Promise<boolean>;
-        /** A new thread's first message made it this session: its browser tabs become the session's. */
         claimDraftTabs?: (sessionId: string) => Promise<boolean>;
         navigate?: (url: string) => Promise<void>;
         back?: () => Promise<void>;
@@ -261,20 +242,15 @@ declare global {
         setProxy?: (proxy?: string | null) => Promise<BrowserProxyState>;
         getProxy?: () => Promise<BrowserProxyState>;
         setControlEnabled?: (enabled: boolean) => Promise<boolean>;
-        /** The size tabs lay out at while the agent controls them, drawn scaled to fit the panel. */
-        setAgentViewport?: (key: AgentViewportKey) => Promise<AgentViewportKey>;
-        /** The conversation started a new turn: tabs the person took over go back to the agent. */
+        setTabPageSize?: (tabId: string, key: AgentViewportKey) => Promise<boolean>;
         startAgentTurn?: (sessionId: string) => Promise<boolean>;
-        /** The conversation's turn ended: its tabs fit the panel again. */
         endAgentTurn?: (sessionId: string) => Promise<boolean>;
-        /** The member's agent permission rules for websites, applied to every page the built-in browser opens; null while they are being verified for an organization that uses them, which opens none. */
         setAgentPermissionRules?: (rules: DesktopAgentPermissionRule[] | null) => Promise<boolean>;
         showTabContextMenu?: (tabId: string, point?: { x: number; y: number }) => Promise<void>;
         destroy?: () => Promise<void>;
         onStateChange?: (callback: (state: BrowserStatePayload) => void) => () => void;
         onPanelOpened?: (callback: (payload?: BrowserPanelOwnerPayload) => void) => () => void;
         onPanelClosed?: (callback: (payload?: BrowserPanelOwnerPayload) => void) => () => void;
-        /** Escape was pressed inside the page of a conversation shown full screen. */
         onPresentationExit?: (callback: (payload: { sessionId: string | null; tabId: string }) => void) => () => void;
       };
       terminal?: {
@@ -290,6 +266,8 @@ declare global {
         distribution?: DesktopDistributionInfo;
         initialDeepLinks?: string[];
         platform?: "darwin" | "linux" | "windows";
+        arch?: string;
+        isPackaged?: boolean;
         version?: string;
         evalFatalBootstrapFailure?: string | null;
       };
@@ -297,16 +275,11 @@ declare global {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 export async function closeSessionBrowserTabs(sessionId: string): Promise<void> {
   if (typeof window === "undefined" || !sessionId.trim()) return;
   try {
     await window.__OPENWORK_ELECTRON__?.browser?.closeSessionTabs?.(sessionId);
   } catch {
-    // Cleanup is idempotent and must not undo a confirmed session deletion.
   }
 }
 
@@ -321,23 +294,11 @@ async function invokeElectronHelper<C extends DesktopCommandName>(
   return (await invokeDesktop(command, ...args)) as DesktopCommandResult<C>;
 }
 
-// Pure utility — resolves the selected workspace ID from a workspace list
-// payload, handling legacy fields.
 export function resolveWorkspaceListSelectedId(
   list: Pick<WorkspaceList, "selectedId" | "activeId"> | null | undefined,
 ): string {
   return list?.selectedId?.trim() || list?.activeId?.trim() || "";
 }
-
-// ---------------------------------------------------------------------------
-// Desktop bridge (Electron IPC proxy)
-// ---------------------------------------------------------------------------
-
-// All bridge methods are implemented via invokeDesktop IPC. The Proxy
-// automatically maps property access to `invokeDesktop(propertyName, ...args)`.
-// Per-command signatures come from the shared DesktopCommandMap contract
-// (packages/types/src/desktop-ipc.ts), so every destructured export below is
-// precisely typed against what the Electron main process implements.
 
 type DesktopBridge = DesktopCommandInvokers & {
   resolveWorkspaceListSelectedId: typeof resolveWorkspaceListSelectedId;
@@ -347,14 +308,10 @@ type DesktopBridgeFn = (...args: unknown[]) => Promise<unknown>;
 
 const electronBridge: Record<string, DesktopBridgeFn> = {};
 
-// The cast is inherent to the Proxy pattern: the target is an empty cache and
-// members are fabricated on access. The contract typing above is what keeps
-// it honest (command names + signatures are checked on both sides).
 export const desktopBridge = new Proxy(electronBridge, {
   get(target, prop) {
     if (typeof prop !== "string") return undefined;
 
-    // resolveWorkspaceListSelectedId is a pure function, not an IPC call
     if (prop === "resolveWorkspaceListSelectedId") {
       return resolveWorkspaceListSelectedId;
     }
@@ -367,9 +324,6 @@ export const desktopBridge = new Proxy(electronBridge, {
       if (!invokeDesktop) {
         throw new Error(`Electron desktop helper is unavailable: ${prop}`);
       }
-      // The Proxy is the one dynamic point in the bridge: `prop` is whatever
-      // property was accessed, already constrained by the DesktopBridge
-      // surface this Proxy is exported as.
       return invokeDesktop(
         prop as DesktopCommandName,
         ...(args as DesktopCommandArgs<DesktopCommandName>),
@@ -379,14 +333,6 @@ export const desktopBridge = new Proxy(electronBridge, {
     return fn;
   },
 }) as unknown as DesktopBridge;
-
-// ---------------------------------------------------------------------------
-// desktopFetch — proxies non-loopback requests through the Electron main
-// process. Loopback hosts (the local opencode/openwork server) use the
-// renderer's own fetch, which works against same-machine services. Cross-origin
-// requests that need CORS headers the target does not send (e.g. the Den API on
-// a different control plane) should instead use `desktopFetchViaMain` directly.
-// ---------------------------------------------------------------------------
 
 function isLoopbackUrl(input: RequestInfo | URL): boolean {
   const raw = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -444,10 +390,6 @@ async function desktopFetchThroughMain(
   init?: DesktopFetchRequestInit,
   options: DesktopFetchMainOptions = {},
 ): Promise<Response> {
-  // Extract method/headers/body from either a Request object or the (input, init)
-  // pair. The OpenCode SDK calls fetch(request) (no init), so reading these only
-  // from `init` would silently drop the Authorization header and the POST body
-  // — the remote would then reject every request with "Invalid bearer token".
   let url: string;
   let method: string | undefined;
   let headers: Record<string, string> | undefined;
@@ -461,8 +403,6 @@ async function desktopFetchThroughMain(
     if (typeof init?.body === "string") {
       body = init.body;
     } else if (input.body) {
-      // Request body is a stream — buffer to text so it survives the IPC hop
-      // to the Electron main process.
       body = await input.clone().text();
     }
   } else {
@@ -474,8 +414,6 @@ async function desktopFetchThroughMain(
 
   const diagnosticsDeadlineAtMs = options.agentContextDiagnosticsDeadlineAtMs;
   const requestMethod = (method ?? "GET").toUpperCase();
-  // Stop must retain its transport deadline when archive uses IPC. Prompt and
-  // command POSTs keep their distinct admission/unknown-outcome contract.
   const cancellable = ["GET", "PATCH"].includes(requestMethod)
     || (requestMethod === "POST" && /\/session\/[^/]+\/abort$/.test(new URL(url).pathname))
     || isPermissionReplyRequest(url, { method: requestMethod })
@@ -485,7 +423,6 @@ async function desktopFetchThroughMain(
     : undefined;
   const transferId = signal ? desktopTransferId() : undefined;
   const fetchInit: DesktopFetchInit = {
-    // Only forward explicit refusal. Existing callers keep their transport defaults.
     ...((init?.redirect ?? (input instanceof Request ? input.redirect : undefined)) === "error"
       ? { redirect: "error" satisfies RequestRedirect }
       : {}),
@@ -511,8 +448,6 @@ async function desktopFetchThroughMain(
     throw error;
   }
 
-  // Response constructor rejects bodies for null-body status codes, so we
-  // must pass null instead of an empty string for those.
   const NULL_BODY_STATUSES = new Set([101, 204, 205, 304]);
   const responseBody = NULL_BODY_STATUSES.has(result.status) ? null : result.body;
 
@@ -547,10 +482,6 @@ export async function desktopFetchAgentContextDiagnostics(
   });
 }
 
-// ---------------------------------------------------------------------------
-// Convenience wrappers
-// ---------------------------------------------------------------------------
-
 export function assertDesktopWebUrl(url: string): string {
   let parsed: URL;
   try {
@@ -564,11 +495,6 @@ export function assertDesktopWebUrl(url: string): string {
   return parsed.toString();
 }
 
-/**
- * "opening" means the system browser was asked and has not confirmed yet. Slow
- * machines (virtual desktops, endpoint security) can take a minute to show it;
- * that is not a failure, and asking again would only add another tab.
- */
 export type DesktopUrlOpenStatus = "opened" | "opening";
 
 export async function openDesktopUrlWithStatus(url: string): Promise<DesktopUrlOpenStatus> {
@@ -592,7 +518,6 @@ export async function openDesktopUrl(url: string): Promise<void> {
   await openDesktopUrlWithStatus(url);
 }
 
-/** Read-only native probe for chat file candidates; never opens or reveals the item. */
 export async function resolveDesktopChatFilePath(target: string): Promise<string | null> {
   if (typeof window === "undefined" || !window.__OPENWORK_ELECTRON__?.invokeDesktop) return null;
   try {
@@ -609,11 +534,6 @@ export async function openDesktopPath(target: string): Promise<void> {
   }
 }
 
-/**
- * Open a chat-referenced workspace file with its default application. The desktop resolves
- * the path on disk and launches only a real file inside the real workspace; a path that
- * resolves outside (for example through a symlink) is revealed in its folder instead.
- */
 export async function openDesktopWorkspaceFile(workspaceRoot: string, target: string, options?: { reveal?: boolean }): Promise<"opened" | "revealed" | "unavailable"> {
   const result = await invokeElectronHelper("__openWorkspaceFile", workspaceRoot, target, options);
   if (!result || typeof result !== "object" || !("ok" in result)) {
@@ -681,7 +601,6 @@ export async function getDesktopHomeDir(): Promise<string> {
 
 let cachedHomeDir: Promise<string | null> | null = null;
 
-/** The home folder for expanding `~/` in chat file links; null outside the desktop app. */
 export function getCachedDesktopHomeDir(): Promise<string | null> {
   if (typeof window === "undefined" || !window.__OPENWORK_ELECTRON__?.invokeDesktop) return Promise.resolve(null);
   cachedHomeDir ??= getDesktopHomeDir()
@@ -738,10 +657,6 @@ export function readDesktopDistributionInfo(): DesktopDistributionInfo {
     requireActivation: false,
   };
 }
-
-// ---------------------------------------------------------------------------
-// Re-export bridge methods as named functions (preserves existing import API)
-// ---------------------------------------------------------------------------
 
 const {
   engineStart,

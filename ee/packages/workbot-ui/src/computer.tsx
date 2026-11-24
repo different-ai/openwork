@@ -19,10 +19,6 @@ const button = "inline-flex h-8 items-center justify-center gap-1.5 rounded-lg p
 
 type ComputerView = "browser" | "computer";
 
-/**
- * Each view has its own path (/browser, /computer), so a reload or a shared link opens the same view. A view this
- * person doesn't have (each is its own rollout) opens the one they do.
- */
 function viewFromLocation(views: ComputerView[]): ComputerView {
   const asked: ComputerView = typeof window !== "undefined" && window.location.pathname.replace(/\/+$/, "") === "/computer" ? "computer" : "browser";
   return views.includes(asked) ? asked : views[0] ?? asked;
@@ -38,15 +34,15 @@ export function openBrowserPage(id: string) {
  * Both views belong to the main conversation's computer. noVNC carries the desktop's pixels and native input;
  * watching the browser streams the page itself instead.
  */
-export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onViewChange, onContextChange, task, surface = "browser", onClose, onStop, expanded = false, onExpand }: {
+export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, teachRequest = 0, onTeachRequestSettled, onViewChange, onContextChange, task, surface = "browser", onClose, onStop, expanded = false, onExpand }: {
   onTeachingChange?(context: BrowserTeachingContext | undefined): void;
   onRun?(text: string): void | Promise<void>;
   canTeach?: boolean;
+  teachRequest?: number;
+  onTeachRequestSettled?(): void;
   onViewChange?(view: ComputerView): void;
-  /** The tab in front of the Browser view, for the chat beside it; null when none is on screen. */
   onContextChange?(context: WorkbotViewContext | null): void;
   task?: { id: string; title: string; status: "working" | "completed" | "failed"; reason?: string };
-  /** Which view a task's card opened beside the chat: its browser, or the rest of its computer. Only with `task`. */
   surface?: ComputerView;
   onClose?(): void;
   onStop?(): void | Promise<void>;
@@ -54,7 +50,6 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
   onExpand?(): void;
 }) {
   const host = workbotHost();
-  // Each side chat has its own computer: this view and its controls are for the chat it opens in.
   const chat = useWorkbotChat();
   const [teaching, setTeaching] = useState<BrowserTeachingContext>();
   const teachingChange = useCallback((context: BrowserTeachingContext | undefined) => { setTeaching(context); onTeachingChange?.(context); }, [onTeachingChange]);
@@ -81,28 +76,30 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
   const [control, setControl] = useState(false);
   const [teachOpen, setTeachOpen] = useState(false);
   const teachable = canTeach && host.browserDemonstrations === true && views.includes("browser");
+  useEffect(() => {
+    if (!teachRequest || !teachable) return;
+    setView("browser"); setTeachOpen(true); onTeachRequestSettled?.();
+  }, [teachRequest, teachable]);
   const [agentPaused, setAgentPaused] = useState(false);
   const [paused, setPaused] = useState(false);
   const [connected, setConnected] = useState(false);
   const [reconnecting, setReconnecting] = useState(false);
   const [updating, setUpdating] = useState(false);
+  const [replacing, setReplacing] = useState(false);
+  useEffect(() => { setReplacing(false); }, [chat, view, task?.id]);
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [revision, setRevision] = useState(0);
   const [changing, setChanging] = useState(false);
-  // The person rebuilt the computer from this task's view, which stopped the task.
   const [rebuilt, setRebuilt] = useState(false);
   useEffect(() => { setRebuilt(false); }, [task?.id, chat]);
-  // Still waiting for the computer after a while: Rebuild is offered beside the wait, not only once it has failed.
   const [slow, setSlow] = useState(false);
   const [livePage, setLivePage] = useState<ScreencastPage | null>(null);
   const previewEnabled = Boolean(host.identity);
-  // A browser task keeps its own pictures; the computer's are kept for the view, where its cards read them.
   const frameTask = view === "browser" ? task?.id : undefined;
   const [denied, setDenied] = useState(() => viewFramesDenied(glimpseKey(chat, view)));
   const deniedRef = useRef(denied);
   const [snapshot, setSnapshot] = useState(() => previewEnabled ? lastFrame(glimpseKey(chat, view, frameTask)) : null);
-  // A past task keeps its own final picture even when today's browser is opened from that card.
   const captureKey = useRef(glimpseKey(chat, view));
   captureKey.current = glimpseKey(chat, view, task?.status === "working" ? frameTask : undefined);
   const [stream, setStream] = useState<ScreencastViewer | null>(null);
@@ -129,7 +126,6 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
     return () => clearTimeout(timer);
   }, [shared]);
   const away = useAway(30_000) && !recording;
-  // Only the page stream says which tab is in front; noVNC shows pixels alone.
   const frontId = view === "browser" && !paused && !error && !denied ? livePage?.id ?? null : null;
   const frontUrl = denied ? "" : livePage?.url ?? "", frontTitle = denied ? "" : livePage?.title ?? "";
   useEffect(() => {
@@ -139,20 +135,20 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
 
   useEffect(() => {
     const target = screen.current;
-    // Nobody watching a hidden tab, so stop streaming until it is shown again.
     if (!target || paused || away) return;
     setSnapshot(previewEnabled ? lastFrame(glimpseKey(chat, view, frameTask)) : null);
     setError(null); setConnected(false); setReconnecting(false); setUpdating(false); setStarting(false); setStream(null);
     const disconnect = connectDesktopViewer(target, host, { view, control, chat, wake: true }, {
-      paused: () => setPaused(true),
+      paused: () => { setReplacing(false); setPaused(true); },
       agentPaused: setAgentPaused,
-      connected: () => { deniedRef.current = false; setDenied(false); setConnected(true); setReconnecting(false); setUpdating(false); setStarting(false); setError(null); },
+      connected: () => { deniedRef.current = false; setDenied(false); setConnected(true); setReconnecting(false); setUpdating(false); setReplacing(false); setStarting(false); setError(null); },
       starting: () => setStarting(true),
       reconnecting: () => { if (previewEnabled && !deniedRef.current) { captureFrame(target, captureKey.current); setSnapshot(lastFrame(glimpseKey(chat, view, frameTask))); } setConnected(false); setReconnecting(true); },
       updating: () => { setConnected(false); setUpdating(true); },
+      replacing: () => { setConnected(false); setReplacing(true); },
       failed: (message, blocked = false) => {
         if (blocked) { deniedRef.current = true; setDenied(true); setSnapshot(null); setLivePage(null); setStream(null); }
-        setConnected(false); setUpdating(false); setStarting(false); setError(message);
+        setConnected(false); setUpdating(false); setReplacing(false); setStarting(false); setError(message);
       },
       page: setLivePage,
       stream: setStream,
@@ -164,10 +160,10 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
   }, [host, identity, chat, view, control, paused, away, revision, task?.id, previewEnabled]);
   useEffect(() => {
     setSlow(false);
-    if (connected || paused || away || error || denied || updating || changing) return;
+    if (connected || paused || away || error || denied || updating || replacing || changing) return;
     const timer = setTimeout(() => setSlow(true), REBUILD_OFFER_AFTER_MS);
     return () => clearTimeout(timer);
-  }, [connected, paused, away, error, denied, updating, changing, revision, chat, view, control]);
+  }, [connected, paused, away, error, denied, updating, replacing, changing, revision, chat, view, control]);
   useEffect(() => {
     if (!connected || !previewEnabled || denied) return;
     const capture = () => { if (screen.current && !deniedRef.current) captureFrame(screen.current, captureKey.current); };
@@ -181,7 +177,9 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
     setChanging(true); setError(null);
     try {
       const { response, payload } = await host.requestJson(inChat("/v1/workbot/computer/action", chat), { method: "POST", body: JSON.stringify({ action: next }) }, 195_000);
-      if (!response.ok) throw new Error(errorMessage(payload, "Your computer didn't respond. Try again."));
+      const replaced = !response.ok && next === "resume" && typeof payload === "object" && payload !== null && "error" in payload && payload.error === "desktop_replacing";
+      if (replaced) setReplacing(true);
+      else if (!response.ok) throw new Error(errorMessage(payload, "Your computer didn't respond. Try again."));
       if (next === "continue" || next === "rebuild") { setControl(false); setAgentPaused(false); }
       if (next === "rebuild" && task) setRebuilt(true);
       setPaused(next === "pause");
@@ -193,7 +191,7 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
 
   const title = task?.title || (view === "browser" ? "Workbot's browser" : "Workbot's computer");
   const header = taskHeader(task, rebuilt);
-  const status = header ? header.status : stopped ? "Stopped" : control && connected ? "You have control" : error ? "Disconnected" : paused ? "Paused" : updating ? "Updating" : starting ? "Starting" : reconnecting ? "Reconnecting" : agentPaused ? "Waiting for you" : "Working";
+  const status = header ? header.status : stopped ? "Stopped" : control && connected ? "You have control" : error ? "Disconnected" : paused ? "Paused" : updating ? "Updating" : replacing ? "Replacing" : starting ? "Starting" : reconnecting ? "Reconnecting" : agentPaused ? "Waiting for you" : "Working";
   const hostname = (() => { try { return new URL(frontUrl).hostname; } catch { return ""; } })();
   const stop = async () => {
     if (stopping) return;
@@ -250,15 +248,15 @@ export function WorkbotComputer({ onTeachingChange, onRun, canTeach = true, onVi
       {!denied && !connected && snapshot ? <img src={snapshot} alt="Last browser frame" className="pointer-events-none absolute inset-0 h-full w-full object-contain object-top" /> : null}
       {!connected && !snapshot ? <BrowserLoading toolbar={view === "browser" && !livePage} /> : null}
       <div ref={screen} className={`relative h-full w-full ${paused || error || denied ? "invisible" : ""}`} aria-label={`${view === "browser" ? "Browser" : "Computer"} live view`} aria-busy={!connected && !error} />
-      {paused || error || slow ? <div className="absolute inset-x-3 bottom-3 flex flex-col items-center justify-center gap-3 rounded-xl bg-[var(--wb-surface)] p-4 text-center shadow-[var(--wb-card-shadow)]">
+      {paused || error || slow || replacing ? <div className="absolute inset-x-3 bottom-3 flex flex-col items-center justify-center gap-3 rounded-xl bg-[var(--wb-surface)] p-4 text-center shadow-[var(--wb-card-shadow)]">
         {view === "browser" ? <Globe size={24} strokeWidth={1.5} className="text-[var(--wb-muted)]" aria-hidden /> : <Monitor size={24} strokeWidth={1.5} className="text-[var(--wb-muted)]" aria-hidden />}
-        <p role={paused || error ? "alert" : "status"} className="text-[14px] text-[var(--wb-text)]">{error ?? (paused ? "The browser is paused. Resume to keep browsing." : "Your computer is taking longer than usual to start. Keep waiting, or rebuild it.")}</p>
+        <p role={paused || error ? "alert" : "status"} className="text-[14px] text-[var(--wb-text)]">{error ?? (paused ? "The browser is paused. Resume to keep browsing." : replacing ? REPLACING_NOTICE : "Your computer is taking longer than usual to start. Keep waiting, or rebuild it.")}</p>
         <div className="flex flex-wrap items-center justify-center gap-1">
           {!paused && !error ? null : <button type="button" className={button} disabled={changing} onClick={() => paused ? void action("resume") : setRevision(current => current + 1)}>{paused ? <Play size={14} aria-hidden /> : <RotateCw size={14} aria-hidden />}{paused ? "Resume" : "Reconnect"}</button>}
-          {paused || denied ? null : <RebuildComputer disabled={changing} onRebuild={() => void action("rebuild")} />}
+          {paused || denied || (replacing && !error) ? null : <RebuildComputer disabled={changing} onRebuild={() => void action("rebuild")} />}
         </div>
       </div> : null}
-      {!denied && teachable && <div hidden={view !== "browser"} style={{ display: view === "browser" ? undefined : "none" }} className={TEACHING_WINDOW_PLACEMENT}><WorkbotTeaching open={teachOpen} onOpenChange={setTeachOpen} suspended={paused} liveTabs={frontId && livePage?.tabs?.length ? { frontId, tabs: livePage.tabs.map(tab => ({ id: tab.id, label: tabTitle(tab) })) } : undefined} onShowTab={stream ? id => stream.tab("activate", id) : undefined} onTeachingChange={teachingChange} onTakeControl={() => setControl(true)} onRun={onRun ? async text => { if (!await action("continue")) throw new Error("Hand back browser control to Workbot before starting the run. Your inputs are still here."); await onRun(text); } : undefined} /></div>}
+      {!denied && teachable && <div hidden={view !== "browser"} style={{ display: view === "browser" ? undefined : "none" }} className={TEACHING_WINDOW_PLACEMENT}><WorkbotTeaching open={teachOpen} onOpenChange={setTeachOpen} suspended={paused} onResume={() => void action("resume")} liveTabs={frontId && livePage?.tabs?.length ? { frontId, tabs: livePage.tabs.map(tab => ({ id: tab.id, label: tabTitle(tab) })) } : undefined} onShowTab={stream ? id => stream.tab("activate", id) : undefined} onTeachingChange={teachingChange} onTakeControl={() => setControl(true)} onRun={onRun ? async text => { if (!await action("continue")) throw new Error("Hand back browser control to Workbot before starting the run. Your inputs are still here."); await onRun(text); } : undefined} /></div>}
     </div>
     <footer className="flex shrink-0 items-center justify-center gap-2 border-t border-[var(--wb-hairline)] px-4 pb-[max(1rem,env(safe-area-inset-bottom))] pt-3">
       {control || agentPaused ? <button type="button" className={`${footerButton} bg-[var(--wb-ink)] text-[var(--wb-on-ink)]`} disabled={changing || denied} onClick={() => void action("continue")}>Hand back</button> : <>
@@ -274,15 +272,11 @@ type ViewerEvents = {
   agentPaused(paused: boolean): void;
   connected(): void;
   reconnecting(): void;
-  /** The computer is moving to a new version once its current work finishes; the view keeps asking until it has. */
   updating?(): void;
-  /** The computer is taking a while to answer: it is starting up (it can take a minute), not stuck connecting. */
+  replacing?(): void;
   starting?(): void;
-  /** Authorization denial discards every retained frame for this identity/chat/view, unlike a network failure. */
   failed(message: string, denied?: boolean): void;
-  /** The address and title of the tab the screencast shows. noVNC shows the browser's own toolbar instead. */
   page?(page: ScreencastPage): void;
-  /** The live page stream, which can switch and close tabs; null while noVNC or nothing is on screen. */
   stream?(stream: ScreencastViewer | null): void;
 };
 
@@ -296,7 +290,6 @@ export function connectDesktopViewer(target: HTMLElement, host: ReturnType<typeo
   const { view, control } = options;
   let disposed = false;
   let screencastRefused = false;
-  // The live connection, and its replacement while it connects.
   let client: import("@novnc/novnc").default | ScreencastViewer | null = null;
   let next: import("@novnc/novnc").default | ScreencastViewer | null = null;
   let retry: ReturnType<typeof setTimeout> | undefined;
@@ -304,10 +297,9 @@ export function connectDesktopViewer(target: HTMLElement, host: ReturnType<typeo
   const controller = new AbortController();
   let failures = 0;
   let updates = 0;
+  let replacements = 0;
   let watchdog: ReturnType<typeof setTimeout> | undefined;
   const scopeKey = frameKey(host.identity?.organizationId ?? "", host.identity?.principalId ?? "", options.chat ?? null, view);
-  // Another mounted viewer can discover revocation first. Stop this stream too, including candidates
-  // issued before the denial that have not drawn yet; they must not later authorize stale pixels.
   const unsubscribe = subscribeFrame(scopeKey, () => {
     if (disposed || !viewFramesDenied(scopeKey)) return;
     disposed = true;
@@ -317,14 +309,12 @@ export function connectDesktopViewer(target: HTMLElement, host: ReturnType<typeo
     events.stream?.(null);
     events.failed("Computer access is unavailable. Sign in again or ask your workspace admin.", true);
   });
-  /** `renewing` keeps the current picture on screen until the replacement connects. */
   const connect = async (renewing = false) => {
     if (disposed) return;
     const request = new AbortController();
     const abort = () => request.abort();
     controller.signal.addEventListener("abort", abort, { once: true });
     const timeout = setTimeout(abort, 195_000);
-    // A computer that takes this long to answer is waking up; say so instead of "Connecting" all along.
     const slow = renewing ? undefined : setTimeout(() => { if (!disposed) events.starting?.(); }, STARTING_AFTER_MS);
     try {
       const { response, payload } = await host.requestJson(inChat("/v1/workbot/computer/viewer", options.chat ?? null), {
@@ -332,7 +322,6 @@ export function connectDesktopViewer(target: HTMLElement, host: ReturnType<typeo
       }, 195_000);
       if (disposed) return;
       if (!response.ok) {
-        // Recheck authorization even during renewal: an old connection cannot keep showing revoked pixels.
         if (response.status === 401 || response.status === 403) {
           disposed = true;
           unsubscribe();
@@ -344,12 +333,15 @@ export function connectDesktopViewer(target: HTMLElement, host: ReturnType<typeo
           events.failed(errorMessage(payload, response.status === 401 ? "Sign in again to view your computer." : "Computer access is off for your organization. Ask your workspace admin."), true);
           return;
         }
-        // A failed early renewal is retried when the live connection closes.
         if (renewing && client) return;
-        // Waiting for an update is expected and short: keep asking, for up to three minutes, instead of failing.
         if (typeof payload === "object" && payload !== null && "error" in payload && payload.error === "desktop_updating" && updates++ < 36) {
           events.updating?.();
           retry = setTimeout(() => void connect(), 5_000);
+          return;
+        }
+        if (typeof payload === "object" && payload !== null && "error" in payload && payload.error === "desktop_replacing" && replacements++ < 3) {
+          events.replacing?.();
+          retry = setTimeout(() => void connect(), 1_000);
           return;
         }
         events.failed(errorMessage(payload, response.status === 403 ? "Computer access is off for your organization." : "Your computer is unavailable. Try reconnecting."));
@@ -358,12 +350,10 @@ export function connectDesktopViewer(target: HTMLElement, host: ReturnType<typeo
       const session = viewerSchema.parse(payload);
       if (session.state === "paused") { events.paused(); return; }
       events.agentPaused(session.paused);
-      // The computer issues one ticket for watching the browser; its page stream and VNC accept it at sibling paths.
       const streamUrl = view === "browser" && !screencastRefused && /\/vnc\/[A-Za-z0-9_-]{43}$/.test(session.url)
         ? session.url.replace(/\/vnc\/([A-Za-z0-9_-]{43})$/, "/screencast/$1") : null;
       const RFB = streamUrl ? null : (await import("@novnc/novnc")).default;
       if (disposed) return;
-      // Each connection draws into its own layer, shown once it is live.
       const layer = document.createElement("div");
       layer.style.cssText = "position:absolute;inset:0;visibility:hidden";
       target.append(layer);
@@ -374,7 +364,6 @@ export function connectDesktopViewer(target: HTMLElement, host: ReturnType<typeo
         rfb.scaleViewport = true;
         rfb.resizeSession = false;
         rfb.background = "#f5f6f7";
-        // Stronger zlib for the non-photo parts of the screen (noVNC defaults to 2) to save bandwidth.
         rfb.compressionLevel = 6;
         candidate = rfb;
       } else {
@@ -385,8 +374,6 @@ export function connectDesktopViewer(target: HTMLElement, host: ReturnType<typeo
       const superseded = next;
       next = candidate;
       superseded?.disconnect();
-      // An open connection that never draws a picture is stuck: give up on it and say so, with Reconnect, instead of
-      // "Connecting" forever. A renewal keeps the picture already on screen, so only a first connection is watched.
       let stalled = false;
       if (!renewing) {
         clearTimeout(watchdog);
@@ -394,14 +381,11 @@ export function connectDesktopViewer(target: HTMLElement, host: ReturnType<typeo
       }
       candidate.addEventListener("connect", () => {
         if (disposed || next !== candidate) { candidate.disconnect(); return; }
-        // noVNC reports the connection before its first frame arrives, so keep the current
-        // picture until the new one is drawn; otherwise every renewal flashes an empty screen.
         void firstFrame(layer).then(() => {
           if (disposed || next !== candidate) return;
           clearTimeout(watchdog);
           layer.style.visibility = "visible";
           const previous = client;
-          // With control, the keyboard goes to the page: on taking control, and across each renewal.
           if (control && candidate instanceof ScreencastViewer && (!previous || target.contains(document.activeElement))) candidate.focus();
           client = candidate; next = null;
           previous?.disconnect();
@@ -409,8 +393,6 @@ export function connectDesktopViewer(target: HTMLElement, host: ReturnType<typeo
           if (candidate instanceof ScreencastViewer && candidate.page) events.page?.(candidate.page);
           allowViewFrames(frameKey(host.identity?.organizationId ?? "", host.identity?.principalId ?? "", options.chat ?? null, view));
           failures = 0; events.connected();
-          // The computer closes each connection after a minute and renewal goes through
-          // membership and flags again, so renew early instead of going blank.
           clearTimeout(renewal);
           renewal = setTimeout(() => void connect(true), 45_000);
         });
@@ -421,11 +403,8 @@ export function connectDesktopViewer(target: HTMLElement, host: ReturnType<typeo
       candidate.addEventListener("disconnect", () => {
         layer.remove();
         if (next === candidate) next = null;
-        // A stream that ends before its first frame means this computer has no page stream yet; use VNC from now on.
         if (candidate instanceof ScreencastViewer && !candidate.connected) screencastRefused = true;
         if (stalled && !disposed) { events.failed("Couldn't connect to your computer. Try again."); return; }
-        // Only the live connection closing (or a first attempt failing with nothing newer
-        // in flight) changes the screen; replaced connections and failed renewals do not.
         const live = client === candidate || client === null && next === null && !renewing;
         if (disposed || !live) return;
         client = null;
@@ -448,19 +427,15 @@ export function connectDesktopViewer(target: HTMLElement, host: ReturnType<typeo
   return () => { disposed = true; unsubscribe(); controller.abort(); clearTimeout(retry); clearTimeout(renewal); clearTimeout(watchdog); next?.disconnect(); client?.disconnect(); target.replaceChildren(); };
 }
 
-/** How long a computer may take to answer before the view says it is starting up. */
+const REPLACING_NOTICE = "Your computer's desktop didn't start, so Workbot is replacing it. This usually takes about a minute.";
 const STARTING_AFTER_MS = 8_000;
-/** A computer that is ready connects in a second or two; past this, the person may rather rebuild it than keep waiting. */
 const REBUILD_OFFER_AFTER_MS = 15_000;
-/** How long an open connection has to draw its first picture before the view gives up on it. */
 const FIRST_PICTURE_MS = 15_000;
 
-/** A tab's or page's address without the scheme, the way Chrome shows it. */
 function shortAddress(href: string) {
   try { const url = new URL(href); return url.protocol === "http:" || url.protocol === "https:" ? `${url.host}${url.pathname === "/" ? "" : url.pathname}${url.search}` : href; } catch { return href; }
 }
 
-/** Chrome calls a blank tab New Tab. */
 function tabTitle(tab: { url: string; title: string }) {
   if (!tab.url || tab.url === "about:blank" || tab.url.startsWith("chrome://newtab")) return "New Tab";
   return tab.title && tab.title !== tab.url ? tab.title : shortAddress(tab.url);
@@ -468,17 +443,9 @@ function tabTitle(tab: { url: string; title: string }) {
 
 const toolbarButton = "inline-flex size-7 shrink-0 items-center justify-center rounded-full text-[var(--wb-muted)] enabled:hover:bg-[var(--wb-chip)] enabled:hover:text-[var(--wb-text)] disabled:opacity-40 focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]";
 
-/**
- * The page stream shows the page alone, so Workbot draws the browser around it the way Chrome does: the open tabs,
- * with the one on screen in front, and a toolbar for that page. Clicking a tab brings it to the front on the computer;
- * its × or a middle click closes it (never the last one, which would quit the browser). With control, the toolbar
- * goes back, forward and reloads, + opens a tab, and the address bar takes an address or a search. A computer built
- * before tabs were streamed shows just the front tab, without those controls.
- */
 function BrowserFrame({ page, stream, teaching }: { page: ScreencastPage; stream: ScreencastViewer | null; teaching?: ReactNode }) {
   const live = Boolean(page.tabs?.length && page.id);
   const tabs = live ? page.tabs! : [{ id: "front", url: page.url, title: page.title }];
-  // The tab just clicked shows in front at once; the computer confirms it within a second.
   const [picked, setPicked] = useState<{ id: string; over: string | undefined } | null>(null);
   useEffect(() => {
     if (!picked) return;
@@ -494,7 +461,6 @@ function BrowserFrame({ page, stream, teaching }: { page: ScreencastPage; stream
   useEffect(() => {
     strip.current?.querySelector<HTMLElement>("[aria-selected=true]")?.scrollIntoView({ block: "nearest", inline: "nearest" });
   }, [front.id]);
-  // With control, the keyboard goes to the page after a tab change, as in Chrome.
   const activate = (id: string) => {
     if (!stream) return;
     if (id !== front.id) { setPicked({ id, over: page.id }); stream.tab("activate", id); }
@@ -505,7 +471,6 @@ function BrowserFrame({ page, stream, teaching }: { page: ScreencastPage; stream
     stream.tab("close", id);
     if (stream.control) stream.focus();
   };
-  // Arrow keys move between tabs, as in any tab list; Enter or Space brings one to the front.
   const moveFocus = (event: ReactKeyboardEvent, index: number) => {
     const next = event.key === "ArrowRight" ? index + 1 : event.key === "ArrowLeft" ? index - 1 : event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : null;
     if (next === null) return;
@@ -513,15 +478,12 @@ function BrowserFrame({ page, stream, teaching }: { page: ScreencastPage; stream
     strip.current?.querySelectorAll<HTMLElement>("[role=tab]")[(next + tabs.length) % tabs.length]?.focus();
   };
 
-  // The address bar shows the page's address until the person edits it.
   const address = useRef<HTMLInputElement>(null);
   const [draft, setDraft] = useState<string | null>(null);
   const openedTab = useRef(false);
-  // A click that focuses the address bar selects all of it; the click's own mouse-up would otherwise place the caret.
   const selectOnMouseUp = useRef(false);
   useEffect(() => {
     setDraft(null);
-    // A tab opened with + is ready to take an address, as in Chrome.
     if (openedTab.current) { openedTab.current = false; address.current?.focus(); }
   }, [page.id]);
   const blank = tabTitle(shown) === "New Tab";
@@ -533,7 +495,6 @@ function BrowserFrame({ page, stream, teaching }: { page: ScreencastPage; stream
         {tabs.map((tab, index) => {
           const active = tab === front;
           const title = tabTitle(tab);
-          // Like Chrome, a thin divider separates two background tabs, not a background tab from the front one.
           const divider = index > 0 && !active && tabs[index - 1] !== front;
           return <div key={tab.id} className={`group relative flex h-8 w-[15rem] min-w-[3.5rem] shrink items-center rounded-t-lg text-[12px] ${active ? "bg-[var(--wb-surface)] text-[var(--wb-text)]" : "text-[var(--wb-muted)] hover:bg-[var(--wb-chip)]/70"}`}
             onMouseDown={(event) => { if (event.button === 1) event.preventDefault(); }}
@@ -572,7 +533,6 @@ function BrowserFrame({ page, stream, teaching }: { page: ScreencastPage; stream
         {control
           ? <input ref={address} aria-label="Address" value={draft ?? (blank ? "" : shortAddress(shown.url))} placeholder="Search Google or type a URL" spellCheck={false} autoComplete="off" autoCapitalize="off"
               onChange={(event) => setDraft(event.target.value)}
-              // Editing shows the whole address, selected, as Chrome does.
               onMouseDown={(event) => { selectOnMouseUp.current = document.activeElement !== event.currentTarget; }}
               onMouseUp={(event) => { if (selectOnMouseUp.current) { event.preventDefault(); selectOnMouseUp.current = false; } }}
               onFocus={(event) => { const field = event.target; setDraft(blank ? "" : shown.url); requestAnimationFrame(() => field.select()); }}
@@ -587,15 +547,12 @@ function BrowserFrame({ page, stream, teaching }: { page: ScreencastPage; stream
 }
 
 type GlimpseState = "connecting" | "live" | "unavailable" | "denied";
-/** One view's connection, shared by the live views in the chat: a card that replaces another picks it up as it is. */
 type SharedGlimpse = { host: ReturnType<typeof workbotHost>; view: ComputerView; container: HTMLDivElement; state: GlimpseState; listeners: Set<(state: GlimpseState) => void>; users: number; close(): void; linger?: ReturnType<typeof setTimeout> };
-/** Keyed by chat and view: each chat has its own computer, so one chat's connection never stands in for another's. */
 const sharedGlimpses = new Map<string, SharedGlimpse>();
 function glimpseKey(chat: string | null, view: ComputerView, taskId?: string) {
   const identity = workbotHost().identity;
   return frameKey(identity?.organizationId ?? "", identity?.principalId ?? "", chat, view, taskId);
 }
-/** How long a view's connection outlives its last live view, so the next card of the same reply doesn't reconnect. */
 const GLIMPSE_LINGER_MS = 15_000;
 
 function watchGlimpse(host: ReturnType<typeof workbotHost>, chat: string | null, view: ComputerView): SharedGlimpse {
@@ -613,7 +570,6 @@ function watchGlimpse(host: ReturnType<typeof workbotHost>, chat: string | null,
   const set = (state: GlimpseState) => {
     shared.state = state;
     for (const listener of shared.listeners) listener(state);
-    // A view that can't connect is dropped, so the next live view tries again.
     if ((state === "unavailable" || state === "denied") && sharedGlimpses.get(key) === shared) { sharedGlimpses.delete(key); shared.close(); }
   };
   const unsubscribe = subscribeFrame(key, () => { if (viewFramesDenied(key)) set("denied"); });
@@ -653,11 +609,9 @@ export function LiveGlimpse({ view, onOpen, previewOnly = false, taskId }: { vie
   const [snapshot, setSnapshot] = useState(() => previewEnabled ? lastFrame(key) : null);
   const screen = useRef<HTMLDivElement>(null);
   const [state, setState] = useState<GlimpseState>("connecting");
-  // Once it has had a picture it stays, so a reconnect doesn't collapse it.
   const [pictured, setPictured] = useState(false);
   useEffect(() => { if (state === "live") setPictured(true); }, [state]);
   const away = useAway(30_000);
-  // Layout cleanup saves before the completed card's layout effect reads the same task-scoped key.
   useLayoutEffect(() => {
     const target = screen.current;
     let timer: ReturnType<typeof setInterval> | undefined;
@@ -721,14 +675,12 @@ export function LastGlimpse({ view, taskId, large = false }: { view: ComputerVie
   useLayoutEffect(() => {
     const read = () => setSnapshot(previewEnabled ? lastFrame(key) : null);
     read();
-    // A late final frame may arrive as the live view disconnects; subscribe without starting another stream.
     return subscribeFrame(key, read);
   }, [host, key, previewEnabled]);
   if (!snapshot) return null;
   return <img src={snapshot} alt={`Last ${view === "browser" ? "browser" : "computer"} view${taskId ? " from this task" : ""}`} className={`${large ? "aspect-[16/10] w-full rounded-[10px] object-contain" : "h-10 w-16 shrink-0 rounded-[8px] object-cover"} bg-[var(--wb-chip)] object-top`} data-workbot-last-frame />;
 }
 
-/** Resolves once noVNC has drawn into the layer's canvas (its pixels start transparent), or after `limit` ms. */
 function firstFrame(layer: HTMLElement, limit = 5_000) {
   const started = performance.now();
   return new Promise<void>(resolve => {
@@ -744,7 +696,6 @@ function firstFrame(layer: HTMLElement, limit = 5_000) {
   });
 }
 
-/** True once the page has been hidden for `delay` ms, so a quick tab switch keeps the stream. */
 function useAway(delay: number) {
   const [away, setAway] = useState(false);
   useEffect(() => {
@@ -761,7 +712,6 @@ function useAway(delay: number) {
   return away;
 }
 
-/** Replaces a computer that won't connect with a fresh one from the current image. Its disk is erased, so ask first. */
 function RebuildComputer({ disabled, onRebuild }: { disabled: boolean; onRebuild(): void }) {
   const [open, setOpen] = useState(false);
   return <AlertDialog.Root open={open} onOpenChange={setOpen}>
@@ -777,7 +727,6 @@ function RebuildComputer({ disabled, onRebuild }: { disabled: boolean; onRebuild
   </AlertDialog.Root>;
 }
 
-/** Keep the browser's destination layout in place until its first real frame arrives (P11). */
 function BrowserLoading({ toolbar }: { toolbar: boolean }) {
   return <div aria-hidden className="pointer-events-none absolute inset-0 flex flex-col bg-[var(--wb-surface)]">
     {toolbar ? <div className="shrink-0 bg-[var(--wb-bubble)] px-3 pt-2">

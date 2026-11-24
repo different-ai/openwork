@@ -2,7 +2,7 @@
  * The Den index flusher (den-index.ts, background job `den-index`): sends the outbox
  * in batches of at most 50 with each session's capability, acknowledges `ok`/`stale`, keeps `index_disabled` and
  * `rate_limited`, drops other rejections, backs off (immediately, 30 s, 2 min, 10 min, hourly), drops rows older than
- * 7 days and snapshots the cell daily. The turn route takes `credentials.indexCapability` and keeps it with the
+ * 7 days and snapshots the cell at most daily, and asks for a run only for an update it can send. The turn route takes `credentials.indexCapability` and keeps it with the
  * session only: never with the turn, never in an export.
  */
 import assert from "node:assert/strict"
@@ -31,6 +31,7 @@ function fakeOutbox(rows: Row[]) {
   const log: string[] = []
   const deferred: Array<{ sessionId: string; retryAt: number }> = []
   let snapshots = 0
+  let snapshotAt: number | null = null
   const outbox: IndexOutbox = {
     pendingIndexUpdates: (now, limit) =>
       rows.filter((row) => row.nextAt <= now).sort((a, b) => Number(a.capability === null) - Number(b.capability === null)).slice(0, limit)
@@ -55,8 +56,10 @@ function fakeOutbox(rows: Row[]) {
       for (let index = rows.length - 1; index >= 0; index -= 1) if ((rows[index]?.createdAt ?? 0) < createdBefore) rows.splice(index, 1)
       return before - rows.length
     },
-    indexSnapshotAll: () => {
+    indexSnapshotAt: () => snapshotAt,
+    indexSnapshotAll: (now) => {
       snapshots += 1
+      snapshotAt = now
     },
   }
   return { outbox, rows, log, deferred, snapshots: () => snapshots }
@@ -138,21 +141,44 @@ test("uses the row's persisted attempt count when the store returns one", async 
   assert.equal(outbox.deferred[0]?.retryAt, 600_000, "the fourth failure in a row waits 10 minutes")
 })
 
-test("drops rows older than 7 days at start and daily, and snapshots the cell once a day", async () => {
+test("asks for a run only while it has an update to send, so an idle cell sets no alarm", () => {
   const start = 10 * DEN_INDEX_MAX_AGE_MS
   let now = start
+  // Rows that can't be sent, one of them past its week: neither is a reason to wake a cell.
   const outbox = fakeOutbox([row("hs_old", { capability: null, createdAt: start - DEN_INDEX_MAX_AGE_MS - 1 }), row("hs_new", { capability: null, createdAt: start - 1000 })])
   const job = denIndexJob({ outbox: outbox.outbox, send: async () => ({ ok: true, results: [] }), now: () => now })
-  assert.equal(job.nextAt(), start, "due at once: old rows are dropped when the cell starts")
+  assert.equal(job.nextAt(), null, "no daily upkeep run: on celld that wakes every conversation's cell once a day for ever")
+  now = start + 30 * DEN_INDEX_SNAPSHOT_EVERY_MS
+  assert.equal(job.nextAt(), null, "however long it stays idle")
+  assert.equal(fakeOutbox([]).outbox.nextIndexUpdateAt(), null)
+})
+
+test("drops rows older than 7 days and snapshots at most once a day, when it runs for an update", async () => {
+  const start = 10 * DEN_INDEX_MAX_AGE_MS
+  let now = start
+  const outbox = fakeOutbox([
+    row("hs_old", { capability: null, createdAt: start - DEN_INDEX_MAX_AGE_MS - 1 }),
+    row("hs_new", { capability: null, createdAt: start - 1000 }),
+    row("hs_send", { nextAt: start, createdAt: start }),
+  ])
+  const send: IndexSend = async (updates) => ({ ok: true, results: updates.map((update) => ({ sessionId: update.sessionId, version: update.version, status: "ok" as const })) })
+  const job = denIndexJob({ outbox: outbox.outbox, send, now: () => now })
+  assert.equal(job.nextAt(), start, "the update that can be sent")
   await job.run()
-  assert.deepEqual(outbox.rows.map((entry) => entry.sessionId), ["hs_new"])
-  assert.equal(outbox.snapshots(), 0)
-  assert.equal(job.nextAt(), start + DEN_INDEX_SNAPSHOT_EVERY_MS)
-  now = start + DEN_INDEX_SNAPSHOT_EVERY_MS
-  await job.run()
-  assert.equal(outbox.snapshots(), 1, "daily reconciliation")
+  assert.deepEqual(outbox.rows.map((entry) => entry.sessionId), ["hs_new"], "the old row went with the run, the sent one was acknowledged")
+  assert.equal(outbox.snapshots(), 1, "a store that never had a snapshot gets one")
+  assert.equal(job.nextAt(), null, "nothing left to send: no further run")
+  // Later the same day another update is sent: no second snapshot.
+  now = start + 3_600_000
+  outbox.rows.push(row("hs_send", { nextAt: now, createdAt: now }))
   await job.run()
   assert.equal(outbox.snapshots(), 1, "once a day")
+  // A day on, after the cell slept and woke (a new job over the same store): the time was kept with the store.
+  now = start + DEN_INDEX_SNAPSHOT_EVERY_MS
+  outbox.rows.push(row("hs_send", { nextAt: now, createdAt: now }))
+  const woken = denIndexJob({ outbox: outbox.outbox, send, now: () => now })
+  await woken.run()
+  assert.equal(outbox.snapshots(), 2, "daily reconciliation, on a day the store has something to send")
 })
 
 test("the job runs through BackgroundJobs and its failure is contained", async () => {

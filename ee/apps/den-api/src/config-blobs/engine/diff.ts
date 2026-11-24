@@ -1,13 +1,3 @@
-/**
- * Field-level diff of two specs and the classification of a matched pair
- * (mapping.md › Change states, › Three-way diff).
- *
- * Paths: object keys join with ".", keyed set elements appear as
- * `models[id=abc]` / `entries[modelId=x]`, so a change reads
- * `models[id=abc].enabled`. Sets of `$ref`s and of scalars produce one change
- * on the array path with `added` / `removed`. Ordered arrays (and unkeyed
- * object arrays) that differ produce one whole-array change.
- */
 import type { ConfigBlobItem, ConfigFieldChange, ConfigPlanFlag, ConfigSpec } from "@openwork/types/den/config-blobs"
 import { isConfigRef, isConfigSecret } from "@openwork/types/den/config-blobs"
 import type { ConfigArea, ConfigItem } from "../area.js"
@@ -17,17 +7,13 @@ import {
   arrayElementKey,
   comparableTop,
   elementSchemaPath,
+  isDerivedField,
   isInformationalField,
   isOrderedArray,
   isPlainObject,
   joinPath,
 } from "./util.js"
 
-/**
- * A field change: the shared `ConfigFieldChange` (`added` / `removed` list set
- * members, ref name hints or values, for set-valued fields such as
- * `access.teams`). Kept as an alias for existing imports.
- */
 export type EngineFieldChange = ConfigFieldChange
 
 export function diffSpecs(layout: ArrayLayout, before: unknown, after: unknown): EngineFieldChange[] {
@@ -42,7 +28,7 @@ function walk(layout: ArrayLayout, before: unknown, after: unknown, path: string
   const displayPath = path || "(spec)"
   if (isStructObject(before) && isStructObject(after)) {
     const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])]
-      .filter((key) => !isInformationalField(layout, joinPath(schemaPath, key)))
+      .filter((key) => !isInformationalField(layout, joinPath(schemaPath, key)) && !isDerivedField(layout, joinPath(schemaPath, key)))
       .sort(compareStrings)
     for (const key of keys) walk(layout, before[key], after[key], joinPath(path, key), joinPath(schemaPath, key), out)
     return
@@ -83,7 +69,6 @@ function walk(layout: ArrayLayout, before: unknown, after: unknown, path: string
   out.push({ path: displayPath, from: before, to: after })
 }
 
-/** A plain object that is not a `$ref` or `$secret` placeholder. */
 function isStructObject(value: unknown): value is { [key: string]: unknown } {
   return isPlainObject(value) && !isConfigRef(value) && !isConfigSecret(value)
 }
@@ -93,49 +78,39 @@ function displayMember(element: unknown): unknown {
   return element
 }
 
-/** Removes something that exists on the target: deleted fields, removed set members or elements. */
 export function isDestructiveChange(change: EngineFieldChange): boolean {
   if (change.removed && change.removed.length > 0) return true
   return change.from !== undefined && change.to === undefined && change.added === undefined
 }
-
-// ---------------------------------------------------------------------------
-// Classification of a matched pair
 
 export type MatchedClassification = {
   op: "update" | "rename" | "unchanged" | "untouched"
   fields: EngineFieldChange[]
   flags: ConfigPlanFlag[]
   reasons: string[]
-  /** `itemRev` of the target as it is now (spec, name, key). */
   targetRev: string
-  /** `itemRev` of the blob item as uploaded (refs as written). */
   oursRev: string
 }
 
 export type ClassifyMatchedInput = {
-  area: Pick<ConfigArea, "orderedArrays" | "arrayKeys" | "informationalFields" | "comparableSpec" | "informationalName" | "cosmeticFields">
+  area: Pick<ConfigArea, "orderedArrays" | "arrayKeys" | "informationalFields" | "derivedFields" | "comparableSpec" | "informationalName" | "assignedKeys" | "cosmeticFields">
   blob: Pick<ConfigBlobItem, "name" | "key" | "rev" | "spec">
-  /** The blob spec with refs rewritten to the target's ids (what would be written). */
   localizedSpec: ConfigSpec
   target: ConfigItem
-  /** Use `blob.rev` as the three-way base (only when the blob came from this same org). */
   threeWay: boolean
-  /** The admin chose "overwrite with blob" for a drifted item. */
   override: boolean
-  /** The spec at export, when known: enables per-field base values and conflicts. */
   baseSpec?: ConfigSpec
 }
 
 export function classifyMatched(input: ClassifyMatchedInput): MatchedClassification {
   const { area, blob, target } = input
-  // Revs cover name and key as well as the spec (`itemRev`): a rename on the
-  // target after export is a change there, a rename only in the blob is an edit.
   const targetRev = itemRev(area, target)
   const oursRev = itemRev(area, blob)
   const fields = diffSpecs(area, target.spec, input.localizedSpec)
   const nameChanged = !area.informationalName && blob.name !== target.name
-  const keyChanged = blob.key !== undefined && (blob.key ?? null) !== (target.key ?? null)
+  const keyChanged = area.assignedKeys
+    ? Boolean(blob.key) && !target.key
+    : blob.key !== undefined && (blob.key ?? null) !== (target.key ?? null)
   const flags: ConfigPlanFlag[] = []
   const reasons: string[] = []
   if (nameChanged) fields.unshift({ path: "name", from: target.name, to: blob.name })

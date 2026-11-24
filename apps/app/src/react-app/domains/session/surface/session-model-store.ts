@@ -1,8 +1,3 @@
-// Per-conversation model memory. Each session can pick its own model (and
-// reasoning variant) from the composer; the choice is remembered in
-// localStorage so returning to a conversation restores the model it last
-// used. Opening a session restores its engine-bound model when no local
-// choice exists; only sessions without either fall back to the global default.
 import { useMemo } from "react";
 import { create } from "zustand";
 
@@ -53,11 +48,9 @@ function writeStoredSelections(bySessionId: Record<string, SessionModelSelection
   try {
     window.localStorage.setItem(STORAGE_KEY, JSON.stringify(bySessionId));
   } catch {
-    // Ignore storage failures.
   }
 }
 
-/** Keep the newest entries (object insertion order) under the cap. */
 function capSelections(bySessionId: Record<string, SessionModelSelection>) {
   const keys = Object.keys(bySessionId);
   if (keys.length <= MAX_REMEMBERED_SESSIONS) return bySessionId;
@@ -70,9 +63,7 @@ function capSelections(bySessionId: Record<string, SessionModelSelection>) {
 
 type SessionModelStore = {
   bySessionId: Record<string, SessionModelSelection>;
-  /** Remember a session's model. No-op when the model is unchanged. */
   setModel: (sessionId: string, model: ModelRef, variant?: string | null) => void;
-  /** Adopt the engine's model only if no local choice has been remembered. */
   restoreModel: (sessionId: string, model: ModelRef, variant?: string | null) => void;
   setVariant: (sessionId: string, variant: string | null) => void;
 };
@@ -91,8 +82,6 @@ export const useSessionModelStore = create<SessionModelStore>((set) => ({
     return { bySessionId };
   }),
   restoreModel: (sessionId, model, variant = null) => set((state) => {
-    // Check at write time: a delayed history read must not replace a picker
-    // choice made while the session was opening (including effort-only edits).
     if (state.bySessionId[sessionId]) return state;
     const bySessionId = capSelections({ ...state.bySessionId, [sessionId]: { model, variant } });
     writeStoredSelections(bySessionId);
@@ -113,7 +102,6 @@ export function getSessionModelSelection(sessionId: string): SessionModelSelecti
 
 export type UseSessionModelSelectionInput = {
   sessionId: string;
-  /** Global default model (route prefs) used when the session has no memory. */
   fallbackModel: ModelRef;
   fallbackModelLabel: string;
   fallbackVariant: string | null;
@@ -134,11 +122,6 @@ export type SessionModelControls = {
   setVariant: (value: string | null) => void;
 };
 
-/**
- * Resolves the model controls for one session surface: the session's own
- * remembered model when present, otherwise the global default. Writing
- * always targets the session so split panes never control each other.
- */
 export function useSessionModelSelection(input: UseSessionModelSelectionInput): SessionModelControls {
   const {
     sessionId,

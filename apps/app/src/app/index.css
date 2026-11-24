@@ -703,3 +703,12 @@ select:disabled {
 @media (prefers-reduced-motion: reduce) {
   .ow-app-progress-dot, .ow-app-loading-grid { animation: none; }
 }
+
+/* Find on a settings page: every match, and the one being visited. The
+   colors match the marks "Find in conversation" draws. */
+::highlight(settings-find) {
+  background-color: color-mix(in srgb, var(--amber-4) 70%, transparent);
+}
+::highlight(settings-find-current) {
+  background-color: var(--amber-7);
+}

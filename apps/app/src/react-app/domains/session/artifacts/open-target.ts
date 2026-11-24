@@ -25,17 +25,13 @@ export type OpenTarget = {
   confidence: number;
   reason: string;
   exists?: boolean;
-  /** Unverified exact candidates from a directory preceding this reference. */
   pathHints?: string[];
-  /** Absolute path on the owning server, not necessarily this computer. */
   resolvedPath?: string;
-  /** Pins subsequent file operations to the root that resolved this target. */
   fileScope?: "workspace" | "conversation";
   size?: number;
   updatedAt?: number;
 };
 
-/** Explicit links preserve the full address, unlike URLs extracted from prose. */
 export function openTargetFromUrl(href: string): OpenTarget | null {
   const value = href.trim();
   try {
@@ -160,23 +156,10 @@ function textWithoutRedundantMarkdownLinkLabels(text: string) {
   });
 }
 
-/**
- * Markdown link destinations are URLs, so a reply that links `Acme%20Quote.pdf`
- * or `file:///…/Acme%20Quote.pdf` names the file `Acme Quote.pdf`. Decode the
- * destination once so it matches the file on disk. A `file://` URL with a host
- * stays as written (network shares are never opened), and a name that is not
- * valid percent-encoding stays literal.
- */
 export function filePathFromLinkHref(href: string): string {
   return parseLocalPathReference(href, { decode: true })?.path ?? href.trim();
 }
 
-/**
- * Chat attachments are uploaded into the workspace inbox and referenced by
- * `file://` URLs on message file parts. Decoding the URL here lets those
- * attachments resolve as openable artifacts (regex path scanning cannot,
- * because attachment filenames often contain spaces).
- */
 export function filePathFromFileUrl(url: string): string | null {
   if (!/^file:\/\//i.test(url)) return null;
   return parseLocalPathReference(url)?.path ?? null;
@@ -207,7 +190,6 @@ function targetFromUrl(url: string, confidence: number, reason: string): OpenTar
       clean = parsed.origin;
     }
   } catch {
-    // Keep the stripped value; regex extraction already validated the shape.
   }
   if (!clean) return null;
   return {
@@ -354,11 +336,9 @@ function addFileValues(map: Map<string, OpenTarget>, values: string[], confidenc
   }
 }
 
-// Session sync replaces changed parts; unchanged tools survive text-only deltas.
 const partOpenTargets = new WeakMap<UIMessage["parts"][number], Map<string, OpenTarget[]>>();
 
 function extractPartOpenTargets(part: UIMessage["parts"][number], confidence: number, includeFileMentions: boolean) {
-  // Only text extraction depends on message role or file-mention options.
   const key = part.type === "text" ? `${confidence}:${includeFileMentions}` : "default";
   let variants = partOpenTargets.get(part);
   const cached = variants?.get(key);
@@ -425,8 +405,6 @@ function extractPartOpenTargets(part: UIMessage["parts"][number], confidence: nu
   return extracted;
 }
 
-/** Exact structured paths touched by completed tools, including reads. These are
- * resolution hints, not sidebar artifacts or proof that the files still exist. */
 export function deriveSessionFileEvidence(messages: UIMessage[]): OpenTarget[] {
   const targets = new Map<string, OpenTarget>();
   for (const message of messages) {
@@ -445,8 +423,6 @@ export function deriveSessionFileEvidence(messages: UIMessage[]): OpenTarget[] {
       for (const value of values) {
         const reference = parseLocalPathReference(value);
         const target = reference && targetFromFile(reference.path, 95, "session tool metadata");
-        // Unlike legacy artifact discovery, evidence must keep literal prefixes
-        // and case: workspaces/foo/report.md can be a real filesystem location.
         if (target && reference) addTarget(targets, { ...target, id: `file:${reference.path}`, value: reference.path });
       }
     }
@@ -470,6 +446,5 @@ export function deriveOpenTargets(messages: UIMessage[], options: DeriveOpenTarg
   return Array.from(targets.values())
     .filter(isArtifactTarget)
     .sort((left, right) => right.confidence - left.confidence)
-    // Callers may attach verification metadata or otherwise mutate their targets.
     .map((target) => ({ ...target }));
 }

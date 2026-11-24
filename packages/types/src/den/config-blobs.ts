@@ -142,11 +142,9 @@ export type ResolvedConfigSecret =
 export type ConfigSpec = { [key: string]: unknown };
 
 export const configBlobItemSchema = z.object({
-  /** Source TypeID. Optional for hand-written items. */
   id: z.string().min(1).max(100).optional(),
   key: configItemKeySchema.nullable().optional(),
   name: z.string().min(1).max(300),
-  /** `sha256:` hash of the canonical spec at export: the three-way base. */
   rev: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
   spec: z.record(z.string(), z.unknown()),
 }).strict();
@@ -192,7 +190,6 @@ export const configBlobSchema = z.object({
   baseHash: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
   areas: z.record(z.string(), z.unknown()),
   secrets: z.array(configBlobSecretIndexEntrySchema).optional(),
-  /** Areas left out of an export because the exporter could not view them. */
   omitted: z.array(z.object({ area: configAreaKeySchema, reason: z.string() }).strict()).optional(),
 }).strict();
 export type ConfigBlob = Omit<z.infer<typeof configBlobSchema>, "areas"> & { areas: ConfigBlobAreasTree };
@@ -231,7 +228,6 @@ export function flattenConfigAreas(tree: unknown): { areas: Partial<Record<Confi
       errors.push(`areas.${path.join(".")} must be an object`);
       return;
     }
-    // Area keys are at most three segments deep ("settings.advanced.collections").
     if (path.length > 3) {
       errors.push(`unknown area "${path.join(".")}"`);
       return;
@@ -254,7 +250,6 @@ export function flattenConfigAreas(tree: unknown): { areas: Partial<Record<Confi
           return;
         }
       }
-      // Checked on the raw input: schema parsing may silently drop a `__proto__` key.
       const shape = findConfigShapeProblem(rawItems, `areas.${key}.items`, CONFIG_BLOB_MAX_SPEC_DEPTH + 2);
       if (shape) {
         errors.push(shape);
@@ -273,9 +268,6 @@ export function flattenConfigAreas(tree: unknown): { areas: Partial<Record<Confi
   walk(tree, []);
   return { areas, errors };
 }
-
-// ---------------------------------------------------------------------------
-// Plans
 
 export const CONFIG_IMPORT_MODES = ["merge", "mirror"] as const;
 export type ConfigImportMode = (typeof CONFIG_IMPORT_MODES)[number];
@@ -314,11 +306,8 @@ export type ConfigFieldChange = {
   path: string;
   from?: unknown;
   to?: unknown;
-  /** Value at export, when known (three-way). */
   base?: unknown;
-  /** Changed on both sides since export. */
   conflict?: boolean;
-  /** For set-valued fields (e.g. `access.teams`): elements added / removed. */
   added?: unknown[];
   removed?: unknown[];
 };
@@ -335,19 +324,19 @@ export type ConfigPlanSecret = {
 };
 
 export type ConfigPlanRef = {
-  /** Spec path where the reference sits, e.g. `access.teams[0]`. */
   path: string;
   ref: string;
   name?: string;
   resolvedId: string | null;
-  /** How it resolved: an existing target item, a planned create in this request, or an explicit decision. */
   via: "target" | "planned" | "decision" | null;
   decision?: "drop" | "invite" | null;
+  refuses?: ConfigRefRefusal[];
 };
+
+export type ConfigRefRefusal = "drop" | "invite";
 
 export type ConfigPlanItem = {
   area: ConfigAreaKey;
-  /** Stable handle for decisions: the blob item's id, else `key:<key>`, else `#<index>`. Target-only items use `target:<id>`. */
   ref: string;
   op: ConfigPlanOp;
   blob?: { id?: string; key?: string | null; name: string };
@@ -359,9 +348,7 @@ export type ConfigPlanItem = {
   candidates?: ConfigMatchCandidate[];
   secrets?: ConfigPlanSecret[];
   refs?: ConfigPlanRef[];
-  /** Hash of the target's current spec this item was planned against. */
   targetRev?: string;
-  /** Effects of writing this item that a later "Restore previous config" can't undo (from the area's `irreversible`). */
   irreversible?: string[];
 };
 
@@ -372,12 +359,11 @@ export type ConfigPlan = {
   mode: ConfigImportMode;
   summary: ConfigPlanSummary;
   areas: Array<{ area: ConfigAreaKey; label: string; items: ConfigPlanItem[] }>;
-  /** Request-level problems (version skew, omitted areas, …). */
   issues: Array<{ level: "error" | "warning" | "info"; message: string; area?: ConfigAreaKey }>;
+  refTargets?: ConfigPlanRefTargets[];
 };
 
-// ---------------------------------------------------------------------------
-// Decisions and inputs
+export type ConfigPlanRefTargets = { area: ConfigAreaKey; items: Array<{ id: string; name: string }> };
 
 export const configDecisionsSchema = z.object({
   matches: z.array(z.object({ area: configAreaKeySchema, ref: z.string(), targetId: z.union([z.string(), z.literal("create")]) }).strict()).default([]),
@@ -387,15 +373,33 @@ export const configDecisionsSchema = z.object({
     z.object({ invite: z.literal(true) }).strict(),
   ]) }).strict()).default([]),
   deletes: z.array(z.object({ area: configAreaKeySchema, targetId: z.string() }).strict()).default([]),
-  /** Overwrite a drifted item with the blob anyway. */
   overrides: z.array(z.object({ area: configAreaKeySchema, ref: z.string() }).strict()).default([]),
   skips: z.array(z.object({ area: configAreaKeySchema, ref: z.string() }).strict()).default([]),
-  /** For a create that collides on a unique name: the new name to use. */
   renames: z.array(z.object({ area: configAreaKeySchema, ref: z.string(), name: z.string().min(1).max(300) }).strict()).default([]),
   people: z.object({ sendInviteEmails: z.boolean().default(false) }).strict().default({ sendInviteEmails: false }),
+  createMissing: z.boolean().optional(),
+  reusedFrom: z.string().optional(),
 }).strict();
 export type ConfigDecisions = z.infer<typeof configDecisionsSchema>;
 export const EMPTY_CONFIG_DECISIONS: ConfigDecisions = { matches: [], refs: [], deletes: [], overrides: [], skips: [], renames: [], people: { sendInviteEmails: false } };
+
+/**
+ * The answers of one import, kept next to the export they were given for and
+ * sent to `PUT …/change-requests/:id/decisions` of a later import of the same
+ * source into the same organization. It carries what was matched, pointed
+ * elsewhere, left out and renamed; deletes, overwrites of drifted items and
+ * invitation emails are decided again each time.
+ */
+export const CONFIG_DECISIONS_FILE_FORMAT = "openwork.config-decisions";
+export const configDecisionsFileSchema = z.object({
+  format: z.literal(CONFIG_DECISIONS_FILE_FORMAT),
+  formatVersion: z.literal(1),
+  source: z.object({ organizationId: z.string() }).strict().nullable(),
+  target: z.object({ organizationId: z.string() }).strict(),
+  changeRequestId: z.string(),
+  decisions: configDecisionsSchema.pick({ matches: true, refs: true, skips: true, renames: true }).strict(),
+}).strict();
+export type ConfigDecisionsFile = z.infer<typeof configDecisionsFileSchema>;
 
 export const configSecretInputSchema = z.discriminatedUnion("decision", [
   z.object({ path: z.string(), decision: z.literal("keep") }).strict(),
@@ -405,9 +409,6 @@ export const configSecretInputSchema = z.discriminatedUnion("decision", [
 ]);
 export type ConfigSecretInput = z.infer<typeof configSecretInputSchema>;
 export const configSecretInputsSchema = z.object({ inputs: z.array(configSecretInputSchema).max(500) }).strict();
-
-// ---------------------------------------------------------------------------
-// Change requests
 
 export const CONFIG_CHANGE_REQUEST_STATUSES = [
   "uploaded",
@@ -475,10 +476,8 @@ export type ConfigApplyStep = {
 export type ConfigApplyFailure = {
   code: string;
   message: string;
-  /** Spec path the failure is about, e.g. "baseUrl" or "access.teams[1]". */
   field?: string;
   step?: ConfigApplyStep;
-  /** HTTP-like status from the underlying service, when there is one. */
   status?: number;
 };
 
@@ -498,15 +497,12 @@ export type ConfigApplyReportItem = {
   op: ConfigPlanOp;
   localId: string | null;
   status: ConfigApplyItemStatus;
-  /** Writes performed, in order. For a failed item: the ones done before the failure. */
   steps: ConfigApplyStep[];
   warnings: string[];
   failure?: ConfigApplyFailure;
-  /** Effects a later revert cannot undo (emails sent, sign-ins revoked, history lost…). */
   irreversible: string[];
   startedAt: string | null;
   durationMs: number | null;
-  /** @deprecated use `failure.message`. Kept for older stored reports. */
   error?: string;
 };
 
@@ -523,17 +519,14 @@ export type ConfigApplyReport = {
   requestedBy: { memberId: string | null; name: string | null; apiKeyName: string | null } | null;
   runsAs: { memberId: string; name: string | null } | null;
   counts: Record<ConfigApplyItemStatus, number>;
-  /** The first failed item, repeated here so callers don't have to search. */
   failure: { area: ConfigAreaKey; ref: string; name: string; failure: ConfigApplyFailure } | null;
   items: ConfigApplyReportItem[];
   warnings: string[];
-  /** `rev` of every item written, right after the apply, keyed `<area>/<id>`: the three-way base of a revert. */
   afterRevs?: Record<string, string>;
 };
 
 /** Organization settings for config change requests (GET/PATCH `/v1/config-blobs/settings`). */
 export type ConfigBlobSettings = {
-  /** Two different approvers; the second must be neither the creator nor the first approver (D5). */
   requireSecondApprover: boolean;
 };
 export const configBlobSettingsPatchSchema = z.object({ requireSecondApprover: z.boolean() }).strict();
@@ -542,7 +535,6 @@ export type ConfigBlobSettingsResponse = { settings: ConfigBlobSettings };
 export type ConfigAreaDescriptor = {
   key: ConfigAreaKey;
   label: string;
-  /** Sidebar breadcrumb for the export tree, e.g. ["AI Gateway", "AI Providers"]. */
   path: string[];
   specVersion: number;
   supported: boolean;
@@ -553,13 +545,9 @@ export type ConfigAreaDescriptor = {
   secretFields: string[];
 };
 
-// ---------------------------------------------------------------------------
-// HTTP API shapes (den-api `/v1/config-blobs/*`, consumed by den-web)
-
 export type ConfigAreasResponse = {
   areas: ConfigAreaDescriptor[];
   deployment: ConfigDeployment;
-  /** Whether `env` secret decisions are allowed here (self-hosted with an operator allowlist). */
   allowEnvSecrets: boolean;
 };
 export type ConfigChangeRequestResponse = { changeRequest: ConfigChangeRequestSummary };

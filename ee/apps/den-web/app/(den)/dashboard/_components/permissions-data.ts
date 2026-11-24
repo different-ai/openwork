@@ -11,11 +11,6 @@ import type { MemberRoleState, TeamRoleState } from "./team-roles";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { permissionsQueryKeys } from "./permissions-query-keys";
 
-/**
- * Den API Permissions endpoints (ee/apps/den-api/src/routes/org/permissions.ts).
- * Response shapes mirror that file's zod schemas.
- */
-
 const statusSchema = z.enum(["allow", "deny"]);
 const setKindSchema = z.enum(["member_default", "admin_default", "billing_manager_default", "super_admin_default", "team"]);
 const sourceKindSchema = z.enum(["user", "seed", "reconcile", "migration"]);
@@ -34,7 +29,6 @@ const appliesToSummarySchema = z.discriminatedUnion("kind", [
 
 const appliesToDetailSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("everyone"), memberCount: z.number() }),
-  // People's names and emails come only with teams.view; the counts always do.
   z.object({ kind: z.literal("admins"), directAdminCount: z.number(), directAdmins: z.array(personSchema).nullable(), adminTeams: z.array(adminTeamSchema) }),
   z.object({ kind: z.literal("super_admins"), superAdminCount: z.number(), superAdmins: z.array(personSchema).nullable() }),
   z.object({ kind: z.literal("team"), team: teamReferenceSchema.nullable(), teams: z.array(teamReferenceSchema).default([]), memberCount: z.number(), members: z.array(personSchema).nullable() }),
@@ -45,9 +39,7 @@ const setSummarySchema = z.object({
   name: z.string(),
   kind: setKindSchema,
   team: teamReferenceSchema.nullable(),
-  /** Every team the set applies to (several only with sharedRoles). */
   teams: z.array(teamReferenceSchema).default([]),
-  /** People given the set directly, without a team. Older servers don't send it. */
   directMemberIds: z.array(z.string()).default([]),
   allowedCount: z.number(),
   createdAt: z.string(),
@@ -115,7 +107,6 @@ const sourceSchema = z.object({
   label: z.string(),
   setId: z.string().optional(),
   teamId: z.string().optional(),
-  // Read so teamRoles can name the source as a role ("Admin via Sales").
   via: z.string().optional(),
   teamName: z.string().optional(),
   setName: z.string().optional(),
@@ -126,7 +117,6 @@ const memberPermissionsSchema = z.object({
   memberId: z.string(),
   featureEnabled: z.boolean(),
   isOwner: z.boolean(),
-  // Older servers don't send it.
   isSuperAdmin: z.boolean().optional().default(false),
   isAdmin: z.boolean(),
   permissions: z.array(z.object({ key: z.string(), label: z.string(), sources: z.array(sourceSchema) })),
@@ -150,7 +140,6 @@ export type PermissionKeyStatus = z.infer<typeof keyStatusSchema>;
 export type MemberPermissions = z.infer<typeof memberPermissionsSchema>;
 export type PermissionChange = { key: string; status: PermissionStatus };
 
-/** A Permissions request that failed with a code the screens explain. */
 export class PermissionsRequestError extends Error {
   readonly status: number;
   readonly code: string | null;
@@ -167,7 +156,6 @@ export class PermissionsRequestError extends Error {
   }
 }
 
-/** Catalog labels for keys, quoted, for error messages. Unknown keys stay as sent. */
 export function permissionLabels(keys: readonly string[]): string {
   return keys.map((key) => `“${isPermissionKey(key) ? getPermissionDefinition(key).label : key}”`).join(", ");
 }
@@ -256,11 +244,6 @@ export function usePermissionSets(orgId: string | null, enabled = true) {
   });
 }
 
-/**
- * The organization's roles as every screen lists them, with the permission
- * set each team holds and the one each person was given directly. Built-in
- * roles only until the sets load, or when the viewer can't read them.
- */
 export function useOrganizationRoles(orgId: string | null, enabled: boolean) {
   const query = usePermissionSets(orgId, enabled);
   const sets = enabled ? query.data ?? [] : [];
@@ -272,12 +255,10 @@ export function useOrganizationRoles(orgId: string | null, enabled: boolean) {
     for (const team of role.teams) setIdByTeam.set(team.id, role.setId);
     for (const memberId of role.directMemberIds) setIdByMember.set(memberId, role.setId);
   }
-  /** A person's own role: their organization role, and the role they were given directly. */
   const memberRoleState = (member: { id: string; role: string; isOwner: boolean }): MemberRoleState => ({
     role: member.isOwner ? "owner" : isSuperAdminRole(member.role) ? "super-admin" : getOrgAccessFlags(member.role, false).isAdmin ? "admin" : "member",
     setId: setIdByMember.get(member.id) ?? null,
   });
-  /** What a team holds: the Admin switch, and the role it was given. */
   const teamRoleState = (team: { id: string; grantsOrganizationAdmin: boolean }): TeamRoleState => ({
     admin: team.grantsOrganizationAdmin,
     setId: setIdByTeam.get(team.id) ?? null,
@@ -372,10 +353,6 @@ export function useMemberPermissions(orgId: string | null, memberId: string, ena
   });
 }
 
-/**
- * Writes run through runReauthableAction: permissions.manage needs a recent
- * sign-in, and the dashboard's reauth dialog retries the write after it.
- */
 function useReauthableWrite() {
   const { runReauthableAction } = useOrgDashboard();
   return async <T>(label: string, write: () => Promise<T>): Promise<T> => {
@@ -456,11 +433,6 @@ export function useRemoveTeamPermissions(orgId: string, setId: string) {
   });
 }
 
-/**
- * sharedRoles: gives a team one custom role, replacing its current one, or
- * none (PUT /v1/teams/:teamId/permission-set). The team's Admin designation is
- * a separate call (PATCH /v1/teams/:id).
- */
 export function useSetTeamRole(orgId: string) {
   const queryClient = useQueryClient();
   const write = useReauthableWrite();
@@ -486,7 +458,6 @@ export function useSetTeamRole(orgId: string) {
   });
 }
 
-/** Gives one person a role directly (a custom role or Billing manager), or takes it away with null. */
 export function useSetMemberRole(orgId: string) {
   const queryClient = useQueryClient();
   const write = useReauthableWrite();
@@ -512,7 +483,6 @@ export function useSetMemberRole(orgId: string) {
   });
 }
 
-/** Creates a named role, given to the teams and people now (each one's current role is replaced). */
 export function useCreateSharedRole(orgId: string) {
   const queryClient = useQueryClient();
   const write = useReauthableWrite();
@@ -534,7 +504,6 @@ export function useCreateSharedRole(orgId: string) {
   });
 }
 
-/** renames a custom role. */
 export function useRenameRole(orgId: string, setId: string) {
   const queryClient = useQueryClient();
   const write = useReauthableWrite();

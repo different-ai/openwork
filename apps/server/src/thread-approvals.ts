@@ -1,19 +1,3 @@
-/**
- * Thread approvals: OpenWork's own memory of what a user approved on a thread.
- *
- * The engine keeps an "always" reply in the memory of the per-directory
- * instance that received it — not on the session and not on disk. OpenWork
- * rebuilds those instances routinely (config, skill, and MCP reload events,
- * idle eviction, engine rollover), so a grant made mid-thread is forgotten
- * while the thread itself lives on, and the same command asks again.
- *
- * This module records every "always" reply against its thread and, when the
- * engine asks the same thread for something that grant already covers,
- * answers on the user's behalf — with "always" again so the fresh instance
- * remembers too. The engine stays the only adjudicator: OpenWork never
- * approves anything the user did not approve on that very thread, and a
- * `deny` rule never reaches the ask stage in the first place.
- */
 import type { EnginePoolConnection, EnginePoolLogger } from "./engine-pool.js";
 import { BoundedSseFrameBuffer } from "./engine-pool.js";
 import { buildEngineAuthProbeHeader } from "./engine-registry.js";
@@ -60,7 +44,6 @@ const threadApprovalStore = createWorkspaceKvStore<WorkspaceThreadApprovals>({
   serialize: (value) => JSON.stringify(value),
 });
 
-/** Mirror of the engine's wildcard matcher (`*` any run, `?` one char, trailing ` *` optional). */
 export function matchesPermissionPattern(input: string, pattern: string): boolean {
   const normalized = input.replaceAll("\\", "/");
   let escaped = pattern
@@ -72,7 +55,6 @@ export function matchesPermissionPattern(input: string, pattern: string): boolea
   return new RegExp(`^${escaped}$`, process.platform === "win32" ? "si" : "s").test(normalized);
 }
 
-/** A grant covers a request when every requested pattern is matched by one of the granted patterns. */
 export function grantCovers(grant: ThreadApprovalGrant, permission: string, patterns: string[]): boolean {
   if (!matchesPermissionPattern(permission, grant.permission)) return false;
   return patterns.length > 0
@@ -135,9 +117,7 @@ function sseFramePayload(frame: string): unknown {
 
 export interface ThreadApprovalReplayerOptions {
   config: ServerConfig;
-  /** The engine to observe; null while no primary is serving. */
   primary: () => EnginePoolConnection | null;
-  /** Map an engine instance directory to the OpenWork workspace it serves; null for directories OpenWork does not own. */
   workspaceIdForDirectory: (directory: string) => Promise<string | null>;
   logger?: EnginePoolLogger;
   reconnectMs?: number;
@@ -148,12 +128,6 @@ export interface ThreadApprovalReplayer {
   stop: () => void;
 }
 
-/**
- * Follow the engine's global event stream, remember "always" replies per
- * thread, and answer repeat asks on the same thread that a remembered grant
- * already covers. Reconnects when the stream drops or the primary engine
- * changes; a lost connection only pauses replay, never approves anything.
- */
 export function startThreadApprovalReplayer(options: ThreadApprovalReplayerOptions): ThreadApprovalReplayer {
   const fetchImpl = options.fetchImpl ?? loopbackFetch;
   const reconnectMs = options.reconnectMs ?? 1_000;
@@ -230,15 +204,11 @@ export function startThreadApprovalReplayer(options: ThreadApprovalReplayerOptio
     if (properties.reply !== "always") return;
     const workspaceId = await options.workspaceIdForDirectory(ask.directory);
     if (!workspaceId) return;
-    // The engine's suggested `always` patterns are what it would remember
-    // itself; fall back to the exact request when it suggests none.
     const patterns = ask.always.length ? ask.always : ask.patterns;
     await rememberThreadApproval(options.config, workspaceId, ask.sessionId, { permission: ask.permission, patterns });
   };
 
   const handleFrame = async (connection: EnginePoolConnection, frame: string) => {
-    // Every engine event crosses this consumer. A frame whose text never names
-    // a permission event cannot decode into one, so skip the JSON parse.
     if (!frame.includes("permission.asked") && !frame.includes("permission.replied")) return;
     const payload = sseFramePayload(frame);
     if (!isRecord(payload) || typeof payload.directory !== "string" || !isRecord(payload.payload)) return;
@@ -279,8 +249,6 @@ export function startThreadApprovalReplayer(options: ThreadApprovalReplayerOptio
       }
       const controller = new AbortController();
       active = controller;
-      // A rollover leaves this stream attached to the draining engine; follow
-      // the primary instead of waiting for the old process to exit.
       const follow = setInterval(() => {
         if (options.primary()?.baseUrl !== connection.baseUrl) controller.abort();
       }, 500);
@@ -292,7 +260,6 @@ export function startThreadApprovalReplayer(options: ThreadApprovalReplayerOptio
         });
         if (response.ok && response.body) await consume(connection, response.body, controller.signal);
       } catch {
-        // Losing the stream only pauses replay; the loop reconnects below.
       } finally {
         clearInterval(follow);
         if (active === controller) active = null;

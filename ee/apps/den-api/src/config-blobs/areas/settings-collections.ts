@@ -1,21 +1,3 @@
-/**
- * `settings.advanced.collections`: marketplaces (collections) and who can see
- * or manage them.
- *
- * Exported per marketplace: name, description, logo URL, whether it is
- * archived, and its access grants by role (everyone, teams, people by email).
- * Nothing in a marketplace is secret.
- *
- * Not in v1: which plugins a marketplace holds (`marketplace_plugin`). Plugins
- * are not exported yet, so an apply never adds or removes memberships: an
- * updated marketplace keeps its plugins, a created one starts empty. Built-in
- * and connected marketplaces can't be deleted (the store refuses).
- *
- * Applies through the plugin-system store, as the marketplace routes do
- * (`createMarketplace`, `updateMarketplace`, `setMarketplaceLifecycle`,
- * `createResourceAccessGrant`, `deleteResourceAccessGrant`), so role checks
- * and plugin MCP access syncing are the same as in the dashboard.
- */
 import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { MarketplaceAccessGrantTable, MarketplaceTable } from "@openwork-ee/den-db/schema"
 import { denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -39,6 +21,8 @@ import {
   isJsonObject,
   loadMemberEmails,
   loadTeamNames,
+  OWN_MANAGER_ACCESS_KEPT,
+  ownManagerAccessPreflight,
   personRef,
   resolvedRefIds,
   specObject,
@@ -61,7 +45,6 @@ const specSchema = z.object({
   description: z.string().max(65535).nullable(),
   logoUrl: z.string().trim().min(1).max(1024).nullable(),
   archived: z.boolean(),
-  /** Grants by role. `orgWide`: the role everyone in the organization has, or null. */
   access: z.object({
     orgWide: z.enum(ROLES).nullable(),
     teams: byRoleSchema,
@@ -103,7 +86,6 @@ function desiredGrants(spec: z.infer<typeof applySpecSchema>, raw: unknown): Des
   const members = isJsonObject(access.members) ? access.members : {}
   const out = new Map<GrantKey, DesiredGrant>()
   if (spec.access.orgWide) out.set("org", { key: "org", role: spec.access.orgWide, value: { orgWide: true } })
-  // Higher roles win when a team or person is listed twice.
   for (const role of ROLES) {
     for (const id of resolvedRefIds(teams[role], `access.teams.${role}`)) {
       const teamId = normalizeTeamId(id)
@@ -136,7 +118,6 @@ export const settingsCollectionsArea = defineConfigArea({
   specSchema,
   dependsOn: ["members.teams", "members.people"],
   deployments: ["cloud", "self_hosted"],
-  // There is no separate view permission: listing every marketplace (and its grants) is a manager's view.
   viewPermission: "marketplaces.manage",
   managePermission: "marketplaces.manage",
   tables: ["marketplace", "marketplace_access_grant"],
@@ -158,6 +139,8 @@ export const settingsCollectionsArea = defineConfigArea({
   async readItems(ctx, ids) {
     return readCollections(ctx, ids)
   },
+
+  preflight: ownManagerAccessPreflight,
 
   async apply(ctx, op): Promise<ConfigApplyResult> {
     return applyWithSteps(async (log) => {
@@ -207,7 +190,6 @@ export const settingsCollectionsArea = defineConfigArea({
           await log.run({ action: "set", target: "archived", detail: "false" }, () => storeCall(`Restore ${label}`, () => setMarketplaceLifecycle({ context, marketplaceId: id, action: "restore" })))
           status = "active"
         }
-        // Only the fields that change are sent; updateMarketplace keeps omitted ones.
         const fields = {
           ...(inScope("name") && op.item.name !== row.name ? { name: op.item.name } : {}),
           ...(inScope("description") && spec.description !== (row.description ?? null) ? { description: spec.description } : {}),
@@ -222,7 +204,6 @@ export const settingsCollectionsArea = defineConfigArea({
         }
       }
 
-      // Grants: only when the plan changes access; then only grants that are added, removed or change role.
       if (inScope("access")) {
         const id = marketplaceId
         const current = await ctx.db
@@ -244,8 +225,7 @@ export const settingsCollectionsArea = defineConfigArea({
           const key = grantKey(grant)
           if (desiredKeys.has(key)) continue
           if (grant.orgMembershipId === payload.currentMember.id && grant.role === "manager") {
-            // Same rule as the creator grant in the dashboard: the person applying keeps managing it.
-            warnings.push("Your own manager access was kept.")
+            warnings.push(OWN_MANAGER_ACCESS_KEPT)
             continue
           }
           await log.run(
@@ -270,7 +250,6 @@ function grantTarget(key: GrantKey): string {
   return "access.orgWide"
 }
 
-/** Team names and emails for grant keys, for step details. */
 async function grantNames(ctx: ConfigAreaContext, keys: readonly GrantKey[]): Promise<Map<GrantKey, string>> {
   const teamIds = keys.flatMap((key) => key.startsWith("team:") ? [key.slice(5)] : [])
   const memberIds = keys.flatMap((key) => key.startsWith("member:") ? [key.slice(7)] : [])

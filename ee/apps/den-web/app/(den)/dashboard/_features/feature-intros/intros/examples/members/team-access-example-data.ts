@@ -1,5 +1,3 @@
-/** Sample data only: no API calls (DESIGN.md I7). Sources read as on a team's Access tab. */
-
 export const teamAccessExampleTeam = "Sales";
 
 export const teamAccessExampleRows: ReadonlyArray<{ name: string; inside: string; source: string }> = [

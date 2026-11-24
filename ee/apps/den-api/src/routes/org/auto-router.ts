@@ -63,12 +63,10 @@ async function listView(c: PermissionRouteContext, organizationId: DenTypeId<"or
   return { ...list, routing, canEdit }
 }
 
-/** Returns the caller's Gateway key, so agents never see it. */
 function secretRoute(options: DescribeRouteOptions): DescribeRouteOptions & { "x-mcp": false } {
   return { ...options, "x-mcp": false }
 }
 
-/** The gateway's OpenAI-compatible base, the same origin Gateway providers' configs point at. */
 function gatewayBaseUrl() {
   return `${env.gatewayPublicBaseUrl.replace(/\/+$/, "")}/api/v1`
 }
@@ -89,14 +87,7 @@ const assignmentResponses = {
   404: notFound,
 }
 
-/**
- * Smart Model Router: admins create named routers,
- * assign each to everyone, teams or members, and list AI Gateway models with
- * the tasks each handles; members pick "Smart: <name>" in the desktop and the
- * gateway routes each prompt (packages/types/src/den/auto-router.ts).
- */
 export function registerOrgAutoRouterRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
-  /** Checks a name-and-models write and saves it; the response is the whole list and the router's id. */
   async function save(c: ResourceActionContext & PermissionRouteContext, write: AutoRouterWrite, routerId?: string) {
     const payload = c.get("organizationContext")
     if (!payload) return c.json({ error: "organization_not_found" }, 404)
@@ -114,16 +105,12 @@ export function registerOrgAutoRouterRoutes<T extends { Variables: OrgRouteVaria
     return c.json({ ...await listView(c, organizationId, { primary: true }), routerId: saved })
   }
 
-  /** Checks who a router should apply to and saves it. */
   async function saveAssignment(c: ResourceActionContext & PermissionRouteContext, write: AutoRouterAssignmentWrite, routerId: string) {
     const payload = c.get("organizationContext")
     if (!payload) return c.json({ error: "organization_not_found" }, 404)
     const organizationId = payload.organization.id
     const problem = await checkAutoRouterAssignment(organizationId, write.assignment)
     if (problem) return c.json(problem, 400)
-    // Everyone reaches every member, so it needs Share with everyone on its own;
-    // keeping an already org-wide router org-wide shares nothing new. The save
-    // decides that under the router's lock.
     const result = await saveAutoRouterAssignment({
       organizationId,
       memberId: payload.currentMember.id,

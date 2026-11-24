@@ -4,7 +4,6 @@ import { useExampleStep } from "../use-example-step";
 import { ExampleAvatar, ExampleCaption, ExampleGroupLabel, ExampleRow, ExampleRows, ExampleServiceMark } from "../example-parts";
 import { OKTA, authSecurityExampleActivity, authSecurityExampleRows } from "./auth-security-example-data";
 
-/** Section example: single sign-on and provisioning from one identity provider, and what they did today. */
 export function AuthSecurityExample() {
   const step = useExampleStep(authSecurityExampleActivity.length);
 

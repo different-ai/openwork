@@ -32,30 +32,25 @@ export const providerCoveredResources = [
   { type: "provider_access_grant", action: "provider.access_grant" },
 ] satisfies Array<{ type: string; action: string }>
 export const providerBackgroundSteps = ["catalog.refresh"]
-// Not covered by the provider emitter; declared like other routes and recorded by generic request capture.
 export const providerUncoveredRoutes = [
   "DELETE /v1/inference-providers/:inferenceProviderId/oauth",
   "POST /v1/inference-providers/migrate-from-llm-provider",
-  // Testing an unsaved key through AI Gateway: no local write, request evidence only.
   "POST /v1/inference-providers/test-connection",
-  // LiteLLM setup, sync and member key connection: request evidence only (routes/integrations.ts).
   "POST /v1/inference-providers/litellm",
   "POST /v1/inference-providers/:inferenceProviderId/litellm/sync",
   "PATCH /v1/inference-providers/:inferenceProviderId/litellm",
   "PUT /v1/inference-providers/:inferenceProviderId/litellm/member-key",
   "POST /v1/inference-providers/oauth/browser-litellm-key",
   "POST /v1/inference-providers/oauth/browser-litellm-check",
-  // TrueFoundry setup, sync and member token creation: request evidence only (routes/integrations.ts).
   "POST /v1/inference-providers/truefoundry",
   "POST /v1/inference-providers/:inferenceProviderId/truefoundry/sync",
   "PATCH /v1/inference-providers/:inferenceProviderId/truefoundry",
+  "POST /v1/inference-providers/:inferenceProviderId/truefoundry/members/:memberId/reset-tokens",
   "POST /v1/inference-providers/oauth/browser-truefoundry-check",
-  // Custom OpenAI-compatible providers: request evidence only (routes/integrations.ts).
   "POST /v1/inference-providers/custom/discover-models",
   "POST /v1/inference-providers/custom/test-connection",
   "POST /v1/inference-providers/custom",
   "PATCH /v1/inference-providers/:inferenceProviderId/custom",
-  // AWS IAM Identity Center member sign-in: request evidence only.
   "POST /v1/inference-providers/oauth/browser-aws-start",
   "POST /v1/inference-providers/oauth/browser-aws-poll",
 ]
@@ -108,7 +103,6 @@ export const defaultPolicyCoverage: AuditCoverageDeclaration = {
 
 const tenantRouteClasses: readonly AuditRouteClass[] = ["tenant_read", "tenant_access", "tenant_change", "tenant_external", "tenant_job", "tenant_signal"]
 const tenantRouteDeclarations = auditRouteDeclarations.filter((declaration) => tenantRouteClasses.includes(declaration.class))
-/** Tenant-visible request event types derived from route declarations (platform store events are not tenant-visible). */
 export const routeAuditEventTypes: readonly string[] = [...new Set(tenantRouteDeclarations.flatMap(auditRouteEventTypes))].sort()
 
 export function supportedAuditEventTypes(): string[] {
@@ -131,7 +125,6 @@ export const genericRequestCoverage: AuditCoverageDeclaration = {
   limitations: "Request evidence describes the HTTP attempt and its status, not every downstream effect; external outcomes on 5xx are recorded as unknown. Asynchronous job outcomes only where a declaration names jobOutcome. Preclaim-scope 403s are recorded in the platform store against the endpoint they refused; unmatched 404s are request-access-log only.",
 }
 
-/** Background job outcomes (src/audit/job-outcomes.ts) recorded by src/audit/job-capture.ts:recordAuditJobOutcome. */
 function jobOutcomes(eventTypes: readonly string[], limitations: string): AuditCoverageDeclaration {
   const declarations = auditJobOutcomeDeclarations.filter((declaration) => eventTypes.includes(declaration.eventType))
   return {
@@ -183,7 +176,6 @@ export const orgAuditCoverage: Readonly<Record<string, AuditCoverageDeclaration>
   "declarative.ts": support("Route description/validation helpers; not an event emitter."),
   "delete-organization.ts": routes("Organization purge is existing behavior, not pilot retention; it deletes the organization's audit tables in one transaction."),
   "desktop-policies.ts": routes("Desktop policy administration."),
-  "egress-diagnostics.ts": routes("Egress diagnostic execution."),
   "gateway-usage-limits.ts": routes("Gateway limit policy and usage administration."),
   "gateway-usage.ts": routes("Gateway usage reads."),
   "gmail-management.ts": routes("Gmail operations, including external effects."),
@@ -251,12 +243,6 @@ export type UserScopedAuditEvent = Readonly<{
   evidence: string
 }>
 
-/**
- * Events about a user (attribution user_memberships): request evidence of the
- * endpoint stays in the platform store; these are appended by
- * src/audit/fanout.ts:recordAuditForUserMemberships into the user's verified
- * active memberships, one operation per organization sharing the request id.
- */
 export const userScopedAuditEvents: readonly UserScopedAuditEvent[] = [
   { eventType: "session.created", category: "change", organizations: "session organization, else every active membership", actor: "the session user + member id", chokepoints: "src/auth.ts databaseHooks.session.create.after (password, email OTP, social, SSO, device, sign-up auto sign-in, verify-email auto sign-in)", evidence: "after: method (password | email_otp | social:<providerId> | sso | device | other), expiresAt. Target session id (never the token), related member, parent organization. No IP or user agent. A session without an active organization (a member of several organizations) can act in all of them, so it fans out to every organization where the user is an active member (own operation each)." },
   { eventType: "session.handed_off", category: "change", organizations: "session organization, else every active membership", actor: "the session user + member id", chokepoints: "src/routes/auth/desktop-handoff.ts exchange (POST /v1/auth/desktop-handoff/exchange)", evidence: "after: method desktop_handoff, expiresAt. The desktop receives the EXISTING web session (same session id), so no second session.created is recorded. Never the grant or session token." },
@@ -275,11 +261,6 @@ export const userScopedAuditEvents: readonly UserScopedAuditEvent[] = [
 
 export type OrganizationBoundAuthEvent = Readonly<{ eventType: string; category: AuditCategory; organization: string; actor: string; chokepoints: string; evidence: string }>
 
-/**
- * Auth endpoints attributed to the organization the request itself proves
- * (src/audit/better-auth.ts, src/routes/auth/*); request evidence is the
- * declared tenant_change/tenant_read outcome, plus these domain events.
- */
 export const organizationBoundAuthEvents: readonly OrganizationBoundAuthEvent[] = [
   { eventType: "oauth_token.issued", category: "change", organization: "MCP consent referenceId (the access token's org claim), after the user's active membership there is verified", actor: "the token's user + member id", chokepoints: "POST /api/auth/oauth2/token (authorization_code, refresh_token): access-token claims extension notes the issuance; hooks.after attributes (phase after) and appends", evidence: "after: clientId, scopes, grantType, resource; target the MCP grant (oauth_consent) or the client. Never token values, authorization codes, client secrets or hashes. Tokens without an organization (non-MCP OIDC) stay platform evidence." },
   { eventType: "oauth_token.revoked", category: "change", organization: "the revoked token row's referenceId, membership verified", actor: "the token's user + member id", chokepoints: "POST /api/auth/oauth2/revoke: hooks.before looks the stored refresh/opaque access token up by its storage hash (nothing kept); hooks.after attributes (phase after) and appends on success", evidence: "before: tokenType, clientId, scopes. JWT access tokens are stateless and not looked up (platform evidence)." },
@@ -289,7 +270,6 @@ export const organizationBoundAuthEvents: readonly OrganizationBoundAuthEvent[] 
   { eventType: "invitation.preview.served", category: "read", organization: "the invitation's organization (the token proves it)", actor: "unknown", chokepoints: "GET /v1/orgs/invitations/preview handler after the invitation is found", evidence: "Request evidence only (category read, off by default); the token is never recorded." },
 ]
 
-/** The only permitted exclusions: MCP consumption transport and the operational probes (src/audit/routes/types.ts). */
 export const auditExclusions = [
   ...MCP_CONSUMPTION_EXCLUSIONS.map(({ method, path, reason }) => ({ location: "ee/apps/den-api/src/mcp", routes: [`${method} ${path}`], reason })),
   ...OPERATIONAL_EXCLUSIONS.map(({ method, path, reason }) => ({ location: "ee/apps/den-api/src/app.ts", routes: [`${method} ${path}`], reason })),

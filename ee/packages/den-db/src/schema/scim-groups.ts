@@ -100,7 +100,6 @@ export const ScimUserTombstoneTable = mysqlTable(
   ],
 )
 
-// Lowercase aliases match the better-auth SCIM model names.
 export const scimGroup = ScimGroupTable
 export const scimGroupMember = ScimGroupMemberTable
 export const scimGroupRole = ScimGroupRoleTable

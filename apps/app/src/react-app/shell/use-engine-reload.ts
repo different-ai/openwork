@@ -1,8 +1,3 @@
-// Engine reload wiring for the session route: UI-triggered engine reload,
-// reload-coordinator registration, the post-org-onboarding reload latch,
-// server reload-event polling, and desktop engine info. Extracted verbatim
-// from session-route.tsx; reload events are now typed (OpenworkReloadEvent)
-// instead of `any`.
 import { useCallback, useEffect, useRef, useState } from "react";
 
 import { engineInfo } from "@/app/lib/desktop";
@@ -101,7 +96,6 @@ export function useEngineReload(input: UseEngineReloadInput) {
     try {
       window.dispatchEvent(new CustomEvent("openwork-server-settings-changed"));
     } catch {
-      // ignore browser event dispatch failures
     }
     if (!restartedEngine) {
       await refreshRouteState();
@@ -134,7 +128,6 @@ export function useEngineReload(input: UseEngineReloadInput) {
     } catch {
       return;
     }
-    // Marking is enough: the reload coordinator auto-reloads once idle.
     reloadCoordinator.markReloadRequired("config", {
       type: "config",
       name: "opencode.json",
@@ -160,26 +153,16 @@ export function useEngineReload(input: UseEngineReloadInput) {
           typeof response.cursor === "number"
             ? response.cursor
             : Math.max(currentCursor ?? 0, ...((response.items ?? []).map((item) => Number(item.seq) || 0)));
-        // The first poll establishes the server cursor so historical reload
-        // events don't show a stale toast on route entry. Subsequent polls mark
-        // new filesystem/server-side mutations, including skills created by an
-        // agent while the session page is open.
         if (currentCursor === undefined || currentCursor === null) return;
         for (const event of response.items ?? []) {
-          // V2 watches these changes in the running location. Refresh the
-          // visible catalog without scheduling the legacy engine disposal.
           if (isOpencodeV2BaseUrl(opencodeBaseUrl)
             && (event.reason === "skills" || event.reason === "mcp" || event.reason === "config")) {
-            // Native provider/model events drive live sync; the 3s reload-event poll
-            // must not become a second provider refresh loop.
             if (shouldRefreshProvidersForReloadEvent(liveProviderSync)) await refreshProviderListQueries(getReactQueryClient());
             continue;
           }
           reloadCoordinator.markReloadRequired(event.reason, event.trigger);
         }
       } catch {
-        // Reload-event polling is best-effort; normal route health checks still
-        // surface connection failures.
       }
     };
 
@@ -196,9 +179,6 @@ export function useEngineReload(input: UseEngineReloadInput) {
     let cancelled = false;
     void engineInfo()
       .then((info) => {
-        // Pre-existing cast: the desktop bridge is a dynamic Proxy, so
-        // engineInfo() returns unknown until the IPC surface is typed
-        // (queued: DesktopCommandMap).
         if (!cancelled) setRouteEngineInfo(info as EngineInfo | null);
       })
       .catch(() => {

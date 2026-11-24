@@ -29,14 +29,14 @@
     "framer-motion": "^12.35.1",
     "graphql": "^16.13.2",
     "lucide-react": "^0.577.0",
-    "next": "15.5.28",
+    "next": "15.5.29",
     "react": "catalog:react18",
     "react-dom": "catalog:react18"
   },
   "devDependencies": {
     "@types/node": "20.12.12",
     "@types/react": "18.2.79",
-    "@types/react-dom": "19.2.3",
+    "@types/react-dom": "18.3.7",
     "autoprefixer": "10.4.19",
     "eslint": "8.57.1",
     "eslint-config-next": "15.5.28",

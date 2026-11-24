@@ -11,7 +11,6 @@ export type TabItem<T extends string> = {
   count?: number;
   countTone?: DenChipTone;
   countClassName?: string;
-  /** Quiet neutral dot: this tab's feature intro hasn't been viewed (DESIGN.md I9). */
   unseen?: boolean;
 };
 
@@ -20,11 +19,9 @@ type UnderlineTabsProps<T extends string> = {
   activeTab: T;
   onChange: (value: T) => void;
   className?: string;
-  /** Keeps empty tabs honest: shows "0" instead of hiding the count. */
   showZeroCounts?: boolean;
 };
 
-/** Small neutral "not viewed yet" dot for tabs and sidebar entries (DESIGN.md I9); never amber or red. */
 export function UnseenDot() {
   return (
     <span
@@ -37,15 +34,12 @@ export function UnseenDot() {
   );
 }
 
-/** Shared appearance for Den's tab buttons and route-based tab links. */
 export function underlineTabClassName(selected: boolean) {
   return `inline-flex items-center gap-2 border-b-2 pb-3 text-[14px] font-medium transition-colors ${selected ? "border-[var(--dls-accent)] text-[var(--dls-text-primary)]" : "border-transparent text-[var(--dls-text-secondary)] hover:text-[var(--dls-text-primary)]"}`;
 }
 
-/** Room kept between the chosen tab and an edge with more tabs behind it: the width of the fade below. */
 const TAB_PEEK = 56;
 
-/** Fades the tabs out under a scroll button. */
 const TAB_FADE = {
   start: "[mask-image:linear-gradient(to_right,transparent_24px,black_56px)]",
   end: "[mask-image:linear-gradient(to_left,transparent_24px,black_56px)]",
@@ -54,11 +48,6 @@ const TAB_FADE = {
 
 const scrollButtonClass = "absolute top-0 flex h-5 w-6 items-center text-gray-500 hover:text-gray-900";
 
-/**
- * One row of tabs that never wraps. When they don't all fit, the row scrolls
- * sideways: the chosen tab is kept in view, a tab reached with the keyboard
- * scrolls into view, and a chevron at an edge shows there are more.
- */
 export function UnderlineTabs<T extends string>({
   tabs,
   activeTab,
@@ -68,7 +57,6 @@ export function UnderlineTabs<T extends string>({
 }: UnderlineTabsProps<T>) {
   const listRef = useRef<HTMLElement>(null);
   const shown = useRef(false);
-  // Which sides have tabs out of view.
   const [hidden, setHidden] = useState({ start: false, end: false });
 
   const measure = useCallback(() => {
@@ -91,10 +79,8 @@ export function UnderlineTabs<T extends string>({
     };
   }, [measure]);
 
-  // Tabs, counts and dots change the row's width without resizing it.
   useEffect(measure);
 
-  // Keeps the chosen tab clear of both edges. Only the row moves, never the page, and not animated when the page opens.
   useEffect(() => {
     const list = listRef.current;
     const tab = list?.querySelector<HTMLElement>('[role="tab"][aria-selected="true"]');
@@ -116,7 +102,6 @@ export function UnderlineTabs<T extends string>({
 
   return (
     <div className={`relative border-b border-gray-200 ${className}`}>
-      {/* The padding leaves room for a tab's focus ring inside the scrolling row; the margins give the room back. */}
       <nav
         ref={listRef}
         className={`-mx-1 -mb-px -mt-1 flex gap-6 overflow-x-auto overflow-y-hidden scroll-smooth px-1 pt-1 [scrollbar-width:none] motion-reduce:scroll-auto [&::-webkit-scrollbar]:hidden ${fade}`}
@@ -152,7 +137,6 @@ export function UnderlineTabs<T extends string>({
           );
         })}
       </nav>
-      {/* For the mouse; the keyboard reaches every tab without them. */}
       {hidden.start ? (
         <button type="button" tabIndex={-1} aria-label="Show earlier tabs" className={`${scrollButtonClass} left-0 justify-start`} onClick={() => scrollTabs(-1)} data-testid="tabs-scroll-start">
           <ChevronLeft className="h-4 w-4" />

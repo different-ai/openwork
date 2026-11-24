@@ -48,26 +48,16 @@ const teamParamsSchema = idParamSchema("teamId", "team")
 const teamConnectionParamsSchema = teamParamsSchema.extend(connectionToolsParamsSchema.shape)
 const AGENTS_OFF_MESSAGE = "Members' agents aren't on for this organization."
 
-/**
- * The group that exists only with a second feature: a team's members'-agents policy with members' agents
- * (`workbotProactive`, on a deployment with Workbot). One cached feature read.
- */
 async function shownGroups(organizationId: string, userId: string): Promise<{ agents: boolean }> {
   return { agents: workbotOrigin() !== null }
 }
 
-/**
- * The route's model check for a team's own model: the caller's supported, credential-ready models only, and the
- * managed starter saved as Default (null), as for the organization. Shared with the config-blob area.
- */
 export async function checkWorkbotTeamModel(input: { organizationId: DenTypeId<"organization">; userId: string; model: string }) {
   const catalog = await workbotModelCatalog({ organizationId: input.organizationId, userId: input.userId }).catch(() => null)
-  // Selecting the managed starter means Default, as for the organization.
   const model = isWorkbotManagedLuna(input.model) && input.model === catalog?.defaultModel ? null : input.model
   return { choice: checkWorkbotModelChoice(model, catalog), model }
 }
 
-/** Saves one team's change; a concurrent first save of the same team created the row, so the change is applied to it. */
 export async function saveWorkbotTeamSettingsChange(input: Parameters<typeof saveWorkbotTeamSettings>[0]): Promise<void> {
   try {
     await saveWorkbotTeamSettings(input)
@@ -77,7 +67,6 @@ export async function saveWorkbotTeamSettingsChange(input: Parameters<typeof sav
   }
 }
 
-/** Turns Workbot on or off for everyone whose teams do not say otherwise (organization metadata `workbot.enabled`). */
 export async function saveWorkbotEnabledForEveryone(organizationId: DenTypeId<"organization">, enabled: boolean): Promise<void> {
   await updateOrganizationMetadata(organizationId, (current) => withWorkbotEnabled(current, enabled))
 }
@@ -86,13 +75,6 @@ async function settingsView(c: PermissionRouteContext, organizationId: DenTypeId
   return { ...await listWorkbotTeamSettings(organizationId, groups), canEdit: await hasPermission(c, "inference.manage") }
 }
 
-/**
- * Members › Teams › a team › Workbot (the `workbotTeamSettings` feature): a team's own default model, Workbot
- * name, on/off switch and (with `workbotProactive`) policy for its members'
- * agents on top of the organization's, and the organization's switch for everyone. Members never
- * read these routes; Den resolves each member's values for them. No route here depends on the caller's own
- * switch, so an admin whose Workbot is off can still turn it back on.
- */
 export function registerOrgWorkbotTeamSettingsRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get(
     "/v1/org/workbot-settings/teams",
@@ -147,7 +129,6 @@ export function registerOrgWorkbotTeamSettingsRoutes<T extends { Variables: OrgR
       const groups = await shownGroups(organizationId, context.currentMember.userId)
       if (change.agent && !groups.agents) return c.json({ error: "invalid_request" as const, message: AGENTS_OFF_MESSAGE, details: [] }, 400)
       if (change.model && !change.model.inherit && change.model.value !== null) {
-        // The same check as the organization's default model, against the caller's own models.
         const { choice, model } = await checkWorkbotTeamModel({ organizationId, userId: context.currentMember.userId, model: change.model.value })
         if (choice === "runner_unavailable") return c.json({ error: "workbot_runner_unavailable" as const, message: RUNNER_UNAVAILABLE_MESSAGE }, 503)
         if (choice === "unknown_model") return c.json({ error: "unknown_model" as const, message: UNKNOWN_MODEL_MESSAGE }, 400)
@@ -257,7 +238,6 @@ export function registerOrgWorkbotTeamSettingsRoutes<T extends { Variables: OrgR
       const briefOn = await agentBriefAllowed(organization.id, currentMember.userId)
       const checkGateOn = await agentCheckGateAllowed(organization.id, currentMember.userId)
       const sendCheckOn = await agentSendCheckAllowed(organization.id, currentMember.userId)
-      // What the change applies to: the team's own policy, or the organization's for a team that had none.
       const everyone = await readEveryoneAgentPolicy(organization.id)
       const refused = await refusedProactiveChange({
         organizationId: organization.id,
@@ -268,7 +248,6 @@ export function registerOrgWorkbotTeamSettingsRoutes<T extends { Variables: OrgR
       })
       if (refused) return c.json(refused, 400)
       const write = () => saveTeamAgentPolicy({ organizationId: organization.id, teamId, change: requested, everyone, updatedByOrgMemberId: currentMember.id })
-      // A concurrent first save of the same team created the row; apply the change to it.
       const saved = await write().catch((error: unknown) => {
         if (!isDuplicateEntry(error)) throw error
         return write()

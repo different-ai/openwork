@@ -9,11 +9,6 @@ import { useQueryClient } from "@tanstack/react-query";
 import { withViewTransition } from "./motion";
 import { newChatId, prefetchWorkbotThread, useRemoveWorkbotChat, type WorkbotChats } from "./data";
 
-/**
- * Side chats: next to the person's main chat (one ongoing conversation), side chats keep one topic apart. They share
- * the main chat's memory. Shown only where side chats are on.
- */
-
 const CHAT_PARAM = "chat";
 const CHAT_ID = /^[a-z0-9]{16,40}$/;
 
@@ -55,7 +50,6 @@ export function useChatLocation(enabled: boolean, beforeLeave?: (chat: string | 
     if (next) url.searchParams.set(CHAT_PARAM, next);
     else url.searchParams.delete(CHAT_PARAM);
     window.history.pushState(null, "", url);
-    // Opening another chat cross-fades into it where the browser can (motion.ts).
     if (next === currentChat.current) setChat(next);
     else withViewTransition(() => setChat(next));
   }, []);
@@ -140,7 +134,6 @@ export function RemoveChatButton({ chatId, title, onRemoved, disabled = false }:
   );
 }
 
-/** Lists with more side chats than this get a filter. */
 const FILTER_FROM = 6;
 
 /**
@@ -150,7 +143,6 @@ const FILTER_FROM = 6;
 export function ChatsDrawer(props: {
   open: boolean;
   onClose: () => void;
-  /** The chat on screen: null for the main chat. */
   current: string | null;
   chats: WorkbotChats | undefined;
   loading: boolean;
@@ -167,7 +159,6 @@ export function ChatsDrawer(props: {
     props.onOpenChat(chat);
     props.onClose();
   };
-  // A chat about to be opened is read as the finger or pointer reaches it, so it opens with its messages.
   const queryClient = useQueryClient();
   const warm = (chat: string | null) => { if (chat !== props.current) prefetchWorkbotThread(queryClient, chat); };
   const row = (selected: boolean) =>

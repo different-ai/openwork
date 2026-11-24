@@ -1,4 +1,3 @@
-/** A bounded, overscanned window, including when filtering shrinks a deep list. */
 export function pluginDirectoryRange(scrollTop: number, viewportHeight: number, rowHeight: number, count: number) {
   const end = Math.min(count, Math.ceil((Math.max(0, scrollTop) + Math.max(0, viewportHeight)) / rowHeight) + 4);
   return {
@@ -7,7 +6,6 @@ export function pluginDirectoryRange(scrollTop: number, viewportHeight: number, 
   };
 }
 
-/** Hidden/clip containers clip content but are not the user's scroll viewport. */
 export function isDirectoryScrollOverflow(overflow: string) {
   return overflow === "auto" || overflow === "scroll";
 }

@@ -16,8 +16,6 @@ function equal(value: string, expected: string): boolean {
   return one.length === two.length && timingSafeEqual(one, two);
 }
 
-/** Incremental exact-secret redaction; retain only an actual secret-prefix suffix,
- * not a fixed tail that would delay short SSE heartbeats or ordinary tokens. */
 export function createProviderSecretRedactor(secrets: readonly string[]) {
   const values = [...new Set(secrets.filter(Boolean))].sort((a, b) => b.length - a.length);
   let pending = "";
@@ -36,7 +34,6 @@ export function createProviderSecretRedactor(secrets: readonly string[]) {
   };
 }
 
-/** HTTP inference only. No WebSocket, catalog, arbitrary URL, admin or mutation proxy. */
 export async function proxyV2ProviderInference(input: {
   request: Request;
   session: CloudProviderDenSession | null;
@@ -80,8 +77,6 @@ export async function proxyV2ProviderInference(input: {
       }
     } finally { void reader.cancel().catch(() => {}); }
     if (!current() || signal.aborted) { release(); return fail(409, "provider_identity_changed"); }
-    // No reusable gateway key cache: resolve current provider/member authority for
-    // every request. Only this host-side stack frame ever owns the raw key.
     const connected = await fetcher(`${session.baseUrl.replace(/\/+$/, "")}/v1/inference-providers/${providerId}/connect`, {
       method: "GET", redirect: "error", signal,
       headers: { accept: "application/json", authorization: `Bearer ${session.token}`,

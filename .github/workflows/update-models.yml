@@ -184,7 +184,12 @@ jobs:
         run: |
           set -euo pipefail
 
-          gh pr merge "$PR_URL" --auto --squash --delete-branch
+          # Auto-merge is a repository setting; when it is off, a maintainer merges.
+          if [ "$(gh api "repos/$GITHUB_REPOSITORY" --jq .allow_auto_merge)" = true ]; then
+            gh pr merge "$PR_URL" --auto --squash --delete-branch
+          else
+            echo "::notice::Auto-merge is off for this repository; $PR_URL is approved and open for a maintainer to merge."
+          fi
 
       - name: No model changes
         if: steps.changes.outputs.changed == 'false'

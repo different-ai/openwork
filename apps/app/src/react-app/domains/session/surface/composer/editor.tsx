@@ -59,6 +59,8 @@ import { isComputerTarget } from "./computer-mentions";
 import { shouldCollapsePastedText, splitPastedText } from "./pasted-text";
 import { insertPastedText } from "./pasted-text-insertion";
 import { lineBoundaryMoveForKey } from "./line-boundary-keys";
+import { inlineMentionAtCaret, isSingleWordMentionQuery, type MentionTrigger } from "./mention-suggestions";
+import { slashTriggerAtCaret, type SlashTrigger } from "./slash-command";
 
 type PastedTextToken = { label: string; lines: number; text: string };
 
@@ -78,13 +80,12 @@ type EditorProps = {
   attachments?: ComposerAttachmentToken[];
   submitDisabled: boolean;
   placeholder: string;
-  /** Key that takes the placeholder as the draft, shown when the editor is focused. */
   placeholderShortcut?: string;
   onChange: (value: string) => void;
+  onInlineMentionChange?: (trigger: MentionTrigger | null) => void;
   onMentionQueryChange?: (query: string | null) => void;
-  /** The `#query` at the caret (task picker) and the draft offset of its `#`, or null. Omit to leave `#` as plain text. */
+  onSlashQueryChange?: (trigger: SlashTrigger | null) => void;
   onSessionReferenceQueryChange?: (trigger: { query: string; offset: number } | null) => void;
-  /** A task reference chip was clicked. */
   onOpenSessionReference?: (reference: { workspaceId: string; sessionId: string }) => void;
   onSubmit: (options: { queue: boolean }) => void | Promise<void>;
   onExpandPastedText?: (label: string) => void;
@@ -98,13 +99,12 @@ type EditorProps = {
 };
 
 export type LexicalPromptEditorHandle = {
+  replaceSlashAtSelection: (trigger: SlashTrigger, choice: { kind: "command"; name: string } | { kind: "skill"; name: string; token?: string }) => boolean;
   insertSkillAtSelection: (skillName: string, skillToken?: string) => void;
-  insertMentionAtSelection: (kind: ComposerMentionKind, value: string) => string | null;
+  insertMentionAtSelection: (kind: ComposerMentionKind, value: string, inline?: boolean) => string | null;
   insertConnectorAtSelection: (connectorName: string) => void;
-  /** Replaces the `#query` at the caret with the task chip; returns the new draft, or null when no `#query` is there. */
-  insertSessionReferenceAtSelection: (reference: SessionReferenceTokenValue) => string | null;
+  insertSessionReferenceAtSelection: (reference: SessionReferenceTokenValue, inline?: boolean) => string | null;
   insertFileMentionAtSelection: (path: string) => string;
-  /** Caret position in the serialized draft, so pasted chips land where the user pasted. */
   draftOffsetAtSelection: () => number | null;
   draftSelectionRange: () => { start: number; end: number } | null;
 };
@@ -290,7 +290,6 @@ function $createComposerSlashCommandNode(commandName: string) {
   return $applyNodeReplacement(new ComposerSlashCommandNode(commandName));
 }
 
-/** A skill chip is a local skill or a Connect skill; its token says which, so it badges like the sent chip. */
 function skillNodePill(name: string, token: string): ComposerPill {
   const pill = parseComposerPillToken(token);
   return pill?.kind === "connect-skill" || pill?.kind === "skill" ? pill : { kind: "skill", name };
@@ -373,7 +372,6 @@ type SerializedComposerConnectorNode = Spread<
   SerializedTextNode
 >;
 
-/** `[connector GitHub]` — the connection a seeded prompt is about, shown as a chip. */
 class ComposerConnectorNode extends TextNode {
   __connectorName: string;
 
@@ -462,7 +460,6 @@ function renderSessionReferenceDom(dom: HTMLElement, value: SessionReferenceToke
   dom.dataset.sessionReferenceSession = value.sessionId;
 }
 
-/** `[session …]` — another task referenced from the `#` menu; clicking it opens that task. */
 class ComposerSessionReferenceNode extends TextNode {
   __reference: SessionReferenceTokenValue;
 
@@ -536,7 +533,6 @@ function $createComposerSessionReferenceNode(reference: SessionReferenceTokenVal
   return $applyNodeReplacement(new ComposerSessionReferenceNode(reference));
 }
 
-/** The chevron expands the pasted text back into the draft (see PasteChipPlugin). */
 function renderPastedTextChipDom(dom: HTMLElement, label: string, lines: number) {
   const expand = document.createElement("button");
   expand.type = "button";
@@ -645,7 +641,6 @@ function createAttachmentChipDom(attachment: ComposerAttachmentToken) {
   dom.dataset.attachmentStatus = "ready";
 
   if (attachment.kind === "image" && attachment.previewUrl) {
-    // Clicking the thumbnail opens the full-size lightbox (see AttachmentChipPlugin).
     const expand = document.createElement("button");
     expand.type = "button";
     expand.className = "h-10 w-10 cursor-zoom-in overflow-hidden rounded-xl border border-border/70 transition-opacity hover:opacity-90";
@@ -665,9 +660,6 @@ function createAttachmentChipDom(attachment: ComposerAttachmentToken) {
     dom.append(chip);
   }
 
-  // Upload progress overlay: hidden by default, toggled through the chip's
-  // data-attachment-status attribute while the draft's attachments are being
-  // compressed/uploaded at send time (see syncAttachmentChipStatus).
   const spinner = document.createElement("span");
   spinner.dataset.attachmentSpinner = "true";
   spinner.className = "absolute inset-0 hidden items-center justify-center rounded-xl bg-background/60";
@@ -695,12 +687,6 @@ function createAttachmentChipDom(attachment: ComposerAttachmentToken) {
   return dom;
 }
 
-/**
- * Toggle the uploading overlay on every attachment chip inside `root`.
- * Chips are raw Lexical token DOM (not React), so status is synced by
- * attribute instead of a re-render. Exported for the composer, which flips
- * this while a draft with attachments is being uploaded/sent.
- */
 export function syncAttachmentChipStatus(root: HTMLElement, status: "uploading" | "ready") {
   for (const chip of root.querySelectorAll<HTMLElement>("[data-attachment-id]")) {
     chip.dataset.attachmentStatus = status;
@@ -907,10 +893,6 @@ function appendSegmentWithNewlines(
   paragraph: ReturnType<typeof $createParagraphNode>,
   segment: string,
 ) {
-  // Preserve newlines in plain text segments. A single paragraph cannot
-  // render "\n" as a line break in contenteditable, so we split on "\n"
-  // and start a new paragraph per line. Return the paragraph the caller
-  // should keep appending to (i.e. the last one we produced).
   if (!segment.includes("\n")) {
     paragraph.append($createTextNode(segment));
     return paragraph;
@@ -953,7 +935,6 @@ function setPrompt(
   const attachmentsById = new Map((attachments ?? []).map((item) => [item.id, item]));
   for (const segment of segments) {
     if (!segment) continue;
-    // Pill tokens decode through the same parser the send path and transcript use.
     const pill = parseComposerPillToken(segment);
     if (pill?.kind === "connector") {
       paragraph.append($createComposerConnectorNode(pill.name));
@@ -1001,14 +982,10 @@ function setPrompt(
 
 const TRIGGER_QUERY_RE = {
   "@": { before: /(?<!\S)@([^\s@]*)$/, after: /^[^\s@]*/ },
-  // `#` opens the task picker at a word start. Task names have spaces, so the
-  // query may too, but not right after `#`: Markdown headings (`# Title`,
-  // `## Title`) stay text.
   "#": { before: /(?<!\S)#((?:[^\s#][^#\n]*)?)$/, after: /^[^\s#]*/ },
 } as const;
 
-/** The `@query` or `#query` the caret is in, if any. */
-function triggerQueryAtSelection(trigger: keyof typeof TRIGGER_QUERY_RE) {
+function editableTextAtSelection() {
   const selection = $getSelection();
   if (!$isRangeSelection(selection) || !selection.isCollapsed()) return null;
   let node = selection.anchor.getNode();
@@ -1020,12 +997,39 @@ function triggerQueryAtSelection(trigger: keyof typeof TRIGGER_QUERY_RE) {
     end = node.getTextContentSize();
   }
   if (!$isTextNode(node) || isComposerInlineTokenNode(node)) return null;
+  return { node, caret: end };
+}
+
+function triggerQueryAtSelection(trigger: keyof typeof TRIGGER_QUERY_RE) {
+  const point = editableTextAtSelection();
+  if (!point) return null;
+  const { node, caret: end } = point;
   const text = node.getTextContent();
   const patterns = TRIGGER_QUERY_RE[trigger];
   const match = text.slice(0, end).match(patterns.before);
   if (!match) return null;
   const remaining = text.slice(end).match(patterns.after)?.[0] ?? "";
   return { node, start: end - match[0].length, end: end + remaining.length, caret: end, query: match[1] ?? "" };
+}
+
+function inlineTriggerAtSelection(find: (text: string, caret: number) => { query: string; offset: number; end: number } | null) {
+  const point = editableTextAtSelection();
+  const caret = $draftOffsetAtSelection();
+  if (!point || caret === null) return null;
+  const { node } = point;
+  const boundary = node.getPreviousSibling()?.getTextContent().slice(-1) ?? "";
+  const match = find(boundary + node.getTextContent(), boundary.length + point.caret);
+  if (!match || match.offset < boundary.length) return null;
+  const start = match.offset - boundary.length;
+  return { node, start, end: match.end - boundary.length, trigger: { query: match.query, offset: caret - (point.caret - start) } };
+}
+
+function slashAtSelection() {
+  return inlineTriggerAtSelection(slashTriggerAtCaret);
+}
+
+function inlineMentionAtSelection() {
+  return inlineTriggerAtSelection(inlineMentionAtCaret);
 }
 
 function mentionAtSelection() {
@@ -1036,7 +1040,6 @@ function sessionReferenceQueryAtSelection() {
   return triggerQueryAtSelection("#");
 }
 
-/** The `#query` at the caret and where its `#` sits in the draft, so a dismissed list stays dismissed for that `#` only. */
 function sessionReferenceTriggerAtSelection() {
   const match = sessionReferenceQueryAtSelection();
   if (!match) return null;
@@ -1044,9 +1047,8 @@ function sessionReferenceTriggerAtSelection() {
   return { query: match.query, offset: caret === null ? -1 : caret - (match.caret - match.start) };
 }
 
-/** Replace the `#query` at the caret with a task reference chip and a space. */
-function insertSessionReferenceAtSelection(reference: SessionReferenceTokenValue) {
-  const match = sessionReferenceQueryAtSelection();
+function insertSessionReferenceAtSelection(reference: SessionReferenceTokenValue, inline: boolean) {
+  const match = inline ? inlineMentionAtSelection() : sessionReferenceQueryAtSelection();
   if (!match || !encodeSessionReferenceToken(reference)) return false;
   const end = match.end + (match.node.getTextContent()[match.end] === " " ? 1 : 0);
   const selection = match.node.select(match.start, end);
@@ -1057,9 +1059,10 @@ function insertSessionReferenceAtSelection(reference: SessionReferenceTokenValue
   return true;
 }
 
-function insertMentionAtSelection(kind: ComposerMentionKind, value: string) {
-  const match = mentionAtSelection();
+function insertMentionAtSelection(kind: ComposerMentionKind, value: string, inline: boolean) {
+  const match = inline ? inlineMentionAtSelection() : mentionAtSelection();
   if (!match) return false;
+  if ("trigger" in match && !isSingleWordMentionQuery(match.trigger.query)) return false;
   const end = match.end + (kind !== "agent" && match.node.getTextContent()[match.end] === " " ? 1 : 0);
   const selection = match.node.select(match.start, end);
   if (kind === "agent") {
@@ -1111,12 +1114,6 @@ function insertSkillAtSelection(skillName: string, skillToken?: string) {
   setSelectionAfterNode(spaceNode);
 }
 
-// Serialize the current editor state to the external draft string. Lexical's
-// root.getTextContent() joins element children with "\n\n" (its "text content
-// mode" for the root node), which causes single newlines typed/pasted by the
-// user to round-trip as double newlines and quickly corrupts the draft. We
-// walk root children ourselves and join with a single "\n" so every newline
-// the user sees onscreen is preserved exactly in the stored draft.
 function serializePromptFromRoot(): string {
   const root = $getRoot();
   return root
@@ -1125,8 +1122,6 @@ function serializePromptFromRoot(): string {
     .join("\n");
 }
 
-// Caret position as an offset into serializePromptFromRoot(): paragraphs join
-// with one "\n", and a caret inside a chip counts as after it.
 function $draftOffsetAtSelection(edge: "start" | "end" = "start"): number | null {
   const selection = $getSelection();
   if (!$isRangeSelection(selection)) return null;
@@ -1147,7 +1142,6 @@ function $draftOffsetAtSelection(edge: "start" | "end" = "start"): number | null
   return offset + (isComposerInlineTokenNode(node) && point.offset > 0 ? node.getTextContentSize() : point.offset);
 }
 
-// Inverse of $draftOffsetAtSelection for a freshly built prompt.
 function $selectDraftOffset(offset: number) {
   let remaining = offset;
   const paragraphs = $getRoot().getChildren();
@@ -1187,39 +1181,16 @@ function SyncPlugin(props: {
   const valueRef = useRef(props.value);
 
   useEffect(() => {
-    // When the external value is cleared (e.g. after sending a message),
-    // always force-rebuild the editor to remove any stale chip nodes.
-    // The valueRef check can false-positive when both refs converge to ""
-    // through different paths (SyncPlugin vs OnChange).
-    //
-    // NOTE: serializePromptFromRoot() calls $getRoot() which requires an
-    // active editor state. Outside of editor.update()/editor.read() we
-    // must wrap it in editor.getEditorState().read().
     const [currentText, caretOffset] = editor.getEditorState().read(() => [serializePromptFromRoot(), $draftOffsetAtSelection()] as const);
     const forceRebuild = !props.value.trim() && currentText.trim() !== "";
     if (!forceRebuild && valueRef.current === props.value) return;
     valueRef.current = props.value;
-    // Check whether the editor already reflects the desired state BEFORE
-    // entering editor.update(). Even a bail-out inside editor.update()
-    // triggers Lexical's reconciliation cycle which can normalise the DOM
-    // selection and reset the cursor (e.g. after a multi-line paste the
-    // cursor jumps to position 0 instead of staying after the pasted
-    // content). The read() above already gave us `currentText` — reuse it.
     if (!forceRebuild && currentText === props.value) return;
     editor.update(() => {
-      // Double-check inside the update in case another queued update
-      // changed the state between the read above and this callback.
       if (!forceRebuild && serializePromptFromRoot() === props.value) return;
       setPrompt(props.value, props.mentions, props.pastedText, props.attachments);
-      // A chip pasted mid-draft rebuilds the prompt: keep the caret before
-      // the same trailing text, i.e. right after the new chip.
       const tail = caretOffset === null ? "" : currentText.slice(caretOffset);
       if (!forceRebuild && tail && props.value.endsWith(tail) && $selectDraftOffset(props.value.length - tail.length)) return;
-      // $getRoot().selectEnd() doesn't work when the last node is a
-      // token (chip) — Lexical can't position a cursor inside a token,
-      // so the selection collapses to position 0. Use element-level
-      // selection instead: place the cursor *after* the last child of
-      // the last paragraph.
       const lastParagraph = $getRoot().getLastChild();
       if ($isElementNode(lastParagraph)) {
         const childCount = lastParagraph.getChildrenSize();
@@ -1246,17 +1217,10 @@ function SubmitPlugin(props: { onSubmit: (options: { queue: boolean }) => void |
       KEY_ENTER_COMMAND,
       (event: KeyboardEvent | null) => {
         if (props.disabled) return false;
-        // IME composition guard: three signals keep this reliable across
-        // Chrome, Safari, and WebKit. While IME is mid-character, Enter
-        // must always fall through to the editor so the composition can
-        // commit.
         if (event?.isComposing === true || event?.keyCode === 229) return false;
-        // Shift+Enter inserts a newline — let the editor handle it.
         if (event?.shiftKey) return false;
         const selection = $getSelection();
         if (!$isRangeSelection(selection)) return false;
-        // Plain Enter submits. Cmd/Ctrl+Enter is the modifier: while the
-        // agent is busy, Enter queues and the modifier steers.
         event?.preventDefault();
         void onSubmitRef.current({ queue: event?.metaKey === true || event?.ctrlKey === true });
         return true;
@@ -1321,7 +1285,6 @@ function PasteChipPlugin(props: { onPasteText?: (text: string, draftOffset?: num
       PASTE_COMMAND,
       (event: ClipboardEvent) => {
         if (event.defaultPrevented) return false;
-        // Only handle plain-text pastes; files and URI lists are handled in the React onPaste.
         const files = event.clipboardData?.files;
         if (files && files.length > 0) return false;
         if (event.clipboardData?.getData("text/uri-list").trim()) return false;
@@ -1419,18 +1382,12 @@ function MentionChipNavigationPlugin() {
         if (!$isRangeSelection(selection) || !selection.isCollapsed()) return false;
         const anchorNode = selection.anchor.getNode();
 
-        // --- Slash command chip: atomic delete ---
-        // When cursor is in the text node right after a slash chip,
-        // remove the chip (and any trailing whitespace text) in one action.
         if ($isTextNode(anchorNode)) {
           const previous = anchorNode.getPreviousSibling();
           if (previous instanceof ComposerSlashCommandNode) {
-            // At offset 0: cursor is right after the chip -> remove chip
-            // At offset > 0 but text is only whitespace: also remove chip
             const textBefore = anchorNode.getTextContent().slice(0, selection.anchor.offset);
             if (selection.anchor.offset === 0 || textBefore.trim() === "") {
               previous.remove();
-              // Also remove the whitespace-only prefix
               if (selection.anchor.offset > 0) {
                 const remaining = anchorNode.getTextContent().slice(selection.anchor.offset);
                 if (remaining) {
@@ -1448,7 +1405,6 @@ function MentionChipNavigationPlugin() {
           }
         }
 
-        // --- Mention / pasted-text / attachment chips: atomic delete ---
         if ($isTextNode(anchorNode) && selection.anchor.offset === 0) {
           const previous = anchorNode.getPreviousSibling();
           if (isComposerInlineTokenNode(previous) && !(previous instanceof ComposerSlashCommandNode)) {
@@ -1525,8 +1481,6 @@ function MentionChipNavigationPlugin() {
   return null;
 }
 
-// Home / End move the caret to the line boundary (Shift extends). See
-// lineBoundaryMoveForKey for why Chromium on macOS does not do this itself.
 function LineBoundaryKeysPlugin() {
   const [editor] = useLexicalComposerContext();
 
@@ -1549,7 +1503,6 @@ function LineBoundaryKeysPlugin() {
   return null;
 }
 
-/** The point's node still exists, is in the document, and the offset is still inside it. */
 function $isLivePoint(point: { key: NodeKey; offset: number; type: "text" | "element" }): boolean {
   const node = $getNodeByKey(point.key);
   if (!node || !node.isAttached()) return false;
@@ -1565,16 +1518,10 @@ function $isCaretAtPromptStart(selection = $getSelection()): boolean {
   return node.is($getRoot()) || node.is($getRoot().getFirstChild()) || Boolean(first && node.is(first));
 }
 
-// Coming back to the prompt from the command palette, a model picker or any
-// other dialog focuses the editor programmatically, and the browser then puts
-// the caret at the very start. Put it back where the person left it instead.
-// A click or tap still places the caret where it lands.
 function KeepCaretOnRefocusPlugin() {
   const [editor] = useLexicalComposerContext();
 
   useEffect(() => {
-    // The caret together with the text it was in: a caret is only put back
-    // into the same text, never after a send, clear or any other edit.
     let saved: { selection: ReturnType<typeof $createRangeSelection>; text: string } | null = null;
     let pointerFocus = false;
     const unregisterUpdate = editor.registerUpdateListener(({ editorState }) => {
@@ -1592,11 +1539,9 @@ function KeepCaretOnRefocusPlugin() {
       pointerFocus = false;
       const restore = saved;
       if (fromPointer || !restore) return;
-      // After the browser has applied its own caret, so ours wins.
       requestAnimationFrame(() => {
         if (document.activeElement !== editor.getRootElement()) return;
         editor.update(() => {
-          // Only undo the browser's jump to the start, in unchanged text; a caret code placed on purpose stays.
           if ($getRoot().getTextContent() !== restore.text) return;
           if (!$isLivePoint(restore.selection.anchor) || !$isLivePoint(restore.selection.focus)) return;
           if (!$isCaretAtPromptStart() || $isCaretAtPromptStart(restore.selection)) return;
@@ -1629,14 +1574,31 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
   const [editor] = useLexicalComposerContext();
 
   useImperativeHandle(props.editorRef, () => ({
+    replaceSlashAtSelection(trigger, choice) {
+      let replaced = false;
+      editor.update(() => {
+        const match = slashAtSelection();
+        if (!match || match.trigger.offset !== trigger.offset || match.trigger.query !== trigger.query) return;
+        if (choice.kind === "command" && trigger.offset !== 0) return;
+        const chip = choice.kind === "skill"
+          ? $createComposerSkillNode(choice.name, choice.token)
+          : $createComposerSlashCommandNode(choice.name);
+        const end = match.end + (match.node.getTextContent()[match.end] === " " ? 1 : 0);
+        const space = $createTextNode(" ");
+        match.node.select(match.start, end).insertNodes([chip, space]);
+        space.selectEnd();
+        replaced = true;
+      }, { discrete: true });
+      return replaced;
+    },
     insertSkillAtSelection(skillName: string, skillToken?: string) {
       editor.update(() => insertSkillAtSelection(skillName, skillToken));
       editor.focus();
     },
-    insertMentionAtSelection(kind: ComposerMentionKind, value: string) {
+    insertMentionAtSelection(kind, value, inline = false) {
       let draft: string | null = null;
       editor.update(() => {
-        if (insertMentionAtSelection(kind, value)) draft = serializePromptFromRoot();
+        if (insertMentionAtSelection(kind, value, inline)) draft = serializePromptFromRoot();
       }, { discrete: true });
       return draft;
     },
@@ -1644,10 +1606,10 @@ function ImperativeHandlePlugin(props: { editorRef: ForwardedRef<LexicalPromptEd
       editor.update(() => insertTokenAtSelection($createComposerConnectorNode(connectorName)));
       editor.focus();
     },
-    insertSessionReferenceAtSelection(reference: SessionReferenceTokenValue) {
+    insertSessionReferenceAtSelection(reference, inline = false) {
       let draft: string | null = null;
       editor.update(() => {
-        if (insertSessionReferenceAtSelection(reference)) draft = serializePromptFromRoot();
+        if (insertSessionReferenceAtSelection(reference, inline)) draft = serializePromptFromRoot();
       }, { discrete: true });
       return draft;
     },
@@ -1736,7 +1698,6 @@ function SessionReferenceChipPlugin(props: { onOpenSessionReference?: (reference
   }, [props.onOpenSessionReference]);
 
   useEffect(() => {
-    // Keep the caret where it is: the chip is a link, not a place to type.
     const handleMouseDown = (event: MouseEvent) => {
       if (!onOpenRef.current || !sessionReferenceChip(event.target)) return;
       event.preventDefault();
@@ -1768,7 +1729,9 @@ function SessionReferenceChipPlugin(props: { onOpenSessionReference?: (reference
 export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorProps>(function LexicalPromptEditor(props, ref) {
   const valueRef = useRef(props.value);
   const onChangeRef = useRef(props.onChange);
+  const onInlineMentionChangeRef = useRef(props.onInlineMentionChange);
   const onMentionQueryChangeRef = useRef(props.onMentionQueryChange);
+  const onSlashQueryChangeRef = useRef(props.onSlashQueryChange);
   const onSessionReferenceQueryChangeRef = useRef(props.onSessionReferenceQueryChange);
 
   useEffect(() => {
@@ -1777,9 +1740,11 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
 
   useEffect(() => {
     onChangeRef.current = props.onChange;
+    onInlineMentionChangeRef.current = props.onInlineMentionChange;
     onMentionQueryChangeRef.current = props.onMentionQueryChange;
+    onSlashQueryChangeRef.current = props.onSlashQueryChange;
     onSessionReferenceQueryChangeRef.current = props.onSessionReferenceQueryChange;
-  }, [props.onChange, props.onMentionQueryChange, props.onSessionReferenceQueryChange]);
+  }, [props.onChange, props.onInlineMentionChange, props.onMentionQueryChange, props.onSlashQueryChange, props.onSessionReferenceQueryChange]);
 
   const initialConfig = useMemo(
     () => ({
@@ -1799,7 +1764,9 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
   const syncPromptFromEditorState = useCallback(
     (state: Parameters<NonNullable<React.ComponentProps<typeof OnChangePlugin>["onChange"]>>[0]) => {
       state.read(() => {
+        onInlineMentionChangeRef.current?.(inlineMentionAtSelection()?.trigger ?? null);
         onMentionQueryChangeRef.current?.(mentionAtSelection()?.query ?? null);
+        onSlashQueryChangeRef.current?.(slashAtSelection()?.trigger ?? null);
         onSessionReferenceQueryChangeRef.current?.(sessionReferenceTriggerAtSelection());
         const next = serializePromptFromRoot();
         if (next === valueRef.current) return;
@@ -1812,12 +1779,6 @@ export const LexicalPromptEditor = forwardRef<LexicalPromptEditorHandle, EditorP
 
   return (
     <LexicalComposer initialConfig={initialConfig}>
-      {/*
-        Tight start, bounded growth:
-        - min-h holds the editor to a single-line look until the user starts typing.
-        - max-h caps the composer — long pastes / multi-paragraph drafts scroll
-          inside the editor instead of pushing the transcript out of view.
-      */}
       <div className="group/prompt-editor relative">
         <PlainTextPlugin
           contentEditable={

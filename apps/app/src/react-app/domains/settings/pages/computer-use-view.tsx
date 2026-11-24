@@ -22,17 +22,14 @@ import {
 import { SettingsInset } from "../settings-section";
 
 type Busy = "choose" | "reset" | ComputerPermission | null;
-/** What the summary reports: the helper's readiness, or that nothing was read. */
 type SummaryState = ComputerStatus["readiness"] | "checking" | "off";
 
 const PERMISSIONS: Array<{ id: ComputerPermission; title: string; purpose: string }> = [
   { id: "accessibility", title: "Accessibility", purpose: "Use app controls, the mouse and the keyboard in Mac apps." },
   { id: "screenRecording", title: "Screen Recording", purpose: "See app windows. macOS may call it Screen & System Audio Recording." },
 ];
-// After opening a pane, give macOS a moment before offering the stale-entry fix.
 const STUCK_AFTER_MS = 15_000;
 
-// Color marks only what needs the person: ready is confirmed, setup is theirs to finish.
 const SUMMARY: Record<SummaryState, { icon: LucideIcon; label: string; tile: string }> = {
   ready: { icon: MonitorCheck, label: "Ready", tile: "bg-green-3 text-green-11" },
   "setup-required": { icon: MonitorCog, label: "Setup needed", tile: "bg-amber-3 text-amber-11" },
@@ -42,21 +39,15 @@ const SUMMARY: Record<SummaryState, { icon: LucideIcon; label: string; tile: str
   off: { icon: Lock, label: "Not turned on", tile: "bg-muted text-muted-foreground" },
 };
 
-// What turning the permissions on shares, said wherever they are listed.
 const SEEN = "The agent sees the app window it is using, and its content goes to your AI model provider.";
 
 const message = (cause: unknown) => cause instanceof Error ? cause.message : String(cause);
 
-/** Settings > Computer use, for the native desktop app. */
 export function ComputerUseView({ fileSends }: { fileSends?: FileSendGrantsClient | null }) {
   const enabled = isElectronRuntime();
   return <ComputerUseSettings enabled={enabled} fileSends={fileSends} />;
 }
 
-/**
- * Computer use is set up once, here, for every chat. Each status comes from a
- * fresh helper probe; opening a System Settings pane never grants anything.
- */
 export function ComputerUseSettings({ enabled, fileSends }: { enabled: boolean; fileSends?: FileSendGrantsClient | null }) {
   const [status, setStatus] = useState<ComputerStatus | null>(null);
   const [readError, setReadError] = useState("");
@@ -87,7 +78,6 @@ export function ComputerUseSettings({ enabled, fileSends }: { enabled: boolean; 
   useEffect(() => {
     if (!enabled) return;
     void readLatest();
-    // macOS reports no event when a permission changes; check while this page is open.
     const update = () => { if (document.visibilityState === "visible") void readLatest(); };
     const timer = window.setInterval(update, 1_500);
     window.addEventListener("focus", update);
@@ -149,13 +139,11 @@ export function ComputerUseSettings({ enabled, fileSends }: { enabled: boolean; 
   const verified = readError ? undefined : status?.permissions;
   const missing = PERMISSIONS.filter((permission) => verified?.[permission.id] !== true);
   const nextPermission = missing[0]?.id;
-  // System permissions exist only for this Mac; Windows and VMs need none.
   const showPermissions = status?.placement === "local" && isMacPlatform() && !["unsupported", "unavailable"].includes(status.readiness);
   const helper = <span className="font-medium text-foreground" data-testid="settings-computer-entry">{entry}</span>;
   const state: SummaryState = readError ? "unavailable" : status?.readiness ?? "checking";
   const detail = readError ? `Couldn't check this computer. ${readError}`
     : !status ? undefined
-      // The helper's own wording addresses one chat and points at a setup screen; this page is that screen, for every chat.
       : status.readiness === "ready" ? `Every chat can use apps on ${status.placement === "local" ? "this computer" : computer}. While the agent works, the chat shows a live view with Take over and Stop.`
         : showPermissions && status.readiness === "setup-required" ? (missing.length === 1 ? `Turn on ${missing[0].title} below.` : "Turn on both macOS permissions below.")
           : status.detail;
@@ -234,7 +222,6 @@ export function ComputerUseSettings({ enabled, fileSends }: { enabled: boolean; 
   );
 }
 
-/** The page's focal element: the one state every chat depends on, and where it applies. */
 function Summary({ state, detail, error, children }: { state: SummaryState; detail?: string; error?: string; children?: ReactNode }) {
   const { icon: Icon, label, tile } = SUMMARY[state];
   return (
@@ -245,7 +232,6 @@ function Summary({ state, detail, error, children }: { state: SummaryState; deta
       <div className="flex min-w-0 flex-1 flex-col gap-0.5">
         <div
           role="status"
-          // Off is not a readiness: nothing was asked of the helper.
           data-testid={state === "off" ? undefined : "settings-computer-status"}
           data-state={state}
           className="text-sm font-medium text-foreground"
@@ -261,7 +247,6 @@ function Summary({ state, detail, error, children }: { state: SummaryState; deta
   );
 }
 
-/** A titled list of rows between hairlines, with what it holds counted on the right. */
 function Group({ title, count, footnote, children }: { title: string; count?: string; footnote?: ReactNode; children: ReactNode }) {
   return (
     <div className="flex flex-col gap-3">
@@ -276,7 +261,6 @@ function Group({ title, count, footnote, children }: { title: string; count?: st
 }
 
 function Row({ className, ...props }: ComponentProps<"li">) {
-  // Narrow panes: the state and action drop below the text instead of squeezing it.
   return <li className={cn("flex min-h-12 flex-wrap items-start gap-x-3 gap-y-2 py-3", className)} {...props} />;
 }
 
@@ -293,7 +277,6 @@ const FILE_SEND_KINDS: Record<string, string> = {
   outlook_create_draft_with_attachments: "Attach files to Outlook drafts",
 };
 
-/** File sends this member chose to always allow. The host owns them; this only lists and removes. */
 export function RememberedFileSends({ client }: { client?: FileSendGrantsClient | null }) {
   const [state, setState] = useState<FileSendGrants | null>(null);
   const [error, setError] = useState("");
@@ -308,7 +291,6 @@ export function RememberedFileSends({ client }: { client?: FileSendGrantsClient 
       const next = await client.listFileSendGrants();
       if (current === generation.current) setState(next);
     } catch (cause) {
-      // Never keep showing one account's approvals after a failed read.
       if (current === generation.current) { setState(null); setError(`Couldn't check always-allowed file sends. Try again. ${message(cause)}`); }
     }
   }
@@ -344,7 +326,6 @@ export function RememberedFileSends({ client }: { client?: FileSendGrantsClient 
     }
   }
 
-  // Nothing to manage until the member has chosen Always allow once.
   const grants = state?.enabled ? state.grants : [];
   if (!grants.length && !error) return null;
   return (
@@ -375,7 +356,6 @@ export function RememberedFileSends({ client }: { client?: FileSendGrantsClient 
   );
 }
 
-/** Main owns identity, feature checks and grants. The renderer only lists and revokes. */
 export function RememberedFileSharing() {
   const [state, setState] = useState<DesktopCommandResult<"computerListFileGrants"> | null>(null);
   const [loading, setLoading] = useState(false);
@@ -385,7 +365,6 @@ export function RememberedFileSharing() {
 
   async function refresh(clearIdentity = false) {
     const current = ++generation.current;
-    // Never retain one account's folders as a fallback for another account or a failed read.
     setState((previous) => clearIdentity ? null : previous ? { enabled: previous.enabled, grants: [] } : null);
     setLoading(true);
     setError("");

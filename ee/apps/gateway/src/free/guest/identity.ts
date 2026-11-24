@@ -8,7 +8,7 @@ import type { DesktopFreeBinding } from "./proof.js"
 
 export type AnonymousIdentities = { installationHash: string; ipHash: string; globalHash: string }
 const hash = z.string().regex(/^[a-f0-9]{64}$/)
-const tokenSchema = z.strictObject({ version: z.literal(3), installationHash: hash, ipHash: hash, globalHash: hash,
+const tokenSchema = z.strictObject({ version: z.literal(3), credentialHash: hash.optional(), installationHash: hash, ipHash: hash, globalHash: hash,
   keyThumbprint: hash, machineId: hash, appVersion: z.string().min(1).max(128), platform: z.enum(["darwin", "win32", "linux"]),
   arch: z.enum(["arm64", "x64"]), issuedAt: z.number().int().nonnegative(), expiresAt: z.number().int().nonnegative() })
 function hashIdentity(config: AutoConfig, kind: string, value: string) {
@@ -37,10 +37,6 @@ export function canonicalizeAnonymousAddress(input: string): string | null {
   return groups.map((part) => part.toString(16).padStart(4, "0")).join(":")
 }
 function quotaAddress(address: string) { return address.includes(":") ? `${address.split(":").slice(0, 4).join(":")}::/64` : address }
-/**
- * Trusted proxies are exact addresses or CIDR ranges ("10.0.0.0/8"): hosts such as Render reach the Gateway from
- * addresses that change, inside a private range. Any malformed entry disables trust altogether (fails closed).
- */
 export function trustedProxyMatcher(entries: readonly string[]): ((address: string) => boolean) | null {
   if (entries.length === 0) return null
   const list = new BlockList()
@@ -75,7 +71,6 @@ export function resolveAnonymousClientAddress(c: Context, config: AutoConfig) {
   return address ? quotaAddress(address) : null
 }
 export function anonymousIpHash(address: string, config: AutoConfig) { return hashIdentity(config, "ip", address) }
-/** The allowance follows the machine, so reinstalling or clearing app data does not reset it. */
 export function createAnonymousIdentities(proof: Pick<DesktopFreeBinding, "machineId">, address: string, config: AutoConfig): AnonymousIdentities {
   return { installationHash: hashIdentity(config, "installation", `machine:${proof.machineId}`),
     ipHash: anonymousIpHash(address, config), globalHash: hashIdentity(config, "global", "openwork-free-allowance") }
@@ -84,9 +79,9 @@ function tokenKey(config: AutoConfig) {
   if (config.tokenSecret.length < 32) throw new Error("Free token secret unavailable")
   return Uint8Array.from(createHash("sha256").update(config.tokenSecret).digest())
 }
-export function issueAnonymousToken(identities: AnonymousIdentities, binding: DesktopFreeBinding, config: AutoConfig, now = Date.now()) {
+export function issueAnonymousToken(identities: AnonymousIdentities, binding: DesktopFreeBinding, config: AutoConfig, now = Date.now(), credentialHash?: string) {
   const expiresAt = now + config.tokenTtlSeconds * 1000
-  const payload = JSON.stringify({ version: 3, ...identities, keyThumbprint: binding.keyThumbprint, machineId: binding.machineId,
+  const payload = JSON.stringify({ version: 3, credentialHash, ...identities, keyThumbprint: binding.keyThumbprint, machineId: binding.machineId,
     appVersion: binding.appVersion, platform: binding.platform, arch: binding.arch, issuedAt: now, expiresAt })
   const iv = Uint8Array.from(randomBytes(12))
   const cipher = createCipheriv("aes-256-gcm", tokenKey(config), iv)

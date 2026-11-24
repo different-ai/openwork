@@ -1,15 +1,10 @@
 import { deviceShareProviderName, type DeviceShareProvider } from "@openwork/types/den/device-provider-share"
 import { gatewayCredentialShape } from "../credential-prompt.js"
 import { GatewayWriteError, resolveGatewayCatalog, validateGatewaySettings } from "./gateway-matrix.js"
-import { buildProviderConfigSnapshot, isSupportedGatewayNpm } from "./inference-provider-config.js"
+import { isSupportedGatewayNpm } from "@openwork-ee/gateway-catalog"
+import { buildProviderConfigSnapshot } from "./inference-provider-config.js"
 import type { ModelsDevProvider } from "./models-dev.js"
 
-/**
- * Whether AI Gateway can serve a catalog provider from exactly one API key and
- * no settings a person has to choose: what a key saved on someone's device can
- * become with one confirmation. Azure, Vertex, Bedrock and Foundry need a
- * resource, project or region, so they stay in AI Gateway's own form.
- */
 export function catalogProviderSharesFromOneKey(catalog: ModelsDevProvider): boolean {
   if (!isSupportedGatewayNpm(catalog.npm)) return false
   if (gatewayCredentialShape(catalog.id, catalog.env)?.kind !== "api_key") return false
@@ -23,10 +18,6 @@ export function catalogProviderSharesFromOneKey(catalog: ModelsDevProvider): boo
   }
 }
 
-/**
- * One answer per requested provider id, in request order. `existing` are the
- * organization's active AI Gateway providers, oldest first.
- */
 export function deviceShareProviders(input: {
   providerIds: readonly string[]
   catalog: readonly ModelsDevProvider[]

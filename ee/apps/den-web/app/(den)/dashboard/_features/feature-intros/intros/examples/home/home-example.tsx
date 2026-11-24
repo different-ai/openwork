@@ -7,7 +7,6 @@ import { ExampleCaption, ExampleRow, ExampleRows, ExampleServiceMark } from "../
 import { useExampleStep } from "../use-example-step";
 import { homeExample } from "./home-example-data";
 
-/** `?` example: what everyone in the organization starts with when they sign in, and who uses it. */
 export function HomeExample() {
   const step = useExampleStep(4);
   const { people, models, connectors, plugins } = homeExample;

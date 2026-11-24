@@ -3,11 +3,11 @@ import { request } from "node:https";
 import type { Duplex } from "node:stream";
 import { attachSurface } from "@openwork/cdp";
 import { trackResource } from "@openwork/world";
-import { ensureEvidenceSnapshot } from "@openwork/freestyle/evidence-builder";
-import { client, execChecked } from "@openwork/freestyle";
+import { ensureEvidenceSnapshot } from "@openwork/world-freestyle/evidence-builder";
+import { client, execChecked } from "@openwork/world-freestyle";
 import { setTimeout as delay } from "node:timers/promises";
-import { deleteEvidenceVm, launchEvidenceWorld, continueEvidenceStream, startEvidenceCheckpoint } from "@openwork/freestyle/checkpoints";
-import type { EvidenceSession } from "@openwork/freestyle/checkpoints";
+import { deleteEvidenceVm, launchEvidenceWorld, continueEvidenceStream, startEvidenceCheckpoint } from "@openwork/world-freestyle/checkpoints";
+import type { EvidenceSession } from "@openwork/world-freestyle/checkpoints";
 import { checkpointCapability, type CheckpointCapability } from "./checkpoint-capability.ts";
 
 /** Host-only relay: keeps the provider cookie out of CDP URLs and evidence logs. */

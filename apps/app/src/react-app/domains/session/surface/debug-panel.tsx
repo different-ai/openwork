@@ -38,7 +38,6 @@ function DiagnosticTable({ rows }: { rows: readonly (readonly [string, string | 
   );
 }
 
-/** Details of the focused conversation. Absent when no thread is open. */
 export type SessionDebugThread = {
   model: SessionRenderModel;
   status: string;
@@ -55,7 +54,6 @@ export type SessionDebugThread = {
   onCopyThread: () => Promise<void>;
 };
 
-/** App and workspace facts shown when no thread is open. */
 export type SessionDebugWorkspace = {
   name: string;
   startupPhase: string;
@@ -105,7 +103,6 @@ export function SessionDebugPanel(props: {
       return {
         server: server.status === "fulfilled" ? server.value : null,
         opencode: opencode.status === "fulfilled" ? opencode.value : null,
-        // Includes authenticated workspace proxy and parsing; not inference latency.
         latencyMs: Math.round(performance.now() - started),
         checkedAt: new Date().toLocaleTimeString(),
       };
@@ -196,8 +193,6 @@ export function SessionDebugPanel(props: {
     const rect = panelRef.current?.getBoundingClientRect();
     const amount = event.shiftKey ? 40 : 10;
     if (!rect) return;
-    // Key presses can arrive before React commits the previous one. Accumulate
-    // from pending state and account for its geometry relative to this render.
     setBounds(previous => adjustBounds(previous, {
       left: rect.left + previous.left - bounds.left,
       top: rect.top + previous.top - bounds.top,
@@ -207,7 +202,6 @@ export function SessionDebugPanel(props: {
   }
   async function copyDiagnostics() {
     try {
-      // Omit URLs, credentials, workspace paths and conversation content.
       await navigator.clipboard.writeText([
         "React session debug", ...rows, ...details,
         ["Connection", connectionLabel], ["Health round trip", latency], ["Event stream", streamPhase ?? "Not started"],
@@ -231,7 +225,6 @@ export function SessionDebugPanel(props: {
         <Bug className="size-4" />
       </PopoverTrigger>
       <PopoverContent ref={panelRef} aria-label="React session debug" data-testid="session-debug-panel"
-        // Overlap the trigger so the footer bug occupies its exact position.
         side="top" align="end" alignOffset={-4} sideOffset={-36} collisionPadding={0}
         style={{ translate: `${bounds.left}px ${bounds.top}px` }}
         className="w-90 gap-0 overflow-hidden rounded-md bg-dls-surface p-0 font-mono text-[11px] text-dls-secondary shadow-sm ring-0 transition-none duration-0 data-open:animate-none data-closed:animate-none"

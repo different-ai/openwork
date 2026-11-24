@@ -1,11 +1,9 @@
-/** Opt-in real computer proof. One disposable conversation, commands + Files + look + wake, cleanup in finally. */
 import assert from "node:assert/strict"
 import { randomUUID } from "node:crypto"
 import { Computers, PAUSE_TIMEOUT_MS } from "../src/computer.js"
 import { createComputerProvider, createGatewayProvider } from "../src/providers.js"
 import type { ComputerFile, ComputerFiles } from "../src/types.js"
 
-// SANDBOX_GATEWAY=differently proves the computer through the sandbox gateway instead of a direct provider.
 const provider = process.env.SANDBOX_GATEWAY === "differently" ? await gatewayProvider() : await directProvider()
 
 async function gatewayProvider() {
@@ -49,7 +47,6 @@ try {
   assert.equal(looked.isError, false)
   assert.match(looked.output, /hello from shared computer/)
   const box = await computers.vm(session)
-  // Pools that can neither pause nor stop keep idle computers running, so there is no resume to prove.
   const idles = provider.describe().stopResume
   if (idles && provider.blocks?.pause) await provider.blocks.pause(box, { timeoutMs: PAUSE_TIMEOUT_MS })
   else if (idles) await provider.stop(box, { timeoutMs: PAUSE_TIMEOUT_MS })

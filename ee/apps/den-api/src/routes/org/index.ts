@@ -7,6 +7,7 @@ import { registerOrgDefaultModelRoutes } from "./default-model.js"
 import { registerOrgAutoRouterRoutes } from "./auto-router.js"
 import { registerOrgPromptRoutes } from "./prompts.js"
 import { registerOrgApiKeyRoutes } from "./api-keys.js"
+import { registerManagedDeploymentConfigurationRoutes } from "./managed-deployment-configuration.js"
 import { registerManagedDeploymentRoutes } from "./managed-deployments.js"
 import { registerOrgAuditRoutes } from "./audit.js"
 import { registerOrgBillingRoutes } from "./billing.js"
@@ -22,7 +23,6 @@ import { registerOrgMcpAppCatalogRoutes } from "./mcp-app-catalog.js"
 import { registerDeleteOrganizationRoutes } from "./delete-organization.js"
 import { registerOrgDiagnosticsRoutes } from "./diagnostics.js"
 import { registerOrgDesktopPolicyRoutes } from "./desktop-policies.js"
-import { registerOrgEgressDiagnosticRoutes } from "./egress-diagnostics.js"
 import { registerOrgInventoryRevisionRoutes } from "./inventory-revision.js"
 import { registerOrgFeatureUsageRoutes } from "./feature-usage.js"
 import { registerOrgInvitationRoutes } from "./invitations.js"
@@ -90,6 +90,7 @@ export function registerOrgRoutes<T extends { Variables: OrgRouteVariables & Req
   registerOrgInventoryRevisionRoutes(app)
   registerOrgFeatureUsageRoutes(app)
   registerManagedDeploymentRoutes(app)
+  registerManagedDeploymentConfigurationRoutes(app)
   registerDeleteOrganizationRoutes(app)
   registerOrgApiKeyRoutes(app)
   registerOrgAuditRoutes(app)
@@ -101,7 +102,6 @@ export function registerOrgRoutes<T extends { Variables: OrgRouteVariables & Req
   registerOrgDesktopPolicyRoutes(app)
   registerOrgConfigBlobRoutes(app)
   registerOrgAgentPermissionRoutes(app)
-  registerOrgEgressDiagnosticRoutes(app)
   registerOrgInferenceRoutes(app)
   registerModelsAnalyticsRoutes(app)
   registerLibraryUsageRoutes(app)

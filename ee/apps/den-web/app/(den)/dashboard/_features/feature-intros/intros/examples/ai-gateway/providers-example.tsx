@@ -3,7 +3,6 @@
 import { ExampleCaption, ExampleProviderMark, ExampleRow, ExampleRows } from "./example-parts";
 import { providersExampleRows } from "./providers-example-data";
 
-/** Provider rows as on AI Providers: models, who can use them, status. */
 export function ProvidersExample() {
   return (
     <div>

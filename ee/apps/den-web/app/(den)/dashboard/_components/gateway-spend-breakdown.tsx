@@ -119,7 +119,7 @@ export function GatewaySpendBreakdown({ orgId, orgSlug }: { orgId: string; orgSl
   );
 }
 
-export function ModelMark({ seriesId, label, tile = false }: { seriesId: string; label: string; /** The 32px row tile instead of the 28px mark. */ tile?: boolean }) {
+export function ModelMark({ seriesId, label, tile = false }: { seriesId: string; label: string; tile?: boolean }) {
   const family = gatewayUsageModelFamily(seriesId);
   const size = tile ? "size-8 rounded-lg" : "size-7 rounded-[8px]";
   return family

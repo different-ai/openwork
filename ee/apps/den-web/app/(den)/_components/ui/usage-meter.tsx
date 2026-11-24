@@ -2,26 +2,13 @@ import type { ReactNode } from "react";
 
 export type DenUsageMeterProps = {
   label: string;
-  /** Units consumed. Values above `total` render as an overflow segment. */
   used: number;
   total: number;
-  /** Right-aligned readout. Defaults to `used/total`. */
   readout?: string;
   caption?: ReactNode;
   className?: string;
 };
 
-/**
- * DenUsageMeter
- *
- * Segmented allowance meter for "x of y included" limits.
- *
- * Segments are discrete rather than a continuous bar because these values are
- * always small whole units (seats, keys, workers) where each one is a decision
- * the user made. Once `used` exceeds `total` the meter collapses to two
- * proportional segments — filled allowance, then overflow in a lighter tone —
- * since drawing dozens of ticks stops being readable.
- */
 export function DenUsageMeter({ label, used, total, readout, caption, className = "" }: DenUsageMeterProps) {
   const safeTotal = Math.max(0, total);
   const safeUsed = Math.max(0, used);

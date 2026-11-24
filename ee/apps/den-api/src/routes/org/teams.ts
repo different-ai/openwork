@@ -5,6 +5,7 @@ import {
   ConnectorInstanceAccessGrantTable,
   DesktopPolicyMemberTable,
   ExternalMcpConnectionAccessGrantTable,
+  AutomationShareTable,
   InvitationTable,
   GatewayProviderAccessTable,
   GatewayUsageAssignmentTable,
@@ -121,14 +122,6 @@ async function ensureMembersBelongToOrganization(input: {
 
 type TeamGrantsFailure = PermissionDeniedResponse | (AgentErrorEnvelope & { error: "forbidden" })
 
-/**
- * Safety rule 9.3 (docs/permissions/overview.md) and the Admin-team rule
- * (role-assignment.ts decideAdminTeamChange), decided inside the team's write
- * transaction against the actor and permission sets read there under share
- * locks (team-grants.ts teamGrantDecisionInTransaction). The owner bypasses
- * both. SCIM writes team membership through scim-groups.ts, not these routes,
- * so identity-provider membership is exempt. Null means allowed.
- */
 async function teamGrantsDenial(tx: TeamMutationTransaction, payload: ResourceOrganizationContext, actor: MemberPermissions, input: {
   teamId: TeamId | null
   grantsOrganizationAdmin: boolean
@@ -157,11 +150,6 @@ function teamGrantsFailureHeaders(response: TeamGrantsFailure): Record<string, s
   return "requiredPermission" in response ? { "WWW-Authenticate": INSUFFICIENT_SCOPE_CHALLENGE } : {}
 }
 
-/**
- * The route checked these keys against the request's permissions (with the recent sign-in for
- * sensitive ones); re-check them against the actor resolved inside the write transaction
- * (resolveTeamActorInTransaction), so a revocation committed since is seen before the write.
- */
 function heldInTransaction(actor: MemberPermissions, keys: readonly PermissionKey[]): PermissionDeniedResponse | null {
   const missing = keys.find((key) => !actor.has(key))
   return missing ? permissionDeniedResponse(missing) : null
@@ -170,11 +158,6 @@ function heldInTransaction(actor: MemberPermissions, keys: readonly PermissionKe
 export type CreateTeamInput = z.infer<typeof createTeamSchema>
 export type UpdateTeamInput = z.infer<typeof updateTeamSchema>
 
-/**
- * Exported for config-blob imports (src/config-blobs/areas/members-teams.ts),
- * which call it with an in-process route context. `options.teamId` reuses a
- * known-free id for the new team (config blobs reuse source ids); routes omit it.
- */
 export async function createTeam(c: ResourceActionContext, payload: ResourceOrganizationContext, input: CreateTeamInput, externalKey?: string, options: { teamId?: TeamId } = {}) {
   return withOrganizationTeamMutation(payload.organization.id, async (tx) => {
   if (input.grantsOrganizationAdmin !== undefined) {
@@ -185,7 +168,6 @@ export async function createTeam(c: ResourceActionContext, payload: ResourceOrga
   const notHeld = heldInTransaction(actor, input.grantsOrganizationAdmin !== undefined ? ["teams.manage", "teams.manage_admin"] : ["teams.manage"])
   if (notHeld) return c.json(notHeld, 403, teamGrantsFailureHeaders(notHeld))
   if (input.grantsOrganizationAdmin === true) {
-    // A new team has no team permission set yet, so it grants only the Admin defaults.
     const denied = await teamGrantsDenial(tx, payload, actor, {
       teamId: null,
       grantsOrganizationAdmin: true,
@@ -278,8 +260,6 @@ export async function updateTeam(c: ResourceActionContext, payload: ResourceOrga
     return c.json({ error: "team_not_found" }, 404)
   }
 
-  // Locked first: creating a team permission set locks the team row before its set, link and
-  // history, so the grant check below (team-grants.ts lockTeamGrantInputs) cannot interleave with it.
   const teamRows = await tx
     .select()
     .from(TeamTable)
@@ -305,7 +285,6 @@ export async function updateTeam(c: ResourceActionContext, payload: ResourceOrga
   if (notHeld) return c.json(notHeld, 403, teamGrantsFailureHeaders(notHeld))
   const nextGrantsOrganizationAdmin = input.grantsOrganizationAdmin ?? team.grantsOrganizationAdmin
   if (team.grantsOrganizationAdmin && !nextGrantsOrganizationAdmin) {
-    // Turning an Admin team off takes admin status away from its members.
     const denial = decideAdminTeamChange({ actor, unmakesAdminTeam: true })
     if (denial) return c.json({ error: "forbidden" as const, ...requiresAdminError(denial.message) }, 403)
   }
@@ -341,7 +320,6 @@ export async function updateTeam(c: ResourceActionContext, payload: ResourceOrga
       .from(TeamMemberTable)
       .where(eq(TeamMemberTable.teamId, team.id)))
       .map((row) => row.id))
-    // Taking people out of an Admin team takes away their admin status.
     const nextMemberIds = new Set<MemberId | null>(memberIds)
     if (team.grantsOrganizationAdmin && [...currentMemberIds].some((memberId) => !nextMemberIds.has(memberId))) {
       const denial = decideAdminTeamChange({ actor, removesMembersFromAdminTeam: true })
@@ -380,8 +358,6 @@ export async function updateTeam(c: ResourceActionContext, payload: ResourceOrga
     await tx.update(TeamTable).set({ name: nextName, updatedAt, grantsOrganizationAdmin: input.grantsOrganizationAdmin }).where(eq(TeamTable.id, team.id))
 
     if (memberIds) {
-      // Only the memberships that change are written: people who stay keep their row
-      // (and its createdAt), so adding or removing one person touches one row.
       const stored = await tx
         .select({ id: TeamMemberTable.id, memberId: TeamMemberTable.orgMembershipId })
         .from(TeamMemberTable)
@@ -429,7 +405,6 @@ export async function deleteTeam(c: ResourceActionContext, payload: ResourceOrga
     return c.json({ error: "team_not_found" }, 404)
   }
 
-  // Locked before the actor's permission inputs, in the same order as updateTeam.
   const teamRows = await tx
     .select()
     .from(TeamTable)
@@ -452,7 +427,6 @@ export async function deleteTeam(c: ResourceActionContext, payload: ResourceOrga
   const notHeld = heldInTransaction(actor, team.grantsOrganizationAdmin ? ["teams.manage", "teams.manage_admin"] : ["teams.manage"])
   if (notHeld) return c.json(notHeld, 403, teamGrantsFailureHeaders(notHeld))
   if (team.grantsOrganizationAdmin) {
-    // Deleting an Admin team takes admin status away from its members.
     const denial = decideAdminTeamChange({ actor, deletesAdminTeam: true })
     if (denial) return c.json({ error: "forbidden" as const, ...requiresAdminError(denial.message) }, 403)
   }
@@ -476,10 +450,9 @@ export async function deleteTeam(c: ResourceActionContext, payload: ResourceOrga
     await deleteTeamWorkbotSettings(tx, team.id)
     await deleteTeamPrompts(tx, team.id)
     await deleteTeamAutoRouterAccess(tx, team.id)
+    await tx.delete(AutomationShareTable).where(eq(AutomationShareTable.team_id, team.id))
     await tx.delete(ExternalMcpConnectionAccessGrantTable).where(eq(ExternalMcpConnectionAccessGrantTable.teamId, team.id))
     await tx.delete(LlmProviderAccessTable).where(eq(LlmProviderAccessTable.teamId, team.id))
-    // Usage-limit assignments have no removed_at; unassigning deletes them. This
-    // runs inside the usage entitlement mutation, which re-evaluates the team's members.
     await tx.delete(GatewayUsageAssignmentTable).where(and(
       eq(GatewayUsageAssignmentTable.organizationId, payload.organization.id),
       eq(GatewayUsageAssignmentTable.teamId, team.id),
@@ -574,7 +547,6 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
       }
       const { externalKey } = c.req.valid("param")
       const input = c.req.valid("json")
-      // primary: create-or-update by key must see a team written moments ago (re-applied configuration).
       const [existing] = await db.$primary.select().from(TeamTable).where(and(
         eq(TeamTable.organizationId, payload.organization.id),
         eq(TeamTable.externalKey, externalKey),
@@ -584,8 +556,6 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
         return await createTeam(c, payload, input, externalKey)
       } catch (error) {
         if (!isDuplicateEntry(error)) throw error
-        // A concurrent creator can win between lookup and insert. Retry against
-        // its identity instead of creating a second resource.
         const [winner] = await db.$primary.select().from(TeamTable).where(and(
         eq(TeamTable.organizationId, payload.organization.id),
         eq(TeamTable.externalKey, externalKey),
@@ -609,7 +579,6 @@ export function registerOrgTeamRoutes<T extends { Variables: OrgRouteVariables }
     async (c) => {
       const payload = c.get("organizationContext")
       const { externalKey } = c.req.valid("param")
-      // primary: deleting a team created moments ago must not report it as already removed.
       const [existing] = await db.$primary.select().from(TeamTable).where(and(
         eq(TeamTable.organizationId, payload.organization.id),
         eq(TeamTable.externalKey, externalKey),

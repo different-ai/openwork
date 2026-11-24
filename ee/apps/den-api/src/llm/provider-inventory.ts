@@ -17,29 +17,12 @@ export type ProviderInventoryPrincipal = {
   sessionToken: string
 }
 
-/**
- * What an open stream polls instead of the database: an opaque marker that
- * changes after a write to a table the fingerprint below depends on, so an idle
- * stream costs no queries. Throws once the session is revoked. Null when Redis
- * cannot answer, so the stream falls back to reading the database.
- */
 export async function readProviderInventoryMarker(principal: ProviderInventoryPrincipal): Promise<string | null> {
   const state = await cache.inventory.providerState(principal)
   if (state?.revoked) throw new Error("Provider inventory is no longer authorized.")
   return state?.generation ?? null
 }
 
-/**
- * Dependency fingerprint for the usable list + connect read by providers.ts.
- * Batched, organization-indexed reads in one snapshot, not N gatewaySummary
- * calls, catalog refreshes, key issuance, upstream requests, or timestamp/MAX
- * aggregates. The latter miss model/link deletes, access/team writes, and key
- * rotations that never touch a provider. Resolve grants first, then fingerprint
- * only caller-visible dependencies. Even an opaque revision is an activity
- * side channel if unrelated providers, models, grants or people can change it.
- * Team/access rows affect the effective projection, never the revision directly;
- * provider touch timestamps likewise reveal writes to inaccessible resources.
- */
 export async function readProviderInventoryRevision(principal: ProviderInventoryPrincipal): Promise<string> {
   return db.transaction(async (tx) => {
     const now = new Date()
@@ -48,7 +31,6 @@ export async function readProviderInventoryRevision(principal: ProviderInventory
     const [member] = await tx.select({ id: MemberTable.id }).from(MemberTable)
       .innerJoin(OrganizationTable, eq(OrganizationTable.id, MemberTable.organizationId))
       .where(and(eq(MemberTable.id, principal.memberId), eq(MemberTable.userId, principal.userId), eq(MemberTable.organizationId, principal.organizationId), isNull(MemberTable.removedAt)))
-    // Revalidate the session and membership on every read of an open stream.
     if (!session || !member) {
       throw new Error("Provider inventory is no longer authorized.")
     }
@@ -88,8 +70,6 @@ export async function readProviderInventoryRevision(principal: ProviderInventory
           : credential.subject === principal.memberId && credential.org_membership_id === principal.memberId)
     })
     const keys = visibleProviders.length ? await tx.select().from(GatewayKeyTable).where(and(eq(GatewayKeyTable.organization_id, principal.organizationId), eq(GatewayKeyTable.org_membership_id, principal.memberId))) : []
-    // Time alone can remove readiness: LiteLLM/API-key expiry and the AWS SSO
-    // registered client's expiry inside its secret. Never hash the wall clock.
     const readiness = providerInventoryReadiness(visibleCredentials, now.getTime())
     return providerInventoryRevision({ organizationId: principal.organizationId, memberId: principal.memberId, gatewayBaseUrl: env.gatewayPublicBaseUrl,
       rows: {
@@ -98,9 +78,7 @@ export async function readProviderInventoryRevision(principal: ProviderInventory
           configurationError: gatewayConfigurationError(provider.provider_config, provider.settings),
           pinnedModelIds: provider.pinned_model_ids.filter((id) => visibleModels.some((model) => model.gateway_provider_id === provider.id && model.model_id === id)),
           migration: provider.settings.migration,
-          // Only these settings affect member issued-key readiness, not sync
-          // timestamps, management configuration or another member's attention.
-          mode: readLiteLlmSettings(provider.settings)?.mode, keySource: readLiteLlmSettings(provider.settings)?.keySource })),
+          mode: readLiteLlmSettings(provider.settings)?.mode, keySource: readLiteLlmSettings(provider.settings)?.keySource, entraScope: readLiteLlmSettings(provider.settings)?.entraScope })),
         models: visibleModels.map((model) => ({ id: model.id, providerId: model.gateway_provider_id, upstreamModelId: model.model_id,
           config: buildGatewayModelConfig({ id: model.id, name: model.name, config: model.model_config }) })),
         groups: groups.filter((group) => visibleGroupIds.includes(group.id)).map((group) => ({ id: group.id, name: group.name })),

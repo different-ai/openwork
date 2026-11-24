@@ -32,7 +32,6 @@ export type WorkerActivityHeartbeatPayload = {
 
 export type EngineForcePolicy = { upgrade: boolean };
 
-/** Missing policy means an older Den, not an instruction to clear local policy. */
 export function readEngineForcePolicy(response: unknown): EngineForcePolicy | undefined {
   if (!isRecord(response) || !isRecord(response.enginePolicy)) return undefined;
   const policy = response.enginePolicy;
@@ -72,8 +71,6 @@ export function resolveWorkerActivityHeartbeatConfig(env: HeartbeatEnv = process
   const url = (env.DEN_ACTIVITY_HEARTBEAT_URL ?? "").trim();
   const token = (env.DEN_ACTIVITY_HEARTBEAT_TOKEN ?? "").trim();
   const featureEnabled = enabled === "1" || enabled === "true" || enabled === "yes";
-  // Den sets DEN_RUNTIME_MANAGED on every instance whose idle lifecycle it owns.
-  // Older Dens only sent the provider name, so that spelling stays accepted.
   const denManaged = managed === "1" || managed === "true" || managed === "yes" || provider === "daytona";
 
   if (!featureEnabled || !denManaged || !workerId || !url || !token) {
@@ -150,8 +147,6 @@ export async function postWorkerActivityHeartbeat(input: {
   });
 
   if (!response.ok) throw new Error(`heartbeat_failed:${response.status}`);
-  // Older Dens may return an empty body. An explicit false clears forced
-  // upgrade policy; a missing policy leaves bootstrap flags unchanged.
   const body: unknown = await response.json().catch(() => undefined);
   const policy = readEngineForcePolicy(body);
   if (policy) await input.onEnginePolicy?.(policy);

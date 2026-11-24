@@ -1,8 +1,4 @@
 /** @jsxImportSource react */
-// Settings › Keyboard shortcuts (ENG-398). The focal group is "Model
-// shortcuts": each saved model gets one key. Rows are compact (DESIGN.md S2),
-// unavailable models keep their key and say why (P4, C5), and removing a key
-// is undoable instead of confirmed (P8).
 import { useMemo, useState } from "react";
 import type * as React from "react";
 import { ChevronDown, Lock, Pencil, Plus, Trash2, Zap } from "lucide-react";
@@ -53,7 +49,6 @@ type CatalogModel = ModelRef & {
 
 export type KeyboardShortcutsViewProps = {
   client: Client | null;
-  /** The shared model catalog, the same list the chat's model picker shows. */
   pickerOptions?: readonly ModelOption[];
   baseUrl: string;
   directory: string;
@@ -140,7 +135,6 @@ function ShortcutEditor(props: {
   target: EditorTarget;
   os: ShortcutOs;
   models: CatalogModel[];
-  /** The same rows the chat's model picker shows. */
   pickerOptions: readonly ModelOption[];
   savedKeys: Set<string>;
   shortcuts: Shortcut[];

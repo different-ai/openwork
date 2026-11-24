@@ -1,14 +1,6 @@
-/**
- * Deploy-time permission reconciliation (docs/permissions/overview.md,
- * section 8): adds rows for new catalog permissions to every organization's
- * Member, Admin and Super admin permission sets. Shared by bootstrap.ts (Docker, Helm, ECS,
- * Cloud Run) and the reconcile-permissions.ts CLI (db:migrate, db:push and the
- * Den DB Migrate workflow). Idempotent; with no permission sets it does nothing.
- */
 import { createDenDb } from "../src/client.ts"
 import { reconcileDefaultPermissionSets, type ReconcilePermissionSetsResult } from "../src/permissions.ts"
 
-/** Same connection choice as den-api and db-executor: DATABASE_URL is MySQL, otherwise PlanetScale. */
 function createDatabaseFromEnv() {
   const databaseUrl = process.env.DATABASE_URL?.trim()
   if (databaseUrl) return createDenDb({ databaseUrl, mode: "mysql" })

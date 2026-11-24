@@ -1,8 +1,3 @@
-/**
- * `$secret` placeholders (format.md › Secrets). The engine only ever handles
- * decisions; values stay with the caller and are given to `executePlan` as
- * `ResolvedConfigSecret`s. Nothing here puts a value into a plan.
- */
 import type {
   ConfigPlanFlag,
   ConfigPlanSecret,
@@ -21,13 +16,10 @@ import {
   joinPath,
 } from "./util.js"
 
-/** What a value pasted into a declared secret field is replaced with, everywhere the plan shows it. */
 export const REDACTED_SECRET = "[redacted]"
 
 export type SecretOccurrence = {
-  /** The placeholder's own `$secret` path (what inputs are keyed by). */
   path: string
-  /** Where it sits in the spec, with keyed set elements: `credentials.apiKey`, `headers[name=X].value`. */
   field: string
   placeholder: ConfigSecret
 }
@@ -57,12 +49,6 @@ export function findSecrets(layout: ArrayLayout, spec: unknown): SecretOccurrenc
   return out
 }
 
-/**
- * One step of a spec location, kept structured: an object key exactly as it
- * appears in the spec (dots and brackets included), followed by how many
- * array levels were entered under it. Secret matching never re-splits a
- * joined path, so a map key such as `A.B` stays one key.
- */
 export type SchemaSegment = { key: string; elements: number }
 
 function enterKey(path: readonly SchemaSegment[], key: string): SchemaSegment[] {
@@ -75,7 +61,6 @@ function enterElement(path: readonly SchemaSegment[]): SchemaSegment[] {
   return [...path.slice(0, -1), { key: last.key, elements: last.elements + 1 }]
 }
 
-/** A declared pattern (`requestHeaders[].value`, `credentials.apiKeys.*`) as segments. Patterns are written by adapters, never by blob authors. */
 function patternSegments(pattern: string): SchemaSegment[] {
   return pattern.split(".").map((part) => {
     let key = part
@@ -88,18 +73,10 @@ function patternSegments(pattern: string): SchemaSegment[] {
   })
 }
 
-/** The structured form of a dotted schema path, for callers that only have one (tests, docs). Keys must not contain dots. */
 export function schemaSegments(schemaPath: string): SchemaSegment[] {
   return schemaPath === "" ? [] : patternSegments(schemaPath)
 }
 
-/**
- * Whether a spec location matches a declared secret field. Array elements are
- * written `[]` in the pattern (`requestHeaders[].value`); a `*` segment
- * matches any one object key whatever characters it holds, for maps keyed by
- * name (`credentials.apiKeys.*` matches the key `OPENAI_API_KEY`, and also
- * the single key `A.B`).
- */
 export function matchesSecretField(pattern: string, path: readonly SchemaSegment[] | string): boolean {
   const want = patternSegments(pattern)
   const have = typeof path === "string" ? schemaSegments(path) : path
@@ -111,7 +88,6 @@ export function matchesSecretField(pattern: string, path: readonly SchemaSegment
   })
 }
 
-/** Characters a key matched by a `*` secret pattern may not hold: they would make its `$secret` path and field ambiguous. */
 const AMBIGUOUS_MAP_KEY = /[.[\]]/
 
 function wildcardKeyProblem(secretFields: readonly string[], path: readonly SchemaSegment[]): boolean {
@@ -125,21 +101,11 @@ function wildcardKeyProblem(secretFields: readonly string[], path: readonly Sche
 }
 
 export type SecretFieldProblems = {
-  /** `$secret` placeholders at a location the area does not declare as a secret field. */
   undeclared: string[]
-  /** Declared secret locations holding something other than a placeholder (a pasted secret, say). */
   raw: string[]
-  /** Keys of a secret map (`credentials.apiKeys.*`) holding `.`, `[` or `]`. */
   invalidKeys: string[]
 }
 
-/**
- * Checks a blob spec against the area's `secretFields`: placeholders may only
- * sit at declared fields (wildcard map keys included), and declared fields may
- * only hold placeholders (or nothing). A raw value at a secret field is never
- * accepted inside a blob: values go through the inputs endpoint. Secret map
- * keys may not hold `.`, `[` or `]`.
- */
 export function checkSecretFields(secretFields: readonly string[], spec: unknown): SecretFieldProblems {
   const problems: SecretFieldProblems = { undeclared: [], raw: [], invalidKeys: [] }
   const declared = (path: readonly SchemaSegment[]) => secretFields.some((pattern) => matchesSecretField(pattern, path))
@@ -167,12 +133,6 @@ export function checkSecretFields(secretFields: readonly string[], spec: unknown
   return problems
 }
 
-/**
- * A copy of `spec` with every non-placeholder value at a declared secret
- * field replaced by `REDACTED_SECRET`, and the positional paths replaced.
- * Run before anything diffs, hashes or stores the spec, so a secret pasted
- * into a blob never reaches a plan, an error or a log.
- */
 export function redactRawSecrets(secretFields: readonly string[], spec: ConfigSpec): { spec: ConfigSpec; redacted: string[] } {
   if (secretFields.length === 0) return { spec, redacted: [] }
   const redacted: string[] = []
@@ -204,33 +164,23 @@ export function redactRawSecrets(secretFields: readonly string[], spec: ConfigSp
   return { spec: isPlainObject(out) ? out : {}, redacted }
 }
 
-/**
- * Whether any placeholder in `spec` has an explicit `value` or `env`
- * decision: the item must be written so the new credential is stored, even
- * when nothing else about it changed.
- */
 export function replacesSecretValue(layout: ArrayLayout, spec: ConfigSpec, inputs: ReadonlyMap<string, ConfigSecretInput>): boolean {
   return findSecrets(layout, spec).some((occurrence) => {
-    const chosen = decisionFor(occurrence.placeholder, inputs.get(occurrence.path))
+    const chosen = decisionFor(occurrence.placeholder, inputs.get(occurrence.path), false)
     return chosen?.decision === "value" || chosen?.decision === "env"
   })
 }
 
 export type SecretDecisionKind = "keep" | "env" | "value" | "unset"
 
-/** One placeholder in an execution op: what to put in its place. Never a value. */
 export type ExecutionSecret = { path: string; field: string; decision: SecretDecisionKind; env?: string }
 
 export type PlanSecretsInput = {
   layout: ArrayLayout
   blobSpec: ConfigSpec
-  /** The matched target item's current spec, or null for a create. */
   targetSpec: ConfigSpec | null
-  /** Inputs from the inputs endpoint, by placeholder path. Values are ignored here. */
   inputs: ReadonlyMap<string, ConfigSecretInput>
-  /** Self-hosted operator allowlist for `env` decisions. */
   allowEnv: (name: string) => boolean
-  /** False when the op writes nothing (unchanged, untouched, skip): no decision is needed. */
   required: boolean
 }
 
@@ -250,7 +200,7 @@ export function planSecrets(input: PlanSecretsInput): PlannedSecrets {
   let missing = false
   for (const occurrence of findSecrets(input.layout, input.blobSpec)) {
     const targetHasValue = targetSet.get(occurrence.field) ?? false
-    const chosen = decisionFor(occurrence.placeholder, input.inputs.get(occurrence.path))
+    const chosen = decisionFor(occurrence.placeholder, input.inputs.get(occurrence.path), targetHasValue)
     const planned: ConfigPlanSecret = {
       path: occurrence.path,
       field: occurrence.field,
@@ -281,10 +231,11 @@ export function planSecrets(input: PlanSecretsInput): PlannedSecrets {
   return { secrets, execution, flags: missing ? ["needs_input"] : [], reasons }
 }
 
-function decisionFor(placeholder: ConfigSecret, input: ConfigSecretInput | undefined): { decision: SecretDecisionKind; env?: string } | null {
+function decisionFor(placeholder: ConfigSecret, input: ConfigSecretInput | undefined, targetHasValue: boolean): { decision: SecretDecisionKind; env?: string } | null {
   if (input) return input.decision === "env" ? { decision: "env", env: input.env } : { decision: input.decision }
   if (placeholder.keep) return { decision: "keep" }
   if (placeholder.env) return { decision: "env", env: placeholder.env }
   if (placeholder.unset) return { decision: "unset" }
+  if (placeholder.set === false) return { decision: targetHasValue ? "keep" : "unset" }
   return null
 }

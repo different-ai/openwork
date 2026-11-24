@@ -6,7 +6,6 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 export function jsonError(status: number, code: string, message: string): Response {
   return Response.json({ error: { message, type: "openwork_anonymous_error", code } }, { status });
 }
-/** Only these gateway headers reach the engine. */
 export function responseHeaders(headers: Headers): Headers {
   const result = new Headers({ "cache-control": "no-store" });
   for (const name of ["content-type", "retry-after", "x-request-id", "x-openwork-request-id", "x-openwork-error-code", "x-openwork-usage-state", "x-openwork-anonymous-no-upstream-retry"]) {
@@ -45,13 +44,11 @@ export async function readBoundedBody(stream: ReadableStream<Uint8Array> | null,
 export async function readJson(stream: ReadableStream<Uint8Array> | null, limit: number, signal: AbortSignal): Promise<unknown> {
   return JSON.parse(new TextDecoder().decode(await readBoundedBody(stream, limit, signal)));
 }
-/** A gateway response that was not OK, kept whole so it can be replayed to the engine. */
 export class RemoteFailure extends Error {
   constructor(readonly status: number, readonly body: Uint8Array<ArrayBuffer>, readonly headers: Headers) {
     super("Desktop free inference gateway rejected the request.");
   }
   response() { return new Response(this.body.slice(), { status: this.status, headers: this.headers }); }
-  /** The error envelope flattened: top level, `error`, and `details` fields in one record. */
   payload(): Record<string, unknown> {
     try {
       const parsed: unknown = JSON.parse(new TextDecoder().decode(this.body));

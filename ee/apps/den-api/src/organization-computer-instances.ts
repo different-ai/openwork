@@ -4,7 +4,6 @@ import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import type { OrganizationComputerInstance } from "@openwork/types/den/remote-devices"
 import { db } from "./db.js"
 
-/** Explicit allowlist: never select worker paths, endpoints, provider_ref, credentials or descriptions. */
 const columns = {
   id: WorkerTable.id, name: WorkerTable.name, destination: WorkerTable.destination, status: WorkerTable.status,
   ownerMemberId: MemberTable.id, ownerName: AuthUserTable.name, ownerEmail: AuthUserTable.email,

@@ -5,14 +5,6 @@ import { useId, useState, type ReactNode } from "react";
 import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
 
-/**
- * The OIDC issuer field that reports what it found.
- *
- * The administrator gives the issuer or the discovery URL; the line under the
- * field says what the provider answered. The field owns no data: the form
- * passes the check result in and decides when to check.
- */
-
 export type OidcIssuerEndpoints = {
   authorizationEndpoint: string;
   tokenEndpoint: string;
@@ -119,7 +111,6 @@ function CheckLine({ check, onUseIssuer, disabled }: { check: OidcIssuerCheck; o
             This provider reports its issuer as <span className="break-all font-mono text-[12px]">{check.reportedIssuer}</span>
           </span>
         </p>
-        {/* Negative margin: the button keeps its hit area without making the line taller. */}
         <span className="-my-1.5 flex"><DenButton variant="secondary" size="sm" onClick={() => onUseIssuer(check.reportedIssuer)} disabled={disabled}>Use this issuer</DenButton></span>
       </div>
     );
@@ -136,13 +127,11 @@ function CheckLine({ check, onUseIssuer, disabled }: { check: OidcIssuerCheck; o
 export type OidcIssuerFieldProps = {
   value: string;
   onChange: (value: string) => void;
-  /** The field lost focus or received a paste: check what is in it now. */
   onCheck: (value: string) => void;
   check: OidcIssuerCheck;
   onUseIssuer: (issuer: string) => void;
   manual: boolean;
   onManualChange: (manual: boolean) => void;
-  /** The endpoint inputs, shown while entering endpoints manually. */
   manualFields: ReactNode;
   disabled?: boolean;
 };
@@ -163,7 +152,6 @@ export function OidcIssuerField({ value, onChange, onCheck, check, onUseIssuer, 
         onBlur={(event) => onCheck(event.target.value)}
         onPaste={(event) => {
           const input = event.currentTarget;
-          // The pasted text lands after this event; read it on the next tick.
           window.setTimeout(() => onCheck(input.value), 0);
         }}
         placeholder="https://idp.example.com"
@@ -171,7 +159,6 @@ export function OidcIssuerField({ value, onChange, onCheck, check, onUseIssuer, 
         disabled={disabled}
         data-testid="sso-oidc-issuer"
       />
-      {/* Reserved height: the rows below never move while a check starts or ends. */}
       <div className="mt-2 min-h-[20px]">
         <CheckLine check={check} onUseIssuer={onUseIssuer} disabled={disabled} />
       </div>
@@ -194,7 +181,6 @@ export function OidcIssuerField({ value, onChange, onCheck, check, onUseIssuer, 
   );
 }
 
-/** Manual endpoints skip discovery, so a discovery URL as the issuer has to be caught here. */
 export function manualIssuerProblem(issuer: string): string | null {
   return issuer.includes("/.well-known/") ? "The issuer is the provider's base address, not its discovery URL." : null;
 }
@@ -207,7 +193,6 @@ function text(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
 }
 
-/** Reads the answer of POST /v1/sso/oidc/check. An answer it cannot read says nothing. */
 export function parseOidcIssuerCheck(payload: unknown): OidcIssuerCheck {
   if (!isRecord(payload)) return { state: "idle" };
   if (payload.ok === true) {
@@ -229,7 +214,6 @@ export function parseOidcIssuerCheck(payload: unknown): OidcIssuerCheck {
   return { state: "failed", message: text(payload.message) ?? "OpenWork could not check this address." };
 }
 
-/** A refused save that points at the issuer: its message, for the line under the field. */
 export function issuerProblemFromSave(payload: unknown): string | null {
   if (!isRecord(payload) || payload.error !== "invalid_request" || !Array.isArray(payload.details)) return null;
   for (const detail of payload.details) {

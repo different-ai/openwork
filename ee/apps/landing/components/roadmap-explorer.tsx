@@ -7,18 +7,13 @@ export type RoadmapAudience = { id: string; label: string; productIds: string[] 
 
 type Props = {
   audiences: RoadmapAudience[];
-  /** Product id to its short name. */
   labels: Record<string, string>;
-  /** Product id to its section: heading, preview, and status columns. */
   panels: Record<string, ReactNode>;
 };
 
-/* One product at a time: pick who it is for, then a product. The
- * address keeps the product (#workbot), so a link opens the same view. */
 export function RoadmapExplorer({ audiences, labels, panels }: Props) {
   const order = audiences.flatMap((audience) => audience.productIds);
   const [active, setActive] = useState(order[0]);
-  /* The product row: a link or Next lands here, so the preview is on screen. */
   const row = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
@@ -40,7 +35,6 @@ export function RoadmapExplorer({ audiences, labels, panels }: Props) {
     if (scroll) row.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   };
 
-  /* Keep the chosen product in sight when the row scrolls sideways on a phone. */
   useEffect(() => {
     const strip = row.current;
     const chip = strip?.querySelector<HTMLElement>(`[data-product="${active}"]`);

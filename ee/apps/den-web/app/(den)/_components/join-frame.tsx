@@ -6,16 +6,10 @@ import { SetupFrame } from "./setup-frame";
 import { SetupErrorLine, SetupFacts, SetupLetterTile, SetupLine, SetupPanelBody, SetupQuietButton } from "./setup-frame-parts";
 import { DenButton } from "./ui/button";
 
-/**
- * The invitation, sandbox and install screens use the same single panel as
- * sign-up and setup. Every screen composes these parts.
- */
-
 const OPENWORK_MARK_SRC = "/openwork-mark.svg";
 
 type JoinOrganization = { name: string; brand: OrganizationBrand };
 
-/** The organization's own icon and logo or app name above the panel; OpenWork's when it has none. */
 function JoinBrand({ organization }: { organization: JoinOrganization | null }) {
   const [failedIconUrl, setFailedIconUrl] = useState<string | null>(null);
   const iconUrl = organization?.brand.iconUrl ?? null;
@@ -23,8 +17,6 @@ function JoinBrand({ organization }: { organization: JoinOrganization | null }) 
   const custom = iconSrc !== OPENWORK_MARK_SRC;
   return (
     <>
-      {/* Organization assets may be served by private on-prem hosts that are
-          intentionally absent from this deployment's image allowlist. */}
       <img
         src={iconSrc}
         alt=""
@@ -40,7 +32,6 @@ function JoinBrand({ organization }: { organization: JoinOrganization | null }) 
   );
 }
 
-/** The setup panel alone, for screens that follow joining (install). */
 export function JoinPanel({ state, organization = null, children }: { state: string; organization?: JoinOrganization | null; children: ReactNode }) {
   return (
     <div data-testid="join-org-root" data-state={state}>
@@ -79,7 +70,6 @@ export function JoinHeading({ title, copy }: { title: ReactNode; copy?: ReactNod
 
 export type JoinFact = { label: string; value: ReactNode };
 
-/** The workspace as the letter tile used everywhere a workspace appears. */
 export function JoinWorkspaceValue({ name }: { name: string }) {
   return <><SetupLetterTile name={name} /><span className="truncate">{name}</span></>;
 }
@@ -101,7 +91,6 @@ export function JoinActions({ children }: { children: ReactNode }) {
 }
 
 export function JoinPrimaryButton({ children, onClick, disabled, loading, testId, downloadHref }: {
-  /** The installer this button starts, exposed for tests and support. */
   downloadHref?: string;
   children: ReactNode;
   onClick: () => void;

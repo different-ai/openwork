@@ -86,7 +86,6 @@ export default async function GlmLanding() {
 
       <main className="pb-24 pt-20">
         <div className="content-max-width px-6">
-          {/* Hero */}
           <div className="animate-fade-up max-w-3xl">
             <div className="mb-3 text-[12px] font-bold uppercase tracking-wider text-gray-500">
               New in OpenWork
@@ -116,7 +115,6 @@ export default async function GlmLanding() {
             </div>
           </div>
 
-          {/* Feature grid */}
           <section className="my-12 grid grid-cols-1 gap-4 sm:grid-cols-2">
             {features.map((f) => (
               <div key={f.title} className={`feature-card ${f.color}`}>
@@ -128,7 +126,6 @@ export default async function GlmLanding() {
             ))}
           </section>
 
-          {/* What to try first */}
           <section className="landing-shell my-12 rounded-2xl p-8">
             <div className="mb-3 text-[12px] font-bold uppercase tracking-wider text-gray-500">
               What to try first
@@ -156,7 +153,6 @@ export default async function GlmLanding() {
             </div>
           </section>
 
-          {/* How it works — conversion funnel */}
           <section className="my-12">
             <div className="mb-3 text-[12px] font-bold uppercase tracking-wider text-gray-500">
               How it works
@@ -199,7 +195,6 @@ export default async function GlmLanding() {
             </div>
           </section>
 
-          {/* Final CTA bar */}
           <section className="my-12 flex flex-col items-center gap-4 rounded-2xl border border-gray-200 bg-white/60 p-8 text-center">
             <h2 className="text-2xl font-bold tracking-tight">
               Run real agent work on GLM 5.2 today

@@ -1,4 +1,5 @@
 import * as React from "react";
+import { featureAnalytics } from "@/app/lib/analytics";
 
 import { desktopRestrictionNotice, type DesktopAppRestrictionChecker } from "../../../../app/cloud/desktop-app-restrictions";
 
@@ -209,8 +210,6 @@ export function createExtensionsStore(options: {
   let cloudOrgMarketplacesLoaded = false;
   let skillsRoot = "";
   let cloudOrgMarketplacesLoadKey = "";
-  /** Plugin IDs the user has already been notified about. Prevents repeated
-   *  "new extension available" notifications across sync cycles. */
 
   let state: MutableState = {
     skillsContextKey: "",
@@ -394,13 +393,10 @@ export function createExtensionsStore(options: {
       const previousPending = snapshot.pendingCloudPluginChanges;
       setStateField("pendingCloudPluginChanges", pending);
 
-      // Installation drift is not activity history or evidence of an admin
-      // removal. Ask the member-scoped observer to verify usable resources.
       if (Object.entries(pending).some(([id, change]) => previousPending[id] !== change)) {
         requestMemberActivityRefresh();
       }
     } catch {
-      // keep previous pending state on failure
     }
   };
 
@@ -580,8 +576,6 @@ export function createExtensionsStore(options: {
         cloudOrgMarketplacesStatus: null,
       }));
 
-      // Activity uses grant-scoped inventories, not this broader marketplace
-      // management view (which can include admin-only resources).
       requestMemberActivityRefresh();
 
       cloudOrgMarketplacesLoaded = true;
@@ -603,8 +597,6 @@ export function createExtensionsStore(options: {
     }
   }
 
-  // Only manual local changes enter these handlers. Assigned Cloud inventory
-  // continues to reconcile through its separate refresh/sync paths.
   function extensionMutationDenied() {
     if (!options.checkDesktopAppRestriction({ restriction: "allowManageExtensions" })) return false;
     options.setError(desktopRestrictionNotice("allowManageExtensions"));
@@ -1240,6 +1232,7 @@ export function createExtensionsStore(options: {
       if (!result.ok) {
         setStateField("skillsStatus", result.stderr || result.stdout || t("skills.import_failed").replace("{status}", String(result.status)));
       } else {
+        featureAnalytics.skillInstalled({ skill_source: "local" });
         setStateField("skillsStatus", result.stdout || t("skills.imported"));
         options.markReloadRequired?.("skills", { type: "skill", name: inferredName, action: "added" });
       }
@@ -1267,6 +1260,7 @@ export function createExtensionsStore(options: {
       setStateField("skillsStatus", t("skills.installing_skill_creator"));
       try {
         await openworkClient.upsertSkill(openworkWorkspaceId, { name: "skill-creator", content: skillCreatorTemplate });
+        featureAnalytics.skillInstalled({ skill_source: "builtin", skill_id: "skill-creator" });
         const message = t("skills.skill_creator_installed");
         setStateField("skillsStatus", message);
         options.markReloadRequired?.("skills", { type: "skill", name: "skill-creator", action: "added" });
@@ -1325,6 +1319,7 @@ export function createExtensionsStore(options: {
         await refreshSkills({ force: true });
         return { ok: false, message };
       }
+      featureAnalytics.skillInstalled({ skill_source: "builtin", skill_id: "skill-creator" });
       const message = result.stdout || t("skills.skill_creator_installed");
       setStateField("skillsStatus", message);
       options.markReloadRequired?.("skills", { type: "skill", name: "skill-creator", action: "added" });
@@ -1564,6 +1559,8 @@ export function createExtensionsStore(options: {
     try {
       await client.setActiveOrganization({ organizationId: orgId });
       const pluginId = await client.createOrgPlugin(orgId, body);
+      if (kind === "skill") featureAnalytics.skillCreated({ skill_source: "organization" });
+      if (kind === "mcp") featureAnalytics.connectionAdded({ connector_kind: "custom" });
       await waitForListedLibraryPlugin(
         () => client.listMeLibraryPlugins(orgId),
         pluginId,
@@ -1596,7 +1593,6 @@ export function createExtensionsStore(options: {
 
   const start = () => {
     if (started) return;
-    // StrictMode double-mount re-arms after dispose.
     disposed = false;
     started = true;
 

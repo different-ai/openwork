@@ -5,13 +5,7 @@ import type { ConnectorsFacts } from "./connectors";
 import { docsPage } from "./docs";
 import { ToolTesterExample } from "./examples/settings/tool-tester-example";
 
-/**
- * Settings › Tool Tester sits under the Connectors section: with no connector
- * at all the Connectors full screen shows; with connectors but none the viewer
- * can test yet, this box replaces "No connected, testable MCP connections".
- */
 export type ToolTesterFacts = ConnectorsFacts & {
-  /** Connectors the viewer can run tools on now: connected, not a built-in provider, no reconnect needed. */
   testableConnectors?: number;
 };
 

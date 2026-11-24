@@ -10,7 +10,6 @@ import {
   workbotExampleSteps,
 } from "./workbot-example-data";
 
-/** Section example: one question in Workbot, the apps it read to answer, and the team setup behind it. */
 export function WorkbotExample() {
   const step = useExampleStep(workbotExampleSteps.length);
 

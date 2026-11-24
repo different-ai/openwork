@@ -107,7 +107,11 @@ decides it everywhere:
   of the member's computers could take is addressed to one that takes tasks
   while another of them is off.
 - `remote-session:targets` keeps listing every computer with its effective
-  `access`. `GET /v1/sessions` (also served under the opt-in alone) says
+  `access`. It leaves out an offline registration once the same computer (same
+  reported name and platform) has been seen since under another one
+  (`src/remote-sessions/targets.ts`): each app profile registers by itself, so
+  another build or a reset of the app data leaves one behind.
+  `GET /v1/sessions` (also served under the opt-in alone) says
   `chosen`, `access` and `effectiveAccess` per computer and `optIn` for the
   list. It and `remote-session:list` leave out the sessions on a computer that
   is off; status keeps answering with the last known state.

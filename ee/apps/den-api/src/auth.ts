@@ -1,5 +1,5 @@
 import * as crypto from "node:crypto";
-import { recordFreeAutoSignIn } from "@openwork-ee/den-db";
+import { recordFreeAutoFounder, recordFreeAutoSignIn } from "@openwork-ee/den-db";
 import { readOrganizationMetadata } from "@openwork/types/den/managed-models-policy";
 import { invalidateTeamInferenceOAuth, revokeMemberGatewayCredentials } from "./llm/inference-provider-lifecycle.js";
 import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js";
@@ -48,7 +48,14 @@ import {
 import { userSessionExpiresAt } from "./session-security-lifetime.js";
 import { DEN_ACCOUNT_CONFIG, denUserConfig } from "./account-linking-policy.js";
 import { cache } from "./cache.js";
-import { lastSignInCookieChange, lastSignInCookieWrites } from "./last-sign-in-method.js";
+import {
+  lastSignInCookieChange,
+  lastSignInCookieWrites,
+  ORGANIZATION_SAML_ALLOW_IDP_INITIATED,
+  ORGANIZATION_SAML_DEPRECATED_ALGORITHM_BEHAVIOR,
+  ORGANIZATION_SAML_REQUIRE_TIMESTAMPS,
+  SSO_DOMAIN_VERIFICATION_TOKEN_PREFIX,
+} from "@openwork-ee/den-sso";
 import { hashSessionTokens } from "./session-token.js";
 import { DEN_DESKTOP_DEVICE_CLIENT_ID } from "./device-clients.js";
 import { beginDesktopDeviceClaim, desktopDeviceAccessDenied, desktopDeviceLoginEnabled, guardDesktopDeviceSessions, requireDesktopDeviceClaim } from "./desktop-device-login.js";
@@ -63,14 +70,11 @@ import { fetchCimdMetadataResource, isCimdClientIdUrlAllowed } from "./mcp/cimd-
 import { withLoopbackRedirectRelaxation } from "./mcp/cimd-loopback-redirects.js";
 import { syncDenSignupContact } from "./loops.js";
 import { sendEmail } from "./utils/email/send-email.js";
-import { invitationEmailProofMatches, organizationInviteEmailProps } from "./invitation-email.js";
-// Read while this module loads: take them from the import-free module, never
-// from api-keys.ts, which is in an import cycle with this file.
+import { organizationInviteEmailProps } from "./invitation-email.js";
 import {
   DEN_API_KEY_DEFAULT_PREFIX,
   DEN_API_KEY_EXPIRES_IN_DAYS,
   DEN_API_KEY_EXPIRES_IN_SECONDS,
-  DEN_API_KEY_RATE_LIMIT_MAX,
   DEN_API_KEY_RATE_LIMIT_TIME_WINDOW_MS,
 } from "./api-key-constants.js";
 import { revokeOrganizationApiKeysForMember } from "./api-keys.js";
@@ -92,12 +96,6 @@ import {
   splitOrganizationRoles,
 } from "./organization-role-hierarchy.js";
 import { isScimDeprovisionedEmailForSsoProvider, isScimDeprovisionedIdentity, SCIM_DEPROVISIONED_SIGN_IN_MESSAGE } from "./scim-deprovisioning.js";
-import {
-  ORGANIZATION_SAML_ALLOW_IDP_INITIATED,
-  ORGANIZATION_SAML_DEPRECATED_ALGORITHM_BEHAVIOR,
-  ORGANIZATION_SAML_REQUIRE_TIMESTAMPS,
-} from "./sso-saml-policy.js";
-import { SSO_DOMAIN_VERIFICATION_TOKEN_PREFIX } from "./sso-domain-verification.js";
 import {
   authorizeOrganizationSsoSignIn,
   completeOrganizationSsoTestIntent,
@@ -150,7 +148,6 @@ import { ensureWorkbotOAuthClient } from "./workbot/oauth-client.js";
 
 const logger = appLogger.child({ component: "auth" });
 
-/** Better Auth paths whose new session comes from an organization's SSO (same set as the session audit). */
 const SSO_SESSION_PATHS = new Set(["/sso/callback/:providerId", "/sso/callback", "/sso/saml2/sp/acs/:providerId", "/sso/saml2/callback/:providerId"]);
 
 async function organizationIdForSlug(slug: string | null) {
@@ -163,8 +160,6 @@ async function organizationIdForSlug(slug: string | null) {
   return organization?.id ?? null;
 }
 
-// A device session approved into an organization, from session.create.before
-// to its after-hook in the same request (keyed by the new session's token).
 const deviceApprovedSessionOrganizations = new Map<string, { organizationId: string; ssoProviderId: string | null; ssoAuthenticatedAt: Date | null }>();
 
 function localMcpResourceAliases(resource: string) {
@@ -212,10 +207,7 @@ export const DEN_MCP_FIRST_PARTY_CLIENT_ID = "openwork-desktop";
 const DEN_API_PUBLIC_MCP_RESOURCES = apiPublicMcpResource(env.apiPublicUrl);
 const DEN_MCP_BASE_RESOURCES = [
   DEN_MCP_RESOURCE,
-  // Audience compatibility: tokens issued before the proxied default carry
-  // the bare-origin resource (`<betterAuthUrl>/mcp`); keep accepting them.
   `${env.betterAuthUrl}/mcp`,
-  // Auto-trust the public API origin so multi-origin clients work without extra config.
   ...DEN_API_PUBLIC_MCP_RESOURCES,
   ...env.mcpAdditionalResources,
   ...localMcpResourceAliases(DEN_MCP_RESOURCE),
@@ -225,9 +217,6 @@ const DEN_MCP_BASE_RESOURCES = [
 export const DEN_MCP_LEGACY_PARENT_RESOURCES = Array.from(new Set(DEN_MCP_BASE_RESOURCES));
 export const DEN_MCP_FIRST_PARTY_RESOURCES = Array.from(new Set([
   ...DEN_MCP_BASE_RESOURCES,
-  // rmcp uses the configured concrete endpoint as the OAuth resource during
-  // token exchange. Accept the two registered child endpoints as aliases of
-  // their canonical parent resource.
   ...DEN_MCP_BASE_RESOURCES.flatMap((resource) => mcpEndpointResourceAliases(resource)),
 ]));
 export const DEN_MCP_RESOURCES = Array.from(new Set([
@@ -365,7 +354,6 @@ function throwMemberLifecycleError(message: string): never {
 
 const auditHookLogger = appLogger.child({ component: "better_auth_audit" });
 
-/** The cookie session of a better-auth request, for audit attribution hooks. */
 async function readAuditHookSession(token: unknown): Promise<BetterAuthHookSession> {
   const session = typeof token === "string" ? await cache.auth.session(token) : null;
   if (!session?.user.id) return null;
@@ -378,7 +366,6 @@ async function readAuditHookSession(token: unknown): Promise<BetterAuthHookSessi
   };
 }
 
-/** Session/account audit events never fail the auth flow that triggered them. */
 async function runAuditHook(name: string, run: () => Promise<void>): Promise<void> {
   if (!env.auditCaptureEnabled) return;
   try {
@@ -408,8 +395,6 @@ const RAW_BETTER_AUTH_MUTATION_DENIALS: readonly (readonly [string, string])[] =
   ["/organization/delete", "Workspace deletion through Better Auth is disabled."],
   ["/organization/update-member-role", "Use the Den member role API to change organization roles."],
   ["/organization/remove-member", "Use the Den member API to remove organization members."],
-  // Not registered by better-auth (dynamicAccessControl is off): Den serves and audits
-  // these refusals itself (routes/auth/raw-role-refusals.ts) with the same messages.
   ["/organization/create-role", "Custom organization roles are not supported."],
   ["/organization/update-role", "Custom organization roles are not supported."],
   ["/organization/delete-role", "Custom organization roles are not supported."],
@@ -432,8 +417,6 @@ const RAW_BETTER_AUTH_MUTATION_DENIALS: readonly (readonly [string, string])[] =
   ["/api-key/delete", "Use the Den API key API to manage organization API keys."],
   ["/scim/generate-token", "Use the Den SCIM API to manage SCIM tokens."],
   ["/scim/delete-provider-connection", "Use the Den SCIM API to manage SCIM providers."],
-  // Device sign-ins are decided only on Den web's /device page (POST /v1/auth/device/decision),
-  // which shows the requesting client from the stored code first (GHSA-q84f-53jg-9ppm).
   ["/device/approve", "Approve command-line sign-ins on the Den device page."],
   ["/device/deny", "Deny command-line sign-ins on the Den device page."],
 ];
@@ -457,13 +440,11 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** The earlier of `expiresAt` and the end of the person's session limits (Auth & Security › General). */
 async function clampSessionExpiresAt(userId: string, expiresAt: Date, createdAt: Date) {
   try {
     const latest = await userSessionExpiresAt(userId, new Date(), createdAt);
     return latest < expiresAt ? latest : expiresAt;
   } catch (error) {
-    // Never block a sign-in on this read; the next extension applies the length.
     logger.error("session length could not be read", { user_id: userId, error });
     return expiresAt;
   }
@@ -506,42 +487,9 @@ async function hasPendingInvitationForEmail(input: { invitationIdOrToken: string
   return Boolean(invitation);
 }
 
-/** The invitation a sign-up names: `?invite=` on the request, then the query or body field. */
 function readSignUpInvite(ctx: { request?: Request; query?: unknown; body?: unknown } | null | undefined) {
   if (!ctx) return null;
   return readRequestQueryParam(ctx.request, "invite") ?? readStringProperty(ctx.query, "invite") ?? readStringProperty(ctx.body, "invite");
-}
-
-function readSignUpInviteProof(ctx: { request?: Request; query?: unknown; body?: unknown } | null | undefined) {
-  if (!ctx) return null;
-  return readRequestQueryParam(ctx.request, "inviteProof") ?? readStringProperty(ctx.query, "inviteProof") ?? readStringProperty(ctx.body, "inviteProof");
-}
-
-/**
- * Whether signing up from an invitation link counts as verifying the email
- * for every organization. Only the link in the invitation email proves it:
- * that link carries a proof made for the join token and the invited address
- * (invitation-email.ts). The join token alone does not, because the inviter
- * can read it, and neither does the invitation id, which every member can
- * see. The invitation must be pending, unexpired and addressed to this email.
- */
-async function invitationLinkVerifiesEmail(input: { inviteToken: string | null; inviteProof: string | null; email: string }) {
-  if (!input.inviteToken || !invitationEmailProofMatches({ inviteToken: input.inviteToken, email: input.email, proof: input.inviteProof })) {
-    return false;
-  }
-
-  const [invitation] = await db
-    .select({ organizationId: schema.InvitationTable.organizationId })
-    .from(schema.InvitationTable)
-    .where(and(
-      eq(schema.InvitationTable.inviteToken, input.inviteToken),
-      eq(schema.InvitationTable.status, "pending"),
-      gt(schema.InvitationTable.expiresAt, new Date()),
-      sql`lower(${schema.InvitationTable.email}) = ${input.email.trim().toLowerCase()}`,
-    ))
-    .limit(1);
-
-  return Boolean(invitation);
 }
 
 async function isEmailAlreadyVerified(email: string) {
@@ -649,7 +597,6 @@ async function assertLiveMcpSessionForRefreshGrant(ctx: Parameters<Parameters<ty
   }
 }
 
-/** The signed-in user's membership and effective permissions in an organization, or null when they are not an active member. */
 async function resolveBetterAuthActor(input: { organizationId: string; userId: string }) {
   const organizationId = normalizeDenTypeId("organization", input.organizationId);
   const member = await cache.org.membership({
@@ -666,12 +613,10 @@ async function resolveBetterAuthActor(input: { organizationId: string; userId: s
   };
 }
 
-/** Effective permissions of the signed-in user in an organization, or null when they are not an active member. */
 async function resolveBetterAuthActorPermissions(input: { organizationId: string; userId: string }) {
   return (await resolveBetterAuthActor(input))?.permissions ?? null;
 }
 
-/** Validates an invitation role for a Better Auth actor, including the admin role-assignment rules. */
 async function assertBetterAuthActorMayInvite(input: {
   actor: NonNullable<Awaited<ReturnType<typeof resolveBetterAuthActor>>>;
   role: string;
@@ -771,11 +716,6 @@ async function getOrganizationMemberRole(input: {
 
 type StoredOAuthTokenRow = { clientId?: unknown; userId?: unknown; referenceId?: unknown; scopes?: unknown };
 
-/**
- * /oauth2/revoke audit: the organization (consent referenceId) of the stored
- * refresh or opaque access token being revoked, found by the same storage hash
- * better-auth uses. JWT access tokens are stateless and are not looked up.
- */
 async function noteRevokedOAuthToken(ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0]) {
   const token = readStringProperty(ctx.body, "token");
   if (!token) return;
@@ -808,11 +748,6 @@ function getEnterpriseAuthRedirectUrl(input: {
   return url.toString();
 }
 
-/**
- * Remembers a password, Google or GitHub sign-in in a long-lived cookie, and
- * forgets it after an SSO sign-in. Available on every deployment without a
- * feature-service lookup during authentication.
- */
 async function updateLastSignInCookie(ctx: Parameters<Parameters<typeof createAuthMiddleware>[0]>[0]) {
   const change = lastSignInCookieChange({
     path: ctx.path,
@@ -842,10 +777,6 @@ function removeSsoTestSessionCookie(ctx: Parameters<Parameters<typeof createAuth
 
 type AuthHookContext = Parameters<Parameters<typeof createAuthMiddleware>[0]>[0];
 
-// SSO started from a signed-in browser: the callback's new session keeps the
-// SSO proofs of the session it replaces (carrySessionSsoProofs). The cookie
-// names that session, signed, for ten minutes. SameSite=None on HTTPS so a
-// SAML identity provider's cross-site POST still carries it.
 const SSO_CARRY_COOKIE = "sso_carry";
 const SSO_CARRY_MAX_AGE_SECONDS = 10 * 60;
 
@@ -856,7 +787,6 @@ function ssoCarryCookie(ctx: Pick<AuthHookContext, "context">) {
 }
 
 async function setSsoCarryCookie(ctx: AuthHookContext) {
-  // Only an SSO sign-in that actually started (it answers with the identity provider's URL).
   if (!readStringProperty(ctx.context.returned, "url")) return;
   const token = await ctx.getSignedCookie(ctx.context.authCookies.sessionToken.name, ctx.context.secret).catch(() => null);
   const session = typeof token === "string" ? await cache.auth.session(token) : null;
@@ -870,7 +800,6 @@ function clearSsoCarryCookie(ctx: AuthHookContext) {
   ctx.setCookie(cookie.name, "", { ...cookie.attributes, maxAge: 0 });
 }
 
-/** The session the browser had when it started this SSO sign-in, from a fresh carry cookie. */
 async function readSsoCarrySessionId(ctx: Pick<AuthHookContext, "context" | "getSignedCookie">) {
   const value = await ctx.getSignedCookie(ssoCarryCookie(ctx).name, ctx.context.secret).catch(() => null);
   if (typeof value !== "string") return null;
@@ -884,10 +813,6 @@ export const auth = betterAuth({
   baseURL: env.betterAuthUrl,
   secret: env.betterAuthSecret,
   onAPIError: {
-    // OAuth authorization errors that cannot be returned to the client
-    // (unknown client, unregistered redirect URI, malformed request) and the
-    // other Better Auth error redirects land on Den web's branded page instead
-    // of Better Auth's built-in card (or, in production, a bare `/?error=`).
     errorURL: `${env.betterAuthUrl}/connect/error`,
   },
   trustedOrigins:
@@ -896,9 +821,6 @@ export const auth = betterAuth({
       : undefined,
   socialProviders:
     Object.keys(socialProviders).length > 0 ? socialProviders : undefined,
-  // Session tokens are stored hashed (src/session-token.ts).
-  // Primary only: the MySQL adapter inserts then selects the row back, which a
-  // lagging read replica would miss.
   database: guardDesktopDeviceSessions(
     hashSessionTokens(drizzleAdapter(db.$primary, { provider: "mysql", schema }), { secret: env.betterAuthSecret }),
     (database) => hashSessionTokens(drizzleAdapter(database, { provider: "mysql", schema }), { secret: env.betterAuthSecret }),
@@ -915,34 +837,24 @@ export const auth = betterAuth({
       create: {
         before: async (user, context) => {
           const email = normalizeLoginEmail(user.email);
-          // SSO callbacks (/sso/callback/:providerId, /sso/saml2/sp/acs/:providerId)
-          // create the user before provisionUser runs, so refuse a SCIM-deprovisioned
-          // email here or the refused sign-in leaves a ghost user, session, and membership.
           const ssoProviderId = readStringProperty(context?.params, "providerId");
           if (ssoProviderId && await isScimDeprovisionedEmailForSsoProvider({ ssoProviderId, email })) {
             throw new APIError("FORBIDDEN", { message: SCIM_DEPROVISIONED_SIGN_IN_MESSAGE });
           }
-          const verifiedByInvitation = context?.path === "/sign-up/email"
-            && await invitationLinkVerifiesEmail({ inviteToken: readSignUpInvite(context), inviteProof: readSignUpInviteProof(context), email });
-          // The /setup administrator's email is one the operator configured,
-          // and the one-time setup code proves the person signing up is that
-          // operator. Like an invitation link, that vouches for the address,
-          // so linking SSO later keeps their password and session.
-          const verifiedByBootstrap = !verifiedByInvitation && context?.path === "/sign-up/email"
+          const passwordSignup = context?.path === "/sign-up/email";
+          const verifiedByBootstrap = passwordSignup
             && Boolean(await authorizeInitialAdminBootstrapSignup({ body: context.body, email }));
           return {
             data: {
               ...user,
               email,
-              ...(verifiedByInvitation || verifiedByBootstrap ? { emailVerified: true } : {}),
+              ...(passwordSignup ? { emailVerified: verifiedByBootstrap } : {}),
             },
           };
         },
       },
       update: {
         before: async (user, context) => {
-          // SCIM PUT and PATCH write the user row here, whatever the request
-          // looked like, so this is where an email change is refused.
           if (typeof user.email === "string" && context?.path === "/scim/v2/Users/:userId") {
             const userId = readStringProperty(context.params, "userId");
             const allowed = userId !== null && await scimEmailChangeAllowed({
@@ -952,7 +864,6 @@ export const auth = betterAuth({
             });
             if (!allowed) throw new APIError("BAD_REQUEST", SCIM_EMAIL_CHANGE_REFUSAL);
           }
-          // Audit: remember which profile fields change (src/audit/domain/account.ts).
           if (env.auditCaptureEnabled) auditUserUpdateBefore(user, context);
           return {
             data: typeof user.email === "string"
@@ -965,14 +876,12 @@ export const auth = betterAuth({
         },
         after: async (user, context) => {
           if (typeof user.id === "string") {
-            // User profile changes can stale cached auth payloads; clear all sessions here.
             await cache.auth.deleteSessionsForUser(normalizeDenTypeId("user", user.id));
           }
           await runAuditHook("user.update", () => auditUserUpdateAfter(user, context));
         },
       },
       delete: {
-        // Memberships still exist here; delete-user is not enabled in Den today.
         before: async (user) => {
           await runAuditHook("user.delete", () => recordAccountDeleted(user));
         },
@@ -1006,11 +915,6 @@ export const auth = betterAuth({
     },
     member: {
       create: {
-        // Members Better Auth creates through its internal adapter (e.g. the
-        // organization plugin) join like any other member: billing follows the
-        // new user count and the member gets a gateway key. After-hooks run
-        // once the creating transaction has committed. SCIM and SSO write
-        // through the raw adapter instead; see identity-provisioning.ts.
         after: async (member: AuthMemberHookRow) => {
           if (member.removedAt) return;
           await runPostOrganizationMemberChangeHooks({
@@ -1051,10 +955,8 @@ export const auth = betterAuth({
             organizationId,
             memberId: normalizeDenTypeId("member", member.id),
           });
-          // One fewer user: billing follows the lower count.
           await cache.org.deleteMembers(organizationId);
           await syncOrganizationBillingQuantities({ organizationId });
-          // Leaving, and any other deletion made through Better Auth: they keep no cloud computer.
           removeMemberWorkbotComputersInBackground({ organizationId, memberId: normalizeDenTypeId("member", member.id) });
         },
       },
@@ -1073,8 +975,6 @@ export const auth = betterAuth({
             deviceApprovedSessionOrganizations.set(session.token, deviceApproval);
           }
           try {
-            // SSO JIT creates the raw member row before the session row, so this
-            // chokepoint can merge any matching pending invitation without blocking sign-in.
             await reconcilePendingInvitationsForUser(userId);
           } catch (error) {
             logger.error("invitation reconcile failed", { user_id: userId, error });
@@ -1085,20 +985,14 @@ export const auth = betterAuth({
             data: {
               ...session,
               activeOrganizationId,
-              // Existing non-schema session label; not an org-locked credential.
               ...(desktopDevice ? { userAgent: DEN_DESKTOP_DEVICE_CLIENT_ID } : {}),
-              // The strictest session limits of the person's organizations.
               expiresAt,
             },
           };
         },
-        // Every sign-in path that creates a session row: session.created in
-        // the session's organization (src/audit/domain/sessions.ts).
         after: async (session, context) => {
           const path = typeof context?.path === "string" ? context.path : null;
           if (path && SSO_SESSION_PATHS.has(path) && typeof session.id === "string") {
-            // Which organization's SSO created this session, so an organization
-            // that requires SSO can tell it from a password or Google session.
             await recordSessionSsoAuthentication({
               sessionId: session.id,
               userId: session.userId,
@@ -1125,8 +1019,6 @@ export const auth = betterAuth({
         },
       },
       update: {
-        // Better Auth extends a session by 7 days on /get-session; keep it to
-        // the person's session limits (Auth & Security › General).
         before: async (session, context) => {
           const current = context?.context.session?.session;
           if (!(session.expiresAt instanceof Date) || !current || typeof current.userId !== "string") return;
@@ -1134,7 +1026,6 @@ export const auth = betterAuth({
         },
         after: async (session) => {
           if (typeof session.token === "string") {
-            // Better Auth session updates are the explicit invalidation point for cached sessions.
             await cache.auth.deleteSession(session.token);
           }
           if (typeof session.id === "string") {
@@ -1143,14 +1034,11 @@ export const auth = betterAuth({
         },
       },
       delete: {
-        // revoke-other-sessions keeps the caller's session by comparing tokens, but
-        // a hashed row listed by user carries a sealed reference: keep it by id.
         before: async (session, context) => {
           if (context?.path === "/revoke-other-sessions" && session.id === context.context.session?.session.id) return false;
         },
         after: async (session, context) => {
           if (typeof session.token === "string") {
-            // Sign-out deletes the backing session row, so cached hits must be cleared here.
             await cache.auth.revokeSession(session.token);
           }
           if (typeof session.id === "string") {
@@ -1159,7 +1047,6 @@ export const auth = betterAuth({
           if (typeof session.id === "string") {
             await cache.auth.revokeSessionId(normalizeDenTypeId("session", session.id));
           }
-          // Fires per row, also for bulk deletes (revoke-sessions, password change).
           await runAuditHook("session.delete", () => recordSessionRevoked(session, auditSessionRevokeReason(context)));
         },
       },
@@ -1186,14 +1073,11 @@ export const auth = betterAuth({
 
       await assertLiveMcpSessionForRefreshGrant(ctx);
 
-      // SCIM adds people without an invitation: Enterprise only.
       if (ctx.path === "/scim/v2/Users" && ctx.request?.method === "POST") {
         const organizationId = await scimRequestOrganizationId(ctx.headers?.get("authorization"));
         if (organizationId && !await organizationAllowsProvisioning(organizationId, "scim")) {
           throw new APIError("FORBIDDEN", { message: SCIM_ENTERPRISE_REQUIRED_MESSAGE });
         }
-        // Someone an admin removed in Den but still assigned in the IdP: their
-        // leftover SCIM account would make this create a 409 duplicate.
         if (organizationId) {
           await releaseStaleScimAccountForCreate({ organizationId, body: ctx.body });
         }
@@ -1201,7 +1085,6 @@ export const auth = betterAuth({
 
       if (ctx.path === "/oauth2/authorize") {
         const clientId = maybeString(ctx.query?.client_id);
-        // Workbot's first-party client follows DEN_WORKBOT_URL; created on its first sign-in.
         if (clientId === WORKBOT_OAUTH_CLIENT_ID) {
           await ensureWorkbotOAuthClient(ctx.context.adapter);
         }
@@ -1231,8 +1114,6 @@ export const auth = betterAuth({
       if (ctx.request) {
         const deniedMutation = getRawBetterAuthMutationDenial(ctx.path);
         if (deniedMutation) {
-          // Audit the refused attempt in the caller's own organization (src/audit/better-auth.ts).
-          // Never throws and writes no intent, so the 403 below is unchanged.
           if (env.auditCaptureEnabled) {
             await auditBetterAuthRefusal({
               body: ctx.body,
@@ -1242,15 +1123,10 @@ export const auth = betterAuth({
           throw new APIError("FORBIDDEN", { message: deniedMutation.message });
         }
 
-        // Audit: the organization an MCP token being revoked belongs to (its
-        // stored row, looked up by the storage hash; nothing is kept).
         if (env.auditCaptureEnabled && ctx.path === "/oauth2/revoke") {
           await runAuditHook("oauth2.revoke", () => noteRevokedOAuthToken(ctx));
         }
 
-        // Tenant audit intent before the endpoint runs (src/audit/better-auth.ts).
-        // Nothing runs while deployment capture is off; refused with 503 only
-        // when an intent append failed (a lookup error means no attribution).
         if (env.auditCaptureEnabled && BETTER_AUTH_AUDIT_BEFORE_PATHS.has(ctx.path)) {
           let audited = true;
           try {
@@ -1266,8 +1142,6 @@ export const auth = betterAuth({
           }
         }
 
-        // User-scoped session/account audit (src/audit/better-auth.ts): prior
-        // session organization/team, or the account a reset token names.
         if (env.auditCaptureEnabled && BETTER_AUTH_SESSION_BEFORE_PATHS.has(ctx.path)) {
           await auditBetterAuthSessionBefore({
             path: ctx.path, request: ctx.request,
@@ -1355,8 +1229,6 @@ export const auth = betterAuth({
         }
 
         if (ctx.path === "/organization/set-active") {
-          // entering an organization that requires SSO
-          // needs a session signed in through its SSO.
           const token = await ctx.getSignedCookie(ctx.context.authCookies.sessionToken.name, ctx.context.secret).catch(() => null);
           const session = typeof token === "string" ? await cache.auth.session(token) : null;
           const organizationId = readStringProperty(ctx.body, "organizationId")
@@ -1383,9 +1255,6 @@ export const auth = betterAuth({
           if (!authorization.ok) {
             throw new APIError("FORBIDDEN", { message: authorization.message });
           }
-          // An organization or domain can match several connections.
-          // Better Auth would take any one of them,
-          // so name the provider Den chose: the ready one.
           if (authorization.providerId && !readStringProperty(ctx.body, "providerId") && isRecord(ctx.body)) {
             return { context: { body: { ...ctx.body, providerId: authorization.providerId } } };
           }
@@ -1413,9 +1282,6 @@ export const auth = betterAuth({
         return;
       }
 
-      // Flag off for the SSO organization: its members must use SSO. With
-      // only "Restrict this domain to our SSO" refuses
-      // sign-in; "Require SSO" is enforced when the organization is opened.
       const requirement = await findNonSsoSignInBlock({ email });
       if (!requirement) {
         return;
@@ -1464,8 +1330,6 @@ export const auth = betterAuth({
         clearSsoCarryCookie(ctx);
       }
 
-      // A SCIM-created member joins like any other: billing follows the new
-      // user count and the member gets a gateway key.
       if (ctx.path === "/scim/v2/Users" && ctx.request?.method === "POST") {
         const createdUserId = readStringProperty(ctx.context.returned, "id");
         const organizationId = await scimRequestOrganizationId(ctx.headers?.get("authorization"));
@@ -1496,8 +1360,6 @@ export const auth = betterAuth({
         const intentId = getSsoTestIntentIdFromCallbackUrl(callbackUrl);
         const providerId = readStringProperty(ctx.params, "providerId");
         if (!intentId || !providerId) {
-          // A real SSO sign-in (not an admin's connection test) forgets the
-          // remembered password or social method.
           await updateLastSignInCookie(ctx);
           return;
         }
@@ -1530,10 +1392,6 @@ export const auth = betterAuth({
 
       const requirement = await findNonSsoSignInBlock({ email: newSession.user.email, userId: newSession.user.id });
       if (!requirement) {
-        // Signing in (e.g. with Google) with a verified email on an
-        // organization's verified SSO domain joins it on the Team plan and up;
-        // Free organizations use invitations. Only after the enterprise sign-in
-        // requirement passed, so a refused sign-in never grants membership.
         await provisionVerifiedDomainMembership({
           userId: normalizeDenTypeId("user", newSession.user.id),
           email: newSession.user.email,
@@ -1544,7 +1402,6 @@ export const auth = betterAuth({
       }
 
       await ctx.context.internalAdapter.deleteSession(newSession.session.token);
-      // Enterprise auth rejection deletes the just-created session outside hooks in some adapters.
       await cache.auth.revokeSession(newSession.session.token);
       deleteSessionCookie(ctx);
       throw ctx.redirect(getEnterpriseAuthRedirectUrl({
@@ -1564,8 +1421,6 @@ export const auth = betterAuth({
         },
       }
       : {}),
-    // Den resolves the client address once (request-client-ip.ts) and hands
-    // it over in this header, so Better Auth and Den's own limits agree.
     ipAddress: {
       ipAddressHeaders: [RESOLVED_CLIENT_IP_HEADER],
       ipv6Subnet: CLIENT_IP_IPV6_SUBNET,
@@ -1592,11 +1447,6 @@ export const auth = betterAuth({
             return createDenTypeId("oauthRefreshToken");
           case "oauthConsent":
             return createDenTypeId("oauthConsent");
-          // better-auth 1.7 oauth-provider models with no den typeid: without
-          // an id the drizzle adapter emits `insert ... values (default, ...)`
-          // and MySQL rejects it (no default on `id`) — the oauthResource seed
-          // storm of 2026-08-07. oauthClientResource/oauthClientAssertion use
-          // forceAllowId, but cover them for any future non-forced create.
           case "oauthResource":
           case "oauthClientResource":
           case "oauthClientAssertion":
@@ -1645,12 +1495,8 @@ export const auth = betterAuth({
     window: 60,
     max: 20,
     customRules: {
-      // Limited per email, per invitation and per address in
-      // auth-rate-limits.ts; an address-only limit here would make everyone
-      // behind one office router share a handful of sign-ups.
       ...Object.fromEntries(DEN_LIMITED_BETTER_AUTH_PATHS.map((path) => [path, false] as const)),
       "/oauth2/token": false,
-      // Read on every page load and session check; one office shares an address.
       "/get-session": {
         window: 60,
         max: 120,
@@ -1688,8 +1534,6 @@ export const auth = betterAuth({
       expiresIn: 600,
       allowedAttempts: 5,
       async sendVerificationOTP({ email, otp, type }) {
-        // better-auth sends a sign-up code even when the new user is already
-        // verified (an invitation link verified it); there is nothing to verify.
         if (type === "email-verification" && await isEmailAlreadyVerified(email)) {
           return;
         }
@@ -1739,16 +1583,15 @@ export const auth = betterAuth({
           if ("plan" in metadata) {
             throw new APIError("FORBIDDEN", { message: "plan is reserved for internal platform administration." });
           }
-          // Features live in the organization_feature table and only platform
-          // admins write them. Organization metadata never turns a feature on,
-          // so a client-supplied capabilities object is dropped, not stored.
           if ("capabilities" in metadata) {
             const { capabilities: _ignored, ...retained } = metadata;
             return { data: { metadata: retained } };
           }
         },
+        afterCreateOrganization: async ({ organization, user }) => {
+          await recordFreeAutoFounder(db, normalizeDenTypeId("organization", organization.id), normalizeDenTypeId("user", user.id));
+        },
         beforeUpdateOrganization: async ({ organization }) => {
-          // A replacement without dpaSigned can erase it just as easily as an explicit false.
           if ("metadata" in organization) {
             throw new APIError("FORBIDDEN", { message: "Use the Den organization settings API to update workspace configuration." });
           }
@@ -1770,7 +1613,6 @@ export const auth = betterAuth({
           }
 
           if (hasRole(role, ORGANIZATION_OWNER_ROLE)) {
-            // primary: a lagging replica could miss members added moments ago and allow a second owner.
             const existingMembers = await db.$primary
               .select({ id: schema.MemberTable.id })
               .from(schema.MemberTable)
@@ -1857,15 +1699,7 @@ export const auth = betterAuth({
       consentPage: `${env.betterAuthUrl}/mcp/select-organization`,
       scopes: [...DEN_MCP_SCOPES],
       validAudiences: DEN_MCP_OAUTH_VALID_AUDIENCES,
-      // better-auth 1.7 gates every token-request `resource` parameter on the
-      // oauthResource registry (invalid_target "is not configured" otherwise;
-      // validAudiences no longer whitelists issuance). Seed all accepted MCP
-      // resource aliases at startup — seeding is idempotent (insertOnly).
       resources: [...DEN_MCP_RESOURCES],
-      // 1.7 defaults to requiring an oauthClientResource link per client per
-      // resource. Dynamically registered MCP clients never request resources
-      // at registration, so enforcement would invalid_target every DCR client.
-      // Keep pre-1.7 behavior: registry + audience validation, no per-client ACL.
       enforcePerClientResources: false,
       allowPublicClientPrelogin: true,
       allowDynamicClientRegistration: true,
@@ -1904,8 +1738,6 @@ export const auth = betterAuth({
                 ],
               }),
             });
-            // Audit (oauth_token.issued in the consent organization, after the
-            // token endpoint succeeds): identifiers only, never token material.
             const resource = resources?.[0];
             noteOAuthTokenIssuance({
               clientId: client.clientId,
@@ -1944,8 +1776,7 @@ export const auth = betterAuth({
           }
 
           const referenceId = normalizeDenTypeId("organization", activeOrganizationId);
-          // An organization that requires SSO grants MCP access only from a session signed in through its SSO.
-          const ssoBlock = await findSsoAccessBlock({ sessionId: typeof session.id === "string" ? session.id : null, organizationId: referenceId });
+          const ssoBlock = await findSsoAccessBlock({ sessionId: typeof session.id === "string" ? normalizeDenTypeId("session", session.id) : null, organizationId: referenceId });
           if (ssoBlock) {
             throw new APIError("FORBIDDEN", { message: SSO_REQUIRED_MESSAGE });
           }
@@ -1966,32 +1797,17 @@ export const auth = betterAuth({
         }
         return claims;
       },
-      // Better Auth refresh-family teardown and /oauth2/revoke intentionally do
-      // not remove durable consent. Already minted JWT exposure remains bounded
-      // by the configured 45-minute MCP access-token lifetime.
       prefix: {
         opaqueAccessToken: DEN_MCP_OPAQUE_ACCESS_TOKEN_PREFIX,
         refreshToken: DEN_MCP_REFRESH_TOKEN_PREFIX,
         clientSecret: "ow_mcp_cs_",
       },
     }),
-    // Client ID Metadata Documents (MCP authorization spec): an MCP client may
-    // present the HTTPS URL of a JSON document it hosts as its client_id. The
-    // plugin fetches and validates the document, stores it as a public client,
-    // and advertises `client_id_metadata_document_supported` in discovery, so
-    // spec-following clients no longer need dynamic registration. DCR stays on
-    // as the fallback for clients that do not support this yet.
     {
       id: "cimd",
       init(ctx) {
         extendOAuthProvider(ctx, {
-          // Same discovery the @better-auth/cimd plugin installs, wrapped so a
-          // registered loopback redirect matches on any port (RFC 8252 §7.3),
-          // which native MCP clients such as Claude Code depend on.
           clientDiscovery: withLoopbackRedirectRelaxation(createCimdClientDiscovery({
-            // Redirect URIs are matched at authorize time and Den's MCP redirect
-            // policy still applies; native clients legitimately redirect to
-            // loopback or another origin than the one hosting their document.
             originBoundFields: ["post_logout_redirect_uris", "client_uri"],
             fetchClientMetadataResource: fetchCimdMetadataResource,
             isMetadataDocumentUrlAllowed: (url) => isCimdClientIdUrlAllowed(url),
@@ -2007,11 +1823,8 @@ export const auth = betterAuth({
     },
     scim({
       linkExistingUsers: {
-        // Not requireExistingOrgMembership: someone an admin removed in Den
-        // may have no member row left, and the IdP must still reprovision them.
         shouldLinkUser: createScimExistingUserLinkCheck(isUserKnownToScimOrganization),
       },
-      // Group names are metadata, never organization role assignments.
       mapGroupToRoles: () => [],
       storeSCIMToken: SCIM_TOKEN_STORAGE_STRATEGY,
       requiredRole: [ORGANIZATION_OWNER_ROLE, ORGANIZATION_SUPER_ADMIN_ROLE, ORGANIZATION_ADMIN_ROLE],
@@ -2041,9 +1854,6 @@ export const auth = betterAuth({
         enabled: true,
         tokenPrefix: SSO_DOMAIN_VERIFICATION_TOKEN_PREFIX,
       },
-      // Den provisions SSO members itself (provisionUser below and the
-      // /callback/:id hook): Better Auth writes member rows through the raw
-      // adapter, skipping billing, and would add people to any plan.
       organizationProvisioning: {
         disabled: true,
       },
@@ -2103,17 +1913,12 @@ export const auth = betterAuth({
             },
           });
 
-        // Invited people join on any plan; automatic sign-up needs the Team plan.
         const membership = await provisionSsoMembership({ organizationId, userId, email });
         if (membership === "invitation_required") {
           throw new APIError("FORBIDDEN", { message: SSO_INVITATION_REQUIRED_MESSAGE });
         }
       },
     }),
-    // RFC 8628 device authorization for `openwork-bootstrap login` and the
-    // OpenCode plugin (`opencode auth login openwork`): the client shows a code,
-    // the person approves it on Den web's /device page, and the client receives
-    // a Den session token. No password ever reaches the client.
     deviceAuthorization({
       expiresIn: DEN_DEVICE_CODE_EXPIRES_IN,
       interval: DEN_DEVICE_CODE_POLL_INTERVAL,
@@ -2136,7 +1941,7 @@ export const auth = betterAuth({
       },
       rateLimit: {
         enabled: true,
-        maxRequests: DEN_API_KEY_RATE_LIMIT_MAX,
+        maxRequests: env.apiKeyRateLimitMax,
         timeWindow: DEN_API_KEY_RATE_LIMIT_TIME_WINDOW_MS,
       },
     }),

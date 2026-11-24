@@ -5,7 +5,6 @@ import { ExampleCaption, ExampleRow, ExampleRows } from "../example-parts";
 import { useExampleStep } from "../use-example-step";
 import { libraryUsageExampleRows } from "./library-usage-example-data";
 
-/** Tab example: skills with their uses and last use, one not used yet. Narrow enough for the 40% column. */
 export function LibraryUsageExample() {
   const step = useExampleStep(libraryUsageExampleRows.length);
 

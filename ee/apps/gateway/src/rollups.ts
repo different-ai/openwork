@@ -1,9 +1,3 @@
-// Rollup job (plan §4.8): raw request logs older than rawRetention fold into
-// hour rollups, hour rollups older than hourlyRetention fold into day rollups.
-// The same run folds Library usage events into day rollups
-// (capability-usage-rollups.ts).
-// One bounded source batch per bucket/transaction. Retried runs consume only
-// remaining source IDs; inserting new raw rows is NEW consumption, not replay.
 import { timingSafeEqual } from "node:crypto"
 import { foldWorkbotUsage, GatewayProviderOauthStateTable, GatewayRequestLogTable, GatewayUsageRollupTable, GatewayRollupLockTable } from "@openwork-ee/den-db"
 import { assertUsageRetentionSafe } from "@openwork-ee/den-db/gateway-usage-limits"
@@ -59,13 +53,11 @@ export const ROLLUP_OBSERVATION_COLUMNS = [
 
 export type AggregatedRollup = RollupDimensions & RollupSums & Partial<Record<(typeof ROLLUP_OBSERVATION_COLUMNS)[number], number | null>>
 
-// Statements that must run inside one bucket's transaction.
 export type RollupStore = {
   aggregateRawHour(bucketStart: Date, limit: number): Promise<{ ids: (typeof GatewayRequestLogTable.$inferSelect.id)[]; groups: AggregatedRollup[] }>
   aggregateHourRollupsToDay(dayStart: Date, limit: number): Promise<{ ids: RollupRow["id"][]; groups: AggregatedRollup[] }>
   upsertRollups(rows: RollupRow[]): Promise<void>
   deleteRawIds(ids: (typeof GatewayRequestLogTable.$inferSelect.id)[]): Promise<number>
-  /** Adds the batch's Workbot-tagged rows to workbot_usage_day (den-db workbot-usage.ts). Optional for test stores. */
   foldWorkbotUsage?(dayStart: Date, ids: (typeof GatewayRequestLogTable.$inferSelect.id)[]): Promise<void>
   deleteHourRollupIds(ids: RollupRow["id"][]): Promise<number>
 }
@@ -84,7 +76,6 @@ export type RunRollupsInput = {
   hourlyRetentionMs?: number
   maxBucketsPerRun?: number
   maxSourceRowsPerBucket?: number
-  /** Library usage (capability_usage_event) folds in the same run; see capability-usage-rollups.ts. */
   capabilityUsageRepository?: CapabilityUsageRollupRepository
 }
 
@@ -104,8 +95,6 @@ export const DAY_MS = 24 * HOUR_MS
 const DEFAULT_RAW_RETENTION_MS = 2 * DAY_MS
 const DEFAULT_HOURLY_RETENTION_MS = 90 * DAY_MS
 const DEFAULT_MAX_BUCKETS_PER_RUN = 48
-// Matches the hosted hourly caller. A bucket larger than this is finished over
-// several runs; the sustained ceiling is buckets x rows per run.
 const DEFAULT_MAX_SOURCE_ROWS_PER_BUCKET = 5000
 
 export function floorToHour(date: Date) {
@@ -116,12 +105,9 @@ export function floorToDay(date: Date) {
   return new Date(Math.floor(date.getTime() / DAY_MS) * DAY_MS)
 }
 
-// New aggregations use the shared tuple hash; historical hashes stay untouched.
 export const rollupDimensionKey = gatewayRollupDimensionKey
 
 export function buildRollupRows(granularity: RollupRow["granularity"], bucketStart: Date, groups: AggregatedRollup[]): RollupRow[] {
-  // Drizzle's numeric bigint mode must not silently round a large SQL sum.
-  // Fail before consumption; operators can split the batch or widen handling.
   for (const group of groups) for (const column of [...ROLLUP_SUM_COLUMNS, ...ROLLUP_OBSERVATION_COLUMNS]) {
     const value = group[column]
     if (value != null && !Number.isSafeInteger(value)) throw new Error("Rollup sum exceeds safe integer range")
@@ -152,7 +138,6 @@ function sum(expression: ReturnType<typeof sql>) {
 const raw = GatewayRequestLogTable
 const rollup = GatewayUsageRollupTable
 
-// Rows with completed_at IS NULL (crashed mid-request) count as client_aborted.
 const rawSums = {
   request_count: sql<number>`count(*)`.mapWith(Number),
   ok_count: sum(sql`case when ${raw.completed_at} is not null and ${raw.outcome} = 'ok' then 1 else 0 end`),
@@ -271,8 +256,6 @@ function createDbRollupStore(executor: Parameters<Parameters<typeof import("./db
     },
     async upsertRollups(rows) {
       if (rows.length === 0) return
-      // NULL + n remains NULL for legacy observation counts. Never manufacture
-      // a completeness claim for already-compacted historical data.
       const set = Object.fromEntries([...ROLLUP_SUM_COLUMNS, ...ROLLUP_OBSERVATION_COLUMNS].map((column) => [column, sql`${rollup[column]} + values(${sql.identifier(column)})`]))
       await executor.insert(rollup).values(rows).onDuplicateKeyUpdate({ set })
     },
@@ -295,8 +278,6 @@ function createDbRollupStore(executor: Parameters<Parameters<typeof import("./db
   }
 }
 
-// Bucket starts are derived server-side via UNIX_TIMESTAMP, which matches the
-// JS epoch under the UTC session assumption drizzle's timestamp mapping makes.
 async function listBuckets(executor: DbExecutor, column: typeof raw.started_at | typeof rollup.bucket_start, from: typeof raw | typeof rollup, extra: ReturnType<typeof sql> | undefined, before: Date, limit: number, sizeMs: number) {
   const seconds = sizeMs / 1000
   const bucket = sql<number>`floor(unix_timestamp(${column}) / ${seconds})`.mapWith(Number)
@@ -324,10 +305,6 @@ export function createDbRollupRepository(db: typeof import("./db.js").db): Rollu
     },
     transaction(run) {
       return db.transaction(async (tx) => {
-        // No snapshot reads precede this exclusive record lock. InnoDB RR's
-        // first consistent read (aggregation) therefore sees the claimed rows.
-        // Daily consumers cannot delete an hour while another worker adds to
-        // it; all paths acquire this same permanent row before any source lock.
         await tx.insert(GatewayRollupLockTable).values({ id: 1 })
           .onDuplicateKeyUpdate({ set: { id: 1 } })
         return run(createDbRollupStore(tx))
@@ -357,13 +334,11 @@ export async function runRollups(input: RunRollupsInput = {}): Promise<RollupRun
     capabilityUsageDayBuckets: 0, capabilityUsageBatches: 0, capabilityUsageRowsDeleted: 0,
   }
 
-  // Only closed buckets: the whole hour/day must be older than the retention.
   const hourCutoff = floorToHour(new Date(now.getTime() - rawRetentionMs))
   for (const bucketStart of await repository.listCandidateHourBuckets(hourCutoff, maxBucketsPerRun)) {
     summary.rawRowsDeleted += await repository.transaction(async (store) => {
       const { ids, groups } = await store.aggregateRawHour(bucketStart, maxSourceRowsPerBucket)
       await store.upsertRollups(buildRollupRows("hour", bucketStart, groups))
-      // Before the rows are deleted: the hour rollups drop the conversation tag.
       await store.foldWorkbotUsage?.(floorToDay(bucketStart), ids)
       return store.deleteRawIds(ids)
     })
@@ -382,7 +357,6 @@ export async function runRollups(input: RunRollupsInput = {}): Promise<RollupRun
 
   summary.oauthStatesDeleted = await repository.deleteExpiredOauthStates(now)
 
-  // Library usage: raw rows older than the same raw retention fold straight into day rows.
   const capabilityUsage = await runCapabilityUsageRollups({
     repository: input.capabilityUsageRepository,
     now,
@@ -407,8 +381,6 @@ export type RollupRouteDependencies = {
   runRollups: (input: RunRollupsInput) => Promise<RollupRunSummary>
 }
 
-// Same shape as keys.ts constantTimeEquals; kept local so this module (and its
-// tests) do not pull in the database client.
 function constantTimeEquals(a: string, b: string) {
   const left = new Uint8Array(Buffer.from(a))
   const right = new Uint8Array(Buffer.from(b))

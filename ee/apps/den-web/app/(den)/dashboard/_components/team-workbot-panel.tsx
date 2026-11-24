@@ -58,7 +58,6 @@ type ModelsQuery = ReturnType<typeof useWorkbotSettings>;
 type RowsProps = { orgId: string; orgSlug: string | null; view: TeamSettingsQuery; models: ModelsQuery; canEdit: boolean; parts: WorkbotSettingsParts };
 type TeamOnlyScope = Extract<TeamScope, { kind: "team" }>;
 
-/** The Workbot tab shows with settings per team on, for people who can view Workbot's settings. */
 export function workbotTabVisible(orgContext: DenOrgContext | null): boolean {
   if (!orgContext) return false;
   const access = getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions);
@@ -69,24 +68,14 @@ function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message.trim() ? error.message : fallback;
 }
 
-/**
- * Members › Teams › Everyone (or a team) › Workbot: whether Workbot is on, the
- * model it starts on, the name it goes by and, while members' agents are
- * available, whether they read the calendar, how they work and which
- * connectors they read.
- * Everyone's page holds the values every team follows until it changes one
- * for its own members.
- */
 export function WorkbotPanel({ scope }: { scope: TeamScope }) {
   const { orgContext, orgId: scopedOrgId, orgSlug } = useOrgDashboard();
   const orgId = scopedOrgId ?? "";
   const visible = workbotTabVisible(orgContext);
   const view = useWorkbotTeamSettings(orgId, visible);
-  // The same read as Manage › Workbot: the models this person can choose, and their names.
   const models = useWorkbotSettings(orgId, visible && Boolean(orgId));
   const [tab, setTab] = useState<WorkbotSettingsTab>("general");
   if (!orgContext || !visible) return null;
-  // Tabs split Workbot's own settings from members' agents and what they read, where there are agents to show.
   const tabs = Boolean(view.data && workbotAgentsShown(view.data));
   const parts = workbotSettingsParts(tabs, tab);
   const canManage = getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions).canManageModelsSettings;
@@ -136,7 +125,6 @@ function Unavailable() {
   return <span className="text-[13px] text-gray-500">Unavailable</span>;
 }
 
-/** On or off, said in words beside the switch. */
 function WorkbotSwitch({ checked, disabled, onChange }: { checked: boolean; disabled: boolean; onChange: (checked: boolean) => void }) {
   return (
     <span className="flex shrink-0 items-center gap-2">
@@ -146,7 +134,6 @@ function WorkbotSwitch({ checked, disabled, onChange }: { checked: boolean; disa
   );
 }
 
-/** The model in use, saved as soon as another is picked. `saved` null is the built-in default. */
 function WorkbotModelPicker({ saved, settings, disabled, onPick }: {
   saved: string | null;
   settings: WorkbotSettings;
@@ -173,11 +160,6 @@ function WorkbotModelPicker({ saved, settings, disabled, onPick }: {
   );
 }
 
-/**
- * Whether members' agents read the calendar, as a row on General: the calendar setting of Everyone's policy for
- * members' agents, or of a team's own. Changing it on a team's page gives the team its own copy of that policy, as any
- * control on its Proactive Mode tab does.
- */
 function CalendarRow({ orgId, scope, canEdit, chip }: { orgId: string; scope: AgentPolicyScope; canEdit: boolean; chip?: ReactNode }) {
   const labelId = useId();
   const policy = useWorkbotProactive(orgId, Boolean(orgId), scope);
@@ -199,7 +181,6 @@ function CalendarRow({ orgId, scope, canEdit, chip }: { orgId: string; scope: Ag
   );
 }
 
-/** Everyone: Workbot on or off and its default model, saved on change. The name is the organization's brand name. */
 function EveryoneWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit, parts }: RowsProps & { scope: TeamScope }) {
   const ids = { enabled: useId(), model: useId(), name: useId() };
   const saveEveryone = useSaveWorkbotEveryoneSettings(orgId);
@@ -245,7 +226,6 @@ function EveryoneWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit,
         <SettingRow flush label="Default model" labelId={ids.model}>
           {view.isError || models.isError ? <Unavailable /> : !data || !settings ? <FieldSkeleton className="w-80" /> : (
             <>
-              {/* The same value and save as Manage › Workbot, so the two pages never disagree. */}
               <WorkbotModelPicker
                 saved={settings.model}
                 settings={settings}
@@ -285,10 +265,6 @@ function EveryoneWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit,
   );
 }
 
-/**
- * Everyone's members' agents: the same controls, value and save as Manage › Workbot, so the two pages never disagree,
- * then the last 7 days of every member's agent (not under Connectors).
- */
 function EveryoneMembersAgents({ scope, orgId, orgSlug, canEdit, show }: {
   show: WorkbotAgentsPart;
   scope: TeamScope;
@@ -310,10 +286,6 @@ function EveryoneMembersAgents({ scope, orgId, orgSlug, canEdit, show }: {
   );
 }
 
-/**
- * A team's members' agents: Everyone's settings until the team changes a control, which gives the team its own
- * copy of all of them. "Use Everyone's" removes that copy; Undo saves it back.
- */
 function TeamMembersAgents({ scope, orgId, orgSlug, row, canEdit, show }: {
   show: WorkbotAgentsPart;
   scope: TeamOnlyScope;
@@ -326,7 +298,6 @@ function TeamMembersAgents({ scope, orgId, orgSlug, row, canEdit, show }: {
   const savePolicy = useSaveWorkbotProactive(orgId, scope);
   const saveTeam = useSaveWorkbotTeamSettings(orgId);
   const [saveError, setSaveError] = useState<string | null>(null);
-  // After "Use Everyone's": the team's settings as they were, for Undo. After that Undo: the way back is "Use Everyone's" again.
   const [saved, setSaved] = useState<{ now: "everyone"; previous: AgentPolicyView } | { now: "own" } | null>(null);
   const pending = saveTeam.isPending || savePolicy.isPending;
   const changed = workbotTeamAgentsChanged(row, policy.data);
@@ -347,7 +318,6 @@ function TeamMembersAgents({ scope, orgId, orgSlug, row, canEdit, show }: {
   async function restore(previous: AgentPolicyView) {
     setSaveError(null);
     try {
-      // What the save starts from: Everyone's settings as they are now.
       const current = await policy.refetch();
       if (current.isError || !current.data) throw new Error("Couldn't load Everyone's settings. Try again.");
       await savePolicy.mutateAsync(agentPolicyRestoreChange(previous, current.data));
@@ -395,13 +365,11 @@ function TeamMembersAgents({ scope, orgId, orgSlug, row, canEdit, show }: {
   );
 }
 
-/** A team: each row shows Everyone's value until the team changes it, and "Use Everyone's" takes it back. */
 function TeamWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit, parts }: RowsProps & { scope: TeamOnlyScope }) {
   const ids = { enabled: useId(), model: useId(), name: useId() };
   const save = useSaveWorkbotTeamSettings(orgId);
   const [saveError, setSaveError] = useState<string | null>(null);
   const [saved, setSaved] = useState<{ change: WorkbotTeamSettingsWrite; undo: WorkbotTeamSettingsWrite } | null>(null);
-  // What is typed in the name field; null while it shows the saved name.
   const [nameDraft, setNameDraft] = useState<string | null>(null);
 
   const data = view.data;
@@ -477,7 +445,6 @@ function TeamWorkbotSettings({ scope, orgId, orgSlug, view, models, canEdit, par
           {view.isError ? <Unavailable /> : !data || !row ? <FieldSkeleton className="w-64" /> : (
             <>
               <ScopeChip scope={scope} changed={!row.name.inherit} />
-              {/* While a name is being typed, the row's actions are Save and Discard. */}
               {canEdit && !row.name.inherit && !drafting ? (
                 <UseEveryonesButton
                   settingLabel="Name"

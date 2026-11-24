@@ -7,7 +7,6 @@ type SessionDotMatrixLoaderProps = {
   label: string;
 };
 
-/** Sidebar left-lane activity indicator — shared dot-matrix in the fixed slot. */
 export function SessionDotMatrixLoader({ className, label }: SessionDotMatrixLoaderProps) {
   return (
     <DotMatrixLoader

@@ -11,6 +11,7 @@ import { recordInspectorEvent } from "../../../app/lib/app-inspector";
 import { denSettingsChangedEvent } from "../../../app/lib/den-session-events";
 import type { DenAuthStatus } from "../cloud/den-auth-provider";
 import {
+  isLoopbackOpenworkServerUrl,
   OpenworkServerError,
   type OpenworkCloudMcpFailure,
   type OpenworkCloudMcpHealth,
@@ -34,8 +35,6 @@ import { CLOUD_INVENTORY_CHANGED_EVENT } from "./cloud-inventory-cache";
 export const SESSION_MCP_MAINTENANCE_INTERVAL_MS = 5 * 60 * 1000;
 export const SESSION_MCP_MAINTENANCE_TIMEOUT_MS = 2 * 60 * 1000;
 export const CLOUD_MCP_REFRESH_MARGIN_MS = 24 * 60 * 60 * 1000;
-// Keep the quick warmup retries, then cover a short startup outage without
-// waiting for navigation or the ordinary five-minute maintenance interval.
 export const CLOUD_MCP_MAINTENANCE_RETRY_DELAYS_MS = [1_000, 3_000, 10_000, 30_000, 60_000];
 
 type CloudMcpMaintenanceClient = CloudMcpClient & Pick<OpenworkServerClient, "listMcp">;
@@ -84,12 +83,13 @@ function genericCloudMcpMaintenanceIssue(input?: {
   code?: string;
   message?: string;
   retryable?: boolean;
+  recommendedAction?: string;
 }): CloudMcpMaintenanceIssue {
   return {
     code: input?.code ?? "cloud_mcp_maintenance_failed",
     stage: "engine_delivery",
     retryable: input?.retryable ?? true,
-    recommendedAction: "Retry, then open Settings → Connect if the problem continues.",
+    recommendedAction: input?.recommendedAction ?? "Retry, then open Settings → Connect if the problem continues.",
     message: input?.message ?? "OpenWork could not verify connected service tools for this workspace.",
   };
 }
@@ -108,16 +108,28 @@ function failedCloudMcpBackgroundSync(input: {
   };
 }
 
-function cloudMcpMaintenanceFailure(error: unknown): CloudMcpBackgroundSyncResult {
+export function cloudMcpMaintenanceFailure(error: unknown, serverBaseUrl?: string): CloudMcpBackgroundSyncResult {
+  if (error instanceof OpenworkServerError && error.code === "insufficient_storage") {
+    return failedCloudMcpBackgroundSync({
+      health: null,
+      issue: genericCloudMcpMaintenanceIssue({
+        code: error.code,
+        message: error.message,
+        retryable: false,
+        recommendedAction: "Free up disk space on this computer, then try again.",
+      }),
+    });
+  }
   return failedCloudMcpBackgroundSync({
     health: null,
     issue: error instanceof OpenworkServerError || error instanceof DenApiError
       ? genericCloudMcpMaintenanceIssue({
           code: error.code,
           message: error.message,
-          // policy_unavailable is verification failure, not a policy denial.
           retryable: error.code === "policy_unavailable" || error.status === 408
-            || error.status === 429 || error.status >= 500,
+            || error.status === 429 || error.status >= 500
+            || (error instanceof OpenworkServerError && error.status === 403 && error.code === "sandbox_only"
+              && !!serverBaseUrl && isLoopbackOpenworkServerUrl(serverBaseUrl)),
         })
       : undefined,
   });
@@ -133,7 +145,6 @@ export function waitForCloudMcpRetry(delayMs: number, signal?: AbortSignal, onli
       resolve();
     };
     const timer = setTimeout(finish, delayMs);
-    // Wake on cancellation; the retry loop checks the signal before attempting.
     signal?.addEventListener("abort", finish, { once: true });
     onlineTarget?.addEventListener("online", finish, { once: true });
   });
@@ -177,10 +188,6 @@ export async function runSessionMcpMaintenanceTask(input: {
   maintenanceInFlight.set(input.targetKey, runToken);
   const controller = new AbortController();
   const signal = input.signal ? AbortSignal.any([input.signal, controller.signal]) : controller.signal;
-  // A hung await inside one tick must not wedge every future tick for this
-  // target (field incident: maintenance stayed blocked until app restart).
-  // The run token keeps a late-settling task from releasing a newer run's
-  // lock after we timed out and moved on.
   const releaseOwnLock = () => {
     if (maintenanceInFlight.get(input.targetKey) === runToken) {
       maintenanceInFlight.delete(input.targetKey);
@@ -225,8 +232,6 @@ export async function syncCloudControlMcpInBackground(input: {
   providerModel?: OpenworkCloudMcpProviderModelContext;
   isCurrent?: () => boolean;
 }): Promise<CloudMcpBackgroundSyncResult> {
-  // Fence every asynchronous boundary, not just React state updates. A late
-  // probe or token mint must not register credentials for an obsolete target.
   const guarded = async <T,>(operation: () => Promise<T>): Promise<T> => {
     const check = () => {
       if (input.isCurrent?.() === false) throw new DOMException("MCP maintenance context changed", "AbortError");
@@ -254,24 +259,17 @@ export async function syncCloudControlMcpInBackground(input: {
     orgId,
     workspaceId,
   };
-  // A structured server error (e.g. secure storage unavailable) must surface
-  // its own message instead of collapsing into the generic maintenance banner.
   let listed: Awaited<ReturnType<CloudMcpMaintenanceClient["listMcp"]>>;
   try {
     listed = await guarded(() => input.client.listMcp(workspaceId));
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") throw error;
-    return cloudMcpMaintenanceFailure(error);
+    return cloudMcpMaintenanceFailure(error, input.client.baseUrl);
   }
   const configured = listed.items.find((entry) => entry.name === CLOUD_MCP_SERVER_NAME);
   if (configured?.config.enabled === false) {
     return { outcome: "skipped", status: "skipped", reason: "disabled", health: null };
   }
-  // Recorded user intent (disabled/removed) gates provisioning only: when no
-  // enabled entry exists we honor it, but an existing enabled entry must keep
-  // its token fresh regardless. A stale "removed" intent once silently
-  // disabled all maintenance until the 7-day token expired and the engine
-  // dropped the MCP.
   const configuredEnabled = configured !== undefined && configured.config.enabled !== false;
   if (!configuredEnabled && readCloudMcpUserState(scope) !== null) {
     return { outcome: "skipped", status: "skipped", reason: "disabled", health: null };
@@ -298,13 +296,6 @@ export async function syncCloudControlMcpInBackground(input: {
     },
     mintToken: (context) => guarded(() => input.mintToken ? input.mintToken() : mintCloudControlMcpToken(context)),
     force: input.force,
-    // Session maintenance is the automatic upgrade path for already-signed-in
-    // desktops. OpenCode can keep reporting a stale Cloud MCP entry as
-    // connected even after the hosted API moved origins, while actual tool
-    // calls fail at the remote endpoint with `missing_mcp_token` when the
-    // persisted Authorization header is no longer delivered. Include the
-    // server-side direct probe here so those auth failures trigger a silent
-    // re-mint instead of waiting for the user to open Settings → Repair.
     probe: true,
     refreshMarginMs: CLOUD_MCP_REFRESH_MARGIN_MS,
     now: input.now,
@@ -368,9 +359,6 @@ export async function runCloudMcpMaintenanceWithRetry(input: {
     try {
       lastResult = await input.attempt();
     } catch (error) {
-      // A different target can share the reconciler's in-flight promise. If
-      // that owner was superseded, only its own retry loop is cancelled; the
-      // current target retries after the shared operation has settled.
       input.signal?.throwIfAborted();
       lastResult = cloudMcpMaintenanceFailure(error);
     }
@@ -517,7 +505,6 @@ export function useSessionMcpMaintenance(input: {
       const started = await runSessionMcpMaintenanceTask({
         targetKey,
         signal: controller.signal,
-        // Backoff time must not consume the existing work watchdog budget.
         timeoutMs: SESSION_MCP_MAINTENANCE_TIMEOUT_MS + CLOUD_MCP_MAINTENANCE_RETRY_DELAYS_MS.reduce((sum, delay) => sum + delay, 0),
         task: async (signal) => {
           if (input.cloudSignedIn) {
@@ -558,10 +545,6 @@ export function useSessionMcpMaintenance(input: {
     const handleFocus = () => {
       if (document.visibilityState === "visible") void tick();
     };
-    // Archiving, restoring or creating a Library plugin changes which org
-    // connections this member gets; refresh the direct MCP catalog right away.
-    // A change made while a run is in flight must not be dropped: that run may
-    // have read the catalog before the change.
     const handleCloudInventoryChanged = () => {
       if (running) rerunRequested = true;
       else void tick();

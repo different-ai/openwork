@@ -82,12 +82,10 @@ import { FeatureIntroHelpButton, FeatureIntroNavDot } from "../_features/feature
 
 const OPENWORK_DOCS_URL = "https://openworklabs.com/docs";
 
-/** The sidebar only tells people whether they can manage the organization. */
 function sidebarRoleLabel(role: string): string {
   return getOrgAccessFlags(role, false).isAdmin ? BUILT_IN_ROLES.admin.label : BUILT_IN_ROLES.member.label;
 }
 
-/** The top bar and the sidebar's logo row share one height, so their bottom borders line up. */
 const SHELL_BAR_HEIGHT = "h-[52px]";
 
 function OrgMark({ name }: { name: string }) {
@@ -197,7 +195,6 @@ export function WorkspaceFavicon({
 
   useEffect(() => {
     if (orgContextLoading) {
-      // Keep the server-rendered favicon until the org context is known.
       return;
     }
 
@@ -340,8 +337,6 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   return "Home";
 }
 
-// Desktop and mobile mount their own copy of the sidebar. Keep open state in
-// each mounted switcher so opening one never portals the hidden copy as well.
 function WorkspaceSwitcher({ children }: { children: (close: () => void) => React.ReactNode }) {
   const [open, setOpen] = useState(false);
   return (
@@ -414,10 +409,6 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     commandPaletteWasOpenRef.current = commandPaletteOpen;
   }, [commandPaletteOpen]);
 
-  // Keep sidebar hooks unconditional across picker and onboarding transitions,
-  // but don't fetch sidebar data while the full-page shell is showing.
-  // Shell colours follow the organization's denGreySidebar feature. Until the organization has loaded, the value
-  // this browser last saw stands in; the server render has none, so hydration matches and then catches up.
   const rememberedShell = useSyncExternalStore(subscribeToRememberedDenShell, readRememberedDenShell, () => null);
   const shellAppearance = denShellAppearance(orgContext, rememberedShell);
   useEffect(() => { rememberDenShell(orgContext); }, [orgContext]);
@@ -439,7 +430,6 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     enabled: sidebarQueriesEnabled,
   });
 
-  // The picker replaces the whole shell until a workspace is chosen.
   if (orgSelectionOpen) {
     return (
       <OrgSelectionScreen
@@ -452,7 +442,6 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     );
   }
 
-  // Setup owns the full page until the user leaves for their dashboard.
   if (isOnboarding) {
     return (
       <>
@@ -463,7 +452,6 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   }
 
   const basePageTitle = getDashboardPageTitle(pathname, activeOrg?.slug ?? null);
-  // the permission pages are role pages.
   const pageTitle = basePageTitle === "Permissions" ? "Roles" : basePageTitle;
   const shouldShowProfilePrompt = Boolean(
     user &&
@@ -672,7 +660,6 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
 
   const sidebarContent = (
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-      {/* Same height as the top bar so the two bottom borders form one line (SHELL_BAR_HEIGHT). */}
       <div className={`flex ${SHELL_BAR_HEIGHT} shrink-0 items-center border-b border-[var(--den-shell-line)] px-4`}>
         <div className="flex w-full items-center justify-between gap-3">
           {activeOrg ? (
@@ -837,12 +824,10 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   return (
     <div data-den-shell={shellAppearance} className="flex min-h-screen flex-col bg-[var(--den-shell-canvas)] md:h-screen md:flex-row">
       <WorkspaceFavicon metadata={orgContext?.organization.metadata} />
-      {/* Desktop sidebar — always visible at md+ */}
       <aside className="hidden min-h-0 shrink-0 overflow-hidden border-r border-[var(--den-shell-line)] bg-[var(--den-shell-sidebar)] md:flex md:h-screen md:w-[260px] md:flex-col">
         {sidebarContent}
       </aside>
 
-      {/* Mobile sidebar — off-canvas drawer */}
       {sidebarOpen ? (
         <div className="fixed inset-0 z-50 md:hidden">
           <div className="absolute inset-0 bg-black/30" onClick={() => setSidebarOpen(false)} aria-hidden />
@@ -863,7 +848,6 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
             >
               <Menu className="h-5 w-5" />
             </button>
-            {/* Phones only: there the sidebar is closed. On a desktop the sidebar and the page's own heading already say where you are. */}
             <span className="truncate text-[14px] tracking-[-0.1px] text-gray-900 md:hidden">{pageTitle}</span>
           </div>
 

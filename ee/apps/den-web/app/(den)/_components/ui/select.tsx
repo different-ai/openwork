@@ -33,25 +33,16 @@ type DenSelectOption = {
   value: string;
   disabled: boolean;
   content: ReactNode;
-  /** Full text for the hover tooltip when the option truncates. */
   title: string;
   testId?: string;
 };
 
 export type DenSelectProps = Omit<SelectHTMLAttributes<HTMLSelectElement>, "disabled" | "size"> & {
   disabled?: boolean;
-  /** Adds a filter field above long option lists. The trigger stays a button. */
   searchLabel?: string;
   searchEmptyLabel?: string;
-  /**
-   * "trigger" keeps the menu exactly as wide as the field, with one-line rows
-   * that truncate and show their full text on hover. Give an `<option title>`
-   * when its content holds more than the name.
-   */
   menuWidth?: DenDropdownWidth;
-  /** "sm" is the 32px field for toolbars and settings rows. */
   size?: "md" | "sm";
-  /** Lands on the trigger. An `<option data-testid>` lands on that option's row while the menu is open. */
   "data-testid"?: string;
 };
 
@@ -454,8 +445,6 @@ export function DenSelect({
                     }
                   }}
                   onPointerDown={(event) => {
-                    // Keep active-descendant focus on the control for mouse/pen,
-                    // but let touch gestures scroll before a click commits.
                     if (event.pointerType !== "touch") event.preventDefault();
                   }}
                   onClick={() => commitValue(option.value)}

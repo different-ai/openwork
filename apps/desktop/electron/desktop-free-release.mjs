@@ -15,3 +15,12 @@ export async function applyDesktopFreeBuildSettings({ appVersion, environment = 
   environment.OPENWORK_DISABLE_FREE_INFERENCE = "1";
   return true;
 }
+
+export async function loadDesktopFreeReleaseKey(version) {
+  if (process.env.OPENWORK_DEV_MODE === "1" && process.env.OPENWORK_DEV_FREE_RELEASE_SECRET) {
+    return Buffer.from(process.env.OPENWORK_DEV_FREE_RELEASE_SECRET);
+  }
+  const generated = await import(generatedPath).catch(() => null);
+  return generated?.version === version && !generated.disabled && generated.tagKey
+    ? Buffer.from(generated.tagKey, "base64") : null;
+}

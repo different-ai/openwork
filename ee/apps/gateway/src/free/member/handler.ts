@@ -1,3 +1,8 @@
+import { desktopChallenge, desktopProofRequired } from "../desktop-access.js"
+import { DESKTOP_FREE_SESSION_HEADER } from "@openwork/free-auto"
+import { sha256Hex } from "@openwork/free-auto/node"
+import { checkDesktopFreeRequest } from "../guest/gate.js"
+import { resolveAnonymousClientAddress, verifyAnonymousToken } from "../guest/identity.js"
 import type { Context } from "hono"
 import { freeAutoJourneyHash, linkFreeAutoGuest } from "@openwork-ee/den-db"
 import { freeAutoDatabase } from "../../db.js"
@@ -6,12 +11,12 @@ import { DESKTOP_FREE_MODEL_ID, DESKTOP_FREE_PROVIDER_ID, MEMBER_FREE_CHAT_PATH,
 import { INFERENCE_FREE_MODEL_ID, managedModelCatalog } from "@openwork/types/den/inference"
 import { ManagedModelsPolicyError } from "@openwork/types/den/managed-models-policy"
 import { HEADLESS_SESSION_HEADER, parseHeadlessSessionHeader } from "@openwork/types/den/workbot-usage"
-import { createInferenceEgressFetch } from "@openwork-ee/utils/inference-egress"
+import { createInferenceEgressFetch } from "@openwork-ee/gateway-upstreams"
 import { createFreeAllowanceStore, type FreeAllowanceStore } from "../shared/allowance.js"
 import { FREE_OPENAI_CHAT_URL, FREE_OPENAI_RESPONSES_URL, type AutoConfig } from "../shared/config.js"
 import { dispatchFreeCompletion } from "../shared/dispatch.js"
 import { freeError, FreeRequestError } from "../shared/errors.js"
-import { findMemberFreePrincipal, readFreePrincipalDefaultPinned } from "../shared/principal.js"
+import { findMemberFreePrincipal, freeSafetyIdentifier, readFreePrincipalDefaultPinned } from "../shared/principal.js"
 import { FreeAutoBusyError } from "../shared/capacity.js"
 import { prepareFreeRequest, readFreeRequest } from "../shared/request.js"
 import type { InferenceKeyRow } from "../../middleware/inference-auth.js"
@@ -25,12 +30,14 @@ export type FreeMemberDependencies = {
   fetch: typeof fetch;
   findMember: typeof findMemberFreePrincipal;
   defaultPinned: typeof readFreePrincipalDefaultPinned;
+  requireDesktop?: typeof desktopProofRequired;
+  clientAddress?: (c: Context) => string | null;
   linkGuest?: (input: Parameters<typeof linkFreeAutoGuest>[1]) => Promise<void>;
   usageLog?: { insert: InsertRequestLog; update?: UpdateRequestLog; reporter?: InferenceReporter };
 }
 function defaults(): FreeMemberDependencies {
   const config = env.freeAuto
-  return { config, store: createFreeAllowanceStore(config, "member"), fetch: createInferenceEgressFetch(), findMember: findMemberFreePrincipal,
+  return { config, requireDesktop: desktopProofRequired, clientAddress: c => resolveAnonymousClientAddress(c, config), store: createFreeAllowanceStore(config, "member"), fetch: createInferenceEgressFetch(), findMember: findMemberFreePrincipal,
     defaultPinned: readFreePrincipalDefaultPinned, linkGuest: (input) => linkFreeAutoGuest(freeAutoDatabase(), input),
     usageLog: { insert: insertRequestLogIntoDb, update: updateRequestLogInDb } }
 }
@@ -39,11 +46,6 @@ function disabled() {
     { status: 403, headers: { "cache-control": "no-store" } })
 }
 
-/**
- * Free Auto for signed-in members of unsubscribed organizations. They call the
- * regular OpenWork Models routes with their `ow_inf_` key; only the free model
- * is served, from the dedicated OpenAI key, within a weekly per-person allowance.
- */
 export function createFreeMemberHandler(dependencies: FreeMemberDependencies = defaults()) {
   const { config, store } = dependencies
   return async (c: Context, key: InferenceKeyRow): Promise<Response> => {
@@ -53,8 +55,27 @@ export function createFreeMemberHandler(dependencies: FreeMemberDependencies = d
       if (!principal) return disabled()
       const path = c.req.path, method = c.req.method
       if (new URL(c.req.url).search) return freeError(400, "invalid_request")
+      const strict = await dependencies.requireDesktop?.(principal.organizationId)
+      let desktopHash: string | undefined
+      const verifyDesktop = async (bodyHash: string) => {
+        if (!strict) return null
+        const address = dependencies.clientAddress?.(c)
+        const token = c.req.header(DESKTOP_FREE_SESSION_HEADER)
+        const auth = c.req.header("authorization")
+        if (!address || !token || !auth?.startsWith("Bearer ")) return desktopChallenge()
+        const session = verifyAnonymousToken(token, address, config)
+        if (!session || session.credentialHash !== sha256Hex(auth)) return desktopChallenge()
+        const gate = await checkDesktopFreeRequest(c.req.raw, bodyHash, { config, consumeNonce: store.consumeNonce }, session)
+        if (gate.error) return gate.error
+        if (gate.proof.version !== 3 || gate.versionError) return desktopChallenge()
+        desktopHash = session.installationHash
+        return null
+      }
+      if (method === "GET") {
+        const denied = await verifyDesktop(sha256Hex(""))
+        if (denied) return denied
+      }
       const journeyHash = freeAutoJourneyHash(c.req.header("x-openwork-free-journey"))
-      // A reported correlation ID is analytics evidence only; membership still comes from the authenticated key.
       if (journeyHash && method === "GET" && path === MEMBER_FREE_STATUS_PATH) await dependencies.linkGuest?.({ journeyHash, userId: principal.id, organizationId: principal.organizationId, now: new Date() })
         .catch(() => console.warn("[free-auto] signed-in journey could not be recorded"))
       if (method === "GET" && path === MEMBER_FREE_MODELS_PATH) {
@@ -62,17 +83,19 @@ export function createFreeMemberHandler(dependencies: FreeMemberDependencies = d
       }
       if (method === "GET" && path === MEMBER_FREE_STATUS_PATH) {
         const status: DesktopFreeAccessStatus = { currentVersion: "", minimumVersion: null, providerID: DESKTOP_FREE_PROVIDER_ID,
-          modelID: DESKTOP_FREE_MODEL_ID, catalog: managedModelCatalog(), defaultPinned: await dependencies.defaultPinned(principal), ...await store.read(principal) }
+          modelID: DESKTOP_FREE_MODEL_ID, catalog: managedModelCatalog(), defaultPinned: await dependencies.defaultPinned(principal), ...await store.read(principal, desktopHash) }
         return c.json(status, 200, { "cache-control": "no-store" })
       }
       if (method !== "POST" || (path !== MEMBER_FREE_CHAT_PATH && path !== MEMBER_FREE_RESPONSES_PATH)) return freeError(404, "not_found", "Only Auto is available without an OpenWork Models subscription.")
       const controller = new AbortController()
       const signal = AbortSignal.any([controller.signal, c.req.raw.signal])
       const parsed = await readFreeRequest(c.req.raw, config.maxBodyBytes, AbortSignal.any([signal, AbortSignal.timeout(config.requestTimeoutMs)]))
-      const prepared = prepareFreeRequest(parsed.value, config, path === MEMBER_FREE_RESPONSES_PATH ? "responses" : "chat")
+      const denied = await verifyDesktop(parsed.bodyHash)
+      if (denied) return denied
+      const prepared = prepareFreeRequest(parsed.value, config, freeSafetyIdentifier(principal), path === MEMBER_FREE_RESPONSES_PATH ? "responses" : "chat")
       const usageLog = dependencies.usageLog
       const upstream = new URL(prepared.protocol === "responses" ? FREE_OPENAI_RESPONSES_URL : FREE_OPENAI_CHAT_URL)
-      return dispatchFreeCompletion({ config, store, fetch: dependencies.fetch, principal, prepared, signal, controller,
+      return dispatchFreeCompletion({ config, store, fetch: dependencies.fetch, principal, desktopHash, prepared, signal, controller,
         startUsageLog: usageLog ? (requestId, stream) => {
           const recorder = createRequestLogRecorder({ insertRequestLog: usageLog.insert, updateRequestLog: usageLog.update,
             reporter: safeInferenceReporter(usageLog.reporter ?? sentryInferenceReporter) })

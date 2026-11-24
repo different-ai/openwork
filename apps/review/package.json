@@ -12,11 +12,11 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@openwork/daytona-evidence": "workspace:*",
+    "@openwork/evidence-daytona": "workspace:*",
     "@openwork/evidence-provider": "workspace:*",
-    "@openwork/freestyle": "workspace:*",
+    "@openwork/world-freestyle": "workspace:*",
     "@openwork/review": "workspace:*",
-    "next": "16.4.1",
+    "next": "16.4.5",
     "react": "catalog:",
     "react-dom": "catalog:"
   },

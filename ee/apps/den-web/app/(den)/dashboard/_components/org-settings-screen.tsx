@@ -193,7 +193,6 @@ export function OrgSettingsScreen() {
     orgContext?.currentMember.permissions,
   );
   const canManageSettings = access.canManageSettings;
-  // admins choose the model new desktop chats start with.
 
   const canManageDesktopVersions = access.canManageSettings;
   const canDeleteOrganization = access.canDeleteOrganization;
@@ -225,7 +224,6 @@ export function OrgSettingsScreen() {
   const savedDesktopVersions = useMemo(() => orgContext && supportedDesktopVersionOptions.length > 0
     ? initialAllowedDesktopVersions(getAllowedDesktopVersionsFromMetadata(orgContext.organization.metadata), supportedDesktopVersionOptions).filter((version) => supportedDesktopVersionOptions.includes(version))
     : [], [orgContext, supportedDesktopVersionOptions]);
-  // Compare effective values, not formatting or set order. Unavailable/hidden fields are not submitted.
   const dirty = Boolean(orgContext) && settingsDraftChanged({
     name: orgContext?.organization.name ?? "", domains: savedDomains, domainRestrictionsEnabled: savedDomains.length > 0,
     desktopVersions: savedDesktopVersions,
@@ -275,7 +273,6 @@ export function OrgSettingsScreen() {
       restricted: (orgContext.organization.allowedEmailDomains?.length ?? 0) > 0,
     };
     const previous = previousSettings.current;
-    // A rollout change is not an organization switch: never erase an unsaved draft when the flag is killed.
     const sameOrganization = previous?.orgId === next.orgId;
     setOrgNameDraft((current) => refreshedDraft(current, previous?.name, next.name, sameOrganization));
     setAllowedDomainsDraft((current) => refreshedDraft(current, previous?.domains, next.domains, sameOrganization,
@@ -504,7 +501,6 @@ export function OrgSettingsScreen() {
       description={null}
       measure
     >
-      {/* Settings read as label and control side by side, so they keep a narrower measure than the lists. */}
       <div className={SETTINGS_MEASURE_CLASS}>
       {orgContext && !orgContext.entitlements.orgControls ? (
         <EnterprisePlanNotice feature="Desktop version control" />
@@ -626,7 +622,6 @@ export function OrgSettingsScreen() {
         <section aria-label="Allowed desktop versions">
           <ItemSection variant="rule" title="Desktop app">
           {desktopVersionOptionsError ? <p role="alert" className="border-b border-[var(--den-list-line)] py-3 text-[13px] text-[var(--ow-danger)]">{desktopVersionOptionsError}</p> : null}
-          {/* The list is long and rarely changed: the row says what is allowed, and opens to change it (DESIGN.md P3, S3). */}
           <details className="group border-b border-[var(--den-list-line)]" data-testid="desktop-version-disclosure">
             <summary className="flex min-h-12 cursor-pointer list-none items-center justify-between gap-3 py-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--dls-text-secondary)] [&::-webkit-details-marker]:hidden">
               <span className="font-medium text-[var(--dls-text-primary)]">Allowed versions</span>

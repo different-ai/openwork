@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { ArrowRight } from "lucide-react";
 import { DenStatusScreen } from "../../../components/den-status-screen";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { getSocialCallbackUrl, requestJson } from "../../(den)/_lib/den-flow";
 
@@ -13,7 +13,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-/** The organization's identity providers, or null when they could not be read. */
 async function loadSsoProviders(orgSlug: string): Promise<{ organizationName: string; providers: SsoProviderOption[] } | null> {
   try {
     const { response, payload } = await requestJson(`/api/auth/sso-options?organizationSlug=${encodeURIComponent(orgSlug)}`, { method: "GET" }, 12000);
@@ -28,10 +27,6 @@ async function loadSsoProviders(orgSlug: string): Promise<{ organizationName: st
   }
 }
 
-/**
- * An organization's SSO sign-in. With one identity provider (or a `providerId`
- * in the link) it goes straight there; with several it shows one button each.
- */
 export default function OrganizationSsoSignInPage() {
   const params = useParams<{ orgSlug: string }>();
   const searchParams = useSearchParams();
@@ -40,6 +35,7 @@ export default function OrganizationSsoSignInPage() {
   const [attempt, setAttempt] = useState(0);
   const [choices, setChoices] = useState<{ organizationName: string; providers: SsoProviderOption[] } | null>(null);
   const [chosenProviderId, setChosenProviderId] = useState<string | null>(null);
+  const startRequests = useRef(new Map<string, ReturnType<typeof requestJson>>());
   const orgSlug = typeof params?.orgSlug === "string" ? params.orgSlug : "";
 
   const callbackURL = useMemo(() => searchParams.get("callbackURL") || getSocialCallbackUrl(), [searchParams]);
@@ -62,23 +58,28 @@ export default function OrganizationSsoSignInPage() {
             setChoices(options);
             return;
           }
-          // One provider: name it. None or unknown: the organization decides, as before.
           providerId = options?.providers[0]?.providerId ?? null;
         }
 
-        const { response, payload } = await requestJson("/api/auth/sign-in/sso", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
-          body: JSON.stringify({
-            ...(providerId ? { providerId } : { organizationSlug: orgSlug }),
-            callbackURL,
-            errorCallbackURL,
-            loginHint,
-          }),
-        });
+        const requestKey = JSON.stringify([orgSlug, providerId, callbackURL, errorCallbackURL, loginHint, attempt]);
+        let startRequest = startRequests.current.get(requestKey);
+        if (!startRequest) {
+          startRequest = requestJson("/api/auth/sign-in/sso", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "application/json",
+            },
+            body: JSON.stringify({
+              ...(providerId ? { providerId } : { organizationSlug: orgSlug }),
+              callbackURL,
+              errorCallbackURL,
+              loginHint,
+            }),
+          });
+          startRequests.current.set(requestKey, startRequest);
+        }
+        const { response, payload } = await startRequest;
 
         if (!response.ok) {
           throw new Error(

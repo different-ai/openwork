@@ -10,7 +10,6 @@ import { LP_PRODUCTS, LP_PRODUCT_TAB_ORDER, type LpProduct, type LpProductKey } 
 
 type Stage = {
   content: ReactNode;
-  /** Fixed-height app windows; data panels size to their content. */
   tall: boolean;
   note: string;
   action: ReactNode;
@@ -82,7 +81,6 @@ export function LpProductsShowcase() {
   const tabRefs = useRef<Array<HTMLButtonElement | null>>([]);
   const reduceMotion = useReducedMotion();
 
-  // Deep links: /#mcp-gateway opens that tab.
   useEffect(() => {
     const fromHash = () => {
       const hash = window.location.hash.replace("#", "");

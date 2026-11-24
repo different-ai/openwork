@@ -13,11 +13,6 @@ import { usePlatform } from "../../../kernel/platform";
 import { activationCardModel, type ActivationRow, type ActivationRowAction } from "./activation-model";
 import { useActivation } from "./use-activation";
 
-/**
- * "Get set up" in the sidebar, above the account. Nothing before the first answer,
- * signed out, when unavailable, once all six steps are done, or after Hide setup in the ⋯ menu; one quiet "Next"
- * line after Den counts it dismissed elsewhere. Opens a popover with the six steps, each with at most one action (DESIGN S2, S7).
- */
 export function ActivationCard(props: { onOpenExtensions: () => void }) {
   const { state, hidden, hide } = useActivation();
   const model = activationCardModel(state, { hidden });

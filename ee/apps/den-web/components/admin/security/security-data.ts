@@ -4,7 +4,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { requestAdmin, withStoredBearer, type AdminResult } from "../admin-request";
 import { useAdminSessionCookie } from "../admin-shell";
 
-/** Mirrors `AdminSecurityFinding` from `GET /v1/admin/security` and `/v1/admin/security/requests`. */
 export type SecuritySeverity = "high" | "medium" | "low" | "clear";
 export type SecurityCategory = "access" | "accounts" | "automation" | "credentials" | "usage";
 export type SecurityTarget = { type: "user"; userId: string } | { type: "organization"; organizationId: string } | null;
@@ -80,7 +79,6 @@ function isFinding(value: unknown): value is SecurityFinding {
     && Array.isArray(value.entities) && value.entities.every(isEntity) && isCount(value.entityCount);
 }
 
-/** Accepts only a complete report, so the page never renders half-understood findings. */
 export function parseSecurityReport(payload: unknown): SecurityReport | null {
   if (!isRecord(payload) || !isText(payload.generatedAt) || !isRecord(payload.range) || !isCount(payload.range.days)) return null;
   if (!Array.isArray(payload.findings) || !payload.findings.every(isFinding)) return null;
@@ -114,7 +112,6 @@ export function severityCounts(findings: readonly SecurityFinding[]): Record<Sec
   return counts;
 }
 
-/** Where a reviewer goes next for an entity. User ids, never emails, go in the address. */
 export function targetHref(target: SecurityTarget): string | null {
   if (!target) return null;
   if (target.type === "user") return `/admin/users?${new URLSearchParams({ search: target.userId })}`;
@@ -126,7 +123,6 @@ export type AdminLoadState<T> =
   | { status: "ready"; data: T }
   | { status: Exclude<AdminResult<unknown>["access"], "ready">; message: string; data: T | null };
 
-/** Loads an admin report; keeps the last one on screen while a new range or refresh loads. */
 function useAdminReport<T>(path: string, parse: (payload: unknown) => T | null, nonce: number) {
   const hasSessionCookie = useAdminSessionCookie();
   const [state, setState] = useState<AdminLoadState<T>>(() => hasSessionCookie ? { status: "loading", data: null }

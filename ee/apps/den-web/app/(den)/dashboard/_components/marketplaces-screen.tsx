@@ -36,12 +36,8 @@ export function MarketplacesScreen() {
     orgContext?.currentMember.permissions,
   );
 
-  // Feature intro: full screen with no collection at all (in place of the empty states
-  // below), banner while only the built-in OpenWork Marketplace exists (DESIGN.md I1, I2).
-  // From the data itself (not isLoading), which only lists collections this person has a role on.
   const intro = useFeatureIntro("collections", collectionsIntroFacts(error ? undefined : marketplacesData, access.canManageAllShared));
 
-  // Feature intro action (DESIGN.md I5): ?new=1 opens New collection once, then leaves the address.
   const searchParams = useSearchParams();
   const newRequested = searchParams.get("new") === "1";
   useEffect(() => {
@@ -60,9 +56,6 @@ export function MarketplacesScreen() {
         )
       : marketplaces;
 
-    // The API returns newest first, which buries a stocked catalogue under an
-    // empty one somebody just created. Lead with the marketplaces that have
-    // something in them.
     return [...matches].sort(
       (a, b) => b.pluginCount - a.pluginCount || a.name.localeCompare(b.name),
     );
@@ -196,7 +189,6 @@ function CreateMarketplaceDialog({
       setDescription("");
       onCreated(created);
     } catch {
-      // The mutation error is rendered in the dialog.
     }
   }
 

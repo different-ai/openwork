@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react"
 
-// Two offset crests make a quiet, recognizable signal at composer size.
 const heights = [3, 5, 9, 17, 22, 14, 7, 4, 8, 15, 20, 11, 5, 3]
 export const dictationMeterSamples = 24
 

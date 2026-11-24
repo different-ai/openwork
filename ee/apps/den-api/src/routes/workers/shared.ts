@@ -122,8 +122,6 @@ const databaseCloudProvisioningStore: CloudProvisioningStore = {
 
 export function persistedWorkerInstanceUrl(provisioned: Pick<ProvisionedWorker, "provider" | "url">) {
   const lifecycleBaseUrl = env.apiPublicUrl ?? env.betterAuthUrl
-  // Contract providers hand out expiring endpoints, so the durable instance URL
-  // is Den's lifecycle route rather than the endpoint itself.
   return isCloudRuntimeProviderId(provisioned.provider)
     ? `${lifecycleBaseUrl.replace(/\/+$/, "")}/v1/cloud/instance`
     : provisioned.url
@@ -183,7 +181,6 @@ export function toInstanceResponse(instance: WorkerInstanceRow | null) {
     provider: instance.provider,
     region: instance.region,
     url: isCloudRuntimeProviderId(instance.provider) ? null : instance.url,
-    // Clients decide URL durability from this, never from the provider name.
     endpointKind: endpointKindForProvider(instance.provider),
     status: instance.status,
     createdAt: instance.created_at,
@@ -234,9 +231,6 @@ async function runCloudProvisioning(input: {
 
   try {
     if (!input.orgId) throw new Error("cloud_worker_organization_required")
-    // Entitlement can lapse between claim and provisioning; a lapse is recorded
-    // as the dedicated web_access_required failure (cloud-failure.ts), which the
-    // published desktop renders through its existing failed-instance state.
     await requireOpenWorkWebRuntimeAccess(
       input.orgId,
       options.getOpenWorkWebAccess ?? getOpenWorkWebRuntimeAccess,
@@ -319,8 +313,6 @@ export async function continueCloudProvisioning(input: {
     return existing
   }
 
-  // Conditional updates are the multi-replica safety; this in-process map is
-  // single-replica efficiency shared by routes, reconcilers, and self-heals.
   const promise = runCloudProvisioning(input, options)
     .finally(() => {
       if (cloudProvisioningInFlight.get(input.workerId) === promise) {
@@ -352,8 +344,6 @@ export async function deleteWorkerCascade(worker: WorkerRow) {
     await tx.delete(DaytonaSandboxTable).where(eq(DaytonaSandboxTable.worker_id, worker.id))
     await tx.delete(WorkerInstanceTable).where(eq(WorkerInstanceTable.worker_id, worker.id))
     await tx.delete(WorkerBundleTable).where(eq(WorkerBundleTable.worker_id, worker.id))
-    // Audit references outlive the resource. Organization erasure owns purging;
-    // deleting a worker must not remove either legacy or operation history.
     await tx.delete(WorkerTable).where(eq(WorkerTable.id, worker.id))
   })
 }

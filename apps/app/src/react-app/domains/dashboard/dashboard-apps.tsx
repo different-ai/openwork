@@ -29,7 +29,6 @@ function snapshotGeometryScopeKey(scope: ReturnType<typeof useAppsClient>["scope
 export function DashboardApps({ onCreateApp, fallbackEndpoints, headerActionsTarget }: {
   onCreateApp: CreateDashboardApp;
   fallbackEndpoints?: DashboardLaunchEndpoint[];
-  /** The window titlebar slot, like Library's. `undefined` renders the controls inline; `null` waits for the slot. */
   headerActionsTarget?: HTMLElement | null;
 }) {
   const { available, client, orgId, query, scope, canManage } = useSavedApps();

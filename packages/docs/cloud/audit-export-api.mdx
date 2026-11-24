@@ -1,0 +1,41 @@
+---
+title: "Audit export rules"
+description: "Keep audit export pages in the same snapshot, combine them, and resume after throttling."
+keywords: ["audit export", "API", "cursor", "NDJSON", "CSV", "rate limit"]
+---
+
+**[Open the generated `GET /v1/audit/export` reference](/api-reference/organizations/export-one-audit-snapshot-page)** for query parameters, response headers, formats, and errors. For a working script, see [Download audit history with the API](/cloud/export-audit-logs).
+
+## Keep pages in the same snapshot
+
+An export cursor is bound to the organization, format, and filters. Keep all
+three unchanged when you resume. You can change `limit`. The cursor expires
+24 hours after the first page; fetching another page does not renew it. If the
+cursor expires, start a new export without a cursor and deduplicate any events
+already processed by event ID.
+
+## Combine pages
+
+Append NDJSON pages directly. For CSV, save each page separately: the API
+suggests the same filename for every page in the chain. When combining pages,
+keep only the first column header. NDJSON and CSV use separate cursor chains;
+to change formats, start over without a cursor.
+
+## API key throttling
+
+New keys default to 600 requests per key in a 60-second window, shared across
+API calls. This is not a fixed minute boundary: the counter resets only when
+the key has been unused across all clients for longer than its window (60
+seconds by default). Den returns `401`, not `429`, when it throttles a key.
+A reverse proxy can impose separate limits; don't rely on `Retry-After`.
+For self-hosted configuration, see [Change the rate limit](/cloud/api-keys#change-the-rate-limit-self-hosted).
+
+## Self-hosted deployments
+
+Open `/docs` on your Den API host for the generated reference matching your
+installed version. Older versions may show less detail than the hosted
+reference linked above. Configure your reverse proxy to pass through
+`X-Audit-Next-Cursor`; removing it makes an intermediate page look like the
+last one. Rotating `BETTER_AUTH_SECRET` invalidates existing cursors. All Den
+API replicas must use the same value or a cursor issued by one replica can
+fail on another.

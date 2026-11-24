@@ -105,12 +105,6 @@ function WorkPreview({ step }: { step: SetupStep }) {
   );
 }
 
-/**
- * A shared visual rhythm from the first auth screen to the first useful task.
- * Without a `step` the frame is a one-page flow (agent sign-in, device and
- * claim codes, connection links): no stepper, no eyebrows, and the story column
- * shows who is asking through `aside` instead of the product preview.
- */
 export function SetupFrame({ step, title, description, children, aside, panelVisual, embedded = false, compactHeader = false, simplified, workbot = false, single = false, brand: brandContent }: {
   step?: SetupStep;
   title: string;
@@ -119,15 +113,10 @@ export function SetupFrame({ step, title, description, children, aside, panelVis
   aside?: ReactNode;
   panelVisual?: ReactNode;
   embedded?: boolean;
-  /** Keep the consent panel focal in a device approval flow; other callers retain display type. */
   compactHeader?: boolean;
-  /** Shared onboarding steps use the simplified layout unless a caller opts out (single-organization mode). */
   simplified?: boolean;
-  /** First-party Workbot sign-in: one compact panel, no Cloud story or setup steps. */
   workbot?: boolean;
-  /** One centered panel with the brand band and no setup steps: invitations and sandbox links. */
   single?: boolean;
-  /** Replaces the OpenWork mark and "OpenWork / Cloud", for an organization with its own brand. */
   brand?: ReactNode;
 }) {
   const sharedStep = step === "account" || step === "space" || step === "people";
@@ -182,9 +171,6 @@ export function SetupFrame({ step, title, description, children, aside, panelVis
   return (
     <section className={`${styles.frame} ${embedded ? styles.embedded : ""} ${plain ? styles.plain : ""} ${useSimplifiedSteps ? styles.simplified : ""}`} data-testid="setup-frame" data-step={step ?? "none"}>
       {useSimplifiedSteps ? (
-        // One column (P7): brand, progress, then one panel that owns the brand
-        // texture, the title and the form. No product preview, step eyebrow,
-        // description or tagline (P1, P2, C7).
         <div className={styles.simpleBody}>
           {brand}
           {progress}

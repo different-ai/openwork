@@ -7,7 +7,6 @@ import { env } from "../env.js"
 import { isPrivateAddress } from "../capability-sources/url-guard.js"
 import { NativeEventError } from "./protocol.js"
 
-/** Resolve and pin on every delivery, retaining the original Host and TLS name; never follow a redirect. */
 export async function postWebhook(urlValue: string, secret: string, subscriptionId: string, deliveryId: string, body: unknown, previousSecret?: string | null) {
   const url = new URL(urlValue)
   if (url.username || url.password || url.hash || !["https:", ...(env.allowPrivateMcpUrls ? ["http:"] : [])].includes(url.protocol)) throw new NativeEventError(-32602, "Invalid callback URL")

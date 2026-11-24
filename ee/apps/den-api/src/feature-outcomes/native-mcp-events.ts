@@ -5,7 +5,6 @@ import { RECEIPT_RETENTION_MS } from "../mcp-events/repository.js"
 import type { FeatureOutcomeReader, FeatureOutcomeStatus } from "./outcomes.js"
 
 const statusOf = (status: string): FeatureOutcomeStatus => status === "delivered" ? "succeeded" : status === "skipped" ? "skipped" : status === "failed" ? "failed" : "running"
-/** Delivered means the callback or internal receipt accepted the event, not successful model completion. */
 export const readNativeMcpEventOutcomes: FeatureOutcomeReader = async (range) => {
   const retained = new Date(range.to.getTime() - RECEIPT_RETENTION_MS)
   const from = retained > range.from ? retained : range.from

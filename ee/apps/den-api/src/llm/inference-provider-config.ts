@@ -1,42 +1,14 @@
 import type { ModelsDevProvider } from "./models-dev.js"
 import { GATEWAY_REQUEST_MODEL_HEADER } from "@openwork/types/den/gateway"
-import { inferenceEgressAllowedOrigins, isAwsRegion, validateInferenceUrl } from "@openwork-ee/utils/inference-egress"
-import { inferenceCredentialEnvNames } from "@openwork-ee/utils/inference-credentials"
-import { isMicrosoftFoundryOverrideAllowed } from "@openwork-ee/utils/microsoft-foundry-catalog"
+import { hasUnresolvedGatewayTemplate } from "@openwork/types/den/inference"
+import { inferenceEgressAllowedOrigins, isAwsRegion, validateInferenceUrl } from "@openwork-ee/gateway-upstreams"
+import { inferenceCredentialEnvNames, isMicrosoftFoundryOverrideAllowed } from "@openwork-ee/gateway-catalog"
 import { readProviderEnvNames, runtimeProviderEnvNames } from "./provider-credentials.js"
+
+export { gatewayModelConfigurationError, hasUnresolvedGatewayTemplate } from "@openwork/types/den/inference"
 
 type JsonRecord = Record<string, unknown>
 
-/**
- * models.dev `npm` packages the inference gateway can proxy (plan §5.3).
- * Bedrock requests are re-signed with SigV4 by the gateway. Anything else is
- * rejected at create time with `unsupported_provider`.
- */
-export const SUPPORTED_GATEWAY_NPM_PACKAGES = [
-  "@ai-sdk/anthropic",
-  "@ai-sdk/openai",
-  "@ai-sdk/mistral",
-  "@ai-sdk/azure",
-  "@ai-sdk/openai-compatible",
-  "@openrouter/ai-sdk-provider",
-  "@ai-sdk/google",
-  "@ai-sdk/google-vertex",
-  "@ai-sdk/google-vertex/anthropic",
-  "@ai-sdk/amazon-bedrock",
-  "@ai-sdk/amazon-bedrock/mantle",
-] as const
-
-export type SupportedGatewayNpm = (typeof SUPPORTED_GATEWAY_NPM_PACKAGES)[number]
-
-export function isSupportedGatewayNpm(npm: string | null): npm is SupportedGatewayNpm {
-  return npm !== null && SUPPORTED_GATEWAY_NPM_PACKAGES.some((entry) => entry === npm)
-}
-
-/**
- * Snapshot of the catalog block persisted in `gateway_providers.provider_config`.
- * Kept upstream-shaped (no gateway URL) because the gateway reads
- * `options.baseURL` / `api` from it as the upstream base.
- */
 export function buildProviderConfigSnapshot(provider: ModelsDevProvider): JsonRecord {
   const snapshot: JsonRecord = {
     id: provider.id,
@@ -57,23 +29,6 @@ export function readProviderConfigNpm(providerConfig: JsonRecord): string | null
   return typeof providerConfig.npm === "string" && providerConfig.npm.trim() ? providerConfig.npm : null
 }
 
-export function hasUnresolvedGatewayTemplate(value: unknown): boolean {
-  if (Array.isArray(value)) return value.some(hasUnresolvedGatewayTemplate)
-  if (isRecord(value)) return Object.values(value).some(hasUnresolvedGatewayTemplate)
-  if (typeof value !== "string") return false
-  let decoded = value
-  for (let pass = 0; pass < 4; pass++) {
-    if (/[{}]|\$\(|\$[A-Za-z_][A-Za-z0-9_]*|<[A-Z_][A-Z0-9_]*>|%[A-Z_][A-Z0-9_]*%|process\.env\./.test(decoded)) return true
-    try {
-      const next = decodeURIComponent(decoded)
-      if (next === decoded) return false
-      decoded = next
-    } catch { return true }
-  }
-  // Do not accept deeply encoded substitutions we could not inspect completely.
-  return /%|[{}]|\$/.test(decoded)
-}
-
 export function gatewayConfigurationError(config: JsonRecord, settings: JsonRecord): string | null {
   const options = isRecord(config.options) ? config.options : {}
   const endpointOverride = settings.upstreamBaseUrl
@@ -86,27 +41,6 @@ export function gatewayConfigurationError(config: JsonRecord, settings: JsonReco
     : null
 }
 
-export function gatewayModelConfigurationError(config: JsonRecord, models: JsonRecord[]): string | null {
-  const npm = readProviderConfigNpm(config)
-  for (const model of models) {
-    const provider = isRecord(model.provider) ? model.provider : {}
-    if ([model.npm, provider.npm].some((override) => override !== undefined && override !== npm)) {
-      return "Selected models override the provider SDK. Use a separate gateway provider with the matching SDK."
-    }
-    if (hasUnresolvedGatewayTemplate({ provider, options: model.options })) {
-      return "Model configuration contains unresolved environment/template dependencies."
-    }
-  }
-  return null
-}
-
-/**
- * `settings.upstreamBaseUrl` (plan §4.1 "upstream base override") lets an
- * organization point the gateway at a regional host or a compatible
- * self-hosted endpoint instead of the catalog default. Non-secret; validated
- * here so a malformed value fails at create/update time rather than per
- * request. Returns the error message, or null when absent or valid.
- */
 export function upstreamBaseUrlSettingError(settings: JsonRecord): string | null {
   const value = settings.upstreamBaseUrl
   if (value === undefined) {
@@ -128,7 +62,6 @@ export function upstreamBaseUrlSettingError(settings: JsonRecord): string | null
   if (url.username || url.password || url.search || url.hash) {
     return "settings.upstreamBaseUrl must not carry credentials, a query string, or a fragment."
   }
-  // Share the gateway's operator-owned exceptions; settings cannot opt into private egress.
   url.hostname = url.hostname.replace(/\.$/, "")
   try {
     validateInferenceUrl(url, { base: true })
@@ -138,16 +71,10 @@ export function upstreamBaseUrlSettingError(settings: JsonRecord): string | null
   return null
 }
 
-/** Amazon Bedrock (Converse) and Amazon Bedrock (OpenAI, Mantle) share region settings and AWS keys. */
 export function isAwsGatewayNpm(npm: string | null): boolean {
   return npm === "@ai-sdk/amazon-bedrock" || npm === "@ai-sdk/amazon-bedrock/mantle"
 }
 
-/**
- * Bedrock's upstream host is derived from `settings.region`, so the gateway never
- * sends Bedrock requests to an admin-chosen host. Only an operator-allowlisted
- * origin (a deployment-owned private endpoint or proxy) may override it.
- */
 export function bedrockSettingsError(settings: JsonRecord, allowedOrigins = inferenceEgressAllowedOrigins()): string | null {
   if (!isAwsRegion(settings.region)) return "Amazon Bedrock requires an AWS region code such as us-east-1."
   const override = settings.upstreamBaseUrl
@@ -156,12 +83,6 @@ export function bedrockSettingsError(settings: JsonRecord, allowedOrigins = infe
   return origin && allowedOrigins.has(origin) ? null : "Amazon Bedrock endpoints are derived from the region; a custom upstream URL must be an operator-approved origin."
 }
 
-/**
- * Microsoft Foundry's upstream host is derived from `settings.resourceName`. Its
- * requests can carry each member's own Entra ID token, so a custom upstream URL
- * must stay on that resource's origin or be an operator-allowlisted origin (a
- * deployment-owned private endpoint or proxy). Expects a validated resource name.
- */
 export function microsoftFoundrySettingsError(settings: JsonRecord, allowedOrigins = inferenceEgressAllowedOrigins()): string | null {
   const override = settings.upstreamBaseUrl
   if (override === undefined) return null
@@ -169,7 +90,6 @@ export function microsoftFoundrySettingsError(settings: JsonRecord, allowedOrigi
     ? null : "Microsoft Foundry endpoints are derived from the resource name; a custom upstream URL must be an operator-approved origin."
 }
 
-/** Persist and expose only the documented non-secret settings. */
 export function publicProviderSettings(settings: JsonRecord): JsonRecord {
   return Object.fromEntries(["project", "location", "resourceName", "apiVersion", "region", "upstreamBaseUrl"]
     .filter((key) => settings[key] !== undefined).map((key) => [key, settings[key]]))
@@ -198,21 +118,11 @@ export function gatewayProviderUrl(baseUrl: string, inferenceProviderId: string)
   return `${base.toString().replace(/\/+$/, "")}/api/v1/providers/${inferenceProviderId}`
 }
 
-/**
- * `@ai-sdk/google-vertex*` mint Google tokens client-side and cannot take a
- * static bearer, so the desktop gets the plain-key SDK and the gateway adapts
- * the request (plan §5.6).
- */
 const vertexDesktopSwap: Record<string, { npm: string; env: string[] }> = {
   "@ai-sdk/google-vertex": { npm: "@ai-sdk/google", env: ["GOOGLE_GENERATIVE_AI_API_KEY"] },
   "@ai-sdk/google-vertex/anthropic": { npm: "@ai-sdk/anthropic", env: ["ANTHROPIC_API_KEY"] },
 }
 
-/**
- * Rewrite a stored provider config into the opencode block the desktop
- * materializes: `api` and `options.baseURL` point at the gateway, Vertex SDKs
- * are swapped for their static-key equivalents. Pure; never touches secrets.
- */
 export function buildGatewayProviderConfig(
   row: { id: string; provider_config: JsonRecord; settings?: JsonRecord },
   baseUrl: string,
@@ -223,13 +133,10 @@ export function buildGatewayProviderConfig(
   const config = nonSecretProviderConfig(row.provider_config)
   const options = isRecord(config.options) ? config.options : {}
   if (npm === "@ai-sdk/azure") {
-    // Azure takes its destination settings as options, never as credential env values.
     for (const key of ["resourceName", "apiVersion"]) {
       if (typeof row.settings?.[key] === "string") options[key] = row.settings[key]
     }
   }
-  // Both Bedrock SDKs send AWS_BEARER_TOKEN_BEDROCK as a bearer instead of
-  // signing locally; the gateway replaces it with SigV4 using the org's AWS keys.
   const credentialEnv = swap?.env ?? (npm === "@ai-sdk/azure" ? ["AZURE_API_KEY"]
     : isAwsGatewayNpm(npm) ? ["AWS_BEARER_TOKEN_BEDROCK"]
       : inferenceCredentialEnvNames(readProviderEnvNames(config)))
@@ -255,8 +162,6 @@ export function buildGatewayModelConfig(model: { id: string; name: string; confi
     .filter(([name]) => name.toLowerCase() !== GATEWAY_REQUEST_MODEL_HEADER))
   return { ...config, id: model.id, name: model.name, headers: {
     ...headers,
-    // OpenCode forwards model headers before uploading the request body. This
-    // preserves the desktop's selection even when the upload is interrupted.
     [GATEWAY_REQUEST_MODEL_HEADER]: model.id,
   } }
 }

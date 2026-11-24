@@ -9,8 +9,7 @@ import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import { ConfirmModal } from "@/react-app/design-system/modals/confirm-modal";
 import { LayoutSection, LayoutSectionHeader, LayoutSectionTitle } from "../settings/settings-layout";
 
-const sessionAccessQueryKey = ["desktop", "remote-session-access"] as const;
-/** The organization's limit arrives when this computer next checks in, so an open page keeps reading. */
+export const sessionAccessQueryKey = ["desktop", "remote-session-access"] as const;
 const SESSION_ACCESS_REFRESH_MS = 5_000;
 const HEADING = "What other devices can do on this computer";
 const NOT_CONNECTED = "Available once this computer is connected to your organization.";
@@ -21,9 +20,7 @@ const CHOICES: ReadonlyArray<{ mode: RemoteSessionAccessMode; title: string; des
   { mode: "all", title: "Also open sessions I started here", description: "They can also open sessions you started on this computer, continue them, stop them and answer their questions and permission requests." },
 ];
 
-/** Why a choice cannot apply right now, or null when it can. */
-function lockedReason(mode: RemoteSessionAccessMode, state: RemoteSessionAccessState): string | null {
-  // A choice is kept for an organization: without one there is nowhere to keep it.
+export function lockedReason(mode: RemoteSessionAccessMode, state: RemoteSessionAccessState): string | null {
   if (!state.connected) return NOT_CONNECTED;
   if (mode === "off") return null;
   if (state.ceiling === "off") return "Your organization has turned this off.";
@@ -34,18 +31,12 @@ function lockedReason(mode: RemoteSessionAccessMode, state: RemoteSessionAccessS
   return null;
 }
 
-/** What applies on a computer whose owner has not chosen, or null when they have or a lock already says it. */
 function unchosenNote(state: RemoteSessionAccessState): string | null {
   if (!state.connected || state.mode !== null) return null;
   if (state.optIn) return "You haven't allowed this computer yet, so nothing reaches it.";
   return state.effective === "created" ? "You haven't chosen. Tasks started from your other devices are allowed, as before." : null;
 }
 
-/**
- * The choices to offer, each with whether it is locked and the line under it.
- * A stored choice that cannot apply says so; a reason shared by several locked
- * choices is written once.
- */
 function describeChoices(state: RemoteSessionAccessState) {
   let written: string | null = null;
   return CHOICES.map(choice => {
@@ -57,10 +48,6 @@ function describeChoices(state: RemoteSessionAccessState) {
   });
 }
 
-/**
- * This computer's own choice of what its owner's other devices, Workbot and
- * agents can do on it, kept per organization. Desktop only.
- */
 export function SessionAccessSection() {
   const bridge = typeof window === "undefined" ? undefined : window.__OPENWORK_ELECTRON__?.remoteSessionAccess;
   if (!bridge?.get || !bridge.set) return null;
@@ -76,7 +63,6 @@ function SessionAccessChoices({ read, write }: {
   const [saving, setSaving] = useState(false);
   const [failed, setFailed] = useState(false);
   const state = query.data;
-  // Not chosen yet: the radio shows what applies. Not connected: nothing is chosen and nothing reaches this computer.
   const shown = state?.connected ? state.mode ?? state.effective : null;
   const note = state ? unchosenNote(state) : null;
   async function choose(mode: RemoteSessionAccessMode) {
@@ -101,7 +87,6 @@ function SessionAccessChoices({ read, write }: {
           id={`session-access-${choice.mode}`}
           value={choice.mode}
           disabled={saving || choice.locked}
-          // Selecting what already applies makes it the owner's choice.
           onClick={() => { if (state.mode === null && shown === choice.mode) void choose(choice.mode); }}
         />
         <FieldContent>

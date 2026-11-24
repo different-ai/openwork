@@ -3,6 +3,55 @@ title: "Changelog"
 description: "OpenWork release notes: new features, improvements, and bug fixes."
 "og:description": "OpenWork release notes: new features, improvements, and bug fixes."
 ---
+<Update label="November 23rd" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
+
+  ## [v0.18.72](https://github.com/different-ai/openwork/compare/v0.18.71...v0.18.72): Bring your team's skills into OpenWork with their files
+
+  - **Bring skills over and use their supporting files.** Teams can import custom skills from Claude or GitHub and upload or download skills as ZIP files. Cloud skills can include scripts, templates, images, and other files; agents can read those files and run skill scripts, with the expected Python and Node libraries available on computers.
+  - **Chat actions and questions are easier to follow.** Run a suggested command directly from chat and the agent continues from its output. Questions appear beside the conversation, are less likely to ask about something you cannot see, and your answers and Automation review cards stay visible after the agent finishes. In Settings, Cmd+F (Ctrl+F on Windows and Linux) finds text on the page you have open.
+  - **AI Gateway setup and sign-in are clearer.** For admins: providers configured for members' own sign-in show as ready, provider edits save credentials and access correctly, and Vertex model choices save as expected. Desktop users can sign in again from models marked **Sign-in required**, and chat now identifies an AI Gateway usage limit instead of suggesting the provider is busy.
+  - **Workbot connects the tools your team actually uses.** It now offers every app your admin set up, and new workspace owners signing in from Workbot can add team tools before chatting. If you connect an app during a conversation, Workbot can use it in the same reply.
+  - **The built-in browser and everyday chat feel more dependable.** Browser pages open at a normal, readable size, links widen a narrow panel, and split-chat app previews open in the panel you can see. Chat no longer flickers when you send a message, and you can start a side chat from text across multiple agent replies.
+  - **Organization access and connected work behave more predictably.** GitHub sources need workspace approval before connecting or syncing; GitHub imports stay private until you share them. Requiring SSO no longer blocks agents, Workbot, and Automations, while invitations use the regular email-verification flow.
+
+</Update>
+
+<Update label="November 19th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
+
+  ## [v0.18.71](https://github.com/different-ai/openwork/compare/v0.18.70...v0.18.71): Get the newest OpenWork alpha as soon as it’s published
+
+  - **Alpha builds arrive without waiting for stable.** If you use the Alpha channel, OpenWork can install the newest published alpha even when it is ahead of the current stable release. Organization settings can still turn off alpha updates or limit which versions are allowed.
+  - **Cloud skills keep their supporting files.** Skills imported from GitHub retain their accompanying text files, so agents can read guides and other files alongside the main skill instructions. MCP clients that support the Skills extension can list and read those files too.
+  - **Settings → Permissions opens right away.** For desktop users, the page no longer waits on a loading screen. When sandbox controls are enabled, a message stays in the composer instead of being lost to a raw error while a setting change is pending, and a stopped sandbox can recover on the next command.
+  - **AWS managed install guidance is clearer.** For admins: the guide explains optional AWS sign-in and how to follow deployment progress.
+
+</Update>
+
+<Update label="November 19th" tags={["🚀 New Features", "🐛 Bug Fixes"]}>
+
+  ## [v0.18.69](https://github.com/different-ai/openwork/compare/v0.18.68...v0.18.69): Chat and connected work handle more situations reliably
+
+  - **Chat works with more models and network setups.** Requests no longer fail just because a model allows less output than OpenWork asked for, and the agent now honors proxy settings when your model provider is reachable only through a proxy. One-time Automations proposed from chat also accept date strings on the first try.
+  - **Desktop work stays in the right place.** Files and file links open the correct panel, including from split chat, and the chat's running-agent count now matches the Agents list. Long agent questions use the full card width, can include a short paragraph, and keep their details readable in the conversation.
+  - **Computer use and Workbot do more.** Mac computer use can open your own browser when you ask and handle larger Chrome pages without exposing password fields. Where browser teaching is enabled, Workbot can open its teaching window from chat, group repeated teaching steps, and let you try and edit a saved skill.
+  - **For admins and self-hosters: deployments and oversight are clearer.** AWS sign-in can let AWS choose the role and offers a direct installer route if approval hits a blank 400 page. Admins can inspect cloud computer state and runner memory, while TrueFoundry models show reasoning efforts and usage-cost controls. Enterprise installs no longer send product analytics or error reports to OpenWork.
+  - **The desktop app is more complete in French.** French translation coverage now includes all of the app's translation keys.
+
+</Update>
+
+<Update label="November 18th" tags={["🚀 New Features", "🐛 Bug Fixes", "🏗️ Refactoring"]}>
+
+  ## [v0.18.68](https://github.com/different-ai/openwork/compare/v0.18.67...v0.18.68): Chat and cloud work recover more reliably
+
+  - **Chat stays readable and recoverable.** Conversations no longer jump as earlier messages load, long agent questions scroll in their own space, and replies recovered after a dropped connection render as one answer. Sign-in requests show a Connect card, and background helpers stay visible in the Agents list.
+  - **Workbot and cloud computer tasks recover faster.** Slack tasks retry brief runner interruptions; Workbot replaces stuck computers sooner, keeps command results through service restarts, and moves large files directly between Files and a computer. Its Android message box also stays above the keyboard.
+  - **Admins get clearer oversight and usage controls.** New Computer fleet and Runner fleet pages show cloud capacity and computers; members can review their own AI Gateway usage, limits, and model prices. Admins can choose TrueFoundry models and assign spend limits to invited people before they join.
+  - **Organization setup and connected work are more dependable.** Configuration imports now handle a whole organization in one run, reuse prior answers, and carry built-in connections. For self-hosters, API-key limits are configurable and Terraform deployments can opt into an AI Gateway. Connection sign-ins, provider permissions, and SCIM account changes are more carefully checked.
+  - **Everyday desktop work gets useful fixes.** Right-click file paths in chat for file actions, see web images inline, open installed Windows apps through the agent, and read Japanese Excel cell text without phonetic readings. Diagnostics is simpler, disk-full saves explain the problem, and the installed desktop app is smaller.
+  - **Some familiar controls have moved or changed.** Ollama setup now lives under AI Providers; the Network check and Settings' Discord link are gone. Packaged desktop builds keep the debugging port closed by default, and team settings now use horizontal tabs.
+
+</Update>
+
 <Update label="November 13th" tags={["🚀 New Features", "🐛 Bug Fixes", "🏗️ Refactoring"]}>
 
   ## [v0.18.67](https://github.com/different-ai/openwork/compare/v0.18.66...v0.18.67): AI Gateway capabilities are now available to every organization
@@ -97,7 +146,7 @@ description: "OpenWork release notes: new features, improvements, and bug fixes.
 
   - **Older installs move to OpenCode v2 in the background.** Existing installs still using OpenCode v1 are moved over automatically, with a backup made first so your chats are kept. Windows installers also carry less duplicate engine data, and Windows can identify OpenWork's signed app files.
   - **Computer use is more capable and predictable.** For Mac users, the agent can script apps directly and keeps working while you use your computer; Take over and Stop return control, and Continue resumes the task. Workbot can also script supported desktop apps. Browser pages keep a steady desktop, tablet, or phone size while the panel changes, and forms take fewer steps. When available, you can dictate into OpenWork or Workbot.
-  - **Chat can work with more of your existing tasks and connections.** Type `#` to add another task as context, ask the agent to create or move sidebar groups, and find connected actions with everyday wording. You can finish or repair an API-key connection in chat without sharing the key with the agent, and OpenWork Cloud tools work again in older desktop versions.
+  - **Chat can work with more of your existing tasks and connections.** Reference another task as context, ask the agent to create or move sidebar groups, and find connected actions with everyday wording. Use `@` to reference a task when inline suggestions are enabled, or `#` with the original composer. You can finish or repair an API-key connection in chat without sharing the key with the agent, and OpenWork Cloud tools work again in older desktop versions.
   - **Documents and first launches are more dependable.** Closing an edited document now gives clear save, discard, or cancel choices, and reloading or reopening it preserves your editing session and unsaved work. Workbot can open a requested document beside chat, explain why a file could not open, and show or rebuild a computer that will not connect. Fresh desktop installs can load built-in tools even if the package registry is unavailable; slow Windows sign-in and first launch no longer hide recovery options.
   - **For admins: team and organization controls are clearer.** Platform administrators can manage feature access per organization member and, when enabled, grant organizations Web access or extra Free Auto usage. Admins can finish connector setup after a check fails, remove connectors, and save team-role changes reliably; Workbot settings show one default model and its availability. When available, Workbot can guide eligible people from free Auto to paid Luna without losing the conversation.
   - **Website visitors can find practical AI governance guidance.** The expanded enterprise pages explain governing employee AI and planning an OpenWork rollout.

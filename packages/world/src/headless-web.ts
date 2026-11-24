@@ -40,7 +40,6 @@ export interface HeadlessWebLaunchOptions {
   name: string;
   state: HeadlessWebState;
   workspace?: string;
-  /** Start with no registered workspace; keep the supplied path authorized for onboarding. */
   emptyWorkspace?: boolean;
   allowSharedState?: boolean;
   replace?: boolean;
@@ -48,7 +47,6 @@ export interface HeadlessWebLaunchOptions {
   rotateTokens?: boolean;
   env?: NodeJS.ProcessEnv;
   browserHostSuffix?: string;
-  /** Run the server on OpenCode v2 alone; no v1 engine process is started. */
   v2Only?: boolean;
 }
 
@@ -66,7 +64,6 @@ export interface HeadlessWorldRuntimePaths {
   serverConfigPath: string;
   webLogPath: string;
   headlessLogPath: string;
-  /** Sessions database for the world's managed OpenCode engine. */
   opencodeDbPath: string;
 }
 
@@ -162,7 +159,6 @@ async function probeOk(url: string): Promise<boolean> {
   return (await probe(url)).ok;
 }
 
-/** A v2-only server answers /health before its engine runs, so also wait for the engine. */
 async function probeServer(manifest: HeadlessRuntimeManifest, v2Only: boolean): Promise<ProbeResult> {
   const health = await probe(manifest.healthUrl);
   if (!health.ok || !v2Only) return health;
@@ -242,7 +238,6 @@ async function killOwnedRuntimeProcess(
       try {
         process.kill(pid, value);
       } catch {
-        // Already gone.
       }
     }
   };
@@ -583,7 +578,6 @@ function killChild(child: ChildProcess, signal: NodeJS.Signals): void {
       process.kill(-pid, signal);
       return;
     } catch {
-      // Fall through to direct kill.
     }
   }
   child.kill(signal);
@@ -1000,7 +994,6 @@ export async function launchHeadlessWeb(options: HeadlessWebLaunchOptions): Prom
     const cleanupDetail = cleanupErrors.length === 0
       ? ""
       : ` Cleanup could not confirm ownership release: ${cleanupErrors.join("; ")}.`;
-    // Keep the addresses on the first line; a health timeout carries log tails after it.
     const [summary, ...details] = messageText(error).split("\n");
     throw new Error([`${summary} Headless server: ${openworkUrl}; web: ${webUrl}.${cleanupDetail}`, ...details].join("\n"));
   }

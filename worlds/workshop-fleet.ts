@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { verifyViewer } from "./lib/private-viewer.ts";
 import { assertTrustedWorkshopRef } from "./lib/workshop-trust.ts";
 import { chmod, lstat, mkdir, realpath, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -28,6 +29,8 @@ import { redactWorkshopDiagnostic } from "./lib/workshop-redaction.ts";
 import { unlockWorkshopDesktop } from "./lib/workshop-unlock.ts";
 import { readWorkshopAudit, validateAuditedPilotRead } from "./lib/workshop-pilot-audit.ts";
 import { connectWorkshopBrowser, foregroundWorkshopDesktop, installWorkshopBrowser, verifyWorkshopBrowserHandoff, WORKSHOP_BROWSER_LAUNCHER, WORKSHOP_BROWSER_PROFILE } from "./lib/workshop-browser.ts";
+
+export { verifyViewer } from "./lib/private-viewer.ts";
 
 export const summary = "Private shared Den/Gateway and isolated workshop Linux desktops; pilot must pass before fan-out.";
 export const supportedTargets = ["daytona/linux"];
@@ -120,33 +123,6 @@ export async function verifySandbox(sandbox: string) {
   const result = await defaultDaytonaExec(["info", sandbox, "-f", "json"], { timeoutMs: 30_000 });
   if (result.code !== 0) throw new Error("Could not read owned workshop sandbox information.");
   return validateSandboxInfo(JSON.parse(result.stdout));
-}
-
-async function rfb(url: string, expectOpen: boolean): Promise<void> {
-  const endpoint = new URL("/websockify", url);
-  endpoint.protocol = "wss:";
-  await new Promise<void>((resolve, reject) => {
-    const socket = new WebSocket(endpoint, ["binary"]);
-    socket.binaryType = "arraybuffer";
-    const timer = setTimeout(() => finish(new Error("Viewer WebSocket probe timed out.")), 15_000);
-    const finish = (error?: Error) => { clearTimeout(timer); socket.close(); error ? reject(error) : resolve(); };
-    socket.onmessage = (event) => {
-      const text = typeof event.data === "string" ? event.data : new TextDecoder().decode(event.data);
-      finish(expectOpen && text.startsWith("RFB 003.") ? undefined : new Error("Viewer RFB authentication check failed."));
-    };
-    socket.onopen = () => { if (!expectOpen) finish(new Error("Unsigned viewer WebSocket unexpectedly opened.")); };
-    socket.onerror = () => finish(expectOpen ? new Error("Signed viewer WebSocket failed.") : undefined);
-  });
-}
-export async function verifyViewer(signed: string, sandboxId: string): Promise<void> {
-  const origins = parsePrivatePreview(new URL(signed).origin, sandboxId, 6080);
-  const get = (url: string) => fetch(url, { redirect: "error", headers: { "X-Daytona-Skip-Preview-Warning": "true" }, signal: AbortSignal.timeout(30_000) });
-  const unsigned = await get(origins.unsignedOrigin);
-  if (![401, 403].includes(unsigned.status)) throw new Error("Unsigned viewer HTTP access was not denied.");
-  const response = await get(signed);
-  if (!response.ok || !/novnc|vnc/i.test(await response.text())) throw new Error("Signed noVNC viewer unavailable.");
-  await rfb(origins.unsignedOrigin, false);
-  await rfb(signed, true);
 }
 
 async function memberGet(member: DenSession, orgId: string, path: string): Promise<unknown> {

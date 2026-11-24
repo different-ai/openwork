@@ -11,7 +11,6 @@ export {
   DEN_API_KEY_EXPIRES_IN_DAYS,
   DEN_API_KEY_EXPIRES_IN_SECONDS,
   DEN_API_KEY_HEADER,
-  DEN_API_KEY_RATE_LIMIT_MAX,
   DEN_API_KEY_RATE_LIMIT_TIME_WINDOW_MS,
 } from "./api-key-constants.js"
 
@@ -20,15 +19,9 @@ type OrganizationId = typeof MemberTable.$inferSelect.organizationId
 type OrganizationMemberId = typeof MemberTable.$inferSelect.id
 type ApiKeyId = typeof AuthApiKeyTable.$inferSelect.id
 
-/** `standard`: acts as its member everywhere. `config`: a config token, see config-blobs/token.ts. */
 export const DEN_API_KEY_TYPES = ["standard", "config"] as const
 export type DenApiKeyType = (typeof DEN_API_KEY_TYPES)[number]
 
-/**
- * Config token scopes. Stored in the Better Auth `apikey.permissions` column the
- * way the apiKey plugin expects (a JSON Record<resource, actions[]>):
- * `config:export` + `config:submit` is `{"config":["export","submit"]}`.
- */
 export const CONFIG_TOKEN_SCOPES = ["config:export", "config:submit", "config:apply"] as const
 export type ConfigTokenScope = (typeof CONFIG_TOKEN_SCOPES)[number]
 const CONFIG_TOKEN_PERMISSION_RESOURCE = "config"
@@ -38,9 +31,7 @@ export type DenApiKeyMetadata = {
   orgMembershipId: OrganizationMemberId
   issuedByUserId: UserId
   issuedByOrgMembershipId: OrganizationMemberId
-  /** Absent on keys issued before key types existed: those are `standard`. */
   type?: DenApiKeyType
-  /** Config tokens only: area keys (or `prefix.*`) the token may touch; absent = every area. */
   areas?: string[]
 }
 
@@ -49,11 +40,8 @@ export type DenApiKeySession = {
   configId: string
   referenceId: string
   metadata: DenApiKeyMetadata | null
-  /** `config` only when the metadata says so and the key holds at least one config scope. */
   type: DenApiKeyType
-  /** Config scopes from `apikey.permissions`; always empty for standard keys. */
   configScopes: ConfigTokenScope[]
-  /** Config tokens: the area limit, or null for every area. Always null for standard keys. */
   configAreas: string[] | null
 }
 
@@ -128,13 +116,11 @@ function isConfigTokenScope(value: string): value is ConfigTokenScope {
   return (CONFIG_TOKEN_SCOPES as readonly string[]).includes(value)
 }
 
-/** Better Auth `permissions` value for these config scopes: `{"config":["export",...]}`. */
 export function configTokenPermissions(scopes: readonly ConfigTokenScope[]): Record<string, string[]> {
   const actions = CONFIG_TOKEN_SCOPES.filter((scope) => scopes.includes(scope)).map((scope) => scope.slice(CONFIG_TOKEN_PERMISSION_RESOURCE.length + 1))
   return { [CONFIG_TOKEN_PERMISSION_RESOURCE]: actions }
 }
 
-/** Reads config scopes back from the stored `apikey.permissions` JSON; unknown actions are ignored. */
 export function parseConfigTokenScopes(value: unknown): ConfigTokenScope[] {
   let parsed: unknown = value
   if (typeof value === "string") {
@@ -156,7 +142,6 @@ export function parseConfigTokenScopes(value: unknown): ConfigTokenScope[] {
   return CONFIG_TOKEN_SCOPES.filter((scope) => scopes.has(scope))
 }
 
-/** Key type, scopes and area limit from the stored metadata and permissions (both must agree for a config token). */
 export function resolveApiKeyKind(metadata: DenApiKeyMetadata | null, permissions: unknown): { type: DenApiKeyType; scopes: ConfigTokenScope[]; areas: string[] | null } {
   if (metadata?.type !== "config") return { type: "standard", scopes: [], areas: null }
   const scopes = parseConfigTokenScopes(permissions)
@@ -169,7 +154,6 @@ export function buildOrganizationApiKeyMetadata(input: {
   orgMembershipId: OrganizationMemberId
   issuedByUserId: UserId
   issuedByOrgMembershipId: OrganizationMemberId
-  /** Config tokens: `type: "config"`, with an optional area limit. */
   config?: { areas: string[] | null }
 }): DenApiKeyMetadata {
   return {
@@ -191,7 +175,6 @@ export function apiKeyMetadataMatchesOrganizationMember(input: {
 }
 
 export async function getApiKeySessionById(apiKeyId: string): Promise<DenApiKeySession | null> {
-  // primary: a key created moments ago must authenticate (verifyApiKey already read it there).
   const rows = await db.$primary
     .select({
       id: AuthApiKeyTable.id,
@@ -304,10 +287,6 @@ export async function revokeOrganizationApiKeysForMember(input: {
     orgMembershipId: input.orgMembershipId,
   })
 
-  // Implicit revocation is an alternate path to the api_key resource: with the
-  // request's change capture active each newly disabled key gets api_key.revoked
-  // in the same transaction. Revocation must never be lost to an audit failure,
-  // so that falls back to the plain update below with [audit-outcome-lost].
   const capture = currentAuditChangeCapture(input.organizationId)
   if (capture) {
     try {
@@ -324,7 +303,6 @@ export async function revokeOrganizationApiKeysForMember(input: {
     }
   }
 
-  // primary: a key created moments ago must be revoked too.
   const apiKeys = await db.$primary
     .select({
       id: AuthApiKeyTable.id,
@@ -355,11 +333,6 @@ export async function getOrganizationApiKeyById(input: {
   return keys.find((apiKey) => apiKey.id === input.apiKeyId) ?? null
 }
 
-/**
- * Deletes one organization API key. With change capture the delete and its
- * api_key.deleted event commit in one transaction (organization share fence
- * first, then the key row); `auditEventIds` lists the appended events.
- */
 export async function deleteOrganizationApiKey(input: {
   organizationId: OrganizationId
   apiKeyId: ApiKeyId

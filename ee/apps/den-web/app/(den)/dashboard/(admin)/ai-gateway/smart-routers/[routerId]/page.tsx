@@ -1,6 +1,5 @@
 import { AutoRouterScreen } from "../../../../_components/auto-router-screen";
 
-/** A Smart Router's page; `?step=access` is step two of adding one: who it applies to. */
 export default async function AiGatewaySmartRouterPage({
   params,
   searchParams,

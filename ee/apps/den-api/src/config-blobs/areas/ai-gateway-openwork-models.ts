@@ -1,27 +1,3 @@
-/**
- * Config-blob area `ai-gateway.openwork-models`: the OpenWork Models settings
- * an admin can set (Manage › AI Gateway › OpenWork Models). Cloud only:
- * managed inference does not exist on self-hosted servers.
- *
- * One item (id: the organization id, matched by its natural key):
- * - `autoOffered`: whether members get the free Auto model (the "Turn off"
- *   switch for an organization without a subscription;
- *   metadata.inferenceFree.offerAllowed).
- * - `autoPinned`: the organization's Auto pin in members' model pickers
- *   (metadata.inferenceFree.defaultPinned).
- *
- * Not carried, on purpose:
- * - paid OpenWork Models on/off and tier: they follow the organization's
- *   Stripe subscription and can't be copied to another organization;
- * - `inference_org_limit_policies` / `_usage_buckets`: derived by the server
- *   from the subscription tier and member count, not set by admins;
- * - `inference_org_upstream_provider_keys`: an OpenRouter key OpenWork
- *   provisions per organization with its own management key. Admins never
- *   see or enter it, so it is not even a `$secret` placeholder.
- *
- * Apply goes through the same functions as PATCH /v1/inference and
- * PATCH /v1/inference/free/pins (routes/org/inference.ts).
- */
 import { eq } from "@openwork-ee/den-db/drizzle"
 import { OrganizationTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -41,9 +17,7 @@ const ITEM_NAME = "OpenWork Models"
 const NATURAL_KEY = "organization"
 
 const openworkModelsSpecSchema = z.object({
-  /** Members get the free Auto model. Off also revokes members' OpenWork Models keys. */
   autoOffered: z.boolean().default(true),
-  /** Auto is pinned in members' model pickers by the organization. */
   autoPinned: z.boolean().default(false),
 }).strict()
 
@@ -86,7 +60,6 @@ async function apply(ctx: ConfigAreaContext, op: ConfigApplyOp) {
     const next = openworkModelsSpecSchema.parse(specObject(op.item.spec))
     const metadata = await readMetadata(ctx)
     const current = specFrom(metadata)
-    // A create is the target's own singleton matched by its natural key: compare with what it has.
     const wants = (field: keyof OpenWorkModelsSpec) => (op.kind === "create" || touches(op.changes, field)) && current[field] !== next[field]
     const warnings: string[] = []
 
@@ -98,7 +71,6 @@ async function apply(ctx: ConfigAreaContext, op: ConfigApplyOp) {
           await allowFreeInferenceOffer(organizationId)
           if (!freeInferenceOrganizationAllowed(await readMetadata(ctx))) warnings.push("Auto is still off for this organization; turn it on from OpenWork Models.")
         } else {
-          // Turning it off here would also turn off a paid subscription's models: leave that to the OpenWork Models page.
           if (inferenceSubscribed(metadata)) throw new ConfigApplyError("subscribed", "This organization subscribes to OpenWork Models; turning Auto off would turn off its paid models too. Do it from OpenWork Models.", 409)
           await setInferenceEnabled({ organizationId, enabled: false, source: "admin" })
         }
@@ -141,15 +113,10 @@ export const aiGatewayOpenWorkModelsArea = defineConfigArea({
   deployments: ["cloud"],
   viewPermission: "inference.view",
   managePermission: "inference.manage",
-  // Settings live in organization.metadata (inferenceFree), owned by the organization row.
-  // inference_org_limit_policies (derived from tier and member count) and
-  // inference_org_upstream_provider_keys (provisioned by OpenWork) are not admin configuration.
   tables: [],
   naturalKeys: [{ label: "organization", get: () => NATURAL_KEY }],
   secretFields: [],
-  // updateOrganizationMetadata / setInferenceEnabled open their own transactions on the global db.
   transactional: false,
-  // Turning Auto off deletes the organization's upstream OpenRouter key.
   externalEffects: true,
   protectedFromDelete: () => "OpenWork Models settings can't be deleted.",
   irreversible,

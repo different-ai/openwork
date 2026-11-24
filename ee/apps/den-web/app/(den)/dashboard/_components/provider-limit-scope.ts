@@ -1,4 +1,3 @@
-/** A default limit excludes providers with their own applicable limit. */
 export const defaultProviderLimitLabel = "Providers without their own limit";
 
 export function providerLimitLabel(providerId: string | null | undefined, providers: { id: string; name: string }[] | undefined): string {

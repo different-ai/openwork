@@ -60,8 +60,6 @@ export function useDesktopFontZoomBehavior() {
       event.stopPropagation();
     };
 
-    // Native menu zoom items (View > Zoom In/Out/Actual Size) route through the
-    // same pathway so app zoom always stays consistent and persisted.
     const handleNativeMenuZoom = (event: Event) => {
       const detail: unknown = event instanceof CustomEvent ? event.detail : null;
       if (detail === "in" || detail === "out" || detail === "reset") {

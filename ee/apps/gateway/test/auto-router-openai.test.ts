@@ -1,9 +1,8 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
-import type { AutoRouteInfo } from "../src/auto-router/chat.js"
+import type { AutoRouteInfo } from "@openwork-ee/gateway-protocols"
 import { translatorFor } from "../src/auto-router/handler.js"
-import { responsesErrorToChat, responsesJsonToChat, responsesStreamToChat, toResponsesBody } from "../src/auto-router/openai-responses.js"
-import { createMemoryReasoningStore } from "../src/auto-router/reasoning-store.js"
+import { responsesErrorToChat, responsesJsonToChat, responsesStreamToChat, toResponsesBody, createMemoryReasoningStore } from "@openwork-ee/gateway-protocols"
 
 const route: AutoRouteInfo = { provider: "openai", model: "gpt-6-luna", thinking: "high", reason: "jev" }
 const reasoningItem = { type: "reasoning", id: "rs_1", encrypted_content: "enc-abc", summary: [{ type: "summary_text", text: "Looking at the file." }] }

@@ -21,7 +21,6 @@ function PermissionRows({ rows }: { rows: readonly TeamAgentsExampleRow[] }) {
   );
 }
 
-/** Agents tab example: what agents may do on a team's computers, and what differs from Everyone. */
 export function TeamAgentsExample() {
   return (
     <div>
@@ -31,7 +30,6 @@ export function TeamAgentsExample() {
   );
 }
 
-/** Browser tab example: the websites agents and the built-in browser may open. */
 export function TeamBrowserExample() {
   return (
     <div>

@@ -1,26 +1,3 @@
-/**
- * `session.read` with `detail: "full"`: every message and content item the
- * engine stores, mapped from OpenCode v2's native message schema
- * (`Session.Message.Info`, `GET /api/session/:id/message`, engine 2.2.0) and,
- * for sessions still on v1, from the equivalent v1 message parts into the
- * same shape.
- *
- * Kept: every message type (user, assistant, synthetic, system, skill, shell,
- * compaction, idle, agent/model/location switches) and every assistant
- * content item (text, reasoning, tool calls with input, output, files, error,
- * metadata and timing), plus model, agent, finish reason, tokens, cost,
- * retries and changed files.
- *
- * Left out on purpose: provider `native` blobs (opaque, provider-specific,
- * may hold signed reasoning), inline base64 file data (the file's name, type
- * and URI are kept) and raw provider response bodies in errors.
- *
- * Long fields are clipped with a visible marker and the message is flagged
- * `truncated`; reading one message by `messageId` raises the limits.
- *
- * Dependency-free on purpose: the bundled engine plugin imports it.
- */
-
 type JsonRecord = Record<string, unknown>;
 
 function isRecord(value: unknown): value is JsonRecord {
@@ -38,17 +15,14 @@ function rec(value: unknown): JsonRecord | undefined {
 function list(value: unknown): unknown[] {
   return Array.isArray(value) ? value : [];
 }
-/** Drops undefined fields so the result stays compact. */
 function compact<T extends JsonRecord>(value: T): T {
   for (const key of Object.keys(value)) if (value[key] === undefined) delete value[key];
   return value;
 }
 
 export type SessionReadLimits = {
-  /** Assistant and user text. */
   text: number;
   reasoning: number;
-  /** Synthetic, system and skill text. */
   context: number;
   toolInput: number;
   toolOutput: number;
@@ -56,7 +30,6 @@ export type SessionReadLimits = {
   shellOutput: number;
   compactionSummary: number;
   errorMessage: number;
-  /** Tool input, output and metadata kept per message; past it, calls are listed without them. */
   toolBudget: number;
 };
 
@@ -86,7 +59,6 @@ export const SESSION_READ_MESSAGE_LIMITS: SessionReadLimits = {
   toolBudget: 400_000,
 };
 
-/** Whole-result character budget for a list read. One message is always returned. */
 export const SESSION_READ_RESULT_BUDGET = 200_000;
 
 class Clipper {
@@ -100,7 +72,6 @@ class Clipper {
     return `${value.slice(0, limit)}…[+${value.length - limit} chars; read this message by messageId for more]`;
   }
 
-  /** Small JSON values stay structured; large ones become a clipped JSON string. */
   json(value: unknown, limit: number): unknown {
     if (value === undefined) return undefined;
     if (typeof value === "string") return this.text(value, limit);
@@ -131,7 +102,6 @@ export type RichToolCall = {
   files?: RichFile[];
   error?: RichError;
   metadata?: unknown;
-  /** The sub-agent session this call started; read it with session.read. */
   childSessionId?: string;
   time?: { created?: number; ran?: number; completed?: number };
 };
@@ -170,7 +140,6 @@ function richTokens(value: unknown): RichTokens | undefined {
   });
 }
 
-/** v2 `Session.StructuredError`; the provider response body is omitted. */
 function richV2Error(value: unknown, clip: Clipper): RichError | undefined {
   const error = rec(value);
   if (!error) return undefined;
@@ -192,7 +161,6 @@ function childSessionId(tool: string, metadata: JsonRecord | undefined): string 
   return str(metadata.sessionId)?.trim() || str(metadata.sessionID)?.trim() || undefined;
 }
 
-/** A file reference without its bytes: `data:` URLs carry the whole file, so they become `inline`. */
 function fileRef(name: string | undefined, mime: string | undefined, uri: string | undefined): RichFile {
   const inline = uri?.startsWith("data:") === true;
   return compact({ name, mime, uri: inline ? undefined : uri, inline: inline ? (true as const) : undefined });
@@ -202,7 +170,6 @@ function nonEmpty(value: JsonRecord | undefined): JsonRecord | undefined {
   return value && Object.keys(value).length > 0 ? value : undefined;
 }
 
-/** Keeps tool input, output and metadata within the message's tool budget. */
 function budgetTools(content: RichContent[], clip: Clipper): RichContent[] {
   let budget = clip.limits.toolBudget;
   return content.map((item) => {
@@ -246,7 +213,6 @@ function v2Tool(item: JsonRecord, clip: Clipper): RichToolCall | null {
     name,
     status,
     executed: typeof item.executed === "boolean" ? item.executed : undefined,
-    // Streaming input is the raw partial JSON text the model is still writing.
     input: clip.json(state.input, clip.limits.toolInput),
     output: clip.text(output, clip.limits.toolOutput),
     files,
@@ -287,7 +253,6 @@ function v2File(value: unknown): RichFile | null {
   return compact({ name: str(file.name), mime: str(file.mime), inline: true as const });
 }
 
-/** Maps one native v2 `Session.Message.Info`. Unknown future types keep id, type and time. */
 export function richV2Message(row: unknown, limits: SessionReadLimits, options: { includeMetadata?: boolean } = {}): RichMessage | null {
   if (!isRecord(row)) return null;
   const id = str(row.id);
@@ -382,7 +347,6 @@ export function richV2Message(row: unknown, limits: SessionReadLimits, options: 
   return compact({ ...base, ...fields, metadata, truncated: clip.truncated ? (true as const) : undefined });
 }
 
-/** v1 errors are `{ name, data: { message } }`. */
 function richV1Error(value: unknown, clip: Clipper): RichError | undefined {
   const error = rec(value);
   if (!error) return undefined;
@@ -422,7 +386,6 @@ function v1Tool(part: JsonRecord, clip: Clipper): RichToolCall | null {
   return compact(call);
 }
 
-/** Maps one v1 `{ info, parts }` message into the same shape as v2. */
 export function richV1Message(message: unknown, limits: SessionReadLimits, options: { includeMetadata?: boolean } = {}): RichMessage | null {
   if (!isRecord(message)) return null;
   const info = rec(message.info);
@@ -491,10 +454,6 @@ export function richV1Message(message: unknown, limits: SessionReadLimits, optio
   });
 }
 
-/**
- * The newest (from end) or oldest (from start) messages that fit the result
- * budget, in chronological order. Always keeps at least one message.
- */
 export function fitSessionReadBudget(
   messages: RichMessage[],
   from: "start" | "end",

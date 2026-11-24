@@ -148,8 +148,6 @@ function isWebAppHost(hostname: string) {
   return normalized === "app.openworklabs.com"
     || normalized === "app.openwork.software"
     || normalized.startsWith("app.")
-    // Cloud Run hostnames serve the den-web frontend, which only exposes the
-    // Den API behind its /api/den proxy path (see #1807).
     || normalized.endsWith(".run.app")
 }
 
@@ -179,7 +177,6 @@ export function resolveDesktopDenBaseUrl(request: Request) {
         return withDenProxyPath(originUrl.origin)
       }
     } catch {
-      // Ignore invalid origins.
     }
   }
 
@@ -202,7 +199,6 @@ export function resolveDesktopDenBaseUrl(request: Request) {
       return withDenProxyPath(url.origin)
     }
   } catch {
-    // Ignore invalid forwarded origins.
   }
 
   return origin
@@ -228,7 +224,6 @@ function hasPathTraversal(pathname: string) {
   try {
     candidates.push(decodeURIComponent(pathname).toLowerCase())
   } catch {
-    // Keep the original escaped path candidate.
   }
 
   return candidates.some((candidate) => candidate.split("/").some((segment) => segment === "." || segment === ".."))
@@ -293,8 +288,6 @@ function isConfiguredGatewayOrigin(candidateOrigin: string, gatewayOrigin: strin
     return false
   }
 
-  // Exact-origin only. As with Daytona preview origins, suffix-based gateway
-  // matches would approve an attacker-controlled origin.
   return candidateOrigin === gateway.origin
 }
 
@@ -310,12 +303,6 @@ function isSignedPreviewOrigin(candidateOrigin: string, signedPreviewUrl: string
     return false
   }
 
-  // Exact-origin only. The Daytona preview proxy zone is shared by every
-  // Daytona customer, so any suffix-based match would approve an
-  // attacker-controlled sandbox origin and leak one-time session grants.
-  // If the preview URL was re-signed between opening the instance and
-  // signing in, this fails closed and the user reopens Cloud for a fresh
-  // URL.
   return candidateOrigin === signedPreview.origin
 }
 
@@ -384,11 +371,6 @@ async function getCloudSignedPreviewUrls(organizationId: WorkerOrgId) {
 
 type WebHandoffApproval = {
   returnUrl: string
-  /**
-   * The organization whose own approval matched. The website then receives a
-   * session that works in this organization only, after the person confirms.
-   * Null for the deployment's gateway and OpenWork Cloud previews.
-   */
   organizationId: WorkerOrgId | null
 }
 
@@ -416,8 +398,6 @@ export async function resolveWebHandoffApproval(input: {
   userId?: string | null
   loadSignedPreviewUrls?: (organizationId: WorkerOrgId) => Promise<string[]>
 }): Promise<WebHandoffApproval | null> {
-  // The configured OpenWork Web gateway: multi-org, or a single-org install
-  // with OpenWork Web on (its own gateway is then the only web return origin).
   const gatewayReturnUrl = approveWebHandoffReturnUrlForSignedPreviews({
     returnUrl: input.returnUrl,
     signedPreviewUrls: [],
@@ -429,7 +409,6 @@ export async function resolveWebHandoffApproval(input: {
     return { returnUrl: gatewayReturnUrl, organizationId: null }
   }
 
-  // Organization-approved origins and sandbox preview origins stay multi-org only.
   if (env.orgMode !== "multi_org") {
     return null
   }
@@ -439,16 +418,11 @@ export async function resolveWebHandoffApproval(input: {
     return null
   }
 
-  // Exact origins the active organization's owners approved in Org settings.
   const activeOrganizationId = normalizeOptionalOrganizationId(input.activeOrganizationId)
   if (activeOrganizationId && await isWebOriginApprovedForOrganization(activeOrganizationId, candidate.origin)) {
     return { returnUrl: candidate.returnUrl, organizationId: activeOrganizationId }
   }
 
-  // A fresh sign-in by someone in several organizations has no active
-  // organization yet, and a member may be active in another one. Approval by
-  // any organization the user currently belongs to is enough; the handoff then
-  // lands them in that organization.
   const userId = normalizeOptionalUserId(input.userId)
   if (userId) {
     const [approvingOrganizationId] = await findMemberOrganizationsApprovingWebOrigin(userId, candidate.origin)
@@ -475,7 +449,6 @@ export async function resolveApprovedWebHandoffReturnUrl(input: Parameters<typeo
   return (await resolveWebHandoffApproval(input))?.returnUrl ?? null
 }
 
-/** The organization the handed-over session belongs to, when the user is an active member of it. */
 async function verifiedHandoffOrganization(userIdRaw: string, organizationIdRaw: string | null | undefined): Promise<{ organizationId: WorkerOrgId; memberId: string } | null> {
   const organizationId = normalizeOptionalOrganizationId(organizationIdRaw)
   const userId = normalizeOptionalUserId(userIdRaw)
@@ -531,24 +504,18 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
       boundOrganizationId = approval.organizationId
     }
 
-    // never hand a session to the desktop inside an
-    // organization that requires SSO unless the session signed in through it.
-    const ssoBlock = await findSsoAccessBlock({ sessionId: session.id, organizationId: boundOrganizationId ?? session.activeOrganizationId })
+    const ssoBlock = await findSsoAccessBlock({ sessionId: c.get("signInSessionId"), organizationId: boundOrganizationId ?? session.activeOrganizationId })
     if (ssoBlock) {
       return c.json(ssoRequiredErrorBody(ssoBlock), 403)
     }
 
     if (boundOrganizationId && approvedReturnUrl) {
-      // Platform authority follows the person, not the session, in places an
-      // organization-bound session can still reach, so it never leaves OpenWork.
       if (await isPlatformAdminUserId(user.id)) {
         return c.json({
           error: "forbidden",
           message: "Platform administrators cannot sign in to an organization's website with this account.",
         }, 403)
       }
-      // The website is the organization's choice, not OpenWork's: the person
-      // sees where they are signing in before any grant exists.
       if (input.confirmed !== true) {
         const [organization] = await db.select({ name: OrganizationTable.name }).from(OrganizationTable)
           .where(eq(OrganizationTable.id, boundOrganizationId)).limit(1)
@@ -561,10 +528,6 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
       }
     }
 
-    // Audit: the grant hands over a session in its organization. With a
-    // verified active membership there the request is attributed before any
-    // write (intent fails closed); without one the request stays platform
-    // evidence and desktop_handoff.created fans out to every membership.
     const handoffOrganizationId = await verifiedHandoffOrganization(user.id, boundOrganizationId ?? session.activeOrganizationId)
     if (handoffOrganizationId) {
       const attribution = auditSessionUserAttribution(user.id, handoffOrganizationId.memberId)
@@ -629,7 +592,6 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
       }
 
       const input = c.req.valid("json")
-      // primary: polled right after the grant is created and consumed; a lagging "unknown" reads as invalid.
       const [grant] = await db.$primary
         .select({ consumedAt: DesktopHandoffGrantTable.consumed_at, expiresAt: DesktopHandoffGrantTable.expires_at })
         .from(DesktopHandoffGrantTable)
@@ -692,8 +654,6 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
         return null
       }
 
-      // The signed-in session the grant was created from must still be live.
-      // A grant written before grants stopped holding tokens names it by token.
       const createdFrom = grant.sessionId
         ? eq(AuthSessionTable.id, grant.sessionId)
         : grant.legacySessionToken ? sessionTokenMatches(grant.legacySessionToken) : null
@@ -783,10 +743,6 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
       }, 404)
     }
 
-    // Tell the desktop which organization this sign-in belongs to so the app
-    // never has to guess (or race /v1/me/orgs) right after a handoff. Falls
-    // back to null when the session has no resolvable organization; the app
-    // then repairs through its normal org-resolution path.
     let organization: { id: string; slug: string; name: string } | null = null
     try {
       const userId = normalizeDenTypeId("user", exchange.user.id)
@@ -794,14 +750,11 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
         userId,
         activeOrganizationId: exchange.activeOrganizationId,
       })
-      // Bootstrap only an authenticated desktop handoff, not browser onboarding
-      // or membership in a managed single-org deployment.
       if (env.orgMode === "multi_org" && resolved.orgs.length === 0) {
         const organizationId = await ensurePersonalOrganizationForUser(userId)
         resolved = await resolveUserOrganizations({
           userId,
           activeOrganizationId: organizationId,
-          // primary: the organization was just created.
           reader: db.$primary,
         })
       }
@@ -814,22 +767,15 @@ export function registerDesktopAuthRoutes<T extends { Variables: AuthContextVari
       organization = null
     }
 
-    // An organization that requires SSO opens only from a session that signed
-    // in through it; the new session keeps the proofs of the one it came from.
-    // Without them the new session simply cannot open such an organization.
     await carrySessionSsoProofs({ fromSessionId: exchange.createdFromSessionId, toSessionId: exchange.session.id, userId: exchange.session.userId })
       .catch(() => undefined)
 
-    // The recipient's session comes from a signed-in web session, not a new
-    // sign-in: session.handed_off in the session's organization, or every
-    // active membership when it has none.
     await recordSessionHandedOff({ ...exchange.session, activeOrganizationId: exchange.activeOrganizationId })
 
     return c.json({
       token: exchange.token,
       user: exchange.user,
       organization,
-      // Compatibility field for published desktops: Connect is always on.
       connectEnabled: organization ? true : null,
     })
     },

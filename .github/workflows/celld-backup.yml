@@ -8,6 +8,9 @@ name: Back up the celld bucket
 # rule (15 days), so a deleted conversation is gone from backups within that time. Restoring: see
 # ee/apps/headless-runner/OWNER-CELLS.md ("Backups and restore").
 #
+# This repository is public, and so are these logs. Object keys carry conversation and file ids, so the log gets counts
+# and error codes only; the keys themselves go to reports/ in the backup bucket.
+#
 # Needs, on the celld-backup environment: secrets CELLD_BACKUP_R2_ACCESS_KEY_ID and CELLD_BACKUP_R2_SECRET_ACCESS_KEY
 # (an R2 token that can read the source bucket and write the backup bucket), and variables CELLD_BACKUP_BUCKET and
 # CELLD_BACKUP_S3_ENDPOINT. Without them the job skips with a notice.
@@ -69,7 +72,17 @@ jobs:
           gone="$(grep -c 'NoSuchKey' "$RUNNER_TEMP/sync.log" || true)"
           other="$(grep -v 'NoSuchKey' "$RUNNER_TEMP/sync.log" | grep -c . || true)"
           if [ "$sync_status" -ne 0 ] && [ "$other" -gt 0 ]; then
-            grep -v 'NoSuchKey' "$RUNNER_TEMP/sync.log" | tail -20
+            # The failing keys stay out of this log: the full list goes to the backup bucket.
+            echo "$other copy error(s) other than objects celld deleted meanwhile, by kind:"
+            grep -v 'NoSuchKey' "$RUNNER_TEMP/sync.log" \
+              | { grep -oE 'An error occurred \([A-Za-z0-9]+\) when calling the [A-Za-z0-9]+ operation' || echo "unrecognised error"; } \
+              | sort | uniq -c
+            report="reports/copy-errors-$stamp.log"
+            if aws s3 cp "$RUNNER_TEMP/sync.log" "s3://$BACKUP_BUCKET/$report" --endpoint-url "$S3_ENDPOINT" --only-show-errors > /dev/null 2>&1; then
+              echo "The full list is in the backup bucket at $report."
+            else
+              echo "The full list could not be saved to the backup bucket; run the copy by hand to see it."
+            fi
             echo "::error::The copy failed for reasons other than objects celld deleted meanwhile"
             exit 1
           fi
@@ -100,8 +113,13 @@ jobs:
             | awk '{ if ($2 == "own.json") own[$1] = 1; else data[$1] = 1 } END { for (cell in data) if (!(cell in own)) print cell }' \
             | sort)"
           if [ -n "$lost" ]; then
-            echo "Cells with change data and no ownership record:"
-            printf '%s\n' "$lost" | head -50
+            # Cell ids stay out of this log: the list goes to the backup bucket.
+            report="reports/lost-ownership-$(date -u +%Y-%m-%dT%H%MZ).txt"
+            if printf '%s\n' "$lost" | aws s3 cp - "s3://$BACKUP_BUCKET/$report" --endpoint-url "$S3_ENDPOINT" --only-show-errors > /dev/null 2>&1; then
+              echo "The cells are listed in the backup bucket at $report."
+            else
+              echo "The list could not be saved to the backup bucket; list fleet/cells/ by hand to find them."
+            fi
             echo "::error title=celld ownership record lost::$(printf '%s\n' "$lost" | wc -l | tr -d ' ') cell(s) have LTX under fleet/cells/<cell>/ltx/ but no own.json; see OWNER-CELLS.md (\"A lost ownership record\")"
             exit 1
           fi

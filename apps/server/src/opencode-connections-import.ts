@@ -6,44 +6,27 @@ import { readJsoncFile } from "./jsonc.js";
 import { isOrganizationMcpName } from "./organization-mcp-names.js";
 import { validateMcpConfig, validateMcpName } from "./validators.js";
 
-/**
- * Reads the connections (MCP servers) a person set up in their own OpenCode
- * config so they can be imported into OpenWork on request.
- *
- * OpenWork's engine never reads that file while it runs: a broken personal
- * file must not stop chats. Importing copies the chosen entries into
- * OpenWork's own store once, and can be run again. The person's files are
- * only ever read here, never written.
- */
-
 export const OPENCODE_CONNECTIONS_IMPORT_LIMITS = {
-  /** A config file larger than this is not read. */
   configBytes: 1024 * 1024,
-  /** Entries offered from one computer. */
   connections: 200,
 } as const;
 
 export type OpencodeConnectionKind = "local" | "remote";
 
-/** A connection found in the person's OpenCode config, in the shape OpenWork stores. */
 export type OpencodeConnection = {
   name: string;
   kind: OpencodeConnectionKind;
-  /** What it runs or where it lives, without arguments, environment, query or credentials. */
   target: string;
-  /** Validated config, including any secrets. Never returned to a client or logged. */
   config: Record<string, unknown>;
 };
 
 export type OpencodeConnectionProblem = { name: string; reason: string };
 
-/** `found` also covers a readable file that lists no connections. */
 export type OpencodeConfigStatus = "found" | "missing" | "invalid" | "unreadable";
 
 export type OpencodeConnectionsSource = {
   status: OpencodeConfigStatus;
   connections: OpencodeConnection[];
-  /** Entries that cannot be imported as written, with a reason a person can act on. */
   problems: OpencodeConnectionProblem[];
 };
 
@@ -57,16 +40,10 @@ function stringRecord(value: unknown): Record<string, string> | undefined {
   return entries.length > 0 ? Object.fromEntries(entries) : undefined;
 }
 
-/** The files OpenCode itself merges from its global config folder, lowest precedence first. */
 export function opencodeUserConfigPaths(configDir: string = globalOpencodeConfigDir()): string[] {
   return ["config.json", "opencode.json", "opencode.jsonc"].map((name) => join(configDir, name));
 }
 
-/**
- * `mcp` is a map of name to server. A common mistake nests that map under
- * `mcp.servers` (the shape other tools use); it is read the same way. A real
- * server that happens to be named "servers" has a type, command or url.
- */
 function connectionEntries(mcp: unknown): Array<[string, unknown]> {
   if (!isRecord(mcp)) return [];
   const nested = mcp.servers;
@@ -78,11 +55,6 @@ function connectionEntries(mcp: unknown): Array<[string, unknown]> {
   ];
 }
 
-/**
- * One entry as OpenWork stores it. Accepts OpenCode's own format and the
- * `command` + `args` + `env` spelling people paste from other tools. Only
- * fields OpenWork understands are kept.
- */
 export function normalizeOpencodeConnection(name: string, value: unknown): OpencodeConnection | OpencodeConnectionProblem {
   try {
     validateMcpName(name);
@@ -138,12 +110,6 @@ function connectionTarget(config: Record<string, unknown>): string {
   return first.split(/[\\/]/).pop() ?? first;
 }
 
-/**
- * The connections in the person's OpenCode config. A missing, unreadable or
- * invalid file is reported, never thrown: importing is optional and must not
- * break Settings. When any file is invalid nothing is offered from it, and
- * the others still are.
- */
 export async function readOpencodeConnections(paths: string[] = opencodeUserConfigPaths()): Promise<OpencodeConnectionsSource> {
   const merged = new Map<string, unknown>();
   let found = false;
@@ -166,7 +132,6 @@ export async function readOpencodeConnections(paths: string[] = opencodeUserConf
   const connections: OpencodeConnection[] = [];
   const problems: OpencodeConnectionProblem[] = [];
   for (const [name, value] of [...merged].slice(0, OPENCODE_CONNECTIONS_IMPORT_LIMITS.connections)) {
-    // Names OpenWork reserves for the organization's own servers are OpenWork's to manage.
     if (isOrganizationMcpName(name)) continue;
     const entry = normalizeOpencodeConnection(name, value);
     if ("config" in entry) connections.push(entry);

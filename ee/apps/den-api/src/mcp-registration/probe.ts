@@ -1,4 +1,4 @@
-import { discoverConnectionRequirements } from "@openwork/enterprise-mcp-client"
+import { discoverConnectionRequirements } from "@openwork/mcp-enterprise-client"
 import type { McpRegistrationOutcome } from "@openwork/types/den/mcp-registration"
 import { ALL_EXTERNAL_MCP_PRESETS, type ExternalMcpPreset } from "../capability-sources/external-mcp-presets.js"
 import { externalMcpSharedCallbackUrl } from "../capability-sources/external-mcp-oauth-contract.js"
@@ -16,11 +16,6 @@ type Fetch = (url: string | URL, init?: RequestInit) => Promise<Response>
 
 export type RegistrationAttempt = { outcome: McpRegistrationOutcome; httpStatus: number | null; diagnosticCode: string | null }
 
-/**
- * Registers OpenWork with a provider exactly as a member's sign-in would (same client name, callback and grant types,
- * no secret), then deletes that registration when the provider allows it (RFC 7592). 401/403 means the provider only
- * accepts apps it approved; other failures are recorded without claiming a refusal.
- */
 export async function attemptDynamicRegistration(input: {
   registrationEndpoint: string
   redirectUri: string
@@ -74,7 +69,6 @@ type Discovered = {
   server: { issuer: string; registrationEndpoint?: string; clientIdMetadataDocumentSupported?: boolean } | null
 }
 
-/** What a preset's sign-in server advertises. Read-only; null when it cannot be reached or read. */
 export async function discoverPreset(preset: ExternalMcpPreset, fetchImpl: Fetch): Promise<Discovered | null> {
   try {
     const requirements = await discoverConnectionRequirements({ serverUrl: preset.url, fetch: fetchImpl, timeoutMs: DISCOVERY_TIMEOUT_MS })
@@ -88,7 +82,6 @@ export async function discoverPreset(preset: ExternalMcpPreset, fetchImpl: Fetch
   }
 }
 
-/** Classifies one preset from its discovery and, where only a registration can tell, whether it accepts OpenWork. */
 export async function probeMcpPresetRegistration(preset: ExternalMcpPreset, options: {
   fetch: Fetch
   redirectUri: string
@@ -106,8 +99,6 @@ export async function probeMcpPresetRegistration(preset: ExternalMcpPreset, opti
   const server = discovered.server
   const facts = { clientMetadataSupported: server.clientIdMetadataDocumentSupported === true, dynamicRegistrationSupported: Boolean(server.registrationEndpoint) }
   if (preset.requiresOAuthClient || preset.defaultOAuthClientId || facts.clientMetadataSupported) {
-    // CIMD needs no registration to learn from; a preset that requires an admin app is already labelled, and one with
-    // OpenWork's own pre-registered app (defaultOAuthClientId) does not depend on registration at all.
     return { issuer: discovered.issuer, outcome: "metadata_only", server, facts, attempt: null }
   }
   if (!server.registrationEndpoint) return { issuer: discovered.issuer, outcome: "no_registration_method", server, facts, attempt: null }
@@ -122,10 +113,6 @@ export async function probeMcpPresetRegistration(preset: ExternalMcpPreset, opti
   return { issuer: discovered.issuer, outcome: attempt.outcome, server, facts, attempt }
 }
 
-/**
- * One pass over every OAuth preset. Discovery is read-only; before anything is recorded or registered, the issuer is
- * claimed so replicas never check the same provider twice and a provider is checked at most once per interval.
- */
 export async function runMcpRegistrationProbe(options: { tryRegistration?: boolean } = {}): Promise<{ checked: number; skipped: number }> {
   const fetchImpl = env.allowPrivateMcpUrls ? createRealmSafeFetch() : createGuardedFetch()
   const redirectUri = externalMcpSharedCallbackUrl()
@@ -163,7 +150,6 @@ export async function runMcpRegistrationProbe(options: { tryRegistration?: boole
   return { checked, skipped }
 }
 
-/** Runs the check on an interval when MCP_REGISTRATION_PROBE_ENABLED=1; returns a stop function. */
 export function startMcpRegistrationProbeLoop(): () => Promise<void> {
   if (!env.mcpRegistrationProbe.enabled) return async () => undefined
   let running: Promise<unknown> | null = null
@@ -173,7 +159,6 @@ export function startMcpRegistrationProbeLoop(): () => Promise<void> {
       .catch((error: unknown) => logger.warn("mcp_registration_probe_failed", { message: error instanceof Error ? error.message : String(error) }))
       .finally(() => { running = null })
   }
-  // Stagger replicas so they rarely contend for the same lease.
   const first = setTimeout(run, 60_000 + Math.floor(Math.random() * 240_000))
   first.unref()
   const timer = setInterval(run, env.mcpRegistrationProbe.intervalMs)

@@ -1,37 +1,8 @@
-/**
- * Config-blob area `ai-gateway.providers`: AI Gateway providers with their
- * model universe, model groups, credential sets and access grants
- * (Manage › AI Gateway › AI Providers).
- *
- * Export is an allowlist: the catalog provider id, the documented non-secret
- * destination settings, a custom provider's own model list and LiteLLM's mode.
- * `provider_config` and model configs are never exported (they come from the
- * catalog on the target). Credentials never travel: each credential set's
- * shared organization credential and OAuth client secret are `$secret`
- * placeholders. Per-member credentials, OAuth states, LiteLLM issued keys and
- * member Gateway keys are runtime/personal and never exported or touched.
- * The legacy provider-level `oauth_client_secret` / `credential_mode` columns
- * are compatibility metadata no route writes (credential sets own them), so
- * they are not part of the spec.
- *
- * Apply goes through the same writers as the inference provider routes
- * (`llm/gateway-matrix.ts`, `llm/gateway-provider-writes.ts`), under the same
- * locks, live Manage Gateway providers re-check and provider audit capture.
- * Child rows (models, groups, sets, grants) reuse their source TypeIDs when
- * they are free on the whole instance, so Gateway model aliases
- * (`gwm_<group>_<set>_<model>`) survive a cloud ↔ self-hosted move.
- *
- * LiteLLM providers are exported (so a blob shows them) but cannot be created
- * or changed by a config blob: their models, groups and member keys come from
- * syncing the organization's own LiteLLM proxy. Apply fails with a clear message.
- */
 import { isDeepStrictEqual } from "node:util"
 import { and, eq, inArray, isNull } from "@openwork-ee/den-db/drizzle"
 import { lockUsageOrganization } from "@openwork-ee/den-db/gateway-usage-limits"
 import { AuthUserTable, GatewayCredentialSetTable, GatewayModelGroupModelTable, GatewayModelGroupTable, GatewayProviderAccessTable, GatewayProviderCredentialTable, GatewayProviderModelTable, GatewayProviderOauthStateTable, GatewayProviderTable, MemberTable, TeamTable } from "@openwork-ee/den-db/schema"
-import { gatewayAudienceKey } from "@openwork-ee/utils/gateway-routing"
-import { isLiteLlmProviderId } from "@openwork-ee/utils/litellm-catalog"
-import { isTrueFoundryProviderId } from "@openwork-ee/utils/truefoundry-catalog"
+import { gatewayAudienceKey, isLiteLlmProviderId, isTrueFoundryProviderId } from "@openwork-ee/gateway-catalog"
 import { createDenTypeId, denTypeIdPrefixes, normalizeDenTypeId, type DenTypeId, type DenTypeIdName } from "@openwork-ee/utils/typeid"
 import { configRefSchema, configSecretSchema, type ConfigApplyStep, type ConfigFieldChange, type ConfigSpec } from "@openwork/types/den/config-blobs"
 import { GATEWAY_PROVIDER_CREDENTIAL_KINDS, GATEWAY_PROVIDER_CREDENTIAL_MODES, GATEWAY_PROVIDER_STATUSES, gatewayAwsSsoSettingsSchema, type GatewayAccessGrantWrite, type GatewayCredentialSetPatch, type GatewayModelGroupPatch } from "@openwork/types/den/gateway"
@@ -50,13 +21,10 @@ import { readLiteLlmSettings } from "../../llm/litellm-settings.js"
 import type { ModelsDevProvider } from "../../llm/models-dev.js"
 import { resolvePermissionsForMember } from "../../permissions/resolve.js"
 import { defineConfigArea, type ConfigApplyOp, type ConfigApplyResult, type ConfigAreaContext, type ConfigItem, type ResolvedConfigItem } from "../area.js"
-import { ConfigApplyError, ConfigStepLog, applyWithSteps, configItemError, opTouched, secretEffects, touches } from "./route-support.js"
+import { ConfigApplyError, ConfigStepLog, applyWithSteps, configItemError, loadMemberEmails, opTouched, secretEffects, touches } from "./route-support.js"
 
 const AREA = "ai-gateway.providers" as const
 const MANAGE = "gateway_providers.manage" as const
-
-// ---------------------------------------------------------------------------
-// Spec
 
 const idSchema = z.string().min(1).max(100)
 const nameSchema = z.string().trim().min(1).max(255)
@@ -70,7 +38,6 @@ const resolvedSecretSchema = z.discriminatedUnion("decision", [
   z.object({ $secret: z.string(), decision: z.literal("unset") }).strict(),
 ])
 
-/** One schema for the blob form (refs and placeholders) and the resolved form apply receives. */
 function providerSpecSchema<Ref extends z.ZodType, Secret extends z.ZodType>(ref: Ref, secret: Secret) {
   const access = z.discriminatedUnion("audience", [
     z.object({ id: idSchema, modelGroup: idSchema, credentialSet: idSchema, audience: z.literal("organization") }).strict(),
@@ -78,23 +45,13 @@ function providerSpecSchema<Ref extends z.ZodType, Secret extends z.ZodType>(ref
     z.object({ id: idSchema, modelGroup: idSchema, credentialSet: idSchema, audience: z.literal("member"), member: ref }).strict(),
   ])
   return z.object({
-    /** Catalog provider id (`openai`, `anthropic`, …), `custom` or `litellm`. Immutable. */
     providerId: nameSchema,
     status: statusSchema,
-    /** Documented non-secret destination settings. Immutable for catalog providers. */
     settings: gatewayProviderSettingsSchema,
-    /** Custom OpenAI-compatible providers only: their own model list (address is settings.upstreamBaseUrl). */
     custom: z.object({ models: z.array(gatewayCustomModelSchema).min(1).max(500) }).strict().optional(),
-    /** LiteLLM providers only, informational: they are synced from the proxy and can't be applied. */
-    litellm: z.object({ mode: z.enum(["org", "member"]), keySource: z.enum(["personal", "issued"]).nullable(), issueStrategy: z.enum(["per_team", "mirror"]).nullable(), mirrorFallback: z.enum(["per_team", "error"]).nullable() }).strict().optional(),
-    /** Provider universe policy: [] follows every supported catalog model. */
+    litellm: z.object({ mode: z.enum(["org", "member"]), keySource: z.enum(["personal", "issued", "entra"]).nullable(), issueStrategy: z.enum(["per_team", "mirror"]).nullable(), mirrorFallback: z.enum(["per_team", "error"]).nullable() }).strict().optional(),
     modelIds: z.array(modelIdSchema).max(500),
-    /** Ordered pins (catalog model ids). */
     pinnedModelIds: z.array(modelIdSchema).max(500),
-    /**
-     * The provider's stored models. Derived from the catalog and `modelIds` on
-     * apply; listed so the blob is readable and so model row ids carry over.
-     */
     models: z.array(z.object({ id: idSchema, modelId: modelIdSchema, name: z.string().max(255) }).strict()).max(5000),
     modelGroups: z.array(z.object({ id: idSchema, name: nameSchema, description: z.string().max(10000).nullable(), status: statusSchema, models: z.array(modelIdSchema).max(500) }).strict()).max(500),
     credentialSets: z.array(z.object({
@@ -102,9 +59,7 @@ function providerSpecSchema<Ref extends z.ZodType, Secret extends z.ZodType>(ref
       name: nameSchema,
       credentialMode: z.enum(GATEWAY_PROVIDER_CREDENTIAL_MODES),
       status: statusSchema,
-      /** Kind of the shared organization credential (org sets). */
       credentialKind: z.enum(GATEWAY_PROVIDER_CREDENTIAL_KINDS).nullable(),
-      /** The shared organization credential (org sets only). Members' own credentials never travel. */
       credential: secret.optional(),
       oauthClientId: z.string().max(255).nullable(),
       oauthClientSecret: secret,
@@ -126,9 +81,6 @@ function secretPath(providerId: string, setId: string, field: "credential" | "oa
   return `${AREA}/${providerId}/credentialSets[${setId}].${field}`
 }
 
-// ---------------------------------------------------------------------------
-// Export
-
 function exportSettings(settings: Record<string, unknown>): ExportSpec["settings"] {
   const strings = Object.fromEntries(Object.entries(publicProviderSettings(settings)).filter((entry): entry is [string, string] => typeof entry[1] === "string"))
   const parsed = gatewayProviderSettingsSchema.safeParse(strings)
@@ -139,7 +91,6 @@ async function exportItems(ctx: ConfigAreaContext): Promise<ConfigItem[]> {
   return readProviders(ctx, null)
 }
 
-/** The providers (all, or just `ids`), each with its children read for those providers only. */
 async function readProviders(ctx: ConfigAreaContext, ids: readonly string[] | null): Promise<ConfigItem[]> {
   const database = ctx.db
   const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
@@ -152,7 +103,6 @@ async function readProviders(ctx: ConfigAreaContext, ids: readonly string[] | nu
     database.select().from(GatewayProviderModelTable).where(inArray(GatewayProviderModelTable.gateway_provider_id, providerIds)),
     database.select().from(GatewayModelGroupTable).where(inArray(GatewayModelGroupTable.gateway_provider_id, providerIds)),
     database.select().from(GatewayCredentialSetTable).where(inArray(GatewayCredentialSetTable.gateway_provider_id, providerIds)),
-    // Only the organization's shared credential; never a member's own.
     database.select({ setId: GatewayProviderCredentialTable.credential_set_id, kind: GatewayProviderCredentialTable.kind, status: GatewayProviderCredentialTable.status })
       .from(GatewayProviderCredentialTable)
       .where(and(inArray(GatewayProviderCredentialTable.gateway_provider_id, providerIds), eq(GatewayProviderCredentialTable.organization_id, organizationId), eq(GatewayProviderCredentialTable.subject, "org"), isNull(GatewayProviderCredentialTable.org_membership_id))),
@@ -162,7 +112,8 @@ async function readProviders(ctx: ConfigAreaContext, ids: readonly string[] | nu
   const teamIds = [...new Set(grants.flatMap((grant) => grant.team_id ? [grant.team_id] : []))]
   const memberIds = [...new Set(grants.flatMap((grant) => grant.org_membership_id ? [grant.org_membership_id] : []))]
   const teams = teamIds.length ? await database.select({ id: TeamTable.id, name: TeamTable.name }).from(TeamTable).where(inArray(TeamTable.id, teamIds)) : []
-  const people = memberIds.length ? await database.select({ id: MemberTable.id, email: AuthUserTable.email, name: AuthUserTable.name }).from(MemberTable).innerJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId)).where(inArray(MemberTable.id, memberIds)) : []
+  const people = memberIds.length ? await database.select({ id: MemberTable.id, name: AuthUserTable.name }).from(MemberTable).innerJoin(AuthUserTable, eq(AuthUserTable.id, MemberTable.userId)).where(inArray(MemberTable.id, memberIds)) : []
+  const emails = await loadMemberEmails(database, organizationId, memberIds)
   const modelById = new Map(models.map((model) => [model.id, model]))
 
   return providers.map((provider): ConfigItem => {
@@ -198,9 +149,9 @@ async function readProviders(ctx: ConfigAreaContext, ids: readonly string[] | nu
       access: grants.filter((grant) => grant.gateway_provider_id === provider.id).flatMap((grant): ExportSpec["access"] => {
         const base = { id: grant.id, modelGroup: grant.model_group_id, credentialSet: grant.credential_set_id }
         if (grant.org_membership_id) {
-          const person = people.find((entry) => entry.id === grant.org_membership_id)
-          // A grant to someone without a sign-in email can't be carried by email.
-          return person?.email ? [{ ...base, audience: "member", member: { $ref: `people/${person.email.toLowerCase()}`, ...(person.name ? { name: person.name } : {}) } }] : []
+          const email = emails.get(grant.org_membership_id)
+          const name = people.find((entry) => entry.id === grant.org_membership_id)?.name
+          return email ? [{ ...base, audience: "member", member: { $ref: `people/${email}`, ...(name ? { name } : {}) } }] : []
         }
         if (grant.team_id) {
           const team = teams.find((entry) => entry.id === grant.team_id)
@@ -212,9 +163,6 @@ async function readProviders(ctx: ConfigAreaContext, ids: readonly string[] | nu
     return { id: provider.id, key: null, name: provider.name, spec }
   })
 }
-
-// ---------------------------------------------------------------------------
-// Matching helpers
 
 function specRecord(item: ConfigItem): Record<string, unknown> {
   return item.spec
@@ -275,9 +223,6 @@ function similarity(blob: ConfigItem, target: ConfigItem): { score: number; reas
   return { score: Math.min(1, Math.round(score * 1000) / 1000), reasons }
 }
 
-// ---------------------------------------------------------------------------
-// Apply
-
 type Actor = { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member">; userId: string }
 
 function actorOf(ctx: ConfigAreaContext): Actor {
@@ -288,17 +233,11 @@ function failure(message: string, field?: string): Error {
   return new ConfigApplyError("invalid_spec", `${AREA}: ${message}`, 400, field)
 }
 
-/** A blob id usable as a new row id: well-formed for the table and not taken on this instance. */
 function typedId<TName extends DenTypeIdName>(name: TName, value: string | undefined): DenTypeId<TName> | null {
   if (!value) return null
   try { return normalizeDenTypeId(name, value) } catch { return null }
 }
 
-/**
- * Runs one provider write the way the routes do: audit capture for the step,
- * the caller's member row locked and Manage Gateway providers re-checked inside
- * the transaction, then the mutation inside `providerAuditMutation`.
- */
 async function providerWrite<T>(ctx: ConfigAreaContext, providerId: DenTypeId<"inferenceProvider">, step: "create" | "update" | "delete", mutate: (tx: GatewayTx) => Promise<T>, options: { lockOrganization?: boolean } = {}): Promise<T> {
   const actor = actorOf(ctx)
   const enabled = "auditCaptureEnabled" in env && env.auditCaptureEnabled === true
@@ -328,23 +267,19 @@ async function lockProvider(tx: GatewayTx, actor: Actor, id: DenTypeId<"inferenc
   return provider
 }
 
-/** The source ids of `wanted` that are well-formed and free for new rows of each table. */
 async function freeIds(tx: GatewayTx, wanted: { models: string[]; groups: string[]; sets: string[]; grants: string[] }) {
   const models = wanted.models.flatMap((id) => typedId("inferenceProviderModel", id) ?? [])
   const groups = wanted.groups.flatMap((id) => typedId("gatewayModelGroup", id) ?? [])
   const sets = wanted.sets.flatMap((id) => typedId("gatewayCredentialSet", id) ?? [])
   const grants = wanted.grants.flatMap((id) => typedId("inferenceProviderAccess", id) ?? [])
-  const [takenModels, takenGroups, takenSets, takenGrants] = await Promise.all([
-    models.length ? tx.select({ id: GatewayProviderModelTable.id }).from(GatewayProviderModelTable).where(inArray(GatewayProviderModelTable.id, models)) : [],
-    groups.length ? tx.select({ id: GatewayModelGroupTable.id }).from(GatewayModelGroupTable).where(inArray(GatewayModelGroupTable.id, groups)) : [],
-    sets.length ? tx.select({ id: GatewayCredentialSetTable.id }).from(GatewayCredentialSetTable).where(inArray(GatewayCredentialSetTable.id, sets)) : [],
-    grants.length ? tx.select({ id: GatewayProviderAccessTable.id }).from(GatewayProviderAccessTable).where(inArray(GatewayProviderAccessTable.id, grants)) : [],
-  ])
+  const takenModels = models.length ? await tx.select({ id: GatewayProviderModelTable.id }).from(GatewayProviderModelTable).where(inArray(GatewayProviderModelTable.id, models)) : []
+  const takenGroups = groups.length ? await tx.select({ id: GatewayModelGroupTable.id }).from(GatewayModelGroupTable).where(inArray(GatewayModelGroupTable.id, groups)) : []
+  const takenSets = sets.length ? await tx.select({ id: GatewayCredentialSetTable.id }).from(GatewayCredentialSetTable).where(inArray(GatewayCredentialSetTable.id, sets)) : []
+  const takenGrants = grants.length ? await tx.select({ id: GatewayProviderAccessTable.id }).from(GatewayProviderAccessTable).where(inArray(GatewayProviderAccessTable.id, grants)) : []
   const free = <T extends string>(ids: T[], taken: Array<{ id: T }>) => new Set(ids.filter((id) => !taken.some((row) => row.id === id)))
   return { models: free(models, takenModels), groups: free(groups, takenGroups), sets: free(sets, takenSets), grants: free(grants, takenGrants) }
 }
 
-/** modelIdKey(modelId) → reusable source model row id, for models this write may insert. */
 async function modelCreateIds(tx: GatewayTx, spec: ResolvedSpec) {
   const free = await freeIds(tx, { models: spec.models.map((model) => model.id), groups: [], sets: [], grants: [] })
   const ids = new Map<string, DenTypeId<"inferenceProviderModel">>()
@@ -355,7 +290,6 @@ async function modelCreateIds(tx: GatewayTx, spec: ResolvedSpec) {
   return ids
 }
 
-/** Models a group or pin may use: within the universe and supported by the provider's SDK (as writeGatewayGroup checks). */
 async function configuredModels(tx: GatewayTx, provider: GatewayProvider) {
   const rows = await tx.select().from(GatewayProviderModelTable).where(eq(GatewayProviderModelTable.gateway_provider_id, provider.id))
   return rows.filter((row) => (!provider.model_ids.length || provider.model_ids.includes(row.model_id)) && !gatewayModelConfigurationError(provider.provider_config, [row.model_config]))
@@ -384,10 +318,8 @@ function credentialInput(set: ResolvedSet, existing: boolean, warnings: string[]
   return { credential, oauthClientSecret, awaitKey }
 }
 
-/** Which parts of a provider an apply writes. A create writes everything. */
 type MatrixScope = { groups: boolean; sets: boolean; access: boolean; touched: ConfigFieldChange[] | null }
 
-/** Writes done inside the provider transaction; `current` is the one running (for a failure report). */
 type TxSteps = { done: ConfigApplyStep[]; current: ConfigApplyStep | null }
 
 async function txStep<T>(steps: TxSteps, step: ConfigApplyStep, write: () => Promise<T>): Promise<T> {
@@ -398,22 +330,10 @@ async function txStep<T>(steps: TxSteps, step: ConfigApplyStep, write: () => Pro
   return result
 }
 
-/**
- * Whether the plan changes this set element (`modelGroups[id=<label>]`: the
- * plan compares groups and sets by `childLabels`). A create (no `touched`) writes all.
- */
 function elementTouched(scope: MatrixScope, array: string, label: string): boolean {
   return scope.touched === null || touches(scope.touched, `${array}[id=${label}]`)
 }
 
-/**
- * Makes the provider's groups, credential sets and grants equal the spec, for
- * the parts in `scope` only. Existing children match by id, then by name
- * (groups and sets) or by (group, set, audience) (grants). A child matched by
- * id is written only when the plan changes it, and then only its changed
- * fields; unmatched existing children are removed. Grants are added and
- * removed one by one, never rewritten.
- */
 async function applyMatrix(tx: GatewayTx, provider: GatewayProvider, spec: ResolvedSpec, trusted: ModelsDevProvider | null, actor: Actor, warnings: string[], scope: MatrixScope, steps: TxSteps) {
   const revoked: Awaited<ReturnType<typeof removeGatewayCredentialSet>> = []
   if (!scope.groups && !scope.sets && !scope.access) return revoked
@@ -500,7 +420,6 @@ async function applyMatrix(tx: GatewayTx, provider: GatewayProvider, spec: Resol
   }
 
   if (scope.sets) {
-    // Sets are checked against the trusted catalog's credential env names, as the set routes do.
     const setProvider: GatewayProvider = trusted ? { ...provider, provider_config: { ...provider.provider_config, env: trusted.env } } : provider
     for (const set of spec.credentialSets) {
       const target = setIds.get(set.id)
@@ -527,7 +446,6 @@ async function applyMatrix(tx: GatewayTx, provider: GatewayProvider, spec: Resol
         ...((row?.oauth_tenant_id ?? null) !== (set.oauthTenantId?.trim().toLowerCase() || null) ? { oauthTenantId: set.oauthTenantId ?? "" } : {}),
         ...(!isDeepStrictEqual(row?.aws_sso ?? null, set.awsSso ?? null) ? { awsSso: set.awsSso } : {}),
         ...(secrets.credential ? { credential: secrets.credential } : {}),
-        // "unset" of a secret that is not stored writes nothing.
         ...(secrets.oauthClientSecret !== undefined && (secrets.oauthClientSecret !== "" || row?.oauth_client_secret) ? { oauthClientSecret: secrets.oauthClientSecret } : {}),
       }
       const fields = Object.keys(input)
@@ -550,11 +468,6 @@ async function applyMatrix(tx: GatewayTx, provider: GatewayProvider, spec: Resol
   return revoked
 }
 
-/**
- * Runs a provider write and reports its steps. The write is one transaction:
- * if it fails nothing was written, so the error lists no steps done, only the
- * step that failed. Upstream revocation runs after commit, as its own step.
- */
 async function runProviderWrite(ctx: ConfigAreaContext, log: ConfigStepLog, id: DenTypeId<"inferenceProvider">, kind: "create" | "update" | "delete", mutate: (tx: GatewayTx, steps: TxSteps) => Promise<Awaited<ReturnType<typeof removeGatewayCredentialSet>>>, options: { lockOrganization?: boolean } = {}) {
   const steps: TxSteps = { done: [], current: null }
   let revoked: Awaited<ReturnType<typeof removeGatewayCredentialSet>>
@@ -636,12 +549,6 @@ async function createProvider(ctx: ConfigAreaContext, log: ConfigStepLog, item: 
   return { localId: id, warnings }
 }
 
-/**
- * Update: only the parts the plan changes are written. Provider fields (name,
- * status, settings, model policy) go through patchGatewayProvider with just the
- * changed fields; a custom provider's settings row is rewritten as one row
- * when any of them changes (its address, catalog and policy are validated together).
- */
 async function updateProvider(ctx: ConfigAreaContext, log: ConfigStepLog, op: Extract<ConfigApplyOp, { kind: "update" }>, spec: ResolvedSpec): Promise<Omit<ConfigApplyResult, "steps">> {
   const actor = actorOf(ctx)
   const item = op.item
@@ -657,7 +564,6 @@ async function updateProvider(ctx: ConfigAreaContext, log: ConfigStepLog, op: Ex
   const [before] = await ctx.db.select().from(GatewayProviderTable).where(and(eq(GatewayProviderTable.id, id), eq(GatewayProviderTable.organization_id, actor.organizationId)))
   if (!before) throw new GatewayWriteError(404, "inference_provider_not_found")
   if (before.provider_id !== spec.providerId) throw failure(`"${item.name}" can't change from provider "${before.provider_id}" to "${spec.providerId}". Create a separate provider instead.`, "providerId")
-  // Catalog I/O happens before any lock, as in the routes.
   const trusted = isGatewayCustomProviderId(before.provider_id) ? null : await trustedProviderCatalog(before)
   await runProviderWrite(ctx, log, id, "update", async (tx, steps) => {
     let provider = await lockProvider(tx, actor, id)
@@ -668,7 +574,6 @@ async function updateProvider(ctx: ConfigAreaContext, log: ConfigStepLog, op: Ex
       const currentUrl = typeof existing.settings.upstreamBaseUrl === "string" ? existing.settings.upstreamBaseUrl : null
       if (!current || !currentUrl) throw new GatewayWriteError(409, "custom_settings_invalid", "This provider's saved settings can't be read. Remove it and add it again.")
       const baseUrl = customBaseUrl(spec.settings.upstreamBaseUrl)
-      // A saved key is never sent to a host it was not saved for.
       if (!sameCustomOrigin(baseUrl, currentUrl) && spec.credentialSets.some((set) => set.credentialMode === "org" && set.credential?.decision !== "value")) {
         throw failure(`"${item.name}" moves to another host; enter its API key again for that address.`, "settings.upstreamBaseUrl")
       }
@@ -720,13 +625,11 @@ async function deleteProvider(ctx: ConfigAreaContext, log: ConfigStepLog, target
   const id = normalizeDenTypeId("inferenceProvider", targetId)
   await runProviderWrite(ctx, log, id, "delete", async (tx, steps) => {
     const provider = await lockProvider(tx, actor, id)
-    // No usage-limit choice: a provider with active usage limits is refused with their list.
     return txStep(steps, { action: "delete", target: "provider", detail: name }, () => removeGatewayProvider(tx, provider, { organizationId: actor.organizationId, memberId: actor.memberId }, undefined))
   }, { lockOrganization: true })
   return { localId: id }
 }
 
-/** The credential set (from a spec) with this id. */
 function specSet(spec: ConfigItem["spec"], id: string): Record<string, unknown> | null {
   const sets = spec.credentialSets
   if (!Array.isArray(sets)) return null
@@ -734,7 +637,6 @@ function specSet(spec: ConfigItem["spec"], id: string): Record<string, unknown> 
   return null
 }
 
-/** A credential set by the label the plan names it with (`childLabels`), else by id. */
 function specSetByLabel(spec: Record<string, unknown>, label: string): Record<string, unknown> | null {
   const labels = childLabels(spec.credentialSets)
   const id = [...labels].find(([, entry]) => entry === label)?.[0] ?? label
@@ -745,7 +647,6 @@ function isPlainRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-/** Plain-language effects a restore can't undo (credential deletion, sign-in revocation, overwritten keys). */
 function irreversible(op: ConfigApplyOp): string[] {
   if (op.kind === "delete") {
     const out = [`The stored keys of "${op.previous.name}" and members' sign-ins to it are deleted (and revoked upstream); keys must be re-entered after a restore.`]
@@ -779,17 +680,6 @@ function irreversible(op: ConfigApplyOp): string[] {
   return [...new Set(out)]
 }
 
-// ---------------------------------------------------------------------------
-// Comparing across organizations
-
-/**
- * Model groups and credential sets keep their row ids in the blob (a move to
- * another instance reuses them, so Gateway aliases survive), but on the same
- * instance an import gives them new ids. Compared, they are told apart by
- * name instead (name and id when two share a name), and access grants name
- * them by that label: a re-import into another organization then matches
- * them, as the apply does (by id, then by name).
- */
 export function childLabels(rows: unknown): Map<string, string> {
   const entries = Array.isArray(rows) ? rows.flatMap((row) => isPlainRecord(row) && typeof row.id === "string" && typeof row.name === "string" ? [{ id: row.id, name: row.name }] : []) : []
   const counts = new Map<string, number>()
@@ -828,12 +718,6 @@ function upstreamBaseUrlOf(spec: Record<string, unknown>): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null
 }
 
-/**
- * A user name, password or query string in `settings.upstreamBaseUrl`
- * (credentials, as the provider routes treat them: they refuse all three),
- * replaced before anything plans with the spec. The problem names the field,
- * never the value.
- */
 export function redactUpstreamCredentials(spec: ConfigSpec): { spec: ConfigSpec; problems: string[] } {
   const settings = spec.settings
   if (typeof settings !== "object" || settings === null || Array.isArray(settings)) return { spec, problems: [] }
@@ -866,10 +750,6 @@ export const aiGatewayProvidersArea = defineConfigArea({
   specSchema: exportSpecSchema,
   dependsOn: ["members.teams", "members.people"],
   deployments: ["cloud", "self_hosted"],
-  // The export holds what GET /v1/inference-providers?scope=manageable only shows to managers
-  // (the upstream address, OAuth client, tenant and AWS IAM Identity Center settings, who is
-  // granted): viewers without Manage Gateway providers get a redacted view there, so the area
-  // is theirs to export only with the manage permission (otherwise it is listed in `omitted`).
   viewPermission: MANAGE,
   managePermission: MANAGE,
   tables: ["gateway_providers", "gateway_provider_models", "gateway_model_groups", "gateway_model_group_models", "gateway_credential_sets", "gateway_provider_access"],
@@ -886,12 +766,11 @@ export const aiGatewayProvidersArea = defineConfigArea({
   orderedArrays: ["pinnedModelIds", "custom.models"],
   arrayKeys: { models: "modelId", "custom.models": "id" },
   comparableSpec,
-  // Catalog reads (models.dev), Google/AWS token revocation and LiteLLM key
-  // deletion happen around the writes, so the engine must not wrap apply in its own transaction.
+  derivedFields: ["credentialSets[].credentialKind"],
+  requiredRefs: ["access[].team", "access[].member"],
   transactional: false,
   externalEffects: true,
   irreversible,
-  // The apply's own rule, earlier: a saved key is never sent to a host it was not saved for.
   async preflight(_ctx, op, info) {
     if (op.kind !== "update" || typeof op.item.spec.providerId !== "string" || !isGatewayCustomProviderId(op.item.spec.providerId)) return null
     const before = upstreamBaseUrlOf(op.previous.spec)

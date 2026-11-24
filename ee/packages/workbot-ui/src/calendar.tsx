@@ -44,20 +44,11 @@ import { workbotHost, useRetainedSurface } from "./host";
 import { CalendarAgenda, QuietMonthDaySummary, QuietTimeGrid, useElementWidth, WorkbotStatusButton, WorkbotWeekPanel } from "./calendar-quiet";
 import { calendarKey, useAutomationModels, useAutomationRuns, useCalendarAction, useCalendarSources, useRunReceipt, useWorkbotAutomations, type AutomationChanges } from "./calendar-data";
 
-/**
- * Workbot's Calendar: the person's Automations next to their meetings, with the selected one's details and
- * Pause / Edit schedule / Run now. Layout and values follow the Paper file "WorkBot — one chat, set up once",
- * page v3, screens 4 and 4b. "Also watching" (event-triggered work) is not shown: Automations have no event
- * triggers yet. "Uses" and "Sends to" are not shown either: nothing records them reliably.
- */
-
 type ListItem = AutomationList["items"][number];
 type Selection = { kind: "automation"; automationId: string; itemKey: string | null } | { kind: "meeting"; key: string } | null;
 
 const PROVIDERS: readonly CalendarProviderId[] = ["google", "microsoft"];
 const timeZone = () => Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC";
-
-/* ── Icons (Paper: 11px in blocks, 13px in lists) ─────────────────────────────────────────────────────────── */
 
 function Check({ size = 11, color = "#30A46C" }: { size?: number; color?: string }) {
   return <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden className="shrink-0"><path d="M20 6 9 17l-5-5" fill="none" stroke={color} strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" /></svg>;
@@ -114,8 +105,6 @@ function MeetingBlock({ event, selected, compact, onSelect }: { event: CalendarE
   );
 }
 
-/* ── Grid ──────────────────────────────────────────────────────────────────────────────────────────────── */
-
 type DayBlock = { key: string; start: number; end: number; kind: "meeting"; event: CalendarEvent };
 
 function blocksForDay(day: LocalDate, zone: string, meetings: readonly CalendarEvent[]): DayBlock[] {
@@ -164,8 +153,6 @@ function MonthGrid(props: { range: CalendarRange; zone: string; now: number; anc
     </div>
   );
 }
-
-/* ── Detail panel ──────────────────────────────────────────────────────────────────────────────────────── */
 
 function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
@@ -265,7 +252,6 @@ function FieldLabel({ children }: { children: ReactNode }) {
   return <span className="text-[12px] font-medium leading-4 text-[#11181C]">{children}</span>;
 }
 
-/** Where it runs, read-only: Workbot creates and keeps Automations in the cloud; desktop ones move from the app. */
 function RunsOnCard({ target }: { target: "desktop" | "cloud" }) {
   return (
     <div className="flex items-start gap-2.5 rounded-lg px-3 py-2.5 shadow-[inset_0_0_0_1px_#0116271A]" data-calendar-runs-on={target}>
@@ -278,10 +264,6 @@ function RunsOnCard({ target }: { target: "desktop" | "cloud" }) {
   );
 }
 
-/**
- * Edit an Automation: what it does, when it repeats, where it runs and its model. Only what changed is sent;
- * Den's Workbot allowlist accepts the name, schedule, instructions and model.
- */
 function EditDialog({ item, busy, onClose, onSave }: { item: ListItem; busy: boolean; onClose: () => void; onSave: (changes: AutomationChanges) => void }) {
   const surface = useRetainedSurface(true);
   const { revision } = item;
@@ -425,7 +407,7 @@ function AutomationPanel({ item, block, zone, onToast, onClose }: { item: ListIt
   );
 }
 
-function MeetingPanel({ event, zone, runs = [], onSelectRun, onClose }: { event: CalendarEvent; zone: string; /** Workbot runs that were about this meeting (`triggerContext.eventId`). */ runs?: AutomationCalendarItem[]; onSelectRun?: (item: AutomationCalendarItem) => void; onClose?: () => void }) {
+function MeetingPanel({ event, zone, runs = [], onSelectRun, onClose }: { event: CalendarEvent; zone: string; runs?: AutomationCalendarItem[]; onSelectRun?: (item: AutomationCalendarItem) => void; onClose?: () => void }) {
   const source = event.provider === "google" ? "Google Calendar" : "Outlook Calendar";
   const when = event.timing.kind === "timed"
     ? `${formatInstant(event.timing.start, zone)} – ${formatTime(event.timing.end, zone)}`
@@ -465,8 +447,6 @@ function MeetingPanel({ event, zone, runs = [], onSelectRun, onClose }: { event:
   );
 }
 
-/* ── Page ──────────────────────────────────────────────────────────────────────────────────────────────── */
-
 function blockedLabel(error: CalendarConnectionError) {
   const name = error.provider === "google" ? "Google Calendar" : "Outlook Calendar";
   if (error.kind === "auth_expired") return `Reconnect ${name}`;
@@ -492,7 +472,6 @@ export function WorkbotCalendar({ connectionsHref, assistantName, onContextChang
   const [selection, setSelection] = useState<Selection>(null);
   const [toast, setToast] = useState<string | null>(null);
   const [creating, setCreating] = useState<CreateAnchor | null>(null);
-  // Meetings own the grid, runs are dots, the Workbot panel opens on demand, narrow widths get an agenda.
 
   const [agenda, setAgenda] = useState(false);
   const [weekPanel, setWeekPanel] = useState(false);
@@ -522,7 +501,6 @@ export function WorkbotCalendar({ connectionsHref, assistantName, onContextChang
     : [], [list.data, now, range, runs.data]);
   const meetings = useMemo(() => [...(google.data?.events ?? []), ...(microsoft.data?.events ?? [])], [google.data, microsoft.data]);
 
-  // The quiet calendar keeps a weekend only for its meetings: runs there are counted in Workbot's panel.
   const days = view === "week" ? weekdaysOnly(range.days, meetings, zone) : range.days;
   const selectedItem = selection?.kind === "automation" ? list.data?.items.find((entry) => entry.automation.id === selection.automationId) ?? null : null;
   const selectedBlock = selection?.kind === "automation" ? items.find((item) => item.key === selection.itemKey) ?? null : null;
@@ -540,8 +518,6 @@ export function WorkbotCalendar({ connectionsHref, assistantName, onContextChang
     const error = meetingQueries[provider].error;
     return error && !(error.kind === "not_connected" && connected.length > 0) && error.kind !== "unsupported";
   });
-  // Both providers can lack a catalog match. Their generic account/settings fallback is shared,
-  // but known accounts must keep their own Connect/Reconnect actions.
   const unverifiedAccounts = connect.connections.isSuccess ? providerStatuses.filter((provider) => {
     const error = meetingQueries[provider].error;
     const nativeProvider = provider === "google" ? "google-workspace" : "microsoft-365";

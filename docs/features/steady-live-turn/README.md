@@ -34,7 +34,7 @@ With the feature on:
 Turn it on for an organization or member in `/admin` › Features, then send a
 prompt that mixes tool calls, a short message and more tool calls. No gap
 appears between the steps and the message, and the Working line does not jump
-up while it runs. The `measure-chat-flicker` skill counts upward jumps.
+up while it runs.
 
 ## Turning it off
 

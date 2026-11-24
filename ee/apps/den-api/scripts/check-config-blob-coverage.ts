@@ -1,15 +1,7 @@
-// Enforces the config-blobs guard rail (docs/features/config-blobs/plan.md):
-// every org-scoped table in den-db is either owned by exactly one config area
-// (`ConfigArea.tables` in src/config-blobs/registry.ts) or listed in
-// src/config-blobs/excluded.ts with a reason. Never both.
-//   pnpm --filter @openwork-ee/den-api config-blobs:coverage
-
 function setEnvDefault(name: string, value: string) {
   if (!process.env[name]?.trim()) process.env[name] = value
 }
 
-// Area adapters import den-api modules that validate env on import; nothing
-// here touches the database.
 setEnvDefault("OPENWORK_DEV_MODE", "1")
 setEnvDefault("DB_MODE", "mysql")
 setEnvDefault("DATABASE_URL", "mysql://root:password@127.0.0.1:3306/openwork_den")
@@ -83,5 +75,4 @@ try {
   console.error(error)
   code = 1
 }
-// Area modules may open pools on import; exit explicitly.
 process.exit(code)

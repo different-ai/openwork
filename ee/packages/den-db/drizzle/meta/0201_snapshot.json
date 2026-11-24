@@ -1,7 +1,7 @@
 {
   "version": "5",
   "dialect": "mysql",
-  "id": "5bafe74f-d527-4f06-8a74-e74911a1c904",
+  "id": "ea7a336a-2674-4158-b9ac-5074a710e535",
   "prevId": "9ff17d7e-e5a9-4aef-af32-986b5aaf042d",
   "tables": {
     "admin_metric_refresh_lease": {
@@ -10649,25 +10649,11 @@
           "notNull": true,
           "autoincrement": false
         },
-        "session_id": {
-          "name": "session_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
-        "organization_id": {
-          "name": "organization_id",
-          "type": "varchar(64)",
-          "primaryKey": false,
-          "notNull": false,
-          "autoincrement": false
-        },
         "session_token": {
           "name": "session_token",
           "type": "text",
           "primaryKey": false,
-          "notNull": false,
+          "notNull": true,
           "autoincrement": false
         },
         "expires_at": {
@@ -16843,6 +16829,13 @@
           "notNull": true,
           "autoincrement": false
         },
+        "external_key": {
+          "name": "external_key",
+          "type": "varchar(128)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "object_type": {
           "name": "object_type",
           "type": "enum('skill','agent','command','tool','mcp','hook','context','custom','script','workflow','app')",
@@ -16952,6 +16945,14 @@
             "organization_id"
           ],
           "isUnique": false
+        },
+        "config_object_org_external_key": {
+          "name": "config_object_org_external_key",
+          "columns": [
+            "organization_id",
+            "external_key"
+          ],
+          "isUnique": true
         },
         "config_object_type": {
           "name": "config_object_type",
@@ -19114,6 +19115,13 @@
           "notNull": true,
           "autoincrement": false
         },
+        "external_key": {
+          "name": "external_key",
+          "type": "varchar(128)",
+          "primaryKey": false,
+          "notNull": false,
+          "autoincrement": false
+        },
         "name": {
           "name": "name",
           "type": "varchar(255)",
@@ -19195,6 +19203,14 @@
             "organization_id"
           ],
           "isUnique": false
+        },
+        "plugin_org_external_key": {
+          "name": "plugin_org_external_key",
+          "columns": [
+            "organization_id",
+            "external_key"
+          ],
+          "isUnique": true
         },
         "plugin_created_by_org_membership_id": {
           "name": "plugin_created_by_org_membership_id",

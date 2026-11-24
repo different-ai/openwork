@@ -7,11 +7,9 @@ import type { ModelRef } from "@/app/types";
 
 import { followUpExchange, followUpPrompt, parseFollowUpSuggestion } from "./follow-up-suggestion";
 
-/** A reply is asked about once the chat has stayed settled this long, so steps of one turn never trigger it. */
 const SETTLE_MS = 600;
 const REMEMBERED_CHATS = 50;
 
-/** The answer for each chat's latest reply (null: nothing to suggest), so reopening a chat asks nothing again. */
 const answers = new Map<string, { replyId: string; suggestion: string | null }>();
 
 function remember(sessionId: string, replyId: string, suggestion: string | null) {
@@ -21,18 +19,11 @@ function remember(sessionId: string, replyId: string, suggestion: string | null)
   if (answers.size > REMEMBERED_CHATS && !oldest.done) answers.delete(oldest.value);
 }
 
-/**
- * A suggested next message for the chat's latest reply (feature
- * `followUpSuggestions`), or null. It is asked for only after a reply that
- * finished while this chat was open, never for history that is just being
- * read, and one small-model request is made per reply.
- */
 export function useFollowUpSuggestion(input: {
   enabled: boolean;
   client: ReturnType<typeof createClient>;
   sessionId: string;
   messages: readonly UIMessage[];
-  /** Nothing is running, queued or waiting on the person. */
   settled: boolean;
   model: ModelRef;
 }): string | null {
@@ -53,7 +44,6 @@ export function useFollowUpSuggestion(input: {
     const timer = setTimeout(() => {
       const current = exchangeRef.current;
       if (!current || current.replyId !== replyId) return;
-      // Any failure means no suggestion: the composer keeps its usual placeholder.
       void client.generateWithSmallModel({ prompt: followUpPrompt(current), model: { providerID, modelID } }, { signal: controller.signal })
         .then((result) => result.data ? parseFollowUpSuggestion(result.data.text) : null, () => null)
         .then((suggestion) => {

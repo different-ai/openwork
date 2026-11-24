@@ -7,7 +7,6 @@ export const TYPE_ID_SUFFIX_LENGTH = 26
 
 const BASE32_REGEX = /^[0-9a-hjkmnp-tv-z]+$/
 
-// TypeID prefixes are persisted in DB rows; append new entries instead of changing existing values.
 export const idTypesMapNameToPrefix = {
   request: "req",
   user: "usr",
@@ -153,6 +152,7 @@ export const idTypesMapNameToPrefix = {
   workbotUsageDay: "wud",
   remoteDevice: "rdv",
   remoteDeviceEvent: "rde",
+  automationShare: "ats",
 } as const
 
 export const denTypeIdPrefixes = idTypesMapNameToPrefix

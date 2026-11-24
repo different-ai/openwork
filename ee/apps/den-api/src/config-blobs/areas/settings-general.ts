@@ -1,21 +1,3 @@
-/**
- * Config-blob area `settings.general`: one item holding the organization's
- * general settings that can move between organizations.
- *
- * - Carried: allowed email domains, allowed desktop versions, which kinds of
- *   Automations are allowed, and the legacy `desktopAppRestrictions` (read
- *   only: Desktop policies replaced it and nothing writes it any more).
- * - Never carried: name, slug, SSO requirements, session settings and the
- *   ceiling on which sessions of members' computers other devices may reach
- *   (`remoteSessions`). They are the target organization's identity, sign-in
- *   and access policy (decision D5): an import never widens them.
- * - The item id is the organization id; it matches across organizations by
- *   its natural key (there is always exactly one). A "create" therefore
- *   updates the target's settings, and delete is refused.
- * - Apply goes through PATCH /v1/org's own function (routes/org/core.ts
- *   updateOrganizationAction: domain validation, the plan check for version
- *   pinning) and the Automation settings service.
- */
 import { eq } from "@openwork-ee/den-db/drizzle"
 import { OrganizationTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -37,12 +19,9 @@ const ITEM_NAME = "General settings"
 const NATURAL_KEY = "organization"
 
 const generalSpecSchema = z.object({
-  /** Null: anyone can be invited. */
   allowedEmailDomains: z.array(z.string().min(1).max(255)).max(100).nullable(),
-  /** Null: every desktop version may connect. */
   allowedDesktopVersions: z.array(z.string().min(1).max(32)).max(200).nullable(),
   automations: z.object({ desktop: z.boolean(), cloud: z.boolean() }).strict(),
-  /** Legacy, read only. Replaced by Desktop policies. */
   desktopAppRestrictions: desktopAppRestrictionsSchema.strict(),
 }).strict()
 
@@ -57,7 +36,6 @@ function sameList(left: readonly string[] | null, right: readonly string[] | nul
   return JSON.stringify(sortedOrNull(left)) === JSON.stringify(sortedOrNull(right))
 }
 
-/** The route's own permission marker (orgPermissionRoute), which the in-process call does not run. */
 async function requireActorPermission(ctx: ConfigAreaContext, key: PermissionKey) {
   const held = await resolvePermissionsForMember({
     organizationId: normalizeDenTypeId("organization", ctx.organizationId),
@@ -93,11 +71,9 @@ export const settingsGeneralArea = defineConfigArea({
   deployments: ["cloud", "self_hosted"],
   viewPermission: "organization.update",
   managePermission: "organization.update",
-  // organization: allowed_email_domains, desktop_app_restrictions and metadata (allowedDesktopVersions, automations).
   tables: ["organization"],
   naturalKeys: [{ label: "organization", get: () => NATURAL_KEY }],
   secretFields: [],
-  // updateOrganizationSettings / updateOrganizationMetadata open their own transactions on the global db.
   transactional: false,
   protectedFromDelete: () => "Organization settings can't be deleted.",
 
@@ -117,14 +93,12 @@ export const settingsGeneralArea = defineConfigArea({
       const current = await readSpec(ctx)
       const warnings: string[] = []
       const localId = ctx.organizationId
-      // A create (the one settings item matched nothing) compares every field with the target.
       const inScope = (path: string) => op.kind === "create" || touches(op.changes, path)
 
       const domainsChange = inScope("allowedEmailDomains") && !sameList(current.allowedEmailDomains, next.allowedEmailDomains)
       const versionsChange = inScope("allowedDesktopVersions") && !sameList(current.allowedDesktopVersions, next.allowedDesktopVersions)
       if (domainsChange || versionsChange) {
         const { c, payload } = await configRouteContext(ctx)
-        // PATCH /v1/org with only the changed setting: the other one is not resent.
         if (domainsChange) {
           await log.run({ action: "set", target: "allowedEmailDomains", detail: next.allowedEmailDomains?.join(", ") ?? "anyone" }, async () => {
             await expectRouteOk(await updateOrganizationAction(c, payload, { allowedEmailDomains: next.allowedEmailDomains }), "Update allowed email domains")
@@ -146,7 +120,6 @@ export const settingsGeneralArea = defineConfigArea({
           : automationChanges.cloud !== undefined && automationChanges.desktop === undefined ? "automations.cloud"
           : "automations"
         await log.run({ action: "set", target: field, detail: Object.entries(automationChanges).map(([kind, on]) => `${kind} ${on ? "on" : "off"}`).join(", ") }, async () => {
-          // Only the kinds that change: turning Cloud on needs the deployment's headless runner.
           const saved = await saveOrganizationAutomationSettings(normalizeDenTypeId("organization", ctx.organizationId), automationChanges)
           if (!saved.ok) throw new ConfigApplyError(saved.error, saved.message, 409)
         }, field)

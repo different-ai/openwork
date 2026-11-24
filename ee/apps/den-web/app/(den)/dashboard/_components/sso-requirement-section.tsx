@@ -2,9 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { SsoSessionRequiredError } from "../../_lib/den-flow";
+import { readOrganizationSsoPolicy } from "@openwork-ee/den-sso";
 import {
   getOrgAccessFlags,
-  getSsoSettingsFromMetadata,
   permissionLockReason,
 } from "../../_lib/den-org";
 import { ssoSettingsChanges, type SsoSettings } from "../../_lib/sso-settings";
@@ -15,7 +15,6 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { EnterprisePlanNotice } from "./enterprise-plan-notice";
 import { SsoRequirementFields, ssoRequirementDescription } from "./sso-requirement-fields";
 
-/** SSO › Authentication: whether members must sign in with this organization's SSO. */
 export function SsoRequirementSection() {
   const { orgContext, mutationBusy, updateOrganizationSettings } = useOrgDashboard();
   const [draft, setDraft] = useState<SsoSettings>({ requireSso: false, restrictDomainToSso: false });
@@ -28,7 +27,7 @@ export function SsoRequirementSection() {
       return;
     }
 
-    setDraft(getSsoSettingsFromMetadata(orgContext.organization.metadata));
+    setDraft(readOrganizationSsoPolicy(orgContext.organization.metadata));
   }, [orgContext]);
 
   if (!orgContext) {
@@ -41,7 +40,7 @@ export function SsoRequirementSection() {
     orgContext.currentMember.permissions,
   ).canManageSettings;
   const changes = ssoSettingsChanges({
-    saved: getSsoSettingsFromMetadata(orgContext.organization.metadata),
+    saved: readOrganizationSsoPolicy(orgContext.organization.metadata),
     draft,
   });
   const dirty = Object.keys(changes).length > 0;

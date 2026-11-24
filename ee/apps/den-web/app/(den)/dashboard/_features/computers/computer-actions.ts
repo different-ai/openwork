@@ -1,19 +1,10 @@
 import type { RemoteDevice } from "@openwork/types/den/remote-devices";
 import { FORMER_MEMBER_LABEL, isFormerOwner, type OrganizationComputer } from "./computers-format";
 
-/*
- * What a person can do to a computer from Den, and the exact words for it.
- * Kept apart from React so the copy and the rules can be tested on their own.
- *
- * Disconnect: Den stops accepting a signed-in desktop as its member's computer
- * and, where it can, signs OpenWork out there. Remove: the entry leaves the
- * list and nothing else happens. Rename: the owner's own label.
- */
 export type ComputerAction = "rename" | "disconnect" | "remove";
 
 export type ConfirmCopy = { title: string; description: string; action: string };
 
-/** A member's own list: every action Den says they may take, in menu order. */
 export function myComputerActions(device: Pick<RemoteDevice, "canRename" | "canDisconnect" | "canRemove">): ComputerAction[] {
   return [
     ...(device.canRename ? ["rename" as const] : []),
@@ -22,7 +13,6 @@ export function myComputerActions(device: Pick<RemoteDevice, "canRename" | "canD
   ];
 }
 
-/** The team list: an admin disconnects and removes, and never renames someone else's computer. */
 export function teamComputerActions(device: Pick<OrganizationComputer, "canDisconnect" | "canRemove">): ComputerAction[] {
   return [
     ...(device.canDisconnect ? ["disconnect" as const] : []),
@@ -30,10 +20,6 @@ export function teamComputerActions(device: Pick<OrganizationComputer, "canDisco
   ];
 }
 
-/**
- * A connected desktop the viewer could disconnect with the "Disconnect team
- * computers" permission: shown with a lock and the reason rather than with nothing.
- */
 export function disconnectLocked(
   device: Pick<OrganizationComputer, "kind" | "disconnectedAt" | "removedAt" | "canDisconnect" | "canRemove">,
   canDisconnectComputers: boolean,
@@ -44,18 +30,15 @@ export function disconnectLocked(
 
 export const DISCONNECT_OWNER_BODY = "OpenWork on that computer is signed out and it stops taking tasks and sharing sessions. Sign in on it again to reconnect it.";
 
-/** The owner disconnecting their own computer. */
 export function disconnectOwnConfirm(name: string): ConfirmCopy {
   return { title: `Disconnect ${name}?`, description: DISCONNECT_OWNER_BODY, action: "Disconnect" };
 }
 
-/** Whose OpenWork an admin signs out, as the confirm names them: a name, an address, or "A former member". */
 export function disconnectOwnerName(device: Pick<OrganizationComputer, "owner" | "shared">): string {
   if (isFormerOwner(device)) return `A ${FORMER_MEMBER_LABEL.toLowerCase()}`;
   return device.owner?.name?.trim() || device.owner?.email?.trim() || `A ${FORMER_MEMBER_LABEL.toLowerCase()}`;
 }
 
-/** An admin disconnecting a member's computer from the organization. */
 export function disconnectTeamConfirm(name: string, owner: string, organization: string): ConfirmCopy {
   return {
     title: `Disconnect ${name}?`,
@@ -68,14 +51,12 @@ export function removeConfirm(name: string): ConfirmCopy {
   return { title: `Remove ${name} from the list?`, description: "This only removes the entry. It doesn't stop or delete the computer.", action: "Remove" };
 }
 
-/** What happened, from what Den reports: it never says the app was signed out when it was not. */
 export function disconnectedMessage(signedOut: boolean): { title: string; description: string } {
   return signedOut
     ? { title: "Disconnected", description: "OpenWork was signed out on that computer." }
     : { title: "Disconnected", description: "It can't act as a computer until someone signs in on it again." };
 }
 
-/** The same, as one line. */
 export function disconnectedLine(signedOut: boolean): string {
   const message = disconnectedMessage(signedOut);
   return `${message.title}. ${message.description}`;
@@ -87,10 +68,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 const ACTION_VERBS: Record<ComputerAction, string> = { rename: "rename", disconnect: "disconnect", remove: "remove" };
 
-/**
- * Why an action was refused. Den's own sentence when it sent one; otherwise a
- * plain line for the status. A bare error code is never shown.
- */
 export function computerActionError(action: ComputerAction, status: number, payload: unknown): string {
   const message = isRecord(payload) && typeof payload.message === "string" ? payload.message.trim() : "";
   if (message) return message;

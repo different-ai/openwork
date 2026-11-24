@@ -12,20 +12,16 @@ function memoryKey(userId: string): string | null {
   return `${LAST_ORGANIZATION_PREFIX}${JSON.stringify([window.location.origin, userId])}`;
 }
 
-/** A non-secret account preference, deliberately retained when credentials are cleared. */
 export function rememberOrganization(userId: string, organizationId: string): void {
   const key = memoryKey(userId);
   const id = organizationId.trim();
   if (!key || !id) return;
   try {
-    // Never persist names, membership details, tokens, or a guessed first organization.
     window.localStorage.setItem(key, id);
   } catch {
-    // Storage restrictions must not prevent an acknowledged organization switch.
   }
 }
 
-/** Save an explicit choice immediately after its acknowledgement, not after loading details. */
 export async function setActiveOrganizationAndRemember(input: {
   userId: string;
   organizationId: string;
@@ -49,11 +45,6 @@ export function readRememberedOrganization(userId: string): string | null {
   }
 }
 
-/**
- * The directory must come from the current authenticated session. A stored ID
- * never leaves the browser until that directory confirms current membership.
- * Failed validation keeps the preference but falls back to the normal picker.
- */
 export async function restoreRememberedOrganization(input: {
   userId: string;
   organizations: readonly DenOrgSummary[];
@@ -71,7 +62,6 @@ export async function restoreRememberedOrganization(input: {
     if (!input.isCurrent() || context?.organization.id !== organization.id
       || context.currentMember.userId !== input.userId) return null;
 
-    // Publish nothing locally until the server acknowledges the new session choice.
     await input.setActive(organization.id);
     return input.isCurrent() ? organization : null;
   } catch {

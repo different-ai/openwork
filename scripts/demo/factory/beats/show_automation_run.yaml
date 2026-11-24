@@ -1,0 +1,22 @@
+id: show_automation_run
+title: Show a completed Automation run
+surface: desktop
+label: REAL
+status: grounded
+requires: [employee_connected, automation_retained]
+do:
+  - {type: open_sidebar, item: Automations}
+  - {type: click, role: button, name: '{{retained_automation}}', match: contains, pick: last}
+  - {type: show, seconds: 25}
+say: This schedule already had a successful manual run. The schedule and the receipt are separate things.
+paste: {}
+see: An active weekly schedule, Monday at 08:00 Pacific, and a Completed manual entry in run history.
+checks:
+  - {type: automation_exists, name: '{{retained_automation}}', state: active}
+  - {type: automation_run_exists, name: '{{retained_automation}}', status: succeeded}
+reset: []
+fallback: Show the retained receipt from rehearsal, not an unverified fresh run.
+expect_seconds: 55
+questions:
+  - {question: Did the weekly schedule itself fire?, answer: 'This receipt is from a manual run. It proves execution, not scheduled delivery.'}
+avoid: [Do not click Run now or the old local output link.]

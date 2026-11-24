@@ -1,12 +1,3 @@
-/**
- * Typed helpers for OpenCode session operations.
- *
- * The OpenCode SDK (v2) exposes `session.abort`, `session.revert`,
- * `session.unrevert`, `session.shell`, and `command.list` as typed methods.
- * This module provides thin wrappers that avoid `as any` casts by using the
- * SDK types directly, and adds feature-detection for newer API surface
- * (e.g. `shellAsync`) that may not be present in older SDK versions.
- */
 import type { Session } from "@opencode-ai/sdk/v2/client";
 import type { Client, ModelRef } from "../types";
 import { isOpencodeV2Client } from "./opencode-v2-adapter";
@@ -36,21 +27,6 @@ function logAbortSession(
   });
 }
 
-// ---------------------------------------------------------------------------
-// Session helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Abort an active session. Resolves to the server's answer: `true` when a
- * live run was aborted, `false` when nothing matched (already idle, or the
- * session lives in a different project/directory scope). Callers that show
- * "stopped" feedback must check the result — a `200: false` response is NOT
- * a successful stop (#2014).
- *
- * Pass the workspace `directory` whenever the prompt was sent through a
- * directory-scoped client; omitting it can resolve the abort against the
- * server's default project where no matching run exists.
- */
 export async function abortSession(
   client: Client,
   sessionID: string,
@@ -70,11 +46,6 @@ export async function abortSession(
   }
 }
 
-/**
- * Abort an active session, swallowing transport errors (useful before
- * revert/undo). Returns `false` when the abort failed or nothing was
- * aborted, so callers can avoid declaring success on a no-op.
- */
 export async function abortSessionSafe(
   client: Client,
   sessionID: string,
@@ -84,15 +55,10 @@ export async function abortSessionSafe(
   try {
     return await abortSession(client, sessionID, directory, logContext);
   } catch {
-    // The session may already be idle or the server unreachable; callers
-    // treat `false` as "nothing was aborted".
     return false;
   }
 }
 
-/**
- * Revert a session to a specific message boundary.
- */
 export async function revertSession(
   client: Client,
   sessionID: string,
@@ -101,9 +67,6 @@ export async function revertSession(
   return unwrap(await client.session.revert({ sessionID, messageID })) as Session;
 }
 
-/**
- * Fork a session at a specific message, creating a new session branch.
- */
 export async function forkSession(
   client: Client,
   sessionID: string,
@@ -112,9 +75,6 @@ export async function forkSession(
   return unwrap(await client.session.fork({ sessionID, messageID })) as Session;
 }
 
-/**
- * Restore all previously reverted messages in a session.
- */
 export async function unrevertSession(
   client: Client,
   sessionID: string,
@@ -122,14 +82,6 @@ export async function unrevertSession(
   return unwrap(await client.session.unrevert({ sessionID })) as Session;
 }
 
-/**
- * Archive or unarchive a session via OpenCode's native `time.archived` field.
- *
- * Passing `archived: true` stamps the current time; `false` clears it (sends
- * `0`, which the server treats as "not archived"). Archiving is a non-destructive
- * primitive — the session and its context are preserved, which matters for orgs
- * with audit/retention policies that forbid deletion.
- */
 export async function setSessionArchived(
   client: Client,
   sessionID: string,
@@ -146,13 +98,6 @@ export async function setSessionArchived(
   );
 }
 
-/**
- * Set the exact model bound to an existing session without sending a prompt.
- *
- * OpenCode v2 persists this through the canonical `/api/session/:id/model`
- * endpoint, so future sends and reopened sessions use the replacement binding.
- * Older clients have no equivalent standalone mutation and fail closed.
- */
 export async function setSessionModel(
   client: Client,
   sessionID: string,
@@ -186,14 +131,6 @@ export async function setSessionModel(
   }
 }
 
-// ---------------------------------------------------------------------------
-// Shell execution
-// ---------------------------------------------------------------------------
-
-/**
- * Execute a shell command in a session. Uses `shell` from the SDK.
- * Falls back to `promptAsync` with a `!` prefix if `shell` is unavailable.
- */
 export async function shellInSession(
   client: Client,
   sessionID: string,
@@ -203,10 +140,6 @@ export async function shellInSession(
   const result = await client.session.shell({ sessionID, command, messageID: options?.messageID });
   assertNoClientError(result);
 }
-
-// ---------------------------------------------------------------------------
-// Command listing
-// ---------------------------------------------------------------------------
 
 export type CommandListItem = {
   id: string;
@@ -220,9 +153,6 @@ export type CommandListItem = {
   subtask?: boolean;
 };
 
-/**
- * List available slash commands for a workspace.
- */
 export async function listCommands(
   client: Client,
   directory?: string,
@@ -248,10 +178,6 @@ export async function listCommands(
     return [];
   }
 }
-
-// ---------------------------------------------------------------------------
-// Internal
-// ---------------------------------------------------------------------------
 
 function assertNoClientError(result: unknown): void {
   const maybe = result as { error?: unknown } | null | undefined;

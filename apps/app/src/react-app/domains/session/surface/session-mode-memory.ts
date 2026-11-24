@@ -44,7 +44,6 @@ export const useSessionAgentStore = create<SessionAgentStore>((set) => ({
     try {
       if (typeof window !== "undefined") window.localStorage.setItem(STORAGE_KEY, JSON.stringify(bySessionId));
     } catch {
-      // Keep the in-memory choice when storage is unavailable.
     }
     return { bySessionId };
   }),
@@ -64,8 +63,6 @@ export function useSessionAgentSelection(input: {
   const selection = useSessionAgentStore((state) => sessionId && Object.hasOwn(state.bySessionId, sessionId)
     ? state.bySessionId[sessionId]
     : undefined);
-  // Adopt the existing preference once, not whenever another new task changes it.
-  // A remembered null is an explicit Default choice, not missing memory.
   useEffect(() => {
     if (!sessionId) return;
     const store = useSessionAgentStore.getState();

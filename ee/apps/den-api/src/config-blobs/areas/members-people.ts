@@ -1,37 +1,3 @@
-/**
- * Config-blob area `members.people`: the organization's people (decision D2):
- * members, pending invitations, their role and the teams they are in.
- *
- * Identity: one item per person, matched by lower-cased email. The item id is
- * the member id (`om_…`), for invited people too (every invitation has a
- * placeholder member row holding its role and teams); an invitation without a
- * placeholder (older rows) uses the invitation id. Never exported: invite
- * tokens, sessions, accounts, passwords, user ids.
- *
- * Spec: `email`, direct `role`, `status` (active | invited), `teams` (refs to
- * `members.teams`) and `managedBy` (scim | sso | manual, informational).
- * Permission sets are NOT a per-person field: a person's permissions follow
- * from their role and teams (`members.roles` carries which teams have which
- * role), so exporting them per person would duplicate derived state.
- *
- * Apply, through the routes' own functions with an in-process route context:
- * - create: someone not in the organization is INVITED
- *   (routes/org/invitations.ts createInvitationAction), whether or not they
- *   already have an account on this instance. Adding an existing account
- *   straight into an organization would skip the explicit-accept / email
- *   verification boundary Den keeps for cross-organization joins
- *   (orgs.ts reconcilePendingInvitationsForUser), so a person with an account
- *   gets a pending invitation too. Invitations are SILENT unless the engine
- *   sets `spec.__sendInviteEmail: true` on the resolved item (from the
- *   request's `decisions.people.sendInviteEmails`). Allowed email domains,
- *   seats and role rules are enforced by the invitation action.
- * - update: role via updateMemberRoleAction (members) or a silent refresh of
- *   the invitation (invited); team membership via the team routes' updateTeam.
- * - delete: removeMemberAction (members) or cancelInvitationAction (invited).
- *   Never the person applying, never the owner (protectedFromDelete), and the
- *   member services keep their own last-owner and role guards.
- * - People managed by the target's SCIM provider are refused with a reason.
- */
 import { and, asc, eq, inArray, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
   AuthAccountTable,
@@ -46,15 +12,19 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
+import { invitationBillingUrl } from "../../agent-links.js"
 import { currentAuditChangeCapture } from "../../audit/request-capture.js"
 import { roleIncludesOwner } from "../../organization-member-guards.js"
+import { freePlanLimitReachedMessage, planLimitReachedMessage } from "../../organization-plan.js"
 import { isEmailAllowedForOrganization } from "../../orgs.js"
 import { ORGANIZATION_ADMIN_ROLE, normalizeOrganizationRoleName, splitOrganizationRoles } from "../../organization-role-hierarchy.js"
 import { cancelInvitationAction, createInvitationAction } from "../../routes/org/invitations.js"
 import { removeMemberAction, updateMemberRoleAction } from "../../routes/org/members.js"
 import { updateTeam } from "../../routes/org/teams.js"
 import { getScimManagedTeamIds } from "../../scim-groups.js"
+import { getOrganizationSeatAddEligibility } from "../../stripe-billing.js"
 import { defineConfigArea, type ConfigApplyOp, type ConfigAreaContext, type ConfigItem, type ConfigPreflightResult } from "../area.js"
+import { normalizeName } from "../engine/match.js"
 import { SEND_INVITE_EMAIL_FIELD } from "../engine/refs.js"
 import {
   ConfigApplyError,
@@ -78,12 +48,9 @@ export { SEND_INVITE_EMAIL_FIELD }
 
 const personSpecSchema = z.object({
   email: z.string().email().max(255),
-  /** The member's direct role (`member`, `admin`, `super-admin`, `owner`). Admin through an Admin team comes from `teams`. */
   role: z.string().min(1).max(255),
-  /** Informational (an import only ever invites). Hand-written blobs may leave it out. */
   status: z.enum(["active", "invited"]).default("invited"),
   teams: z.array(specRefSchema).max(500).default([]),
-  /** Informational: who owns this person on the source. Hand-written blobs may leave it out. */
   managedBy: z.enum(["manual", "sso", "scim"]).default("manual"),
 }).strict()
 
@@ -118,9 +85,6 @@ function preferredMemberId(id: string | undefined) {
   }
 }
 
-// ---------------------------------------------------------------------------
-// Reads
-
 type PersonRow = {
   memberId: string | null
   invitationId: string | null
@@ -131,7 +95,6 @@ type PersonRow = {
   status: "active" | "invited"
 }
 
-/** Provider ids of the organization's SCIM and SSO connections. */
 async function identityProviders(ctx: ConfigAreaContext) {
   const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
   const [scim, sso] = await Promise.all([
@@ -157,12 +120,6 @@ async function managedByUsers(ctx: ConfigAreaContext, userIds: readonly string[]
   return out
 }
 
-/**
- * Members (people, not setup agents) and pending invitations, one row per person.
- * `ids` reads just those items: member ids with one query; an invitation-only
- * item (`inv_…`, older rows) needs the whole list to tell it apart from a member
- * with the same email, so its presence falls back to the full read, filtered.
- */
 async function listPeople(ctx: ConfigAreaContext, ids: readonly string[] | null = null): Promise<PersonRow[]> {
   if (ids) {
     const memberIds = ids.flatMap((id) => preferredMemberId(id) ?? [])
@@ -213,7 +170,6 @@ async function listPeopleRows(ctx: ConfigAreaContext, memberIds: readonly Member
   return { people, coveredInvitations }
 }
 
-/** Adds pending invitations that have no placeholder member (older rows). */
 async function withInvitationOnlyPeople(ctx: ConfigAreaContext, people: PersonRow[], coveredInvitations: Set<string>): Promise<PersonRow[]> {
   const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
   const invitations = await ctx.db
@@ -248,7 +204,6 @@ async function teamIdsByMember(ctx: ConfigAreaContext, memberIds: readonly strin
   return out
 }
 
-/** The target row behind an item id: a member (placeholder members included) or an invitation without one. */
 async function readTarget(ctx: ConfigAreaContext, targetId: string): Promise<PersonRow | null> {
   const id = targetId.trim()
   return (await listPeople(ctx, [id])).find((person) => person.memberId === id || person.invitationId === id) ?? null
@@ -281,9 +236,6 @@ async function activeMemberByEmail(ctx: ConfigAreaContext, email: string): Promi
   return row?.id ?? null
 }
 
-// ---------------------------------------------------------------------------
-// Writes
-
 async function actorUser(ctx: ConfigAreaContext) {
   const [user] = await ctx.db
     .select({ id: AuthUserTable.id, name: AuthUserTable.name, email: AuthUserTable.email })
@@ -294,7 +246,6 @@ async function actorUser(ctx: ConfigAreaContext) {
   return user
 }
 
-/** Invites (or silently refreshes the invitation of) `email` with `role`. Returns the placeholder member id. */
 async function invite(ctx: ConfigAreaContext, rc: ConfigRouteContext, input: { email: string; role: string; sendEmail: boolean; memberId?: string }) {
   const response = await createInvitationAction(rc.c, rc.payload, await actorUser(ctx), { email: input.email, role: input.role }, currentAuditChangeCapture(ctx.organizationId), {
     sendEmail: input.sendEmail,
@@ -305,13 +256,6 @@ async function invite(ctx: ConfigAreaContext, rc: ConfigRouteContext, input: { e
   return { invitationId, memberId: await memberIdForInvitation(ctx, invitationId) }
 }
 
-/**
- * Puts the member in exactly `wanted` teams through the team route's
- * updateTeam (Admin-team and grant rules included). Only teams whose
- * membership changes are written, one step each; updateTeam writes only this
- * person's membership row. Teams managed by SCIM are left alone with a
- * warning: the identity provider owns their members.
- */
 async function syncTeams(ctx: ConfigAreaContext, rc: ConfigRouteContext, log: ConfigStepLog, memberId: string, wanted: readonly string[], label: string, teamNames: Map<string, string>): Promise<string[]> {
   const warnings: string[] = []
   const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
@@ -340,7 +284,6 @@ async function syncTeams(ctx: ConfigAreaContext, rc: ConfigRouteContext, log: Co
   return warnings
 }
 
-/** Team names from the resolved refs' name hints, for step details. */
 function refTeamNames(refs: unknown): Map<string, string> {
   const out = new Map<string, string>()
   if (!Array.isArray(refs)) return out
@@ -361,12 +304,8 @@ function sendsInviteEmail(spec: { [key: string]: unknown }): boolean {
   return spec[SEND_INVITE_EMAIL_FIELD] === true
 }
 
-// ---------------------------------------------------------------------------
-// Preflight
-
 type InviteRules = { allowedEmailDomains: string[]; scim: boolean }
 
-/** One read per plan: preflight runs once per person with the same context. */
 const inviteRules = new WeakMap<ConfigAreaContext, Promise<InviteRules>>()
 
 function readInviteRules(ctx: ConfigAreaContext): Promise<InviteRules> {
@@ -382,8 +321,58 @@ function readInviteRules(ctx: ConfigAreaContext): Promise<InviteRules> {
   return loading
 }
 
-/** The invitation action's own rules, before apply: allowed email domains and SCIM-provisioned people. */
+type SeatBudget = { left: number | null; refusal: string }
+
+const seatBudgets = new WeakMap<ConfigAreaContext, Promise<SeatBudget>>()
+
+function readSeatBudget(ctx: ConfigAreaContext): Promise<SeatBudget> {
+  const cached = seatBudgets.get(ctx)
+  if (cached) return cached
+  const loading = (async () => {
+    const eligibility = await getOrganizationSeatAddEligibility(normalizeDenTypeId("organization", ctx.organizationId))
+    const { plan } = eligibility
+    return {
+      left: plan.userLimit === null ? null : Math.max(0, plan.userLimit - plan.users),
+      refusal: plan.seats !== null ? planLimitReachedMessage(plan) : freePlanLimitReachedMessage(eligibility.freeSeatCount, invitationBillingUrl()),
+    }
+  })()
+  seatBudgets.set(ctx, loading)
+  return loading
+}
+
+async function seatPreflight(ctx: ConfigAreaContext, email: string): Promise<ConfigPreflightResult | null> {
+  const budget = await readSeatBudget(ctx)
+  if (budget.left === null) return null
+  if (await activeMemberByEmail(ctx, email)) return null
+  if (budget.left > 0) {
+    budget.left -= 1
+    return null
+  }
+  return { block: `${email} can't be invited: there is no seat left for them. ${budget.refusal} Or skip this person (or another person this file invites, to give them the seat).` }
+}
+
+function ownershipPreflight(op: ConfigApplyOp & { kind: "update" }): ConfigPreflightResult | null {
+  if (!touches(op.changes, "role")) return null
+  const wanted = typeof op.item.spec.role === "string" ? op.item.spec.role : ""
+  const current = typeof op.previous.spec.role === "string" ? op.previous.spec.role : ""
+  if (roleIncludesOwner(wanted) === roleIncludesOwner(current)) return null
+  const email = emailOf(op.previous) ?? op.previous.name
+  const reason = roleIncludesOwner(current)
+    ? `${email} is the owner here: ownership is only moved by transferring it, so their role stays as it is.`
+    : `${email} is the owner in the file and ${current || "a member"} here: ownership is only moved by transferring it, so their role stays as it is.`
+  return op.secretPaths.length === 0 && op.changes.length === 1 ? { skip: reason } : { warnings: [reason] }
+}
+
+function similarity(blob: ConfigItem, target: ConfigItem): { score: number; reasons: string[] } {
+  const local = (item: ConfigItem) => emailOf(item)?.split("@")[0] ?? ""
+  if (local(blob) && local(blob) === local(target)) return { score: 0.9, reasons: ["same address before the @"] }
+  const name = (item: ConfigItem) => item.name.includes("@") ? "" : normalizeName(item.name)
+  if (name(blob) && name(blob) === name(target)) return { score: 0.6, reasons: ["same name"] }
+  return { score: 0, reasons: [] }
+}
+
 async function peoplePreflight(ctx: ConfigAreaContext, op: ConfigApplyOp): Promise<ConfigPreflightResult | null> {
+  if (op.kind === "update") return ownershipPreflight(op)
   if (op.kind !== "create" || typeof op.item.spec.email !== "string") return null
   const email = normalizeEmail(op.item.spec.email)
   const rules = await readInviteRules(ctx)
@@ -393,17 +382,16 @@ async function peoplePreflight(ctx: ConfigAreaContext, op: ConfigApplyOp): Promi
   if (!isEmailAllowedForOrganization(rules.allowedEmailDomains, email)) {
     return { block: `${email} can't be invited: this organization only allows ${rules.allowedEmailDomains.join(", ")} email addresses (Settings › General). Allow the domain first, or skip this person.` }
   }
+  const seat = await seatPreflight(ctx, email)
+  if (seat) return seat
   const role = typeof op.item.spec.role === "string" ? op.item.spec.role : ""
   return roleIncludesOwner(role) ? { warnings: [`${email} is the owner on the source; they are invited as an admin (an import never moves ownership).`] } : null
 }
-
-// ---------------------------------------------------------------------------
 
 export const membersPeopleArea = defineConfigArea({
   key: AREA,
   label: "People",
   path: ["Members", "People"],
-  // Item ids are member ids (`om_…`); an invitation-only row's `inv_…` id is never reused.
   idPrefix: denTypeIdPrefixes.member,
   specVersion: 1,
   specSchema: personSpecSchema,
@@ -413,13 +401,12 @@ export const membersPeopleArea = defineConfigArea({
   managePermission: "invitations.manage",
   tables: ["member", "team_member", "invitation"],
   naturalKeys: [{ label: "email", get: emailOf }],
+  similarity,
   uniqueFields: [{ label: "email", get: (item) => typeof item.spec.email === "string" ? normalizeEmail(item.spec.email) || null : null }],
   secretFields: [],
-  // An import invites; it never makes someone join, and a person's name is
-  // their account's. Both are exported for readers but are not changes.
   informationalFields: ["status"],
+  derivedFields: ["managedBy"],
   informationalName: true,
-  // Invitation, member and team actions open their own transactions on the global db, and may send email.
   transactional: false,
   externalEffects: true,
   protectedFromDelete: (item, ctx) => {
@@ -519,7 +506,6 @@ export const membersPeopleArea = defineConfigArea({
         return { localId: memberId, warnings }
       }
 
-      // Update (or a create that found the person already here: every field is compared then).
       const inScope = (path: string) => op.kind === "create" || touches(op.changes, path)
       await refuseScimManaged(ctx, target)
       if (inScope("email") && target.email !== email) warnings.push(`${target.email} keeps their email; it is not changed by import.`)

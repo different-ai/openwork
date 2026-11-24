@@ -41,15 +41,6 @@ import {
 } from "./definitions.js"
 import { HUMAN_MEMBER, SELECT, TASK_EVENT, inList, type Rows } from "./sql.js"
 
-/**
- * The Control Center's metric queries. Each metric runs independently, reads
- * platform tables through an indexed time window and returns aggregate
- * payloads: one per range, or one under "all" when the range does not apply.
- * Never selects emails, tokens or credential columns; the invitation table is
- * read only as counts and durations. Queries run one at a time, so a metric
- * never competes with itself and a failed query leaves nothing running.
- */
-
 export const RANGES = Object.keys(CONTROL_CENTER_RANGE_DAYS) as ControlCenterRange[]
 export type RangeKey = ControlCenterRange | "all"
 
@@ -66,7 +57,6 @@ export type MetricResult<K extends ControlCenterSectionKey> = Partial<Record<Ran
 export type MetricContext = { now: Date; rows: Rows }
 
 const BUILT_IN_MARKETPLACES = inList([DEFAULT_OPENWORK_MARKETPLACE_NAME, RETIRED_STARTER_MARKETPLACE_NAME])
-/** Weekly charts show this many weeks per range; the 7-day range still needs a trend. */
 const RANGE_WEEKS: Record<ControlCenterRange, number> = { "7d": 4, "30d": 5, "90d": 13 }
 
 const later = (a: string, b: string) => (a > b ? a : b)
@@ -84,8 +74,6 @@ function workEmail(column: string) {
 
 const notSetupAgentUser = sql.raw(`NOT EXISTS (SELECT 1 FROM member sa WHERE sa.user_id = u.id AND sa.is_setup_agent = 1)`)
 
-// Every organization gets its own copy of the built-in plugins, so their ids are
-// too many to load: the database refuses a result over 100k rows. Test them in SQL.
 function isBuiltInPlugin(column: string) {
   return sql`EXISTS (SELECT 1 FROM marketplace_plugin bmp JOIN marketplace bmk ON bmk.id = bmp.marketplace_id
     WHERE bmp.plugin_id = ${sql.raw(column)} AND bmk.name IN (${BUILT_IN_MARKETPLACES}))`
@@ -96,40 +84,16 @@ function isBuiltInSkill(column: string) {
     WHERE bpco.config_object_id = ${sql.raw(column)} AND bmk.name IN (${BUILT_IN_MARKETPLACES}))`
 }
 
-/** Distinct people who ran a task in the last 1, 7 and 30 days. Shared with den_overview. */
-// SPEAK TO OMAR BEFORE REENABLING THIS DATA POINT, NO EXCEPTIONS
-// Disabled: this query scanned 30 days of telemetry_event across every organization
-// with four COUNT(DISTINCT) aggregates every refresh and slowed the database down a lot.
-// Until it comes back, every value below is 0.
 export async function readTaskUserWindows(_rows: Rows, _now: Date) {
-  // const [row] = await rows(sql`${SELECT}
-  //     COUNT(DISTINCT CASE WHEN t.event_timestamp >= ${ago(now, 1)} THEN m.user_id END) AS daily,
-  //     COUNT(DISTINCT CASE WHEN t.event_timestamp >= ${ago(now, 7)} THEN m.user_id END) AS weekly,
-  //     COUNT(DISTINCT m.user_id) AS monthly,
-  //     COUNT(DISTINCT CASE WHEN t.event_timestamp >= ${ago(now, 14)} AND t.event_timestamp < ${ago(now, 7)} THEN m.user_id END) AS previous_weekly,
-  //     SUM(t.event_type = 'task.started' AND t.event_timestamp >= ${ago(now, 7)}) AS started,
-  //     SUM(t.event_type = 'task.completed' AND t.event_timestamp >= ${ago(now, 7)}) AS completed,
-  //     SUM(t.event_type = 'task.failed' AND t.event_timestamp >= ${ago(now, 7)}) AS failed,
-  //     SUM(t.event_type = 'task.started' AND t.event_timestamp >= ${ago(now, 14)} AND t.event_timestamp < ${ago(now, 7)}) AS previous_started,
-  //     SUM(t.event_type = 'task.failed' AND t.event_timestamp >= ${ago(now, 14)} AND t.event_timestamp < ${ago(now, 7)}) AS previous_failed
-  //   FROM telemetry_event t JOIN member m ON m.id = t.member_id
-  //   WHERE t.event_timestamp >= ${ago(now, 30)} AND t.event_timestamp <= ${now} AND ${TASK_EVENT} AND ${HUMAN_MEMBER}`)
-  // return {
-  //   daily: num(row?.daily), weekly: num(row?.weekly), monthly: num(row?.monthly), previousWeekly: num(row?.previous_weekly),
-  //   started: num(row?.started), completed: num(row?.completed), failed: num(row?.failed),
-  //   previousStarted: num(row?.previous_started), previousFailed: num(row?.previous_failed),
-  // }
   return { daily: 0, weekly: 0, monthly: 0, previousWeekly: 0, started: 0, completed: 0, failed: 0, previousStarted: 0, previousFailed: 0 }
 }
 
-/** Organizations with at least two people in them. */
 async function readTeamOrganizations(rows: Rows): Promise<Map<string, number>> {
   const result = await rows(sql`${SELECT} m.organization_id AS org, COUNT(*) AS people FROM member m
     WHERE ${HUMAN_MEMBER} GROUP BY m.organization_id HAVING COUNT(*) >= 2`)
   return new Map(result.map((row) => [String(row.org), num(row.people)]))
 }
 
-/** People who ran a task and tasks started per organization in [from, to). */
 async function readOrganizationActivity(rows: Rows, from: Date, to: Date) {
   const result = await rows(sql`${SELECT} m.organization_id AS org, COUNT(DISTINCT m.user_id) AS people, SUM(t.event_type = 'task.started') AS tasks
     FROM telemetry_event t JOIN member m ON m.id = t.member_id
@@ -137,8 +101,6 @@ async function readOrganizationActivity(rows: Rows, from: Date, to: Date) {
     GROUP BY m.organization_id`)
   return new Map(result.map((row) => [String(row.org), { people: num(row.people), tasks: num(row.tasks) }]))
 }
-
-// --- A. Pulse ---
 
 export async function computePulse({ now, rows }: MetricContext): Promise<MetricResult<"pulse">> {
   const today = dayKey(now)
@@ -185,17 +147,7 @@ export async function computePulse({ now, rows }: MetricContext): Promise<Metric
   return perRange((range) => ({ ...kpis, daily: allDays.filter((day) => day.date >= rangeStartDay(today, range)) }))
 }
 
-// --- B–D. Growth, lifecycle, activation, retention and reactivation ---
-
 async function readUserActivity(rows: Rows, now: Date, from: string) {
-  // SPEAK TO OMAR BEFORE REENABLING THIS DATA POINT, NO EXCEPTIONS.
-  // The per-user daily task activity query is disabled: it scanned every task event
-  // platform-wide for up to 126 days and was too slow. Activity-based lifecycle numbers
-  // (weekly states, activation, retention, reactivation) read as empty until it returns.
-  // rows(sql`${SELECT} m.user_id AS uid, DATE(t.event_timestamp) AS day, MIN(u.created_at) AS signup
-  //   FROM telemetry_event t JOIN member m ON m.id = t.member_id JOIN user u ON u.id = m.user_id
-  //   WHERE t.event_timestamp >= ${new Date(dayTime(from))} AND t.event_timestamp <= ${now} AND ${TASK_EVENT} AND ${HUMAN_MEMBER}
-  //   GROUP BY m.user_id, day`),
   const activity: Awaited<ReturnType<Rows>> = []
   const signups = await rows(sql`${SELECT} u.id AS uid, u.created_at AS signup FROM user u
     WHERE u.created_at >= ${new Date(dayTime(from))} AND u.created_at <= ${now} AND ${notSetupAgentUser}`)
@@ -221,7 +173,6 @@ export async function computeLifecycle({ now, rows }: MetricContext): Promise<Me
   const lastComplete = addDays(currentWeek, -7)
   const firstTrendWeek = weekStart(CONTROL_CENTER_TREND_START)
   const recentWeeks = weekStarts(lastComplete, RANGE_WEEKS["90d"])
-  // A week is compared with the one before it, so lifecycle weeks start once that week was tracked too.
   const lifecycleWeeks = recentWeeks.filter((week) => week >= addDays(firstTrendWeek, 7))
   const from = later(CONTROL_CENTER_TRACKING_STARTED, addDays(today, -126))
   const inactiveCutoff = ago(now, 30)
@@ -232,7 +183,6 @@ export async function computeLifecycle({ now, rows }: MetricContext): Promise<Me
   const oldAccounts = await rows(sql`${SELECT} COUNT(*) AS accounts FROM user u WHERE u.created_at < ${inactiveCutoff} AND ${notSetupAgentUser}`)
   const people: UserActivity[] = [...users.values()]
   const weekRows = classifyWeeks(people, lifecycleWeeks)
-  // Organization creation does not depend on usage tracking, so it covers every week in the range.
   const organizationWeeks = new Map(recentWeeks.map((week) => [week, { week, personal: 0, team: 0 }]))
   for (const row of organizations) {
     const day = toDay(row.day)
@@ -242,7 +192,6 @@ export async function computeLifecycle({ now, rows }: MetricContext): Promise<Me
     else bucket.personal += 1
   }
 
-  // Signups before tracking started have no activity history to compare, so they are counted as old accounts.
   const recentlyActiveOld = people.filter((user) => dayTime(user.signupDay) < inactiveCutoff.getTime() && activeBetween(user, dayKey(inactiveCutoff), addDays(today, 1))).length
   const previousWeek = addDays(lastComplete, -7)
   const returnedPrevious = people.filter((user) => weekStart(user.signupDay) !== previousWeek && activeBetween(user, previousWeek, lastComplete) && !activeBetween(user, addDays(previousWeek, -7), previousWeek))
@@ -265,7 +214,6 @@ export async function computeLifecycle({ now, rows }: MetricContext): Promise<Me
     people.flatMap((user, index) => [...user.days].map((day) => ({ userId: String(index), dayTime: dayTime(day) }))),
   )
   const cohorts = cohortRows.map((cohort) => {
-    // An offset is shown only once the cohort's last signup day has had that whole week.
     const complete = Math.floor((dayTime(today) - dayTime(addDays(cohort.cohort, 6))) / (7 * DAY_MS)) - 1
     const retention = []
     for (let offset = 0; offset <= Math.min(complete, 13); offset += 1) {
@@ -289,13 +237,10 @@ export async function computeLifecycle({ now, rows }: MetricContext): Promise<Me
   })
 }
 
-// --- D. Invitations ---
-
 const CONTACT_ACTIONS = sql.raw(`'contacted', 'replied', 'meeting'`)
 
 export async function computeInvitations({ now, rows }: MetricContext): Promise<MetricResult<"invitations">> {
   const from = ago(now, 90)
-  // member_invite_id narrows to invited members; the first task uses telemetry_event_member_ts.
   const joined = await rows(sql`${SELECT} m.user_id AS uid, m.joined_at AS joined,
       (SELECT MIN(t.event_timestamp) FROM telemetry_event t WHERE t.member_id = m.id AND t.event_timestamp >= m.joined_at AND ${TASK_EVENT}) AS first_task
     FROM member m WHERE m.invite_id IS NOT NULL AND m.joined_at >= ${from} AND ${HUMAN_MEMBER}`)
@@ -346,21 +291,17 @@ export async function computeInvitations({ now, rows }: MetricContext): Promise<
   })
 }
 
-// --- E–F. Skills, MCP sharing and connector reliability ---
-
 export async function computeSharing({ now, rows }: MetricContext): Promise<MetricResult<"sharing">> {
   const today = dayKey(now)
   const from = later(CONTROL_CENTER_CAPABILITY_TRACKING_STARTED, addDays(today, -89))
   const fromTime = new Date(dayTime(from))
   const catalogSince = ago(now, 90)
-  // Preserve the catalog's UTC day comparison within its rolling 90-day window.
   const catalogDayCutoff = (days: number) => new Date(Math.ceil(ago(now, days + 1).getTime() / DAY_MS) * DAY_MS)
   const catalogCounts = (createdAt: SQL) => sql`
     COUNT(CASE WHEN ${createdAt} >= ${catalogDayCutoff(7)} THEN 1 END) AS \`7d\`,
     COUNT(CASE WHEN ${createdAt} >= ${catalogDayCutoff(30)} THEN 1 END) AS \`30d\`,
     COUNT(*) AS \`90d\``
   const teams = await readTeamOrganizations(rows)
-  // Raw events are deleted as the gateway folds them into daily rollups, so the two never overlap.
   const uses = await rows(sql`${SELECT} u.day AS day, u.organization_id AS org, u.org_membership_id AS member, u.kind AS kind,
       (${isBuiltInPlugin("u.plugin_id")} OR ${isBuiltInSkill("u.config_object_id")}) AS built_in,
       co.created_by_org_membership_id AS skill_creator,
@@ -380,7 +321,6 @@ export async function computeSharing({ now, rows }: MetricContext): Promise<Metr
       g.org_wide AS org_wide, g.team_id AS team, g.org_membership_id AS grantee
     FROM config_object co LEFT JOIN config_object_access_grant g ON g.config_object_id = co.id AND g.removed_at IS NULL
     WHERE co.object_type = 'skill' AND co.status = 'active' AND co.deleted_at IS NULL AND NOT ${isBuiltInSkill("co.id")}`)
-  // Each catalog query returns one row even when the window contains more than 100k records.
   const [plugins] = await rows(sql`${SELECT} ${catalogCounts(sql`p.created_at`)}
     FROM plugin p
     WHERE p.status = 'active' AND p.created_at >= ${catalogSince} AND NOT ${isBuiltInPlugin("p.id")}`)
@@ -429,7 +369,6 @@ export async function computeSharing({ now, rows }: MetricContext): Promise<Metr
     const teamSkillUses: CapabilityUse[] = inRange.filter((row) => row.kind === "skill" && !row.builtIn && teams.has(row.org))
       .map((row) => ({ memberId: row.member, creatorId: row.skillCreator, uses: row.uses }))
     const skillReuse = reuseRate(teamSkillUses)
-    // Only calls through an added connection have a creator; legacy per-person provider connections are left out.
     const teamConnectionUses: CapabilityUse[] = inRange.filter((row) => row.kind === "connector_tool" && row.connectionCreator !== null && teams.has(row.org))
       .map((row) => ({ memberId: row.member, creatorId: row.connectionCreator, uses: row.uses }))
     const connectionReuse = reuseRate(teamConnectionUses)
@@ -468,14 +407,11 @@ export async function computeSharing({ now, rows }: MetricContext): Promise<Metr
   })
 }
 
-// --- G. Revenue ---
-
 const SEAT_TYPES = new Set(["seat", "web", "enterprise"])
 type SubscriptionType = ControlCenterRevenue["monthly"][number]["type"]
 const subscriptionType = (value: unknown): SubscriptionType | null =>
   value === "inference" || value === "seat" || value === "web" || value === "enterprise" ? value : null
 
-/** Paid seats per organization from active seat-based subscriptions. */
 function paidSeats(subscriptions: { org: string; type: SubscriptionType; status: string; seats: number }[]) {
   const seats = new Map<string, number>()
   for (const subscription of subscriptions) {
@@ -531,8 +467,6 @@ export async function computeRevenue({ now, rows }: MetricContext): Promise<Metr
     },
   }
 }
-
-// --- H. Accounts to watch ---
 
 export async function computeAccounts({ now, rows }: MetricContext): Promise<MetricResult<"accounts">> {
   const teams = await readTeamOrganizations(rows)

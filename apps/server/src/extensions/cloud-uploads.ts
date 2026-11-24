@@ -18,9 +18,7 @@ export type CloudUploadDependencies = {
   readCloudMcp?: typeof readConnectCloudMcp;
   fetchImpl?: typeof externalFetch;
   signal?: AbortSignal;
-  /** Host-only, exact-file capability supplied after native chat approval. */
   approvedDriveFile?: PreparedDriveUploadFile;
-  /** Host-only: the shared file-send approval already approved this save in the chat. */
   approvedInChat?: boolean;
 };
 
@@ -267,8 +265,6 @@ async function postDirectUpload(
 ) {
   assertGmailUploadActive(signal);
   const endpoint = await cloudUploadEndpoint(config, suffix, dependencies);
-  // Last check before remote multipart dispatch, including cancellation while
-  // reading files or resolving the member's transport credentials.
   assertGmailUploadActive(signal);
   const response = await (dependencies.fetchImpl ?? externalFetch)(endpoint.url.toString(), {
     method: "POST",
@@ -321,7 +317,6 @@ async function uploadDriveFile(
     }
     const payload: unknown = await response.json().catch(() => null);
     if (!response.ok) {
-      // A disabled/unavailable new route leaves small-file multipart uploads intact.
       if (response.status === 404) throw new ApiError(413, "large_upload_unavailable", "This organization currently supports Drive uploads up to 4 MiB. Resumable uploads are not enabled or the server needs an update.");
       throw new ApiError(response.status, "cloud_upload_failed", isRecord(payload) && typeof payload.message === "string" ? payload.message : `OpenWork Cloud returned HTTP ${response.status}.`);
     }

@@ -14,20 +14,8 @@ import { REMOTE_THREAD_PAGE_MAX, REMOTE_THREAD_PAGE_SIZE, useRemoteThreadConvers
 import { RemoteFollowUpComposer } from "./remote-follow-up-composer"
 import { RemoteTranscriptView } from "./remote-transcript-view"
 
-/**
- * A task on another computer, opened beside the chat: its conversation,
- * rendered step by step by the main chat renderer, what it waits on, and the
- * composer to follow up on it or stop it.
- *
- * The transcript is the heavy read (a desktop answers it from its own
- * session), so it is read when the panel opens and then only when the shared
- * status says the task changed, at most every few seconds and one at a time.
- * Nothing is read while the panel is closed.
- */
-
 export function RemoteThreadPanel({ tab }: { tab: RemoteThreadPanelTab }) {
   const entry = useRemoteThread(tab.threadKey)
-  // The open panel keeps the task followed, like its row.
   useFollowRemoteThread(entry?.start ?? null, tab.owner, null)
   if (!entry) {
     return <div className="p-4 text-sm text-muted-foreground">{t("session.remote_task_read_failed")}</div>
@@ -61,7 +49,6 @@ function RemoteThreadConversation({ entry }: { entry: RemoteThreadEntry }) {
       <RemoteThreadTranscriptBody
         entry={entry}
         conversation={conversation}
-        // The chat's rows are padded for a full-width pane; beside the chat they take the panel's width.
         className="[&_.md\:px-10]:md:px-3 [&_.md\:px-8]:md:px-2"
       />
 
@@ -89,19 +76,15 @@ function RemoteThreadConversation({ entry }: { entry: RemoteThreadEntry }) {
   )
 }
 
-/** The scrolling transcript, its loading and error states and the state line, shared by the panel and the helper view. */
 export function RemoteThreadTranscriptBody({ entry, conversation, className, children }: {
   entry: RemoteThreadEntry
   conversation: ReturnType<typeof useRemoteThreadConversation>
   className?: string
-  /** Shown above the transcript, e.g. the task folded as one line. */
   children?: ReactNode
 }) {
   const local = useLocal()
-  // Same switch the chat reads; it only adds raw details to error cards.
   const [developerMode] = useState(() => typeof window !== "undefined" && window.localStorage.getItem("openwork.developerMode") === "1")
   const { view, page, transcript, limit, setLimit, readError, read, running, messages } = conversation
-  // While it works, the transcript's own Working line says so.
   const showStatusLine = !running || view.lastChecked !== null
   return (
     <div

@@ -21,7 +21,6 @@ import { GatewayLimitRow } from "./gateway-usage-limits-section";
 import { ItemPanel, ItemRow, ItemRowsSkeleton, ItemSection } from "./item-list";
 import { getProviderIconSlug } from "./llm-provider-data";
 
-/** What the Models tab can show this viewer. Every part keeps its own AI Gateway or Models permission. */
 export function teamModelsAccess(orgContext: DenOrgContext | null) {
   if (!orgContext) return null;
   const access = getOrgAccessFlags(orgContext.currentMember.role, orgContext.currentMember.isOwner, orgContext.currentMember.permissions);
@@ -37,17 +36,11 @@ export function teamModelsAccess(orgContext: DenOrgContext | null) {
   };
 }
 
-/** a Models tab when the viewer can see any of the AI Gateway or the default model. */
 export function modelsTabVisible(orgContext: DenOrgContext | null): boolean {
   const access = teamModelsAccess(orgContext);
   return Boolean(orgContext && access && (access.gateway || access.defaultModel));
 }
 
-/**
- * A team's Models tab, or Everyone's (team null): the model new desktop chats
- * start on, the AI providers they can use, and the spend limits that apply.
- * Everything is read and changed through the AI Gateway's own data and screens.
- */
 export function ModelsPanel({ team }: { team: { id: string; name: string } | null }) {
   const { orgContext, orgId, orgSlug } = useOrgDashboard();
   const access = teamModelsAccess(orgContext);

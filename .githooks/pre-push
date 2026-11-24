@@ -1,0 +1,5 @@
+#!/bin/sh
+# Runs the required PR checks before a push, so a red check is found here and
+# not in CI. Skip once with `git push --no-verify`.
+cd "$(git rev-parse --show-toplevel)" || exit 1
+exec node scripts/check.mjs

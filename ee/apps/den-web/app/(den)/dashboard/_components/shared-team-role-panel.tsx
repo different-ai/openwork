@@ -25,12 +25,6 @@ import {
 } from "./team-roles";
 import { useGiveRole } from "./use-give-role";
 
-/**
- * A team's one role, from the organization's role list (Member, Admin,
- * Billing manager, Super admin or a custom role), what it adds, and Change
- * role as a searchable picker of every role. A role can be on several teams;
- * changing it here only changes this team.
- */
 export function SharedTeamRolePanel({ team }: { team: DenOrgTeam }) {
   const { orgContext, orgId, orgSlug } = useOrgDashboard();
   const access = orgContext
@@ -40,7 +34,6 @@ export function SharedTeamRolePanel({ team }: { team: DenOrgTeam }) {
   const { roles, sets } = organizationRoles;
   const state: TeamRoleState = { admin: team.grantsOrganizationAdmin, setId: organizationRoles.setIdByTeam.get(team.id) ?? null };
   const role = teamRoleEntry(state, roles);
-  // The Admin switch gives the Admin permissions; a set the team holds gives its own.
   const linkedSetId = state.setId;
   const adminSet = sets.find((set) => set.kind === "admin_default") ?? null;
   const memberSet = sets.find((set) => set.kind === "member_default") ?? null;
@@ -68,7 +61,6 @@ export function SharedTeamRolePanel({ team }: { team: DenOrgTeam }) {
     canManagePermissions: access?.canManagePermissions ?? false,
     hasOwnerAuthority: (access?.isOwner ?? false) || (access?.isSuperAdmin ?? false),
   };
-  // A role can only be given by someone who holds everything it grants.
   const grantLocks = useRoleGrantLocks(orgId, sets, orgContext?.currentMember.permissions ?? [], orgContext?.currentMember.isOwner ?? false);
   const roleKind = isMember ? "member" : isAdmin ? "admin" : "custom";
 
@@ -116,7 +108,6 @@ function CheckMark() {
   return <span aria-hidden className="flex h-8 w-8 items-center justify-center text-gray-900"><Check className="h-4 w-4" strokeWidth={2} /></span>;
 }
 
-/** Change role: the organization's one role list in a searchable picker, opened under the button. */
 function RolePicker({ team, state, roles, lockReasons, abilities, disabled, newRoleHref }: {
   team: DenOrgTeam;
   state: TeamRoleState;

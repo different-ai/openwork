@@ -174,7 +174,6 @@ export function initialAdminBootstrapSignupRejectedResponse() {
 }
 
 async function readSessionByToken(token: string) {
-  // primary: the sign-up response that carries this token just created the session.
   const rows = await db.$primary
     .select({ id: AuthSessionTable.id, userId: AuthSessionTable.userId, activeOrganizationId: AuthSessionTable.activeOrganizationId })
     .from(AuthSessionTable)

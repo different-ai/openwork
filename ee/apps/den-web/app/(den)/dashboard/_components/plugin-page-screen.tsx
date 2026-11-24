@@ -93,12 +93,9 @@ export function WhatsInside({
   );
 }
 
-/** Each App is its own MCP server; its URL works in any MCP client with OpenWork sign-in. */
 export function AppMcpServers({ plugin }: { plugin: DenPlugin }) {
   const { runtimeConfig, runtimeConfigLoaded } = useDenFlow();
   const { orgContext } = useOrgDashboard();
-  // Den reports App servers only while its deployment switch and the
-  // organization's member-facing MCP connections setting are both on.
   if (plugin.authoredApps.length === 0 || orgContext?.capabilities.appMcpServers !== true) return null;
   return (
     <section className="flex flex-col gap-2.5" data-testid="app-mcp-servers">
@@ -128,9 +125,7 @@ function useArchivePlugin() {
   };
 }
 
-/** B2 (a member's plugin) and D3 (Manage, with Who can use it inline). */
 export function PluginPageScreen({ pluginId, mode }: { pluginId: string; mode: "member" | "admin" }) {
-  // Item managers may not hold Manage all shared items. Resolve their item role on both routes.
   const library = useLibrary();
   return <PluginPage pluginId={pluginId} mode={mode} libraryItems={library.data} />;
 }
@@ -146,15 +141,12 @@ function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: 
   const [savingAccess, setSavingAccess] = useState(false);
   const [accessError, setAccessError] = useState<string | null>(null);
   const back = mode === "admin" ? { href: getPluginsRoute(orgSlug), label: "Plugins" } : { href: getLibraryRoute(orgSlug), label: "My Library" };
-  // Feature intros: on Manage, a banner while nobody besides its owner can use this plugin,
-  // directly or through a collection it's in.
   const introsEnabled = useFeatureIntroRuntime().enabled;
   const collectionGrants = usePluginCollectionGrants(
     (plugin.data?.marketplaces ?? []).map((collection) => collection.id),
     introsEnabled && mode === "admin" && Boolean(plugin.data),
   );
   const accessIntro = useFeatureIntro("plugins.access", mode === "admin" && plugin.data && access.data && collectionGrants && orgContext ? {
-    // This plugin exists, so the section is set up.
     plugins: 1,
     sharedBeyondOwner: pluginSharedBeyondOwnerWithCollections(draftFromPluginGrants(access.data), plugin.data.createdByOrgMembershipId, collectionGrants),
     canEditAccess: plugin.data.createdByOrgMembershipId === orgContext.currentMember.id
@@ -186,7 +178,6 @@ function PluginPage({ pluginId, mode, libraryItems }: { pluginId: string; mode: 
     : null;
   const draft = access.data ? draftFromPluginGrants(access.data) : null;
   const item = libraryItems?.find((entry) => entry.type === "plugin" && entry.id === pluginId);
-  // Creator, a manager on this plugin, or `sharing.manage_all` (manager on everything shared).
   const canManage = mine || (item?.type === "plugin" && item.role === "manager") || memberAccess?.canManageAllShared === true;
   const creator = orgContext?.members.find((member) => member.id === data.createdByOrgMembershipId);
   const who = mine && orgContext && draft

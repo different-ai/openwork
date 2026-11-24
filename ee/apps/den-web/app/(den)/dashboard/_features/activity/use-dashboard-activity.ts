@@ -20,8 +20,6 @@ export function useDashboardActivity() {
   );
 
   return useQuery({
-    // Include both identity and readiness: neither an organization switch nor a
-    // membership/permission change may display another scope's cached rows.
     queryKey: ["dashboard-activity", orgId, user?.id, member?.id, member?.permissions ?? null, enabled],
     enabled,
     queryFn: async ({ signal }) => {
@@ -31,7 +29,6 @@ export function useDashboardActivity() {
         signal,
         request: async (path, requestSignal) => {
           requestSignal.throwIfAborted();
-          // requestJson delegates the deadline when a caller supplies a signal.
           const controller = new AbortController();
           const cancel = () => controller.abort(requestSignal.reason);
           requestSignal.addEventListener("abort", cancel, { once: true });
@@ -53,12 +50,8 @@ export function useDashboardActivity() {
         },
       });
     },
-    // A rejection leaves TanStack Query's complete previous data intact. Do not
-    // catch errors into []: initial errors and genuinely empty snapshots differ.
     retry: false,
     staleTime: 60_000,
-    // Den computes the newest entries in one bounded read. Refresh on returning
-    // to the dashboard or focusing it rather than polling.
     refetchOnMount: "always",
     refetchOnWindowFocus: true,
   });

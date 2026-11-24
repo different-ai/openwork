@@ -11,12 +11,7 @@ import type { ApprovalRequest, ServerConfig, TokenScope, WorkspaceInfo } from ".
 import { ensureDir, exists, shortId } from "../utils.js";
 import { addRoute, type RequestContext, type Route } from "./registry.js";
 
-/**
- * Build a Content-Disposition header value that is safe for Unicode filenames.
- * Uses RFC 6266 `filename*` (UTF-8 percent-encoded) with an ASCII fallback.
- */
 function contentDisposition(disposition: "attachment" | "inline", filename: string): string {
-  // ASCII fallback: replace any non-ASCII character with '_'
   const asciiName = filename.replace(/[^\x20-\x7E]/g, "_");
   const encodedName = encodeURIComponent(filename);
   return `${disposition}; filename="${asciiName}"; filename*=UTF-8''${encodedName}`;
@@ -31,8 +26,6 @@ const FILE_SESSION_CATALOG_DEFAULT_LIMIT = 2000;
 const FILE_SESSION_CATALOG_MAX_LIMIT = 10000;
 const FILE_BROWSER_EXCLUDED_DIRECTORIES = new Set([".git", "node_modules"]);
 const MAX_PATH_COMPONENT_BYTES = 255;
-// formData() holds the whole body in memory, so multipart uploads stay capped.
-// Raw uploads stream to disk and answer only to the inbox limit.
 const INBOX_MULTIPART_MAX_BYTES = 250_000_000;
 const INBOX_MULTIPART_FRAMING_BYTES = 1_000_000;
 const WINDOWS_RESERVED_PATH_COMPONENT = /^(?:con|prn|aux|nul|clock\$|conin\$|conout\$|com[1-9¹²³]|lpt[1-9¹²³])(?:\..*)?$/i;
@@ -53,7 +46,6 @@ interface RegisterFileRoutesOptions {
   resolveOutboxEnabled: () => boolean;
   resolveInboxMaxBytes: () => number;
   scopeRank: (scope: TokenScope) => number;
-  /** The folder a conversation of this workspace runs in, or null when unknown. */
   resolveSessionDirectory?: (workspace: WorkspaceInfo, sessionId: string) => Promise<string | null>;
 }
 
@@ -79,9 +71,6 @@ export function normalizeWorkspaceRelativePath(input: string, options: { allowSu
     throw new ApiError(400, "invalid_path", "Path components must not end with a dot or space");
   }
 
-  // A lot of user-facing surfaces (artifacts, tool logs) reference files as
-  // `workspace/<path>` or `/workspace/<path>`. The server API expects
-  // workspace-relative paths, so normalize those common prefixes here.
   let normalized = raw.replace(/\\/g, "/");
   normalized = normalized.replace(/^\/+/, "");
   normalized = normalized.replace(/^\.\//, "");
@@ -129,7 +118,6 @@ function inboxFileTooLarge(maxBytes: number, size: number) {
   return new ApiError(413, "file_too_large", "File exceeds upload limit", { maxBytes, size });
 }
 
-/** Streams an upload to `dest`, so its size never has to fit in memory. */
 async function writeUploadToFile(body: ReadableStream<Uint8Array>, dest: string, maxBytes: number, signal: AbortSignal): Promise<number> {
   let bytes = 0;
   const limit = new Transform({
@@ -139,10 +127,6 @@ async function writeUploadToFile(body: ReadableStream<Uint8Array>, dest: string,
     },
   });
   try {
-    // Read the body directly: Readable.fromWeb drops bytes from large bodies under
-    // Bun. Bun also never errors the body when a client disconnects, so the signal
-    // is what ends an abandoned upload, and cancelling the body makes Bun answer
-    // with an empty 200, so a refused upload leaves it uncancelled to send its error.
     const source = async function* () {
       for await (const chunk of body.values({ preventCancel: true })) yield chunk;
     };
@@ -288,7 +272,6 @@ function parseFileScope(value: unknown): FileScope | undefined {
   throw new ApiError(400, "invalid_file_scope", "fileScope must be workspace or conversation");
 }
 
-/** A supplied scope pins file operations to that root, even when the file is missing. */
 export async function resolveScopedWorkspaceFilePath(
   workspaceRoot: string,
   relativePath: string,
@@ -331,7 +314,6 @@ function normalizeUrlTarget(value: string): string | null {
   }
 }
 
-/** `path` relative to `root`, or null when it is outside it. */
 function pathInside(root: string | null, path: string): string | null {
   if (!root) return null;
   const fromRoot = relative(resolve(root), resolve(path));
@@ -359,13 +341,6 @@ const ARTIFACT_SEARCH_SKIPPED_DIRECTORIES = new Set([
 const ARTIFACT_SEARCH_MAX_DIRECTORIES = 4000;
 const ARTIFACT_SEARCH_MAX_DEPTH = 12;
 
-/**
- * Find a file the chat named by a partial path (`report.pdf`,
- * `electron/main.mjs`) somewhere below `root`. Walks breadth-first so the
- * shallowest match wins, ties broken by path order; never follows symlinks,
- * skips build and dependency folders, and gives up after a bounded number of
- * folders so a huge workspace cannot stall a click.
- */
 export async function findWorkspaceFileBySuffix(
   root: string,
   relativePath: string,
@@ -404,15 +379,6 @@ export async function findWorkspaceFileBySuffix(
   return null;
 }
 
-/**
- * `conversationDirectory` names the folder the conversation runs in when it moved
- * into a worktree. Files missing from the workspace are also looked up there.
- *
- * `search` is for a person clicking a reference: a relative path that does not
- * exist as written (a bare `report.pdf`, `main.mjs:12` from a reply) is looked up
- * by name below the conversation folder and the workspace. `~/` paths expand to
- * this computer's home folder and count only when they land inside either one.
- */
 export async function resolveWorkspaceArtifactTargets(
   workspaceRoot: string,
   input: unknown,
@@ -421,7 +387,6 @@ export async function resolveWorkspaceArtifactTargets(
   const targets = Array.isArray(input) ? input.slice(0, 80) : [];
   const results = new Map<string, Record<string, unknown>>();
   const workspaceResolved = resolve(workspaceRoot);
-  // Looked up once for absolute/scoped references, fallback, or suffix search.
   let conversationLookup: Promise<string | null> | null = null;
   const conversationDirectory = () => (conversationLookup ??= options.conversationDirectory?.() ?? Promise.resolve(null));
 
@@ -462,8 +427,6 @@ export async function resolveWorkspaceArtifactTargets(
       const expanded = /^~[/\\]/.test(rawValue) && home ? join(home, rawValue.slice(2)) : rawValue;
       if (expanded.startsWith("~")) continue;
       if (isAbsolute(expanded)) {
-        // Keep an absolute reference at its exact owning root. Prefer the
-        // conversation when its worktree is nested inside the workspace.
         const directory = requestedScope === "workspace" ? null : await conversationDirectory();
         const fromConversation = pathInside(directory, expanded);
         const fromWorkspace = requestedScope === "conversation" ? null : pathInside(workspaceResolved, expanded);
@@ -480,8 +443,6 @@ export async function resolveWorkspaceArtifactTargets(
           conversationDirectory,
         });
         if (!requestedScope && absPath !== resolveSafeChildPath(workspaceRoot, relativePath)) fileScope = "conversation";
-        // A verified/scoped target is an identity, not another name search:
-        // deleting it must not select a different file or a different root.
         if (!requestedScope && options.search === true && !(await exists(absPath))) {
           const directory = await conversationDirectory();
           const roots: Array<{ root: string; scope: FileScope }> = [];
@@ -739,8 +700,6 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
   } = options;
   const fileSessions = new FileSessionStore();
 
-  // A conversation that moved into a worktree writes its files there, and its
-  // replies name them relative to that folder.
   const conversationDirectory = async (workspace: WorkspaceInfo, sessionId: unknown): Promise<string | null> => {
     const id = typeof sessionId === "string" ? sessionId.trim() : "";
     if (!id || !resolveSessionDirectory) return null;
@@ -748,8 +707,6 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
     return directory && resolve(directory) !== resolve(workspace.path) ? directory : null;
   };
 
-  // Legacy callers prefer the workspace copy; scoped callers retain the exact
-  // root selected by artifact resolution for reads, downloads and writes.
   const resolveConversationFilePath = (workspace: WorkspaceInfo, relativePath: string, sessionId: unknown, fileScope: unknown): Promise<string> =>
     resolveScopedWorkspaceFilePath(workspace.path, relativePath, {
       fileScope,
@@ -835,8 +792,6 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
     }
     const workspace = await resolveWorkspace(config, ctx.params.id);
 
-    // Clients send the file as the raw body with its path in the query. Multipart
-    // stays for older clients and scripts.
     const contentType = ctx.request.headers.get("content-type") ?? "";
     const multipart = contentType.toLowerCase().includes("multipart/form-data");
     const maxBytes = multipart ? Math.min(resolveInboxMaxBytes(), INBOX_MULTIPART_MAX_BYTES) : resolveInboxMaxBytes();
@@ -869,13 +824,6 @@ export function registerFileRoutes(options: RegisterFileRoutesOptions): void {
     const relativePath = normalizeWorkspaceRelativePath(requestedPath, { allowSubdirs: true });
     const inboxRoot = resolveInboxDir(workspace.path);
     const dest = resolveSafeChildPath(inboxRoot, relativePath);
-
-    // Inbox uploads are exempt from host approval: the inbox is the designated
-    // client drop area (path-constrained via resolveSafeChildPath, size-capped,
-    // audited, and disable-able via inbox.enabled). Parking the upload on the
-    // manual-approval queue froze web/gateway clients for the whole approval
-    // timeout and then failed the send, because client tokens cannot approve
-    // their own writes. All other write routes remain approval-gated.
 
     await ensureDir(dirname(dest));
     const tmp = join(dirname(dest), `.upload-${shortId()}.tmp`);

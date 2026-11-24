@@ -3,7 +3,7 @@
 import { Dialog } from "@base-ui/react/dialog";
 import { useQuery } from "@tanstack/react-query";
 import { googleDriveFileId, workbotContextLabel, type WorkbotViewContext } from "@openwork/types/workbot-context";
-import { CalendarDays, FileText, Globe, House, Lock, MessageCircle, Monitor, PanelLeft, X } from "lucide-react";
+import { CalendarDays, FileText, Globe, House, Lock, MessageCircle, Monitor, PanelLeft, Presentation, X } from "lucide-react";
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
 import { computerTabLabel, workbotHost, useRetainedSurface } from "./host";
 import { DOCUMENTS_LIST_GC_MS, ItemIcon } from "@openwork/documents/react";
@@ -15,6 +15,8 @@ export const WorkspaceNavigationContext = createContext<((fileId: string) => voi
 export const OpenDocumentContext = createContext<string | null>(null);
 /** Opens Workbot's computer from a conversation; null while it is already on screen or unavailable. */
 export const ComputerNavigationContext = createContext<(() => void) | null>(null);
+/** Opens the teaching window in the Browser view. Null where this chat has none to open. */
+export const TeachingNavigationContext = createContext<(() => void) | null>(null);
 const control = "grid size-8 shrink-0 place-items-center rounded-lg text-[var(--wb-muted)] hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]";
 
 /** A result offers navigation; only the person's ordinary click opens a file in Workbot. */
@@ -74,6 +76,18 @@ export function ComputerOffer() {
   </div>;
 }
 
+/** A reply that opened the teaching window keeps a way back to it, for when it was closed or the page reloaded. */
+export function TeachingOffer({ receipt }: { receipt?: { id: string } }) {
+  const open = useContext(TeachingNavigationContext);
+  if (!open || !receipt) return null;
+  return <div className="workbot-row-enter flex min-h-7 items-center pt-1" data-workbot-teaching-offer>
+    <button type="button" onClick={open} title="Open the teaching window in the Browser view"
+      className="flex h-7 min-w-0 max-w-full items-center gap-1.5 rounded-full px-2.5 text-[13px] font-medium leading-4 text-[var(--wb-text)] transition-colors duration-150 hover:bg-[var(--wb-chip)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]">
+      <Presentation size={14} strokeWidth={1.75} aria-hidden className="shrink-0 text-[var(--wb-muted)]" /><span className="truncate">Teach Workbot</span>
+    </button>
+  </div>;
+}
+
 /** The computer page's icon: a globe where it is only the browser, a monitor where it is the whole computer. */
 export function ComputerTabIcon({ label, size = 16, strokeWidth = 1.5 }: { label: "Browser" | "Computer"; size?: number; strokeWidth?: number }) {
   const Icon = label === "Browser" ? Globe : Monitor;
@@ -85,12 +99,10 @@ export function WorkspaceMenu({ page, onPage, onDocument, onChats, drafts }: { p
   const host = workbotHost();
   const [open, setOpen] = useState(false);
   const surface = useRetainedSurface(open);
-  // The same sources as Documents (Google Drive, and OneDrive where it is connected), so both list the same files.
   const documents = useWorkbotDocumentsSource();
   const recent = useQuery({
     queryKey: ["documents", ...documents.scope, documents.provider.id, "workspace-recent"],
     queryFn: ({ signal }) => documents.provider.list({ view: "recent", folderId: "root", query: "", signal }),
-    // Opening the drawer again within half a minute shows the same list at once; it refreshes after that.
     enabled: surface.open && documents.ready, retry: false, staleTime: 30_000, gcTime: DOCUMENTS_LIST_GC_MS,
   });
   const prefetchDocuments = usePrefetchWorkbotDocuments();

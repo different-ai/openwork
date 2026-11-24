@@ -1,8 +1,3 @@
-/**
- * Builds the plan of a change request (mapping.md › Steps 3–7) and the
- * execution plan `executePlan` runs. Pure: everything the plan depends on
- * comes in through `BuildPlanInput`.
- */
 import type { FeatureKey } from "@openwork/features"
 import type {
   ConfigAreaKey,
@@ -17,10 +12,12 @@ import type {
   ConfigPlanItem,
   ConfigPlanOp,
   ConfigPlanRef,
+  ConfigPlanRefTargets,
   ConfigSecretInput,
   ConfigSpec,
 } from "@openwork/types/den/config-blobs"
 import {
+  CONFIG_AREA_KEYS,
   CONFIG_BLOB_MAX_ITEMS,
   CONFIG_BLOB_MAX_ITEMS_PER_AREA,
   CONFIG_BLOCKING_FLAGS,
@@ -47,81 +44,40 @@ import {
 } from "./refs.js"
 import { namePeopleByEmail } from "./people.js"
 import { checkSecretFields, findSecrets, planSecrets, redactRawSecrets, replacesSecretValue, type ExecutionSecret } from "./secrets.js"
-import { isPlainObject, sha256, typeIdPrefix } from "./util.js"
+import { isPlainObject, normalizeEmail, sha256, typeIdPrefix } from "./util.js"
 
 
 export type BuildPlanInput = {
-  /** Area definitions: every area in scope plus every area references may point to. */
   areas: readonly ConfigArea[]
-  /** `flattenConfigAreas(blob.areas).areas`. */
   blobAreas: Partial<Record<ConfigAreaKey, ConfigBlobArea>>
   scope: readonly ConfigAreaKey[]
   mode: ConfigImportMode
-  /** The target org's current items, per area (scope and referenced areas). */
   targetItems: ReadonlyMap<ConfigAreaKey, readonly ConfigItem[]>
-  /** Alias rows for the blob's source instance: area → source id → local id. */
   aliases?: ReadonlyMap<ConfigAreaKey, ReadonlyMap<string, string>>
   decisions?: ConfigDecisions
-  /** Secret inputs. Only their decisions are read; values never enter the plan. */
   secretInputs?: readonly ConfigSecretInput[]
-  /** Target org members: normalized email → member id. */
   people?: ReadonlyMap<string, string>
-  /** Operator allowlist for `env` secrets (self-hosted). Default: nothing allowed. */
   allowEnv?: (name: string) => boolean
   deployment: ConfigDeployment
   features: Partial<Record<FeatureKey, boolean>>
   sourceInstanceId?: string
-  /**
-   * The blob was exported from this same organization, so item `rev`s are a
-   * valid three-way base. Otherwise revs are ignored (two-way diff).
-   */
   sameOrganization?: boolean
-  /** Specs at export, keyed `${area}/${source id}`: per-field base values for drifted items. */
   baseSpecs?: ReadonlyMap<string, ConfigSpec>
-  /** Needed to run `protectedFromDelete`; without it, ticked deletes on areas that declare it are not planned. */
   ctx?: ConfigAreaContext
-  /**
-   * Areas the caller may view. References into any other area keep their
-   * resolved id (execution needs it) but lose name hints in fields and refs,
-   * and their resolution reasons are replaced by a generic one. Omitted:
-   * every area is visible.
-   */
   visibleAreas?: ReadonlySet<ConfigAreaKey>
-  /**
-   * Whether the caller may write `members.people` (its manage permission,
-   * within the config token's area limit). False: an `invite` decision on a
-   * people reference is not planned (the reference stays unresolved), so no
-   * invitation can come from a caller who could not invite. Default: true.
-   */
   mayInvite?: boolean
-  /**
-   * The areas' `preflight` verdicts on the ops of an earlier build of this
-   * same plan, keyed by `preflightKey(area, ref)` (see `runPreflight`):
-   * `skip` plans the item as skipped (references to it resolve like an
-   * admin's skip), `block` adds the `blocked` flag, warnings become reasons.
-   */
   preflight?: ReadonlyMap<string, ConfigPreflightResult>
-  /**
-   * The plan restores an earlier change ("Restore previous config"): the blob
-   * holds the items that change updated or deleted, as they were before.
-   * Only those, and the items it created (`created`, area → local ids,
-   * offered for deletion), are listed. Every other item of the areas is left
-   * out of the plan: it is neither offered for deletion nor changed.
-   */
   restore?: { created: ReadonlyMap<ConfigAreaKey, ReadonlySet<string>> }
 }
 
-/** Key of a plan item in `BuildPlanInput.preflight`. */
 export function preflightKey(area: ConfigAreaKey, ref: string): string {
   return skippedKey(area, ref)
 }
 
 export type ExecutionItem = {
-  /** Source id from the blob, if any. */
   sourceId?: string
   key?: string | null
   name: string
-  /** As in the blob: `$ref`s and `$secret`s still unresolved (see `refs` / `secrets`). */
   spec: ConfigSpec
 }
 
@@ -129,31 +85,23 @@ export type ExecutionOp = {
   area: ConfigAreaKey
   ref: string
   kind: "create" | "update" | "delete"
-  /** The plan op (`rename` executes as an update). */
   op: ConfigPlanOp
   matchedBy: ConfigMatchTier | null
   targetId?: string
-  /** Source id to reuse for a create when it is free on the instance (D4). */
   preferredId?: string
   item?: ExecutionItem
   refs: ResolvedRefOccurrence[]
   secrets: ExecutionSecret[]
   previous?: ConfigItem
-  /** Display name for the apply report (the blob item's, else the target's). */
   name: string
-  /** Updates: the plan's field changes (adapters write only these). Empty for creates and deletes. */
   changes: ConfigFieldChange[]
-  /** Updates: spec paths (`field`) of the secret placeholders whose decision writes the credential (value, env, or unset of a stored one). */
   secretPaths: string[]
-  /** `itemRev` of the target the op was planned against (updates, deletes): apply re-reads the item and compares. */
   targetRev?: string
-  /** Effects a later restore can't undo, as the area describes them for this op (computed at plan time). */
   irreversible: string[]
 }
 
 export type ExecutionPlan = {
   planHash: string
-  /** Items with blocking flags. `executePlan` refuses to run while non-zero. */
   blocking: number
   ops: ExecutionOp[]
 }
@@ -161,19 +109,10 @@ export type ExecutionPlan = {
 export type BuildPlanResult = {
   plan: ConfigPlan
   execution: ExecutionPlan
-  /** Validation errors (duplicate ids/keys, invalid specs, unknown areas, newer spec versions). */
   errors: string[]
-  /**
-   * The subset of `errors` that invalidates the whole request (unknown areas,
-   * newer spec versions, duplicate ids/keys, too many items, forbidden keys or
-   * too deep nesting, secret values pasted into the blob). Invalid item specs
-   * are not in it: those items are `blocked` and the admin may skip them.
-   * Never holds a secret value.
-   */
   fatalErrors: string[]
 }
 
-/** Areas in dependency order (dependencies first, otherwise input order). Throws on a cycle. */
 export function sortAreas<T extends Pick<ConfigArea, "key" | "dependsOn">>(areas: readonly T[]): T[] {
   const byKey = new Map(areas.map((area) => [area.key, area]))
   const sorted: T[] = []
@@ -204,7 +143,6 @@ type AreaState = {
   area: ConfigArea
   unsupported: string | null
   items: ConfigBlobItem[]
-  /** Per blob item index: why it cannot be applied (invalid spec). */
   invalid: Map<number, string>
   match: { matches: ItemMatch[]; unmatchedTargets: ConfigItem[] } | null
 }
@@ -228,7 +166,6 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
     issues.push(area ? { level: "error", message, area } : { level: "error", message })
   }
 
-  // `people/<member id>` (exports for callers who may not read emails) compares as the member's email here.
   const blobAreas = input.people ? namePeopleByEmail(input.blobAreas, input.people) : input.blobAreas
   const ordered = sortAreas(input.areas)
   const areaByKey = new Map(ordered.map((area) => [area.key, area]))
@@ -237,16 +174,17 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
   for (const key of Object.keys(blobAreas)) {
     if (!input.scope.some((scoped) => scoped === key)) issues.push({ level: "warning", message: `area ${key} is in the blob but not in its scope: ignored` })
   }
+  if (decisions.reusedFrom) {
+    const answers = decisions.matches.length + decisions.refs.length + decisions.skips.length + decisions.renames.length
+    issues.push({ level: "info", message: `${answers} ${answers === 1 ? "answer was" : "answers were"} reused from an earlier import of this source (${decisions.reusedFrom}): what was left out, pointed elsewhere, matched or renamed then is answered the same way here. Change any of them in this review.` })
+  }
   if (input.mode === "merge" && decisions.deletes.length > 0) issues.push({ level: "warning", message: "deletes are ignored in merge mode" })
 
-  // Size caps: matching and diffing are at least linear per item, and
-  // proposals per pair; a blob past these is refused outright.
   let totalItems = 0
   for (const blobArea of Object.values(blobAreas)) totalItems += blobArea?.items.length ?? 0
   const tooManyItems = totalItems > CONFIG_BLOB_MAX_ITEMS
   if (tooManyItems) addError(`the blob holds ${totalItems.toLocaleString("en-US")} items, more than the ${CONFIG_BLOB_MAX_ITEMS.toLocaleString("en-US")} allowed`)
 
-  // 1–3. Validate, upgrade and match each area in scope.
   const states: AreaState[] = []
   for (const area of ordered) {
     if (!scope.has(area.key)) continue
@@ -293,8 +231,6 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
         return { ...item, spec }
       })
       if (state.unsupported) continue
-      // A value pasted into a secret field never goes further than this: it is
-      // replaced before validation, diffing and hashing, and the request is invalid.
       state.items = state.items.map((item) => {
         const redaction = redactRawSecrets(area.secretFields, item.spec)
         for (const field of redaction.redacted) addError(`${area.label} "${item.name}": a secret value was pasted into ${field}; use the inputs step instead`, area.key)
@@ -315,7 +251,6 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
           addError(`${area.label} "${item.name}": ${message}`, area.key, { itemLevel: true })
           return
         }
-        // The parsed spec: defaults the schema fills in (fields a hand-written blob may leave out) count as written.
         state.items[index] = { ...item, spec: parsed.data }
       })
     }
@@ -331,10 +266,6 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
     state.match = matchResult
   }
 
-  // Secret inputs are keyed by `$secret` path, so a path names exactly one
-  // placeholder in the whole blob. Two placeholders sharing one would let a
-  // value entered for one item land in another (one with an endpoint of the
-  // uploader's choosing, say): such a blob is refused.
   const secretPathCount = new Map<string, number>()
   for (const state of states) {
     for (const item of state.items) {
@@ -345,7 +276,6 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
     if (count > 1) addError(`the secret placeholder "${path}" appears ${count} times: every $secret path must be unique in a config file`)
   }
 
-  // Skips: admin exclusions and unsupported areas.
   const skipped = new Set<string>()
   for (const skip of decisions.skips) skipped.add(skippedKey(skip.area, skip.ref))
   const adminSkipped = new Set(skipped)
@@ -360,7 +290,6 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
     }
   }
 
-  // Mirror deletes, decided before refs and collisions look at the target.
   const deleteTicks = new Set(decisions.deletes.map((entry) => `${entry.area}\u0000${entry.targetId}`))
   const deleting = new Map<ConfigAreaKey, Set<string>>()
   const targetOnly = new Map<ConfigAreaKey, Draft[]>()
@@ -370,7 +299,6 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
     const deletedIds = new Set<string>()
     const restoreCreated = input.restore ? input.restore.created.get(state.area.key) ?? new Set<string>() : null
     for (const target of state.match.unmatchedTargets) {
-      // A restore touches only what the restored change wrote: of the items not in the snapshot, the ones it created.
       if (restoreCreated && !restoreCreated.has(target.id)) continue
       const notInBlob = restoreCreated ? "added by the change being restored" : "not in the blob"
       const item: ConfigPlanItem = {
@@ -412,7 +340,6 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
     targetOnly.set(state.area.key, drafts)
   }
 
-  // 4–6. Resolve refs, diff, secrets.
   const peopleArea = areaByKey.get(PEOPLE_AREA)
   const resolveRef = createRefResolver({
     scope: writable,
@@ -429,7 +356,18 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
   const overrides = new Set(decisions.overrides.map((entry) => skippedKey(entry.area, entry.ref)))
   const renames = new Map(decisions.renames.map((entry) => [skippedKey(entry.area, entry.ref), entry.name]))
 
-  // References into areas the caller can't view: ids stay, names and reasons go.
+  const blobPeopleNames = new Map<string, string>()
+  for (const person of blobAreas[PEOPLE_AREA]?.items ?? []) {
+    const email = person.spec.email
+    if (typeof email === "string" && person.name) blobPeopleNames.set(normalizeEmail(email), person.name)
+  }
+  const namedPersonRef = (ref: ConfigPlanRef): ConfigPlanRef => {
+    if (ref.name !== undefined) return ref
+    const parsed = parseConfigRef(ref.ref)
+    const name = parsed?.area === "people" ? blobPeopleNames.get(normalizeEmail(parsed.target)) : undefined
+    return name === undefined ? ref : { ...ref, name }
+  }
+
   const visibleAreas = input.visibleAreas
   const hiddenRef = (ref: string): boolean => {
     if (!visibleAreas) return false
@@ -464,7 +402,6 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
       })
       continue
     }
-    // A create reuses its source id only when it looks like this area's ids (D4).
     const idPrefix = area.idPrefix ?? sharedTypeIdPrefix(input.targetItems.get(area.key) ?? [])
     for (const match of state.match.matches) {
       const key = skippedKey(area.key, match.ref)
@@ -524,7 +461,6 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
         fields = classification.fields
         item.flags.push(...classification.flags)
         reasons.push(...classification.reasons)
-        // A new credential is only stored by writing the item.
         if (item.op === "unchanged" && replacesSecretValue(area, blob.spec, inputsByPath)) {
           item.op = "update"
           reasons.push("credential will be replaced")
@@ -535,7 +471,7 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
       item.fields = fields
 
       const writes = item.op === "create" || item.op === "update" || item.op === "rename"
-      if (refs.length) item.refs = refs.map((ref) => planRefView(toPlanRef(ref), hiddenRef(ref.ref)))
+      if (refs.length) item.refs = refs.map((ref) => planRefView(namedPersonRef(toPlanRef(ref)), hiddenRef(ref.ref)))
       if (writes) {
         const unresolved = refs.filter((ref) => ref.resolution.kind === "unresolved")
         if (unresolved.length) {
@@ -579,21 +515,18 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
         const preferredId = blob.id && idPrefix !== null && typeIdPrefix(blob.id) === idPrefix ? blob.id : undefined
         const secretPaths = secrets.secrets
           .filter((secret) => secret.decision === "value" || secret.decision === "env" || (secret.decision === "unset" && secret.targetHasValue))
-          // Spec paths (`credentialSets[id=…].credential`), as adapters compare them with `changes`; never the `$secret` handle.
           .map((secret) => secret.field)
         draft.exec = match.target
           ? { area: area.key, ref: match.ref, kind: "update", op: item.op, matchedBy: match.matchedBy, targetId: match.target.id, item: execItem, refs, secrets: secrets.execution, previous: match.target, name: blob.name, changes: fields, secretPaths, targetRev: item.targetRev, irreversible: [] }
           : { area: area.key, ref: match.ref, kind: "create", op: "create", matchedBy: match.matchedBy, item: execItem, refs, secrets: secrets.execution, name: blob.name, changes: [], secretPaths: [], irreversible: [], ...(preferredId ? { preferredId } : {}) }
         setIrreversible(area, item, draft.exec, decisions)
         applyVerdict(item, preflight.get(key))
+        if (decisions.createMissing === false && draft.exec.kind === "create") applyVerdict(item, { block: MATCH_ONLY_BLOCK })
         draft.uniqueProbe = { id: match.target?.id ?? blobItemAsConfigItem(blob, match.index).id, key: blob.key ?? match.target?.key ?? null, name: blob.name, spec: localized }
       }
     }
   }
 
-  // Invite decisions for people who are neither members nor in the blob: one
-  // planned `members.people` create each (pending invitation, role member, no
-  // teams), run before everything else so references resolve to it.
   const inviteDrafts: Draft[] = []
   const invited = new Set<string>()
   for (const drafts of blobDrafts.values()) {
@@ -624,7 +557,6 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
       } else {
         draft.exec = { area: PEOPLE_AREA, ref, kind: "create", op: "create", matchedBy: null, item: { name: email, spec }, refs: [], secrets: [], name: email, changes: [], secretPaths: [], irreversible: [] }
         setIrreversible(peopleArea, item, draft.exec, decisions)
-        // An invite other items rely on can't just be skipped: a skip verdict blocks it instead.
         const verdict = preflight.get(preflightKey(PEOPLE_AREA, ref))
         applyVerdict(item, verdict?.skip ? { ...verdict, block: verdict.block ?? verdict.skip } : verdict)
       }
@@ -632,7 +564,6 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
     }
   }
 
-  // Unique collisions: every writing item against the target as it will be.
   for (const state of states) {
     if (!state.match || !state.area.uniqueFields?.length) continue
     const drafts = blobDrafts.get(state.area.key) ?? []
@@ -656,7 +587,25 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
     }
   }
 
-  // 7. Assemble.
+  for (const state of states) {
+    if (!state.match || !state.area.uniqueAmongCreates?.length) continue
+    const creates = (blobDrafts.get(state.area.key) ?? []).filter((draft) => draft.exec?.kind === "create" && draft.uniqueProbe)
+    for (const unique of state.area.uniqueAmongCreates) {
+      const counts = new Map<string, number>()
+      const valueOf = (draft: Draft) => draft.uniqueProbe ? unique.get(draft.uniqueProbe) : null
+      for (const draft of creates) {
+        const value = valueOf(draft)
+        if (value !== null) counts.set(value, (counts.get(value) ?? 0) + 1)
+      }
+      for (const draft of creates) {
+        const value = valueOf(draft)
+        if (value === null || (counts.get(value) ?? 0) < 2) continue
+        if (!draft.item.flags.includes("collision.unique")) draft.item.flags.push("collision.unique")
+        draft.item.reasons = [...(draft.item.reasons ?? []), `this import creates more than one item with ${unique.label} "${draft.item.blob?.name ?? value}": rename this one or skip it`]
+      }
+    }
+  }
+
   const planAreas: ConfigPlan["areas"] = []
   const forward: ExecutionOp[] = []
   const deletes: ExecutionOp[][] = []
@@ -705,14 +654,8 @@ export function buildPlan(input: BuildPlanInput): BuildPlanResult {
   return { plan, execution, errors, fatalErrors }
 }
 
-/**
- * What the area says a later restore can't undo for this op, on the plan item
- * (shown before approval) and the execution op (seeded into the report). The
- * preview op carries the blob's spec with refs and secrets still unresolved.
- */
 function setIrreversible(area: ConfigArea, item: ConfigPlanItem, exec: ExecutionOp, decisions: ConfigDecisions): void {
   if (!area.irreversible) return
-  // As it will be applied: a person's create carries the invite-email choice.
   const preview = previewOp(withInviteEmail(exec, decisions.people.sendInviteEmails))
   if (!preview) return
   let effects: string[] = []
@@ -725,11 +668,6 @@ function setIrreversible(area: ConfigArea, item: ConfigPlanItem, exec: Execution
   if (effects.length > 0) item.irreversible = effects
 }
 
-/**
- * An execution op as the adapter's `apply` would get it, for plan-time
- * checks (`irreversible`, `preflight`): the blob's spec with `$ref`s and
- * `$secret`s still unresolved.
- */
 export function previewOp(exec: ExecutionOp): ConfigApplyOp | null {
   if (exec.kind === "delete" && exec.targetId && exec.previous) return { kind: "delete", targetId: exec.targetId, previous: exec.previous }
   if (exec.kind === "update" && exec.targetId && exec.previous && exec.item) {
@@ -739,23 +677,18 @@ export function previewOp(exec: ExecutionOp): ConfigApplyOp | null {
   return null
 }
 
-/**
- * An op as it is applied: with `send`, a `members.people` create (from the
- * blob or an invite decision) carries `SEND_INVITE_EMAIL_FIELD`, so the
- * invitation email goes out. The plan's irreversible effects use the same.
- */
 export function withInviteEmail(op: ExecutionOp, send: boolean): ExecutionOp {
   if (!send || op.area !== PEOPLE_AREA || op.kind !== "create" || !op.item) return op
   return { ...op, item: { ...op.item, spec: { ...op.item.spec, [SEND_INVITE_EMAIL_FIELD]: true } } }
 }
 
-/** `withInviteEmail` on every op of an execution plan. */
 export function withInviteEmails(execution: ExecutionPlan, send: boolean): ExecutionPlan {
   if (!send) return execution
   return { ...execution, ops: execution.ops.map((op) => withInviteEmail(op, send)) }
 }
 
-/** A preflight `block` (the `blocked` flag and its reason) and warnings on a planned write. */
+const MATCH_ONLY_BLOCK = "This import only changes what already exists, and nothing here matches this item: choose the item it is, or leave it out."
+
 function applyVerdict(item: ConfigPlanItem, verdict: ConfigPreflightResult | undefined): void {
   if (!verdict) return
   const reasons = [...(item.reasons ?? [])]
@@ -767,7 +700,6 @@ function applyVerdict(item: ConfigPlanItem, verdict: ConfigPreflightResult | und
   if (reasons.length > 0) item.reasons = reasons
 }
 
-/** The TypeID prefix every item shares, or null when they have none in common (or there are none). */
 function sharedTypeIdPrefix(items: readonly ConfigItem[]): string | null {
   let shared: string | null = null
   for (const item of items) {
@@ -778,11 +710,38 @@ function sharedTypeIdPrefix(items: readonly ConfigItem[]): string | null {
   return shared
 }
 
-/** A plan ref as the caller sees it: for areas they can't view, no name hint. */
+export function planRefTargets(plan: ConfigPlan, input: {
+  scope: readonly ConfigAreaKey[]
+  targetItems: ReadonlyMap<ConfigAreaKey, readonly ConfigItem[]>
+  members?: ReadonlyMap<string, string>
+  visibleAreas?: ReadonlySet<ConfigAreaKey>
+}): ConfigPlanRefTargets[] {
+  const wanted = new Set<ConfigAreaKey>()
+  for (const area of plan.areas) {
+    for (const item of area.items) {
+      for (const ref of item.refs ?? []) {
+        if (ref.via === "target" || (ref.via === "planned" && !ref.decision)) continue
+        const key = refArea(ref.ref)
+        if (key !== null && !input.scope.includes(key) && (!input.visibleAreas || input.visibleAreas.has(key))) wanted.add(key)
+      }
+    }
+  }
+  const out: ConfigPlanRefTargets[] = []
+  for (const key of CONFIG_AREA_KEYS) {
+    if (!wanted.has(key)) continue
+    const items = key === PEOPLE_AREA
+      ? [...(input.members ?? [])].map(([id, name]) => ({ id, name }))
+      : (input.targetItems.get(key) ?? []).map((item) => ({ id: item.id, name: item.name }))
+    if (items.length > 0) out.push({ area: key, items: items.sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id)) })
+  }
+  return out
+}
+
 function planRefView(ref: ConfigPlanRef, hidden: boolean): ConfigPlanRef {
   if (!hidden || ref.name === undefined) return ref
   const out: ConfigPlanRef = { path: ref.path, ref: ref.ref, resolvedId: ref.resolvedId, via: ref.via }
   if (ref.decision !== undefined) out.decision = ref.decision
+  if (ref.refuses !== undefined) out.refuses = ref.refuses
   return out
 }
 
@@ -797,7 +756,6 @@ function blobSummary(blob: ConfigBlobItem): NonNullable<ConfigPlanItem["blob"]> 
   return out
 }
 
-/** What of an item the plan hash covers: ops, matches, target revs, resolutions and secret decision kinds. Never values. */
 function hashView(draft: Draft): unknown {
   const { item } = draft
   return {
@@ -807,7 +765,6 @@ function hashView(draft: Draft): unknown {
     matchedBy: item.matchedBy,
     blob: item.blob ?? null,
     targetId: item.target?.id ?? null,
-    // Name and key live outside the spec: a rename on the target is drift too.
     targetName: item.target?.name ?? null,
     targetKey: item.target?.key ?? null,
     targetRev: item.targetRev ?? null,

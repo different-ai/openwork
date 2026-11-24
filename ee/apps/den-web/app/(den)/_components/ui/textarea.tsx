@@ -6,24 +6,10 @@ export type DenTextareaProps = Omit<
   TextareaHTMLAttributes<HTMLTextAreaElement>,
   "disabled"
 > & {
-  /**
-   * Number of visible text lines — sets the initial height.
-   * Defaults to 4.
-   */
   rows?: number;
-  /**
-   * Disables the textarea and dims it to 60 % opacity.
-   * Forwarded as the native `disabled` attribute.
-   */
   disabled?: boolean;
 };
 
-/**
- * DenTextarea
- *
- * Matches DenInput styling exactly: same border, bg, focus ring,
- * placeholder, and disabled state. Height is controlled by `rows`.
- */
 export function DenTextarea({
   rows = 4,
   disabled = false,

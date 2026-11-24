@@ -19,7 +19,6 @@ import { credentialPromptFromToolPart } from "./credential-prompt"
 
 export const CREDENTIAL_SAVED_CONTINUE_PROMPT = "I've saved the key. Go ahead."
 
-/** Keys saved in this window, so a remounting card stays saved before Den answers; never the value. */
 const savedHere = new Set<string>()
 const listeners = new Set<() => void>()
 const subscribe = (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener) } }
@@ -46,7 +45,6 @@ function denDashboardUrl(baseUrl: string, prompt: CredentialPrompt): string | nu
   }
 }
 
-/** Who will use the key, from fixed text; the audience counts come from Den, never the agent. */
 function audienceLine(prompt: CredentialPrompt): string {
   const target = prompt.target
   if (target.type === "mcp_connection_member_key") return "Only for you"
@@ -59,7 +57,6 @@ function audienceLine(prompt: CredentialPrompt): string {
   return `Replaces each person's own key · shared with ${who}`
 }
 
-/** Plain, value-free direction for each failure; the key is never repeated back. */
 function failureState(error: unknown, name: string): { phase: Phase; message: string | null } {
   if (error instanceof DenApiError) {
     if (error.status === 403 && error.code === "reauth") return { phase: "reauth", message: "Confirm it's you, then enter the key again." }
@@ -73,14 +70,8 @@ function failureState(error: unknown, name: string): { phase: Phase; message: st
   return { phase: "entry", message: "OpenWork couldn't confirm the key was saved. Try again." }
 }
 
-/**
- * The private field an agent asks for, shown where the conversation is. The
- * key goes straight from this field to Den with the signed-in person's
- * session; the transcript, tool results and model only learn it was saved.
- */
 export function CredentialPromptCard({ part, continueToolCallId = part.toolCallId }: {
   part: DynamicToolUIPart
-  /** The transcript's own tool call; a Code Mode script's inner call is not a turn part. */
   continueToolCallId?: string
 }) {
   const prompt = credentialPromptFromToolPart(part)
@@ -88,7 +79,6 @@ export function CredentialPromptCard({ part, continueToolCallId = part.toolCallI
   const auth = useDenAuth()
   const queryClient = useQueryClient()
   const fieldId = useId()
-  // One handle per field; values are read once at save and never kept.
   const fields = useRef(new Map<string, SecretFieldHandle>())
   const identifiers = useRef(new Map<string, HTMLInputElement>())
   const filled = useRef(new Set<string>())
@@ -103,7 +93,6 @@ export function CredentialPromptCard({ part, continueToolCallId = part.toolCallI
   const signedIn = auth.isSignedIn && Boolean(token && organizationId)
   const key = prompt ? targetKey(prompt) : ""
   const local = useSyncExternalStore(subscribe, () => savedHere.has(key), () => false)
-  // Den's own answer, so a reopened conversation shows what is true now.
   const stored = useQuery({
     queryKey: ["den", "credential-prompt", organizationId, key],
     queryFn: async () => {
@@ -163,7 +152,6 @@ export function CredentialPromptCard({ part, continueToolCallId = part.toolCallI
       } else if (prompt.target.type === "mcp_connection_key") {
         await client.saveMcpConnectionSharedKey(organizationId, prompt.target.connectionId, value)
       } else if (prompt.target.type === "mcp_connection_shared_switch") {
-        // Den switches the connection only if this key works and nothing changed since the request.
         await client.saveMcpConnectionSharedKey(organizationId, prompt.target.connectionId, value, { expectedUpdatedAt: prompt.target.expectedUpdatedAt })
       } else if (prompt.target.type === "mcp_connection_member_key") {
         await client.setMyMcpCredential(organizationId, prompt.target.connectionId, value)
@@ -180,7 +168,6 @@ export function CredentialPromptCard({ part, continueToolCallId = part.toolCallI
       setPhase("entry")
       markSaved(key)
       void queryClient.invalidateQueries({ queryKey: ["den", "credential-prompt", organizationId, key] })
-      // Picks the task up as if the person said so; the message carries no key.
       messageList?.continueAfterConnection?.(continueToolCallId, CREDENTIAL_SAVED_CONTINUE_PROMPT)
     } catch (cause) {
       values = {}
@@ -211,7 +198,6 @@ export function CredentialPromptCard({ part, continueToolCallId = part.toolCallI
     : blocked === "denied" ? "You can't change this key. Ask an organization admin."
     : blocked === "gone" ? "Ask the agent to set it up again."
     : null
-  // One state line: who uses the key and where it goes (P9).
   const consent = `${audienceLine(prompt)}${prompt.destination ? ` · sent only to ${prompt.destination}` : ""} · never shown to the agent`
   const Icon = settled ? Check : blocked ? Lock : KeyRound
 

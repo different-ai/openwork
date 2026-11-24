@@ -1,9 +1,3 @@
-/**
- * Storage for config blobs: change requests (a table-as-queue with leases, as
- * in `slack-assistant/repository.ts`), alias rows and recent exports.
- * Business rules (what a status transition means) live in the engine; this
- * file only reads and writes rows, with optimistic status guards.
- */
 import { randomUUID } from "node:crypto"
 import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, ne, or } from "@openwork-ee/den-db/drizzle"
 import {
@@ -37,19 +31,11 @@ type OrganizationId = DenTypeId<"organization">
 type MemberId = DenTypeId<"member">
 
 export type ConfigTx = Parameters<Parameters<typeof db.transaction>[0]>[0]
-/** `db`, `db.$primary` or a transaction. */
 export type ConfigDatabase = typeof db.$primary | ConfigTx
 
-/** Statuses the analysis worker picks up. `analyzing` only once its lease expired (a crashed worker). */
 export const CONFIG_ANALYSIS_CLAIMABLE_STATUSES: readonly ConfigChangeRequestStatus[] = ["uploaded", "stale", "analyzing"]
-/**
- * Statuses the apply worker looks at. `applying` only once its lease expired,
- * and never to apply again: it is marked `failed` (CONFIG_APPLY_INTERRUPTED_ERROR),
- * keeping its before-snapshot for a revert.
- */
 export const CONFIG_APPLY_CLAIMABLE_STATUSES: readonly ConfigChangeRequestStatus[] = ["queued", "applying"]
 export const CONFIG_APPLY_INTERRUPTED_ERROR = "The apply stopped part-way (the server restarted or lost its lock). Check the apply report, then fix and upload again, or restore the previous config."
-/** Open statuses that go `stale` when another request of the org is applied. */
 export const CONFIG_STALEABLE_STATUSES: readonly ConfigChangeRequestStatus[] = ["needs_review", "approved", "queued"]
 export const CONFIG_CLOSED_STATUSES: readonly ConfigChangeRequestStatus[] = ["invalid", "applied", "failed", "superseded", "cancelled"]
 export const CONFIG_BLOB_EXPORTS_KEPT = 20
@@ -64,9 +50,6 @@ function affectedRows(result: unknown): number {
   if ("affectedRows" in result && typeof result.affectedRows === "number") return result.affectedRows
   return 0
 }
-
-// ---------------------------------------------------------------------------
-// Change requests
 
 export type CreateChangeRequestInput = Omit<ConfigChangeRequestInsert, "id" | "approvals" | "errors" | "createdAt" | "updatedAt"> & {
   errors?: string[]
@@ -93,7 +76,27 @@ export async function getChangeRequest(
   return rows[0] ?? null
 }
 
-/** The columns a summary needs: leaves the blob, secret inputs and snapshot encrypted and unread. */
+export async function latestAppliedFromSource(
+  organizationId: OrganizationId,
+  source: { instanceId: string; organizationId: string },
+  database: ConfigDatabase = db.$primary,
+): Promise<Pick<ConfigChangeRequestRow, "id" | "decisions"> | null> {
+  const rows = await database
+    .select({ id: ConfigChangeRequestTable.id, decisions: ConfigChangeRequestTable.decisions })
+    .from(ConfigChangeRequestTable)
+    .where(and(
+      eq(ConfigChangeRequestTable.organizationId, organizationId),
+      eq(ConfigChangeRequestTable.status, "applied"),
+      eq(ConfigChangeRequestTable.sourceInstanceId, source.instanceId),
+      eq(ConfigChangeRequestTable.sourceOrgId, source.organizationId),
+      ne(ConfigChangeRequestTable.sourceKind, "revert"),
+      isNotNull(ConfigChangeRequestTable.decisions),
+    ))
+    .orderBy(desc(ConfigChangeRequestTable.appliedAt), desc(ConfigChangeRequestTable.id))
+    .limit(1)
+  return rows[0] ?? null
+}
+
 const summaryColumns = {
   id: ConfigChangeRequestTable.id,
   organizationId: ConfigChangeRequestTable.organizationId,
@@ -134,7 +137,6 @@ export async function listChangeRequests(
     .limit(options.limit ?? 100)
 }
 
-/** Status of each of these requests of the organization (missing ids are left out). */
 export async function listChangeRequestStatuses(
   organizationId: OrganizationId,
   ids: readonly ConfigChangeRequestId[],
@@ -150,10 +152,6 @@ export async function listChangeRequestStatuses(
 
 export type ChangeRequestPatch = Partial<Omit<ConfigChangeRequestInsert, "id" | "organizationId" | "createdAt" | "updatedAt">>
 
-/**
- * Updates a request only while its status is one of `from` (optimistic guard).
- * Returns the updated row, or null when the request moved on or does not exist.
- */
 export async function updateChangeRequest(
   organizationId: OrganizationId,
   id: ConfigChangeRequestId,
@@ -175,10 +173,6 @@ export async function updateChangeRequest(
 
 export type ClaimedChangeRequest = ConfigChangeRequestRow & { leaseOwner: string }
 
-/**
- * Finishes a claimed step: applies `patch`, clears the lease. Guarded by the
- * lease owner so a worker whose lease expired cannot overwrite a newer claim.
- */
 export async function releaseClaim(
   claim: Pick<ClaimedChangeRequest, "id" | "leaseOwner">,
   patch: ChangeRequestPatch,
@@ -191,7 +185,6 @@ export async function releaseClaim(
   return affectedRows(result) > 0
 }
 
-/** Pushes a live claim's lease forward; false when the lease was lost. */
 export async function extendClaim(claim: Pick<ClaimedChangeRequest, "id" | "leaseOwner">, leaseMs: number): Promise<boolean> {
   const result = await db.$primary
     .update(ConfigChangeRequestTable)
@@ -208,7 +201,6 @@ function claimableWhere(statuses: readonly ConfigChangeRequestStatus[], now: Dat
   )
 }
 
-/** Claims the next request to analyze (any org) and marks it `analyzing`. */
 export async function claimNextAnalysis(options: { leaseMs?: number } = {}): Promise<ClaimedChangeRequest | null> {
   return db.transaction(async (tx) => {
     const now = new Date()
@@ -226,13 +218,6 @@ export async function claimNextAnalysis(options: { leaseMs?: number } = {}): Pro
   })
 }
 
-/**
- * Claims the next request to apply and marks it `applying`. Only one request
- * per org applies at a time: a candidate is skipped while another request of
- * its org is `applying` with a live lease. The org row is locked (SKIP LOCKED,
- * so claims never wait on each other) while that is checked, which serializes
- * concurrent claims for the same org without deadlocks.
- */
 export async function claimNextApply(options: { leaseMs?: number } = {}): Promise<ClaimedChangeRequest | null> {
   return db.transaction(async (tx) => {
     const now = new Date()
@@ -246,7 +231,6 @@ export async function claimNextApply(options: { leaseMs?: number } = {}): Promis
     const triedOrgs = new Set<string>()
     for (const row of candidates) {
       if (row.status === "applying") {
-        // A worker died (or lost its lease) mid-apply: some items may be written. Never run it again.
         await tx.update(ConfigChangeRequestTable).set({
           status: "failed",
           errors: [CONFIG_APPLY_INTERRUPTED_ERROR],
@@ -266,7 +250,6 @@ export async function claimNextApply(options: { leaseMs?: number } = {}): Promis
         .where(eq(OrganizationTable.id, row.organizationId))
         .for("update", { skipLocked: true })
       if (!org) continue
-      // A locking read sees the latest committed rows, not the transaction's snapshot.
       const [busy] = await tx
         .select({ id: ConfigChangeRequestTable.id })
         .from(ConfigChangeRequestTable)
@@ -287,10 +270,6 @@ export async function claimNextApply(options: { leaseMs?: number } = {}): Promis
   })
 }
 
-/**
- * After an apply: every other open request of the org that was planned or
- * approved goes `stale` (re-analyzed, approval dropped). Returns their ids.
- */
 export async function markOtherOpenRequestsStale(
   organizationId: OrganizationId,
   exceptId: ConfigChangeRequestId,
@@ -311,13 +290,8 @@ export async function markOtherOpenRequestsStale(
   return ids
 }
 
-/** Open statuses a newer upload from the same API key and scope replaces (D5). Never one queued or applying. */
 export const CONFIG_SUPERSEDABLE_STATUSES: readonly ConfigChangeRequestStatus[] = ["uploaded", "analyzing", "needs_review", "approved", "stale"]
 
-/**
- * D5: a new request from an API key supersedes that key's older open requests
- * with exactly the same scope. Returns the superseded ids.
- */
 export async function supersedeOpenRequestsFromApiKey(input: {
   organizationId: OrganizationId
   apiKeyId: string
@@ -341,20 +315,9 @@ export async function supersedeOpenRequestsFromApiKey(input: {
   return ids
 }
 
-/** Secret inputs are kept at most this long on a request that was not applied. */
 export const CONFIG_SECRET_INPUTS_TTL_MS = 7 * 24 * 60 * 60 * 1000
-/** Open statuses whose secret inputs expire. Not `analyzing` / `applying` (a worker holds them; caught on a later sweep). */
 export const CONFIG_SECRET_INPUT_EXPIRY_STATUSES: readonly ConfigChangeRequestStatus[] = ["needs_review", "approved", "stale", "queued"]
 
-/**
- * Deletes the secret inputs of open requests uploaded more than
- * CONFIG_SECRET_INPUTS_TTL_MS ago, at most `limit` per call. Such a request
- * goes `stale` with approvals dropped, so it is re-analyzed and asks for its
- * secrets again. Closed statuses clear their inputs when they close
- * (applied, failed, cancelled, superseded, invalid). Cheap: `status IN (…)`
- * uses the queue index prefix, and only open requests are scanned.
- */
-/** `now` sets the cutoff (tests pass a later time); the request is re-analyzed right away. */
 export async function expireSecretInputs(options: { now?: Date; limit?: number } = {}, database: ConfigDatabase = db.$primary): Promise<ConfigChangeRequestId[]> {
   const now = options.now ?? new Date()
   const scope = and(
@@ -372,10 +335,6 @@ export async function expireSecretInputs(options: { now?: Date; limit?: number }
   return ids
 }
 
-// ---------------------------------------------------------------------------
-// Summaries
-
-/** Member ids a list of summaries needs names for (creators and approvers). */
 export function summaryMemberIds(rows: ConfigChangeRequestSummaryRow[]): string[] {
   const ids = new Set<string>()
   for (const row of rows) {
@@ -385,7 +344,6 @@ export function summaryMemberIds(rows: ConfigChangeRequestSummaryRow[]): string[
   return [...ids]
 }
 
-/** Display names of the org's members (user name; null when the member has no user). */
 export async function loadMemberNames(organizationId: OrganizationId, memberIds: string[]): Promise<Map<string, string | null>> {
   const names = new Map<string, string | null>()
   if (memberIds.length === 0) return names
@@ -432,14 +390,10 @@ export function toChangeRequestSummary(row: ConfigChangeRequestSummaryRow, names
   }
 }
 
-// ---------------------------------------------------------------------------
-// Aliases
-
 export function aliasKey(area: ConfigAreaKey, sourceId: string): string {
   return `${area}:${sourceId}`
 }
 
-/** `${area}:${sourceId}` → local id, for one source instance. */
 export async function listAliases(organizationId: OrganizationId, sourceInstanceId: string, database: ConfigDatabase = db): Promise<Map<string, string>> {
   const rows = await listAliasRows(organizationId, sourceInstanceId, database)
   return new Map(rows.map((row) => [aliasKey(row.area, row.sourceId), row.localId]))
@@ -447,7 +401,6 @@ export async function listAliases(organizationId: OrganizationId, sourceInstance
 
 export type ConfigAliasEntry = Pick<ConfigBlobAliasRow, "area" | "sourceId" | "localId" | "createdByChangeRequestId">
 
-/** The org's alias rows for one source instance, with the change request that wrote each (provenance). */
 export async function listAliasRows(organizationId: OrganizationId, sourceInstanceId: string, database: ConfigDatabase = db): Promise<ConfigAliasEntry[]> {
   return database
     .select({ area: ConfigBlobAliasTable.area, sourceId: ConfigBlobAliasTable.sourceId, localId: ConfigBlobAliasTable.localId, createdByChangeRequestId: ConfigBlobAliasTable.createdByChangeRequestId })
@@ -455,7 +408,6 @@ export async function listAliasRows(organizationId: OrganizationId, sourceInstan
     .where(and(eq(ConfigBlobAliasTable.organizationId, organizationId), eq(ConfigBlobAliasTable.sourceInstanceId, sourceInstanceId)))
 }
 
-/** Removes the aliases pointing at local items an apply deleted (any source instance). Returns how many went. */
 export async function deleteAliasesForLocalIds(
   organizationId: OrganizationId,
   deleted: ReadonlyArray<{ area: ConfigAreaKey; localId: string }>,
@@ -482,7 +434,6 @@ export type AliasInput = {
   createdByChangeRequestId: ConfigChangeRequestId | null
 }
 
-/** Records aliases; a second alias for the same source item replaces the first. */
 export async function insertAliases(organizationId: OrganizationId, aliases: AliasInput[], database: ConfigDatabase = db.$primary): Promise<void> {
   for (const alias of aliases) {
     await database
@@ -492,10 +443,6 @@ export async function insertAliases(organizationId: OrganizationId, aliases: Ali
   }
 }
 
-// ---------------------------------------------------------------------------
-// Exports
-
-/** Keeps a copy of an export (the three-way base) and prunes the org's older ones. */
 export async function recordExport(input: {
   organizationId: OrganizationId
   baseHash: string
@@ -518,7 +465,6 @@ export async function findExportByBaseHash(organizationId: OrganizationId, baseH
   return rows[0] ?? null
 }
 
-/** Deletes all but the newest `keep` exports of the org. Returns how many went. */
 export async function pruneExports(organizationId: OrganizationId, keep = CONFIG_BLOB_EXPORTS_KEPT): Promise<number> {
   const old = await db.$primary
     .select({ id: ConfigBlobExportTable.id })
@@ -530,9 +476,6 @@ export async function pruneExports(organizationId: OrganizationId, keep = CONFIG
   if (old.length === 0) return 0
   return affectedRows(await db.$primary.delete(ConfigBlobExportTable).where(inArray(ConfigBlobExportTable.id, old.map((row) => row.id))))
 }
-
-// ---------------------------------------------------------------------------
-// Apply runs (one row per apply attempt, with its report)
 
 function failureColumns(report: ConfigApplyReport) {
   return {
@@ -548,12 +491,10 @@ export type CreateApplyRunInput = {
   requestedByMemberId: MemberId | null
   requestedByApiKeyId: string | null
   runsAsMemberId: MemberId | null
-  /** Built with `runId: ""` and `attempt: 0`: both are filled in here. */
   report: ConfigApplyReport
   startedAt: Date
 }
 
-/** Inserts the run of the next attempt (status `running`). Returns the row with `runId` and `attempt` set in its report. */
 export async function createApplyRun(input: CreateApplyRunInput, database: ConfigDatabase = db.$primary): Promise<ConfigApplyRunRow> {
   const id = createDenTypeId("configApplyRun")
   const previous = await database
@@ -582,11 +523,6 @@ export async function createApplyRun(input: CreateApplyRunInput, database: Confi
   return row
 }
 
-/**
- * Saves a run's report (after every item, and once at the end). Only while the
- * run is still `running`: a run already marked `interrupted` by the next claim
- * keeps that status, but its items are still updated with what this worker did.
- */
 export async function saveApplyRunReport(
   run: Pick<ConfigApplyRunRow, "id" | "organizationId">,
   report: ConfigApplyReport,
@@ -599,7 +535,6 @@ export async function saveApplyRunReport(
     .set({ report: summarized, status: summarized.status, finishedAt, ...failureColumns(summarized) })
     .where(and(eq(ConfigApplyRunTable.organizationId, run.organizationId), eq(ConfigApplyRunTable.id, run.id), eq(ConfigApplyRunTable.status, "running")))
   if (affectedRows(result) > 0) return true
-  // Interrupted meanwhile: record what this worker did, keep `interrupted`.
   await database
     .update(ConfigApplyRunTable)
     .set({ report: { ...summarized, status: "interrupted" }, ...failureColumns(summarized) })
@@ -621,7 +556,6 @@ export async function getApplyRun(
   return rows[0] ?? null
 }
 
-/** Every run of a change request, newest first. */
 export async function listApplyRuns(organizationId: OrganizationId, changeRequestId: ConfigChangeRequestId, database: ConfigDatabase = db): Promise<ConfigApplyRunRow[]> {
   return database
     .select()
@@ -631,7 +565,6 @@ export async function listApplyRuns(organizationId: OrganizationId, changeReques
     .limit(50)
 }
 
-/** The newest run of a change request, or null when it was never applied. */
 export async function latestApplyRun(organizationId: OrganizationId, changeRequestId: ConfigChangeRequestId, database: ConfigDatabase = db): Promise<ConfigApplyRunRow | null> {
   const rows = await database
     .select()
@@ -642,7 +575,6 @@ export async function latestApplyRun(organizationId: OrganizationId, changeReque
   return rows[0] ?? null
 }
 
-/** A worker died or lost its lease mid-apply: its `running` runs become `interrupted`, items in flight failed ("interrupted"). */
 export async function interruptRunningApplyRuns(organizationId: OrganizationId, changeRequestId: ConfigChangeRequestId, database: ConfigDatabase = db.$primary): Promise<number> {
   const running = await database
     .select()

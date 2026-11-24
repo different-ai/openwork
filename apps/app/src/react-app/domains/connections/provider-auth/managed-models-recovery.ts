@@ -23,7 +23,6 @@ export type ManagedModelAvailabilityPendingInput = {
   openWorkModelsSyncing: boolean;
 };
 
-/** A cloud model can temporarily disappear while its provider is being reconciled. */
 export function isManagedModelAvailabilityPending(
   input: ManagedModelAvailabilityPendingInput,
 ) {

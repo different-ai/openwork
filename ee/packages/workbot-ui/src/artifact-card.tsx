@@ -6,12 +6,6 @@ import { artifactColor, artifactKind, artifactLabel, artifactTitle, staticAppHtm
 import { useWorkbotFileBytes, useWorkbotImageUrl, useWorkbotPreview, useWorkbotPreviewPage, type WorkbotAttachment } from "./data";
 import { OpenFileContext, OpenFileIdContext } from "./open-file";
 
-/**
- * A file Workbot made, as a card in the conversation: a large preview of the file itself, then a small
- * icon, its title and its type. Tapping it opens the file beside the chat (a full-screen sheet on a phone).
- * An App built in OpenWork is a card too: it has no bytes to preview, so it shows its type until it is opened.
- */
-
 const ICONS: Record<ArtifactKind, LucideIcon> = {
   html: Globe, app: AppWindow, image: ImageIcon, pdf: FileText, video: Film, audio: Music, markdown: FileText, text: FileText,
   csv: FileSpreadsheet, sheet: FileSpreadsheet, slides: Presentation, document: FileText, other: File,
@@ -63,7 +57,6 @@ export function ArtifactCard({ file }: { file: WorkbotAttachment }) {
           <span className="truncate text-[12px] leading-4 text-[var(--wb-muted)]">{label}</span>
         </span>
       </div>
-      {/* One target over the whole card: the thumbnail may be a live frame, which can't sit inside a button. */}
       <button
         type="button"
         onClick={() => open(file)}
@@ -85,17 +78,10 @@ export function ArtifactThumbnail({ file, kind, html }: { file: WorkbotAttachmen
 
 function ImageThumbnail({ file, kind }: { file: WorkbotAttachment; kind: ArtifactKind }) {
   const url = useWorkbotImageUrl(file.id, file.updatedAt);
-  // Blob URL from our own API; next/image cannot optimize it.
   // eslint-disable-next-line @next/next/no-img-element
-  // The whole picture at its own proportions on the card's tray: a phone screenshot or a portrait photo is not cropped
-  // to a 16:10 strip.
   return url ? <img src={url} alt="" className="workbot-fade-in block h-full w-full object-contain p-2" /> : <Placeholder kind={kind} />;
 }
 
-/**
- * The app at a desktop width, scaled down to the card, as its page looks before its scripts run (staticAppHtml): a
- * card appearing never runs the app, sends anything or navigates. Only opening it in the panel runs it.
- */
 function AppThumbnail({ html }: { html: string }) {
   const page = useMemo(() => staticAppHtml(html), [html]);
   if (page === null) return <Placeholder kind="html" />;
@@ -114,21 +100,18 @@ function AppThumbnail({ html }: { html: string }) {
   );
 }
 
-/** The first page Workbot's computer rendered; the type's placeholder when there is none. */
 function PageThumbnail({ file, kind }: { file: WorkbotAttachment; kind: ArtifactKind }) {
   const preview = useWorkbotPreview(file.id, file.updatedAt);
   const page = useWorkbotPreviewPage(file.id, 1, file.updatedAt, Boolean(preview.data));
   if (!preview.data || !page.data) return <Placeholder kind={kind} />;
   return (
     <span className="grid h-full w-full place-items-center bg-[var(--wb-tray)] px-[10%] pt-[6%]">
-      {/* Blob URL from our own API; next/image cannot optimize it. */}
       {/* eslint-disable-next-line @next/next/no-img-element */}
       <img src={page.data} alt="" className="workbot-fade-in block h-full w-full rounded-t-[6px] object-cover object-top shadow-[var(--wb-page-shadow)]" />
     </span>
   );
 }
 
-/** No picture of this file: a quiet tile tinted by its type, with its icon. */
 function Placeholder({ kind }: { kind: ArtifactKind }) {
   const Icon = ICONS[kind];
   const color = artifactColor(kind);

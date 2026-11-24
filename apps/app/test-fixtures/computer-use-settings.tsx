@@ -6,13 +6,6 @@ import { Button } from "../src/components/ui/button"
 import { TooltipProvider } from "../src/components/ui/tooltip"
 import "../src/app/index.css"
 
-// Settings > Computer use in each state it can report, behind the desktop IPC
-// boundary: no helper, no macOS permissions and no account are involved.
-//   ?state=ready | setup | partial | unsupported | unavailable | failed | checking | vm | off
-//   &targets=2   offers a second computer to choose
-//   &grants=none | some | failed | off   remembered file sharing (default none)
-//   &theirs      macOS lists the permissions under an app OpenWork cannot reset
-//   &controls    shows buttons that stand in for System Settings
 const query = new URLSearchParams(location.search)
 const state = query.get("state") ?? "ready"
 const granted: Record<ComputerPermission, boolean> = {
@@ -52,7 +45,6 @@ async function invoke(command: string, ...args: unknown[]) {
     case "computerChoose":
       if (typeof args[0] === "string") targetId = args[0]
       return status()
-    // Opening a pane grants nothing; the fixture's "Grant" buttons stand in for System Settings.
     case "computerSetup":
     case "computerResetPermission":
       return { setupId: "fixture" }
@@ -70,7 +62,6 @@ async function invoke(command: string, ...args: unknown[]) {
 }
 Reflect.set(window, "__OPENWORK_ELECTRON__", { invokeDesktop: invoke })
 
-// What a person does in System Settings. The page finds out on its next check, as it does from macOS.
 function SystemSettings() {
   return (
     <div className="flex w-full max-w-3xl flex-wrap items-center justify-between gap-2 border-b border-border pb-3">

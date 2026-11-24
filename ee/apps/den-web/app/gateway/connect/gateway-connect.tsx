@@ -14,14 +14,12 @@ type AwsDevice = { attempt: string; userCode: string; verificationUrl: string; e
 
 const METHOD_BRAND: Record<"google" | "microsoft" | "aws_sso", string> = { google: "Google", microsoft: "Microsoft", aws_sso: "AWS" };
 
-/** Only the identity provider's own authorize page may receive the person. */
 function isAuthorizationUrl(method: ConnectMethod, url: URL) {
   if (url.username || url.password) return false;
   if (method === "microsoft") return url.origin === "https://login.microsoftonline.com" && /^\/[0-9a-f-]{36}\/oauth2\/v2\.0\/authorize$/i.test(url.pathname);
   return url.origin === "https://accounts.google.com" && url.pathname === "/o/oauth2/v2/auth";
 }
 
-/** AWS's own approval page for the device code (Identity Center or the access portal). */
 function isAwsVerificationUrl(value: string) {
   try {
     const url = new URL(value);
@@ -34,7 +32,6 @@ function readIssue(value: unknown): IssueState | null {
   if (typeof value !== "object" || value === null) return null;
   const status = readString(value, "status");
   const keyCount: unknown = Reflect.get(value, "keyCount");
-  // TrueFoundry reports `ready` (one key per person) instead of a key count.
   const ready: unknown = Reflect.get(value, "ready");
   return status ? { status, message: readString(value, "message"), keyCount: typeof keyCount === "number" ? keyCount : ready === true ? 1 : 0 } : null;
 }
@@ -205,6 +202,10 @@ export function GatewayConnect() {
         if ((response.status === 401 || response.status === 403) && (code === "browser_signin_required" || code === "browser_account_mismatch")) {
           startAttempted.current = false;
           setStep(code === "browser_signin_required" ? "sign_in_required" : "account_mismatch");
+        } else if (response.status === 403 && code === "feature_disabled") {
+          startAttempted.current = false;
+          setStep("blocked");
+          setError(readString(payload, "message") ?? "You can't sign in to these models right now. Ask your admin.");
         } else {
           setStep("restart");
           setError("Sign-in could not continue. Start signing in again in OpenWork.");
@@ -231,7 +232,6 @@ export function GatewayConnect() {
     }
   }
 
-  /** AWS IAM Identity Center: OpenWork shows AWS's approval page and code, then waits for approval. */
   async function startAwsSignIn() {
     if (!mounted.current || !ready.current || actionRequest.current || startAttempted.current) return;
     const controller = new AbortController();
@@ -344,7 +344,6 @@ export function GatewayConnect() {
     }
   }
 
-  /** Per-user LiteLLM: the member pastes their own key; OpenWork checks it with the proxy. */
   async function connectLiteLlmKey() {
     if (!mounted.current || !ready.current || actionRequest.current) return;
     const apiKey = liteLlmKey.trim();
@@ -411,7 +410,6 @@ export function GatewayConnect() {
     }
   }
 
-  /** OpenWork-created LiteLLM or TrueFoundry keys: look the person up again. */
   async function checkIssuedKey() {
     if (!mounted.current || !ready.current || actionRequest.current) return;
     const controller = new AbortController();

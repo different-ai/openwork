@@ -1,10 +1,11 @@
+import { desktopChallenge } from "../desktop-access.js"
 import * as Sentry from "@sentry/node"
 import { randomBytes } from "node:crypto"
 import { INFERENCE_USAGE_CONVERSION_FACTOR } from "@openwork/types/den/inference"
 import type { FreeAllowanceStore, FreeUsageReceipt } from "./allowance.js"
 import { FREE_OPENAI_CHAT_URL, FREE_OPENAI_RESPONSES_URL, type AutoConfig } from "./config.js"
-import type { FreePrincipal } from "./principal.js"
-import { meterFreeResponse, upstreamErrorDetails, type UpstreamErrorDetails } from "./meter.js"
+import { freeSafetyIdentifier, type FreePrincipal } from "./principal.js"
+import { isPolicyRefusal, meterFreeResponse, upstreamErrorDetails, type UpstreamErrorDetails } from "./meter.js"
 import { retryFreeSettlement } from "./settlement.js"
 import { freeError } from "./errors.js"
 import type { FreeProtocol } from "./request.js"
@@ -15,7 +16,6 @@ const log = gatewayLog.child({ component: "free-auto" })
 const UPSTREAM_ERROR_BODY_BYTES = 16 * 1024
 const UPSTREAM_ERROR_BODY_TIMEOUT_MS = 2_000
 
-/** Reads a bounded slice of OpenAI's error body for its type and code, then aborts the request. */
 async function readUpstreamError(response: Response, controller: AbortController): Promise<UpstreamErrorDetails> {
   const timeout = setTimeout(() => controller.abort(), UPSTREAM_ERROR_BODY_TIMEOUT_MS)
   const reader = response.body?.getReader()
@@ -43,34 +43,30 @@ function errorCode(error: unknown) {
   return typeof code === "string" && /^[\w.-]{1,64}$/.test(code) ? code : undefined
 }
 
-/**
- * Check the allowance, send one request to OpenAI with the dedicated free key, and charge
- * the reported cost afterwards, as paid Models does. Guests and members only differ in
- * which store (and so which tables) holds their allowance.
- */
 export async function dispatchFreeCompletion(input: {
   config: AutoConfig; store: FreeAllowanceStore; fetch: typeof fetch;
-  principal: FreePrincipal; prepared: { body: string; stream: boolean; choices?: number; protocol?: FreeProtocol };
+  principal: FreePrincipal; desktopHash?: string; prepared: { body: string; stream: boolean; choices?: number; protocol?: FreeProtocol };
   signal: AbortSignal; controller: AbortController;
-  /** Members only: write-ahead Gateway usage log so Auto shows in the organization's usage. Guests are never logged. */
   startUsageLog?: (requestId: string, stream: boolean) => RequestLogRecorder;
 }) {
   const { config, store, principal, prepared, signal, controller } = input
   signal.throwIfAborted()
   const requestId = randomBytes(16).toString("hex")
-  const admission = await store.admit(principal)
+  const admission = await store.admit(principal, requestId, prepared.choices ?? 1, input.desktopHash)
   if (!admission.ok) {
-    const response = freeError(admission.code === "free_principal_rejected" ? 403 : 429, admission.code)
-    // Keep desktop error bodies compatible. These headers distinguish a signed-in
-    // person's exhausted allowance from temporary capacity and guest limits.
-    if (principal.kind === "member" && admission.code === "anonymous_limit_exceeded") {
+    if (admission.code === "desktop_proof_required") return desktopChallenge()
+    if (admission.code === "free_founder_unavailable") return freeError(403, admission.code, "Included model usage is unavailable for this organization. You can use a configured or paid model.")
+    const sharedMessage = admission.code === "free_desktop_budget_exhausted" ? "This desktop has reached its weekly free model limit."
+      : admission.code === "free_founder_budget_exhausted" ? "Organizations created by the same account have reached their shared weekly free model limit." : undefined
+    const response = freeError(admission.code === "free_principal_rejected" ? 403 : 429, admission.code, sharedMessage)
+    if (principal.kind === "member" && (admission.code === "anonymous_limit_exceeded" || sharedMessage)) {
       response.headers.set("X-OpenWork-Error-Code", "free_allowance_exhausted")
       response.headers.set("X-OpenWork-Usage-State", "blocked")
     }
     return response
   }
-  const charge = (receipt: FreeUsageReceipt | null) => retryFreeSettlement(
-    () => store.charge({ requestId, principal, windows: admission.windows, receipt }),
+  const charge = (receipt: FreeUsageReceipt | null, release = false) => retryFreeSettlement(
+    () => store.charge({ requestId, principal, windows: admission.windows, receipt, reserved: admission.reserved, release }),
     () => Sentry.captureMessage("Free Auto charge pending database recovery", {
       level: "error", tags: { route: principal.kind === "member" ? "openwork_free" : "anonymous_free" },
       extra: { requestId, receipt, principal, windows: admission.windows },
@@ -78,9 +74,8 @@ export async function dispatchFreeCompletion(input: {
   )
   const usageLog = input.startUsageLog?.(requestId, prepared.stream) ?? null
   const startedAt = Date.now()
-  // One line per failure, with what is needed to find it at OpenAI. Never the prompt, output, keys, or OpenAI's message text.
   const logFailure = (level: "info" | "error", message: string, fields: Record<string, string | number | undefined>) => log[level](message, {
-    request_id: requestId, route: principal.kind === "member" ? "openwork_free" : "anonymous_free",
+    request_id: requestId, route: principal.kind === "member" ? "openwork_free" : "anonymous_free", safety_identifier: freeSafetyIdentifier(principal),
     organization_id: principal.kind === "member" ? principal.organizationId : undefined,
     model: config.upstreamModel, protocol: prepared.protocol ?? "chat", stream: prepared.stream,
     duration_ms: Date.now() - startedAt, ...fields,
@@ -88,9 +83,22 @@ export async function dispatchFreeCompletion(input: {
   const upstreamFields = (details: UpstreamErrorDetails) => ({
     upstream_error_type: details.type, upstream_error_code: details.code,
   })
-  // Like every Gateway route: no durable accounting record, no upstream call.
   if (usageLog && await usageLog.whenStarted?.() === false) {
+    if (admission.reserved) await charge(null, true)
     return freeError(503, "request_log_unavailable", `${REQUEST_LOG_UNAVAILABLE_MESSAGE} No allowance was consumed.`)
+  }
+  let paused: boolean
+  try {
+    paused = await store.safetyPaused(principal)
+  } catch {
+    if (admission.reserved) await charge(null, true)
+    await usageLog?.finish({ status: 503, outcome: "upstream_error", errorCode: "free_safety_check_unavailable" })
+    return freeError(503, "free_safety_check_unavailable")
+  }
+  if (paused) {
+    if (admission.reserved) await charge(null, true)
+    await usageLog?.finish({ status: 403, outcome: "upstream_error", errorCode: "free_safety_paused" })
+    return freeError(403, "free_safety_paused", "Free model access is restricted. Contact OpenWork support for review.")
   }
   let response: Response
   let headerTimedOut = false
@@ -108,7 +116,6 @@ export async function dispatchFreeCompletion(input: {
     logFailure(reason === "client_cancelled" ? "info" : "error", "free Auto request did not reach OpenAI", {
       reason, error_name: error instanceof Error ? error.name : undefined, error_code: errorCode(error),
     })
-    // The request may have reached OpenAI, so the estimate is charged.
     controller.abort()
     await charge(null)
     await usageLog?.finish({ status: null, outcome: "upstream_unreachable", errorCode: "free_inference_upstream_error" }).catch(() => undefined)
@@ -118,16 +125,19 @@ export async function dispatchFreeCompletion(input: {
   const contentType = response.headers.get("content-type")?.split(";", 1)[0]?.trim().toLowerCase()
   const upstreamRequestId = response.headers.get("x-request-id")?.slice(0, 128)
   if (!response.ok) {
-    // OpenAI does not bill a request it answers with an error.
+    if (admission.reserved) await charge(null, true)
     const details = await readUpstreamError(response, controller)
     logFailure("error", "free Auto upstream request failed", {
       reason: "upstream_status", http_status_code: response.status, upstream_request_id: upstreamRequestId, ...upstreamFields(details),
     })
+    if (isPolicyRefusal(details)) {
+      await usageLog?.finish({ status: response.status, outcome: "upstream_error", errorCode: "free_policy_refusal" })
+      return freeError(403, "free_policy_refusal", "This request was stopped by the model provider's safety policy.")
+    }
     await usageLog?.finish({ status: response.status, outcome: "upstream_error", errorCode: "free_inference_upstream_unavailable" }).catch(() => undefined)
     return freeError(503, "free_inference_upstream_unavailable", "Auto is temporarily unavailable. No allowance was consumed.")
   }
   if (!response.body || contentType !== (prepared.stream ? "text/event-stream" : "application/json")) {
-    // A successful but unreadable response may have been billed, just like a broken stream.
     logFailure("error", "free Auto upstream response was unreadable", {
       reason: "invalid_response", http_status_code: response.status, upstream_request_id: upstreamRequestId, content_type: contentType?.slice(0, 80),
     })

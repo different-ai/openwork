@@ -1,5 +1,3 @@
-// Owned here: reload vocabulary is part of the extension manifest contract.
-// types.ts re-exports it for the rest of the app.
 export type ReloadReason = "plugins" | "skills" | "mcp" | "config" | "agents" | "commands";
 
 export type OpenWorkExtensionSourceFormat =
@@ -81,10 +79,6 @@ export type OpenWorkExtensionLifecycle = {
   detection?: string[];
 };
 
-// ---------------------------------------------------------------------------
-// Enablement — declarative conditions for extension "active" state
-// ---------------------------------------------------------------------------
-
 export type EnablementConditionType =
   | "mcp-connected"
   | "provider-connected"
@@ -93,13 +87,10 @@ export type EnablementConditionType =
 
 export type EnablementCondition = {
   type: EnablementConditionType;
-  /** What to check — MCP server name, plugin id, env key, etc. */
   ref: string;
-  /** Human-readable label shown in the UI. */
   label: string;
 };
 
-/** Result of evaluating a single enablement condition at runtime. */
 export type EnablementResult = {
   condition: EnablementCondition;
   met: boolean;
@@ -123,7 +114,6 @@ export type OpenWorkExtensionManifest = {
   resources: OpenWorkExtensionResource[];
   contributions?: OpenWorkExtensionContribution[];
   lifecycle?: OpenWorkExtensionLifecycle;
-  /** Declarative conditions that must ALL be true for the extension to be "active". */
   enablement?: EnablementCondition[];
   defaultEnabled?: boolean;
   defaultHidden?: boolean;

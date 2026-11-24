@@ -16,24 +16,16 @@ import type { CreateDashboardApp } from "./dashboard-apps";
 import { useSavedApps } from "../apps/use-apps";
 import { ArtifactsPage } from "./artifacts-page";
 
-/** The member's dashboard. Placement belongs to each member. */
 export function DashboardPage({ fallbackEndpoints, onCreateApp, headerActionsTarget, onSignIn, active = true }: {
   onCreateApp: CreateDashboardApp;
-  /** Retained pages refresh access when navigation makes them visible again. */
   active?: boolean;
-  /** Opens OpenWork Cloud sign-in, the same action Library offers when signed out. */
   onSignIn?: () => void;
-  /** Titlebar slot for the Add control, matching Library. */
   headerActionsTarget?: HTMLElement | null;
-  /** Other workspace MCP runtimes tiles may launch through when the primary one lacks their server. */
   fallbackEndpoints?: DashboardLaunchEndpoint[];
 }) {
   const denAuth = useDenAuth();
   const { openworkServerClient } = useWorkspace();
   const personal = useSavedApps();
-  // The active org lives in den settings, which change outside React; track
-  // them through the settings-changed event so an org switch swaps the board
-  // scope.
   const [denSettings, setDenSettings] = useState(() => readDenSettings());
   useEffect(() => {
     const sync = () => setDenSettings(readDenSettings());
@@ -46,13 +38,8 @@ export function DashboardPage({ fallbackEndpoints, onCreateApp, headerActionsTar
     [activeOrgId, denAuth.user?.id, denSettings.baseUrl, denSettings.apiBaseUrl],
   );
 
-  // The dashboard belongs to the signed-in member: signed out, no tile mounts
-  // and nothing is launched or fetched, and the page is one empty state whose
-  // action is signing in.
   if (denAuth.status !== "checking" && !denAuth.isSignedIn) return <DashboardSignedOut onSignIn={onSignIn} />;
 
-  // Hold the board (and every launch) until its user/org scope and saved apps
-  // are final.
   if (denAuth.status === "checking"
     || (Boolean(personal.client && personal.orgId) && personal.query.isPending && !personal.query.isFetched)) {
     return (

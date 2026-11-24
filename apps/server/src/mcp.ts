@@ -442,16 +442,10 @@ function deniedToolIds(
   agentName: string,
   toolIds: string[],
 ): string[] {
-  // OpenCode merges the deprecated top-level `tools` map and the current
-  // `permission` map independently, then applies every permission key after
-  // every tools key. A project `tools: { x: true }` therefore cannot undo a
-  // global `permission: { x: "deny" }`.
   const topLevel = mergeToolPolicy(
     mergeConfiguredPolicies(configs, (config) => toolPolicyFromLegacyTools(config.tools)),
     mergeConfiguredPolicies(configs, (config) => normalizeToolPolicy(config.permission)),
   );
-  // Deprecated `mode.<name>` is folded into `agent.<name>` only after all
-  // ordinary agent layers have merged, so mode policy remains the later set.
   const agent = mergeToolPolicy(
     mergeConfiguredPolicies(configs, (config) => policyForAgentContainer(config, "agent", agentName)),
     mergeConfiguredPolicies(configs, (config) => policyForAgentContainer(config, "mode", agentName)),
@@ -460,9 +454,6 @@ function deniedToolIds(
   return toolIds.filter((toolId) => {
     const decision = rules.slice().reverse().find((rule) => (
       openCodeWildcardMatch(toolId, rule.permission)
-      // OpenCode only removes a tool when the winning rule applies to the
-      // entire tool resource. Resource-specific rules are enforced at call
-      // time and do not hide the tool from the catalog.
       && rule.pattern === "*"
     ));
     return decision?.action === "deny";
@@ -541,12 +532,8 @@ export async function listMcpFromRuntimeSnapshot(
 
   const items: McpItem[] = [];
 
-  // Preserve production behavior: runtime MCPs are dynamically POSTed to
-  // OpenCode and can supersede static project/global entries after startup.
   for (const [name, entry] of Object.entries(globalMcpMap)) {
     if (Object.prototype.hasOwnProperty.call(projectMcpMap, name)) continue;
-    // One row per name: a connection OpenWork holds itself (for example one
-    // imported from this file) is the one the engine runs.
     if (Object.prototype.hasOwnProperty.call(runtimeMap, name)) continue;
     const toolDenies = diagnoseMcpToolDeniesFromConfigs({ projectConfig: config, globalConfig, name });
     items.push({
@@ -584,12 +571,6 @@ export async function listMcpFromRuntimeSnapshot(
   return items;
 }
 
-/**
- * Diagnostics-only passive inventory. It returns every configured layer and
- * collision metadata without claiming which entry is effective: OpenCode's
- * static config merge and OpenWork's later dynamic MCP registration can make
- * that answer lifecycle-dependent, and observing it would wake a cold engine.
- */
 export async function inspectMcpLayersFromRuntimeSnapshot(
   workspaceRoot: string,
   runtimeConfig: RuntimeOpencodeConfig,
@@ -670,8 +651,6 @@ export async function addMcp(
 ): Promise<{ action: "added" | "updated" }> {
   validateUserMcpName(name);
   validateMcpConfig(config);
-  // Read and change the map inside the serialized writer: a copy taken before
-  // the write is stale when two changes land at once, and one is lost.
   let existed = false;
   await writeRuntimeOpencodeConfig(serverConfig, workspaceId, (current) => {
     const mcpMap = { ...runtimeMcpMap(current) };
@@ -694,13 +673,6 @@ export async function removeMcp(serverConfig: ServerConfig, workspaceId: string,
   return existed;
 }
 
-// Flips `enabled` on a workspace MCP entry. Returns false for "toggle does
-// not apply": missing, non-object, or malformed enough that OpenCode would
-// fail to load it. The HTTP layer maps false to 404. Globals are out of
-// scope by design — only workspace-level entries.
-//
-// `updateJsoncPath` (vs `updateJsoncTopLevel`) preserves inline comments
-// inside the MCP entry — see the regression that motivated #1444.
 export async function setMcpEnabled(
   serverConfig: ServerConfig,
   workspaceId: string,

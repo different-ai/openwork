@@ -38,10 +38,9 @@ const TABS: Array<{ id: ProfileTab; label: string; icon: typeof ListChecks }> = 
 
 const row = "flex min-h-11 items-center gap-3 border-b border-[var(--wb-row-line)] py-2 text-[13.5px] text-[var(--wb-text)] last:border-b-0";
 
-export function ProfileSheet({ open, onClose, name, activity, initialTab = "tasks" }: { open: boolean; onClose(): void; name: string; activity: WorkbotActivity; mark?: ReactNode; /** The tab it opens on, each time it opens (default Tasks). */ initialTab?: ProfileTab }) {
+export function ProfileSheet({ open, onClose, name, activity, initialTab = "tasks" }: { open: boolean; onClose(): void; name: string; activity: WorkbotActivity; mark?: ReactNode; initialTab?: ProfileTab }) {
   const surface = useRetainedSurface(open);
   const [tab, setTab] = useState<ProfileTab>(initialTab);
-  // The sheet stays mounted while closed, so each opening starts on the tab the caller asked for.
   const [openedOn, setOpenedOn] = useState(open ? initialTab : null);
   const want = open ? initialTab : null;
   if (want !== openedOn) {
@@ -54,8 +53,6 @@ export function ProfileSheet({ open, onClose, name, activity, initialTab = "task
   const tabs = TABS.filter((entry) => computers || entry.id !== "computers");
   if (!tabs.some((entry) => entry.id === tab)) setTab("tasks");
   const drag = useSheetDrag(onClose);
-  // One sheet for every screen size: a side panel from `sm` up, and on phones a full-height sheet under the status bar
-  // that reaches the bottom edge (its rows scroll under a glass fade), pulled down or closed to dismiss.
   return <Dialog.Root open={surface.open} onOpenChange={(next) => { if (!next) onClose(); }}>
     <Dialog.Portal {...surface.portal}>
       <Dialog.Backdrop className="fixed inset-0 z-40 bg-[var(--wb-ink)]/25 transition-opacity duration-200 data-[ending-style]:opacity-0 data-[starting-style]:opacity-0 motion-reduce:transition-none sm:bg-[var(--wb-ink)]/10" />
@@ -101,20 +98,17 @@ function TasksTab({ name, activity }: { name: string; activity: WorkbotActivity 
       <ActivityDetails name={name} activity={activity} />
     </> : !remote.data?.jobs.length && !remote.isFetching ? <p className="px-5 pt-2 text-[13px] text-[var(--wb-muted)]">{name} isn&apos;t working on anything right now. Bigger jobs you hand it show up here while they run.</p> : null}
     {remote.isPending ? <p className="px-5 pt-3 text-[13px] text-[var(--wb-muted)]" role="status">Checking your remote tasks…</p> : null}
-    {/* Only when nothing is known yet; known rows keep their last state through a failed refresh. */}
     {remote.isError && !remote.data ? <p className="px-5 pt-3 text-[13px] text-[var(--wb-muted)]" role="status">Couldn&apos;t check your remote tasks just now. <button type="button" className="underline" onClick={() => void remote.refetch()}>Try again</button></p> : null}
     <RemoteJobs jobs={remote.data?.jobs ?? []} statusError={remote.data?.statusError} />
     {remote.data?.hasEarlier ? <p className="px-5 pt-2 text-[12px] text-[var(--wb-muted)]">Showing recent remote tasks. Older jobs may be outside this chat&apos;s current history.</p> : null}
   </>;
 }
 
-/** Files the person sent and Workbot made; opening one closes the profile and shows it beside the chat. */
 function FilesTab({ name, open, onClose }: { name: string; open: boolean; onClose(): void }) {
   const openFile = useContext(OpenFileContext);
   return <FilesList enabled={open} assistantName={name} framed={false} onOpenFile={(file) => { onClose(); openFile(file); }} />;
 }
 
-/** Reuse the inventory and the screen's guarded navigation; dismiss the sheet only when Open is available. */
 function ComputersTab({ onClose }: { onClose(): void }) {
   const computerFor = useContext(DeviceComputerNavigationContext);
   return <WorkbotDevices computerFor={(chat) => {
@@ -127,7 +121,6 @@ function SchedulesTab() {
   return workbotHost().calendar ? <SchedulesList /> : <p className="px-5 pt-1 text-[13px] leading-[19px] text-[var(--wb-muted)]">Schedules aren&apos;t enabled for this organization. An admin can turn on Workbot&apos;s calendar.</p>;
 }
 
-/** Read the same owner-scoped Automations as Calendar; never invent a schedule or a new per-feature screen. */
 function SchedulesList() {
   const schedules = useWorkbotAutomations();
   return <div className="flex flex-col gap-3 px-5 pt-1">
@@ -142,12 +135,6 @@ function SchedulesList() {
   </div>;
 }
 
-/**
- * The apps and parts of its computer Workbot can use for the person, each saying whether it can; off ones stay listed
- * with why (P4). Apps: every connector the person can use, connected or not (Connected first), with one Connect where
- * they sign in themselves and a short note where only an admin can.
- */
-/** `titled`: the sheet is already titled Apps, so the list does not repeat it. */
 function AppsTab({ name, titled = false }: { name: string; titled?: boolean }) {
   const host = workbotHost();
   const views = computerViews(host);
@@ -200,13 +187,11 @@ export function AppsList({ name, heading = true }: { name: string; heading?: boo
   </section>;
 }
 
-/** "about-me.md" → "About me". */
 function memoryTitle(file: string) {
   const plain = file.replace(/\.(md|txt)$/i, "").replace(/[-_]+/g, " ").trim();
   return plain ? `${plain[0]?.toUpperCase()}${plain.slice(1)}` : file;
 }
 
-/** What Workbot remembers, file by file, newest first. Read-only: it changes when the person tells Workbot. */
 function MemoryTab({ name }: { name: string }) {
 
   const memory = useWorkbotMemory(true);

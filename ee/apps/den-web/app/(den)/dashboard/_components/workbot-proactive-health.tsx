@@ -8,11 +8,6 @@ import { DenTable, type DenTableColumn } from "../../_components/ui/table";
 import { AGENT_HEALTH_ANCHOR } from "./workbot-agent-scope";
 import { useWorkbotProactiveHealth } from "./workbot-proactive-data";
 
-/**
- * Manage › Workbot › Members' agents, last 7 days: per responsibility, how often agents checked, how often they had
- * nothing to say, how many messages went out and how many members muted it. Counts only.
- */
-
 type Row = WorkbotProactiveHealth["responsibilities"][number];
 
 function share(part: number, whole: number) {
@@ -21,7 +16,6 @@ function share(part: number, whole: number) {
 
 type RhythmRow = { id: "rhythm"; label: string; checks: number; quiet: number; sent: number };
 
-/** With Your agent's brief (`rhythm`): one row for every check on the one rhythm. */
 function RhythmHealthTable({ rhythm }: { rhythm: NonNullable<WorkbotProactiveHealth["rhythm"]> }) {
   const columns: DenTableColumn<RhythmRow>[] = [
     { key: "label", header: "Agents", render: (row) => <span className="font-medium text-gray-900">{row.label}</span> },

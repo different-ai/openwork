@@ -6,7 +6,6 @@ import { DenSkeleton } from "../../../_components/ui/skeleton";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 import { CONFIG_STATUS_PRESENTATION, formatSummaryCounts, isTransientStatus } from "./config-blobs-model";
 
-/** Settings › Config renders once the organization has loaded. */
 export function useConfigOrgReady(): { ready: boolean } {
   const { orgContext, orgBusy } = useOrgDashboard();
   return { ready: !orgBusy && Boolean(orgContext) };
@@ -21,7 +20,6 @@ export function ConfigStatusChip({ status }: { status: ConfigChangeRequestStatus
   );
 }
 
-/** `+3 ~5 −0`: adds, changes (with renames), removals. */
 export function ConfigCounts({ summary }: { summary: ConfigPlanSummary | null }) {
   const counts = formatSummaryCounts(summary);
   if (!counts || !summary) return null;

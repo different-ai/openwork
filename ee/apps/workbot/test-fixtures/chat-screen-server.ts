@@ -5,27 +5,20 @@ import { fileURLToPath } from "node:url"
 import { createServer } from "vite"
 import { ARTIFACT_BYTES, exaAt, GOOGLE_EVENTS, googleAt, OPENWORK_APP_ID, OPENWORK_APP_OPENED, scenarios, type FixtureThread, type FixtureTurn } from "./chat-screen-scenarios.js"
 import { fixtureRemoteJobs, fixtureStaleRemoteJobs } from "./remote-jobs.js"
+import { fixtureDevices } from "./devices.js"
 import { AUTOMATIONS, fixtureAutomationRuns, fixtureMeetings, fixtureRunRange } from "./calendar-fixture.js"
 
-// Observes real client requests; the fixture never changes browser controls or rendered UI.
 const browserRequests: Array<{ path: string; body: unknown }> = []
 const browserControlHeld = new Set<string>()
 let remoteStopped = false
 let appWaves = 0
 let googleStarted: number | null = null
 let exaStarted: number | null = null
-/** Ben's Exa request: the first search, the second, both done while it reads, then the answer (ms from first read). */
 const EXA_PHASES_MS = [3_000, 6_000, 9_000]
 const GOOGLE_EVENT_GAP_MS = 1_500
 const GOOGLE_STORED_MS = 4_500
 const GOOGLE_DONE_MS = 9_000
 
-/**
- * Test-only: serves chat-screen.tsx with Workbot's Vite config and answers the page's `/v1/workbot` requests from an
- * in-memory conversation per scenario. Messages sent get a short canned answer; uploads are kept in memory.
- *
- *   pnpm --filter @openwork-ee/workbot exec tsx test-fixtures/chat-screen-server.ts [port]
- */
 type Kept = { id: string; name: string; mediaType: string; size: number; createdAt: number; source: "user"; bytes: Buffer }
 
 const threads = new Map<string, FixtureThread>()
@@ -53,14 +46,11 @@ const json = (response: ServerResponse, status: number, value: unknown) => {
 async function answer(request: IncomingMessage, response: ServerResponse) {
   const url = new URL(request.url ?? "/", "http://fixture")
   const name = String(request.headers["x-fixture-scenario"] ?? "bubbles")
-  // "google" replays Nov 8's browser request in real time from the page's first read: GOOGLE_EVENTS while the call is
-  // written, the stored running step at GOOGLE_STORED_MS, done at GOOGLE_DONE_MS. A reload afterwards reads it done.
   if (name === "google") {
     googleStarted ??= Date.now()
     const since = Date.now() - googleStarted
     threads.set(name, googleAt(since < GOOGLE_STORED_MS ? 0 : since < GOOGLE_DONE_MS ? 1 : 2))
   }
-  // "exa" replays the Exa request from the page's first read (EXA_PHASES_MS); `?exa=reset` starts it over.
   if (name === "exa") {
     if (url.searchParams.get("exa") === "reset") exaStarted = null
     exaStarted ??= Date.now()
@@ -70,7 +60,6 @@ async function answer(request: IncomingMessage, response: ServerResponse) {
   }
   const current = thread(name)
   const path = url.pathname
-  // The Calendar's reads (`?calendar=1`): a week around today with meetings and Workbot's runs.
   if (path.startsWith("/v1/workbot/calendar/")) {
     const den = path.slice("/v1/workbot/calendar".length)
     const range = () => ({ from: Number(url.searchParams.get("from") ?? Date.parse(url.searchParams.get("timeMin") ?? "")), to: Number(url.searchParams.get("to") ?? Date.parse(url.searchParams.get("timeMax") ?? "")) })
@@ -139,9 +128,14 @@ async function answer(request: IncomingMessage, response: ServerResponse) {
       const file = files.get(id)
       return file ? [{ id: file.id, name: file.name, mediaType: file.mediaType, size: file.size }] : []
     })
-    const turn: FixtureTurn = { id: input.id, text: input.text, sentAt: now, finishedAt: now, status: "done", attachments, parts: [{ kind: "text", text: "Got it.", step: 0 }], modelSteps: 1, error: null }
+    const teach = /\bteach\b/i.test(input.text)
+    const turn: FixtureTurn = { id: input.id, text: input.text, sentAt: now, finishedAt: now, status: "done", attachments, parts: [{ kind: "text", text: teach ? "Sure, opening the teaching window. Pick the tab and press Start teaching." : "Got it.", step: 0 }], modelSteps: 1, error: null, ...(teach ? { teaching: { id: `teach-${input.id}` } } : {}) }
     current.turns.push(turn)
     return json(response, 202, { ok: true })
+  }
+  if (request.method === "POST" && path === "/v1/workbot/teaching") {
+    await body(request)
+    return json(response, 200, { demonstration: null, tabs: [{ id: "tab-1", origin: "https://www.example.com" }] })
   }
   if (request.method === "POST" && path === "/v1/workbot/files") {
     const bytes = await body(request)
@@ -151,7 +145,6 @@ async function answer(request: IncomingMessage, response: ServerResponse) {
     const { bytes: _bytes, ...file } = kept
     return json(response, 201, file)
   }
-  // An App built in OpenWork: the real server asks the App's own MCP server; here one App answers from memory.
   const builtApp = /^\/v1\/workbot\/apps\/([^/]+)\/(open|call)$/.exec(path)
   if (request.method === "POST" && builtApp) {
     if (builtApp[1] !== OPENWORK_APP_ID) return json(response, 502, { error: "app_unavailable" })
@@ -172,10 +165,10 @@ async function answer(request: IncomingMessage, response: ServerResponse) {
     return response.end(kept.bytes)
   }
   if (path === "/v1/workbot/remote-jobs") {
-    // `remote-stale`: the refresh failed and every row keeps its last verified state.
     if (name === "remote-stale") return json(response, 200, { jobs: fixtureStaleRemoteJobs(), hasEarlier: false, statusError: "unavailable" })
     return json(response, 200, { jobs: name === "remote" ? fixtureRemoteJobs(remoteStopped) : [], hasEarlier: false })
   }
+  if (path === "/v1/workbot/devices") return json(response, 200, { devices: fixtureDevices(name === "remote") })
   if (path.startsWith("/v1/workbot/remote-jobs/")) {
     if (request.method === "POST" && path.endsWith("/stop")) { remoteStopped = true; return json(response, 200, { state: "stopped" }) }
     return json(response, 200, { state: "ready", canStop: !remoteStopped, messageId: "fixture-user", messages: [
@@ -195,7 +188,6 @@ async function answer(request: IncomingMessage, response: ServerResponse) {
     { name: "projects.md", updatedAt: Date.now() - 6 * 86_400_000, content: "- Workbot UI fixes (Nov 7 list)\n- 3D room planner for the new office" },
   ] })
   if (path === "/v1/workbot/chats") return json(response, 200, { main: { updatedAt: Date.now() - 60_000 }, side: request.headers["x-fixture-chat-list"] === "1" ? fixtureSideChats() : [] })
-  // Documents (`?documents=1`): a small Drive with recent files, one folder, and a text file that opens.
   if (path === "/v1/workbot/documents/v1/capabilities/google-workspace/drive-files") {
     const query = (url.searchParams.get("query") ?? "").toLowerCase()
     const folder = url.searchParams.get("folderId")
@@ -210,11 +202,9 @@ async function answer(request: IncomingMessage, response: ServerResponse) {
     if (request.method === "POST") return json(response, 200, { ok: true })
     return json(response, 200, { kind: "text", connectionId: "google-workspace", fileId: found.id, name: found.name, revision: "1", canEdit: true, text: found.text ?? "" })
   }
-  // No live stream: the page reads the conversation again on its own.
   return json(response, 404, { error: "not_found" })
 }
 
-/** The profile's Apps list: every app the person can use, connected or not, as Den sorts it (Connected first). */
 const app = (id: string, name: string, status: "connected" | "needs_sign_in" | "not_connected" | "needs_attention", action: "connect" | "ask_admin" | "admin_settings" | null, managedBy: "you" | "organization" = action === "connect" ? "you" : "organization") => ({
   id, name, nativeProviderKey: null, authType: "oauth" as const, status, managedBy, action,
   connectMode: action === "connect" ? "external" as const : "admin" as const,
@@ -233,7 +223,6 @@ const fixtureApps = [
   app("a5", "Jira", "needs_attention", "ask_admin"),
 ]
 
-/** Side chats for `?chatlist=1`, deliberately unsorted: the list orders them by latest activity. */
 const fixtureSideChats = () => {
   const now = Date.now()
   return [
@@ -263,8 +252,6 @@ const fixtureDrive = [
 const entry = fileURLToPath(new URL("./chat-screen.tsx", import.meta.url))
 const vite = await createServer({
   configFile: fileURLToPath(new URL("../vite.config.ts", import.meta.url)),
-  // A proof measures one loaded product revision, not a React Fast Refresh remount
-  // when another contributor saves source while its nine-second task is running.
   server: { port: Number(process.argv[2] ?? 3091), strictPort: true, ...(process.env.WORKBOT_FIXTURE_FROZEN === "1" ? { hmr: false, watch: null } : {}) },
   plugins: [{
     name: "workbot-chat-screen-fixture",
@@ -273,8 +260,8 @@ const vite = await createServer({
         const url = request.url ?? "/"
         if (url === "/fixture/browser-witness") { json(response, 200, browserRequests); return }
         if (url.startsWith("/v1/workbot")) { void answer(request, response); return }
-        if (url === "/" || url.startsWith("/?") || url.startsWith("/documents") || url.startsWith("/browser") || url.startsWith("/computer")) {
-          void server.transformIndexHtml(url, `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" /><title>Workbot</title></head><body style="margin:0"><div id="root"></div><script type="module" src="/@fs/${entry}"></script></body></html>`)
+        if (url === "/" || url.startsWith("/?") || url.startsWith("/documents") || url.startsWith("/devices") || url.startsWith("/browser") || url.startsWith("/computer")) {
+          void server.transformIndexHtml(url, `<!doctype html><html><head><meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content" /><title>Workbot</title></head><body style="margin:0"><div id="root"></div><script type="module" src="/@fs/${entry}"></script></body></html>`)
             .then((html) => { response.setHeader("Content-Type", "text/html"); response.end(html) })
           return
         }
@@ -283,8 +270,6 @@ const vite = await createServer({
     },
   }],
 })
-// Test-only screencast: the caller supplies a JPEG captured from an actual page. It is intentionally not a browser
-// runtime: UI tests exercise real frame drawing/retention without signing into a runner or claiming an external task.
 if (process.env.WORKBOT_FIXTURE_FRAME) vite.httpServer?.on("upgrade", (request, socket) => {
   if (!request.url?.startsWith("/screencast/")) return
   const key = request.headers["sec-websocket-key"]

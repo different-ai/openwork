@@ -32,14 +32,11 @@ export function legacyExecutionPermissions(policy: DesktopExecutionPolicy | unde
       permissions.bash ??= {};
       permissions.bash[rule.resource] = rule.effect;
     } else if (rule.action === "webfetch" || rule.action === "websearch") {
-      // The pinned engine accepts only scalar actions for these two tools.
       permissions[rule.action] = rule.effect;
     }
   }
   return permissions;
 }
-// Glob matching without a regular expression: repeated wildcard patterns must
-// not create catastrophic backtracking on a long command.
 function matches(pattern: string, value: string): boolean {
   const rule = pattern.toLowerCase();
   const command = value.toLowerCase();
@@ -83,8 +80,6 @@ export function policyDenial(policy: DesktopConfig, action: ManagedPolicyAction,
   if ((action === "model" || action === "provider") && input.providerID === "opencode") {
     return policy.allowZenModel === false ? "Your organization has disabled this AI provider." : null;
   }
-  // Native fetch follows redirects inside the engine. Until it exposes a
-  // per-hop hook, approved-site browsing must use the intercepted browser.
   if ((action === "webfetch" || action === "websearch") && execution?.browserOrigins !== undefined) return "Use OpenWork's built-in browser to open approved websites.";
   if (action === "browser" || action === "webfetch") {
     if (action === "browser" && policy.allowBuiltInExtensions === false) return "Built-in extensions are disabled by your organization.";

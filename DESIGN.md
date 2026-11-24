@@ -214,6 +214,9 @@ Everywhere else the normal rules hold.
   Reconnect", not a stack trace. Raw input/output lives under "Technical
   details". Never show engine ids, routing names, or raw provider text in
   the row; a step that did no visible work (catalog lookups) is not shown.
+  A failed step keeps the ink of the other steps: the agent often recovers,
+  and "Couldn't…" already says it failed. Red is for the error that ends
+  the turn.
 - **T3** MCP Apps and generated views get a 40px header (source logo, title,
   explicit state such as "Ready" / "Draft" / "Not posted") and one icon
   action ("Open in panel"). Body is the app; footer holds ≤ 2 actions.

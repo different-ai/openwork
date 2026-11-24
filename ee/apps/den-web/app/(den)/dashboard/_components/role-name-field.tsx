@@ -10,7 +10,6 @@ import type { PermissionsAccess } from "./permissions-ui";
 
 type ReadyAccess = Extract<PermissionsAccess, { state: "ready" }>;
 
-/** A custom role's name, renamed in place. */
 export function RoleNameField({ ready, set }: { ready: ReadyAccess; set: PermissionSetDetail }) {
   const toast = useDenToast();
   const rename = useRenameRole(ready.orgId, set.id);

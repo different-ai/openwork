@@ -1,21 +1,3 @@
-/**
- * Config-blob area `settings.audit` (Observability › Audit logs › Settings):
- * one item, whether the organization captures audit logs.
- *
- * - Carried: `captureOn`, the one setting an organization administrator
- *   changes (PATCH /v1/audit/settings).
- * - Never carried: the rest of `audit_policy` (categories, allowance, excess
- *   mode, attachment window, source): the platform operator or the plan sets
- *   them, and the target keeps its own. `audit_state` and every audit event
- *   and operation are runtime.
- * - Export never provisions anything: an entitled organization without a
- *   policy yet exports what it would get on first read (capture on).
- *
- * Apply goes through the route's own function (`setOrganizationAuditCapture`):
- * membership and Manage audit settings re-checked in the transaction, the
- * entitlement and deployment checks for turning capture on, and the
- * revision check against the policy read just before.
- */
 import { readAuditPolicy } from "@openwork-ee/den-db/audit-log"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
@@ -30,7 +12,6 @@ const AREA = "settings.audit"
 const ITEM_NAME = "Audit log settings"
 
 const auditSpecSchema = z.object({
-  /** Whether audit events are captured (needs the audit entitlement and capture on this deployment to turn on). */
   captureOn: z.boolean().default(false),
 }).strict()
 
@@ -38,7 +19,6 @@ async function readState(ctx: ConfigAreaContext) {
   const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
   const { entitlement } = await readAuditAvailability(ctx.db, organizationId)
   const policy = await readAuditPolicy(ctx.db, organizationId)
-  // Without a policy, the first read of an entitled organization creates one with capture on (initializeAuditPolicyInTx).
   const captureOn = policy ? policy.enabled : entitlement.enabled && env.auditCaptureEnabled
   return { captureOn, revision: policy?.revision ?? 0, entitled: entitlement.enabled }
 }
@@ -61,7 +41,6 @@ export const settingsAuditArea = defineConfigArea({
   tables: ["audit_policy"],
   naturalKeys: [ORG_SINGLETON_NATURAL_KEY],
   secretFields: [],
-  // setOrganizationAuditCapture opens its own transaction on the global db (and records the change in the audit log).
   transactional: false,
   protectedFromDelete: () => "Audit log settings can't be deleted.",
 

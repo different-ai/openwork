@@ -30,7 +30,6 @@ export function redactWorkflowVersionAuthoringDetails(
   version: WorkflowVersion,
 ): WorkflowVersion {
   return {
-    // Keep the structural graph visible to Workflow viewers, but replace source-derived labels.
     ...version,
     code: null,
     graph: version.graph

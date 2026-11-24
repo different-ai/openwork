@@ -4,7 +4,6 @@ import { ExampleCaption, ExampleGroupLabel, ExampleProviderMark, ExampleRow, Exa
 import { OPENWORK_MODELS } from "./gateway-example-data";
 import { openworkModelsExampleLineup, openworkModelsExampleWeeklyLeft } from "./openwork-models-example-data";
 
-/** On for everyone: the lineup with what each model is best for, and included usage left. */
 export function OpenWorkModelsExample() {
   return (
     <div>

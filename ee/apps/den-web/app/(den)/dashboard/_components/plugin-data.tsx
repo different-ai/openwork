@@ -11,29 +11,6 @@ import {
 } from "./integration-data";
 import { parsePluginAccessGrants, pluginAccessQueryKeys } from "./plugin-access-data";
 
-/**
- * Plugin primitives — mirror OpenCode / Claude Code's plugin surface:
- *
- *  A plugin is a *bundle* of reusable pieces that extend an agent runtime:
- *   - skills      natural-language playbooks/instructions agents can load on demand
- *   - hooks       lifecycle callbacks (PreToolUse / PostToolUse / SessionStart, etc.)
- *   - mcps        Model Context Protocol servers that expose external tools/resources
- *   - agents      custom sub-agents with their own system prompt and tool set
- *   - commands    slash-commands that shortcut common workflows
- *
- * This file models the frontend shape only. Mock data is served through
- * React Query so we can swap the queryFn for a real API call later without
- * touching any consumers.
- *
- * Gating: the catalog is empty until the user has connected at least one
- * integration (GitHub or Bitbucket) on the Integrations page. The queryFn
- * reads the integrations cache and derives which plugins are visible from
- * the set of connected repositories. Integration mutations invalidate
- * `["plugins"]`, so connections and disconnections propagate automatically.
- */
-
-// ── Primitive types ────────────────────────────────────────────────────────
-
 export type PluginCategory =
   | "integrations"
   | "workflows"
@@ -148,18 +125,9 @@ export type DenPlugin = {
   createdAt: string;
   createdByOrgMembershipId: string | null;
   updatedAt: string;
-  /**
-   * Opt-in gating: which connected integration provider exposes this plugin.
-   * - "any"      → visible once ANY integration is connected (e.g. marketplace output styles)
-   * - "github"   → only visible after a GitHub account is connected
-   * - "bitbucket"→ only visible after a Bitbucket account is connected
-   */
   requiresProvider: "any" | "github" | "bitbucket";
-  /** An OpenWork extension every organization gets by default (e.g. OpenWork Browser), not one the team made. */
   builtIn?: boolean;
 };
-
-// ── Display helpers ────────────────────────────────────────────────────────
 
 export function getPluginCategoryLabel(category: PluginCategory): string {
   switch (category) {
@@ -235,11 +203,6 @@ export function getPluginPartsSummary(plugin: DenPlugin): string {
   }
   return parts.length > 0 ? parts.join(" · ") : "Empty bundle";
 }
-
-// ── Mock data ──────────────────────────────────────────────────────────────
-//
-// These are shaped to mirror real marketplaces (Anthropic's official catalog,
-// internal team bundles, etc.) so the UI exercises realistic content.
 
 const MOCK_PLUGINS: DenPlugin[] = [
   {
@@ -523,11 +486,6 @@ function filterByConnectedProviders(
   });
 }
 
-// ── Query hooks ────────────────────────────────────────────────────────────
-//
-// Keep the surface identical to what a real API-backed version would return,
-// so swapping `queryFn` for `requestJson(...)` later is a one-line change.
-
 export const pluginQueryKeys = {
   all: ["plugins"] as const,
   list: () => [...pluginQueryKeys.all, "list"] as const,
@@ -557,10 +515,6 @@ function pluginMcpTransport(config: Record<string, unknown>): PluginMcpTransport
   return asString(config.url) ? "http" : "stdio";
 }
 
-/**
- * Marketplace syncs used to title an MCP config object after its file, so a
- * `.mcp.json` showed up as ".mcp". Such a title says nothing about the server.
- */
 function isFileDerivedMcpTitle(title: string, currentRelativePath: string | null | undefined) {
   const normalized = title.trim().toLowerCase();
   if (normalized === ".mcp" || normalized === "mcp") return true;
@@ -586,7 +540,6 @@ export function pluginMcpEntries(item: {
     ? entries
     : [[item.title, payload] satisfies [string, Record<string, unknown>]];
   const useTitle = servers.length === 1 && !isFileDerivedMcpTitle(item.title, item.currentRelativePath);
-  // Old syncs stored the second line of the JSON file (`"mcpServers": {`) as the description.
   const description = /^"?(mcpServers|mcp)"?\s*:\s*\{?$/.test(item.description.trim()) ? "" : item.description;
 
   return servers.map(([serverName, config], index) => ({
@@ -702,7 +655,6 @@ async function fetchResolvedPlugin(id: string): Promise<DenPlugin | null> {
   return pluginItem ? buildDenPlugin(pluginItem, contents) : null;
 }
 
-/** List items and plugin detail share one shape, so either can be combined with `/resolved`. */
 function buildDenPlugin(pluginItem: Record<string, unknown>, contents: unknown): DenPlugin | null {
   const pluginId = asString(pluginItem.id);
   const name = asString(pluginItem.name);
@@ -741,8 +693,6 @@ function buildDenPlugin(pluginItem: Record<string, unknown>, contents: unknown):
         ? item.normalizedPayload.requiredCapabilities.length
         : 0,
     } satisfies PluginWorkflow));
-  // Standalone URL-imported Apps are retained in storage for a future unit of
-  // value, but intentionally stay out of the current Plugin and Library UI.
   const apps: PluginRemoteMcpApp[] = [];
   const authoredApps = parsePluginAuthoredApps(contents);
   const hooks = membershipItems
@@ -801,10 +751,6 @@ function listItems(payload: unknown) {
   return (isRecord(payload) && Array.isArray(payload.items) ? payload.items : []).filter(isRecord);
 }
 
-/**
- * Each plugin's `/resolved` body, keyed by id, from one request (at most 100
- * ids). A Den without `/v1/resolved-plugins` gets one request per plugin.
- */
 async function requestPluginsContents(ids: string[]): Promise<Map<string, unknown>> {
   if (ids.length === 0) return new Map();
   const { response, payload } = await requestJson(
@@ -829,7 +775,6 @@ async function requestPluginsContents(ids: string[]): Promise<Map<string, unknow
   }));
 }
 
-/** Every plugin with its contents: one list request plus one `/v1/resolved-plugins` request. */
 export function usePlugins({ enabled = true }: { enabled?: boolean } = {}) {
   return useQuery({
     enabled,
@@ -851,11 +796,8 @@ export function usePlugins({ enabled = true }: { enabled?: boolean } = {}) {
   });
 }
 
-/** What a plugin list row shows, straight from the list response. */
 export type DenPluginSummary = Pick<DenPlugin, "id" | "name" | "slug" | "description" | "status" | "createdByOrgMembershipId"> & {
-  /** False when the server did not include access, so callers load it per plugin. */
   accessIncluded: boolean;
-  /** An OpenWork extension every organization gets by default (e.g. OpenWork Browser), not one the team made. */
   builtIn: boolean;
   updatedAt?: string;
 };
@@ -886,10 +828,6 @@ function parsePluginSummary(item: Record<string, unknown>): DenPluginSummary | n
   };
 }
 
-/**
- * Plugins without their contents, in one request. Access for plugins the
- * caller manages is written to each plugin's access query.
- */
 export function pluginSummariesQueryOptions() {
   return queryOptions({
     queryKey: pluginQueryKeys.summaries(),

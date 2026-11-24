@@ -1,16 +1,7 @@
 import { recordConnectorCall, toolCallFailed } from "../capability-usage.js"
 import { EXTENSION_ID, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server"
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
-import {
-  CallToolRequestSchema,
-  ErrorCode,
-  ListResourcesRequestSchema,
-  ListResourceTemplatesRequestSchema,
-  ListToolsRequestSchema,
-  McpError,
-  ReadResourceRequestSchema,
-} from "@modelcontextprotocol/sdk/types.js"
-import { StreamableHTTPTransport } from "@hono/mcp"
+import { AsyncLocalStorage } from "node:async_hooks"
+import { createMcpHandler, ProtocolError, ProtocolErrorCode, Server, type Tool } from "@modelcontextprotocol/server"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { Context, Hono } from "hono"
 import type { RequestIdVariables } from "hono/request-id"
@@ -31,15 +22,22 @@ import {
 } from "../capability-sources/external-mcp-client-runtime.js"
 import { externalMcpDiagnosticForResponse } from "../capability-sources/external-mcp-diagnostics.js"
 import { evaluateToolPolicy } from "../capability-sources/external-mcp-tool-policy.js"
+import { cache } from "../cache.js"
 import { env } from "../env.js"
 import { organizationFeatureEnabled } from "../features.js"
 import { tokenRoute } from "../middleware/index.js"
 import { resolvePublicOrigin } from "../capability-sources/generic-oauth.js"
 import { handleMcpAppServerRequest, isMcpAppServerId } from "./app-server.js"
 import { appSiteResponse, wantsAppSite } from "./app-site.js"
-import { getMcpResourceContext, verifyMcpRequest } from "./auth.js"
-import { externalMcpAppResourceUri, resolveMcpMemberIdentity } from "./external-capabilities.js"
+import { getMcpResourceContext, verifyMcpRequest, type McpPrincipal } from "./auth.js"
+import {
+  externalMcpAppResourceUri,
+  externalMcpConnectionHold,
+  mcpMemberForToken,
+  resolveMcpMemberIdentity,
+} from "./external-capabilities.js"
 import { externalMcpToolSchemaDigest } from "./external-mcp-tool-arguments.js"
+import { InventoryEventBus, type InventoryRevision } from "./inventory-event-bus.js"
 import { preflightMcpJsonRpcRequest } from "./json-rpc-preflight.js"
 import { EXECUTE_CAPABILITY_TOOL_NAME, scoreText, SEARCH_CAPABILITIES_TOOL_NAME, tokenize } from "./search.js"
 import { DEN_MCP_APP_HOST_SCOPE, DEN_MCP_WRITE_SCOPE } from "./scopes.js"
@@ -78,6 +76,8 @@ const externalMcpProxyRuntime: ExternalMcpProxyRuntime = {
   readResource: readExternalMcpResource,
 }
 
+export const EXTERNAL_CONNECTION_TOOLS_TTL_MS = 60_000
+
 const PROXY_GATEWAY_TOOL_NAMES = new Set([SEARCH_CAPABILITIES_TOOL_NAME, EXECUTE_CAPABILITY_TOOL_NAME])
 
 const boundedGatewayTools: ExternalMcpProxyTool[] = [
@@ -105,7 +105,6 @@ const boundedGatewayTools: ExternalMcpProxyTool[] = [
       properties: {
         name: { type: "string", minLength: 1 },
         arguments: { type: "object" },
-        // Older input, accepted for a while; capabilityCallInput explains why.
         body: { type: "object", description: "Older form of arguments." },
       },
       required: ["name"],
@@ -133,10 +132,25 @@ const legacyBoundedGatewayTools: ExternalMcpProxyTool[] = boundedGatewayTools.ma
     : tool
 ))
 
-/**
- * A provider tool the model may see on a directly exposed connection. Tools
- * that declare an app-only UI visibility stay private to the App host.
- */
+function objectSchema(value: unknown): Record<string, unknown> | undefined {
+  if (!isRecord(value) || (value.type !== undefined && value.type !== "object")) return undefined
+  return { ...value, type: "object" }
+}
+
+function listableTools(tools: readonly ExternalMcpProxyTool[]): Tool[] {
+  return tools.flatMap((tool) => {
+    const inputSchema = objectSchema(tool.inputSchema)
+    if (!inputSchema) return []
+    const { outputSchema: listedOutputSchema, ...rest } = tool
+    const outputSchema = objectSchema(listedOutputSchema)
+    return [{
+      ...rest,
+      inputSchema: inputSchema as Tool["inputSchema"],
+      ...(outputSchema ? { outputSchema: outputSchema as Tool["outputSchema"] } : {}),
+    }]
+  })
+}
+
 function toolVisibleToModel(tool: ExternalMcpProxyTool): boolean {
   const meta = isRecord(tool._meta) ? tool._meta : {}
   const ui = isRecord(meta.ui) ? meta.ui : {}
@@ -178,13 +192,7 @@ export function createExternalConnectionProxyServer(input: {
   scopes: ReadonlySet<string>
   runtime?: ExternalMcpProxyRuntime
   appHostClient?: boolean
-  /** Opt in to the modern search results and execute arguments schema; defaults to legacy. */
   toolShapes?: boolean
-  /**
-   * Whether the organization currently allows member-facing MCP connections.
-   * Direct exposure is fail-closed: the provider catalog is served only when
-   * the caller explicitly confirms the organization flag is on.
-   */
   directExposureEnabled?: boolean
 }) {
   const { connection } = input.operation
@@ -207,19 +215,14 @@ export function createExternalConnectionProxyServer(input: {
       }
     }
     const call = runtime.callTool({ ...input.operation, toolName: tool.name, args })
-    // Library usage: one row per direct call, ok or error, never the arguments or result.
     recordConnectorCall(Promise.resolve(call), {
       organizationId: connection.organizationId,
       orgMembershipId: input.operation.member.orgMembershipId,
       connectionId: connection.id,
-      // The App host calls tools for an open App; any other client is the member's agent.
       source: input.appHostClient === true ? "app" : "agent",
     }, toolCallFailed)
     return call
   }
-  // An administrator opted this connection into direct exposure: ordinary MCP
-  // clients receive the provider's own catalog instead of the bounded
-  // search/execute pair. The App host keeps its private app-only surface.
   const directClient = connection.exposeDirectly
     && input.directExposureEnabled === true
     && input.appHostClient !== true
@@ -247,15 +250,19 @@ export function createExternalConnectionProxyServer(input: {
     (await (input.appHostClient ? listAppTools() : listDirectTools()))
       .map((tool) => externalMcpAppResourceUri(tool)).filter((uri) => uri !== null),
   )
-  const server = new McpServer(input.descriptor.serverInfo ?? {
+  const listsChange = input.appHostClient === true || directClient
+  const server = new Server(input.descriptor.serverInfo ?? {
     name: connection.name,
     version: "1.0.0",
   }, {
     capabilities: {
-      ...(input.descriptor.capabilities.tools ? { tools: { listChanged: false } } : {}),
-      ...(input.descriptor.capabilities.resources ? { resources: { listChanged: false, subscribe: false } } : {}),
+      ...(input.descriptor.capabilities.tools ? { tools: { listChanged: listsChange } } : {}),
+      ...(input.descriptor.capabilities.resources ? { resources: { listChanged: listsChange, subscribe: false } } : {}),
       ...(downstreamUi ? { extensions: { [EXTENSION_ID]: downstreamUi } } : {}),
     },
+    ...(listsChange && input.descriptor.capabilities.tools
+      ? { cacheHints: { "tools/list": { ttlMs: EXTERNAL_CONNECTION_TOOLS_TTL_MS, cacheScope: "private" as const } } }
+      : {}),
     instructions: input.appHostClient
       ? "This member-authorized OpenWork Connect endpoint privately exposes app-visible tools and their bound MCP App resources for this connection. Omitted UI visibility defaults to model and app; tools are projected here as app-only. Ordinary clients retain their configured direct or search_capabilities/execute_capability surface."
       : directClient
@@ -264,25 +271,25 @@ export function createExternalConnectionProxyServer(input: {
   })
 
   if (input.descriptor.capabilities.tools) {
-    server.server.setRequestHandler(ListToolsRequestSchema, async () => ({
-      tools: input.appHostClient
+    server.setRequestHandler("tools/list", async () => ({
+      tools: listableTools(input.appHostClient
         ? [...appGatewayTools, ...await listAppTools()]
         : directClient
           ? await listDirectTools()
-          : gatewayTools,
+          : gatewayTools),
     }))
-    server.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+    server.setRequestHandler("tools/call", async (request) => {
       const args = toolArguments(request.params.arguments)
       if (directClient) {
         const tool = (await listDirectTools()).find((tool) => tool.name === request.params.name)
         if (!tool) {
-          throw new McpError(ErrorCode.InvalidRequest, `Tool ${request.params.name} is not available on ${connection.name}.`)
+          throw new ProtocolError(ProtocolErrorCode.InvalidRequest, `Tool ${request.params.name} is not available on ${connection.name}.`)
         }
         return callTool(tool, args)
       }
       if (request.params.name === SEARCH_CAPABILITIES_TOOL_NAME) {
         const query = typeof args.query === "string" ? args.query.trim() : ""
-        if (!query) throw new McpError(ErrorCode.InvalidParams, "search_capabilities requires a non-empty query.")
+        if (!query) throw new ProtocolError(ProtocolErrorCode.InvalidParams, "search_capabilities requires a non-empty query.")
         const requestedLimit = typeof args.limit === "number" && Number.isInteger(args.limit) ? args.limit : 5
         const limit = Math.max(1, Math.min(20, requestedLimit))
         const queryTokens = tokenize(query)
@@ -327,21 +334,19 @@ export function createExternalConnectionProxyServer(input: {
       if (request.params.name === EXECUTE_CAPABILITY_TOOL_NAME) {
         const toolName = typeof args.name === "string" ? args.name.trim() : ""
         const tool = (await listProviderTools()).find((candidate) => candidate.name === toolName)
-        if (!tool) throw new McpError(ErrorCode.InvalidRequest, "The capability is unavailable. Call search_capabilities again.")
-        // Accept both forms even after a rollout is killed: clients may still
-        // execute a cached modern search result against the legacy view.
+        if (!tool) throw new ProtocolError(ProtocolErrorCode.InvalidRequest, "The capability is unavailable. Call search_capabilities again.")
         return callTool(tool, toolArguments(args.arguments ?? args.body))
       }
       if (!input.appHostClient) {
-        throw new McpError(
-          ErrorCode.InvalidRequest,
+        throw new ProtocolError(
+          ProtocolErrorCode.InvalidRequest,
           `Direct provider tool ${request.params.name} is unavailable. Use search_capabilities and execute_capability.`,
         )
       }
       const tool = (await listAppTools()).find((tool) => tool.name === request.params.name)
       if (!tool) {
-        throw new McpError(
-          ErrorCode.InvalidRequest,
+        throw new ProtocolError(
+          ProtocolErrorCode.InvalidRequest,
           `Tool ${request.params.name} is not available on the MCP Apps endpoint. Use search_capabilities and execute_capability.`,
         )
       }
@@ -350,18 +355,18 @@ export function createExternalConnectionProxyServer(input: {
   }
 
   if (input.descriptor.capabilities.resources) {
-    server.server.setRequestHandler(ListResourcesRequestSchema, async () => {
+    server.setRequestHandler("resources/list", async () => {
       if (!input.appHostClient && !directClient) return { resources: [] }
       const allowedUris = await appResourceUris()
       return { resources: (await runtime.listResources(input.operation)).filter((resource) => allowedUris.has(resource.uri)) }
     })
-    server.server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({ resourceTemplates: [] }))
-    server.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+    server.setRequestHandler("resources/templates/list", async () => ({ resourceTemplates: [] }))
+    server.setRequestHandler("resources/read", async (request) => {
       if (!input.appHostClient && !directClient) {
-        throw new McpError(ErrorCode.InvalidRequest, "Provider MCP App resources require direct exposure or the OpenWork App host.")
+        throw new ProtocolError(ProtocolErrorCode.InvalidRequest, "Provider MCP App resources require direct exposure or the OpenWork App host.")
       }
       if (!(await appResourceUris()).has(request.params.uri)) {
-        throw new McpError(ErrorCode.InvalidRequest, "The resource is not bound to an available MCP App tool.")
+        throw new ProtocolError(ProtocolErrorCode.InvalidRequest, "The resource is not bound to an available MCP App tool.")
       }
       return runtime.readResource({ ...input.operation, uri: request.params.uri })
     })
@@ -378,8 +383,6 @@ async function jsonRpcRequestId(request: Request): Promise<string | number | nul
       if (typeof id === "string" || typeof id === "number") return id
     }
   } catch {
-    // Preflight owns invalid JSON. A downstream failure without a readable id
-    // still uses the protocol-defined null error id.
   }
   return null
 }
@@ -401,7 +404,7 @@ export async function externalMcpProxyProtocolErrorResponse(
     jsonrpc: "2.0",
     id: await jsonRpcRequestId(request),
     error: {
-      code: ErrorCode.InternalError,
+      code: ProtocolErrorCode.InternalError,
       message: "The connected MCP server is not ready.",
       data: {
         error: "mcp_connection_unavailable",
@@ -419,17 +422,48 @@ export async function externalMcpProxyProtocolErrorResponse(
   })
 }
 
+export function createExternalConnectionProxyHandler(input: { revision: InventoryRevision; pollMs?: number }) {
+  const bus = new InventoryEventBus({
+    revision: input.revision,
+    pollMs: input.pollMs,
+    events: [{ kind: "tools_list_changed" }, { kind: "resources_list_changed" }],
+    onerror: (error) => console.error("external_mcp_proxy_change_listener_failed", { error }),
+  })
+  const requestServer = new AsyncLocalStorage<Server>()
+  const handler = createMcpHandler(() => {
+    const server = requestServer.getStore()
+    if (!server) throw new Error("External connection proxy request was not prepared.")
+    return server
+  }, {
+    legacy: "stateless",
+    onerror: (error) => console.error("external_mcp_proxy_transport_error", { error }),
+    bus,
+  })
+  return {
+    fetch: (organizationId: string, request: Request, server: Server) =>
+      bus.run(organizationId, () => requestServer.run(server, () => handler.fetch(request))),
+    close: async () => {
+      bus.close()
+      await handler.close()
+    },
+  }
+}
+
+type ExternalConnectionProxyHandler = ReturnType<typeof createExternalConnectionProxyHandler>
+let defaultProxyHandler: ExternalConnectionProxyHandler | undefined
+
 type ExternalMcpProxyRequestDependencies = {
   describe: typeof describeExternalMcpServer
-  serve: (server: McpServer, context: Context) => Promise<Response | undefined>
+  serve: (server: Server, context: Context, organizationId: string) => Promise<Response | undefined>
 }
 
 const externalMcpProxyRequestDependencies: ExternalMcpProxyRequestDependencies = {
   describe: describeExternalMcpServer,
-  serve: async (server, context) => {
-    const transport = new StreamableHTTPTransport()
-    await server.connect(transport)
-    return transport.handleRequest(context)
+  serve: (server, context, organizationId) => {
+    defaultProxyHandler ??= createExternalConnectionProxyHandler({
+      revision: (id) => cache.inventory.revision(normalizeDenTypeId("organization", id)),
+    })
+    return defaultProxyHandler.fetch(organizationId, context.req.raw, server)
   },
 }
 
@@ -438,7 +472,6 @@ export async function handleExternalConnectionProxyRequest(input: {
   operation: ExternalMcpProxyOperation
   scopes: ReadonlySet<string>
   appHostClient?: boolean
-  /** Opt in to the modern search results and execute arguments schema; defaults to legacy. */
   toolShapes?: boolean
   directExposureEnabled?: boolean
   runtime?: ExternalMcpProxyRuntime
@@ -459,7 +492,7 @@ export async function handleExternalConnectionProxyRequest(input: {
       directExposureEnabled: input.directExposureEnabled === true,
       toolShapes: input.toolShapes === true,
     })
-    const response = await dependencies.serve(server, input.context)
+    const response = await dependencies.serve(server, input.context, input.operation.connection.organizationId)
     return response ?? new Response(null, { status: 204 })
   } catch (error) {
     return externalMcpProxyProtocolErrorResponse(
@@ -470,34 +503,40 @@ export async function handleExternalConnectionProxyRequest(input: {
   }
 }
 
-/**
- * Exposes one member-authorized connection to Desktop's private App host. An
- * ordinary client receives only a bounded search/execute compatibility surface
- * unless an administrator marked the connection `exposeDirectly`, in which case
- * it is served as a standard MCP server whose tool catalog is filtered by the
- * organization's tool policy. Grants are re-checked on every request. An
- * authored App id at the same path is served as that App's own MCP server.
- */
+export type ExternalConnectionProxyRouteDeps = {
+  verify: (request: Request, requestId: string) => Promise<McpPrincipal | Response>
+  member: typeof resolveMcpMemberIdentity
+  connection: typeof getExternalMcpConnection
+  granted: typeof memberCanUseExternalMcpConnection
+  memberKeyReady: typeof externalMcpConnectionReadyForMember
+  toolShapes: (organizationId: Parameters<typeof organizationFeatureEnabled>[0], userId: string) => Promise<boolean>
+  proxy: typeof handleExternalConnectionProxyRequest
+}
+
+export const EXTERNAL_CONNECTION_PROXY_ROUTE_DEPS: ExternalConnectionProxyRouteDeps = {
+  verify: (request, requestId) => verifyMcpRequest(request.headers, getMcpResourceContext(request, "agent", requestId)),
+  member: resolveMcpMemberIdentity,
+  connection: getExternalMcpConnection,
+  granted: memberCanUseExternalMcpConnection,
+  memberKeyReady: externalMcpConnectionReadyForMember,
+  toolShapes: (organizationId, userId) => organizationFeatureEnabled(organizationId, "connectStandardTools", { userId }),
+  proxy: handleExternalConnectionProxyRequest,
+}
+
 export function registerExternalConnectionProxyRoutes<T extends { Variables: RequestIdVariables & Record<string, unknown> }>(
   app: Hono<T>,
+  deps: ExternalConnectionProxyRouteDeps = EXTERNAL_CONNECTION_PROXY_ROUTE_DEPS,
 ) {
   const path = "/mcp/agent/connections/:connectionId"
 
   app.all(path, tokenRoute, async (c) => {
     const requestIdValue = c.get("requestId")
     const requestId = typeof requestIdValue === "string" ? requestIdValue : "unknown"
-    // A browser at an App's URL gets the site page. Nobody has signed in yet,
-    // so every App id gets the same page and the App is not looked up: the
-    // page signs the visitor in with their OpenWork session, and only then
-    // does this route say whether they may open the App as a site.
     if (wantsAppSite(c.req.raw) && isMcpAppServerId(c.req.param("connectionId"))) {
       const page = await appSiteResponse({ appIdOrName: c.req.param("connectionId"), publicOnly: false })
       if (page) return page
     }
-    const principal = await verifyMcpRequest(
-      c.req.raw.headers,
-      getMcpResourceContext(c.req.raw, "agent", requestId),
-    )
+    const principal = await deps.verify(c.req.raw, requestId)
     if (principal instanceof Response) return principal
 
     const preflightResponse = await preflightMcpJsonRpcRequest(c.req.raw, requestId)
@@ -507,43 +546,43 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
       return new Response(null, { status: 405, headers: { allow: "POST" } })
     }
 
-    // Each authored App is served as its own MCP server at a connection path,
-    // so released clients register and authorize it like any direct connection.
     const requestedId = c.req.param("connectionId")
     if (isMcpAppServerId(requestedId)) {
       return handleMcpAppServerRequest({ app: app as unknown as Hono, context: c, principal, appId: requestedId })
     }
 
     const organizationId = normalizeDenTypeId("organization", principal.organizationId)
+    const unavailable = (message?: string) => c.json({ error: "connection_not_available", ...(message ? { message } : {}) }, 403)
 
     let connectionId
     try {
       connectionId = normalizeDenTypeId("externalMcpConnection", requestedId)
     } catch {
-      throw new McpError(ErrorCode.InvalidRequest, "The MCP connection id is invalid.")
+      return unavailable()
     }
-    const member = await resolveMcpMemberIdentity({
+    const resolvedMember = await deps.member({
       userId: principal.userId,
       organizationId,
     })
-    if (!member) return c.json({ error: "connection_not_available" }, 403)
+    if (!resolvedMember) return unavailable()
+    const member = mcpMemberForToken(resolvedMember, principal.scopes)
 
-    const connection = await getExternalMcpConnection({ organizationId, connectionId })
-    const allowed = connection && await memberCanUseExternalMcpConnection({
+    const connection = await deps.connection({ organizationId, connectionId })
+    const granted = connection && await deps.granted({
       connectionId,
       orgMembershipId: member.orgMembershipId,
       teamIds: member.teamIds,
     })
-    if (!connection || !allowed) return c.json({ error: "connection_not_available" }, 403)
+    if (!connection || !granted) return unavailable()
+    const hold = externalMcpConnectionHold(connection, member)
+    if (hold) return unavailable(hold.message)
     if (usesMemberApiKey(connection)
-      && !await externalMcpConnectionReadyForMember(connection, member.orgMembershipId)) {
-      return c.json({ error: "connection_not_available", message: "Connect your personal API key in Your Connections." }, 403)
+      && !await deps.memberKeyReady(connection, member.orgMembershipId)) {
+      return unavailable("Connect your personal API key in Your Connections.")
     }
 
     const directExposureEnabled = connection.exposeDirectly
-    const toolShapes = await organizationFeatureEnabled(organizationId, "connectStandardTools", {
-      userId: principal.userId,
-    })
+    const toolShapes = await deps.toolShapes(organizationId, principal.userId)
 
     const redirectUriBase = resolvePublicOrigin(c.req.raw, env.apiPublicUrl)
     const redirectUri = `${redirectUriBase}/v1/mcp-connections/${encodeURIComponent(connection.id)}/connect/callback`
@@ -554,7 +593,7 @@ export function registerExternalConnectionProxyRoutes<T extends { Variables: Req
       member: downstreamMember,
       diagnosticReferenceId: requestId,
     }
-    return handleExternalConnectionProxyRequest({
+    return deps.proxy({
       context: c,
       operation,
       scopes: principal.scopes,

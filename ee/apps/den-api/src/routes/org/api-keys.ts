@@ -7,10 +7,10 @@ import {
   configTokenPermissions,
   DEN_API_KEY_TYPES,
   deleteOrganizationApiKey,
-  DEN_API_KEY_RATE_LIMIT_MAX,
   DEN_API_KEY_RATE_LIMIT_TIME_WINDOW_MS,
   listOrganizationApiKeys,
 } from "../../api-keys.js"
+import { env } from "../../env.js"
 import { ORGANIZATION_AUDIT_ACTIONS } from "../../audit-events.js"
 import { apiKeyAuditColumns, apiKeyCreatedEvent } from "../../audit/domain/api-keys.js"
 import { appendDomainChangesAfterCommit, finishLegacyAuditAction } from "../../audit/domain/legacy.js"
@@ -29,10 +29,8 @@ const configTokenScopeSchema = z.enum(CONFIG_TOKEN_SCOPES).meta({ ref: "ConfigTo
 
 const createOrganizationApiKeySchema = z.object({
   name: z.string().trim().min(2).max(64),
-  /** `config`: a config token, limited to the config-blob routes its scopes open. */
   type: apiKeyTypeSchema.optional(),
   scopes: z.array(configTokenScopeSchema).min(1).max(CONFIG_TOKEN_SCOPES.length).optional(),
-  /** Config tokens only: area keys or `prefix.*` (e.g. `ai-gateway.*`); left out = every area. */
   areas: z.array(z.string().trim().min(1).max(64)).min(1).max(64).optional(),
 }).superRefine((value, ctx) => {
   if (value.type === "config") {
@@ -97,9 +95,7 @@ const organizationApiKeySchema = z.object({
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),
   type: apiKeyTypeSchema,
-  /** Config token scopes; empty for standard keys. */
   scopes: z.array(configTokenScopeSchema),
-  /** Config token area limit; null = every area (and always null for standard keys). */
   areas: z.array(z.string()).nullable(),
   owner: apiKeyOwnerSchema,
 }).meta({ ref: "OrganizationApiKey" })
@@ -262,16 +258,13 @@ export function registerOrgApiKeyRoutes<T extends { Variables: OrgRouteVariables
             issuedByOrgMembershipId: payload.currentMember.id,
             ...(config ? { config: { areas: config.areas } } : {}),
           }),
-          // Better Auth apiKey permissions: {"config":["export","submit",...]} (server-only field).
           ...(config ? { permissions: configTokenPermissions(config.scopes) } : {}),
           rateLimitEnabled: true,
-          rateLimitMax: DEN_API_KEY_RATE_LIMIT_MAX,
+          rateLimitMax: env.apiKeyRateLimitMax,
           rateLimitTimeWindow: DEN_API_KEY_RATE_LIMIT_TIME_WINDOW_MS,
         },
       })
 
-      // better-auth wrote the key on its own adapter: append the after-snapshot
-      // (read back from the row, never the plaintext) in a fresh transaction.
       const capture = auditChangeCapture(c)
       const auditEventIds = await appendDomainChangesAfterCommit(capture, "api_key.created", async (tx) => {
         const [row] = await tx.select(apiKeyAuditColumns).from(AuthApiKeyTable).where(eq(AuthApiKeyTable.id, created.id)).limit(1)

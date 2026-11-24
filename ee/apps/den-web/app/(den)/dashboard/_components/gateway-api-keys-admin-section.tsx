@@ -27,11 +27,6 @@ import {
 
 const SETTING_LABEL = "Allow 3rd party tools & harnesses";
 
-/**
- * AI Gateway › API Keys: the organization's switch for member API keys at
- * the top, then every member's key, who owns it, when it expires and when it was last used. Admins with
- * Manage Gateway providers can revoke any key.
- */
 export function GatewayApiKeysAdminSection({ canManageKeys, canManageSettings }: { canManageKeys: boolean; canManageSettings: boolean }) {
   const { orgSlug, runReauthableAction } = useOrgDashboard();
   const keys = useOrganizationGatewayApiKeys();
@@ -56,7 +51,6 @@ export function GatewayApiKeysAdminSection({ canManageKeys, canManageSettings }:
   }
 
   const { apiKeys } = keys.data;
-  // Shown as saved while the change is on its way, so the switch never flips back mid-save.
   const enabled = save.isPending && save.variables?.memberApiKeys !== undefined ? save.variables.memberApiKeys : keys.data.enabled;
   const facts = { memberApiKeys: enabled, apiKeys: apiKeys.length };
 
@@ -92,7 +86,6 @@ export function GatewayApiKeysAdminSection({ canManageKeys, canManageSettings }:
           aria-label={SETTING_LABEL}
           checked={enabled}
           disabled={!canManageSettings || save.isPending}
-          // Changing a workspace setting needs a recent sign-in; the dialog opens and the change retries.
           onChange={(next) => void runReauthableAction("save-ai-gateway-settings", async () => { await save.mutateAsync({ memberApiKeys: next }); }).catch(() => undefined)}
         />
       </div>
@@ -145,7 +138,6 @@ export function GatewayApiKeysAdminSection({ canManageKeys, canManageSettings }:
   );
 }
 
-/** No keys yet: what member keys are, that each member creates their own, and a way to create yours. */
 function ApiKeysInfoPanel({ enabled, href }: { enabled: boolean; href: string }) {
   return (
     <div className={`${AUTOMATION_CARD_CLASS} flex flex-col items-center gap-4 p-4 py-14 text-center`} data-testid="gateway-api-keys-admin-empty">

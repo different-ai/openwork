@@ -4,9 +4,9 @@
 # HTTP redirects to HTTPS. Without it, the services' run.app URLs serve HTTPS.
 
 locals {
-  create_lb         = local.custom_domain
+  create_lb         = local.custom_domain || var.ai_gateway_enabled
   create_lb_address = local.create_lb && var.load_balancer_ip_address == ""
-  create_lb_cert    = local.create_lb && length(var.ssl_certificate_ids) == 0
+  create_lb_cert    = local.custom_domain && length(var.ssl_certificate_ids) == 0
   lb_ip             = local.create_lb ? (local.create_lb_address ? google_compute_global_address.lb[0].address : var.load_balancer_ip_address) : null
   lb_services       = local.create_lb ? { api = google_cloud_run_v2_service.api.name, web = google_cloud_run_v2_service.web.name } : {}
 }
@@ -52,13 +52,28 @@ resource "google_compute_url_map" "https" {
   name            = var.managed_legacy ? "${var.name}-routes" : "${var.name}-den"
   default_service = google_compute_backend_service.run["web"].id
 
+  dynamic "host_rule" {
+    for_each = var.ai_gateway_enabled ? [1] : []
+    content {
+      hosts        = [var.ai_gateway_domain_name]
+      path_matcher = "ai-gateway"
+    }
+  }
+  dynamic "path_matcher" {
+    for_each = var.ai_gateway_enabled ? [1] : []
+    content {
+      name            = "ai-gateway"
+      default_service = google_compute_backend_service.ai_gateway[0].id
+    }
+  }
+
   host_rule {
-    hosts        = [local.api_host]
+    hosts        = [trimprefix(local.api_url, "https://")]
     path_matcher = "api"
   }
 
   host_rule {
-    hosts        = [var.domain_name]
+    hosts        = [local.web_host]
     path_matcher = "web"
   }
 
@@ -87,10 +102,14 @@ resource "google_compute_managed_ssl_certificate" "this" {
 resource "google_compute_target_https_proxy" "this" {
   count = local.create_lb ? 1 : 0
 
-  project          = var.project_id
-  name             = var.managed_legacy ? "${var.name}-https" : "${var.name}-den"
-  url_map          = google_compute_url_map.https[0].id
-  ssl_certificates = local.create_lb_cert ? [google_compute_managed_ssl_certificate.this[0].id] : var.ssl_certificate_ids
+  project = var.project_id
+  name    = var.managed_legacy ? "${var.name}-https" : "${var.name}-den"
+  url_map = google_compute_url_map.https[0].id
+  ssl_certificates = concat(
+    local.create_lb_cert ? [google_compute_managed_ssl_certificate.this[0].id] : [],
+    google_compute_managed_ssl_certificate.ai_gateway[*].id,
+    var.ssl_certificate_ids,
+  )
 }
 
 resource "google_compute_global_forwarding_rule" "https" {

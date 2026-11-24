@@ -108,8 +108,6 @@ export function JoinSandboxScreen({ token }: { token: string }) {
                 </div>
               ) : (
                 <div data-testid="join-sandbox-auth">
-                  {/* Email first, like the main sign-in page: an existing account is asked for its password instead of
-                      being sent to a code screen. Signing up with an email that already has an account sends no code. */}
                   <AuthPanel
                     bare
                     hideIntro

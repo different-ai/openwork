@@ -44,7 +44,6 @@ export function registerOrgSandboxJoinRoutes<T extends { Variables: OrgRouteVari
       if (retryAfter !== null) return c.json({ error: "rate_limited", message: "Too many attempts. Try again in a few minutes." }, 429)
       const preview = await previewSandboxJoin(c.req.valid("query").token)
       if (!preview) return c.json(notFound, 404)
-      // The token proves the organization; the read is attributed there with an unknown actor. The token is never recorded.
       await attributeAuditRequest(c, { organizationId: preview.organizationId, actor: { type: "unknown", id: null }, principalKey: "unknown:sandbox_join_token" })
       c.header("Cache-Control", "no-store")
       return c.json({ organizationName: preview.organizationName, state: preview.state, joinRole: preview.joinRole, expiresAt: preview.expiresAt, connectors: preview.connectors })

@@ -47,7 +47,6 @@ import {
   GithubConnectorRequestError,
   getGithubAppSummary,
   getGithubConnectorAppConfig,
-  getGithubInstallationAccessToken,
   getGithubRepositoryHeadSha,
   getGithubRepositoryTextFile,
   getGithubRepositoryTree,
@@ -56,6 +55,7 @@ import {
   validateGithubInstallationTarget,
   verifyGithubInstallStateToken,
 } from "./github-app.js"
+import { approvedGithubInstallationOwner, githubAccountInstallationId, GithubInstallationApprovalError, requireApprovedGithubInstallation } from "./github-installation-policy.js"
 import {
   buildGithubRepoDiscovery,
   type GithubDiscoveredPlugin,
@@ -64,11 +64,11 @@ import {
   type GithubDiscoveryTreeEntry,
 } from "./github-discovery.js"
 import { planConnectorImportedResourceCleanup, uniqueIds } from "./connector-cleanup.js"
+import { assignDefaultExternalKey, setExternalKey, type KeyedItem } from "./external-keys.js"
 import {
   DEFAULT_OPENWORK_MARKETPLACE_DESCRIPTION,
   DEFAULT_OPENWORK_MARKETPLACE_LOGO_URL,
   DEFAULT_OPENWORK_MARKETPLACE_NAME,
-  type DefaultMarketplacePluginEntry,
   RETIRED_DEFAULT_OPENWORK_PLUGINS,
   RETIRED_STARTER_MARKETPLACE_DESCRIPTION,
   RETIRED_STARTER_MARKETPLACE_LOGO_URL,
@@ -80,6 +80,18 @@ import { db } from "../../../db.js"
 import { withPrimaryReads } from "../../../read-routing.js"
 import { requestReadFor } from "../../../request-reads.js"
 import { latestConfigObjectVersions } from "../../../config-object-versions.js"
+import {
+  checkSkillFiles,
+  isSkillFileText,
+  sameSkillFiles,
+  selectSkillFilesBySize,
+  skillFilesFromPayload,
+  skillFilesLeftOutMessage,
+  storedSkillFileList,
+  type SkillFileBody,
+  type SkillFileEntry,
+} from "../../../skill-files.js"
+import { storeInlineSkillFiles, storeSkillFileBodies } from "../../../skill-file-blobs.js"
 import { keysetAfter, keysetPage, type KeysetCursor } from "../../../list-pagination.js"
 import { resolveOrganizationMemberAuthority } from "../../../organization-team-roles.js"
 import { resolveMemberPermissions, resolvePermissionsForMember } from "../../../permissions/resolve.js"
@@ -268,12 +280,10 @@ type GithubPluginMcpImportReuse = {
 type GithubPluginMcpImportServer = {
   authType: "oauth" | null
   connectionId: string | null
-  /** The provider OpenWork already knows for this declared connector (see claude-connector-aliases.ts). */
   mapsTo: GithubPluginMcpImportMapping | null
   name: string
   pluginKey: string
   pluginName: string
-  /** The organization's existing connection this server will use instead of a new one. */
   reuse: GithubPluginMcpImportReuse | null
   serverKey: string
   skippedReason: "headers_unsupported" | "invalid_config" | "invalid_url" | "local_unsupported" | "missing_url" | "native_connector" | "unsupported_auth" | null
@@ -293,6 +303,8 @@ type GithubPluginMcpImportPlugin = {
 
 type GithubPluginSkillImportSkill = {
   description: string | null
+  files?: SkillFileBody[]
+  filesLeftOut?: string[]
   name: string
   pluginKey: string
   pluginName: string
@@ -302,6 +314,7 @@ type GithubPluginSkillImportSkill = {
   sourceSchemaVersion: string | null
   sourcePath: string
   supported: boolean
+  supportingFileCount?: number
 }
 
 type GithubPluginMcpImportPlan = {
@@ -310,12 +323,12 @@ type GithubPluginMcpImportPlan = {
   marketplace: GithubMarketplaceInfo | null
   plugins: GithubPluginMcpImportPlugin[]
   repositoryFullName: string
+  requiresSkillSelection: boolean
   rootPath: string
   servers: GithubPluginMcpImportServer[]
   skills: GithubPluginSkillImportSkill[]
   sourceSchemaVersion: string | null
   sourceRevisionRef: string
-  /** GitHub cut the repository tree short, so a missing file may still exist. */
   treeTruncated: boolean
   warnings: string[]
 }
@@ -383,7 +396,7 @@ type GrantTarget = ConfigObjectGrantTarget | MarketplaceGrantTarget | PluginGran
 
 export class PluginArchRouteFailure extends Error {
   constructor(
-    readonly status: 400 | 404 | 409 | 502,
+    readonly status: 400 | 404 | 409 | 413 | 502,
     readonly error: string,
     message: string,
     options?: ErrorOptions,
@@ -465,7 +478,6 @@ function parsePublicGithubPluginUrl(rawUrl: string): PublicGithubPluginTarget {
   }
 }
 
-// Overridable so @openwork/testkit specs can serve a fixed repository.
 function publicGithubApiBase() {
   return (process.env.DEN_PUBLIC_GITHUB_API_BASE?.trim() || "https://api.github.com").replace(/\/+$/, "")
 }
@@ -474,9 +486,6 @@ function publicGithubRawBase() {
   return (process.env.DEN_PUBLIC_GITHUB_RAW_BASE?.trim() || "https://raw.githubusercontent.com").replace(/\/+$/, "")
 }
 
-// Unauthenticated GitHub API calls share 60 requests an hour per server IP,
-// across every organization. The OAuth app's client credentials raise that to
-// 5,000 an hour for public data, and grant no access to anyone's account.
 function publicGithubAuthorization(): Record<string, string> {
   const { clientId, clientSecret } = env.github
   if (!clientId || !clientSecret) return {}
@@ -605,9 +614,6 @@ async function mapPublicGithubConcurrently<T, R>(items: T[], mapper: (item: T) =
 async function getPublicGithubTextFile(input: { branch: string; discoveryPath: string; snapshot: PublicGithubTreeSnapshot }) {
   const fullPath = input.snapshot.fullPathByDiscoveryPath.get(input.discoveryPath) ?? input.discoveryPath
   const { owner, repo } = publicGithubRepoParts(input.snapshot.repositoryFullName)
-  // Raw downloads at the resolved commit do not count against the API rate
-  // limit; a marketplace such as knowledge-work-plugins has 250+ SKILL.md
-  // files, so reading them through /contents exhausted it in one preview.
   const ref = input.snapshot.headSha || input.branch
   const response = await fetch(
     `${publicGithubRawBase()}/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/${ref.split("/").map(encodeURIComponent).join("/")}/${fullPath.split("/").map(encodeURIComponent).join("/")}`,
@@ -641,9 +647,30 @@ async function getPublicGithubDiscoveryFileTexts(snapshot: PublicGithubTreeSnaps
   return Object.fromEntries(paths.map((path, index) => [path, texts[index] ?? null]))
 }
 
+async function skillVersionPayload(input: { organizationId: string; previousPayload?: unknown; value: ConfigObjectInput }): Promise<Record<string, unknown> | null> {
+  const payload = input.value.normalizedPayloadJson
+  if (payload === undefined) {
+    const kept = await storeInlineSkillFiles(input.organizationId, skillFilesFromPayload(input.previousPayload))
+    return kept.length > 0 ? { files: storedSkillFileList(kept) } : null
+  }
+  const { files: rawFiles, ...rest } = payload
+  if (rawFiles === undefined) return Object.keys(rest).length > 0 ? rest : null
+  const checked = checkSkillFiles(rawFiles)
+  if ("problem" in checked) {
+    throw new PluginArchRouteFailure(
+      400,
+      "invalid_skill_files",
+      checked.problem.path ? `${checked.problem.message} (${checked.problem.path})` : checked.problem.message,
+    )
+  }
+  const stored = await storeSkillFileBodies(input.organizationId, checked.files)
+  const next = stored.length > 0 ? { ...rest, files: storedSkillFileList(stored) } : rest
+  return Object.keys(next).length > 0 ? next : null
+}
+
 const STANDARD_SKILL_NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 
-function deriveSkillProjection(value: ConfigObjectInput) {
+export function deriveSkillProjection(value: ConfigObjectInput) {
   const rawSourceText = normalizeOptionalString(value.rawSourceText)
   if (!rawSourceText) {
     throw new PluginArchRouteFailure(
@@ -783,8 +810,6 @@ async function getLatestVersions(configObjectIds: ConfigObjectId[]) {
 }
 
 function serializeVersion(row: ConfigObjectVersionRow) {
-  // Workflow authoring data belongs to the role-aware Workflow management API.
-  // Generic config-object reads must not bypass that boundary for viewers.
   const isCodemodeWorkflowVersion = row.schemaVersion === "codemode-script-v1"
   const isAuthoredApp = isAuthoredMcpAppVersion(row)
   return {
@@ -816,6 +841,7 @@ function serializeConfigObject(row: ConfigObjectRow, latestVersion: ConfigObject
     currentRelativePath: row.currentRelativePath,
     deletedAt: row.deletedAt ? row.deletedAt.toISOString() : null,
     description: row.description,
+    externalKey: row.externalKey,
     id: row.id,
     latestVersion: latestVersion ? serializeVersion(latestVersion) : null,
     objectType: row.objectType,
@@ -833,70 +859,6 @@ type PluginMarketplaceSummary = {
   name: string
 }
 
-const DEFAULT_OPENWORK_EXTENSION_MANIFESTS = [
-  {
-    schemaVersion: 1,
-    id: "openwork-browser",
-    name: "OpenWork Browser",
-    description: "Automate the built-in browser panel that stays visible inside OpenWork.",
-    source: { format: "openwork-builtin", origin: "builtin", trusted: true },
-    icon: { src: "/openwork-mark.svg" },
-    composer: { prompt: "Use the OpenWork Browser extension to " },
-    setup: { instructions: "OpenWork Browser is ready by default in desktop workspaces." },
-    resources: [{ type: "opencode-plugin", id: "openwork-chrome-devtools", label: "OpenWork browser tools", required: true }],
-    contributions: [
-      { type: "settings-panel", ref: "openwork.browser.settings", location: "settings-detail" },
-      { type: "session-side-panel", ref: "openwork.browser.panel", location: "session-right-pane" },
-      { type: "composer-prompt", prompt: "Use the OpenWork Browser extension to ", location: "composer" },
-    ],
-    enablement: [{ type: "toggle-enabled", ref: "openwork-browser", label: "Enabled" }],
-    lifecycle: { reload: ["plugins", "agents"], detection: ["plugin:openwork-chrome-devtools"] },
-    defaultEnabled: true,
-  },
-  {
-    schemaVersion: 1,
-    id: "openai-image-gen",
-    name: "OpenAI Image Gen",
-    description: "Generate image artifacts with gpt-image-2.",
-    source: { format: "openwork-builtin", origin: "builtin", trusted: true },
-    icon: { src: "/ext-openai.svg" },
-    composer: { prompt: "Use the OpenAI Image Gen extension to " },
-    setup: { instructions: "Add an OpenAI API key, then agents can generate image artifacts through OpenWork extension actions." },
-    resources: [
-      { type: "secret", id: "openai-api-key", envKey: "OPENAI_API_KEY", required: true },
-      { type: "local-service", id: "openai-image-generation-service", label: "OpenAI image generation", required: true },
-      { type: "tool", id: "openai-image-generate", label: "Image generation", required: true },
-    ],
-    contributions: [
-      { type: "settings-panel", ref: "openwork.imageGen.settings", location: "settings-detail" },
-      { type: "composer-prompt", prompt: "Use the OpenAI Image Gen extension to ", location: "composer" },
-    ],
-    enablement: [{ type: "env-set", ref: "OPENAI_API_KEY", label: "OpenAI API key" }],
-    lifecycle: { reload: ["config"], detection: ["env:OPENAI_API_KEY"] },
-  },
-  {
-    schemaVersion: 1,
-    id: "ollama",
-    name: "Ollama",
-    description: "Local model provider at http://localhost:11434.",
-    source: { format: "openwork-builtin", origin: "builtin", trusted: true },
-    icon: { src: "/ext-ollama.svg" },
-    composer: { prompt: "Use the Ollama extension to " },
-    setup: { instructions: "Run Ollama locally, choose or pull a model, then add it as an OpenCode provider." },
-    resources: [
-      { type: "local-service", id: "ollama-api", label: "Ollama API", description: "http://localhost:11434", required: true },
-      { type: "provider", id: "ollama", providerId: "ollama", packageName: "@ai-sdk/openai-compatible", required: true },
-    ],
-    contributions: [
-      { type: "settings-panel", ref: "openwork.ollama.settings", location: "settings-detail" },
-      { type: "composer-prompt", prompt: "Use the Ollama extension to ", location: "composer" },
-    ],
-    enablement: [{ type: "provider-connected", ref: "ollama", label: "Ollama provider" }],
-    lifecycle: { reload: ["config"], detection: ["provider:ollama"] },
-  },
-] as const
-
-// Render historical seeded records without re-seeding them or reviving local setup.
 const RETIRED_GOOGLE_WORKSPACE_MANIFEST = {
   schemaVersion: 1,
   id: "google-workspace",
@@ -910,10 +872,6 @@ const RETIRED_GOOGLE_WORKSPACE_MANIFEST = {
     { type: "setup-instructions", ref: "openwork.googleWorkspace.setup", location: "settings-detail" },
   ],
 } as const
-
-function defaultOpenWorkManifestForPlugin(row: PluginRow) {
-  return DEFAULT_OPENWORK_EXTENSION_MANIFESTS.find((manifest) => manifest.name === row.name && manifest.description === row.description) ?? null
-}
 
 function extensionResourceTypeForConfigObject(objectType: string) {
   switch (objectType) {
@@ -947,7 +905,7 @@ function serializedPluginSourceFormat(row: PluginRow) {
 function serializePluginExtension(row: PluginRow, componentCounts: Record<string, number>) {
   const builtInManifest = row.name === RETIRED_GOOGLE_WORKSPACE_MANIFEST.name && row.description === RETIRED_GOOGLE_WORKSPACE_MANIFEST.description
     ? RETIRED_GOOGLE_WORKSPACE_MANIFEST
-    : defaultOpenWorkManifestForPlugin(row)
+    : null
   if (builtInManifest) {
     return {
       description: builtInManifest.description,
@@ -1012,6 +970,7 @@ function serializePlugin(row: PluginRow, memberCount?: number, marketplaces: Plu
     createdByOrgMembershipId: row.createdByOrgMembershipId,
     deletedAt: row.deletedAt ? row.deletedAt.toISOString() : null,
     description: row.description,
+    externalKey: row.externalKey,
     id: row.id,
     extension: serializePluginExtension(row, componentCounts),
     marketplaces,
@@ -1267,12 +1226,6 @@ async function getConnectorSyncEventRow(organizationId: OrganizationId, connecto
   return rows[0]?.event ?? null
 }
 
-// Verifies the target resource exists AND belongs to the caller's active
-// organization, returning 404 otherwise. This must run before any role check on
-// access-grant endpoints: resolvePluginArchResourceRole short-circuits to
-// "manager" for org admins without binding the resource to the org, so without
-// this guard an admin in org A could read/add/revoke grants on org B resources
-// by supplying a foreign resourceId.
 async function ensureResourceInOrganization(context: PluginArchActorContext, target: ResourceTarget) {
   const organizationId = context.organizationContext.organization.id
   if (target.resourceKind === "config_object") {
@@ -1298,9 +1251,6 @@ async function ensureResourceInOrganization(context: PluginArchActorContext, tar
   }
 }
 
-// Validates that a grant's target member/team belong to the caller's active
-// organization, so a manager cannot grant access to a foreign org's member or
-// team id by smuggling it through the request body.
 async function ensureGrantTargetsInOrganization(context: PluginArchActorContext, value: AccessGrantWrite) {
   const organizationId = context.organizationContext.organization.id
 
@@ -1404,7 +1354,6 @@ async function upsertGrant(input: ResourceTarget & {
   const organizationId = input.context.organizationContext.organization.id
 
   if (input.resourceKind === "config_object") {
-    // primary: insert-vs-update must see a grant written moments ago.
     const existing = await db.$primary
       .select()
       .from(ConfigObjectAccessGrantTable)
@@ -1449,7 +1398,6 @@ async function upsertGrant(input: ResourceTarget & {
   }
 
   if (input.resourceKind === "marketplace") {
-    // primary: insert-vs-update must see a grant written moments ago.
     const existing = await db.$primary
       .select()
       .from(MarketplaceAccessGrantTable)
@@ -1494,7 +1442,6 @@ async function upsertGrant(input: ResourceTarget & {
   }
 
   if (input.resourceKind === "plugin") {
-    // primary: insert-vs-update must see a grant written moments ago.
     const existing = await db.$primary
       .select()
       .from(PluginAccessGrantTable)
@@ -1538,7 +1485,6 @@ async function upsertGrant(input: ResourceTarget & {
     return serializeAccessGrant({ ...row, removedAt: null })
   }
 
-  // primary: insert-vs-update must see a grant written moments ago.
   const existing = await db.$primary
     .select()
     .from(ConnectorInstanceAccessGrantTable)
@@ -1691,11 +1637,10 @@ export async function getConfigObjectDetail(context: PluginArchActorContext, con
 
 export async function createConfigObject(input: {
   context: PluginArchActorContext
-  /** Use this id for the new object (config-blob imports reuse the source id); a fresh one otherwise. */
+  externalKey?: string
   id?: ConfigObjectId
   objectType: ConfigObjectRow["objectType"]
   pluginIds?: PluginId[]
-  /** Where an imported object came from in its source repository; a re-import matches and prunes on it. */
   sourcePath?: string | null
   sourceMode: ConfigObjectRow["sourceMode"]
   value: ConfigObjectInput
@@ -1715,6 +1660,9 @@ export async function createConfigObject(input: {
   const createdByOrgMembershipId = input.context.organizationContext.currentMember.id
   const configObjectId = input.id ?? createDenTypeId("configObject")
   const versionId = createDenTypeId("configObjectVersion")
+  const normalizedPayloadJson = input.objectType === "skill"
+    ? await skillVersionPayload({ organizationId, value: input.value })
+    : input.value.normalizedPayloadJson ?? null
 
   await db.transaction(async (tx) => {
     await tx.insert(ConfigObjectTable).values({
@@ -1744,7 +1692,7 @@ export async function createConfigObject(input: {
         createdVia: input.sourceMode,
         id: versionId,
         isDeletedVersion: false,
-        normalizedPayloadJson: input.value.normalizedPayloadJson ?? null,
+        normalizedPayloadJson,
         organizationId,
         rawSourceText: normalizeOptionalString(input.value.rawSourceText),
       schemaVersion: normalizeOptionalString(input.value.schemaVersion),
@@ -1787,6 +1735,7 @@ export async function createConfigObject(input: {
     }
   })
 
+  await firstExternalKey({ kind: "config_object", organizationId, id: configObjectId }, projection.title, input.externalKey)
   return getConfigObjectDetail(input.context, configObjectId)
 }
 
@@ -1851,6 +1800,15 @@ export async function createConfigObjectVersion(input: {
 
   const now = new Date()
   const projection = deriveProjection({ objectType: row.objectType, value: input.value })
+  const normalizedPayloadJson = row.objectType === "skill"
+    ? await skillVersionPayload({
+      organizationId: row.organizationId,
+      previousPayload: input.value.normalizedPayloadJson === undefined
+        ? (await getLatestVersions([row.id])).get(row.id)?.normalizedPayloadJson
+        : undefined,
+      value: input.value,
+    })
+    : input.value.normalizedPayloadJson ?? null
   await db.transaction(async (tx) => {
     await tx.insert(ConfigObjectVersionTable).values({
       configObjectId: row.id,
@@ -1860,7 +1818,7 @@ export async function createConfigObjectVersion(input: {
       createdVia: row.sourceMode === "connector" ? "connector" : row.sourceMode,
       id: createDenTypeId("configObjectVersion"),
       isDeletedVersion: false,
-      normalizedPayloadJson: input.value.normalizedPayloadJson ?? null,
+      normalizedPayloadJson,
       organizationId: row.organizationId,
       rawSourceText: normalizeOptionalString(input.value.rawSourceText),
       schemaVersion: normalizeOptionalString(input.value.schemaVersion),
@@ -1880,6 +1838,29 @@ export async function createConfigObjectVersion(input: {
   })
 
   return getConfigObjectDetail(input.context, row.id)
+}
+
+export async function setConfigObjectExternalKey(input: { context: PluginArchActorContext; configObjectId: ConfigObjectId; externalKey: string | null }) {
+  const row = await getConfigObjectRow(input.context.organizationContext.organization.id, input.configObjectId)
+  if (!row) {
+    throw new PluginArchRouteFailure(404, "config_object_not_found", "Config object not found.")
+  }
+  await requirePluginArchResourceRole({ context: input.context, resourceId: row.id, resourceKind: "config_object", role: "manager" })
+  if (input.externalKey !== row.externalKey) {
+    await changeExternalKey({ kind: "config_object", organizationId: row.organizationId, id: row.id }, input.externalKey)
+  }
+  return getConfigObjectDetail(input.context, row.id)
+}
+
+async function firstExternalKey(item: KeyedItem, name: string, wanted: string | undefined): Promise<string | null> {
+  if (wanted && await setExternalKey(item, wanted, { onlyWhenUnset: true })) return wanted
+  return assignDefaultExternalKey(item, name)
+}
+
+async function changeExternalKey(item: KeyedItem, key: string | null) {
+  if (!await setExternalKey(item, key)) {
+    throw new PluginArchRouteFailure(409, "external_key_taken", `Another ${item.kind === "plugin" ? "plugin" : "skill, agent or command"} in this organization already has the key "${key}".`)
+  }
 }
 
 export async function setConfigObjectLifecycle(input: { context: PluginArchActorContext; configObjectId: ConfigObjectId; action: "archive" | "delete" | "restore" }) {
@@ -1928,9 +1909,6 @@ export async function attachConfigObjectToPlugin(input: { context: PluginArchAct
   const authoredApp = configObject.objectType === "app"
     && isAuthoredMcpAppVersion((await getLatestVersions([configObject.id])).get(configObject.id) ?? {})
   if (configObject.objectType === "workflow" || configObject.objectType === "script" || authoredApp) {
-    // Adding a Workflow or authored App to a Plugin can expand its audience
-    // through Plugin and Marketplace grants, so its manager makes that sharing
-    // decision. Legacy imported Apps keep their existing membership behavior.
     await requirePluginArchResourceRole({
       context: input.context,
       resourceId: configObject.id,
@@ -2244,7 +2222,6 @@ const mePluginAccessEdgeOrder: Record<MePluginAccessEdge["kind"], number> = {
   catalog: 5,
 }
 
-/** Callers holding the same request context share one read (the library's loaders call it concurrently). */
 function listMeEffectivePluginAccessWithComponentKinds(input: { context: PluginArchActorContext }) {
   return requestReadFor(input.context, "me-effective-plugin-access", () => loadMeEffectivePluginAccessWithComponentKinds(input))
 }
@@ -2692,12 +2669,6 @@ function pluginAudienceCondition(organizationId: OrganizationId, memberId?: Memb
   )`
 }
 
-/**
- * Whether a member (not necessarily the caller) holds `sharing.manage_all`,
- * i.e. sees every plugin. Joined members resolve fully (Admin teams and team
- * permission sets included); a member who has not joined yet resolves from
- * their stored role alone, as before.
- */
 async function memberManagesAllSharedResources(input: { organizationId: OrganizationId; memberId: MemberId; role: string; joined: boolean }) {
   if (roleIncludesOwner(input.role)) return true
   const permissions = input.joined
@@ -2786,7 +2757,7 @@ export async function getPluginDetail(context: PluginArchActorContext, pluginId:
 export async function createPlugin(input: {
   context: PluginArchActorContext
   description?: string | null
-  /** Use this id for the new plugin (config-blob imports reuse the source id); a fresh one otherwise. */
+  externalKey?: string
   id?: PluginId
   name: string
   sourceFormat?: string | null
@@ -2817,6 +2788,7 @@ export async function createPlugin(input: {
     createdByOrgMembershipId: input.context.organizationContext.currentMember.id,
     deletedAt: null,
     description: normalizeOptionalString(input.description ?? undefined),
+    externalKey: null,
     id: input.id ?? createDenTypeId("plugin"),
     name,
     organizationId: input.context.organizationContext.organization.id,
@@ -2842,7 +2814,7 @@ export async function createPlugin(input: {
     })
   })
 
-  return serializePlugin(row, 0)
+  return serializePlugin({ ...row, externalKey: await firstExternalKey({ kind: "plugin", organizationId: row.organizationId, id: row.id }, name, input.externalKey) }, 0)
 }
 
 function pluginMcpConnectionSetupInput(setup: PluginMcpConnectionSetup) {
@@ -2854,13 +2826,6 @@ function pluginMcpConnectionSetupInput(setup: PluginMcpConnectionSetup) {
   }
 }
 
-/**
- * A plugin whose inline MCP connection setup failed must not survive as an
- * active plugin with a half-configured server: the creator would see the
- * failure, fix the credentials, and then hit a duplicate-name conflict on
- * retry. Mirror the GitHub import path instead — drop the bindings and the
- * connections this attempt created, then archive the plugin.
- */
 async function rollbackPluginMcpConnectionSetup(input: { context: PluginArchActorContext; pluginId: PluginId }) {
   const organizationId = input.context.organizationContext.organization.id
   const bindings = await pluginMcpRequirementBindingsForResource({ organizationId, resourceId: input.pluginId, resourceKind: "plugin" }).catch(() => [])
@@ -2913,7 +2878,6 @@ export async function createPluginBundle(input: {
       if (!connection || connection.kind !== "external_mcp") {
         throw new PluginArchRouteFailure(404, "mcp_connection_not_found", "That connector was not found in this organization.")
       }
-      // Members bundle only connectors they added themselves from My Library.
       if (connection.createdByOrgMembershipId !== input.context.organizationContext.currentMember.id && !(await pluginArchHasPermission(input.context, "connections.manage"))) {
         throw new PluginArchAuthorizationError(403, "forbidden", "Only organization owners and admins can bind plugin MCP servers to organization connections.")
       }
@@ -2951,7 +2915,6 @@ export async function createPluginBundle(input: {
   }
 
   if (input.marketplaceId) {
-    // Validate the publish target before creating anything so a bad marketplace cannot leave an orphan plugin.
     await ensureEditableMarketplace(input.context, input.marketplaceId)
   }
 
@@ -3000,8 +2963,6 @@ export async function createPluginBundle(input: {
     await attachPluginToMarketplace({ context: input.context, marketplaceId: input.marketplaceId, pluginId: plugin.id })
   }
 
-  // Grants and the collection are in place, so the derived connection access
-  // is complete the moment each server is configured.
   try {
     for (const pending of pendingConnections) {
       for (const serverName of pending.serverNames) {
@@ -3035,8 +2996,11 @@ export async function createPluginBundle(input: {
   return getPluginDetail(input.context, plugin.id)
 }
 
-export async function updatePlugin(input: { context: PluginArchActorContext; description?: string | null; name?: string; pluginId: PluginId }) {
+export async function updatePlugin(input: { context: PluginArchActorContext; description?: string | null; externalKey?: string | null; name?: string; pluginId: PluginId }) {
   const row = await ensureEditablePlugin(input.context, input.pluginId)
+  if (input.externalKey !== undefined && input.externalKey !== row.externalKey) {
+    await changeExternalKey({ kind: "plugin", organizationId: row.organizationId, id: row.id }, input.externalKey)
+  }
   const updatedAt = new Date()
   await db.update(PluginTable).set({
     description: input.description === undefined ? row.description : normalizeOptionalString(input.description ?? undefined),
@@ -3074,11 +3038,6 @@ export async function listPluginMemberships(input: { context: PluginArchActorCon
   return { items: await serializePluginMemberships(memberships, input), nextCursor: null }
 }
 
-/**
- * GET /v1/plugins/:pluginId/resolved for many plugins in one request: the same
- * viewer check and the same body per plugin, read with one query per table
- * instead of one set of queries per plugin.
- */
 export async function listResolvedPlugins(input: { context: PluginArchActorContext; pluginIds: PluginId[] }) {
   const pluginIds = [...new Set(input.pluginIds)]
   const roles = await resolvePluginArchPluginRoles(input.context, pluginIds)
@@ -3141,7 +3100,6 @@ export async function removePluginMembership(input: { configObjectId: ConfigObje
 }
 
 export async function listMarketplaces(input: { context: PluginArchActorContext; cursor?: string; limit?: number; q?: string; status?: MarketplaceRow["status"] }) {
-  // A first visit seeds the default marketplace; list it from the primary then.
   if (await ensureDefaultOpenWorkMarketplace(input.context)) return withPrimaryReads(() => listSeededMarketplaces(input))
   return listSeededMarketplaces(input)
 }
@@ -3202,20 +3160,13 @@ async function ensureDefaultOpenWorkMarketplace(context: PluginArchActorContext)
     await retireStarterPlaceholders({ database: tx, organizationId, retiredAt: now })
     await retireDefaultOpenWorkPlugins({ database: tx, organizationId, retiredAt: now })
 
-    const marketplace = await ensureDefaultMarketplace({
+    await ensureDefaultMarketplace({
       context,
       createdAt: now,
       database: tx,
       description: DEFAULT_OPENWORK_MARKETPLACE_DESCRIPTION,
       logoUrl: DEFAULT_OPENWORK_MARKETPLACE_LOGO_URL,
       name: DEFAULT_OPENWORK_MARKETPLACE_NAME,
-    })
-    await ensureDefaultMarketplacePlugins({
-      context,
-      createdAt: now,
-      database: tx,
-      entries: DEFAULT_OPENWORK_EXTENSION_MANIFESTS.map((manifest) => ({ description: manifest.description, name: manifest.name })),
-      marketplaceId: marketplace.id,
     })
   })
   return true
@@ -3256,70 +3207,9 @@ async function defaultOpenWorkMarketplaceSeedComplete(organizationId: Organizati
       isNull(MarketplaceAccessGrantTable.removedAt),
     ))
   const marketplaceGrants = new Set(marketplaceGrantRows.map((grant) => grant.marketplaceId))
-  if (!marketplaceIds.every((marketplaceId) => marketplaceGrants.has(marketplaceId))) {
-    return false
-  }
-
-  const defaultPluginEntries = DEFAULT_OPENWORK_EXTENSION_MANIFESTS.map((manifest) => ({ description: manifest.description, name: manifest.name }))
-  const defaultPluginRows = await db
-    .select({ id: PluginTable.id, name: PluginTable.name, description: PluginTable.description })
-    .from(PluginTable)
-    .where(and(
-      eq(PluginTable.organizationId, organizationId),
-      inArray(PluginTable.name, defaultPluginEntries.map((entry) => entry.name)),
-      eq(PluginTable.status, "active"),
-      isNull(PluginTable.deletedAt),
-    ))
-
-  const pluginIdByEntry = new Map<string, PluginId>()
-  for (const entry of defaultPluginEntries) {
-    const plugin = defaultPluginRows.find((row) => row.name === entry.name && row.description === entry.description)
-    if (!plugin) {
-      return false
-    }
-    pluginIdByEntry.set(defaultMarketplacePluginEntryKey(entry), plugin.id)
-  }
-
-  const pluginIds = Array.from(pluginIdByEntry.values())
-  const pluginGrantRows = await db
-    .select({ pluginId: PluginAccessGrantTable.pluginId })
-    .from(PluginAccessGrantTable)
-    .where(and(
-      eq(PluginAccessGrantTable.organizationId, organizationId),
-      inArray(PluginAccessGrantTable.pluginId, pluginIds),
-      eq(PluginAccessGrantTable.orgWide, true),
-      eq(PluginAccessGrantTable.role, "viewer"),
-      isNull(PluginAccessGrantTable.removedAt),
-    ))
-  const pluginGrants = new Set(pluginGrantRows.map((grant) => grant.pluginId))
-  if (!pluginIds.every((pluginId) => pluginGrants.has(pluginId))) {
-    return false
-  }
-
-  const expectedMemberships = new Set<string>()
-  for (const entry of defaultPluginEntries) {
-    const pluginId = pluginIdByEntry.get(defaultMarketplacePluginEntryKey(entry))
-    if (pluginId) expectedMemberships.add(defaultMarketplacePluginMembershipKey(openWorkMarketplaceId, pluginId))
-  }
-
-  const membershipRows = await db
-    .select({ marketplaceId: MarketplacePluginTable.marketplaceId, pluginId: MarketplacePluginTable.pluginId })
-    .from(MarketplacePluginTable)
-    .where(and(
-      eq(MarketplacePluginTable.organizationId, organizationId),
-      inArray(MarketplacePluginTable.marketplaceId, marketplaceIds),
-      inArray(MarketplacePluginTable.pluginId, pluginIds),
-      isNull(MarketplacePluginTable.removedAt),
-    ))
-  const memberships = new Set(membershipRows.map((membership) => defaultMarketplacePluginMembershipKey(membership.marketplaceId, membership.pluginId)))
-  return Array.from(expectedMemberships).every((membership) => memberships.has(membership))
+  return marketplaceIds.every((marketplaceId) => marketplaceGrants.has(marketplaceId))
 }
 
-/**
- * Plugins and My Library can be the first thing an older organization opens,
- * so they retire empty starter and built-in placeholders too, not only the
- * marketplace list. Two indexed reads when there is nothing to retire.
- */
 async function retireEmptyStarterPlugins(organizationId: OrganizationId) {
   const retirable = await findRetirableStarterPlaceholders(db, organizationId)
   if (retirable.memberships.length === 0 && retirable.emptyMarketplaceIds.length === 0
@@ -3340,11 +3230,6 @@ async function retireEmptyStarterPlugins(organizationId: OrganizationId) {
   })
 }
 
-/**
- * Starter placeholders are plugins the system put into the retired starter
- * marketplace that never gained a source or any contents. Anything imported,
- * filled in, or added by a person stays.
- */
 async function findRetirableStarterPlaceholders(database: typeof db | DbTransaction, organizationId: OrganizationId) {
   const starterMarketplaces = await database
     .select({ description: MarketplaceTable.description, id: MarketplaceTable.id, logoUrl: MarketplaceTable.logoUrl })
@@ -3382,7 +3267,6 @@ async function findRetirableStarterPlaceholders(database: typeof db | DbTransact
         ))),
     ))
 
-  // Only the untouched starter marketplace goes, and only once nothing else is in it.
   const untouchedMarketplaceIds = starterMarketplaces
     .filter((marketplace) => marketplace.logoUrl === RETIRED_STARTER_MARKETPLACE_LOGO_URL && marketplace.description === RETIRED_STARTER_MARKETPLACE_DESCRIPTION)
     .map((marketplace) => marketplace.id)
@@ -3423,10 +3307,6 @@ async function retireStarterPlaceholders(input: { database: DbTransaction; organ
   }
 }
 
-/**
- * Retired built-in plugins are retired only while they are still the untouched
- * system seed: no source, no contents. Anything imported or filled in stays.
- */
 async function findRetirableDefaultOpenWorkPluginIds(database: typeof db | DbTransaction, organizationId: OrganizationId) {
   if (RETIRED_DEFAULT_OPENWORK_PLUGINS.length === 0) return []
   const rows = await database
@@ -3464,86 +3344,6 @@ async function retireDefaultOpenWorkPlugins(input: { database: DbTransaction; or
   await input.database.update(PluginTable)
     .set({ deletedAt: input.retiredAt, status: "deleted", updatedAt: input.retiredAt })
     .where(inArray(PluginTable.id, pluginIds))
-}
-
-function defaultMarketplacePluginEntryKey(entry: DefaultMarketplacePluginEntry) {
-  return `${entry.name}\n${entry.description}`
-}
-
-function defaultMarketplacePluginMembershipKey(marketplaceId: MarketplaceId, pluginId: PluginId) {
-  return `${marketplaceId}:${pluginId}`
-}
-
-async function ensureDefaultMarketplacePlugins(input: {
-  context: PluginArchActorContext
-  createdAt: Date
-  database: DbTransaction
-  entries: DefaultMarketplacePluginEntry[]
-  marketplaceId: MarketplaceId
-}) {
-  const organizationId = input.context.organizationContext.organization.id
-  const createdByOrgMembershipId = input.context.organizationContext.currentMember.id
-
-  for (const entry of input.entries) {
-    let plugin = (await input.database
-      .select()
-      .from(PluginTable)
-      .where(and(
-        eq(PluginTable.organizationId, organizationId),
-        eq(PluginTable.name, entry.name),
-        eq(PluginTable.description, entry.description),
-        isNull(PluginTable.deletedAt),
-      ))
-      .limit(1))[0]
-
-    if (!plugin) {
-      const pluginRow = {
-        createdAt: input.createdAt,
-        createdByOrgMembershipId,
-        deletedAt: null,
-        description: entry.description,
-        id: createDenTypeId("plugin"),
-        name: entry.name,
-        organizationId,
-        sourceFormat: null,
-        sourceRepositoryUrl: null,
-        sourceSchemaVersion: null,
-        status: "active" as const,
-        updatedAt: input.createdAt,
-      }
-      await input.database.insert(PluginTable).values(pluginRow)
-      plugin = pluginRow
-    }
-
-    await ensureOrgWidePluginAccess({ context: input.context, database: input.database, pluginId: plugin.id, role: "viewer" })
-
-    const existingMembership = (await input.database
-      .select()
-      .from(MarketplacePluginTable)
-      .where(and(
-        eq(MarketplacePluginTable.marketplaceId, input.marketplaceId),
-        eq(MarketplacePluginTable.pluginId, plugin.id),
-      ))
-      .limit(1))[0]
-
-    if (existingMembership) {
-      if (existingMembership.removedAt) {
-        await input.database.update(MarketplacePluginTable).set({ membershipSource: "system", removedAt: null }).where(eq(MarketplacePluginTable.id, existingMembership.id))
-      }
-      continue
-    }
-
-    await input.database.insert(MarketplacePluginTable).values({
-      createdAt: input.createdAt,
-      createdByOrgMembershipId,
-      id: createDenTypeId("marketplacePlugin"),
-      marketplaceId: input.marketplaceId,
-      membershipSource: "system",
-      organizationId,
-      pluginId: plugin.id,
-      removedAt: null,
-    })
-  }
 }
 
 async function ensureDefaultMarketplace(input: {
@@ -3626,40 +3426,6 @@ async function ensureOrgWideMarketplaceAccess(input: {
   })
 }
 
-async function ensureOrgWidePluginAccess(input: {
-  context: PluginArchActorContext
-  database: DbTransaction
-  pluginId: PluginId
-  role: PluginArchRole
-}) {
-  const createdAt = new Date()
-  const createdByOrgMembershipId = input.context.organizationContext.currentMember.id
-  const organizationId = input.context.organizationContext.organization.id
-
-  const existing = (await input.database
-    .select()
-    .from(PluginAccessGrantTable)
-    .where(and(eq(PluginAccessGrantTable.pluginId, input.pluginId), eq(PluginAccessGrantTable.orgWide, true)))
-    .limit(1))[0]
-  if (existing) {
-    if (existing.removedAt || existing.role !== input.role) {
-      await input.database.update(PluginAccessGrantTable).set({ createdByOrgMembershipId, removedAt: null, role: input.role }).where(eq(PluginAccessGrantTable.id, existing.id))
-    }
-    return
-  }
-  await input.database.insert(PluginAccessGrantTable).values({
-    createdAt,
-    createdByOrgMembershipId,
-    id: createDenTypeId("pluginAccessGrant"),
-    organizationId,
-    orgMembershipId: null,
-    orgWide: true,
-    pluginId: input.pluginId,
-    role: input.role,
-    teamId: null,
-  })
-}
-
 export async function getMarketplaceDetail(context: PluginArchActorContext, marketplaceId: MarketplaceId) {
   const row = await ensureVisibleMarketplace(context, marketplaceId)
   const memberships = await db
@@ -3669,7 +3435,6 @@ export async function getMarketplaceDetail(context: PluginArchActorContext, mark
   return serializeMarketplace(row, memberships.length)
 }
 
-/** `id`: reuse this id for the new row (config-blob imports; the caller checked it is free). */
 export async function createMarketplace(input: { context: PluginArchActorContext; description?: string | null; logoUrl?: string | null; name: string; externalKey?: string; id?: MarketplaceId }) {
   const now = new Date()
   const row = {
@@ -3837,7 +3602,6 @@ export async function getMarketplaceResolved(input: { context: PluginArchActorCo
       teamIds: input.context.memberTeams.map((team) => team.id),
     },
     pluginIds,
-    desktopManifestPluginIds: pluginRows.flatMap((row) => defaultOpenWorkManifestForPlugin(row) ? [row.id] : []),
   })
 
   const plugins = pluginRows.map((row) => {
@@ -3971,7 +3735,7 @@ export async function listConnectorAccounts(input: { context: PluginArchActorCon
   return pageItems(filtered, input.cursor, input.limit)
 }
 
-export async function createConnectorAccount(input: { context: PluginArchActorContext; connectorType: ConnectorAccountRow["connectorType"]; displayName: string; externalAccountRef?: string | null; metadata?: Record<string, unknown>; remoteId: string }) {
+async function insertConnectorAccount(input: { context: PluginArchActorContext; connectorType: ConnectorAccountRow["connectorType"]; displayName: string; externalAccountRef?: string | null; metadata?: Record<string, unknown>; remoteId: string }) {
   const now = new Date()
   const row = {
     connectorType: input.connectorType,
@@ -3988,6 +3752,13 @@ export async function createConnectorAccount(input: { context: PluginArchActorCo
   }
   await db.insert(ConnectorAccountTable).values(row)
   return serializeConnectorAccount(row)
+}
+
+export async function createConnectorAccount(input: Parameters<typeof insertConnectorAccount>[0]) {
+  if (input.connectorType === "github") {
+    return upsertGithubConnectorAccountFromInstallation({ context: input.context, installationId: githubAccountInstallationId(input.remoteId) })
+  }
+  return insertConnectorAccount(input)
 }
 
 export async function getConnectorAccountDetail(context: PluginArchActorContext, connectorAccountId: ConnectorAccountId) {
@@ -4031,8 +3802,6 @@ export async function disconnectConnectorAccount(input: { connectorAccountId: Co
       .where(inArray(ConfigObjectTable.connectorInstanceId, instanceIds))
   const configObjectIds = configObjectRows.map((entry) => entry.id)
 
-  // Resolve every imported marketplace/plugin id to delete up front so the
-  // transaction below is a single pass of pure writes (no reads on the tx).
   const importedResourceCleanupPlan = await planConnectorImportedResourceCleanupIds({ organizationId, seedPluginIds: connectorPluginIds })
   const pluginMcpRequirementBindingIdsToDelete = await pluginMcpRequirementBindingIdsForHardDeletedResources({
     configObjectIds,
@@ -4125,6 +3894,10 @@ export async function createConnectorInstance(input: { connectorAccountId: Conne
   if (!account) {
     throw new PluginArchRouteFailure(404, "connector_account_not_found", "Connector account not found.")
   }
+  if (input.connectorType === "github" || account.connectorType === "github") {
+    if (input.connectorType !== "github") throw new GithubInstallationApprovalError()
+    approvedGithubAccountInstallationId(account, input.config)
+  }
   const now = new Date()
   const row = {
     connectorAccountId: account.id,
@@ -4166,6 +3939,9 @@ export async function getConnectorInstanceDetail(context: PluginArchActorContext
 
 export async function updateConnectorInstance(input: { connectorInstanceId: ConnectorInstanceId; config?: Record<string, unknown>; context: PluginArchActorContext; name?: string; remoteId?: string | null; status?: ConnectorInstanceRow["status"] }) {
   const row = await ensureEditableConnectorInstance(input.context, input.connectorInstanceId)
+  if (row.connectorType === "github" && (input.status === "active" || (input.config && "installationId" in input.config))) {
+    await approvedGithubInstanceInstallationId(row, input.config)
+  }
   await db.update(ConnectorInstanceTable).set({
     instanceConfigJson: input.config === undefined ? row.instanceConfigJson : input.config,
     name: input.name?.trim() || row.name,
@@ -4179,6 +3955,7 @@ export async function updateConnectorInstance(input: { connectorInstanceId: Conn
 export async function setConnectorInstanceLifecycle(input: { action: "archive" | "disable" | "enable"; connectorInstanceId: ConnectorInstanceId; context: PluginArchActorContext }) {
   const row = await ensureEditableConnectorInstance(input.context, input.connectorInstanceId)
   const status = input.action === "archive" ? "archived" : input.action === "disable" ? "disabled" : "active"
+  if (row.connectorType === "github" && status === "active") await approvedGithubInstanceInstallationId(row)
   await db.update(ConnectorInstanceTable).set({ status, updatedAt: new Date() }).where(eq(ConnectorInstanceTable.id, row.id))
   return getConnectorInstanceDetail(input.context, row.id)
 }
@@ -4299,8 +4076,6 @@ async function deletePluginMcpRequirementBindingsForHardDelete(input: {
   await input.tx.delete(PluginMcpRequirementBindingTable).where(inArray(PluginMcpRequirementBindingTable.id, bindingIds))
 }
 
-// Read-only planning pass. Runs outside of any transaction so that the
-// subsequent delete pass can execute as a single transaction of pure writes.
 async function planConnectorImportedResourceCleanupIds(input: { organizationId: OrganizationId; seedPluginIds: PluginId[] }): Promise<ConnectorImportedResourceCleanupPlan> {
   const uniqueSeedPluginIds = uniqueIds(input.seedPluginIds)
   if (uniqueSeedPluginIds.length === 0) {
@@ -4383,8 +4158,6 @@ async function planConnectorImportedResourceCleanupIds(input: { organizationId: 
   }
 }
 
-// Write-only delete pass. Must run inside a transaction. Contains no reads so it
-// is safe to run alongside the other deletes on the same Vitess connection.
 async function deleteConnectorImportedResources(input: {
   organizationId: OrganizationId
   plan: ConnectorImportedResourceCleanupPlan
@@ -4516,8 +4289,6 @@ export async function removeConnectorInstance(input: { connectorInstanceId: Conn
     .where(eq(ConfigObjectTable.connectorInstanceId, instance.id))
   const configObjectIds = configObjectRows.map((entry) => entry.id)
 
-  // Resolve every imported marketplace/plugin id to delete up front so the
-  // transaction below is a single pass of pure writes (no reads on the tx).
   const importedResourceCleanupPlan = await planConnectorImportedResourceCleanupIds({ organizationId: instance.organizationId, seedPluginIds: pluginIds })
   const pluginMcpRequirementBindingIdsToDelete = await pluginMcpRequirementBindingIdsForHardDeletedResources({
     configObjectIds,
@@ -4627,6 +4398,9 @@ export async function queueConnectorTargetResync(input: { connectorTargetId: Con
   const target = await getConnectorTargetRow(input.context.organizationContext.organization.id, input.connectorTargetId)
   if (!target) throw new PluginArchRouteFailure(404, "connector_target_not_found", "Connector target not found.")
   const instance = await ensureEditableConnectorInstance(input.context, target.connectorInstanceId)
+  if (target.connectorType === "github" || instance.connectorType === "github") {
+    await requireApprovedGithubSyncTarget(instance, target)
+  }
   const eventId = createDenTypeId("connectorSyncEvent")
   await db.insert(ConnectorSyncEventTable).values({
     completedAt: null,
@@ -4752,7 +4526,11 @@ export async function getConnectorSyncEventDetail(context: PluginArchActorContex
 export async function retryConnectorSyncEvent(input: { connectorSyncEventId: ConnectorSyncEventId; context: PluginArchActorContext }) {
   const row = await getConnectorSyncEventRow(input.context.organizationContext.organization.id, input.connectorSyncEventId)
   if (!row) throw new PluginArchRouteFailure(404, "connector_sync_event_not_found", "Connector sync event not found.")
-  await ensureEditableConnectorInstance(input.context, row.connectorInstanceId)
+  const instance = await ensureEditableConnectorInstance(input.context, row.connectorInstanceId)
+  if (row.connectorType === "github" || instance.connectorType === "github") {
+    const target = row.connectorTargetId ? await getConnectorTargetRow(row.organizationId, row.connectorTargetId) : null
+    await requireApprovedGithubSyncTarget(instance, target)
+  }
   await db.update(ConnectorSyncEventTable).set({
     attemptCount: 0,
     completedAt: null,
@@ -4773,6 +4551,9 @@ export async function syncConnectorInstanceNow(input: { connectorInstanceId: Con
 
   let enqueuedCount = 0
   for (const target of targets) {
+    if (target.connectorType === "github" || instance.connectorType === "github") {
+      await requireApprovedGithubSyncTarget(instance, target)
+    }
     const activeEvents = await db
       .select({ id: ConnectorSyncEventTable.id })
       .from(ConnectorSyncEventTable)
@@ -4917,11 +4698,6 @@ function githubPluginMcpImportServer(input: Omit<GithubPluginMcpImportServer, "m
   }
 }
 
-/**
- * Claude/Cowork connectors that point at Anthropic-only endpoints (or leave
- * the URL to Claude) map to the provider OpenWork already knows. Presets use
- * their own URL; native providers are never imported as MCP servers.
- */
 function withImportedConnectorTarget(server: GithubPluginMcpImportServer): GithubPluginMcpImportServer {
   const target = resolveImportedConnectorTarget({ name: server.name, url: server.url })
   if (!target) return server
@@ -5012,7 +4788,6 @@ export function mcpServerEntriesFromPayload(input: {
 
   return [...invalidAgentEntries, ...fallbackEntries.map(([rawName, rawConfig]) => {
     const server = mcpServerEntryFromConfig(rawName, rawConfig)
-    // Agent Plugins declare what they require; only Claude/Cowork suggestions are mapped.
     return isAgentPlugin ? server : withImportedConnectorTarget(server)
   })]
 
@@ -5216,18 +4991,12 @@ export function skillEntryFromSource(input: {
   }
 }
 
-/**
- * Fills in which existing organization connection each server will use: the
- * External MCP connection for its (canonical) URL, or the native Google
- * Workspace / Microsoft 365 connection a Claude connector maps to.
- */
 async function withExistingConnectionReuse(input: { organizationId: OrganizationId; servers: GithubPluginMcpImportServer[] }) {
   const connections = await listExternalMcpConnections(input.organizationId)
   const nativeByProvider = new Map<string, GithubPluginMcpImportReuse | null>()
   const nativeConnection = async (providerId: string) => {
     if (nativeByProvider.has(providerId)) return nativeByProvider.get(providerId) ?? null
     const row = connections.find((connection) => connection.kind === "native_provider" && connection.nativeProviderKey === providerId)
-    // Legacy native setups keep the OAuth client under the provider key, with no connection row.
     const legacy = row ? null : await getOrgOAuthClient(input.organizationId, providerId)
     const reuse = row
       ? { connectionId: row.id, connectionName: row.name }
@@ -5241,7 +5010,6 @@ async function withExistingConnectionReuse(input: { organizationId: Organization
   for (const server of input.servers) {
     if (server.mapsTo?.kind === "native") {
       const reuse = await nativeConnection(server.mapsTo.providerId)
-      // A vendor-hosted server kept only for orgs without the native connection.
       result.push(reuse && server.supported
         ? { ...server, reuse, skippedReason: "native_connector", supported: false }
         : { ...server, reuse })
@@ -5256,22 +5024,59 @@ async function withExistingConnectionReuse(input: { organizationId: Organization
   return result
 }
 
-async function computeGithubPluginMcpImportPlan(input: { githubUrl: string; includeSkillText?: boolean; organizationId?: OrganizationId }): Promise<GithubPluginMcpImportPlan> {
+function githubSkillFolderEntries(input: { sourcePath: string; treeEntries: GithubDiscoveryTreeEntry[] }) {
+  if (input.sourcePath === "SKILL.md") {
+    return input.treeEntries
+      .filter((entry) => entry.kind === "blob" && entry.path !== input.sourcePath)
+      .map((entry) => ({ discoveryPath: entry.path, path: entry.path, size: entry.size }))
+  }
+  if (!input.sourcePath.endsWith("/SKILL.md")) return []
+  const directory = input.sourcePath.slice(0, -"/SKILL.md".length)
+  return input.treeEntries
+    .filter((entry) => entry.kind === "blob" && entry.path.startsWith(`${directory}/`) && entry.path !== input.sourcePath)
+    .map((entry) => ({ discoveryPath: entry.path, path: entry.path.slice(directory.length + 1), size: entry.size }))
+}
+
+async function getPublicGithubSkillFiles(input: { snapshot: PublicGithubTreeSnapshot; sourcePath: string }): Promise<{ files: SkillFileBody[]; leftOut: string[] }> {
+  const entries = githubSkillFolderEntries({ sourcePath: input.sourcePath, treeEntries: input.snapshot.treeEntries })
+  const selection = selectSkillFilesBySize(entries)
+  const discoveryPathByPath = new Map(entries.map((entry) => [entry.path, entry.discoveryPath]))
+  const texts = await mapPublicGithubConcurrently(selection.included, (path) => getPublicGithubTextFile({
+    branch: input.snapshot.branch,
+    discoveryPath: discoveryPathByPath.get(path) ?? path,
+    snapshot: input.snapshot,
+  }))
+  const files: Array<{ path: string; text: string }> = []
+  const leftOut = [...selection.leftOut]
+  for (const [index, path] of selection.included.entries()) {
+    const text = texts[index]
+    if (typeof text === "string" && isSkillFileText(text)) files.push({ path, text })
+    else leftOut.push(path)
+  }
+  const checked = checkSkillFiles(files)
+  if ("files" in checked) return { files: checked.files, leftOut: leftOut.sort() }
+  return { files: [], leftOut: entries.map((entry) => entry.path).sort() }
+}
+
+async function computeGithubPluginMcpImportPlan(input: {
+  githubUrl: string
+  includeSkillText?: boolean
+  includeSkillFilesFor?: "all" | ReadonlySet<string>
+  organizationId?: OrganizationId
+}): Promise<GithubPluginMcpImportPlan> {
   const target = parsePublicGithubPluginUrl(input.githubUrl)
   const snapshot = await getPublicGithubRepositoryTree(target)
   const fileTextByPath = await getPublicGithubDiscoveryFileTexts(snapshot)
   const discovery = buildGithubRepoDiscovery({
     entries: snapshot.treeEntries,
     fileTextByPath,
+    skillFoldersPluginName: snapshot.rootPath.split("/").filter(Boolean).at(-1) || snapshot.repositoryFullName.split("/").at(-1) || "GitHub skills",
   })
   const importPlansByPluginKey = buildGithubDiscoveryImportPlans({
     discoveredPlugins: discovery.discoveredPlugins,
     treeEntries: snapshot.treeEntries,
   })
 
-  // Read every component file up front, a few at a time; a marketplace like
-  // knowledge-work-plugins has 250+ files and reading them one by one took
-  // over 30 seconds. Results are then assembled in discovery order.
   const jobs = discovery.discoveredPlugins
     .filter((entry) => entry.supported)
     .flatMap((plugin) => (importPlansByPluginKey[plugin.key] ?? [])
@@ -5302,10 +5107,27 @@ async function computeGithubPluginMcpImportPlan(input: { githubUrl: string; incl
     }
   }
 
-  // Import connects each server through hosted egress, which only accepts
-  // public HTTPS URLs. Apply the same rule here so the preview never promises
-  // a server the import then refuses (it used to fail the whole import with a
-  // 500 after the preview said "supported").
+  const skillFilesFor = input.includeSkillFilesFor
+  if (skillFilesFor) {
+    for (const skill of skills) {
+      if (!skill.supported || (skillFilesFor !== "all" && !skillFilesFor.has(skill.skillKey))) continue
+      const read = await getPublicGithubSkillFiles({ snapshot, sourcePath: skill.sourcePath })
+      skill.files = read.files
+      skill.filesLeftOut = read.leftOut
+    }
+  }
+
+  for (const skill of skills) {
+    skill.supportingFileCount = githubSkillFolderEntries({ sourcePath: skill.sourcePath, treeEntries: snapshot.treeEntries }).length
+  }
+
+  const skillFileWarnings = skills.flatMap((skill) => {
+    if (!skill.supported) return []
+    const entries = githubSkillFolderEntries({ sourcePath: skill.sourcePath, treeEntries: snapshot.treeEntries })
+    const leftOut = skill.filesLeftOut?.length ?? selectSkillFilesBySize(entries).leftOut.length
+    return leftOut > 0 ? [skillFilesLeftOutMessage({ skillName: skill.name, leftOut, total: entries.length })] : []
+  })
+
   const egressByUrl = new Map<string, Promise<boolean>>()
   const egressAllowed = (url: string) => {
     let pending = egressByUrl.get(url)
@@ -5326,7 +5148,7 @@ async function computeGithubPluginMcpImportPlan(input: { githubUrl: string; incl
     servers.splice(0, servers.length, ...await withExistingConnectionReuse({ organizationId: input.organizationId, servers }))
   }
 
-  const plugins = discovery.discoveredPlugins
+  const countedPlugins = discovery.discoveredPlugins
     .filter((plugin) => plugin.supported)
     .map((plugin) => ({
       description: plugin.description,
@@ -5335,7 +5157,10 @@ async function computeGithubPluginMcpImportPlan(input: { githubUrl: string; incl
       name: plugin.displayName,
       skillCount: skills.filter((skill) => skill.pluginKey === plugin.key && skill.supported).length,
     } satisfies GithubPluginMcpImportPlugin))
-    .filter((plugin) => plugin.mcpCount > 0 || plugin.skillCount > 0)
+  const plugins = countedPlugins.filter((plugin) => plugin.mcpCount > 0 || plugin.skillCount > 0)
+  const emptyPluginWarnings = countedPlugins
+    .filter((plugin) => plugin.mcpCount === 0 && plugin.skillCount === 0)
+    .map((plugin) => `${plugin.name}: no skills or MCP servers that OpenWork can import were found.`)
   const sourceSchemaVersions = new Set(discovery.discoveredPlugins
     .filter((plugin) => plugin.supported && plugin.sourceKind === "agent_plugin_manifest")
     .flatMap((plugin) => plugin.sourceSchemaVersion ? [plugin.sourceSchemaVersion] : []))
@@ -5346,6 +5171,7 @@ async function computeGithubPluginMcpImportPlan(input: { githubUrl: string; incl
     marketplace: discovery.marketplace,
     plugins,
     repositoryFullName: snapshot.repositoryFullName,
+    requiresSkillSelection: discovery.classification === "skill_folders_repo",
     rootPath: snapshot.rootPath,
     servers,
     skills,
@@ -5355,6 +5181,8 @@ async function computeGithubPluginMcpImportPlan(input: { githubUrl: string; incl
     warnings: [
       ...discovery.warnings,
       ...(snapshot.truncated ? ["GitHub truncated the repository tree; some MCP files may be missing."] : []),
+      ...emptyPluginWarnings,
+      ...skillFileWarnings,
     ],
   }
 }
@@ -5819,7 +5647,6 @@ async function validateConfiguredPluginMcpConnection(input: {
     )
   } catch (error) {
     const diagnostic = externalMcpDiagnosticForResponse(error, input.connection.id, "MCP_INITIALIZE")
-    // Provider text can repeat a just-entered key; keep only server-owned fields.
     console.error("plugin_mcp_connection_validation_failed", {
       connectionId: input.connection.id,
       organizationId: input.connection.organizationId,
@@ -5875,8 +5702,6 @@ async function ensureImportedExternalMcpConnection(input: {
   }
   const serverUrl = input.server.url
 
-  // Same rule as every other MCP connection: self-hosted Dens that allow
-  // private MCP URLs (DEN_ALLOW_PRIVATE_MCP_URLS, dev mode) skip the guard.
   if (!env.allowPrivateMcpUrls) {
     try {
       await assertPublicUrl(serverUrl)
@@ -5889,9 +5714,6 @@ async function ensureImportedExternalMcpConnection(input: {
   const existing = (await listExternalMcpConnections(organizationId))
     .find((connection) => connection.kind === "external_mcp" && comparablePluginMcpRequirementUrl(connection.url) === comparablePluginMcpRequirementUrl(serverUrl))
 
-  // A Claude connector mapped to a preset (Slack, Notion, ...) uses the
-  // organization's connection for it as the admin set it up, rather than
-  // failing the import over a different credential mode.
   if (existing && input.server.mapsTo?.kind === "preset") {
     return { connection: existing, ownedByImportedPlugin: false }
   }
@@ -5899,8 +5721,6 @@ async function ensureImportedExternalMcpConnection(input: {
   if (existing) {
     const authType = resolveGithubPluginMcpImportAuthType({
       declaredAuthType: input.server.authType,
-      // Legacy none always used shared mode, regardless of the import's OAuth
-      // mode default. A shared PAT must not replace per-member OAuth.
       existingAuthType: existing.authType === "none" || existing.credentialMode === input.credentialMode ? existing.authType : undefined,
       requestedAuthType: input.authType,
       url: serverUrl,
@@ -6002,7 +5822,6 @@ function importedPluginName(plan: GithubPluginMcpImportPlan) {
 }
 
 export async function previewGithubPluginMcpImport(input: { context: PluginArchActorContext; githubUrl: string }) {
-  // Only admins import, and only they see which organization connections an import would use.
   return computeGithubPluginMcpImportPlan({
     githubUrl: input.githubUrl,
     organizationId: await pluginArchHasPermission(input.context, "plugins.import") ? input.context.organizationContext.organization.id : undefined,
@@ -6018,7 +5837,6 @@ export async function configureMarketplacePluginMcpRequirement(input: {
   oauthClient?: { clientId: string; clientSecret?: string }
   pluginId: PluginId
   serverName: string
-  /** Set up a shared API-key connection now; a person adds the key in a private field next. */
   awaitKey?: boolean
 }) {
   const awaitingKey = input.awaitKey === true && input.authType === "apikey" && !normalizedPluginMcpApiKey(input.apiKey)
@@ -6079,7 +5897,6 @@ export async function configureMarketplacePluginMcpRequirement(input: {
   const connection = connectionResult.connection
 
   try {
-    // A connection still waiting for its key is checked when the key is saved.
     if (!(awaitingKey && !connection.apiKey)) await validateConfiguredPluginMcpConnection({ authType: input.authType, connection })
   } catch (error) {
     if (connectionResult.created) {
@@ -6175,18 +5992,15 @@ async function grantImportAccessToPluginArchResource(input: {
 }
 
 type ImportedGithubObject = {
+  files: SkillFileEntry[]
   id: ConfigObjectId
   mcpUrlKeys: string[]
   objectType: "mcp" | "skill"
   rawSourceText: string | null
-  /** The repository path a GitHub import read it from; null for objects added by hand or imported before provenance was kept. */
   sourcePath: string | null
   title: string
 }
 
-// Keys that survive a re-import when an object has no recorded source path:
-// a skill's name (its SKILL.md frontmatter name, stored as the title) and an
-// MCP server's URL.
 function importedSkillKey(name: string) {
   return `skill:${name.trim().toLowerCase()}`
 }
@@ -6195,12 +6009,6 @@ function importedMcpKey(url: string) {
   return `mcp:${comparablePluginMcpRequirementUrl(url)}`
 }
 
-/**
- * Where a GitHub-imported object came from, as a repository path: the skill's
- * SKILL.md, or the `.mcp.json` plus `#<server name>`. Stored as the config
- * object's current relative path (the column GitHub connector sync uses for
- * the same thing). Null when it does not fit the column.
- */
 function githubImportSourcePath(plan: Pick<GithubPluginMcpImportPlan, "rootPath">, sourcePath: string, serverName?: string) {
   const path = `${plan.rootPath ? `${plan.rootPath}/` : ""}${sourcePath}${serverName === undefined ? "" : `#${serverName}`}`
   return path.length <= 255 ? path : null
@@ -6227,7 +6035,6 @@ async function findPreviouslyImportedGithubPlugin(input: { context: PluginArchAc
   return rows[0] ?? null
 }
 
-/** The skills and MCP servers already in a plugin, with what a re-import matches on. */
 async function importedGithubObjects(context: PluginArchActorContext, pluginId: PluginId): Promise<ImportedGithubObject[]> {
   const organizationId = context.organizationContext.organization.id
   const objects = await db
@@ -6259,9 +6066,9 @@ async function importedGithubObjects(context: PluginArchActorContext, pluginId: 
       mcpUrlKeys: object.objectType === "mcp"
         ? servers.flatMap((server) => typeof server.url === "string" ? [importedMcpKey(server.url)] : [])
         : [],
+      files: object.objectType === "skill" ? skillFilesFromPayload(payload) : [],
       objectType: object.objectType,
       rawSourceText: object.objectType === "skill" ? version?.rawSourceText ?? null : null,
-      // Only a GitHub import's own objects carry a source path it may prune by.
       sourcePath: object.sourceMode === "import" ? object.currentRelativePath?.trim() || null : null,
       title: object.title,
     })
@@ -6277,13 +6084,6 @@ async function recordGithubImportSourcePath(object: ImportedGithubObject, source
   ))
 }
 
-/**
- * Takes a component deleted upstream out of a re-imported plugin: its
- * membership is marked removed and, unless another plugin still uses it, the
- * object is archived. Both can be undone. An MCP server's requirement binding
- * goes with it; a connection created for this plugin is deleted only when
- * nothing else references it.
- */
 async function removeGithubImportedObject(input: { context: PluginArchActorContext; object: ImportedGithubObject; pluginId: PluginId }) {
   const organizationId = input.context.organizationContext.organization.id
   const ownedBindings = await db
@@ -6333,12 +6133,16 @@ export async function importGithubPluginMcps(input: {
   if (input.marketplaceId) {
     await ensureEditableMarketplace(input.context, input.marketplaceId)
   }
+  const selectedSkillKeys = new Set(input.selectedSkillKeys?.map((key) => key.trim()).filter(Boolean) ?? [])
   const plan = await computeGithubPluginMcpImportPlan({
     githubUrl: input.githubUrl,
     includeSkillText: true,
+    includeSkillFilesFor: input.selectedSkillKeys === undefined ? "all" : selectedSkillKeys,
     organizationId: input.context.organizationContext.organization.id,
   })
-  const selectedSkillKeys = new Set(input.selectedSkillKeys?.map((key) => key.trim()).filter(Boolean) ?? [])
+  if (plan.requiresSkillSelection && selectedSkillKeys.size === 0) {
+    throw new PluginArchRouteFailure(400, "skill_selection_required", "This repository has no plugin manifest. Choose the skills to import by listing their skillKey values in selectedSkillKeys.")
+  }
   const selectedServerKeys = new Set(input.selectedServerKeys?.map((key) => key.trim()).filter(Boolean) ?? [])
   const selectedServerNames = new Set(input.selectedServerNames?.map((name) => name.trim()).filter(Boolean) ?? [])
   const consideredServers = selectedServerKeys.size > 0
@@ -6346,7 +6150,6 @@ export async function importGithubPluginMcps(input: {
     : selectedServerNames.size > 0
     ? plan.servers.filter((server) => selectedServerNames.has(server.name))
     : plan.servers
-  // Omitted means every skill, like servers; an explicit [] imports none.
   const consideredSkills = input.selectedSkillKeys === undefined
     ? plan.skills
     : plan.skills.filter((skill) => selectedSkillKeys.has(skill.skillKey))
@@ -6358,17 +6161,11 @@ export async function importGithubPluginMcps(input: {
 
   const access = input.access ?? {
     memberIds: [],
-    orgWide: true,
+    orgWide: false,
     teamIds: [],
-  }
-  if (!access.orgWide && access.memberIds.length === 0 && access.teamIds.length === 0) {
-    throw new PluginArchRouteFailure(400, "missing_import_access", "Choose who can use the imported plugin.")
   }
   const pluginName = input.name ?? importedPluginName(plan)
   const sourceRepositoryUrl = `https://github.com/${plan.repositoryFullName}`
-  // Re-running an import (a migration agent retrying, or picking up upstream
-  // changes) updates the plugin imported earlier from the same repository
-  // instead of failing as a duplicate.
   const previous = await findPreviouslyImportedGithubPlugin({ context: input.context, name: pluginName, sourceRepositoryUrl })
   const plugin = previous ?? await createPlugin({
     context: input.context,
@@ -6380,8 +6177,6 @@ export async function importGithubPluginMcps(input: {
     sourceRepositoryUrl,
     sourceSchemaVersion: plan.classification === "agent_plugin_repo" ? plan.sourceSchemaVersion : null,
   })
-  // Match what is already in the plugin by its recorded source path first,
-  // then by the keys older imports can still be matched on.
   const existingObjects = previous ? await importedGithubObjects(input.context, previous.id) : []
   const existingBySourcePath = new Map<string, ImportedGithubObject>()
   const existingByKey = new Map<string, ImportedGithubObject>()
@@ -6410,8 +6205,6 @@ export async function importGithubPluginMcps(input: {
   const removed: Array<{ configObjectId: ConfigObjectId; name: string; objectType: "mcp" | "skill"; sourcePath: string }> = []
   for (const server of supportedServers) {
     const sourcePath = githubImportSourcePath(plan, server.sourcePath, server.name)
-    // A server is the same server while its URL is: a changed URL is a new
-    // connection, and the old object is pruned below as gone upstream.
     const existingServer = server.url ? existingByKey.get(importedMcpKey(server.url)) : undefined
     if (existingServer?.objectType === "mcp") {
       matchedObjectIds.add(existingServer.id)
@@ -6437,9 +6230,6 @@ export async function importGithubPluginMcps(input: {
     const payload = importedConnectionBackedMcpPayload({
       authType,
       connectionId: connection.id,
-      // Claude/Cowork plugins list connectors as suggestions ("connect one
-      // of these"); their skills work without them. Agent Plugins declare
-      // what they need, so those stay required.
       optional: plan.classification !== "agent_plugin_repo",
       ownedByImportedPlugin: importedConnection.ownedByImportedPlugin,
       server,
@@ -6498,6 +6288,7 @@ export async function importGithubPluginMcps(input: {
     if (!skillText) {
       throw new PluginArchRouteFailure(400, "invalid_skill_import", "Selected skill content was unavailable.")
     }
+    const skillFiles = skill.files ?? []
     const metadata = skillMetadataFromText(skillText)
     const sourcePath = githubImportSourcePath(plan, skill.sourcePath)
     const byPath = sourcePath ? existingBySourcePath.get(sourcePath) : undefined
@@ -6506,8 +6297,7 @@ export async function importGithubPluginMcps(input: {
     if (existingSkill) {
       matchedObjectIds.add(existingSkill.id)
       await recordGithubImportSourcePath(existingSkill, sourcePath)
-      // Stored text is trimmed on write; compare the same way.
-      if (existingSkill.rawSourceText?.trim() === skillText.trim()) {
+      if (existingSkill.rawSourceText?.trim() === skillText.trim() && sameSkillFiles(existingSkill.files, skillFiles)) {
         unchanged.push({ name: metadata.title, objectType: "skill" })
         continue
       }
@@ -6515,7 +6305,7 @@ export async function importGithubPluginMcps(input: {
         context: input.context,
         configObjectId: existingSkill.id,
         reason: `Re-imported from ${input.githubUrl}`,
-        value: { rawSourceText: skillText },
+        value: { normalizedPayloadJson: { files: skillFiles }, rawSourceText: skillText },
       })
       updatedSkills.push({ configObjectId: existingSkill.id, name: metadata.title, sourcePath: skill.sourcePath })
       continue
@@ -6536,6 +6326,7 @@ export async function importGithubPluginMcps(input: {
           sourceSchemaVersion: skill.sourceSchemaVersion,
           sourcePath: skill.sourcePath,
         },
+        ...(skillFiles.length > 0 ? { normalizedPayloadJson: { files: skillFiles } } : {}),
         rawSourceText: skillText,
       },
     })
@@ -6548,11 +6339,6 @@ export async function importGithubPluginMcps(input: {
     importedSkills.push({ configObjectId: configObject.id, name: metadata.title, sourcePath: skill.sourcePath })
   }
 
-  // Prune what was deleted upstream. Presence is judged against everything the
-  // repository still has, not only what this call selected, so leaving a skill
-  // unselected never removes it. Objects without a recorded source path (added
-  // by hand) and paths outside this import's folder are never touched, and a
-  // truncated GitHub tree is not trusted to say a file is gone.
   if (previous && !plan.treeTruncated) {
     const upstreamSkillPaths = new Set(plan.skills.flatMap((skill) => githubImportSourcePath(plan, skill.sourcePath) ?? []))
     const upstreamSkillKeys = new Set(plan.skills.map((skill) => importedSkillKey(skill.name)))
@@ -6564,7 +6350,6 @@ export async function importGithubPluginMcps(input: {
         : object.mcpUrlKeys.some((key) => upstreamMcpKeys.has(key))
       if (stillUpstream) continue
       await removeGithubImportedObject({ context: input.context, object, pluginId: plugin.id })
-      // An MCP object's title is its connection name; report the server name it was imported as.
       const name = object.objectType === "mcp" ? object.sourcePath.split("#").slice(1).join("#") || object.title : object.title
       removed.push({ configObjectId: object.id, name, objectType: object.objectType, sourcePath: object.sourcePath })
     }
@@ -6581,6 +6366,17 @@ export async function importGithubPluginMcps(input: {
 
   const skipped = consideredServers.flatMap((server) =>
     server.supported || !server.skippedReason ? [] : [{ mapsTo: server.mapsTo, name: server.name, reason: server.skippedReason, reuse: server.reuse }])
+  const skippedSkillFiles = supportedSkills.flatMap((skill) => {
+    const leftOut = skill.filesLeftOut ?? []
+    if (leftOut.length === 0) return []
+    return [{
+      count: leftOut.length,
+      message: skillFilesLeftOutMessage({ skillName: skill.name, leftOut: leftOut.length, total: leftOut.length + (skill.files?.length ?? 0), atImport: true }),
+      name: skill.name,
+      paths: leftOut.slice(0, 50),
+      sourcePath: skill.sourcePath,
+    }]
+  })
   const skippedSkills = consideredSkills.flatMap((skill) =>
     skill.supported || !skill.skippedReason ? [] : [{ name: skill.name, reason: skill.skippedReason, sourcePath: skill.sourcePath }])
 
@@ -6592,12 +6388,12 @@ export async function importGithubPluginMcps(input: {
     plugin: await getPluginDetail(input.context, plugin.id),
     removed,
     skipped,
+    skippedSkillFiles,
     skippedSkills,
     unchanged,
     updatedSkills,
   }
   } catch (error) {
-    // Never tear down a plugin that existed before this import.
     if (previous) throw error
     await deletePluginMcpRequirementBindingsForPlugin({
       organizationId: input.context.organizationContext.organization.id,
@@ -6657,21 +6453,49 @@ function withGithubDiscoveryCache(config: Record<string, unknown>, cache: Github
   }
 }
 
+function approvedGithubAccountInstallationId(account: ConnectorAccountRow | null, instanceConfig?: unknown) {
+  if (!account || account.connectorType !== "github" || account.status !== "active") {
+    throw new GithubInstallationApprovalError()
+  }
+  const installationId = githubAccountInstallationId(account.remoteId, isRecord(instanceConfig) ? instanceConfig.installationId : undefined)
+  requireApprovedGithubInstallation(account.organizationId, installationId)
+  return installationId
+}
+
+async function approvedGithubInstanceInstallationId(
+  instance: Pick<ConnectorInstanceRow, "organizationId" | "connectorAccountId" | "connectorType" | "instanceConfigJson">,
+  config: unknown = instance.instanceConfigJson,
+) {
+  if (instance.connectorType !== "github") throw new GithubInstallationApprovalError()
+  const account = await withPrimaryReads(() => getConnectorAccountRow(instance.organizationId, instance.connectorAccountId))
+  return approvedGithubAccountInstallationId(account, config)
+}
+
+async function requireApprovedGithubSyncTarget(instance: ConnectorInstanceRow, target: ConnectorTargetRow | null) {
+  if (instance.status !== "active" || !target || target.connectorType !== "github"
+    || target.connectorInstanceId !== instance.id || target.organizationId !== instance.organizationId) {
+    throw new GithubInstallationApprovalError()
+  }
+  await approvedGithubInstanceInstallationId(instance)
+}
+
 async function getGithubDiscoveryContext(input: { connectorInstanceId: ConnectorInstanceId; context: PluginArchActorContext }) {
-  const connectorInstance = await ensureVisibleConnectorInstance(input.context, input.connectorInstanceId)
+  const connectorInstance = await withPrimaryReads(() => ensureVisibleConnectorInstance(input.context, input.connectorInstanceId))
   if (connectorInstance.connectorType !== "github") {
     throw new PluginArchRouteFailure(409, "github_connector_instance_required", "Connector instance is not a GitHub connector.")
   }
 
-  const connectorAccount = await getConnectorAccountRow(input.context.organizationContext.organization.id, connectorInstance.connectorAccountId)
-  if (!connectorAccount || connectorAccount.connectorType !== "github") {
-    throw new PluginArchRouteFailure(404, "connector_account_not_found", "GitHub connector account not found.")
-  }
+  if (connectorInstance.status !== "active") throw new GithubInstallationApprovalError()
+  const installationId = await approvedGithubInstanceInstallationId(connectorInstance)
 
   const targetRows = await db
     .select()
     .from(ConnectorTargetTable)
-    .where(eq(ConnectorTargetTable.connectorInstanceId, connectorInstance.id))
+    .where(and(
+      eq(ConnectorTargetTable.connectorInstanceId, connectorInstance.id),
+      eq(ConnectorTargetTable.organizationId, connectorInstance.organizationId),
+      eq(ConnectorTargetTable.connectorType, "github"),
+    ))
     .orderBy(asc(ConnectorTargetTable.createdAt), asc(ConnectorTargetTable.id))
     .limit(1)
   const connectorTarget = targetRows[0] ?? null
@@ -6685,11 +6509,7 @@ async function getGithubDiscoveryContext(input: { connectorInstanceId: Connector
   const repositoryFullName = typeof targetConfig.repositoryFullName === "string" ? targetConfig.repositoryFullName.trim() : connectorTarget.remoteId.trim()
   const branch = typeof targetConfig.branch === "string" ? targetConfig.branch.trim() : connectorTarget.externalTargetRef?.trim() ?? ""
   const ref = typeof targetConfig.ref === "string" ? targetConfig.ref.trim() : branch ? `refs/heads/${branch}` : ""
-  const installationId = typeof connectorInstance.instanceConfigJson === "object" && connectorInstance.instanceConfigJson && typeof (connectorInstance.instanceConfigJson as Record<string, unknown>).installationId === "number"
-    ? (connectorInstance.instanceConfigJson as Record<string, unknown>).installationId as number
-    : Number(connectorAccount.remoteId)
-
-  if (!repositoryFullName || !branch || !ref || !Number.isFinite(installationId) || installationId <= 0) {
+  if (!repositoryFullName || !branch || !ref) {
     throw new PluginArchRouteFailure(409, "invalid_github_connector_target", "GitHub connector target is missing repository, branch, or installation metadata.")
   }
 
@@ -6700,10 +6520,10 @@ async function getGithubDiscoveryContext(input: { connectorInstanceId: Connector
   return {
     autoImportNewPlugins: typeof autoImportSaved === "boolean" ? autoImportSaved : true,
     branch,
-    connectorAccount,
     connectorInstance,
     connectorTarget,
     installationId,
+    organizationId: connectorInstance.organizationId,
     ref,
     repositoryFullName,
   }
@@ -6733,7 +6553,6 @@ async function buildConnectorAutomationContext(input: { connectorInstance: Conne
   }
   const features = await getOrganizationFeatures(organization.id, { userId: member.userId })
 
-  // The automation acts with the connector creator's own permissions.
   const memberPermissions = await resolvePermissionsForMember({
     organizationId: organization.id,
     memberId: member.id,
@@ -6779,11 +6598,8 @@ async function maybeAutoImportGithubConnectorInstance(input: {
   const instanceConfig = input.connectorInstance.instanceConfigJson && typeof input.connectorInstance.instanceConfigJson === "object"
     ? input.connectorInstance.instanceConfigJson as Record<string, unknown>
     : {}
-  // Treat an unset flag as enabled to match getGithubDiscoveryContext defaults: a repo the
-  // user has already configured should re-sync on push unless they explicitly opted out.
   const autoImportNewPlugins = instanceConfig.autoImportNewPlugins !== false
   if (!autoImportNewPlugins) {
-    // User explicitly disabled auto-import: do not run discovery or materialize any objects.
     return {
       autoImported: false as const,
       autoImportNewPlugins,
@@ -6799,9 +6615,6 @@ async function maybeAutoImportGithubConnectorInstance(input: {
   }
 
   const context = await buildConnectorAutomationContext({ connectorInstance: input.connectorInstance })
-  // Force a fresh discovery so the latest head revision and file contents are fetched. Without
-  // this, the cached discovery snapshot keeps the previous sourceRevisionRef and the version
-  // guard in materializeGithubImportedObject would skip creating a new version on push.
   const discovery = await resolveGithubConnectorDiscovery({
     connectorInstanceId: input.connectorInstance.id,
     context,
@@ -6842,7 +6655,6 @@ async function maybeAutoImportGithubConnectorInstance(input: {
   }
 }
 
-/** Runs on the primary: the worker just claimed the event, and the import reads back what it creates. */
 export function executeGithubConnectorSyncEvent(input: { connectorSyncEventId: ConnectorSyncEventId }) {
   return withPrimaryReads(() => executeGithubConnectorSyncEventOnPrimary(input))
 }
@@ -6870,6 +6682,7 @@ async function executeGithubConnectorSyncEventOnPrimary(input: { connectorSyncEv
     throw new Error("GitHub connector target not found for sync event.")
   }
 
+  await requireApprovedGithubSyncTarget(connectorInstance, connectorTarget)
   const startedAt = new Date()
   const autoImportSummary = await maybeAutoImportGithubConnectorInstance({
     connectorInstance,
@@ -6918,8 +6731,8 @@ async function getGithubDiscoveryFileTexts(input: {
   branch: string
   config: ReturnType<typeof githubConnectorAppConfig>
   installationId: number
+  organizationId: string
   repositoryFullName: string
-  token?: string
   treeEntries: GithubDiscoveryTreeEntry[]
 }) {
   const interestingPaths = new Set<string>()
@@ -6941,10 +6754,10 @@ async function getGithubDiscoveryFileTexts(input: {
       fileTextByPath[path] = await getGithubRepositoryTextFile({
         config: input.config,
         installationId: input.installationId,
+        organizationId: input.organizationId,
         path,
         ref: input.branch,
         repositoryFullName: input.repositoryFullName,
-        token: input.token,
       })
     } catch (error) {
       wrapGithubConnectorError(error)
@@ -6965,22 +6778,18 @@ function pagedGithubDiscoveryTree(input: { cursor?: string; entries: GithubDisco
 async function computeGithubDiscoverySnapshot(input: {
   branch: string
   installationId: number
+  organizationId: string
   ref: string
   repositoryFullName: string
-  token?: string
 }) {
-  const token = input.token ?? await getGithubInstallationAccessToken({
-    config: githubConnectorAppConfig(),
-    installationId: input.installationId,
-  })
   let treeSnapshot: Awaited<ReturnType<typeof getGithubRepositoryTree>>
   try {
     treeSnapshot = await getGithubRepositoryTree({
       branch: input.branch,
       config: githubConnectorAppConfig(),
       installationId: input.installationId,
+      organizationId: input.organizationId,
       repositoryFullName: input.repositoryFullName,
-      token,
     })
   } catch (error) {
     wrapGithubConnectorError(error)
@@ -6990,8 +6799,8 @@ async function computeGithubDiscoverySnapshot(input: {
     branch: input.branch,
     config: githubConnectorAppConfig(),
     installationId: input.installationId,
+    organizationId: input.organizationId,
     repositoryFullName: input.repositoryFullName,
-    token,
     treeEntries: treeSnapshot.treeEntries,
   })
   const discovery = buildGithubRepoDiscovery({
@@ -7021,14 +6830,14 @@ async function computeGithubDiscoverySnapshot(input: {
   } satisfies GithubDiscoverySnapshot
 }
 
-async function computeGithubConnectorDiscovery(input: { connectorInstanceId: ConnectorInstanceId; context: PluginArchActorContext; token?: string }) {
+async function computeGithubConnectorDiscovery(input: { connectorInstanceId: ConnectorInstanceId; context: PluginArchActorContext }) {
   const discoveryContext = await getGithubDiscoveryContext(input)
   const snapshot = await computeGithubDiscoverySnapshot({
     branch: discoveryContext.branch,
     installationId: discoveryContext.installationId,
+    organizationId: discoveryContext.organizationId,
     ref: discoveryContext.ref,
     repositoryFullName: discoveryContext.repositoryFullName,
-    token: input.token,
   })
 
   return {
@@ -7071,17 +6880,19 @@ async function resolveGithubConnectorDiscovery(input: { connectorInstanceId: Con
     && cached.branch === discoveryContext.branch
     && cached.ref === discoveryContext.ref
     && cached.repositoryFullName === discoveryContext.repositoryFullName) {
-    // A matching branch/ref says nothing about content: compare the cached
-    // snapshot's commit SHA against the live head, otherwise the discovery
-    // UI stays permanently stuck on the old repository structure after a
-    // push (#1871). The probe is a single commits API call; if it fails
-    // (rate limit, network), prefer availability and serve the cache.
     const liveHeadSha = await getGithubRepositoryHeadSha({
       branch: discoveryContext.branch,
       config: githubConnectorAppConfig(),
       installationId: discoveryContext.installationId,
+      organizationId: discoveryContext.organizationId,
       repositoryFullName: discoveryContext.repositoryFullName,
-    }).catch(() => null)
+    }).catch((error: unknown) => {
+      if ((error instanceof GithubConnectorRequestError && (error.status === 429 || error.status >= 500))
+        || error instanceof TypeError || (error instanceof Error && (error.name === "AbortError" || error.name === "TimeoutError"))) {
+        return null
+      }
+      throw error
+    })
     if (liveHeadSha === null || liveHeadSha === cached.sourceRevisionRef) {
       return {
         autoImportNewPlugins: discoveryContext.autoImportNewPlugins,
@@ -7122,7 +6933,7 @@ function discoveryMappingsForPlugin(plugin: GithubDiscoveredPlugin) {
   return [
     ...plugin.componentPaths.skills.map((selector) => ({
       objectType: "skill" as const,
-      selector: plugin.sourceKind === "agent_plugin_manifest" ? selector : `${selector}/**`,
+      selector: plugin.sourceKind === "agent_plugin_manifest" || plugin.sourceKind === "skill_folder" ? selector : `${selector}/**`,
     })),
     ...plugin.componentPaths.commands.map((selector) => ({ objectType: "command" as const, selector: `${selector}/**` })),
     ...plugin.componentPaths.agents.map((selector) => ({ objectType: "agent" as const, selector: `${selector}/**` })),
@@ -7233,8 +7044,6 @@ function importedObjectMetadata(input: { objectType: ConnectorMappingRow["object
         : `MCP server imported from ${input.path}.`
     }
   } else if (isJson && !readPayloadString(normalizedPayloadJson, "description")) {
-    // Without this the projection falls back to the file's second line, which
-    // for JSON is a fragment such as `"hooks": {`.
     metadata.description = `Imported from ${input.path}.`
   }
 
@@ -7266,11 +7075,6 @@ function importedMcpServerNames(payload: Record<string, unknown>) {
   ))
 }
 
-/**
- * A `.mcp.json` file names its servers by key, so the file name (".mcp") is
- * never a useful title. Prefer the single server's key, then the file's own
- * name, then the folder that holds it (normally the plugin directory).
- */
 function importedMcpObjectName(input: {
   nameFromFile: string
   pathSegments: string[]
@@ -7291,9 +7095,6 @@ export function deriveGithubImportedObjectProjection(input: { objectType: Connec
     ? metadata.metadata.frontmatter as Record<string, unknown>
     : null
   const hasFrontmatter = frontmatterRecord && Object.keys(frontmatterRecord).length > 0
-  // Skill projections need the full SKILL.md: deriveSkillProjection parses and
-  // validates the frontmatter itself, so stripping it here made every GitHub
-  // connector skill import fail with invalid_skill_frontmatter.
   const projectionRawSource = input.objectType !== "skill" && hasFrontmatter
     ? parseMarkdownFrontmatter(input.rawSourceText).body
     : input.rawSourceText
@@ -7350,8 +7151,6 @@ async function materializeGithubImportedObject(input: {
   const fileName = input.externalLocator.split("/").filter(Boolean).at(-1) ?? input.externalLocator
   const fileExtension = fileName.includes(".") ? fileName.split(".").at(-1) ?? null : null
 
-  // Prefer the per-file blob sha when the tree snapshot provides one so an unchanged file can be
-  // skipped even when the head commit moved; fall back to the head revision otherwise.
   const bindingRevisionRef = input.sourceFileRevisionRef ?? input.sourceRevisionRef
   const existingBinding = await findActiveConnectorSourceBinding({
     connectorMappingId: input.connectorMapping.id,
@@ -7530,19 +7329,17 @@ async function materializeGithubImportPlans(input: {
     ? input.connectorTarget.targetConfigJson as Record<string, unknown>
     : {}
   const branch = typeof targetConfig.branch === "string" ? targetConfig.branch : input.connectorTarget.externalTargetRef ?? ""
-  const installationId = typeof input.connectorInstance.instanceConfigJson === "object" && input.connectorInstance.instanceConfigJson && typeof (input.connectorInstance.instanceConfigJson as Record<string, unknown>).installationId === "number"
-    ? (input.connectorInstance.instanceConfigJson as Record<string, unknown>).installationId as number
-    : null
+  const organizationId = input.context.organizationContext.organization.id
+  const instance = await withPrimaryReads(() => getConnectorInstanceRow(organizationId, input.connectorInstance.id))
+  if (!instance || instance.status !== "active" || input.connectorTarget.connectorInstanceId !== instance.id) {
+    throw new GithubInstallationApprovalError()
+  }
+  const installationId = await approvedGithubInstanceInstallationId(instance)
   const repositoryFullName = typeof targetConfig.repositoryFullName === "string" ? targetConfig.repositoryFullName : input.connectorTarget.remoteId
   if (!installationId || !branch || !repositoryFullName) {
     throw new PluginArchRouteFailure(409, "invalid_github_materialization_context", "GitHub connector target is missing required materialization context.")
   }
 
-  const token = await getGithubInstallationAccessToken({
-    config,
-    installationId,
-  })
-  const organizationId = input.context.organizationContext.organization.id
   const plannedFiles = input.importPlans.flatMap((plan) => plan.paths.map((path) => ({
     mapping: plan.mapping,
     path,
@@ -7557,10 +7354,10 @@ async function materializeGithubImportPlans(input: {
     fetchFile: (path) => getGithubRepositoryTextFile({
       config,
       installationId,
+      organizationId,
       path,
       ref: branch,
       repositoryFullName,
-      token,
     }),
     files: plannedFiles.map((file, index) => ({
       lastSeenSourceRevisionRef: existingBindings[index]?.lastSeenSourceRevisionRef ?? null,
@@ -7579,7 +7376,6 @@ async function materializeGithubImportPlans(input: {
       continue
     }
     if (result.status === "skipped_unchanged") {
-      // The file content is already materialized at this revision: no fetch, no new version.
       const binding = existingBindings[index]
       if (binding) {
         materializedConfigObjects.push(await getConfigObjectDetail(input.context, binding.configObjectId))
@@ -7718,33 +7514,23 @@ async function ensureDiscoveryMapping(input: {
   })
 }
 
-export async function createGithubConnectorAccount(input: { accountLogin: string; accountType: "Organization" | "User"; context: PluginArchActorContext; displayName: string; installationId: number }) {
-  return createConnectorAccount({
-    connectorType: "github",
-    context: input.context,
-    displayName: input.displayName,
-    metadata: {
-      accountLogin: input.accountLogin,
-      accountType: input.accountType,
-      repositories: [],
-      repositorySelection: "all",
-      settingsUrl: null,
-    },
-    remoteId: String(input.installationId),
-  })
+export async function createGithubConnectorAccount(input: { context: PluginArchActorContext; installationId: number }) {
+  return upsertGithubConnectorAccountFromInstallation(input)
 }
 
 async function upsertGithubConnectorAccountFromInstallation(input: { context: PluginArchActorContext; installationId: number }) {
+  const organizationId = input.context.organizationContext.organization.id
+  requireApprovedGithubInstallation(organizationId, input.installationId)
   let installation: Awaited<ReturnType<typeof getGithubInstallationSummary>>
   try {
     installation = await getGithubInstallationSummary({
       config: githubConnectorAppConfig(),
       installationId: input.installationId,
+      organizationId,
     })
   } catch (error) {
     wrapGithubConnectorError(error)
   }
-  const organizationId = input.context.organizationContext.organization.id
   const existingRows = await db
     .select()
     .from(ConnectorAccountTable)
@@ -7764,7 +7550,7 @@ async function upsertGithubConnectorAccountFromInstallation(input: { context: Pl
   }
 
   if (!existingRows[0]) {
-    return createConnectorAccount({
+    return insertConnectorAccount({
       connectorType: "github",
       context: input.context,
       displayName: installation.displayName,
@@ -7829,7 +7615,6 @@ export async function completeGithubConnectorInstall(input: { context: PluginArc
 
   return {
     connectorAccount,
-    // Keep install completion fast. The connected-account screen loads repositories next.
     repositories: [],
   }
 }
@@ -7951,18 +7736,10 @@ export async function applyGithubConnectorDiscovery(input: { autoImportNewPlugin
 }
 
 export async function listGithubRepositories(input: { connectorAccountId: ConnectorAccountId; context: PluginArchActorContext; cursor?: string; limit?: number; q?: string }) {
-  const account = await getConnectorAccountRow(input.context.organizationContext.organization.id, input.connectorAccountId)
-  if (!account) {
-    throw new PluginArchRouteFailure(404, "connector_account_not_found", "Connector account not found.")
-  }
-  if (account.connectorType !== "github") {
-    throw new PluginArchRouteFailure(409, "github_connector_account_required", "Connector account is not a GitHub account.")
-  }
-
-  const installationId = Number(account.remoteId)
-  if (!Number.isFinite(installationId) || installationId <= 0) {
-    throw new PluginArchRouteFailure(409, "invalid_github_installation_id", "Connector account does not have a valid GitHub installation id.")
-  }
+  const organizationId = input.context.organizationContext.organization.id
+  const account = await withPrimaryReads(() => getConnectorAccountRow(organizationId, input.connectorAccountId))
+  if (!account) throw new PluginArchRouteFailure(404, "connector_account_not_found", "Connector account not found.")
+  const installationId = approvedGithubAccountInstallationId(account)
 
   let repositories: RepositorySummary[]
   let installationSummary: Awaited<ReturnType<typeof getGithubInstallationSummary>>
@@ -7970,10 +7747,12 @@ export async function listGithubRepositories(input: { connectorAccountId: Connec
     repositories = await listGithubInstallationRepositories({
       config: githubConnectorAppConfig(),
       installationId,
+      organizationId,
     })
     installationSummary = await getGithubInstallationSummary({
       config: githubConnectorAppConfig(),
       installationId,
+      organizationId,
     })
   } catch (error) {
     wrapGithubConnectorError(error)
@@ -8022,10 +7801,10 @@ export async function validateGithubTarget(input: {
   branch: string
   config?: ReturnType<typeof githubConnectorAppConfig>
   installationId: number
+  organizationId: string
   ref: string
   repositoryFullName: string
   repositoryId: number
-  token?: string
 }) {
   try {
     return await validateGithubInstallationTarget({
@@ -8035,7 +7814,7 @@ export async function validateGithubTarget(input: {
       ref: input.ref,
       repositoryFullName: input.repositoryFullName,
       repositoryId: input.repositoryId,
-      token: input.token,
+      organizationId: input.organizationId,
     })
   } catch (error) {
     wrapGithubConnectorError(error)
@@ -8053,19 +7832,19 @@ export async function githubSetup(input: {
   repositoryFullName: string
   repositoryId: number
 }) {
-  const githubConfig = githubConnectorAppConfig()
-  const installationToken = await getGithubInstallationAccessToken({
-    config: githubConfig,
-    installationId: input.installationId,
-  })
+  const organizationId = input.context.organizationContext.organization.id
+  requireApprovedGithubInstallation(organizationId, input.installationId)
+  const account = input.connectorAccountId ? await getConnectorAccountRow(organizationId, input.connectorAccountId) : null
+  if (input.connectorAccountId && approvedGithubAccountInstallationId(account) !== input.installationId) {
+    throw new GithubInstallationApprovalError()
+  }
   const validation = await validateGithubTarget({
     branch: input.branch,
-    config: githubConfig,
     installationId: input.installationId,
     ref: input.ref,
     repositoryFullName: input.repositoryFullName,
     repositoryId: input.repositoryId,
-    token: installationToken,
+    organizationId,
   })
   if (!validation.repositoryAccessible) {
     throw new PluginArchRouteFailure(409, "github_repository_not_accessible", "GitHub repository is not accessible for this installation.")
@@ -8079,28 +7858,19 @@ export async function githubSetup(input: {
     installationId: input.installationId,
     ref: input.ref,
     repositoryFullName: input.repositoryFullName,
-    token: installationToken,
+    organizationId,
   })
 
-  let connectorAccountId = input.connectorAccountId as ConnectorAccountId | undefined
-  let connectorAccountDetail = connectorAccountId ? await getConnectorAccountDetail(input.context, connectorAccountId) : null
-  if (!connectorAccountId || !connectorAccountDetail) {
-    connectorAccountDetail = await createGithubConnectorAccount({
-      accountLogin: input.repositoryFullName.split("/")[0] ?? input.repositoryFullName,
-      accountType: "Organization",
-      context: input.context,
-      displayName: input.repositoryFullName,
-      installationId: input.installationId,
-    })
-    connectorAccountId = connectorAccountDetail.id
-  }
+  const connectorAccountDetail = account
+    ? await getConnectorAccountDetail(input.context, account.id)
+    : await upsertGithubConnectorAccountFromInstallation(input)
+  const connectorAccountId = connectorAccountDetail.id
 
   const connectorInstance = await createConnectorInstance({
     connectorAccountId,
     connectorType: "github",
     config: {
       autoImportNewPlugins: true,
-      installationId: input.installationId,
     },
     context: input.context,
     name: input.connectorInstanceName,
@@ -8160,6 +7930,8 @@ type GithubWebhookTargetRow = {
 }
 
 async function listActiveGithubWebhookTargets(installationId: number) {
+  const organizationId = approvedGithubInstallationOwner(installationId)
+  if (!organizationId) return []
   return db
     .select({ instance: ConnectorInstanceTable, target: ConnectorTargetTable })
     .from(ConnectorTargetTable)
@@ -8171,6 +7943,7 @@ async function listActiveGithubWebhookTargets(installationId: number) {
       eq(ConnectorAccountTable.organizationId, ConnectorInstanceTable.organizationId),
       eq(ConnectorAccountTable.connectorType, "github"),
       eq(ConnectorAccountTable.remoteId, String(installationId)),
+      eq(ConnectorAccountTable.organizationId, organizationId),
       eq(ConnectorAccountTable.status, "active"),
       eq(ConnectorInstanceTable.status, "active"),
     ))
@@ -8361,10 +8134,17 @@ export async function enqueueGithubWebhookSync(input: {
     return { accepted: false as const, reason: "missing installation id" }
   }
 
+  const organizationId = approvedGithubInstallationOwner(input.installationId)
+  if (!organizationId) return { accepted: false as const, reason: "installation not approved" }
+
   const accounts = await db
     .select()
     .from(ConnectorAccountTable)
-    .where(and(eq(ConnectorAccountTable.connectorType, "github"), eq(ConnectorAccountTable.remoteId, String(input.installationId))))
+    .where(and(
+      eq(ConnectorAccountTable.connectorType, "github"),
+      eq(ConnectorAccountTable.organizationId, organizationId),
+      eq(ConnectorAccountTable.remoteId, String(input.installationId)),
+    ))
 
   if (input.event !== "push") {
     if (input.event === "installation") {
@@ -8417,19 +8197,27 @@ export async function enqueueGithubWebhookSync(input: {
       eq(ConnectorAccountTable.organizationId, ConnectorInstanceTable.organizationId),
       eq(ConnectorAccountTable.connectorType, "github"),
       eq(ConnectorAccountTable.remoteId, String(input.installationId)),
+      eq(ConnectorAccountTable.organizationId, organizationId),
       eq(ConnectorAccountTable.status, "active"),
       eq(ConnectorInstanceTable.status, "active"),
     ))
 
   const queuedIds: string[] = []
   for (const row of instances) {
+    if (row.instance.connectorType !== "github") continue
+    const instanceConfig = row.instance.instanceConfigJson
+    try {
+      githubAccountInstallationId(String(input.installationId), instanceConfig?.installationId)
+    } catch (error) {
+      if (!(error instanceof GithubInstallationApprovalError)) throw error
+      continue
+    }
     const targetConfig = row.target.targetConfigJson ?? {}
     const targetRef = typeof targetConfig.ref === "string" ? targetConfig.ref : null
     if (targetRef && targetRef !== input.ref) {
       continue
     }
 
-    // primary: dedupes webhook redeliveries that can arrive back to back.
     const existing = await db.$primary
       .select({ id: ConnectorSyncEventTable.id })
       .from(ConnectorSyncEventTable)

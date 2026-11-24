@@ -7,23 +7,14 @@ import { AuthSecurityExample } from "./examples/auth-security/auth-security-exam
 import { ScimExample } from "./examples/auth-security/scim-example";
 import { SsoExample } from "./examples/auth-security/sso-example";
 
-/** SSO connection, from `GET /v1/sso`: none, saved but domain not verified, verified but not on, on. */
 export type AuthSecuritySsoState = "none" | "verify-domain" | "turn-on" | "on";
-/** SCIM connector, from `GET /v1/scim`: none, created but nobody synced yet, syncing people. */
 export type AuthSecurityScimState = "none" | "waiting" | "syncing";
 
-/**
- * Facts the Auth & Security page reports from data it already loads. A
- * missing fact means "not loaded yet": a section never takes over the page on a guess.
- */
 export type AuthSecurityFacts = {
   sso?: AuthSecuritySsoState;
   scim?: AuthSecurityScimState;
-  /** SSO is in the organization's plan (Team and up, `entitlements.sso`). */
   ssoIncluded?: boolean;
-  /** SCIM is in the organization's plan (Enterprise, `entitlements.scim`). */
   scimIncluded?: boolean;
-  /** An enabled SSO connection exists, which SCIM needs (`GET /v1/scim` `ssoReady`). */
   ssoReady?: boolean;
 };
 
@@ -40,7 +31,6 @@ function sectionSetUp(ctx: Ctx): boolean {
   return (ctx.facts.sso ?? "none") !== "none" || (ctx.facts.scim ?? "none") !== "none";
 }
 
-/** Plan lock (P4, I6): upgrade where this person can, else say whose call it is. */
 const ssoPlanCtas: readonly Cta[] = [
   { when: (ctx) => ctx.facts.ssoIncluded === false && ctx.can("canManageBilling"), label: "Upgrade to Team", href: getBillingRoute() },
   {
@@ -85,7 +75,6 @@ export const authSecurityIntros = [
       { when: (ctx) => ctx.can("canManageSso"), label: "Set up single sign-on", href: SSO_SETUP },
       { when: () => true, label: "Set up single sign-on", href: SSO_SETUP, locked: { reason: permissionLockReason("sso.manage") } },
     ],
-    // Full screen only once both are known and neither is set up.
     setupState: (ctx) => {
       if (ctx.facts.sso === undefined || ctx.facts.scim === undefined) return "done";
       return sectionSetUp(ctx) ? "done" : "none";
@@ -118,7 +107,6 @@ export const authSecurityIntros = [
       { when: (ctx) => ctx.can("canManageSso"), label: "Set up single sign-on", href: SSO_SETUP },
       { when: () => true, label: "Set up single sign-on", href: SSO_SETUP, locked: { reason: permissionLockReason("sso.manage") } },
     ],
-    // Box with no connection; banner while a saved connection isn't on yet.
     setupState: (ctx) => {
       if (ctx.facts.sso === undefined || ctx.facts.sso === "none") return "none";
       return ctx.facts.sso === "on" ? "done" : "partial";
@@ -162,7 +150,6 @@ export const authSecurityIntros = [
       { when: (ctx) => ctx.can("canManageScim"), label: "Create a SCIM connector", href: SCIM_SETUP },
       { when: () => true, label: "Create a SCIM connector", href: SCIM_SETUP, locked: { reason: permissionLockReason("scim.manage") } },
     ],
-    // Box with no connector; banner while nobody has synced from the identity provider yet.
     setupState: (ctx) => {
       if (ctx.facts.scim === undefined || ctx.facts.scim === "none") return "none";
       return ctx.facts.scim === "syncing" ? "done" : "partial";

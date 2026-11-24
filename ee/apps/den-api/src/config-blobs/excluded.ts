@@ -1,40 +1,20 @@
-/**
- * Every org-scoped SQL table that no config-blob area owns, and why.
- * `pnpm --filter @openwork-ee/den-api config-blobs:coverage` fails when an
- * org-scoped table is neither owned by an area (`ConfigArea.tables`) nor
- * listed here, or is in both. A new table needs a decision: add it to an
- * area, or list it here with a reason.
- *
- * Source: docs/features/config-blobs/inventory.md and delete-organization.ts.
- * Tables owned by the v1 areas (CONFIG_AREA_KEYS) are deliberately absent.
- */
-
 export type ConfigExclusionReason =
-  /** Runs, events, queues, leases, usage, logs, caches: produced by use, not configured. */
   | "runtime"
-  /** Holds credentials or tokens only; secrets never travel in a blob. */
   | "secret"
-  /** Belongs to one member (sign-ins, personal keys, their agent). */
   | "personal"
-  /** Commercial state. */
   | "billing"
-  /** Owned by the platform operator or OpenWork staff, not the tenant. */
   | "platform"
-  /** Configuration we intend to export in a later phase (inventory.md 🔜). */
   | "not_yet"
-  /** The config blob feature's own bookkeeping. */
   | "config_blobs_internal"
 
 export type ConfigExclusion = { reason: ConfigExclusionReason; note?: string }
 
 export const CONFIG_BLOB_EXCLUDED_TABLES: Record<string, ConfigExclusion> = {
-  // Config blobs' own tables.
   config_change_request: { reason: "config_blobs_internal" },
   config_apply_run: { reason: "config_blobs_internal" },
   config_blob_alias: { reason: "config_blobs_internal" },
   config_blob_export: { reason: "config_blobs_internal" },
 
-  // Members: later phases.
   permission_set_member: { reason: "not_yet", note: "direct member role assignments are not included in members.roles exports" },
   scim_group: { reason: "runtime", note: "owned by the IdP through SCIM" },
   scim_group_member: { reason: "runtime", note: "owned by the IdP through SCIM" },
@@ -44,7 +24,6 @@ export const CONFIG_BLOB_EXCLUDED_TABLES: Record<string, ConfigExclusion> = {
   scim_sync_event: { reason: "runtime" },
   external_identity: { reason: "runtime", note: "SSO / SCIM identity links, per instance" },
 
-  // AI Gateway.
   gateway_provider_credentials: { reason: "secret", note: "written through ai-gateway.providers $secret placeholders" },
   gateway_provider_oauth_states: { reason: "runtime" },
   gateway_litellm_issued_keys: { reason: "secret", note: "keys issued in an organization's LiteLLM proxy" },
@@ -79,18 +58,15 @@ export const CONFIG_BLOB_EXCLUDED_TABLES: Record<string, ConfigExclusion> = {
   models_analytics_event: { reason: "runtime" },
   models_analytics_settings: { reason: "secret", note: "langfuse credentials" },
 
-  // Connectors.
   connected_account: { reason: "personal", note: "per-member sign-ins and tokens" },
   mcp_registration_event: { reason: "runtime" },
   mcp_registration_status: { reason: "runtime" },
 
-  // Plugins, skills, sources.
   connector_source_binding: { reason: "runtime", note: "sync bookkeeping" },
   connector_source_tombstone: { reason: "runtime", note: "sync bookkeeping" },
   connector_sync_event: { reason: "runtime" },
   connector_target_reconcile: { reason: "runtime" },
 
-  // Workbot and "Your agent".
   slack_assistant_installation: { reason: "secret", note: "signing secret, bot token and a workspace binding" },
   slack_assistant_desktop_handoff: { reason: "runtime" },
   agent_instance: { reason: "personal", note: "one per member" },
@@ -98,7 +74,6 @@ export const CONFIG_BLOB_EXCLUDED_TABLES: Record<string, ConfigExclusion> = {
   agent_check: { reason: "runtime" },
   agent_delivery: { reason: "runtime" },
 
-  // Settings.
   session_sso_authentication: { reason: "runtime" },
   session_sso_proof: { reason: "runtime" },
   audit_state: { reason: "runtime" },
@@ -113,7 +88,6 @@ export const CONFIG_BLOB_EXCLUDED_TABLES: Record<string, ConfigExclusion> = {
   organization_grant: { reason: "billing", note: "platform-granted benefits" },
   feature_change: { reason: "platform", note: "flag change history; settings.features writes it through updateOrganizationFeatureOverrides" },
 
-  // Personal work and runtime.
   automation: { reason: "personal", note: "My Automations" },
   automation_runner: { reason: "runtime" },
   automation_runner_notification: { reason: "runtime" },
@@ -148,16 +122,11 @@ export const CONFIG_BLOB_EXCLUDED_TABLES: Record<string, ConfigExclusion> = {
   deviceCode: { reason: "runtime" },
   sandbox_organization: { reason: "platform" },
   managed_deployment: { reason: "platform", note: "operator state" },
+  managed_deployment_aws_sign_in: { reason: "platform", note: "operator state" },
   account_follow_up: { reason: "platform", note: "platform-admin sales follow-up" },
   account_follow_up_action: { reason: "platform" },
 }
 
-/**
- * Org-scoped tables with no `organization_id` / `org_id` column of their own
- * (scoped through a parent row). The coverage check adds them to the tables it
- * enumerates from the schema, so child tables of exported resources must be
- * owned by the same area or excluded too.
- */
 export const CONFIG_BLOB_ORG_SCOPED_CHILD_TABLES: readonly string[] = [
   "organization",
   "team_member",

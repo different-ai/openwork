@@ -3,8 +3,6 @@ import { join } from "node:path";
 
 export const dynamic = "force-static";
 
-// The agent guide for moving from Claude Cowork, read from the same package as
-// the openwork-bootstrap CLI it drives so the two cannot drift apart.
 function readMigrateGuide() {
   return readFileSync(join(process.cwd(), "..", "..", "..", "packages", "openwork-bootstrap", "migrate.md"), "utf8");
 }

@@ -8,7 +8,6 @@ export type OrgFeatureOptions = {
   active?: boolean
 }
 
-/** Shared query and guarded state for surfaces that also need loading/error information. */
 export function useOrgFeatureState(name: string, options: OrgFeatureOptions = {}) {
   const context = useAutomationsDenContext()
   const allowed = options.active !== false && context.ready && Boolean(context.client && context.organizationId)
@@ -25,7 +24,6 @@ export function useOrgFeatureState(name: string, options: OrgFeatureOptions = {}
     refetchInterval: 60_000,
     refetchIntervalInBackground: true,
   })
-  // `enabled: false` stops fetching, not cache reads. Always guard the value too.
   const data = !allowed ? false : query.data === undefined ? undefined : query.data[name] === true
   return {
     enabled: data === true,
@@ -37,7 +35,6 @@ export function useOrgFeatureState(name: string, options: OrgFeatureOptions = {}
   }
 }
 
-/** Missing, signed-out, inactive or wrong-runtime features are off, even in a populated cache. */
 export function useOrgFeature(name: string, options: OrgFeatureOptions = {}): boolean {
   return useOrgFeatureState(name, options).enabled
 }

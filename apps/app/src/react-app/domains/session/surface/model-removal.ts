@@ -7,7 +7,6 @@ export type RemovalInventory = {
   lockedModels: readonly ModelRef[];
 };
 
-/** Two successful, independent member inventory reads are required. Unknown is not removed. */
 export function confirmedOrganizationRemoval(input: {
   model: ModelRef;
   before: RemovalInventory | null;
@@ -21,7 +20,6 @@ export function confirmedOrganizationRemoval(input: {
   return input.engineSettled && input.engineMissing && absent(input.before) && absent(input.after);
 }
 
-/** Same maker beats shortcuts, even when a gateway hides that maker behind opaque IDs. */
 export function closestAvailableModel(
   options: readonly ModelOption[], personal: readonly ModelRef[], recent: readonly ModelRef[],
   unavailable: ModelRef & { title?: string }, usable: (model: ModelOption) => boolean,
@@ -37,7 +35,6 @@ export function closestAvailableModel(
   const family = candidates.filter((option) => maker
     ? modelMakerId(option) === maker
     : !/^(ipr|lpr)_/.test(unavailable.providerID) && option.providerID === unavailable.providerID);
-  // For Claude, preserve the closest tier instead of jumping from Opus to Haiku.
   const tier = (model: ModelRef & { title?: string }) => {
     const name = modelTitle(model).toLowerCase();
     return name.includes("opus") ? 3 : name.includes("sonnet") ? 2 : name.includes("haiku") ? 1 : 0;

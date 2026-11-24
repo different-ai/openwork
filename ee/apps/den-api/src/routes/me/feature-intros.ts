@@ -6,7 +6,6 @@ import { jsonValidator, orgMemberRoute, type OrganizationContextVariables } from
 import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 
-/** Intros for the person's own Den screens; agents have no use for them. */
 type FeatureIntroRouteOptions = DescribeRouteOptions & { "x-mcp": false }
 const describeFeatureIntroRoute = (options: FeatureIntroRouteOptions) => describeRoute(options)
 

@@ -102,7 +102,6 @@ export function mergeHeadlessServerConfig(
       const parsed: unknown = JSON.parse(existingRaw);
       if (isRecord(parsed)) existing = parsed;
     } catch {
-      // Corrupt config: fall back to a minimal isolated document.
     }
   }
   const existingRoots = Array.isArray(existing.authorizedRoots)
@@ -216,16 +215,13 @@ export function buildHeadlessRuntimeManifest(input: {
   };
 }
 
-/** The health wait's own requests; left in, they would fill the server log tail. */
 const HEALTH_REQUEST_LINE = /^GET \/health \d{3}\b/;
 const ANSI_ESCAPE = /\x1b\[[0-9;]*m/g;
 const LOG_TAIL_LINES = 12;
 const LOG_LINE_CHARS = 300;
 
 export type HeadlessHealthTimeoutPart = {
-  /** Last probe outcome, such as "answered 503" or "unreachable (ECONNREFUSED)". */
   probe: string;
-  /** "running", "exited with code 1" or "killed by SIGKILL". */
   process: string;
   logPath: string;
   log: string | null;
@@ -235,7 +231,6 @@ function redactSecrets(line: string, secrets: string[]): string {
   return secrets.filter(Boolean).reduce((text, secret) => text.split(secret).join("[redacted]"), line);
 }
 
-/** Vite logs the same warning for every probe of the page; one line per run is enough. */
 function collapseRepeats(lines: string[]): Array<{ line: string; count: number }> {
   const runs: Array<{ line: string; count: number }> = [];
   for (const line of lines) {

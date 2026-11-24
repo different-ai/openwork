@@ -166,9 +166,10 @@ export function buildInputPatterns(target, options = {}) {
     // The MySQL-backed Den API tests (ee/apps/den-api/test/api) and the files
     // they read outside the den-api workspace closure.
     case "den-api-tests": patterns = [
-      ...api(), ...closure("@openwork-ee/headless-runner"), "evals/packages/labs/**", "evals/packages/open-workplace/**",
+      ...api(), ...closure("@openwork-ee/headless-runner"), ...closure("@openwork-ee/gateway"), "evals/packages/labs/**", "evals/packages/open-workplace/**",
       "packaging/helm/openwork-ee/values.schema.json",
       "packaging/docker/docker-compose.web-local.yml", "packaging/docker/docker-compose.ci-mysql.yml",
+      ...closure("openwork-server"),
       CI_WORKFLOW, ".github/scripts/classify-ci-changes.mjs", ".github/actions/setup-tests/**",
     ]; break;
     case "api-docs": patterns = [...api(), ...render, ...CONTRACT_SCRIPTS, ".github/scripts/runtime-scope.mjs", ".github/workflows/refresh-api-docs.yml"]; break;
@@ -186,7 +187,6 @@ export function buildInputPatterns(target, options = {}) {
     ]; break;
     // The landing build command also builds packages/email, which it does not declare.
     case "vercel-landing": patterns = [...closure("@openwork-ee/landing", "@openwork/email"), ".vercelignore"]; break;
-    case "vercel-diagnostics": patterns = [...closure("@openwork-ee/diagnostics"), ".vercelignore"]; break;
     case "review": patterns = [
       ...closure("@openwork/review-app"), "apps/app/src/styles/colors.css",
       ".vercelignore", ".github/workflows/review-app-deploy.yml",

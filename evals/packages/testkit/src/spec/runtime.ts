@@ -844,9 +844,13 @@ export class UserChannel implements User {
   #click(target: Target, clickCount: number, verb: "click" | "dblclick", options: ClickOptions = {}): Promise<void> {
     const surface = requireSurface(this.#surface);
     const hitTestDetail = options.hitTest === false ? ", hitTest=false" : "";
-    return this.#runtime.call("user", verb, `${verb}(${targetDetail(target)}${hitTestDetail})`, surface, async () => {
-      if (this.#runtime.adapters.user?.click) return this.#runtime.adapters.user.click(surface, target, clickCount);
-      const clicked = await clickTarget(surface, target, { mustHitTest: options.hitTest !== false, clickCount });
+    const modifierDetail = options.modifiers?.length ? `, modifiers=${options.modifiers.join("+")}` : "";
+    return this.#runtime.call("user", verb, `${verb}(${targetDetail(target)}${hitTestDetail}${modifierDetail})`, surface, async () => {
+      if (this.#runtime.adapters.user?.click) {
+        if (options.modifiers?.length) throw new Error(`${verb} with held keys is not supported on this surface.`);
+        return this.#runtime.adapters.user.click(surface, target, clickCount);
+      }
+      const clicked = await clickTarget(surface, target, { mustHitTest: options.hitTest !== false, clickCount, modifiers: options.modifiers });
       this.#runtime.emit({ stage: this.#runtime.stage, channel: "user", verb: "target", detail: targetDetail(target), surface: surfaceName(surface), ok: true, target: clicked.rect });
     });
   }

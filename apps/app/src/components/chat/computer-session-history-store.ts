@@ -11,12 +11,9 @@ function mark(chats: Chats, sessionId: string, value: boolean): Chats {
 }
 
 export const useComputerSessionHistoryStore = create<{
-  /** Per chat: the subagent whose live view the person opened from the crew; none shows the chat's. */
   agents: Readonly<Record<string, string>>
   setAgent: (sessionId: string, agentSessionId: string | null) => void
-  /** Chats whose computer is working now: their card offers the live view. */
   working: Chats
-  /** Chats where the person opened the live view from the card. */
   watching: Chats
   setWorking: (sessionId: string, working: boolean) => void
   setWatching: (sessionId: string, watching: boolean) => void

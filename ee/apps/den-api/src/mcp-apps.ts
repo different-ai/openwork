@@ -58,13 +58,8 @@ type Revision = typeof ConfigObjectVersionTable.$inferSelect
 type DatabaseReader = Pick<typeof db, "select">
 export type McpAppAccessInput = { organizationId: string; member: McpMemberIdentity | null; requestScope?: object }
 export type McpAppResource = { app: McpAppSummary; html: string; csp: McpAppCsp; resourceDigest: string }
-/** An App a member may use, without its compiled HTML. */
 export type McpAppEntry = { appId: string; pluginId: string; revisionId: string; title: string; description: string | null; serverPath: string }
-/** The App's current revision as its own MCP server serves it. */
-/** `loadsWithLaunch`: opening the App also runs its no-click tools that need no input. */
-/** `site`: its author made it work as a web page. */
 export type McpAppServerDefinition = { app: McpAppSummary; tools: McpAppToolBinding[]; loadsWithLaunch?: boolean; site?: boolean }
-/** Resolves declared tools as the author, before anything is published. */
 export type ResolveMcpAppTools = (tools: McpAppToolDeclaration[]) => Promise<McpAppToolBinding[]>
 
 function notFound(): never {
@@ -122,7 +117,6 @@ async function latestRevision(organizationId: DenTypeId<"organization">, id: Den
   return row ?? null
 }
 
-/** Editor access gates every App write; the MCP write scope is checked before a write starts. */
 async function requireEditor(context: PluginArchActorContext, id: DenTypeId<"configObject">) {
   await requirePluginArchResourceRole({ context, resourceId: id, resourceKind: "config_object", role: "editor" })
 }
@@ -156,8 +150,6 @@ async function editablePlugin(context: PluginArchActorContext, id: string) {
   return pluginId
 }
 
-// The builder's own policy and size refusals are fixed text naming what to
-// change, so they are returned as written; compiler errors keep a generic hint.
 const BUILDER_POLICY_MESSAGE = /^Generated [^.]* cannot /u
 const BUILDER_LIMIT_MESSAGE = /^(?:(?:React|CSS) source exceeds \d+ bytes\.|Compiled MCP App exceeds \d+ bytes\.(?: Compiled size: \d+ bytes\.)?|React view build exceeded the server time limit\.)$/u
 
@@ -172,7 +164,6 @@ function compileFailure(result?: GeneratedArtifactViewBuildResult): McpAppError 
   return new McpAppError(422, "mcp_app_compile_failed", `Artifact compilation failed${location}. ${hint} No revision was published.`)
 }
 
-/** The stored source of a revision, verified against the digest it was compiled from. */
 function storedSource(version: Revision, payload: McpAppCompiledRevision): McpAppSource {
   let source: unknown
   try {
@@ -196,11 +187,6 @@ function workflowTools(tools: McpAppToolBinding[]): WorkflowTool[] {
   })
 }
 
-/**
- * The bound Workflows that are not yet in the App's Plugin. Adding one widens
- * who can run it, so the author must manage it, as attachConfigObjectToPlugin
- * requires; this is checked before anything is created.
- */
 async function workflowsToAdd(context: PluginArchActorContext, pluginId: DenTypeId<"plugin"> | null, tools: WorkflowTool[]): Promise<DenTypeId<"configObject">[]> {
   const ids = [...new Set(tools.map((entry) => entry.workflowId))]
   const present = new Set(pluginId && ids.length > 0 ? (await db.select({ id: PluginConfigObjectTable.configObjectId }).from(PluginConfigObjectTable).where(and(
@@ -222,7 +208,6 @@ async function workflowsToAdd(context: PluginArchActorContext, pluginId: DenType
   return missing
 }
 
-/** Workflow tools run through the App's own Plugin, so sharing that Plugin shares them. */
 function throughPlugin(tools: McpAppToolBinding[], pluginId: string): McpAppToolBinding[] {
   return tools.map((tool) => {
     const parsed = tool.kind === "workflow" ? parseMarketplaceCapabilityName(tool.capability) : null
@@ -230,19 +215,10 @@ function throughPlugin(tools: McpAppToolBinding[], pluginId: string): McpAppTool
   })
 }
 
-/**
- * Adds bound Workflows to the App's Plugin just before the App is written. If
- * that write then fails, a Workflow stays where its manager chose to add it;
- * removing it could break another editor's concurrent write that binds it.
- */
 async function addWorkflows(context: PluginArchActorContext, pluginId: DenTypeId<"plugin">, workflowIds: DenTypeId<"configObject">[]) {
   for (const configObjectId of workflowIds) await attachConfigObjectToPlugin({ context, configObjectId, pluginId })
 }
 
-/**
- * An App may be marked public only when it has no
- * tools: a visitor is not signed in, so there is nobody for a tool to run as.
- */
 async function requirePublishable(tools: McpAppToolBinding[]) {
   if (tools.length > 0) {
     throw new McpAppError(409, "public_app_has_tools", "A public artifact cannot have tools, because visitors are not signed in. Remove its tools (tools: []) or pass public: false. No revision was published.")
@@ -255,10 +231,6 @@ function publicNameTaken(name: string, saved: boolean): McpAppError {
     : `The public name "${name}" is already used by another artifact. Choose another publicName. No revision was published.`)
 }
 
-/**
- * Checked before anything is written: a name needs a public App, and a name
- * another App holds is refused, never moved, even while that App is private.
- */
 async function requirePublicNameFree(input: { name: string; isPublic: boolean; appId: DenTypeId<"configObject"> | null }) {
   if (!input.isPublic) {
     throw new McpAppError(409, "public_name_needs_public", "publicName names a public artifact's URL. Pass public: true with it, or omit publicName. No revision was published.")
@@ -268,7 +240,6 @@ async function requirePublicNameFree(input: { name: string; isPublic: boolean; a
   if (row && row.appId !== input.appId) throw publicNameTaken(input.name, false)
 }
 
-/** Gives the App this name, replacing its earlier one, whose URL stops answering. */
 async function savePublicName(organizationId: DenTypeId<"organization">, id: DenTypeId<"configObject">, name: string) {
   try {
     const [current] = await db.select({ name: PublicMcpAppNameTable.name }).from(PublicMcpAppNameTable)
@@ -282,10 +253,13 @@ async function savePublicName(organizationId: DenTypeId<"organization">, id: Den
   }
 }
 
+const DUPLICATE_ENTRY_MESSAGE = /\bDuplicate entry\b|\(errno 1062\)/
+
 function isDuplicateEntry(error: unknown): boolean {
   if (typeof error !== "object" || error === null) return false
   if ("code" in error && error.code === "ER_DUP_ENTRY") return true
   if ("errno" in error && error.errno === 1062) return true
+  if ("message" in error && typeof error.message === "string" && DUPLICATE_ENTRY_MESSAGE.test(error.message)) return true
   return "cause" in error && error.cause !== error && isDuplicateEntry(error.cause)
 }
 
@@ -316,8 +290,6 @@ async function compile(input: CreateMcpAppInput, pluginId: string, tools: McpApp
     compilerName: result.compilerName,
     compilerVersion: result.compilerVersion,
     reactVersion: result.reactVersion,
-    // Only an App written to read them gets initial results, so Apps built
-    // before them never pay for reads they would make again themselves.
     ...(reactSource.includes(MCP_APP_INITIAL_RESULTS_META) ? { loadsWithLaunch: true } : {}),
     ...(input.public ? { public: true } : {}),
     ...(input.site ? { site: true } : {}),
@@ -339,8 +311,6 @@ async function compile(input: CreateMcpAppInput, pluginId: string, tools: McpApp
 
 type McpAppWriteInput<TInput> = TInput & { context: PluginArchActorContext; resolveTools: ResolveMcpAppTools }
 
-// Creating or updating an App writes a Plugin, memberships and a revision and
-// reads each back through shared helpers, so every read uses the primary.
 export function createMcpApp(input: McpAppWriteInput<CreateMcpAppInput>): Promise<McpAppSummary> {
   return withPrimaryReads(() => createMcpAppOnPrimary(input))
 }
@@ -374,8 +344,6 @@ async function createMcpAppOnPrimary({ context, resolveTools, ...source }: McpAp
     }
   }
   const appPluginId = pluginId
-  // Do not leave an empty private Plugin behind; it would also block a retry
-  // with the same title as a duplicate.
   const discardPlugin = async () => {
     if (createdPluginId) await setPluginLifecycle({ action: "archive", context, pluginId: createdPluginId }).catch(() => undefined)
   }
@@ -415,14 +383,10 @@ async function updateMcpAppOnPrimary({ context, resolveTools, ...source }: McpAp
   const current = await editableApp(context, id)
   if (current.version.id !== expectedId) throw new McpAppError(409, "mcp_app_revision_conflict", "This artifact has changed. Read it again before updating.")
   const pluginId = normalizeDenTypeId("plugin", current.payload.pluginId)
-  // Omitted CSS, description, and tools keep the App's current ones; stored
-  // tools stay as published instead of being resolved again.
   const resolved = input.tools ? await resolveTools(input.tools) : current.payload.tools
-  // An omitted public keeps the App's current choice, like its tools.
   const isPublic = input.public ?? current.payload.public === true
   if (isPublic) await requirePublishable(resolved)
   const isSite = input.site ?? current.payload.site === true
-  // Only a new choice is checked, so an App keeps updating while the feature is off.
   if (input.publicName) await requirePublicNameFree({ name: input.publicName, isPublic, appId: id })
   const workflows = input.tools ? await workflowsToAdd(context, pluginId, workflowTools(resolved)) : []
   const compiled = await compile({
@@ -432,8 +396,6 @@ async function updateMcpAppOnPrimary({ context, resolveTools, ...source }: McpAp
     cssSource: input.cssSource ?? storedSource(current.version, current.payload).cssSource,
     description: input.description ?? current.payload.description ?? undefined,
   }, pluginId, throughPlugin(resolved, pluginId))
-  // Rechecked after compiling, outside the transaction so a slow check never
-  // holds the row lock and a second pool connection at once.
   await requireEditor(context, id)
   await addWorkflows(context, pluginId, workflows)
   const organizationId = context.organizationContext.organization.id
@@ -489,17 +451,11 @@ async function accessibleAppPlugins(input: McpAppAccessInput): Promise<Map<strin
   return apps
 }
 
-/** The Plugin through which the member reaches one App, checked for that App only. */
 async function accessibleAppPlugin(input: McpAppAccessInput & { appId: string }): Promise<string | undefined> {
   const references = await timeMcpApp("den.app-access-check", () => listAccessibleMarketplaceCapabilityReferencesFor({ ...input, configObjectId: input.appId }))
   return references.find((reference) => reference.objectType === "app")?.pluginId
 }
 
-/**
- * Apps the member may use, read without their compiled revisions: every
- * catalog, index, and search lookup would otherwise load each App's HTML.
- */
-/** Each active authored App among these ids, with its latest revision. */
 async function latestAuthoredApps(organizationId: DenTypeId<"organization">, ids: DenTypeId<"configObject">[]) {
   if (ids.length === 0) return []
   const rows = await db.select({ id: ConfigObjectTable.id, title: ConfigObjectTable.title, description: ConfigObjectTable.description })
@@ -523,13 +479,11 @@ async function latestAuthoredApps(organizationId: DenTypeId<"organization">, ids
   for (const version of versions) if (!latest.has(version.configObjectId)) latest.set(version.configObjectId, version)
   return rows.flatMap((row) => {
     const version = latest.get(row.id)
-    // URL-imported Apps share the object type; only authored revisions have their own server.
     if (!version || version.isDeletedVersion || version.schemaVersion !== MCP_APP_CONFIG_SCHEMA_VERSION) return []
     return [{ ...row, revisionId: version.id }]
   })
 }
 
-/** A one-row indexed lookup: an org without Apps skips the access scan every search would otherwise pay. */
 async function organizationHasApps(organizationId: DenTypeId<"organization">): Promise<boolean> {
   const [row] = await db.select({ id: ConfigObjectTable.id }).from(ConfigObjectTable).where(and(
     eq(ConfigObjectTable.organizationId, organizationId),
@@ -557,14 +511,12 @@ export function listAccessibleMcpApps(input: McpAppAccessInput): Promise<McpAppE
   return timeMcpApp("den.accessible-apps", () => listAccessibleMcpAppsUntimed(input))
 }
 
-/** A cheap check before access-checked App work: is this config object an active App? */
 export async function isActiveMcpApp(input: { organizationId: string; appId: string }): Promise<boolean> {
   const id = mcpAppIdSchema.safeParse(input.appId)
   if (!id.success) return false
   return await activeApp(normalizeDenTypeId("organization", input.organizationId), appId(id.data)) !== null
 }
 
-/** Which revision a row is, without its encrypted payload. */
 type RevisionHead = Pick<Revision, "id" | "schemaVersion" | "isDeletedVersion">
 const revisionHeadColumns = {
   id: ConfigObjectVersionTable.id,
@@ -580,14 +532,6 @@ async function latestRevisionHead(organizationId: DenTypeId<"organization">, id:
   return row ?? null
 }
 
-/**
- * Compiled revisions by their immutable id. A revision row is written once and
- * never updated, so its payload (HTML, CSP, digests and the tools it was
- * published with) is reused instead of read, decrypted and parsed, up to 2 MiB,
- * on every App request. The payload is one encrypted column, so it cannot be
- * read without its HTML. Nothing about who may use an App is kept: Plugin
- * access, the active App and which revision is current are read every request.
- */
 type RevisionContent = { payload: McpAppCompiledRevision; bytes: number; intact?: boolean }
 const REVISION_CONTENT_MAX_BYTES = 16 * 1024 * 1024
 const REVISION_CONTENT_MAX_ENTRIES = 64
@@ -629,8 +573,6 @@ async function revisionContent(organizationId: DenTypeId<"organization">, id: De
 async function accessibleRevisionUncached(input: McpAppAccessInput & { appId: string }) {
   const id = appId(input.appId)
   const organizationId = normalizeDenTypeId("organization", input.organizationId)
-  // Read together: each is a database round trip on every App request. Nothing
-  // from the App or its revision is used unless the member can reach its Plugin.
   const [pluginId, active, head] = await Promise.all([
     accessibleAppPlugin(input),
     activeApp(organizationId, id),
@@ -643,7 +585,6 @@ async function accessibleRevisionUncached(input: McpAppAccessInput & { appId: st
   return { id, pluginId, organizationId, currentRevisionId: head.id, content }
 }
 
-// HTTP callers supply a fresh scope per request. No Plugin access survives that request.
 const requestRevisions = new WeakMap<object, Map<string, ReturnType<typeof accessibleRevisionUncached>>>()
 function accessibleRevision(input: McpAppAccessInput & { appId: string }) {
   if (!input.requestScope) return accessibleRevisionUncached(input)
@@ -655,7 +596,6 @@ function accessibleRevision(input: McpAppAccessInput & { appId: string }) {
   return revision
 }
 
-/** The member's current view of one App's own MCP server. */
 export async function loadMcpAppServerDefinition(input: McpAppAccessInput & { appId: string }): Promise<McpAppServerDefinition> {
   const { id, pluginId, currentRevisionId, content: { payload } } = await accessibleRevision(input)
   return {
@@ -671,7 +611,6 @@ export async function loadMcpAppResource(input: McpAppAccessInput & { appId: str
   const { id, pluginId, organizationId, currentRevisionId, content: current } = await accessibleRevision(input)
   let content: RevisionContent | null = current
   if (currentRevisionId !== versionId) {
-    // An earlier revision must still belong to this App before its kept content is used.
     const [head] = await db.select(revisionHeadColumns).from(ConfigObjectVersionTable).where(and(
       eq(ConfigObjectVersionTable.organizationId, organizationId),
       eq(ConfigObjectVersionTable.configObjectId, id),
@@ -681,7 +620,6 @@ export async function loadMcpAppResource(input: McpAppAccessInput & { appId: str
   }
   if (!content) return notFound()
   const { payload } = content
-  // Hashed once per kept revision, not on every read.
   content.intact ??= digest(payload.html) === payload.resourceDigest && Buffer.byteLength(payload.html) === payload.htmlBytes
   if (!content.intact) {
     throw new McpAppError(422, "mcp_app_digest_mismatch", "The artifact revision failed its integrity check.")
@@ -694,7 +632,6 @@ export async function loadMcpAppResource(input: McpAppAccessInput & { appId: str
   }
 }
 
-/** The App a public URL's last segment names: an App id, or a public name some App holds. */
 async function appIdForPublicPath(appIdOrName: string): Promise<DenTypeId<"configObject"> | null> {
   const direct = mcpAppIdSchema.safeParse(appIdOrName)
   if (direct.success) return appId(direct.data)
@@ -706,12 +643,6 @@ async function appIdForPublicPath(appIdOrName: string): Promise<DenTypeId<"confi
   return parsed.success ? appId(parsed.data) : null
 }
 
-/**
- * The current revision of an App marked public, found by its App id or its
- * friendly name, for a visitor who is not signed in. Checked on every request, with no member or Plugin access: the
- * App is active, its newest revision is marked public and has no tools, and
- * its resource integrity checks pass. Unmarking it or adding a tool stops it at once.
- */
 export async function loadPublicMcpApp(input: { appIdOrName: string }): Promise<McpAppResource | null> {
   if (!env.appMcpServersEnabled) return null
   const id = await appIdForPublicPath(input.appIdOrName)
@@ -738,12 +669,6 @@ export async function loadPublicMcpApp(input: { appIdOrName: string }): Promise<
   }
 }
 
-/**
- * Whether a browser at a public URL gets the site page: the App there is
- * public, as loadPublicMcpApp checks, and its newest revision was made a site.
- * Asked with no sign-in, so it is only ever true for an
- * App its editor already shared with everyone.
- */
 export async function isPublicMcpAppSite(input: { appIdOrName: string }): Promise<boolean> {
   if (!env.appMcpServersEnabled) return false
   const id = await appIdForPublicPath(input.appIdOrName)
@@ -761,7 +686,6 @@ export async function isPublicMcpAppSite(input: { appIdOrName: string }): Promis
   return true
 }
 
-// Opt-in numeric profiling only; never emit request payloads or identities.
 if (process.env.OPENWORK_MCP_APP_TIMINGS === "1") {
   new PerformanceObserver(list => {
     for (const entry of list.getEntries()) if (entry.name.startsWith("openwork.mcp-app.")) {

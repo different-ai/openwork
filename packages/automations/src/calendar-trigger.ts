@@ -6,12 +6,6 @@ import {
 } from "@openwork/types/automations"
 import type { CalendarEventFacts } from "./proactive.js"
 
-/**
- * Calendar triggers: which meetings start a run, when, and under what key.
- * Pure: Den reads the calendar (projectGoogleCalendarEvents) and claims each
- * occurrence once with its key as the claim nonce.
- */
-
 const MINUTE_MS = 60_000
 
 /** How late a meeting's moment may still start its run; older moments are never replayed. */
@@ -22,9 +16,7 @@ export const CALENDAR_TRIGGER_POLL_MS = 5 * MINUTE_MS
 export const CALENDAR_TRIGGER_READ_MARGIN_MS = AUTOMATION_CALENDAR_OFFSET_MAX_MINUTES * MINUTE_MS + CALENDAR_TRIGGER_GRACE_MS + CALENDAR_TRIGGER_POLL_MS
 
 export type CalendarTriggerOccurrence = {
-  /** Stable per meeting and edge: a moved meeting is a new occurrence, a changed offset is not. */
   key: string
-  /** When the run is due. */
   at: number
   event: CalendarEventFacts
 }
@@ -103,7 +95,6 @@ function localTime(at: number, timeZone: string): string {
   return new Intl.DateTimeFormat("en-US", { timeZone, weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" }).format(at)
 }
 
-/** Hostnames only: an invitee's domain is chosen by whoever sent the invite, so nothing else may pass. */
 const HOSTNAME = /^(?=.{1,253}$)[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?)+$/
 
 /**

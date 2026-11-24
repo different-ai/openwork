@@ -79,14 +79,10 @@ function artifactTypeToPreview(type: ArtifactType): OpenTargetPreview {
   return "external";
 }
 
-/** Open any file path in the artifact preview panel (markdown, code, images…). */
 export function useOpenArtifactPath() {
   const { onOpenTarget } = useOpenTargets();
 
   return React.useCallback((rawPath: string, options?: OpenTargetOptions) => {
-    // Explicit file actions must not strip path prefixes or reuse suffix matches,
-    // but `:line` suffixes and quotes are not part of the file name. A path the
-    // reader turns away is passed through so the opener can explain why.
     const path = parseLocalPathReference(rawPath)?.path ?? rawPath;
     const target: OpenTarget = {
       id: `file:${path}`,

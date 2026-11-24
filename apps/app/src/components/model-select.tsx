@@ -54,14 +54,12 @@ export function ModelSelect({ open, value, hideValue = false, onOpenChange, onCh
   const { options, catalogState, retainedSelection, restrictToCloud, autoVisible } = catalog;
   React.useEffect(() => {
     const recover = (event: Event) => {
-      // The New Task composer has no session; its requests carry none either.
       if (!(event instanceof CustomEvent) || (event.detail?.sessionId || undefined) !== (sessionId || undefined)) return;
       setFocusAlternative(event.detail?.focusAlternative !== false); onOpenChange(true);
     };
     window.addEventListener(openComposerModelPickerEvent, recover);
     return () => window.removeEventListener(openComposerModelPickerEvent, recover);
   }, [sessionId, onOpenChange]);
-  // The palette and shortcuts for this conversation switch among exactly these models.
   const catalogOwner = React.useRef(Symbol());
   React.useLayoutEffect(() => {
     if (sessionId) useModelPickerCatalogStore.getState().publish(sessionId, catalogOwner.current, catalog.actionOptions);
@@ -72,21 +70,17 @@ export function ModelSelect({ open, value, hideValue = false, onOpenChange, onCh
   }, [sessionId]);
   const selected = options.find((option) => option.providerID === value.providerID && option.modelID === value.modelID);
   const name = hideValue ? undefined : fixedModelTitle(value) ?? (catalog.currentOption ? modelTitle(catalog.currentOption) : undefined);
-  // Fast shows on its own as a quiet "· Fast" after the model name. Nothing follows "Select model", and a
-  // setting the list does not show is only called out once the list is the engine's answer for a verified sign-in.
   const { summary, fast: fastOn } = modelTriggerSettings({ model: value, named: name !== undefined,
     verified: catalogState.state === "ready" && !catalog.restoring,
     options: selected?.behaviorOptions ?? catalog.currentOption?.behaviorOptions ?? behaviorOptions, value: behaviorValue });
   const select = (option: ModelOption, behavior?: { variant: string | null }) => choice.choose(option, () => {
     onChange({ providerID: option.providerID, modelID: option.modelID }, behavior?.variant);
-    // Setting the model keeps the variant when the model is unchanged, so apply it directly too.
     if (behavior && !managesOwnBehavior(option)) onBehaviorChange?.(behavior.variant);
     onOpenChange(false);
   });
   const openProvider = () => { onOpenChange(false); window.dispatchEvent(new Event(openProviderAuthEvent)); };
   const openSettings = () => { onOpenChange(false); openAutoProviderSettings(); };
   return <Popover open={open} onOpenChange={(next) => {
-    // A provider sign-in opened from this picker owns focus until it finishes or is cancelled.
     if (!next && choice.loginOpen) return;
     setFocusAlternative(false); onOpenChange(next);
   }}>

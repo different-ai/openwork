@@ -11,13 +11,10 @@ import { readGoogleActionJson, requestGoogleAction, type GoogleWorkspaceActionDe
 import type { OrgRouteVariables } from "./shared.js"
 
 const scope = "https://www.googleapis.com/auth/"
-// Arbitrary document IDs require general Drive access. A retained full grant must
-// never turn the connector's selected-file permission into access to every Doc.
 const writeScopes = [scope + "drive"]
 const readScopes = [...writeScopes, scope + "drive.readonly"]
 const base = "/v1/capabilities/google-workspace/documents/:documentId"
 const id = z.string().min(1).max(512).regex(/^[A-Za-z0-9_-]+$/)
-// Tab IDs are opaque and commonly contain dots (for example, t.0). They only go in JSON.
 const tabId = z.string().min(1).max(512)
 const params = z.object({ documentId: id }).strict()
 const revision = z.string().min(1).max(512)
@@ -83,7 +80,6 @@ function unavailable(c: Parameters<typeof requestGoogleAction>[0], mutation = fa
 async function read(c: Parameters<typeof requestGoogleAction>[0], deps: GoogleWorkspaceActionDependencies, documentId: string, editing = false): Promise<{ ok: true; document: GoogleDocument } | { ok: false; reply: Response }> {
   const target = url(documentId)
   target.searchParams.set("includeTabsContent", "true")
-  // Only INLINE returns indices usable by batchUpdate. Omit suggested text locally, preserving those offsets.
   target.searchParams.set("suggestionsViewMode", "SUGGESTIONS_INLINE")
   target.searchParams.set("fields", "documentId,title,revisionId,tabs")
   const result = await requestGoogleAction(c, deps, editing ? writeScopes : readScopes, target)
@@ -141,7 +137,6 @@ export function registerGoogleDocumentRoutes<T extends { Variables: OrgRouteVari
     const document = result.document
     const tab = document.tabs.find(tab => tab.id === input.tabId)
     if (document.revisionId !== input.revisionId || !tab || !documentTextMatches(tab, input.startIndex, input.expectedText)) return conflict(c)
-    // Recheck after the external read: killing the feature stops a pending edit too.
     const context = c.get("organizationContext")
     if (!context) return c.json({ error: "feature_disabled" }, 404)
     const requests = [

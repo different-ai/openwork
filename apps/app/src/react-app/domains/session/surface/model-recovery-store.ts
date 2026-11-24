@@ -16,7 +16,6 @@ type RecoveryState = {
   clear: (chat: string) => void;
 };
 
-/** Ephemeral, scoped to account/workspace/chat; never changes a global model preference. */
 export const useModelRecoveryStore = create<RecoveryState>((set) => ({
   byChat: {},
   record: (chat, recovery) => set((state) => ({ byChat: { ...state.byChat, [chat]: { ...recovery, returned: false, dismissed: false } } })),

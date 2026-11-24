@@ -41,12 +41,6 @@ export async function hasOpenworkWorkspaceConfig(
   return openworkWorkspaceConfigStore.has(config, workspaceId);
 }
 
-/**
- * Seed the DB-backed openwork config for a workspace if no row exists yet.
- * Used at workspace creation and as the migrate-on-read landing spot for
- * legacy `.opencode/openwork.json` files. No-op when a row is already present,
- * so it never clobbers live provisioning state.
- */
 export async function seedOpenworkWorkspaceConfigIfEmpty(
   config: ServerConfig,
   workspaceId: string,

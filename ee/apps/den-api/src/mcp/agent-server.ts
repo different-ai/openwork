@@ -5,18 +5,8 @@ import type { ConnectToolView } from "./connect-tool-view.js"
 import type { RemoteSkillDescriptor } from "./marketplace-capabilities.js"
 import { serviceDirectoryInstructions, type ConnectService } from "./engine-tool-view.js"
 
-/** Which rules the instructions state: a tools/list view, or the full view as OpenWork's engine gets it (engine-tool-view.ts). */
 type InstructionView = ConnectToolView | "engine"
 
-/**
- * Connect steering routes requests; it does not repeat tool rules. With App
- * servers on, App requests go to the built-in build-an-app skill, which owns
- * the process, quality bar, and detailed source/tool-call contract.
- * create_app summarizes publication; search_capabilities owns search coverage.
- * With them off (DEN_APP_MCP_SERVERS_ENABLED=false or member-facing MCP
- * connections disabled), the previous Workflow-bound save_artifact_view
- * guidance applies unchanged.
- */
 function agentMcpDetailedInstructions(appServers: boolean, toolView: InstructionView = "search", toolShapes = false): string {
   const searchMatches = toolShapes
     ? "Every match is an MCP tool with an inputSchema; call execute_capability with its name and arguments matching that inputSchema (an OpenWork API operation takes path, query, and body inside arguments)."
@@ -49,16 +39,8 @@ function agentMcpDetailedInstructions(appServers: boolean, toolView: Instruction
   ].join("\n")
 }
 
-/**
- * How saving and finding Workflows sounds to a person who is not technical:
- * one offer with a name, one confirmation with a link, and no system words.
- * The short rule rides on execute_capability_script, where a procedure is
- * tested, because the instructions every client sees have no room left
- * (AGENT_MCP_INSTRUCTIONS_MAX_CHARS and the 2 KB Claude Code limit).
- */
 export const WORKFLOW_SAVE_INSTRUCTIONS = "When a repeatable task works, offer to save it as a Workflow under a short name; once the person agrees, save and reply \"Saved as <name>\" with its libraryUrl. Talk about workflows in plain words: never receipts, schemas, Plugins or modes."
 
-/** The fuller version in the guidance resource. */
 const WORKFLOW_CONVERSATION_GUIDANCE = [
   "Saving a Workflow is the person's choice, made once, in plain words. After a procedure succeeds and looks reusable (a brief, a report, a check they will want again), ask one short question such as \"Want me to save this as Morning brief so you can run it again or schedule it?\" Suggest a 2-4 word name in sentence case. Do not save before they agree, and do not ask about the name, Plugin, inputs or schemas separately.",
   "When they agree, call saveWorkflow (omit pluginId unless they named a Plugin) and reply in one line: \"Saved as <name>.\" then the libraryUrl it returns, and that they can run, schedule or share it from there. Saving again under the same name updates that workflow; say \"Updated <name>.\" in that case.",
@@ -68,22 +50,10 @@ const WORKFLOW_CONVERSATION_GUIDANCE = [
 
 export const AGENT_MCP_GUIDANCE_URI = "openwork://agent/guidance.md"
 
-/**
- * Claude Code shows a server's instructions only up to 4,096 characters (2,048
- * before v2.1.296) and drops the rest
- * (https://code.claude.com/docs/en/mcp#tool-search-for-mcp-server-authors).
- * The rules stay within the lower limit; the engine's service directory and
- * then the skill index get what is left.
- */
 export const AGENT_MCP_INSTRUCTIONS_MAX_CHARS = 4_096
 
 const CONNECTION_STATUS_INSTRUCTIONS = "connection_status shows the sign-in card for a service that is not ready; use it only for an explicit connect request or a failed connection. Relay the connection's exact action; a downstream failure does not mean OpenWork needs reconnecting. Never invent credentials or claim setup is ready."
 
-/**
- * What the full tool view does instead of searching for everything: capability
- * search stays for what has no tool. OpenWork's engine shows
- * `linear.list_issues` as `linear_list_issues` and finds tools itself.
- */
 function fullToolViewInstructions(engine: boolean): string[] {
   const separator = engine ? "_" : "."
   return [
@@ -114,60 +84,40 @@ function agentMcpInstructions(appServers: boolean, toolView: InstructionView = "
 export const AGENT_MCP_INSTRUCTIONS = agentMcpInstructions(true)
 export const LEGACY_AGENT_MCP_INSTRUCTIONS = agentMcpInstructions(false)
 
-/** Rolled out with `remote-session:status`; one rule, the details live in its description. */
 const REMOTE_SESSION_STATUS_INSTRUCTIONS = "To follow remote sessions, call remote-session:status with all of their commandIds or Cloud sessionIds and waitMs instead of calling remote-session:read repeatedly; read only for the transcript or the full answer."
 
-/** For callers who may write; who a Slack message comes from decides the tool. */
+const REMOTE_SESSION_EVENT_INSTRUCTIONS = "After remote-session create or send, follow the result's note: when this chat is watched, end your turn; otherwise subscribe to its event where your client supports MCP Events, or use status with waitMs."
+
 function slackSendAsBotInstructions(toolView: InstructionView = "search"): string {
   const tool = toolView === "full" ? "openwork-bot.slack_send_as_bot" : toolView === "engine" ? "openwork-bot_slack_send_as_bot" : "slack_send_as_bot"
   return `To notify the user or "send me" something on Slack (DM me, ping me, remind me, let me know; also in Automations and their instructions), use ${tool} with target me; slack_send_message posts as the user and does not notify them, so use it only to post as the user.`
 }
 
-/**
- * Rolled out with My agent (`workbotProactive`) for members who may write: chat is the main way to change Your
- * agent, and "why so quiet?" is answered from its check records.
- */
 export const MY_AGENT_INSTRUCTIONS = "To change what Your agent tells the user, use putMeAgent; to explain why it was quiet, read the user's agent checks."
 
-/**
- * The same rule with Your agent's brief (`workbotAgentBrief`): what it tells them is lines in their words, and how often
- * it checks is theirs to slow down.
- */
 export const MY_AGENT_BRIEF_INSTRUCTIONS = "To change what Your agent tells the user (\"also watch our Render bill\", \"never tell me about newsletters\": lines added to their brief), what it reads (\"also use Linear\", \"use my Granola for meeting context\": any connector they can use, by name in `sources`) or how often it checks, use putMeAgent; to explain why it was quiet or when it checks next, read the user's agent and its checks."
 
-/**
- * A full-view tools/list is the member's own, so clients may reuse it only for
- * the same authorization, and briefly: tools/list_changed reaches streams on
- * this replica only, so other replicas' clients refetch after this.
- */
 const FULL_TOOL_VIEW_CACHE_HINTS = { "tools/list": { ttlMs: 60_000, cacheScope: "private" as const } }
 
 export function createAgentMcpServer(options: {
   appServers?: boolean
   remoteSessionStatus?: boolean
-  /** slack_send_as_bot is available to this caller (feature on, a member, and the write scope). */
+  remoteSessionEvents?: boolean
   canSendSlackMessages?: boolean
-  /** My agent is on for this member and they may change it (`workbotProactive`, a member, and the write scope). */
   myAgent?: boolean
-  /** With `myAgent`: Your agent's brief and rhythm (`workbotAgentBrief`) are on for them. */
   myAgentBrief?: boolean
-  /** Which tools/list this request gets; see connect-tool-view.ts. */
   toolView?: ConnectToolView
-  /** Describe search matches as MCP tools (part of `connectStandardTools`). */
   toolShapes?: boolean
-  /** Advertise the MCP Skills Extension (SEP-2640); its handlers are registered by the caller. */
   skillsExtension?: boolean
   nativeEvents?: boolean
-  /** The member's skills, listed after the instructions as far as AGENT_MCP_INSTRUCTIONS_MAX_CHARS allows. */
   skills?: readonly RemoteSkillDescriptor[]
-  /** The full view is for OpenWork's own engine (`connectEngineTools`, engine-tool-view.ts). */
   engine?: boolean
-  /** The member's connected services, named before the skill index in the engine's instructions. */
   services?: readonly ConnectService[]
 } = {}): McpServer {
   const view: InstructionView = options.toolView === "full" && options.engine ? "engine" : options.toolView ?? "search"
   const rules = [agentMcpInstructions(options.appServers !== false, view, options.toolShapes),
     ...(options.remoteSessionStatus ? [REMOTE_SESSION_STATUS_INSTRUCTIONS] : []),
+    ...(options.remoteSessionStatus && options.remoteSessionEvents ? [REMOTE_SESSION_EVENT_INSTRUCTIONS] : []),
     ...(options.canSendSlackMessages ? [slackSendAsBotInstructions(view)] : []),
     ...(options.myAgent ? [options.myAgentBrief ? MY_AGENT_BRIEF_INSTRUCTIONS : MY_AGENT_INSTRUCTIONS] : [])].join("\n")
   const directory = view === "engine" && options.services

@@ -1,22 +1,10 @@
 import type { DeviceShareOptions } from "@openwork/types/den/device-provider-share";
 import { isCloudManagedProviderKey } from "../../connections/provider-auth/cloud-provider-config";
 import type { ProviderCredentialHealth } from "../../connections/provider-auth/credential-health";
-
-/**
- * Sharing a key saved on this device with the organization: what Settings › AI
- * Providers shows for each row and for an organization that has nothing shared
- * yet. Pure, so the rules are
- * unit-tested; Den decides who may share and what can be shared.
- */
+import type { SharedDeviceProviderArrival } from "../../connections/provider-auth/shared-provider-sync";
 
 export type ShareableDeviceProvider = { id: string; name: string; source?: "env" | "api" | "config" | "custom" };
 
-/**
- * Providers worth asking Den about: an API key this person pasted, which this
- * computer's server can read. Sign-ins (ChatGPT, Claude Code), environment
- * credentials and hand-written config are not one key someone can hand over,
- * and a key the provider already refused is not worth sharing.
- */
 export function deviceShareCandidates(
   providers: readonly ShareableDeviceProvider[],
   health: (providerId: string) => ProviderCredentialHealth,
@@ -25,12 +13,9 @@ export function deviceShareCandidates(
 }
 
 export type DeviceProviderShareRow =
-  /** One confirmation shares it. */
   | { state: "shareable" }
-  /** The organization already has this provider, under this name. */
   | { state: "shared"; sharedAs: string };
 
-/** What a device row shows, by provider id. A provider with no entry shows nothing about sharing. */
 export function deviceProviderShareRows(
   options: DeviceShareOptions | null | undefined,
   candidates: readonly ShareableDeviceProvider[],
@@ -45,14 +30,6 @@ export function deviceProviderShareRows(
   return rows;
 }
 
-/**
- * The organization section while nothing is shared yet (DESIGN C6: what
- * happened and the next action; P4: locked with who can change it).
- * - `share`: this person can share a key that is already on this device.
- * - `add`: they can share, but nothing here is one key; AI Gateway's own form is the way.
- * - `locked`: someone else manages providers.
- * - null: the feature is off or Den has not answered; the section keeps its plain empty line.
- */
 export type OrganizationShareEmptyState =
   | { kind: "share"; provider: { id: string; name: string } }
   | { kind: "add" }
@@ -70,22 +47,21 @@ export function organizationShareEmptyState(
   return first ? { kind: "share", provider: { id: first.id, name: first.name } } : { kind: "add" };
 }
 
-/** "Avery Owner manages AI providers for Acme." */
 export function shareLockedLine(managerName: string | null, organizationName: string): string {
   return `${managerName || "Your workspace owner"} manages AI providers for ${organizationName}.`;
 }
 
-/** What the person agrees to, as label and value rows (DESIGN P9: action, data, risk, reversibility). */
-export function shareConsentFacts(input: { providerName: string; organizationName: string }): Array<{ label: string; value: string }> {
+export function shareConsentFacts(input: { providerName: string; organizationName: string; guided?: boolean }): Array<{ label: string; value: string }> {
   return [
     { label: "Who can use it", value: `Everyone in ${input.organizationName}, including people you invite later` },
-    { label: "Your key", value: "Leaves this device and is stored encrypted in AI Gateway. Members never see it" },
+    { label: "Your key", value: input.guided
+      ? "A copy is stored encrypted in AI Gateway. Members never see it. Afterwards you choose whether it also stays on this device"
+      : "Leaves this device and is stored encrypted in AI Gateway. Members never see it" },
     { label: "Cost", value: `Their usage is billed to your ${input.providerName} account` },
     { label: "Changing it", value: "Limit who uses it, or remove it, in AI Gateway" },
   ];
 }
 
-/** A plain sentence for a share that did not happen. Server codes come from apps/server/src/device-provider-share.ts. */
 export function shareFailureMessage(error: unknown): string {
   const code = typeof error === "object" && error !== null && "code" in error && typeof error.code === "string" ? error.code : "";
   switch (code) {
@@ -105,12 +81,10 @@ export function shareFailureMessage(error: unknown): string {
   }
 }
 
-/** Den asks for a recent sign-in before AI Gateway changes. */
 export function shareNeedsVerification(error: unknown): boolean {
   return typeof error === "object" && error !== null && "code" in error && error.code === "verification_required";
 }
 
-/** A missing response is not proof that a share failed: stop retries until the person checks. */
 export function shareNeedsReview(error: unknown): boolean {
   const code = typeof error === "object" && error !== null && "code" in error ? error.code : null;
   return typeof code !== "string" || ![
@@ -118,4 +92,24 @@ export function shareNeedsReview(error: unknown): boolean {
     "feature_disabled", "no_session", "organization_mismatch", "account_mismatch",
     "share_failed", "den_unreachable", "verification_required", "invalid_provider",
   ].includes(code);
+}
+
+export type SharedProviderArrival = SharedDeviceProviderArrival;
+
+export function shareOutcomeFacts(input: { providerName: string; organizationName: string; arrival: SharedProviderArrival }): Array<{ label: string; value: string }> {
+  if (input.arrival.status === "pending") return [
+    { label: "Shared", value: `${input.organizationName} has ${input.providerName} in AI Gateway` },
+    { label: "This device", value: `Not listed under ${input.organizationName} here yet. Your key on this device still works` },
+  ];
+  return [
+    { label: "Shared as", value: `${input.arrival.name}, listed under From ${input.organizationName}` },
+    { label: "Use their copy", value: `Removes your key from this device. ${input.providerName} models run through ${input.organizationName}` },
+    { label: "Keep both", value: `Your key stays on this device, and ${input.providerName} models are listed twice` },
+  ];
+}
+
+export function shareOutcomeTitle(input: { providerName: string; organizationName: string; arrival: SharedProviderArrival }): string {
+  return input.arrival.status === "arrived"
+    ? `${input.providerName} is shared with ${input.organizationName}`
+    : `${input.providerName} is shared, but not on this device yet`;
 }

@@ -21,12 +21,6 @@ function encodeQueryValue(value: unknown) {
   return JSON.stringify(value)
 }
 
-/**
- * MCP clients sometimes pass `body` as a JSON-encoded string instead of an
- * object (the tool input schema accepts unknown). Forwarding that string
- * as-is double-encodes the payload and route validators reject it with
- * "expected object, received string". Parse such strings back into JSON.
- */
 export function normalizeToolBody(body: unknown): unknown {
   if (typeof body !== "string") {
     return body
@@ -42,11 +36,6 @@ export function normalizeToolBody(body: unknown): unknown {
   }
 }
 
-/**
- * MCP clients frequently pass `path`/`query` as a JSON-encoded string instead of an
- * object. Parse such strings back into a record so a stringified `{"q":"acme"}` does not
- * fail tool-input validation (the same hazard `normalizeToolBody` guards for the body).
- */
 export function normalizeToolRecord(value: unknown): Record<string, unknown> | undefined {
   const parsed = typeof value === "string" ? normalizeToolBody(value) : value
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
@@ -117,12 +106,6 @@ function buildInternalRequest(input: {
 export type McpOperationResult = {
   isError: boolean
   content: Awaited<ReturnType<typeof buildRestToolContent>>
-  /**
-   * The route's full JSON/text response before model-visible truncation.
-   * Present only when `includePayload` is set; Code Mode scripts use it so a
-   * script can read past the 20,000-character model-visible cap and decide what
-   * to return. Never forward this field to an MCP client.
-   */
   payload?: unknown
 }
 

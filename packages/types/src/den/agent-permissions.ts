@@ -31,18 +31,33 @@ import { z } from "zod";
  *
  * To add a permission: add a definition below and enforce it wherever that
  * action can happen. Only engine actions belong in agent-permission-engine.ts;
- * browser_upload and file_send are enforced by the OpenWork host and must
- * never enter the engine grammar.
+ * browser_upload, file_send, host_execution and sandbox_opt_out are enforced by the OpenWork
+ * host and must never enter the engine grammar.
+ *
+ * host_execution is the sandbox-only switch: blocking it means the agent's
+ * commands and files run in the local sandbox, and everything else that runs
+ * on the member's computer (apps, the built-in browser, local MCP servers) is
+ * refused by the host. A member's own setting can only be stricter.
  */
 
 export const AGENT_PERMISSION_DECISIONS = ["allow", "ask", "deny"] as const;
 export type AgentPermissionDecision = (typeof AGENT_PERMISSION_DECISIONS)[number];
 
 /** OpenCode permission actions, plus local MCP, computer use (with its files and clipboard) and app scripting enforced by OpenWork. */
-export const AGENT_PERMISSION_ACTIONS = ["shell", "edit", "webfetch", "websearch", "skill", "mcp", "external_directory", "computer", "computer_files", "computer_clipboard", "script", "browser_upload", "file_send"] as const;
+export const AGENT_PERMISSION_ACTIONS = ["shell", "edit", "webfetch", "websearch", "skill", "mcp", "external_directory", "computer", "computer_files", "computer_clipboard", "script", "browser_upload", "file_send", "host_execution", "sandbox_opt_out"] as const;
 
-export const AGENT_HARNESS_PERMISSION_KEYS = ["externalFolders", "computerUse", "computerFiles", "computerClipboard", "appScripting"] as const;
-export const AGENT_HARNESS_PERMISSION_ACTIONS = ["external_directory", "computer", "computer_files", "computer_clipboard", "script"] as const;
+export const AGENT_HARNESS_PERMISSION_KEYS = ["externalFolders", "computerUse", "computerFiles", "computerClipboard", "appScripting", "hostExecution", "sandboxOptOut"] as const;
+export const AGENT_HARNESS_PERMISSION_ACTIONS = ["external_directory", "computer", "computer_files", "computer_clipboard", "script", "host_execution", "sandbox_opt_out"] as const;
+
+/** Desktops that enforce host_execution say so; Den keeps it from the ones that do not. */
+export const AGENT_SANDBOX_ONLY_CAPABILITY_HEADER = "X-OpenWork-Sandbox-Only";
+/**
+ * Desktops that know both sandbox modes (Use and Force) say so. Without it Den
+ * keeps sandbox_opt_out from the desktop: published desktops reject an action
+ * they do not know, and the ones that sent only the sandbox-only header already
+ * offer the sandbox next to the usual tools whenever its rollout is on.
+ */
+export const AGENT_SANDBOX_MODES_CAPABILITY_HEADER = "X-OpenWork-Sandbox-Modes";
 
 /** What blocking computer use blocks too: everything else the agent does in apps. */
 export const AGENT_COMPUTER_USE_DEPENDENT_ACTIONS = ["computer_files", "computer_clipboard", "script"] as const;
@@ -63,16 +78,12 @@ export const agentPermissionSections: readonly { id: AgentPermissionSection; lab
 type AgentPermissionDefinitionEntry = {
   key: string;
   section: AgentPermissionSection;
-  /** What the agent does, as the row's label. */
   label: string;
-  /** One sentence, shown as the row's tooltip. */
   description: string;
   action: AgentPermissionAction;
-  /** `choice` is a picklist of decisions; `toggle` is on (allow) or off (deny). */
   control: "choice" | "toggle";
-  /** The patterns its lists hold, or null when it has no lists. */
+  toggleMeans?: "allows" | "requires";
   patterns: AgentPermissionPatternKind | null;
-  /** What one pattern names, for "Always block a command". */
   patternNoun: string | null;
 };
 
@@ -86,6 +97,28 @@ export const agentPermissionDefinitions = [
     control: "choice",
     patterns: "command",
     patternNoun: "command",
+  },
+  {
+    key: "sandboxOptOut",
+    section: "commands",
+    label: "Use OpenWork Sandbox",
+    description: "Members' agents get a separate, safe space on their computer for risky work. Their usual tools keep working.",
+    action: "sandbox_opt_out",
+    control: "toggle",
+    toggleMeans: "requires",
+    patterns: null,
+    patternNoun: null,
+  },
+  {
+    key: "hostExecution",
+    section: "commands",
+    label: "Force OpenWork Sandbox",
+    description: "Everything members' agents run stays inside the sandbox. It can only reach the project and authorized folders.",
+    action: "host_execution",
+    control: "toggle",
+    toggleMeans: "requires",
+    patterns: null,
+    patternNoun: null,
   },
   {
     key: "fileEdits",
@@ -263,22 +296,16 @@ export const agentPermissionPatternPlaceholders: Record<AgentPermissionPatternKi
   website: "docs.example.com",
 };
 
-// ---------------------------------------------------------------------------
-// Patterns
-// ---------------------------------------------------------------------------
-
 type WebsitePattern =
   | { kind: "any" }
   | { kind: "site"; scheme: "http" | "https" | null; host: string; subdomains: boolean; port: string | null; path: string };
 
-/** The pattern's scheme, null when it names none, or undefined when it is not a website's. */
 function websiteScheme(value: string | undefined): "http" | "https" | null | undefined {
   if (value === undefined) return null;
   const scheme = value.toLowerCase();
   return scheme === "http" || scheme === "https" ? scheme : undefined;
 }
 
-/** `example.com.` is the same site as `example.com`. */
 function withoutTrailingDot(host: string): string {
   return host.endsWith(".") ? host.slice(0, -1) : host;
 }
@@ -293,7 +320,6 @@ function parseWebsitePattern(input: string): WebsitePattern | null {
   const rest = schemeMatch ? value.slice(schemeMatch[0].length) : value;
   const slash = rest.indexOf("/");
   const authority = slash === -1 ? rest : rest.slice(0, slash);
-  // A trailing `/*` or `/` adds nothing: paths match as prefixes.
   let path = slash === -1 ? "" : rest.slice(slash);
   if (path.endsWith("/*")) path = path.slice(0, -2);
   while (path.endsWith("/")) path = path.slice(0, -1);
@@ -308,11 +334,9 @@ function parseWebsitePattern(input: string): WebsitePattern | null {
     return null;
   }
   if (parsed.pathname !== "/" || parsed.username || parsed.password) return null;
-  // `:08080` is port 8080, as an address would write it.
   const portNumber = /:(\d{1,5})$/.exec(hostAndPort)?.[1];
   const explicitPort = portNumber === undefined ? null : String(Number(portNumber));
   if (explicitPort !== null && Number(explicitPort) > 65535) return null;
-  // A port the pattern names, even its scheme's default, limits it to that port.
   return {
     kind: "site",
     scheme,
@@ -381,12 +405,6 @@ function globMatches(pattern: string, value: string): boolean {
   return patternIndex === pattern.length;
 }
 
-/**
- * A path as a server may route it: encoded letters, digits, `-._~` and
- * separators (%2F, %5C) decoded, other encodings in upper case, dot segments
- * resolved and repeated slashes collapsed, so `/priv%61te`, `/private%2Fsecret`
- * or `/a/%2E%2E/private` compare as `/private/...`.
- */
 function canonicalWebsitePath(path: string): string {
   const decoded = path
     .replace(/%([0-9a-f]{2})/gi, (encoded, hex: string) => {
@@ -394,7 +412,6 @@ function canonicalWebsitePath(path: string): string {
       if (char === "/" || char === "\\") return "/";
       return /^[A-Za-z0-9._~-]$/.test(char) ? char : encoded.toUpperCase();
     })
-    // Collapse repeated slashes first: a path starting with `//` would resolve as another host.
     .replace(/\/{2,}/g, "/");
   try {
     return new URL(decoded, "http://host").pathname;
@@ -442,11 +459,8 @@ export function websitePatternEngineResources(pattern: string, effect: AgentPerm
   if (!website) return [];
   if (website.kind === "any") return ["*"];
   const host = `${website.subdomains ? "*." : ""}${website.host}`;
-  // A pattern without a port matches every port: its allow resources cover
-  // addresses that name one, while its deny resources leave them to the plugin.
   const ports = website.port ? [`:${website.port}`] : effect === "deny" ? [""] : ["", ":*"];
   return (website.scheme ? [website.scheme] : ["https", "http"]).flatMap((scheme) => {
-    // An address leaves out its scheme's default port, so allowing it covers addresses without one.
     const defaultPort = website.port === (scheme === "https" ? "443" : "80");
     return (effect !== "deny" && defaultPort ? [...ports, ""] : ports).flatMap((port) => {
       const site = `${scheme}://${host}${port}${website.path}`;
@@ -454,10 +468,6 @@ export function websitePatternEngineResources(pattern: string, effect: AgentPerm
     });
   });
 }
-
-// ---------------------------------------------------------------------------
-// Settings: what an admin saves for everyone or for one team
-// ---------------------------------------------------------------------------
 
 export const agentPermissionSettingSchema = z
   .object({
@@ -528,6 +538,20 @@ export function withoutFileSendPermissions(settings: AgentPermissionSettings): A
   return visible;
 }
 
+/** Hide the sandbox-only setting from editors that do not know it, or while its rollout is off. */
+export function withoutHostExecutionPermissions(settings: AgentPermissionSettings): AgentPermissionSettings {
+  const visible = { ...settings };
+  delete visible.hostExecution;
+  return visible;
+}
+
+/** Hide the Use requirement from editors that do not know it. */
+export function withoutSandboxOptOutPermissions(settings: AgentPermissionSettings): AgentPermissionSettings {
+  const visible = { ...settings };
+  delete visible.sandboxOptOut;
+  return visible;
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
@@ -580,16 +604,11 @@ export function normalizeAgentPermissionSettings(value: unknown): AgentPermissio
   return settings;
 }
 
-// ---------------------------------------------------------------------------
-// Rules: what a member's apps receive and enforce
-// ---------------------------------------------------------------------------
-
 /** One delivered rule, checked strictly where it is enforced (Den sends them in `DenDesktopConfig.agentPermissions`). */
 export const agentPermissionRuleSchema = z.object({
   action: z.enum(AGENT_PERMISSION_ACTIONS),
   resource: z.string().min(1).max(500),
   effect: z.enum(AGENT_PERMISSION_DECISIONS),
-  /** Who set it: "Everyone" or a team's name. */
   source: z.string().min(1).max(255),
 });
 
@@ -610,10 +629,95 @@ export function withoutFileSendRules(rules: readonly AgentPermissionRule[]): Age
   return rules.filter((rule) => rule.action !== "file_send");
 }
 
+/** host_execution rules must not reach clients that cannot read them. */
+export function withoutHostExecutionRules(rules: readonly AgentPermissionRule[]): AgentPermissionRule[] {
+  return rules.filter((rule) => rule.action !== "host_execution");
+}
+
+/** sandbox_opt_out rules must not reach clients that cannot read them. */
+export function withoutSandboxOptOutRules(rules: readonly AgentPermissionRule[]): AgentPermissionRule[] {
+  return rules.filter((rule) => rule.action !== "sandbox_opt_out");
+}
+
+/**
+ * What the organization requires of the OpenWork Sandbox for this member.
+ * Force (host_execution blocked) implies Use. A member's own setting can only
+ * be stricter.
+ */
+export function resolveSandboxRequirement(rules: readonly AgentPermissionRule[] | undefined): {
+  use: boolean;
+  force: boolean;
+  useSource: string | null;
+  forceSource: string | null;
+} {
+  const forceRule = matchingAgentPermissionRule(rules, "host_execution", "*");
+  const useRule = matchingAgentPermissionRule(rules, "sandbox_opt_out", "*");
+  const force = forceRule !== null && forceRule.effect !== "allow";
+  const ownUse = useRule !== null && useRule.effect !== "allow";
+  return {
+    use: force || ownUse,
+    force,
+    useSource: ownUse ? useRule.source : force ? forceRule.source : null,
+    forceSource: force ? forceRule.source : null,
+  };
+}
+
+/** Whether the organization requires sandbox-only for this member. */
+export function agentPermissionRulesRequireSandbox(rules: readonly AgentPermissionRule[] | undefined): boolean {
+  return matchingAgentPermissionRule(rules, "host_execution", "*")?.effect === "deny";
+}
+
+export const AGENT_SANDBOX_ONLY_UPDATE_REQUIRED_SOURCE = "Sandbox-only policy requires an updated OpenWork app";
+
+const SANDBOX_ONLY_LEGACY_BLOCKED_ACTIONS = ["shell", "edit", "external_directory", "computer", "computer_files", "computer_clipboard", "script", "mcp", "webfetch"] as const satisfies readonly AgentPermissionAction[];
+
+/**
+ * The rules one desktop receives. Each capability is a request header the
+ * desktop sends; without it the desktop would reject or ignore that action.
+ * Dropping a rule must never loosen what the organization required, so a
+ * dropped requirement is replaced by blocks the desktop does understand.
+ * Whether the sandbox rollout is on plays no part: a stored requirement keeps
+ * blocking host execution when the rollout is turned off.
+ */
+export function agentPermissionRulesForClient(
+  rules: readonly AgentPermissionRule[],
+  supports: { browserUploads: boolean; fileSends: boolean; sandboxOnly: boolean; sandboxModes?: boolean },
+): AgentPermissionRule[] {
+  let delivered: AgentPermissionRule[] = [...rules];
+  if (!supports.sandboxModes) delivered = withoutSandboxOptOutRules(delivered);
+  if (!supports.browserUploads) delivered = withoutBrowserUploadRules(delivered);
+  if (!supports.fileSends) delivered = withoutFileSendRules(delivered);
+  if (!supports.sandboxOnly) delivered = withoutHostExecutionRules(delivered);
+  if (!supports.browserUploads && rules.some((rule) => rule.action === "browser_upload")) {
+    delivered.push({ action: "webfetch", resource: "*", effect: "deny", source: "Browser upload policy requires an updated OpenWork app" });
+  }
+  if (!supports.sandboxOnly && agentPermissionRulesRequireSandbox(rules)) {
+    for (const action of SANDBOX_ONLY_LEGACY_BLOCKED_ACTIONS) {
+      delivered.push({ action, resource: "*", effect: "deny", source: AGENT_SANDBOX_ONLY_UPDATE_REQUIRED_SOURCE });
+    }
+  }
+  return delivered;
+}
+
+/**
+ * The member's legacy execution setting merged with the
+ * organization's: the stricter wins. A member's Allow cannot undo the
+ * organization's Block, and a member's Block stands when the organization allows.
+ */
+export function resolveHostExecution(input: {
+  localAllow: boolean;
+  rules: readonly AgentPermissionRule[] | undefined;
+}): { decision: "allow" | "deny"; managed: boolean; source: string | null } {
+  const rule = matchingAgentPermissionRule(input.rules, "host_execution", "*");
+  const organization: AgentPermissionDecision = rule && rule.effect !== "allow" ? "deny" : "allow";
+  const decision = stricterAgentPermissionDecision(input.localAllow ? "allow" : "deny", organization);
+  const managed = organization === "deny";
+  return { decision: decision === "allow" ? "allow" : "deny", managed, source: managed ? rule?.source ?? null : null };
+}
+
 export const AGENT_PERMISSION_EVERYONE = "Everyone";
 
 export type AgentPermissionPolicySettings = {
-  /** "Everyone" or the team's name, shown wherever a rule decides. */
   source: string;
   settings: AgentPermissionSettings;
 };
@@ -627,7 +731,6 @@ export function stricterAgentPermissionDecision(left: AgentPermissionDecision, r
 export type ResolvedAgentPermission = {
   definition: AgentPermissionDefinition;
   decision: AgentPermissionDecision;
-  /** Who set the decision, or null when only the permission's default applies. */
   decisionSource: string | null;
   allow: { pattern: string; source: string }[];
   block: { pattern: string; source: string }[];
@@ -693,9 +796,6 @@ export function agentPermissionRules(resolved: readonly ResolvedAgentPermission[
   const rules = resolved.flatMap(({ definition, decision, decisionSource, allow, block }) => {
     const action = definition.action;
     const restricted = decision !== "allow" && decisionSource !== null;
-    // Unlike engine permissions, an explicit Allow of a member-decided
-    // permission is authority to skip the member's prompt. An unset Ask has
-    // no admin source or base rule.
     const memberDecides = actionMemberDecides(action);
     const explicit = decisionSource !== null && (restricted || memberDecides);
     return [
@@ -704,13 +804,10 @@ export function agentPermissionRules(resolved: readonly ResolvedAgentPermission[
       ...block.map(({ pattern, source }) => ({ action, resource: pattern, effect: "deny" as const, source })),
     ];
   });
-  // Any command can change files, so blocking file edits blocks commands too.
-  // Last, so no allowed command pattern reopens it.
   const edits = resolved.find((entry) => entry.definition.action === "edit");
   if (edits?.decision === "deny" && edits.decisionSource !== null) {
     rules.push({ action: "shell", resource: "*", effect: "deny", source: edits.decisionSource });
   }
-  // Files, the clipboard and app scripts all act in apps, so blocking computer use blocks them last.
   const computer = resolved.find((entry) => entry.definition.action === "computer");
   if (computer?.decision === "deny" && computer.decisionSource !== null) {
     for (const action of AGENT_COMPUTER_USE_DEPENDENT_ACTIONS) rules.push({ action, resource: "*", effect: "deny", source: computer.decisionSource });
@@ -754,7 +851,6 @@ export function matchingAgentPermissionRule(
 
 export type AgentPermissionDecisionResult = {
   effect: AgentPermissionDecision;
-  /** The rule that decided, or null when only the action's default applies. */
   rule: AgentPermissionRule | null;
   resource: string;
 };
@@ -788,6 +884,8 @@ const BLOCKED_SUBJECT: Record<AgentPermissionAction, (resource: string) => strin
   webfetch: (resource) => resource === "*" ? "opening websites" : `opening ${resource}`,
   browser_upload: (resource) => resource === "*" ? "uploading files to websites" : `uploading files to ${resource}`,
   file_send: () => "sending files to connected accounts",
+  host_execution: () => "running tools on this computer outside the sandbox",
+  sandbox_opt_out: () => "working without the OpenWork Sandbox",
   websearch: () => "searching the web",
   skill: (resource) => resource === "*" ? "local skills" : `the local skill "${resource}"`,
   mcp: (resource) => resource === "*" ? "local MCP servers" : `the local MCP server "${resource}"`,

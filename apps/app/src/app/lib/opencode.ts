@@ -44,11 +44,7 @@ export type OpencodeAuth = {
 const DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS = 10_000;
 const OAUTH_OPENCODE_REQUEST_TIMEOUT_MS = 5 * 60_000;
 const MCP_AUTH_OPENCODE_REQUEST_TIMEOUT_MS = 90_000;
-// Bound the acceptance handshake, not the task. A timeout leaves admission
-// unknown, so the transport must never automatically resend the prompt.
 const PROMPT_ASYNC_REQUEST_TIMEOUT_MS = 30_000;
-// The first native v2 write also opens its location and reconciles the org's
-// providers, connections and skills. This can exceed the ordinary read budget.
 const V2_SESSION_WRITE_TIMEOUT_MS = 60_000;
 const V2_SESSION_WRITE_URL_RE = /\/opencode2\/api\/session(?:\/[^/?#]+\/prompt)?\/?(?:[?#]|$)/;
 const SESSION_LONG_RUNNING_URL_RE = /\/session\/[^/?#]+\/(?:command|summarize)(?:[?#]|$)/;
@@ -70,9 +66,6 @@ export function isPromptAdmissionUnknown(error: unknown): error is PromptAdmissi
   return error instanceof PromptAdmissionUnknownError;
 }
 
-/** The settled server failure behind an uncertain admission: the parsed
- * response body when the server answered, otherwise the transport error or
- * undefined for a timeout. It explains the failure; it never proves rejection. */
 export function promptAdmissionFailure(error: PromptAdmissionUnknownError): unknown {
   let cause: unknown = error.cause;
   while (isPromptAdmissionUnknown(cause)) cause = cause.cause;
@@ -90,10 +83,8 @@ async function readSettledFailure(response: Response): Promise<unknown> {
 
 let lastMessageStamp = 0;
 
-/** Native sortable msg_ format. This identifies a submission, NOT an idempotency key. */
 export function createPromptMessageID(): string {
   lastMessageStamp = Math.max(Date.now() * 0x1000, lastMessageStamp + 1);
-  // Native stores the low six bytes of the timestamp/counter, then 14 random characters.
   return `msg_${lastMessageStamp.toString(16).padStart(12, "0").slice(-12)}${crypto.randomUUID().replaceAll("-", "").slice(0, 14)}`;
 }
 
@@ -174,7 +165,6 @@ async function postSessionRequest<T>(
   try {
     error = text ? JSON.parse(text) : text;
   } catch {
-    // ignore
   }
   if (options?.throwOnError) throw error;
   return { error, request, response };
@@ -228,7 +218,6 @@ async function fetchWithTimeout(
       try {
         controller?.abort(cancellable ? new Error("Request timed out.") : undefined);
       } catch {
-        // ignore
       }
       reject(new Error("Request timed out."));
     }, effectiveTimeoutMs);
@@ -236,8 +225,6 @@ async function fetchWithTimeout(
 
   try {
     const response = await Promise.race([fetchImpl(input, initWithSignal), timeoutPromise]);
-    // A proxy/server failure can happen after native admission. Only an
-    // explicit client rejection establishes that the prompt was not accepted.
     if (SESSION_PROMPT_ASYNC_URL_RE.test(getRequestUrl(input)) && (response.status >= 500 || response.status === 408)) {
       throw new PromptAdmissionUnknownError({ cause: await readSettledFailure(response) });
     }
@@ -276,15 +263,6 @@ const resolveAuthHeader = (auth?: OpencodeAuth) => {
   return encoded ? `Basic ${encoded}` : null;
 };
 
-/**
- * URLs whose response body we must stream chunk-by-chunk (SSE, long-running
- * message streams, event subscriptions). The Tauri HTTP plugin's
- * `fetch_read_body` IPC call blocks until the entire body is delivered, so
- * pointing it at an infinite stream freezes the webview's main thread for
- * minutes. For these endpoints we always use the webview's native fetch —
- * CORS is already wide open on the openwork/opencode stack, so there's no
- * reason to route them through the plugin.
- */
 const STREAM_URL_RE = /\/(event|stream)(\b|\/|$|\?)/;
 
 function requestIsStreaming(input: RequestInfo | URL, init?: RequestInit): boolean {
@@ -307,15 +285,11 @@ export const createDesktopFetch = (auth?: OpencodeAuth, finiteFetch: typeof glob
   };
 
   return (input: RequestInfo | URL, init?: RequestInit) => {
-    // Streams must go through the webview's native fetch to avoid the
-    // Tauri HTTP plugin's `fetch_read_body` hang on never-closing bodies.
     const shouldStream = requestIsStreaming(input, init);
     const permissionReply = isPermissionReplyRequest(input, init);
     const underlyingFetch = shouldStream
       ? nativeFetchRef()
       : permissionReply && finiteFetch === desktopFetch ? desktopFetchViaMain : finiteFetch;
-    // Streams should never be timed out at the transport layer; the caller
-    // aborts via AbortSignal when the subscription unmounts.
     const timeoutMs = shouldStream ? 0 : DEFAULT_OPENCODE_REQUEST_TIMEOUT_MS;
 
     if (permissionReply && !(input instanceof Request)) input = new Request(input, init);
@@ -324,8 +298,6 @@ export const createDesktopFetch = (auth?: OpencodeAuth, finiteFetch: typeof glob
       const headers = new Headers(requestInit?.headers ?? input.headers);
       addAuth(headers);
       const request = new Request(input, { ...requestInit, headers });
-      // Keep an explicit null override even in runtimes whose Request clone
-      // retains the original signal when constructed with signal: null.
       return fetchWithTimeout(underlyingFetch, request, { signal: requestInit?.signal }, timeoutMs, permissionReply);
     }
 
@@ -390,8 +362,6 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
   sessionOverrides.promptAsync = async (parameters: PromptAsyncParameters, options?: { throwOnError?: boolean }) => {
     const { sessionID, directory: requestDirectory, ...body } = parameters;
     try {
-      // Keep the tagged transport failure intact instead of serializing it
-      // through the SDK's error result. Native still receives prompt_async.
       return await withAdmissionDeadline(PROMPT_ASYNC_REQUEST_TIMEOUT_MS, (signal) => postSessionRequest(fetchImpl, baseUrl, `/session/${encodeURIComponent(sessionID)}/prompt_async`, body, {
         headers: Object.keys(headers).length ? headers : undefined,
         directory: requestDirectory ?? directory,
@@ -422,7 +392,6 @@ export function createClient(baseUrl: string, directory?: string, auth?: Opencod
   return client;
 }
 
-/** Includes body consumption: receiving headers alone cannot release a send lock. */
 async function withAdmissionDeadline<T>(timeoutMs: number, operation: (signal: AbortSignal) => Promise<T>, timeoutError: () => Error): Promise<T> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
@@ -444,16 +413,11 @@ export async function hasAcceptedPromptMessage(client: ReturnType<typeof createC
     (signal) => client.session.message({ sessionID, messageID }, { signal }),
     () => new Error("Acceptance check timed out. The message is still held."));
   const message = result.data?.info;
-  // Absence (including a transient 404) is not proof of rejection.
   return message?.id === messageID && message.sessionID === sessionID && message.role === "user";
 }
 
 export type PromptAdmission = "accepted" | "absent" | "unknown";
 
-/** Reconcile an uncertain prompt against native. Only the exact user message
- * proves acceptance. `absent` is authoritative the other way: native listed
- * the idle conversation without the message, so the settled POST is not going
- * to admit it later. A failed or partial read stays unknown and keeps the hold. */
 export async function readPromptAdmission(client: ReturnType<typeof createClient>, sessionID: string, messageID: string): Promise<PromptAdmission> {
   if (await hasAcceptedPromptMessage(client, sessionID, messageID)) return "accepted";
   const [messages, statuses] = await Promise.all([

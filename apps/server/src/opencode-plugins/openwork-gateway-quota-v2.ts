@@ -42,9 +42,6 @@ export default {
     }
     if (context.options.liveProviders === true && context.provider) {
       const provider = context.provider;
-      // The live source changes independently of watched config. Resolve its
-      // current native settings at request time instead of retaining another
-      // inventory copy or reintroducing static gateway config rows.
       registrations.push(await context.session.hook("http.response", async event => {
         const id = event.model.providerID;
         if (!/^ipr_[a-z0-9]+$/.test(id) || Object.hasOwn(providers, id)) return;

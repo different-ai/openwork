@@ -1,32 +1,15 @@
 import { createHmac } from "node:crypto"
 
-/**
- * Rate limits for the email sign-up, sign-in and code endpoints.
- *
- * Better Auth's own limiter counts only by address, so everyone behind one
- * office or school router shared five sign-ups an hour. These endpoints are
- * limited here instead, per person first:
- * - a tight bucket per email address (what an attacker would target);
- * - a generous ceiling per address, which still bounds one source spraying
- *   many addresses but lets a whole team sign up together;
- * - a sign-up from a valid invitation link was approved by an admin, so it
- *   is counted against that invitation instead of the shared address.
- *
- * Failed passwords are additionally locked out per email (auth-protection.ts).
- */
-
 export type AuthRateLimitPolicy = {
   windowMs: number
   emailMax: number
   ipMax: number
-  /** Sign-ups from a valid invitation use this bucket instead of the address ceiling. */
   invitationMax?: number
 }
 
 const MINUTE_MS = 60_000
 const HOUR_MS = 60 * MINUTE_MS
 
-/** Keyed by the Better Auth path (without the `/api/auth` prefix); POST only. */
 export const AUTH_RATE_LIMIT_POLICIES: Readonly<Record<string, AuthRateLimitPolicy>> = {
   "/sign-up/email": { windowMs: HOUR_MS, emailMax: 5, ipMax: 60, invitationMax: 10 },
   "/sign-in/email": { windowMs: 5 * MINUTE_MS, emailMax: 10, ipMax: 100 },
@@ -35,7 +18,6 @@ export const AUTH_RATE_LIMIT_POLICIES: Readonly<Record<string, AuthRateLimitPoli
   "/request-password-reset": { windowMs: HOUR_MS, emailMax: 5, ipMax: 30 },
 }
 
-/** Paths whose Better Auth address-only limit is replaced by the policies above. */
 export const DEN_LIMITED_BETTER_AUTH_PATHS = Object.keys(AUTH_RATE_LIMIT_POLICIES)
 
 export type AuthRateLimitBucket = "email" | "ip" | "invitation"
@@ -44,9 +26,7 @@ export type AuthRateLimitInput = {
   path: string
   email: string | null
   clientIpKey: string
-  /** The invitation id or token of a sign-up already checked to be pending and addressed to this email. */
   invitation: string | null
-  /** Server secret the bucket keys are derived with. */
   keySecret: string
 }
 
@@ -54,7 +34,6 @@ export type AuthRateLimitCheck = (key: string, maxRequests: number, windowMs: nu
 
 export type AuthRateLimitResult = { bucket: AuthRateLimitBucket; retryAfterSeconds: number }
 
-/** Keyed so stored bucket keys cannot be matched against a list of emails or invitation tokens. */
 function bucketId(keySecret: string, value: string) {
   return createHmac("sha256", keySecret).update(value).digest("base64url").slice(0, 32)
 }

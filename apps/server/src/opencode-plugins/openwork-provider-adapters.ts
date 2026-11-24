@@ -12,11 +12,6 @@ import type {
 } from "@openwork/types/openwork-provider";
 import { z } from "zod";
 
-/**
- * An affordance's argument object. Keys it does not define are refused with
- * the valid names, so a wrong name (`limit` for `count`) fails loudly instead
- * of being dropped and silently falling back to a default.
- */
 export function strictArgsSchema<Shape extends z.ZodRawShape>(shape: Shape) {
   const valid = Object.keys(shape).join(", ");
   return z.strictObject(shape, {
@@ -26,7 +21,6 @@ export function strictArgsSchema<Shape extends z.ZodRawShape>(shape: Shape) {
   });
 }
 
-// Epoch milliseconds or an ISO-8601 string; resolve with sessionTimestampMs.
 const sessionTimestampArgSchema = z.union([z.number().int().nonnegative(), z.string().trim().min(1)])
   .refine((value) => typeof value === "number" || Number.isFinite(Date.parse(value)), {
     message: "Expected epoch milliseconds or an ISO-8601 date string.",
@@ -77,7 +71,6 @@ export const sessionSendArgsSchema = strictArgsSchema({
   reveal: z.boolean().optional().describe("true to also open that session in the person's focused pane after sending. Defaults to false: nothing on screen changes."),
 });
 
-/** The engine permission a person answers before the agent answers another session's question for them. */
 export const SESSION_QUESTION_ANSWER_PERMISSION = "openwork_session_question_answer";
 
 const sessionQuestionListArgsShape = {
@@ -87,7 +80,6 @@ const sessionQuestionListArgsShape = {
 
 export const sessionQuestionListArgsSchema = strictArgsSchema(sessionQuestionListArgsShape);
 
-// Built from the shape, not extended: an extended schema keeps the list of valid names it was made with.
 export const sessionQuestionAnswerArgsSchema = strictArgsSchema({
   ...sessionQuestionListArgsShape,
   requestId: z.string().trim().min(1).describe("Pending question id from session.question.list."),
@@ -95,7 +87,6 @@ export const sessionQuestionAnswerArgsSchema = strictArgsSchema({
     .describe("One array per question, in order: the chosen option labels, or the person's own text where the question allows it."),
 });
 
-/** Argument schemas by affordance id; sessionContribution must advertise exactly these keys. */
 export const sessionAffordanceArgsSchemas = {
   "models.list": openworkModelsListArgsSchema,
   "session.search": sessionSearchArgsSchema,
@@ -350,7 +341,7 @@ function automationContribution(): OpenworkFeatureContribution {
         arguments: [
           argument("name", "string", true, "Short Automation name, at most 120 characters."),
           argument("instructions", "string", true, "Self-contained instructions the Automation runs on its schedule."),
-          argument("schedule", "object", true, "Schedule with an IANA timezone: once {at}, daily {hour, minute}, weekly {daysOfWeek, hour, minute}, or interval {everyHours 1-24, optional daysOfWeek (0=Sunday), startHour, endHour} for every few hours on the hour, e.g. every 3 hours from 9 to 18, or calendar {edge start|end, offsetMinutes -120..120, rule {withExternalAttendees, titleIncludes}} to run around each meeting on the person's Google Calendar (Cloud only). Interval and calendar need their organization features."),
+          argument("schedule", "object", true, "Schedule with a kind and an IANA timezone: once {at: epoch milliseconds, or an ISO date-time such as 2026-01-15T09:00 read in that timezone}, daily {hour, minute}, weekly {daysOfWeek, hour, minute}, or interval {everyHours 1-24, optional daysOfWeek (0=Sunday), startHour, endHour} for every few hours on the hour, e.g. every 3 hours from 9 to 18, or calendar {edge start|end, offsetMinutes -120..120, rule {withExternalAttendees, titleIncludes}} to run around each meeting on the person's Google Calendar (Cloud only). Interval and calendar need their organization features."),
           argument("model", "object", false, "Optional providerId and modelId. Omit to use the person's default."),
           argument("executionTarget", "string", false, "Optional suggested place to run: \"cloud\" (headless in OpenWork Cloud, runs while this computer is off) or \"desktop\" (this computer, only while OpenWork is open). The person can change it on the card. Omit to default to this desktop."),
         ],
@@ -435,8 +426,6 @@ function connectContribution(
           argument("name", "string", false, "Exact capability ref returned by Connect search or remote skill guidance."),
           argument("arguments", "object", false, "Arguments matching the search match's inputSchema."),
           argument("schemaDigest", "string", false, "Optional schema digest from the search match."),
-          // Den keeps accepting these older inputs for a while, for callers
-          // and older Den builds from before `arguments`.
           argument("path", "object", false, "Older form of arguments.path."),
           argument("query", "object", false, "Older form of arguments.query."),
           argument("body", "object", false, "Older form of arguments."),

@@ -9,11 +9,8 @@ import {
 export type WorkspaceAvatarProps = {
   workspaceId: string;
   label: string;
-  /** Optional custom picture; falls back to a solid color marker when absent. */
   imageUrl?: string | null;
-  /** Optional preferred solid color; falls back to hashed autoset color. */
   color?: string | null;
-  /** CSS size class, e.g. "size-4". Defaults to "size-4". */
   sizeClass?: string;
 };
 

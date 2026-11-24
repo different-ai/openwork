@@ -12,12 +12,6 @@ import { DenSegmented } from "../../../app/(den)/_components/ui/segmented";
 import { requestAdmin, sendAdmin } from "../admin-request";
 import { describeFeatureChange, parseFeatureChange, type AdminFeatureChange } from "../feature-change";
 
-/**
- * Deployment-wide state of every feature in packages/features/src/registry.ts:
- * on or off for everyone, and the kill switch. Per-organization overrides stay
- * on the organization's Features tab.
- */
-
 type AdminFeature = {
   key: string;
   label: string;
@@ -64,14 +58,12 @@ function parseFeature(value: unknown): AdminFeature | null {
   };
 }
 
-/** "2026-10-23" → "23 Oct 2026", read as a calendar day (no time zone shift). */
 function formatAddedDay(added: string): string {
   return new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${added}T00:00:00Z`));
 }
 
 type FeatureGroup = { key: string; label: string; description: string; features: AdminFeature[] };
 
-/** Registry category order; anything an older or newer server sends that this build does not know goes last. */
 function groupFeatures(features: AdminFeature[]): FeatureGroup[] {
   const known: FeatureGroup[] = FEATURE_CATEGORY_KEYS.map((key) => ({ key, label: FEATURE_CATEGORIES[key].label, description: FEATURE_CATEGORIES[key].description, features: [] }));
   const other: FeatureGroup = { key: "other", label: "Other", description: "", features: [] };
@@ -91,7 +83,6 @@ function parseReport(payload: unknown): FeaturesReport | null {
   };
 }
 
-/** One state line per feature (DESIGN.md P1). */
 function rolloutState(feature: AdminFeature): string {
   if (!feature.available) return "Not part of this deployment";
   if (feature.killed) return "Turned off everywhere";
@@ -165,7 +156,6 @@ function FeatureRow({ feature, onChange }: { feature: AdminFeature; onChange: (n
             if (enabled !== feature.enabled) void save({ enabled });
           }}
         />
-        {/* Fixed-width slot so rows stay aligned whichever button shows. */}
         <div className="flex w-40 justify-end">
           {feature.killed ? (
             <DenButton type="button" variant="secondary" size="sm" data-testid={`admin-feature-restore-${feature.key}`} disabled={controlsDisabled} onClick={() => void save({ killed: false })}>
@@ -179,7 +169,6 @@ function FeatureRow({ feature, onChange }: { feature: AdminFeature; onChange: (n
               data-testid={`admin-feature-kill-${feature.key}`}
               disabled={controlsDisabled}
               onClick={() => {
-                // Turning a feature off for everyone, overrides included, is the one destructive action here (DESIGN.md P8).
                 if (window.confirm(`Turn off ${feature.label} for everyone on this deployment? Organization overrides and deployment locks are ignored until you restore it.`)) {
                   void save({ killed: true });
                 }

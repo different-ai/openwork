@@ -13,7 +13,6 @@ import { createOAuthAppDraft, validateOAuthAppDraft, withOAuthAppManualDraft, ty
 
 export { createOAuthAppDraft, type OAuthAppDraft } from "./oauth-app-draft";
 
-/** Step two's one field for a server that takes a key. */
 export function ApiKeyFields({ name, saving, error, onSave }: {
   name: string;
   saving: boolean;
@@ -50,7 +49,6 @@ export function ApiKeyFields({ name, saving, error, onSave }: {
   );
 }
 
-/** Step two's fields for a server that only accepts a pre-registered OAuth app. */
 export function OAuthAppFields({ secretRequired, saving, error, onSave, url, discovery, formId, hideSubmit = false, draft, onDraftChange, setupValidation = false, callbackUrl }: {
   url?: string;
   discovery?: McpRequirementsDiscovery | null;
@@ -58,16 +56,11 @@ export function OAuthAppFields({ secretRequired, saving, error, onSave, url, dis
   saving: boolean;
   error: string | null;
   onSave: (input: OAuthAppInput) => void;
-  /** Supply both props to retain the sole draft in the parent across setup choices. */
   draft?: OAuthAppDraft;
   onDraftChange?: (draft: OAuthAppDraft) => void;
-  /** Custom connector setup validates a reviewed draft; presets retain their existing form. */
   setupValidation?: boolean;
-  /** Exact callback supplied by a backend preset or verified runtime, never inferred here. Shown with Copy so the admin can register it in their OAuth app. */
   callbackUrl?: string;
-  /** Lets a page footer button submit these fields. */
   formId?: string;
-  /** The page footer carries the submit action instead. */
   hideSubmit?: boolean;
 }) {
   const [localDraft, setLocalDraft] = useState(() => draft && onDraftChange ? null : createOAuthAppDraft());
@@ -164,7 +157,6 @@ export function OAuthAppFields({ secretRequired, saving, error, onSave, url, dis
   );
 }
 
-/** Rarely changed key transport; collapsed so the default path is only the decision that matters. */
 export function ApiKeySchemeAdvanced({ value, onChange, disabled, testId }: {
   value: ExternalMcpApiKeyAuthScheme;
   onChange: (value: ExternalMcpApiKeyAuthScheme) => void;

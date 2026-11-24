@@ -4,7 +4,6 @@ import { useExampleStep } from "../use-example-step";
 import { ExampleAvatar, ExampleCaption, ExampleProviderMarks, ExampleRow, ExampleRows } from "./example-parts";
 import { usersTeamsExampleRows } from "./users-teams-example-data";
 
-/** The people and teams directory: who can use which models, their limit and spend. */
 export function UsersTeamsExample() {
   const step = useExampleStep(usersTeamsExampleRows.length, 3000);
   return (

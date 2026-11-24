@@ -453,7 +453,6 @@ export function DebugView(props: DebugViewProps) {
   return (
     <>
     <section className="space-y-6 max-w-3xl w-full">
-      {/* Section: Runtime overview */}
       <div className={cardClass}>
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -512,7 +511,6 @@ export function DebugView(props: DebugViewProps) {
         error={props.runtimeConfigStatusError}
       />
 
-      {/* Section: Services */}
       <div className={cardClass}>
         <div className={sectionHeaderClass}>
           <div className={sectionTitleClass}>{t("settings.services_section_title")}</div>
@@ -611,7 +609,6 @@ export function DebugView(props: DebugViewProps) {
         </div>
       ) : null}
 
-      {/* Section: Diagnostics */}
       <div className={cardClass}>
         <div className={sectionHeaderClass}>
           <div className={sectionTitleClass}>{t("settings.openwork_diagnostics_title")}</div>
@@ -720,7 +717,6 @@ export function DebugView(props: DebugViewProps) {
         </div>
       </div>
 
-      {/* Section: Activity */}
       <div className={cardClass}>
         <div className={sectionHeaderClass}>
           <div className={sectionTitleClass}>{t("settings.activity_section_title")}</div>
@@ -801,7 +797,6 @@ export function DebugView(props: DebugViewProps) {
         </div>
       </div>
 
-      {/* Section: Developer log stream */}
       <div className={cardClass}>
         <div className="flex items-start justify-between gap-3">
           <div>
@@ -829,7 +824,6 @@ export function DebugView(props: DebugViewProps) {
         {props.developerLogStatus ? <StatusBanner tone="info" message={props.developerLogStatus} /> : null}
       </div>
 
-      {/* Section: Tools */}
       <div className={cardClass}>
         <div className={sectionHeaderClass}>
           <div className={sectionTitleClass}>{t("settings.tools_section_title")}</div>
@@ -951,7 +945,6 @@ export function DebugView(props: DebugViewProps) {
         </div>
       </div>
 
-      {/* Section: Reset & recovery */}
       <div className={cardClass}>
         <div className={sectionHeaderClass}>
           <div className={sectionTitleClass}>{t("settings.recovery_section_title")}</div>
@@ -994,7 +987,6 @@ export function DebugView(props: DebugViewProps) {
         {props.resetStatus ? <StatusBanner tone="info" message={props.resetStatus} /> : null}
       </div>
 
-      {/* Section: Electron alpha migration (debug only) */}
       {props.electronMigrationAvailable ? (
         <div className={cardClass}>
           <div className="flex items-start justify-between gap-3">
@@ -1112,7 +1104,6 @@ export function DebugView(props: DebugViewProps) {
         </div>
       ) : null}
 
-      {/* Section: Electron alpha updater (debug only) */}
       {props.electronAlphaUpdaterAvailable ? (
         <div className={cardClass}>
           <div className="flex items-start justify-between gap-3">
@@ -1165,7 +1156,6 @@ export function DebugView(props: DebugViewProps) {
         </div>
       ) : null}
 
-      {/* Section: Danger zone */}
       {isDesktop ? (
         <div className="space-y-3 rounded-2xl border border-red-7/30 bg-red-3/10 p-5">
           <div className={sectionHeaderClass}>

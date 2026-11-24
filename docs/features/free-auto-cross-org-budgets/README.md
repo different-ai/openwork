@@ -1,0 +1,9 @@
+# Cross-organization free model budgets
+
+People can create organizations and invite teammates as usual. All organizations founded by one account share the configured organization weekly allowance. All signed-in accounts using one desktop share the configured personal weekly allowance. Each account also has its own weekly cap across computers. Coworkers sharing a computer draw from the same desktop allowance.
+
+Apply the database migration, upgrade Den and every gateway, and distribute a desktop release that supports signed free requests. Turn this feature on for everyone in the deployment. It requires desktop proof and reserves signed-in spend against the shared budgets on every request, including in new organizations. Turning it off restores the other budget and desktop rollout settings.
+
+The migration attributes existing organizations to their earliest recorded human member when the membership identifies a founder. Ownership transfers keep the original attribution. A provisional workspace receives a founder when a person claims ownership. An organization missing a reliable founder can still use paid or configured models. If old Den replicas created organizations during the upgrade, repeat the migration's idempotent founder backfill after upgrading them.
+
+The founder pool counts this week's existing usage in attributed organizations. Desktop accounting begins with requests under this rollout. The gateway stores a keyed hash from the verified desktop session. Keep the accounting identity key stable during the budget window. Distinct founding accounts on distinct computers can qualify independently. The deployment-wide ceiling bounds signed-in spend across those pools.

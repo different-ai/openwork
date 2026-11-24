@@ -166,8 +166,8 @@ resource "google_cloud_run_v2_service" "api" {
 
     containers {
       image   = local.den_api_image
-      command = var.managed_legacy ? ["node"] : null
-      args    = var.managed_legacy ? ["/app/ee/apps/den-api/dist/main.js"] : null
+      command = var.ai_gateway_enabled || var.managed_legacy ? ["node"] : null
+      args    = var.ai_gateway_enabled ? ["--input-type=module", "-e", local.ai_gateway_entrypoint, "/app/ee/apps/den-api/dist/main.js"] : (var.managed_legacy ? ["/app/ee/apps/den-api/dist/main.js"] : null)
 
       ports {
         container_port = 8788

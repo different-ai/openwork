@@ -32,7 +32,6 @@ export function recordPaletteRecent(
   try {
     storage.setItem(COMMAND_PALETTE_RECENTS_KEY, JSON.stringify(next));
   } catch {
-    // A blocked or full localStorage should not prevent running the action.
   }
   return next;
 }

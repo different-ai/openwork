@@ -25,10 +25,8 @@ type Named = { id: string; label: string };
 type Props = {
   destination: NewSessionDestination;
   workspaces: Named[];
-  /** Groups of every offered workspace, so one pick can choose both. */
   groupsByWorkspace: Record<string, Named[]>;
   hasDraft: boolean;
-  /** The draft holds workspace files, so it may only change group within its workspace. */
   workspaceChangeBlocked: boolean;
   disabled: boolean;
   onChange: (destination: NewSessionDestination) => void;
@@ -37,7 +35,6 @@ type Props = {
 
 const FIND_LABEL = "Find a workspace or group";
 
-/** Quiet context beside the model picker; no destination UI until there is a choice to make. */
 export function NewTaskDestinationMenu(props: Props) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -87,7 +84,6 @@ export function NewTaskDestinationMenu(props: Props) {
           initialFocus={inputRef}
           className="flex max-h-[min(var(--available-height),24rem)] w-72 max-w-[calc(100vw-2rem)] flex-col gap-0 overflow-hidden rounded-[14px] bg-popover p-0 shadow-[var(--dls-shell-shadow)] ring-0 data-open:animate-none data-closed:animate-none dark:ring-0"
         >
-          {/* Without `items`, Base UI keeps its old highlight index when rows filter. */}
           <Command mode="none" items={options.map((option) => option.value)} value={query} onValueChange={(value) => setQuery(value)}>
             <div className="flex h-11 shrink-0 items-center border-b border-gray-3 px-1.5">
               <CommandInput
@@ -162,7 +158,6 @@ function DestinationWorkspaceAvatar({ workspaceId, label }: { workspaceId: strin
   );
 }
 
-/** Only a draft to discard and nowhere else to send it. */
 function DraftActionsMenu({ disabled, onDiscard }: { disabled: boolean; onDiscard: () => void }) {
   return (
     <span className="min-w-0 max-w-full text-muted-foreground">

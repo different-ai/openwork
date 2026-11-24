@@ -43,7 +43,6 @@ export type AutomationModelSelection = {
 }
 
 export type ResolvedAutomationModel = AutomationModelSelection & {
-  /** `desktop_runtime`: a provider only the executing desktop has; that runtime checks it before each run. */
   accessKind: "free" | "openwork_managed" | "authorized_custom" | "cloud_default" | "desktop_runtime"
   providerRecordId: string | null
   providerName: string
@@ -54,7 +53,6 @@ export type AutomationAuthorityFailure = {
   ok: false
   code: "owner_membership_lost" | "model_access_lost" | "provider_unavailable"
   message: string
-  /** Internal rollout classification; never substitutes for checking existing grants. */
   reason?: "provider_model_disabled"
 }
 
@@ -155,7 +153,6 @@ function resolvedProviderModel(input: {
 export type AutomationModelAccessInput = {
   organizationId: string
   ownerMemberId: string
-  /** Where this check's run executes; a desktop can use providers Den has no record of. */
   executionTarget: AutomationExecutionTarget
 } & AutomationModelSelection
 
@@ -169,8 +166,6 @@ export async function resolveAutomationModelAccessWithStore(
   }
 
   if (input.providerId === AUTOMATION_CLOUD_DEFAULT_MODEL.providerId) {
-    // Placement (cloud, headless runtime) is enforced where the Automation is
-    // created or changed; here an active owner is all the cloud default needs.
     if (input.modelId !== AUTOMATION_CLOUD_DEFAULT_MODEL.modelId) {
       return { ok: false, code: "model_access_lost", message: "The selected cloud model is not available for Automations." }
     }
@@ -224,10 +219,6 @@ export async function resolveAutomationModelAccessWithStore(
   }
 
   if (!isDenAuthorizedAutomationProvider(input.providerId)) {
-    // Desktop Automations run on the owner's desktop with the providers it has
-    // (connected there, or AI Gateway providers synced for the owner). Den holds
-    // no record of them, so the desktop runtime refuses a model it lacks before
-    // the run starts. The cloud has none of them.
     if (input.executionTarget !== "desktop") {
       return { ok: false, code: "provider_unavailable", message: "This model is only available on a desktop. Choose a model your organization provides to run this Automation in the cloud." }
     }
@@ -268,11 +259,6 @@ export async function isActiveAutomationOwnerWithStore(
   return Boolean(await store.findActiveMember(input))
 }
 
-/**
- * Runner tokens outlive membership changes (12h HMAC credentials with no
- * server-side state), so every runner request re-checks that the owner is
- * still an active member before honoring the token.
- */
 export function isActiveAutomationOwner(
   input: { organizationId: string; ownerMemberId: string },
 ): Promise<boolean> {

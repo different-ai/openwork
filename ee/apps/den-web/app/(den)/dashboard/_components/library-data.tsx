@@ -59,7 +59,6 @@ export type LibraryWorkflowItem = {
   state: "ready" | "needs_signin" | "needs_admin_setup";
   resultState: "never_run" | "fresh" | "stale" | "needs_attention";
   latestSuccessfulAt: string | null;
-  /** Why the latest run failed, when resultState is needs_attention. Older servers omit it. */
   failureReason: string | null;
   viewState: "default" | "custom_active" | "build_failed" | "retired";
   activeViewTitle: string | null;
@@ -296,7 +295,6 @@ export function useLibrary() {
   return useQuery(libraryQueryOptions());
 }
 
-/** Counts what waits on the viewer's sign-in, for the quiet sidebar dot. */
 export function useLibraryNeedsSignInCount(enabled: boolean): number {
   const library = useQuery({ ...libraryQueryOptions(), enabled });
   return (library.data ?? []).filter(needsViewerSignIn).length;

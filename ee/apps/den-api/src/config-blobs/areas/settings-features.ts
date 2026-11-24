@@ -1,31 +1,3 @@
-/**
- * Config-blob area `settings.features`: the feature flags that are on for the
- * organization.
- *
- * - One item per feature that is EFFECTIVELY ON for the organization as a
- *   whole: `resolveFeature` (packages/features/src/resolve.ts) with this
- *   deployment, its kill switches and operator locks, the stored rollouts and
- *   the organization's overrides, and no member override. So a feature is
- *   exported whether it is on for everyone, locked on by the operator or
- *   turned on for this organization in /admin. Features that are off are
- *   never exported; member overrides never are.
- * - The item id is the feature key (`nativeDictation`), its name the registry
- *   label, its spec `{ enabled: true }`: the "key: true" of the request. Keys
- *   are lowerCamelCase, which the item `key` pattern rejects, so the key is
- *   the id (matched by id on any instance) and the natural key.
- * - An import only ever turns features ON, as an organization override set
- *   through `updateOrganizationFeatureOverrides`, the function /admin and
- *   `den_set_org_capability` use (feature_change records the applying user).
- *   Only a platform admin (the /v1/admin check) may: anyone else gets a block
- *   at plan time, so the admin can skip these and apply the rest.
- * - Never turned off: deletes are refused (`protectedFromDelete`), and the
- *   spec is constant, so there is nothing to update.
- * - Skipped at plan time: a key this server doesn't know (or has retired), a
- *   feature not part of this deployment, one whose kill switch is on, one the
- *   operator locked off. `permanent` features are treated like any other:
- *   permanent only says the switch stays in the product, and turning one on
- *   for an organization is what /admin does with it.
- */
 import { describeFeatures, readFeatureRollouts, readOrganizationFeatureOverrides } from "@openwork-ee/den-db/organization-features"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import {
@@ -49,29 +21,28 @@ const AREA = "settings.features"
 export const PLATFORM_ADMIN_ONLY_MESSAGE = "Only platform admins can turn on features."
 const NEVER_OFF_MESSAGE = "Imports never turn features off."
 
+function platformAdminOnlyReason(key: FeatureKey): string {
+  return `${featureDefinition(key).label} stays off here: only a platform admin can turn a feature on. Ask one to turn it on, then import this file again for the settings that need it.`
+}
+
 const featureSpecSchema = z.object({
-  /** Always true: only features that are on are exported, and an import only turns features on. */
   enabled: z.literal(true),
 }).strict()
 
 const labelToKey = new Map<string, FeatureKey>(FEATURE_KEYS.map((key) => [featureDefinition(key).label.trim().toLowerCase(), key]))
 const retiredKeys = new Set<string>(RETIRED_FEATURE_KEYS)
 
-/** The feature an item names: its id when that is a feature key, else a feature whose label is the item's name. */
 function featureKeyOf(item: { id?: string; sourceId?: string; name: string }): FeatureKey | null {
   const id = item.sourceId ?? item.id
   if (id !== undefined && isFeatureKey(id)) return id
   return labelToKey.get(item.name.trim().toLowerCase()) ?? null
 }
 
-/** What the item names, for messages: its id, else its name. */
 function itemLabel(item: { sourceId?: string; name: string }): string {
   return item.sourceId ?? item.name
 }
 
-/** Every feature as the organization gets it, without any member's override. Read fresh, never from the cache. */
 async function resolveForOrganization(ctx: ConfigAreaContext): Promise<Record<FeatureKey, ResolvedFeature>> {
-  // Sequential: ctx.db may be a transaction, which runs one query at a time.
   const rollouts = await readFeatureRollouts(ctx.db)
   const overrides = await readOrganizationFeatureOverrides(ctx.db, normalizeDenTypeId("organization", ctx.organizationId))
   return describeFeatures({ rollouts, overrides, environment: env.features })
@@ -90,7 +61,6 @@ async function readOn(ctx: ConfigAreaContext, ids: readonly string[] | null): Pr
     .map(toItem)
 }
 
-/** Why the feature can't be turned on for this organization here, or null when it can. */
 function notApplicable(key: FeatureKey, resolved: ResolvedFeature): string | null {
   const label = featureDefinition(key).label
   if (resolved.source === "unavailable") return `${label} isn't part of this deployment.`
@@ -108,26 +78,21 @@ export const settingsFeaturesArea = defineConfigArea({
   key: AREA,
   label: "Feature flags",
   path: ["Settings", "Feature flags"],
-  // Ids are feature keys, not TypeIDs: a create never reuses a source id as a row id.
   specVersion: 1,
   specSchema: featureSpecSchema,
   dependsOn: [],
   deployments: ["cloud", "self_hosted"],
   viewPermission: "organization.update",
   managePermission: "organization.update",
-  // Only the organization's overrides; rollouts, member overrides and history are the platform's.
   tables: ["organization_feature"],
   naturalKeys: [{ label: "feature key", get: (item) => featureKeyOf(item) }],
-  // The label comes from the registry of the server reading it: a different label is not a change.
   informationalName: true,
   secretFields: [],
-  // updateOrganizationFeatureOverrides opens its own transaction on the global db and clears the feature cache.
   transactional: false,
   externalEffects: false,
 
   protectedFromDelete: () => NEVER_OFF_MESSAGE,
 
-  // A restore can't turn the feature off again (deletes are refused); a platform admin does that in /admin.
   irreversible: (op) => {
     if (op.kind !== "create") return []
     const key = featureKeyOf(op.item)
@@ -147,7 +112,7 @@ export const settingsFeaturesArea = defineConfigArea({
     const reason = notApplicable(key, resolved)
     if (reason) return { skip: reason }
     if (resolved.enabled) return { skip: `${featureDefinition(key).label} is already on here.` }
-    if (!await isAdminRouteUserId(ctx.actor.userId)) return { block: PLATFORM_ADMIN_ONLY_MESSAGE }
+    if (!await isAdminRouteUserId(ctx.actor.userId)) return { skip: platformAdminOnlyReason(key) }
     return null
   },
 
@@ -163,7 +128,6 @@ export const settingsFeaturesArea = defineConfigArea({
       const resolved = (await resolveForOrganization(ctx))[key]
       const reason = notApplicable(key, resolved)
       if (reason) throw new ConfigApplyError("feature_unavailable", reason, 409)
-      // Already on (for everyone, or set since the plan): nothing to write.
       if (resolved.enabled) return { localId: key }
       await log.run({ action: "set", target: key, detail: "on" }, () => updateOrganizationFeatureOverrides({
         organizationId: normalizeDenTypeId("organization", ctx.organizationId),

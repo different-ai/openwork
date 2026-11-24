@@ -2,9 +2,6 @@ import { createCipheriv, createDecipheriv, createHmac, createSecretKey, hkdfSync
 import type { z } from "zod"
 import { env } from "../env.js"
 
-// Short-lived bearer tokens for file transfers. Each kind has its own domain,
-// so a token issued for one purpose is never accepted for another.
-
 type Expiring = { e: number }
 
 function signature(domain: string, encoded: string) {
@@ -17,7 +14,6 @@ function unexpired<T extends Expiring>(value: unknown, schema: z.ZodType<T>): T 
   return parsed.data
 }
 
-/** Signed but readable: the payload names its member, file and expiry (`e`, in seconds). */
 export function signLink<T extends Expiring>(domain: string, payload: T): string {
   const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url")
   return `${encoded}.${signature(domain, encoded)}`
@@ -40,7 +36,6 @@ function sealingKey(domain: string) {
   return createSecretKey(new Uint8Array(hkdfSync("sha256", env.betterAuthSecret, "", domain, 32)))
 }
 
-/** Encrypted and authenticated, for payloads the bearer must not read, such as a provider's upload session URL. */
 export function sealToken<T extends Expiring>(domain: string, payload: T): string {
   const iv = new Uint8Array(randomBytes(12))
   const cipher = createCipheriv("aes-256-gcm", sealingKey(domain), iv)

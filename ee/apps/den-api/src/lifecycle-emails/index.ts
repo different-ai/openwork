@@ -50,7 +50,6 @@ export function lifecycleUnsubscribeUrl(email: string) {
   return `${base}/v1/email/unsubscribe?email=${encodeURIComponent(address)}&token=${encodeURIComponent(token)}`
 }
 
-/** Record an unsubscribe. Idempotent. */
 export async function recordLifecycleUnsubscribe(email: string) {
   const address = normalizeEmailAddress(email)
   await db.insert(LifecycleEmailTable).ignore().values({
@@ -61,7 +60,6 @@ export async function recordLifecycleUnsubscribe(email: string) {
   })
 }
 
-/** Insert the ledger row first; only the replica whose insert wins sends. */
 async function reserve(kind: string, subjectKey: string, recipient: string) {
   const result = await db.insert(LifecycleEmailTable).ignore().values({ kind, subjectKey, recipient, status: "sending" })
   return automationAffectedRows(result) > 0
@@ -94,11 +92,6 @@ function notYetSent(kind: string, subjectColumn: typeof WorkspaceBootstrapTable.
   )
 }
 
-/**
- * One reminder per provisional workspace whose person gave an email and has
- * not claimed it yet. A fresh owner claim link is minted at send time because
- * only hashes of earlier links are stored.
- */
 async function sendClaimReminders(now: Date) {
   const kind = LIFECYCLE_EMAIL_KINDS.claimReminder
   const rows = await db
@@ -159,10 +152,6 @@ async function sendClaimReminders(now: Date) {
   return sent
 }
 
-/**
- * One nudge per organization whose owner is still alone a couple of days in:
- * invite teammates, or add the MCP gateway once as an org connector.
- */
 async function sendTeamNudges(now: Date) {
   const kind = LIFECYCLE_EMAIL_KINDS.teamNudge
   const rows = await db
@@ -185,7 +174,6 @@ async function sendTeamNudges(now: Date) {
     .where(and(
       gte(OrganizationTable.createdAt, new Date(now.getTime() - TEAM_NUDGE_MAX_AGE_MS)),
       lte(OrganizationTable.createdAt, new Date(now.getTime() - TEAM_NUDGE_MIN_AGE_MS)),
-      // Provisional workspaces get the claim reminder instead.
       notExists(db.select({ one: sql`1` }).from(WorkspaceBootstrapTable).where(and(
         eq(WorkspaceBootstrapTable.organizationId, OrganizationTable.id),
         eq(WorkspaceBootstrapTable.status, "provisional"),
@@ -220,7 +208,6 @@ async function sendTeamNudges(now: Date) {
           mcpDocsLink: MCP_DOCS_URL,
           unsubscribeLink,
         },
-        // RFC 8058 one-click unsubscribe; the endpoint accepts GET and POST.
         headers: {
           "List-Unsubscribe": `<${unsubscribeLink}>`,
           "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",

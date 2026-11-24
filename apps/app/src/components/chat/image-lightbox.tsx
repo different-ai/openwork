@@ -7,7 +7,6 @@ type ImageLightboxProps = {
   onOpenChange: (open: boolean) => void
 }
 
-/** Full-size image viewer shared by sent, queued, and draft image attachments. */
 export function ImageLightbox({ src, alt, open, onOpenChange }: ImageLightboxProps) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>

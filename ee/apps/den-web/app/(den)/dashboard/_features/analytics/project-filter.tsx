@@ -5,11 +5,6 @@ import { DenSelect } from "../../../_components/ui/select";
 
 const FILTER_INPUT_ID = "analytics-project-filter";
 
-/**
- * Narrows the analytics screen to one project dimension. An empty value means
- * "All projects"; when a project is chosen its recorded session count is
- * shown next to the select.
- */
 export function ProjectFilter({ options, value, onValueChange }: {
   options: TelemetryDimensionListItem[];
   value: string;

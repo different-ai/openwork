@@ -27,6 +27,7 @@ import { DenTextarea } from "../../_components/ui/textarea";
 import { ItemPanel, ItemRow, ItemRowsSkeleton, ItemSection } from "./item-list";
 import { ItemHeader, ItemPage } from "./item-header";
 import { ConnectorLogo } from "./item-logo";
+import { connectorBatches } from "./my-agent-enable-connectors";
 import { SourceIcon } from "./source-icon";
 import {
   OUTCOME_PILL,
@@ -44,15 +45,8 @@ import {
   whenPhrase,
 } from "./my-agent-view";
 
-/**
- * My agent in the Library: the member's own background agent, what it did and why it stayed
- * quiet, and what they told it. Chat is the main way to change it; every change shows where it came from with an
- * Undo, here and in chat alike. These components only render; my-agent-screen.tsx loads and saves.
- */
-
 const ADMIN_LOCK = "Set by your admin.";
 
-/** A field as tall as what's written in it: CSS where the browser sizes fields itself, a line estimate elsewhere. */
 const GROW = "resize-none [field-sizing:content]";
 function growRows(text: string) {
   const lines = text.split("\n").reduce((total, line) => total + Math.max(1, Math.ceil(line.length / 72)), 0);
@@ -72,9 +66,6 @@ function LockNote({ children }: { children: ReactNode }) {
   );
 }
 
-// ---- The Library row ------------------------------------------------------------------------------------------------
-
-/** Pinned above the Library's filters: where the agent stands, today's count, its switch and the way in. */
 export function MyAgentRow({ view, href, now, saving, onToggle }: {
   view: MemberAgentView;
   href: string;
@@ -124,21 +115,15 @@ export function MyAgentRowError({ message, retrying, onRetry }: { message: strin
   );
 }
 
-// ---- The page -------------------------------------------------------------------------------------------------------
-
 export type MyAgentLinks = {
   library: string;
-  /** The Google Workspace connector in the member's Library, or where to add it. */
   google: { href: string; status: string };
-  /** A connection's page in the member's Library, where they connect or reconnect their account. */
   connector: (connectionId: string) => string;
-  /** The Library's connector catalog, for a source the organization has no connection for yet. */
   catalog: string;
 };
 
 type Change = (change: MemberAgentInput) => void;
 
-/** "Saved from chat at 11:20 AM. Undo" for the change behind a field. */
 function ChangeNote({ view, field, now, saving, onChange }: { view: MemberAgentView; field: AgentChangeField; now: number; saving: boolean; onChange: Change }) {
   const change = latestChange(view, field);
   if (!change) return null;
@@ -153,7 +138,6 @@ function ChangeNote({ view, field, now, saving, onChange }: { view: MemberAgentV
   );
 }
 
-/** A compact settings row: label left, its state or control right, one note under it. */
 function Row({ label, labelId, hint, note, children, testId }: { label: string; labelId?: string; hint?: string; note?: ReactNode; children?: ReactNode; testId?: string }) {
   return (
     <div className="flex flex-col gap-1 py-2.5" data-testid={testId}>
@@ -217,10 +201,6 @@ function WordsField({ view, field, now, saving, onChange }: { view: MemberAgentV
   );
 }
 
-/**
- * Your brief (`workbotAgentBrief`): the member's own lines in one text, with where the last change came from and Undo,
- * and the organization's brief behind a disclosure (read only).
- */
 function BriefSection({ view, now, saving, onChange }: { view: MemberAgentView; now: number; saving: boolean; onChange: Change }) {
   const id = useId();
   const brief = view.brief;
@@ -267,12 +247,15 @@ function focalLine(view: MemberAgentView, now: number): { title: string; sentenc
   return { title: "No checks yet", sentence: view.destination?.blocked === "member_not_linked" ? "Link your Slack account to Workbot to get its messages." : "It reads your calendar and connectors in your working hours." };
 }
 
-export function MyAgentPanel({ view, now, links, saving, error, earlier, onChange }: {
+export function MyAgentPanel({ view, now, links, saving, error, earlier, onChange, setAll, bulkDirection, pendingSources }: {
   view: MemberAgentView;
   now: number;
   links: MyAgentLinks;
   saving: boolean;
   error: string | null;
+  setAll?: (batches: MemberAgentInput[]) => void;
+  bulkDirection?: boolean;
+  pendingSources?: MemberAgentInput["sources"];
   earlier: { open: boolean; onToggle: (open: boolean) => void; checks: MemberAgentCheck[] | null; loading: boolean; error: string | null };
   onChange: Change;
 }) {
@@ -285,6 +268,8 @@ export function MyAgentPanel({ view, now, links, saving, error, earlier, onChang
   const fix = view.lastCheck?.fix ?? null;
   const reconnect = view.lastCheck?.sources[0] ?? null;
   const google = links.google;
+  const enable = setAll ? connectorBatches(view.sources ?? [], true) : [];
+  const disable = setAll ? connectorBatches(view.sources ?? [], false) : [];
 
   return (
     <ItemPage testId="my-agent-screen">
@@ -358,9 +343,16 @@ export function MyAgentPanel({ view, now, links, saving, error, earlier, onChang
       </ItemSection>
       )}
 
-      <ItemSection title="What it reads" variant="rule" testId="my-agent-uses">
+      <ItemSection title="What it reads" variant="rule" testId="my-agent-uses" meta={setAll && (enable.length > 0 || disable.length > 0 || bulkDirection !== undefined) ? (
+        <div className="flex flex-wrap justify-end gap-2">
+          <DenButton size="xs" variant="secondary" disabled={saving || !view.available || !enable.length} loading={bulkDirection === true}
+            onClick={() => setAll(enable)}>Enable all connected apps</DenButton>
+          <DenButton size="xs" variant="secondary" disabled={saving || !view.available || !disable.length} loading={bulkDirection === false}
+            onClick={() => setAll(disable)}>Turn all off</DenButton>
+        </div>
+      ) : undefined}>
         <div className="flex flex-col divide-y divide-gray-100">
-          {(view.sources ?? []).map((source) => <SourceRow key={source.id} view={view} source={source} now={now} saving={saving} links={links} onChange={onChange} />)}
+          {(view.sources ?? []).map((source) => <SourceRow key={source.id} view={view} source={source} pendingOn={pendingSources?.find((change) => change.source === source.id)?.on} now={now} saving={saving} links={links} onChange={onChange} />)}
         </div>
         {(view.sources ?? []).some(sourceLocked) ? (
           <p className="border-t border-gray-100 pt-2.5" data-testid="my-agent-sources-locked"><LockNote>{`Locked sources are ${ADMIN_LOCK.charAt(0).toLowerCase()}${ADMIN_LOCK.slice(1)}`}</LockNote></p>
@@ -415,17 +407,11 @@ export function MyAgentPanel({ view, now, links, saving, error, earlier, onChang
   );
 }
 
-/** "Saved from chat at 10:42 AM." for the latest change to one source's switch or instruction. */
 function SourceChangeNote({ view, sourceId, field, now }: { view: MemberAgentView; sourceId: string; field: "source" | "sourceInstruction"; now: number }) {
   const change = (view.changes ?? []).find((entry) => entry.field === field && entry.sourceId === sourceId && !entry.undone);
   return change ? <span data-source={change.source}>{changeSourceLine(change, view.timeZone, now)}</span> : null;
 }
 
-/**
- * Whether a source's row shows a lock: not allowed, or a connector the admin turned on for everyone. The calendar on
- * for everyone shows no lock: picking which calendar app it reads is the member's control there.
- */
-/** A source whose connector has no read-only tools: the agent can't read it until an admin allows one. */
 export const NO_READ_TOOLS = "No read-only tools found. An admin can review its tools.";
 
 function sourceLocked(source: MemberAgentSource) {
@@ -438,7 +424,6 @@ function pickerTitle(kind: Exclude<MemberAgentSource["kind"], "other">) {
   return `Read your ${PICKER_NOUN[kind]} from`;
 }
 
-/** The picker's menu: the allowed apps, a check on the chosen one, and Connect on those the member hasn't connected. */
 export function AccountPickerOptions({ kind, options, chosen, onPick }: {
   kind: Exclude<MemberAgentSource["kind"], "other">;
   options: MemberAgentSourceConnection[];
@@ -470,10 +455,6 @@ export function AccountPickerOptions({ kind, options, chosen, onPick }: {
   );
 }
 
-/**
- * Where the calendar reads from, when the organization has several calendar apps: the chosen app's logo and name,
- * opening a menu of them with a check on the chosen one and Connect on those the member hasn't connected.
- */
 function AccountPicker({ kind, options, chosen, disabled, onPick }: {
   kind: Exclude<MemberAgentSource["kind"], "other">;
   options: MemberAgentSourceConnection[];
@@ -506,14 +487,7 @@ function AccountPicker({ kind, options, chosen, disabled, onPick }: {
   );
 }
 
-/**
- * One source in What it reads, as one row. The calendar: its icon, a state line (when it was last read, or the
- * Connect action when the member's account isn't ready) and the app it reads from, a picker when the organization has
- * several. A connector: its own logo and state. Then a quiet button for the member's instruction and,
- * where the member chooses, its switch (a lock where the admin decided; the reason is said once, under the list). The
- * instruction, once written, sits under it.
- */
-function SourceRow({ view, source, now, saving, links, onChange }: { view: MemberAgentView; source: MemberAgentSource; now: number; saving: boolean; links: MyAgentLinks; onChange: Change }) {
+function SourceRow({ view, source, pendingOn, now, saving, links, onChange }: { pendingOn?: boolean; view: MemberAgentView; source: MemberAgentSource; now: number; saving: boolean; links: MyAgentLinks; onChange: Change }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(source.instruction);
   useEffect(() => setDraft(source.instruction), [source.instruction]);
@@ -523,7 +497,6 @@ function SourceRow({ view, source, now, saving, links, onChange }: { view: Membe
   const fix = source.connections.find((connection) => connection.state !== "connected") ?? null;
   const logoFrom = ready ?? source.connections[0] ?? null;
   const steerable = source.on && source.policy !== "off";
-  // The app a core source reads from, under its own name ("Google Workspace"), as the picker lists it.
   const chosen = source.options.find((option) => option.id === source.connections[0]?.id) ?? null;
   const showSwitch = !core || source.policy !== "everyone";
   const save = (instruction: string) => {
@@ -540,7 +513,6 @@ function SourceRow({ view, source, now, saving, links, onChange }: { view: Membe
           ? null
           : source.lastReadAt ? `Last read ${whenPhrase(source.lastReadAt, view.timeZone, now)}` : "Not read yet";
   const instructionLabel = `${source.instruction ? "Edit the" : "Add an"} instruction for ${source.name}`;
-  // Your agent's brief: a connector with no read-only tools still shows, and says so.
   const noReadTools = !core && source.policy !== "off" && source.readTools === 0;
   const connectAction = source.on && source.policy !== "off" && !ready ? (
     fix
@@ -566,7 +538,8 @@ function SourceRow({ view, source, now, saving, links, onChange }: { view: Membe
           </span>
         </span>
         <span className="flex shrink-0 items-center gap-2">
-          {!core && status ? <span className="whitespace-nowrap text-[12px] text-gray-500">{status}</span> : null}
+          {pendingOn !== undefined ? <span role="status" className="text-[12px] text-gray-500">Saving…</span> : null}
+          {!core && status && pendingOn === undefined ? <span className="whitespace-nowrap text-[12px] text-gray-500">{status}</span> : null}
           {!core ? connectAction : null}
           {core && source.policy !== "off" && source.options.length > 1 ? (
             <AccountPicker kind={core} options={source.options} chosen={chosen} disabled={saving}
@@ -589,7 +562,7 @@ function SourceRow({ view, source, now, saving, links, onChange }: { view: Membe
               <span className="flex w-4 justify-center">
                 {locked ? <Lock size={14} strokeWidth={1.5} className="text-gray-500" role="img" aria-label={source.policy === "off" ? "Not allowed by your admin" : "On for everyone, set by your admin"} /> : null}
               </span>
-              <DenSwitch size="sm" aria-label={source.name} checked={source.on} disabled={locked || saving}
+              <DenSwitch size="sm" aria-label={source.name} checked={pendingOn ?? source.on} disabled={locked || saving}
                 onChange={(on) => onChange({ sources: [{ source: source.id, on }] })} />
             </>
           ) : null}
@@ -618,7 +591,6 @@ function hourRange(from: number, to: number): number[] {
   return Array.from({ length: Math.max(0, to - from + 1) }, (_, index) => from + index);
 }
 
-/** The page's layout while the agent loads: the focal line and sections where they will be. */
 export function MyAgentPanelSkeleton({ library }: { library: string }) {
   return (
     <ItemPage testId="my-agent-screen">

@@ -1,21 +1,14 @@
 import type { ExternalMcpConnection, ExternalMcpPreset } from "./mcp-connections-data";
 
-/** Native provider connections keep fixed ids in Den. */
 export const GOOGLE_WORKSPACE_QUICK_ADD_ID = "google-workspace";
 export const MICROSOFT_365_QUICK_ADD_ID = "microsoft-365";
 
 export type NativeProviderKey = typeof GOOGLE_WORKSPACE_QUICK_ADD_ID | typeof MICROSOFT_365_QUICK_ADD_ID;
 
-/** Google Workspace and Microsoft 365 set up with an org OAuth app instead of a server address. */
 export function isNativeProviderCatalogId(id: string): id is NativeProviderKey {
   return id === GOOGLE_WORKSPACE_QUICK_ADD_ID || id === MICROSOFT_365_QUICK_ADD_ID;
 }
 
-/**
- * Where a popular connector row lands when someone adds it. Gmail, Drive, and
- * Calendar are one Google Workspace connection in Den; Outlook is Microsoft
- * 365; everything else is a curated MCP preset.
- */
 export type PopularConnectorTarget =
   | { kind: "google-workspace" }
   | { kind: "microsoft-365" }
@@ -27,7 +20,6 @@ export type PopularConnector = {
   description: string;
   icon: { iconUrl?: string; simpleIconSlug?: string; serviceUrl?: string };
   target: PopularConnectorTarget;
-  /** Starter prompt seeded after the connector chip when someone picks Chat. */
   chatPrompt: string;
 };
 
@@ -84,18 +76,12 @@ export const POPULAR_CONNECTORS: PopularConnector[] = [
 
 export const MORE_CONNECTORS_TEASER = "See Outlook Email, Granola, and more";
 
-/** Starter prompt for connectors without a curated one. */
 export function connectorChatPrompt(displayName: string): string {
   const popular = POPULAR_CONNECTORS.find((connector) => connector.displayName === displayName);
   return popular?.chatPrompt
     ?? `Explain how I could use ${displayName}: suggest three useful tasks and distinguish general ideas from tools available here. If access is unavailable, help me plan without connecting.`;
 }
 
-/**
- * Deep link that opens the desktop app on a new chat with the connector chip
- * and starter prompt already in the composer. The app parses this in
- * apps/app/src/app/lib/openwork-links.ts (parseChatDeepLink).
- */
 export function connectorChatDeepLink(input: { connector: string; prompt: string }): string {
   const params = new URLSearchParams({ connector: input.connector, prompt: input.prompt });
   return `openwork://chat?${params.toString()}`;
@@ -120,7 +106,6 @@ export function connectionForPresetUrl(
   return connections.find((connection) => comparableMcpUrl(connection.url) === target);
 }
 
-/** Curated presets that are not already represented by a popular row. */
 export function remainingPresets(presets: readonly ExternalMcpPreset[]): ExternalMcpPreset[] {
   const popularPresetIds = new Set(
     POPULAR_CONNECTORS.flatMap((connector) => connector.target.kind === "preset" ? [connector.target.presetId] : []),

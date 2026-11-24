@@ -42,9 +42,7 @@ export const automationIntervalScheduleSchema = z.object({
   timezone: timezoneSchema,
   everyHours: z.number().int().min(AUTOMATION_INTERVAL_MIN_HOURS).max(AUTOMATION_INTERVAL_MAX_HOURS),
   daysOfWeek: daysOfWeekSchema.default(EVERY_DAY),
-  /** First hour of the window, 0–23. Defaults to midnight. */
   startHour: z.number().int().min(0).max(23).default(0),
-  /** Hour the window closes, 1–24, after `startHour`. Defaults to the end of the day. */
   endHour: z.number().int().min(1).max(24).default(24),
 }).refine((schedule) => schedule.endHour > schedule.startHour, {
   message: "endHour must be after startHour",
@@ -64,14 +62,11 @@ export const AUTOMATION_CALENDAR_OFFSET_MAX_MINUTES = 120
  */
 export const automationCalendarScheduleSchema = z.object({
   kind: z.literal("calendar"),
-  /** The zone meeting times are shown in, to the person and in the run. */
   timezone: timezoneSchema,
   edge: z.enum(["start", "end"]),
   offsetMinutes: z.number().int().min(-AUTOMATION_CALENDAR_OFFSET_MAX_MINUTES).max(AUTOMATION_CALENDAR_OFFSET_MAX_MINUTES),
   rule: z.object({
-    /** Only meetings with someone whose email domain differs from the owner's. */
     withExternalAttendees: z.boolean().default(false),
-    /** Only meetings whose title contains this text, ignoring case. */
     titleIncludes: z.string().trim().min(1).max(120).optional(),
   }).strict().default({ withExternalAttendees: false }),
 }).describe("Runs offsetMinutes (negative is before) from the start or end of each meeting on the owner's primary Google Calendar: timed meetings they accepted or organize, with someone else invited. Cloud Automations only; needs Google Calendar connected and the organization's before-and-after-meeting Automations.")
@@ -294,7 +289,6 @@ export const automationErrorSchema = z.object({
     "connect_access_unavailable",
     "openwork_web_access_required",
     "execution_runtime_unavailable",
-    /** The agent finished, but a connection it needed must be connected or reconnected first. */
     "connection_action_required",
     "execution_failed",
     "execution_timed_out",
@@ -322,7 +316,6 @@ export const automationExecutionThreadSchema = z.object({
   automationId: idSchema,
   automationRunId: idSchema,
   engineKind: idSchema,
-  /** Native OpenCode session identity for agent runs. */
   nativeThreadId: idSchema.nullable().optional(),
   workspaceId: idSchema.nullable().optional(),
 }).meta({ ref: "AutomationExecutionThread" })
@@ -434,7 +427,6 @@ export const automationCloudTargetSchema = z.object({
   kind: z.literal("cloud"),
   available: z.boolean(),
   runtime: z.enum(["headless", "web"]).nullable(),
-  /** The owner has an OpenWork Web computer, so a cloud run can also use its files. */
   cloudComputer: z.boolean(),
 }).meta({ ref: "AutomationCloudTarget" })
 export type AutomationCloudTarget = z.infer<typeof automationCloudTargetSchema>
@@ -452,24 +444,13 @@ export const automationRunnerNotificationSchema = z.object({
 export type AutomationRunnerNotification = z.infer<typeof automationRunnerNotificationSchema>
 
 export const automationRunnerWorkItemSchema = z.union([
-  // The automation-run item shape predates remote-session commands and is
-  // consumed by released desktop runners: it must keep every field it has
-  // always carried.
   z.object({
     runId: idSchema,
     executionTarget: z.literal("desktop"),
-    /**
-     * Present only for a run pinned to one workspace. A workspace exists on the
-     * desktop that has its folder, so a runner without it leaves the run for
-     * the owner's desktop that does. Released runners ignore the field.
-     */
     workspaceId: automationWorkspaceIdSchema.optional(),
   }),
   z.object({ kind: z.literal("remote_session_create"), commandId: idSchema }),
-  // Listed only for runners that registered remote_session_control_v1.
   z.object({ kind: z.literal("remote_session_request"), requestId: idSchema }),
-  // Listed only for runners that registered remote_session_access_v1. Claimed
-  // and completed through the remote-session command routes, like a create.
   z.object({ kind: z.literal("remote_session_attach"), commandId: idSchema }),
 ])
 /** Runs a desktop may claim per work poll; a runner skips the ones pinned elsewhere. */
@@ -507,15 +488,11 @@ export function unchosenRemoteSessionAccess(optIn: boolean | undefined): RemoteS
  */
 export const runnerSessionAccessPolicySchema = z.object({
   ceiling: remoteSessionAccessModeSchema,
-  /** A computer whose owner has not chosen is `off`. Absent from servers without the opt-in, which reads as false. */
   optIn: z.boolean().optional(),
 })
 export const automationRunnerWorkResponseSchema = z.object({
-  // Up to the run limit plus five remote-session commands, five requests and five attach commands.
   items: z.array(automationRunnerWorkItemSchema).max(AUTOMATION_RUNNER_WORK_RUN_LIMIT + 15),
-  /** Live org policy is returned even when inventory has not changed. */
   enginePolicy: runnerEnginePolicySchema.optional(),
-  /** Sent to runners with remote_session_access_v1 while the feature is on. */
   sessionAccess: runnerSessionAccessPolicySchema.optional(),
 })
 export type AutomationRunnerWorkResponse = z.infer<typeof automationRunnerWorkResponseSchema>
@@ -535,7 +512,6 @@ export type DesktopInventoryModel = z.infer<typeof desktopInventoryModelSchema>
 export const desktopInventoryWorkspaceSchema = z.object({
   workspaceId: desktopInventoryIdSchema,
   name: z.string().trim().min(1).max(120),
-  /** The workspace the desktop uses when a remote session names none. */
   active: z.boolean(),
   engine: z.enum(["v1", "v2"]),
   defaultModel: z.object({
@@ -543,7 +519,6 @@ export const desktopInventoryWorkspaceSchema = z.object({
     modelId: z.string().trim().min(1).max(160),
     variant: z.string().trim().min(1).max(60).optional(),
   }).nullable(),
-  /** Models the workspace can use right now; empty when the desktop could not list them. */
   models: z.array(desktopInventoryModelSchema).max(DESKTOP_INVENTORY_MODEL_LIMIT),
 })
 export type DesktopInventoryWorkspace = z.infer<typeof desktopInventoryWorkspaceSchema>
@@ -565,7 +540,6 @@ export type DesktopRunnerInventory = z.infer<typeof desktopRunnerInventorySchema
 export const desktopRunnerInventoryResponseSchema = z.object({
   ok: z.literal(true),
   updatedAt: timestampSchema,
-  /** Effective live policy; old clients ignore this additive response field. */
   enginePolicy: runnerEnginePolicySchema.optional(),
 })
 
@@ -584,22 +558,13 @@ export const runnerReportedSessionSchema = z.object({
   sessionId: desktopInventoryIdSchema,
   title: z.string().max(240),
   engine: z.enum(["v1", "v2"]),
-  /** When the session last changed on the computer; must fit a four-digit RFC 3339 year. */
   updatedAt: timestampSchema.max(RUNNER_SESSION_TIMESTAMP_MAX),
-  /** Whether a turn was running at report time; absent when the computer could not tell. */
   working: z.boolean().optional(),
 })
 export type RunnerReportedSession = z.infer<typeof runnerReportedSessionSchema>
 export const runnerSessionReportSchema = z.object({
-  /** The access in force on the computer: the owner's choice capped by the ceiling Den last sent. */
   access: remoteSessionAccessModeSchema,
-  /**
-   * The owner has made a choice on this computer for this organization. False:
-   * `access` is only what applies by default. Sent by runners with
-   * remote_session_choice_v1; absent from earlier ones.
-   */
   chosen: z.boolean().optional(),
-  /** Most recently changed first; must be empty unless access is `all`. */
   sessions: z.array(runnerReportedSessionSchema).max(RUNNER_SESSION_REPORT_LIMIT),
 }).refine((report) => report.access === "all" || report.sessions.length === 0, {
   message: "Sessions are reported only while access is all.",
@@ -608,7 +573,6 @@ export type RunnerSessionReport = z.infer<typeof runnerSessionReportSchema>
 export const runnerSessionReportResponseSchema = z.object({
   ok: z.literal(true),
   updatedAt: timestampSchema,
-  /** The organization's current ceiling, so the computer can narrow at once. */
   sessionAccess: runnerSessionAccessPolicySchema,
 })
 
@@ -623,10 +587,6 @@ export const remoteSessionCommandAssignmentSchema = z.object({
     variant: z.string().trim().min(1).max(60).nullable(),
   }).nullable(),
   expiresAt: timestampSchema,
-  /**
-   * The workspace the caller chose. The desktop creates the session there or
-   * fails with `workspace_unavailable`; absent means its active workspace.
-   */
   workspaceId: desktopInventoryIdSchema.nullable().optional(),
 })
 /**
@@ -747,7 +707,6 @@ export const remoteSessionPendingSummarySchema = z.discriminatedUnion("kind", [
     options: z.array(z.string().max(240)).max(REMOTE_SESSION_PENDING_OPTIONS_MAX),
     multiple: z.boolean(),
     custom: z.boolean(),
-    /** How many questions the request asks; only a single one can be answered from a row. */
     questionCount: z.number().int().min(1).max(REMOTE_SESSION_PENDING_QUESTIONS_MAX),
   }),
   z.object({
@@ -775,7 +734,6 @@ export const remoteSessionCommandSessionReportSchema = z.object({
   finalText: z.string().max(REMOTE_SESSION_FINAL_TEXT_MAX_LENGTH).optional(),
   error: remoteSessionCommandErrorSchema.nullable().optional(),
   messageCount: z.number().int().min(0).optional(),
-  /** The step the session ran last, as a short sentence ("Ran List the release notes"). */
   latestStep: z.string().max(REMOTE_SESSION_LATEST_STEP_MAX_LENGTH).nullable().optional(),
   pending: remoteSessionPendingSchema.nullable().optional(),
   observedAt: timestampSchema,
@@ -796,14 +754,12 @@ export const REMOTE_SESSION_STATUS_PREVIEW_MAX_LENGTH = 280
 export const remoteSessionStatusThreadInputSchema = z.object({
   commandId: idSchema.optional(),
   sessionId: z.string().trim().min(1).max(240).optional(),
-  /** The version this caller last received for the thread. */
   version: z.string().trim().min(1).max(64).optional(),
 }).refine((thread) => (thread.commandId === undefined) !== (thread.sessionId === undefined), {
   message: "Pass exactly one of commandId or sessionId.",
 })
 export const remoteSessionStatusRequestSchema = z.object({
   threads: z.array(remoteSessionStatusThreadInputSchema).min(1).max(REMOTE_SESSION_STATUS_THREADS_MAX),
-  /** Hold the call until a thread changes, up to this long. 0 or absent answers at once. */
   waitMs: z.number().int().min(0).max(REMOTE_SESSION_STATUS_WAIT_MAX_MS).optional(),
 })
 export type RemoteSessionStatusRequest = z.infer<typeof remoteSessionStatusRequestSchema>
@@ -811,7 +767,6 @@ export type RemoteSessionStatusRequest = z.infer<typeof remoteSessionStatusReque
 export const remoteSessionThreadStateSchema = z.enum(["starting", "running", "waiting", "idle", "error"])
 export type RemoteSessionThreadState = z.infer<typeof remoteSessionThreadStateSchema>
 export const remoteSessionThreadStatusSchema = z.object({
-  /** The commandId or sessionId the caller asked about. */
   ref: z.string().max(240),
   changed: z.literal(true),
   version: z.string().max(64),
@@ -820,19 +775,14 @@ export const remoteSessionThreadStatusSchema = z.object({
   waitingFor: remoteSessionWaitingForSchema.nullable(),
   title: z.string().max(240).nullable(),
   computerId: z.string().max(160).nullable(),
-  /** The computer's own name, e.g. "Mac mini"; null for Cloud or an unknown computer. */
   computerLabel: z.string().max(240).nullable(),
   sessionId: z.string().max(240).nullable(),
   workspaceId: z.string().max(240).nullable(),
   messageCount: z.number().int().min(0).nullable(),
-  /** The start of the final answer once the thread is idle; read the session for all of it. */
   preview: z.string().max(REMOTE_SESSION_STATUS_PREVIEW_MAX_LENGTH).nullable(),
-  /** The step the thread ran last, as a short sentence; absent from older Den deployments. */
   latestStep: z.string().max(REMOTE_SESSION_LATEST_STEP_MAX_LENGTH).nullable().optional(),
   error: remoteSessionCommandErrorSchema.nullable(),
-  /** When this state was last confirmed. */
   observedAt: timestampSchema.nullable(),
-  /** While waiting: the question or permission, when the computer reports it. Absent from older servers. */
   pending: remoteSessionPendingSummarySchema.nullable().optional(),
 })
 export type RemoteSessionThreadStatus = z.infer<typeof remoteSessionThreadStatusSchema>
@@ -840,12 +790,10 @@ export const remoteSessionThreadUnchangedSchema = z.object({
   ref: z.string().max(240),
   changed: z.literal(false),
   version: z.string().max(64),
-  /** The thread could not be checked just now; keep the last known state. */
   stale: z.boolean().optional(),
 })
 export const remoteSessionStatusResultSchema = z.object({
   threads: z.array(z.discriminatedUnion("changed", [remoteSessionThreadStatusSchema, remoteSessionThreadUnchangedSchema])),
-  /** Suggested wait before the next status call; null once every thread has settled. */
   retryAfterMs: z.number().int().min(0).nullable(),
 })
 export type RemoteSessionStatusResult = z.infer<typeof remoteSessionStatusResultSchema>
@@ -887,7 +835,6 @@ export type RemoteSessionRequestInput = z.infer<typeof remoteSessionRequestInput
 const remoteSessionRequestAssignmentBase = {
   requestId: idSchema,
   kind: z.literal("remote_session_request"),
-  /** The remote-session command that delivered this session. */
   commandId: idSchema,
   sessionId: z.string().trim().min(1).max(240),
   workspaceId: z.string().trim().min(1).max(240),
@@ -945,13 +892,11 @@ export const remoteSessionTranscriptMessageSchema = z.object({
   truncated: z.boolean(),
   toolCalls: z.array(remoteSessionTranscriptToolCallSchema).max(200),
   error: remoteSessionCommandErrorSchema.nullable(),
-  /** Ordered steps; older runners omit them and readers fall back to text + toolCalls. */
   parts: z.array(remoteSessionTranscriptPartSchema).max(REMOTE_SESSION_TRANSCRIPT_PARTS_MAX).optional(),
   completedAt: timestampSchema.nullable().optional(),
 })
 export type RemoteSessionTranscriptMessage = z.infer<typeof remoteSessionTranscriptMessageSchema>
 export const remoteSessionReadResultSchema = z.object({
-  /** Whether the engine returned full history or only its current context. */
   historyScope: z.enum(["full", "context"]).optional(),
   title: z.string().max(240).nullable(),
   status: remoteSessionStatusSchema,
@@ -960,16 +905,8 @@ export const remoteSessionReadResultSchema = z.object({
   messageCount: z.number().int().min(0),
   from: z.enum(["start", "end"]),
   messages: z.array(remoteSessionTranscriptMessageSchema).max(REMOTE_SESSION_TRANSCRIPT_PAGE_MAX),
-  /** Pass back as cursor (with the same from) for the next page; null when there is none. */
   nextCursor: z.string().max(160).nullable(),
-  /** The question or permission the session waits on, from runners that can answer it. */
   pending: remoteSessionPendingSchema.nullable().optional(),
-  /**
-   * Every open question and permission, from runners with
-   * remote_session_access_v1; `pending`, when there is one, comes first. It
-   * also lists a question a finished turn left open, which `pending` does
-   * not. Any of them can be answered by its requestId.
-   */
   pendingItems: z.array(remoteSessionPendingSchema).max(REMOTE_SESSION_PENDING_ITEMS_MAX).optional(),
 })
 export type RemoteSessionReadResult = z.infer<typeof remoteSessionReadResultSchema>
@@ -983,7 +920,6 @@ export const remoteSessionStopResultSchema = z.object({
 })
 export const remoteSessionAnswerResultSchema = z.object({
   requestId: z.string().max(240),
-  /** An earlier attempt of the same answer already reached the session. */
   alreadyAnswered: z.boolean(),
 })
 export const remoteSessionRequestResultSchema = z.discriminatedUnion("action", [
@@ -1027,7 +963,6 @@ export const automationDesktopRunnerAssignmentSchema = z.object({
   timeoutMs: z.number().int().min(10_000).max(60 * 60 * 1_000),
   leaseExpiresAt: timestampSchema,
   attempt: z.number().int().positive(),
-  /** Pinned target workspace; absent for records created before pinning existed. */
   workspaceId: automationWorkspaceIdSchema.nullable().optional(),
 })
 export type AutomationDesktopRunnerAssignment = z.infer<typeof automationDesktopRunnerAssignmentSchema>
@@ -1084,10 +1019,8 @@ export const automationMeetingContextSchema = z.object({
   title: z.string().max(300).nullable(),
   start: timestampSchema,
   end: timestampSchema,
-  /** Email domains of everyone else invited, without rooms; never full addresses. */
   attendeeDomains: z.array(z.string().max(253)).max(50),
   externalAttendees: z.number().int().nonnegative(),
-  /** A Google Meet or Calendar link, or null. */
   link: z.string().max(2_048).nullable(),
 }).meta({ ref: "AutomationMeetingContext" })
 export type AutomationMeetingContext = z.infer<typeof automationMeetingContextSchema>
@@ -1119,7 +1052,6 @@ export const automationRunSchema = z.object({
   resultSummary: z.string().max(20_000).nullable(),
   codemodeReceiptId: idSchema.nullable().optional(),
   validatedResult: z.unknown().optional(),
-  /** What started a calendar-triggered run; absent for clock and manual runs. */
   triggerContext: automationRunTriggerContextSchema.nullable().optional(),
   usage: automationUsageSchema,
   createdAt: timestampSchema,
@@ -1184,6 +1116,43 @@ export const createAutomationSchema = z.union([actionCreateAutomationSchema, leg
 export type CreateAutomation = z.infer<typeof legacyCreateAutomationSchema>
 export type CreateAutomationDefinition = z.infer<typeof createAutomationSchema>
 
+export const automationSharingSchema = z.object({
+  orgWide: z.boolean(),
+  memberIds: z.array(z.string()),
+  teamIds: z.array(z.string()),
+}).meta({ ref: "AutomationSharing" })
+export type AutomationSharing = z.infer<typeof automationSharingSchema>
+
+export const updateAutomationSharingSchema = z.object({
+  orgWide: z.boolean().default(false),
+  memberIds: z.array(z.string()).max(200).default([]),
+  teamIds: z.array(z.string()).max(200).default([]),
+}).strict().meta({ ref: "UpdateAutomationSharing" })
+export type UpdateAutomationSharing = z.input<typeof updateAutomationSharingSchema>
+
+export const sharedAutomationSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  sharedBy: z.object({ memberId: z.string(), name: z.string() }),
+  sharedAt: z.string().datetime(),
+  schedule: automationScheduleSchema,
+  executionTarget: automationExecutionTargetSchema,
+  action: automationActionSchema,
+}).meta({ ref: "SharedAutomation" })
+export type SharedAutomation = z.infer<typeof sharedAutomationSchema>
+
+export const sharedAutomationListSchema = z.object({
+  items: z.array(sharedAutomationSchema),
+  nextCursor: z.string().nullable(),
+}).meta({ ref: "SharedAutomationList" })
+export type SharedAutomationList = z.infer<typeof sharedAutomationListSchema>
+
+export const copySharedAutomationSchema = z.object({
+  name: z.string().trim().min(1).max(120).optional(),
+  model: automationModelSchema.optional(),
+}).strict().meta({ ref: "CopySharedAutomation" })
+export type CopySharedAutomation = z.infer<typeof copySharedAutomationSchema>
+
 /**
  * What an in-app agent may hand back when a person describes recurring work.
  *
@@ -1197,12 +1166,7 @@ export const automationProposalSchema = z.object({
   instructions: z.string().trim().min(1).max(100_000),
   schedule: automationScheduleSchema,
   model: automationModelSchema.optional(),
-  /**
-   * Where the agent suggests it runs. Only a starting choice: the review card
-   * offers the places this member can actually run it and the person picks.
-   */
   executionTarget: automationExecutionTargetSchema.optional(),
-  /** Workspace the proposing conversation ran in; the renderer pins it on create. */
   workspaceId: automationWorkspaceIdSchema.optional(),
 })
 export type AutomationProposal = z.infer<typeof automationProposalSchema>
@@ -1213,13 +1177,7 @@ export const updateAutomationSchema = z.object({
   schedule: automationScheduleSchema.optional(),
   model: automationModelSchema.optional(),
   action: automationActionSchema.optional(),
-  /**
-   * Moves the Automation between the owner's desktops and the cloud. A pinned
-   * workspace belongs to one computer, so moving drops it unless `workspaceId`
-   * is set in the same request. Workflows run only in the cloud.
-   */
   executionTarget: automationExecutionTargetSchema.optional(),
-  /** Re-pin to a different workspace; null clears the pin (legacy active-workspace fallback). */
   workspaceId: automationWorkspaceIdSchema.nullable().optional(),
 }).strict().refine(
   (input) => Object.keys(input).length > 0,

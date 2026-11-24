@@ -9,12 +9,10 @@ export const browserOperationLabels: Record<string, string> = {
   result_withheld: "Website result was kept private",
 };
 
-/** The page needs attention or a human handoff. */
 export function browserNeedsPerson(tab: BrowserPanelTab | null | undefined): boolean {
   return tab?.browserTask?.status === "needs_attention";
 }
 
-/** One short state line for the browser's header button. */
 export function browserStatusLabel(tab: BrowserPanelTab | null | undefined): string {
   if (!tab) return "No page open";
   if (browserNeedsPerson(tab)) return "Needs you";

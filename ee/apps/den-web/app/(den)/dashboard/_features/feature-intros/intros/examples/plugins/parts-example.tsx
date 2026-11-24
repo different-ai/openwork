@@ -37,22 +37,18 @@ function PartsList({ caption, icon: Icon, rows, mono = false }: { caption: strin
   );
 }
 
-/** Agents tab example: agents from three plugins, each with the plugin it came with. */
 export function PluginAgentsExample() {
   return <PartsList caption="Agents across your plugins" icon={Users} rows={agentsExampleRows} />;
 }
 
-/** Commands tab example. */
 export function PluginCommandsExample() {
   return <PartsList caption="Commands across your plugins" icon={Terminal} rows={commandsExampleRows} mono />;
 }
 
-/** Hooks tab example: what each hook does and when it runs. */
 export function PluginHooksExample() {
   return <PartsList caption="Hooks across your plugins" icon={Webhook} rows={hooksExampleRows} />;
 }
 
-/** MCPs tab example: the apps inside plugins, with how much the AI can do in each. */
 export function PluginMcpsExample() {
   const step = useExampleStep(mcpsExampleRows.length);
   return (

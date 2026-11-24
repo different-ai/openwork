@@ -13,7 +13,6 @@ export const AdminMetricSnapshotTable = mysqlTable("admin_metric_snapshot", {
   metric_key: varchar("metric_key", { length: 64 }).notNull(),
   range_key: varchar("range_key", { length: 16 }).notNull(),
   payload: json("payload").$type<unknown>(),
-  /** When `payload` was last computed successfully; null until the first success. */
   computed_at: timestamp("computed_at", { fsp: 3 }),
   duration_ms: int("duration_ms"),
   error: varchar("error", { length: 500 }),

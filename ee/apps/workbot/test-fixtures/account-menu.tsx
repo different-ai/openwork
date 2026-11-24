@@ -4,8 +4,6 @@ import { setWorkbotHost } from "../../../packages/workbot-ui/src/host";
 import { createHost, meSchema } from "../src/client/host";
 import "../src/client/styles.css";
 
-// The production host and avatar for one signed-in person. `?menu=off` is the person
-// Workbot's real /auth routes answer behind the page.
 const me = meSchema.parse({
   userId: "user_fixture", organizationId: "org_fixture", name: "Sam Rivera", email: "sam@example.test",
   organizationName: "Example Team", enabled: true, denUrl: "https://den.example.test",

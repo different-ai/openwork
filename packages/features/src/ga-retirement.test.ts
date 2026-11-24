@@ -24,7 +24,7 @@ const graduated = [
   "nativeDictation", "workbotScrollToBottom", "workbotApps",
   "workbotProactive", "workbotTeamSettings", "workbotUsageAnalytics",
   "fileSendPermissions", "remoteDevices", "remoteSessionAccess",
-  "workbotSettingsTabs", "sandboxSlack", "sandboxModelChoice",
+  "workbotSettingsTabs", "sandboxSlack", "sandboxModelChoice", "settingsFind",
 ]
 
 test("completed November rollouts are retired rather than permanently enabled flags", () => {
