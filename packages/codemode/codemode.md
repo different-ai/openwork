@@ -1,13 +1,12 @@
 # CodeMode Design and Status
 
-This is the living design and status document for `@opencode-ai/codemode` and its existing V2 OpenCode adapter.
+This is the living design and status document for `@openwork/codemode` and its existing V2 OpenCode adapter.
 It records current behavior, intentional boundaries, durable rationale, and material remaining work.
 
 Completed implementation history, branch names, test counts, and closed findings belong in git, not here. Remove
 completed work instead of preserving checked-off chronology.
 
-Detailed package API documentation lives in [README.md](./README.md). OpenAPI-specific follow-ups live in
-[src/openapi/TODO.md](./src/openapi/TODO.md).
+Detailed package API documentation lives in [README.md](./README.md).
 
 ## How CodeMode Works
 
@@ -124,9 +123,6 @@ These are product boundaries rather than DSL backlog:
   side effects. Hosts and tools own those concerns.
 - Heuristic parsing of text tool results as JSON. A result should not silently change type based on its contents.
 
-The OpenAPI adapter may gain more transports and encodings, but it must continue skipping operations it cannot
-represent accurately rather than guessing semantics.
-
 ## Decisions and Rationale
 
 | Decision                                                 | Rationale                                                                                                                                                                                                                |
@@ -140,12 +136,11 @@ represent accurately rather than guessing semantics.
 | Treat `execute` as the model-facing invocation boundary. | Nested calls are implementation details of one orchestration program. Reusing the outer context and bounding only the final result preserves complete intermediate data without inventing durable child-call identities. |
 | Return expected failures as data.                        | Models need actionable diagnostics without exposing private host causes; host interruption and defects must still propagate correctly.                                                                                   |
 | Leave execution-limit defaults to hosts.                 | Appropriate budgets depend on the surrounding product and its own cancellation, retention, and output-bounding policies.                                                                                                 |
-| Skip unsupported OpenAPI operations.                     | Incorrect parameter encoding, authentication, or transport behavior is worse than a precise `skipped` reason.                                                                                                            |
 
 ## Remaining Work
 
-Keep only material unresolved work here. Small isolated defects should be GitHub issues; adapter-only work belongs in
-the adapter TODO. Delete entries when completed.
+Keep only material unresolved work here. Small isolated defects should be GitHub issues.
+Delete entries when completed.
 
 ### DSL expansion
 
