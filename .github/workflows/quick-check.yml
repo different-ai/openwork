@@ -132,7 +132,6 @@ jobs:
           packages/computer-use/value-use.test.mjs
           packages/computer-use/private-value-use.test.mjs
           packages/computer-use/computer-control-value-approval.test.mjs
-          apps/desktop/electron/session-runner-computer-requests.test.mjs
           apps/desktop/test/ui-control-private-redact.test.mjs
       - name: Check outbound access manifest
         run: node scripts/check-outbound-access.mjs
@@ -284,6 +283,12 @@ jobs:
           pnpm --filter openwork-server build
       - name: Typecheck Electron main against the IPC contract
         run: pnpm --filter @openwork/desktop typecheck:electron
+      # These need the workspace's own packages, so they run here and not with the static checks.
+      - name: Check private value rules, the card and the audit record
+        run: >-
+          node --conditions=development --test
+          apps/desktop/electron/private-values.test.mjs
+          apps/desktop/electron/session-runner-computer-requests.test.mjs
 
   # Single stable context for branch rulesets to require. Every always-run
   # quick check must succeed; the Den job must succeed when selected and be
