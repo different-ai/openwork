@@ -18,7 +18,7 @@ import { env } from "../../env.js"
 import { jsonValidator, orgPermissionRoute } from "../../middleware/index.js"
 import { appLogger } from "../../observability/logger.js"
 import { resolvePermissionsForMember } from "../../permissions/resolve.js"
-import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
+import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, ssoRequiredSchema, unauthorizedSchema } from "../../openapi.js"
 import { permissionDeniedResponse, permissionFailureHeaders, type OrgRouteVariables } from "./shared.js"
 
 type Variables = OrgRouteVariables & RequestIdVariables
@@ -39,14 +39,18 @@ const errors = {
   503: jsonResponse("Audit storage or required access capture unavailable; no audit content is released.", z.object({ error: z.enum(["audit_unavailable", "audit_storage_inconsistent"]) })),
 }
 const filterParameters: NonNullable<DescribeRouteOptions["parameters"]> = [
-  ...["from", "to"].map((name) => ({ in: "query", name, schema: { anyOf: [{ type: "string", format: "date" }, { type: "string", format: "date-time", maxLength: 40 }] }, description: "Inclusive operation-start bound; date-only is UTC midnight. from must not exceed to." } satisfies NonNullable<DescribeRouteOptions["parameters"]>[number])),
+  ...([["from", "lower"], ["to", "upper"]] as const).map(([name, bound]) => ({
+    in: "query", name,
+    schema: { anyOf: [{ type: "string", format: "date" }, { type: "string", format: "date-time", maxLength: 40 }] },
+    description: `Inclusive ${bound} bound on the operation's first-recorded time; unbounded when omitted. Use \`YYYY-MM-DD\` (UTC midnight) or \`YYYY-MM-DDTHH:MM:SS[.fraction]\` followed by \`Z\` or \`±HH:MM\`, e.g. \`2026-11-01T00:00:00+08:00\`. Seconds and a time zone are required for date-times; numeric offsets must include a colon. \`from\` must not be later than \`to\`.`,
+  } satisfies NonNullable<DescribeRouteOptions["parameters"]>[number])),
   { in: "query", name: "actorId", schema: { type: "string", pattern: "^usr_[0-7][0-9a-hjkmnp-tv-z]{25}$" }, description: "Initiating user ID, not a delegated event actor or membership ID." },
-  { in: "query", name: "action", schema: { type: "string", minLength: 1, maxLength: 128, pattern: "^[a-z][a-z0-9_.-]*$" }, description: "Exact stable action of any child event within the snapshot." },
+  { in: "query", name: "action", schema: { type: "string", minLength: 1, maxLength: 128, pattern: "^[a-z][a-z0-9_.-]*$" }, description: "Exact stable action of any child event within the snapshot. See `GET /v1/audit/event-types` for supported actions." },
   { in: "query", name: "outcome", schema: { type: "string", enum: auditOperationOutcomeSchema.options }, description: "Current operation outcome; not an individual event outcome." },
   { in: "query", name: "origin", schema: { type: "string", enum: auditOriginSchema.options }, description: "Stored operation origin." },
   { in: "query", name: "searchId", schema: { type: "string", minLength: 1, maxLength: 255, pattern: "^[^\\u0000-\\u001f\\u007f-\\u009f]+$" }, description: "Exact case-sensitive operation, child event, child request or stored child resource reference ID within the snapshot; OR across ID kinds, AND with other filters. Not free-text or legacy payload search." },
-  { in: "query", name: "resourceId", schema: { type: "string", minLength: 1, maxLength: 255 }, description: "Exact case-sensitive stored reference ID from any child within the snapshot." },
-  { in: "query", name: "resourceType", schema: { type: "string", minLength: 1, maxLength: 64, pattern: "^[a-z][a-z0-9_.-]*$" }, description: "Optional stored reference type; requires resourceId." },
+  { in: "query", name: "resourceId", schema: { type: "string", minLength: 1, maxLength: 255, pattern: "^[^\\u0000-\\u001f\\u007f]+$" }, description: "Exact case-sensitive stored reference ID from any child within the snapshot. No live-resource lookup." },
+  { in: "query", name: "resourceType", schema: { type: "string", minLength: 1, maxLength: 64, pattern: "^[a-z][a-z0-9_.-]*$" }, description: "Type of the same stored reference matched by resourceId. Requires resourceId." },
 ]
 const pageParameters: NonNullable<DescribeRouteOptions["parameters"]> = [
   { in: "query", name: "limit", schema: { type: "integer", minimum: 1, maximum: 100, default: 50 }, description: "Maximum rows in this page." },
@@ -219,26 +223,41 @@ export function registerOrgAuditRoutes<T extends { Variables: Variables }>(app: 
 
   app.get("/v1/audit/export", describeAuditRoute({
     operationId: "getAuditExport", tags: ["Organizations"], "x-mcp": false, summary: "Export one audit snapshot page",
-    description: `Requires View audit history (audit.view) and deployment audit visibility. For scripts, send an organization API key in x-api-key. Exports retained, structured events only, not every cloud action.
+    description: `Requires View audit history (\`audit.view\`) and deployment audit visibility. For scripts, send an organization API key in \`x-api-key\` without a Bearer prefix; its owner must be a current member with that permission.
 
-Omit cursor on the first request. Copy the full X-Audit-Next-Cursor response header into the next request's cursor query parameter. There is no nextCursor field in the body. Keep the organization, filters and format unchanged; limit may change. Stop when a successful response omits the header, even if it has exactly limit events. Cursors are signed and expire 24 hours after the first page, without renewal.
+Read \`X-Audit-Next-Cursor\` from the response headers, not the body. Pass it as \`cursor\`; stop when a successful response omits the header, even if the page is full.
 
-X-Audit-Snapshot-At starts at server time minus five seconds and stays fixed across pages. Events recorded after it are excluded. This is not a continuous feed or a retention guarantee. ${filterDescription}
-
-Each response is one attachment containing all eligible child events of matching operations, in ascending event ID (recording time) order. NDJSON has one full envelope per line. CSV has a column header on every page and summary fields only: references and changed-field names are JSON cells, no before/after content. Every cell is quoted; formula-leading whitespace/control and =+-@ are prefixed with an apostrophe, backslashes are doubled, and controls/multiline characters are encoded as literal backslash-u escapes.
-
-The API key's request limit is shared with other calls using the key. See the [Audit export API reference](https://openworklabs.com/docs/cloud/audit-export-api) for limits and errors and [Download audit history with the API](https://openworklabs.com/docs/cloud/export-audit-logs) for an example.`,
+[Download audit history with the API](https://openworklabs.com/docs/cloud/export-audit-logs) · [How export snapshots and cursors work](https://openworklabs.com/docs/cloud/audit-logs#how-export-snapshots-and-cursors-work).`,
     parameters: [
-      { ...pageParameters[0], description: "Maximum child events per page, excluding the CSV column header. Default 50, range 1 to 100. Can change between pages." },
-      { ...pageParameters[1], description: "Omit for the first page. For later pages, use the entire X-Audit-Next-Cursor response header as this query parameter. Nonempty, at most 4096 characters." },
+      { ...pageParameters[0], description: "Maximum child events per page, excluding the CSV column header. Send decimal digits only, with no leading zero, sign, spaces or decimal point." },
+      { in: "query", name: "cursor", schema: { type: "string", minLength: 1, maxLength: 4096 }, description: "Omit for the first page. For later pages, URL-encode the entire opaque X-Audit-Next-Cursor response header value." },
       ...filterParameters,
-      { in: "query", name: "format", schema: { type: "string", enum: ["ndjson", "csv"], default: "ndjson" }, description: "Attachment format. Use the same format on every page of a cursor chain." },
+      { in: "query", name: "format", schema: { type: "string", enum: ["ndjson", "csv"], default: "ndjson" }, description: "Attachment format." },
     ],
-    responses: { ...errors, 403: { ...errors[403], description: "Organization access, permission or audit visibility denied." }, 200: { description: "One attachment page of events, with no pagination object in the body.", content: { "application/x-ndjson": { schema: { type: "string" } }, "text/csv": { schema: { type: "string" } } }, headers: {
-      "X-Audit-Next-Cursor": { description: "Set only when more eligible events remain. Pass this opaque response header value as the next request's cursor query parameter.", schema: { type: "string" } },
-      "X-Audit-Snapshot-At": { description: "UTC cutoff, set to server time minus five seconds on the first page and unchanged on later pages. Events recorded after it are excluded.", schema: { type: "string", format: "date-time" } },
-      "Content-Disposition": { description: "Attachment filename; the same on every page of a snapshot.", schema: { type: "string" } },
-    } } },
+    responses: {
+      200: {
+        description: "One attachment page of retained, structured child events from matching operations, ordered by ascending event ID. Omitted filters impose no restriction; supplied filters combine with AND. Content-Type is application/x-ndjson; charset=utf-8 for NDJSON or text/csv; charset=utf-8 for CSV.",
+        content: {
+          "application/x-ndjson; charset=utf-8": { schema: { type: "string", description: "One complete audit event envelope per line, or an empty body when no events match." } },
+          "text/csv; charset=utf-8": { schema: { type: "string", description: "Summary fields only, without before or after values. References and changed-field names are JSON cells. Each page starts with a header row, even if no events match. Rows end with CRLF. Every cell is quoted. Formula-leading =, +, -, @, tab, CR or LF (including after leading whitespace or control characters) trigger an apostrophe prefix. Backslashes are doubled; control characters and Unicode line and paragraph separators use literal Unicode escapes." } },
+        },
+        headers: {
+          "X-Audit-Next-Cursor": { description: "Present only when more eligible events remain. Use its entire value as the next request's cursor query parameter.", schema: { type: "string" } },
+          "X-Audit-Snapshot-At": { required: true, description: "UTC cutoff, set to server time minus five seconds on the first page and unchanged on later pages. Events recorded after it are excluded.", schema: { type: "string", format: "date-time" } },
+          "Content-Disposition": { required: true, description: 'Attachment with a filename of the form `audit-<snapshot Unix time in milliseconds>.<format>`; the same on every page of a snapshot.', schema: { type: "string", example: 'attachment; filename="audit-1793462400000.ndjson"' } },
+        },
+      },
+      400: jsonResponse("`audit_invalid_query`: invalid parameters. All parameters are optional; unknown, repeated or empty parameters are rejected. `audit_invalid_cursor`: the cursor is invalid or does not match the organization, format or filters.", z.object({ error: z.enum(["audit_invalid_query", "audit_invalid_cursor"]) })),
+      401: jsonResponse("`unauthorized`: authentication failed or Den throttled the API key (401, not 429).", unauthorizedSchema),
+      403: jsonResponse("`forbidden`: access denied or missing `audit.view`. `audit_visibility_disabled`: deployment audit visibility (`DEN_AUDIT_VISIBILITY_ENABLED`, on by default) is off. `sso_required`: organization SSO is required for the session; does not apply to API keys.", z.union([
+        z.object({ error: z.literal("forbidden"), message: z.string(), code: z.literal("requires_admin").optional(), retryable: z.literal(false).optional(), action_url: z.string().optional(), requiredPermission: z.literal("audit.view").optional() }),
+        z.object({ error: z.literal("audit_visibility_disabled") }),
+        ssoRequiredSchema,
+      ])),
+      404: jsonResponse("`organization_not_found`: no organization context could be resolved for the authenticated user.", z.object({ error: z.literal("organization_not_found") })),
+      410: errors[410],
+      503: jsonResponse("`audit_unavailable`: audit storage or required access recording failed. `audit_storage_inconsistent`: retained audit data failed integrity checks. No export data is returned.", z.object({ error: z.enum(["audit_unavailable", "audit_storage_inconsistent"]) })),
+    },
   } satisfies AuditRouteDescription), orgPermissionRoute("audit.view"), (c) => serveAudit(c, "export", async (organizationId) => {
     const query = parseQuery(auditExportQuerySchema, c)
     const result = await listAuditExportEvents({ database: db, organizationId, secret: env.betterAuthSecret }, query)
