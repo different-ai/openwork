@@ -28,7 +28,7 @@ import {
 } from "./repository.js"
 import { countConnectedMembers, listConnectionToolsForMember, listMemberConnections } from "./sources-repository.js"
 import { createCheckGateModel } from "./check-gate.js"
-import { createEvaluationModel } from "./evaluation-model.js"
+import { createEvaluationModel } from "../llm/evaluation-model.js"
 import { createAgentSendCheck } from "./send-check.js"
 import { readAgentTemplate } from "./template.js"
 import { agentMessageId, agentMessageSessionId, agentSessionId, defaultAgentTurnDeps, endAgentMessageSession, runAgentSessionTurn, runAgentTurn } from "./turn.js"
