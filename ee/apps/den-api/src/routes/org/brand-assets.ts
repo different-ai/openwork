@@ -49,7 +49,7 @@ const invalidAssetSchema = z.object({
   message: z.string(),
 }).meta({ ref: "InvalidManagedBrandAssetError" })
 
-function publicBaseUrl() {
+export function brandAssetPublicBaseUrl() {
   return env.apiPublicUrl ?? `http://127.0.0.1:${env.port}`
 }
 
@@ -75,7 +75,7 @@ function normalizeAssetRoute(input: {
   }
 }
 
-async function uploadedAsset(input: {
+export async function uploadedAsset(input: {
   file: File
   kind: BrandAssetKind
   organizationId: BrandAssetStorageKey["organizationId"]
@@ -112,7 +112,7 @@ export function registerOrgBrandAssetRoutes<T extends { Variables: OrgRouteVaria
   options: { storage?: BrandAssetStorage; publicBaseUrl?: string; signingSecret?: string } = {},
 ) {
   const storage = options.storage ?? databaseBrandAssetStorage
-  const assetPublicBaseUrl = options.publicBaseUrl ?? publicBaseUrl()
+  const assetPublicBaseUrl = options.publicBaseUrl ?? brandAssetPublicBaseUrl()
   const signingSecret = options.signingSecret ?? env.betterAuthSecret
 
   app.get(
@@ -142,8 +142,6 @@ export function registerOrgBrandAssetRoutes<T extends { Variables: OrgRouteVaria
       if (!verifyBrandAssetSignature(key, signature, signingSecret)) {
         return c.json({ error: "not_found" }, 404)
       }
-      // The HMAC binds the organization in the path: attribute the download to
-      // it; the holder of a capability URL is anonymous.
       const audited = await attributeAuditRequest(c, {
         organizationId: key.organizationId, actor: { type: "unknown", id: null }, principalKey: "anonymous:signed_brand_asset_url",
       })

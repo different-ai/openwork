@@ -1,11 +1,3 @@
-/**
- * The step a session ran last, as one short sentence ("Ran List the release
- * notes", "Read v1.1.md"), for status lines that say what a session on
- * another computer is doing without reading its transcript.
- *
- * Only the current turn counts: steps before the latest user message belong
- * to an earlier answer.
- */
 import type { HeadlessThreadMessage, HeadlessThreadMessagePart } from "./types.js";
 
 export const LATEST_STEP_MAX_LENGTH = 120;

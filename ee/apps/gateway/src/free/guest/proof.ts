@@ -16,16 +16,13 @@ const proofSchema = z.discriminatedUnion("version", [
   z.strictObject({ version: z.literal(2), ...claims }),
   z.strictObject({ version: z.literal(3), releaseTag: z.string().regex(DESKTOP_FREE_RELEASE_TAG_PATTERN), ...claims }),
 ])
-/** What a guest token is bound to: the signing key, the machine and the app build. */
 export type DesktopFreeBinding = Pick<DesktopFreeProofClaims, "machineId" | "appVersion" | "platform" | "arch"> & { keyThumbprint: string }
 export type VerifiedDesktopFreeProof = DesktopFreeProofClaims & DesktopFreeBinding & {
-  /** Which secret tagged a v3 proof; null for a v2 proof from a release that predates release tags. */
   releaseSource: ReleaseSecretCandidate["source"] | null
 }
 
 export function verifyDesktopFreeProof(input: {
   header: string | null; method: string; path: string; bodyHash: string; authorization: string;
-  /** Secrets the gateway accepts for the claimed app version. Absent means release tags are not checked (tests). */
   releaseSecrets?: (appVersion: string) => ReleaseSecretCandidate[];
   binding?: DesktopFreeBinding; now?: number;
 }): VerifiedDesktopFreeProof | null {
@@ -49,7 +46,6 @@ export function verifyDesktopFreeProof(input: {
     const request = { method: input.method, path: input.path, bodyHash: input.bodyHash, authorizationHash: sha256Hex(input.authorization) }
     let releaseSource: VerifiedDesktopFreeProof["releaseSource"] = null
     if (proof.version === 3 && input.releaseSecrets) {
-      // The tag is checked before the signature so a wrong-release secret is never mistaken for a bad signature.
       const matched = matchReleaseTag(proof.releaseTag, input.releaseSecrets(proof.appVersion), { ...proof, ...request })
       if (!matched) return null
       releaseSource = matched.source

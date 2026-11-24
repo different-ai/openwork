@@ -1,16 +1,3 @@
-/**
- * In-process harness for den-api security tests.
- *
- * Boots the real den-api Hono app against a real, throwaway MySQL database and
- * talks to it only through the public HTTP API (better-auth sign-up/sign-in,
- * /v1/*, /mcp/*). Nothing in OpenWork is mocked. Outside services the tests
- * need (an MCP server, an OAuth authorization server) are small HTTP servers
- * the test starts itself; see `startFakeHttpServer`.
- *
- * Usage: `const den = await bootDen()` once per test file (node:test runs each
- * file in its own process, so each file gets its own database and app), then
- * `after(() => den.close())`.
- */
 import { execFile } from "node:child_process"
 import { randomBytes } from "node:crypto"
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http"
@@ -32,7 +19,6 @@ const PASSWORD = "Correct-Horse-Battery-Staple-42!"
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json }
 export type Call = { status: number; body: Json; text: string; headers: Headers }
 export type Method = "GET" | "POST" | "PUT" | "PATCH" | "DELETE"
-/** A signed-in person: the bearer token clients send, and the session cookie Den Web's browser holds. */
 export type Session = { token: string; cookie: string; email: string; name: string; userId: string }
 export type Member = Session & { memberId: string }
 export type RequestOptions = { orgId?: string | null; headers?: Record<string, string>; body?: unknown; rawBody?: string }
@@ -41,7 +27,6 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-/** Read a nested field: `field(body, "team", "id")`. */
 export function field(value: unknown, ...keys: string[]): unknown {
   let current = value
   for (const key of keys) current = isRecord(current) ? current[key] : undefined
@@ -88,7 +73,6 @@ function withDatabase(base: URL, database: string): string {
   return url.toString()
 }
 
-/** The schema as drizzle-kit sees it (`export` is offline: no credentials needed). */
 async function schemaStatements(): Promise<string[]> {
   const { stdout } = await execFileAsync(
     process.execPath,
@@ -100,7 +84,6 @@ async function schemaStatements(): Promise<string[]> {
   return inlineIndexes(stdout.slice(start).split(/;\s*\n/).map((statement) => statement.trim()).filter(Boolean))
 }
 
-/** A MySQL connection pool (never PlanetScale's HTTP client) for one database URL. */
 function mysqlPool(databaseUrl: string) {
   const { client } = createDenDb({ databaseUrl, mode: "mysql" })
   if (!("getConnection" in client)) throw new Error("expected a MySQL pool")
@@ -125,14 +108,11 @@ async function createDatabase(): Promise<{ url: string; drop: () => Promise<void
   const root = mysqlPool(withDatabase(base, "mysql"))
   const [statements] = await Promise.all([
     schemaStatements(),
-    // Bootstrap's current schema has no table charset clauses: server defaults
-    // must be testable without converting an already-created customer schema.
     root.query(`CREATE DATABASE \`${name}\`${charsetClause}`),
   ])
   const url = withDatabase(base, name)
   const target = mysqlPool(url)
   try {
-    // Tables first, then indexes and foreign keys, a few at a time.
     const tables = statements.filter((statement) => statement.startsWith("CREATE TABLE"))
     const rest = statements.filter((statement) => !statement.startsWith("CREATE TABLE"))
     for (const group of [tables, rest]) {
@@ -164,9 +144,91 @@ async function createDatabase(): Promise<{ url: string; drop: () => Promise<void
   }
 }
 
+const READ_USER = { username: "den_api_test_read", password: "den-api-test-read-password" }
+
+async function createReadUser(): Promise<{ username: string; password: string }> {
+  const root = mysqlPool(withDatabase(mysqlBaseUrl(), "mysql"))
+  try {
+    await root.query(`CREATE USER IF NOT EXISTS '${READ_USER.username}'@'%' IDENTIFIED BY '${READ_USER.password}'`)
+    await root.query(`GRANT SELECT ON *.* TO '${READ_USER.username}'@'%'`)
+  } finally {
+    await root.end()
+  }
+  return READ_USER
+}
+
+export type ConcurrentStatement = { running: string; sent: string }
+
+async function productionLikeDatabase(options: { replica: boolean }) {
+  const { client, readClient } = await import("../../src/db.js")
+  if (!("getConnection" in client)) throw new Error("productionLike needs MySQL mode")
+  const replica = options.replica ? readClient : null
+  if (options.replica && (!replica || !("getConnection" in replica))) throw new Error("productionLike needs replica credentials")
+  const REPLICA_CONNECTIONS = 10
+  let frozen = false
+
+  async function snapshotAll(): Promise<void> {
+    if (!replica || !("getConnection" in replica)) return
+    const connections = await Promise.all(Array.from({ length: REPLICA_CONNECTIONS }, () => replica.getConnection()))
+    try {
+      await Promise.all(connections.map(async (connection) => {
+        await connection.query("COMMIT")
+        await connection.query("START TRANSACTION WITH CONSISTENT SNAPSHOT, READ ONLY")
+      }))
+    } finally {
+      for (const connection of connections) connection.release()
+    }
+  }
+
+  const concurrentStatements: ConcurrentStatement[] = []
+  const guarded = new WeakSet<object>()
+  const sqlOf = (input: unknown): string => (typeof input === "string" ? input : isRecord(input) && typeof input.sql === "string" ? input.sql : "?")
+  const getConnection = client.getConnection.bind(client)
+  client.getConnection = async () => {
+    const connection = await getConnection()
+    if (guarded.has(connection)) return connection
+    guarded.add(connection)
+    let running: string | null = null
+    for (const method of ["query", "execute"] as const) {
+      const unwrapped = connection[method]
+      const original = (...args: unknown[]): Promise<unknown> => Reflect.apply(unwrapped, connection, args)
+      const wrapped = async (...args: unknown[]) => {
+        const sent = sqlOf(args[0])
+        if (running !== null && sent !== "rollback") {
+          concurrentStatements.push({ running, sent })
+          throw new Error(`production-like database: a transaction sent "${sent}" before "${running}" answered; PlanetScale's serverless driver fails here`)
+        }
+        running = sent
+        try {
+          return await original(...args)
+        } finally {
+          running = null
+        }
+      }
+      Object.defineProperty(connection, method, { value: wrapped, configurable: true, writable: true })
+    }
+    return connection
+  }
+
+  await snapshotAll()
+  return {
+    async catchUp(): Promise<void> {
+      if (!frozen) await snapshotAll()
+    },
+    async freeze(): Promise<void> {
+      await snapshotAll()
+      frozen = true
+    },
+    async thaw(): Promise<void> {
+      frozen = false
+      await snapshotAll()
+    },
+    concurrentStatements,
+  }
+}
+
 export type FakeHandler = (request: IncomingMessage, body: string, response: ServerResponse) => void | Promise<void>
 
-/** A small outside service (an MCP server, an OAuth provider) for one test file. */
 export async function startFakeHttpServer(handler: FakeHandler): Promise<{ url: string; close: () => Promise<void> }> {
   const server = createServer((request, response) => {
     const chunks: Uint8Array[] = []
@@ -192,16 +254,8 @@ export async function startFakeHttpServer(handler: FakeHandler): Promise<{ url: 
 
 export type FakeMcpTool = { name: string; description: string; text: string; annotations?: { readOnlyHint?: boolean; destructiveHint?: boolean } }
 export type WireEntry = { path: string; rpcMethod: string; authorization: string; status: number; sessionId?: string }
-/**
- * What the fake MCP server answers for one request. `reply` = speak MCP;
- * otherwise a bare status (with optional headers/body), as a real service might.
- */
 export type FakeMcpDecision = { reply: true } | { reply: false; status: number; headers?: Record<string, string>; body?: string }
 
-/**
- * A small streamable-HTTP MCP server (JSON responses) that records every
- * request it receives: path, JSON-RPC method and the Authorization header.
- */
 export async function startFakeMcpServer(options: {
   tools: FakeMcpTool[]
   decide?: (entry: { path: string; rpcMethod: string; authorization: string; rpcId: Json }) => FakeMcpDecision
@@ -263,15 +317,9 @@ export async function startFakeMcpServer(options: {
   return { ...server, wire }
 }
 
-/**
- * An MCP server that signs people in as its own OAuth authorization server
- * (RFC 9728 discovery, dynamic client registration, PKCE code flow).
- * `responseIssuer` adds RFC 9207 `iss` to the authorization reply;
- * `protectedResource` makes it declare a resource other than its own /mcp.
- */
-export async function startFakeOAuthMcpServer(options: { responseIssuer?: boolean; protectedResource?: string } = {}) {
+export async function startFakeOAuthMcpServer(options: { responseIssuer?: boolean; protectedResource?: string; challengeScopes?: string[] } = {}) {
+  const scopesSupported = options.challengeScopes ?? ["mcp:read"]
   const requests: { method: string; path: string }[] = []
-  /** When set, a signed-in MCP request is refused with this status and JSON body. */
   let refusal: { status: number; body: Json } | null = null
   const issued = new Set<string>()
   const codes = new Set<string>()
@@ -284,7 +332,7 @@ export async function startFakeOAuthMcpServer(options: { responseIssuer?: boolea
     const url = new URL(request.url ?? "/", issuer)
     requests.push({ method: request.method ?? "", path: url.pathname })
     if (url.pathname.startsWith("/.well-known/oauth-protected-resource") || url.pathname === "/mcp/.well-known/oauth-protected-resource") {
-      json(response, 200, { resource: options.protectedResource ?? `${issuer}/mcp`, authorization_servers: [issuer], scopes_supported: ["mcp:read"], bearer_methods_supported: ["header"] })
+      json(response, 200, { resource: options.protectedResource ?? `${issuer}/mcp`, authorization_servers: [issuer], scopes_supported: scopesSupported, bearer_methods_supported: ["header"] })
       return
     }
     if (url.pathname.startsWith("/.well-known/oauth-authorization-server") || url.pathname.startsWith("/.well-known/openid-configuration")) {
@@ -298,7 +346,7 @@ export async function startFakeOAuthMcpServer(options: { responseIssuer?: boolea
         grant_types_supported: ["authorization_code", "refresh_token"],
         token_endpoint_auth_methods_supported: ["none", "client_secret_post", "client_secret_basic"],
         code_challenge_methods_supported: ["S256"],
-        scopes_supported: ["mcp:read"],
+        scopes_supported: scopesSupported,
       })
       return
     }
@@ -335,7 +383,8 @@ export async function startFakeOAuthMcpServer(options: { responseIssuer?: boolea
     if (url.pathname === "/mcp") {
       const bearer = (request.headers.authorization ?? "").replace(/^Bearer /, "")
       if (!issued.has(bearer)) {
-        response.writeHead(401, { "www-authenticate": `Bearer resource_metadata="${issuer}/.well-known/oauth-protected-resource"` }).end()
+        const scope = options.challengeScopes ? `, scope="${options.challengeScopes.join(" ")}"` : ""
+        response.writeHead(401, { "www-authenticate": `Bearer resource_metadata="${issuer}/.well-known/oauth-protected-resource"${scope}` }).end()
         return
       }
       if (refusal) return json(response, refusal.status, refusal.body)
@@ -359,7 +408,6 @@ export async function startFakeOAuthMcpServer(options: { responseIssuer?: boolea
     mcpUrl: `${server.url}/mcp`,
     tokenRequests: () => requests.filter((entry) => entry.path === "/token").length,
     requests,
-    /** Refuse every signed-in MCP request with this answer, or answer normally again with null. */
     refuseMcp(answer: { status: number; body: Json } | null) {
       refusal = answer
     },
@@ -370,16 +418,13 @@ export type McpToolResult = { status: number; isError: boolean; rpcError: Json; 
 
 export type Den = Awaited<ReturnType<typeof bootDen>>
 
-/**
- * Create the database, set the environment, import the app.
- * `platformAdminEmail` is seeded into the deployment's platform-admin allowlist
- * (the same DEN_BOOTSTRAP_ADMIN_EMAILS a self-hosted operator sets) so the test
- * can turn organization features on from /v1/admin.
- */
-export async function bootDen(options: { env?: Record<string, string> } = {}) {
+export async function bootDen(options: { env?: Record<string, string>; productionLike?: boolean } = {}) {
   const stamp = `${Date.now().toString(36)}${randomBytes(3).toString("hex")}`
   const platformAdminEmail = `platform-admin+${stamp}@example.test`
   const database = await createDatabase()
+  const transactionsOnly = options.productionLike === undefined && process.env.DEN_API_TEST_PRODUCTION_LIKE === "transactions"
+  const productionLike = transactionsOnly || (options.productionLike ?? process.env.DEN_API_TEST_PRODUCTION_LIKE === "1")
+  const readUser = productionLike && !transactionsOnly ? await createReadUser() : null
   Object.assign(process.env, {
     DATABASE_URL: database.url,
     DB_MODE: "mysql",
@@ -403,6 +448,7 @@ export async function bootDen(options: { env?: Record<string, string> } = {}) {
     STRIPE_SECRET_KEY: "",
     LOOPS_API_KEY: "",
     OTEL_SDK_DISABLED: "true",
+    ...(readUser ? { DATABASE_READ_USERNAME: readUser.username, DATABASE_READ_PASSWORD: readUser.password } : {}),
     ...options.env,
   })
   const app = await import("../../src/app.js").then((module) => module.default, async (error: unknown) => {
@@ -410,7 +456,10 @@ export async function bootDen(options: { env?: Record<string, string> } = {}) {
     throw error
   })
 
+  const production = productionLike ? await productionLikeDatabase({ replica: !transactionsOnly }) : null
+
   async function request(token: string | null, method: Method, pathname: string, options: RequestOptions = {}): Promise<Call> {
+    await production?.catchUp()
     const headers = new Headers({ origin: WEB_ORIGIN, ...options.headers })
     if (token) headers.set("authorization", `Bearer ${token}`)
     if (options.orgId) headers.set("x-openwork-org-id", options.orgId)
@@ -428,7 +477,6 @@ export async function bootDen(options: { env?: Record<string, string> } = {}) {
     return request(null, "POST", "/api/auth/sign-in/email", { body: { email, password } })
   }
 
-  /** A new person signs up through the public endpoint and signs in. */
   async function signUp(name: string, email = `${name.toLowerCase().replace(/[^a-z]+/g, "-")}+${stamp}@example.test`): Promise<Session> {
     const created = await request(null, "POST", "/api/auth/sign-up/email", { body: { email, name, password: PASSWORD } })
     if (created.status !== 200) throw new Error(`sign-up ${email}: ${summary(created)}`)
@@ -438,7 +486,6 @@ export async function bootDen(options: { env?: Record<string, string> } = {}) {
     return { token: text(field(signedIn.body, "token"), "session token"), cookie, email, name, userId: text(field(signedIn.body, "user", "id"), "user id") }
   }
 
-  /** The person creates an organization and becomes its owner. */
   async function createOrg(owner: Session, name: string): Promise<{ orgId: string; owner: Member }> {
     const created = await request(owner.token, "POST", "/v1/org", { body: { name } })
     if (created.status >= 300) throw new Error(`create org ${name}: ${summary(created)}`)
@@ -452,7 +499,6 @@ export async function bootDen(options: { env?: Record<string, string> } = {}) {
     return text(member?.id, `member id for ${email}`)
   }
 
-  /** An inviter invites the person and they accept through the public API. */
   async function join(inviter: Session, orgId: string, person: Session, role: "member" | "admin" = "member"): Promise<Member> {
     const invited = await request(inviter.token, "POST", "/v1/invitations", { orgId, body: { email: person.email, role } })
     const inviteToken = field(invited.body, "inviteToken")
@@ -462,7 +508,6 @@ export async function bootDen(options: { env?: Record<string, string> } = {}) {
     return { ...person, memberId: await memberIdOf(inviter, orgId, person.email) }
   }
 
-  /** Sign up a fresh person and add them to the organization. */
   async function newMember(inviter: Session, orgId: string, name: string, role: "member" | "admin" = "member"): Promise<Member> {
     return join(inviter, orgId, await signUp(name), role)
   }
@@ -474,7 +519,6 @@ export async function bootDen(options: { env?: Record<string, string> } = {}) {
   }
 
   let platformAdmin: Session | null = null
-  /** A platform administrator turns an organization feature on or off from /admin. */
   async function setFeature(orgId: string, key: string, enabled: boolean): Promise<Call> {
     platformAdmin ??= await signUp("Platform Admin", platformAdminEmail)
     return request(platformAdmin.token, "PUT", `/v1/admin/organizations/${encodeURIComponent(orgId)}/capabilities`, {
@@ -482,19 +526,21 @@ export async function bootDen(options: { env?: Record<string, string> } = {}) {
     })
   }
 
-  /** Request helper bound to one person and one organization, sending what Den Web sends: bearer and session cookie. */
+  async function asPlatformAdmin(method: Method, pathname: string, body?: unknown): Promise<Call> {
+    platformAdmin ??= await signUp("Platform Admin", platformAdminEmail)
+    return request(platformAdmin.token, method, pathname, { body })
+  }
+
   function as(session: Session, orgId: string) {
     return (method: Method, pathname: string, body?: unknown, headers?: Record<string, string>) =>
       request(session.token, method, pathname, { orgId, body, headers: { ...(session.cookie ? { cookie: session.cookie } : {}), ...headers } })
   }
 
-  /** An MCP token for this person, as OpenWork's clients mint one. */
   async function mintMcpToken(session: Session, orgId: string): Promise<string> {
     const issued = await request(session.token, "POST", "/v1/mcp/token", { orgId, body: { scopes: ["mcp:read", "mcp:write"] } })
     return text(field(issued.body, "token"), `MCP token for ${session.email} (${summary(issued)})`)
   }
 
-  /** One tools/call on OpenWork's MCP gateway, exactly as an MCP client sends it. */
   async function callMcpTool(token: string, name: string, args: Record<string, unknown>): Promise<McpToolResult> {
     const response = await request(token, "POST", "/mcp/agent", {
       headers: { accept: "application/json, text/event-stream" },
@@ -519,22 +565,12 @@ export async function bootDen(options: { env?: Record<string, string> } = {}) {
     }
   }
 
-  /**
-   * ARRANGE ONLY: mark the organization's saved SSO connection enabled, as if
-   * its owner had completed the interactive IdP test (a separate journey that
-   * needs a real IdP). SCIM token issuance requires an enabled connection.
-   * Never use this to observe an outcome.
-   */
   async function arrangeSsoConnectionEnabled(orgId: string): Promise<void> {
     const { client } = await import("../../src/db.js")
     if (!("getConnection" in client)) throw new Error("arrangeSsoConnectionEnabled needs MySQL mode")
     await client.execute("UPDATE sso_connection SET status = 'enabled' WHERE organization_id = ?", [orgId])
   }
 
-  /**
-   * READ ONLY: everything the audit tables hold, as one string, so a test can
-   * prove a secret was never stored (not just never returned by the API).
-   */
   async function auditStorageText(): Promise<string> {
     const { client } = await import("../../src/db.js")
     if (!("getConnection" in client)) throw new Error("auditStorageText needs MySQL mode")
@@ -563,9 +599,12 @@ export async function bootDen(options: { env?: Record<string, string> } = {}) {
     memberIdOf,
     createTeam,
     setFeature,
+    asPlatformAdmin,
     as,
+    production,
     async close() {
-      const { client } = await import("../../src/db.js")
+      const { client, readClient } = await import("../../src/db.js")
+      if (readClient && "getConnection" in readClient) await readClient.end().catch(() => undefined)
       if ("getConnection" in client) await client.end().catch(() => undefined)
       await database.drop()
     },

@@ -32,11 +32,6 @@ export const LlmProviderTable = mysqlTable(
     providerConfig: json("provider_config")
       .$type<Record<string, unknown>>()
       .notNull(),
-    /**
-     * How the provider credential relates to people. Shared providers use the
-     * org-level apiKey below; per-member providers resolve a credential from
-     * LlmProviderMemberCredentialTable for the calling member.
-     */
     credentialMode: mysqlEnum("credential_mode", ["shared", "per_member"]).notNull().default("shared"),
     apiKey: encryptedTextColumn("api_key"),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),

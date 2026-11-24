@@ -7,7 +7,5 @@ export default defineConfig({
   target: "es2022",
   clean: true,
   dts: false,
-  // Other consumers use workbook directly from source. The Node editor must
-  // carry its JavaScript instead of asking Node to load those source imports.
   noExternal: ["@openwork/workbook"],
 })

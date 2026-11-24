@@ -76,7 +76,6 @@ export function collaboraWorkspaceUrl(value: string) {
   return url.toString()
 }
 
-/** Only colors cross into the editor theme, never CSS rules or document content. */
 function hostColors(element: HTMLElement) {
   const style = getComputedStyle(element)
   const colors: Record<string, string> = {}

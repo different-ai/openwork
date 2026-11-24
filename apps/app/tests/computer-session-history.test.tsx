@@ -3,13 +3,14 @@ import { GlobalRegistrator } from "@happy-dom/global-registrator"
 import { act, createElement } from "react"
 import { createRoot, type Root } from "react-dom/client"
 import type { DynamicToolUIPart, UIMessage } from "ai"
-import { collectComputerSessionHistory, computerActionMarks, showsLiveComputerView, withoutComputerHistory } from "../src/lib/computer-session-history"
+import { computerHandedBackFiles, collectComputerSessionHistory, computerActionMarks, showsLiveComputerView, withoutComputerHistory } from "../src/lib/computer-session-history"
 import { parseDynamicToolUIPart, withToolAttachmentOwner } from "../src/react-app/domains/session/sync/parse-tool-parts"
 import { browserHistoryMessages, computerHistoryMessages } from "../test-fixtures/computer-session-history-data"
 
 GlobalRegistrator.register({ url: "https://web.example/" })
 Reflect.set(globalThis, "IS_REACT_ACT_ENVIRONMENT", true)
-const { ComputerSessionHistory } = await import("../src/components/chat/computer-session-history")
+const { ComputerSessionHistory, attachFileToComposer } = await import("../src/components/chat/computer-session-history")
+const { useComposerStateStore } = await import("../src/react-app/domains/session/surface/composer-state-store")
 const { TooltipProvider } = await import("../src/components/ui/tooltip")
 const { useComputerSessionHistoryStore } = await import("../src/components/chat/computer-session-history-store")
 const images = ["first", "second", "third"].map(value => `data:image/png;base64,${btoa(value)}`)
@@ -90,18 +91,20 @@ test("failed, denied, waiting and native error results stay out of the card", ()
   expect(collectComputerSessionHistory([{ id: "failures", role: "assistant", parts }])).toBeNull()
 })
 
-test("browser steps share the card, while a sign-in handoff and a failed step stay in the conversation", () => {
-  const messages = browserHistoryMessages(images)
-  const handoff: DynamicToolUIPart = { type: "dynamic-tool", toolName: "browser_handoff", toolCallId: "handoff", state: "output-available", input: {}, output: '{"ok":true}' }
-  const failed: DynamicToolUIPart = { ...handoff, toolName: "browser_act", toolCallId: "failed", output: '{"ok":false,"code":"stale_observation"}' }
-  messages[1]!.parts.push(handoff, failed)
-  const history = collectComputerSessionHistory(messages)!
-  expect(history.parts.map(part => part.toolName)).toEqual(["browser_open", "browser_observe", "browser_act", "browser_observe", "browser_act", "browser_observe"])
-  expect(history.frames.map(frame => frame.label)).toEqual(["Checked the page", "Checked the page", "Checked the page"])
-  const remaining = messages.flatMap(message => withoutComputerHistory(message.parts, history))
-  expect(remaining.filter(part => part.type === "dynamic-tool")).toEqual([handoff, failed])
-  expect(remaining.filter(part => part.type === "file")).toHaveLength(0)
-  expect(remaining.filter(part => part.type === "text")).toHaveLength(3)
+test("browser steps keep their own chat rows and never join the computer card", () => {
+  expect(collectComputerSessionHistory(browserHistoryMessages(images))).toBeNull()
+  // The fixtures share call ids; give the browser turn its own so only the tool name differs.
+  const browser = browserHistoryMessages(images).map(message => ({ ...message, id: `browser-${message.id}`, parts: message.parts.map(part =>
+    part.type === "dynamic-tool" ? { ...part, toolCallId: `browser-${part.toolCallId}` }
+      : part.type === "file" ? { ...part, providerMetadata: { openwork: { toolCallId: `browser-${part.providerMetadata?.openwork?.toolCallId}` } } } : part) }))
+  const mixed = [...browser, ...computerHistoryMessages(images)]
+  const history = collectComputerSessionHistory(mixed)!
+  expect(history.parts.every(part => part.toolName.startsWith("computer_"))).toBe(true)
+  expect(history.frames).toHaveLength(3)
+  const remaining = mixed.flatMap(message => withoutComputerHistory(message.parts, history))
+  expect(remaining.filter(part => part.type === "dynamic-tool").map(part => part.type === "dynamic-tool" && part.toolName))
+    .toEqual(["browser_open", "browser_observe", "browser_act", "browser_observe", "browser_act", "browser_observe"])
+  expect(remaining.filter(part => part.type === "file")).toHaveLength(3)
 })
 
 test("duplicate observations share a view, while returning to an earlier screen remains chronological", () => {
@@ -114,9 +117,6 @@ test("native timing and failure metadata survive hydration", () => {
   const part = parseDynamicToolUIPart({ type: "tool", id: "part", sessionID: "session", messageID: "message", callID: "call", tool: "computer_observe",
     state: { status: "completed", input: {}, output: "unavailable", title: "Computer", metadata: { isError: true }, time: { start: 100, end: 150 } } })!
   expect(part.callProviderMetadata?.openwork).toMatchObject({ toolStartedAt: 100, toolCompletedAt: 150, computerFailure: true })
-  const browser = parseDynamicToolUIPart({ type: "tool", id: "part", sessionID: "session", messageID: "message", callID: "call", tool: "browser_observe",
-    state: { status: "completed", input: {}, output: "{}", title: "Browser observation", metadata: {}, time: { start: 100, end: 150 } } })!
-  expect(browser.callProviderMetadata?.openwork).toMatchObject({ toolStartedAt: 100, toolCompletedAt: 150 })
 })
 
 async function mount(messages = computerHistoryMessages(images), active = false) {
@@ -166,19 +166,6 @@ test("browsing pins a capture while live work gains frames; missing screenshots 
   expect(container.textContent).toContain("No captured views")
 })
 
-test("the card says browser only while the whole turn stayed in the browser", async () => {
-  const messages = browserHistoryMessages(images)
-  const { container, render, click } = await mount(messages)
-  expect(container.textContent).toContain("Used browser")
-  expect(container.querySelector('[role="group"]')?.getAttribute("aria-label")).toBe("Browser session history")
-  await click("View browser session history")
-  expect(container.querySelector('[data-computer-view-count]')?.textContent).toBe("3 / 3")
-  await click("View browser actions")
-  expect(container.textContent).toContain("third-look")
-  await render(collectComputerSessionHistory([...messages, ...computerHistoryMessages(images)])!)
-  expect(container.textContent).toContain("Used computer")
-})
-
 test("streaming transcript updates do not keep restarting playback", async () => {
   const { container, render, click } = await mount(computerHistoryMessages(images), true)
   await click("View computer session history"); await click("Play captured views")
@@ -190,12 +177,36 @@ test("streaming transcript updates do not keep restarting playback", async () =>
   expect(container.querySelector('[data-computer-view-count]')?.textContent).toBe("2 / 3")
 })
 
+test("with two apps in one session, each step names the app it ran in", async () => {
+  const call = (id: string, name: string, input: Record<string, unknown>, output: unknown): DynamicToolUIPart =>
+    ({ type: "dynamic-tool", toolName: name, toolCallId: id, state: "output-available", input, output: JSON.stringify(output) })
+  const view = (image: string, id: string) => withToolAttachmentOwner([{ type: "file", mediaType: "image/png", url: image }], id)
+  const history = collectComputerSessionHistory([{ id: "a", role: "assistant", parts: [
+    call("ps", "computer_open", { app_id: "com.adobe.Photoshop", purpose: "Turn the image into a PDF" }, { ok: true, session_id: "s-ps", app_name: "Photoshop" }), ...view(images[0]!, "ps"),
+    call("pv", "computer_open", { app_id: "com.apple.Preview", purpose: "Export the PDF" }, { ok: true, session_id: "s-pv", app_name: "Preview" }),
+    call("export", "computer_act", { observation_id: "o1", intent: "Export as PDF", action: { type: "menu", path: ["File", "Export as PDF…"] } }, { ok: true }), ...view(images[1]!, "export"),
+    call("back", "computer_act", { session_id: "s-ps", observation_id: "o2", intent: "Check the image", action: { type: "press", ref: "e1" } }, { ok: true }), ...view(images[2]!, "back"),
+  ] }])!
+  expect(history.apps).toEqual(["Photoshop", "Preview"])
+  expect(history.frames.map(frame => [frame.app, frame.label])).toEqual([["Photoshop", "Opened Photoshop"], ["Preview", "Export as PDF"], ["Photoshop", "Check the image"]])
+  const container = document.createElement("div"); document.body.append(container)
+  const root = createRoot(container); mounted = { root, container }
+  await act(async () => root.render(createElement(TooltipProvider, { children: createElement(ComputerSessionHistory, { history, active: false, renderAction: part => createElement("p", {}, part.toolCallId) }) })))
+  expect(container.querySelector("[data-computer-session-apps]")?.textContent).toBe("Photoshop, Preview")
+  await act(async () => container.querySelector<HTMLElement>('[aria-label="View computer session history"]')!.click())
+  expect(container.querySelector("[data-computer-view-step]")?.textContent).toContain("Photoshop · Check the image")
+  // One app: no names, as before.
+  const single = collectComputerSessionHistory([{ id: "b", role: "assistant", parts: [call("one", "computer_open", { app_id: "notes", purpose: "Write" }, { ok: true, session_id: "s", app_name: "Notes" }), ...view(images[0]!, "one")] }])!
+  await act(async () => root.render(createElement(TooltipProvider, { children: createElement(ComputerSessionHistory, { history: single, active: false, renderAction: () => null }) })))
+  expect(container.querySelector("[data-computer-session-apps]")).toBeNull()
+  expect(container.querySelector("[data-computer-view-app]")).toBeNull()
+})
+
 test("with the card on, the live computer view opens from the card or when the person is needed", () => {
   const working = { state: "active" }
-  expect(showsLiveComputerView({ historyEnabled: false, watching: false, session: working })).toBe(true)
-  expect(showsLiveComputerView({ historyEnabled: true, watching: false, session: working })).toBe(false)
-  expect(showsLiveComputerView({ historyEnabled: true, watching: true, session: working })).toBe(true)
-  expect(showsLiveComputerView({ historyEnabled: true, watching: false, session: { state: "paused" } })).toBe(true)
+  expect(showsLiveComputerView({ watching: false, session: working })).toBe(false)
+  expect(showsLiveComputerView({ watching: true, session: working })).toBe(true)
+  expect(showsLiveComputerView({ watching: false, session: { state: "paused" } })).toBe(true)
 })
 
 test("the card offers the live view only for a working computer, and toggles it", async () => {
@@ -216,8 +227,6 @@ test("the card offers the live view only for a working computer, and toggles it"
   expect(container.querySelector('[data-computer-view-count]')).toBeNull()
   await render(history, { watching: true, onWatch: watching => chosen.push(watching) })
   expect(button()?.textContent).toBe("Hide live view")
-  await render(collectComputerSessionHistory(browserHistoryMessages(images))!, { watching: false, onWatch: () => {} })
-  expect(button()).toBeUndefined()
 })
 
 test("the live view choice is per chat and clears without touching other chats", () => {
@@ -231,4 +240,161 @@ test("the live view choice is per chat and clears without touching other chats",
   store.setWorking("chat", true)
   expect(useComputerSessionHistoryStore.getState().working).toEqual({ chat: true })
   store.setWorking("chat", false); store.setWatching("other", false)
+})
+
+test("the card lists the files its session saved, each once, with Open, Show in Finder and Attach to chat in one menu", async () => {
+  const step = (id: string, output: unknown, toolName = "computer_act"): DynamicToolUIPart =>
+    ({ type: "dynamic-tool", toolName, toolCallId: id, state: "output-available", input: { observation_id: id, action: { type: "save_as", path: "/x" } }, output })
+  const saved = (path: string, bytes: number) => ({ ok: true, status: "dispatched", path: "file_saved", saved_file: { path, bytes } })
+  const history = collectComputerSessionHistory([{ id: "a", role: "assistant", parts: [
+    step("first", `${JSON.stringify(saved("/Users/me/Desktop/report.pdf", 2048))}\n{"post_observation":{"ok":true}}`),
+    step("chart", saved("/Users/me/Desktop/chart.png", 10)),
+    // Pressed Save but never found on disk, refused, or from the browser: not handed back.
+    step("unconfirmed", { ok: true, path: "file_save_unconfirmed", saved_file: { path: "/Users/me/ghost.pdf", bytes: 1 } }),
+    step("refused", { ok: false, code: "file_exists", next: "correct_request", saved_file: { path: "/Users/me/old.pdf", bytes: 1 } }),
+    step("browser", saved("/Users/me/page.pdf", 1), "browser_act"),
+    step("again", saved("/Users/me/Desktop/report.pdf", 4096)),
+  ] }])!
+  expect(history.savedFiles).toEqual([
+    { path: "/Users/me/Desktop/report.pdf", name: "report.pdf", bytes: 4096 },
+    { path: "/Users/me/Desktop/chart.png", name: "chart.png", bytes: 10 },
+  ])
+
+  const container = document.createElement("div"); document.body.append(container)
+  const root = createRoot(container); mounted = { root, container }
+  const calls: string[] = []
+  const fileActions = { open: (path: string) => calls.push(`open ${path}`), reveal: (path: string) => calls.push(`reveal ${path}`), attach: (path: string) => calls.push(`attach ${path}`) }
+  const render = async (next: typeof history, actions?: typeof fileActions) => {
+    await act(async () => root.render(createElement(TooltipProvider, { children: createElement(ComputerSessionHistory, { history: next, active: false, renderAction: part => createElement("p", {}, part.toolCallId), fileActions: actions }) })))
+  }
+  // Each file's actions sit in one menu, opened from its ⋯ button.
+  const choose = async (name: string, item: string) => {
+    await act(async () => container.querySelector<HTMLButtonElement>(`[aria-label="Actions for ${name}"]`)!.click())
+    const option = [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(element => element.textContent === item)
+    expect(option).toBeDefined()
+    await act(async () => option!.click())
+  }
+  await render(history, fileActions)
+  // Shown without opening the card.
+  expect(container.querySelector('[data-computer-view-count]')).toBeNull()
+  const rows = [...container.querySelectorAll("[data-computer-saved-file]")]
+  expect(rows.map(row => row.querySelector("[title]")?.getAttribute("title"))).toEqual(["/Users/me/Desktop/report.pdf", "/Users/me/Desktop/chart.png"])
+  expect(rows[0]!.textContent).toContain("4 KB")
+  expect(container.querySelector('[aria-label="Open report.pdf"]')).toBeNull()
+  await choose("report.pdf", "Open"); await choose("report.pdf", "Show in Finder"); await choose("chart.png", "Attach to chat")
+  expect(calls).toEqual(["open /Users/me/Desktop/report.pdf", "reveal /Users/me/Desktop/report.pdf", "attach /Users/me/Desktop/chart.png"])
+
+  // Off the desktop the files are still named, with nothing to press.
+  await render(history)
+  expect(container.querySelectorAll("[data-computer-saved-file]")).toHaveLength(2)
+  expect(container.querySelector('[aria-label="Actions for report.pdf"]')).toBeNull()
+  await render(collectComputerSessionHistory(computerHistoryMessages(images))!, fileActions)
+  expect(container.querySelector("[data-computer-saved-files]")).toBeNull()
+})
+
+test("the card also lists what scripts and shell commands wrote to the chat's output folder during its turn", async () => {
+  const folder = "/Users/me/Downloads/OpenWork/chat"
+  const step = (id: string, toolName: string, at: number, output: unknown = { ok: true }): DynamicToolUIPart =>
+    ({ type: "dynamic-tool", toolName, toolCallId: id, state: "output-available", input: {}, output,
+      callProviderMetadata: { openwork: { toolStartedAt: at, toolCompletedAt: at + 100 } } })
+  const history = collectComputerSessionHistory([{ id: "a", role: "assistant", parts: [
+    step("open", "computer_open", 10_000),
+    step("script", "computer_script", 20_000),
+    // A save elsewhere is listed from its receipt; an image saved into the folder is listed once, not twice.
+    step("save", "computer_act", 30_000, { ok: true, path: "file_saved", saved_file: { path: "/Users/me/Desktop/map.png", bytes: 5 } }),
+    step("shot", "computer_act", 40_000, { ok: true, path: "file_saved", saved_file: { path: `${folder}/flyer.png`, bytes: 7, width: 800, height: 600 } }),
+  ] }])!
+  const listed = [
+    { path: `${folder}/deck.pptx`, bytes: 300, modifiedAt: 60_000 }, // copied in by a shell command after the session
+    { path: `${folder}/flyer.png`, bytes: 900, modifiedAt: 50_000 }, // the save_image file, edited again by a script
+    { path: `${folder}/old.txt`, bytes: 1, modifiedAt: 5_000 }, // from before this session
+    { path: `${folder}/next-turn.png`, bytes: 1, modifiedAt: 200_000 }, // a later turn's
+  ]
+  expect(computerHandedBackFiles(history, listed, 100_000)).toEqual([
+    { path: `${folder}/deck.pptx`, name: "deck.pptx", bytes: 300 },
+    { path: `${folder}/flyer.png`, name: "flyer.png", bytes: 900 },
+    { path: "/Users/me/Desktop/map.png", name: "map.png", bytes: 5 },
+  ])
+  // While the turn runs everything since the first step counts; with no folder, only receipts.
+  expect(computerHandedBackFiles(history, listed, null).map(file => file.name)).toEqual(["next-turn.png", "deck.pptx", "flyer.png", "map.png"])
+  expect(computerHandedBackFiles(history, [], null)).toEqual(history.savedFiles)
+  // From the turn's start: what a subagent saved in the chat's folder before the chat's own first step.
+  const subagent = { path: `${folder}/place.png`, bytes: 2, modifiedAt: 8_000 }
+  expect(computerHandedBackFiles(history, [...listed, subagent], 100_000, 7_500).map(file => file.name)).toEqual(["deck.pptx", "flyer.png", "map.png", "place.png"])
+
+  const container = document.createElement("div"); document.body.append(container)
+  const root = createRoot(container); mounted = { root, container }
+  let reads = 0
+  const fileActions = { open: () => {}, reveal: () => {}, attach: () => {}, list: async () => { reads++; return listed } }
+  const render = async (turnEndedAt: number | null) => act(async () => root.render(createElement(TooltipProvider, { children: createElement(ComputerSessionHistory,
+    { history, active: false, renderAction: part => createElement("p", {}, part.toolCallId), fileActions, turnEndedAt }) })))
+  await render(100_000)
+  const names = () => [...container.querySelectorAll("[data-computer-saved-file] [title]")].map(item => item.getAttribute("title"))
+  // Past two files the rest fold behind one toggle.
+  expect(names()).toEqual([`${folder}/deck.pptx`, `${folder}/flyer.png`])
+  const toggle = () => container.querySelector<HTMLButtonElement>("[data-computer-saved-files-toggle]")!
+  expect(toggle().textContent).toBe("Show 1 more")
+  await act(async () => toggle().click())
+  expect(names()).toEqual([`${folder}/deck.pptx`, `${folder}/flyer.png`, "/Users/me/Desktop/map.png"])
+  expect(toggle().textContent).toBe("Show fewer")
+  expect(container.querySelector('[aria-label="Actions for map.png"]')).not.toBeNull()
+  // Rendering again with nothing new does not read the folder again.
+  await render(100_000)
+  expect(reads).toBe(1)
+})
+
+test("attaching a saved file puts it in that chat's composer once, as a file mention", () => {
+  const store = useComposerStateStore.getState()
+  store.setDraft("chat", "Summarize")
+  attachFileToComposer("chat", "/Users/me/My Report.pdf")
+  attachFileToComposer("chat", "/Users/me/My Report.pdf")
+  const state = useComposerStateStore.getState()
+  expect(state.sessions.chat?.draft).toBe("Summarize @/Users/me/My%20Report.pdf ")
+  expect(state.sessions.chat?.mentions).toEqual({ "/Users/me/My Report.pdf": "file" })
+  expect(state.pendingFocusSessionId).toBe("chat")
+  expect(state.sessions.other).toBeUndefined()
+  store.clearSession("chat"); useComposerStateStore.setState({ pendingFocusSessionId: null })
+})
+
+test("with subagents on the computer the card lists them as a crew, and a row opens that agent's live view", async () => {
+  const { ComputerCrewCard } = await import("../src/components/chat/computer-crew")
+  const history = collectComputerSessionHistory(computerHistoryMessages(images))!
+  const members = [
+    { sessionId: "maps-agent", name: "Maps", color: "#30a46c", app: "Maps", state: "working" as const, intent: "searching for the café",
+      frame: { mimeType: "image/png" as const, data: "iVBORw0KGgoAAAAA", width: 4, height: 3 } },
+    { sessionId: "slides-agent", name: "Slides", color: "#f76b15", app: "PowerPoint", state: "waiting" as const, intent: "typing the title" },
+    { sessionId: "photo-agent", name: "Photoshop", color: "#8e4ec6", app: null, state: "paused" as const, intent: null },
+    { sessionId: "done-agent", name: "Notes", color: "#d6409f", app: "Notes", state: "done" as const, intent: "saving" },
+  ]
+  const opened: string[] = []
+  const container = document.createElement("div"); document.body.append(container)
+  const root = createRoot(container); mounted = { root, container }
+  const render = async (crew?: { members: typeof members; onOpen: (member: { sessionId: string }) => void }) => act(async () => root.render(createElement(TooltipProvider, {
+    children: createElement(ComputerSessionHistory, { history, active: true, renderAction: part => createElement("p", {}, part.toolCallId), crew }) })))
+  // No subagents: the card is as before.
+  await render()
+  expect(container.querySelector("[data-computer-crew]")).toBeNull()
+  await render({ members, onOpen: member => opened.push(member.sessionId) })
+  const rows = [...container.querySelectorAll("[data-computer-crew-member]")]
+  expect(rows.map(row => row.getAttribute("aria-label"))).toEqual(["Watch Maps live", "Watch Slides live", "Watch Photoshop live", "Watch Notes live"])
+  expect([...container.querySelectorAll("[data-computer-crew-state]")].map(state => state.textContent)).toEqual(["Working", "Waiting for its turn", "Paused for you", "Done"])
+  expect(rows[0]!.textContent).toContain("Maps · Maps")
+  expect(rows[0]!.textContent).toContain("searching for the café")
+  expect(rows[3]!.textContent).not.toContain("saving")
+  expect(rows[0]!.querySelector("img")?.getAttribute("src")).toBe("data:image/png;base64,iVBORw0KGgoAAAAA")
+  expect(rows[1]!.querySelector("img")).toBeNull()
+  await act(async () => (rows[1] as HTMLElement).click())
+  expect(opened).toEqual(["slides-agent"])
+  // A chat whose own turn used no computer: the crew alone.
+  await act(async () => root.render(createElement(TooltipProvider, { children: createElement(ComputerCrewCard, { members, onOpen: () => {} }) })))
+  expect(container.querySelector("[data-computer-crew-card]")?.textContent).toContain("Agents using computer")
+  expect(container.querySelectorAll("[data-computer-crew-member]")).toHaveLength(4)
+})
+
+test("opening an agent from the crew points the chat's live view at it until the view is hidden", () => {
+  const store = useComputerSessionHistoryStore.getState()
+  store.setAgent("chat", "maps-agent")
+  expect(useComputerSessionHistoryStore.getState().agents).toEqual({ chat: "maps-agent" })
+  store.setAgent("chat", null)
+  expect(useComputerSessionHistoryStore.getState().agents).toEqual({})
 })

@@ -21,7 +21,6 @@ type ResolveDashboardMcpAppOptions<TEndpoint extends McpAppResolutionEndpoint> =
   signal?: AbortSignal
 }
 
-/** Resolve the exact saved app before sending its arguments or launch approval. */
 export async function resolveDashboardMcpApp<TEndpoint extends McpAppResolutionEndpoint>({
   endpoints,
   projectedToolName,
@@ -40,7 +39,6 @@ export async function resolveDashboardMcpApp<TEndpoint extends McpAppResolutionE
     for (const endpoint of pending) {
       if (!isActive(endpoint)) continue
       try {
-        // Discovery needs the binding, never the saved tool input or approval.
         const reference = launch ? { ...launch, arguments: {} } : undefined
         const { app } = await timeMcpApp("dashboard.discovery-resolve", () => endpoint.client.resolveMcpApp(endpoint.workspaceId, projectedToolName, reference, { sessionId: null, readOnly: false }, { signal }))
         if (isActive(endpoint) && app && app.serverName === expected.serverName

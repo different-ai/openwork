@@ -1,9 +1,3 @@
-/**
- * An in-memory Den for tests: device authorization, /v1/me, the AI Gateway
- * list/connect routes, /v1/mcp/token and the /mcp/agent connection index.
- * Response shapes follow ee/apps/den-api (routes/me, routes/org/inference-providers,
- * routes/mcp, mcp/connect-mcp-server-index).
- */
 import type { Fetch } from "./den.ts"
 
 export const API = "https://api.example.test"
@@ -17,7 +11,6 @@ export const MODEL_ID = "gwm_01m292ydevejz88xgn8dhsdy22_01m292yde8escv5k6jkfwq8y
 export interface FakeDen {
   readonly fetch: Fetch
   readonly calls: string[]
-  /** Device poll answers, consumed in order; the last one repeats. */
   pollAnswers: { status: number; body: unknown }[]
   knownClientIds: Set<string>
   sessionValid: boolean
@@ -154,7 +147,6 @@ export function createFakeDen(): FakeDen {
             schemaVersion: "openwork.connect/mcp-servers/1",
             servers: den.directServers.map((server) => ({ ...server, description: null })),
           })
-          // Streamable HTTP may answer with SSE.
           const sse = `event: message\ndata: ${JSON.stringify({ jsonrpc: "2.0", id: body.id, result: { contents: [{ uri: body.params.uri, mimeType: "application/json", text }] } })}\n\n`
           return new Response(sse, { status: 200, headers: { "content-type": "text/event-stream" } })
         }

@@ -68,6 +68,7 @@ async function bounded(work, timeoutMs, signal) {
  *   spawnChild?: typeof spawn,
  *   onSetupReturn?: () => unknown,
  *   permissionEntry?: () => Promise<string>,
+ *   recordableOverlay?: () => boolean,
  *   timeouts?: Partial<Record<"probe" | "handshake" | "call" | "close" | "setupPoll" | "setupLifetime", number>>,
  * }} [options]
  */
@@ -81,6 +82,7 @@ export function createLocalComputerAdapter({
   spawnChild = spawn,
   onSetupReturn = () => {},
   permissionEntry = async () => "",
+  recordableOverlay = () => false,
   timeouts = {},
 } = {}) {
   const limits = { probe: 5_000, handshake: 5_000, call: 120_000, close: 7_000, setupPoll: 1_000, setupLifetime: 300_000, ...timeouts };
@@ -415,7 +417,9 @@ export function createLocalComputerAdapter({
         ? { OPENWORK_COMPUTER_USE_PRESENCE: JSON.stringify({ name: presence.name.trim().slice(0, 32), color: presence.color }) } : {};
       // Parallel local sessions work behind other windows; the helper chooses foreground when an app needs it.
       const delivery = background ? { OPENWORK_COMPUTER_USE_DELIVERY: "background" } : {};
-      const transport = new StdioClientTransport({ command: state.binary, args: ["mcp-embedded"], env: { ...env, ...shown, ...delivery }, stderr: "ignore" });
+      // The person's opt-in to show overlays in screen recordings; the helper hides them from capture otherwise.
+      const recordable = recordableOverlay() === true ? { OPENWORK_COMPUTER_USE_RECORDABLE_OVERLAY: "1" } : {};
+      const transport = new StdioClientTransport({ command: state.binary, args: ["mcp-embedded"], env: { ...env, ...shown, ...delivery, ...recordable }, stderr: "ignore" });
       let closed = false;
       let terminationConfirmed = false;
       let busy = false;

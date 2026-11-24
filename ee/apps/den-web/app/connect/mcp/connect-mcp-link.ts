@@ -7,13 +7,11 @@ export type ConnectMcpLink = {
 export type ConnectStartResult =
   | { kind: "connected" }
   | { kind: "redirect"; authorizeUrl: string }
-  /** The connection is gone or not shared with this person: no retry will help. */
   | { kind: "unavailable"; message: string }
   | { kind: "error"; message: string };
 
 const ID_PATTERN = /^[A-Za-z0-9_-]{1,128}$/;
 
-/** Reads the link den-api returns as `links.signIn` from POST /v1/mcp-connections. */
 export function readConnectMcpLink(params: URLSearchParams): ConnectMcpLink | null {
   const connectionId = params.get("connectionId")?.trim() ?? "";
   const organizationId = params.get("org")?.trim() ?? "";
@@ -45,7 +43,6 @@ export function readConnectStartResult(payload: unknown, ok: boolean, name = "Th
   return { kind: "error", message: "Could not start sign-in. Try again." };
 }
 
-/** The workspace name for the link's organization, from GET /v1/me/orgs. */
 export function readWorkspaceName(payload: unknown, organizationId: string): string | null {
   const orgs = readField(payload, "orgs");
   if (!Array.isArray(orgs)) return null;

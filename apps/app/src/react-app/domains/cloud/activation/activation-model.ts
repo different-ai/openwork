@@ -1,4 +1,5 @@
 import {
+  ACTIVATION_OPTIONAL_DETAIL,
   ACTIVATION_STEP_TITLES,
   activationChecklistPresentation,
   activationProgress,
@@ -9,20 +10,13 @@ import {
   type ActivationStepId,
 } from "@openwork/types/den/activation";
 
-/**
- * The Desktop "Get set up" card: what it shows for a checklist Den computed, and
- * when this app reports a step only it can observe. Pure, so the rules are unit-tested.
- */
-
 export type ActivationRowAction = "invite" | "skill" | "provider" | "gateway" | "connect";
 
 export type ActivationRow = {
   id: ActivationStepId;
   title: string;
   state: "done" | "open" | "locked";
-  /** State in a person's words (done) or who can do it (locked). */
   line: string | null;
-  /** At most one action, only for an open step. */
   action: { kind: ActivationRowAction; label: string } | null;
 };
 
@@ -38,9 +32,9 @@ export type ActivationCardModel =
   | { presentation: "hidden" }
   | { presentation: "next" | "full"; done: number; total: number; next: string | null; rows: ActivationRow[]; dismissed: boolean };
 
-export function activationCardModel(state: ActivationState | null | undefined): ActivationCardModel {
+export function activationCardModel(state: ActivationState | null | undefined, options: { hidden?: boolean } = {}): ActivationCardModel {
   const presentation = activationChecklistPresentation(state);
-  if (presentation === "hidden" || !state) return { presentation: "hidden" };
+  if (presentation === "hidden" || !state || options.hidden) return { presentation: "hidden" };
   const progress = activationProgress(state);
   const next = nextActivationStep(state);
   return {
@@ -55,27 +49,19 @@ export function activationCardModel(state: ActivationState | null | undefined): 
         id: step.id,
         title: ACTIVATION_STEP_TITLES[step.id],
         state: rowState,
-        line: step.done ? step.detail ?? null : step.lockedReason ?? null,
+        line: step.done ? step.detail ?? null : step.lockedReason ?? (step.optional ? ACTIVATION_OPTIONAL_DETAIL : null),
         action: rowState === "open" ? ACTIONS[step.id] ?? null : null,
       };
     }),
   };
 }
 
-/**
- * Report only while Den shows the checklist for this person and the step is still open: nothing is sent when the
- * checklist is unavailable, before it loaded, or once Den already counts the step.
- */
 export function shouldReportActivationEvent(state: ActivationState | null | undefined, step: ActivationClientEvent): boolean {
   if (!state) return false;
   if (step === "dismiss") return !state.dismissed;
   return orderedActivationSteps(state).some((entry) => entry.id === step && !entry.done);
 }
 
-/**
- * One report per step and scope at a time; a failure is swallowed (it never affects the person) and may be retried
- * on the next occurrence, since Den ignores repeats anyway.
- */
 export function createActivationReporter<Scope extends { key: string }>(input: {
   readState: (scope: Scope) => ActivationState | null | undefined;
   send: (scope: Scope, step: ActivationClientEvent, durationMs: number | undefined) => Promise<ActivationState | null>;
@@ -99,7 +85,35 @@ export function createActivationReporter<Scope extends { key: string }>(input: {
   };
 }
 
-/** Composer draft parts that run a skill (a local skill or one assigned through OpenWork). */
+const BUILT_IN_PROVIDER_ID = "opencode";
+
+export function hasVerifiedDeviceProvider(
+  health: {
+    entries: Readonly<Record<string, { status: string }>>;
+    workspaceScopes: Readonly<Record<string, string>>;
+  },
+  managed: (providerId: string) => boolean,
+): boolean {
+  return Object.entries(health.entries).some(([key, entry]) => {
+    if (entry.status !== "verified") return false;
+    let parsed: unknown;
+    try { parsed = JSON.parse(key); } catch { return false; }
+    if (!Array.isArray(parsed)) return false;
+    const [workspaceId, providerId]: unknown[] = parsed;
+    if (typeof workspaceId !== "string" || typeof providerId !== "string") return false;
+    const id = providerId.trim();
+    return health.workspaceScopes[workspaceId] === "device" && Boolean(id) && id.toLowerCase() !== BUILT_IN_PROVIDER_ID && !managed(id);
+  });
+}
+
+export function hasDeviceConnection(statuses: Readonly<Record<string, { status: string }>> | null | undefined): boolean {
+  return Object.entries(statuses ?? {}).some(([name, entry]) => entry.status === "connected" && !name.trim().toLowerCase().startsWith("openwork"));
+}
+
 export function draftUsesSkill(parts: readonly { type: string }[] | undefined): boolean {
   return Boolean(parts?.some((part) => part.type === "skill" || part.type === "connect-skill"));
+}
+
+export function activationHiddenStorageKey(input: { origin: string; organizationId: string; principalId: string }): string {
+  return `openwork.activation.hidden:${input.origin}:${input.organizationId}:${input.principalId}`;
 }

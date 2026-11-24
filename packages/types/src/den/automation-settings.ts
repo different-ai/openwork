@@ -24,7 +24,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function metadataRecord(metadata: unknown): Record<string, unknown> | null {
   if (isRecord(metadata)) return metadata;
   if (typeof metadata !== "string") return null;
-  // Some readers hand back the stored JSON column text.
   try {
     const parsed: unknown = JSON.parse(metadata);
     return isRecord(parsed) ? parsed : null;

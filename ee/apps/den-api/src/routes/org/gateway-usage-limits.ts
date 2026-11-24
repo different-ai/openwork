@@ -236,9 +236,7 @@ export function registerOrgGatewayUsageLimitRoutes<T extends { Variables: OrgRou
         if ("organization" in target)
           return service.assign(scope(c), c.req.valid("param").policyId, { organization: true })
         if ("memberId" in target && isDenTypeId("member", target.memberId))
-          return service.assign(scope(c), c.req.valid("param").policyId, {
-            memberId: target.memberId,
-          })
+          return service.assign(scope(c), c.req.valid("param").policyId, { memberId: target.memberId })
         if ("teamId" in target && isDenTypeId("team", target.teamId))
           return service.assign(scope(c), c.req.valid("param").policyId, { teamId: target.teamId })
         throw new GatewayUsageError("invalid_target", 400, "Invalid assignment target.")

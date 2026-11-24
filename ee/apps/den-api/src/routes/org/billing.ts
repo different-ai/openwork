@@ -22,9 +22,15 @@ import {
   createSeatCheckoutSession,
   getOpenWorkWebBillingSummary,
   getOrgBillingSummary,
+  listOrganizationInvoices,
   PlanSubscriptionExistsError,
   syncStripeCheckoutSession,
 } from "../../stripe-billing.js"
+import {
+  BILLING_INVOICES_DEFAULT_PAGE_SIZE,
+  billingInvoicesQuerySchema,
+  billingInvoicesResponseSchema,
+} from "@openwork/types/den/billing-invoices"
 import { checkoutReturnUrls, defaultCheckoutReturnPageUrl } from "../../billing-plans.js"
 import { orgMemberRoute, orgPermissionRoute } from "../../middleware/index.js"
 import { forbiddenSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
@@ -88,10 +94,6 @@ function billingReturnUrl(c: { req: { raw: Request } }) {
 }
 
 function checkoutSuccessUrl(c: { req: { raw: Request } }) {
-  // `return=models` sends the user back to the OpenWork Models page after a
-  // successful inference checkout — that's where they subscribed from and
-  // where the unlocked value (the model lineup) is visible. The billing page
-  // remains the status/portal view.
   return env.stripe.billingSuccessUrl ?? `${getRequestOrigin(c)}/dashboard/billing/stripe/checking?session_id={CHECKOUT_SESSION_ID}&return=models`
 }
 
@@ -146,14 +148,12 @@ function checkoutCancelUrl(c: { req: { raw: Request } }) {
   return env.stripe.billingCancelUrl ?? billingReturnUrl(c)
 }
 
-/** Den web origin for return pages: the configured billing URL's origin, else the request's. */
 function checkoutReturnOrigin(c: { req: { raw: Request } }) {
   const configured = env.stripe.billingSuccessUrl
   if (configured) {
     try {
       return new URL(configured, getRequestOrigin(c)).origin
     } catch {
-      // Fall back to the request origin.
     }
   }
   return getRequestOrigin(c)
@@ -201,7 +201,8 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
         return c.json(openWorkWebUnavailableResponse(), 404)
       }
       const web = await getOpenWorkWebBillingSummary(payload.organization.id)
-      return c.json({ billing: { stripe: { web } } })
+      const memberHasAccess = web.hasAccess && payload.currentMember.openworkWeb
+      return c.json({ billing: { stripe: { web: { ...web, memberHasAccess } } } })
     },
   )
 
@@ -221,18 +222,12 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
       const user = c.get("user")
       const payload = c.get("organizationContext")
       const email = getRequiredUserEmail(user)
-      // The portal URL is a live Stripe session that can change billing, so it
-      // needs the same check as POST /v1/billing/stripe/portal (billing_portal.use,
-      // including the recent sign-in). Without it the URL is omitted; the read still succeeds.
       const portal = await requirePermission(c, "billing_portal.use")
       const billing = await getOrgBillingSummary({
         organizationId: payload.organization.id,
         includePortalUrl: portal.ok,
         returnUrl: billingReturnUrl(c),
       })
-      // Den web still reads `billing.polar` as the cloud-worker access summary
-      // (den-flow.ts getBillingSummary). Polar billing is retired, so this is
-      // the constant "no gate, access allowed" shape it always had in practice.
       const polar = email ? retiredPolarBillingStatus : null
 
       return c.json({ billing: { ...billing, polar } })
@@ -374,13 +369,6 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
         }, 409)
       }
       if (session === "inference_subscription_exists") {
-        // The organization already has an OpenWork Models subscription Stripe
-        // is still collecting on (typically past due after a failed renewal).
-        // A second Checkout would charge them twice, so hand them the billing
-        // portal where the payment method can be fixed instead. The portal URL
-        // is a live Stripe session that can change billing, so it needs the
-        // same check as POST /v1/billing/stripe/portal (billing_portal.use with
-        // a recent sign-in); Start a subscription alone never returns it.
         const portalAccess = await requirePermission(c, "billing_portal.use")
         if (!portalAccess.ok) {
           const failure = portalAccess.response.error === "forbidden"
@@ -447,6 +435,56 @@ export function registerOrgBillingRoutes<T extends { Variables: OrgRouteVariable
         return c.json(billingNotConfiguredResponse("portal"), 503)
       }
       return c.json({ url: session.url })
+    },
+  )
+
+  app.get(
+    "/v1/billing/stripe/invoices",
+    describeRoute({
+      tags: ["Organizations"],
+      hide: true,
+      summary: "List the organization's Stripe invoices",
+      description: "Finalized invoices, newest first, with Stripe's hosted invoice page and PDF links. Drafts are not listed. An organization without a Stripe billing account gets an empty list. Page with `cursor` (the previous page's `nextCursor`).",
+      responses: {
+        200: jsonResponse("Invoices returned successfully.", billingInvoicesResponseSchema.meta({ ref: "OrgStripeInvoicesResponse" })),
+        400: jsonResponse("The query was invalid.", z.object({ error: z.literal("invalid_request") }).passthrough()),
+        401: jsonResponse("The caller must be signed in to see invoices.", unauthorizedSchema),
+        403: jsonResponse("The caller needs the View invoices permission and a recent sign-in.", forbiddenSchema),
+        503: jsonResponse("This deployment does not sell anything through Stripe.", billingNotConfiguredSchema),
+      },
+    }),
+    orgPermissionRoute("billing_invoices.view"),
+    async (c) => {
+      const parsed = billingInvoicesQuerySchema.safeParse({
+        limit: c.req.query("limit"),
+        cursor: c.req.query("cursor"),
+      })
+      if (!parsed.success) {
+        return c.json({ error: "invalid_request", details: parsed.error }, 400)
+      }
+      try {
+        assertBillingProductConfigured("portal")
+      } catch {
+        return c.json(billingNotConfiguredResponse("portal"), 503)
+      }
+      const payload = c.get("organizationContext")
+      const page = await listOrganizationInvoices({
+        organizationId: payload.organization.id,
+        limit: parsed.data.limit ?? BILLING_INVOICES_DEFAULT_PAGE_SIZE,
+        startingAfter: parsed.data.cursor ?? null,
+      }).catch((error: unknown) => {
+        if (billingNotConfiguredProductForError(error, "portal")) return "not_configured" as const
+        if (error instanceof Error && error.message.includes("No such invoice")) return "invalid_cursor" as const
+        throw error
+      })
+      if (page === "not_configured") {
+        return c.json(billingNotConfiguredResponse("portal"), 503)
+      }
+      if (page === "invalid_cursor") {
+        return c.json({ error: "invalid_request", message: "That page of invoices is no longer available. Start from the first page." }, 400)
+      }
+      c.header("Cache-Control", "no-store")
+      return c.json(page)
     },
   )
 

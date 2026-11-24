@@ -4,23 +4,11 @@ import type { McpAppToolBinding, McpAppToolDeclaration, PrepareMcpAppInput, Prep
 import { generatedAppLibrariesNextStep } from "../generated-app-libraries.js"
 import { runsWithoutClick } from "./app-tool-access.js"
 
-/**
- * OpenWork's opinionated App starters. prepare_app returns the one that fits
- * the verified tools, already calling them with inputs built from their
- * schemas; the same three are readable as resources. Each covers the host
- * rules (theme, reads that load on open, one click per change, approval,
- * blocked) and every state, so
- * the author only replaces the presentation.
- */
 export type AppStarterPattern = "lookup" | "action" | "standalone"
 
 export const APP_STARTER_RESOURCE_ROOT = "openwork://apps/starters"
 export const appStarterResourceUri = (pattern: AppStarterPattern) => `${APP_STARTER_RESOURCE_ROOT}/${pattern}.json`
 
-/**
- * A preparation never runs a tool or saves an App. It lists the built-in
- * libraries that may be imported in an MCP App.
- */
 export function appAuthoringStarter(input: PrepareMcpAppInput, tools: McpAppToolBinding[]): PrepareMcpAppOutput {
   const starter = appStarter(tools)
   return {
@@ -48,7 +36,6 @@ type StarterTool = { name: string; label: string; fields: StarterField[]; live: 
 const MAX_FIELDS = 6
 const MAX_OPTIONS = 20
 
-/** The pattern a set of verified tools calls for. */
 export function appStarterPattern(tools: McpAppToolBinding[]): AppStarterPattern {
   if (tools.length === 0) return "standalone"
   return tools.some((tool) => !runsWithoutClick(tool)) ? "action" : "lookup"
@@ -63,7 +50,7 @@ export function appStarter(tools: McpAppToolBinding[]) {
       cssSource: STARTER_CSS,
       nextSteps: [
         "Starter: standalone. It has no tools: compute() turns the inputs in FIELDS (prefilled from the launch input) into the figures it shows, the first one largest.",
-        "Replace FIELDS and compute() with this App's inputs and logic, and the empty notice with what to enter first. Keep useTheme and the shared components.",
+        "Replace FIELDS and compute() with this artifact’s inputs and logic, and the empty notice with what to enter first. Keep useTheme and the shared components.",
         "Then call create_app with this preparationId.",
       ],
     }
@@ -80,8 +67,8 @@ export function appStarter(tools: McpAppToolBinding[]) {
   ].filter(Boolean).join("\n")
   const body = change ? ACTION_SOURCE : LOOKUP_SOURCE
   const describe = change
-    ? `Starter: action. ${change.name} runs once per click of its button, from inputs built from its schema${load ? `; ${load.name} loads when the App opens and again from its own button` : ""}. It covers approval, failure, and blocked states.`
-    : `Starter: lookup. ${load?.name} loads when the App opens, with inputs built from its schema and filled from the launch input: the last result for them shows at once while it refreshes, and Enter or its button loads it again. It covers loading, empty, stale, approval, failure, and blocked states.`
+    ? `Starter: action. ${change.name} runs once per click of its button, from inputs built from its schema${load ? `; ${load.name} loads when the artifact opens and again from its own button` : ""}. It covers approval, failure, and blocked states.`
+    : `Starter: lookup. ${load?.name} loads when the artifact opens, with inputs built from its schema and filled from the launch input: the last result for them shows at once while it refreshes, and Enter or its button loads it again. It covers loading, empty, stale, approval, failure, and blocked states.`
   return {
     pattern,
     reactSource: [STARTER_HEADER, constants, SHARED_SOURCE, body].join("\n"),
@@ -113,7 +100,6 @@ function starterTool(tool: McpAppToolBinding): StarterTool {
   }
 }
 
-/** Labeled inputs for an object schema's simple top-level properties. */
 function schemaFields(schema: Record<string, unknown>, placement?: "path" | "query"): StarterField[] {
   const required = Array.isArray(schema.required) ? schema.required.filter((key) => typeof key === "string") : []
   return Object.entries(record(schema.properties)).flatMap(([name, value]): StarterField[] => {
@@ -137,7 +123,6 @@ function schemaFields(schema: Record<string, unknown>, placement?: "path" | "que
   })
 }
 
-/** "create_invoice" → "Create invoice"; a read with no verb gets "Find" or "Refresh". */
 function actionLabel(tool: McpAppToolBinding): string {
   const label = humanize(tool.name)
   if (!runsWithoutClick(tool)) return label
@@ -184,9 +169,6 @@ function jsPrimitive(value: Primitive): string {
   return typeof value === "string" ? jsString(value) : String(value)
 }
 
-// The App compiler reads source text before parsing it, so schema text such as
-// an "import" key or a "<" in a title must never form what it refuses. Risky
-// words are split across a join, which no compiler step folds back together.
 const RISKY_TEXT = /import|require|export|eval|Function|setTimeout|setInterval|dangerouslySetInnerHTML|__openworkSafeReact|@jsx/gu
 
 function jsString(text: string): string {
@@ -489,7 +471,7 @@ function Fields({ fields, values, onChange, onEnter }) {
 
 // Blocked, approval and failure states, each with its next step.
 function ToolNotice({ call, retryLabel, onRetry, showBlocked = true }) {
-  if (!call.available) return showBlocked ? <p className="notice">Open this App in OpenWork to use its live data.</p> : null;
+  if (!call.available) return showBlocked ? <p className="notice">Open this artifact in OpenWork to use its live data.</p> : null;
   if (call.status === "approval") {
     return <p className="notice">This needs your approval first. <button type="button" onClick={onRetry}>{retryLabel}</button></p>;
   }
@@ -618,7 +600,7 @@ export default function App({ app, input, result, hostContext }) {
   React.useEffect(() => {
     setValues(initialValues(CHANGE.fields, input));
   }, [launch]);
-  // The read loads when the App opens, showing its last result at once while
+  // The read loads when the artifact opens, showing its last result at once while
   // it refreshes, and again from its button. Only the change waits for a click.
   const delivered = result !== undefined;
   React.useEffect(() => {
@@ -783,7 +765,7 @@ type StarterSample = {
 const STARTER_SAMPLES: StarterSample[] = [
   {
     pattern: "lookup",
-    title: "Lookup App starter",
+    title: "Lookup artifact starter",
     useWhen: "Every bound tool only reads: a dashboard, list, status board, or search. Loads its data when it opens.",
     tools: [{
       name: "find_orders",
@@ -798,7 +780,7 @@ const STARTER_SAMPLES: StarterSample[] = [
   },
   {
     pattern: "action",
-    title: "Action App starter",
+    title: "Action artifact starter",
     useWhen: "At least one bound tool changes data: a form that creates, updates, or sends something, with a read that shows the result.",
     tools: [
       {
@@ -824,7 +806,7 @@ const STARTER_SAMPLES: StarterSample[] = [
   },
   {
     pattern: "standalone",
-    title: "Standalone App starter",
+    title: "Standalone artifact starter",
     useWhen: "No tools: calculators, converters, checklists, and planners that work from their inputs and the launch input alone.",
     tools: [],
     textFallback: "Splits an amount by a percentage and shows both parts.",
@@ -835,7 +817,6 @@ function sampleDeclaration(tool: McpAppToolBinding): McpAppToolDeclaration {
   return { name: tool.name, description: tool.description, capability: tool.capability, ...(tool.mode === "live" ? { mode: "live" as const } : {}) }
 }
 
-/** The three starters as read-only resources any MCP client can read before building. */
 export function registerAppStarterResources(server: McpServer) {
   for (const sample of STARTER_SAMPLES) {
     const uri = appStarterResourceUri(sample.pattern)

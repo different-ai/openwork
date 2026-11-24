@@ -71,7 +71,6 @@ export function documentSourceFileId(item: DocumentItem): string {
 function splitter<T extends { id: string }>(entries: T[]) {
   return (id: string): { entry: T; id: string } | null => {
     const index = id.indexOf(SEPARATOR)
-    // Unprefixed ids, such as links opened from chat, belong to the first provider.
     if (index < 0) return entries[0] ? { entry: entries[0], id } : null
     const entry = entries.find(item => item.id === id.slice(0, index))
     return entry ? { entry, id: id.slice(index + 1) } : null
@@ -125,7 +124,6 @@ export function combinedDocumentsProvider(providers: DocumentsProvider[]): Docum
           nextCursor: null, incomplete: false,
         }
       }
-      // Recent files, and searches from the top level, come from every provider at once.
       let cursors: Record<string, string> = {}
       if (input.cursor) {
         try { cursors = z.record(z.string(), z.string()).parse(JSON.parse(input.cursor)) } catch { throw new DocumentsError(400, "invalid_request", "This page of documents is unavailable.") }

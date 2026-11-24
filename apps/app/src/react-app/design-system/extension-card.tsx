@@ -13,35 +13,20 @@ import { resolveExtensionIconUrl } from "./extension-icon-src";
 export type ExtensionCardProps = {
   name: string;
   description: string;
-  /** Simple Icons slug for brand icon. When set, loads from CDN. */
   iconSlug?: string;
-  /** Direct icon URL (e.g. local SVG). Takes priority over iconSlug. */
   iconSrc?: string;
-  /** Related service URL used for favicon fallback when no icon is configured. */
   url?: string;
-  /** What this row is: a local app, an account connection, an MCP server, a skill, or a plugin. */
   taxonomy?: ExtensionTaxonomy;
-  /** Whether the extension is already installed/connected. */
   connected?: boolean;
-  /** Per-condition enablement results. When provided, overrides `connected`. */
   enablement?: EnablementResult[];
-  /** Whether a connect operation is in progress. */
   connecting?: boolean;
-  /** Whether interaction is disabled. */
   disabled?: boolean;
-  /** Whether this item is hidden from the normal catalog view. */
   hidden?: boolean;
-  /** Reason this item is visible but unavailable. */
   disabledReason?: string | null;
-  /** Optional primary next-step label (signin/connect). */
   nextActionLabel?: string;
-  /** Click handler for nextActionLabel; falls back to onClick. */
   onNextAction?: () => void;
-  /** Click handler. */
   onClick?: () => void;
-  /** A short state for assistive tech and filters, e.g. Sign in or Set up. */
   statusChip?: { label: string; tone: "attention" | "setup" };
-  /** A control after the row, outside its button, e.g. a ⋯ menu. */
   trailing?: ReactNode;
 };
 
@@ -66,7 +51,6 @@ function ExtensionIcon(props: {
   );
 }
 
-/** One Library row: logo tile, name, what it does, its state, and one trailing action. */
 export function ExtensionCard(props: ExtensionCardProps) {
   const {
     name,
@@ -86,7 +70,6 @@ export function ExtensionCard(props: ExtensionCardProps) {
     onClick,
   } = props;
 
-  // When enablement results are provided, derive connected + partial state from them.
   const allMet = enablement ? enablement.every((r) => r.met) : connectedProp;
   const someMet = enablement ? enablement.some((r) => r.met) && !allMet : false;
   const readiness: ReadinessState = allMet ? "ready" : someMet ? "partial" : "none";

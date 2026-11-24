@@ -24,7 +24,6 @@ export function snapshotReadAccess(memberId: DenTypeId<"member">) {
   )
 }
 
-/** The same readable history window as detail, with one metadata query per batch. */
 export async function workflowSnapshotStateRows(
   organizationId: DenTypeId<"organization">,
   configObjectIds: DenTypeId<"configObject">[],
@@ -34,8 +33,6 @@ export async function workflowSnapshotStateRows(
   const ids = [...new Set(configObjectIds)]
   for (let offset = 0; offset < ids.length; offset += SNAPSHOT_BATCH_SIZE) {
     const batch = ids.slice(offset, offset + SNAPSHOT_BATCH_SIZE)
-    // Keep an indexed, bounded lookup for each workflow. Ranking a whole batch
-    // scans every historical receipt before applying the per-workflow limit.
     const queries = batch.map((configObjectId) => db.select({
       configObjectId: WorkflowRunTable.config_object_id,
       receiptId: WorkflowRunTable.id,

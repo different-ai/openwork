@@ -14,10 +14,6 @@ import { t } from "../../../../i18n";
 
 export type LibraryRowMenuAction = "open" | "edit" | "share" | "duplicate" | "stop_sharing" | "delete";
 
-/**
- * The ⋯ menu on something the member made. Edit only appears for kinds with
- * something to write; Stop sharing only once it is shared.
- */
 export function LibraryRowMenu(props: {
   name: string;
   canEdit: boolean;

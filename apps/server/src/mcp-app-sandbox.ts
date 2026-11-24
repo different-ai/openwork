@@ -223,9 +223,6 @@ export const MCP_APP_SANDBOX_PROXY_SCRIPT = String.raw`
 `;
 
 export const MCP_APP_SANDBOX_PROXY_CSS = "html,body{width:100%;height:100%;margin:0;overflow:hidden;background:transparent}";
-// Readiness must not wait on extra network requests. In particular, a stylesheet
-// before a classic script blocks its execution even when the script is downloaded.
-// These are trusted host constants; provider HTML is delivered separately.
 export const MCP_APP_SANDBOX_PROXY_HTML = `<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><style>${MCP_APP_SANDBOX_PROXY_CSS}</style><title>MCP App sandbox</title></head><body><script>${MCP_APP_SANDBOX_PROXY_SCRIPT}</script></body></html>`;
 
 function sandboxPageHeaders(csp: string | null): Record<string, string> {
@@ -237,7 +234,6 @@ function sandboxPageHeaders(csp: string | null): Record<string, string> {
   };
 }
 
-// One origin in every list, so a change to any directive changes the version.
 const VERSION_SAMPLE_CSP = JSON.stringify({
   connectDomains: ["https://connect.example"],
   resourceDomains: ["https://resource.example"],
@@ -245,17 +241,11 @@ const VERSION_SAMPLE_CSP = JSON.stringify({
   baseUriDomains: ["https://base.example"],
 });
 
-/** Names this sandbox page and the headers it is served with; either changing gives a new URL. */
 export const MCP_APP_SANDBOX_PROXY_VERSION = createHash("sha256")
   .update(JSON.stringify([MCP_APP_SANDBOX_PROXY_HTML, sandboxPageHeaders(VERSION_SAMPLE_CSP)]))
   .digest("hex")
   .slice(0, 16);
 
-/**
- * The sandbox page is a build constant and its policy comes from the URL, so a
- * URL naming the current version always gets the same response. Apps then
- * start without asking the server for it again. Any other request is not stored.
- */
 export function mcpAppSandboxPageHeaders(searchParams: URLSearchParams): Record<string, string> {
   return {
     ...sandboxPageHeaders(searchParams.get("csp")),

@@ -11,7 +11,6 @@ import { PlatformProvider, createDefaultPlatform } from "../src/react-app/kernel
 import { browserHistoryMessages, computerHistoryMessages } from "./computer-session-history-data"
 import "../src/app/index.css"
 
-// Deterministic raster captures: no desktop, external service, or recording.
 function capture(stage: number): string {
   const canvas = document.createElement("canvas")
   canvas.width = 640; canvas.height = 380

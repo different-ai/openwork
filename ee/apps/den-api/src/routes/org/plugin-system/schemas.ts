@@ -23,9 +23,8 @@ import { idParamSchema } from "../shared.js"
 
 const cursorSchema = z.string().trim().min(1).max(255)
 const jsonObjectSchema = z.object({}).passthrough()
-// MEDIUMTEXT allows ~12.58 MB of encrypted plaintext; 1 MiB stays safely below storage
-// while still ~40x the largest real skill document, yielding a clean 400 instead of a 500.
 const configObjectInputMaxPayloadBytes = 1_048_576
+const configObjectInputMaxNormalizedPayloadBytes = 11 * 1_048_576
 const rawSourceTextSchema = z.string().trim().min(1).refine(
   (value) => Buffer.byteLength(value, "utf8") <= configObjectInputMaxPayloadBytes,
   { message: `rawSourceText must be at most ${configObjectInputMaxPayloadBytes} bytes (1 MiB) after UTF-8 encoding.` },
@@ -179,8 +178,8 @@ export const connectorAccountRepositoryParamsSchema = connectorAccountParamsSche
 export const configObjectInputSchema = z.object({
   rawSourceText: rawSourceTextSchema.optional(),
   normalizedPayloadJson: jsonObjectSchema.refine(
-    (value) => Buffer.byteLength(JSON.stringify(value), "utf8") <= configObjectInputMaxPayloadBytes,
-    { message: `normalizedPayloadJson must stringify to at most ${configObjectInputMaxPayloadBytes} bytes (1 MiB) after UTF-8 encoding.` },
+    (value) => Buffer.byteLength(JSON.stringify(value), "utf8") <= configObjectInputMaxNormalizedPayloadBytes,
+    { message: `normalizedPayloadJson must stringify to at most ${configObjectInputMaxNormalizedPayloadBytes} bytes (11 MiB) after UTF-8 encoding.` },
   ).optional(),
   parserMode: z.string().trim().min(1).max(100).optional(),
   schemaVersion: z.string().trim().min(1).max(100).optional(),
@@ -228,11 +227,6 @@ export const resourceAccessGrantWriteSchema = z.object({
   }
 })
 
-/**
- * The same connector setup an admin fills in on the Connections page. It
- * configures the connection for a plugin-declared MCP server, either inline
- * while creating the plugin or later through the configure route.
- */
 export const pluginMcpConnectionSetupSchema = z.object({
   authType: z.enum(["oauth", "apikey", "none"]).optional().default("oauth"),
   credentialMode: z.enum(["shared", "per_member"]).optional(),
@@ -288,11 +282,18 @@ export const pluginCreateSchema = z.object({
   marketplaceId: marketplaceIdSchema.optional(),
 })
 
+export const externalKeySchema = z.string().regex(/^[a-z0-9][a-z0-9._-]{0,127}$/)
+
+export const configObjectExternalKeySchema = z.object({
+  externalKey: externalKeySchema.nullable(),
+})
+
 export const pluginUpdateSchema = z.object({
   name: z.string().trim().min(1).max(255).optional(),
   description: nullableStringSchema.optional(),
+  externalKey: externalKeySchema.nullable().optional(),
 }).superRefine((value, ctx) => {
-  if (value.name === undefined && value.description === undefined) {
+  if (value.name === undefined && value.description === undefined && value.externalKey === undefined) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       message: "Provide at least one field to update.",
@@ -450,18 +451,10 @@ export const githubDiscoveryApplySchema = z.object({
 })
 
 export const githubPluginMcpImportAccessSchema = z.object({
-  orgWide: z.boolean().optional().default(true),
+  orgWide: z.boolean().optional().default(false).describe("Share with everyone in the organization. Requires the org-wide sharing permission."),
   memberIds: z.array(memberIdSchema).max(200).optional().default([]),
   teamIds: z.array(teamIdSchema).max(200).optional().default([]),
-}).superRefine((value, ctx) => {
-  if (!value.orgWide && value.memberIds.length === 0 && value.teamIds.length === 0) {
-    ctx.addIssue({
-      code: z.ZodIssueCode.custom,
-      message: "Provide orgWide=true or at least one member/team grant.",
-      path: ["orgWide"],
-    })
-  }
-})
+}).describe("Who can use the imported plugin, besides its creator. Omitted or empty keeps it private to the creator.")
 
 export const githubPluginMcpImportPreviewSchema = z.object({
   githubUrl: z.string().trim().url().max(2048),
@@ -622,6 +615,7 @@ export const libraryItemSchema = z.discriminatedUnion("type", [
     edges: z.array(effectiveAccessEdgeSchema),
     state: z.enum(["ready", "needs_signin", "needs_admin_setup"]),
     resultState: z.enum(["never_run", "fresh", "stale", "needs_attention"]),
+    failureReason: z.string().nullable().optional(),
     latestSuccessfulAt: nullableTimestampSchema,
     viewState: z.enum(["default", "custom_active", "build_failed", "retired"]),
     activeViewTitle: nullableStringSchema,
@@ -654,6 +648,7 @@ export const configObjectVersionSchema = z.object({
 
 export const configObjectSchema = z.object({
   id: configObjectIdSchema,
+  externalKey: z.string().nullable(),
   organizationId: denTypeIdSchema("organization"),
   objectType: configObjectTypeSchema,
   sourceMode: configObjectSourceModeSchema,
@@ -711,6 +706,7 @@ export const pluginExtensionSchema = z.object({
 
 export const pluginSchema = z.object({
   id: pluginIdSchema,
+  externalKey: z.string().nullable(),
   organizationId: denTypeIdSchema("organization"),
   name: z.string().trim().min(1).max(255),
   description: nullableStringSchema,
@@ -1062,7 +1058,7 @@ const githubPluginMcpImportServerSchema = z.object({
 
 const githubPluginMcpImportPlanSchema = z.object({
   branch: z.string(),
-  classification: z.enum(["agent_plugin_repo", "claude_marketplace_repo", "claude_multi_plugin_repo", "claude_single_plugin_repo", "folder_inferred_repo", "unsupported"]),
+  classification: z.enum(["agent_plugin_repo", "claude_marketplace_repo", "claude_multi_plugin_repo", "claude_single_plugin_repo", "folder_inferred_repo", "skill_folders_repo", "unsupported"]),
   marketplace: z.object({
     description: z.string().nullable(),
     name: z.string().nullable(),
@@ -1089,7 +1085,9 @@ const githubPluginMcpImportPlanSchema = z.object({
     sourceSchemaVersion: z.string().nullable(),
     sourcePath: z.string(),
     supported: z.boolean(),
+    supportingFileCount: z.number().int().nonnegative().describe("Files in the skill's folder besides SKILL.md."),
   })),
+  requiresSkillSelection: z.boolean().describe("True when the repository has no plugin manifest: nothing is selected by default, and an import must name each skill in selectedSkillKeys."),
   sourceSchemaVersion: z.string().nullable(),
   sourceRevisionRef: z.string(),
   warnings: z.array(z.string()),
@@ -1130,6 +1128,13 @@ export const githubPluginMcpImportResponseSchema = pluginArchMutationResponseSch
       reason: githubPluginMcpImportSkippedReasonSchema,
       reuse: githubPluginMcpImportReuseSchema,
     })),
+    skippedSkillFiles: z.array(z.object({
+      count: z.number().int().positive().describe("How many files in the skill's folder were not imported."),
+      message: z.string().describe("A sentence for the person importing: how many files were left out and the limits behind it."),
+      name: z.string(),
+      paths: z.array(z.string()).describe("The files left out, relative to the skill's folder; at most 50 are named."),
+      sourcePath: z.string(),
+    })).describe("Imported skills that could not bring every file in their folder: files that are not text or are past the size limits."),
     skippedSkills: z.array(z.object({
       name: z.string(),
       reason: z.enum(["invalid_skill"]),
@@ -1169,7 +1174,6 @@ const pluginMcpRequirementConfigureItemSchema = (
     }),
   })
 )
-/** An API-key requirement set up without its key also returns credentialPrompt. */
 export const pluginMcpRequirementConfigureResponseSchema = z.object({
   ok: z.literal(true),
   item: pluginMcpRequirementConfigureItemSchema,
@@ -1261,7 +1265,7 @@ export const githubDiscoveryTreeSummarySchema = z.object({
 }).meta({ ref: "PluginArchGithubDiscoveryTreeSummary" })
 export const githubDiscoveredPluginSchema = z.object({
   key: z.string().trim().min(1),
-  sourceKind: z.enum(["agent_plugin_manifest", "marketplace_entry", "plugin_manifest", "standalone_claude", "folder_inference"]),
+  sourceKind: z.enum(["agent_plugin_manifest", "marketplace_entry", "plugin_manifest", "standalone_claude", "folder_inference", "skill_folder"]),
   sourceSchemaVersion: z.enum(["1.0.0", "1.1.0"]).nullable(),
   rootPath: z.string(),
   displayName: z.string().trim().min(1),
@@ -1287,7 +1291,7 @@ export const githubConnectorDiscoveryResponseSchema = pluginArchMutationResponse
   "PluginArchGithubConnectorDiscoveryResponse",
   z.object({
     autoImportNewPlugins: z.boolean(),
-    classification: z.enum(["agent_plugin_repo", "claude_marketplace_repo", "claude_multi_plugin_repo", "claude_single_plugin_repo", "folder_inferred_repo", "unsupported"]),
+    classification: z.enum(["agent_plugin_repo", "claude_marketplace_repo", "claude_multi_plugin_repo", "claude_single_plugin_repo", "folder_inferred_repo", "skill_folders_repo", "unsupported"]),
     connectorInstance: connectorInstanceSchema,
     connectorTarget: connectorTargetSchema,
     discoveredPlugins: z.array(githubDiscoveredPluginSchema),

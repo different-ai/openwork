@@ -54,7 +54,6 @@ function choiceOf(row: { providerId: string; modelId: string }): DefaultModelCho
   return { providerId: row.providerId, modelId: row.modelId }
 }
 
-/** OpenWork Models, when the organization has them on and its data agreement allows them. */
 async function openWorkModelOptions(organizationId: OrganizationId): Promise<DefaultModelOption[]> {
   const [organization] = await db
     .select({ metadata: OrganizationTable.metadata })
@@ -76,7 +75,6 @@ async function openWorkModelOptions(organizationId: OrganizationId): Promise<Def
   }))
 }
 
-/** Every model the organization's own providers (`lpr_…`) offer, within each provider's allowlist. */
 async function organizationProviderOptions(organizationId: OrganizationId): Promise<DefaultModelOption[]> {
   const providers = await db
     .select({ id: LlmProviderTable.id, source: LlmProviderTable.source, providerId: LlmProviderTable.providerId, name: LlmProviderTable.name, providerConfig: LlmProviderTable.providerConfig })
@@ -107,11 +105,6 @@ async function organizationProviderOptions(organizationId: OrganizationId): Prom
   }))
 }
 
-/**
- * The AI Gateway's models: each active provider's catalog models that sit in
- * at least one active model group. The model id is the catalog id; members
- * reach it through their own alias.
- */
 async function gatewayOptions(organizationId: OrganizationId): Promise<DefaultModelOption[]> {
   if (gatewayManagementUnavailable()) return []
   const providers = await db
@@ -152,7 +145,6 @@ async function gatewayOptions(organizationId: OrganizationId): Promise<DefaultMo
 
 const SOURCE_ORDER: readonly DefaultModelSource[] = ["openwork", "gateway", "provider"]
 
-/** Readers per source; injectable so tests can fail one source without a database. */
 export type DefaultModelOptionReaders = Record<DefaultModelSource, (organizationId: OrganizationId) => Promise<DefaultModelOption[]>>
 
 const liveReaders: DefaultModelOptionReaders = {
@@ -161,11 +153,6 @@ const liveReaders: DefaultModelOptionReaders = {
   provider: organizationProviderOptions,
 }
 
-/**
- * Every model the organization can choose as a default, read live from what
- * it has set up. A source that fails is reported, and its models left out,
- * so the others stay choosable.
- */
 export async function listDefaultModelOptions(organizationId: OrganizationId, readers: DefaultModelOptionReaders = liveReaders): Promise<DefaultModelOptions> {
   const results = await Promise.all(SOURCE_ORDER.map(async (source) => {
     try {
@@ -184,16 +171,13 @@ export async function listDefaultModelOptions(organizationId: OrganizationId, re
   }
 }
 
-/** Whether a choice is one of the organization's models: "ok", "unknown_model", or "source_unavailable" when its source could not be read. */
 export function checkDefaultModelChoice(choice: DefaultModelChoice, options: DefaultModelOptions): "ok" | "unknown_model" | "source_unavailable" {
   if (options.options.some((option) => sameDefaultModel(option, choice))) return "ok"
   const source: DefaultModelSource = choice.providerId === OPENWORK_MODELS_PROVIDER_ID ? "openwork" : isGatewayProviderId(choice.providerId) ? "gateway" : "provider"
   return options.unavailableSources.includes(source) ? "source_unavailable" : "unknown_model"
 }
 
-/** The organization default and every team's override, teams by name, with each team's size and conflicts. */
 export async function listDefaultModelSettings(organizationId: OrganizationId): Promise<Omit<DefaultModelSettings, "canEdit">> {
-  // Primary: every save answers with this view of the row it just wrote. Admin-only and rare.
   const [rows, teams] = await Promise.all([
     db.$primary.select().from(OrgDefaultModelTable).where(eq(OrgDefaultModelTable.organizationId, organizationId)),
     db.$primary.select({ id: TeamTable.id, name: TeamTable.name }).from(TeamTable).where(eq(TeamTable.organizationId, organizationId)).orderBy(asc(TeamTable.name)),
@@ -232,16 +216,12 @@ export async function findOrganizationTeamForDefaultModel(organizationId: Organi
   return { ...team, memberCount: Number(members?.total ?? 0) }
 }
 
-/**
- * Sets or clears one scope's model: the organization default (teamId null) or
- * one team's override. Null clears it: no organization default, or the team
- * uses the organization default again.
- */
 export async function saveDefaultModel(input: {
   organizationId: OrganizationId
   teamId: TeamId | null
   model: DefaultModelChoice | null
   updatedByOrgMemberId: MemberId
+  id?: DenTypeId<"orgDefaultModel">
 }): Promise<void> {
   const scopeKey = input.teamId ?? DEFAULT_MODEL_EVERYONE_SCOPE
   const now = new Date()
@@ -260,7 +240,7 @@ export async function saveDefaultModel(input: {
       return
     }
     await tx.insert(OrgDefaultModelTable).values({
-      id: createDenTypeId("orgDefaultModel"),
+      id: input.id ?? createDenTypeId("orgDefaultModel"),
       organizationId: input.organizationId,
       teamId: input.teamId,
       scopeKey,
@@ -273,21 +253,14 @@ export async function saveDefaultModel(input: {
   })
 }
 
-/** Removes a team's override inside the transaction that deletes the team. */
 export async function deleteTeamDefaultModel(database: Database, teamId: TeamId): Promise<void> {
   await database.delete(OrgDefaultModelTable).where(eq(OrgDefaultModelTable.teamId, teamId))
 }
 
-/** Removes every default model of an organization inside the transaction that deletes it. */
 export async function deleteOrganizationDefaultModels(database: Database, organizationId: OrganizationId): Promise<void> {
   await database.delete(OrgDefaultModelTable).where(eq(OrgDefaultModelTable.organizationId, organizationId))
 }
 
-/**
- * The model reference this member's desktop uses for a choice, or null when
- * the member cannot use it: OpenWork Models and organization providers need
- * the member's access; an AI Gateway model becomes the member's own alias.
- */
 async function memberModelReference(input: { organizationId: OrganizationId; memberId: MemberId; teamIds: TeamId[] }, choice: DefaultModelChoice): Promise<{ providerID: string; modelID: string } | null> {
   if (isGatewayProviderId(choice.providerId)) {
     if (gatewayManagementUnavailable()) return null
@@ -324,12 +297,6 @@ async function memberModelReference(input: { organizationId: OrganizationId; mem
   return model ? { providerID: choice.providerId, modelID: model.id } : null
 }
 
-/**
- * The default model a member's desktop starts new chats with: their teams'
- * override, else the organization default (see resolveDefaultModel). Null
- * when there is none or the member cannot use the resolved model; the desktop
- * then keeps its own behaviour.
- */
 export async function readDefaultModelForMember(input: { organizationId: OrganizationId; memberId: MemberId }): Promise<DesktopDefaultModel | null> {
   const rows = await db.select().from(OrgDefaultModelTable).where(eq(OrgDefaultModelTable.organizationId, input.organizationId))
   if (rows.length === 0) return null
@@ -354,11 +321,6 @@ export async function readDefaultModelForMember(input: { organizationId: Organiz
     : { ...reference, source: "organization" }
 }
 
-/**
- * What `/v1/me/desktop-config` sends as `defaultModel`: nothing while the
- * feature is off (the stored choices are not even read), and nothing when the
- * lookup fails, so desktops keep their own default.
- */
 export async function desktopConfigDefaultModel(
   input: { organizationId: OrganizationId; memberId: MemberId },
   read: typeof readDefaultModelForMember = readDefaultModelForMember,

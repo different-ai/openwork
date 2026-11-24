@@ -27,11 +27,30 @@ import {
   parseOrgListPayload,
   roleIncludesCanonicalRole,
   permissionLockReason,
+  type AdminReauthMinutes,
+  type MaxSessionLengthDays,
+  type SessionLengthHours,
 } from "../../_lib/den-org";
 import { bootOrgContextFor, shouldStartOrgBootRequests } from "../../_lib/org-boot-requests";
 import { consumeOrgSelectionRequest, shouldOpenOrgSelection } from "../../_lib/org-selection";
 import { restoreRememberedOrganization, setActiveOrganizationAndRemember } from "../../_lib/org-memory";
 import { ORG_SCOPE_HEADER, OrganizationNotFoundError, getRequestOrgScope, setRequestOrgScope } from "../../_lib/org-scope";
+import { SsoRequiredError, readSsoRequiredSignInPath, redirectToOrganizationSso } from "../../_lib/sso-required";
+
+export type OrganizationSettingsUpdate = {
+  name?: string;
+  allowedEmailDomains?: string[] | null;
+  allowedDesktopVersions?: string[] | null;
+  requireSso?: boolean;
+  restrictDomainToSso?: boolean;
+  sessionLengthHours?: SessionLengthHours;
+  maxSessionLengthDays?: MaxSessionLengthDays;
+  adminReauthMinutes?: AdminReauthMinutes;
+  brandAppName?: string | null;
+  brandLogoUrl?: string | null;
+  brandIconUrl?: string | null;
+  brandAccentColor?: string | null;
+};
 
 type OrgDashboardContextValue = {
   orgSlug: string | null;
@@ -49,23 +68,24 @@ type OrgDashboardContextValue = {
   refreshOrgData: () => Promise<void>;
   createOrganization: (name: string) => Promise<void>;
   updateOrganizationName: (name: string) => Promise<void>;
-  updateOrganizationSettings: (input: { name?: string; allowedEmailDomains?: string[] | null; allowedDesktopVersions?: string[] | null; requireSso?: boolean; brandAppName?: string | null; brandLogoUrl?: string | null; brandIconUrl?: string | null; brandAccentColor?: string | null }) => Promise<void>;
+  updateOrganizationSettings: (input: OrganizationSettingsUpdate) => Promise<void>;
   deleteOrganization: () => Promise<void>;
   switchOrganization: (slug: string) => void;
-  /** teamId (teamRoles): invite into a custom role by adding the pending member to its team. */
-  inviteMember: (input: { email: string; role: string; teamId?: string | null }) => Promise<void>;
+  inviteMember: (input: { email: string; role: string; teamId?: string | null }) => Promise<string | null>;
   startSeatCheckout: () => Promise<void>;
   cancelInvitation: (invitationId: string) => Promise<void>;
-  /** The join link of a pending invitation; GET /v1/org never includes join tokens. */
   getInvitationLink: (invitationId: string) => Promise<string>;
   updateMemberRole: (memberId: string, role: string) => Promise<void>;
   removeMember: (memberId: string) => Promise<void>;
+  setMemberOpenWorkWeb: (memberId: string, enabled: boolean) => Promise<void>;
   transferOwnership: (memberId: string) => Promise<void>;
-  createTeam: (input: { name: string; memberIds: string[] }) => Promise<void>;
+  createTeam: (input: { name: string; memberIds: string[] }) => Promise<string | null>;
   updateTeam: (teamId: string, input: { name?: string; memberIds?: string[]; grantsOrganizationAdmin?: boolean }) => Promise<void>;
   deleteTeam: (teamId: string) => Promise<void>;
-  runReauthableAction: (label: string, action: () => Promise<void>) => Promise<void>;
+  runReauthableAction: (label: string, action: () => Promise<void>, prompt?: ReauthPrompt) => Promise<void>;
 };
+
+export type ReauthPrompt = { title: string; description: string };
 
 type OrgSettingsCompletion = {
   message: string;
@@ -73,6 +93,7 @@ type OrgSettingsCompletion = {
 
 type PendingReauthMutation = {
   label: string;
+  prompt?: ReauthPrompt;
   action: () => Promise<void>;
   resolve: () => void;
   reject: (error: unknown) => void;
@@ -87,9 +108,7 @@ function requestOrgDirectory(): OrgBootRequest {
 
 function startOrgBootRequests(): OrgBootRequests {
   const directory = requestOrgDirectory();
-  // No workspace header: Den answers for the session's active workspace.
   const context = requestJson("/v1/org", { method: "GET", cache: "no-store" }, 12000);
-  // A load that never consumes them (signed out, unmounted) must not leave rejections unhandled.
   directory.catch(() => undefined);
   context.catch(() => undefined);
   return { directory, context };
@@ -98,6 +117,15 @@ function startOrgBootRequests(): OrgBootRequests {
 const OrgDashboardContext = createContext<OrgDashboardContextValue | null>(null);
 const ORG_SETTINGS_PATH = "/dashboard/org-settings";
 const ORG_SETTINGS_UPDATED_MESSAGE = "Workspace settings updated.";
+
+function isObject(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function stringField(value: unknown, key: string): string | null {
+  const field = isObject(value) ? value[key] : null;
+  return typeof field === "string" && field.length > 0 ? field : null;
+}
 
 export function OrgDashboardProvider({
   children,
@@ -118,9 +146,7 @@ export function OrgDashboardProvider({
   const pendingReauthMutationsRef = useRef<PendingReauthMutation[]>([]);
   const pathnameRef = useRef(pathname);
   const [reauthDialogOpen, setReauthDialogOpen] = useState(false);
-  // A full page load starts the workspace list and the active workspace's
-  // details while the session check runs, instead of after it. The first load
-  // consumes them; every later load (switches, refreshes, retries) asks again.
+  const [reauthPrompt, setReauthPrompt] = useState<ReauthPrompt | null>(null);
   const bootRequestsRef = useRef<OrgBootRequests | null>(null);
   const orgLoadRef = useRef<{
     generation: number;
@@ -194,7 +220,6 @@ export function OrgDashboardProvider({
 
   async function setActiveOrganization(input: { organizationId?: string | null; organizationSlug?: string | null }, workbotLink = false) {
     const { response, payload } = await requestJson(
-      // The supported database-session route works for both bearer and cookie-backed Den visits.
       workbotLink ? "/v1/me/active-organization" : "/api/auth/organization/set-active",
       {
         method: "POST",
@@ -204,14 +229,16 @@ export function OrgDashboardProvider({
     );
 
     if (!response.ok) {
+      const ssoSignInPath = readSsoRequiredSignInPath(payload);
+      if (ssoSignInPath) {
+        throw new SsoRequiredError(ssoSignInPath, getErrorMessage(payload, "This organization requires single sign-on."));
+      }
       throw new Error(getErrorMessage(payload, `Failed to switch organization (${response.status}).`));
     }
   }
 
   async function loadOrgContext(organizationId: string, started: OrgBootRequest | null = null) {
     if (started) {
-      // The unscoped boot request answers for the session's active workspace.
-      // Use it only when that is the workspace being opened; otherwise ask again.
       const early = bootOrgContextFor(await started.catch(() => null), organizationId);
       if (early) return early;
     }
@@ -221,6 +248,10 @@ export function OrgDashboardProvider({
       12000,
     );
     if (!response.ok) {
+      const ssoSignInPath = readSsoRequiredSignInPath(payload);
+      if (ssoSignInPath) {
+        throw new SsoRequiredError(ssoSignInPath, getErrorMessage(payload, "This organization requires single sign-on."));
+      }
       if (response.status === 404) {
         throw new OrganizationNotFoundError(getErrorMessage(payload, `Failed to load organization (${response.status}).`));
       }
@@ -256,7 +287,6 @@ export function OrgDashboardProvider({
 
   async function refreshOrgData() {
     if (!orgLoadRef.current.mounted || orgLoadRef.current.userId !== (user?.id ?? null)) return;
-    // A background refresh must not restore the previous org over an explicit switch.
     if (user && orgLoadRef.current.switching) {
       return;
     }
@@ -294,10 +324,7 @@ export function OrgDashboardProvider({
         throw new Error("Finish your workspace setup before opening another team's settings.");
       }
       const displayedOrgId = linkedOrgId ?? setupOrganizationId ?? orgLoadRef.current.organizationId;
-      // Always consume the handshake, including required-picker and setup loads.
       const selectionRequested = consumeOrgSelectionRequest();
-      // A direct dashboard visit may restore only when no explicit/session org
-      // or post-auth chooser request owns this load. Never replace a linked org.
       if (!displayedOrgId && !directoryPayload.orgs.some((entry) => entry.isActive)
         && !selectionRequested && !setupPending && !isSingleOrgMode
         && !window.sessionStorage.getItem(PENDING_ORG_INVITATION_STORAGE_KEY)
@@ -317,7 +344,6 @@ export function OrgDashboardProvider({
           };
         }
       }
-      // A tab's unfinished setup owns its org even when another tab switches the session.
       const displayedOrg = displayedOrgId
         ? directoryPayload.orgs.find((entry) => entry.id === displayedOrgId) ?? null
         : null;
@@ -368,9 +394,6 @@ export function OrgDashboardProvider({
       }
       setRequestOrgScope(targetOrg.id);
 
-      // Single-org deployments never surface the picker; otherwise the
-      // org-selection module decides from the directory plus any pending
-      // sign-in request.
       if (!linkedOrgId && !setupOrganizationId && !isSingleOrgMode && shouldOpenOrgSelection(directoryPayload.orgs, selectionRequested)) {
         orgLoadRef.current.organizationId = null;
         setRequestOrgScope(null);
@@ -390,7 +413,6 @@ export function OrgDashboardProvider({
       const context = await loadOrgContext(targetOrg.id, boot?.context ?? null);
       if (!isCurrent()) return;
       if (linkedOrgId) {
-        // Consume only after the exact workspace loaded. Later explicit switches stay authoritative.
         const url = new URL(window.location.href);
         url.searchParams.delete("workbotOrganizationId");
         window.history.replaceState(null, "", `${url.pathname}${url.search}${url.hash}`);
@@ -402,6 +424,10 @@ export function OrgDashboardProvider({
       if (!isCurrent()) return;
       setRequestOrgScope(null);
       setOrgContext(null);
+      if (error instanceof SsoRequiredError) {
+        redirectToOrganizationSso(error.signInPath);
+        return;
+      }
       if (setupOrganizationId || hasWorkbotLink) {
         setOrgError(error instanceof Error ? error.message : "Could not restore the linked workspace.");
         return;
@@ -455,7 +481,12 @@ export function OrgDashboardProvider({
     }
   }
 
-  async function runReauthableAction(label: string, action: () => Promise<void>) {
+  function openReauthDialog() {
+    setReauthPrompt(pendingReauthMutationsRef.current[0]?.prompt ?? null);
+    setReauthDialogOpen(true);
+  }
+
+  async function runReauthableAction(label: string, action: () => Promise<void>, prompt?: ReauthPrompt) {
     const organizationId = orgContext?.organization.id;
     const userId = user?.id;
     const scopedAction = async () => {
@@ -476,9 +507,9 @@ export function OrgDashboardProvider({
       await new Promise<void>((resolve, reject) => {
         pendingReauthMutationsRef.current = [
           ...pendingReauthMutationsRef.current,
-          { label, action: scopedAction, resolve, reject },
+          { label, prompt, action: scopedAction, resolve, reject },
         ];
-        setReauthDialogOpen(true);
+        openReauthDialog();
       });
     }
   }
@@ -552,7 +583,7 @@ export function OrgDashboardProvider({
           ...retryAfterReauth,
           ...queuedDuringRetry,
         ];
-        setReauthDialogOpen(true);
+        openReauthDialog();
         return;
       }
 
@@ -622,8 +653,6 @@ export function OrgDashboardProvider({
       && generation === orgLoadRef.current.generation && orgLoadRef.current.userId === userId;
     orgLoadRef.current.switching = true;
     orgLoadRef.current.organizationId = targetOrg.id;
-    // Unmount scoped consumers before changing the shared request header, not
-    // merely at the end of React's event batch.
     flushSync(() => {
       setOrgBusy(true);
       setMutationBusy("switch-organization");
@@ -636,8 +665,6 @@ export function OrgDashboardProvider({
       try {
         if (!isCurrent()) return;
         setRequestOrgScope(targetOrg.id);
-        // A slow/failed details request must not lose the acknowledged choice;
-        // a newer switch/account must never overwrite it with a stale response.
         if (!await setActiveOrganizationAndRemember({
           userId: user.id,
           organizationId: targetOrg.id,
@@ -657,6 +684,10 @@ export function OrgDashboardProvider({
         if (!isCurrent()) return;
         setRequestOrgScope(null);
         setOrgContext(null);
+        if (error instanceof SsoRequiredError) {
+          redirectToOrganizationSso(error.signInPath);
+          return;
+        }
         if (error instanceof OrganizationNotFoundError) {
           try {
             await recoverFromOrganizationNotFound(generation);
@@ -687,10 +718,10 @@ export function OrgDashboardProvider({
     await updateOrganizationSettings({ name: trimmed });
   }
 
-  async function updateOrganizationSettings(input: { name?: string; allowedEmailDomains?: string[] | null; allowedDesktopVersions?: string[] | null; requireSso?: boolean; brandAppName?: string | null; brandLogoUrl?: string | null; brandIconUrl?: string | null; brandAccentColor?: string | null }) {
+  async function updateOrganizationSettings(input: OrganizationSettingsUpdate) {
     ensureCanManageSettings();
     const shouldPublishOrgSettingsCompletion = pathnameRef.current === ORG_SETTINGS_PATH;
-    const body: { name?: string; allowedEmailDomains?: string[] | null; allowedDesktopVersions?: string[] | null; requireSso?: boolean; brandAppName?: string | null; brandLogoUrl?: string | null; brandIconUrl?: string | null; brandAccentColor?: string | null } = {};
+    const body: OrganizationSettingsUpdate = {};
     if (typeof input.name === "string") {
       const trimmed = input.name.trim();
       if (!trimmed) {
@@ -706,6 +737,18 @@ export function OrgDashboardProvider({
     }
     if (input.requireSso !== undefined) {
       body.requireSso = input.requireSso;
+    }
+    if (input.restrictDomainToSso !== undefined) {
+      body.restrictDomainToSso = input.restrictDomainToSso;
+    }
+    if (input.sessionLengthHours !== undefined) {
+      body.sessionLengthHours = input.sessionLengthHours;
+    }
+    if (input.maxSessionLengthDays !== undefined) {
+      body.maxSessionLengthDays = input.maxSessionLengthDays;
+    }
+    if (input.adminReauthMinutes !== undefined) {
+      body.adminReauthMinutes = input.adminReauthMinutes;
     }
     if (input.brandAppName !== undefined) {
       body.brandAppName = input.brandAppName;
@@ -769,6 +812,7 @@ export function OrgDashboardProvider({
       throw new Error(permissionLockReason("teams.manage"));
     }
 
+    let invitedMemberId: string | null = null;
     await runMutation("invite-member", async () => {
       ensureActiveOrganizationSelected();
       const { response, payload } = await requestJson(
@@ -792,8 +836,9 @@ export function OrgDashboardProvider({
         }
         throw getRequestError(payload, response, `Failed to invite member (${response.status}).`);
       }
-
+      invitedMemberId = stringField(payload, "memberId");
     });
+    return invitedMemberId;
   }
 
   async function startSeatCheckout() {
@@ -925,6 +970,25 @@ export function OrgDashboardProvider({
     });
   }
 
+  async function setMemberOpenWorkWeb(memberId: string, enabled: boolean) {
+    if (!getCurrentAccess().canStartSeatCheckout) {
+      throw new Error(permissionLockReason("billing.manage"));
+    }
+
+    await runMutation("member-openwork-web", async () => {
+      ensureActiveOrganizationSelected();
+      const { response, payload } = await requestJson(
+        `/v1/members/${encodeURIComponent(memberId)}/openwork-web`,
+        { method: "POST", body: JSON.stringify({ enabled }) },
+        12000,
+      );
+
+      if (!response.ok) {
+        throw getRequestError(payload, response, `Failed to update OpenWork Web (${response.status}).`);
+      }
+    });
+  }
+
   async function transferOwnership(memberId: string) {
     if (!getCurrentAccess().canTransferOwnership) {
       throw new Error("Only the workspace owner can transfer ownership.");
@@ -954,6 +1018,7 @@ export function OrgDashboardProvider({
       throw new Error(permissionLockReason("teams.manage"));
     }
 
+    let createdTeamId: string | null = null;
     await runMutation("create-team", async () => {
       ensureActiveOrganizationSelected();
       const { response, payload } = await requestJson(
@@ -968,7 +1033,9 @@ export function OrgDashboardProvider({
       if (!response.ok) {
         throw getRequestError(payload, response, `Failed to create team (${response.status}).`);
       }
+      createdTeamId = stringField(isObject(payload) ? payload.team : null, "id");
     });
+    return createdTeamId;
   }
 
   async function updateTeam(teamId: string, input: { name?: string; memberIds?: string[]; grantsOrganizationAdmin?: boolean }) {
@@ -1009,8 +1076,6 @@ export function OrgDashboardProvider({
       if (response.status !== 204 && !response.ok) {
         throw getRequestError(payload, response, `Failed to delete team (${response.status}).`);
       }
-      // Deletion removes role links in Den, not reusable shared roles. Refresh the
-      // cached sets/details too, so switching tabs cannot resurrect a deleted team.
       if (activeOrgId) await queryClient.invalidateQueries({ queryKey: permissionsQueryKeys.all(activeOrgId) });
     });
   }
@@ -1042,7 +1107,6 @@ export function OrgDashboardProvider({
     }
 
     if (orgLoadRef.current.userId !== (user?.id ?? null)) {
-      // Boot requests belong to the session this page loaded with.
       if (orgLoadRef.current.userId !== null) bootRequestsRef.current = null;
       orgLoadRef.current.userId = user?.id ?? null;
       orgLoadRef.current.organizationId = null;
@@ -1055,7 +1119,6 @@ export function OrgDashboardProvider({
       void refreshOrgData();
       const signInRoute = workbotSignInRoute(window.location.href);
       if (signInRoute !== "/") {
-        // A fresh auth page reads the preserved intent after the old session is cleared.
         void signOut().then(() => window.location.replace(signInRoute));
         return;
       }
@@ -1096,6 +1159,7 @@ export function OrgDashboardProvider({
     getInvitationLink,
     updateMemberRole,
     removeMember,
+    setMemberOpenWorkWeb,
     transferOwnership,
     createTeam,
     updateTeam,
@@ -1118,6 +1182,7 @@ export function OrgDashboardProvider({
         orgContext={orgContext}
         onCancel={cancelReauth}
         onVerified={retryReauthMutation}
+        {...(reauthPrompt ?? {})}
       />
     </OrgDashboardContext.Provider>
   );

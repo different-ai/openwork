@@ -67,9 +67,6 @@ function normalizePathItems(pathItems: unknown, counts: NormalizationCounts) {
   }
 }
 
-// Operations tagged Internal (Automation runner protocol, development-only
-// email outbox) stay in the served /openapi.json for debugging but are not part
-// of the published contract.
 const excludedTags = new Set<string>(["Internal"])
 
 function hasExcludedTag(operation: Record<string, unknown>) {
@@ -113,11 +110,6 @@ function collectSchemaRefs(value: unknown, into: Set<string>) {
   }
 }
 
-// Schemas registered through Zod `.meta({ id })` land in components.schemas
-// even when every route that references them is `hide: true` or was excluded
-// above (Internal tags, /openapi.json describing itself). Keep only schemas
-// reachable from the remaining document, following $ref transitively, so the
-// published contract does not advertise types no documented operation uses.
 function pruneOrphanSchemas(document: Record<string, unknown>, counts: NormalizationCounts) {
   const components = document.components
   if (!isRecord(components)) return
@@ -169,11 +161,8 @@ function normalizeOpenApiDocument(document: Record<string, unknown>) {
   return counts
 }
 
-/** A detached, normalized contract; never mutate the raw document cached by Den. */
 export function publicOpenApiDocument(original: unknown) {
   if (!isRecord(original)) throw new Error("OpenAPI response was not a JSON object.")
-  // Hono metadata can contain functions. Match the raw endpoint's JSON wire
-  // representation before normalizing, while preserving its cached object.
   const document: unknown = JSON.parse(JSON.stringify(original))
   if (!isRecord(document)) throw new Error("OpenAPI response was not a JSON object.")
   const counts = normalizeOpenApiDocument(document)

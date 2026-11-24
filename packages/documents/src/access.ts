@@ -6,7 +6,6 @@ export function documentsAccessFailure(error: unknown): "signin" | "connection" 
   if (["workbot_documents_not_enabled", "feature_disabled"].includes(error.code)) return "disabled"
   if (error.status === 401) return "signin"
   if (error.code === "needs_connection") return "connection"
-  // Unknown conflicts may be refreshable, but must still mask cached content.
   if (error.status === 403 || error.status === 409) return "blocked"
   return null
 }

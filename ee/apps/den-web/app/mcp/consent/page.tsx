@@ -47,11 +47,6 @@ function readEmail(payload: unknown): string | null {
   return isRecord(payload) && isRecord(payload.user) && typeof payload.user.email === "string" ? payload.user.email : null;
 }
 
-/**
- * The OAuth consent step (A8/A9): who is asking, which workspace it will use,
- * where the approval goes, and what it can do, then one primary action that
- * names the app. Deny stays a quiet text action.
- */
 export default function McpConsentPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState<"accept" | "deny" | null>(null);

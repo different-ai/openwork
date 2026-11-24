@@ -1,14 +1,3 @@
-/**
- * Last-outcome bookkeeping for the background cloud MCP maintenance loop.
- *
- * The maintenance tick used to swallow every failure (`.catch(() =>
- * "skipped")`), so a wedged or permanently failing loop was invisible — in the
- * field a machine sat with an expired token for days with zero surfaced
- * signal. Each run now records its outcome per maintenance target so the
- * connection status UI and diagnostics (see the Live MCP Connection
- * Diagnostics work) can show when maintenance last ran and how it ended.
- */
-
 const CLOUD_MCP_MAINTENANCE_OUTCOME_KEY = "openwork.den.mcp.lastMaintenanceOutcome";
 const MAX_RECORDED_OUTCOMES = 8;
 const MAX_DETAIL_LENGTH = 200;
@@ -29,10 +18,6 @@ type StorageLike = {
 
 let storageOverrideForTest: StorageLike | null = null;
 
-/**
- * Bun on Linux exposes a readonly `globalThis.window`, so tests cannot stub
- * the global. Inject a storage instead (pass null to restore the default).
- */
 export function __setCloudMcpMaintenanceOutcomeStorageForTest(storage: StorageLike | null) {
   storageOverrideForTest = storage;
 }
@@ -74,7 +59,6 @@ function readOutcomeMap(): Map<string, CloudMcpMaintenanceOutcome> {
       if (outcome) outcomes.set(targetKey, outcome);
     }
   } catch {
-    // Storage unavailable or corrupt — treat as no recorded outcomes.
   }
   return outcomes;
 }
@@ -100,7 +84,6 @@ export function recordCloudMcpMaintenanceOutcome(
       JSON.stringify({ version: 1, outcomes: Object.fromEntries(kept) }),
     );
   } catch {
-    // Storage unavailable — recording outcomes must never break maintenance.
   }
 }
 

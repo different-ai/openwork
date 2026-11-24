@@ -1,122 +1,34 @@
 import assert from "node:assert/strict";
-import test from "node:test";
+import { test } from "node:test";
 import { createComputerAgentPermissions } from "./computer-agent-permissions.mjs";
 
-const rule = (action = "computer", effect = "ask", source = "Everyone") => ({ action, resource: "*", effect, source });
-function fixture({ confirm = async () => true } = {}) {
-  let clock = 0;
+test("a sandbox-only host denial is picked up on the next computer boundary without a cache window", async () => {
+  let required = false;
   let reads = 0;
-  let rules = [];
-  let failed = false;
-  const policy = createComputerAgentPermissions({
-    readRules: async () => { reads++; if (failed) throw new Error("offline"); return rules; },
-    confirm, now: () => clock,
+  const permissions = createComputerAgentPermissions({
+    readRules: async () => { reads++; return required ? [{ action: "computer", resource: "*", effect: "deny", source: "Sandbox-only mode" }] : []; },
+    confirm: async () => { throw new Error("A required sandbox cannot be approved into host execution"); },
   });
-  return { policy, setRules: value => { rules = value; }, fail: () => { failed = true; }, recover: () => { failed = false; }, tick: () => { clock += 30_000; }, reads: () => reads };
-}
-
-for (const kind of ["computer", "script"]) test(`${kind} allows by default and applies allow, ask and deny`, async () => {
-  const f = fixture();
-  assert.deepEqual(await f.policy.check({ kind }), { effect: "allow" });
-  for (const effect of ["allow", "ask", "deny"]) {
-    f.setRules([rule(kind, effect)]); f.tick();
-    const decision = await f.policy.check({ kind });
-    assert.equal(decision.effect, effect);
-    if (effect === "ask") assert.deepEqual(decision.rule, rule(kind, effect));
-    if (effect === "deny") assert.match(decision.message, /Your organization's agent permissions block .+ \(set for Everyone\)\./);
-  }
-});
-
-test("rules are cached for 30 seconds, then refreshed; read errors retain the last known rules", async () => {
-  const f = fixture(); f.setRules([rule("computer", "deny")]);
-  assert.equal((await f.policy.check({ kind: "computer" })).effect, "deny");
-  f.setRules([]);
-  assert.equal((await f.policy.check({ kind: "computer" })).effect, "deny");
-  assert.equal(f.reads(), 1);
-  f.fail(); f.tick();
-  assert.equal((await f.policy.check({ kind: "computer" })).effect, "deny");
-  assert.equal(f.reads(), 2);
-});
-
-test("a successful refresh expires cached rules and an empty policy restores current behavior", async () => {
-  const f = fixture(); f.setRules([rule("computer", "deny")]);
-  await f.policy.check({ kind: "computer" });
-  f.setRules([]); f.tick();
-  assert.deepEqual(await f.policy.check({ kind: "computer" }), { effect: "allow" });
-  assert.equal(f.reads(), 2);
-});
-
-for (const kind of ["computer", "script"]) {
-  test(`${kind} denies before the first successful read and retries on the next check`, async () => {
-    const f = fixture(); f.fail();
-    assert.deepEqual(await f.policy.check({ kind }), {
-      effect: "deny",
-      message: "Your organization's agent permissions could not be verified yet. Try again in a moment; nothing ran.",
-    });
-    assert.equal(f.reads(), 1);
-    f.recover();
-    assert.deepEqual(await f.policy.check({ kind }), { effect: "allow" });
-    assert.equal(f.reads(), 2, "retry does not wait for the 30-second cache");
-  });
-
-  test(`${kind} allows after a successful empty read, even if a later read fails`, async () => {
-    const f = fixture();
-    assert.deepEqual(await f.policy.check({ kind }), { effect: "allow" });
-    assert.equal(f.reads(), 1);
-    f.fail(); f.tick();
-    assert.deepEqual(await f.policy.check({ kind }), { effect: "allow" });
-    assert.equal(f.reads(), 2);
-  });
-
-  test(`${kind} retains verified deny rules when a later read fails`, async () => {
-    const f = fixture(); f.setRules([rule(kind, "deny")]);
-    const decision = await f.policy.check({ kind });
+  assert.deepEqual(await permissions.check({ kind: "computer", sessionId: "root" }), { effect: "allow" });
+  required = true;
+  for (const sessionId of ["root", "child"]) {
+    const decision = await permissions.check({ kind: "computer", sessionId });
     assert.equal(decision.effect, "deny");
-    f.fail(); f.tick();
-    assert.deepEqual(await f.policy.check({ kind }), decision);
-    assert.equal(f.reads(), 2);
-  });
-}
-
-test("approval belongs to one chat and resets only when the ordered rules change", async () => {
-  let asks = 0;
-  const f = fixture({ confirm: async () => { asks++; return true; } });
-  f.setRules([rule()]); await f.policy.check({ kind: "computer" });
-  assert.equal(await f.policy.approveComputer("chat", rule()), true);
-  assert.equal(await f.policy.approveComputer("chat", rule()), true);
-  assert.equal(asks, 1);
-  await f.policy.approveComputer("other", rule()); assert.equal(asks, 2);
-  f.setRules([{ source: "Everyone", effect: "ask", resource: "*", action: "computer" }]); f.tick();
-  await f.policy.check({ kind: "computer" });
-  await f.policy.approveComputer("chat", rule()); assert.equal(asks, 2, "object property order does not change policy");
-  f.setRules([rule("computer", "ask", "Contractors")]); f.tick();
-  const decision = await f.policy.check({ kind: "computer" });
-  await f.policy.approveComputer("chat", decision.rule); assert.equal(asks, 3);
+    assert.match(decision.message, /Sandbox-only mode/);
+  }
+  assert.equal(reads, 3);
 });
 
-for (const answer of [false, undefined, null, 0, 1, "allow"]) test(`only explicit true approves, not ${String(answer)}`, async () => {
-  const f = fixture({ confirm: async () => answer });
-  assert.equal(await f.policy.approveComputer("chat", rule()), false);
-});
-
-test("a rejected dialog is not approval", async () => {
-  const f = fixture({ confirm: async () => { throw new Error("closed"); } });
-  assert.equal(await f.policy.approveComputer("chat", rule()), false);
-});
-
-test("concurrent asks in a chat share one promise; changed rules invalidate a pending answer", async () => {
-  let asks = 0;
-  let resolve;
-  const answer = new Promise(done => { resolve = done; });
-  const f = fixture({ confirm: () => { asks++; return answer; } });
-  f.setRules([rule()]); await f.policy.check({ kind: "computer" });
-  const first = f.policy.approveComputer("chat", rule());
-  assert.equal(f.policy.approveComputer("chat", rule()), first);
-  await Promise.resolve(); assert.equal(asks, 1);
-  f.setRules([rule("computer", "deny")]); f.tick();
-  await f.policy.check({ kind: "computer" });
-  f.setRules([rule()]); f.tick();
-  await f.policy.check({ kind: "computer" });
-  resolve(true);
-  assert.equal(await first, false, "restoring the earlier rules cannot revive an old dialog");
+test("ordinary offline behaviour is retained, and a failed read cannot lift a verified sandbox denial", async () => {
+  let unavailable = false;
+  let rules = [];
+  const permissions = createComputerAgentPermissions({ readRules: async () => { if (unavailable) throw new Error("offline"); return rules; }, confirm: async () => false });
+  assert.equal((await permissions.check({ kind: "computer" })).effect, "allow");
+  unavailable = true;
+  assert.equal((await permissions.check({ kind: "computer" })).effect, "allow");
+  unavailable = false;
+  rules = [{ action: "computer", resource: "*", effect: "deny", source: "Sandbox-only mode" }];
+  assert.equal((await permissions.check({ kind: "computer" })).effect, "deny");
+  unavailable = true;
+  assert.equal((await permissions.check({ kind: "computer" })).effect, "deny");
 });

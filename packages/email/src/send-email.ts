@@ -60,7 +60,6 @@ export type SendEmailInput<Template extends EmailTemplate = EmailTemplate> = {
   props: EmailTemplateProps[Template]
   config: EmailSendConfig
   subject?: string
-  /** Extra headers, e.g. List-Unsubscribe for lifecycle reminders. */
   headers?: Record<string, string>
 }
 

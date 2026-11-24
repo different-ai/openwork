@@ -15,7 +15,6 @@ import { SecretTextInput } from "../../../design-system/secret-text-input";
 import { librarySecretFieldClass } from "./add-library-item-page";
 import { LibraryPage } from "./library-page";
 
-/** Den's preset copy leads with what it does; the rest is admin detail. */
 export function connectorSummary(preset: Pick<DenExternalMcpPreset, "description">) {
   const first = preset.description.split(/\.\s/)[0]?.trim() ?? "";
   return first.replace(/\.$/, "");
@@ -25,11 +24,6 @@ export type LibraryConnectorSetupInput = {
   apiKey?: string;
 };
 
-/**
- * The provider only accepts an app the organization registers with it (Slack,
- * GitHub), so an admin adds that app in OpenWork Cloud before anyone signs in.
- * A preset with OpenWork's own app signs in like any other.
- */
 export function connectorNeedsOrganizationApp(
   preset: Pick<DenExternalMcpPreset, "authType" | "requiresOAuthClient" | "defaultOAuthClientId">,
 ) {
@@ -41,10 +35,6 @@ type CatalogConnection = Pick<
   "authType" | "credentialMode" | "connected" | "connectedForMe" | "needsReconnect" | "missingFeatures" | "credentialHealth"
 >;
 
-/**
- * An organization connector the member signs in to with their own account and
- * has not yet (or must again). Shared connectors and keys stay "Added".
- */
 export function catalogConnectionNeedsSignIn(connection: CatalogConnection) {
   return connection.authType === "oauth"
     && connection.credentialMode === "per_member"
@@ -62,20 +52,16 @@ function ConnectorIcon(props: { preset: DenExternalMcpPreset; size?: "sm" | "md"
   );
 }
 
-/** The organization already has this connector; the member has not signed in to their own account yet. */
 export type LibraryConnectorCatalogSignIn = {
   onSignIn: () => void;
   busy: boolean;
-  /** The member's last sign-in came back but a setting in the service's app blocks it. */
   problem?: { reason: string; settings: ProviderSettingsLink | null };
   onOpenSettings?: (url: string) => void;
 };
 
-/** Every connector the member can add, plus a way to add any other MCP server. */
 export function LibraryConnectorCatalogPage(props: {
   presets: DenExternalMcpPreset[];
   addedUrls: Set<string>;
-  /** Added connectors the member still signs in to, by URL. Others that are added just say so. */
   signInsByUrl?: ReadonlyMap<string, LibraryConnectorCatalogSignIn>;
   onBack: () => void;
   onPick: (preset: DenExternalMcpPreset) => void;
@@ -172,17 +158,9 @@ export function LibraryConnectorCatalogPage(props: {
   );
 }
 
-/**
- * The one setup page every listed connector shares. Only the grey box and the
- * button change with how the connector signs in. A connector that needs the
- * organization's own app is set up by an admin in OpenWork Cloud; members see
- * it locked with who can change that (P4, C5).
- */
 export function LibraryConnectorSetupPage(props: {
   preset: DenExternalMcpPreset;
-  /** Owners and admins add the organization's app in OpenWork Cloud. */
   canSetUpOrganizationApp: boolean;
-  /** Opens OpenWork Cloud's setup for this connector; absent when no Cloud address is known. */
   onSetUpInCloud?: () => void;
   onBack: () => void;
   onCatalog: () => void;
@@ -198,7 +176,6 @@ export function LibraryConnectorSetupPage(props: {
   const signsIn = preset.authType === "oauth";
 
   const submit = async () => {
-    // Each secret is read once here and the field empties.
     const apiKey = preset.authType === "apikey" ? apiKeyField.current?.take() ?? "" : "";
     if (preset.authType === "apikey" && !apiKey.trim()) {
       setError(t("extensions.add_mcp_api_key_required"));

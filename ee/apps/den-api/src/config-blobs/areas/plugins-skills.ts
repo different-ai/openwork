@@ -1,0 +1,312 @@
+import { and, eq, inArray } from "@openwork-ee/den-db/drizzle"
+import { ConnectorInstanceTable, RemoteMcpAppTable, configObjectTypeValues } from "@openwork-ee/den-db/schema"
+import { denTypeIdPrefixes, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { isAuthoredMcpAppVersion } from "@openwork/types/mcp-app"
+import { z } from "zod"
+import { latestConfigObjectVersions } from "../../config-object-versions.js"
+import { AGENT_TEMPLATE_PATH } from "../../workbot-proactive/template.js"
+import { requirePluginArchCapability } from "../../routes/org/plugin-system/access.js"
+import { createConfigObject, createConfigObjectVersion, setConfigObjectLifecycle } from "../../routes/org/plugin-system/store.js"
+import { ConfigApplyItemError, defineConfigArea, type ConfigAreaContext, type ConfigItem } from "../area.js"
+import {
+  accessByRoleSchema,
+  accessSpec,
+  adoptItemKey,
+  applyAccess,
+  ensureItemKeys,
+  itemKey,
+  jsonOverlap,
+  loadAudienceNames,
+  loadConfigObjects,
+  loadGrants,
+  loadSharedPlugins,
+  nameSimilarity,
+  normalizeText,
+  parseSpec,
+  pluginArchActor,
+  sharedConfigObjectIds,
+  textOverlap,
+} from "./plugins-support.js"
+import { ConfigApplyError, applyWithSteps, isJsonObject, ownManagerAccessPreflight, specObject, touches } from "./route-support.js"
+import { skillPayloadWithContents } from "../../skill-file-blobs.js"
+
+const AREA = "plugins.skills"
+
+const contentSchema = z.object({
+  rawSourceText: z.string().max(4 * 1024 * 1024).nullable().default(null),
+  payload: z.record(z.string(), z.unknown()).nullable().default(null),
+  schemaVersion: z.string().trim().min(1).max(100).nullable().default(null),
+}).strict()
+
+const specSchema = z.object({
+  type: z.enum(configObjectTypeValues),
+  archived: z.boolean().default(false),
+  content: contentSchema,
+  access: accessByRoleSchema.default({ orgWide: null, teams: { viewer: [], editor: [], manager: [] }, members: { viewer: [], editor: [], manager: [] } }),
+  description: z.string().max(65535).nullable().default(null),
+  sourcePath: z.string().max(255).nullable().default(null),
+  origin: z.enum(["cloud", "import", "connector"]).default("cloud"),
+  managedBy: z.enum(["manual", "source"]).default("manual"),
+  source: z.string().max(255).nullable().default(null),
+  remoteApp: z.object({ sourceUrl: z.string().max(2048), status: z.enum(["active", "retired"]) }).strict().nullable().default(null),
+}).strict()
+
+const applySpecSchema = z.object({
+  type: z.enum(configObjectTypeValues),
+  archived: z.boolean().default(false),
+  content: contentSchema,
+  origin: z.enum(["cloud", "import", "connector"]).default("cloud"),
+  managedBy: z.enum(["manual", "source"]).default("manual"),
+  source: z.string().nullable().default(null),
+  sourcePath: z.string().nullable().default(null),
+  description: z.string().nullable().default(null),
+  remoteApp: z.unknown().optional(),
+}).passthrough()
+
+type Row = Awaited<ReturnType<typeof loadConfigObjects>>[number]
+
+function isAgentTemplate(type: unknown, path: unknown): boolean {
+  return type === "agent" && path === AGENT_TEMPLATE_PATH
+}
+
+const AGENT_TEMPLATE_SKIP = "the \"Your agent\" template is carried by Members' agents (workbot.proactive), not by this area"
+
+function contentOf(spec: ConfigItem["spec"]): { rawSourceText: string | null; payload: unknown } {
+  const content = isJsonObject(spec.content) ? spec.content : {}
+  return {
+    rawSourceText: typeof content.rawSourceText === "string" ? content.rawSourceText : null,
+    payload: content.payload ?? null,
+  }
+}
+
+async function readSkills(ctx: ConfigAreaContext, ids: readonly string[] | null): Promise<ConfigItem[]> {
+  const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
+  let rows: Row[] = (await loadConfigObjects(ctx.db, organizationId, ids)).filter((row) => !isAgentTemplate(row.objectType, row.currentRelativePath))
+  if (rows.length === 0) return []
+  const latest = await latestConfigObjectVersions(rows.map((row) => row.id), organizationId)
+  rows = rows.filter((row) => {
+    const version = latest.get(row.id)
+    return !(row.objectType === "app" && version && isAuthoredMcpAppVersion(version))
+  })
+  if (ids === null) {
+    const { shared } = await loadSharedPlugins(ctx.db, organizationId)
+    const sharedIds = await sharedConfigObjectIds({ db: ctx.db, organizationId, objects: rows, sharedPluginIds: shared.ids })
+    rows = rows.filter((row) => sharedIds.has(row.id))
+  }
+  if (rows.length === 0) return []
+  const objectIds = rows.map((row) => row.id)
+  const instanceIds = [...new Set(rows.flatMap((row) => row.connectorInstanceId ? [row.connectorInstanceId] : []))]
+  const [grants, instances, remoteApps] = await Promise.all([
+    loadGrants(ctx.db, "config_object", organizationId, objectIds),
+    instanceIds.length === 0 ? [] : ctx.db.select({ id: ConnectorInstanceTable.id, name: ConnectorInstanceTable.name })
+      .from(ConnectorInstanceTable)
+      .where(and(eq(ConnectorInstanceTable.organizationId, organizationId), inArray(ConnectorInstanceTable.id, instanceIds))),
+    ctx.db.select().from(RemoteMcpAppTable).where(and(eq(RemoteMcpAppTable.organizationId, organizationId), inArray(RemoteMcpAppTable.configObjectId, objectIds))),
+  ])
+  const names = await loadAudienceNames(ctx.db, organizationId, grants)
+  const instanceNames = new Map(instances.map((instance) => [instance.id, instance.name]))
+  const remoteByObject = new Map(remoteApps.map((app) => [app.configObjectId, app]))
+
+  const payloads = new Map<string, Record<string, unknown> | null>()
+  for (const row of rows) {
+    const payload = latest.get(row.id)?.normalizedPayloadJson ?? null
+    payloads.set(row.id, row.objectType === "skill" ? await skillPayloadWithContents(organizationId, payload) : payload)
+  }
+
+  const items = rows.map((row): ConfigItem => {
+    const version = latest.get(row.id)
+    const remote = remoteByObject.get(row.id)
+    const sourceManaged = row.sourceMode === "connector" || row.connectorInstanceId !== null
+    return {
+      id: row.id,
+      key: row.externalKey,
+      name: row.title,
+      spec: {
+        type: row.objectType,
+        archived: row.status === "archived",
+        content: {
+          rawSourceText: version?.rawSourceText ?? null,
+          payload: payloads.get(row.id) ?? null,
+          schemaVersion: version?.schemaVersion ?? null,
+        },
+        access: accessSpec(grants.filter((grant) => grant.resourceId === row.id), names),
+        description: row.description ?? null,
+        sourcePath: row.currentRelativePath ?? null,
+        origin: row.sourceMode,
+        managedBy: sourceManaged ? "source" : "manual",
+        source: row.connectorInstanceId ? instanceNames.get(row.connectorInstanceId) ?? null : null,
+        remoteApp: remote ? { sourceUrl: remote.sourceUrl, status: remote.status } : null,
+      },
+    }
+  })
+  return items.sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id))
+}
+
+function sourceManagedFailure(name: string, source: string | null, field: string): ConfigApplyItemError {
+  const from = source ? `the source "${source}"` : "its source"
+  return new ConfigApplyItemError({
+    code: "source_managed",
+    message: `"${name}" comes from ${from} (Plugins › Sources): its content is changed in the repository and synced, not imported. Skip this item; the source sync brings it back.`,
+    field,
+    status: 409,
+  })
+}
+
+export const pluginsSkillsArea = defineConfigArea({
+  key: AREA,
+  label: "Skills, agents and commands",
+  path: ["Plugins", "Skills"],
+  idPrefix: denTypeIdPrefixes.configObject,
+  specVersion: 1,
+  specSchema,
+  dependsOn: ["members.teams", "members.people"],
+  deployments: ["cloud", "self_hosted"],
+  viewPermission: "sharing.manage_all",
+  managePermission: "sharing.manage_all",
+  tables: ["config_object", "config_object_version", "config_object_access_grant", "remote_mcp_app"],
+  assignedKeys: true,
+  ensureKeys: (ctx, items) => ensureItemKeys("config_object", ctx.organizationId, items),
+  naturalKeys: [{
+    label: "source file",
+    get: (item) => item.spec.managedBy === "source" && typeof item.spec.source === "string" && typeof item.spec.sourcePath === "string"
+      ? `${normalizeText(item.spec.source)}\n${item.spec.sourcePath}`
+      : null,
+  }, {
+    label: "type and title",
+    get: (item) => item.spec.managedBy !== "source" && typeof item.spec.type === "string" && normalizeText(item.name)
+      ? `${item.spec.type}\n${normalizeText(item.name)}`
+      : null,
+  }],
+  similarity: (blob, target) => {
+    if (blob.spec.type !== target.spec.type) return { score: 0, reasons: ["different type"] }
+    const reasons = [`same type (${String(blob.spec.type)})`]
+    const name = nameSimilarity(blob.name, target.name)
+    if (name === 1) reasons.push("same title")
+    else if (name > 0) reasons.push(`similar title (${Math.round(name * 100)}%)`)
+    const left = contentOf(blob.spec)
+    const right = contentOf(target.spec)
+    const content = Math.max(textOverlap(left.rawSourceText, right.rawSourceText), jsonOverlap(left.payload, right.payload))
+    if (content === 1) reasons.push("same content")
+    else if (content > 0) reasons.push(`${Math.round(content * 100)}% of the content equal`)
+    return { score: Math.min(1, 0.35 * name + 0.65 * content), reasons }
+  },
+  secretFields: [],
+  containsConfidentialContent: true,
+  informationalFields: ["description", "sourcePath", "origin", "managedBy", "source", "remoteApp"],
+  informationalName: true,
+  transactional: false,
+  protectedFromDelete: (item) => item.spec.managedBy === "source"
+    ? `"${item.name}" comes from ${typeof item.spec.source === "string" ? `the source "${item.spec.source}"` : "a source"}; remove it from the repository instead.`
+    : null,
+
+  async preflight(ctx, op) {
+    if (op.kind === "create") {
+      if (isAgentTemplate(op.item.spec.type, op.item.spec.sourcePath)) return { skip: AGENT_TEMPLATE_SKIP }
+      if (op.item.spec.managedBy === "source") {
+        const source = typeof op.item.spec.source === "string" ? `the source "${op.item.spec.source}"` : "its source"
+        return { skip: `comes from ${source} (Plugins › Sources): the source's sync creates it once that source is set up here` }
+      }
+      return null
+    }
+    if (op.kind === "update" && op.previous.spec.managedBy === "source" && (touches(op.changes, "content") || touches(op.changes, "archived"))) {
+      const source = typeof op.previous.spec.source === "string" ? `the source "${op.previous.spec.source}"` : "its source"
+      return { block: `"${op.previous.name}" comes from ${source}: its content and archived state change in the repository, not by import. Skip this item (or keep its content as it is here).` }
+    }
+    return ownManagerAccessPreflight(ctx, op)
+  },
+
+  irreversible: (op) => {
+    if (op.kind === "update" && touches(op.changes, "content")) {
+      return [`A new version of "${op.previous.name}" is saved; reverting adds another version, the history keeps this one.`]
+    }
+    return []
+  },
+
+  async exportItems(ctx) {
+    return readSkills(ctx, null)
+  },
+
+  async readItems(ctx, ids) {
+    return readSkills(ctx, ids)
+  },
+
+  async apply(ctx, op) {
+    return applyWithSteps(async (log) => {
+      const actor = await pluginArchActor(ctx)
+      const warnings: string[] = []
+
+      if (op.kind === "delete") {
+        if (op.previous.spec.managedBy === "source") throw sourceManagedFailure(op.previous.name, typeof op.previous.spec.source === "string" ? op.previous.spec.source : null, "managedBy")
+        await log.run({ action: "delete", target: "object", detail: op.previous.name }, () =>
+          setConfigObjectLifecycle({ context: actor, configObjectId: normalizeDenTypeId("configObject", op.targetId), action: "delete" }))
+        return { localId: op.targetId }
+      }
+
+      const raw = specObject(op.item.spec)
+      const spec = parseSpec(applySpecSchema, raw)
+      const value = {
+        ...(spec.content.rawSourceText !== null ? { rawSourceText: spec.content.rawSourceText } : {}),
+        ...(spec.content.payload !== null ? { normalizedPayloadJson: spec.content.payload } : {}),
+        ...(spec.content.schemaVersion !== null ? { schemaVersion: spec.content.schemaVersion } : {}),
+        metadata: { title: op.item.name, ...(spec.description ? { description: spec.description } : {}) },
+      }
+      if (spec.content.rawSourceText === null && spec.content.payload === null) {
+        throw new ConfigApplyError("invalid_spec", "content needs rawSourceText or payload.", 400, "content")
+      }
+
+      if (op.kind === "create") {
+        if (spec.managedBy === "source") throw sourceManagedFailure(op.item.name, spec.source, "managedBy")
+        if (isAgentTemplate(spec.type, spec.sourcePath)) {
+          throw new ConfigApplyItemError({ code: "agent_template", message: `"${op.item.name}" is the Workbot "Your agent" template: import it with Members' agents (workbot.proactive).`, field: "sourcePath", status: 409 })
+        }
+        await requirePluginArchCapability(actor, "config_object.create")
+        const created = await log.run({ action: "create", target: "object", detail: `${spec.type} "${op.item.name}"` }, () => createConfigObject({
+          context: actor,
+          ...(op.preferredId ? { id: normalizeDenTypeId("configObject", op.preferredId) } : {}),
+          ...(itemKey(op.item.key) ? { externalKey: itemKey(op.item.key) } : {}),
+          objectType: spec.type,
+          sourceMode: spec.origin === "import" ? "import" : "cloud",
+          sourcePath: spec.sourcePath,
+          value,
+        }), "content")
+        const localId = created.id
+        if (spec.remoteApp) warnings.push(`"${op.item.name}" was installed from a remote MCP App URL on the source; install it again here to keep it updated.`)
+        await applyAccess({ ctx, actor, kind: "config_object", resourceId: localId, access: raw.access, log, warnings })
+        if (spec.archived) {
+          await log.run({ action: "set", target: "archived", detail: "true" }, () =>
+            setConfigObjectLifecycle({ context: actor, configObjectId: normalizeDenTypeId("configObject", localId), action: "archive" }))
+        }
+        return { localId, warnings }
+      }
+
+      const configObjectId = normalizeDenTypeId("configObject", op.targetId)
+      const [row] = await loadConfigObjects(ctx.db, ctx.organizationId, [configObjectId])
+      if (!row) throw new ConfigApplyError("config_object_not_found", `"${op.previous.name}" no longer exists.`, 404)
+      const sourceManaged = row.sourceMode === "connector" || row.connectorInstanceId !== null
+      if (touches(op.changes, "type") && row.objectType !== spec.type) {
+        throw new ConfigApplyError("type_changed", `"${row.title}" is a ${row.objectType}; an import can't turn it into a ${spec.type}. Create a new item instead.`, 409, "type")
+      }
+      await adoptItemKey({ kind: "config_object", organizationId: ctx.organizationId, id: configObjectId }, op, log, warnings)
+      const contentChanged = touches(op.changes, "content")
+      const lifecycleChanged = touches(op.changes, "archived") && (row.status === "archived") !== spec.archived
+      if (sourceManaged && (contentChanged || lifecycleChanged)) {
+        const [instance] = row.connectorInstanceId
+          ? await ctx.db.select({ name: ConnectorInstanceTable.name }).from(ConnectorInstanceTable).where(eq(ConnectorInstanceTable.id, row.connectorInstanceId)).limit(1)
+          : []
+        throw sourceManagedFailure(row.title, instance?.name ?? null, contentChanged ? "content" : "archived")
+      }
+      if (contentChanged) {
+        await log.run({ action: "create", target: "content", detail: "new version" }, () =>
+          createConfigObjectVersion({ context: actor, configObjectId, value }), "content")
+      }
+      if (lifecycleChanged) {
+        await log.run({ action: "set", target: "archived", detail: String(spec.archived) }, () =>
+          setConfigObjectLifecycle({ context: actor, configObjectId, action: spec.archived ? "archive" : "restore" }))
+      }
+      if (touches(op.changes, "access")) {
+        await applyAccess({ ctx, actor, kind: "config_object", resourceId: configObjectId, access: raw.access, log, warnings })
+      }
+      return { localId: configObjectId, warnings }
+    })
+  },
+})

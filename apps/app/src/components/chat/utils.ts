@@ -1,7 +1,5 @@
 import { isReasoningUIPart, isToolUIPart, type DynamicToolUIPart, type FileUIPart, type ToolUIPart, type UIMessage } from "ai"
 import type { ThreadStatus } from "@/lib/messages"
-// Relative so the pure grouping contract stays importable from alias-free
-// test workspaces (evals specs import this module directly).
 import { isAggregatableToolPart, type AggregateThought } from "../../lib/tool-aggregate"
 import { reasoningDurationMs } from "../../lib/text-activity"
 import { SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX } from "../../app/types"
@@ -64,9 +62,6 @@ export function getMediaBadge(part: Pick<FileUIPart, "filename" | "mediaType">) 
   if (mime === PPTX_MIME) return "PPTX"
   if (mime === XLSX_MIME) return "XLSX"
 
-  // Prefer the filename extension: attachment mimes are transport details
-  // (e.g. everything text-like or binary travels as text/plain so providers
-  // accept it), while the extension reflects what the user actually attached.
   const fromExtension = extensionBadge(part.filename)
   if (fromExtension) return fromExtension
 
@@ -106,7 +101,6 @@ export function getMessageCreated(message: UIMessage): number | null {
   return typeof created === "number" ? created : null
 }
 
-/** When the assistant finished the turn (server timestamp), if known. */
 export function getMessageCompleted(message: UIMessage): number | null {
   const opencode = getMessageOpencodeMetadata(message)
   if (!opencode || !("completed" in opencode)) return null
@@ -114,16 +108,9 @@ export function getMessageCompleted(message: UIMessage): number | null {
   return typeof completed === "number" ? completed : null
 }
 
-/**
- * When the current run started (server timestamp). A follow-up sent while the
- * reply before it was still being written joins that run, so steering does not
- * restart the working time; a message sent after the reply finished, or after
- * an error, starts a new run.
- */
 export function getRunStartedAt(messages: UIMessage[]): number | null {
   const newestReply = messages.findLast((message) => message.role === "assistant")
   let startedAt: number | null = null
-  // The user message being traced back and the newest reply written before it.
   let followUp: UIMessage | null = null
   let reply: UIMessage | null = null
   for (let index = messages.length - 1; index >= 0; index--) {
@@ -144,17 +131,10 @@ export function getRunStartedAt(messages: UIMessage[]): number | null {
 function replyUnfinishedAt(reply: UIMessage, sentAt: number | null, newest: boolean) {
   if (reply.id.startsWith(SYNTHETIC_SESSION_ERROR_MESSAGE_PREFIX)) return false
   const completed = getMessageCompleted(reply)
-  // An interrupted run can leave an old reply without a completion time; only
-  // the newest reply may still be in progress.
   if (completed === null) return newest
   return sentAt !== null && completed > sentAt
 }
 
-/**
- * How long, between `from` and `now`, a run waited for a person's approval or
- * answer. Waits that overlap (the chat and a helper asking at once) count once;
- * an open wait lasts until `now`.
- */
 export function getWaitedMs(waits: readonly { start: number; end?: number }[], from: number, now: number): number {
   const spans = waits
     .map((wait) => [Math.max(wait.start, from), Math.min(wait.end ?? now, now)] as const)
@@ -226,12 +206,6 @@ type AssistantRenderGroup =
   | { kind: "tool"; part: ToolUIPart | DynamicToolUIPart }
   | { kind: "tool-aggregate"; parts: (ToolUIPart | DynamicToolUIPart)[]; thoughts: AggregateThought[] }
 
-/**
- * Steps often arrive as one assistant message per tool call. When a
- * message contains nothing but aggregatable tool parts (plus step
- * markers / hidden reasoning), return those parts so consecutive
- * messages can merge into one aggregate line. Prose breaks the run.
- */
 export function getAggregateOnlyParts(
   message: UIMessage,
   showThinking: boolean
@@ -256,14 +230,6 @@ export function getAggregateOnlyParts(
   return tools.length > 0 ? tools : null
 }
 
-/**
- * An OpenCode turn usually arrives as ONE assistant message with steps
- * (reasoning, tool calls, narration) and the final answer interleaved in
- * `parts`. Split at the last non-empty text part so the step portion can
- * fold into the "Worked for…" run while the answer stays visible. Returns
- * null when there is nothing to fold (pure prose, or no work before the
- * answer).
- */
 export function splitTurnAtAnswer(message: UIMessage): { steps: UIMessage; answer: UIMessage } | null {
   const parts = message.parts
   let answerStart = -1
@@ -286,7 +252,6 @@ export function splitTurnAtAnswer(message: UIMessage): { steps: UIMessage; answe
   }
 }
 
-/** Two thoughts' combined length, unknown when either is unknown. */
 function addDurations(left: number | null | undefined, right: number | null): number | null {
   return typeof left === "number" && right !== null ? left + right : null
 }
@@ -320,9 +285,6 @@ export function getAssistantRenderGroups(
 
     const previous = groups.at(-1)
     if (previous?.kind === "reasoning") {
-      // Each reasoning part is its own section (often opening with a bold
-      // "**Title**"); joining without a break glues that title onto the
-      // previous paragraph's last sentence.
       previous.text += previous.text && part.text.trim() ? `\n\n${part.text}` : part.text
       previous.isStreaming = previous.isStreaming || part.state === "streaming"
       previous.durationMs = addDurations(previous.durationMs, durationMs)
@@ -333,10 +295,6 @@ export function getAssistantRenderGroups(
       return
     }
 
-    // A thought in the middle of an aggregate run embeds into the run at
-    // its chronological slot instead of opening a new top-level group.
-    // Alternating thought/command turns then read as ONE aggregate line
-    // that advertises its thoughts, not a ladder of repeated single lines.
     if (previous?.kind === "tool-aggregate") {
       const lastThought = previous.thoughts.at(-1)
       if (lastThought && lastThought.afterIndex === previous.parts.length) {
@@ -376,13 +334,6 @@ export function getAssistantRenderGroups(
     }
 
     if (isToolUIPart(part)) {
-      // Paper aggregation rule: consecutive command/edit/read/search calls
-      // collapse into one aggregate group. Prose, files, and other tools
-      // break the run. A thought inside the run embeds at its chronological
-      // slot (see appendReasoning), so the run stays one compact line and
-      // still reads in the order the model produced it. A thought before
-      // any call — after prose or at the turn's start — remains its own
-      // top-level group and starts a fresh run.
       if (isAggregatableToolPart(part)) {
         const previous = groups.at(-1)
         if (previous?.kind === "tool-aggregate") {

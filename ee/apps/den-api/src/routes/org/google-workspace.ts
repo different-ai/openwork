@@ -6,8 +6,7 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { env } from "../../env.js"
-import { organizationFeatureEnabled } from "../../features.js"
-import { markFeaturesUsed } from "../../feature-usage.js"
+import { requireFeature } from "../../features.js"
 import { buildCalendarEventPayload, calendarRecurrenceMatches, createCalendarEventBodySchema } from "../../capability-sources/google-calendar-events.js"
 import { cloudTransportRoute, jsonValidator, orgMemberRoute, paramValidator, queryValidator } from "../../middleware/index.js"
 import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
@@ -29,6 +28,7 @@ import {
   extractGmailAttachmentData,
   extractGmailMessage,
   extractGmailMessageIds,
+  extractGmailThreadMetadata,
   extractGmailThreadQuoteInput,
   extractGmailThreadReplyContext,
   gmailBodyHasQuotedHistory,
@@ -59,9 +59,6 @@ const DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 const GOOGLE_WORKSPACE_API_TIMEOUT_MS = 30_000
 const MAX_DRIVE_FILE_CONTENT_BYTES = 64 * 1024
 const PDF_MIME_TYPE = "application/pdf"
-// Largest PDF downloaded to extract its text; only the text, never the bytes, reaches the model.
-// The whole file is held while pdf.js reads it (the cross-reference table is at the end), and parsing
-// needs up to ~5x the file size in the worst case measured, in a worker with its own heap limit.
 const DRIVE_PDF_MAX_BYTES = 50 * 1024 * 1024
 const DRIVE_PDF_TEXT_TIMEOUT_MS = 15_000
 
@@ -99,7 +96,6 @@ function pdfTextUnavailable(file: GoogleWorkspaceDriveFile, reason: DrivePdfText
   }
 }
 const DRIVE_TEXT_CHARACTER_LIMIT = 200_000
-// UTF-8 needs at most four bytes per character.
 const DRIVE_TEXT_BYTE_LIMIT = DRIVE_TEXT_CHARACTER_LIMIT * 4
 const DIRECT_UPLOAD_MAX_BYTES = 4 * 1024 * 1024
 const DIRECT_UPLOAD_BODY_MAX_BYTES = DIRECT_UPLOAD_MAX_BYTES + (256 * 1024)
@@ -192,8 +188,30 @@ const gmailMessageSummarySchema = z.object({
   snippet: z.string(),
 }).meta({ ref: "GoogleWorkspaceGmailMessageSummary" })
 
-const gmailMessageSchema = gmailMessageSummarySchema.extend({
+const gmailMessageMetadataFields = {
+  cc: z.string(),
+  replyTo: z.string(),
+  internalDate: z.number().int().nullable().describe("Gmail internal timestamp in epoch milliseconds, or null if unavailable."),
+  labelIds: z.array(z.string()),
+}
+
+const gmailThreadParamSchema = z.object({
+  threadId: z.string().trim().min(1).max(512).refine((id) => id !== "." && id !== "..").describe("Gmail thread id from a Gmail message."),
+})
+
+const gmailThreadMessageSchema = gmailMessageSummarySchema.extend(gmailMessageMetadataFields)
+  .meta({ ref: "GoogleWorkspaceGmailThreadMessage" })
+
+const gmailThreadResponseSchema = z.object({
+  ok: z.literal(true),
+  threadId: z.string(),
+  historyId: z.string().optional(),
+  messages: z.array(gmailThreadMessageSchema),
+}).meta({ ref: "GoogleWorkspaceGmailThreadResponse" })
+
+const gmailMessageSchema = gmailThreadMessageSchema.extend({
   body: z.string(),
+  bodyTruncated: z.boolean().describe("Whether the returned body was trimmed to the message body limit."),
   attachments: z.array(gmailAttachmentSchema),
 }).meta({ ref: "GoogleWorkspaceGmailMessage" })
 
@@ -360,6 +378,14 @@ export type GoogleWorkspaceAccessToken =
   | { kind: "google_api_error"; message: string }
   | NativeProviderPolicyError
 
+export function gmailReadTokenError(token: Exclude<GoogleWorkspaceAccessToken, { kind: "ok" }>): {
+  status: 403 | 409 | 502
+  body: { error: typeof token.kind; message: string }
+} {
+  const status = token.kind === "policy_blocked" ? 403 : token.kind === "needs_connection" ? 409 : 502
+  return { status, body: { error: token.kind, message: token.message } }
+}
+
 type CalendarConferenceData = {
   createRequest: {
     requestId: string
@@ -372,20 +398,16 @@ function gmailApiBase(): string {
 }
 
 function calendarApiBase(): string {
-  // Calendar and Drive normally share www.googleapis.com; one env knob keeps Google API tests simple.
   return (env.googleApiBaseUrl ?? "https://www.googleapis.com").replace(/\/+$/, "")
 }
 
 function driveApiBase(): string {
-  // Calendar and Drive normally share www.googleapis.com; one env knob keeps Google API tests simple.
   return (env.googleApiBaseUrl ?? "https://www.googleapis.com").replace(/\/+$/, "")
 }
 
 export function missingScope(account: ConnectedAccountRow, anyOf: string[]): boolean {
   const scopes = account.scopes
   if (!Array.isArray(scopes) || scopes.length === 0) {
-    // Some legacy connections predate recorded scopes. Preserve their existing behavior;
-    // general Drive retrieval uses the stricter, fail-closed check below.
     return false
   }
   const provider = getNativeOAuthProvider("google-workspace")
@@ -429,14 +451,11 @@ async function googleWorkspaceToken(input: {
     memberId: input.orgMembershipId,
   })
   const teamIds = memberTeams.map((team) => team.id)
-  // Gmail multipart hosts select via payload, never via Den's signed internal headers.
   const requestedConnectorId = input.connectionId === undefined
     ? readInternalCapabilityConnectorId(getContext().req.raw.headers)
     : input.connectionId
   let credentialProviderId: string | null
   if (requestedConnectorId) {
-    // This exact lookup also handles the synthetic google-workspace legacy
-    // entry. An explicit selection must never use the default resolver.
     const entries = await listNativeProviderUsableEntries({
       organizationId: input.organizationId,
       orgMembershipId: input.orgMembershipId,
@@ -482,12 +501,6 @@ export type MemberCalendarRead =
   | { kind: "ok"; json: unknown }
   | { kind: "needs_connection" | "policy_blocked" | "missing_scope" | "google_api_error" }
 
-/**
- * Reads a member's primary Google Calendar for their agent's event source (calendar changes that wake it early),
- * outside any request: one read-only `GET`, expanded recurring events and cancelled ones (`showDeleted`), so a
- * cancellation can be told from a move. With `connectionId` (members' agents) it reads through exactly that Google
- * Workspace connection, never one of the member's other Google accounts; without it, the member's default connection.
- */
 export async function readMemberGoogleCalendar(input: {
   organizationId: DenTypeId<"organization">
   orgMembershipId: DenTypeId<"member">
@@ -510,6 +523,39 @@ export async function readMemberGoogleCalendar(input: {
   return { kind: "ok", json: await readJson(response) }
 }
 
+export type MemberMailArrivals =
+  | { kind: "ok"; messages: { from: string; subject: string; snippet: string; labels: string[] }[]; more: boolean }
+  | { kind: "needs_connection" | "policy_blocked" | "missing_scope" | "google_api_error" }
+
+export async function readMemberGmailArrivals(input: {
+  organizationId: DenTypeId<"organization">
+  orgMembershipId: DenTypeId<"member">
+  connectionId: string
+  since: number
+  limit: number
+}): Promise<MemberMailArrivals> {
+  const token = await googleWorkspaceToken({ organizationId: input.organizationId, orgMembershipId: input.orgMembershipId, connectionId: input.connectionId })
+  if (token.kind !== "ok") return { kind: token.kind }
+  if (missingScope(token.account, [GMAIL_READ_SCOPE])) return { kind: "missing_scope" }
+  const listUrl = new URL(`${gmailApiBase()}/gmail/v1/users/me/messages`)
+  listUrl.searchParams.set("q", `after:${Math.floor(input.since / 1000)} -in:sent -in:drafts -in:chats -in:spam -in:trash`)
+  listUrl.searchParams.set("maxResults", String(input.limit + 1))
+  const listed = await googleWorkspaceApiFetch(listUrl, { headers: { authorization: `Bearer ${token.accessToken}` } })
+  if (!listed.ok) return { kind: "google_api_error" }
+  const ids = extractGmailMessageIds(await readJson(listed), input.limit + 1)
+  const metadata = await fetchGmailMetadata(ids.slice(0, input.limit), token.accessToken, AbortSignal.timeout(GOOGLE_WORKSPACE_API_TIMEOUT_MS))
+  if (!metadata.ok) return { kind: "google_api_error" }
+  return {
+    kind: "ok",
+    more: ids.length > input.limit,
+    messages: metadata.json.map((json) => {
+      const message = extractGmailMessage(json)
+      const labels: unknown = isRecordValue(json) ? json.labelIds : null
+      return { from: message.from, subject: message.subject, snippet: message.snippet, labels: Array.isArray(labels) ? labels.filter((label): label is string => typeof label === "string") : [] }
+    }),
+  }
+}
+
 async function googleApiError(operation: string, response: Response) {
   const text = await response.text()
   return { error: "google_api_error" as const, message: `${operation} failed: ${response.status} ${text.slice(0, 300)}` }
@@ -523,7 +569,6 @@ function googleErrorReasons(text: string): Set<string> {
   try {
     return parseGoogleError(JSON.parse(text)).reasons
   } catch {
-    // Non-JSON provider errors retain the ordinary upstream-error path.
     return new Set()
   }
 }
@@ -785,12 +830,6 @@ async function executeGmailDraft(
   return { status: 200, body: result }
 }
 
-/**
- * Native Google Workspace capabilities, executed by Den with the calling
- * member Den-brokered credential (getValidAccessToken). Tagged
- * "Capability Sources" so search_capabilities/execute_capability discover
- * them — the agent path needs no MCP server and no extra wiring.
- */
 export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.use("/v1/capabilities/google-workspace/*", contextStorage())
   app.use("/v1/direct-uploads/google-workspace/*", contextStorage())
@@ -1007,7 +1046,6 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     },
   )
 
-  // Singular by-id route segments keep structuralShorten from colliding with the plural list tool names.
   app.get(
     "/v1/capabilities/google-workspace/gmail-message/:messageId",
     describeRoute({
@@ -1050,6 +1088,59 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       }
 
       return c.json({ ok: true, message: extractGmailMessage(await readJson(response)) })
+    },
+  )
+
+  app.get(
+    "/v1/capabilities/google-workspace/gmail-thread/:threadId",
+    describeRoute({
+      tags: ["Capability Sources"],
+      summary: "Read a Gmail thread by ID as the calling member",
+      description: "Lists messages in a Gmail conversation in chronological order, with headers, snippets and per-message label IDs but no bodies. Use the threadId from a Gmail message.",
+      responses: {
+        200: jsonResponse("Gmail thread metadata returned.", gmailThreadResponseSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("The connection is blocked by organization policy.", z.object({ error: z.literal("policy_blocked"), message: z.string() })),
+        404: jsonResponse("Gmail thread read is disabled.", z.object({ error: z.literal("feature_disabled"), feature: z.literal("gmailThreadRead") })),
+        409: jsonResponse("The calling member has not connected their Google account or is missing permission.", needsConnectionSchema),
+        502: jsonResponse("Google rejected the request.", upstreamErrorSchema),
+      },
+    }),
+    orgMemberRoute(),
+    requireFeature("gmailThreadRead"),
+    paramValidator(gmailThreadParamSchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const token = await googleWorkspaceToken({
+        organizationId: payload.organization.id,
+        orgMembershipId: payload.currentMember.id,
+      })
+      if (token.kind !== "ok") {
+        const { body, status } = gmailReadTokenError(token)
+        return c.json(body, status)
+      }
+      if (missingScope(token.account, [GMAIL_READ_SCOPE])) {
+        return c.json({ error: "needs_connection", message: missingPermissionMessage("Gmail read") }, 409)
+      }
+
+      const { threadId } = c.req.valid("param")
+      const threadUrl = new URL(`${gmailApiBase()}/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}`)
+      threadUrl.searchParams.set("format", "metadata")
+      for (const header of ["From", "To", "Cc", "Bcc", "Reply-To", "Subject", "Date"]) {
+        threadUrl.searchParams.append("metadataHeaders", header)
+      }
+      try {
+        const response = await googleWorkspaceApiFetch(threadUrl, {
+          headers: { authorization: `Bearer ${token.accessToken}` },
+          signal: c.req.raw.signal,
+        })
+        if (!response.ok) {
+          return c.json(await googleApiError("Gmail thread read", response), 502)
+        }
+        return c.json({ ok: true, ...extractGmailThreadMetadata(await readJson(response), threadId) })
+      } catch {
+        return c.json({ error: "google_api_error", message: "Gmail thread read failed." }, 502)
+      }
     },
   )
 
@@ -1157,7 +1248,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     describeRoute({
       tags: ["Capability Sources"],
       summary: "Create a Google Calendar event (one-time or recurring series) as the calling member",
-      description: "Create a recurring meeting, repeat weekly, or create a one-time event on the member's primary calendar. Recurrence writes require the googleCalendarRecurrence feature; pass structured recurrence or advanced rrule (not both), a finite count/until, and an explicit IANA timeZone. eventId identifies the new series master. Set createMeetLink to request a Google Meet link.",
+      description: "Create a recurring meeting, repeat weekly, or create a one-time event on the member's primary calendar. For recurrence writes, pass structured recurrence or advanced rrule (not both), a finite count/until, and an explicit IANA timeZone. eventId identifies the new series master. Set createMeetLink to request a Google Meet link.",
       responses: {
         200: jsonResponse("Google Calendar event created.", createCalendarEventResponseSchema),
         400: jsonResponse("Invalid recurrence, missing IANA timeZone, or recurring meetings disabled.", invalidRequestSchema),
@@ -1171,10 +1262,6 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
     async (c) => {
       const payload = c.get("organizationContext")
       const input = c.req.valid("json")
-      if ((input.recurrence !== undefined || input.rrule !== undefined)
-        && !await organizationFeatureEnabled(payload.organization.id, "googleCalendarRecurrence", { userId: payload.currentMember.userId })) {
-        return c.json({ error: "invalid_request", message: "Recurring meetings are disabled (googleCalendarRecurrence); omit recurrence/rrule to create a one-time event." }, 400)
-      }
       const token = await googleWorkspaceToken({
         organizationId: payload.organization.id,
         orgMembershipId: payload.currentMember.id,
@@ -1191,7 +1278,6 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
 
       const url = new URL(`${calendarApiBase()}/calendar/v3/calendars/primary/events`)
       const eventPayload = buildCalendarEventPayload(input)
-      if (eventPayload.recurrence) markFeaturesUsed({ organizationId: payload.organization.id, memberId: payload.currentMember.id, keys: ["googleCalendarRecurrence"] })
       if (input.createMeetLink) {
         url.searchParams.set("conferenceDataVersion", "1")
         eventPayload.conferenceData = buildCalendarConferenceData()
@@ -1323,7 +1409,6 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
         return c.json({ error: token.kind, message: token.message }, token.kind === "policy_blocked" ? 403 : 409)
       }
       const permissionMessage = driveReadPermissionMessage(token.account)
-      // A previously granted Google scope is not permission after the admin removes it from this connector.
       const enabledRead = token.enabledScopes.some((scope) => scope === DRIVE_READ_SCOPE || scope === DRIVE_FULL_SCOPE)
       if (permissionMessage || !enabledRead) {
         return c.json({ error: "needs_connection", message: permissionMessage ?? "An organization admin must enable Read all Drive files in connector setup, then reconnect Google Workspace." }, 409)
@@ -1419,9 +1504,7 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       }
 
       const isGoogleAppsFile = file.mimeType.startsWith("application/vnd.google-apps")
-      // A PDF is read as its text, so the binary model-safety limit does not apply to it.
       const readPdfText = file.mimeType === PDF_MIME_TYPE
-        && await organizationFeatureEnabled(payload.organization.id, "googleDrivePdfText", { userId: payload.currentMember.userId })
       if (
         !isGoogleAppsFile
         && !isDeclaredTextFile(file.mimeType)
@@ -1463,7 +1546,6 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       if (readPdfText) {
         const pdf = await readBytesWithin(contentResponse, DRIVE_PDF_MAX_BYTES)
         if (!pdf) return c.json(pdfTextUnavailable(file, "file_too_large"))
-        // Extraction takes ownership of the bytes, so keep what a small PDF's fallback needs first.
         const smallPdfBase64 = pdf.byteLength <= MAX_DRIVE_FILE_CONTENT_BYTES ? Buffer.from(pdf).toString("base64") : null
         const extracted = await extractPdfText(pdf, { maxCharacters: DRIVE_TEXT_CHARACTER_LIMIT, timeoutMs: DRIVE_PDF_TEXT_TIMEOUT_MS })
         if (extracted.kind === "text") {
@@ -1480,7 +1562,6 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
           })
         }
         if (extracted.kind === "timed_out") return c.json(pdfTextUnavailable(file, "extraction_timed_out"))
-        // A small PDF without readable text still comes back as base64 for the client to handle, as before.
         if (smallPdfBase64 !== null) {
           return c.json({
             ok: true,
@@ -1497,7 +1578,6 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
         return c.json(pdfTextUnavailable(file, extracted.kind === "no_text" ? "no_extractable_text" : "file_too_large"))
       }
 
-      // Never hold more than the text limit could need: a large text file is cut, not buffered whole.
       const { bytes, truncated } = await readBoundedBytes(contentResponse, DRIVE_TEXT_BYTE_LIMIT)
       if (isGoogleAppsFile || (truncated && isDeclaredTextFile(file.mimeType))) {
         const content = truncateText(decodeTruncatedText(bytes, false), DRIVE_TEXT_CHARACTER_LIMIT)
@@ -1516,7 +1596,6 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
 
       let content: ReturnType<typeof decodeFileContent>
       if (truncated) {
-        // Past the text limit: readable UTF-8 is returned cut off; anything else is too large for inline content.
         try {
           content = { kind: "text", content: truncateText(decodeTruncatedText(bytes, true), DRIVE_TEXT_CHARACTER_LIMIT).text, truncated: true }
         } catch {

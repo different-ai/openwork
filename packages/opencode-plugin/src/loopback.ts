@@ -1,15 +1,8 @@
-/**
- * The page the browser returns to after the member approves (or denies) the
- * sign-in on Den web. It carries no secret: the token only ever arrives by
- * polling Den. Hitting it just ends the poll wait early and shows a "go back
- * to OpenCode" page.
- */
 import { createServer, type Server } from "node:http"
 
 export type ReturnResult = "approved" | "denied"
 
 export interface ReturnPage {
-  /** http://127.0.0.1:<port>/openwork/callback */
   readonly url: string
   close(): void
 }
@@ -78,7 +71,6 @@ export async function startReturnPage(onResult: (result: ReturnResult) => void):
     server.once("error", reject)
     server.listen(0, "127.0.0.1", () => resolve())
   })
-  // Never keep OpenCode alive just for this page.
   server.unref()
   const address = server.address()
   const port = typeof address === "object" && address ? address.port : 0

@@ -26,7 +26,6 @@ export interface StepHandle {
   ok(detail?: string): Promise<void>;
   fail(detail?: string): Promise<void>;
   note(detail: string): Promise<void>;
-  /** Update the running step's detail in place (for example the current sub-phase). */
   progress(detail: string): Promise<void>;
 }
 

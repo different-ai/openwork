@@ -21,7 +21,6 @@ import { SetupChecks } from "./setup-checks";
 export function useConnectorTarget(catalogId: string): { target: ConnectorTarget | null; loading: boolean; missing: boolean; failed: boolean } {
   const searchParams = useSearchParams();
   const presets = useMcpConnectionPresets();
-  // A preset's own minimum wins until the admin chooses more; its optional list feeds that choice.
   const customUrl = searchParams.get("url");
   const customName = searchParams.get("name");
   return useMemo(() => {
@@ -53,7 +52,6 @@ export function useConnectorTarget(catalogId: string): { target: ConnectorTarget
   }, [catalogId, customName, customUrl, presets.data, presets.error, presets.isLoading]);
 }
 
-/** A4 and A5: the checks fill in, the member signs in, and the connector is theirs. */
 export function MemberConnectorSetupScreen({ catalogId }: { catalogId: string }) {
   const router = useRouter();
   const searchParams = useSearchParams();

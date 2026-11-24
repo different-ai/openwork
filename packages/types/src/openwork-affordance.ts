@@ -191,6 +191,8 @@ const openworkAffordanceSuccessSchema = z.object({
  * the request came from: an agent never gets a dialog, it gets one of these.
  * - `target_working`: the target session is still working; ask the person to
  *   stop it if they want it closed, otherwise leave it running.
+ * - `target_waiting`: the target session is waiting on the person (a question
+ *   or approval); it stays in view until they answer.
  * - `self_archive_while_working`: a session asked to archive itself (or its
  *   parent) from inside its own running turn; finish the turn, the reviewer
  *   archives.
@@ -205,6 +207,7 @@ export const openworkAffordanceFailureCodeSchema = z.enum([
   "conflict",
   "failed",
   "target_working",
+  "target_waiting",
   "self_archive_while_working",
   "verification_failed",
   "archive_outcome_unknown",

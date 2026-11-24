@@ -12,12 +12,18 @@ Undo next to every change. Nothing new runs: the existing wake writes the record
 
 ![Library › My agent after a change made in chat](./my-agent.png)
 
+With `workbotAgentBrief` on, My bot shows **Your brief** (the member's own lines in one text, with where each change
+came from and Undo, and the organization's brief behind a disclosure) in place of "What it tells you about" and "In
+your words", the next checks with the reason the agent gave for an extra one ("Next check 1:45 PM: before your 2 PM
+with Northwind"), how often it checks (never more often than the admin's), and quiet hours. See
+[Your agent's brief and check rhythm](../workbot-agent-brief/README.md).
+
 ## What a member gets
 
 | Where | What |
 | --- | --- |
 | Den › My Library | A pinned **My agent** row above the filters: "Last check at 11:20 AM. Stayed quiet.", "1 of 3 today", the on/off switch and a chevron. Locked with the reason when the admin turned agents off. |
-| Library › My agent | The last check and why (the focal line), the next check, "1 of 3 sent today"; today's checks with a Sent / Quiet / Waited / Failed pill and **Open in Slack**, "Earlier this week" collapsed; **What it tells you about** (switches with "Saved from chat at … Undo", locked when the admin turned one off); **In your words** (Always tell me about, Never tell me about, When, How); **Uses** (a switch per source, with its last read, a Connect action, the admin's lock and the member's instruction; see [Your agent](../workbot-proactive/README.md#member-controls)); **Limits** (their hours inside the admin's, an only-urgent window, the daily limit locked: "Set by your admin in Manage › Workbot"). |
+| Library › My agent | The last check and why (the focal line), the next check, "1 of 3 sent today"; today's checks with a Sent / Quiet / Waited / Failed pill and **Open in Slack**, "Earlier this week" collapsed; **What it tells you about** (switches with "Saved from chat at … Undo", locked when the admin turned one off); **In your words** (Always tell me about, Never tell me about, When, How); **Uses** (a switch per source, with its last read, a Connect action, the admin's lock and the member's instruction; see [Your agent](../workbot-proactive/README.md#member-controls)); **Limits** (their hours inside the admin's, an only-urgent window, the daily limit locked: "Set by your admin."). |
 | Chat | "between 12 and 2 only urgent stuff, stop telling me about calendar changes" → Workbot calls `putMeAgent` once and replies with `saved.reply`: exactly what was saved, `Reply "undo" to revert.` and the link. Text only, no Slack buttons. "Why so quiet?" is answered from `lastCheck` / `getMeAgentChecks`. |
 
 ## How it works

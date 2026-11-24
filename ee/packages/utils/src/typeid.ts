@@ -7,7 +7,6 @@ export const TYPE_ID_SUFFIX_LENGTH = 26
 
 const BASE32_REGEX = /^[0-9a-hjkmnp-tv-z]+$/
 
-// TypeID prefixes are persisted in DB rows; append new entries instead of changing existing values.
 export const idTypesMapNameToPrefix = {
   request: "req",
   user: "usr",
@@ -111,6 +110,7 @@ export const idTypesMapNameToPrefix = {
   inferenceRequestLog: "irl",
   inferenceUsageRollup: "iur",
   gatewayKey: "gky",
+  gatewayApiKey: "gak",
   gatewayModelGroup: "gmg",
   gatewayModelGroupModel: "gmm",
   gatewayCredentialSet: "gcs",
@@ -124,6 +124,7 @@ export const idTypesMapNameToPrefix = {
   permissionSet: "pms",
   permissionSetPermission: "psp",
   permissionSetTeam: "pst",
+  permissionSetMember: "psm",
   capabilityUsageEvent: "cue",
   capabilityUsageRollup: "cur",
   agentPermissionPolicy: "agp",
@@ -141,6 +142,19 @@ export const idTypesMapNameToPrefix = {
   sandboxOrganization: "sbx",
   mcpRegistrationStatus: "mrs",
   mcpRegistrationEvent: "mre",
+  featureIntroState: "fis",
+  configChangeRequest: "ccr",
+  configBlobAlias: "cba",
+  configBlobExport: "cbe",
+  configApplyRun: "car",
+  denInstance: "dni",
+  workbotTeamSetting: "wts",
+  workbotUsageDay: "wud",
+  harnessFeedbackGroup: "hfg",
+  harnessFeedbackReport: "hfr",
+  remoteDevice: "rdv",
+  remoteDeviceEvent: "rde",
+  automationShare: "ats",
 } as const
 
 export const denTypeIdPrefixes = idTypesMapNameToPrefix

@@ -1,0 +1,26 @@
+id: create_automation_by_prompt
+title: Make the leadership pack weekly
+surface: desktop
+label: REAL
+status: grounded
+requires: [deck_shown]
+do:
+  - {type: return_to_chat, turn: deck}
+  - {type: ask, turn: schedule, prompt: automation-prompt, model: '{{model}}', same_thread: true}
+  - {type: wait_turn, turn: schedule, timeout_seconds: 240}
+  - {type: confirm_automation, name: '{{new_automation}}'}
+  - {type: open_sidebar, item: Automations}
+  - {type: show, turn: schedule, seconds: 8}
+say: '{{employee}} can make this weekly in plain words. It’s a new Automation, not the job whose completed run we just saw.'
+paste:
+  automation-prompt: Make this a Desktop Automation called {{new_automation}} for Mondays at 8 AM America/Los_Angeles. Use {{model}}. Read only; no emailing or uploads.
+see: In Automations, the new named record is Active with a Monday 08:00 Pacific schedule.
+checks:
+  - {type: turn_succeeded, turn: schedule}
+  - {type: automation_exists, name: '{{new_automation}}', state: active, created_this_beat: true}
+reset: [Archive only the exact Automation created this rehearsal; preserve the retained schedule and run.]
+fallback: Show the retained schedule and explain what creating a new one would do. Do not claim the new schedule exists.
+expect_seconds: 70
+questions:
+  - {question: Does this run if the desktop is off?, answer: This example uses desktop placement. The computer and app must be on and signed in.}
+avoid: [Review the proposal; do not confirm anything that sends, uploads, or grants permissions.]

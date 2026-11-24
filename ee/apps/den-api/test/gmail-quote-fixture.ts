@@ -1,4 +1,3 @@
-// Synthetic mail only; shared by the regression tests and quote-rendering preview.
 export const from = "Example Sender <sender@example.test>"
 export const date = "Wed, 14 Oct 2026 16:50:00 +0000"
 export const html = '<div>Latest reply</div><div><a href="https://example.test/notes">Project notes</a></div><table><tr><td>Milestone</td><td>Complete</td></tr></table><blockquote class="gmail_quote" style="border-left:1px solid rgb(204,204,204);padding-left:1ex"><div>Earlier reply</div><blockquote class="gmail_quote" style="border-left:1px solid rgb(204,204,204);padding-left:1ex"><div>Original question</div></blockquote></blockquote>'

@@ -1,8 +1,7 @@
 "use client";
 
-import { Copy, RefreshCw, Shield, Trash2 } from "lucide-react";
+import { Copy, RefreshCw, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { DashboardPageTemplate } from "../../_components/ui/dashboard-page-template";
 import { DenButton } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
 import { getRequestError, isReauthRequiredError, requestJson } from "../../_lib/den-flow";
@@ -13,7 +12,10 @@ import {
   parseOrgScimPayload,
   permissionLockReason,
 } from "../../_lib/den-org";
+import { FeatureIntroGate } from "../_features/feature-intros";
+import type { AuthSecurityFacts } from "../_features/feature-intros/intros/auth-security";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
+import { scimIntroState } from "./auth-security-intro-facts";
 import { EnterprisePlanNotice } from "./enterprise-plan-notice";
 
 function formatDateTime(value: string | null) {
@@ -29,8 +31,14 @@ function formatDateTime(value: string | null) {
   return date.toLocaleString();
 }
 
-export function ScimScreen() {
+export type ScimScreenProps = {
+  setupMode?: boolean;
+  onIntroFacts?: (facts: AuthSecurityFacts) => void;
+};
+
+export function ScimScreen({ setupMode = false, onIntroFacts }: ScimScreenProps = {}) {
   const { orgId, orgContext, runReauthableAction } = useOrgDashboard();
+  const [loaded, setLoaded] = useState(false);
   const [baseUrl, setBaseUrl] = useState<string | null>(null);
   const [ssoReady, setSsoReady] = useState(false);
   const [connection, setConnection] = useState<DenOrgScimConnection | null>(null);
@@ -98,6 +106,7 @@ export function ScimScreen() {
         setSsoReady(parsed.ssoReady);
         setConnection(parsed.connection);
         setHealth(parsed.health);
+        setLoaded(true);
       }
     } catch (nextError) {
       if (isReauthRequiredError(nextError)) {
@@ -320,32 +329,34 @@ export function ScimScreen() {
     }
   }
 
+  const introState = loaded ? scimIntroState(connection, health) : null;
+  const scimIncluded = orgContext?.entitlements.scim;
+  useEffect(() => {
+    if (!introState || scimIncluded === undefined) return;
+    onIntroFacts?.({ scim: introState, scimIncluded, ssoReady });
+  }, [introState, scimIncluded, ssoReady, onIntroFacts]);
+  const introFacts = introState && scimIncluded !== undefined && !(setupMode && introState === "none")
+    ? { scim: introState, scimIncluded, ssoReady }
+    : null;
+
   if (!orgContext) {
     return (
-      <DashboardPageTemplate
-        icon={Shield}
-        title="SCIM"
-        description="Provision organization members from your identity provider with an org-scoped SCIM connector."
-      >
+      <div data-testid="scim-tab-content">
         <div className="rounded-[28px] border border-gray-200 bg-white px-6 py-10 text-[15px] text-gray-500">
           Loading organization details...
         </div>
-      </DashboardPageTemplate>
+      </div>
     );
   }
 
   return (
-    <DashboardPageTemplate
-      icon={Shield}
-      title="SCIM"
-      description="Create one SCIM connector per workspace, then give your identity provider the base URL and bearer token shown here."
-    >
+    <div data-testid="scim-tab-content">
       {!access.canViewScim ? (
         <div className="rounded-[28px] border border-[var(--dls-border)] bg-[var(--dls-hover)] px-6 py-5 text-[14px] text-[var(--dls-text-primary)]">
           {permissionLockReason("scim.view")}
         </div>
       ) : (
-        <>
+        <FeatureIntroGate introKey="auth-security.scim" facts={introFacts}>
           {!orgContext.entitlements.scim ? (
             <EnterprisePlanNotice feature="SCIM provisioning" />
           ) : null}
@@ -400,7 +411,7 @@ export function ScimScreen() {
             </div>
           ) : null}
 
-          <div className="mb-6 rounded-[30px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
+          <div id="scim-base-url" className="mb-6 scroll-mt-6 rounded-[30px] border border-gray-200 bg-white p-6 shadow-[0_18px_48px_-34px_rgba(15,23,42,0.22)]">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div>
                 <p className="text-[16px] font-semibold tracking-[-0.03em] text-gray-900">
@@ -550,8 +561,8 @@ export function ScimScreen() {
               </div>
             ) : null}
           </div>
-        </>
+        </FeatureIntroGate>
       )}
-    </DashboardPageTemplate>
+    </div>
   );
 }

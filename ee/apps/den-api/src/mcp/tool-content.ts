@@ -36,11 +36,6 @@ function truncationMarker(shownCharacters: number, totalCharacters: number): str
     + "Call this capability from execute_capability_script to read the full value and return the part you need.]"
 }
 
-/**
- * Keeps one model-visible string within budget. The cut is always announced
- * with the real size, because Code Mode scripts receive the untruncated
- * payload (see invoke.ts `includePayload`) and can read the rest.
- */
 function truncateModelString(value: string): string {
   if (value.length <= MAX_MODEL_VISIBLE_TEXT_CHARACTERS) return value
   const markerLength = truncationMarker(MAX_MODEL_VISIBLE_TEXT_CHARACTERS, value.length).length
@@ -93,7 +88,6 @@ function stringifyModelPayload(value: unknown): string {
   return JSON.stringify(value, null, 2)!
 }
 
-/** A route that returns a top-level `resourceLink` also gets the standard MCP `resource_link` content part. */
 function findResourceLink(payload: unknown): AgentToolContentPart | undefined {
   if (!isRecord(payload) || !isRecord(payload.resourceLink)) return undefined
   const link = payload.resourceLink

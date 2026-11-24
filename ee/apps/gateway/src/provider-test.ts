@@ -1,24 +1,17 @@
-// Test a provider configuration before it is saved.
-// Den sends the provider, its settings, an organization credential and one model;
-// the gateway sends one short prompt the same way it would forward a member's
-// request, and answers whether the provider replied. Nothing is stored or logged
-// as usage, and the upstream body never reaches the caller.
-import { BEDROCK_MANTLE_DEFAULT_API_PATH } from "@openwork-ee/utils/bedrock-mantle-catalog"
-import { bedrockMantleHost, bedrockRuntimeHost, inferenceEgressAllowedOrigins, isAwsRegion, validateInferenceUrl } from "@openwork-ee/utils/inference-egress"
-import { isInferenceCredentialKindSupported, pickInferenceApiKeyFromMap } from "@openwork-ee/utils/inference-credentials"
-import { PROVIDER_TEST_SIGNATURE_HEADER, verifyProviderTestSignature } from "@openwork-ee/utils/provider-test-signature"
+import { BEDROCK_MANTLE_DEFAULT_API_PATH, isInferenceCredentialKindSupported, pickInferenceApiKeyFromMap, gatewayCustomCatalogProvider } from "@openwork-ee/gateway-catalog"
+import { bedrockMantleHost, bedrockRuntimeHost, inferenceEgressAllowedOrigins, isAwsRegion, isPublicInferenceAddress, validateInferenceUrl, PROVIDER_TEST_SIGNATURE_HEADER, verifyProviderTestSignature, bedrockMantleService, bedrockService, signAwsRequest, buildAuthHeader, classifyProtocolFamily, defaultBaseUrl, vertexPublisherBase } from "@openwork-ee/gateway-upstreams"
+import type { InferenceAddressResolver, AwsCredentials, MintGcpAccessToken, ProtocolFamily } from "@openwork-ee/gateway-upstreams"
 import { GATEWAY_PROVIDER_CREDENTIAL_KINDS, parseGatewayProviderSecret } from "@openwork/types/den/gateway"
 import type { GatewayAwsKeysSecret, GatewayGcpServiceAccountSecret, GatewayProviderTestResult } from "@openwork/types/den/gateway"
+import { gatewayCustomModelSchema, isGatewayCustomProviderId, normalizeGatewayCustomBaseUrl } from "@openwork/types/den/gateway-custom-providers"
+import type { GatewayCustomModel } from "@openwork/types/den/gateway-custom-providers"
+import { lookup } from "node:dns/promises"
+import { isIP } from "node:net"
 import type { Context, Hono } from "hono"
 import { z } from "zod"
-import { bedrockMantleService, bedrockService, signAwsRequest } from "./credentials/aws-sigv4.js"
-import type { AwsCredentials } from "./credentials/aws-sigv4.js"
-import type { MintGcpAccessToken } from "./credentials/gcp-service-account.js"
 import type { InferenceAuthVariables } from "./middleware/inference-auth.js"
 import type { OrganizationVariables } from "./middleware/org-context.js"
-import { buildAuthHeader, classifyProtocolFamily, defaultBaseUrl, vertexPublisherBase } from "./protocols.js"
-import type { ProtocolFamily } from "./protocols.js"
-import type { CatalogProvider, ProviderCatalog } from "./provider-catalog.js"
+import type { CatalogProvider, ProviderCatalog } from "@openwork-ee/gateway-catalog"
 
 export const gatewayProviderTestPath = "/api/v1/provider-tests"
 
@@ -30,7 +23,6 @@ const ERROR_BODY_LIMIT = 16_384
 const requestSchema = z.object({
   providerId: z.string().trim().min(1).max(255),
   model: z.string().trim().min(1).max(255),
-  // Upstream destination settings. upstreamBaseUrl is only used when the operator allowlisted its origin.
   settings: z.object({
     project: z.string().trim().max(255).optional(),
     location: z.string().trim().max(63).optional(),
@@ -40,6 +32,7 @@ const requestSchema = z.object({
     upstreamBaseUrl: z.string().trim().max(2048).optional(),
   }).strict().default({}),
   credential: z.object({ kind: z.enum(GATEWAY_PROVIDER_CREDENTIAL_KINDS), secret: z.string().min(1).max(65535) }).strict(),
+  customModel: gatewayCustomModelSchema.optional(),
 }).strict()
 
 type TestRequest = z.infer<typeof requestSchema>
@@ -52,11 +45,11 @@ type Credential =
 
 export type ProviderTestDependencies = {
   fetch: typeof fetch
-  /** The database encryption key Den also holds; Den signs each test with a key derived from it. */
   signingSecret: string | undefined
   catalog: ProviderCatalog
   mintGcpAccessToken: MintGcpAccessToken
   now: () => Date
+  resolveHost?: InferenceAddressResolver
 }
 
 function failed(code: string, message: string, model: string, status: number | null = null): GatewayProviderTestResult {
@@ -85,32 +78,53 @@ function readCredential(input: TestRequest, catalog: CatalogProvider): Credentia
   }
 }
 
-/** Anthropic Messages and OpenAI Chat Completions share this shape. */
 function messagesBody(model: string) {
   return { model, max_tokens: MAX_OUTPUT_TOKENS, messages: [{ role: "user", content: TEST_PROMPT }] }
 }
 
-/**
- * A saved provider's base URL override, honoured here only for an origin the
- * operator allowlisted (a private endpoint or proxy the deployment owns). Any
- * other address would let a caller aim a test at a host of their choosing.
- */
 function operatorBaseUrl(settings: Settings): string | null | { error: string } {
   const override = settings.upstreamBaseUrl
   if (!override) return null
   try {
     if (inferenceEgressAllowedOrigins().has(new URL(override).origin)) return override
-  } catch { /* Reported below. */ }
+  } catch {}
   return { error: "This provider address can't be tested. Remove the custom address or ask your operator to allow it." }
 }
 
-/** Where the prompt goes and what it says, in the provider's own API. */
+const CUSTOM_ADDRESS_REFUSED = "AI Gateway only reaches public HTTPS addresses. Private networks (localhost, 10.x, 192.168.x, internal hosts) need your operator to allow the address first."
+
+function customBaseUrl(settings: Settings): { url: URL } | { error: string; code: "invalid_settings" | "address_not_allowed" } {
+  const normalized = settings.upstreamBaseUrl ? normalizeGatewayCustomBaseUrl(settings.upstreamBaseUrl) : null
+  if (!normalized) return { code: "invalid_settings", error: "Enter the provider's API address, for example https://api.example.com/v1." }
+  try { return { url: validateInferenceUrl(normalized, { base: true }) } } catch {
+    return { code: "address_not_allowed", error: CUSTOM_ADDRESS_REFUSED }
+  }
+}
+
+async function checkCustomHost(url: URL, resolveHost: InferenceAddressResolver): Promise<{ code: string; message: string } | null> {
+  const host = url.hostname.replace(/^\[|\]$/g, "")
+  if (isIP(host) || inferenceEgressAllowedOrigins().has(url.origin)) return null
+  let addresses: { address: string }[]
+  try { addresses = await resolveHost(host) } catch {
+    return { code: "upstream_unreachable", message: `AI Gateway couldn't find ${host}. Check the API address.` }
+  }
+  if (!addresses.length) return { code: "upstream_unreachable", message: `AI Gateway couldn't find ${host}. Check the API address.` }
+  if (addresses.some(({ address }) => !isPublicInferenceAddress(address))) return { code: "address_not_allowed", message: CUSTOM_ADDRESS_REFUSED }
+  return null
+}
+
+const TEST_TOOL = { type: "function", function: { name: "noop", description: "Does nothing. Do not call it.", parameters: { type: "object", properties: {} } } }
+
+function customBody(model: string, customModel: GatewayCustomModel | undefined, tokenField: "max_tokens" | "max_completion_tokens") {
+  const { max_tokens: _maxTokens, ...base } = messagesBody(model)
+  return { ...base, [tokenField]: MAX_OUTPUT_TOKENS, ...(customModel?.tool_call ? { tools: [TEST_TOOL] } : {}) }
+}
+
 function buildCall(family: ProtocolFamily, catalog: CatalogProvider, settings: Settings, model: string): { url: string; body: Record<string, unknown>; headers?: Record<string, string> } | { error: string } {
   const encoded = encodeURIComponent(model)
   const vertex = family === "google_vertex" || family === "google_vertex_anthropic"
   const override = vertex ? null : operatorBaseUrl(settings)
   if (override !== null && typeof override === "object") return override
-  // Same order as the gateway's own forwarding: operator override, catalog address, family default.
   const root = (fallback: string | null) => (override ?? fallback)?.replace(/\/+$/, "") ?? null
   const missing = { error: "This provider has no address to test." }
   const generateContent = { contents: [{ role: "user", parts: [{ text: TEST_PROMPT }] }], generationConfig: { maxOutputTokens: MAX_OUTPUT_TOKENS } }
@@ -137,7 +151,6 @@ function buildCall(family: ProtocolFamily, catalog: CatalogProvider, settings: S
     }
     case "openai": {
       const url = root(catalog.api ?? defaultBaseUrl(family, settings))
-      // The Responses API takes every current OpenAI model, reasoning ones included.
       return url ? { url: `${url}/responses`, body: { model, input: TEST_PROMPT, max_output_tokens: MAX_OUTPUT_TOKENS } } : missing
     }
     case "azure": {
@@ -194,17 +207,30 @@ async function readErrorMessage(response: Response, secrets: string[]) {
         if (typeof candidate === "string" && candidate.trim()) message = candidate
         else for (const child of Object.values(value)) if (typeof child === "object" && child !== null) pending.push(child)
       }
-    } catch { /* Not JSON: no message to show. */ }
+    } catch {}
     if (typeof message !== "string") return null
     let safe = message.trim().slice(0, 300)
-    // Never echo the key back, even partly masked by the provider.
     for (const secret of secrets) if (secret.length >= 8) safe = safe.split(secret).join("…")
     return safe.replace(/\b(sk|key|AKIA|ASIA)[-_A-Za-z0-9]{12,}\b/g, "…")
   } catch { return null }
 }
 
+const MODEL_MISSING = /\b(?:model[^.]{0,80}\b(?:not (?:be )?found|does ?n[o']t exist|not exist|is not (?:available|supported|a valid model)|unknown|invalid)|(?:unknown|invalid|unsupported|no such) model)\b/i
+const PARAMETER_REFUSED = /\b(?:unsupported (?:parameter|value|argument)|unrecognized (?:request )?(?:argument|parameter)|unknown (?:parameter|field|argument)|extra (?:inputs|fields) (?:are )?not permitted|(?:parameter|argument|field)[^.]{0,80}\bnot supported|does not support (?:tools|tool|function)|not supported (?:with|for|by) this model)/i
+
+function refusesParameter(status: number, providerMessage: string | null) {
+  return (status === 400 || status === 422) && providerMessage !== null && PARAMETER_REFUSED.test(providerMessage)
+}
+
 function statusMessage(status: number, providerMessage: string | null, model: string) {
   const detail = providerMessage ? ` The provider said: ${providerMessage}` : ""
+  if ((status === 400 || status === 422) && providerMessage && MODEL_MISSING.test(providerMessage) && !PARAMETER_REFUSED.test(providerMessage)) {
+    return { code: "model_not_found", message: `The provider couldn't find ${model} for this key or account.${detail}` }
+  }
+  if (refusesParameter(status, providerMessage)) {
+    return { code: "unsupported_parameter", message: `${model} refused a setting in the test request. Check this model's settings (for example tool calling).${detail}` }
+  }
+  if (status === 402) return { code: "insufficient_credit", message: `The provider accepted the key but the account has no credit left.${detail}` }
   if (status === 401) return { code: "provider_authentication_failed", message: "The provider rejected this key. Check that it's correct and still active." }
   if (status === 403) return { code: "provider_permission_denied", message: `The provider denied access with this key. Check its permissions and that ${model} is enabled for it.${detail}` }
   if (status === 404) return { code: "model_not_found", message: `The provider couldn't find ${model} for this key or account.${detail}` }
@@ -213,18 +239,30 @@ function statusMessage(status: number, providerMessage: string | null, model: st
   return { code: "upstream_rejected", message: `The provider rejected the test prompt (${status}).${detail}` }
 }
 
+type PreparedCall = { url: string; body: Record<string, unknown>; headers?: Record<string, string> }
+
+async function buildCustomCall(input: TestRequest, dependencies: ProviderTestDependencies): Promise<PreparedCall | { code: string; error: string }> {
+  if (input.customModel && input.customModel.id !== input.model) return { code: "invalid_request", error: "The model settings don't match the model being tested." }
+  const base = customBaseUrl(input.settings)
+  if ("error" in base) return base
+  const refused = await checkCustomHost(base.url, dependencies.resolveHost ?? ((host) => lookup(host, { all: true, verbatim: true })))
+  if (refused) return { code: refused.code, error: refused.message }
+  return { url: `${base.url.href.replace(/\/+$/, "")}/chat/completions`, body: customBody(input.model, input.customModel, "max_tokens") }
+}
+
 export async function runProviderTest(input: TestRequest, dependencies: ProviderTestDependencies): Promise<GatewayProviderTestResult> {
   const { model } = input
-  const catalog = dependencies.catalog.getCatalogProvider(input.providerId)
+  const custom = isGatewayCustomProviderId(input.providerId)
+  const catalog = custom ? gatewayCustomCatalogProvider : dependencies.catalog.getCatalogProvider(input.providerId)
   const family = classifyProtocolFamily(catalog)
   if (!catalog || !family) return failed("unsupported_provider", "AI Gateway can't test this provider.", model)
+  if (!custom && input.customModel) return failed("invalid_request", "Model settings can only be sent for a custom provider.", model)
   const credential = readCredential(input, catalog)
   if ("error" in credential) return failed("invalid_credential", credential.error, model)
   let auth: { kind: "header"; name: string; value: string } | { kind: "aws"; credentials: AwsCredentials; region: string }
   const secrets: string[] = []
   if (credential.kind === "gcp_service_account") {
     if (family !== "google_vertex" && family !== "google_vertex_anthropic") return failed("invalid_credential", "A service account key only works with Google Vertex AI.", model)
-    // Each test signs in afresh; the cache key never matches a saved credential.
     const minted = await dependencies.mintGcpAccessToken({ credentialId: `provider-test:${crypto.randomUUID()}`, serviceAccount: credential.serviceAccount, now: dependencies.now() })
     if (minted.kind === "error") return failed("provider_authentication_failed", "Google rejected the service account key. Check that it's current and belongs to this project.", model)
     auth = { kind: "header", ...buildAuthHeader(family, minted.accessToken) }
@@ -241,31 +279,58 @@ export async function runProviderTest(input: TestRequest, dependencies: Provider
   }
 
   const settings = auth.kind === "aws" ? { ...input.settings, region: auth.region } : input.settings
-  const call = buildCall(family, catalog, settings, model)
-  if ("error" in call) return failed("invalid_settings", call.error, model)
-  let upstream: UpstreamCall
-  try {
-    const url = validateInferenceUrl(call.url)
-    const headers = new Headers({ "content-type": "application/json", accept: "application/json", ...call.headers })
-    upstream = { url, headers, body: JSON.stringify(call.body) }
-  } catch { return failed("invalid_settings", "These settings don't make a valid provider address.", model) }
-  if (auth.kind === "header") upstream.headers.set(auth.name, auth.value)
-  else signAwsRequest({ method: "POST", url: upstream.url, headers: upstream.headers, body: upstream.body, credentials: auth.credentials, region: auth.region, service: family === "bedrock_mantle" ? bedrockMantleService : bedrockService, now: dependencies.now() })
+  let call: PreparedCall
+  if (custom) {
+    const built = await buildCustomCall(input, dependencies)
+    if ("error" in built) return failed(built.code, built.error, model)
+    call = built
+  } else {
+    const built = buildCall(family, catalog, settings, model)
+    if ("error" in built) return failed("invalid_settings", built.error, model)
+    call = built
+  }
 
-  let response: Response
-  try {
-    response = await dependencies.fetch(upstream.url, { method: "POST", headers: upstream.headers, body: upstream.body, redirect: "error", signal: AbortSignal.timeout(TEST_TIMEOUT_MS) })
-  } catch (error) {
-    const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")
-    return failed(timedOut ? "upstream_timeout" : "upstream_unreachable", timedOut ? "The provider didn't answer within 30 seconds." : "AI Gateway couldn't reach the provider. Check the settings above.", model)
+  const send = async (body: Record<string, unknown>): Promise<Response | GatewayProviderTestResult> => {
+    let upstream: UpstreamCall
+    try {
+      const url = validateInferenceUrl(call.url)
+      const headers = new Headers({ "content-type": "application/json", accept: "application/json", ...call.headers })
+      upstream = { url, headers, body: JSON.stringify(body) }
+    } catch {
+      return custom ? failed("address_not_allowed", CUSTOM_ADDRESS_REFUSED, model) : failed("invalid_settings", "These settings don't make a valid provider address.", model)
+    }
+    if (auth.kind === "header") upstream.headers.set(auth.name, auth.value)
+    else signAwsRequest({ method: "POST", url: upstream.url, headers: upstream.headers, body: upstream.body, credentials: auth.credentials, region: auth.region, service: family === "bedrock_mantle" ? bedrockMantleService : bedrockService, now: dependencies.now() })
+    try {
+      return await dependencies.fetch(upstream.url, { method: "POST", headers: upstream.headers, body: upstream.body, redirect: "error", signal: AbortSignal.timeout(TEST_TIMEOUT_MS) })
+    } catch (error) {
+      const timedOut = error instanceof Error && (error.name === "TimeoutError" || error.name === "AbortError")
+      if (timedOut) return failed("upstream_timeout", "The provider didn't answer within 30 seconds.", model)
+      return failed("upstream_unreachable", custom
+        ? "AI Gateway couldn't connect to this address. Check the API address, and that it's reachable from the internet over HTTPS with a valid certificate."
+        : "AI Gateway couldn't reach the provider. Check the settings above.", model)
+    }
+  }
+
+  let response = await send(call.body)
+  if (!(response instanceof Response)) return response
+  let providerMessage: string | null = null
+  if (!response.ok) {
+    providerMessage = isAwsFamily(family) ? null : await readErrorMessage(response, secrets)
+    if (isAwsFamily(family)) await response.body?.cancel().catch(() => {})
+    if (custom && refusesParameter(response.status, providerMessage) && /max_tokens/.test(providerMessage ?? "")) {
+      response = await send(customBody(model, input.customModel, "max_completion_tokens"))
+      if (!(response instanceof Response)) return response
+      providerMessage = response.ok ? null : await readErrorMessage(response, secrets)
+    }
   }
   if (response.ok) {
     await response.body?.cancel().catch(() => {})
     return { ok: true, model, status: response.status, code: null, message: null }
   }
-  // AWS signature errors can echo the canonical request, including the session token.
-  const providerMessage = isAwsFamily(family) ? null : await readErrorMessage(response, secrets)
-  if (isAwsFamily(family)) await response.body?.cancel().catch(() => {})
+  if (custom && response.status === 404 && !(providerMessage && (MODEL_MISSING.test(providerMessage) || providerMessage.includes(model)))) {
+    return failed("endpoint_not_found", "Nothing answered at this API address. Check it ends where the provider's OpenAI-compatible API starts, usually /v1.", model, 404)
+  }
   const { code, message } = statusMessage(response.status, providerMessage, model)
   return failed(code, message, model, response.status)
 }
@@ -277,7 +342,6 @@ export function registerProviderTestRoute(api: Hono<ProviderTestEnv>, dependenci
     c.header("cache-control", "no-store")
     const identity = c.get("inference")
     if (identity.kind !== "gateway") return c.json({ error: { code: "invalid_api_key", message: "An OpenWork Gateway key is required." } }, 401)
-    // Only Den, after checking that this member may manage providers, can ask for a test.
     const body = await c.req.text()
     const signature = c.req.header(PROVIDER_TEST_SIGNATURE_HEADER)
     if (!dependencies.signingSecret || !signature || !verifyProviderTestSignature(dependencies.signingSecret, { organizationId: identity.organizationId, memberId: identity.orgMembershipId, body }, signature, dependencies.now().getTime())) {

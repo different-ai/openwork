@@ -1,18 +1,3 @@
-/**
- * Session storage tooling for a Node runner's database and files store (storage/, README "Long conversations").
- *
- *   pnpm session list                       sessions with their hot bytes and segment counts
- *   pnpm session inspect <sessionId>        hot part, manifest, large bodies, pending seal failures
- *   pnpm session verify <sessionId>         fetch every segment and check it against its checksum and header
- *   pnpm session seal <sessionId>           seal everything sealable now (the safety rules still apply)
- *   pnpm session reseal <sessionId>         rewrite every segment (verified, swapped one by one)
- *   pnpm session export <sessionId> [--out <file>]   the lossless export (sealed turns and large outputs inline)
- *   pnpm session delete <sessionId> [--vacuum]       delete it and all its objects; --vacuum also rewrites the file
- *
- * Options: --db <path> (default HEADLESS_DB_PATH or ./data/headless.sqlite), --files-dir <dir> for a disk store;
- * otherwise HEADLESS_FILES (disk with HEADLESS_FILES_DIR, or s3 with the HEADLESS_S3_* settings) as the runner reads
- * them. Stop the runner first: the database has one writer. Prints no credentials or content beyond what is asked for.
- */
 import { writeFileSync } from "node:fs"
 import { dirname, join } from "node:path"
 import { parseArgs } from "node:util"
@@ -63,12 +48,10 @@ function usage(): never {
 const store = new Store(nodeSqlite(dbPath))
 if (store.migrationError) throw store.migrationError
 const target = values.target ? Number(values.target) : Number(env.HEADLESS_SEGMENT_TARGET_BYTES ?? DEFAULT_STORAGE_SETTINGS.segmentTargetBytes)
-// The CLI seals when asked, whatever HEADLESS_SEGMENTS says on the runner.
 const storage = new SessionStorage(store, blobStore(), {
   ...DEFAULT_STORAGE_SETTINGS,
   segments: true,
   segmentTargetBytes: target,
-  // What the runner's model context reaches is never sealed; the CLI uses the runner's budget to know.
   contextCharBudget: Number(env.HEADLESS_CONTEXT_CHAR_BUDGET ?? DEFAULT_STORAGE_SETTINGS.contextCharBudget),
 })
 const print = (value: unknown) => console.log(JSON.stringify(value, null, 2))

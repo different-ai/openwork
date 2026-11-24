@@ -97,6 +97,19 @@ Session replacement cancels the old stream and fences pending fetches so one
 identity cannot publish after another signs in. Den authorization continues
 on inference requests: a cached catalog is not offline authorization.
 
+## A personal device key is not an organization grant
+
+Signing in and inviting someone do not upload personal provider keys. Under
+`shareDeviceProvider` (cloud and self-hosted, off), desktop AI Providers can
+explicitly share a supported saved API key. The local server reads it only
+after Den confirms permission and the person confirms Everyone, key destination
+and cost. It creates a separate organization Gateway provider through the
+existing sensitive-write route; normal catalog ownership, grants and inference
+authorization still apply. The personal credential is not deleted or silently
+replaced. Invite previews show Everyone/selected-team configuration, never the
+inviter's personal credentials or a promise of live model readiness. See
+[sharing a device provider](features/share-device-provider/README.md).
+
 ## Timing and limits
 
 The target is roughly two seconds from a committed Den inventory change to

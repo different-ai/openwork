@@ -8,20 +8,11 @@ import {
   type HeadlessRunnerClient,
 } from "../headless-runner/client.js"
 
-/**
- * One pass of a member's agent on the standard headless runner.
- *
- * - Its own durable session, one per agent (`hs_agent_…`, derived, so Den keeps no mapping). Never the member's
- *   Workbot chat and never `memoryOf` it: what the agent reads stays in its own transcript and `memory/` notes.
- *   Only the text Den actually delivers leaves it.
- * - Standard runner tools only (its scratch files, so `memory/` notes persist across passes) plus Connect tools
- *   with a read-scoped MCP token (`mcp:read`) that carries its sources as an allowlist (agent-read-sources.ts): it
- *   reads the member's calendar, email, team chat and other sources that are on, and can't send, edit or accept
- *   anything. Not `credentials.readOnly`, which would also take away its file tools.
- * - Silence by default: the answer is parsed with the shared `NO_REPLY` rule; anything unexpected is silence too.
- */
-
 export type AgentTurnResult = AgentReply | { kind: "unavailable"; code: string }
+
+export type AgentTurnUsage = { inputTokens: number; cachedInputTokens: number; outputTokens: number } | null
+
+export type AgentRawTurnResult = { kind: "answered"; text: string; usage: AgentTurnUsage } | { kind: "unavailable"; code: string }
 
 export type AgentTurnDeps = {
   client: HeadlessRunnerClient | null
@@ -45,12 +36,10 @@ export function defaultAgentTurnDeps(): AgentTurnDeps {
   }
 }
 
-/** The agent's own session: one per member, never shared with Workbot. */
 export function agentSessionId(organizationId: string, memberId: string) {
   return `hs_agent_${createHash("sha256").update(`agent:${organizationId}:${memberId}`).digest("hex").slice(0, 40)}`
 }
 
-/** Stable per wake, so a resend never starts a second turn. */
 export function agentMessageId(memberId: string, wakeAt: number) {
   return `wa_${createHash("sha256").update(`agent:${memberId}:${wakeAt}`).digest("hex").slice(0, 32)}`
 }
@@ -59,16 +48,31 @@ export async function runAgentTurn(
   input: { actor: HeadlessRunnerActor; sessionId: string; instructions: string; model: string; prompt: string; messageId: string; scopes?: readonly string[] },
   deps: AgentTurnDeps,
 ): Promise<AgentTurnResult> {
+  const answered = await runAgentSessionTurn(input, deps)
+  return answered.kind === "answered" ? parseAgentReply(answered.text) : answered
+}
+
+export async function runAgentSessionTurn(
+  input: { actor: HeadlessRunnerActor; sessionId: string; instructions: string; model: string; prompt: string; messageId: string; scopes?: readonly string[] },
+  deps: AgentTurnDeps,
+): Promise<AgentRawTurnResult> {
   const client = deps.client
   if (!client) return { kind: "unavailable", code: "runner_not_configured" }
-  // Same id every pass: creates the session the first time, keeps its transcript and notes after that, and picks
-  // up a new template version's instructions.
   const session = await client
     .putSession(input.sessionId, { title: "Your agent", instructions: input.instructions, repeats: { maxWaitingMs: 60_000, maxIdenticalFailures: 2 } })
     .catch(() => null)
   if (!session?.ok) return { kind: "unavailable", code: session?.error ?? "runner_unreachable" }
   const send = () => client
-    .sendTurn(input.actor, { sessionId: input.sessionId, messageId: input.messageId, prompt: input.prompt, model: input.model, mcpReadOnly: true, ...(input.scopes?.length ? { mcpScopes: input.scopes } : {}), ttlMs: TOKEN_TTL_MS, execution: "steps" })
+    .sendTurn(input.actor, {
+      sessionId: input.sessionId,
+      messageId: input.messageId,
+      prompt: input.prompt,
+      model: input.model,
+      mcpReadOnly: true,
+      ...(input.scopes?.length ? { mcpScopes: input.scopes } : {}),
+      ttlMs: TOKEN_TTL_MS,
+      execution: "steps",
+    })
     .catch(() => null)
   const sent = await send()
   if (!sent?.ok) return { kind: "unavailable", code: sent?.error ?? "runner_unreachable" }
@@ -86,14 +90,13 @@ export async function runAgentTurn(
     const turn = read.value.turns.find((entry) => entry.messageId === input.messageId)
     if (!turn || ACTIVE_TURN_STATUSES.has(turn.status)) continue
     if (turn.status === "interrupted") {
-      // The runner restarted mid-turn: the same message id resumes it, with a fresh read-scoped token.
       const resumed = await send()
       if (!resumed?.ok) return { kind: "unavailable", code: resumed?.error ?? "runner_unreachable" }
       continue
     }
     if (turn.status !== "completed") return { kind: "unavailable", code: turn.error ?? `turn_${turn.status}` }
     const answer = read.value.messages.filter((message) => message.role === "assistant" && message.toolCalls.length === 0).at(-1)
-    return parseAgentReply(answer?.role === "assistant" ? answer.text : read.value.finalAssistantText)
+    return { kind: "answered", text: answer?.role === "assistant" ? answer.text : read.value.finalAssistantText, usage: turn.usage ?? null }
   }
   await client.abort(input.sessionId, input.messageId).catch(() => null)
   return { kind: "unavailable", code: "timed_out" }

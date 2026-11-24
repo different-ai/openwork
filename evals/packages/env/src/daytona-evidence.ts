@@ -9,16 +9,16 @@ const SAVE_WAIT_MS = 10 * 60_000;
 
 /**
  * The web evidence world on a Daytona Linux VM: the same world as Freestyle's,
- * built by @openwork/daytona-evidence. The runner only drives its browser.
+ * built by @openwork/evidence-daytona. The runner only drives its browser.
  * It advertises checkpoints: each is captured in seconds (a fork of the running
  * VM) and saved in the background; stopping waits for every save.
  */
 export async function daytonaEvidenceWeb(sourceSha: string) {
   // Loaded on demand so worlds that never pick Daytona do not load its client.
-  const { ensureEvidenceTemplate, prepareEvidenceWorld } = await import("@openwork/daytona-evidence/builder");
-  const { DaytonaApi } = await import("@openwork/daytona-evidence/api");
-  const { launchDaytonaEvidenceWorld, deleteDaytonaEvidenceWorld, evidenceControl } = await import("@openwork/daytona-evidence");
-  const { startDaytonaCheckpoint } = await import("@openwork/daytona-evidence/checkpoints");
+  const { ensureEvidenceTemplate, prepareEvidenceWorld } = await import("@openwork/evidence-daytona/builder");
+  const { DaytonaApi } = await import("@openwork/evidence-daytona/api");
+  const { launchDaytonaEvidenceWorld, deleteDaytonaEvidenceWorld, evidenceControl } = await import("@openwork/evidence-daytona");
+  const { startDaytonaCheckpoint } = await import("@openwork/evidence-daytona/checkpoints");
   const api = new DaytonaApi();
   const prepare = process.env.OPENWORK_DAYTONA_EPHEMERAL_WORLD === "1" ? prepareEvidenceWorld : ensureEvidenceTemplate;
   const template = await prepare(sourceSha, api, {
@@ -81,9 +81,9 @@ export async function daytonaEvidenceWeb(sourceSha: string) {
  * attaches its restored browser for the test. The caller deletes it with `stop()`.
  */
 export async function openedDaytonaCopy(reportId: string, existingIds: readonly string[] = []) {
-  const { DaytonaApi } = await import("@openwork/daytona-evidence/api");
-  const { listDaytonaCopies, daytonaCopyAccess } = await import("@openwork/daytona-evidence/checkpoints");
-  const { evidenceControl } = await import("@openwork/daytona-evidence");
+  const { DaytonaApi } = await import("@openwork/evidence-daytona/api");
+  const { listDaytonaCopies, daytonaCopyAccess } = await import("@openwork/evidence-daytona/checkpoints");
+  const { evidenceControl } = await import("@openwork/evidence-daytona");
   const api = new DaytonaApi();
   const created = (await listDaytonaCopies(reportId, api)).filter((sandbox) => !existingIds.includes(sandbox.id));
   if (created.length !== 1) throw new Error("Expected one private copy from the review action");

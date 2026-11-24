@@ -5,7 +5,6 @@ import type { DenSession, Fetch } from "./den.ts"
 type CredentialScope = "den" | "desktop"
 
 interface SharedFetch {
-  /** Taken after every ticket handed out before this fetch started. */
   readonly startedAfter: number
   readonly controller: AbortController
   readonly result: Promise<GatewayInventory>
@@ -22,15 +21,10 @@ export interface SharedInventoryRequest {
   readonly fetch: Fetch
   readonly session: DenSession
   readonly scope: CredentialScope
-  /** From inventoryRequestTicket(), taken when this Location decided it needed fresh inventory. */
   readonly ticket: number
   readonly signal?: AbortSignal
 }
 
-// OpenCode creates one plugin instance per Location, each in its own ESM graph,
-// and one change on the shared inventory stream reaches all of them at once.
-// Like the stream hub, only an immutable capability is global; fetches and the
-// credentials they carry stay in this closure.
 declare global {
   var __openworkGatewayInventoryFetches: InventoryFetchHub | undefined
 }
@@ -41,8 +35,6 @@ function abortError(signal: AbortSignal): unknown {
 
 function createInventoryFetchHub(): InventoryFetchHub {
   const shared = new Map<string, SharedFetch>()
-  // Strictly increasing across tickets and fetch starts, so ordering never
-  // depends on two events landing in different milliseconds.
   let sequence = 0
   const ticket = () => ++sequence
 
@@ -68,8 +60,6 @@ function createInventoryFetchHub(): InventoryFetchHub {
     if (request.signal?.aborted) throw abortError(request.signal)
     const key = `${inventorySessionKey(request.session)}:${request.scope}`
     const entry = shared.get(key)
-    // Every event is authoritative: a Location only joins a fetch that began
-    // after it asked, never one that may have read Den before its change.
     const current = entry && !entry.settled && entry.startedAfter > request.ticket ? entry : start(key, request)
     current.joiners += 1
     const leave = () => {

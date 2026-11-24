@@ -10,21 +10,10 @@ async function usableGatewayKey(row: typeof GatewayKeyTable.$inferSelect | undef
     const key = gatewayBearerKey(row.encrypted_key)
     if (await gatewayBearerKeyMatchesDigest(key, row.key_hash)) return key.value
   } catch {
-    // Corrupt/non-Gateway material is rotated in this store only, never imported from Models.
   }
   return null
 }
 
-/**
- * Member fence serializes issuance/rotation with joins and offboarding, including an empty key store. Every
- * writer of a member's key holds that member's row lock, so the key itself is read without a lock: a locking
- * read of a key that does not exist yet takes a gap lock that other new members of the organization share, and
- * their inserts then deadlock. The read happens after the fence, so it sees every committed change to the key.
- *
- * An active member's usable key is returned from one plain read, without the fence: only writes need it, and
- * a key read just before a concurrent revocation commits is the same answer the request would have had a
- * moment earlier. Everything else (no key, an unusable key, a member who is gone) takes the fenced path.
- */
 export async function ensureMemberGatewayKey(input: {
   organizationId: typeof MemberTable.$inferSelect.organizationId
   memberId: typeof MemberTable.$inferSelect.id

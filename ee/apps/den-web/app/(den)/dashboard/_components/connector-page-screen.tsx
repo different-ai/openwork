@@ -39,7 +39,6 @@ export function WhatYourAiCanDo({ tools, loading, signedIn, error }: {
   error: boolean;
 }) {
   const [expanded, setExpanded] = useState(false);
-  // A cached list from before a sign-out is not what this person's AI can do now.
   const available = signedIn ? tools : [];
   const visible = expanded ? available : available.slice(0, TOOLS_PREVIEW);
   const count = available.length === 1 ? "1 thing" : `${available.length} things`;
@@ -47,20 +46,20 @@ export function WhatYourAiCanDo({ tools, loading, signedIn, error }: {
     <section className="flex flex-col gap-2.5" data-testid="what-your-ai-can-do">
       <SectionTitle title="What your AI can do" meta={available.length > 0 ? count : undefined} />
       <ItemPanel>
-        {!signedIn ? <p className="px-5 py-4 text-[13px] text-gray-500">They show up after you sign in.</p> : null}
-        {signedIn && loading ? <p className="px-5 py-4 text-[13px] text-gray-500">Reading them now...</p> : null}
-        {signedIn && error ? <p className="px-5 py-4 text-[13px] text-gray-500">OpenWork could not read them right now.</p> : null}
+        {!signedIn ? <p className="py-3 text-[13px] text-[var(--dls-text-secondary)]">They show up after you sign in.</p> : null}
+        {signedIn && loading ? <p className="py-3 text-[13px] text-[var(--dls-text-secondary)]">Reading them now...</p> : null}
+        {signedIn && error ? <p className="py-3 text-[13px] text-[var(--dls-text-secondary)]">OpenWork could not read them right now.</p> : null}
         {visible.map((tool) => (
-          <div key={tool.name} className="px-5 py-3" data-testid="connector-tool">
-            <p className="text-[14px] font-medium leading-5 text-gray-900">{toolTitle(tool)}</p>
-            {toolSummary(tool) ? <p className="text-[13px] leading-[18px] text-gray-500">{toolSummary(tool)}</p> : null}
+          <div key={tool.name} className="flex min-h-12 flex-col justify-center py-1.5" data-testid="connector-tool">
+            <p className="text-[13px] font-medium leading-5 text-[var(--dls-text-primary)]">{toolTitle(tool)}</p>
+            {toolSummary(tool) ? <p className="text-[12px] leading-4 text-[var(--dls-text-secondary)]">{toolSummary(tool)}</p> : null}
           </div>
         ))}
         {available.length > TOOLS_PREVIEW ? (
           <button
             type="button"
             onClick={() => setExpanded((value) => !value)}
-            className="flex items-center gap-1.5 px-5 py-3 text-left text-[13px] font-medium text-gray-700 hover:text-gray-900"
+            className="flex items-center gap-1.5 py-3 text-left text-[13px] font-medium text-[var(--dls-text-secondary)] hover:text-[var(--dls-text-primary)]"
           >
             {expanded ? "Show less" : `Show all ${available.length}`}
             <ChevronDown className={`h-3.5 w-3.5 transition-transform ${expanded ? "rotate-180" : ""}`} aria-hidden />
@@ -73,13 +72,12 @@ export function WhatYourAiCanDo({ tools, loading, signedIn, error }: {
 
 export function ChatButton({ name }: { name: string }) {
   return (
-    <DenButton icon={MessageSquare} href={connectorChatDeepLink({ connector: name, prompt: connectorChatPrompt(name) })}>
+    <DenButton size="sm" icon={MessageSquare} href={connectorChatDeepLink({ connector: name, prompt: connectorChatPrompt(name) })}>
       Chat
     </DenButton>
   );
 }
 
-/** A6: a connector in My Library. */
 export function LibraryConnectorScreen({ connectionId }: { connectionId: string }) {
   const router = useRouter();
   const params = useSearchParams();
@@ -153,7 +151,7 @@ export function LibraryConnectorScreen({ connectionId }: { connectionId: string 
               ]}
             />
             {mine ? (
-              <LinkButton href={getLibraryConnectorShareRoute(orgSlug, connectionId)}>
+              <LinkButton size="sm" href={getLibraryConnectorShareRoute(orgSlug, connectionId)}>
                 <UserPlus className="h-4 w-4" aria-hidden />
                 Share
               </LinkButton>

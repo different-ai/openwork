@@ -2,45 +2,43 @@
 
 import type { ElementType, ReactNode } from "react";
 import { DenPageHeader } from "./page-header";
-
-/**
- * Shared shell for org dashboard pages, all beneath OrgDashboardProvider:
- * a compact flat heading, supporting context, then page content.
- */
+import { DASHBOARD_PAGE_CLASS, SETTINGS_MEASURE_CLASS } from "./dashboard-styles";
 
 export type DashboardPageTemplateProps = {
-  /** Retained for compatibility; the shared Trim header does not render an icon. */
   icon?: ElementType<{
     size?: number;
     className?: string;
     strokeWidth?: number;
   }>;
-  /** Semantic page heading. */
   title: string;
-  /** Supporting context retained above the page content. */
   description: ReactNode;
-  /** Retained for compatibility; all pages use the shared Trim header size. */
+  state?: ReactNode;
+  action?: ReactNode;
   size?: "default" | "compact" | "responsive";
-  /** Retained for compatibility; supporting copy always renders below the header. */
   descriptionPlacement?: "below" | "hero";
+  measure?: boolean;
   children?: React.ReactNode;
 };
 
 export function DashboardPageTemplate({
   title,
   description,
+  state,
+  action,
+  measure = false,
   children,
 }: DashboardPageTemplateProps) {
   return (
-    <div className="mx-auto max-w-[860px] p-4 sm:p-6 md:p-8">
+    <div className={DASHBOARD_PAGE_CLASS}>
+      <div className={measure ? SETTINGS_MEASURE_CLASS : undefined}>
       <div data-dashboard-flat-header>
-        <DenPageHeader title={title} size="compact" className="mb-1 break-words" />
+        <DenPageHeader title={title} size="compact" state={state} action={action} className={description ? "mb-1 break-words" : "mb-6 break-words"} />
       </div>
 
-      <p className="mb-6 text-[14px] text-gray-500">{description}</p>
+      {description ? <p className="mb-6 text-[13px] text-[var(--dls-text-secondary)]">{description}</p> : null}
 
-      {/* ── Page content ── */}
       {children}
+      </div>
     </div>
   );
 }

@@ -20,11 +20,6 @@ function safeJson(text: string): unknown {
   }
 }
 
-/**
- * Keeps Den's first-party Workbot client in step with DEN_WORKBOT_URL: created on the first sign-in, its return
- * address updated when the URL changes. A public client (PKCE, no secret) that skips the consent screen, since
- * Workbot is part of OpenWork. Without DEN_WORKBOT_URL nothing is created, so Workbot can't sign in.
- */
 export async function ensureWorkbotOAuthClient(adapter: Adapter, env: Record<string, string | undefined> = process.env) {
   const origin = workbotOrigin(env)
   if (!origin) return

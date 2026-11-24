@@ -1,6 +1,5 @@
 import { z } from "zod";
 
-// The host performs these actions for its signed-in caller, as with drive_upload_file. Agents use these tools, which ask before writes.
 export const DRIVE_FILE_ACTIONS = ["drive_pull_file", "drive_file_status", "drive_push_file"] as const;
 export type DriveFileAction = (typeof DRIVE_FILE_ACTIONS)[number];
 
@@ -30,7 +29,6 @@ export const drivePushFileArgs = z.object({
   name: z.string().min(1).max(255).optional().describe("Name for a copy."),
 }).strict();
 
-/** What the model sees for each tool; v1 tools and the v2 context plugin share these. */
 export const DRIVE_FILE_TOOLS = {
   drive_pull_file: {
     description: "Save a Google Drive, OneDrive or SharePoint file into the workspace and return its path and revision, never its content. Use it to analyze or edit Office, PDF, CSV or any large file with shell tools. Docs, Sheets and Slides arrive as docx, xlsx and pptx unless format says otherwise.",
@@ -50,11 +48,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** Engine permissions check writes; Desktop separately confirms saves, replaced copies and pulls outside drive/ at the host boundary. */
 async function askPermission(context: unknown, permission: DriveFileAction, patterns: string[], metadata: Record<string, unknown>) {
   const ask = isRecord(context) && typeof context.ask === "function" ? context.ask : null;
   if (!ask) throw new Error("This OpenWork engine cannot ask for approval, so nothing was changed. Update OpenWork to save files to Drive.");
-  // "Always" covers only these patterns, so one approval never extends to other files.
   await ask.call(context, { permission, patterns, always: patterns, metadata });
 }
 

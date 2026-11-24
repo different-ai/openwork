@@ -1,11 +1,3 @@
-/**
- * Minimal SQL executor used by den-db operational scripts (bootstrap and
- * schema repairs). Depending on the environment it wraps either a direct
- * mysql2 connection (DATABASE_URL) or the PlanetScale HTTP driver
- * (DATABASE_HOST / DATABASE_USERNAME / DATABASE_PASSWORD), and exposes the
- * two operations the scripts need: run a parameterized query and close.
- */
-
 import { parseMySqlConnectionConfig } from "../src/mysql-config.ts"
 
 export type Executor = {

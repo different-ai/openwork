@@ -1,33 +1,20 @@
-// Asks Jev (TypeSafe System One, https://docs.typesafe.ai/primitives/score)
-// how well a prompt fits each of a Smart Router's tasks, and how much
-// reasoning it needs. One request: one Score question per task, plus one for
-// the thinking level. Scores come back normalized to 0..1. Jev sees task names
-// and the conversation, never provider or model ids.
-
 export type JevTask = {
-  /** Opaque question key, `task_<n>`. */
   key: string
-  /** The task as the admin named it, for example "code review". */
   name: string
 }
 
 export type JevScores = {
-  /** Each task's score, 0 (unrelated) to 1 (clearly this task), by key. */
   tasks: Map<string, number>
-  /** How much reasoning the prompt needs, 0 (none) to 1 (deep); null when Jev gave none. */
   thinking: number | null
   model: string | null
 }
 
 export type AskJev = (input: { prompt: string; context: string | null; tasks: JevTask[]; signal?: AbortSignal }) => Promise<JevScores | null>
 
-/** Prompts longer than this are trimmed (start and end kept); routing rarely needs more. */
 const PROMPT_LIMIT = 12_000
 
-/** The question key for the thinking level; task keys are `task_<n>`, so it cannot collide. */
 export const JEV_THINKING_KEY = "thinking"
 
-/** Thinking levels, low to high; the gateway maps the score onto the model's own levels. */
 export const JEV_THINKING_CRITERIA = [
   "None: a greeting, a quick fact, or a simple lookup or rewrite that needs no reasoning",
   "Light: a short answer or a small, clear change that needs a little thought",
@@ -76,7 +63,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-/** A Score answer as 0..1: its score divided by the top level number. */
 function normalizedScore(answer: unknown, levels: number): number | null {
   if (!isRecord(answer) || typeof answer.score !== "number" || !Number.isFinite(answer.score) || levels < 2) return null
   return Math.min(1, Math.max(0, answer.score / (levels - 1)))

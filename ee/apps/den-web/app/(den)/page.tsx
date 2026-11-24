@@ -14,8 +14,6 @@ export default async function HomePage({
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
 }) {
-  // Decided on the server so an agent's sign-in renders its own frame on the
-  // first paint; the exact signed query is still read from the browser URL.
   const agentSignIn = getMcpOAuthSelectOrganizationRoute(toSearch(await searchParams)) !== null;
   return <AuthScreen agentSignIn={agentSignIn} />;
 }

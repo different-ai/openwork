@@ -2,11 +2,11 @@ import type { DenOpenWorkWebAccessSource } from "../../../app/lib/den";
 
 export type OpenWorkWebAccessCheck = {
   scope: string;
-  state: "granted" | "denied" | "error";
+  state: "granted" | "denied" | "not_assigned" | "error";
   accessSource: DenOpenWorkWebAccessSource;
 };
 
-export type OpenWorkWebAccessGateState = "inactive" | "checking" | "granted" | "denied" | "error";
+export type OpenWorkWebAccessGateState = "inactive" | "checking" | "granted" | "denied" | "not_assigned" | "error";
 
 export function resolveOpenWorkWebAccessGateState(input: {
   gatewayMode: boolean;

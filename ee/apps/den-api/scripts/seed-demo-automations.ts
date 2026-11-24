@@ -1,6 +1,4 @@
 import { automationOccurrenceIdentity, automationRevisionDigest } from "@openwork/automations"
-// Schedule expansion comes straight from @openwork/types: prepared Dens run this seed against
-// @openwork/automations' built dist, which can predate the range API.
 import { automationOccurrencesInRange, nextAutomationOccurrence } from "@openwork/types/automation-schedule"
 import {
   AUTOMATION_CLOUD_DEFAULT_MODEL,
@@ -20,16 +18,6 @@ import {
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../src/db.js"
 
-/**
- * The owner's Automations for the Acme demo, with two weeks of run receipts,
- * so the desktop Calendar has Workbot-style work to show next to meetings.
- * Opt-in (DEN_DEMO_SEED_AUTOMATIONS=1 or --automations) because seeded active
- * Automations are scheduled for real by any Den that boots on this database.
- *
- * Times follow the demo time zone (America/Los_Angeles unless
- * DEMO_TIME_ZONE says otherwise), relative to now, like the demo calendar.
- */
-
 type OrganizationId = typeof AutomationTable.$inferSelect.organization_id
 type MemberId = typeof AutomationTable.$inferSelect.owner_member_id
 
@@ -47,7 +35,6 @@ type DemoAutomation = {
   schedule: (timezone: string) => AutomationSchedule
   executionTarget: "cloud" | "desktop"
   needsAttention?: Omit<AutomationNeedsAttentionReason, "occurredAt">
-  /** Outcome of the nth most recent past occurrence (0 = latest); missing entries succeed. */
   outcomes?: Partial<Record<number, DemoRunOutcome>>
   summary: string
 }
@@ -150,7 +137,6 @@ export async function seedDemoAutomations(input: {
       let latestSuccessfulRunId: typeof AutomationRunTable.$inferSelect.id | null = null
       for (const [index, scheduledFor] of ran.entries()) {
         const fromLatest = ran.length - 1 - index
-        // A blocked Automation was stopped by its latest occurrence, which recorded why.
         const outcome: DemoRunOutcome = blocked && fromLatest === 0 && demo.needsAttention
           ? { status: "skipped", error: { code: demo.needsAttention.code, message: demo.needsAttention.message, retryable: false } }
           : demo.outcomes?.[fromLatest] ?? { status: "succeeded", seconds: 60 + ((index * 37) % 90), summary: demo.summary }

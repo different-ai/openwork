@@ -12,7 +12,6 @@ import { isAutoRouterModel, managesOwnBehavior, type ModelPickerCatalogState, ty
 
 const chordClass = "hidden shrink-0 rounded border border-border/70 bg-muted/40 px-1.5 py-0.5 font-sans text-xs leading-none text-muted-foreground sm:inline-flex";
 
-/** The picker's settings for the current model and its way out, under one hairline. */
 export function ModelPickerFooter({ effortButtonRef, effortLabel, effortShortcut, canChangeEffort, onOpenEffort, fast, onConnectProvider }: {
   effortButtonRef?: React.Ref<HTMLButtonElement>;
   effortLabel: string;
@@ -35,7 +34,6 @@ export function ModelPickerFooter({ effortButtonRef, effortLabel, effortShortcut
       <kbd className={chordClass}>{fast.shortcut}</kbd>
       <Switch aria-label="Fast mode" size="sm" checked={fast.on} disabled={fast.disabled} onCheckedChange={fast.onToggle} />
     </div> : null}
-    {/* The list above already holds every model; there is no second, larger picker. */}
     {onConnectProvider ? <div className="flex items-center pt-0.5">
       <Button variant="ghost" size="sm" className="h-8 px-2 font-normal text-muted-foreground" onClick={onConnectProvider}>Connect more providers</Button>
     </div> : null}
@@ -43,16 +41,11 @@ export function ModelPickerFooter({ effortButtonRef, effortLabel, effortShortcut
 }
 
 export type ModelPickerPanelProps = {
-  /** Selectable models, from the shared catalog. */
   options: readonly ModelOption[];
   current: ModelRef;
-  /** Effort/Fast variant applied to `current`. */
   behaviorValue: string | null;
-  /** Used when `current` is not in `options` (e.g. still loading). */
   fallbackBehaviorOptions?: readonly { value: string | null; label: string }[];
-  /** `behavior.variant` is set when the search named an option such as "fast" or "high". */
   onSelect: (option: ModelOption, behavior?: { variant: string | null }) => void;
-  /** Omit where effort cannot be changed. */
   onBehaviorChange?: (value: string | null) => void;
   catalogState: ModelPickerCatalogState;
   retainedSelection?: RetainedModelSelection;
@@ -64,15 +57,9 @@ export type ModelPickerPanelProps = {
   openWorkModelsSyncing?: boolean;
   autoVisible: boolean;
   onReloadWorkspace?: () => void | Promise<unknown>;
-  /** Rows under the footer that only one surface offers. */
   footerExtra?: React.ReactNode;
 };
 
-/**
- * The one model picker body: search, the model list, the current model's
- * effort (as a submenu) and Fast mode. The composer shows it in a popover;
- * surfaces without a composer show the same panel in a dialog.
- */
 export function ModelPickerPanel(props: ModelPickerPanelProps) {
   const { options, current, behaviorValue, onBehaviorChange } = props;
   const [query, setQuery] = React.useState("");

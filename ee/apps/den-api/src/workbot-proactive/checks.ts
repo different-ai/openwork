@@ -17,12 +17,6 @@ import {
 } from "@openwork/types/den/workbot-proactive"
 import { hoursLabel } from "./preferences.js"
 
-/**
- * One check of a member's agent, in the member's words (My agent, `workbotProactive`): what came of it and one
- * sentence that says why. Pure; the wake decides the reason and the repository stores the record. Sentences never
- * carry email or message content, only what the agent was about.
- */
-
 const OUTCOME_OF: Record<AgentCheckReason, AgentCheckOutcome> = {
   sent: "sent",
   nothing_new: "quiet",
@@ -40,6 +34,9 @@ const OUTCOME_OF: Record<AgentCheckReason, AgentCheckOutcome> = {
   no_destination: "failed",
   send_failed: "failed",
   agent_unavailable: "failed",
+  no_findings: "quiet",
+  findings_held: "quiet",
+  source_stopped: "failed",
 }
 
 const FIX_OF: Partial<Record<AgentCheckReason, AgentCheckFix>> = {
@@ -50,14 +47,12 @@ const FIX_OF: Partial<Record<AgentCheckReason, AgentCheckFix>> = {
   no_destination: "ask_admin",
 }
 
-/** "calendar changes", "meeting prep and waiting on you". */
 function about(responsibilities: readonly AgentResponsibility[]) {
   const labels = [...new Set(responsibilities)].map((responsibility) => AGENT_RESPONSIBILITY_COPY[responsibility].label.toLowerCase())
   if (labels.length <= 1) return labels[0] ?? ""
   return `${labels.slice(0, -1).join(", ")} and ${labels.at(-1)}`
 }
 
-/** "Slack", "Gmail and Slack". */
 function names(sources: readonly AgentMemberCheckSource[]) {
   const labels = [...new Set(sources.map((source) => source.name))]
   if (labels.length <= 1) return labels[0] ?? ""
@@ -69,17 +64,17 @@ export type AgentCheckDescription = { outcome: AgentCheckOutcome; summary: strin
 export function describeAgentCheck(input: {
   reason: AgentCheckReason
   responsibilities?: readonly AgentResponsibility[]
-  /** What a message drew on, or what couldn't be read (with the connection to fix). */
   sources?: readonly AgentMemberCheckSource[]
   limits: { startHour: number; endHour: number; dailyCap: number; quietWindow: AgentHourWindow | null }
+  messages?: number
 }): AgentCheckDescription {
   const topic = about(input.responsibilities ?? [])
   const from = names(input.sources ?? [])
   const subject = topic ? ` about ${topic}` : from ? ` from ${from}` : ""
   const held = subject ? ` Held a message${subject}.` : ""
-  const unread = input.reason === "source_disconnected" ? from || "a source" : ""
+  const unread = input.reason === "source_disconnected" || input.reason === "source_stopped" ? from || "a source" : ""
   const summaries: Record<AgentCheckReason, string> = {
-    sent: `Sent you a message${subject}.`,
+    sent: `Sent you ${(input.messages ?? 1) > 1 ? `${input.messages} messages` : "a message"}${subject}.`,
     nothing_new: "Stayed quiet: nothing new.",
     already_told: "Stayed quiet: nothing you hadn't heard.",
     unreadable_reply: "Stayed quiet: nothing it could send.",
@@ -95,17 +90,18 @@ export function describeAgentCheck(input: {
     no_destination: "Couldn't reach you: your admin hasn't chosen where messages go.",
     send_failed: "Couldn't send the message in Slack.",
     agent_unavailable: "Couldn't run the check: trying again in 15 minutes.",
+    no_findings: "Stayed quiet: nothing needed you.",
+    findings_held: "Stayed quiet: found something that can wait for a later check.",
+    source_stopped: `Stopped reading ${unread}: no longer on for your agent.`,
   }
   return { outcome: OUTCOME_OF[input.reason], summary: summaries[input.reason] }
 }
 
-/** The short form for a row: the sentence up to its colon ("Stayed quiet"), or the whole sentence. */
 export function checkHeadline(summary: string) {
   const colon = summary.indexOf(": ")
   return colon > 0 ? summary.slice(0, colon) : summary.replace(/\.$/, "")
 }
 
-/** Several skips with the same cause (Google still disconnected) are one record whose time moves. */
 export function memberCheckId(memberId: string, key: string) {
   return createHash("sha256").update(`${memberId}\u0000${key}`).digest("hex")
 }
@@ -126,7 +122,6 @@ function oneOf<T extends string>(values: readonly T[], value: string): T | null 
   return values.find((entry) => entry === value) ?? null
 }
 
-/** A stored record as the member reads it; a row this version doesn't understand is left out. */
 export function memberAgentCheck(row: MemberCheckRow): MemberAgentCheck | null {
   const kind = oneOf(AGENT_CHECK_KINDS, row.kind)
   const outcome = oneOf(AGENT_CHECK_OUTCOMES, row.outcome)
@@ -153,7 +148,6 @@ export function memberAgentCheck(row: MemberCheckRow): MemberAgentCheck | null {
 export type AgentCheckRecord = {
   organizationId: DenTypeId<"organization">
   memberId: DenTypeId<"member">
-  /** Dedupes repeated skips; a check that ran uses its own time. */
   key: string
   at: number
   kind: AgentCheckKind

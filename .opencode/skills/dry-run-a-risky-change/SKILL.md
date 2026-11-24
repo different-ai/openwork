@@ -61,9 +61,9 @@ Reproduce each affected shape with generic data and drive the real screens.
    "Acme") and prove the journeys in a proof (`write-a-spec`). Use the fake
    Stripe lab (`evals/worlds/fake-stripe.ts`) when billing must be configured,
    or limits that depend on Stripe being set up switch off.
-3. Run headless: `pnpm evals:e2e <name> --local`, or boot a preview with
-   `preview-my-work` (`preview-den` / `preview-full`, locally or on Daytona)
-   and click through by hand. Attach screenshots to the PR (`upload-photo`).
+3. Run headless: `pnpm evals:e2e <name> --local`, or boot a preview world
+   (`pnpm world help preview-den` / `preview-full`, locally or on Daytona)
+   and click through by hand. Attach screenshots to the PR.
 
 ## Level 3: PlanetScale copy of real data (exceptional, needs approval)
 

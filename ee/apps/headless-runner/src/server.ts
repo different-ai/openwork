@@ -5,12 +5,10 @@ import { nodeSqlite } from "./node-sqlite.js"
 import { createRuntime } from "./runtime.js"
 
 const SELF_RESUME_INTERVAL_MS = 60_000
-/** How often the Node host checks for due storage upkeep (see background.ts). */
 const BACKGROUND_INTERVAL_MS = 5_000
 
 const config = loadConfig()
 const store = new Store(nodeSqlite(config.dbPath))
-// Step-mode turns run here too, each step as soon as it is due: there is no deploy switch to wait for on Node.
 const { app, runner, recovered, steps, blobKind, computer, selfResume, background } = await createRuntime(config, store)
 const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
   console.log(
@@ -18,7 +16,6 @@ const server = serve({ fetch: app.fetch, port: config.port }, (info) => {
   )
 })
 
-// Turns with a resume grant keep going on their own: right after startup recovery, then every minute while one waits.
 let resumeTimer: ReturnType<typeof setInterval> | undefined
 if (selfResume) {
   void selfResume.sweep()
@@ -29,7 +26,6 @@ if (selfResume) {
   resumeTimer.unref()
 }
 
-// Storage upkeep (sealing, the Den index outbox): run whatever is due every few seconds; never throws.
 const backgroundTimer = setInterval(() => {
   const due = background.nextAt()
   if (due !== null && due <= Date.now()) void background.runDue()

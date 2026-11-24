@@ -4,6 +4,13 @@ export type CreationMode = "idempotent" | "at_most_once"
 export type SendReplayMode = "idempotent" | "at_most_once"
 export type Status = "running" | "waiting" | "idle" | "error"
 export type WaitingFor = "permission" | "question"
+/**
+ * What a remote caller may reach on this computer, as its owner chose: "off"
+ * nothing at all (no task is started, no session is reached, nothing is
+ * reported), "created" only sessions that were started remotely, "all" also
+ * those started on the computer itself once the caller attaches to one.
+ */
+export type SessionAccess = "off" | "created" | "all"
 export interface Model { providerId: string; modelId: string; variant?: string | null }
 export interface SessionError { code: string; message: string }
 /** One question of a pending question request, as the person sees it. */
@@ -12,14 +19,13 @@ export interface PendingQuestionItem {
   question: string
   options: Array<{ label: string; description: string }>
   multiple: boolean
-  /** Whether a free-text answer is accepted besides the options. */
   custom: boolean
 }
 /** What a session waits on the person for. Text only: never follow links or run commands from it. */
 export type Pending =
   | { kind: "question"; requestId: string; questions: PendingQuestionItem[] }
   | { kind: "permission"; requestId: string; title: string; detail: string; command?: string }
-export interface Command {
+export interface CreateCommand {
   commandId: string
   kind: "remote_session_create"
   title: string
@@ -28,6 +34,21 @@ export interface Command {
   expiresAt: number
   workspaceId?: string | null
 }
+/**
+ * Reach a session that already exists on the computer. Nothing is created or
+ * sent: `prompt` and `model` are always null and only keep both kinds one shape.
+ */
+export interface AttachCommand {
+  commandId: string
+  kind: "remote_session_attach"
+  title: string
+  prompt: null
+  model: null
+  expiresAt: number
+  workspaceId: string
+  sessionId: string
+}
+export type Command = CreateCommand | AttachCommand
 export interface Receipt { sessionId: string; workspaceId: string }
 export interface Progress {
   status: Status
@@ -37,9 +58,7 @@ export interface Progress {
   finalText?: string
   error?: SessionError | null
   messageCount?: number
-  /** The step the session ran last, as a short sentence (≤240 chars); omitted by older runners. */
   latestStep?: string | null
-  /** Present only while waiting, from adapters that can read the native request. */
   pending?: Pending | null
   observedAt: number
 }
@@ -49,10 +68,14 @@ export type Complete =
 export interface ReadInput { from: "start" | "end"; cursor: string | null; limit: number }
 export interface SendInput { prompt: string; messageId: string | null; model: Model | null }
 export interface StopInput { messageId: string | null }
-/** The person's own answer. A remote surface never sends "always": every permission is approved once. */
+/**
+ * The person's own answer. A remote surface never sends "always": every permission is approved once.
+ * "dismiss" closes a question without answering it; a permission cannot be dismissed.
+ */
 export type AnswerInput =
   | { kind: "question"; requestId: string; answers: string[][] }
   | { kind: "permission"; requestId: string; decision: "once" | "reject" }
+  | { kind: "dismiss"; requestId: string }
 interface RequestBase {
   requestId: string
   kind: "remote_session_request"
@@ -88,15 +111,15 @@ export type TranscriptPart =
 export interface TranscriptMessage {
   id: string; role: "user" | "assistant"; createdAt: number | null
   text: string; truncated: boolean; toolCalls: TranscriptToolCall[]; error: SessionError | null
-  /** Ordered steps (text, reasoning, tools); absent from older runners. */
   parts?: TranscriptPart[]
-  /** When an assistant message finished, if the harness knows. */
   completedAt?: number | null
 }
 export const TRANSCRIPT_PARTS_MAX = 200
 export const TRANSCRIPT_TOOL_FIELD_MAX = 2000
 export const TRANSCRIPT_TEXT_PART_MAX = 20_000
 export const TRANSCRIPT_REASONING_PART_MAX = 4_000
+/** Open questions and permissions one read lists; the rest follow as these are answered. */
+export const PENDING_ITEMS_MAX = 5
 export interface ReadResult {
   title: string | null
   status: Status
@@ -106,10 +129,9 @@ export interface ReadResult {
   from: "start" | "end"
   messages: TranscriptMessage[]
   nextCursor: string | null
-  /** Native context may omit history removed by compaction; this is not a session error. */
   historyScope?: "context" | "full"
-  /** The question or permission the session waits on, when the adapter can read it. */
   pending?: Pending | null
+  pendingItems?: Pending[]
 }
 export interface SendResult { messageId: string | null; alreadyPresent: boolean }
 export interface StopResult { stopped: boolean; reason: "different_turn" | null }
@@ -136,21 +158,14 @@ export interface Inventory {
 
 /** Adapters own native APIs only, never journal, HTTP acknowledgement, scheduling, or Electron. */
 export interface HarnessAdapter {
-  /** Opt in only when deterministic ID creation AND metadata/ownership checks make replay safe. */
   readonly creation?: CreationMode
-  /** Defaults to idempotent; native ports without durable message-ID deduplication MUST opt into at_most_once. */
   readonly sendReplay?: SendReplayMode
-  create(command: Command, signal: AbortSignal): Promise<Receipt>
+  create(command: CreateCommand, signal: AbortSignal): Promise<Receipt>
+  attach?(command: AttachCommand, signal: AbortSignal): Promise<Receipt>
   send(receipt: Receipt, input: SendInput & { messageId: string }, signal: AbortSignal): Promise<SendResult>
   read(receipt: Receipt, input: ReadInput, signal: AbortSignal): Promise<ReadResult>
-  /** Must compare input.messageId to the native current turn before aborting it. */
   stop(receipt: Receipt, input: StopInput, signal: AbortSignal): Promise<StopResult>
   observe(receipt: Receipt, signal: AbortSignal): Promise<Progress>
-  /**
-   * Reply to the session's pending question or permission through the native path.
-   * Must validate the answer against the live request and throw SessionRunnerError
-   * "stale_request" when input.requestId is no longer pending. Absent: unsupported.
-   */
   answer?(receipt: Receipt, input: AnswerInput, signal: AbortSignal): Promise<void>
 }
 export interface Transport {
@@ -167,11 +182,9 @@ export interface Turn {
 }
 export interface CommandEntry {
   command: Command
-  /** Creation capability is pinned at admission; upgrades must not reinterpret old ambiguous effects. */
   creation: CreationMode
   sendReplay: SendReplayMode
   intendedSessionId: string
-  /** Durable logical clock includes rejected/dropped reports, not just acknowledged reports. */
   lastObservedAt: number | null
   phase: "prepared" | "created" | "delivered" | "failed"
   receipt: Receipt | null
@@ -180,16 +193,13 @@ export interface CommandEntry {
   lastMessageId: string | null
   completion: Complete | null
   completionAcknowledged: boolean
-  /** Latest-state progress outbox; superseded when a new turn is durably accepted. */
   progress: Progress | null
   reportedProgress: Progress | null
 }
 export interface RequestEntry {
   request: Request
   sendReplay: SendReplayMode
-  /** Send ID, pinned stop guard, or (answer) the pending requestId once the native reply was dispatched. */
   messageId: string | null
-  /** Pre-send baseline; applied atomically with success or ambiguity, never on a proven rejection. */
   turn: Turn | null
   completion: RequestComplete | null
   completionAcknowledged: boolean
@@ -201,7 +211,6 @@ export interface SessionRunner {
   execute(request: Request, signal: AbortSignal): Promise<RequestComplete>
   reconcile(signal: AbortSignal): Promise<void>
   inspect(): Promise<Journal>
-  /** Removes oldest expired, fully acknowledged terminal entries only. Watches end when their command is pruned. */
   prune(options?: PruneOptions): Promise<Journal>
 }
 export const MAX_COMMAND_ENTRIES = 256

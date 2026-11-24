@@ -26,8 +26,6 @@ function SidebarToggle({ surface }: { surface: "sidebar" | "main" }) {
       title={`Toggle sidebar (${isMacPlatform() ? "⌘B" : "Ctrl+B"})`}
       onClick={() => {
         if (isMobile) return;
-        // The clicked control moves with the sidebar. Keep keyboard focus on
-        // its visible counterpart rather than inside the now-inert panel.
         requestAnimationFrame(() => {
           document.querySelector<HTMLButtonElement>(`[data-sidebar-toggle="${open ? "main" : "sidebar"}"]`)?.focus({ preventScroll: true });
         });
@@ -58,7 +56,6 @@ export function SidebarTitlebar({ history }: { history?: ConversationHistoryCont
   );
 }
 
-/** One search/bell pair, in the brand row or the main titlebar when hidden. */
 export function SidebarActions({ onOpenSessionSearch }: { onOpenSessionSearch?: () => void }) {
   return (
     <div data-sidebar-actions className="flex shrink-0 items-center gap-0.5 titlebar-no-drag">

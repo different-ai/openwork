@@ -20,7 +20,7 @@ async function renderCalendar(connections: WorkbotConnection[], states: Partial<
     prepare: async () => { throw new Error("Rendering must not prepare a request") },
   })
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, retryOnMount: false } } })
-  client.setQueryData(["workbot", "connections", identity.organizationId, identity.principalId], connections)
+  client.setQueryData(["workbot", "connections", identity.organizationId, identity.principalId], { connections })
   const zone = Intl.DateTimeFormat().resolvedOptions().timeZone || "UTC"
   const range = calendarRange("week", localDateOf(Date.now(), zone), zone, 1)
   for (const provider of providers) {

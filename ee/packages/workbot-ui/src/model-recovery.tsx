@@ -99,7 +99,6 @@ export function AccessRecovery({ reason, onRetry }: { reason: WorkbotAccessReaso
     const href = managementUrl(path);
     return href ? { href, label } : null;
   };
-  // No model at all: both ways to give Workbot one, each opening Den's page that rechecks permissions and billing.
   const actions = reason === "oauth_scope_missing" ? (signIn ? [{ href: signIn.toString(), label: "Review sign-in access" }] : [])
     : reason === "rate_limited" || !canManageModels ? []
       : reason === "gateway_provider_missing" ? [link("ai-gateway?tab=openwork-models", "Set up OpenWork Models"), link("ai-gateway?tab=ai-providers", "Add a model provider")]

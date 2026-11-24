@@ -21,7 +21,6 @@ export async function readModelsAnalyticsSettings(db: Db, orgId: ModelsAnalytics
   const available = org !== undefined
   const subscribed = subscription?.status === "active" || subscription?.status === "trialing"
   const modelsEnabled = record(metadata.inference).enabled === true
-  // An unknown organization does not touch the tables.
   const settings = available ? (await db.select().from(ModelsAnalyticsSettingsTable)
     .where(eq(ModelsAnalyticsSettingsTable.org_id, orgId)).limit(1))[0] : undefined
   return {
@@ -50,8 +49,6 @@ export async function appendModelsAnalyticsEvents(db: Db, input: {
     && Date.parse(event.timestamp) <= now + 60_000)
   if (!events.length) return
   await db.transaction(async (tx) => {
-    // Serialize collection with opt-out. Once disabling returns, an in-flight
-    // inference response cannot append under an older consent decision.
     const [current] = await tx.select({ enabled: ModelsAnalyticsSettingsTable.enabled, consentedAt: ModelsAnalyticsSettingsTable.consented_at })
       .from(ModelsAnalyticsSettingsTable).where(eq(ModelsAnalyticsSettingsTable.org_id, input.orgId)).limit(1).for("update")
     if (!current?.enabled || current.consentedAt?.getTime() !== consentedAt) return
@@ -73,11 +70,9 @@ function missingTable(error: unknown): boolean {
 }
 
 export async function deleteModelsAnalyticsForOrganization(tx: Pick<Db, "delete">, orgId: ModelsAnalyticsOrgId) {
-  // Lock/remove consent first so an in-flight append cannot recreate history.
   for (const table of [ModelsAnalyticsSettingsTable, ModelsAnalyticsEventTable]) {
     try { await tx.delete(table).where(eq(table.org_id, orgId)) }
     catch (error) {
-      // Existing organization deletion also works before the additive migration.
       if (!missingTable(error)) throw error
     }
   }

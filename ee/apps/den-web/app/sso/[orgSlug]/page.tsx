@@ -1,10 +1,31 @@
 "use client";
 
 import Link from "next/link";
+import { ArrowRight } from "lucide-react";
 import { DenStatusScreen } from "../../../components/den-status-screen";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useSearchParams } from "next/navigation";
 import { getSocialCallbackUrl, requestJson } from "../../(den)/_lib/den-flow";
+
+type SsoProviderOption = { providerId: string; name: string };
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+async function loadSsoProviders(orgSlug: string): Promise<{ organizationName: string; providers: SsoProviderOption[] } | null> {
+  try {
+    const { response, payload } = await requestJson(`/api/auth/sso-options?organizationSlug=${encodeURIComponent(orgSlug)}`, { method: "GET" }, 12000);
+    if (!response.ok || !isRecord(payload) || !Array.isArray(payload.providers)) return null;
+    const providers = payload.providers.flatMap((entry) => {
+      if (!isRecord(entry) || typeof entry.providerId !== "string" || typeof entry.name !== "string") return [];
+      return entry.providerId && entry.name.trim() ? [{ providerId: entry.providerId, name: entry.name.trim() }] : [];
+    });
+    return { organizationName: typeof payload.organizationName === "string" ? payload.organizationName : "", providers };
+  } catch {
+    return null;
+  }
+}
 
 export default function OrganizationSsoSignInPage() {
   const params = useParams<{ orgSlug: string }>();
@@ -12,11 +33,15 @@ export default function OrganizationSsoSignInPage() {
   const [error, setError] = useState<string | null>(null);
   const [redirectUrl, setRedirectUrl] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
+  const [choices, setChoices] = useState<{ organizationName: string; providers: SsoProviderOption[] } | null>(null);
+  const [chosenProviderId, setChosenProviderId] = useState<string | null>(null);
+  const startRequests = useRef(new Map<string, ReturnType<typeof requestJson>>());
   const orgSlug = typeof params?.orgSlug === "string" ? params.orgSlug : "";
 
   const callbackURL = useMemo(() => searchParams.get("callbackURL") || getSocialCallbackUrl(), [searchParams]);
   const errorCallbackURL = useMemo(() => searchParams.get("errorCallbackURL") || undefined, [searchParams]);
   const loginHint = useMemo(() => searchParams.get("loginHint") || undefined, [searchParams]);
+  const linkedProviderId = useMemo(() => searchParams.get("providerId") || null, [searchParams]);
 
   useEffect(() => {
     let cancelled = false;
@@ -25,19 +50,36 @@ export default function OrganizationSsoSignInPage() {
 
     void (async () => {
       try {
-        const { response, payload } = await requestJson("/api/auth/sign-in/sso", {
-          method: "POST",
-          headers: {
-            "Content-Type": "application/json",
-            Accept: "application/json",
-          },
-          body: JSON.stringify({
-            organizationSlug: orgSlug,
-            callbackURL,
-            errorCallbackURL,
-            loginHint,
-          }),
-        });
+        let providerId = linkedProviderId ?? chosenProviderId;
+        if (!providerId) {
+          const options = await loadSsoProviders(orgSlug);
+          if (cancelled) return;
+          if (options && options.providers.length > 1) {
+            setChoices(options);
+            return;
+          }
+          providerId = options?.providers[0]?.providerId ?? null;
+        }
+
+        const requestKey = JSON.stringify([orgSlug, providerId, callbackURL, errorCallbackURL, loginHint, attempt]);
+        let startRequest = startRequests.current.get(requestKey);
+        if (!startRequest) {
+          startRequest = requestJson("/api/auth/sign-in/sso", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Accept: "application/json",
+            },
+            body: JSON.stringify({
+              ...(providerId ? { providerId } : { organizationSlug: orgSlug }),
+              callbackURL,
+              errorCallbackURL,
+              loginHint,
+            }),
+          });
+          startRequests.current.set(requestKey, startRequest);
+        }
+        const { response, payload } = await startRequest;
 
         if (!response.ok) {
           throw new Error(
@@ -66,7 +108,34 @@ export default function OrganizationSsoSignInPage() {
     return () => {
       cancelled = true;
     };
-  }, [callbackURL, errorCallbackURL, loginHint, orgSlug, attempt]);
+  }, [callbackURL, errorCallbackURL, loginHint, orgSlug, attempt, linkedProviderId, chosenProviderId]);
+
+  if (choices && !chosenProviderId && !linkedProviderId) {
+    return (
+      <DenStatusScreen
+        title={choices.organizationName ? `Sign in to ${choices.organizationName}` : "Choose how to sign in"}
+        description="Choose the account you use at work."
+      >
+        <div className="mt-9 grid gap-3" data-testid="sso-provider-choices">
+          {choices.providers.map((provider) => (
+            <button
+              key={provider.providerId}
+              type="button"
+              className="den-button-primary w-full"
+              data-testid="sso-provider-choice"
+              onClick={() => setChosenProviderId(provider.providerId)}
+            >
+              {`Continue with ${provider.name}`}
+              <ArrowRight className="h-4 w-4" aria-hidden="true" />
+            </button>
+          ))}
+        </div>
+        <Link href="/" className="mt-6 inline-flex text-[13px] font-medium text-[var(--dls-text-secondary)] underline underline-offset-4 hover:text-[var(--dls-text-primary)]">
+          Back to sign in
+        </Link>
+      </DenStatusScreen>
+    );
+  }
 
   return (
     <DenStatusScreen
@@ -81,8 +150,18 @@ export default function OrganizationSsoSignInPage() {
       ) : null}
       {error ? (
         <div className="flex flex-wrap gap-3">
-          <button type="button" className="den-button-secondary mt-6" onClick={() => setAttempt((value) => value + 1)}>
-            Try again
+          <button
+            type="button"
+            className="den-button-secondary mt-6"
+            onClick={() => {
+              if (choices && chosenProviderId) {
+                setChosenProviderId(null);
+                return;
+              }
+              setAttempt((value) => value + 1);
+            }}
+          >
+            {choices && chosenProviderId ? "Choose another account" : "Try again"}
           </button>
           <Link href="/" className="mt-6 inline-flex h-10 items-center justify-center rounded-full border border-[var(--dls-border)] px-4 text-[13px] font-medium transition-colors hover:bg-[var(--dls-hover)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[var(--dls-accent)]">
             Back to sign in

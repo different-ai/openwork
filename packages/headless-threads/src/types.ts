@@ -1,18 +1,7 @@
-/**
- * The Headless Threads contract.
- *
- * A "thread" is a native OpenWork session: the same workspace, the same
- * managed OpenCode engine, the same session id, the same persisted messages
- * and tool activity the desktop UI shows. Nothing here introduces a second
- * chat engine, a second session store, or a second model gateway — the types
- * below only describe the session surface OpenWork already serves.
- */
-
 /** Model selection, in OpenWork's server casing (`providerId`/`modelId`). */
 export interface HeadlessThreadModel {
   providerId: string;
   modelId: string;
-  /** Optional engine variant, e.g. a reasoning configuration. */
   variant?: string;
 }
 
@@ -37,15 +26,10 @@ export interface HeadlessThreadMessagePart {
   tool?: string;
   callId?: string;
   toolStatus?: string;
-  /** The tool call's input, as the engine recorded it. */
   toolInput?: unknown;
-  /** The tool call's output text, once it completed. */
   toolOutput?: string;
-  /** The tool call's error text, when it failed. */
   toolError?: string;
-  /** The engine's short title for a tool call, e.g. a command's description. */
   toolTitle?: string;
-  /** When the part started and ended, epoch ms, when the engine records it. */
   startedAt?: number;
   endedAt?: number;
   synthetic?: boolean;
@@ -55,10 +39,8 @@ export interface HeadlessThreadMessagePart {
 export interface HeadlessThreadMessage {
   id: string;
   role: string;
-  /** The user message this assistant response belongs to. */
   parentId: string | null;
   createdAt: number | null;
-  /** When an assistant message finished, when the engine records it. */
   completedAt?: number | null;
   error: HeadlessThreadMessageError | null;
   usage: HeadlessThreadUsage | null;
@@ -82,38 +64,27 @@ export interface HeadlessThreadUsage {
 
 export interface CreateThreadInput {
   title: string;
-  /** Native V2 creation identity. V1 rejects this before creating a session. */
   id?: string;
-  /** Native V2 metadata, verified on the creation receipt before any prompt. */
   metadata?: Record<string, unknown>;
-  /** Optional first turn. When present the thread starts running immediately. */
   prompt?: string;
   model?: HeadlessThreadModel;
   signal?: AbortSignal;
 }
 
 export interface HeadlessThread {
-  /**
-   * The native OpenCode session id. It is the same id the OpenWork UI uses,
-   * so a headless thread can be opened in the app afterwards.
-   */
   id: string;
   workspaceId: string;
   title: string | null;
   directory: string | null;
   createdAt: number | null;
-  /** True when `createThread` was given a prompt and the engine accepted it. */
   started: boolean;
-  /** The engine that owns this thread. */
   engine?: HeadlessThreadEngine;
-  /** The model the thread was started with, when one was resolved. */
   model?: HeadlessThreadModel;
 }
 
 export interface HeadlessThreadTurnInput {
   prompt: string;
   model?: HeadlessThreadModel;
-  /** Stable message identity. V2 deduplicates admission atomically; V1 only checks history before submitting. */
   messageId?: string;
   signal?: AbortSignal;
 }
@@ -128,14 +99,12 @@ export interface HeadlessTurnAcceptance {
   acceptedAt: number;
   messageCountBefore: number;
   messageId: string | null;
-  /** True when the engine already held this exact user message. */
   alreadyPresent: boolean;
 }
 
 export interface HeadlessThreadWaitInput {
   timeoutMs: number;
   pollIntervalMs?: number;
-  /** The turn being waited on. Omit to wait on a thread's first reply. */
   since?: { messageCountBefore: number; messageId?: string | null };
   signal?: AbortSignal;
 }
@@ -147,7 +116,6 @@ export interface HeadlessThreadWaitResult {
   snapshot: HeadlessThreadSnapshot;
   waitedMs: number;
   polls: number;
-  /** True when a busy or retry status was seen while waiting. */
   observedRunning: boolean;
   terminalError: HeadlessThreadMessageError | null;
 }
@@ -163,10 +131,6 @@ export interface HeadlessThreadSnapshot {
 
 export interface HeadlessAbortResult {
   threadId: string;
-  /**
-   * The server accepted the abort request. Acceptance is not proof the run
-   * stopped — call `waitForThread` afterwards to observe the thread go idle.
-   */
   accepted: boolean;
 }
 
@@ -188,7 +152,6 @@ export type HeadlessTranscriptPart =
     callId: string | null;
     status: string | null;
     title: string | null;
-    /** As the engine recorded them; callers bound what they pass on. */
     input: unknown;
     output: string | null;
     error: string | null;
@@ -204,7 +167,6 @@ export interface HeadlessTranscriptMessage {
   text: string;
   reasoning: string;
   toolCalls: HeadlessTranscriptToolCall[];
-  /** Text, reasoning and tool steps in order. */
   parts: HeadlessTranscriptPart[];
 }
 
@@ -213,7 +175,6 @@ export interface HeadlessThreadTranscript {
   title: string | null;
   status: HeadlessThreadStatus;
   messages: HeadlessTranscriptMessage[];
-  /** Text of the last assistant message, or an empty string when there is none. */
   finalAssistantText: string;
   usage: HeadlessThreadUsage;
   terminalError: HeadlessThreadMessageError | null;
@@ -243,25 +204,19 @@ export type HeadlessThreadPending =
   | { kind: "question"; requestId: string; questions: HeadlessThreadPendingQuestion[] }
   | { kind: "permission"; requestId: string; title: string; detail: string; command?: string };
 
-/** The person's answer; a remote surface never approves "always". */
+/**
+ * The person's answer; a remote surface never approves "always". `dismiss`
+ * closes a question without answering it, as the Dismiss button in the app does.
+ */
 export type HeadlessThreadAnswer =
   | { kind: "question"; requestId: string; answers: string[][] }
-  | { kind: "permission"; requestId: string; decision: "once" | "reject" };
+  | { kind: "permission"; requestId: string; decision: "once" | "reject" }
+  | { kind: "dismiss"; requestId: string };
 
 export interface HeadlessThreadClient extends AgentSessionClient {
-  /**
-   * The pending permission or question that holds a thread, read from the
-   * engine's own request lists. Two small reads; no transcript.
-   */
   getThreadWaitingFor(threadId: string, input?: { signal?: AbortSignal }): Promise<HeadlessThreadWaitingFor>;
-  /** The request a thread waits on, a permission before a question, with what is needed to answer it. */
   getThreadPending(threadId: string, input?: { signal?: AbortSignal }): Promise<HeadlessThreadPending | null>;
-  /**
-   * Answers the thread's pending request through the engine's own reply path,
-   * after checking it is still pending and the answers fit. A request that is
-   * no longer pending fails with code `stale_request`; misfit answers with
-   * `invalid_answer`. Nothing is sent in either case.
-   */
+  getThreadPendingItems(threadId: string, input?: { signal?: AbortSignal }): Promise<HeadlessThreadPending[]>;
   answerThread(threadId: string, answer: HeadlessThreadAnswer, input?: { signal?: AbortSignal }): Promise<void>;
   waitForThread(threadId: string, input: HeadlessThreadWaitInput): Promise<HeadlessThreadWaitResult>;
   waitUntilIdle(threadId: string, input: HeadlessThreadWaitInput): Promise<HeadlessThreadWaitResult>;
@@ -279,29 +234,15 @@ export type HeadlessFetch = (
 ) => Promise<Response>;
 
 export interface HeadlessThreadClientOptions {
-  /** OpenWork server base URL, e.g. `http://127.0.0.1:8787`. */
   baseUrl: string;
   workspaceId: string;
-  /** A collaborator-scoped OpenWork client token. */
   token: string;
-  /** Host credential for server-to-server execution against the resolved Cloud runtime. */
   hostToken?: string;
-  /**
-   * Model used when a call does not name one. Without it, the client asks the
-   * server for the workspace's default model.
-   */
   defaultModel?: HeadlessThreadModel;
-  /**
-   * The engine to drive. `auto` (the default) asks the server once which
-   * engine its chats use, so headless threads land where the app reads them.
-   */
   engine?: HeadlessThreadEngine | "auto";
   requireModelAvailability?: boolean;
-  /** Default `waitForThread` poll interval. Defaults to 500ms. */
   pollIntervalMs?: number;
-  /** Bounds every individual HTTP request. Defaults to 15 seconds; use 0 to disable. */
   requestTimeoutMs?: number;
-  /** Cancels every operation issued by this client. */
   signal?: AbortSignal;
   fetch?: HeadlessFetch;
   now?: () => number;

@@ -28,9 +28,11 @@
     "@opentelemetry/sdk-node": "0.220.0",
     "@opentelemetry/sdk-trace-base": "2.9.0",
     "@opentelemetry/semantic-conventions": "1.42.0",
+    "@openwork-ee/gateway-catalog": "workspace:*",
+    "@openwork-ee/den-sso": "workspace:*",
     "@openwork-ee/telemetry-contracts": "workspace:*",
     "@openwork-ee/utils": "workspace:*",
-    "@openwork/enterprise-mcp-client": "workspace:*",
+    "@openwork/mcp-enterprise-client": "workspace:*",
     "@openwork/features": "workspace:*",
     "@openwork/types": "workspace:*",
     "@openwork/ui": "workspace:*",
@@ -39,12 +41,13 @@
     "@tanstack/react-query": "^5.96.2",
     "cmdk": "^1.1.1",
     "lucide-react": "^0.577.0",
-    "next": "16.4.1",
+    "next": "16.4.5",
     "posthog-js": "1.430.2",
     "react": "catalog:",
     "react-dom": "catalog:",
     "recharts": "3.10.1",
-    "zod": "^4.6.6"
+    "zod": "^4.6.6",
+    "zustand": "^5.0.12"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4.3.3",

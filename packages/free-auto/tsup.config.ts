@@ -10,6 +10,5 @@ export default defineConfig({
   },
   format: ["esm"],
   target: "es2022",
-  // Electron main and the desktop relay load dist/*.js at runtime; keep workspace packages external.
   external: ["@openwork/types"],
 })

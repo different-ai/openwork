@@ -1,6 +1,5 @@
 import type { SqlDriver, SqlValue } from "../sql.js"
 
-/** SQLite belongs to the actor runtime, not the runner. Writes always drain their cursors before an effect. */
 export function durableObjectSql(storage: DurableObjectStorage): SqlDriver {
   return {
     exec: (sql) => { storage.sql.exec(sql).toArray() },
@@ -13,7 +12,6 @@ export function durableObjectSql(storage: DurableObjectStorage): SqlDriver {
           cursor.toArray()
           return { changes: cursor.rowsWritten }
         },
-        // Context reads stop early. Page instead of materializing the entire history or leaving an open cursor.
         *iterate(...params: SqlValue[]) {
           const pageSize = 128
           for (let offset = 0; ; offset += pageSize) {
@@ -25,6 +23,6 @@ export function durableObjectSql(storage: DurableObjectStorage): SqlDriver {
       }
     },
     transaction: (fn) => storage.transactionSync(fn),
-    close() { /* The host owns the connection and the actor's lifetime. */ },
+    close() {},
   }
 }

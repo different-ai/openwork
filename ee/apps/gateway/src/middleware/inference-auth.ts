@@ -32,7 +32,6 @@ export function readOpenWorkKey(request: Request) {
     return value === null ? [] : [value.trim()]
   })
   if (auth !== null) candidates.push(/^Bearer\s+(\S+)$/i.exec(auth)?.[1] ?? "")
-  // Google SDK query auth carries the OpenWork key, never an upstream key.
   candidates.push(...new URL(request.url).searchParams.getAll("key"))
   if (candidates.some((value) => !value || /[\s,]/.test(value)) || new Set(candidates).size > 1) {
     throw new Error("ambiguous_api_key")

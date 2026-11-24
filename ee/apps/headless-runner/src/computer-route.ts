@@ -1,21 +1,14 @@
 import type { ComputerSide } from "./store.js"
 import type { SessionComputer } from "./types.js"
 
-/** One side's computers, with what placing a computer needs (headless-computer's Computers has both). */
 export type ComputerSideApi = SessionComputer & {
-  /** Starts the conversation's computer here and waits for it. */
   start?(sessionId: string): Promise<void>
-  /** Whether the conversation has a computer here, without starting it. */
   has?(sessionId: string): Promise<boolean>
   pauseIdle?(sessionId: string): Promise<void>
 }
 
 type Log = (message: string, detail: Record<string, unknown>) => void
 
-/**
- * Whether the sandbox gateway can make computers: a probe answered at most every `ttlMs`, and closed at once by an
- * infrastructure failure until the next probe. Each change is logged once.
- */
 export class GatewayHealth {
   private state: { up: boolean; at: number } | null = null
   private probing: Promise<boolean> | null = null
@@ -35,7 +28,6 @@ export class GatewayHealth {
     return this.probing
   }
 
-  /** An infrastructure failure from the gateway: new computers go to the runner's own provider until it recovers. */
   down(error: unknown) {
     this.record(false, error instanceof Error ? error.message : "computer failed to start")
   }
@@ -52,16 +44,6 @@ export class GatewayHealth {
   }
 }
 
-/**
- * Each conversation's computer: through the sandbox gateway when its `sandboxGateway` setting is on, else from the
- * runner's own provider. Conversations without the setting never touch the gateway.
- *
- * A gateway conversation's computer is placed when one is first needed, and where it was made is recorded
- * (`sides`): through the gateway while it is healthy, else, or when starting it there fails for want of
- * infrastructure, on the runner's own provider. The gateway's refusals (quotas, placement policy) are errors, never
- * a reason to go around it. A computer stays where it was made: one on the gateway errors while the gateway is down,
- * and one made on the runner's provider is kept until it is gone, when the next goes through the gateway again.
- */
 export function routeComputers(input: {
   direct?: ComputerSideApi
   gateway?: ComputerSideApi
@@ -79,7 +61,6 @@ export function routeComputers(input: {
   const warned = new Set<string>()
   const placing = new Map<string, Promise<ComputerSideApi>>()
 
-  /** The side now holding the conversation's computer, as recorded; undefined when no side can have one. */
   const current = (sessionId: string): ComputerSideApi | undefined => {
     if (!input.viaGateway(sessionId)) return direct
     if (!gateway) {
@@ -92,14 +73,11 @@ export function routeComputers(input: {
     return sides.get(sessionId) === "direct" && direct ? direct : gateway
   }
 
-  /** Where a call goes; `create`: the call may make the conversation's computer, so place it first. */
   const route = async (sessionId: string, create: boolean): Promise<ComputerSideApi | undefined> => {
-    // Not a gateway conversation, no gateway, or nothing to fall back to: nothing to choose.
     if (!input.viaGateway(sessionId) || !gateway || !direct) return current(sessionId)
     const recorded = sides.get(sessionId)
     if (recorded === "gateway") return gateway
     if (recorded === "direct") {
-      // An earlier fallback keeps its computer while it exists, and while the gateway is still down.
       const kept = direct.known(sessionId) || (await direct.has?.(sessionId).catch(() => true) ?? true)
       if (kept || !(await healthy())) return direct
     }
@@ -140,7 +118,6 @@ export function routeComputers(input: {
     if (!computer.desktopRun || !computer.desktopViewer || !computer.browserDemonstration || !computer.desktopAction) throw new Error("This conversation's computer has no desktop")
     return computer as Required<SessionComputer>
   }
-  // Async throughout, so a missing computer is a rejected call the runner already reports, never a thrown one.
   return {
     prompt: any.prompt,
     tools: any.tools,
@@ -148,14 +125,14 @@ export function routeComputers(input: {
     image: any.image,
     ...(any.desktopTools ? { desktopTools: any.desktopTools } : {}),
     available: (sessionId) => (input.viaGateway(sessionId) ? gateway ?? direct : direct) !== undefined,
-    desktopRun: async (sessionId, args, signal) => (await desktop(sessionId, true)).desktopRun(sessionId, args, signal),
+    desktopRun: async (sessionId, args, signal, policy) => (await desktop(sessionId, true)).desktopRun(sessionId, args, signal, policy),
     desktopViewer: async (sessionId, view) => (await desktop(sessionId, false)).desktopViewer(sessionId, view),
     browserDemonstration: async (sessionId, command) => (await desktop(sessionId, true)).browserDemonstration(sessionId, command),
     desktopAction: async (sessionId, action) => (await desktop(sessionId, false)).desktopAction(sessionId, action),
-    run: async (sessionId, name, args) => (await routed(sessionId, true)).run(sessionId, name, args),
+    run: async (sessionId, name, args, callKey) => (await routed(sessionId, true)).run(sessionId, name, args, callKey),
+    pickUp: async (sessionId, name, args, callKey) => (await (await route(sessionId, false))?.pickUp?.(sessionId, name, args, callKey)) ?? null,
     known: (sessionId) => current(sessionId)?.known(sessionId) ?? false,
     prewarm: (sessionId) => void route(sessionId, true).then((computer) => computer?.prewarm(sessionId)).catch(() => undefined),
-    // Both sides: a no-op where the conversation has no computer, and one switched away from still pauses.
     release: (sessionId) => {
       direct?.release(sessionId)
       gateway?.release(sessionId)
@@ -163,7 +140,6 @@ export function routeComputers(input: {
     pauseIdle: async (sessionId) => {
       await current(sessionId)?.pauseIdle?.(sessionId)
     },
-    // The side holding the conversation's computer must succeed; the other side is cleaned up when it can be.
     delete: async (sessionId) => {
       const own = current(sessionId)
       const other = own === direct ? gateway : direct

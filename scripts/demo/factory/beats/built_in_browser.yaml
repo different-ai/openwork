@@ -1,0 +1,20 @@
+id: built_in_browser
+title: "Open the built-in browser"
+surface: desktop
+label: REAL
+status: draft
+requires: [employee_connected]
+do:
+  - {type: manual, instruction: "Open the built-in browser and show the approved fixture page."}
+  - {type: show, seconds: 5}
+say: "This is a read-only browser example."
+paste: {}
+see: "The fixture heading loads in the built-in browser pane."
+checks:
+  - {"type": "browser_page_loaded", "url": "https://fixture.example.test/pilot-review"}
+reset: []
+fallback: Skip until verified on the rehearsal desktop; make no live claim.
+expect_seconds: 45
+questions:
+  - {question: Is this part of the verified live sequence?, answer: No. This is a rehearsal placeholder until its expected result is verified.}
+avoid: ["Skip sign-in, downloads, or site changes."]

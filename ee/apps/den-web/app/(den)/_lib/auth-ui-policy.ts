@@ -14,3 +14,7 @@ export function resolveVisibleAuthMode(input: {
     ? "sign-in"
     : input.authMode;
 }
+
+export function emailFirstStepWhenSignUpClosed<Step extends string>(step: Step, signUpClosed: boolean): Step | "password" {
+  return signUpClosed && step === "new_account" ? "password" : step;
+}

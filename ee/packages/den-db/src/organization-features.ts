@@ -1,6 +1,7 @@
 import { and, desc, eq, gte, inArray, isNull, or, sql } from "drizzle-orm"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import {
+  FEATURES,
   isFeatureKey,
   mapFeatures,
   resolveFeature,
@@ -17,16 +18,9 @@ import { AuthUserTable } from "./schema/auth"
 import { MemberTable, OrganizationTable } from "./schema/org"
 import { FeatureChangeTable, FeatureRolloutTable, FeatureUsageTable, MemberFeatureTable, OrganizationFeatureTable } from "./schema/organization-features"
 
-/**
- * Storage for feature state (on/off for everyone and kill switch per feature) and
- * per-organization overrides. The registry and resolution rules live in
- * @openwork/features; this module only reads and writes the rows. Read
- * features through here, never from organization metadata.
- */
-
 type Db = ReturnType<typeof createDenDb>["db"]
 type Tx = Parameters<Parameters<Db["transaction"]>[0]>[0]
-export type FeatureDatabase = Db | Tx
+export type FeatureDatabase = Db | Db["$primary"] | Tx
 
 export type FeatureOverrideChanges = Partial<Record<FeatureKey, boolean | null>>
 
@@ -97,12 +91,61 @@ export async function readFeatures(
   environment: FeatureEnvironment,
   options: { lock?: "share"; userId?: string } = {},
 ): Promise<FeatureMap> {
-  // Sequential on purpose: callers may pass a transaction, and a PlanetScale
-  // transaction is one session that fails when two queries are in flight.
   const rollouts = await readFeatureRollouts(database)
   const overrides = organizationId ? await readOrganizationFeatureOverrides(database, organizationId, options) : {}
   const memberOverrides = organizationId && options.userId ? await readMemberFeatureOverrides(database, organizationId, options.userId, options) : {}
   return resolveFeatures({ ...environment, rollouts, overrides, memberOverrides })
+}
+
+/**
+ * Whether free models need a signed desktop session: cross-organization
+ * budgets count usage per desktop, so they need it for every member, and
+ * desktop-only free models need it for everyone. Pass null for `organization`
+ * when the caller is signed out. The gateway enforces this rule; hosted
+ * callers check it so they never choose a free model the gateway refuses.
+ */
+export function freeAutoDesktopProofRequiredBy(deployment: FeatureMap, organization: FeatureMap | null): boolean {
+  if (organization && deployment.freeAutoCrossOrgBudgets) return true
+  return (organization ?? deployment).desktopOnlyFreeAuto
+}
+
+export async function freeAutoDesktopProofRequired(
+  database: FeatureDatabase,
+  organizationId: string | null,
+  environment: FeatureEnvironment,
+): Promise<boolean> {
+  const deployment = await readFeatures(database, null, environment)
+  return freeAutoDesktopProofRequiredBy(deployment, organizationId ? await readFeatures(database, organizationId, environment) : null)
+}
+
+/**
+ * A single feature held stable for a mutation. Materializing its default row
+ * gives a concurrent first kill switch an actual row to serialize against,
+ * including on databases without gap locks. Existing rollout values are never
+ * changed. Only mutation callers opt in; ordinary feature reads stay read-only.
+ */
+export async function lockFeatureForMutation(
+  database: Tx,
+  organizationId: string,
+  userId: string,
+  key: FeatureKey,
+  environment: FeatureEnvironment,
+): Promise<boolean> {
+  await database.select({ id: OrganizationTable.id }).from(OrganizationTable)
+    .where(eq(OrganizationTable.id, normalizeDenTypeId("organization", organizationId))).for("share")
+  await database.select({ id: MemberTable.id }).from(MemberTable).where(and(
+    eq(MemberTable.organizationId, normalizeDenTypeId("organization", organizationId)),
+    eq(MemberTable.userId, normalizeDenTypeId("user", userId)),
+    isNull(MemberTable.removedAt),
+  )).for("update")
+  await database.insert(FeatureRolloutTable)
+    .values({ feature_key: key, enabled: FEATURES[key].default, killed: false })
+    .onDuplicateKeyUpdate({ set: { feature_key: key } })
+  const [rollout] = await database.select().from(FeatureRolloutTable)
+    .where(eq(FeatureRolloutTable.feature_key, key)).for("share")
+  const overrides = await readOrganizationFeatureOverrides(database, organizationId, { lock: "share" })
+  const memberOverrides = await readMemberFeatureOverrides(database, organizationId, userId, { lock: "share" })
+  return resolveFeature(key, { ...environment, rollouts: { [key]: rollout }, overrides, memberOverrides }).enabled
 }
 
 /** Effective state with its source, for /admin. */
@@ -145,7 +188,6 @@ export type FeatureChange = {
   scope: FeatureChangeScope
   action: FeatureChangeAction
   at: Date
-  /** Null when the change was made without a signed-in person (e.g. a deploy-time script) or the user was deleted. */
   by: { id: string; name: string; email: string } | null
 }
 
@@ -158,7 +200,6 @@ type FeatureChangeInput = {
   changedByUserId: string | null
 }
 
-/** Appends to the feature history. Call inside the transaction that made the change. */
 async function recordFeatureChanges(database: FeatureDatabase, changes: FeatureChangeInput[]): Promise<void> {
   if (changes.length === 0) return
   await database.insert(FeatureChangeTable).values(changes.map((change) => ({
@@ -171,7 +212,6 @@ async function recordFeatureChanges(database: FeatureDatabase, changes: FeatureC
   })))
 }
 
-/** What a stored override change does to the history: nothing when the value is the same. */
 function overrideChangeAction(previous: boolean | undefined, next: boolean | null): FeatureChangeAction | null {
   if (next === null) return previous === undefined ? null : "reset"
   return previous === next ? null : next ? "on" : "off"
@@ -187,7 +227,6 @@ function latestPerFeature(rows: Array<{
   user_email: string | null
 }>): Partial<Record<FeatureKey, FeatureChange>> {
   const latest: Partial<Record<FeatureKey, FeatureChange>> = {}
-  // Rows arrive newest first: the first one per key wins.
   for (const row of rows) {
     if (!isFeatureKey(row.feature_key) || latest[row.feature_key]) continue
     latest[row.feature_key] = {
@@ -300,7 +339,6 @@ export async function setOrganizationFeatureOverrides(
 
     const overrides = await readOrganizationFeatureOverrides(tx, organizationId)
     const metadata = parseMetadata(organization.metadata)
-    // The previous release also honored these flat aliases for Connect.
     delete metadata.connectEnabled
     delete metadata.mcpConnectionsEnabled
     if (Object.keys(overrides).length > 0) metadata.capabilities = { ...overrides }
@@ -404,7 +442,6 @@ export async function recordFeatureUsage(database: FeatureDatabase, input: {
       first_used_at: at, last_used_at: at, last_used_day: day, days_used: 1,
     })))
     .onDuplicateKeyUpdate({ set: {
-      // days_used reads the old last_used_day: the column is declared first, and drizzle assigns in column order.
       days_used: sql`${FeatureUsageTable.days_used} + if(${FeatureUsageTable.last_used_day} < values(${FeatureUsageTable.last_used_day}), 1, 0)`,
       last_used_day: sql`greatest(${FeatureUsageTable.last_used_day}, values(${FeatureUsageTable.last_used_day}))`,
       last_used_at: sql`greatest(${FeatureUsageTable.last_used_at}, values(${FeatureUsageTable.last_used_at}))`,

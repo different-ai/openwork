@@ -7,21 +7,12 @@ import { parseRecord } from "./capability-call"
 import { codeModeToolCalls } from "./code-mode-tools"
 import { isToolPartInFlight } from "./tool-activity"
 
-/**
- * A skill the agent created (or saved a new version of) in this conversation,
- * as confirmed by OpenWork Cloud's structured tool results. Prose never
- * creates, shares or names one: only a validated result does.
- */
-
 export type SkillRecipient = {
   kind: "person" | "team" | "organization"
-  /** Grant target id; never shown. */
   id: string | null
-  /** Display name from a structured directory result in this conversation. */
   name: string | null
 }
 
-/** Access the results confirmed. `unknown` is an updated skill whose grants this chat never saw. */
 export type ConfirmedSkillAccess =
   | { kind: "private" }
   | { kind: "unknown" }
@@ -29,7 +20,6 @@ export type ConfirmedSkillAccess =
 
 export type PendingSkillShare =
   | { state: "running"; recipient: SkillRecipient }
-  /** The share was sent but its outcome is not known (connection lost, run interrupted). */
   | { state: "unverified"; recipient: SkillRecipient }
   | { state: "failed"; recipient: SkillRecipient; reason: SkillShareFailureReason }
 
@@ -44,19 +34,15 @@ export type CreatedSkillCard =
     mode: "created" | "updated"
     access: ConfirmedSkillAccess
     pending: PendingSkillShare | null
-    /** Top-level tool call the card is placed after; the first one that produced it. */
     anchorToolCallId: string
   }
-  /** A save that finished while its run is live, before its details arrived. */
   | { kind: "loading"; key: string; anchorToolCallId: string }
 
-/** Row labels for share steps, which need names only the conversation knows. */
 export type SkillShareLabel = { skillName: string | null; recipientName: string | null }
 
 export type CreatedSkillsModel = {
   cards: CreatedSkillCard[]
   shareLabels: ReadonlyMap<string, SkillShareLabel>
-  /** Tool calls that saved a skill, keyed by call id, with the saved name. */
   savedNames: ReadonlyMap<string, string>
 }
 
@@ -76,11 +62,6 @@ function contentRecord(content: unknown): Record<string, unknown> | null {
   return parseRecord(content.flatMap((item) => isRecord(item) && typeof item.text === "string" ? [item.text] : []).join(""))
 }
 
-/**
- * Every structured form a call's result can arrive in: the MCP result the
- * engine preserved, a Code Mode capture (`structuredContent`, content blocks
- * or the object itself), or a JSON string.
- */
 function structuredResults(call: DynamicToolUIPart): Record<string, unknown>[] {
   if (call.state !== "output-available") return []
   const found: Record<string, unknown>[] = []
@@ -106,7 +87,6 @@ function structuredResults(call: DynamicToolUIPart): Record<string, unknown>[] {
   return found
 }
 
-/** The validated saved-skill payload a call returned, if any. */
 export function savedSkillPayload(call: DynamicToolUIPart): SkillCreatedPayload | null {
   for (const record of structuredResults(call)) {
     const parsed = skillCreatedPayloadSchema.safeParse(record)
@@ -128,7 +108,6 @@ function capabilityInput(call: DynamicToolUIPart): { name: string; path: Record<
   }
 }
 
-/** A request to grant access to a plugin: who, and for which plugin. */
 export function skillShareRequest(call: DynamicToolUIPart): { pluginId: string; recipient: SkillRecipient } | null {
   const capability = capabilityInput(call)
   if (!capability || !/(?:^|:)postPluginsAccess$/.test(capability.name)) return null
@@ -151,7 +130,6 @@ function failureRecord(call: DynamicToolUIPart): Record<string, unknown> | null 
   return null
 }
 
-/** Why a share did not happen, from the result's error code, never its prose. */
 export function skillShareFailureReason(call: DynamicToolUIPart): SkillShareFailureReason | null {
   const preserved = call.callProviderMetadata?.openwork?.mcpResult
   const failed = call.state === "output-error" || (call.state === "output-available" && isRecord(preserved) && preserved.isError === true)
@@ -170,7 +148,6 @@ function directoryNames(call: DynamicToolUIPart, names: Map<string, string>) {
   if (!capability || !/(?:^|:)getOrg$/.test(capability.name)) return
   for (const record of structuredResults(call)) {
     const directory = parseDenLibraryOrgDirectory(record)
-    // The parser falls back to the member id; an id is never a name.
     for (const member of directory.members) if (member.name !== member.id) names.set(member.id, member.name)
     for (const team of directory.teams) names.set(team.id, team.name)
   }
@@ -180,24 +157,16 @@ function sameRecipient(left: SkillRecipient, right: SkillRecipient) {
   return left.kind === right.kind && left.id === right.id
 }
 
-/** Calls a part made: a script's own calls with results, or the part itself. */
 function callsOf(part: DynamicToolUIPart): DynamicToolUIPart[] {
   const calls = codeModeToolCalls(part)
   if (!calls) return [part]
   const only = calls.length === 1 ? calls[0] : undefined
-  // A one-call script that kept no result of its own returned that call's result.
   if (only && only.state === "output-available" && only.output === undefined && part.state === "output-available") {
     return [{ ...only, output: part.output }]
   }
   return calls
 }
 
-/**
- * Every created skill in the conversation, in order, one card per skill:
- * later updates and shares change that card instead of adding another.
- * `live` says whether the run is still active; an unanswered share in a run
- * that is no longer live is unverified, never assumed to have succeeded.
- */
 export function collectCreatedSkills(messages: readonly UIMessage[], options: { live: boolean }): CreatedSkillsModel {
   const skills = new Map<string, Extract<CreatedSkillCard, { kind: "ready" }>>()
   const order: string[] = []
@@ -224,7 +193,6 @@ export function collectCreatedSkills(messages: readonly UIMessage[], options: { 
             const mode = payload.mode ?? "created"
             skills.set(payload.skillId, {
               kind: "ready", skillId: payload.skillId, pluginId: payload.pluginId, name: payload.name, mode,
-              // create_skill always makes a private skill; an update leaves grants as they were.
               access: mode === "created" ? { kind: "private" } : { kind: "unknown" },
               pending: null, anchorToolCallId: part.toolCallId,
             })
@@ -254,7 +222,6 @@ export function collectCreatedSkills(messages: readonly UIMessage[], options: { 
         const confirmed = grant && (share.recipient.kind === "person" ? grant.orgMembershipId === share.recipient.id
           : share.recipient.kind === "team" ? grant.teamId === share.recipient.id : grant.orgWide)
         if (!confirmed) {
-          // A result that does not confirm the grant is not a share.
           skill.pending = { state: "unverified", recipient: share.recipient }
           continue
         }
@@ -275,7 +242,6 @@ export function collectCreatedSkills(messages: readonly UIMessage[], options: { 
       pending: skill.pending ? { ...skill.pending, recipient: named(skill.pending.recipient) } : null,
     }]
   })
-  // A save whose details are still loading disappears once they arrive.
   for (const entry of loading) if (!savedNames.has(entry.key)) cards.push(entry)
 
   const shareLabels = new Map<string, SkillShareLabel>()
@@ -286,7 +252,6 @@ export function collectCreatedSkills(messages: readonly UIMessage[], options: { 
   return { cards, shareLabels, savedNames }
 }
 
-/** "Sam Taylor" → "Sam"; generic labels when no name was confirmed. */
 export function shortRecipientName(recipient: SkillRecipient): string | null {
   if (recipient.kind === "organization") return "your organization"
   if (!recipient.name) return null
@@ -312,7 +277,6 @@ function confirmedLabel(access: ConfirmedSkillAccess): string | null {
   return null
 }
 
-/** The card's one state line: what is confirmed, or what is still in progress. */
 export function createdSkillAccessLabel(card: Extract<CreatedSkillCard, { kind: "ready" }>): string {
   const confirmed = confirmedLabel(card.access)
   if (card.pending?.state === "running") {
@@ -325,7 +289,6 @@ export function createdSkillAccessLabel(card: Extract<CreatedSkillCard, { kind: 
   return confirmed ?? (card.mode === "updated" ? "New version saved" : "Only you")
 }
 
-/** Present/past names for a call that saved a skill, from its input or its validated result. */
 export function savedSkillSentence(call: DynamicToolUIPart): { present: string; past: string; failure: string } | null {
   if (!SAVE_SKILL_TOOL.test(call.toolName)) return null
   const updating = call.toolName.endsWith("update_skill")
@@ -340,19 +303,16 @@ export function savedSkillSentence(call: DynamicToolUIPart): { present: string; 
     : { present: `Creating ${target}`, past: payload ? `Created ${target}` : "Created a skill", failure: `Couldn't create ${target}` }
 }
 
-/** "Shared Update CRM with Sam": the skill and recipient come from this conversation's results. */
 export function skillShareSentence(label: SkillShareLabel | null): { present: string; past: string; failure: string } {
   const skill = label?.skillName ?? "the skill"
   const to = label?.recipientName ? ` with ${label.recipientName}` : ""
   return { present: `Sharing ${skill}${to}…`, past: `Shared ${skill}${to}`, failure: `Couldn't share ${skill}` }
 }
 
-/** OpenWork's own skill tools are first-party: they carry the OpenWork mark. */
 export function isOpenWorkSkillCall(call: DynamicToolUIPart): boolean {
   return OPENWORK_TOOL.test(call.toolName) && (SAVE_SKILL_TOOL.test(call.toolName) || skillShareRequest(call) !== null)
 }
 
-/** The Library detail that opens this skill: the same id Library rows use for a plugin's file. */
 export function createdSkillLibraryDetailId(card: { pluginId: string; skillId: string }): string {
   return `plugin:${card.pluginId}/file/${card.skillId}`
 }

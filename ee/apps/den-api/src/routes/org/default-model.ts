@@ -56,7 +56,6 @@ async function save(c: SaveContext, input: { teamId: DenTypeId<"team"> | null; m
   try {
     await write()
   } catch (error) {
-    // A concurrent first save of the same scope created the row; replace it.
     if (!isDuplicateEntry(error)) throw error
     await write()
   }
@@ -72,11 +71,6 @@ const writeResponses = {
   503: jsonResponse("The model's provider could not be read to check the model.", sourceUnavailableSchema),
 }
 
-/**
- * The model new desktop chats start with (OpenCode v2 engine only): one
- * organization default and an optional override per team,
- * available to every organization.
- */
 export function registerOrgDefaultModelRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get(
     "/v1/org/default-model",

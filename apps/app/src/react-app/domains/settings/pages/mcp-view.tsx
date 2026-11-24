@@ -25,6 +25,7 @@ import {
 } from "lucide-react";
 
 import { desktopRestrictionNotice } from "../../../../app/cloud/desktop-app-restrictions";
+import { OpencodeConnectionsImport, type OpencodeConnectionsImportSource } from "../../connections/opencode-connections-import";
 import { isBuiltInOpenWorkExtension, getMcpServerName, type McpDirectoryInfo } from "../../../../app/constants";
 import { evaluateEnablement } from "../../../../app/enablement";
 import type { EnablementResult } from "../../../../app/extensions";
@@ -63,8 +64,7 @@ import {
   revealDesktopItemInDir,
   type OpencodeConfigFile,
 } from "../../../../app/lib/desktop";
-import { markFeatureUsed, readDenSettings, type DenExternalMcpPreset } from "../../../../app/lib/den";
-import { useOrgFeature } from "@/react-app/domains/cloud/use-org-feature";
+import { readDenSettings, type DenExternalMcpPreset } from "../../../../app/lib/den";
 import { providerSetupProblem } from "../../connections/connection-sign-in-problem";
 import type { OrgMcpConnectOptions } from "../../connections/use-org-mcp-connections";
 import { denConnectorSetupUrl } from "../../../../app/lib/den-dashboard-links";
@@ -182,27 +182,17 @@ const getSkillHiddenId = (skill: SkillItem) => `skill:${skill.name}`;
 export type McpViewProps = {
   busy: boolean;
   selectedWorkspaceRoot: string;
-  /** Installed skills to render alongside MCPs in the grid. */
   installedSkills?: SkillItem[];
-  /** Composer slash commands to render in Library. */
   installedCommands?: LibraryCommandItem[];
-  /** Composer agents to render in Library. */
   installedAgents?: LibraryAgentItem[];
-  /** MCP capabilities assigned through OpenWork Connect. */
   availableConnectMcpServers?: McpServerEntry[];
   availableConnectMcpStatuses?: McpStatusMap;
-  /** Organization inventory is still being fetched and nothing is cached yet. */
   inventoryLoading?: boolean;
   inventoryError?: string | null;
-  /** Installed organization extensions to render alongside runtime extensions. */
   installedPlugins?: CloudImportedPlugin[];
-  /** Uninstall a skill by name. */
   uninstallSkill?: (name: string) => void;
-  /** Remove a legacy local copy of an organization plugin by plugin id. */
   removeCloudPlugin?: (pluginId: string) => void | Promise<unknown>;
-  /** Whether this workspace still holds a legacy local copy of the plugin. */
   hasLocalPluginCopy?: (pluginId: string) => boolean;
-  /** Read skill content by name. */
   readSkill?: (name: string) => Promise<{ content: string } | null>;
   readConfigFile?: (scope: "project" | "global") => Promise<OpencodeConfigFile | null>;
   mcpServers: McpServerEntry[];
@@ -210,9 +200,7 @@ export type McpViewProps = {
   mcpLastUpdatedAt: number | null;
   mcpStatuses: McpStatusMap;
   mcpConnectingName: string | null;
-  /** False when secure storage for OpenWork-managed sign-ins is unavailable on this device. */
   managedOAuthAvailable?: boolean;
-  /** Organization policy permission for local extension configuration. */
   allowManageExtensions: boolean;
   quickConnect: McpDirectoryInfo[];
   connectMcp: (entry: McpDirectoryInfo) => Promise<McpConnectResult>;
@@ -220,21 +208,11 @@ export type McpViewProps = {
   logoutMcpAuth: (name: string) => Promise<void> | void;
   removeMcp: (name: string) => void;
   setMcpEnabled?: (name: string, enabled: boolean) => Promise<void> | void;
-  /** Return extension-specific config UI for the detail modal. */
   configSlotForEntry?: (entry: McpDirectoryInfo) => React.ReactNode | null;
-  /** Check if an extension-kind entry is connected/active. */
   isExtensionConnected?: (entry: McpDirectoryInfo) => boolean;
-  /** Enablement context for evaluating extension active state. */
   enablementContext?: import("../../../../app/enablement").EnablementContext;
-  /** Organization policy restriction for OpenWork-provided built-in extensions. */
   builtInExtensionsDisabled?: boolean;
-  /** Connected org-level External MCP Connections rendered in My Extensions. */
   orgMcpItems?: ExtensionItem[];
-  /**
-   * The signed-in member's own active organization (`cloudSession.activeOrgName`),
-   * shown only to that member so provenance and sign-in captions can say whose
-   * organization shared an item. It is never an outside party's identity.
-   */
   organizationName?: string | null;
   orgMcpError?: string | null;
   orgMcpConnectingId?: string | null;
@@ -246,22 +224,18 @@ export type McpViewProps = {
   onFilterChange?: (filter: ExtensionInventoryFilter) => void;
   initialState?: ExtensionInventoryState;
   onStateChange?: (state: ExtensionInventoryState, filter: ExtensionInventoryFilter) => void;
-  /** Stable extension detail id from `/extensions/:id`. */
   detailId?: string | null;
-  /** Navigate when detail opens/closes. When set, detail renders as a page. */
   onDetailIdChange?: (id: string | null, filter?: ExtensionInventoryFilter) => void;
-  /** Create a workspace skill, command, or agent from Library. */
   createLibraryItem?: (
     kind: LibraryAuthorableKind,
     input: CreateLibraryItemInput,
   ) => Promise<string>;
-  /** Reload composer command and agent lists after a Library create. */
   onLibraryListsRefresh?: () => Promise<void> | void;
   onRefresh?: () => void;
   headerActionsTarget?: HTMLDivElement | null;
-  /** OpenCode plugin management, shown under the Plugins category. */
   pluginsContent?: ReactNode;
   onOpenCloudAccount?: () => void;
+  opencodeImport?: OpencodeConnectionsImportSource;
 };
 
 const builtInExtensionDisabledReason = () => t("extensions.disabled_by_organization");
@@ -403,7 +377,6 @@ function resolveExtensionDetailTarget(
   return entry ? { kind: "entry", entry } : null;
 }
 
-/** Which Library page is showing; the list is home and every other page returns to it. */
 type LibraryScreen =
   | { kind: "list" }
   | { kind: "create"; addKind: LibraryAuthorableKind }
@@ -528,7 +501,6 @@ export function McpView(props: McpViewProps) {
   const libraryCloudSignedIn = cloudSession.isSignedIn
     || (Boolean(cloudSession.authToken.trim()) && denAuth.isSignedIn);
   const activeOrganizationId = cloudSession.activeOrganization?.id.trim() ?? "";
-  // The connector catalog rarely changes; keep it across visits so the Add dialog shows its logos at once.
   const connectorPresetsQuery = useQuery({
     queryKey: ["library-connector-presets", cloudSession.baseUrl, activeOrganizationId],
     enabled: libraryCloudSignedIn && Boolean(activeOrganizationId),
@@ -539,8 +511,6 @@ export function McpView(props: McpViewProps) {
     () => (libraryCloudSignedIn && activeOrganizationId ? connectorPresetsQuery.data ?? [] : []),
     [activeOrganizationId, connectorPresetsQuery.data, libraryCloudSignedIn],
   );
-  // Persisted Cloud settings reconstruct the organization with a member role.
-  // Use the verified member's current role, not that restoration placeholder.
   const identity = denAuth.verifiedIdentity;
   const organizationRole = useQuery({
     queryKey: ["library-organization-role", cloudSession.baseUrl, identity?.principalId, identity?.organizationId],
@@ -550,7 +520,6 @@ export function McpView(props: McpViewProps) {
       return result.orgs.find((org) => org.id === identity?.organizationId)?.role ?? null;
     },
   });
-  // Per row, so one slow service never blocks checking the others.
   const [checkingConnections, setCheckingConnections] = useState<ReadonlySet<string>>(new Set());
   async function checkAgain(connectionId: string) {
     setCheckingConnections((current) => new Set([...current, connectionId]));
@@ -559,7 +528,6 @@ export function McpView(props: McpViewProps) {
     } catch {
       toast.error("Could not check this connection. Try again.");
     } finally {
-      // A failed request may still have recorded a result; always show what is stored.
       props.onRefresh?.();
       setCheckingConnections((current) => new Set([...current].filter((id) => id !== connectionId)));
     }
@@ -570,7 +538,6 @@ export function McpView(props: McpViewProps) {
   const canManageCloudConnections = denAuth.isSignedIn
     && identity?.organizationId === activeOrganizationId
     && isConnectAdminRole(organizationRole.data);
-  const personalConnectorsEnabled = useOrgFeature("desktopPersonalConnectors");
   const connectorCues = useMemo(() => libraryConnectorCues(connectorPresets), [connectorPresets]);
   const libraryAddOptions = {
     cloudSignedIn: libraryCloudSignedIn && Boolean(activeOrganizationId) && denAuth.status !== "unavailable",
@@ -591,7 +558,6 @@ export function McpView(props: McpViewProps) {
           : undefined;
   const addDisabledReason = cloudIssue ?? (!props.createLibraryItem ? t("extensions.cloud_unavailable") : undefined);
   const signedOut = !libraryCloudSignedIn && denAuth.status !== "checking";
-  // Signed out, every add kind needs Cloud: the sign-in banner carries the action instead.
   const addControl = signedOut ? null : (
     <LibraryAddControl
       kinds={libraryAddKindsForFilter("all")}
@@ -644,7 +610,6 @@ export function McpView(props: McpViewProps) {
     setScreen({ kind: "create", addKind: action.kind });
   };
 
-  /** A new item opens on its own page, the way it would from its row; Back returns to the list. */
   const finishCreate = (pluginId: string, created: { name: string; description: string; connector?: boolean }) => {
     setScreen({ kind: "list" });
     setFilter("all");
@@ -659,7 +624,6 @@ export function McpView(props: McpViewProps) {
     });
   };
 
-  /** OAuth connectors finish in the provider's own window, as they do in Den. */
   const reportSignInFailure = (cause: unknown) => {
     toast.error(cause instanceof Error && cause.message.trim() ? cause.message : t("common.something_went_wrong"));
   };
@@ -686,9 +650,8 @@ export function McpView(props: McpViewProps) {
     return props.createLibraryItem(kind, input);
   };
 
-  const addsPersonalConnection = libraryAddOptions.cloudSignedIn && !canManageCloudConnections && personalConnectorsEnabled;
+  const addsPersonalConnection = libraryAddOptions.cloudSignedIn && !canManageCloudConnections;
 
-  /** A member's own connector, as My Library adds it on the web; it opens sign-in straight away. */
   const createPersonalConnection = async (input: CreateLibraryItemInput) => {
     const authType = input.connection?.authType === "none" ? "none" : "oauth";
     const name = input.name.trim();
@@ -697,12 +660,10 @@ export function McpView(props: McpViewProps) {
       url: input.instructions.trim(),
       authType,
     });
-    markFeatureUsed("desktopPersonalConnectors");
     setScreen({ kind: "list" });
     setFilter("all");
     refreshLibrary();
     toast.success(t("extensions.toast_added_title"), { description: t("extensions.toast_added_detail") });
-    // The connections hook opens sign-in and keeps checking until Den has it, so the row turns Ready.
     if (authType === "oauth") {
       if (props.connectOrgMcp) props.connectOrgMcp(connectionId);
       else startConnectionSignIn(connectionId);
@@ -916,7 +877,6 @@ export function McpView(props: McpViewProps) {
   };
 
   useEffect(() => {
-    // Detail routes do not carry a category. Keep the category the person opened.
     if (props.detailId) return;
     setFilter(primaryLibraryFilter(props.initialFilter));
   }, [props.initialFilter, props.detailId]);
@@ -957,7 +917,6 @@ export function McpView(props: McpViewProps) {
     orgMcpItems,
   ]);
 
-  // A new connector opens on its plugin page at once, then moves to its connection page, where sign-in lives, once that loads.
   useEffect(() => {
     if (!landingConnector) return;
     const elsewhere = activeTarget !== null && !(activeTarget.kind === "plugin" && activeTarget.plugin.pluginId === landingConnector.pluginId);
@@ -1102,17 +1061,12 @@ export function McpView(props: McpViewProps) {
   const isQuickConnectConfigured = (entry: McpDirectoryInfo) =>
     props.mcpServers.some((server) => server.name === getMcpIdentityKey(entry));
 
-  // Servers written into this workspace's config appear under MCPs as local
-  // items. Projected Cloud connections have their own account controls, and
-  // OpenWork's own runtimes are app functionality rather than MCPs to browse.
   const localServers = props.mcpServers.filter((entry) => {
     if (isConnectDirectMcpServerName(entry.name)) return false;
     const match = resolveQuickConnectMatch(entry.name);
     return !match || isLibraryMcpDirectoryEntry(match);
   });
 
-  // A directory entry that is already configured is represented by its local
-  // server card, so the catalog only offers what is not set up yet.
   const libraryDirectoryEntries = quickConnectList.filter((entry) =>
     isLibraryMcpDirectoryEntry(entry) && !isQuickConnectConfigured(entry));
 
@@ -1131,16 +1085,11 @@ export function McpView(props: McpViewProps) {
     if (props.builtInExtensionsDisabled && isBuiltInOpenWorkExtension(entry)) return false;
     const result = enablementForEntry(entry);
     if (result) return result.active;
-    // Fallback for entries without enablement context.
     if (isToggleOnlyExtension(entry)) return isOpenWorkExtensionEnabled(entry);
     if (entry.kind === "extension" && !isMcpBackedExtension(entry)) return props.isExtensionConnected?.(entry) ?? false;
     return isQuickConnectConfigured(entry);
   };
 
-  // Built-in OpenWork extensions answer to `allowBuiltInExtensions`; every
-  // other directory entry is a local install governed by
-  // `allowManageExtensions`. Entries the member already installed stay usable
-  // but can no longer be managed.
   const builtInDisabledReasonForEntry = (entry: McpDirectoryInfo) =>
     props.builtInExtensionsDisabled && isBuiltInOpenWorkExtension(entry)
       ? builtInExtensionDisabledReason()
@@ -1224,8 +1173,6 @@ export function McpView(props: McpViewProps) {
     ? activeTarget.plugin
     : activeTarget && detailParent?.childId === extensionDetailIdForTarget(activeTarget)
       ? detailParent.plugin
-      // Direct links/reloads have no click history. Use the structural parent
-      // only when it is unambiguous; never pick between two containing plugins.
       : matchingParentPlugins.length === 1 ? matchingParentPlugins[0] : null;
   const detailCategory = filter !== "all" ? filter
     : detailSkill || detailCommand || detailAgent ? "skill"
@@ -1664,7 +1611,6 @@ export function McpView(props: McpViewProps) {
   const currentMemberId = libraryDirectory?.currentMemberId ?? null;
   const ownedPluginNames = new Set(ownedPlugins.map((plugin) => plugin.name.toLowerCase()));
   const pluginRowNames = new Set([...ownedPluginNames, ...installedPlugins.map((plugin) => plugin.name.toLowerCase())]);
-  // Connections the member made arrive with their connector plugin; list them once, under Added by you.
   const myConnectionIds = new Set(cloudConnections
     .filter((item) => ownedPluginNames.has(connectionPluginName(item.name))
       || item.edges.some((edge) => edge.kind === "mine" || (edge.kind === "person" && edge.sharedById === currentMemberId)))
@@ -1685,7 +1631,6 @@ export function McpView(props: McpViewProps) {
     ...cloudConnections.map((item) => item.url),
     ...orgMcpItems.flatMap((item) => (item.orgMcpConnection ? [item.orgMcpConnection.url] : [])),
   ]);
-  // The organization already has these; each person signs in to their own account from the catalog too.
   const connectorSignInsByUrl = new Map<string, LibraryConnectorCatalogSignIn>();
   for (const item of orgMcpItems.filter(isOrgMcpConnectionItem)) {
     const connection = item.orgMcpConnection;
@@ -1867,7 +1812,6 @@ export function McpView(props: McpViewProps) {
   for (const plugin of installedPlugins) {
     if (libraryCloud.ownedPluginIds.has(plugin.pluginId)) continue;
     const cloudItem = libraryCloud.pluginById.get(plugin.pluginId);
-    // A local copy outlives a delete or lost access until the next sync; the cloud list decides.
     if (libraryCloud.ready && !cloudItem) continue;
     const taxonomy = (cloudItem
       ? libraryCloudItemTaxonomy(cloudItem.componentKinds, cloudItem.componentCount)
@@ -1903,7 +1847,6 @@ export function McpView(props: McpViewProps) {
     const recordedView = { checking: checkingConnections.has(connection.id) };
     const recordedState = recordedConnectorState(connection, recordedView);
     const personalSignIn = recordedState === "Sign in" && connection.credentialMode === "per_member";
-    // A setting in the service's app blocks sign-in: link to it when Den gave a safe link, otherwise offer to try again.
     const providerSettings = recordedState === "Change setting" ? providerSetupProblem(connection)?.settings ?? null : null;
     const retryAfterSetting = recordedState === "Change setting" && !providerSettings && connection.credentialMode === "per_member";
     if (!recordedState && (myConnectionIds.has(connection.id) || ownedPluginNames.has(connectionPluginName(item.name)))) continue;
@@ -2120,6 +2063,18 @@ export function McpView(props: McpViewProps) {
         </div>
       )}
 
+      {props.opencodeImport && props.allowManageExtensions ? (
+        <OpencodeConnectionsImport
+          source={props.opencodeImport}
+          stateOf={(name) => {
+            const server = props.mcpServers.find((entry) => entry.name === name);
+            if (!server) return null;
+            const status = resolveStatus(server);
+            return { label: friendlyStatus(status), ready: status === "connected" };
+          }}
+        />
+      ) : null}
+
       <div className="mb-5 flex flex-wrap items-center gap-1.5" aria-label={t("extensions.filters_label")}>
         {extensionInventoryFilters.map((f) => {
           const selected = filter === f;
@@ -2279,7 +2234,6 @@ export function connectMcpInventoryGroup(entry: McpServerEntry, statuses: McpSta
   return "available";
 }
 
-/** A workspace server's live engine status decides whether its row says Ready or Sign in. */
 export function localServerInventoryGroup(status: ReactMcpStatus): ExtensionInventoryGroup {
   switch (status) {
     case "connected":
@@ -2303,13 +2257,11 @@ export function localServerSourceLabel(entry: McpServerEntry) {
   return entry.source === "config.global" ? t("extensions.local_this_device") : t("extensions.local_this_workspace");
 }
 
-/** Den names a connection a plugin brings "<plugin> / <server>". */
 export function connectionPluginName(connectionName: string) {
   const separator = connectionName.lastIndexOf(" / ");
   return (separator > 0 ? connectionName.slice(0, separator) : connectionName).trim().toLowerCase();
 }
 
-/** The chip and button a row shows when it is not ready yet. */
 export function libraryRowAttention(group: ExtensionInventoryGroup): {
   statusChip?: { label: string; tone: "attention" | "setup" };
   actionLabel?: string;
@@ -2323,7 +2275,6 @@ export function libraryRowAttention(group: ExtensionInventoryGroup): {
   return {};
 }
 
-/** Progress and success notes from the MCP store are information, not alerts. */
 export function libraryStatusTone(message: string | null): "info" | "warning" {
   return message === t("mcp.reloading_status") || message === t("mcp.connected") ? "info" : "warning";
 }
@@ -2401,13 +2352,11 @@ export function LibraryEmptyState(props: {
   );
 }
 
-/** One Library row: where it sits, what kind it reads as, and what it renders. */
 export type LibraryRow = {
   key: string;
   section: LibrarySection;
   taxonomy: ExtensionTaxonomy;
   searchText: string;
-  /** Waits on the member's own sign-in; the "Needs sign-in" filter keeps only these. */
   needsSignIn?: boolean;
   node: ReactNode;
 };
@@ -2437,19 +2386,12 @@ function LibrarySectionHeader(props: { section: LibrarySection; label: string; m
   );
 }
 
-/** Rows a signed-out member could use after signing in, shown locked. */
 const lockedLibraryPreviews: Array<{ name: string; description: string; iconSrc: string }> = [
   { name: "Google Workspace", description: "Gmail, Calendar and Drive", iconSrc: "/ext-google-workspace.svg" },
-  // Simple Icons no longer ships Slack's mark, so it is bundled like the others.
   { name: "Slack", description: "Read and post in your channels", iconSrc: "/ext-slack.svg" },
   { name: "Linear", description: "Issues and projects", iconSrc: "/ext-linear.svg" },
 ];
 
-/**
- * Signed out, adding to the Library needs OpenWork Cloud, so the page's one
- * primary action is signing in. It lives here, above what it unlocks, instead
- * of a header "Add to library" that could not do anything.
- */
 function LibrarySignUpBanner(props: { onSignUp?: () => void }) {
   return (
     <CloudSignInBanner
@@ -2562,7 +2504,6 @@ type McpConfiguredServerDetailsProps = {
   onToggleBusy: (value: SetStateAction<string | null>) => void;
 };
 
-/** Workspace-server management shown on the local MCP detail page. */
 function McpConfiguredServerDetails(props: McpConfiguredServerDetailsProps) {
   return (
     <div className="space-y-3 rounded-xl border border-dls-border bg-dls-surface px-4 py-3">

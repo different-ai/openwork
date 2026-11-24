@@ -5,11 +5,6 @@ import { AUTOMATION_LEGACY_SCHEDULE_KINDS, type AutomationList } from "@openwork
 export const AGENT_AUTOMATION_INDEX_URI = "automation://index.json"
 export const AGENT_AUTOMATION_INDEX_SCHEMA = "https://schemas.openworklabs.com/automations/discovery/0.3.0/schema.json"
 
-/**
- * How many Automations the discovery index carries. The index rides in every
- * system prompt, so it is bounded on purpose; the count of what was left out
- * travels with it so a caller can tell "you have none" from "there are more".
- */
 export const AGENT_AUTOMATION_INDEX_LIMIT = 25
 
 export type AgentAutomationIndexEntry = {
@@ -17,21 +12,12 @@ export type AgentAutomationIndexEntry = {
   name: string
   state: string
   schedule: AutomationList["items"][number]["revision"]["schedule"]
-  /** The schedule in words, e.g. "Every 3 hours · 09:00–18:00 · UTC". */
   summary: string
   nextDueAt: number | null
   executionTarget: "desktop" | "cloud"
   latestRun: { status: string; trigger: string; finishedAt: number | null } | null
 }
 
-/**
- * Discovery metadata for the Automations this member owns.
- *
- * Unlike the skill index this describes live, mutable state: a schedule can be
- * edited and a run can finish a second after the index is built. `fetchedAt`
- * travels with it so consumers can say how old the snapshot is, and callers are
- * expected to re-read through a capability before acting on anything timely.
- */
 export function buildAgentAutomationIndex(input: {
   items: AutomationList["items"]
   fetchedAt: number
@@ -61,12 +47,6 @@ export function buildAgentAutomationIndex(input: {
     fetchedAt: input.fetchedAt,
     total,
     omitted: Math.max(0, total - included.length),
-    /**
-     * Released desktops parse every entry here with a schedule schema that
-     * knows only once, daily and weekly, and drop the whole index on any other
-     * kind. Entries with newer kinds travel in `moreAutomations`, which they
-     * ignore; readers should list both.
-     */
     automations: entries.filter((entry) => legacy.has(entry.schedule.kind)),
     moreAutomations: entries.filter((entry) => !legacy.has(entry.schedule.kind)),
   }

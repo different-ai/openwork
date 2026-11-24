@@ -14,9 +14,7 @@ export type AutomationModelOption = {
   modelId: string
   providerName: string
   modelName: string
-  /** The catalog provider family (e.g. "anthropic") for the logo; the record id is often opaque. */
   logoProviderId?: string
-  /** `desktop_runtime`: connected only in the desktop runtime that runs the Automation (Desktop placement only). */
   accessKind: "free" | "openwork_managed" | "authorized_custom" | "cloud_default" | "desktop_runtime"
 }
 
@@ -27,7 +25,6 @@ export type AutomationModelProvider = {
   providerId?: string
   name: string
   models: ReadonlyArray<{ id: string; name: string }>
-  /** The provider's stored config; its model allowlist/blocklist narrows what an Automation can use. */
   providerConfig?: Record<string, unknown>
 }
 
@@ -67,7 +64,6 @@ export function automationModelOptions(
           logoProviderId: provider.providerId,
           accessKind: "authorized_custom",
         }))
-    // The provider's own allowlist/blocklist wins; an explicit empty allowlist allows nothing.
     return models.filter((model) => automationModelAllowedByProvider(provider.providerConfig ?? {}, model.modelId))
   })
   return [

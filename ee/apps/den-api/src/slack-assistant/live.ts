@@ -1,16 +1,5 @@
 import { z } from "zod"
 
-/**
- * The runner's live events for a Slack run's session (ee/apps/headless-runner/src/events.ts), so a reply shows its
- * text as it is written instead of only once each step is stored.
- *
- * A Slack run is advanced in short windows (run.ts), but the model keeps writing between them. A feed therefore stays
- * open for a little while after a window ends and buffers what arrives, so the next window on this process continues
- * without a gap. The window passes a token it got from its checkpoint; a feed only continues for the same token, so a
- * window that ran on another process (and consumed those events there) never gets them twice. Anything else starts a
- * fresh feed, which can't know how much of the step in progress it missed.
- */
-
 export const runnerEventSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("changed"), messageId: z.string(), status: z.string().optional() }),
   z.object({ type: z.literal("text"), messageId: z.string(), step: z.number(), delta: z.string(), reset: z.boolean().optional() }),
@@ -18,7 +7,6 @@ export const runnerEventSchema = z.discriminatedUnion("type", [
 ])
 export type RunnerEvent = z.infer<typeof runnerEventSchema>
 
-/** Parses complete server-sent events from `buffer`; returns them and the incomplete remainder. */
 export function parseServerSentEvents(buffer: string): { events: RunnerEvent[]; ready: boolean; rest: string } {
   const blocks = buffer.split(/\r?\n\r?\n/)
   const rest = blocks.pop() ?? ""
@@ -48,18 +36,13 @@ export function parseServerSentEvents(buffer: string): { events: RunnerEvent[]; 
 }
 
 export type LiveFeed = {
-  /** Just connected: text of a step already in progress before now was missed. */
   readonly fresh: boolean
-  /** The connection ended (or fell too far behind); events before that are still returned by take(). */
   readonly closed: boolean
-  /** Events since the last take, oldest first. */
   take(): RunnerEvent[]
-  /** Ends this window; the feed stays open briefly for the next window that brings `token`. */
   release(token: number): void
 }
 
 export type LiveFeedSource = {
-  /** A feed of the session's events, or null when the runner's events can't be opened. */
   acquire(sessionId: string, token: number): Promise<LiveFeed | null>
 }
 
@@ -74,11 +57,8 @@ type Entry = {
 
 export function createLiveFeeds(options: {
   open: (sessionId: string, signal: AbortSignal) => Promise<ReadableStream<Uint8Array> | null>
-  /** How long a feed waits for the next window. */
   idleMs?: number
-  /** A feed that buffered this many events without a window taking them is closed. */
   maxBuffered?: number
-  /** How long to wait for the runner to confirm the subscription. */
   readyTimeoutMs?: number
 }): LiveFeedSource {
   const idleMs = options.idleMs ?? 30_000
@@ -109,7 +89,6 @@ export function createLiveFeeds(options: {
         if (entry.buffer.length > maxBuffered) break
       }
     } catch {
-      // Aborted or dropped: the reader falls back to reading the session.
     } finally {
       entry.closed = true
       onReady()
@@ -150,7 +129,6 @@ export function createLiveFeeds(options: {
       if (!stream) return null
       const entry: Entry = { controller, buffer: [], closed: false, token: null, inUse: true, idle: null }
       entries.set(sessionId, entry)
-      // Wait for the runner to confirm the subscription, so a turn sent right after loses none of its text.
       await new Promise<void>((resolve) => {
         const timer = setTimeout(resolve, readyTimeoutMs)
         timer.unref?.()

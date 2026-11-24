@@ -4,7 +4,7 @@ import { mkdtempSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
-import { shouldPublishWindowsAlpha } from "../../scripts/release/check-windows-alpha-version.mjs";
+import { shouldPublishWindowsAlpha } from "../../scripts/release/check-alpha-version.mjs";
 import { selectAlphaAssetsToPrune } from "../../scripts/release/prune-alpha-assets.mjs";
 
 const workflow = readFileSync(new URL("../workflows/alpha-macos-aarch64.yml", import.meta.url), "utf8");
@@ -27,7 +27,7 @@ function fixture(body) {
   const installer = `openwork-win-x64-${artifactVersion}.exe`;
   mkdirSync(dist, { recursive: true });
   mkdirSync(join(directory, "scripts/release"), { recursive: true });
-  writeFileSync(join(directory, "scripts/release/check-windows-alpha-version.mjs"), readFileSync(new URL("../../scripts/release/check-windows-alpha-version.mjs", import.meta.url)));
+  writeFileSync(join(directory, "scripts/release/check-alpha-version.mjs"), readFileSync(new URL("../../scripts/release/check-alpha-version.mjs", import.meta.url)));
   for (const name of [installer, `${installer}.blockmap`, "latest.yml"]) {
     writeFileSync(join(dist, name), "fixture");
   }

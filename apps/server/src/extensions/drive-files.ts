@@ -27,22 +27,18 @@ const MAX_STATUS_FILES = 50;
 const CONNECTION_ID = /^(google-workspace|emc_[A-Za-z0-9]+)$/;
 const MICROSOFT_CONNECTION_ID = /^(microsoft-365|emc_[A-Za-z0-9]+)$/;
 const DRIVE_ID = /^[A-Za-z0-9_-]{1,512}$/;
-// Graph item and drive ids, such as b!x2_Kr or 01ABCDEF, are opaque but never hold whitespace or path characters.
 const MICROSOFT_ID = /^[^\s/\\?#]{1,512}$/;
 const MICROSOFT_LINK_HOST = /(^|\.)(sharepoint\.(com|us|cn|de)|sharepoint-mil\.us|onedrive\.(com|live\.com)|1drv\.ms)$/;
 
 type Provider = "google-workspace" | "microsoft-365";
-/** A Google Drive file id, or a Microsoft item (with its drive) or file link. */
 type FileTarget = { fileId: string } | { itemId: string; driveId?: string } | { url: string };
 const SERVICE_NAME: Record<Provider, string> = { "google-workspace": "Drive", "microsoft-365": "OneDrive or SharePoint" };
-// Exported formats Drive can import back into the same Google file type when saved as a copy.
 const CONVERTIBLE_FORMATS: Record<string, string[]> = {
   "application/vnd.google-apps.spreadsheet": ["xlsx", "csv"],
   "application/vnd.google-apps.document": ["docx", "md", "txt"],
   "application/vnd.google-apps.presentation": ["pptx"],
 };
 
-/** Only the embedding Desktop host can supply this callback; request payloads and shell credentials cannot approve a write. */
 async function confirmDriveTransfer(config: ServerConfig, request: DriveFileApprovalRequest, signal?: AbortSignal) {
   signal?.throwIfAborted();
   if (!config.driveFileApproval) {
@@ -54,10 +50,8 @@ async function confirmDriveTransfer(config: ServerConfig, request: DriveFileAppr
 }
 
 type DriveLink = {
-  /** Absent on records made before Microsoft 365 files: those are Google Drive. */
   provider?: Provider;
   fileId: string;
-  /** Microsoft only: the drive holding fileId. */
   driveId?: string;
   connectionId: string | null;
   name: string;
@@ -115,7 +109,6 @@ function isMicrosoftLink(value: string) {
   }
 }
 
-/** An explicit provider wins; otherwise a driveId, a Microsoft connection or a OneDrive/SharePoint link means Microsoft 365. */
 function providerFor(args: Record<string, unknown>): Provider {
   if (args.provider !== undefined) {
     if (args.provider !== "google-workspace" && args.provider !== "microsoft-365") throw new ApiError(400, "invalid_payload", "provider must be google-workspace or microsoft-365.");
@@ -137,7 +130,6 @@ function microsoftTarget(args: Record<string, unknown>): FileTarget {
   return { itemId: fileId, ...(driveId ? { driveId } : {}) };
 }
 
-/** Accepts a bare ID or a Drive, Docs, Sheets or Slides link. */
 export function parseDriveFileId(value: string) {
   const trimmed = value.trim();
   if (DRIVE_ID.test(trimmed)) return trimmed;
@@ -148,12 +140,10 @@ export function parseDriveFileId(value: string) {
     const id = fromPath ?? fromQuery ?? "";
     if (DRIVE_ID.test(id)) return id;
   } catch {
-    // Not a link.
   }
   throw new ApiError(400, "invalid_payload", "fileId must be a Google Drive file ID or a Drive, Docs, Sheets or Slides link.");
 }
 
-// One writer at a time: pulls and pushes update the link record.
 let linkQueue: Promise<unknown> = Promise.resolve();
 function withLinks<T>(config: ServerConfig, update: (links: DriveLinks) => Promise<T> | T): Promise<T> {
   const run = linkQueue.then(async () => {
@@ -170,7 +160,6 @@ function withLinks<T>(config: ServerConfig, update: (links: DriveLinks) => Promi
   return run;
 }
 
-/** Host-owned, so file content cannot redirect a push to another Drive file. */
 async function readLinks(config: ServerConfig): Promise<DriveLinks> {
   try {
     const value: unknown = JSON.parse(await readFile(join(runtimeStorageDir(config), LINKS_FILE), "utf8"));
@@ -182,7 +171,6 @@ async function readLinks(config: ServerConfig): Promise<DriveLinks> {
       return { version: 1, links };
     }
   } catch {
-    // Missing or unreadable: start empty.
   }
   return { version: 1, links: {} };
 }
@@ -212,7 +200,6 @@ async function hashFile(path: string) {
   }
 }
 
-/** No pathname remains when transferred bytes enter this host-owned staging file. */
 async function privateDriveFile(config: ServerConfig) {
   const folder = runtimeStorageDir(config);
   await mkdir(folder, { recursive: true });
@@ -247,7 +234,6 @@ async function copyHandles(source: FileHandle, target: FileHandle, size: number,
   }
 }
 
-/** An unlinked host-owned copy keeps uploads on the exact bytes hashed before confirmation. */
 async function snapshotForPush(config: ServerConfig, source: FileHandle, expected: { sha256: string; size: number }, signal?: AbortSignal) {
   const snapshot = await privateDriveFile(config);
   try {
@@ -285,11 +271,9 @@ function displayPath(config: ServerConfig, context: Record<string, unknown>, pat
   if (!base) return path;
   if (isWithinRoot(path, base)) return relative(base, path);
   try {
-    // Link records hold real paths; a workspace may be opened through a symlink.
     const real = realpathSync(base);
     if (isWithinRoot(path, real)) return relative(real, path);
   } catch {
-    // Missing base: show the full path.
   }
   return path;
 }
@@ -298,13 +282,11 @@ function outsideWorkspace(base: string) {
   return new ApiError(403, "path_outside_workspace", `Files can only be saved inside an authorized workspace, such as ${base}. Leave out path to save under drive/.`);
 }
 
-/** Pull targets have real parents, so a drive folder that links elsewhere does not count. */
 async function inDriveFolder(config: ServerConfig, context: Record<string, unknown>, target: string) {
   const base = await realpath(workspaceBase(config, context)).catch(() => null);
   return !!base && isWithinRoot(target, join(base, "drive"));
 }
 
-/** Creates missing folders only below an existing directory that resolves inside an authorized root. */
 async function resolvePullTarget(config: ServerConfig, context: Record<string, unknown>, requested: string | null, defaultName: string) {
   const base = workspaceBase(config, context);
   const candidate = requested ? (isAbsolute(requested) ? resolve(requested) : resolve(base, requested)) : resolve(base, "drive", defaultName);
@@ -335,20 +317,17 @@ async function resolvePullTarget(config: ServerConfig, context: Record<string, u
   return target;
 }
 
-/** The destination was resolved to a real folder inside a root; refuse if a component has since become a symlink. */
 async function assertStableFolder(config: ServerConfig, folder: string) {
   let real = "";
   try {
     real = await realpath(folder);
   } catch {
-    // Missing now: fall through to the refusal.
   }
   if (real !== folder || !(await realRoots(config)).some((root) => isWithinRoot(real, root))) {
     throw new ApiError(409, "workspace_changed", "The workspace folder changed during the transfer, so nothing was transferred. Try again.");
   }
 }
 
-/** The temporary file we opened is still the one in the checked folder. */
 async function assertSameFile(path: string, opened: Stats) {
   const placed = await lstat(path).catch(() => null);
   if (!placed || !placed.isFile() || placed.ino !== opened.ino || placed.dev !== opened.dev) {
@@ -356,7 +335,6 @@ async function assertSameFile(path: string, opened: Stats) {
   }
 }
 
-/** Opens an authorized file once, without following a planted symlink, for both hashing and upload. */
 async function openAuthorizedFile(config: ServerConfig, path: string) {
   const handle = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
@@ -458,7 +436,6 @@ function parseDownloadInfo(payload: Record<string, unknown>): DownloadInfo {
   };
 }
 
-/** Microsoft files have no native formats or md5; a PDF conversion is the only export. */
 function parseMicrosoftDownloadInfo(payload: Record<string, unknown>): DownloadInfo {
   const file = payload.file;
   const download = payload.download;
@@ -490,7 +467,6 @@ async function describe(config: ServerConfig, dependencies: CloudUploadDependenc
   return parseMicrosoftDownloadInfo(await denJson(config, dependencies, "/v1/direct-downloads/microsoft-365/drive-files", { query: { ...query, format, connectionId } }));
 }
 
-/** The same file again, by the ids its first description returned. */
 function describedTarget(provider: Provider, info: DownloadInfo): FileTarget {
   return provider === "microsoft-365" ? { itemId: info.file.id, ...(info.file.driveId ? { driveId: info.file.driveId } : {}) } : { fileId: info.file.id };
 }
@@ -499,7 +475,6 @@ function linkTarget(link: DriveLink): FileTarget {
   return link.provider === "microsoft-365" ? { itemId: link.fileId, ...(link.driveId ? { driveId: link.driveId } : {}) } : { fileId: link.fileId };
 }
 
-/** Ranged chunks for stored files, one stream for exports; the caller verifies size and md5. */
 async function download(config: ServerConfig, dependencies: CloudUploadDependencies, provider: Provider, info: DownloadInfo, connectionId: string | undefined, handle: FileHandle) {
   const format = info.download.exported ? info.download.format ?? undefined : undefined;
   const microsoft = provider === "microsoft-365";
@@ -564,14 +539,12 @@ async function pullDriveFile(config: ServerConfig, args: Record<string, unknown>
 
   let info = await describe(config, dependencies, fileTarget, format, connectionId);
   fileTarget = describedTarget(provider, info);
-  // A Microsoft PDF conversion of Plan.docx saves as Plan.pdf; Google files have no extension to replace.
   const converted = provider === "microsoft-365" && info.download.exported;
   const sourceName = converted ? info.file.name.slice(0, info.file.name.length - extname(info.file.name).length) || info.file.name : info.file.name;
   const name = safeFileName(sourceName, info.download.exported ? info.download.extension : null);
   const links = await readLinks(config);
   let target = await resolvePullTarget(config, context, requested, name);
   if (!requested) {
-    // The default name may belong to another file: use the first free name, or the one already holding this file.
     const extension = extname(name);
     const stem = name.slice(0, name.length - extension.length);
     for (let copy = 2; await exists(target) && !sameDriveFile(links.links[target], provider, info); copy += 1) {
@@ -579,7 +552,6 @@ async function pullDriveFile(config: ServerConfig, args: Record<string, unknown>
       target = await resolvePullTarget(config, context, null, `${stem} (${copy})${extension}`);
     }
   }
-  // One check for whichever path was chosen: never discard unpushed edits or another file silently.
   const before = await lstat(target).catch(() => null);
   if (before) {
     const link = links.links[target];
@@ -597,8 +569,6 @@ async function pullDriveFile(config: ServerConfig, args: Record<string, unknown>
   }
 
   let saved: Awaited<ReturnType<typeof download>> | null = null;
-  // Under drive/, a pull adds a file or refreshes an unedited copy, and nothing loads from there.
-  // Elsewhere it could add a plugin or agent the engine runs, and engine rules never see this write.
   const replacing = !!before && overwrite;
   if (replacing || !(await inDriveFolder(config, context, target))) {
     await confirmDriveTransfer(config, { provider, action: replacing ? "overwrite" : "pull", path: target, fileId: info.file.id, name: info.file.name, webViewLink: info.file.webViewLink }, dependencies.signal);
@@ -613,9 +583,6 @@ async function pullDriveFile(config: ServerConfig, args: Record<string, unknown>
         }
         const root = (await realRoots(config)).find((candidate) => isWithinRoot(target, candidate));
         if (!root) throw new ApiError(403, "path_outside_workspace", "Files can only be saved inside an authorized workspace.");
-        // Match the workbook/attachment writer: prove the opened inode before
-        // truncating or writing, then use only its handle. No path-based rename
-        // can follow a swapped parent into another file.
         let destination: Awaited<ReturnType<typeof openWorkspaceFileForWriting>>;
         try {
           destination = await openWorkspaceFileForWriting(root, target, before, "Drive download");
@@ -636,7 +603,6 @@ async function pullDriveFile(config: ServerConfig, args: Record<string, unknown>
         }
       }
     } catch (error) {
-      // A file that changed (or shrank) mid-download fails a chunk: retry once from its new revision.
       const transient = error instanceof ApiError && ["drive_download_incomplete", "google_api_error", "microsoft_graph_error", "cloud_drive_failed"].includes(error.code);
       if (!transient || attempt === 2) throw error;
       const fresh = await describe(config, dependencies, fileTarget, format, connectionId);
@@ -646,7 +612,6 @@ async function pullDriveFile(config: ServerConfig, args: Record<string, unknown>
     } finally {
       await temporary.close();
     }
-    // Size or md5 did not match: the file changed while downloading.
     if (!saved && attempt === 1) info = await describe(config, dependencies, fileTarget, format, connectionId);
   }
   if (!saved) throw new ApiError(409, "drive_changed_during_download", `The file kept changing in ${service} while downloading. Try again later.`);
@@ -679,7 +644,6 @@ function pullResult(config: ServerConfig, context: Record<string, unknown>, targ
   };
 }
 
-/** Whether a link record is the described file: same provider, id and (for Microsoft) drive. */
 function sameDriveFile(link: DriveLink | undefined, provider: Provider, info: DownloadInfo) {
   if (!link || (link.provider ?? "google-workspace") !== provider || link.fileId !== info.file.id) return false;
   return provider !== "microsoft-365" || (link.driveId ?? "") === info.file.driveId;
@@ -687,7 +651,6 @@ function sameDriveFile(link: DriveLink | undefined, provider: Provider, info: Do
 
 async function linkedEntries(config: ServerConfig, context: Record<string, unknown>, requested: string) {
   const links = await readLinks(config);
-  // Link records hold real paths, so compare against the real roots too.
   const roots = [...allowedRoots(config), ...await realRoots(config)];
   let entries = Object.entries(links.links).filter(([path]) => roots.some((root) => isWithinRoot(path, root)));
   if (requested) {
@@ -696,7 +659,6 @@ async function linkedEntries(config: ServerConfig, context: Record<string, unkno
     try {
       candidates.add(await realpath([...candidates][0]));
     } catch {
-      // A deleted local copy keeps its link: try the real workspace folder instead.
       if (!isAbsolute(requested)) candidates.add(resolve(await realpath(base).catch(() => base), requested));
     }
     entries = entries.filter(([path]) => candidates.has(path));
@@ -705,7 +667,6 @@ async function linkedEntries(config: ServerConfig, context: Record<string, unkno
   return entries;
 }
 
-/** The format a pull exported, so a status check or push describes the same export. */
 function linkFormat(link: DriveLink) {
   return link.provider === "microsoft-365" || link.native ? link.format ?? undefined : undefined;
 }
@@ -735,7 +696,6 @@ async function driveFileStatus(config: ServerConfig, args: Record<string, unknow
   return { ok: true, files, ...(entries.length > MAX_STATUS_FILES ? { truncated: true } : {}) };
 }
 
-// One push per local file at a time, so two pushes cannot both pass the revision check.
 const pushing = new Map<string, Promise<unknown>>();
 async function oneAtATime<T>(key: string, run: () => Promise<T>): Promise<T> {
   const next = (pushing.get(key) ?? Promise.resolve()).catch(() => undefined).then(run);
@@ -781,7 +741,6 @@ async function pushOpenFile(config: ServerConfig, args: Record<string, unknown>,
   if (mode === "replace" && link.native) {
     throw new ApiError(400, "native_file_replace_unsupported", "Google Docs, Sheets and Slides files cannot be replaced by an uploaded file. Push with mode copy to save a new Google file next to it, or edit a Sheet with the Sheets values actions.");
   }
-  // Replacing always names the pulled revision: nothing the model passes can skip the newer-version check.
   if (mode === "replace" && !link.revision) {
     throw new ApiError(409, "revision_unknown", "Drive reported no revision when this file was pulled, so newer Drive changes could not be detected. Pull it again, or save the edits as a copy.");
   }
@@ -796,7 +755,7 @@ async function pushOpenFile(config: ServerConfig, args: Record<string, unknown>,
     if (mode === "replace" && remote.file.native) throw new ApiError(400, "native_file_replace_unsupported", "Save this Google file as a copy instead.");
     const target = { ...link, name: remote.file.name, driveMimeType: remote.file.mimeType, native: remote.file.native, parents: remote.file.parents };
     const convert = mode === "copy" && target.native && (CONVERTIBLE_FORMATS[target.driveMimeType] ?? []).includes(link.format ?? "");
-    await confirmDriveTransfer(config, { provider: "google-workspace", action: "push", path, fileId: remote.file.id, name: remote.file.name, webViewLink: remote.file.webViewLink, mode: mode === "copy" ? "copy" : "replace" }, dependencies.signal);
+    if (!dependencies.approvedInChat) await confirmDriveTransfer(config, { provider: "google-workspace", action: "push", path, fileId: remote.file.id, name: remote.file.name, webViewLink: remote.file.webViewLink, mode: mode === "copy" ? "copy" : "replace" }, dependencies.signal);
     await assertStableFolder(config, dirname(path));
     await assertSameFile(path, await handle.stat());
     if ((await hashHandle(handle)).sha256 !== local.sha256) {
@@ -851,7 +810,6 @@ async function pushOpenFile(config: ServerConfig, args: Record<string, unknown>,
 
 type RelayProgress = { status: "partial"; nextOffset: number } | { status: "complete"; file: Record<string, unknown> & { id: string } };
 
-/** One relay answer: progress, the saved file, "uncertain" (ask how much arrived), or a definite refusal (thrown). */
 async function relayProgress(response: Response): Promise<RelayProgress | "uncertain"> {
   const payload: unknown = await response.json().catch(() => null);
   if (!response.ok) {
@@ -870,7 +828,6 @@ async function relayProgress(response: Response): Promise<RelayProgress | "uncer
   return "uncertain";
 }
 
-/** Parts go to OpenWork Cloud, which holds Microsoft's session URL. An uncertain part asks how much arrived; it never starts another upload. */
 async function uploadMicrosoftRelayFile(config: ServerConfig, dependencies: CloudUploadDependencies, input: { token: string; file: FileHandle; size: number; chunkBytes: number }) {
   const suffix = "/v1/direct-uploads/microsoft-365/drive-upload-sessions/content";
   const query = { token: input.token };
@@ -912,7 +869,6 @@ async function uploadMicrosoftRelayFile(config: ServerConfig, dependencies: Clou
   }
 }
 
-/** Office files on OneDrive and SharePoint are ordinary files, so they are replaced in place; only a PDF conversion goes back as a copy. */
 async function pushMicrosoftFile(config: ServerConfig, args: Record<string, unknown>, context: Record<string, unknown>, dependencies: CloudUploadDependencies, path: string, handle: FileHandle, link: DriveLink) {
   if (!MICROSOFT_ID.test(link.fileId) || (link.driveId && !MICROSOFT_ID.test(link.driveId)) || (link.connectionId !== null && !MICROSOFT_CONNECTION_ID.test(link.connectionId))) {
     throw new ApiError(409, "invalid_link", "The saved OneDrive or SharePoint link is invalid. Pull the file again before saving.");
@@ -924,7 +880,6 @@ async function pushMicrosoftFile(config: ServerConfig, args: Record<string, unkn
   if (mode === "replace" && converted) {
     throw new ApiError(400, "converted_file_replace_unsupported", "A PDF made from this file cannot replace the original. Push with mode copy to save the PDF next to it.");
   }
-  // Replacing always names the pulled eTag: nothing the model passes can skip the newer-version check.
   if (mode === "replace" && !link.revision) {
     throw new ApiError(409, "revision_unknown", "Microsoft reported no revision when this file was pulled, so newer changes could not be detected. Pull it again, or save the edits as a copy.");
   }
@@ -939,7 +894,7 @@ async function pushMicrosoftFile(config: ServerConfig, args: Record<string, unkn
   try {
     const remote = await describe(config, dependencies, linkTarget(link), undefined, link.connectionId ?? undefined);
     if (remote.file.id !== link.fileId) throw new ApiError(409, "drive_conflict", "The OneDrive or SharePoint target changed. Pull it again before saving.");
-    await confirmDriveTransfer(config, { provider: "microsoft-365", action: "push", path, fileId: remote.file.id, name: remote.file.name, webViewLink: remote.file.webViewLink, mode: mode === "copy" ? "copy" : "replace" }, dependencies.signal);
+    if (!dependencies.approvedInChat) await confirmDriveTransfer(config, { provider: "microsoft-365", action: "push", path, fileId: remote.file.id, name: remote.file.name, webViewLink: remote.file.webViewLink, mode: mode === "copy" ? "copy" : "replace" }, dependencies.signal);
     await assertStableFolder(config, dirname(path));
     await assertSameFile(path, await handle.stat());
     if ((await hashHandle(handle)).sha256 !== local.sha256) {

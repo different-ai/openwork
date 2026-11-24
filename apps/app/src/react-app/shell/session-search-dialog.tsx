@@ -43,16 +43,10 @@ type ResultGroup = {
 export type SessionSearchDialogProps = {
   open: boolean;
   onClose: () => void;
-  /** Every session across workspaces. */
   sessions: SearchableSession[];
   onOpenSession: (workspaceId: string, sessionId: string) => void;
 };
 
-/**
- * Session search across every workspace by title (Cmd/Ctrl+Shift+F), newest
- * message first. With an empty query it lists recent sessions. Sub-agent
- * sessions are left out upstream; they open from their parent's task card.
- */
 export function SessionSearchDialog(props: SessionSearchDialogProps) {
   const [query, setQuery] = useState("");
   const sessions = useMemo(() => dedupeSearchableSessions(props.sessions), [props.sessions]);

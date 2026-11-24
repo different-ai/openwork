@@ -401,7 +401,6 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
             result = await checkOpenworkServer(retryUrl, retryToken, retryHostToken);
           }
         } catch {
-          // Preserve the original check result when the retry probe fails.
         }
       }
 
@@ -470,10 +469,6 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
   const start = () => {
     if (typeof window === "undefined") return;
     if (started) return;
-    // Allow restart after a prior dispose() (React 18 StrictMode double-mounts
-    // each effect in dev: mount → dispose → re-mount). If we early-return when
-    // `disposed` is true, the real mount never arms polling and the UI stays
-    // on stale/empty state forever.
     disposed = false;
     started = true;
 
@@ -745,11 +740,6 @@ export function createOpenworkServerStore(options: CreateOpenworkServerStoreOpti
 
     if (!isDesktopRuntime()) return null;
 
-    // A store that has not observed the server yet (a fresh route mount)
-    // must not treat it as dead: the restart below tears down the embedded
-    // server AND its managed engine, killing every live run. Ask the desktop
-    // bridge for the live server first and restart only when that running
-    // server is genuinely unreachable.
     let hostInfo: OpenworkServerInfo | null = null;
     try {
       hostInfo = await openworkServerInfo() as OpenworkServerInfo;

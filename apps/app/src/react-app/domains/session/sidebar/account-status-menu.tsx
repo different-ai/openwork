@@ -111,9 +111,6 @@ export function resolveRuntimeStatus(input: RuntimeStatusInput): RuntimeStatus {
   if (input.reloadError) {
     return { variant: "disconnected", label: t("system.reload_failed"), detail: input.reloadError };
   }
-  // This row renders app-scoped facts only. Per-session loading (messages
-  // still fetching, a model verdict still pending) stays in the pane and the
-  // composer — one session's state must not paint the whole app as booting.
   if (input.openworkServerStatus === "disconnected" && input.initializing) {
     return {
       variant: "loading",
@@ -140,11 +137,6 @@ function connectDotVariant(status: OpenWorkConnectStatus): StatusDotVariant {
   return "disconnected";
 }
 
-/**
- * Non-developer mode shows one status row: the runtime status, unless
- * OpenWork Connect needs attention (or is the only signal available).
- * Developer mode keeps the two separate rows.
- */
 export function resolveCollapsedStatus(
   runtime: RuntimeStatus | null,
   connect: OpenWorkConnectStatus | null,
@@ -194,7 +186,6 @@ export type AccountStatusMenuProps = {
   clientConnected: boolean;
   openworkServerStatus: OpenworkServerStatus;
   developerMode: boolean;
-  /** Hidden until a workspace is selected, matching the old status bar. */
   showConnectionStatus: boolean;
   providerConnectedIds: string[];
   mcpConnectedCount: number;
@@ -203,13 +194,10 @@ export type AccountStatusMenuProps = {
   openWorkConnectState?: SessionCloudMcpMaintenanceState;
   showSettingsButton?: boolean;
   onOpenAccountSettings?: () => void;
+  onOpenDiagnostics?: () => void;
   onSendFeedback?: () => void;
 };
 
-/**
- * Sidebar footer control: the signed-in account plus the live status the app
- * used to show in a full-width bottom status bar.
- */
 export function AccountStatusMenu(props: AccountStatusMenuProps) {
   const denAuth = useDenAuth();
   const platform = usePlatform();
@@ -242,11 +230,6 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
 
   const openSettings = props.onOpenAccountSettings;
   const openDocs = useCallback(() => platform.openLink(DOCS_URL), [platform]);
-  // When the organization blocks settings control, the settings surface is the
-  // Cloud account page only, so the entry is labelled for where it lands and
-  // the Debug shortcut is hidden.
-  // Reuses Den’s existing allowControlSettings boolean contract (PR #1838);
-  // no new response field is required. Missing values retain the hook’s default.
   const controlSettingsBlocked = useDesktopRestriction("allowControlSettings");
 
   const docsControlAction = useMemo<OpenworkControlAction>(() => ({
@@ -283,15 +266,10 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
 
   const user = denAuth.user;
   const signedIn = denAuth.isSignedIn && user !== null;
-  // A retained session still restores in the background; never flash "Sign
-  // in". This covers both the initial check and a retained session whose
-  // first check failed transiently (local server restart, control-plane
-  // blip) and is being retried.
   const restoringSession = isDenSessionRestoring({
     status: denAuth.status,
     hasUser: user !== null,
   });
-  // A self-hosted server is named by its host, as on the sign-in page.
   const denBaseUrl = readDenSettings().baseUrl;
   const serverLabel = isDefaultControlPlaneUrl(denBaseUrl, HOSTED_DEFAULT_DEN_BASE_URL)
     ? "OpenWork Cloud"
@@ -299,8 +277,6 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
   const accountLabel = signedIn
     ? user.name?.trim() || user.email
     : restoringSession ? serverLabel : "Sign in";
-  // The sidebar row shows the name only; the email stays inside the account
-  // menu so it is not permanently on screen (matches Claude Code and Codex).
   const accountDetail = signedIn
     ? serverLabel
     : restoringSession ? "Restoring your session" : "Sync with OpenWork Cloud";
@@ -356,7 +332,6 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
             data-testid="account-status-menu"
             data-runtime-state={runtimeStatus?.variant}
             data-connect-state={connectStatus?.state}
-            /* ps-1.5 puts the 24px avatar 12px from the edge, so the name lands on the sidebar label lane. */
             className="flex min-w-0 flex-1 items-center gap-2 rounded-lg ps-1.5 pe-2 py-1.5 text-left transition-colors hover:bg-sidebar-accent max-lg:min-h-11"
             aria-label={signedIn ? `${accountLabel} — account and status` : "Account and status"}
             title={connectNeedsAttention
@@ -464,7 +439,11 @@ export function AccountStatusMenu(props: AccountStatusMenuProps) {
         ) : null}
 
         {connectNeedsAttention && !controlSettingsBlocked ? (
-          <DropdownMenuItem onClick={() => navigate("/settings/debug")}>
+          <DropdownMenuItem
+            onClick={() => props.onOpenDiagnostics
+              ? props.onOpenDiagnostics()
+              : navigate(props.developerMode ? "/settings/debug" : "/settings/advanced/agent-access")}
+          >
             <Stethoscope className="size-3.5" />
             Run diagnostics
           </DropdownMenuItem>

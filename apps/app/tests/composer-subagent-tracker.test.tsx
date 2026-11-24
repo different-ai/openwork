@@ -157,3 +157,42 @@ test("once the turn has ended and every agent settled, the list goes away", asyn
   ]), { parentActive: false })
   expect(container.querySelector("[data-subagent-tracker]")).toBeNull()
 })
+
+async function renderListed(messages: UIMessage[], keepEarlier: boolean) {
+  const container = document.createElement("div")
+  document.body.append(container)
+  root = createRoot(container)
+  function Listed(props: { messages: UIMessage[] }) {
+    const parts = tracker.useComposerSubagentParts(props.messages, WORKSPACE, { enabled: true, keepEarlier })
+    return <output data-listed={parts.map((part) => part.toolCallId).join(",")} />
+  }
+  const listed = () => container.querySelector("output")?.getAttribute("data-listed") ?? ""
+  await act(async () => root?.render(<Listed messages={messages} />))
+  return { listed, rerender: (next: UIMessage[]) => act(async () => root?.render(<Listed messages={next} />)) }
+}
+
+test("a follow-up keeps an earlier turn's helper listed while it still works, only with keepEarlier", async () => {
+  store.getState().setRunStatus(WORKSPACE, "ses_bg_running", { type: "busy" })
+  const messages = turn(
+    [{ type: "text", text: "It's Thursday." }],
+    [taskPart("t_bg", "general", "Review release notes", "done", "ses_bg_running"), taskPart("t_old", "general", "Old task", "done", "ses_bg_idle")],
+  )
+  expect(tracker.earlierTurnSubagentParts(messages).map((part) => part.toolCallId)).toEqual(["t_bg", "t_old"])
+  expect((await renderListed(messages, true)).listed()).toBe("t_bg")
+  await act(async () => root?.unmount())
+  root = null
+  expect((await renderListed(messages, false)).listed()).toBe("")
+})
+
+test("an earlier helper that finishes mid-turn stays listed until the next turn", async () => {
+  store.getState().setRunStatus(WORKSPACE, "ses_bg_finishing", { type: "busy" })
+  const earlier = [taskPart("t_fin", "general", "Review release notes", "done", "ses_bg_finishing")]
+  const messages = turn([{ type: "text", text: "Working on it." }], earlier)
+  const view = await renderListed(messages, true)
+  expect(view.listed()).toBe("t_fin")
+  await act(async () => store.getState().setRunStatus(WORKSPACE, "ses_bg_finishing", { type: "idle" }))
+  await view.rerender([...messages])
+  expect(view.listed()).toBe("t_fin")
+  await view.rerender([...messages, { id: "u2", role: "user", parts: [{ type: "text", text: "Next." }] }])
+  expect(view.listed()).toBe("")
+})

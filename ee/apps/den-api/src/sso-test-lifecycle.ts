@@ -1,5 +1,5 @@
 import { createHmac, randomUUID } from "node:crypto"
-import { and, eq, gt, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
+import { and, asc, eq, gt, isNotNull, isNull } from "@openwork-ee/den-db/drizzle"
 import {
   AuthVerificationTable,
   AuthUserTable,
@@ -12,13 +12,9 @@ import { ssoConnectionStatusEvent } from "./audit/domain/sso.js"
 import type { AuditChangeCapture } from "./audit/request-capture.js"
 import { db } from "./db.js"
 import { env } from "./env.js"
-import { isOrganizationSsoReady } from "./sso-readiness.js"
-import { ssoStateVerificationIdentifier } from "./sso-state-identifier.js"
+import { ssoDomainColumnCovers, ssoDomainsCover } from "./sso-domains.js"
+import { isOrganizationSsoReady, ssoStateVerificationIdentifier } from "@openwork-ee/den-sso"
 import { ssoTestDomainMismatchMessage } from "./sso-test-domain.js"
-
-// Every read here uses the primary: the test lifecycle is a sequence of steps
-// (create, start, provider redirect, callback, complete, enable) that each
-// check state the previous step wrote moments earlier. All are low volume.
 
 type SsoConnection = typeof SsoConnectionTable.$inferSelect
 type SsoTestUserId = NonNullable<SsoConnection["activeTestUserId"]>
@@ -76,7 +72,7 @@ async function getConnectionWithProvider(connection: SsoConnection) {
   return { connection, provider: provider ?? null }
 }
 
-async function findConnectionForSignIn(input: {
+export async function findConnectionForSignIn(input: {
   providerId: string | null
   organizationSlug: string | null
   domain: string | null
@@ -91,24 +87,26 @@ async function findConnectionForSignIn(input: {
     return connection ?? null
   }
 
-  if (input.organizationSlug) {
-    const [connection] = await db.$primary
-      .select({ connection: SsoConnectionTable })
-      .from(SsoConnectionTable)
-      .innerJoin(OrganizationTable, eq(SsoConnectionTable.organizationId, OrganizationTable.id))
-      .where(eq(OrganizationTable.slug, input.organizationSlug))
-      .limit(1)
-    return connection?.connection ?? null
-  }
+  const emailDomain = input.email?.split("@")[1]?.trim().toLowerCase() || null
+  const domain = input.domain?.trim().toLowerCase() || emailDomain
+  const where = input.organizationSlug
+    ? eq(OrganizationTable.slug, input.organizationSlug)
+    : domain ? ssoDomainColumnCovers(SsoConnectionTable.domain, domain) : null
+  if (!where) return null
 
-  const domain = input.domain ?? input.email?.split("@")[1]?.trim().toLowerCase() ?? null
-  if (!domain) return null
-  const [connection] = await db.$primary
-    .select()
+  const rows = await db.$primary
+    .select({ connection: SsoConnectionTable, domainVerified: SsoProviderTable.domainVerified })
     .from(SsoConnectionTable)
-    .where(eq(SsoConnectionTable.domain, domain))
-    .limit(1)
-  return connection ?? null
+    .innerJoin(OrganizationTable, eq(SsoConnectionTable.organizationId, OrganizationTable.id))
+    .leftJoin(SsoProviderTable, and(
+      eq(SsoProviderTable.providerId, SsoConnectionTable.providerId),
+      eq(SsoProviderTable.organizationId, SsoConnectionTable.organizationId),
+    ))
+    .where(where)
+    .orderBy(asc(SsoConnectionTable.createdAt), asc(SsoConnectionTable.id))
+  const ready = rows.filter((row) => isOrganizationSsoReady({ connection: row.connection, provider: { domainVerified: row.domainVerified === true } }))
+  const preferred = (domain ? ready.find((row) => ssoDomainsCover(row.connection.domain, domain)) : undefined) ?? ready[0] ?? rows[0]
+  return preferred?.connection ?? null
 }
 
 function activeTestMatches(connection: SsoConnection, input: {
@@ -164,7 +162,7 @@ export async function createOrganizationSsoTestIntent(input: {
     return { ok: false as const, message: "Verify the SSO domain before testing this configuration." }
   }
   if (connection.status === "enabled") {
-    return { ok: false as const, message: "Disable SSO before testing a replacement configuration." }
+    return { ok: false as const, message: "Disable this SSO connection before testing a replacement configuration." }
   }
 
   const intentId = randomUUID()
@@ -195,10 +193,13 @@ export async function beginOrganizationSsoTestIntent(input: {
   const [connection] = await db.$primary
     .select()
     .from(SsoConnectionTable)
-    .where(eq(SsoConnectionTable.organizationId, input.organizationId))
+    .where(and(
+      eq(SsoConnectionTable.organizationId, input.organizationId),
+      eq(SsoConnectionTable.activeTestIntentId, input.intentId),
+    ))
     .limit(1)
 
-  if (!connection) return { ok: false as const, message: "SSO configuration was not found." }
+  if (!connection) return { ok: false as const, message: "This SSO authentication test is no longer available. Start a new test." }
   if (connection.activeTestIntentId === input.intentId && connection.activeTestExpiresAt && connection.activeTestExpiresAt <= now) {
     await failOrganizationSsoTestIntent(input.intentId, "expired")
     return { ok: false as const, message: SSO_TEST_FAILURE_MESSAGES.expired }
@@ -244,9 +245,9 @@ export async function authorizeOrganizationSsoSignIn(input: {
   userId: string | null
 }) {
   const connection = await findConnectionForSignIn(input)
-  if (!connection) return { ok: true as const, mode: "unmanaged" as const }
+  if (!connection) return { ok: true as const, mode: "unmanaged" as const, providerId: null }
   const current = await getConnectionWithProvider(connection)
-  if (isOrganizationSsoReady(current)) return { ok: true as const, mode: "enabled" as const }
+  if (isOrganizationSsoReady(current)) return { ok: true as const, mode: "enabled" as const, providerId: connection.providerId }
 
   const intentId = testIntentIdFromUrl(input.callbackUrl)
   if (!intentId || !input.userId || !current.provider?.domainVerified || !activeTestMatches(connection, {
@@ -257,7 +258,7 @@ export async function authorizeOrganizationSsoSignIn(input: {
   })) {
     return { ok: false as const, message: "SSO is not enabled for this organization. An administrator must test and enable the saved configuration first." }
   }
-  return { ok: true as const, mode: "test" as const, intentId }
+  return { ok: true as const, mode: "test" as const, intentId, providerId: connection.providerId }
 }
 
 async function getIntentIdFromVerification(state: string | null) {
@@ -308,11 +309,6 @@ function clearActiveTestFields() {
   }
 }
 
-/**
- * The identity provider sent the administrator back without a session. When
- * their own email is outside the connection's domain that is the reason, so
- * say which domain to use instead of a generic provider error.
- */
 export async function failOrganizationSsoTestAuthentication(intentId: string) {
   const [test] = await db.$primary
     .select({ domain: SsoConnectionTable.domain, email: AuthUserTable.email })
@@ -390,25 +386,33 @@ export function createSsoConfigRevision(input: {
   return createHmac("sha256", env.betterAuthSecret).update(JSON.stringify(input)).digest("hex")
 }
 
-export async function enableOrganizationSsoConnection(organizationId: SsoConnection["organizationId"], capture: AuditChangeCapture | null = null) {
-  const [connection] = await db.$primary
+export function ssoConnectionEnableBlocker(
+  connection: Pick<SsoConnection, "testStatus" | "lastTestedRevision" | "configRevision">,
+  provider: { domainVerified: boolean | null } | null,
+): string | null {
+  if (!provider?.domainVerified) return "Verify the SSO domain before enabling SSO."
+  if (connection.testStatus !== "succeeded" || !connection.lastTestedRevision || connection.lastTestedRevision !== connection.configRevision) {
+    return "Test the current SSO configuration successfully before enabling SSO."
+  }
+  return null
+}
+
+export async function enableOrganizationSsoConnection(target: SsoConnection | null, capture: AuditChangeCapture | null = null) {
+  const [connection] = target ? await db.$primary
     .select()
     .from(SsoConnectionTable)
-    .where(eq(SsoConnectionTable.organizationId, organizationId))
-    .limit(1)
+    .where(eq(SsoConnectionTable.id, target.id))
+    .limit(1) : []
   if (!connection) return { ok: false as const, message: "SSO configuration was not found." }
+  const organizationId = connection.organizationId
 
   const current = await getConnectionWithProvider(connection)
-  if (!current.provider?.domainVerified) {
-    return { ok: false as const, message: "Verify the SSO domain before enabling SSO." }
-  }
-  if (connection.testStatus !== "succeeded" || !connection.lastTestedRevision || connection.lastTestedRevision !== connection.configRevision) {
-    return { ok: false as const, message: "Test the current SSO configuration successfully before enabling SSO." }
+  const blocker = ssoConnectionEnableBlocker(connection, current.provider)
+  if (blocker || !connection.lastTestedRevision) {
+    return { ok: false as const, message: blocker ?? "Test the current SSO configuration successfully before enabling SSO." }
   }
 
   const lastTestedRevision = connection.lastTestedRevision
-  // Guarded update and its sso_connection.enabled event commit together; the
-  // organization share fence (when captured) precedes the connection row lock.
   const auditEventIds = await db.transaction(async (tx) => {
     const [before] = capture ? await tx.select().from(SsoConnectionTable).where(eq(SsoConnectionTable.id, connection.id)).limit(1).for("update") : []
     const result = await tx
@@ -428,13 +432,9 @@ export async function enableOrganizationSsoConnection(organizationId: SsoConnect
     : { ok: false as const, message: "The SSO configuration changed before it could be enabled. Test it again." }
 }
 
-export async function disableOrganizationSsoConnection(organizationId: SsoConnection["organizationId"], capture: AuditChangeCapture | null = null) {
-  const [connection] = await db.$primary
-    .select()
-    .from(SsoConnectionTable)
-    .where(eq(SsoConnectionTable.organizationId, organizationId))
-    .limit(1)
+export async function disableOrganizationSsoConnection(connection: SsoConnection | null, capture: AuditChangeCapture | null = null) {
   if (!connection) return { ok: false as const, message: "SSO configuration was not found." }
+  const organizationId = connection.organizationId
   const auditEventIds = await db.transaction(async (tx) => {
     const [before] = capture ? await tx.select().from(SsoConnectionTable).where(eq(SsoConnectionTable.id, connection.id)).limit(1).for("update") : []
     await tx

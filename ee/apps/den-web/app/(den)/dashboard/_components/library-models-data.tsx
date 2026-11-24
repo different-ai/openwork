@@ -26,7 +26,6 @@ export const libraryModelQueryKeys = {
   connections: (orgId: string | null) => ["me", "library", "models", "connections", orgId] as const,
 };
 
-/** How long we wait for the sign-in (Google, AWS or Microsoft) before offering to try again. */
 const SIGN_IN_WAIT_MS = 10 * 60 * 1000;
 const SIGN_IN_POLL_MS = 2000;
 
@@ -42,7 +41,6 @@ async function loadUsableProviders(orgId: string, signal?: AbortSignal) {
   return parsed.data.inferenceProviders;
 }
 
-/** Every model provider the organization gives the viewer, with their sign-in state. */
 export function useLibraryModels(enabled = true) {
   const { orgId } = useOrgDashboard();
   const providers = useQuery({
@@ -75,11 +73,6 @@ type SignInState =
   | { kind: "waiting"; providerId: string }
   | { kind: "failed"; providerId: string; message: string };
 
-/**
- * Signs the viewer in with their own account for one provider, right where
- * they are: opens the provider's sign-in in a new tab and waits here until
- * Den confirms it, then says which account is in use.
- */
 export function useModelSignIn() {
   const { orgId } = useOrgDashboard();
   const queryClient = useQueryClient();
@@ -100,7 +93,6 @@ export function useModelSignIn() {
     const current = new AbortController();
     controller.current = current;
     setState({ kind: "waiting", providerId: provider.id });
-    // Open the tab inside the click so the browser does not block it.
     const tab = window.open("", "_blank");
     try {
       const authUrl = await startGatewayMemberConnection(orgId, set, current.signal);
@@ -140,7 +132,6 @@ export function useModelSignIn() {
           toast({ title: row.accountEmail ? `Signed in to ${signInBrand(provider)} as ${row.accountEmail}` : `Signed in to ${signInBrand(provider)}` });
           return;
         }
-        // The person closed the sign-in tab without finishing, or the provider said no there.
         if (tabClosed) {
           setState({ kind: "failed", providerId: provider.id, message: "Sign-in didn't finish." });
           return;

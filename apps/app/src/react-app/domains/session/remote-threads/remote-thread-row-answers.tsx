@@ -6,11 +6,6 @@ import { singleChoiceAnswer } from "@/lib/remote-session-answers"
 import { answerRemoteThread } from "./remote-thread-actions"
 import type { RemoteThreadEntry } from "./remote-thread-store"
 
-/**
- * A single-choice question a task on another computer asks, answered from its
- * row in the chat: each option is one small button. Other answers (free text,
- * option details) are given in the task's conversation, which the last button opens.
- */
 export function RemoteThreadRowAnswers({ entry, choices, openPanel }: {
   entry: RemoteThreadEntry
   choices: { requestId: string; options: string[] }

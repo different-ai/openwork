@@ -1,8 +1,6 @@
 import { checkManagedTool } from "./managed-policy-client.js";
 import { createManagedPolicyIpcClient } from "../managed-policy-ipc.js";
 const check = createManagedPolicyIpcClient();
-// Plugin.define is the identity function in the pinned SDK. The structural
-// contract avoids loading either engine's SDK into the other engine.
 export default {
   id: "openwork.managed-policy",
   async setup(ctx: {

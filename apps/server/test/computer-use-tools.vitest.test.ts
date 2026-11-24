@@ -15,7 +15,7 @@ test("the agent can discover computer tools on every desktop platform, including
 test("app scripts are offered on this Mac and approved in OpenWork, not by an engine prompt", async () => {
   const plugin = await server();
   expect(plugin.tool.computer_script).toBeDefined();
-  expect(plugin.tool.computer_script.description).toContain("full script");
+  expect(plugin.tool.computer_script.description).toContain("unless the person's organization asks before each script");
   expect(Object.keys(plugin.tool.computer_script.args)).toEqual(["app", "code", "timeoutMs"]);
 });
 
@@ -39,6 +39,19 @@ test("computer_open defaults to control and offers the narrower modes only when 
   expect(description).not.toContain("prefer assist");
   // The person answers in the chat; the turn does not end on a request to reply.
   expect(description).toContain("ask them in this chat with the question tool");
+  // The person's own input pauses a step; it is never a reason to hand the task back.
+  expect(description).toContain("only pause a step until they are idle");
+  expect(description).toContain("never a reason to stop or ask them");
+});
+
+test("a task across apps is split into app agents that pass files by path", async () => {
+  const plugin = await server({ parallel: true });
+  const description = plugin.tool.computer_open.description;
+  expect(description).toContain("give each app to its own subagent");
+  expect(description).toContain("start each wave's agents together in one message");
+  expect(description).toContain("every agent of this chat gets the same one");
+  expect(description).toContain("check the final file yourself");
+  expect(description).toContain("OpenWork places their windows");
 });
 
 test("a Windows PC is not offered app scripting", async () => {
@@ -49,4 +62,11 @@ test("a Windows PC is not offered app scripting", async () => {
     expect("computer_script" in plugin.tool).toBe(false);
     expect(plugin.tool.computer_open.description).toContain("Windows PC");
   } finally { Object.defineProperty(process, "platform", platform); }
+});
+
+test("the agent opens the person's own browser as an app when they ask for it", async () => {
+  const plugin = await server();
+  const description = plugin.tool.computer_open.description;
+  expect(description).toContain("unless the person asks for their own browser (Chrome, Safari); then open it as an app like any other");
+  expect(description).toContain("Web browser apps and remote computers take no password or code");
 });

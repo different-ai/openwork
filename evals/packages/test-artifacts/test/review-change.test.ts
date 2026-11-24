@@ -3,7 +3,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { assembleReview } from "../src/review.ts";
+import { assembleReview, renderReviewComment } from "../src/review.ts";
+import { authorEvidenceNotice } from "../../../../.github/scripts/evidence-association.mjs";
 
 const SHA = "2222222222222222222222222222222222222222";
 // A 1×1 PNG: enough for the assembler to read its size.
@@ -28,6 +29,7 @@ test("the report keeps each image's step, what changed, what was checked, and it
     };
     await writeFile(join(dir, "test-run.json"), JSON.stringify({
       name: "a member finds effort under Advanced options",
+      notice: "Started by @artifact-user", triggering_actor: { login: "artifact-user" },
       dir,
       createdAt: "2026-10-02T10:00:00.000Z",
       closedAt: "2026-10-02T10:01:00.000Z",
@@ -51,7 +53,11 @@ test("the report keeps each image's step, what changed, what was checked, and it
       failure: "Timed out",
     }));
     for (const name of ["01-before.png", "02-before.png", "03-failed.png"]) await writeFile(join(dir, name), PIXEL);
-    const { report } = await assembleReview({ testRunDirs: [dir] });
+    const notice = authorEvidenceNotice({ triggering_actor: { login: "api-starter" } });
+    const { report } = await assembleReview({ testRunDirs: [dir], notice });
+    assert.equal(report.notice, notice);
+    assert.ok(renderReviewComment(report).includes(notice));
+    assert.ok(!report.notice.includes("artifact-user"));
     const [first, second, failed, check] = report.evidence;
     assert.ok(first?.kind === "image" && second?.kind === "image" && failed?.kind === "image" && check?.kind === "assertion");
     assert.deepEqual(second.size, { width: 1, height: 1 });

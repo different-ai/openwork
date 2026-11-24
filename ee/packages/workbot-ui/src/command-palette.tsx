@@ -10,6 +10,7 @@ import {
   CircleAlert,
   CircleDashed,
   FileText,
+  Globe,
   House,
   LayoutDashboard,
   ListChecks,
@@ -17,6 +18,8 @@ import {
   MessageCircle,
   MessagesSquare,
   Monitor,
+  MonitorSmartphone,
+  Paperclip,
   PenLine,
   Plug,
   Plus,
@@ -45,25 +48,18 @@ import { useRetainedSurface } from "./host";
  * Base UI's Dialog and Autocomplete own focus, the combobox/listbox roles and arrow-key navigation (DESIGN P5).
  */
 
-export type WorkbotPaletteTab = "home" | "calendar" | "documents" | "computer";
+export type WorkbotPaletteTab = "home" | "calendar" | "documents" | "computer" | "devices";
 type Page = "root" | "chats" | "tasks";
 
 type Entry = Rankable & {
   icon: ReactNode;
-  /** Quiet trailing text: when a chat was last used, how long a task has run. */
   meta?: string;
-  /** Why this can't run right now, shown on the row (DESIGN P4). The row stays visible but disabled. */
   locked?: string;
-  /** Opens a nested page (Tab or Enter) instead of running. */
   page?: Exclude<Page, "root">;
-  /** What Enter does, as the highlighted row says it. */
   verb: string;
   run?: () => void;
-  /** Keeps the palette open after running (Try again). */
   stayOpen?: boolean;
-  /** Runs once the palette has closed, for actions that move focus (Write a message, Show a task). */
   thenFocus?: () => void;
-  /** Cmd/Ctrl+Enter. */
   alt?: { verb: string; run: () => void };
 };
 
@@ -71,8 +67,8 @@ export type WorkbotCommandPaletteProps = {
   name: string;
   tab: WorkbotPaletteTab;
   tabs: readonly WorkbotPaletteTab[];
+  computerLabel?: "Browser" | "Computer";
   onTab: (tab: WorkbotPaletteTab) => void;
-  /** Side chats, where they are on. */
   chats: {
     current: string | null;
     list: WorkbotChats | undefined;
@@ -80,7 +76,6 @@ export type WorkbotCommandPaletteProps = {
     failed: boolean;
     retry: () => void;
     open: (chat: string | null) => void;
-    /** Unsaved document drafts keep the person in this chat. */
     locked: boolean;
   } | null;
   busy: boolean;
@@ -93,19 +88,22 @@ export type WorkbotCommandPaletteProps = {
   connectionsHref: string | null;
 };
 
-const TAB_LABEL: Record<WorkbotPaletteTab, string> = { home: "Home", calendar: "Calendar", documents: "Documents", computer: "Computer" };
+const TAB_LABEL: Record<WorkbotPaletteTab, string> = { home: "Home", calendar: "Calendar", documents: "Documents", computer: "Computer", devices: "Devices" };
 const TAB_ICON: Record<WorkbotPaletteTab, ReactNode> = {
   home: <House size={16} strokeWidth={1.5} aria-hidden />,
   calendar: <CalendarDays size={16} strokeWidth={1.5} aria-hidden />,
   documents: <FileText size={16} strokeWidth={1.5} aria-hidden />,
   computer: <Monitor size={16} strokeWidth={1.5} aria-hidden />,
+  devices: <MonitorSmartphone size={16} strokeWidth={1.5} aria-hidden />,
 };
 const TAB_KEYWORDS: Record<WorkbotPaletteTab, string> = {
   home: "chat conversation main start",
   calendar: "week meetings schedule automations",
   documents: "drive files docs sheets",
-  computer: "browser desktop screen",
+  computer: "browser desktop screen web page",
+  devices: "computers laptop mac pc virtual machine sandbox online",
 };
+const BROWSER_ICON = <Globe size={16} strokeWidth={1.5} aria-hidden />;
 
 function isMac() {
   return typeof navigator !== "undefined" && /mac|iphone|ipad|ipod/i.test(navigator.platform);
@@ -148,7 +146,6 @@ function Highlighted({ text, query }: { text: string; query: string }) {
     : <span key={index}>{run.text}</span>)}</>;
 }
 
-/** Where the Chats group will be, while it loads: the label and three rows of the same height. */
 function ChatsSkeleton() {
   return (
     <div className="pt-1" aria-hidden data-workbot-palette-loading>
@@ -167,6 +164,8 @@ const NO_CHATS: WorkbotChats["side"] = [];
 
 const ICON_BUTTON =
   "grid h-8 w-8 shrink-0 place-items-center rounded-full text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]";
+const TRIGGER_BUTTON =
+  "grid size-10 shrink-0 place-items-center rounded-lg text-[var(--wb-muted)] transition-colors duration-150 hover:bg-[var(--wb-chip)] hover:text-[var(--wb-text)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)]";
 
 export function WorkbotCommandPalette(props: WorkbotCommandPaletteProps) {
   const mac = useMemo(isMac, []);
@@ -179,9 +178,7 @@ export function WorkbotCommandPalette(props: WorkbotCommandPaletteProps) {
   const [highlightedId, setHighlightedId] = useState<string | null>(null);
   const input = useRef<HTMLInputElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
-  /** Where focus goes back to when the palette was opened from the keyboard (the composer, a document). */
   const returnTo = useRef<HTMLElement | null>(null);
-  /** An action's own focus move, run once the palette has closed. */
   const pendingFocus = useRef<(() => void) | null>(null);
   const stopTask = useStopWorkbotTask();
   const blocked = surface.blocked;
@@ -195,7 +192,6 @@ export function WorkbotCommandPalette(props: WorkbotCommandPaletteProps) {
     pendingFocus.current = null;
     next?.();
   };
-  // A page change can unmount the header mid-close; the focus move still happens.
   useEffect(() => () => {
     const next = pendingFocus.current;
     pendingFocus.current = null;
@@ -207,14 +203,12 @@ export function WorkbotCommandPalette(props: WorkbotCommandPaletteProps) {
     else setRecents(loadPaletteRecents());
   }, [open]);
 
-  // A new search or page starts at the top, where the best match is, after the list's own scroll-into-view settles.
   useEffect(() => {
     if (!open) return;
     let frame = window.requestAnimationFrame(() => { frame = window.requestAnimationFrame(() => { if (scroller.current) scroller.current.scrollTop = 0; }); });
     return () => window.cancelAnimationFrame(frame);
   }, [open, page, query]);
 
-  // Cmd+K on macOS, Ctrl+K elsewhere, from anywhere on the page, including the composer. Pressed again, it closes.
   useEffect(() => {
     if (blocked) return;
     const onKey = (event: globalThis.KeyboardEvent) => {
@@ -235,7 +229,6 @@ export function WorkbotCommandPalette(props: WorkbotCommandPaletteProps) {
   const runningTasks = tasks.filter(running);
 
   const chatEntries = useMemo<Entry[]>(() => {
-    // Until the list arrives the Chats group is a skeleton, so rows never jump in under the pointer.
     if (!chats || !chats.list) return [];
     const lock = chats.locked ? "Save or close document drafts first" : undefined;
     const entry = (id: string | null, title: string, updatedAt: number | undefined, preview: boolean): Entry => ({
@@ -285,9 +278,10 @@ export function WorkbotCommandPalette(props: WorkbotCommandPaletteProps) {
       if (chats.failed && !chats.list) entries.push({ id: "action:retry-chats", group: "chats", title: "Couldn't load your chats", detail: "Try again", keywords: "retry reload", icon: <RotateCw size={16} strokeWidth={1.5} aria-hidden />, verb: "Try again", run: chats.retry, stayOpen: true });
     }
     if (tasks.length > 0) entries.push({ id: "action:tasks", group: "actions", title: "Show background tasks", detail: runningTasks.length > 0 ? `${runningTasks.length.toLocaleString()} running` : `${tasks.length.toLocaleString()} finished`, keywords: "jobs work progress", icon: <ListChecks size={16} strokeWidth={1.5} aria-hidden />, page: "tasks", verb: "Open" });
-    if (props.onOpenFiles) entries.push({ id: "action:files", group: "actions", title: "Show files", keywords: "uploads attachments documents outputs", icon: <FileText size={16} strokeWidth={1.5} aria-hidden />, verb: "Show", run: props.onOpenFiles });
+    if (props.onOpenFiles) entries.push({ id: "action:files", group: "actions", title: "Show files", detail: "Uploads and files from this chat", keywords: "uploads attachments documents outputs", icon: <Paperclip size={16} strokeWidth={1.5} aria-hidden />, verb: "Show", run: props.onOpenFiles });
     for (const tab of props.tabs) {
-      entries.push({ id: `nav:${tab}`, group: "navigation", title: TAB_LABEL[tab], detail: props.tab === tab ? "Open now" : undefined, keywords: TAB_KEYWORDS[tab], icon: TAB_ICON[tab], locked: props.tab === tab ? "Open now" : undefined, verb: "Go", run: () => props.onTab(tab) });
+      const browser = tab === "computer" && props.computerLabel === "Browser";
+      entries.push({ id: `nav:${tab}`, group: "navigation", title: browser ? "Browser" : TAB_LABEL[tab], detail: props.tab === tab ? "Open now" : undefined, keywords: browser ? `${TAB_KEYWORDS[tab]} computer` : TAB_KEYWORDS[tab], icon: browser ? BROWSER_ICON : TAB_ICON[tab], locked: props.tab === tab ? "Open now" : undefined, verb: "Go", run: () => props.onTab(tab) });
     }
     entries.push({ id: "settings:dashboard", group: "settings", title: "Your dashboard", detail: "OpenWork", keywords: "account profile organization workspace admin", icon: <LayoutDashboard size={16} strokeWidth={1.5} aria-hidden />, verb: "Open", run: () => window.location.assign(props.homeHref), alt: { verb: "New tab", run: () => openInNewTab(props.homeHref) } });
     const connections = props.connectionsHref;
@@ -300,7 +294,6 @@ export function WorkbotCommandPalette(props: WorkbotCommandPaletteProps) {
     ...chatEntries.map((entry) => ({ ...entry, preview: true })),
   ] : page === "tasks" ? taskEntries.map((entry) => ({ ...entry, preview: true })) : rootEntries, [page, rootEntries, chatEntries, taskEntries]);
   const groups: RankedGroup<Entry>[] = useMemo(
-    // The page or chat already open is not offered as a recent: it would lead nowhere.
     () => rankPaletteItems(query, pageEntries, page === "root" ? recents.filter((id) => pageEntries.find((entry) => entry.id === id)?.locked === undefined) : []),
     [query, pageEntries, page, recents],
   );
@@ -330,7 +323,6 @@ export function WorkbotCommandPalette(props: WorkbotCommandPaletteProps) {
       else close();
       return;
     }
-    // Emacs-style Ctrl+N / Ctrl+P move like the arrow keys (macOS habit, also on other systems).
     if (event.ctrlKey && !event.metaKey && !event.altKey && (event.key === "n" || event.key === "p") && target) {
       event.preventDefault();
       event.stopPropagation();
@@ -395,7 +387,7 @@ export function WorkbotCommandPalette(props: WorkbotCommandPaletteProps) {
       onOpenChangeComplete={(next) => { if (!next) flushFocus(); }}
     >
       <Dialog.Trigger
-        className={ICON_BUTTON}
+        className={TRIGGER_BUTTON}
         aria-label="Search and actions"
         aria-keyshortcuts={mac ? "Meta+K" : "Control+K"}
         title={`Search and actions (${mod}${mac ? "" : "+"}K)`}

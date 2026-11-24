@@ -1,0 +1,306 @@
+---
+title: "Install from OpenWork Cloud (Deployments)"
+description: "Use Manage › Deployments in OpenWork Cloud to install your own OpenWork in your AWS or Google Cloud account, approve every change there, and watch its health."
+keywords: ["Deployments", "managed deployment", "managed installer", "AWS", "CloudFormation", "CloudShell", "Google Cloud", "Cloud Shell", "Terraform", "private cloud", "self-host"]
+---
+
+<Warning>
+  **Deployments is rolling out by request.** It is off by default, and only on
+  OpenWork Cloud. If you don't see **Manage › Deployments**, or it says
+  **Deployments aren't turned on for this workspace**, ask your OpenWork
+  contact. Google Cloud support is newer than AWS and has not yet been proven
+  on a live customer install. Azure isn't supported; use the
+  [manual Azure guide](/self-host/deploy-to-your-cloud/azure).
+</Warning>
+
+**Manage › Deployments** installs your own copy of OpenWork in your company's
+AWS account or Google Cloud project, at your own address, from OpenWork Cloud.
+You approve the install in your cloud; OpenWork Cloud then shows its progress,
+health and available updates.
+
+- **It runs in your account.** Your cloud bills you for what it runs.
+- **You approve every change.** Nothing is installed or updated until you
+  approve it in your cloud. There are no automatic updates.
+- **No cloud keys.** OpenWork never asks for your cloud credentials. You run
+  the installer yourself.
+- **Your first sign-in stays yours.** The first administrator's sign-in code is
+  kept in your cloud's secret store. OpenWork never receives it.
+
+To deploy by hand instead, with Helm or Terraform, see
+[Deploy to your cloud](/self-host/deploy-to-your-cloud/overview).
+
+## Who can use it
+
+| Action | Permission | Who has it by default |
+| --- | --- | --- |
+| See deployments | **View deployments** | Owner and admins |
+| Create, approve, update, change and remove deployments | **Manage deployments** | Owner only |
+
+Managing deployments asks you to sign in again if you haven't signed in
+recently.
+
+If **Create deployment** is locked with a message about the installer, no
+installer has been published for that cloud yet. Only OpenWork can fix that; it
+isn't something your cloud sign-in can change.
+
+## What you need
+
+### AWS
+
+- An AWS account, and someone who can create a CloudFormation stack with IAM
+  resources. An account that holds nothing else is best.
+- A **public Route 53 hosted zone in that account** for the address. For
+  `openwork.example.com`, that's the `example.com` zone or a delegated
+  `openwork.example.com` zone. The installer creates `openwork.example.com`,
+  `api.openwork.example.com`, and their HTTPS certificates.
+- If the domain has CAA records, they must allow `amazon.com`.
+- A network, chosen in the form:
+  - **New dedicated network**: creates its own VPC, NAT gateway and ECS
+    cluster. The form estimates about $100–150 a month at the small size.
+  - **Existing VPC**: runs in your VPC, with two or more private subnets with
+    outbound internet through NAT, two or more public subnets for the load
+    balancer, and optionally your ECS cluster. The form estimates about
+    $60–100 a month at the small size, plus your network's own costs. The
+    installer checks your network before changing anything.
+
+### Google Cloud
+
+- A dedicated Google Cloud project with billing turned on. Don't use a shared
+  production project.
+- A public Cloud DNS zone in that project that serves the address.
+- Costs include Cloud Run, Cloud SQL, a load balancer and storage. Check
+  Google Cloud pricing.
+
+## Create a deployment
+
+1. Open **Manage › Deployments** and click **Create deployment**.
+2. Choose the **Cloud** and fill in the form:
+   - **Name**, for example `Production`
+   - AWS: **AWS account ID**, **Region**, **Network**, and the **Route 53
+     hosted zone ID for that address**
+   - Google Cloud: **Google Cloud project ID**, **Google Cloud project
+     number**, **Region**, and the **Cloud DNS managed zone name for that
+     address**
+   - **Address**, for example `openwork.example.com`
+   - **First administrator email**
+3. Confirm that you control the account, and that you understand the
+   permissions and costs.
+4. Click **Create deployment**.
+
+Nothing is created in your cloud yet. For AWS, the form takes about **30–60 seconds** once you have the values ready, not counting AWS sign-in or permission review.
+
+### AWS example
+
+This example follows a real install, with identifying values masked. Use your own values, not the placeholders.
+
+| Field | Example |
+| --- | --- |
+| **Cloud** | AWS |
+| **Name** | `Production` |
+| **AWS account ID** | `********8800` (enter all 12 digits from the AWS console account menu) |
+| **Region** | `us-east-1` |
+| **Network** | **New dedicated network** |
+| **Address** | `ow-••••••••.aws.example.com` (enter a hostname without `https://`) |
+| **Route 53 hosted zone ID for that address** | `Z••••••••••••••••••••` (copy the full **Hosted zone ID** from **Route 53 › Hosted zones**) |
+| **First administrator email** | `[redacted]@example.com` (use the email of the person who will set up the new OpenWork instance) |
+| **Cloud computers (optional)** | **Off** (does not disable the managed runner) |
+
+### AWS sign-in is optional
+
+You need to be signed in to the target AWS account to approve the install, but **you don't need to save an AWS sign-in URL in OpenWork**. If you're already signed in, or you prefer to sign in separately, skip the setting. The approval link goes straight to the AWS console when no portal is saved.
+
+Set it up before opening the installer only if you want approval links to go through your team's AWS IAM Identity Center access portal. Choose **Use an access portal (optional)** under **Approve in AWS**, or open **Deployments › Settings › AWS sign-in**. Enter your start URL, for example `https://[redacted].awsapps.com/start`, and click **Save sign-in**. Leave **Role name (optional)** blank to pick a role in AWS, or enter the exact role name shown in your portal.
+
+If a portal is already saved and you're signed in to the right account, click **Already signed in to AWS? Open the installer directly**. If the portal sends you to a blank **HTTP ERROR 400** on `signin.aws.amazon.com`, use that direct link or open the original approval link in a private window and sign in there. You don't need to create another deployment.
+
+![Chrome shows “This page isn’t working” and HTTP ERROR 400 during AWS sign-in. The address bar is cropped out.](/images/managed-aws/aws-sign-in-400.png)
+
+## Approve the install
+
+- **AWS**: under **Approve in AWS**, click **Review and approve in AWS**. If
+  you see **Prepare AWS approval** first, click it to get the link.
+  The CloudFormation console opens with the installer filled in. Make sure
+  the console shows the intended AWS account and region. Review the prefilled
+  parameters and permissions, acknowledge the required IAM capabilities, then
+  click **Create stack**.
+  Sign in to that AWS account in the same browser first. If AWS shows a sign-in
+  page for a root or IAM user, the browser isn't signed in to the account: sign
+  in on your company's AWS page, then open the link again.
+- **Google Cloud**: click **Prepare Google Cloud approval**. Click **Copy
+  command**, then **Open Google Cloud Shell**, and run the command there. It
+  checks the installer before running it, asks you to type the project ID to
+  approve, and asks for your consent to use your Google credentials. It never
+  asks for service account keys.
+
+OpenWork shows each installer step as it happens: **Installer connected**,
+**Release verified**, account (or project) **and domain verified**,
+**Infrastructure installed**, **Services started**, and **HTTPS and database
+verified**. Allow **15–30 minutes** on AWS after clicking **Create stack**.
+You can also follow the stack under **CloudFormation › Stacks › Events**:
+`CREATE_IN_PROGRESS` means AWS is still working; `CREATE_COMPLETE` means the
+stack finished. If the stack fails or rolls back, check **Events** for the first
+failed resource and its reason before retrying.
+
+If an installer step fails, the deployment page says what to check. Fix the
+reported issue and use **Prepare retry** when offered.
+
+## Sign in for the first time
+
+When the install finishes, open `https://<your address>/setup`. Enter the
+one-time code from the deployment's secret in AWS Secrets Manager or Google
+Cloud Secret Manager, field `DEN_INITIAL_ADMIN_BOOTSTRAP_CODE`. **Technical
+details** on the deployment shows where to look. See
+[Create the first administrator](/self-host/deploy-to-your-cloud/first-administrator).
+
+Then set up email and single sign-on in your new OpenWork. If you installed the managed runtime on AWS, configure an upstream model provider under **Models** before sending your first model request. To use Slack, add your Slack app credentials in **Connectors** in the new instance.
+
+## Status checks
+
+A read-only health agent in your account reports every 5 minutes. **Status
+checks** shows **API**, **Database connection**, **Web app**, **Services**,
+**Load balancer**, **Database instance**, **Database storage**, **Backups**
+and **HTTPS certificate**. Reports contain only check results.
+
+Each deployment reads:
+
+- **Operational**: everything passes.
+- **Degraded**: a warning, or a check that isn't critical failed.
+- **Down**: the API, web app, database connection or services are failing.
+- **Not reporting**: no report recently. The last known checks stay visible.
+
+On a fresh AWS install, **Runner backups** may warn before the first scheduled backup has completed. Check the individual rows rather than relying only on the overall status. If it is the only warning, recheck after the first scheduled backup and investigate if it persists.
+
+![An AWS deployment in OpenWork Cloud. The core checks pass, but the Runner backups row is marked Couldn't check, and the overall status is Degraded.](/images/managed-aws/deployment-status-checks.png)
+
+*Example from a fresh install. The runner storage value is omitted because this build displayed it in the wrong unit.*
+
+Health shows in OpenWork Cloud only. It isn't emailed to you.
+
+## Update
+
+When a newer installer is published, the deployment shows **Update to** and
+the version. Click it to get a command for AWS CloudShell or Google Cloud
+Shell, then run it there. The update refuses to delete or replace your
+database, secrets or network, and checks health again afterwards.
+
+## Change the configuration
+
+After an AWS deployment is installed, **Edit configuration** changes some of
+its settings without waiting for a newer installer. It is rolling out by
+request: if you don't see **Edit configuration** on an installed deployment,
+ask your OpenWork contact. Google Cloud deployments can't be edited after
+installation yet.
+
+### What you can change
+
+| Setting | What it does |
+| --- | --- |
+| **Name** | Saved right away. Nothing changes in AWS, and there is no command to run. |
+| **First administrator email** | Changes who can complete the first sign-in at `https://<your address>/setup`. An administrator who has already signed in stays the administrator, and no email is sent. |
+| **Add gateway runtime** | For a deployment with core services only: adds the model gateway, managed runner, Workbot, Slack and Automations, file storage and daily backups. AWS bills your account for them, and they can't be removed later. |
+| **Cloud computers** | For a deployment with the gateway runtime: turns Daytona or Freestyle computers on or off, or changes their key, snapshot or Daytona settings. The computers run outside your AWS account and are billed by that provider. |
+
+### What is fixed at installation
+
+**Address**, **AWS account**, **Region**, **Hosted zone**, **Network** and
+**Size** are chosen when the deployment is created. The dialog shows them
+locked under **Fixed at installation**. Your database, certificates, DNS
+records and network are built around them, so changing one would mean a
+different installation, not an edited one. To use different values, create a
+new deployment.
+
+The gateway runtime can't be turned off once it is added: removing it would
+delete the runner's files, secrets and backups.
+
+### Make a change
+
+1. Open the deployment in **Manage › Deployments** and click **Edit
+   configuration**.
+2. Change the values and click **Review changes**. The review lists each
+   value **Before** and **After** and says what the change does to your
+   installation.
+3. Tick the confirmation and click **Prepare AWS approval**.
+4. Click **Copy command**, then **Open AWS CloudShell** signed in to the
+   deployment's AWS account, and run the command there.
+
+**Nothing changes until you run the command in your AWS account.** Until
+then the deployment reads **Awaiting AWS approval**, lists the change under
+**Requested changes**, and keeps running with its current settings. The
+approval expires after 3 hours. While it waits you can:
+
+- **Show approval command** to see the command again, for example after
+  reloading the page.
+- **Edit change** to replace it with a different change. The earlier command
+  stops working.
+- **Discard change** to drop it. The earlier command stops working.
+
+The command first checks that the approval is still current and reserves it,
+then updates the installer in your AWS account. Once reserved, the change
+can't be edited or discarded: the shell may already be changing AWS. If it
+stays at **AWS approval reserved**, ask your OpenWork operator to inspect the
+installer before attempting recovery. Turning the feature off does not
+cancel an approval already reserved.
+
+The command runs the installer version you already have with the new values;
+it does not update OpenWork. It refuses to run in any other AWS account, and
+the installer refuses to delete or replace your database, secrets or network.
+Older installations without an immutable installer reference need an approved
+Update before configuration editing is available.
+
+### A change restarts services
+
+Every change you approve restarts the OpenWork API and web app, so people
+using your OpenWork are interrupted for a moment. A change to cloud computers
+also restarts the managed runner, which interrupts work it is running at that
+moment. Run the command at a quiet time.
+
+OpenWork shows the same six steps as an install. After the last one,
+**HTTPS and database verified**, the deployment shows the new values. If a
+step fails, the page says what to check; the deployment keeps showing the
+values from before the change, AWS may be partly changed, and **Review and
+try again** reopens the change so you can run it again.
+
+### Secrets stay in your account
+
+OpenWork never asks for a secret value. For cloud computers, create your
+Daytona or Freestyle API key as a plain-string secret in AWS Secrets Manager,
+in the deployment's AWS account and region, and enter only its ARN, for
+example `arn:aws:secretsmanager:us-east-1:123456789012:secret:daytona-key-Ab12Cd`.
+OpenWork Cloud stores the ARN and passes it to the installer; it never receives
+the key value. Your installed runner uses the key to authenticate to your
+chosen computer provider.
+
+### If Edit configuration is locked
+
+The line under the button says why. The usual reasons:
+
+- An install, update or change is waiting for approval or running in AWS.
+  Finish it, or discard the change, first.
+- The last install, retry or update didn't finish. Finish it with **Prepare
+  retry** or **Update to**, then edit the configuration.
+- You don't have the **Manage deployments** permission. Ask the organization
+  owner.
+
+**Add gateway runtime** can be used only when the deployment already runs the
+newest published installer. On an older one the button is locked and names
+the version to update to; **Update to** can add the gateway runtime in the
+same step.
+
+## Remove
+
+**Remove** deletes the deployment record from OpenWork Cloud. It's offered only
+before an install has started.
+
+Removing the record, or deleting the AWS installer stack, does **not** delete
+OpenWork, its database, or its Terraform state in your cloud, and doesn't stop
+charges. Taking an install down is a manual step in your own cloud.
+
+If Deployments is turned off for your organization, running installs keep
+working and keep reporting health; you just can't start new installs.
+
+## Agents
+
+With Deployments on, AI tools connected through the
+[OpenWork MCP gateway](/start-here/connect-openwork-mcp) can create a
+deployment and prepare its approval for you. The approval step is always yours
+to take in your own cloud. Agents can't remove deployments.

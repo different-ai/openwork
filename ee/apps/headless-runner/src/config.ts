@@ -3,7 +3,6 @@ import { dirname, join } from "node:path"
 import { z } from "zod"
 import { parseDsn, type ErrorReportingConfig } from "./error-reporting.js"
 
-/** Allow https anywhere, and plain http only for loopback development hosts. */
 function isSafeUrl(value: string) {
   const url = new URL(value)
   if (url.protocol === "https:") return true
@@ -13,10 +12,6 @@ const safeUrl = z
   .url()
   .refine(isSafeUrl, "must be https (http is allowed only for loopback hosts)")
   .transform((value) => value.replace(/\/+$/, ""))
-/**
- * Den's API for self-resume. The runner sends its callback token and resume grants there and gets member-scoped MCP
- * tokens back, so it must be https; plain http is allowed only for loopback development hosts, like the other URLs.
- */
 const denUrl = safeUrl
 
 const csv = z
@@ -24,7 +19,6 @@ const csv = z
   .optional()
   .transform((value) => (value ? value.split(",").map((item) => item.trim()).filter(Boolean) : []))
 
-/** Empty means unset, as an env file's `NAME=` line usually intends. */
 const optionalText = z
   .string()
   .optional()
@@ -46,43 +40,24 @@ const configSchema = z.object({
   HEADLESS_MODEL: z.string().min(1),
   HEADLESS_MODEL_API_KEY: z.string().min(1).optional(),
   HEADLESS_MCP_URL: safeUrl.optional(),
-  /** Explicit trusted Den destination; never inferred from the generic MCP host. Unset: no Workbot telemetry. */
   HEADLESS_WORKBOT_DEN_API_URL: optionalText.pipe(telemetryDenOrigin.optional()),
   HEADLESS_MCP_TOOL_ALLOWLIST: csv,
   HEADLESS_MAX_CONCURRENT_TURNS: z.coerce.number().int().min(1).max(1_000).default(32),
-  /** Model calls per turn; 0 means no limit, so a long task is bounded by the turn timeout and Stop instead. */
   HEADLESS_MAX_STEPS: z.coerce.number().int().min(0).default(0),
   HEADLESS_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(256).max(128_000).default(16_384),
-  /** 0 means no limit: every model and tool call has its own timeout, so a turn cannot hang. */
   HEADLESS_TURN_TIMEOUT_MS: z.coerce
     .number()
     .int()
     .min(0)
     .default(0)
     .refine((value) => value === 0 || value >= 10_000, "must be 0 (no limit) or at least 10000"),
-  /**
-   * A running turn pauses itself between steps this often so the caller can resume it with fresh credentials.
-   * Den's run-scoped MCP tokens live at most 60 minutes.
-   */
   HEADLESS_CREDENTIAL_REFRESH_MS: z.coerce.number().int().min(60_000).default(50 * 60_000),
   HEADLESS_CONTEXT_CHAR_BUDGET: z.coerce.number().int().min(10_000).default(400_000),
   HEADLESS_SYSTEM_PROMPT: z.string().optional(),
-  /**
-   * Saved files (uploads and files the agent hands back): off, a folder on disk, or any S3-compatible bucket. Only
-   * conversations created with `files: true` use them.
-   */
   HEADLESS_FILES: z.enum(["off", "disk", "s3"]).default("off"),
-  /** For `disk`. Defaults to a `files` folder next to the database, so both live on the same persistent volume. */
   HEADLESS_FILES_DIR: z.string().min(1).optional(),
-  /** The largest single file a conversation may keep (uploads, saved files, computer outputs). */
   HEADLESS_FILES_MAX_BYTES: z.coerce.number().int().min(1024).default(100 * 1024 * 1024),
-  /** How much one conversation may keep in total. */
   HEADLESS_FILES_MAX_SESSION_BYTES: z.coerce.number().int().min(1024).default(5 * 1024 * 1024 * 1024),
-  /**
-   * Session storage (README "Long conversations"): seal old turns into segments and move large tool outputs to the
-   * files bucket, so the hot database stays small. Off by default; reading sealed history and large outputs always
-   * works whatever this says. Needs HEADLESS_FILES (s3 on cells).
-   */
   HEADLESS_SEGMENTS: z.enum(["on", "off"]).default("off"),
   HEADLESS_HOT_LIMIT_BYTES: z.coerce.number().int().min(65_536).default(32 * 1024 * 1024),
   HEADLESS_SEGMENT_TARGET_BYTES: z.coerce.number().int().min(1024).default(8 * 1024 * 1024),
@@ -93,7 +68,6 @@ const configSchema = z.object({
   HEADLESS_S3_ACCESS_KEY_ID: z.string().min(1).optional(),
   HEADLESS_S3_SECRET_ACCESS_KEY: z.string().min(1).optional(),
   HEADLESS_S3_FORCE_PATH_STYLE: z.enum(["true", "false"]).default("false"),
-  /** A Linux computer per conversation (bash and look tools): off, or a Freestyle VM. */
   HEADLESS_COMPUTER: z.enum(["off", "freestyle", "daytona"]).default("off"),
   DAYTONA_API_KEY: z.string().min(1).optional(),
   DAYTONA_API_URL: safeUrl.default("https://app.daytona.io/api"),
@@ -105,38 +79,20 @@ const configSchema = z.object({
     .string()
     .optional()
     .transform((value) => value || undefined),
-  /** Snapshot id or slug to boot from; defaults to the one built from @openwork-ee/headless-computer's image. */
   HEADLESS_COMPUTER_SNAPSHOT: z.string().min(1).optional(),
-  /**
-   * A sandbox gateway in front of several providers (Differently), separate from HEADLESS_COMPUTER's direct provider.
-   * Only conversations whose `sandboxGateway` setting is on (Den's per-organization flag) run their computer through it;
-   * every other conversation keeps the direct provider. Off by default.
-   */
   SANDBOX_GATEWAY: z.enum(["off", "differently"]).default("off"),
   SANDBOX_GATEWAY_URL: safeUrl.optional(),
   SANDBOX_GATEWAY_API_KEY: z.string().min(1).optional(),
-  /** The gateway's template for Workbot's computer image (Differently maps it to each provider's own image). */
   SANDBOX_GATEWAY_TEMPLATE: z.string().min(1).optional(),
   HEADLESS_COMPUTER_PAUSE_SECONDS: z.coerce.number().int().min(10).default(300),
   SANDBOX_GATEWAY_PAUSE_SECONDS: z.coerce.number().int().min(10).optional(),
   HEADLESS_COMPUTER_KEEP_DAYS: z.coerce.number().int().min(1).max(365).default(14),
-  /** true keeps each conversation's computer (paused, memory intact) until removed, instead of deleting it after KEEP_DAYS unused. */
   HEADLESS_COMPUTER_PERSISTENT: z.enum(["true", "false"]).default("false"),
-  /** Freestyle desktop: the domain the viewer is published under; any unused style.dev subdomain needs no DNS. */
   HEADLESS_COMPUTER_DOMAIN: z.string().regex(/^(?=.{1,40}$)[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/, "HEADLESS_COMPUTER_DOMAIN must be a lowercase domain of at most 40 characters").optional(),
-  /**
-   * Optional error reports to Sentry (see error-reporting.ts). Unset, nothing is sent anywhere: self-hosted runners
-   * ship without one. The release defaults to `headless-runner@<HEADLESS_RUNNER_VERSION>`.
-   */
   HEADLESS_SENTRY_DSN: optionalText.refine((value) => value === undefined || parseDsn(value) !== null, "must be a Sentry DSN (https://<key>@<host>/<project>)"),
   HEADLESS_SENTRY_ENVIRONMENT: optionalText,
   HEADLESS_SENTRY_RELEASE: optionalText,
-  /** Set by the runner image at build time; tagged on error reports. */
   HEADLESS_RUNNER_VERSION: optionalText,
-  /**
-   * Self-resume (all three, or none): Den's API, the token the runner calls it with, and the key that encrypts turns'
-   * resume grants at rest. With them the runner resumes interrupted turns itself and refreshes MCP tokens in place.
-   */
   HEADLESS_DEN_API_URL: optionalText.pipe(denUrl.optional()),
   HEADLESS_DEN_CALLBACK_TOKEN: optionalText.refine((value) => value === undefined || value.length >= 32, "must be at least 32 characters"),
   HEADLESS_GRANT_KEY: optionalText.refine((value) => value === undefined || value.length >= 32, "must be at least 32 characters"),
@@ -154,7 +110,6 @@ export type Config = {
     maxOutputTokens: number
   }
   mcp?: { url: string; toolAllowlist: string[] }
-  /** Constructed only from the separately configured, trusted Den API origin. */
   workbotTelemetryUrl?: string
   limits: {
     maxConcurrentTurns: number
@@ -169,14 +124,10 @@ export type Config = {
     | { kind: "disk"; directory: string }
     | { kind: "s3"; endpoint: string; region: string; bucket: string; accessKeyId: string; secretAccessKey: string; forcePathStyle: boolean }
   fileLimits: { maxFileBytes: number; maxSessionBytes: number }
-  /** Sealing and large bodies (storage/); `segments` false is the default and the kill switch. */
   storage: { segments: boolean; hotLimitBytes: number; segmentTargetBytes: number; largeBodyBytes: number }
   computer?: ComputerProviderConfig & ComputerSettings
-  /** The sandbox gateway, for conversations with `sandboxGateway` on; the same computer settings, its own provider. */
   computerGateway?: SandboxGatewayConfig & ComputerSettings
-  /** Where error reports go; unset (no DSN) sends none. */
   errorReporting?: ErrorReportingConfig
-  /** Turns with a resume grant keep going on their own (see self-resume.ts); unset, callers resume them. */
   selfResume?: SelfResumeConfig
 }
 
@@ -224,7 +175,6 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
   }
 }
 
-/** All three settings or none: a runner set up halfway would quietly never resume anything. */
 function selfResumeConfig(value: z.infer<typeof configSchema>): Config["selfResume"] {
   const { HEADLESS_DEN_API_URL: denApiUrl, HEADLESS_DEN_CALLBACK_TOKEN: callbackToken, HEADLESS_GRANT_KEY: grantKey } = value
   if (!denApiUrl && !callbackToken && !grantKey) return undefined
@@ -281,7 +231,6 @@ function computerConfig(value: z.infer<typeof configSchema>): Config["computer"]
   }
 }
 
-/** How Workbot's computers behave, whichever provider or gateway runs them. */
 type ComputerSettings = { scope?: string; idlePauseMs: number; keepDays: number; persistent?: boolean; desktop?: boolean }
 
 function gatewayConfig(value: z.infer<typeof configSchema>): Config["computerGateway"] {

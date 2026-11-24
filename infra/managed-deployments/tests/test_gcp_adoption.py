@@ -82,6 +82,49 @@ class AdoptionTests(unittest.TestCase):
                 runner.apply(root, {})
         self.assertEqual(order, [("apply", True), ("verify", True), ("apply", False)])
 
+    def test_service_less_retry_checks_owned_migration_before_apply(self):
+        job = {"type": "google_cloud_run_v2_job", "values": {
+            "name": "ow-123456781234-migrate", "project": ENV["PROJECT_ID"], "location": ENV["REGION"]}}
+        completed = {"status": {"completionTime": "known", "conditions": [{"type": "Completed", "status": "True"}]}}
+        for label, executions, allowed in [
+            ("fresh", None, True),
+            ("no-executions", [], True),
+            ("completed", [completed], True),
+            ("running", [{"status": {}}], False),
+            ("unknown", [{"status": {"completionTime": "known", "conditions": [{"type": "Completed", "status": "Unknown"}]}}], False),
+            ("malformed", {}, False),
+            ("denied", subprocess.CalledProcessError(1, "gcloud"), False),
+            ("timeout", subprocess.TimeoutExpired("gcloud", 30), False),
+        ]:
+            with self.subTest(case=label), tempfile.TemporaryDirectory() as directory:
+                root = Path(directory)
+                (root / "infra/managed-deployments/gcp/terraform").mkdir(parents=True)
+                plan = {"prior_state": {"values": {"root_module": {"child_modules": [
+                    {"resources": [] if executions is None else [job]}
+                ]}}}}
+                order = []
+                def cloud(*args, **kwargs):
+                    self.assertEqual(args, ("run", "jobs", "executions", "list", "--job=ow-123456781234-migrate",
+                                            "--region=" + ENV["REGION"]))
+                    self.assertEqual(kwargs, {"timeout": 30})
+                    order.append("migration-read")
+                    if isinstance(executions, Exception):
+                        raise executions
+                    return executions
+                with patch.dict(os.environ, ENV), patch.object(runner, "terraform_binary", return_value="terraform"), \
+                        patch.object(runner, "gcloud", side_effect=cloud) as read, \
+                        patch.object(runner.subprocess, "run", side_effect=lambda command, **kw: order.append(command[1])), \
+                        patch.object(runner.subprocess, "check_output", side_effect=[json.dumps(plan).encode(), b"{}"]), \
+                        patch.object(runner.time, "monotonic", side_effect=[0, 601]), patch("builtins.print"):
+                    if allowed:
+                        runner.apply(root, {})
+                    else:
+                        with self.assertRaises((ValueError, subprocess.CalledProcessError)):
+                            runner.apply(root, {})
+                expected = ["init", "plan"] + ([] if executions is None else ["migration-read"]) + (["apply"] if allowed else [])
+                self.assertEqual(order, expected)
+                self.assertEqual(read.call_count, 0 if executions is None else 1)
+
     def test_unverified_revisions_never_resume_autoscaling(self):
         calls = []
         with tempfile.TemporaryDirectory() as directory:
@@ -357,6 +400,18 @@ class FenceTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "ownership"):
                 runner.maintenance_fence(plan)
             cloud.assert_not_called()
+
+    def test_service_less_retry_rejects_migration_in_another_project_or_region(self):
+        for field in ("project", "location"):
+            values = {"name": "ow-123456781234-migrate", "project": ENV["PROJECT_ID"], "location": ENV["REGION"]}
+            values[field] = "other-target"
+            plan = {"prior_state": {"values": {"root_module": {"resources": [
+                {"type": "google_cloud_run_v2_job", "values": values}
+            ]}}}}
+            with self.subTest(field=field), patch.dict(os.environ, ENV), patch.object(runner, "gcloud") as cloud:
+                with self.assertRaisesRegex(ValueError, "unexpected migration target"):
+                    runner.maintenance_fence(plan)
+                cloud.assert_not_called()
 
     def test_missing_stale_paginated_active_or_idle_instances_are_never_zero(self):
         since = datetime.now(timezone.utc) - timedelta(seconds=1)

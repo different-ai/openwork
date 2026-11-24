@@ -40,17 +40,11 @@ function readOrganizationName(payload: unknown): string | null {
   return typeof payload.organization.name === "string" ? payload.organization.name : null;
 }
 
-/** Display form of a user code: ABCD-EFGH. */
 function formatUserCode(value: string): string {
   const clean = value.replace(/[\s-]/g, "").toUpperCase();
   return clean.length === 8 ? `${clean.slice(0, 4)}-${clean.slice(4)}` : clean;
 }
 
-/**
- * The person's half of "provision now, claim later": an agent already built
- * this workspace and handed over a code; signing in and confirming makes the
- * person its owner and ends the agent's temporary access.
- */
 export function WorkspaceClaimCodeScreen({ initialUserCode }: { initialUserCode: string }) {
   const { user, sessionHydrated, signOut } = useDenFlow();
   const [userCode, setUserCode] = useState(formatUserCode(initialUserCode));

@@ -55,6 +55,38 @@
     --ow-success: #0f9f66;
     --ow-warning: #b45309;
     --ow-danger: #b42318;
+    /*
+     * Dashboard shell colours. These defaults are the shell as it has always
+     * looked: a white sidebar and top bar beside lightly tinted pages.
+     */
+    --den-shell-canvas: #fafafa;
+    --den-shell-topbar: #ffffff;
+    --den-shell-sidebar: #ffffff;
+    --den-shell-line: var(--color-gray-100);
+    --den-shell-nav-selected: var(--color-gray-100);
+    --den-shell-nav-selected-ink: var(--color-gray-900);
+    --den-shell-nav-selected-weight: 400;
+    --den-shell-nav-hover: var(--color-gray-50);
+    --den-shell-sidebar-hover: var(--color-gray-100);
+    /* Hairlines between the rows of a flat list drawn straight on the canvas. */
+    --den-list-line: var(--dls-border);
+}
+
+/*
+ * Feature `denGreySidebar`: the sidebar on a light grey band and every page on
+ * white, as the admin dashboard is pictured on the website. Colours only.
+ */
+[data-den-shell="grey"] {
+    --den-shell-canvas: #ffffff;
+    --den-shell-topbar: #ffffff;
+    --den-shell-sidebar: #f7f8fa;
+    --den-shell-line: #eef0f3;
+    --den-shell-nav-selected: #e7eaee;
+    --den-shell-nav-selected-ink: var(--dls-text-primary);
+    --den-shell-nav-selected-weight: 500;
+    --den-shell-nav-hover: #eef0f3;
+    --den-shell-sidebar-hover: #eef0f3;
+    --den-list-line: #eef0f3;
 }
 
 * {

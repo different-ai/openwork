@@ -1,7 +1,6 @@
 export const DEN_MCP_READ_SCOPE = "mcp:read"
 export const DEN_MCP_WRITE_SCOPE = "mcp:write"
 export const DEN_MCP_OFFLINE_SCOPE = "offline_access"
-/** First-party Desktop-only scope. Never advertise or grant this through public OAuth. */
 export const DEN_MCP_APP_HOST_SCOPE = "mcp:app-host"
 
 export type DenMcpTokenScope = typeof DEN_MCP_READ_SCOPE | typeof DEN_MCP_WRITE_SCOPE

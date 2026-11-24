@@ -1,7 +1,6 @@
 export type AiCrawler = {
   name: string
   operator: string
-  /** index: builds a model's picture of the web ahead of time; live: fetches because a user asked. */
   kind: "index" | "live" | "search"
 }
 

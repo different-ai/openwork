@@ -44,7 +44,6 @@ function CopyValue({ label, value, display }: { label: string; value: string; di
   );
 }
 
-/** For an app that already exists: the values to add to it by hand. Collapsed by default (P3). */
 function ExistingAppDetails({ callbackUrl, scopes }: { callbackUrl: string; scopes: readonly string[] }) {
   const manifest = JSON.stringify(slackUserOAuthManifest({ redirectUrl: callbackUrl, scopes }), null, 2);
   return (
@@ -68,12 +67,10 @@ export type SlackSetupChecklistProps = {
   scopes: readonly string[];
   mcpConfirmed: boolean;
   onConfirmMcp: (confirmed: boolean) => void;
-  /** The client ID and secret fields, owned by the setup screen. */
   oauthAppFields: ReactNode;
   onSignIn: () => void;
   onCheckAgain: () => void;
   checking: boolean;
-  /** Shared checks to show first, e.g. OpenWork could not reach Slack at all. */
   leading?: SetupCheck[];
   scopeChoice: SlackScopeChoice | null;
   onChooseScopes: (choice: SlackScopeChoice) => void;
@@ -93,7 +90,6 @@ const SCOPE_CHOICES: { value: SlackScopeChoice; title: string; recommended?: boo
   },
 ];
 
-/** The explicit access choice: nothing preselected, one line of consent per option (P9). */
 function ScopeChoice({ value, onChange }: { value: SlackScopeChoice | null; onChange: (choice: SlackScopeChoice) => void }) {
   return (
     <div className="grid gap-3 sm:grid-cols-2" role="radiogroup" aria-label="What OpenWork can do in Slack" data-testid="slack-setup-scope-choice">
@@ -127,7 +123,6 @@ function ScopeChoice({ value, onChange }: { value: SlackScopeChoice | null; onCh
   );
 }
 
-/** The one Slack setup list: each step reports what OpenWork knows and offers the next action. */
 export function SlackSetupChecklist({
   steps,
   callbackUrl,
@@ -230,12 +225,6 @@ export function SlackSetupChecklist({
   return <SetupChecks checks={[...leading, ...checks]} />;
 }
 
-/**
- * Slack-only state around the shared connector setup: the admin's MCP
- * confirmation, the recorded check after their test sign-in (asked for once
- * if the callback's own check hasn't landed), and whether the optional
- * @openwork assistant applies to this connection.
- */
 export function useSlackSetupState(setup: ReturnType<typeof useConnectorSetup>, target: ConnectorTarget | null, scopeChoice: SlackScopeChoice | null) {
   const slack = Boolean(target?.preset && isSlackMcpUrl(target.url));
   const checkConnection = useCheckMcpConnection();
@@ -246,13 +235,11 @@ export function useSlackSetupState(setup: ReturnType<typeof useConnectorSetup>, 
   const assistantQuery = useSlackAssistantSetupQuery(setup.connectionId, slack && connection !== null);
 
   useEffect(() => {
-    // The sign-in callback records a check; if it hasn't shown up (older server, a race), ask for one, once.
     if (!slack || !connection || !setup.signedIn || readiness !== null || requestedCheck.current === connection.id) return;
     requestedCheck.current = connection.id;
     checkConnection.mutate(connection.id);
   }, [checkConnection, connection, readiness, setup.signedIn, slack]);
 
-  // The manifest and the new connection share one list: the admin's choice, nothing before it.
   const scopes = slackScopesFor(scopeChoice, target?.preset);
   const callbackUrl = target?.preset?.oauthCallbackUrl ?? null;
   const steps = slackSetupSteps({

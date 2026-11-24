@@ -11,14 +11,12 @@ import { ProviderHasUsageLimitsError } from "./inference-provider-data";
 
 export type ProviderMoveTarget = { id: string; name: string; status: string };
 
-/** The active limits scoped to a provider, as the delete route lists them. */
 export function providerUsageLimits(policies: GatewayUsageLimitPolicy[], providerId: string): GatewayProviderRemovalUsageLimit[] {
   return policies
     .filter((policy) => !policy.archivedAt && policy.providerId === providerId)
     .map(({ id, name, revision, hardLimit, limits }) => ({ id, name, revision, hardLimit, limits }));
 }
 
-/** Other active providers of the organization the limits can move to. */
 export function providerMoveTargets(providers: ProviderMoveTarget[], removedProviderId: string): ProviderMoveTarget[] {
   return providers.filter((provider) => provider.id !== removedProviderId && provider.status === "active");
 }
@@ -27,10 +25,6 @@ function sameChoice(a: GatewayProviderRemovalLimitChoice, b: GatewayProviderRemo
   return a.action === b.action && (a.action !== "move" || (b.action === "move" && a.providerId === b.providerId));
 }
 
-/**
- * What happens to a provider's spend limits when it is removed.
- * Read limits up front when the person may view them; the server's 409 list is authoritative.
- */
 export function useProviderRemovalUsageLimits({ orgId, providerId, open, providers }: {
   orgId: string | null;
   providerId: string;
@@ -50,12 +44,10 @@ export function useProviderRemovalUsageLimits({ orgId, providerId, open, provide
     targets,
     choice,
     setChoice: setPicked,
-    /** The choice to send with the delete, only once limits are known to exist. */
     requestChoice(): GatewayProviderRemovalLimitChoice | undefined {
       if (!usageLimits.length) return undefined;
       return choice;
     },
-    /** True when the delete stopped because the provider has limits; the dialog then asks. */
     handleRemoveError(error: unknown) {
       if (!(error instanceof ProviderHasUsageLimitsError)) return false;
       setFromServer(error.usageLimits);
@@ -68,7 +60,6 @@ export function useProviderRemovalUsageLimits({ orgId, providerId, open, provide
   };
 }
 
-/** The affected limits and the move/delete choice, shown inside the remove-provider dialog. */
 export function ProviderRemovalUsageLimits({ providerName, usageLimits, targets, choice, onChange, disabled = false }: {
   providerName: string;
   usageLimits: GatewayProviderRemovalUsageLimit[];

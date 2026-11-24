@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -224,6 +224,12 @@ export async function selfHostServer(options: SelfHostServerOptions): Promise<Se
       PROVISIONER_MODE: "stub",
       ...options.env,
     };
+
+    if (process.env.OPENWORK_EVAL_DEN_RUNTIME_PREPARED !== "1") {
+      // Match the regular Den fixture: a fresh next dev process must not reuse
+      // a stale Turbopack graph that repeatedly reloads before hydration.
+      await rm(join(REPO_ROOT, "ee", "apps", "den-web", ".next", "dev"), { recursive: true, force: true });
+    }
 
     const api = spawnService("den-api", "dev:den:api", apiPort, {
       ...commonEnv,

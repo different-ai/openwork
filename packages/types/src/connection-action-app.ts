@@ -3,7 +3,6 @@ import { z } from "zod"
 const idSchema = z.string().trim().min(1).max(160)
 
 export const connectionActionAppSchemaVersion = "1" as const
-// Persisted conversations may still contain this retired resource; never embed it.
 export const legacyConnectionActionAppResourceUri = "ui://openwork/connection-action/v1/view.html"
 
 /**

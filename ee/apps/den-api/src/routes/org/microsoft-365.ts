@@ -6,7 +6,6 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { env } from "../../env.js"
-import { requireFeature } from "../../features.js"
 import { cloudTransportRoute, jsonValidator, orgMemberRoute, paramValidator, queryValidator } from "../../middleware/index.js"
 import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { getValidAccessToken } from "../../capability-sources/generic-oauth.js"
@@ -138,7 +137,6 @@ const mailAttachmentResponseSchema = z.object({
 
 const connectionIdSchema = z.string().regex(/^(microsoft-365|emc_[A-Za-z0-9]+)$/).optional()
 
-// The multipart payload of a draft with attachments: a new message, or a reply to one.
 const mailDraftUploadPayloadSchema = z.union([
   mailDraftBodySchema.extend({ connectionId: connectionIdSchema }).strict(),
   z.object({ replyToMessageId: graphItemIdSchema, comment: mailReplyDraftBodySchema.shape.comment, bodyContentType: bodyContentTypeSchema, connectionId: connectionIdSchema }).strict(),
@@ -225,7 +223,6 @@ const calendarEventResponseSchema = z.object({
   warning: z.string().optional().describe("Present when a Teams meeting was asked for but Microsoft returned no join link. The event exists; do not create it again."),
 }).meta({ ref: "Microsoft365CalendarEventResponse" })
 
-/** A meeting asked for without a join link coming back is said out loud, never reported as a plain success. */
 function calendarEventResult(input: { isOnlineMeeting?: boolean }, event: Microsoft365CalendarEvent) {
   if (input.isOnlineMeeting !== true || event.onlineMeetingUrl) return { ok: true as const, event }
   return {
@@ -377,7 +374,6 @@ const teamsMessageResponseSchema = z.object({
 }).meta({ ref: "Microsoft365TeamsMessageResponse" })
 
 export type Microsoft365AccessToken =
-  /** graphBaseUrl: only for a sandbox's sample Microsoft 365, the workplace's Graph instead of Microsoft's. */
   | { kind: "ok"; accessToken: string; scopes: string[] | null; enabledFeatures: string[]; graphBaseUrl?: string }
   | { kind: "needs_connection"; message: string }
   | { kind: "microsoft_graph_error"; message: string }
@@ -390,7 +386,6 @@ export type Microsoft365RouteOptions = {
   fetch?: typeof fetch
   resolveAccessToken?: Microsoft365AccessTokenResolver
   memberRoute?: MiddlewareHandler<{ Variables: OrgRouteVariables }>
-  /** Host file transport routes; tests inject a member instead of an MCP access token. */
   transportRoute?: MicrosoftDriveFileRouteOptions["transportRoute"]
   transportReadRoute?: MicrosoftDriveFileRouteOptions["transportReadRoute"]
 }
@@ -423,7 +418,6 @@ async function defaultAccessTokenResolver({ connectionId, ...input }: Microsoft3
   if (!client) {
     return { kind: "needs_connection", message: CONNECT_MICROSOFT_ACCOUNT_MESSAGE }
   }
-  // A sandbox's sample connector that can't be used now never falls back to Microsoft's Graph.
   if (client.sandboxEndpoints?.status === "unavailable") {
     return { kind: "needs_connection", message: client.sandboxEndpoints.message }
   }
@@ -485,12 +479,6 @@ function describeMutation(operationId: string, summary: string, description: str
   })
 }
 
-/**
- * Delegated Microsoft 365 capabilities. Read and mutation routes both use the calling
- * member's delegated token from the shared native-provider vault. Tests and
- * self-host staging can inject a Graph base URL, fetch implementation, and
- * token resolver without changing production auth behavior.
- */
 export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariables }>(
   app: Hono<T>,
   options: Microsoft365RouteOptions = {},
@@ -504,7 +492,6 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
     onError: (c) => c.json({ error: "invalid_request", message: "Request exceeds 1 MiB." }, 413),
   })
 
-  /** Graph for the member's token: a sandbox's sample connector always goes to its own workplace, never Microsoft. */
   function graphClient(token: Extract<Microsoft365AccessToken, { kind: "ok" }>, signal?: AbortSignal, timeoutMs?: number, ownDriveOnly?: boolean) {
     return new MicrosoftGraphClient({
       accessToken: token.accessToken,
@@ -516,7 +503,6 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
     })
   }
 
-  /** Other drives, SharePoint included, need the all-files permission: full access to save there, read-all to read. */
   function ownDriveOnly(token: Extract<Microsoft365AccessToken, { kind: "ok" }>, write: boolean) {
     return !featureGranted(token, write ? ["filesFull"] : ["filesReadAll", "filesFull"])
   }
@@ -547,8 +533,6 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
     transportReadRoute: options.transportReadRoute,
   })
 
-  // Documents reads need any OneDrive permission and saving a write permission; other
-  // people's drives and SharePoint follow the same all-files rule as the file routes.
   registerMicrosoftDocumentRoutes(app, {
     memberRoute: orgMemberRouteMiddleware,
     graphBaseUrl: options.graphBaseUrl ?? env.microsoftGraphBaseUrl ?? DEFAULT_GRAPH_BASE_URL,
@@ -605,7 +589,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
         502: jsonResponse("Microsoft Graph rejected the request.", upstreamErrorSchema),
       },
     }),
-    orgMemberRouteMiddleware, requireFeature("outlookAttachments"), paramValidator(mailMessageParamSchema),
+    orgMemberRouteMiddleware, paramValidator(mailMessageParamSchema),
     async (c) => {
       const client = await mutationClient(c.get("organizationContext"), c.req.raw.signal, ["mailRead"], "Outlook mail read")
       if (client instanceof Response) return client
@@ -628,7 +612,7 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
         502: jsonResponse("Microsoft Graph rejected the request.", upstreamErrorSchema),
       },
     }),
-    orgMemberRouteMiddleware, requireFeature("outlookAttachments"), paramValidator(mailAttachmentParamSchema),
+    orgMemberRouteMiddleware, paramValidator(mailAttachmentParamSchema),
     async (c) => {
       const client = await mutationClient(c.get("organizationContext"), c.req.raw.signal, ["mailRead"], "Outlook mail read")
       if (client instanceof Response) return client
@@ -655,7 +639,6 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
       },
     }),
     options.transportRoute ?? cloudTransportRoute(),
-    requireFeature("outlookAttachments"),
     bodyLimit({
       maxSize: MAIL_DRAFT_UPLOAD_BODY_MAX_BYTES,
       onError: (c) => c.json({ error: "invalid_request", message: "Direct upload request is too large." }, 413),
@@ -704,7 +687,6 @@ export function registerMicrosoft365Routes<T extends { Variables: OrgRouteVariab
           await client.addMailAttachment(draft.id, { name, contentType, content: new Uint8Array(await file.arrayBuffer()) })
           attachments.push({ name, contentType, size: file.size })
         } catch (error) {
-          // Never leave a draft that is missing a file the person asked for; cleanup outlives a dropped request.
           const removed = await granted.graph().deleteMailDraft(draft.id).then(() => true, () => false)
           return c.json(removed
             ? { error: "microsoft_graph_error", message: `Outlook did not attach ${name}, so the new draft was moved to Deleted Items. ${graphError(error).message}` }

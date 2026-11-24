@@ -4,38 +4,16 @@ import { AuditLogError } from "@openwork-ee/den-db/audit-log"
 import { appLogger } from "../observability/logger.js"
 import { AUDIT_APPEND_RETRY_OPERATIONAL_MARKER } from "../operational-log-markers.js"
 
-// Bounded retry for standalone audit transactions (intent, served, outcome,
-// service/job outcomes, user fan-out, after-commit change events, platform
-// rows). The whole transaction callback is re-run, so the entitlement recheck
-// and policy-current fence run again on every attempt. Deterministic failures
-// (every AuditLogError, feature/entitlement decisions, validation) are never
-// retried. Appends made INSIDE a business transaction (appendAuditChanges,
-// providerAuditMutation) are not wrapped: retrying them would re-run the
-// business mutation, so a deadlock there still rolls the mutation back.
-
 export const AUDIT_APPEND_MAX_ATTEMPTS = 3
-// Base backoff before attempts 2 and 3, plus up to 25 ms jitter each: at most
-// ~250 ms added latency, well under one second.
 const BACKOFF_MS: readonly number[] = [50, 150]
 const BACKOFF_JITTER_MS = 25
 
-/**
- * lock_conflict: InnoDB deadlock victim (1213), lock wait timeout (1205), or a
- * MariaDB snapshot-isolation write conflict (1020, ER_CHECKREAD, on by default
- * since MariaDB 11.6.2, which says to retry it like a deadlock); the
- * transaction was rolled back, so a re-run can never duplicate anything.
- * connection: the connection failed mid-transaction; the COMMIT may or may not
- * have landed, so only appends that are idempotent on replay are re-run.
- */
 export type AuditTransientFailure = "lock_conflict" | "connection"
 
 const LOCK_CONFLICT_CODES = new Set(["ER_LOCK_DEADLOCK", "ER_LOCK_WAIT_TIMEOUT", "ER_CHECKREAD"])
 const LOCK_CONFLICT_ERRNOS = new Set([1213, 1205, 1020])
-// PlanetScale/Vitess surface MySQL errors as message text: "... Deadlock found when trying to get lock; try restarting transaction (errno 1213) (sqlstate 40001)".
 const LOCK_CONFLICT_MESSAGE = /Deadlock found when trying to get lock|Lock wait timeout exceeded|Record has changed since last read|\(errno (?:12(?:13|05)|1020)\)/
 const CONNECTION_MESSAGE = /Connection lost|PROTOCOL_CONNECTION_LOST/
-// PlanetScale/Vitess: "vttablet: rpc error: code = ResourceExhausted desc = transaction pool connection limit exceeded".
-// Retrying only adds load to the pool every den-api write shares, so it is never retried (ENG-683).
 const POOL_EXHAUSTED_MESSAGE = /ResourceExhausted|transaction pool connection limit exceeded/
 const SAFE_CODE = /^[A-Z][A-Z0-9_]{1,63}$/
 
@@ -83,25 +61,12 @@ function safeErrorCode(error: unknown): string | null {
 }
 
 export type AuditRetryOptions = Readonly<{
-  /** Which append is retried (log field only). */
   label: string
-  /**
-   * True when a replay after an ambiguous commit returns the already-written
-   * record instead of a second one (stable idempotency key on a stable
-   * operation binding, or a pre-generated primary key). Lock conflicts are
-   * retried either way; connection failures only when idempotent.
-   */
   idempotent: boolean
   requestId?: string | null
   organizationId?: string | null
 }>
 
-/**
- * Runs `attempt` (one complete transaction) up to AUDIT_APPEND_MAX_ATTEMPTS
- * times on transient database failures with short jittered backoff, then
- * rethrows the last error so the caller's existing fail-closed (503) or
- * [audit-outcome-lost] behaviour applies.
- */
 export async function withAuditRetry<T>(attempt: (attemptNumber: number) => Promise<T>, options: AuditRetryOptions): Promise<T> {
   for (let attemptNumber = 1; ; attemptNumber++) {
     try {

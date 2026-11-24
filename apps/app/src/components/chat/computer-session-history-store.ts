@@ -11,17 +11,21 @@ function mark(chats: Chats, sessionId: string, value: boolean): Chats {
 }
 
 export const useComputerSessionHistoryStore = create<{
-  enabled: boolean
-  setEnabled: (enabled: boolean) => void
-  /** Chats whose computer is working now: their card offers the live view. */
+  agents: Readonly<Record<string, string>>
+  setAgent: (sessionId: string, agentSessionId: string | null) => void
   working: Chats
-  /** Chats where the person opened the live view from the card. */
   watching: Chats
   setWorking: (sessionId: string, working: boolean) => void
   setWatching: (sessionId: string, watching: boolean) => void
 }>((set) => ({
-  enabled: false,
-  setEnabled: enabled => set(state => state.enabled === enabled ? state : { enabled }),
+  agents: {},
+  setAgent: (sessionId, agentSessionId) => set(state => {
+    if ((state.agents[sessionId] ?? null) === agentSessionId) return state
+    const agents = { ...state.agents }
+    if (agentSessionId) agents[sessionId] = agentSessionId
+    else delete agents[sessionId]
+    return { agents }
+  }),
   working: {},
   watching: {},
   setWorking: (sessionId, working) => set(state => {

@@ -20,13 +20,13 @@ output "bootstrap_code" {
 }
 
 output "load_balancer_ip" {
-  description = "Load balancer IPv4 address: point domain_name and the API host (A records) at it. Null without domain_name."
+  description = "Load balancer IPv4 address for custom Den and AI Gateway hostnames. Null when neither is enabled."
   value       = local.lb_ip
 }
 
 output "dns_records" {
-  description = "A records to create for the custom hostnames. Empty without domain_name."
-  value       = local.create_lb ? { (var.domain_name) = local.lb_ip, (local.api_host) = local.lb_ip } : {}
+  description = "A records to create for custom Den and AI Gateway hostnames. Empty without custom hosts."
+  value       = merge(local.custom_domain ? { (var.domain_name) = local.lb_ip, (local.api_host) = local.lb_ip } : {}, var.ai_gateway_enabled ? { (var.ai_gateway_domain_name) = local.lb_ip } : {})
 }
 
 output "service_names" {

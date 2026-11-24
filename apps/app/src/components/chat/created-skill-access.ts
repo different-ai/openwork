@@ -2,7 +2,6 @@ import { createDenClient, readDenSettings } from "@/app/lib/den"
 import type { DenLibraryAccessGrant, DenLibraryOrgDirectory } from "@/app/lib/den-library"
 import type { ConfirmedSkillAccess, SkillRecipient } from "@/lib/created-skill"
 
-/** Live grants → the card's confirmed access. The owner's own grant is not "sharing". */
 export function accessFromGrants(grants: DenLibraryAccessGrant[], directory: DenLibraryOrgDirectory | null): ConfirmedSkillAccess {
   const members = new Map((directory?.members ?? []).filter((member) => member.name !== member.id).map((member) => [member.id, member.name]))
   const teams = new Map((directory?.teams ?? []).map((team) => [team.id, team.name]))
@@ -17,10 +16,6 @@ export function accessFromGrants(grants: DenLibraryAccessGrant[], directory: Den
   return recipients.length > 0 ? { kind: "shared", recipients } : { kind: "private" }
 }
 
-/**
- * Check status: read the plugin's current access with the signed-in Den
- * session. Read-only; it never repeats a share.
- */
 export async function readCreatedSkillAccess(pluginId: string): Promise<ConfirmedSkillAccess> {
   const settings = readDenSettings()
   const token = settings.authToken?.trim()

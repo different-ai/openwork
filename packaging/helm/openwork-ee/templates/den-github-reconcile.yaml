@@ -1,0 +1,63 @@
+{{- $githubReconcile := .Values.denApi.githubReconcile }}
+{{- if $githubReconcile.enabled }}
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: {{ include "openwork-ee.fullname" . }}-den-github-reconcile
+  labels:
+    {{- include "openwork-ee.componentLabels" (dict "root" . "component" "den-github-reconcile") | nindent 4 }}
+spec:
+  schedule: {{ $githubReconcile.schedule | quote }}
+  timeZone: {{ $githubReconcile.timeZone | quote }}
+  concurrencyPolicy: Forbid
+  # A missed run is skipped; the next one picks up whatever is due.
+  startingDeadlineSeconds: 240
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 0
+      activeDeadlineSeconds: 300
+      template:
+        spec:
+          restartPolicy: Never
+          {{- with .Values.imagePullSecrets }}
+          imagePullSecrets:
+            {{- toYaml . | nindent 12 }}
+          {{- end }}
+          containers:
+            - name: github-reconcile
+              image: "{{ .Values.denApi.image.repository }}:{{ include "openwork-ee.imageTag" (dict "root" . "componentTag" .Values.denApi.image.tag) }}"
+              imagePullPolicy: {{ .Values.image.pullPolicy }}
+              command: ["node", "--input-type=module", "-e"]
+              args:
+                - |
+                  try {
+                    const response = await fetch(process.env.RECONCILE_URL, {
+                      method: "POST",
+                      headers: { authorization: `Bearer ${process.env.DEN_MAINTENANCE_TOKEN}` },
+                      signal: AbortSignal.timeout(240000),
+                    });
+                    const body = await response.text();
+                    if (!response.ok) throw new Error(String(response.status));
+                    console.log("GitHub reconcile run completed", body);
+                  } catch (error) {
+                    console.error("GitHub reconcile run failed", error instanceof Error ? error.message : "");
+                    process.exitCode = 1;
+                  }
+              env:
+                - name: RECONCILE_URL
+                  value: "http://{{ include "openwork-ee.denApiServiceName" . }}:{{ .Values.denApi.service.port }}/internal/github/reconcile/run"
+                - name: DEN_MAINTENANCE_TOKEN
+                  valueFrom:
+                    secretKeyRef:
+                      name: {{ include "openwork-ee.denMaintenanceTokenSecret" . | quote }}
+                      key: {{ include "openwork-ee.denMaintenanceTokenKey" . | quote }}
+                      optional: false
+              resources:
+                requests:
+                  cpu: 10m
+                  memory: 32Mi
+                limits:
+                  memory: 128Mi
+{{- end }}

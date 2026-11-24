@@ -178,7 +178,6 @@ export async function createLinearIssue(input: CreateLinearIssueInput, config: L
   try {
     return await createLinearIssueStrict({ ...input, teamId }, config)
   } catch (error) {
-    // Callers carry on without the issue, so report it where someone will see it.
     logger.error("failed to create Linear issue", { error })
     captureException(error, { component: "linear" })
     return null

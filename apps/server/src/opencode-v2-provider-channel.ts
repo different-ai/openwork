@@ -1,6 +1,3 @@
-// Credential-free code, written beside the managed loaders. Native require's
-// canonical module cache is process-wide, unlike OpenCode's Location-scoped
-// ESM/source graphs. The capability itself only ever lives in this closure.
 export const providerCredentialBrokerSource = String.raw`
 const { createReadStream } = require("node:fs");
 const { once } = require("node:events");

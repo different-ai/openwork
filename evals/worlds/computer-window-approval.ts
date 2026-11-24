@@ -26,7 +26,6 @@ export async function computerWindowApproval(_seed: Seed, { place }: { place: Pl
   resources.defer(async () => { await control.reset(true); });
   const sessionId = "fixture-chat";
   try {
-    await control.setFeatureEnabled(true);
     await control.setRemoteEnabled(true);
     const vite = await createServer({
       root: fileURLToPath(new URL("../../apps/app", import.meta.url)),

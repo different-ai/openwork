@@ -57,9 +57,6 @@ export function catalogModelVariants(config: Record<string, unknown>, providerNp
     }))];
     if (!efforts.length) return undefined;
     const variants = isRecord(config.variants) ? { ...config.variants } : {};
-    // V1 merges configured variants into inferred defaults. Omitting MINIMAL
-    // does not remove it: disable every effort the catalog excludes, including
-    // for opaque Gateway aliases. Explicit user overrides still take precedence.
     for (const effort of reasoningEffort.options) {
       if (!Object.hasOwn(variants, effort)) variants[effort] = efforts.includes(effort)
         ? { thinkingConfig: { includeThoughts: true, thinkingLevel: effort } }
@@ -75,7 +72,6 @@ export function catalogModelVariants(config: Record<string, unknown>, providerNp
   if (!efforts.length) return undefined;
   const variants = isRecord(config.variants) ? { ...config.variants } : {};
   for (const effort of efforts) {
-    // An explicit override (including disabled) always wins over the catalog.
     if (!Object.hasOwn(variants, effort)) variants[effort] = { effort };
   }
   return variants;
@@ -92,8 +88,6 @@ export function nativeModelVariants(raw: unknown, providerPackage: string | unde
   if (providerPackage !== "@opencode/ai/providers/openai"
     || !metadata.success
     || Object.keys(variants).some((id) => id.startsWith(FAST_VARIANT_PREFIX))) return enabled;
-  // Catalog efforts are not OpenCode variants. Expand only here, and never
-  // resurrect an explicitly disabled variant or overwrite custom settings.
   for (const effort of metadata.data.reasoningEfforts ?? []) {
     if (!Object.hasOwn(variants, effort)) enabled.push({ id: effort, settings: { reasoningEffort: effort } });
   }
@@ -121,9 +115,6 @@ export function materializeLegacyFastProviders(providers: Record<string, Record<
         || (isRecord(model.provider) && model.provider.npm !== undefined && model.provider.npm !== provider.npm)
         || Object.keys(model.variants).some((key) => key.startsWith(FAST_VARIANT_PREFIX))) continue;
       const { [CATALOG_FAST_VARIANT]: _metadata, ...variants } = model.variants;
-      // v1 merges configured variants into its inferred defaults, including for
-      // opaque gateway aliases. Explicitly disable efforts the catalog excludes;
-      // an absent entry would leave the engine's unsupported fallback selectable.
       const efforts = metadata.data.reasoningEfforts;
       if (efforts?.length) {
         for (const effort of reasoningEffort.options) {

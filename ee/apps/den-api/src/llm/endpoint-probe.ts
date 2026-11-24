@@ -1,14 +1,3 @@
-/**
- * Endpoint probing for custom LLM providers ("test connection").
- *
- * Given a base URL and credential, discover what the endpoint actually
- * serves: normalize common URL mistakes (trailing `/responses`, Azure host
- * twins), call the OpenAI-compatible `GET /models`, and return the model
- * ids — on Azure these are the deployment names, which is exactly what the
- * provider config needs. Pure logic is separated from I/O so it can be
- * unit-tested with an injected fetch.
- */
-
 type JsonRecord = Record<string, unknown>
 
 export type ProbeVendor = "azure" | "openai-compatible"
@@ -16,14 +5,10 @@ export type ProbeVendor = "azure" | "openai-compatible"
 export type EndpointProbeResult = {
   ok: boolean
   vendor: ProbeVendor
-  /** The candidate base URL that answered /models, when ok. */
   normalizedApi: string | null
-  /** Every candidate URL that was attempted, in order. */
   attempted: string[]
   models: Array<{ id: string }>
-  /** Human guidance when not ok. */
   hint: string | null
-  /** Upstream HTTP status of the last failed attempt, when relevant. */
   status: number | null
 }
 
@@ -45,7 +30,6 @@ export function detectVendor(url: string): ProbeVendor {
     const { hostname } = new URL(url)
     if (AZURE_HOST_PATTERN.test(hostname)) return "azure"
   } catch {
-    // fall through
   }
   return "openai-compatible"
 }
@@ -84,7 +68,6 @@ function azureHostTwin(base: string): string | null {
       return url.toString().replace(/\/+$/, "")
     }
   } catch {
-    // ignore
   }
   return null
 }
@@ -98,17 +81,10 @@ function withAzureV1Path(base: string): string | null {
       return url.toString().replace(/\/+$/, "")
     }
   } catch {
-    // ignore
   }
   return null
 }
 
-/**
- * Ordered, deduplicated list of base URLs to try. The user's (normalized)
- * input always comes first; Azure-specific rewrites follow — the host twin
- * (`openai.azure.com` <-> `services.ai.azure.com`) and the bare-origin
- * `/openai/v1` path, both mistakes we have watched real users make.
- */
 export function buildCandidateBaseUrls(raw: string): string[] {
   const first = normalizeBase(raw)
   if (!first) return []
@@ -137,8 +113,6 @@ function isBlockedHostname(hostname: string, allowLoopback: boolean): boolean {
     normalized === "::1" ||
     /^127\./.test(normalized)
   if (loopback) return !allowLoopback
-  // Private ranges: allowed for self-hosted installs reaching internal
-  // gateways; the metadata/link-local blocks above are the hard rule.
   return false
 }
 
@@ -176,13 +150,6 @@ async function readBoundedJson(response: Response): Promise<unknown> {
 
 const AZURE_DEPLOYMENTS_API_VERSION = "2023-03-15-preview"
 
-/**
- * On Azure, `GET /openai/v1/models` often answers with the full Azure model
- * catalog (hundreds of ids, most of them not deployed on the resource), while
- * chat/completions only accepts *deployment* names. The legacy deployments
- * endpoint lists what is actually deployed — exactly what the model picker
- * needs — so it is preferred, with /models as the fallback.
- */
 async function listAzureDeployments(
   fetchImpl: FetchLike,
   base: string,
@@ -249,11 +216,6 @@ function hintFor(vendor: ProbeVendor, status: number | null): string {
   return "Could not reach the endpoint. Check the URL, network access, and that the endpoint allows requests from OpenWork Cloud."
 }
 
-/**
- * Try each candidate base URL until one serves /models. Sends both
- * `Authorization: Bearer` and `api-key` headers — Azure accepts either,
- * OpenAI-compatible servers ignore the extra header.
- */
 export async function probeEndpoint(input: {
   api: string
   apiKey: string
@@ -328,13 +290,10 @@ export async function probeEndpoint(input: {
         status: response.status,
       }
     } catch {
-      // Network error or abort — try the next candidate.
       continue
     }
   }
 
-  // Azure resources sometimes reject /openai/v1/models entirely while the
-  // legacy deployments endpoint still answers — salvage the probe from it.
   if (vendor === "azure") {
     const origins = [...new Set(candidates.map((base) => new URL(base).origin))]
     for (const origin of origins) {
@@ -366,14 +325,7 @@ export async function probeEndpoint(input: {
 
 export type ModelVerification = {
   id: string
-  /**
-   * ok       — works with the default openai-compatible request shape
-   * adjusted — works after switching to the OpenAI package request shape
-   *            (max_completion_tokens; GPT-5/o-series on Azure)
-   * failed   — neither shape produced a successful completion
-   */
   status: "ok" | "adjusted" | "failed"
-  /** The AI SDK package the provider config should use for this model. */
   npm: "@ai-sdk/openai-compatible" | "@ai-sdk/openai"
   message: string | null
 }
@@ -443,13 +395,6 @@ async function completionAttempt(
   }
 }
 
-/**
- * Send one tiny real completion per model to determine the request shape
- * the model accepts. GPT-5/o-series models on Azure reject `max_tokens`
- * (the openai-compatible default) and require `max_completion_tokens`
- * (the OpenAI package behavior) — detected here so the editor can pick
- * the right package automatically instead of surfacing a 400 in chat.
- */
 export async function verifyModels(input: {
   api: string
   apiKey: string

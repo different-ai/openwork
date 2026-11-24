@@ -42,8 +42,8 @@ import { startWorkbotDemoReads, verifyWorkbotDemoReads } from "./workbot-demo-re
 const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const WORKBOT_WORLD = "preview-workbot";
 // A preview VM's services keep template origins; these preloads translate them (see each file).
-const PREVIEW_EGRESS = new URL("../../packages/freestyle/src/egress.mjs", import.meta.url).href;
-const PREVIEW_LOOPBACK = new URL("../../packages/freestyle/src/loopback.mjs", import.meta.url).href;
+const PREVIEW_EGRESS = new URL("../../packages/world-freestyle/src/egress.mjs", import.meta.url).href;
+const PREVIEW_LOOPBACK = new URL("../../packages/world-freestyle/src/loopback.mjs", import.meta.url).href;
 const DAYTONA_WORKBOT_PORT = 3020;
 const DAYTONA_RUNNER_PORT = 8795;
 const DAYTONA_UPSTREAM_PORT = 3990;
@@ -660,7 +660,7 @@ export async function bootWorkbotOnDaytona(stack: AsyncDisposableStack, place: P
   });
   stack.defer(() => workbot.stop().catch(() => undefined));
   await verifyWorkbotPreviews(workbotPreview, runnerPreview);
-  const orgId = await enableWorkbot(den, options.computerSnapshot ? { computerUse: true, browserUse: true, remoteComputers: true, workbotDocuments: true } : {});
+  const orgId = await enableWorkbot(den, options.computerSnapshot ? { remoteComputers: true, workbotDocuments: true } : {});
   const world: WorkbotWorld = {
     den, orgId, workbotUrl: workbotPreview.browserOrigin, workbotInternal: workbotPreview.browserOrigin,
     denWebPublic: den.ref.webUrl, runnerUrl: runnerPreview.browserOrigin, secrets,

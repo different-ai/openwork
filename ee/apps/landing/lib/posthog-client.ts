@@ -18,6 +18,5 @@ export function capturePosthogEvent(event: string, properties?: Record<string, u
   try {
     window.posthog?.capture?.(event, properties);
   } catch {
-    // Ignore analytics delivery failures.
   }
 }

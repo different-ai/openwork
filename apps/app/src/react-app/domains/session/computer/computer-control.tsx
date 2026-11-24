@@ -5,15 +5,13 @@ import { desktopBridge } from "@/app/lib/desktop"
 import { useComputerSessionHistoryStore } from "@/components/chat/computer-session-history-store"
 import { showsLiveComputerView } from "@/lib/computer-session-history"
 import { useSessionFloatingSlot } from "../panel/floating-slot"
+import { createComputerFollow } from "./computer-follow"
 import { ComputerPanel } from "./computer-panel"
 import { useComputerRequest } from "./computer-store"
 
 const message = (cause: unknown) => cause instanceof Error ? cause.message : String(cause)
+const followComputer = createComputerFollow((sessionId, watching) => desktopBridge.computerFollow(sessionId, watching))
 
-/**
- * Shows this chat's live computer view while the agent works. Setup and the
- * choice of computer live in Settings, so the chat shows no idle status.
- */
 export function ComputerControl({ sessionId }: { sessionId: string }) {
   const slot = useSessionFloatingSlot()
   const request = useComputerRequest(sessionId)
@@ -31,26 +29,33 @@ export function ComputerControl({ sessionId }: { sessionId: string }) {
     try {
       const next = await desktopBridge.computerSnapshot(sessionId)
       if (current === generation.current) setSnapshot(next)
-    } catch { /* The next read tries again. */ }
+    } catch {}
     finally { reading.current = false }
   }
   useEffect(() => () => { generation.current++ }, [])
+  useEffect(() => {
+    const update = () => followComputer(sessionId, document.visibilityState === "visible")
+    update()
+    document.addEventListener("visibilitychange", update)
+    return () => {
+      document.removeEventListener("visibilitychange", update)
+      followComputer(sessionId, false)
+    }
+  }, [sessionId])
   const readLatest = useEffectEvent(refresh)
   const working = Boolean(snapshot?.session || snapshot?.cleanupPending)
-  const historyEnabled = useComputerSessionHistoryStore(state => state.enabled)
   const watching = useComputerSessionHistoryStore(state => Boolean(state.watching[sessionId]))
+  const agent = useComputerSessionHistoryStore(state => state.agents[sessionId])
+  useEffect(() => { if (!watching) useComputerSessionHistoryStore.getState().setAgent(sessionId, null) }, [sessionId, watching])
   useEffect(() => {
     const history = useComputerSessionHistoryStore.getState()
     history.setWorking(sessionId, working)
-    // The next computer session starts in the card again.
     if (!working) history.setWatching(sessionId, false)
   }, [sessionId, working])
   useEffect(() => () => useComputerSessionHistoryStore.getState().setWorking(sessionId, false), [sessionId])
   useEffect(() => {
     void readLatest()
     const update = () => { if (document.visibilityState === "visible") void readLatest() }
-    // Agent work can start without a request. Keep the live view current across
-    // silent renewal and follow-up messages.
     const timer = window.setInterval(update, 1_500)
     window.addEventListener("focus", update)
     document.addEventListener("visibilitychange", update)
@@ -78,6 +83,6 @@ export function ComputerControl({ sessionId }: { sessionId: string }) {
   }
 
   if (!slot || !snapshot || !working) return null
-  if (!showsLiveComputerView({ historyEnabled, watching, session: snapshot.session })) return null
-  return <ComputerPanel sessionId={sessionId} slot={slot} enabled={snapshot.enabled} canStop controlsBusy={stopping} stopping={stopping} cleanupPending={Boolean(snapshot.cleanupPending)} stopError={actionError} onStop={() => void halt()} />
+  if (!showsLiveComputerView({ watching, session: snapshot.session })) return null
+  return <ComputerPanel key={agent ?? sessionId} sessionId={agent ?? sessionId} slot={slot} enabled={snapshot.enabled} canStop controlsBusy={stopping} stopping={stopping} cleanupPending={Boolean(snapshot.cleanupPending)} stopError={actionError} onStop={() => void halt()} />
 }

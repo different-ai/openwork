@@ -26,12 +26,6 @@ import { z } from "zod";
 import { workbotSettingsSchema } from "@openwork/types/den/workbot-settings";
 import { workbotHost } from "./host";
 
-/**
- * Workbot's Calendar data: the person's Automations, runs and meetings, all through Workbot's server
- * (`/v1/workbot/calendar/...`), which forwards Den's own routes. The shapes are Den's, so the shared
- * @openwork/calendar adapters and reconciliation work unchanged.
- */
-
 const PREFIX = "/v1/workbot/calendar";
 
 /** A failed Calendar request, shaped like Den's errors so the shared adapters can classify it. */

@@ -179,10 +179,23 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
     },
   },
   automationRunner: {
+    onRunLifecycle(callback) {
+      const handler = (_event, payload) => callback(payload);
+      ipcRenderer.on("openwork:automation-runner:lifecycle", handler);
+      return () => ipcRenderer.removeListener("openwork:automation-runner:lifecycle", handler);
+    },
     onCredentialRejected(callback) {
-      const handler = () => callback();
+      const handler = (_event, rejection) => callback(rejection);
       ipcRenderer.on(AUTOMATION_RUNNER_CREDENTIAL_REJECTED_EVENT, handler);
       return () => ipcRenderer.removeListener(AUTOMATION_RUNNER_CREDENTIAL_REJECTED_EVENT, handler);
+    },
+  },
+  remoteSessionAccess: {
+    get() {
+      return ipcRenderer.invoke("openwork:remote-session-access:get");
+    },
+    set(mode) {
+      return ipcRenderer.invoke("openwork:remote-session-access:set", mode);
     },
   },
   fileSystem: {
@@ -298,7 +311,7 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
     taskControl(tabId, action) { return ipcRenderer.invoke("openwork:browser:taskControl", tabId, action); },
     setProxy(proxy) { return ipcRenderer.invoke("openwork:browser:setProxy", proxy); },
     setControlEnabled(enabled) { return ipcRenderer.invoke("openwork:browser:setControlEnabled", enabled); },
-    setAgentViewport(key) { return ipcRenderer.invoke("openwork:browser:setAgentViewport", key); },
+    setTabPageSize(tabId, key) { return ipcRenderer.invoke("openwork:browser:setTabPageSize", tabId, key); },
     startAgentTurn(sessionId) { return ipcRenderer.invoke("openwork:browser:startAgentTurn", sessionId); },
     endAgentTurn(sessionId) { return ipcRenderer.invoke("openwork:browser:endAgentTurn", sessionId); },
     setAgentPermissionRules(rules) { return ipcRenderer.invoke("openwork:browser:setAgentPermissionRules", rules); },
@@ -357,6 +370,8 @@ contextBridge.exposeInMainWorld("__OPENWORK_ELECTRON__", {
     distribution: desktopDistribution,
     initialDeepLinks: [],
     platform: normalizePlatform(process.platform),
+    arch: process.arch,
+    isPackaged: ipcRenderer.sendSync("openwork:app-packaged-sync") === true,
     version: process.versions.electron,
     evalFatalBootstrapFailure: process.env.OPENWORK_EVAL_FATAL_DESKTOP_BOOTSTRAP_FAILURE ?? null,
   },

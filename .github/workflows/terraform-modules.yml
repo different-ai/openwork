@@ -38,7 +38,7 @@ jobs:
         run: |
           python3 - <<'PY'
           import json, os, subprocess
-          modules = ["openwork-aws-ecs", "openwork-gcp-cloud-run", "openwork-azure-container-apps"]
+          modules = ["openwork-aws-ecs", "openwork-gcp-cloud-run", "openwork-azure-container-apps", "openwork-self-host"]
           base = os.environ["BASE_SHA"]
           try:
               if base == "MANUAL" or not base.strip("0"):
@@ -101,11 +101,16 @@ jobs:
       - name: Format, initialize, validate and mocked tests with both tools
         working-directory: infra/terraform/modules/${{ matrix.module }}
         run: |
+          example=examples/complete
+          if [[ "$MODULE" == openwork-self-host ]]; then example=examples/basic; fi
           for tool in terraform tofu; do
             "$tool" fmt -check -recursive
             # A lock belongs to one registry. Regenerate explicitly when switching tools.
             if [[ "$tool" == tofu ]]; then
-              rm -f .terraform.lock.hcl examples/complete/.terraform.lock.hcl
+              rm -f .terraform.lock.hcl "$example/.terraform.lock.hcl"
+              if [[ -f "$example/opentofu.lock.hcl" ]]; then
+                cp "$example/opentofu.lock.hcl" "$example/.terraform.lock.hcl"
+              fi
             fi
             # Reusable modules ship no locks; preserve a future committed lock if present.
             if [[ ! -f .terraform.lock.hcl ]]; then
@@ -118,7 +123,7 @@ jobs:
             fi
             "$tool" test
             (
-              cd examples/complete
+              cd "$example"
               if [[ ! -f .terraform.lock.hcl ]]; then
                 "$tool" init -backend=false -input=false
               fi
@@ -126,6 +131,13 @@ jobs:
               "$tool" validate
             )
           done
+      - uses: actions/setup-node@v6
+        if: matrix.module == 'openwork-gcp-cloud-run'
+        with:
+          node-version: '24.22.1'
+      - name: Cloud SQL Gateway entrypoint compatibility (offline)
+        if: matrix.module == 'openwork-gcp-cloud-run'
+        run: node --test infra/terraform/modules/openwork-gcp-cloud-run/scripts/cloud-sql-entrypoint.test.mjs
       - name: Install verified Trivy
         id: trivy-install
         if: ${{ !cancelled() }}

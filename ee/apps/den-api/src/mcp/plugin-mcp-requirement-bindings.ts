@@ -40,7 +40,6 @@ export async function upsertPluginMcpRequirementBinding(input: {
   connectionOwnedByPlugin: boolean
 }): Promise<PluginMcpRequirementBindingRow> {
   const serverName = input.serverName.trim()
-  // primary: insert-vs-update decision must see a binding written moments ago.
   const existing = await db.$primary
     .select()
     .from(PluginMcpRequirementBindingTable)
@@ -150,7 +149,6 @@ export async function activePluginMcpRequirementBindingsReferenceConnection(inpu
   excludingPluginId: PluginId
   organizationId: OrganizationId
 }): Promise<boolean> {
-  // primary: gates deleting a connection; a just-written binding must count.
   const rows = await db.$primary
     .select({ pluginId: PluginMcpRequirementBindingTable.pluginId })
     .from(PluginMcpRequirementBindingTable)

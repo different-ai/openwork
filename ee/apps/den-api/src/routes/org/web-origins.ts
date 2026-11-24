@@ -28,8 +28,6 @@ const WEB_ORIGIN_ALREADY_APPROVED_MESSAGE = "This origin is already approved."
 const WEB_ORIGIN_LIMIT_REACHED_MESSAGE = `This organization already has ${ORGANIZATION_WEB_ORIGIN_LIMIT} approved web origins. Remove one before adding another.`
 const WEB_ORIGIN_NOT_FOUND_MESSAGE = "This approved origin no longer exists."
 
-// OpenAPI-only view of the shared contract: den-web parses responses with the
-// shared schema, so the `date-time` format is declared here instead of there.
 const organizationWebOriginDocumentSchema = organizationWebOriginSchema.extend({
   createdAt: z.string().datetime(),
 }).meta({ ref: "OrganizationWebOrigin" })
@@ -120,7 +118,7 @@ export function registerOrgWebOriginRoutes<T extends { Variables: OrgRouteVariab
     describeRoute({
       tags: ["Organizations"],
       summary: "Approve a web origin",
-      description: "Approves one exact HTTPS origin (scheme, host, and optional port) for this organization. Approved origins can receive web sign-in handoffs for this organization and make credentialed browser requests to the Den API.",
+      description: "Approves one exact HTTPS origin (scheme, host, and optional port) for this organization. Approved origins can receive web sign-in handoffs for this organization and make credentialed browser requests to the Den API. A member confirms each handoff, and the origin receives a session that works in this organization only.",
       responses: {
         201: jsonResponse("The web origin was approved.", organizationWebOriginDocumentSchema),
         400: jsonResponse("The origin was not an exact HTTPS origin.", approveWebOriginBadRequestSchema),

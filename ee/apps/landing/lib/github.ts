@@ -70,10 +70,6 @@ const fetchJson = async <T,>(url: string): Promise<T | null> => {
 };
 
 export const getGithubData = async () => {
-  // /releases/latest always returns the most recent non-draft, non-prerelease
-  // release regardless of how many alpha/prerelease builds exist.  This avoids
-  // the paginated list being flooded by alpha tags pushing stable releases out
-  // of the per_page window.
   const [repo, latestRelease, releases] = await Promise.all([
     fetchJson<Repo>("https://api.github.com/repos/different-ai/openwork"),
     fetchJson<Release>(
@@ -118,8 +114,6 @@ export const getGithubData = async () => {
     return hasElectronDesktopAsset(release);
   };
 
-  // Prefer the /releases/latest result (immune to alpha flood), then fall back
-  // to scanning the paginated list for a stable release with desktop assets.
   const pick =
     (latestRelease && hasElectronDesktopAsset(latestRelease) ? latestRelease : null) ||
     releaseList.find((release) => isStableDesktopRelease(release)) ||
@@ -129,10 +123,6 @@ export const getGithubData = async () => {
     (latestRelease && hasWindowsDesktopAsset(latestRelease) ? latestRelease : null) ||
     releaseList.find((release) => isStableDesktopRelease(release) && hasWindowsDesktopAsset(release));
 
-  // The public website and Den intentionally expose different builds from the
-  // same release. Exclude both the retired helper installer and the parallel
-  // Cloud and enterprise flavors here so loose per-architecture matching never
-  // swaps the public download for a managed distribution.
   const isNonPublicDesktopAsset = (asset: ReleaseAsset) => {
     const name = String(asset?.name || "").toLowerCase();
     return name.startsWith("openwork-installer-")

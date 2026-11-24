@@ -1,23 +1,11 @@
-/**
- * The shell bootstrap every provider runs inside a Cloud sandbox: mount
- * layout, checkpoint hydrate/flush, and the supervised `openwork-server`
- * process. It is provider-neutral; a provider only supplies the paths its
- * mounts land on and the process credentials, then `exec`s the rendered
- * command.
- */
-
 import { shellQuote } from "@openwork/sandbox"
 
 export { shellQuote }
 
 export type OpenWorkCheckpointConfig = {
-  /** Persistent mount that receives `checkpoints/ckpt-*.tar`. */
   dataMountPath: string
-  /** Where the running server keeps its state (checkpointed). */
   runtimeDataPath: string
-  /** The workspace root the server serves (checkpointed). */
   runtimeWorkspacePath: string
-  /** Scratch directory for in-progress checkpoint tars and markers. */
   sidecarDir: string
   intervalSeconds: number
   keep: number
@@ -25,7 +13,6 @@ export type OpenWorkCheckpointConfig = {
 
 export type OpenWorkBootstrapConfig = OpenWorkCheckpointConfig & {
   cloudComputerDisplay?: string
-  /** Persistent mount exposed to the agent as the workspace volume. */
   workspaceMountPath: string
   port: number
   workerId: string
@@ -35,35 +22,21 @@ export type OpenWorkBootstrapConfig = OpenWorkCheckpointConfig & {
     url: string
     token: string
   }
-  /** Value of `DEN_RUNTIME_PROVIDER` inside the sandbox. */
   runtimeProvider: string
-  /** Wording for the runtime-image verification failure, e.g. "Daytona runtime image". */
   imageDescription: string
-  /** Operator hint appended to start failures, e.g. "rebuild and republish the Daytona snapshot". */
   rebuildHint: string
-  /** Document editor beside the server, when the image includes one. */
   documentsEditor?: OpenWorkDocumentsEditorConfig
 }
 
 export type OpenWorkDocumentsEditorConfig = {
   port: number
-  /** The only WOPI host the editor may load and save files through (Den's public API origin). */
   wopiHost: string
-  /** The page origin allowed to embed the editor. */
   frameAncestor: string
 }
 
 /** Installed by the worker image beside the engine. */
 export const DOCUMENTS_EDITOR_PROXY_PATH = "/opt/openwork/documents-editor-proxy.mjs"
 
-/**
- * Supervises the image's Collabora engine as its own user, on loopback behind
- * a small proxy on the public port. The signed preview URL reaches the proxy
- * through the provider proxy, which terminates TLS and rewrites Host; the
- * proxy restores the public host the engine builds its URLs from. The engine
- * loads only Den's WOPI files, with macros and the admin console off. The
- * instance is the member's own VM, so chroot jails are not required for isolation.
- */
 function documentsEditorScript(config: OpenWorkDocumentsEditorConfig, rebuildHint: string) {
   const enginePort = config.port + 1
   const options = [
@@ -142,11 +115,6 @@ function checkpointLastFlushMarkerPath(config: OpenWorkCheckpointConfig) {
 }
 
 function checkpointEnvironmentScript(config: OpenWorkCheckpointConfig) {
-  // The engine keeps its sessions in a SQLite database under its own data dir
-  // (opencode.db), which lives on the container overlay rather than a volume.
-  // It was missing from the checkpoint, so every recycle onto a new snapshot
-  // started the user from scratch. Resolved from $HOME in-shell so it tracks
-  // the image instead of a hardcoded /root.
   return `ENGINE_STATE_PATH=\${OPENWORK_ENGINE_STATE_PATH:-\$HOME/.local/share/opencode}
 OPENWORK_STATE_MANIFEST="${checkpointStateManifest(config)} \$ENGINE_STATE_PATH"
 CHECKPOINT_DIR=${shellQuote(checkpointDirectory(config))}
@@ -264,12 +232,8 @@ export function renderOpenWorkBootstrapScript(config: OpenWorkBootstrapConfig) {
     shellQuote("1"),
     " OPENWORK_OPENCODE_BIN=",
     shellQuote("/usr/local/bin/opencode"),
-    // Pin this on wake too: older snapshots must not fall back to downloading
-    // an engine at runtime.
     " OPENWORK_OPENCODE2_BIN=",
     shellQuote("/usr/local/bin/opencode2"),
-    // Keep positive policy signals for older server images. Current servers
-    // migrate automatically; neither organization nor member overrides opt out.
     " OPENWORK_ENGINE_FORCE_POLICY=",
     shellQuote("1"),
     " OPENWORK_ENGINE_AUTO_UPGRADE=",
@@ -280,16 +244,12 @@ export function renderOpenWorkBootstrapScript(config: OpenWorkBootstrapConfig) {
     shellQuote("v2"),
     " OPENWORK_WEB_ROOT=",
     shellQuote("/opt/openwork/web"),
-    // The instance still serves its own SPA copy for direct/debug access, but
-    // without a bootstrap token that path is intentionally inert; the gateway
-    // is the supported entry.
     " OPENWORK_WEB_BOOTSTRAP_TOKEN=",
     shellQuote("0"),
     " OPENWORK_EXTENSIONS_PLUGIN_DIR=",
     shellQuote("/opt/openwork/opencode-plugins"),
     " DEN_RUNTIME_PROVIDER=",
     shellQuote(config.runtimeProvider),
-    // Den owns this instance's idle lifecycle regardless of which host runs it.
     " DEN_RUNTIME_MANAGED=",
     shellQuote("1"),
     " DEN_WORKER_ID=",
@@ -300,16 +260,12 @@ export function renderOpenWorkBootstrapScript(config: OpenWorkBootstrapConfig) {
     shellQuote(config.activityHeartbeat.url),
     " DEN_ACTIVITY_HEARTBEAT_TOKEN=",
     shellQuote(config.activityHeartbeat.token),
-    // VM auto-pause can be as short as one minute. The five-minute legacy
-    // heartbeat cannot keep an active preview awake before that deadline.
     ...(config.cloudComputerDisplay ? [" DEN_ACTIVITY_HEARTBEAT_INTERVAL_SECONDS=30 DEN_ACTIVITY_WINDOW_SECONDS=120"] : []),
     ...(config.cloudComputerDisplay ? [` sh -c ${shellQuote(`openwork-cloud-desktop ${shellQuote(config.runtimeDataPath)} ${shellQuote(config.cloudComputerDisplay)} && exec openwork-server "$@"`)} --`] : [" openwork-server"]),
     ` --workspace ${shellQuote(config.runtimeWorkspacePath)}`,
     ` --host 0.0.0.0`,
     ` --port ${shellQuote(String(config.port))}`,
     ` --cors '*'`,
-    // This single-user worker's SPA has no approvals responder, so manual mode makes gated writes such as chat-attachment uploads time out to 403.
-    // Auto matches the desktop sidecar's approvalMode; viewer tokens remain blocked by scope checks.
     ` --approval auto`,
     ` --verbose`,
   ].join("")

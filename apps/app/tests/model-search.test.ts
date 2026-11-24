@@ -95,6 +95,48 @@ describe("model search", () => {
   });
 });
 
+describe("scoped model search", () => {
+  const search = (options: readonly ModelOption[], query: string) => searchModels(options, query, { providerFilterSyncFix: true });
+  const managedClaude = model("ipr_managed", "gwm_claude", "Claude Opus 5.5", "OpenWork Anthropic");
+  const managedSol = model("ipr_managed_b", "gwm_b", "Sol 6.1", "OpenWork Models");
+  const unrelated = model("302ai", "claude-opus-6.1", "Claude Opus 6.1", "302.AI");
+  const options = [managedClaude, managedSol, unrelated, ...all];
+
+  test("all recognized provider terms constrain the results", () => {
+    const result = search(options, "ow anthropic");
+    expect(result.matches.map((match) => match.option)).toEqual(expect.arrayContaining([managedClaude, openworkOpus]));
+    expect(result.matches).toHaveLength(2);
+    expect(result.provider).toEqual({ label: "OpenWork Anthropic", found: true });
+  });
+
+  test("all model terms must match within the requested provider scope", () => {
+    expect(search(options, "sol 6.1 ow anthropic").matches).toEqual([]);
+    expect(search(options, "sol 5.5").matches).toEqual([]);
+    expect(search(options, "claude 6.1 ow anthropic").matches).toEqual([]);
+    expect(search(options, "sol 6.1 ow").matches.map((match) => match.option)).toEqual([managedSol]);
+  });
+
+  test("a provider with no models stays empty rather than showing other providers", () => {
+    const result = search([unrelated, managedSol], "ow anthropic");
+    expect(result.matches).toEqual([]);
+    expect(result.provider).toEqual({ label: "OpenWork Anthropic", found: false });
+    expect(search(all.filter((option) => option.providerID !== "openrouter"), "opus 5.5 openrouter").matches).toEqual([]);
+  });
+
+  test("provider typos, model typos and optional effort keep working in scope", () => {
+    const result = search(options, "cluade opus 5.5 ow anthrpic fast high");
+    expect(result.matches.map((match) => match.option)).toEqual(expect.arrayContaining([managedClaude, openworkOpus]));
+    expect(result.matches).toHaveLength(2);
+    expect(result.intent).toEqual({ fast: true, effort: "high" });
+  });
+
+  test("the disabled flag preserves legacy provider ranking and partial matching", () => {
+    expect(searchModels(options, "sol 6.1 ow anthropic", { providerFilterSyncFix: false }))
+      .toEqual(searchModels(options, "sol 6.1 ow anthropic"));
+    expect(searchModels(options, "sol 6.1 ow anthropic").matches.length).toBeGreaterThan(0);
+  });
+});
+
 describe("model maker", () => {
   test("the maker comes from the model's name, wherever it is served", () => {
     expect(modelMakerId({ providerID: "ipr_x", modelID: "gwm_a", title: "Claude Opus 5.5" })).toBe("anthropic");

@@ -1,7 +1,6 @@
 import { SocTypeIIBadge } from "./soc-type-ii-badge";
 import { TRUST_CENTER_URL } from "../lib/trust-center";
 
-/** "Backed by Y Combinator" and the SOC 2 Type II badge, as shown under hero CTAs. */
 export function LpTrustRow({ className = "mt-7" }: { className?: string }) {
   return (
     <div className={`${className} flex flex-wrap items-center gap-x-4 gap-y-4`}>

@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto"
 import { startMcpAppTiming } from "@openwork/types/mcp-app-timing";
 import { EXTENSION_ID, RESOURCE_MIME_TYPE } from "@modelcontextprotocol/ext-apps/server"
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js"
+import { Server } from "@modelcontextprotocol/sdk/server/index.js"
 import {
   CallToolRequestSchema,
   ErrorCode,
@@ -40,6 +40,7 @@ import {
 import { executeCapabilityWithBudget } from "./agent.js"
 import { runsWithoutClick } from "./app-tool-access.js"
 import { launchInitialResults, launchReadHandoff, requiredScope, type LaunchReadHandoff, type McpAppLaunchDataStore } from "./app-launch-data.js"
+import { APP_SITE_HEADER } from "./app-site.js"
 import { callMcpAppTool, mcpAppToolKeepable } from "./app-tools.js"
 import { mcpAuditPrincipal } from "../audit/mcp-service-audit.js"
 import { mcpPrincipalCredentialId, type McpPrincipal } from "./auth.js"
@@ -48,7 +49,6 @@ import { resolveMcpMemberIdentity } from "./external-capabilities.js"
 import { getCatalog } from "./index.js"
 import { DEN_MCP_READ_SCOPE } from "./scopes.js"
 
-/** App servers share the connection endpoint path; their ids are App config objects. */
 export function isMcpAppServerId(value: string): boolean {
   return mcpAppIdSchema.safeParse(value).success
 }
@@ -59,11 +59,11 @@ const launchInputSchema: Tool["inputSchema"] = {
     input: {
       type: "object",
       additionalProperties: true,
-      description: "Optional JSON launch input the App receives.",
+      description: "Optional JSON launch input the artifact receives.",
     },
     timeZone: {
       type: "string",
-      description: "Optional IANA time zone for the data the App loads as it opens.",
+      description: "Optional IANA time zone for the data the artifact loads as it opens.",
     },
   },
   additionalProperties: false,
@@ -81,14 +81,13 @@ function launchTool(definition: McpAppServerDefinition): Tool {
   return {
     name: MCP_APP_LAUNCH_TOOL_NAME,
     title: `Open ${app.title}`,
-    description: `Open ${app.title}.${app.description ? ` ${app.description}` : ""} Returns its launch input and a readable summary${definition.loadsWithLaunch ? "; opening also loads the App's read-only data" : "; opening runs no other tools"}.`,
+    description: `Open ${app.title}.${app.description ? ` ${app.description}` : ""} Returns its launch input and a readable summary${definition.loadsWithLaunch ? "; opening also loads the artifact's read-only data" : "; opening runs no other tools"}.`,
     inputSchema: launchInputSchema,
     annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     _meta: { ui: { resourceUri: app.resourceUri, visibility: ["model", "app"] }, "ui/resourceUri": app.resourceUri },
   }
 }
 
-/** Den checks a connection tool's labels again on every call. */
 function boundTool(binding: McpAppToolBinding): Tool {
   const noClick = runsWithoutClick(binding)
   return {
@@ -108,15 +107,11 @@ function boundTool(binding: McpAppToolBinding): Tool {
 type AppRefusal = "not_a_member" | "other_organization" | "apps_off" | "not_found"
 
 const REFUSAL_MESSAGES: Record<Exclude<AppRefusal, "other_organization">, string> = {
-  not_a_member: "The App is not available: this connection is not signed in to an organization you belong to.",
-  apps_off: "The App is not available: Apps built in OpenWork are turned off for this organization.",
-  not_found: "The App is not available.",
+  not_a_member: "The artifact is not available: this connection is not signed in to an organization you belong to.",
+  apps_off: "The artifact is not available: artifacts built in OpenWork are turned off for this organization.",
+  not_found: "The artifact is not available.",
 }
 
-/**
- * The organization an App belongs to, only when the user is also a member of
- * it, so a refusal can name it without revealing Apps in other organizations.
- */
 async function appOrganizationForMember(appId: string, userId: string) {
   const [row] = await db.select({ id: OrganizationTable.id, name: OrganizationTable.name })
     .from(ConfigObjectTable)
@@ -127,29 +122,20 @@ async function appOrganizationForMember(appId: string, userId: string) {
   return row ?? null
 }
 
-/**
- * Logs why an App server refused a request and answers with the JSON-RPC error
- * every MCP client can show, as pass-through connections do.
- */
 async function refuseAppRequest(request: Request, input: { reason: AppRefusal; organizationId: string; appId: string; organizationName?: string }): Promise<Response> {
   console.error("mcp_app_server_refused", { reason: input.reason, organizationId: input.organizationId, appId: input.appId })
   const message = input.reason === "other_organization"
-    ? `This App belongs to ${input.organizationName ?? "another organization"}. Switch to ${input.organizationName ?? "that organization"} in OpenWork, then connect the App again.`
+    ? `This artifact belongs to ${input.organizationName ?? "another organization"}. Switch to ${input.organizationName ?? "that organization"} in OpenWork, then connect the artifact again.`
     : REFUSAL_MESSAGES[input.reason]
   return appUnavailableResponse(request, message, input.reason)
 }
 
-/**
- * A protocol-valid refusal for a member who cannot use this App, so every MCP
- * client sees the same JSON-RPC error rather than an HTTP failure.
- */
 async function appUnavailableResponse(request: Request, message = REFUSAL_MESSAGES.not_found, reason: AppRefusal = "not_found"): Promise<Response> {
   let id: string | number | null = null
   try {
     const body: unknown = await request.clone().json()
     if (typeof body === "object" && body !== null && "id" in body && (typeof body.id === "string" || typeof body.id === "number")) id = body.id
   } catch {
-    // Preflight already rejected malformed JSON; a missing id uses null.
   }
   return new Response(JSON.stringify({
     jsonrpc: "2.0",
@@ -162,43 +148,34 @@ function toolArguments(value: unknown): Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value) ? Object.fromEntries(Object.entries(value)) : {}
 }
 
-/**
- * One App as a standalone standard MCP server: its launch tool bound to the
- * current immutable ui:// revision, the tools it declared, and its revision
- * resources. It exposes nothing else from OpenWork Connect.
- */
 export function createMcpAppServer(input: {
   definition: McpAppServerDefinition
   scopes: ReadonlySet<string>
   loadResource: (revision: { appId: string; revisionId: string }) => Promise<McpAppResource>
   callTool: (binding: McpAppToolBinding, args: Record<string, unknown>) => Promise<ExecuteCapabilityToolResult>
   launchData?: McpAppLaunchDataStore
-  /** Whether a read's result may be kept for this caller's next open. */
   canKeep?: (binding: McpAppToolBinding) => boolean
-  /** Where a launch read past its budget waits for this caller's own call. */
   launchReads?: LaunchReadHandoff
+  instructions?: string
 }) {
   const { app, tools } = input.definition
-  const server = new McpServer({ name: app.title, version: "1.0.0" }, {
+  const server = new Server({ name: app.title, version: "1.0.0" }, {
     capabilities: {
       tools: { listChanged: false },
       resources: { listChanged: false, subscribe: false },
       extensions: { [EXTENSION_ID]: { mimeTypes: [RESOURCE_MIME_TYPE] } },
     },
-    instructions: `This is the ${app.title} App from OpenWork. Call ${MCP_APP_LAUNCH_TOOL_NAME} to open it. Its other tools run as you, with your own OpenWork access and connections.`,
+    instructions: input.instructions ?? `This is the ${app.title} artifact from OpenWork. Call ${MCP_APP_LAUNCH_TOOL_NAME} to open it. Its other tools run as you, with your own OpenWork access and connections.`,
   })
 
-  server.server.setRequestHandler(ListToolsRequestSchema, async () => ({
+  server.setRequestHandler(ListToolsRequestSchema, async () => ({
     tools: [launchTool(input.definition), ...tools.map(boundTool)],
   }))
-  server.server.setRequestHandler(CallToolRequestSchema, async (request) => {
+  server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const args = toolArguments(request.params.arguments)
     if (request.params.name === MCP_APP_LAUNCH_TOOL_NAME) {
       if (!input.scopes.has(DEN_MCP_READ_SCOPE)) return scopeError(MCP_APP_LAUNCH_TOOL_NAME, DEN_MCP_READ_SCOPE)
       const launchInput = toolArguments(args.input)
-      // Launch input can change what the App asks for, so only an App opened
-      // without any gets reads made ahead of it. They stay out of the model's
-      // view in _meta, which hosts pass to the App with the result.
       const initialResults = input.definition.loadsWithLaunch && Object.keys(launchInput).length === 0
         ? await launchInitialResults({ tools, scopes: input.scopes, timeZone: typeof args.timeZone === "string" ? args.timeZone : undefined, callTool: input.callTool, store: input.launchData, canKeep: input.canKeep, handoff: input.launchReads })
         : []
@@ -210,8 +187,6 @@ export function createMcpAppServer(input: {
     }
     const binding = tools.find((tool) => tool.name === request.params.name)
     if (!binding) throw new McpError(ErrorCode.InvalidParams, `Tool ${request.params.name} is not available on ${app.title}.`)
-    // OpenWork's host answers a cached read from its own storage. One that
-    // reaches this server came from another host and must not run the tool.
     if (request.params._meta?.["openwork/cache"] === "read") {
       return { isError: true, content: [{ type: "text", text: "No kept result is available from this host." }], _meta: { "openwork/cached": false } }
     }
@@ -221,20 +196,20 @@ export function createMcpAppServer(input: {
     return input.launchReads ? input.launchReads.call(binding, args, run) : run()
   })
 
-  server.server.setRequestHandler(ListResourcesRequestSchema, async () => ({
+  server.setRequestHandler(ListResourcesRequestSchema, async () => ({
     resources: [{ uri: app.resourceUri, name: app.title, mimeType: RESOURCE_MIME_TYPE, ...(app.description ? { description: app.description } : {}) }],
   }))
-  server.server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({ resourceTemplates: [] }))
-  server.server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+  server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => ({ resourceTemplates: [] }))
+  server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const revision = parseMcpAppResourceUri(request.params.uri)
     if (!revision || revision.appId !== app.appId || !input.scopes.has(DEN_MCP_READ_SCOPE)) {
-      throw new McpError(ErrorCode.InvalidRequest, "The resource is not an available revision of this App.", { error: "mcp_app_not_found" })
+      throw new McpError(ErrorCode.InvalidRequest, "The resource is not an available revision of this artifact.", { error: "mcp_app_not_found" })
     }
     let resource: McpAppResource
     try {
       resource = await input.loadResource(revision)
     } catch (error) {
-      throw new McpError(ErrorCode.InvalidRequest, "The resource is not an available revision of this App.", {
+      throw new McpError(ErrorCode.InvalidRequest, "The resource is not an available revision of this artifact.", {
         error: error instanceof McpAppError ? error.code : "mcp_app_unavailable",
       })
     }
@@ -251,11 +226,6 @@ export function createMcpAppServer(input: {
   return server
 }
 
-/**
- * Serves one App's MCP server for a verified member request. Access to the App
- * is rechecked on every request through its Plugin, and every bound tool runs
- * with the caller's own capability context.
- */
 async function handleMcpAppServerRequestUntimed(input: {
   app: Hono
   context: Context
@@ -274,7 +244,6 @@ async function handleMcpAppServerRequestUntimed(input: {
     getCatalog(input.app, context.env),
   ])
   if (!member) return refuse("not_a_member")
-  // A client authorized for one organization cannot reach an App built in another.
   if (home && home.id !== organizationId) return refuse("other_organization", home.name)
   if (!env.appMcpServersEnabled) return refuse("apps_off")
   const capabilityContext = createCapabilityRegistryContext({
@@ -298,6 +267,7 @@ async function handleMcpAppServerRequestUntimed(input: {
     if (error instanceof McpAppError) return refuse("not_found")
     throw error
   }
+  if (context.req.header(APP_SITE_HEADER) && !definition.site) return refuse("not_found")
   const server = createMcpAppServer({
     definition,
     scopes: principal.scopes,
@@ -307,15 +277,11 @@ async function handleMcpAppServerRequestUntimed(input: {
       invoke: () => callMcpAppTool(capabilityContext, binding, args),
     }),
     canKeep: (binding) => mcpAppToolKeepable(capabilityContext, binding),
-    // The launch and the App's later call arrive as separate requests, so a
-    // read is matched to its caller by everything that shapes its result.
     launchReads: launchReadHandoff(JSON.stringify([
       organizationId, member.orgMembershipId, [...member.teamIds].sort(), mcpPrincipalCredentialId(principal),
       [...principal.scopes].sort(), definition.app.appId, definition.app.revisionId,
     ])),
     launchData: {
-      // The inventory revision limits stale hits; launchInitialResults still
-      // runs every read through current authorization before accepting a hit.
       async open(timeZone) {
         const revision = await cache.inventory.revision(organizationId)
         if (!revision) return null
@@ -343,8 +309,6 @@ export async function handleMcpAppServerRequest(input: Parameters<typeof handleM
   const finish = startMcpAppTiming(`den.app-server.${stage}`)
   try {
     const response = await handleMcpAppServerRequestUntimed(input)
-    // Streamable HTTP returns its Response before a tool finishes. The profiling
-    // copy observes completion without delaying or changing the client's stream.
     if (process.env.OPENWORK_MCP_APP_TIMINGS === "1" && response.body) {
       void response.clone().arrayBuffer().then(finish, finish)
     } else finish()

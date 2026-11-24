@@ -27,11 +27,7 @@ export type PersistedUiState = {
 
 export type UiState = {
   sidebarOpen: boolean;
-  // Deliberately not persisted so each app load starts with only chat visible.
   sidePanelState: SidePanelState;
-  // Which workspace groups are open in the session sidebar. Kept in memory
-  // (not persisted) so leaving for Settings and coming back does not collapse
-  // them: the session route unmounts while Settings is open.
   expandedWorkspaceIds: string[];
   applicationMenuVisible: boolean;
   workspaceLeftSidebarWidth: number;
@@ -322,8 +318,6 @@ export function toggleWorkspaceRightSidebar(state: UiState): UiState {
 }
 
 function syncApplicationMenuVisible(visible: boolean): void {
-  // Fire-and-forget window chrome: the shell refuses this before enterprise
-  // activation, and the menu simply keeps its default visibility then.
   void globalThis.window?.__OPENWORK_ELECTRON__?.invokeDesktop?.("__setApplicationMenuVisible", visible)?.catch(() => undefined);
 }
 

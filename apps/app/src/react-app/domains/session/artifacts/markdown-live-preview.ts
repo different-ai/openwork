@@ -13,14 +13,6 @@ import {
 import { renderMarkdownHtml } from "@/components/markdown/markdown-primitive";
 import { selectionIntersectsElement } from "@/components/markdown/selection-stability";
 
-/**
- * Obsidian-style "merged" markdown view for CodeMirror 6: the document stays
- * fully editable as plain markdown, but headings, emphasis, lists, quotes and
- * links are rendered inline. Syntax markers (`#`, `*`, `` ` ``, `>`, link
- * brackets) are hidden unless the selection touches the line they belong to,
- * so editing the raw markup is always one click away.
- */
-
 const HIDE = Decoration.replace({});
 
 const HEADING_MARK = [
@@ -73,9 +65,6 @@ function lineHasSelection(view: EditorView, pos: number) {
 
 function buildDecorations(view: EditorView): DecorationSet {
   const widgets: Range<Decoration>[] = [];
-  // Force the markdown tree to be parsed across the whole document so headings
-  // and inline marks are decorated immediately, even before incremental parsing
-  // would otherwise reach them.
   const tree =
     ensureSyntaxTree(view.state, view.state.doc.length, 200) ?? syntaxTree(view.state);
 
@@ -87,8 +76,6 @@ function buildDecorations(view: EditorView): DecorationSet {
         const name = node.name;
 
         if (name === "Table") {
-          // Tables are handled as one block by `tableField`, so their pipes and
-          // cell markup are never half-rendered alongside it.
           return false;
         }
 
@@ -99,7 +86,6 @@ function buildDecorations(view: EditorView): DecorationSet {
         }
 
         if (name === "HeaderMark") {
-          // `#` markers and the trailing space; hide unless editing the line.
           if (!lineHasSelection(view, node.from)) {
             const after = view.state.doc.sliceString(node.to, node.to + 1) === " " ? node.to + 1 : node.to;
             widgets.push(HIDE.range(node.from, after));
@@ -155,7 +141,6 @@ function buildDecorations(view: EditorView): DecorationSet {
           return;
         }
         if (name === "URL") {
-          // Hide the (target) part of a link unless editing it.
           if (!lineHasSelection(view, node.from)) {
             widgets.push(HIDE.range(node.from, node.to));
           }
@@ -165,7 +150,6 @@ function buildDecorations(view: EditorView): DecorationSet {
     });
   }
 
-  // Line decorations must be applied in document order; collect them separately.
   for (const { from, to } of view.visibleRanges) {
     tree.iterate({
       from,
@@ -211,10 +195,6 @@ const livePreviewPlugin = ViewPlugin.fromClass(
     }
 
     update(update: ViewUpdate) {
-      // Rebuild when the document, viewport or selection changes. Also rebuild
-      // when the language parser advances (the syntax tree may not be ready in
-      // the constructor for large documents), detected via any transaction that
-      // touched the language state.
       if (
         update.docChanged ||
         update.viewportChanged ||
@@ -230,11 +210,6 @@ const livePreviewPlugin = ViewPlugin.fromClass(
   },
 );
 
-/**
- * Source lines of a pipe table map to rendered rows: header, delimiter, then one
- * line per body row. Returns how far the clicked row sits from the table start so
- * a click lands the cursor on the row the user aimed at.
- */
 function clickedRowOffset(target: EventTarget | null): number {
   const row = target instanceof Element ? target.closest("tr") : null;
   const body = row?.parentElement;
@@ -242,12 +217,6 @@ function clickedRowOffset(target: EventTarget | null): number {
   return Array.from(body.rows).indexOf(row) + 2;
 }
 
-/**
- * A GFM table rendered as one block. Pipe tables are unreadable as source once
- * they have more than a couple of columns, so the whole table is replaced by the
- * same HTML the rest of the app uses for markdown, and clicking it hands the
- * source back for editing.
- */
 class TableWidget extends WidgetType {
   constructor(readonly source: string, readonly from: number) {
     super();
@@ -260,7 +229,6 @@ class TableWidget extends WidgetType {
   toDOM(view: EditorView) {
     const wrapper = document.createElement("div");
     wrapper.className = "cm-md-table";
-    // renderMarkdownHtml sanitizes its output.
     wrapper.innerHTML = renderMarkdownHtml(this.source, "surface");
     wrapper.addEventListener("click", (event) => {
       if (event.defaultPrevented || event.button !== 0 || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return;
@@ -283,10 +251,6 @@ class TableWidget extends WidgetType {
   }
 }
 
-/**
- * Block decorations may not come from a view plugin, so table replacement lives
- * in its own state field.
- */
 function buildTableDecorations(state: EditorState): DecorationSet {
   const builder = new RangeSetBuilder<Decoration>();
   const tree = ensureSyntaxTree(state, state.doc.length, 200) ?? syntaxTree(state);
@@ -294,7 +258,6 @@ function buildTableDecorations(state: EditorState): DecorationSet {
   tree.iterate({
     enter: (node) => {
       if (node.name !== "Table") return;
-      // Selecting into a table returns it to editable markdown.
       if (selectionTouches(state, node.from, node.to)) return false;
 
       const source = state.doc.sliceString(node.from, node.to);
@@ -325,11 +288,6 @@ const tableField = StateField.define<DecorationSet>({
   provide: (field) => EditorView.decorations.from(field),
 });
 
-/**
- * A rendered table has no text positions inside it, so vertical cursor motion
- * steps straight over it. Arrowing into one puts the cursor on the nearest source
- * line instead, which returns the table to editable markdown.
- */
 function enterTable(view: EditorView, direction: 1 | -1): boolean {
   const { state } = view;
   const cursorLine = state.doc.lineAt(state.selection.main.head);
@@ -382,10 +340,7 @@ const livePreviewTheme = EditorView.baseTheme({
     fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
   },
   ".cm-md-bullet": { paddingRight: "0.4em", color: "hsl(var(--muted-foreground))" },
-  // `contain: inline-size` keeps a wide table from stretching the editor (which
-  // would stop every other paragraph from wrapping); the table scrolls in place.
   ".cm-md-table": { cursor: "text", overflowX: "auto", contain: "inline-size", userSelect: "text" },
-  // Size columns to their content rather than squeezing words apart in a narrow panel.
   ".cm-md-table table": { fontSize: "0.95em", width: "max-content", minWidth: "100%" },
 });
 

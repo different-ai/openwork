@@ -1,9 +1,12 @@
-/**
- * Spanish translations (Español)
- * Professional terms (Skills, Plugins, Commands, Sessions, OpenCode, OpenPackage, OpenWork) are NOT translated
- */
-
 export default {
+  "artifact.office_empty": "Este archivo no contiene texto legible. Ábrelo en otra aplicación para ver el original.",
+  "artifact.office_empty_slide": "Esta diapositiva no contiene texto legible.",
+  "artifact.office_loading": "Cargando esquema de texto",
+  "artifact.office_slide": "Diapositiva {number}",
+  "artifact.office_text_only": "Solo se muestra el esquema de texto, sin diseño, imágenes ni colores.",
+  "artifact.office_too_large": "El archivo es demasiado grande para la vista previa. Ábrelo en otra aplicación para verlo completo.",
+  "artifact.office_truncated": "Parte del texto no se muestra porque la vista previa ha alcanzado su límite.",
+  "artifact.office_unreadable": "No se pudo leer el archivo. Prueba a abrirlo en otra aplicación.",
   "app.error_audit_load": "No se pudo cargar el audit log.",
   "app.error_connect_first": "Conecta a este worker antes de realizar cambios del runtime.",
   "app.error_request_failed": "Solicitud fallida",
@@ -317,8 +320,11 @@ export default {
   "providers.still_connected_suffix": ", pero el worker todavía lo informa como conectado. Borre cualquier clave API restante o credenciales de OAuth y reinicie el worker para desconectarlo por completo.",
   "providers.unknown_provider": "Proveedor desconocido",
   "providers.use_api_key_suffix": "Usa una clave API en su lugar.",
+  "question_modal.collapse": "Minimizar",
+  "question_modal.collapsed_status": "Esperando tu respuesta",
   "question_modal.custom_answer_label": "O escribe una respuesta personalizada",
   "question_modal.custom_answer_placeholder": "Escribe tu respuesta aquí...",
+  "question_modal.expand": "Mostrar pregunta",
   "question_modal.question_counter": "Pregunta {current} de {total}",
   "session.allow_for_session": "Permitir durante la sesión",
   "session.allow_once": "Permitir una vez",
@@ -518,7 +524,6 @@ export default {
   "settings.group_workspace": "Espacio de trabajo",
   "settings.hide_titlebar": "Ocultar barra de título",
   "settings.hide_titlebar_desc": "Oculta la barra de título de la ventana. Útil para mosaico de ventanas",
-  "settings.join_discord": "Únete a Discord",
   "settings.language": "Idioma",
   "settings.language.description": "Elige tu idioma preferido",
   "settings.last_error": "Último error",

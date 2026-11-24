@@ -120,7 +120,6 @@ export async function POST(request: Request) {
         fullName: name,
         email: { email, isVerified: false },
       },
-      // Public submissions must not overwrite an existing customer's profile.
       onUpdate: {},
     });
     if (customerResult.error || !customerResult.customer?.id) {
@@ -140,7 +139,6 @@ export async function POST(request: Request) {
       throw new Error("Plain thread creation failed", { cause: threadResult.error?.code });
     }
   } catch (error) {
-    // Do not log API response bodies, which may contain submitted personal data.
     console.error("Plain form submission failed", {
       operation,
       errorType: error instanceof Error ? error.name : "UnknownError",

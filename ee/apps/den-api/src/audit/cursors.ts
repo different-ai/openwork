@@ -3,7 +3,6 @@ import { typeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
 
 export const AUDIT_CURSOR_TTL_MS = 24 * 60 * 60 * 1000
-// v2: positions are time-ordered event/operation IDs; there is no sequence watermark.
 const domain = "openwork.den.audit.cursor.v2\0"
 const milliseconds = z.number().int().nonnegative().safe()
 const positionSchema = z.object({
@@ -17,7 +16,6 @@ const cursorSchema = z.object({
   mode: z.enum(["operations", "events", "export-ndjson", "export-csv"]),
   filterHash: z.string().regex(/^[a-f0-9]{64}$/),
   operationId: typeId.schema("auditOperation").nullable(),
-  /** Events recorded after this instant are outside the page set. */
   visibleBefore: milliseconds,
   position: positionSchema,
   issuedAt: milliseconds,

@@ -6,37 +6,16 @@ import { isToolDisabled } from "../capability-sources/external-mcp-tool-policy.j
 import type { ExecuteCapabilityToolResult } from "./capability-registry.js"
 import { toolTitle, withSafetyHints } from "./tool-labels.js"
 
-/**
- * Connect's full tool view: every capability the member may use, listed as
- * its own standard MCP tool (see connect-tool-view.ts for who gets it).
- *
- * A tool is named like the Code Mode call for the same capability,
- * `<namespace>.<tool>` (`linear.list_issues` is `tools.linear.list_issues` in
- * execute_capability_script). Capabilities with no Code Mode namespace use
- * hyphenated ones (`run-workflow`, `open-app`, `remote-session`,
- * `openwork-bot`), which a connection's namespace can never be. Names keep to the MCP name characters
- * and to 64 characters, so clients that prefix them (`mcp__<server>__<tool>`
- * in Claude Code, which drops names over 128) still accept them.
- *
- * Every tool runs through the executor execute_capability uses, with the same
- * `{ name, arguments }` it receives, so grants, tool policy, scopes,
- * connection checks, audit and usage counting are unchanged. Every tool has a
- * title and a safety hint (tool-labels.ts), filled in where its source states
- * none.
- */
-
 export const CONNECT_FULL_TOOL_NAME_MAX_LENGTH = 64
 export const CONNECTION_STATUS_TOOL_NAME = "connection_status"
 export const WORKFLOW_TOOL_NAMESPACE = "run-workflow"
 export const APP_TOOL_NAMESPACE = "open-app"
 export const REMOTE_SESSION_TOOL_NAMESPACE = "remote-session"
-/** slack_send_as_bot's namespace: `openwork-bot.slack_send_as_bot`. */
 export const OPENWORK_BOT_TOOL_NAMESPACE = "openwork-bot"
 
 export type ConnectFullToolCandidate = {
   namespace: string
   toolName: string
-  /** The exact name execute_capability takes. */
   capability: string
   title?: string
   description: string
@@ -47,10 +26,8 @@ export type ConnectFullToolCandidate = {
 
 export type ConnectFullTool = ConnectFullToolCandidate & { name: string; title: string; annotations: ToolAnnotations }
 
-/** What execute_capability receives; the older path/query/body fields stay for its own callers. */
 export type CapabilityCall = { name: string; arguments?: unknown; path?: unknown; query?: unknown; body?: unknown }
 
-/** A connection the member may use but cannot call yet; connection_status shows its card. */
 export type PendingConnection = { namespace: string; name: string }
 
 const DISALLOWED_NAME_CHARACTERS = /[^A-Za-z0-9_.-]/g
@@ -59,7 +36,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-/** MCP tool and output schemas must describe objects; anything else would fail the whole list. */
 function objectSchema(value: unknown): Record<string, unknown> | undefined {
   if (!isRecord(value) || (value.type !== undefined && value.type !== "object")) return undefined
   return value
@@ -69,12 +45,10 @@ export function connectFullToolName(namespace: string, toolName: string): string
   const wanted = `${namespace}.${toolName}`
   const safe = wanted.replace(DISALLOWED_NAME_CHARACTERS, "_")
   if (safe === wanted && wanted.length <= CONNECT_FULL_TOOL_NAME_MAX_LENGTH) return wanted
-  // Rewritten names carry a digest of the original so they stay unique and stable.
   const suffix = `-${createHash("sha256").update(wanted).digest("hex").slice(0, 8)}`
   return `${safe.slice(0, CONNECT_FULL_TOOL_NAME_MAX_LENGTH - suffix.length)}${suffix}`
 }
 
-/** One tool per candidate in name order; the same candidates always give the same list. */
 export function buildConnectFullTools(candidates: readonly ConnectFullToolCandidate[]): ConnectFullTool[] {
   const named = candidates
     .flatMap((candidate) => objectSchema(candidate.inputSchema)
@@ -95,10 +69,6 @@ function compare(left: string, right: string): number {
   return left < right ? -1 : left > right ? 1 : 0
 }
 
-/**
- * Tool names for titled items (Workflows, Apps). The oldest id keeps the plain
- * title, so adding a namesake never renames an existing tool.
- */
 export function titledToolNames(items: readonly { id: string; title: string }[]): Map<string, string> {
   const names = new Map<string, string>()
   const taken = new Set<string>()
@@ -120,7 +90,6 @@ export type ExternalToolListing = {
   annotations?: unknown
 }
 
-/** A ready connection's provider tools, minus the ones its tool policy disables. */
 export function externalToolCandidates(input: {
   connection: { id: string; name: string; namespace: string; toolPolicy: ExternalMcpToolPolicy | null }
   tools: readonly ExternalToolListing[]
@@ -146,11 +115,6 @@ export function externalToolCandidates(input: {
   })
 }
 
-/**
- * Advertises a JSON Schema without validating against it, as
- * execute_capability does: the capability's own executor checks arguments,
- * and a provider's schema guidance stays advisory.
- */
 function advertisedSchema(schema: Record<string, unknown>): StandardSchemaWithJSON<unknown, unknown> {
   return {
     "~standard": {
@@ -166,7 +130,6 @@ function advertisedSchema(schema: Record<string, unknown>): StandardSchemaWithJS
 export function registerConnectFullTools(input: {
   server: McpServer
   tools: readonly ConnectFullTool[]
-  /** The executor execute_capability uses. */
   execute: (call: CapabilityCall) => Promise<ExecuteCapabilityToolResult>
 }) {
   for (const tool of input.tools) {
@@ -183,7 +146,6 @@ export function registerConnectFullTools(input: {
 export function registerConnectionStatusTool(input: {
   server: McpServer
   pending: readonly PendingConnection[]
-  /** The connection's status card, as its status capability returns it. */
   show: (connection: PendingConnection) => Promise<ExecuteCapabilityToolResult>
 }) {
   const pending = [...input.pending].sort((left, right) => compare(left.namespace, right.namespace))

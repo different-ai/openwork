@@ -18,13 +18,11 @@ import type { BackgroundShell } from "@/react-app/domains/session/status/backgro
 
 const COMMAND_PREVIEW_LENGTH = 80
 
-/** One line of a command, cut to fit a row. */
 export function commandPreview(command: string): string {
   const oneLine = command.replace(/\s+/g, " ").trim()
   return oneLine.length > COMMAND_PREVIEW_LENGTH ? `${oneLine.slice(0, COMMAND_PREVIEW_LENGTH - 1)}…` : oneLine
 }
 
-/** The completion notice a transcript message carries, if it is one. */
 export function backgroundShellNoticeFromMessage(message: UIMessage): BackgroundShellNotice | null {
   if (message.role !== "system") return null
   for (const part of message.parts) {
@@ -35,11 +33,6 @@ export function backgroundShellNoticeFromMessage(message: UIMessage): Background
   return null
 }
 
-/**
- * Where a background command ended, in the transcript: one quiet row in the
- * step rail's shape (sentence and command), never the engine's
- * raw `<shell>` hand-off text. The text-first rail drops the glyph.
- */
 export const BackgroundTaskNotice = React.memo(function BackgroundTaskNotice({ message, notice }: { message: UIMessage; notice: BackgroundShellNotice }) {
   const command = commandPreview(notice.command)
   return (
@@ -59,7 +52,6 @@ export const BackgroundTaskNotice = React.memo(function BackgroundTaskNotice({ m
   )
 })
 
-/** The background sub-agent completion notice a transcript message carries, if it is one. */
 export function subagentNoticeFromMessage(message: UIMessage): SubagentNotice | null {
   if (message.role !== "system") return null
   for (const part of message.parts) {
@@ -70,13 +62,6 @@ export function subagentNoticeFromMessage(message: UIMessage): SubagentNotice | 
   return null
 }
 
-/**
- * Where a background sub-agent ended, in the transcript: one quiet row in the
- * same shape as a background command's, never the engine's raw `<subagent>`
- * hand-off text. It opens the sub-agent's chat, like its run line does.
- * The text-first rail reads like every other step, "Sub-agent
- * finished Diagnose stuck conversion", with no glyph.
- */
 export const SubagentNoticeRow = React.memo(function SubagentNoticeRow({ message, notice }: { message: UIMessage; notice: SubagentNotice }) {
   const { onOpenSubagentSession } = useMessageList()
   const label = subagentNoticeLabel(notice)
@@ -98,7 +83,7 @@ export const SubagentNoticeRow = React.memo(function SubagentNoticeRow({ message
           type="button"
           data-subagent-notice={notice.outcome}
           className={cn(rowClassName, "group cursor-pointer transition-colors hover:text-foreground")}
-          aria-label={`${label}${notice.description ? `: ${notice.description}` : ""}. Open sub-agent chat`}
+          aria-label={`${label}${notice.description ? `: ${notice.description}` : ""}. ${notice.linkedSession ? "Open session" : "Open sub-agent chat"}`}
           onClick={() => onOpenSubagentSession(notice.childSessionId)}
         >
           {content}
@@ -113,20 +98,13 @@ export const SubagentNoticeRow = React.memo(function SubagentNoticeRow({ message
 
 type BackgroundTasksProps = {
   shells: BackgroundShell[]
-  /** The connection cannot confirm the count right now: show it without the live shimmer. */
   stale?: boolean
 }
 
 type BackgroundTasksLabelProps = BackgroundTasksProps & {
-  /** Off when the label sits inside a line whose one shimmer already covers it. */
   shimmer?: boolean
 }
 
-/**
- * "2 running background tasks": commands the agent left running. Same
- * shimmer as the turn's "Working" line. The list stays one hover (or focus)
- * away: each command and how long it has been running.
- */
 export const BackgroundTasksLabel = React.memo(function BackgroundTasksLabel({ shells, stale = false, shimmer = true }: BackgroundTasksLabelProps) {
   const [open, setOpen] = React.useState(false)
   const [now, setNow] = React.useState(() => Date.now())
@@ -162,11 +140,6 @@ export const BackgroundTasksLabel = React.memo(function BackgroundTasksLabel({ s
   )
 })
 
-/**
- * The count on its own line, once the turn is over. It takes the Working
- * line's place with the same height, so the chat does not move when the
- * turn ends and the count stays.
- */
 export const BackgroundTasksMessage = React.memo(function BackgroundTasksMessage(props: BackgroundTasksProps) {
   return (
     <Message className="mx-auto flex w-full max-w-3xl flex-col items-start gap-2 px-2 md:px-10">

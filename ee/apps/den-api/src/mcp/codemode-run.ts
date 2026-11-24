@@ -1,24 +1,17 @@
 import { CodeMode } from "@openwork/codemode"
 import { Effect } from "effect"
+import { limitCodemodePatternTime } from "./codemode-pattern-limit.js"
 import { runStandardCodeMode } from "./codemode-run-standard.js"
 import type { CodemodeLanguage } from "./codemode-script-object.js"
 import type { CodemodeToolTree } from "./codemode-tools.js"
 
-/**
- * Which interpreter runs a script: OpenWork's original Code Mode, or the
- * standard one, which runs ECMAScript (today `@opencode/codemode`).
- */
+limitCodemodePatternTime()
+
 export type CodemodeRuntime = "openwork" | "standard"
 
-/**
- * Saved code runs only on the interpreter it was written for: OpenWork's for
- * `codemode-js`, the standard one for `ecmascript` while the organization has
- * `standardCodeMode`. With the feature off an `ecmascript` Workflow has none
- * (undefined) and does not run, rather than switching interpreter silently.
- */
-export function codemodeRuntimeFor(language: CodemodeLanguage, standardCodeMode: boolean): CodemodeRuntime | undefined {
+export function codemodeRuntimeFor(language: CodemodeLanguage): CodemodeRuntime {
   if (language === "codemode-js") return "openwork"
-  return standardCodeMode ? "standard" : undefined
+  return "standard"
 }
 
 type CodemodeRunCommon = {
@@ -45,8 +38,6 @@ function isJsonSafe(value: unknown, seen = new Set<object>()): value is CodeMode
   return safe
 }
 
-// A runaway-loop guard, not a work budget: scripts call tools without a
-// per-call approval, and the timeout and output cap bound everything else.
 const DEFAULT_MAX_TOOL_CALLS = 1_024
 
 export async function runCodemodeScript(input: {

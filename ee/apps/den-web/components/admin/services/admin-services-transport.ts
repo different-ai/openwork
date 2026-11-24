@@ -1,7 +1,6 @@
 import { requestAdmin, sendAdmin } from "../admin-request";
 import { parseServicesSnapshot, SERVICES_PATH, type ServicesTransport } from "./service-readiness-data";
 
-/** Stable internal adapter; never imported by organization settings. */
 export const adminServicesTransport: ServicesTransport = {
   getSnapshot: (signal) => requestAdmin(SERVICES_PATH, parseServicesSnapshot, signal),
   startCheck: async (signal) => {

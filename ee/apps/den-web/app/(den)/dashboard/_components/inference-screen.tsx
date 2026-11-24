@@ -19,12 +19,8 @@ import { useDenFlow } from "../../_providers/den-flow-provider";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { getGatewayDashboardAccess } from "../_lib/gateway-dashboard-access";
 import { UsageLimitsCard } from "../_features/analytics/usage-limits-card";
+import { useFeatureIntro } from "../_features/feature-intros";
 
-/**
- * Editorial detail per model: what a knowledge worker should reach for it for,
- * and the vendor monogram shown in the lineup table. Keyed by model alias so
- * unmapped models still render with sane defaults.
- */
 const MODEL_DETAILS: Record<string, { bestFor: string; monogram: string } | undefined> = {
   "moonshotai/kimi-k3": { bestFor: "Research & synthesis", monogram: "MS" },
   "z-ai/glm-5.2": { bestFor: "Multi-step tasks", monogram: "ZA" },
@@ -136,7 +132,6 @@ export function InferenceScreen({ embedded = false }: { embedded?: boolean }) {
     </div>;
   }
 
-  // Do not mount data fetching or management actions until this workspace is verified.
   return <InferenceContent key={dashboard.orgId} embedded={embedded} />;
 }
 
@@ -148,8 +143,6 @@ function InferenceContent({ embedded }: { embedded: boolean }) {
   const [saving, setSaving] = useState(false);
   const [subscribeBusy, setSubscribeBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // A checkout answered 503 billing_not_configured: same neutral state as a
-  // deployment that reports it does not sell OpenWork Models.
   const [checkoutNotSold, setCheckoutNotSold] = useState(false);
 
   const access = getOrgAccessFlags(
@@ -157,7 +150,6 @@ function InferenceContent({ embedded }: { embedded: boolean }) {
     orgContext?.currentMember.isOwner ?? false,
     orgContext?.currentMember.permissions,
   );
-  // Subscribing starts a billing checkout; enabling changes the inference setting.
   const canSubscribe = access.canManageBilling;
   const canToggleModels = access.canManageModelsSettings;
   const activeOrgSlug = activeOrg?.slug ?? null;
@@ -186,9 +178,6 @@ function InferenceContent({ embedded }: { embedded: boolean }) {
     void loadStatus();
   }, [orgContext?.organization.id]);
 
-  // Subscribe at the point of value: start the Stripe checkout right here
-  // instead of bouncing the user to the billing page. Billing stays the
-  // status/portal view.
   async function startSubscribeCheckout() {
     if (!canSubscribe) {
       setError("Starting OpenWork Models checkout needs the “Manage billing” permission.");
@@ -254,8 +243,8 @@ function InferenceContent({ embedded }: { embedded: boolean }) {
   }
 
   const enabled = status?.enabled === true;
+  useFeatureIntro("ai-gateway.openwork-models", embedded && status ? { openworkModels: status.enabled } : null);
   const subscribed = status?.subscribed === true;
-  // Not sold here: no Subscribe, no price, a neutral lock with the alternative (DESIGN P4, C5).
   const notSold = !subscribed && (status?.billingConfigured === false || checkoutNotSold);
   const showGettingStarted = !loading && status !== null && !subscribed && !notSold;
   const memberCount = status?.memberCount ?? 0;

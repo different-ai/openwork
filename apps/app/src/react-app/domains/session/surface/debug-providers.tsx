@@ -46,8 +46,6 @@ export function DebugProviders(props: {
   resolveAvailability?: ModelAvailabilityResolver;
   onCopyThread: () => Promise<void>;
 }) {
-  // Null follows the focused thread's model, including changes made elsewhere.
-  // Inspecting another provider never writes model selection or configuration.
   const [inspection, setInspection] = useState<ModelRef | null>(null);
   const [copying, setCopying] = useState(false);
   const engine = useMemo(() => isOpencodeV2BaseUrl(props.baseUrl)
@@ -56,8 +54,6 @@ export function DebugProviders(props: {
   [props.baseUrl, props.workspaceRoot, props.token]);
   const providers = useProviderListQuery({ client: engine, baseUrl: props.baseUrl, directory: props.workspaceRoot });
   const history = useQuery({
-    // Credential-scoped reads cannot reuse another signed-in identity's history.
-    // Raw query keys are never rendered or included in diagnostic exports.
     queryKey: ["react-session-debug-thread", props.workspaceId, props.baseUrl, props.sessionId, props.token],
     queryFn: ({ signal }) => getNativeSessionMessages({ opencodeBaseUrl: props.baseUrl, token: props.token }, props.sessionId,
       { limit: 50, signal: AbortSignal.any([signal, AbortSignal.timeout(8_000)]) }),
@@ -91,7 +87,6 @@ export function DebugProviders(props: {
   const output = count(value(tokens, "output"));
   const cacheRead = count(value(cache, "read"));
   const cacheWrite = count(value(cache, "write"));
-  // Some engines emit all-zero placeholders before usage is measured.
   const measured = [input, output, cacheRead, cacheWrite, count(value(tokens, "reasoning"))].some(item => item !== null && item > 0);
   const context = input === null || !measured ? null : input + (cacheRead ?? 0) + (cacheWrite ?? 0);
   const limit = model?.limit.context && model.limit.context > 0 ? model.limit.context : null;
@@ -142,8 +137,6 @@ export function DebugProviders(props: {
   ] as const;
   async function copyDetails() {
     try {
-      // Allowlisted observations only: never provider options, keys, headers,
-      // raw errors, URLs, paths, tool payloads, or conversation contents.
       await navigator.clipboard.writeText(JSON.stringify({ thread: props.sessionId,
         inspectedProvider: inspected.providerID, inspectedModel: inspected.modelID,
         observations: Object.fromEntries([...rows, ...details]),
@@ -186,7 +179,6 @@ export function DebugProviders(props: {
   </div>;
 }
 
-/** Workspace-wide provider setup, shown when no thread is focused. */
 export function DebugWorkspaceProviders(props: { workspaceRoot: string; baseUrl: string; token: string }) {
   const engine = useMemo(() => isOpencodeV2BaseUrl(props.baseUrl)
     ? createClientV2(props.baseUrl, props.workspaceRoot, { token: props.token })
@@ -194,7 +186,6 @@ export function DebugWorkspaceProviders(props: { workspaceRoot: string; baseUrl:
   [props.baseUrl, props.workspaceRoot, props.token]);
   const providers = useProviderListQuery({ client: engine, baseUrl: props.baseUrl, directory: props.workspaceRoot });
   const connected = new Set(providers.data?.connected ?? []);
-  // Connected providers first; the list never includes credentials or options.
   const list = (providers.data?.all ?? []).toSorted((a, b) =>
     Number(connected.has(b.id)) - Number(connected.has(a.id)) || a.name.localeCompare(b.name));
   return <div data-testid="session-debug-workspace-providers" className="space-y-2 py-2 text-xs">

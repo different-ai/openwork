@@ -9,6 +9,7 @@ import {
   ensureDefaultPermissionSets,
   getDefaultPermissionSets,
   isDefaultPermissionSetsMissingError,
+  listActiveMemberPermissionSets,
   listActiveTeamPermissionSetsForTeams,
   listAuthoritativeTeamMemberships,
   readPermissionSetStates,
@@ -23,7 +24,7 @@ import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
 import { appLogger } from "../observability/logger.js"
 import { roleIncludesOwner } from "../organization-member-guards.js"
-import { isEffectiveOrganizationAdmin } from "../organization-role-hierarchy.js"
+import { isEffectiveOrganizationAdmin, isOrganizationSuperAdminRole } from "../organization-role-hierarchy.js"
 import type { OrganizationContext } from "../orgs.js"
 import {
   createMemberPermissions,
@@ -36,34 +37,6 @@ import {
   type PermissionGrant,
 } from "./effective.js"
 
-/**
- * Server-side permission resolution (docs/permissions/overview.md, section 6).
- *
- * - Owner: every catalog key.
- * - Feature off: code defaults for Member, plus Admin for effective admins.
- *   The permission tables are not read.
- * - Feature on: the union of the Member default set, the Admin default set
- *   (effective admins only) and the active team sets of the member's teams.
- *   Team sets apply only through memberships that carry authority (the same
- *   SCIM projection rule as Admin teams; listAuthoritativeTeamMemberships).
- *   Default sets are created on first use. Only when they are missing and
- *   can't be created does resolution fall back to code defaults (logged);
- *   every other error fails closed and propagates, so a trimmed Admin set is
- *   never silently widened back to the code defaults.
- *
- * In request handlers use `c.var.memberPermissions` (orgPermissionRoute /
- * resolveMemberPermissionsMiddleware) or requirePermission / hasPermission in
- * routes/org/shared.ts. Outside a request, or for another member, use
- * `resolvePermissionsForMember`.
- *
- * Inside a write transaction that must not act on a permission revoked since
- * the route check, call `resolvePermissionsForMember({ ..., database: tx })`.
- * That mode reads only through `tx` (no second pool connection), with share
- * locks so it sees the latest committed rows and holds them until commit, and
- * never writes: no lazy default-set creation or catalog reconciliation. Missing
- * default sets then deny everything (logged) instead of using code defaults.
- */
-
 export type { MemberPermissions, PermissionExplanation, PermissionSource } from "./effective.js"
 
 type OrganizationId = typeof OrganizationTable.$inferSelect.id
@@ -75,15 +48,8 @@ export type ResolveMemberPermissionsInput = {
   organizationId: OrganizationId
   memberId: MemberId
   isOwner: boolean
-  /** The member's stored `member.role` (not the effective role). */
   directRole: string
-  /** Teams with `grants_organization_admin` the member belongs to. */
   adminTeamIds: readonly string[]
-  /**
-   * Teams the member belongs to. Team sets apply only through those of these
-   * memberships that carry authority (listAuthoritativeTeamMemberships).
-   * Not read when the member is the owner.
-   */
   teamIds: readonly string[]
 }
 
@@ -95,6 +61,7 @@ export type ExplainMemberPermissionsInput = Omit<ResolveMemberPermissionsInput, 
 export type MemberPermissionExplanation = {
   featureEnabled: boolean
   isOwner: boolean
+  isSuperAdmin: boolean
   isAdmin: boolean
   permissions: PermissionExplanation[]
 }
@@ -108,11 +75,6 @@ type PermissionSubject = {
   teamIds: readonly string[]
 }
 
-/**
- * Where resolution reads. `transaction`: read-only, locking reads through
- * `database` (see the module comment). Otherwise the root database, with lazy
- * default-set creation and reconciliation.
- */
 type PermissionReads = {
   database: PermissionDatabase
   transaction: boolean
@@ -128,8 +90,14 @@ function readLock(reads: PermissionReads): { lock?: "share" } {
   return reads.transaction ? { lock: "share" } : {}
 }
 
+type DefaultSetMembership = {
+  isAdmin: boolean
+  isSuperAdmin: boolean
+}
+
 type CollectedGrants = {
   isOwner: boolean
+  isSuperAdmin: boolean
   isAdmin: boolean
   grants: PermissionGrant[]
 }
@@ -150,7 +118,6 @@ function adminDefaultSources(subject: PermissionSubject, set: PermissionSetSumma
   return sources
 }
 
-/** Team ids among `teamIds` whose membership carries authority for this member. */
 async function authoritativeTeamIds(subject: PermissionSubject, reads: PermissionReads) {
   const requested = new Set<string>(subject.teamIds.map((teamId) => normalizeDenTypeId("team", teamId)))
   if (requested.size === 0) return []
@@ -162,38 +129,54 @@ async function authoritativeTeamIds(subject: PermissionSubject, reads: Permissio
   return [...new Set(memberships.map((membership) => membership.teamId))].filter((teamId) => requested.has(teamId))
 }
 
-/** The default sets. Created on first use, except in a transaction, where missing sets throw. */
-async function defaultPermissionSets(organizationId: OrganizationId, reads: PermissionReads): Promise<DefaultPermissionSets> {
+async function defaultPermissionSets(
+  organizationId: OrganizationId,
+  membership: DefaultSetMembership,
+  reads: PermissionReads,
+): Promise<Pick<DefaultPermissionSets, "member" | "admin"> & { "super-admin": PermissionSetSummary | null }> {
   if (!reads.transaction) return ensureDefaultPermissionSets(db, organizationId)
   const stored = await getDefaultPermissionSets(reads.database, organizationId, readLock(reads))
   if (!stored.member || !stored.admin) throw new DefaultPermissionSetsMissingError(organizationId)
-  return { member: stored.member, admin: stored.admin }
+  if (membership.isSuperAdmin && !stored["super-admin"]) throw new DefaultPermissionSetsMissingError(organizationId)
+  return { member: stored.member, admin: stored.admin, "super-admin": stored["super-admin"] }
 }
 
-async function databaseGrants(subject: PermissionSubject, isAdmin: boolean, reads: PermissionReads): Promise<PermissionGrant[]> {
-  const sets = await defaultPermissionSets(subject.organizationId, reads)
+async function databaseGrants(subject: PermissionSubject, membership: DefaultSetMembership, reads: PermissionReads): Promise<PermissionGrant[]> {
+  const { isAdmin, isSuperAdmin } = membership
+  const sets = await defaultPermissionSets(subject.organizationId, membership, reads)
+  const superAdminSet = isSuperAdmin ? sets["super-admin"] : null
   const teamIds = await authoritativeTeamIds(subject, reads)
   const teamSets = teamIds.length > 0
     ? await listActiveTeamPermissionSetsForTeams(reads.database, subject.organizationId, teamIds, readLock(reads))
     : []
-  const defaultSets: { key: PermissionDefaultSetKey; set: PermissionSetSummary }[] = [{ key: "member", set: sets.member }]
+  const directSets = await listActiveMemberPermissionSets(reads.database, {
+    organizationId: subject.organizationId,
+    memberId: subject.memberId,
+    ...readLock(reads),
+  })
+  const defaultSets: { key: PermissionDefaultSetKey; set: Pick<PermissionSetSummary, "id"> }[] = [{ key: "member", set: sets.member }]
   if (isAdmin) defaultSets.push({ key: "admin", set: sets.admin })
-  const setIds = [...defaultSets.map(({ set }) => set.id), ...teamSets.map((teamSet) => teamSet.permissionSetId)]
+  if (superAdminSet) defaultSets.push({ key: "super-admin", set: superAdminSet })
+  for (const linked of [...teamSets, ...directSets]) {
+    if (linked.defaultKey && !defaultSets.some(({ set }) => set.id === linked.permissionSetId)) {
+      defaultSets.push({ key: linked.defaultKey, set: { id: linked.permissionSetId } })
+    }
+  }
+  const setIds = [...new Set([
+    ...defaultSets.map(({ set }) => set.id),
+    ...teamSets.map((teamSet) => teamSet.permissionSetId),
+    ...directSets.map((directSet) => directSet.permissionSetId),
+  ])]
 
   let states = await readPermissionSetStates(reads.database, setIds, readLock(reads))
   const needsReconcile = defaultSets.some(({ key, set }) => {
     const current = states.get(set.id) ?? new Map()
     return reconcileDecisions({ setDefaultKey: key, existingKeysEverSeen: new Set(current.keys()), currentStates: current, catalog: PERMISSIONS }).length > 0
   })
-  // A transaction never writes: keys not reconciled yet stay denied, as when reconciling fails.
   if (needsReconcile && !reads.transaction) {
-    // A deploy added catalog keys and deploy-time reconciliation has not
-    // reached this org yet. Best-effort: a failed write never changes the
-    // outcome; resolution continues with the states already read.
     try {
       const result = await reconcileDefaultPermissionSets(db, { organizationId: subject.organizationId })
       logger.info("permission default sets reconciled on read", { organization_id: subject.organizationId, rows_inserted: result.rowsInserted })
-      // In a transaction so it reads the primary: a replica can lag the rows just reconciled.
       states = await db.transaction((tx) => readPermissionSetStates(tx, setIds))
     } catch (error) {
       logger.error("reconciling default permission sets on read failed; using the stored state", {
@@ -213,25 +196,36 @@ async function databaseGrants(subject: PermissionSubject, isAdmin: boolean, read
     const directAdmin = isEffectiveOrganizationAdmin({ directRole: subject.directRole, adminTeamIds: [] })
     for (const source of adminDefaultSources(subject, sets.admin, directAdmin)) grants.push({ source, keys: adminKeys })
   }
+  if (superAdminSet) {
+    grants.push({
+      source: { kind: "super_admin_default", setId: superAdminSet.id, setName: superAdminSet.name },
+      keys: allowedKeys(states.get(superAdminSet.id)),
+    })
+  }
   for (const teamSet of teamSets) {
     grants.push({
       source: { kind: "team", setId: teamSet.permissionSetId, setName: teamSet.permissionSetName, teamId: teamSet.teamId, teamName: teamSet.teamName },
       keys: allowedKeys(states.get(teamSet.permissionSetId)),
     })
   }
+  for (const directSet of directSets) {
+    grants.push({
+      source: { kind: "direct", setId: directSet.permissionSetId, setName: directSet.permissionSetName },
+      keys: allowedKeys(states.get(directSet.permissionSetId)),
+    })
+  }
   return grants
 }
 
 async function collectPermissionGrants(subject: PermissionSubject, reads: PermissionReads = ROOT_READS): Promise<CollectedGrants> {
-  const isAdmin = isEffectiveOrganizationAdmin({ directRole: subject.directRole, adminTeamIds: subject.adminTeams.map((team) => team.id) })
-  if (subject.isOwner) return { isOwner: true, isAdmin, grants: ownerPermissionGrants() }
+  const effectiveAdmin = isEffectiveOrganizationAdmin({ directRole: subject.directRole, adminTeamIds: subject.adminTeams.map((team) => team.id) })
+  if (subject.isOwner) return { isOwner: true, isSuperAdmin: false, isAdmin: effectiveAdmin, grants: ownerPermissionGrants() }
+  const isSuperAdmin = isOrganizationSuperAdminRole(subject.directRole)
+  const isAdmin = effectiveAdmin || isSuperAdmin
 
   try {
-    return { isOwner: false, isAdmin, grants: await databaseGrants(subject, isAdmin, reads) }
+    return { isOwner: false, isSuperAdmin, isAdmin, grants: await databaseGrants(subject, { isAdmin, isSuperAdmin }, reads) }
   } catch (error) {
-    // Fail closed: only missing default sets (which should never happen, and
-    // would otherwise lock the org out) fall back to code defaults, and only
-    // outside a transaction; inside one they deny everything.
     if (!isDefaultPermissionSetsMissingError(error)) throw error
     logger.error(reads.transaction
       ? "permission default sets are missing inside a transaction; denying"
@@ -240,11 +234,10 @@ async function collectPermissionGrants(subject: PermissionSubject, reads: Permis
       member_id: subject.memberId,
       error,
     })
-    return { isOwner: false, isAdmin, grants: missingDefaultSetsPermissionGrants({ isAdmin, transaction: reads.transaction }) }
+    return { isOwner: false, isSuperAdmin, isAdmin, grants: missingDefaultSetsPermissionGrants({ isAdmin, isSuperAdmin, transaction: reads.transaction }) }
   }
 }
 
-/** Effective permissions for a member, from already-loaded membership data. */
 export async function resolveMemberPermissions(input: ResolveMemberPermissionsInput): Promise<MemberPermissions> {
   return memberPermissionsFromGrants(await collectPermissionGrants({
     ...input,
@@ -252,7 +245,6 @@ export async function resolveMemberPermissions(input: ResolveMemberPermissionsIn
   }))
 }
 
-/** Effective permissions for the caller of an organization request. */
 export function resolveMemberPermissionsFromContext(
   context: OrganizationContext,
   teamIds: readonly string[],
@@ -267,23 +259,17 @@ export function resolveMemberPermissionsFromContext(
   })
 }
 
-/** Each allowed key with the sets (and teams) that allow it. For GET /v1/members/:id/permissions. */
 export async function explainMemberPermissions(input: ExplainMemberPermissionsInput): Promise<MemberPermissionExplanation> {
   const collected = await collectPermissionGrants({ ...input, teamIds: input.teams.map((team) => team.id) })
   return {
     featureEnabled: true,
     isOwner: collected.isOwner,
+    isSuperAdmin: collected.isSuperAdmin,
     isAdmin: collected.isAdmin,
     permissions: explainPermissionGrants(collected.grants),
   }
 }
 
-/**
- * Loads what resolution needs for any active member. Null when the member is
- * missing, removed, or has no user yet. Admin teams follow the authoritative
- * membership rule (listAuthoritativeTeamMemberships), as
- * resolveOrganizationMemberAuthority does.
- */
 export async function loadPermissionSubject(
   input: { organizationId: OrganizationId; memberId: MemberId },
   reads: PermissionReads = ROOT_READS,
@@ -310,7 +296,6 @@ export async function loadPermissionSubject(
       .orderBy(asc(TeamTable.createdAt))
     return lock.lock ? await query.for(lock.lock) : await query
   }
-  // A transaction runs one query at a time on its connection.
   const [adminTeams, teams] = reads.transaction
     ? [await readAdminTeams(), await readTeams()]
     : await Promise.all([readAdminTeams(), readTeams()])
@@ -324,14 +309,6 @@ export async function loadPermissionSubject(
   }
 }
 
-/**
- * Effective permissions of any member, e.g. an automation owner, an inviter,
- * or a member checked by a Better Auth hook. Fails closed: a missing or removed
- * member holds nothing.
- *
- * Pass `database: tx` to re-check inside a write transaction: every read goes
- * through `tx` with share locks and nothing is written (see the module comment).
- */
 export async function resolvePermissionsForMember(input: {
   organizationId: OrganizationId
   memberId: MemberId
@@ -348,7 +325,6 @@ export async function resolvePermissionsForMember(input: {
   }, reads))
 }
 
-/** `explainMemberPermissions` for any member, or null when the member is missing or removed. */
 export async function explainPermissionsForMember(input: {
   organizationId: OrganizationId
   memberId: MemberId

@@ -17,8 +17,6 @@ function boundedEntry<T>(entries: ReadonlyMap<string, T>, key: string, value: T,
   return next;
 }
 
-// Only interaction metadata, never transcript bodies, credentials, or retained DOM.
-// These bounded, last-written caches deliberately do not survive an app restart.
 export const useWorkbenchUiState = create<{
   disclosures: ReadonlyMap<string, boolean>;
   splitRatios: ReadonlyMap<string, number>;
@@ -49,7 +47,6 @@ export function useWorkbenchDisclosure(detail: string | undefined): [boolean, (o
   useLayoutEffect(() => {
     if (!key) return;
     const update = (open: boolean | undefined) => {
-      // Eviction forgets restoration metadata, not the mounted reader's choice.
       if (open === undefined) return;
       setLocal((current) => current.key === localKey && current.open !== open
         ? { key: localKey, open } : current);

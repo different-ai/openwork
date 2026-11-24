@@ -25,7 +25,6 @@ export function decodeFileContent(
   }
 }
 
-/** Reads at most maxBytes, so an oversized provider body never sits in memory whole. */
 export async function readBoundedBytes(response: Response, maxBytes: number): Promise<{ bytes: Uint8Array; truncated: boolean }> {
   if (!response.body) return { bytes: new Uint8Array(0), truncated: false }
   const reader = response.body.getReader()
@@ -59,17 +58,9 @@ export async function readBoundedBytes(response: Response, maxBytes: number): Pr
   return { bytes, truncated }
 }
 
-/**
- * Reads a whole body only if it fits in maxBytes; null when it does not. The
- * limit is enforced while streaming (a declared Content-Length over it is
- * refused before reading, an undeclared or wrong one is cut off as soon as it
- * passes), and a declared size is read straight into one buffer, so a large
- * file is held once rather than as chunks plus a copy.
- */
 export async function readBytesWithin(response: Response, maxBytes: number): Promise<Uint8Array | null> {
   if (!response.body) return new Uint8Array(0)
   const declared = Number(response.headers.get("content-length"))
-  // A compressed body's Content-Length is the compressed size, not what the reader yields.
   const encoding = response.headers.get("content-encoding")
   const hasDeclared = response.headers.has("content-length") && Number.isSafeInteger(declared) && declared >= 0
     && (!encoding || encoding === "identity")
@@ -103,7 +94,6 @@ export async function readBytesWithin(response: Response, maxBytes: number): Pro
   return length === declared ? bytes : bytes.subarray(0, length)
 }
 
-/** Text from a read that may stop mid-character: a trailing partial character is dropped. */
 export function decodeTruncatedText(bytes: Uint8Array, fatal: boolean): string {
   return new TextDecoder("utf-8", { fatal }).decode(bytes, { stream: true })
 }

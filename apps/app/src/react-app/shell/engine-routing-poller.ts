@@ -1,8 +1,6 @@
 type RoutingSource = { key: string; read: () => Promise<boolean> };
 type Poll = { refresh: () => void; dispose: () => void };
 
-/** One request per server scope, with completion-based polling. Settings changes
- * coalesce into one follow-up read so an older in-flight snapshot cannot win. */
 export function createEngineRoutingPoller(options: {
   publish: (key: string, routing: boolean) => void;
   onError: (error: unknown) => void;

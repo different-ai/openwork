@@ -1,9 +1,7 @@
 import assert from "node:assert/strict"
 import { beforeEach, test } from "node:test"
 import { autoRouterIdFromModel, autoRouterModelId, autoRouterThinkingLevels, type AutoRouterThinkingLevel } from "@openwork/types/den/auto-router"
-import { anthropicJsonToChat, anthropicStreamToChat, claudeTakesEffort, toAnthropicBody } from "../src/auto-router/anthropic.js"
-import { createMemoryReasoningStore } from "../src/auto-router/reasoning-store.js"
-import { injectRouteIntoChatStream, readAutoPrompt, toOpenAiChatBody, type AutoRouteInfo } from "../src/auto-router/chat.js"
+import { anthropicJsonToChat, anthropicStreamToChat, claudeTakesEffort, toAnthropicBody, createMemoryReasoningStore, injectRouteIntoChatStream, readAutoPrompt, toOpenAiChatBody, type AutoRouteInfo } from "@openwork-ee/gateway-protocols"
 import { annotateChatError, annotateChatStreamErrors, autoRouteNote } from "../src/auto-router/handler.js"
 import { clearAutoTurnChoices, decideAutoRoute, fallbackDecision, jevTasks, thinkingLevelFor, type AutoCandidate, type TurnChoice } from "../src/auto-router/decide.js"
 import { JEV_THINKING_KEY, jevRequestBody, readJevScores, type AskJev, type JevScores } from "../src/auto-router/jev.js"
@@ -316,7 +314,7 @@ test("a Messages stream becomes a chat stream, and its thinking is replayed on t
   const args = chunks.flatMap((chunk) => chunk.choices[0]?.delta?.tool_calls?.[0]?.function?.arguments ?? []).join("")
   assert.equal(args, "{\"path\":\"a.ts\"}")
   assert.equal(chunks.at(-2).choices[0].finish_reason, "tool_calls")
-  assert.deepEqual(chunks.at(-1).usage, { prompt_tokens: 15, completion_tokens: 7, total_tokens: 22, prompt_tokens_details: { cached_tokens: 5 } })
+  assert.deepEqual(chunks.at(-1).usage, { prompt_tokens: 15, completion_tokens: 7, total_tokens: 22, prompt_tokens_details: { cached_tokens: 5, cache_write_tokens: 0 } })
 
   const next = toAnthropicBody({ messages: [
     { role: "user", content: "read a.ts" },

@@ -93,20 +93,27 @@ Every `evals/specs/**/*.e2e.test.ts` a PR adds or changes is treated as that
 PR's proof of work. Nothing is required and nothing is blocked: a PR that
 touches no E2E spec produces no proof evidence, and the run says so.
 
-The non-required **PR change proof** workflow selects those specs from the live
-PR file list and runs each one in its own bounded job on the exact PR head, with
-a virtual display so Electron-driving specs can run. Each job uploads one hashed
-artifact. Failed, skipped, unsupported, and cancelled proofs stay visible as
-non-passing executions; they never fall back to packaged smoke or another
-regression.
+PRs run only the quick check. Start the non-required **PR change proof** by hand:
+
+```sh
+gh workflow run pr-proof.yml --ref <branch> -f pr=<number>
+```
+
+It selects specs from the live PR file list and uploads their records as artifacts.
+Only secret-free GitHub lanes run; Daytona and real-Mac tests still cannot run
+there. Unsupported proofs are not passes and never fall back to another regression.
 
 The credentialed **Evidence review** workflow runs trusted default-branch code.
-It re-reads the current PR file list, derives the same selection, and accepts
-exactly one artifact per selected spec and run attempt. Every test record must
-name that spec and the current PR SHA. Records from all selected specs are
-combined into one report with one section per test. Downloaded PR artifacts are
-data and are never imported or executed. Unrelated evidence, unexpected proof
-artifacts, stale heads or attempts, and missing or duplicate records are refused.
+For a completed hand-started run, it uses GitHub's API to find exactly one open
+same-repository PR with the run's branch and head SHA; forks and ambiguous or
+missing matches are skipped. Dispatch inputs and artifacts never establish identity.
+Existing pull-request runs remain supported. It re-reads the current PR file list,
+derives the same selection, and accepts exactly one artifact per selected spec and
+run attempt. Every test record must name that spec and the current PR SHA. Records
+from all selected specs are combined into one report with one section per test.
+Downloaded PR artifacts are data and are never imported or executed. Unrelated
+evidence, unexpected proof artifacts, stale heads or attempts, and missing or
+duplicate records are refused.
 
 Candidate publisher and review-app checks live in the PR-only
 `Evidence review candidate checks` workflow. It has no publishing secret or
@@ -140,7 +147,7 @@ Daytona needs server-only `DAYTONA_API_KEY` and a Linux-VM region (`OPENWORK_DAY
 
 **Configuration boundary:** only the review deployment's server-side provider credentials and advertised capabilities authorize a fresh preview. Missing credentials, unknown providers and unsupported worlds fail closed. Configuration is rechecked for POSTs, readiness polling and deferred builds; removing a provider configuration prevents new allocation without revoking already-issued access or changing checkpoint opening. Provider API origins still require HTTPS, and same-origin request checks, immutable report source, private gateway isolation and expiry remain mandatory. This infrastructure configuration is separate from product feature flags; it does not enable or alter any Cloud/customer rollout.
 
-Cold Daytona preparation can exceed the review function's 800-second budget. Operators can prewarm an exact pushed commit with the exported `buildDaytonaPreview(sha, "app-web")` in `@openwork/daytona-evidence/previews` using a scoped server credential; the same builder is used by the UI. Do not claim a ready preview until snapshot storage and authenticated app/backend probes pass. `OPENWORK_EVIDENCE_PROVIDER=daytona` chooses a preferred provider; it neither supplies credentials nor proves live availability.
+Cold Daytona preparation can exceed the review function's 800-second budget. Operators can prewarm an exact pushed commit with the exported `buildDaytonaPreview(sha, "app-web")` in `@openwork/evidence-daytona/previews` using a scoped server credential; the same builder is used by the UI. Do not claim a ready preview until snapshot storage and authenticated app/backend probes pass. `OPENWORK_EVIDENCE_PROVIDER=daytona` chooses a preferred provider; it neither supplies credentials nor proves live availability.
 
 ## Interactive Freestyle previews
 
@@ -231,7 +238,7 @@ web preview, and remains bound to the world that was launched. Switching choices
 clears the previous world's displayed links, not its VM. All choices keep the
 same two-hour expiry and access checks.
 
-Validate with `pnpm --filter @openwork/freestyle test`, the world package tests,
+Validate with `pnpm --filter @openwork/world-freestyle test`, the world package tests,
 and the reviewer production build. UI follows DESIGN.md P3, P4, P10, P11, S1,
 C1, C2, and C6: the launch stays in place, failures are actionable, and snapshot
 details are collapsed. Review has no shared button component, so it uses a native

@@ -21,7 +21,6 @@ export function startDeepLinkBridge(): void {
         pushPendingDeepLinks(window, urls);
       });
     } catch {
-      // ignore startup failures
     }
   })();
 }

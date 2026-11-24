@@ -12,35 +12,14 @@ import { createDenClient, DenApiError, readDenSettings } from "@/app/lib/den"
 import { remoteFollowUpMatches, type RemoteThreadFollowUp, type RemoteThreadStart } from "@/lib/remote-session-thread"
 import { remoteThreadFollowUpsInPart } from "@/lib/remote-thread-starts"
 
-/**
- * Tasks the agent started on other computers, followed for the chat.
- *
- * One loop follows every task shown anywhere in the app, whatever number of
- * rows, panels or chats show it, with one Den call at a time:
- *
- * - The first look at a task asks at once; after that each call sends the
- *   versions it holds and waits on Den (up to 20 s) until one changes, so a
- *   quiet task costs about three small calls a minute and none of its data.
- * - A task stops being followed when it finishes or fails, 15 minutes after
- *   nothing on screen shows it, or 6 hours after it last started work.
- * - Nothing is called while the window is hidden or offline, nor when no
- *   task needs following. Failures back off to a minute.
- *
- * Transcripts are not part of this: the open panel reads one only when the
- * status says something changed.
- */
-
 const WAIT_MS = REMOTE_SESSION_STATUS_WAIT_MAX_MS
-/** However busy a task is, one status call starts at most every two seconds. */
 const MIN_CALL_INTERVAL_MS = 2_000
 const BACKOFF_BASE_MS = 2_000
 const BACKOFF_MAX_MS = 60_000
 const LINGER_MS = 15 * 60_000
 export const REMOTE_THREAD_FOLLOW_MAX_MS = 6 * 60 * 60_000
 const FOLLOW_MAX_MS = REMOTE_THREAD_FOLLOW_MAX_MS
-/** After a follow-up, an idle status is still the previous turn until the task reports work again. */
 const FOLLOW_UP_GRACE_MS = 90_000
-/** Only a follow-up the agent just sent revives a task; reopening an old chat does not. */
 const REVIVE_WINDOW_MS = 2 * 60_000
 
 export type RemoteThreadOwner = { workspaceId: string; sessionId: string }
@@ -50,18 +29,12 @@ export type RemoteThreadEntry = {
   organizationId: string
   version: string | null
   status: RemoteSessionThreadStatus | null
-  /** The last check couldn't confirm the state; the row shows the last known one. */
   stale: boolean
-  /** When Den last confirmed the state. */
   checkedAt: number | null
-  /** When the task was started, or last sent a follow-up; null when the chat doesn't know. */
   activeSince: number | null
-  /** When this window first showed the task. */
   firstSeenAt: number
   followedUpAt: number | null
-  /** The status version a follow-up was sent against: a different one is the new turn, even one that already finished. */
   followUpVersion: string | null
-  /** When the agent sent the latest follow-up it revived this task for, so each revives it once. */
   revivedAt: number | null
   owners: Record<string, RemoteThreadOwner>
   viewers: number
@@ -72,7 +45,6 @@ type RemoteThreadState = {
   threads: Record<string, RemoteThreadEntry>
   watch: (start: RemoteThreadStart, input: { owner: RemoteThreadOwner; organizationId: string; startedAt: number | null }) => () => void
   followedUp: (key: string) => void
-  /** The agent sent the task a follow-up itself; reviving for the same follow-up again changes nothing. */
   revive: (followUp: RemoteThreadFollowUp) => void
   apply: (result: RemoteSessionStatusResult, keys: readonly string[], checkedAt: number) => void
   markStale: (keys: readonly string[]) => void
@@ -82,7 +54,6 @@ function settled(entry: RemoteThreadEntry) {
   return entry.status?.state === "idle" || entry.status?.state === "error"
 }
 
-/** A follow-up was accepted and the task hasn't reported the new turn yet. */
 export function remoteThreadAwaitingFollowUp(entry: RemoteThreadEntry, now: number): boolean {
   return settled(entry) && entry.followedUpAt !== null && now - entry.followedUpAt < FOLLOW_UP_GRACE_MS
 }
@@ -165,8 +136,6 @@ export const useRemoteThreadStore = create<RemoteThreadState>()((set, get) => ({
           threads[key] = { ...current, version: thread.version, stale: thread.stale === true, checkedAt: thread.stale ? current.checkedAt : checkedAt }
           continue
         }
-        // Work reported after a follow-up, or a newer version than the one it was sent against,
-        // ends its grace: the new turn is now visible.
         const newTurn = thread.state !== "idle" && thread.state !== "error"
           || (current.followUpVersion !== null && thread.version !== current.followUpVersion)
         const followedUpAt = current.followedUpAt !== null && newTurn ? null : current.followedUpAt
@@ -189,12 +158,10 @@ export const useRemoteThreadStore = create<RemoteThreadState>()((set, get) => ({
 
 let loopRunning = false
 let inflight: { controller: AbortController; keys: ReadonlySet<string> } | null = null
-/** The tasks of the last call; only a task outside it needs a new call before the next one. */
 let lastKeys: ReadonlySet<string> = new Set()
 let wake: (() => void) | null = null
 let listening = false
 
-/** "command:<id>" → "<id>", the ref Den answers with. */
 function refId(key: string) {
   return key.slice(key.indexOf(":") + 1)
 }
@@ -212,7 +179,6 @@ function canCall() {
   return typeof navigator === "undefined" || navigator.onLine !== false
 }
 
-/** Most relevant first: on screen, then the latest started. */
 function keysToCheck(organizationId: string, now: number): string[] {
   return Object.values(useRemoteThreadStore.getState().threads)
     .filter((entry) => remoteThreadNeedsStatus(entry, organizationId, now))
@@ -238,7 +204,6 @@ function listen() {
   if (listening || typeof window === "undefined") return
   listening = true
   const onChange = () => {
-    // Hidden: drop the waiting call. Visible or back online: look again now.
     if (!canCall()) inflight?.controller.abort()
     else kick(true)
   }
@@ -247,11 +212,6 @@ function listen() {
   window.addEventListener("offline", onChange)
 }
 
-/**
- * Follow newly shown tasks now: a waiting call restarts with them. A row that
- * only remounts (scrolling) changes nothing, so it never cuts a backoff or a
- * wait short; `now` does, for a follow-up or the window coming back.
- */
 function kick(now = false) {
   listen()
   const context = denContext()
@@ -288,12 +248,10 @@ async function follow() {
           waitMs,
         }, { signal: controller.signal })
         useRemoteThreadStore.getState().apply(result, keys, Date.now())
-        // Den could not check any of them (a waking cloud computer): back off like a failure.
         const unchecked = result.threads.length > 0 && result.threads.every((thread) => !thread.changed && thread.stale)
         failures = unchecked ? failures + 1 : 0
         const changed = result.threads.some((thread) => thread.changed)
         const backoff = Math.min(BACKOFF_MAX_MS, BACKOFF_BASE_MS * 2 ** Math.max(0, failures - 1))
-        // A waiting call already spent its time; a quick one honors Den's hint.
         const next = unchecked ? backoff : changed || waitMs > 0 ? 0 : result.retryAfterMs ?? 0
         await pause(Math.max(next, MIN_CALL_INTERVAL_MS - (Date.now() - calledAt)))
       } catch (error) {
@@ -317,9 +275,7 @@ export function useRemoteThread(key: string | null): RemoteThreadEntry | null {
   return useRemoteThreadStore((state) => key ? state.threads[key] ?? null : null)
 }
 
-/** Follow a task while this component shows it (and for a while after). */
 export function useFollowRemoteThread(start: RemoteThreadStart | null, owner: RemoteThreadOwner, startedAt: number | null) {
-  // A task is identified by its key; a re-rendered part with the same key is the same task.
   const latest = useRef({ start, startedAt })
   latest.current = { start, startedAt }
   const key = start?.key ?? null
@@ -333,7 +289,6 @@ export function useFollowRemoteThread(start: RemoteThreadStart | null, owner: Re
   }, [key, workspaceId, sessionId])
 }
 
-/** Revive the tasks these follow-ups went to, if the agent sent them just now. */
 export function reviveRemoteThreads(followUps: readonly RemoteThreadFollowUp[], now = Date.now()) {
   for (const followUp of followUps) {
     if (followUp.sentAt === null || now - followUp.sentAt > REVIVE_WINDOW_MS) continue
@@ -341,10 +296,8 @@ export function reviveRemoteThreads(followUps: readonly RemoteThreadFollowUp[], 
   }
 }
 
-/** The agent's own `remote-session:send`, directly or from a script, to a task the chat shows: follow it again. */
 export function useReviveRemoteThread(part: DynamicToolUIPart | null) {
   const followUps = part ? remoteThreadFollowUpsInPart(part) : []
-  // A re-rendered step with the same follow-ups is the same send.
   const latest = useRef(followUps)
   latest.current = followUps
   const signature = followUps.map((followUp) => `${followUp.toolCallId}@${followUp.sentAt ?? ""}`).join("\n")
@@ -355,11 +308,6 @@ export function useReviveRemoteThread(part: DynamicToolUIPart | null) {
 
 export type RemoteThreadAttention = { kind: "permission" | "question"; title: string }
 
-/**
- * Chats whose task on another computer waits on the person, as a string that
- * only changes when that set does: status updates that change nothing here
- * never re-render the sidebar.
- */
 export function useRemoteThreadAttentionKey(): string {
   return useRemoteThreadStore((state) => {
     const rows: string[][] = []

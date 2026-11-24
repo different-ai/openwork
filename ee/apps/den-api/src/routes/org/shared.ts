@@ -13,7 +13,7 @@ import {
   splitOrganizationRoles,
 } from "../../organization-role-hierarchy.js"
 import type { AuthContextVariables } from "../../session.js"
-import { ensureFreshPrivilegedSession } from "../../privileged-session.js"
+import { ensureFreshPrivilegedSession, organizationPrivilegedSessionMaxAgeMs } from "../../privileged-session.js"
 
 export type OrgRouteVariables =
   & AuthContextVariables
@@ -48,28 +48,15 @@ export { permissionDeniedMessage } from "../../permissions/effective.js"
 
 type PermissionRouteVariables = Pick<AuthContextVariables, "apiKey" | "session"> & Partial<OrganizationContextVariables>
 
-/** Any Hono context for an organization route (orgMemberRoute, orgRoleRoute, orgPermissionRoute, cloudTransportRoute). */
 export type PermissionRouteContext = {
   get: <K extends keyof PermissionRouteVariables>(key: K) => PermissionRouteVariables[K]
 }
 
-/**
- * The caller's effective permissions for this request, resolved at most once
- * per request (shared with orgPermissionRoute and resolveMemberPermissionsMiddleware).
- * Null without an organization context.
- */
 export async function memberPermissionsForRequest(c: PermissionRouteContext): Promise<MemberPermissions | null> {
   const payload = c.get("organizationContext")
   return payload ? memberPermissionsForOrganizationContext(payload) : null
 }
 
-/**
- * In-handler permission check for conditional cases (depends on the body or
- * the target row). Same result shape as the ensure* helpers, so call sites stay
- *   const permission = await requirePermission(c, "teams.manage_admin")
- *   if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response), permissionFailureHeaders(permission.response))
- * Includes the recent sign-in check for sensitive keys.
- */
 export async function requirePermission(
   c: PermissionRouteContext,
   key: PermissionKey,
@@ -77,10 +64,12 @@ export async function requirePermission(
 ): Promise<PermissionCheckResult> {
   const permissions = await memberPermissionsForRequest(c)
   if (!permissions) return { ok: false, response: { error: "organization_not_found" } }
-  return checkMemberPermission({ apiKey: c.get("apiKey"), session: c.get("session") }, permissions, key, options)
+  return checkMemberPermission({ apiKey: c.get("apiKey"), session: c.get("session") }, permissions, key, {
+    maxAgeMs: organizationPrivilegedSessionMaxAgeMs(c.get("organizationContext")),
+    ...options,
+  })
 }
 
-/** Whether the caller holds `key`. No recent sign-in check: use for visibility and filtering, not for sensitive writes. */
 export async function hasPermission(c: PermissionRouteContext, key: PermissionKey): Promise<boolean> {
   const permissions = await memberPermissionsForRequest(c)
   return permissions?.has(key) ?? false

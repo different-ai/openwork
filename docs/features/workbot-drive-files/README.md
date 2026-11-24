@@ -1,5 +1,7 @@
 # Workbot: reading Drive files
 
+> **Generally available:** `workbotDriveFiles` is retired; the enabled behavior is now standard. Permissions, organization settings and entitlements still apply. Any rollout, off-state or kill-switch instructions below describe the historical rollout; see [the retirement guide](../ga-rollout-retirement/README.md).
+
 - Feature: `workbotDriveFiles`
 - Deployments: cloud and self-hosted; default **off**
 - Owner: `benjaminshafii`

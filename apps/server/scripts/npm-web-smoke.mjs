@@ -75,6 +75,9 @@ const env = {
   XDG_DATA_HOME: join(home, ".local", "share"),
   XDG_CONFIG_HOME: join(home, ".config"),
   XDG_CACHE_HOME: join(home, ".cache"),
+  XDG_STATE_HOME: join(home, ".local", "state"),
+  OPENCODE_DB: undefined,
+  OPENCODE_CONFIG_DIR: undefined,
   OPENWORK_PACKAGE_ROOT: "",
 };
 
@@ -147,13 +150,33 @@ try {
   if (plugins.length === 0 || missing.length > 0) fail(`engine plugins missing: ${JSON.stringify(missing.length ? missing : plugins)}`);
   log(`engine loaded ${plugins.length} plugins from the package`);
 
-  const created = await request(`${base}/workspace/${workspaceId}/opencode/session`, {
+  // Fresh profiles select v2. The legacy write mount deliberately returns 409
+  // once v2 owns history; exercise the native path used by the web client instead
+  // of disabling the default engine or weakening the history fence for this test.
+  const engineDeadline = Date.now() + READY_TIMEOUT_MS;
+  while (true) {
+    if (child.exitCode !== null) fail(`openwork-server web exited ${child.exitCode} while waiting for v2`);
+    const status = await request(`${base}/experimental/engine-v2-preview/status`, { headers: auth });
+    if (status.status !== 200) fail(`engine status returned ${status.status}: ${status.text}`);
+    const engine = JSON.parse(status.text);
+    if (engine.running === true && engine.chatRouting === true) break;
+    if (Date.now() >= engineDeadline) fail(`default v2 engine was not ready within 5 minutes: ${status.text}`);
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+  log("default v2 engine ready");
+
+  const sessionsUrl = `${base}/workspace/${workspaceId}/opencode2/api/session`;
+  const created = await request(sessionsUrl, {
     method: "POST",
     headers: { ...auth, "content-type": "application/json" },
-    body: JSON.stringify({ title: "npm release smoke" }),
+    body: JSON.stringify({ title: "npm release smoke", location: { directory: workspace } }),
   });
-  if (created.status !== 200 || !JSON.parse(created.text).id) fail(`session create returned ${created.status}: ${created.text}`);
-  log("session created through the engine");
+  if (created.status !== 200 || !JSON.parse(created.text).data?.id) fail(`session create returned ${created.status}: ${created.text}`);
+  const sessionId = JSON.parse(created.text).data.id;
+  log("session created through the native v2 engine");
+  const saved = await request(`${sessionsUrl}/${encodeURIComponent(sessionId)}`, { headers: auth });
+  if (saved.status !== 200 || JSON.parse(saved.text).data?.id !== sessionId) fail(`session read returned ${saved.status}: ${saved.text}`);
+  log("session read back through the native v2 engine");
   log("passed");
 } finally {
   stopTree(child);

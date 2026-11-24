@@ -1,23 +1,9 @@
 import { legacyExecutionPermissions } from "./managed-policy-rules.js";
-import { DESKTOP_POLICY_ENFORCEMENT_ENABLED, desktopCapabilityConfig } from "@openwork/types/den/desktop-policies-runtime";
+import { DESKTOP_POLICY_ENFORCEMENT_ENABLED, LOCAL_MODEL_PROVIDER_IDS, desktopCapabilityConfig } from "@openwork/types/den/desktop-policies-runtime";
 import { materializeLegacyFastProviders } from "@openwork/types/cloud-model-fast";
 import { isManagedPolicyPlugin } from "./managed-policy-plugin.js";
 import { isLegacyBrowserPlugin } from "./workspace-init.js";
-import { ORGANIZATION_PROVIDER_ID, organizationProviderGate } from "./organization-provider-gate.js";
-/**
- * Runtime OpenCode configuration injected via a server-managed config file
- * passed to the engine as OPENCODE_CONFIG.
- *
- * This is the single source of truth for the openwork agent definition,
- * plugins, and any other config that should be injected at runtime rather
- * than written to the user's own config files. Both cli.ts and embedded.ts
- * use this.
- *
- * The engine re-reads the OPENCODE_CONFIG file from disk on every instance
- * rebuild (e.g. /instance/dispose), so the file is synchronized on every
- * runtime-DB write — unlike the previous OPENCODE_CONFIG_CONTENT env var,
- * which was frozen at spawn and reverted MCP state on each dispose.
- */
+import { ORGANIZATION_PROVIDER_ID, organizationAllowlistsProviders, organizationProviderGate } from "./organization-provider-gate.js";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -33,6 +19,7 @@ import {
   openworkChromeDevtoolsPluginPath,
   openworkComputerUsePluginPath,
   openworkPdfAttachmentsPluginPath,
+  openworkPrivateValuesPluginPath,
 } from "./openwork-extensions-plugin-path.js";
 import type { ServerConfig } from "./types.js";
 import { runtimeStorageDir } from "./runtime-db.js";
@@ -52,11 +39,6 @@ import { appendOrganizationPrompts, OPENWORK_AGENT_PROMPT } from "./openwork-age
 export async function buildOpenworkRuntimeConfigObject(
   config?: ServerConfig,
 ): Promise<Record<string, unknown>> {
-  // Workspace-independent by design: the injected engine config file is
-  // rendered from the ENGINE_GLOBAL runtime row plus static built-ins only,
-  // so workspace activation rewrites identical bytes and never varies the
-  // engine-pool fingerprint. Per-workspace MCPs reach the engine through the
-  // dynamic push path instead.
   const runtimeConfig = config ? await readGlobalRuntimeOpencodeConfig(config) : {};
   return buildOpenworkRuntimeConfigObjectFromSnapshot(runtimeConfig);
 }
@@ -65,8 +47,6 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
   runtimeConfig: RuntimeOpencodeConfig,
 ): Record<string, unknown> {
   if (!DESKTOP_POLICY_ENFORCEMENT_ENABLED) {
-    // Only model access (the AI Gateway's "Who can use models") is enforced: keep allowCustomProviders from the verified
-    // policy (cleared on sign-out) and drop execution rules and every other desktop policy.
     const { managedPolicy, ...localConfig } = runtimeConfig;
     runtimeConfig = managedPolicy ? { ...localConfig, managedPolicy: desktopCapabilityConfig(managedPolicy) } : localConfig;
   }
@@ -75,11 +55,14 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
   const { managedPolicy: _managedPolicy, managedPrompt, ...engineConfig } = runtimeConfig;
   const provider = materializeLegacyFastProviders(runtimeProviderMap(runtimeConfig));
   const allowsProvider = organizationProviderGate(runtimeConfig.managedPolicy);
+  const allowlist = allowsProvider && organizationAllowlistsProviders(runtimeConfig.managedPolicy);
+  const blockedLocal = allowsProvider && !allowlist ? LOCAL_MODEL_PROVIDER_IDS.filter((id) => !allowsProvider(id)) : [];
   return {
     ...engineConfig,
-    ...(allowsProvider ? { enabled_providers: [
+    ...(allowlist ? { enabled_providers: [
       ...Object.keys(provider).filter((id) => ORGANIZATION_PROVIDER_ID.test(id)),
       ...(allowsProvider("opencode") ? ["opencode"] : []),
+      ...LOCAL_MODEL_PROVIDER_IDS.filter((id) => allowsProvider(id)),
     ] } : {}),
     permission: { ...engineConfig.permission, ...permissions },
     default_agent: runtimeConfig.default_agent ?? "openwork",
@@ -92,8 +75,6 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
         permission: {
           ...permissions,
           skill: {
-            // OpenWork supplies its own current skill routing and no longer
-            // supports these engine or legacy workspace skills.
             "customize-opencode": "deny",
             "get-started": "deny",
             "command-creator": "deny",
@@ -106,10 +87,6 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
     plugin: [
       openworkChromeDevtoolsPluginPath(),
       openworkComputerUsePluginPath(),
-      // Registration order is prompt order: the knowledge plugin appends the
-      // operating rules first, then the extensions plugin adds app-control
-      // mechanics, live Connect steering, and the remote skill and Automation
-      // catalogs, so rules precede state and state precedes data.
       openworkCapabilitiesKnowledgePluginPath(),
       openworkExtensionsPreviewPluginPath(),
       openworkOfficeAttachmentsPluginPath(),
@@ -120,8 +97,9 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
       openworkTitleRecoveryPluginPath(),
       openworkGatewayQuotaPluginPath(),
       ...runtimePluginList(runtimeConfig).filter((plugin) => !isManagedPolicyPlugin(plugin) && !isLegacyBrowserPlugin(plugin)),
+      openworkPrivateValuesPluginPath(),
     ],
-    ...(disabledProviders.length ? { disabled_providers: disabledProviders } : {}),
+    ...(disabledProviders.length || blockedLocal.length ? { disabled_providers: [...new Set([...disabledProviders, ...blockedLocal])] } : {}),
     mcp: Object.fromEntries(Object.entries(runtimeMcpMap(runtimeConfig))
       .filter(([name]) => !name.startsWith(CONNECT_MCP_SERVER_NAME_PREFIX))),
     ...(Object.keys(provider).length ? { provider } : {}),
@@ -154,9 +132,6 @@ export function openworkRuntimeConfigFilePath(config: ServerConfig): string {
   return join(runtimeStorageDir(config), "runtime-opencode-config.json");
 }
 
-// Serialize file writes per path so a slow older write can never land after
-// (and clobber) a newer one. Content is built inside the queued job so each
-// job reads the latest runtime-DB state.
 export interface OpenworkRuntimeConfigWriteResult {
   path: string;
   changed: boolean;
@@ -164,11 +139,6 @@ export interface OpenworkRuntimeConfigWriteResult {
 
 const fileWriteQueue = new Map<string, Promise<OpenworkRuntimeConfigWriteResult>>();
 
-/**
- * Rebuild the engine-visible runtime config file from the runtime DB.
- * Atomic (temp file + rename) so the engine never reads a partial file
- * mid-dispose.
- */
 export async function writeOpenworkRuntimeConfigFile(
   config: ServerConfig,
 ): Promise<OpenworkRuntimeConfigWriteResult> {
@@ -189,11 +159,6 @@ export async function writeOpenworkRuntimeConfigFile(
   return await next;
 }
 
-/**
- * Keep the runtime config file in sync with the runtime DB so every engine
- * instance rebuild reads fresh state instead of a spawn-time snapshot.
- * Returns an unsubscribe function.
- */
 export function keepOpenworkRuntimeConfigFileFresh(config: ServerConfig): () => void {
   return onRuntimeOpencodeConfigWrite((writeConfig, writtenWorkspaceId) => {
     if (!isEngineGlobalRuntimeConfigId(writtenWorkspaceId)) return;

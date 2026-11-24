@@ -21,12 +21,6 @@ type McpSecretInputProps = Omit<DenSecretInputProps, "name"> & {
 
 type McpCredentialInputProps = McpIdentifierInputProps | McpSecretInputProps;
 
-/**
- * Machine credentials must never be inferred from the Den account that is
- * signed in on this origin. The standard autocomplete hint covers browser
- * autofill; the data attributes cover common password-manager extensions.
- * Secrets go through DenSecretInput, which adds the same protections.
- */
 export function McpCredentialInput(props: McpCredentialInputProps) {
   if (props.kind === "secret") {
     const { kind: _kind, autoComplete, ...secretProps } = props;

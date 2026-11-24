@@ -5,10 +5,6 @@ import { t } from "../../../../i18n";
 import { Button } from "@/components/ui/button";
 import { TextInput } from "../../../design-system/text-input";
 
-// Explicit, prop-driven shape of the extensions store. The Solid
-// PluginsView pulled this from useExtensions(); in React we pass it
-// in so the page stays stateless and the extensions provider can be
-// ported separately.
 export type PluginsExtensionsStore = {
   pluginScope: "project" | "global";
   setPluginScope: (value: "project" | "global") => void;

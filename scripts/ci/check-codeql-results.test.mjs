@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { defaultSetupBaseline, missingLanguages } from "./check-codeql-results.mjs";
+import { defaultSetupBaseline, headCoverage, missingLanguages } from "./check-codeql-results.mjs";
 
 const current = "dynamic/github-code-scanning/codeql:analyze";
 const legacy = "dynamic/github-code-scanning/codeql:upload";
@@ -75,4 +75,19 @@ test("recognizes the advanced-setup workflow baseline", () => {
 test("PRs that skip the Swift build still need a Swift upload", () => {
   assert.deepEqual(missingLanguages(["python", "swift"], [analysis("python")], [head]), ["swift"]);
   assert.deepEqual(missingLanguages(["python", "swift"], [analysis("python"), analysis("swift", { key: ".github/workflows/codeql.yml:analyze" })], [head]), []);
+});
+
+test("classifies why a PR head's results did not match by commit", () => {
+  const run = (path, status = "completed", conclusion = "success") => ({ path, status, conclusion });
+  const advanced = ".github/workflows/codeql.yml";
+  const retired = "dynamic/github-code-scanning/codeql";
+  assert.equal(headCoverage([run(retired)]), "stale");
+  assert.equal(headCoverage([]), "stale");
+  assert.equal(headCoverage([run(".github/workflows/ci.yml"), run(retired)]), "stale");
+  assert.equal(headCoverage([run(`${advanced}@refs/pull/1/merge`)]), "uploaded");
+  assert.equal(headCoverage([run(advanced, "completed", "failure"), run(advanced)]), "uploaded");
+  assert.equal(headCoverage([run(advanced, "completed", "failure")]), "missing");
+  assert.equal(headCoverage([run(advanced, "completed", "cancelled"), run(retired)]), "missing");
+  assert.equal(headCoverage([run(advanced, "in_progress", null)]), "active");
+  assert.equal(headCoverage([run(retired, "queued", null)]), "active");
 });

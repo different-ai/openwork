@@ -38,7 +38,6 @@ export const emailSubjects: { [Template in EmailTemplate]: (props: EmailTemplate
 export const emailReplyTo: { [Template in EmailTemplate]: (props: EmailTemplateProps[Template]) => string | undefined } = {
   verification: () => undefined,
   passwordReset: () => undefined,
-  // Replies reach support when the deployment has an address, otherwise the inviter.
   organizationInvite: ({ supportEmail, invitedByEmail }) => supportEmail || invitedByEmail || undefined,
   downloadLink: () => undefined,
   feedback: ({ email }) => email,
