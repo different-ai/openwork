@@ -1001,7 +1001,13 @@ export function createEngineV2Preview(options: {
     const localKeys = allowsProvider
       ? new Map([...localAuth.apiKeys].filter(([id]) => allowsProvider(id)))
       : localAuth.apiKeys;
-    const credentials = new Map((await options.env?.list() ?? []).map((entry) => [entry.key, entry.value]));
+    const storedEnvOrEmptyWhenUnreadable = options.env
+      ? await options.env.list().catch((error: unknown) => {
+        unreadable.push(errorMessage(error));
+        return [];
+      })
+      : [];
+    const credentials = new Map(storedEnvOrEmptyWhenUnreadable.map((entry) => [entry.key, entry.value]));
     const native = await readEngineV2NativeProviders(active);
     const environment: NodeJS.ProcessEnv = { ...process.env, ...Object.fromEntries(credentials) };
     const userFile = await userConfigProviders(configured, allowsProvider, native, localKeys, credentials, undefined, environment);
