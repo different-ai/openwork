@@ -189,7 +189,7 @@ test("the drift check reports a changed default, a removed control and a target 
   assert.match(catalogProblems(edited(values, (text) => text.replace("gateway: {}", "gateway:\n  enabled: true"))).join("\n"), /aiGateway on helm: helm-value gateway\.enabled .* records default null, the file says true/)
 
   const gcpRoot = "infra/managed-deployments/gcp/terraform/main.tf"
-  assert.deepEqual(catalogProblems(edited(gcpRoot, (text) => text.replace("  managed_legacy ", "  ai_gateway_enabled = true\n  managed_legacy "))),
+  assert.deepEqual(catalogProblems(edited(gcpRoot, (text) => `${text}\nlocals {\n  ai_gateway_enabled = true\n}\n`)),
     [`aiGateway on managed-gcp: recorded as unsupported, but ${gcpRoot} now mentions ai_gateway_enabled`])
 
   const worker = "ee/apps/den-api/src/slack-assistant/worker.ts"
