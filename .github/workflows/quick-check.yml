@@ -147,8 +147,8 @@ jobs:
           path: ~/.cache/pnpm/lockfile-verified.jsonl
           key: ${{ runner.os }}-pnpm-lockfile-verified-${{ hashFiles('pnpm-lock.yaml', 'evals/pnpm-lock.yaml', 'pnpm-workspace.yaml', 'evals/pnpm-workspace.yaml') }}
       # The root's dependencies bring the TypeScript parser the import check reads source with.
-      - name: Install the feature registry's and the root's dependencies
-        run: pnpm install --frozen-lockfile --prefer-offline --filter "@openwork/features" --filter "@different-ai/openwork-workspace"
+      - name: Install the feature registry's, the capability catalog's and the root's dependencies
+        run: pnpm install --frozen-lockfile --prefer-offline --filter "@openwork/features" --filter "@openwork/managed-deployments" --filter "@different-ai/openwork-workspace"
       # Den API and the Gateway load workspace packages from TypeScript source
       # in production Node, which resolves less than tsx, bundlers and the
       # typecheck do. Without this, such an import first fails their deploy.
@@ -184,6 +184,11 @@ jobs:
         run: pnpm --filter @openwork/features test
       - name: Check the feature registry, Helm chart and guard rules
         run: pnpm features:check
+      # One catalog says which Terraform variables, Helm values and Den switches
+      # implement each capability. This fails when an installer drifts from it,
+      # or when a capability starts to need a rollout flag.
+      - name: Check the deployment capability catalog against the installers
+        run: pnpm --filter @openwork/managed-deployments test
 
   # Shipped code (tests left out) of every changed package and every package
   # that depends on it, plus Electron main when the desktop is affected.
