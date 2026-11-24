@@ -67,6 +67,31 @@ Kong) is listed because Google's public location pages list Cloud Run, Cloud
 Scheduler, Cloud SQL and Artifact Registry there. No live install has run in
 `asia-east2`; qualify it with one before promising that region.
 
+Database backups are stored in the deployment's region: the root passes
+`database.backup_location = var.region` to the shared module. Without it Google
+chooses the location: "If you don't specify a storage location, then your
+backups are stored in the multi-region that is geographically closest to the
+location of your Cloud SQL instance."
+([Cloud SQL backup options](https://cloud.google.com/sql/docs/mysql/backup-recovery/backup-options)).
+Its [locations page](https://cloud.google.com/sql/docs/mysql/locations) lists
+three backup multi-regions, `us`, `eu` and `asia`, and describes `asia` as "Data
+centers in Asia, excluding Hong Kong and Indonesia". None contains Hong Kong,
+so default backups of an `asia-east2` database leave Hong Kong.
+What this does and does not cover:
+
+- A deployment installed before this setting gets it as an in-place Cloud SQL
+  update on its next approved Install or Update. Google keeps backups already
+  taken in their original location.
+- Backups in the instance's own region do not survive the loss of that region.
+  Google's guidance is "Only use a custom backup location if required by
+  regulation"
+  ([standard backups](https://cloud.google.com/sql/docs/mysql/backup-recovery/manage-standard-backups)).
+- Only database backups are confined. Secrets use Secret Manager automatic
+  replication, which Google replicates across multiple regions globally, and
+  the HTTPS load balancer is global.
+- The setting is proven by offline Terraform tests only. No live install or
+  update has applied it.
+
 The customer reviews the project, resource scope and cost, then types the exact
 project ID to approve. The script verifies the project number and public DNS
 zone before changing anything, checks the bundle before executing anything,

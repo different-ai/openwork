@@ -100,6 +100,7 @@ Get the setup code directly from Secret Manager, without logging it, using the `
 | `create_database`, `database_url`, `cloud_sql_connection_name` | `true`, empty, empty; bring an existing database by setting create false and a verified URL |
 | `database.tier`, `database.edition`, `database.database_version` | `db-g1-small` (**1.7 GB**), `ENTERPRISE`, `MYSQL_8_4`; micro reached its memory quota at idle |
 | `database.disk_size_gb`, `database.availability_type`, `database.backup_enabled` | `20`, `ZONAL`, `true` |
+| `database.backup_location` | Unset. Cloud SQL then stores backups in the multi-region nearest the instance, which can lie outside its region. Set a Cloud SQL region or multi-region to choose; an existing instance is updated in place, and backups already taken stay where they are |
 | `database.deletion_protection` | Deprecated nullable alias; when explicitly set it overrides the common input for Cloud SQL only |
 | `den_api` | CPU `1`, memory `2Gi`, min `1`, max `3` |
 | `den_web` | CPU `1`, memory `1Gi`, min `1`, max `3` (Cloud Run request-driven service floor uses one CPU) |
@@ -118,6 +119,7 @@ Get the setup code directly from Secret Manager, without logging it, using the `
 | `database_identifier` | Common output: managed Cloud SQL instance ID; existing Cloud SQL connection name when supplied; empty for other external databases |
 | `migration_step_identifier` | Common output: full Cloud Run job resource ID |
 | `database_instance_name`, `cloud_sql_connection_name` | Retained aliases: managed instance name / connector reference (null/empty where external) |
+| `database_backup_location` | Cloud SQL location that stores new backups; null when Google's default applies or the database is external |
 | `migration_job_name` | Retained job-name output; logs use `resource.type="cloud_run_job"` |
 | `secret_ids`, `service_account_email`, `service_names` | Managed secret identifiers and runtime identities |
 | `images` | Final resolved image references |
@@ -145,6 +147,10 @@ legacy secrets and a web identity; new optional generated SMTP/Resend secrets
 are not part of that profile. See the [managed installer guide](../../../managed-deployments/gcp/README.md)
 for address moves, customer re-approval, grant scope, maintenance and live gates.
 The offline managed checks are not a new live certification of this module.
+
+**Backup location is opt-in.** `database.backup_location` is unset by default, so
+direct users see no change in their plan. The managed installer sets it to the
+deployment's region.
 
 **Database disk default: 10 → 20 GB.** Existing direct users who omitted
 `database.disk_size_gb` will see an in-place storage increase in their next plan.

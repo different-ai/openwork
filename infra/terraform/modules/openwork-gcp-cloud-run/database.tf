@@ -57,6 +57,7 @@ resource "google_sql_database_instance" "this" {
     backup_configuration {
       enabled            = var.database.backup_enabled
       binary_log_enabled = var.database.backup_enabled
+      location           = var.database.backup_location
       start_time         = var.managed_legacy ? "03:00" : null
       dynamic "backup_retention_settings" {
         for_each = var.managed_legacy ? [1] : []

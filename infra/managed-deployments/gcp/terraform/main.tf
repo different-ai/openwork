@@ -109,6 +109,7 @@ module "platform" {
     database_version = "MYSQL_8_0"
     tier             = "db-custom-1-3840"
     disk_size_gb     = 20
+    backup_location  = var.region
   }
   den_api    = { cpu = "2", memory = "2Gi", min_instances = 1, max_instances = 10 }
   den_web    = { cpu = "1", memory = "1Gi", min_instances = 1, max_instances = 10 }

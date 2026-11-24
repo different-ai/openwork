@@ -48,6 +48,10 @@ run "contract_and_security" {
     condition     = output.service_names == { den_api = "ow-123456781234-api", den_web = "ow-123456781234-web" }
     error_message = "Existing managed service names must be preserved."
   }
+  assert {
+    condition     = module.platform.database_backup_location == "us-central1"
+    error_message = "Managed database backups must be stored in the deployment's region."
+  }
 }
 run "hong_kong_region" {
   command = plan
@@ -66,6 +70,10 @@ run "hong_kong_region" {
   assert {
     condition     = google_cloud_scheduler_job.health.http_target[0].uri == "https://run.googleapis.com/v2/projects/test-project/locations/asia-east2/jobs/ow-123456781234-health:run"
     error_message = "The schedule must run the health job in the chosen region."
+  }
+  assert {
+    condition     = module.platform.database_backup_location == "asia-east2"
+    error_message = "Managed database backups must be stored in the deployment's region."
   }
   assert {
     condition     = alltrue([for binding in google_cloud_run_v2_service_iam_member.public : binding.location == "asia-east2"])
