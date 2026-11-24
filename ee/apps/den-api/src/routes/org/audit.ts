@@ -219,7 +219,7 @@ export function registerOrgAuditRoutes<T extends { Variables: Variables }>(app: 
 
   app.get("/v1/audit/export", describeAuditRoute({
     operationId: "getAuditExport", tags: ["Organizations"], "x-mcp": false, summary: "Export one audit snapshot page",
-    description: `Requires View audit history (audit.view) and deployment audit visibility. For scripts, send an organization API key in x-api-key. Exports retained, structured events only.
+    description: `Requires View audit history (audit.view) and deployment audit visibility. For scripts, send an organization API key in x-api-key. Exports retained, structured events only, not every cloud action.
 
 Omit cursor on the first request. Copy the full X-Audit-Next-Cursor response header into the next request's cursor query parameter. There is no nextCursor field in the body. Keep the organization, filters and format unchanged; limit may change. Stop when a successful response omits the header, even if it has exactly limit events. Cursors are signed and expire 24 hours after the first page, without renewal.
 
@@ -234,10 +234,10 @@ The API key's request limit is shared with other calls using the key. See the [a
       ...filterParameters,
       { in: "query", name: "format", schema: { type: "string", enum: ["ndjson", "csv"], default: "ndjson" }, description: "Attachment format. Use the same format on every page of a cursor chain." },
     ],
-    responses: { ...errors, 403: { ...errors[403], description: "View audit history (audit.view) and deployment audit visibility are required." }, 200: { description: "One attachment page of events, with no pagination object in the body.", content: { "application/x-ndjson": { schema: { type: "string" } }, "text/csv": { schema: { type: "string" } } }, headers: {
+    responses: { ...errors, 403: { ...errors[403], description: "Organization access, permission or audit visibility denied." }, 200: { description: "One attachment page of events, with no pagination object in the body.", content: { "application/x-ndjson": { schema: { type: "string" } }, "text/csv": { schema: { type: "string" } } }, headers: {
       "X-Audit-Next-Cursor": { description: "Set only when more eligible events remain. Pass this opaque response header value as the next request's cursor query parameter.", schema: { type: "string" } },
       "X-Audit-Snapshot-At": { description: "UTC cutoff, set to server time minus five seconds on the first page and unchanged on later pages. Events recorded after it are excluded.", schema: { type: "string", format: "date-time" } },
-      "Content-Disposition": { description: "Attachment filename for this page.", schema: { type: "string" } },
+      "Content-Disposition": { description: "Attachment filename; the same on every page of a snapshot.", schema: { type: "string" } },
     } } },
   } satisfies AuditRouteDescription), orgPermissionRoute("audit.view"), (c) => serveAudit(c, "export", async (organizationId) => {
     const query = parseQuery(auditExportQuerySchema, c)

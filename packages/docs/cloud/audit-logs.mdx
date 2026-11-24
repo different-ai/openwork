@@ -106,17 +106,19 @@ only runs as a dry run: nothing is deleted.
 
 ## Export
 
-Call `GET /v1/audit/export` on your Den API host. Each successful response
-contains one page of events. **The next cursor is in the response header
-`X-Audit-Next-Cursor`, not in the NDJSON or CSV body.** Send its value as the
-`cursor` query parameter on your next request.
+Call `GET /v1/audit/export` on your Den API host (`https://api.openworklabs.com`
+for OpenWork Cloud). Each successful response contains one page of events.
+**The next cursor is in the response header `X-Audit-Next-Cursor`, not in the
+NDJSON or CSV body.** Send its value as the `cursor` query parameter on your
+next request.
 
-For a script, send an organization [API key](/cloud/api-keys) in the `x-api-key`
-header, without a `Bearer` prefix. The key's owner must be a current member of
-the key's organization with **View audit history** (`audit.view`). A signed-in
-Den session also works (session cookie or `Authorization: Bearer <session-token>`).
-The deployment must have audit visibility enabled (`DEN_AUDIT_VISIBILITY_ENABLED`).
-The export includes only retained, structured history, not legacy payloads.
+For integrations, use an organization [API key](/cloud/api-keys) in the
+`x-api-key` header, without a `Bearer` prefix. Grant the key's owner
+**View audit history** (`audit.view`) in that organization before creating the key.
+A change to the owner's role or effective permissions revokes their existing
+keys for that organization. The deployment must have audit visibility enabled
+(`DEN_AUDIT_VISIBILITY_ENABLED`, on by default). The export includes only
+retained, structured history, not legacy payloads.
 
 ### Export parameters
 
@@ -128,7 +130,7 @@ repeated or empty parameters are rejected. Filters combine with AND.
 | `format` | String; `ndjson` | `ndjson` or `csv`. Start a new export to change formats. |
 | `limit` | Integer; `50` | `1`–`100` child events per page, not operations or bytes. Send decimal digits without a leading zero, sign or decimal point. The CSV column header does not count. |
 | `cursor` | String; omitted | Omit for the first page. Then use the full `X-Audit-Next-Cursor` header value (maximum 4,096 characters). Treat it as opaque. |
-| `from` | Date or date-time string; unbounded | Inclusive lower bound on when the operation was first recorded, not on the time of each child event. Use `YYYY-MM-DD` or an ISO date-time (up to 40 characters) with `Z` or a numeric UTC offset. |
+| `from` | Date or date-time string; unbounded | Inclusive lower bound on when the operation was first recorded, not on the time of each child event. Use `YYYY-MM-DD` or `YYYY-MM-DDTHH:MM:SS[.fraction]` followed by `Z` or `±HH:MM` (up to 40 characters total), for example `2026-11-01T00:00:00+08:00`. Seconds and a time zone are required; short times and offsets without a colon are rejected. |
 | `to` | Date or date-time string; unbounded | Inclusive upper bound on the same operation time, using the same syntax. Date-only values mean **UTC midnight at the start of the date**, including for `to`. `from` must not be later than `to`. |
 | `actorId` | User ID string; unrestricted | The operation's initiating `usr_` user ID, not a member ID or a later child event's actor. |
 | `action` | String; unrestricted | Exact action of any child event at or before the snapshot cutoff. 1–128 characters matching `^[a-z][a-z0-9_.-]*$`. See `GET /v1/audit/event-types` for supported actions. |
@@ -164,13 +166,24 @@ recorded after it are excluded, including new children of existing operations.
 The cutoff doesn't freeze current operation outcomes or protect retention.
 Start a new snapshot to see newer events. Don't use the cutoff as a polling
 watermark in `from`: that filters operation starts and can miss later children
-of older operations.
+of older operations. If access recording is on, export requests can themselves
+produce audit events. Those are outside the current snapshot but can appear
+in a later export. An operation whose outcome changes while you page through
+an `outcome` filter can appear only partly.
+
+On a self-hosted deployment, ensure any reverse proxy passes through
+`X-Audit-Next-Cursor`. A stripped header looks like the last page to a client.
+Use `curl --dump-header -` to inspect the headers. Rotating
+`BETTER_AUTH_SECRET` or using different values across Den API replicas
+invalidates in-flight cursors.
 
 NDJSON (`application/x-ndjson`) has one full event envelope per line and an
 empty body when no events match. CSV (`text/csv`) has summary fields only,
 with no before or after values, and a column-header row on every page, even
-an empty page. If you combine CSV pages, keep the column header only once.
-The two formats use separate cursor chains.
+an empty page. CSV rows end with CRLF. If you combine CSV pages, keep the
+column header only once. The two formats use separate cursor chains.
+The suggested attachment filename is the same on every page of a snapshot;
+choose distinct output paths when saving pages separately.
 
 ### Download every NDJSON page
 
@@ -179,46 +192,88 @@ Set `DEN_API_URL` to your Den API base URL (for example,
 the first page, save headers separately from the data:
 
 ```sh
-curl --fail --silent --show-error --get "$DEN_API_URL/v1/audit/export" \
+curl --fail --silent --show-error --get "${DEN_API_URL%/}/v1/audit/export" \
   --header "x-api-key: $DEN_API_KEY" \
   --data-urlencode 'limit=100' \
   --dump-header page.headers --output page.ndjson
 ```
 
-For all pages, run this script with Bash from an empty directory. It writes
-`audit.ndjson` only once every page has succeeded. Data and cursors may be
-sensitive; don't share the output or response headers.
+Save this as `export-audit.sh` in a new directory and run
+`bash export-audit.sh`. It appends successful pages to `audit.ndjson.partial`
+and saves the next cursor in `audit.cursor`. After a request fails, fix the
+error and run the same command in the same directory with the same filters.
+The script loads the saved cursor and appends the remaining pages. Use a new
+directory if the cursor expires or if you change filters. If the script was
+interrupted while writing a page, check for a partial or duplicate page before
+using the output. Keep the files and error output private.
 
 ```bash
+#!/usr/bin/env bash
 set -eu
 umask 077
 : "${DEN_API_URL:?Set your Den API base URL}"
 : "${DEN_API_KEY:?Set your Den API key}"
+
+if [ -e audit.ndjson ]; then
+  printf 'audit.ndjson already exists; use a new directory.\n' >&2
+  exit 1
+fi
+cursor=
+if [ -s audit.cursor ] && [ -f audit.ndjson.partial ]; then
+  cursor=$(cat audit.cursor)
+elif [ -e audit.cursor ] || [ -e audit.ndjson.partial ]; then
+  printf 'Incomplete checkpoint; inspect the partial export before continuing.\n' >&2
+  exit 1
+fi
+
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
-cursor=
+retried=0
+
+show_cursor() {
+  printf 'Resume cursor: %s\n' "${cursor:-(none; retry the first page)}" >&2
+}
 
 while :; do
   args=(--data-urlencode 'format=ndjson' --data-urlencode 'limit=100')
   if [ -n "$cursor" ]; then
     args+=(--data-urlencode "cursor=$cursor")
   fi
-  status=$(curl --fail --silent --show-error --get "${DEN_API_URL%/}/v1/audit/export" \
+  if ! status=$(curl --silent --show-error --get "${DEN_API_URL%/}/v1/audit/export" \
     --header "x-api-key: $DEN_API_KEY" "${args[@]}" \
-    --dump-header "$work/headers" --output "$work/page" --write-out '%{http_code}')
-  if [ "$status" != 200 ]; then
-    printf 'Unexpected HTTP status: %s\n' "$status" >&2
+    --dump-header "$work/headers" --output "$work/page" --write-out '%{http_code}'); then
+    show_cursor
     exit 1
   fi
-  cat "$work/page" >> "$work/export"
-  cursor=$(awk '/^HTTP\// { cursor="" }
+  if [ "$status" != 200 ]; then
+    printf 'HTTP %s\n' "$status" >&2
+    cat "$work/page" >&2
+    printf '\n' >&2
+    show_cursor
+    if [ "$status" = 401 ] && [ "$retried" = 0 ]; then
+      printf 'Possible key throttling. Waiting 61 seconds, then retrying this page once.\n' >&2
+      retried=1
+      sleep 61
+      continue
+    fi
+    exit 1
+  fi
+  retried=0
+
+  next=$(awk '/^HTTP\// { cursor="" }
     tolower($0) ~ /^x-audit-next-cursor:/ {
       sub(/^[^:]+:[ \t]*/, ""); sub(/[ \t\r]+$/, ""); cursor=$0
     }
     END { print cursor }' "$work/headers")
-  [ -n "$cursor" ] || break
+  cat "$work/page" >> audit.ndjson.partial
+  if [ -z "$next" ]; then
+    mv audit.ndjson.partial audit.ndjson
+    rm -f audit.cursor
+    break
+  fi
+  printf '%s\n' "$next" > audit.cursor
+  cursor=$next
 done
-mv "$work/export" audit.ndjson
 ```
 
 To filter the download, add the same `--data-urlencode` options to `args` on
@@ -232,9 +287,13 @@ New organization API keys default to **600 requests per key** with a
 versions, the counter resets after a quiet period longer than the window since
 the last accepted key use, not at a fixed minute boundary. On deployments that
 support `DEN_API_KEY_RATE_LIMIT_MAX`, an operator can override the default for
-new keys. Existing key settings and ingress limits can differ. API-key
-throttling can appear as `401`: don't assume a `429` or a `Retry-After` header,
-and don't automatically retry `401` responses.
+new keys. With the default limit, a loop that never leaves the key idle for more
+than a minute is throttled after 600 requests, or fewer export requests if other
+calls use the same key. Den returns `401` (`unauthorized`) when it throttles a
+key. Leave the key unused everywhere for more than 60 seconds (or longer than
+its configured window), then resume from the last saved cursor. If an isolated
+retry still returns `401`, check the key and its settings before trying again.
+An ingress can impose its own limits; don't rely on `429` or `Retry-After` from Den.
 
 | HTTP status | What it means |
 | --- | --- |
