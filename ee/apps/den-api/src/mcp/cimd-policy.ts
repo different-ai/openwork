@@ -1,4 +1,5 @@
-import { assertPublicUrl, PrivateUrlError } from "../capability-sources/url-guard.js"
+import { APIError } from "better-auth/api"
+import { assertPublicUrl, PrivateUrlError, UnresolvedHostError } from "../capability-sources/url-guard.js"
 import { env } from "../env.js"
 
 function ownOrigins(): Set<string> {
@@ -27,6 +28,12 @@ export async function isCimdClientIdUrlAllowed(clientIdUrl: string): Promise<boo
     await assertPublicUrl(clientIdUrl)
     return true
   } catch (error) {
+    if (error instanceof UnresolvedHostError && error.temporary) {
+      throw new APIError("SERVICE_UNAVAILABLE", {
+        error: "temporarily_unavailable",
+        error_description: "Could not look up the client_id host. Try again in a moment.",
+      })
+    }
     if (error instanceof PrivateUrlError) return false
     throw error
   }
