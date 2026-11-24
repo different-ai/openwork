@@ -7,21 +7,19 @@ import {
   type AgentState,
 } from "@openwork/automations/proactive"
 import {
-  AGENT_BRIEF_MESSAGE_LIMIT,
+  AGENT_ONE_MESSAGE_LIMIT,
   agentBriefForCheck,
-  agentCheckInstructions,
   agentCheckPrompt,
-  agentMessageInstructions,
-  agentMessagePrompt,
   agentMessageRetryPrompt,
+  agentOneMessageInstructions,
   agentToldToday,
+  asOneMessage,
   checkGateApplies,
   decideBriefDelivery,
   extraChecksLeft,
   isFirstCheckOfDay,
   parseAboutId,
   parseAgentMessages,
-  parseCheckReport,
   pendingCheckRequests,
   planCheckGate,
   rememberSent,
@@ -32,7 +30,6 @@ import {
   type AgentCheckOccasion,
   type AgentCheckRequest,
   type AgentConversationTurn,
-  type AgentMessagesReply,
   type AgentSentRecord,
 } from "@openwork/automations/proactive-brief"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
@@ -41,6 +38,7 @@ import type { AgentMemberCheckMessage, AgentMemberCheckSource } from "@openwork-
 import { agentReadScopes } from "../mcp/agent-read-sources.js"
 import { appLogger } from "../observability/logger.js"
 import { describeAgentCheck } from "./checks.js"
+import type { DeliveryResult } from "./deliver.js"
 import { memberBriefLines, memberRhythm, nextScheduledCheck } from "./brief.js"
 import { memberAgentOn } from "./policy.js"
 import { memberLimits, parseStoredPreferences } from "./preferences.js"
@@ -69,9 +67,6 @@ export type AgentBriefWakeDeps = AgentWakeDeps & {
   briefOn: (organizationId: DenTypeId<"organization">, userId: DenTypeId<"user">) => Promise<boolean>
   person: (organizationId: DenTypeId<"organization">, memberId: DenTypeId<"member">) => Promise<string | null>
   check: (input: { actor: { userId: string; organizationId: string }; sessionId: string; instructions: string; model: string; prompt: string; messageId: string; scopes: readonly string[] }) => Promise<AgentRawTurnResult>
-  message: (input: { actor: { userId: string; organizationId: string }; sessionId: string; instructions: string; model: string; prompt: string; messageId: string }) => Promise<AgentRawTurnResult>
-  messageSessionId: (organizationId: string, memberId: string, wakeAt: number) => string
-  endMessageSession: (sessionId: string) => Promise<void>
   conversation: (input: { organizationId: DenTypeId<"organization">; userId: DenTypeId<"user">; since: number }) => Promise<AgentConversationTurn[] | null>
   requestedChecks: (memberId: DenTypeId<"member">) => Promise<AgentCheckRequest[]>
   readTools: (input: { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member">; connection: MemberConnection }) => Promise<readonly AgentReadToolInput[] | null>
@@ -87,11 +82,11 @@ function iso(at: number) {
   return new Date(at).toISOString()
 }
 
-function logUsage(memberId: string, step: "check" | "message", turn: AgentRawTurnResult) {
+function logUsage(memberId: string, turn: AgentRawTurnResult) {
   if (turn.kind !== "answered") return
   appLogger.info("workbot_agent_step_usage", {
     member_id: memberId,
-    step,
+    step: "check",
     input_tokens: turn.usage?.inputTokens ?? -1,
     cached_input_tokens: turn.usage?.cachedInputTokens ?? -1,
     output_tokens: turn.usage?.outputTokens ?? -1,
@@ -199,7 +194,7 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
   const ready = sources.filter((source) => readableConnections(source).length > 0)
   const notices = {
     ...await noticeUnreadableSources({
-      row, organizationId, userId, unreadable: blockedConnections(sources), othersReadable: ready.length > 0, told: state.notices, now, slot, kind, deps, record,
+      row, organizationId, userId, unreadable: blockedConnections(sources), othersReadable: ready.length > 0, told: state.notices, now, slot, kind, deps, record, combined: true,
     }),
     ...await noticeStoppedSources({ row, organizationId, userId, sources, choices: stored.sources, othersReadable: ready.length > 0, told: state.notices, now, slot, kind, deps, record }),
   }
@@ -271,10 +266,15 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
   const model = await deps.model(actor).catch(() => null)
   if (!model) return retry("model_unavailable")
 
-  const check = await deps.check({
+  const dayStart = zonedDayStart(now, timeZone)
+  const sentToday = await deps.sentSince(memberId, new Date(dayStart))
+  const recent = await deps.conversation({ organizationId, userId, since: now - CONVERSATION_DAYS * 24 * HOUR_MS }).catch(() => null)
+  if (recent === null) appLogger.info("workbot_agent_conversation_unavailable", { member_id: memberId })
+  const conversation = recent ?? []
+  const checkTurn = {
     actor,
     sessionId: deps.sessionId(organizationId, memberId),
-    instructions: agentCheckInstructions({ name, brief: briefText }),
+    instructions: agentOneMessageInstructions({ name, brief: briefText }),
     model,
     prompt: agentCheckPrompt({
       occasion,
@@ -283,7 +283,7 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
       nextCheckAt: nextAfter,
       extraChecksLeft: extraChecksLeft(state.requests, brief.extraChecksPerDay, now, timeZone),
       sent: state.sent,
-      lastReport: state.lastReport ?? null,
+      oneMessage: { name, sentToday, cap: limits.dailyCap, conversation },
       sources: readable.map((source) => ({
         id: source.id,
         name: source.name,
@@ -301,10 +301,18 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
     }),
     messageId: deps.messageId(memberId, row.nextWakeAt.getTime()),
     scopes: agentReadScopes({ ...readAllowlist(readable), tools: toolPlan.tools, nativeReads: toolPlan.nativeReads }),
-  })
+  }
+  const check = await deps.check(checkTurn)
   if (check.kind === "unavailable") return retry(check.code)
-  logUsage(memberId, "check", check)
-  const report = parseCheckReport(check.text)
+  logUsage(memberId, check)
+  let reply = parseAgentMessages(check.text, true)
+  if (reply.kind === "invalid") {
+    appLogger.info("workbot_agent_message_retry", { member_id: memberId, reason: reply.reason })
+    const again = await deps.check({ ...checkTurn, prompt: agentMessageRetryPrompt(reply.reason), messageId: deps.messageId(`${memberId}:check:2`, row.nextWakeAt.getTime()) })
+    if (again.kind === "unavailable") return retry(again.code)
+    logUsage(memberId, again)
+    reply = parseAgentMessages(again.text, true)
+  }
 
   const requests = settleCheckRequests(await deps.requestedChecks(memberId).catch(() => state.requests ?? []), now)
   const readIds = readable.map((source) => source.id)
@@ -322,100 +330,86 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
   let sent = 0
   const sentRecords: AgentSentRecord[] = []
   let delivered: "sent" | "failed" | "nothing_new" | "daily_limit" | "quiet_hours" | "quiet_window" | "snoozed" | null = null
-  if (report.kind === "findings") {
-    const sentToday = await deps.sentSince(memberId, new Date(zonedDayStart(now, timeZone)))
-    if (sentToday >= limits.dailyCap) {
-      outcome = { reason: "daily_limit" }
-      delivered = "daily_limit"
-    } else {
-      const conversation = await deps.conversation({ organizationId, userId, since: now - CONVERSATION_DAYS * 24 * HOUR_MS }).catch(() => null)
-      if (conversation === null) appLogger.info("workbot_agent_conversation_unavailable", { member_id: memberId })
-      const reply = await writeMessages({
-        deps, actor, model, name, memberId, organizationId, wakeAt: row.nextWakeAt.getTime(),
-        prompt: agentMessagePrompt({ name, sentToday, cap: limits.dailyCap, now, timeZone, nextCheckAt: nextAfter, firstCheck: occasion.kind === "first", report: report.report, conversation: conversation ?? [] }),
+  if (reply.kind !== "quiet" && sentToday >= limits.dailyCap) {
+    outcome = { reason: "daily_limit" }
+    delivered = "daily_limit"
+  } else if (reply.kind === "invalid") {
+    appLogger.warn("workbot_agent_message_unparsed", { member_id: memberId, reason: reply.reason })
+    outcome = { reason: "unreadable_reply" }
+  } else if (reply.kind === "messages") {
+    const sendCheck = settings.sendCheck === true && deps.sendCheck ? await deps.sendCheck({ organizationId, memberId, userId }).catch(() => null) : null
+    const merged = asOneMessage(reply.messages)
+    const candidates = merged ? [merged] : []
+    let messages = candidates
+    let heldForBrief = 0
+    if (sendCheck) {
+      const toldToday = agentToldToday({ conversation, sent: state.sent, since: dayStart })
+      const checked = await Promise.all(candidates.map((message) => sendCheck({ brief: briefText, message: message.text, update: message.update, toldToday, holdAt: settings.sendCheckThreshold })))
+      messages = candidates.filter((_, index) => checked[index]?.verdict.kind !== "hold")
+      heldForBrief = checked.filter((result) => result.verdict.kind === "hold" && result.verdict.reason === "brief").length
+      appLogger.info("workbot_agent_send_check", {
+        member_id: memberId,
+        messages: candidates.length,
+        held_brief: heldForBrief,
+        held_repeat: candidates.length - messages.length - heldForBrief,
+        unavailable: checked.filter((result) => result.status === "unavailable").length,
+        duration_ms: Math.max(0, ...checked.map((result) => result.durationMs)),
+        input_tokens: checked.reduce((sum, result) => sum + (result.inputTokens ?? 0), 0),
       })
-      if (reply.kind === "unavailable") {
-        appLogger.info("workbot_agent_message_unavailable", { member_id: memberId, code: reply.code })
-        outcome = { reason: "agent_unavailable" }
-      } else if (reply.kind === "invalid") {
-        appLogger.warn("workbot_agent_message_unparsed", { member_id: memberId, reason: reply.reason })
-        outcome = { reason: "unreadable_reply" }
-      } else if (reply.kind === "quiet") {
-        outcome = { reason: "findings_held" }
-      } else {
-        const sendCheck = settings.sendCheck === true && deps.sendCheck ? await deps.sendCheck({ organizationId, memberId, userId }).catch(() => null) : null
-        let messages = reply.messages
-        let heldForBrief = 0
-        if (sendCheck) {
-          const toldToday = agentToldToday({ conversation: conversation ?? [], sent: state.sent, since: zonedDayStart(now, timeZone) })
-          const checked = await Promise.all(reply.messages.map((message) => sendCheck({ brief: briefText, message: message.text, update: message.update, toldToday, holdAt: settings.sendCheckThreshold })))
-          messages = reply.messages.filter((_, index) => checked[index]?.verdict.kind !== "hold")
-          heldForBrief = checked.filter((result) => result.verdict.kind === "hold" && result.verdict.reason === "brief").length
-          appLogger.info("workbot_agent_send_check", {
-            member_id: memberId,
-            messages: reply.messages.length,
-            held_brief: heldForBrief,
-            held_repeat: reply.messages.length - messages.length - heldForBrief,
-            unavailable: checked.filter((result) => result.status === "unavailable").length,
-            duration_ms: Math.max(0, ...checked.map((result) => result.durationMs)),
-            input_tokens: checked.reduce((sum, result) => sum + (result.inputTokens ?? 0), 0),
-          })
-        }
-        const resolveSource = (source: string) => findSource(sources, source)?.id ?? null
-        const about = messages.flatMap((message) => message.about.flatMap((entry) => parseAboutId(entry, resolveSource) ?? []))
-        const decision = decideBriefDelivery({
-          messages,
-          sources: new Set(readIds),
-          resolveSource,
-          told: await deps.told(memberId, about),
-          sentToday,
-          dailyCap: limits.dailyCap,
-          rhythm,
-          snoozedUntil: row.snoozedUntil?.getTime() ?? null,
-          at: deps.now(),
-          timeZone,
-        })
-        if (decision.kind === "held") {
-          delivered = decision.reason === "outside_hours" ? "quiet_hours" : decision.reason === "quiet_hours" ? "quiet_window" : "snoozed"
-          outcome = { reason: decision.reason === "outside_hours" ? "outside_hours" : decision.reason === "quiet_hours" ? "quiet_window" : "snoozed" }
+    }
+    const resolveSource = (source: string) => findSource(sources, source)?.id ?? null
+    const about = messages.flatMap((message) => message.about.flatMap((entry) => parseAboutId(entry, resolveSource) ?? []))
+    const decision = decideBriefDelivery({
+      messages,
+      sources: new Set(readIds),
+      resolveSource,
+      told: await deps.told(memberId, about),
+      sentToday,
+      dailyCap: limits.dailyCap,
+      rhythm,
+      snoozedUntil: row.snoozedUntil?.getTime() ?? null,
+      at: deps.now(),
+      timeZone,
+    })
+    if (decision.kind === "held") {
+      delivered = decision.reason === "outside_hours" ? "quiet_hours" : decision.reason === "quiet_hours" ? "quiet_window" : "snoozed"
+      outcome = { reason: decision.reason === "outside_hours" ? "outside_hours" : decision.reason === "quiet_hours" ? "quiet_window" : "snoozed" }
+    } else {
+      const linkDomains = readable.flatMap((source) => readableConnections(source).flatMap(connectionLinkDomains))
+      const drew: AgentItem[] = []
+      let first: AgentMemberCheckMessage | null = null
+      let failed = false
+      let lost = false
+      for (const message of decision.deliver) {
+        const [lead, ...folded] = message.ledger
+        const id = lead ? await deps.reserve({ organizationId, memberId, item: lead.item, outcome: "pending", kind: "brief" }) : null
+        if (!id) continue
+        for (const entry of folded) await deps.reserve({ organizationId, memberId, item: entry.item, outcome: "folded", kind: "brief" })
+        const allowedNow = (await deps.holdsLease(row)) && (await deps.allowed(organizationId, userId)) && (await deps.briefOn(organizationId, userId))
+        const result: DeliveryResult | { ok: false; code: "lease_or_feature_lost" } = allowedNow
+          ? await deps.deliver({ organizationId, userId, text: cleanAgentMessage(message.text, { limit: AGENT_ONE_MESSAGE_LIMIT, linkDomains }) })
+          : { ok: false, code: "lease_or_feature_lost" }
+        await deps.finish(id, result.ok ? "sent" : "failed")
+        if (result.ok) {
+          sent += 1
+          sentRecords.push({ at: now, about: message.about.map((item) => `${item.source}:${item.id}`), lead: sentLead(message.text) })
+          drew.push(...message.about)
+          first ??= result.message ?? null
         } else {
-          const linkDomains = readable.flatMap((source) => readableConnections(source).flatMap(connectionLinkDomains))
-          const drew: AgentItem[] = []
-          let first: AgentMemberCheckMessage | null = null
-          let failed = false
-          let lost = false
-          for (const message of decision.deliver) {
-            const [lead, ...folded] = message.ledger
-            const id = lead ? await deps.reserve({ organizationId, memberId, item: lead.item, outcome: "pending", kind: "brief" }) : null
-            if (!id) continue
-            for (const entry of folded) await deps.reserve({ organizationId, memberId, item: entry.item, outcome: "folded", kind: "brief" })
-            const allowedNow = (await deps.holdsLease(row)) && (await deps.allowed(organizationId, userId)) && (await deps.briefOn(organizationId, userId))
-            const result = allowedNow
-              ? await deps.deliver({ organizationId, userId, text: cleanAgentMessage(message.text, { limit: AGENT_BRIEF_MESSAGE_LIMIT, linkDomains }) })
-              : { ok: false as const, code: "lease_or_feature_lost" }
-            await deps.finish(id, result.ok ? "sent" : "failed")
-            if (result.ok) {
-              sent += 1
-              sentRecords.push({ at: now, about: message.about.map((item) => `${item.source}:${item.id}`), lead: sentLead(message.text) })
-              drew.push(...message.about)
-              first ??= result.message ?? null
-            } else {
-              appLogger.warn("workbot_agent_delivery_failed", { member_id: memberId, code: result.code })
-              if (result.code === "lease_or_feature_lost") lost = true
-              else failed = true
-              break
-            }
-          }
-          const capped = decision.skipped.some((entry) => entry.reason === "daily_limit")
-          const unreadable = decision.skipped.length > 0 && decision.skipped.every((entry) => entry.reason === "unknown_source")
-          if (unreadable) appLogger.warn("workbot_agent_message_unknown_sources", { member_id: memberId })
-          delivered = sent ? "sent" : failed ? "failed" : capped ? "daily_limit" : "nothing_new"
-          outcome = sent
-            ? { reason: "sent", sources: checkSources(drew, sources), message: first, messages: sent }
-            : lost ? null : failed ? { reason: "send_failed" } : capped ? { reason: "daily_limit" } : unreadable ? { reason: "unreadable_reply" }
-              : !messages.length && heldForBrief ? { reason: "findings_held" } : { reason: "already_told" }
+          appLogger.warn("workbot_agent_delivery_failed", { member_id: memberId, code: result.code })
+          if (result.code === "lease_or_feature_lost") lost = true
+          else failed = true
+          break
         }
       }
+      const capped = decision.skipped.some((entry) => entry.reason === "daily_limit")
+      const unreadable = decision.skipped.length > 0 && decision.skipped.every((entry) => entry.reason === "unknown_source")
+      if (unreadable) appLogger.warn("workbot_agent_message_unknown_sources", { member_id: memberId })
+      delivered = sent ? "sent" : failed ? "failed" : capped ? "daily_limit" : "nothing_new"
+      outcome = sent
+        ? { reason: "sent", sources: checkSources(drew, sources), message: first, messages: sent }
+        : lost ? null : failed ? { reason: "send_failed" } : capped ? { reason: "daily_limit" } : unreadable ? { reason: "unreadable_reply" }
+          : !messages.length && heldForBrief ? { reason: "findings_held" } : { reason: "already_told" }
     }
   }
   if (outcome) await record({ ...outcome, key: `ran:${now}`, kind })
@@ -424,50 +418,11 @@ export async function wakeAgentBrief(row: AgentInstanceRow, deps: AgentBriefWake
     day: new Date(now).toISOString().slice(0, 10),
     counts: [{ responsibility: AGENT_RHYTHM_COUNTER, checks: 1, quiet: sent ? 0 : 1, sent }],
   }).catch(() => appLogger.warn("workbot_agent_checks_unrecorded", { member_id: memberId }))
-  appLogger.info("workbot_agent_ran", { member_id: memberId, path: "brief", occasion: occasion.kind, report: report.kind, delivered: delivered ?? "none", sent })
+  appLogger.info("workbot_agent_ran", { member_id: memberId, path: "one_message", occasion: occasion.kind, report: reply.kind, delivered: delivered ?? "none", sent })
   const settled: AgentState = {
     ...nextState,
     sent: rememberSent(state.sent, sentRecords, now),
-    lastReport: report.kind === "findings" ? { at: now, text: report.report.slice(0, 4_000) } : state.lastReport ?? null,
   }
   await deps.settle(row, { state: JSON.stringify(settled), timeZone, templateVersionId: template.versionId, failures: 0, nextWakeAt: nextWake(nextAfter, requests) })
-  return { status: "ran", reasons: ["scheduled"], reply: report.kind === "findings" ? "message" : "quiet", delivered }
+  return { status: "ran", reasons: ["scheduled"], reply: reply.kind === "messages" ? "message" : "quiet", delivered }
 }
-
-async function writeMessages(input: {
-  deps: AgentBriefWakeDeps
-  actor: { userId: string; organizationId: string }
-  model: string
-  name: string
-  memberId: string
-  organizationId: string
-  wakeAt: number
-  prompt: string
-}): Promise<AgentMessagesReply | { kind: "unavailable"; code: string }> {
-  const { deps } = input
-  const sessionId = deps.messageSessionId(input.organizationId, input.memberId, input.wakeAt)
-  const turn = (prompt: string, attempt: number) => deps.message({
-    actor: input.actor,
-    sessionId,
-    instructions: agentMessageInstructions(input.name),
-    model: input.model,
-    prompt,
-    messageId: deps.messageId(`${input.memberId}:message:${attempt}`, input.wakeAt),
-  })
-  try {
-    const first = await turn(input.prompt, 1)
-    if (first.kind === "unavailable") return first
-    logUsage(input.memberId, "message", first)
-    const parsed = parseAgentMessages(first.text)
-    if (parsed.kind !== "invalid") return parsed
-    appLogger.info("workbot_agent_message_retry", { member_id: input.memberId, reason: parsed.reason })
-    const second = await turn(agentMessageRetryPrompt(parsed.reason), 2)
-    if (second.kind === "unavailable") return second
-    logUsage(input.memberId, "message", second)
-    return parseAgentMessages(second.text)
-  } finally {
-    await deps.endMessageSession(sessionId).catch(() => undefined)
-  }
-}
-
-export const AGENT_MESSAGE_SCOPES = agentReadScopes({ kinds: [], connectionIds: [] })

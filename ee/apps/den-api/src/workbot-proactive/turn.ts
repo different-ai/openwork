@@ -44,10 +44,6 @@ export function agentMessageId(memberId: string, wakeAt: number) {
   return `wa_${createHash("sha256").update(`agent:${memberId}:${wakeAt}`).digest("hex").slice(0, 32)}`
 }
 
-export function agentMessageSessionId(organizationId: string, memberId: string, wakeAt: number) {
-  return `hs_agentmsg_${createHash("sha256").update(`agent-message:${organizationId}:${memberId}:${wakeAt}`).digest("hex").slice(0, 36)}`
-}
-
 export async function runAgentTurn(
   input: { actor: HeadlessRunnerActor; sessionId: string; instructions: string; model: string; prompt: string; messageId: string; scopes?: readonly string[] },
   deps: AgentTurnDeps,
@@ -57,13 +53,13 @@ export async function runAgentTurn(
 }
 
 export async function runAgentSessionTurn(
-  input: { actor: HeadlessRunnerActor; sessionId: string; instructions: string; model: string; prompt: string; messageId: string; scopes?: readonly string[]; title?: string; readOnly?: boolean },
+  input: { actor: HeadlessRunnerActor; sessionId: string; instructions: string; model: string; prompt: string; messageId: string; scopes?: readonly string[] },
   deps: AgentTurnDeps,
 ): Promise<AgentRawTurnResult> {
   const client = deps.client
   if (!client) return { kind: "unavailable", code: "runner_not_configured" }
   const session = await client
-    .putSession(input.sessionId, { title: input.title ?? "Your agent", instructions: input.instructions, repeats: { maxWaitingMs: 60_000, maxIdenticalFailures: 2 } })
+    .putSession(input.sessionId, { title: "Your agent", instructions: input.instructions, repeats: { maxWaitingMs: 60_000, maxIdenticalFailures: 2 } })
     .catch(() => null)
   if (!session?.ok) return { kind: "unavailable", code: session?.error ?? "runner_unreachable" }
   const send = () => client
@@ -72,7 +68,7 @@ export async function runAgentSessionTurn(
       messageId: input.messageId,
       prompt: input.prompt,
       model: input.model,
-      ...(input.readOnly ? { readOnly: true } : { mcpReadOnly: true }),
+      mcpReadOnly: true,
       ...(input.scopes?.length ? { mcpScopes: input.scopes } : {}),
       ttlMs: TOKEN_TTL_MS,
       execution: "steps",
@@ -104,8 +100,4 @@ export async function runAgentSessionTurn(
   }
   await client.abort(input.sessionId, input.messageId).catch(() => null)
   return { kind: "unavailable", code: "timed_out" }
-}
-
-export async function endAgentMessageSession(sessionId: string, deps: Pick<AgentTurnDeps, "client">): Promise<void> {
-  await deps.client?.deleteSession(sessionId).catch(() => null)
 }
