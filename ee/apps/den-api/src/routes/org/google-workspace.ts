@@ -6,6 +6,7 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { env } from "../../env.js"
+import { requireFeature } from "../../features.js"
 import { buildCalendarEventPayload, calendarRecurrenceMatches, createCalendarEventBodySchema } from "../../capability-sources/google-calendar-events.js"
 import { cloudTransportRoute, jsonValidator, orgMemberRoute, paramValidator, queryValidator } from "../../middleware/index.js"
 import { invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
@@ -27,6 +28,7 @@ import {
   extractGmailAttachmentData,
   extractGmailMessage,
   extractGmailMessageIds,
+  extractGmailThreadMetadata,
   extractGmailThreadQuoteInput,
   extractGmailThreadReplyContext,
   gmailBodyHasQuotedHistory,
@@ -186,8 +188,30 @@ const gmailMessageSummarySchema = z.object({
   snippet: z.string(),
 }).meta({ ref: "GoogleWorkspaceGmailMessageSummary" })
 
-const gmailMessageSchema = gmailMessageSummarySchema.extend({
+const gmailMessageMetadataFields = {
+  cc: z.string(),
+  replyTo: z.string(),
+  internalDate: z.number().int().nullable().describe("Gmail internal timestamp in epoch milliseconds, or null if unavailable."),
+  labelIds: z.array(z.string()),
+}
+
+const gmailThreadParamSchema = z.object({
+  threadId: z.string().trim().min(1).max(512).refine((id) => id !== "." && id !== "..").describe("Gmail thread id from a Gmail message."),
+})
+
+const gmailThreadMessageSchema = gmailMessageSummarySchema.extend(gmailMessageMetadataFields)
+  .meta({ ref: "GoogleWorkspaceGmailThreadMessage" })
+
+const gmailThreadResponseSchema = z.object({
+  ok: z.literal(true),
+  threadId: z.string(),
+  historyId: z.string().optional(),
+  messages: z.array(gmailThreadMessageSchema),
+}).meta({ ref: "GoogleWorkspaceGmailThreadResponse" })
+
+const gmailMessageSchema = gmailThreadMessageSchema.extend({
   body: z.string(),
+  bodyTruncated: z.boolean().describe("Whether the returned body was trimmed to the message body limit."),
   attachments: z.array(gmailAttachmentSchema),
 }).meta({ ref: "GoogleWorkspaceGmailMessage" })
 
@@ -353,6 +377,14 @@ export type GoogleWorkspaceAccessToken =
   | { kind: "needs_connection"; message: string }
   | { kind: "google_api_error"; message: string }
   | NativeProviderPolicyError
+
+export function gmailReadTokenError(token: Exclude<GoogleWorkspaceAccessToken, { kind: "ok" }>): {
+  status: 403 | 409 | 502
+  body: { error: typeof token.kind; message: string }
+} {
+  const status = token.kind === "policy_blocked" ? 403 : token.kind === "needs_connection" ? 409 : 502
+  return { status, body: { error: token.kind, message: token.message } }
+}
 
 type CalendarConferenceData = {
   createRequest: {
@@ -1056,6 +1088,59 @@ export function registerGoogleWorkspaceRoutes<T extends { Variables: OrgRouteVar
       }
 
       return c.json({ ok: true, message: extractGmailMessage(await readJson(response)) })
+    },
+  )
+
+  app.get(
+    "/v1/capabilities/google-workspace/gmail-thread/:threadId",
+    describeRoute({
+      tags: ["Capability Sources"],
+      summary: "Read a Gmail thread by ID as the calling member",
+      description: "Lists messages in a Gmail conversation in chronological order, with headers, snippets and per-message label IDs but no bodies. Use the threadId from a Gmail message.",
+      responses: {
+        200: jsonResponse("Gmail thread metadata returned.", gmailThreadResponseSchema),
+        401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
+        403: jsonResponse("The connection is blocked by organization policy.", z.object({ error: z.literal("policy_blocked"), message: z.string() })),
+        404: jsonResponse("Gmail thread read is disabled.", z.object({ error: z.literal("feature_disabled"), feature: z.literal("gmailThreadRead") })),
+        409: jsonResponse("The calling member has not connected their Google account or is missing permission.", needsConnectionSchema),
+        502: jsonResponse("Google rejected the request.", upstreamErrorSchema),
+      },
+    }),
+    orgMemberRoute(),
+    requireFeature("gmailThreadRead"),
+    paramValidator(gmailThreadParamSchema),
+    async (c) => {
+      const payload = c.get("organizationContext")
+      const token = await googleWorkspaceToken({
+        organizationId: payload.organization.id,
+        orgMembershipId: payload.currentMember.id,
+      })
+      if (token.kind !== "ok") {
+        const { body, status } = gmailReadTokenError(token)
+        return c.json(body, status)
+      }
+      if (missingScope(token.account, [GMAIL_READ_SCOPE])) {
+        return c.json({ error: "needs_connection", message: missingPermissionMessage("Gmail read") }, 409)
+      }
+
+      const { threadId } = c.req.valid("param")
+      const threadUrl = new URL(`${gmailApiBase()}/gmail/v1/users/me/threads/${encodeURIComponent(threadId)}`)
+      threadUrl.searchParams.set("format", "metadata")
+      for (const header of ["From", "To", "Cc", "Bcc", "Reply-To", "Subject", "Date"]) {
+        threadUrl.searchParams.append("metadataHeaders", header)
+      }
+      try {
+        const response = await googleWorkspaceApiFetch(threadUrl, {
+          headers: { authorization: `Bearer ${token.accessToken}` },
+          signal: c.req.raw.signal,
+        })
+        if (!response.ok) {
+          return c.json(await googleApiError("Gmail thread read", response), 502)
+        }
+        return c.json({ ok: true, ...extractGmailThreadMetadata(await readJson(response), threadId) })
+      } catch {
+        return c.json({ error: "google_api_error", message: "Gmail thread read failed." }, 502)
+      }
     },
   )
 
