@@ -4,7 +4,7 @@ import { createServer } from "node:http";
 import { once } from "node:events";
 import test from "node:test";
 import {
-  assertForward, assertPromotionPolicy, assertSameLatest, assertTrustedEvent, checkPromotionPolicy, compareVersions, latestStable, PROMOTION_ENVIRONMENT,
+  assertForward, assertPromotionPolicy, assertSameLatest, assertTrustedEvent, checkPromotionPolicy, compareReleases, compareVersions, installerRevision, latestStable, PROMOTION_ENVIRONMENT,
   assertReleaseImages, promote, publisherConfig, releaseBuildArguments, releaseConfig, releaseImages, releaseRepositories, renderClient, shouldPrepare, stableVersion, verifyRuntimeImage,
 } from "./managed-stable-release.mjs";
 
@@ -107,6 +107,52 @@ test("numeric ordering is not lexical (.9 -> .10), handles large numeric semver"
   assert.equal(compareVersions("v1.2.10", "1.2.10"), 0);
   assert.throws(() => assertForward(config, previous), /downgrade/);
   assert.throws(() => assertForward(config, { ...config, bundleSha256: "e".repeat(64) }), /different bytes/);
+});
+
+test("an installer release is ordered by version first, then installer revision", () => {
+  assert.equal(compareReleases({ version: "1.2.10", installerRevision: 2 }, { version: "1.2.10" }), 1);
+  assert.equal(compareReleases({ version: "1.2.10" }, { version: "1.2.10", installerRevision: 2 }), -1);
+  assert.equal(compareReleases({ version: "1.2.10", installerRevision: 3 }, { version: "1.2.10", installerRevision: 3 }), 0);
+  assert.equal(compareReleases({ version: "1.2.11" }, { version: "1.2.10", installerRevision: 9 }), 1, "a newer version outranks any revision of an older one");
+  assert.equal(installerRevision(undefined), 1);
+  for (const invalid of [0, 1, -2, 1.5, "2", null, 10000]) assert.throws(() => installerRevision(invalid), /installer.revision/i);
+  const second = { ...config, installerRevision: 2, bundleSha256: "e".repeat(64) };
+  assert.doesNotThrow(() => assertForward(config, second), "same version, higher revision is forward");
+  assert.throws(() => assertForward(second, config), /downgrade/);
+  assert.throws(() => assertForward(second, { ...second, bundleSha256: "f".repeat(64) }), /different bytes/);
+  assert.deepEqual(releaseConfig("aws", second), second);
+  assert.deepEqual(Object.keys(releaseConfig("aws", second)), ["version", "installerRevision", "templateUrl", "bundleUrl", "bundleSha256"]);
+  for (const installerRevision of [1, 0, "2", 2.5, null]) assert.throws(() => releaseConfig("aws", { ...config, installerRevision }));
+  assert.deepEqual(publisherConfig({ DEN_MANAGED_DEPLOYMENT_AWS_RELEASE: JSON.stringify(second) }), second);
+  assert.deepEqual(releaseBuildArguments("aws", candidate.version, "out", "pins.json", 2).slice(-2), ["--installer-revision", "2"]);
+  assert.ok(!releaseBuildArguments("aws", candidate.version, "out", "pins.json", 1).includes("--installer-revision"));
+  assert.throws(() => releaseBuildArguments("aws", candidate.version, "out", "pins.json", 0), /installer.revision/i);
+});
+
+test("an installer-only fix promotes the same version at a higher revision, and never the reverse", async () => {
+  const second = { ...config, installerRevision: 2, bundleSha256: "e".repeat(64),
+    templateUrl: config.templateUrl.replace("template.json", "1.2.10_r2/template.json"), bundleUrl: config.bundleUrl.replace("bundle.tar.gz", "1.2.10_r2/bundle.tar.gz") };
+  const revised = { ...candidate, installerRevision: 2, bundleSha256: second.bundleSha256 };
+  const forward = fixture({ changed: snapshot(config) });
+  forward.args.expected = snapshot(config);
+  assert.deepEqual(await promote({ ...forward.args, candidate: revised, publish: async () => second }), { status: "deploy-requested", deploymentId: "dep-123abc" });
+  assert.deepEqual(forward.calls.filter((call) => Array.isArray(call)), [["put", "aws", second]]);
+
+  const current = fixture();
+  current.args.expected = snapshot(second);
+  assert.deepEqual(await promote({ ...current.args, candidate: revised, publish: async () => second }), { status: "already-current" });
+  assert.ok(!current.calls.includes("deploy"));
+
+  for (const changes of [
+    { expected: snapshot(second) },
+    { candidate: revised, expected: snapshot(config), publish: async () => config },
+    { candidate: revised, expected: snapshot(config), publish: async () => ({ ...second, installerRevision: 3 }) },
+  ]) {
+    const { calls, args } = fixture();
+    await assert.rejects(promote({ ...args, ...changes }), /downgrade|does not match/);
+    assert.ok(!calls.some((call) => Array.isArray(call) && call[0] === "put"));
+    assert.ok(!calls.includes("deploy"));
+  }
 });
 
 test("workflow_run fork refs are rejected; trusted completions are only signals", () => {
@@ -400,6 +446,8 @@ test("workflow keeps cheap checks independent; trusted code, review and serializ
   assert.match(workflow, /if: github.event_name == 'workflow_dispatch' && inputs.promote/);
   assert.match(workflow, /reviewed_manifest_sha256:/);
   assert.match(workflow, /qualification_url:/);
+  assert.match(workflow, /installer_revision:/);
+  assert.match(workflow.split("\n  prepare:\n")[1].split("\n  promote:\n")[0], /INSTALLER_REVISION: \$\{\{ inputs\.installer_revision \|\| '1' \}\}/);
   const script = readFileSync(new URL("managed-stable-release.mjs", import.meta.url), "utf8");
   assert.doesNotMatch(script, /\/api\/.*(?:organizations|deployments)|slack|send.*mail/);
   assert.match(script, /only.*new-install default changed/i);

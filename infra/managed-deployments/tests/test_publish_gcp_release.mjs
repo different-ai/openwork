@@ -70,12 +70,13 @@ globalThis.fetch = async (input, options) => {
 };
 `;
 
-function fixture(t, overrides = {}) {
+// `overrides.version` is the folder the fake bucket serves; `manifestOverrides` changes what the manifest declares.
+function fixture(t, overrides = {}, manifestOverrides = {}) {
   const root = mkdtempSync(join(tmpdir(), "openwork-gcp-publisher-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const bundle = Buffer.from("offline bundle fixture\n");
   const tutorial = Buffer.from("# Offline tutorial fixture\n");
-  const manifest = { provider: "gcp", version, bundleSha256: sha256(bundle), templateSha256: sha256(tutorial) };
+  const manifest = { provider: "gcp", version, bundleSha256: sha256(bundle), templateSha256: sha256(tutorial), ...manifestOverrides };
   const config = {
     project: { projectId, projectNumber },
     // Raw Cloud Storage JSON API representation, not gcloud's normalized view.
@@ -139,6 +140,38 @@ test("publishes reviewed bytes only to immutable public Google generation URLs",
   }
   assert.ok(commands.every((args) => !args.some((arg) => ["create", "add-iam-policy-binding", "set-iam-policy", "update", "rm"].includes(arg))));
 });
+
+test("GCP publishes a higher installer revision beside its version, as one release value", (t) => {
+  const f = fixture(t, { version: "1.2.3_r2" }, { version: "1.2.3", installerRevision: 2 });
+  const result = f.run();
+  assert.equal(result.status, 0, result.stderr);
+  const output = JSON.parse(result.stdout);
+  assert.deepEqual(Object.keys(output), ["DEN_MANAGED_DEPLOYMENT_GCP_RELEASE"], "the four separate settings cannot carry a revision");
+  assert.deepEqual(JSON.parse(output.DEN_MANAGED_DEPLOYMENT_GCP_RELEASE), {
+    version: "1.2.3", installerRevision: 2,
+    templateUrl: `https://storage.googleapis.com/${bucket}/releases/gcp/1.2.3_r2/tutorial.md?generation=${generations["tutorial.md"]}`,
+    bundleUrl: `https://storage.googleapis.com/${bucket}/releases/gcp/1.2.3_r2/bundle.tar.gz?generation=${generations["bundle.tar.gz"]}`,
+    bundleSha256: f.manifest.bundleSha256,
+  });
+  const commands = f.commands();
+  assert.ok(commands.some((args) => args.slice(0, 3).join(" ") === "storage objects list" && args[3] === `gs://${bucket}/releases/gcp/1.2.3_r2/**`),
+    "the sibling folder is inventoried alone: revision 1 objects are neither read nor refused");
+  assert.deepEqual(commands.filter((args) => args[0] === "storage" && args[1] === "cp").map((args) => args[3]), names.map((name) => `gs://${bucket}/releases/gcp/1.2.3_r2/${name}`));
+});
+
+for (const [label, manifestOverrides, pattern] of [
+  ["an explicit revision 1", { version: "1.2.3", installerRevision: 1 }, /Invalid installer revision/],
+  ["a zero revision", { version: "1.2.3", installerRevision: 0 }, /Invalid installer revision/],
+  ["a text revision", { version: "1.2.3", installerRevision: "2" }, /Invalid installer revision/],
+  ["a revision above the limit", { version: "1.2.3", installerRevision: 10000 }, /Invalid installer revision/],
+  ["a revision of a prerelease", { installerRevision: 2 }, /stable versions only/],
+]) {
+  test(`GCP publisher refuses ${label} before contacting gcloud`, (t) => {
+    const f = fixture(t, {}, manifestOverrides);
+    refused(f, pattern);
+    assert.equal(f.commands().length, 0);
+  });
+}
 
 for (const [label, overrides, pattern] of [
   ["wrong project number", { project: { projectId, projectNumber: "999999999999" } }, /Wrong release project/],

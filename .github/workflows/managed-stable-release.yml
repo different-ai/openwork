@@ -27,6 +27,10 @@ on:
         type: choice
         options: [aws, gcp]
         default: aws
+      installer_revision:
+        description: Installer revision for the latest stable version (1 = first installer; raise it for an installer-only fix, after Den is deployed)
+        type: string
+        default: "1"
       promote:
         description: Publish AWS and change new-install default after real-cloud qualification review
         type: boolean
@@ -71,6 +75,7 @@ jobs:
       trusted_source: ${{ steps.source.outputs.sha }}
     env:
       RELEASE_PROVIDER: ${{ inputs.provider || 'aws' }}
+      INSTALLER_REVISION: ${{ inputs.installer_revision || '1' }}
       RELEASE_DIRECTORY: dist/managed-stable
       GH_TOKEN: ${{ github.token }}
     steps:

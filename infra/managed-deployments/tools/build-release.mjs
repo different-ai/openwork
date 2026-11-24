@@ -28,6 +28,17 @@ const inventoryKey = (kinds) => kinds.toSorted().join(",");
 export const HEALTH_SOURCE = GCP_REPOSITORIES.health + "@sha256:a1165e272e578941b84abc79e4ab38a0305cd12803a5c4247979ac7655f4d641";
 const digestPattern = /^sha256:[a-f0-9]{64}$/;
 
+// The installer's own revision for one app version. Revision 1 is never
+// written, so a revision-1 release is byte for byte what it was before
+// revisions existed.
+export const MAX_INSTALLER_REVISION = 9999;
+export function parseInstallerRevision(value) {
+  const revision = /^[1-9]\d{0,3}$/.test(value ?? "") ? Number(value) : NaN;
+  if (!Number.isInteger(revision) || revision > MAX_INSTALLER_REVISION) throw new Error("Use --installer-revision <1-9999>.");
+  return revision;
+}
+export const releaseFolder = (version, installerRevision = 1) => installerRevision > 1 ? `${version}_r${installerRevision}` : version;
+
 // Docker authenticates with the operator's registry credentials. Resolve only
 // fixed repositories, and select the actual Linux/amd64 manifest, never an index
 // digest or an attestation. Re-read by digest so missing pins fail at build time.
@@ -114,26 +125,32 @@ export function validateModuleReferences(moduleFiles, read = (path) => readFileS
 
 export function buildRelease(argv = process.argv.slice(2), inspect) {
   const [provider, version, ...options] = argv;
-  if (!["aws", "gcp"].includes(provider)) throw new Error("Usage: build-release.mjs <aws|gcp> <published-version> [output-directory] [--image-pins <approved-json-file>] [--include-assistants]");
+  if (!["aws", "gcp"].includes(provider)) throw new Error("Usage: build-release.mjs <aws|gcp> <published-version> [output-directory] [--image-pins <approved-json-file>] [--include-assistants] [--installer-revision <n>]");
   if (!version || !/^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?$/.test(version)) throw new Error("Supply an exact published OpenWork image version.");
   const outputArgument = options[0] && !options[0].startsWith("--") ? options.shift() : undefined;
   let pinsFile;
   let includeAssistants = false;
+  let installerRevision;
   while (options.length) {
     const option = options.shift();
     if (option === "--image-pins" && pinsFile === undefined && options[0] && !options[0].startsWith("--")) {
       pinsFile = options.shift();
     } else if (option === "--include-assistants" && !includeAssistants && provider === "aws") {
       includeAssistants = true;
+    } else if (option === "--installer-revision" && installerRevision === undefined) {
+      installerRevision = parseInstallerRevision(options.shift());
     } else {
-      throw new Error("Use --image-pins <approved-json-file> and AWS-only --include-assistants (registry verification is mandatory).");
+      throw new Error("Use --image-pins <approved-json-file>, --installer-revision <n> and AWS-only --include-assistants (registry verification is mandatory).");
     }
   }
   // Resolve before writing artifacts; no customer-time source tag resolution.
   const approvedPins = pinsFile === undefined ? undefined : JSON.parse(readFileSync(resolve(pinsFile), "utf8"));
   const images = provider === "gcp" ? resolveGcpImages(version, approvedPins, inspect)
     : resolveAwsImages(version, approvedPins, inspect, includeAssistants);
-  const output = resolve(outputArgument ?? resolve(root, "dist/managed-deployments", provider, version));
+  const revision = installerRevision ?? 1;
+  if (revision > 1 && version.includes("-")) throw new Error("Installer revisions apply to stable versions only.");
+  const identity = { provider, version, ...(revision > 1 ? { installerRevision: revision } : {}), protocolVersion: 1 };
+  const output = resolve(outputArgument ?? resolve(root, "dist/managed-deployments", provider, releaseFolder(version, revision)));
   mkdirSync(output, { recursive: true });
   const templateName = provider === "aws" ? "cloudformation.json" : "tutorial.md";
   if (provider === "aws") {
@@ -198,11 +215,11 @@ export function buildRelease(argv = process.argv.slice(2), inspect) {
       copyFileSync(resolve(root, file), destination);
       checksums[relative(stage, destination)] = createHash("sha256").update(readFileSync(destination)).digest("hex");
     }
-    writeFileSync(resolve(stage, "release.json"), JSON.stringify({ provider, version, protocolVersion: 1, files: checksums, images }, null, 2) + "\n");
+    writeFileSync(resolve(stage, "release.json"), JSON.stringify({ ...identity, files: checksums, images }, null, 2) + "\n");
     execFileSync("python3", [resolve(root, "infra/managed-deployments/tools/deterministic-archive.py"), stage, resolve(output, "bundle.tar.gz")]);
     const digest = (name) => createHash("sha256").update(readFileSync(resolve(output, name))).digest("hex");
-    writeFileSync(resolve(output, "manifest.json"), JSON.stringify({ provider, version, protocolVersion: 1, bundleSha256: digest("bundle.tar.gz"), templateSha256: digest(templateName) }, null, 2) + "\n");
-    console.log(`Built ${provider} installer ${version}: ${output}`);
+    writeFileSync(resolve(output, "manifest.json"), JSON.stringify({ ...identity, bundleSha256: digest("bundle.tar.gz"), templateSha256: digest(templateName) }, null, 2) + "\n");
+    console.log(`Built ${provider} installer ${version}${revision > 1 ? ` revision ${revision}` : ""}: ${output}`);
   } finally {
     rmSync(stage, { recursive: true, force: true });
   }

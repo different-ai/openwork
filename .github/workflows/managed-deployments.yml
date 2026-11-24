@@ -24,6 +24,11 @@ on:
         description: Published OpenWork image version to pin in the installer
         required: true
         type: string
+      installer_revision:
+        description: Installer revision for that version (1 = first installer; raise it for an installer-only fix)
+        required: false
+        default: "1"
+        type: string
 
 permissions:
   contents: read
@@ -63,7 +68,8 @@ jobs:
         env:
           RELEASE_VERSION: ${{ inputs.version }}
           RELEASE_PROVIDER: ${{ inputs.provider }}
-        run: node infra/managed-deployments/tools/build-release.mjs "$RELEASE_PROVIDER" "$RELEASE_VERSION" "dist/managed-deployments/$RELEASE_PROVIDER"
+          INSTALLER_REVISION: ${{ inputs.installer_revision || '1' }}
+        run: node infra/managed-deployments/tools/build-release.mjs "$RELEASE_PROVIDER" "$RELEASE_VERSION" "dist/managed-deployments/$RELEASE_PROVIDER" --installer-revision "$INSTALLER_REVISION"
       - name: Retain installer for operator publication
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:

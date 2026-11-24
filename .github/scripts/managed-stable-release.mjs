@@ -5,7 +5,10 @@ import { execFileSync } from "node:child_process";
 import { appendFileSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { AWS_REPOSITORIES, GCP_REPOSITORIES, resolveImage } from "../../infra/managed-deployments/tools/build-release.mjs";
+import { AWS_REPOSITORIES, GCP_REPOSITORIES, parseInstallerRevision, resolveImage } from "../../infra/managed-deployments/tools/build-release.mjs";
+// The one ordering of installer releases (version, then installer revision),
+// shared with Den. The file imports nothing, so Node loads it without a build.
+import { compareInstallerRelease } from "../../packages/managed-deployments/src/installer-release.ts";
 
 export const PROMOTION_ENVIRONMENT = "managed-installer-production";
 const SHA = /^[a-f0-9]{40}$/;
@@ -17,11 +20,20 @@ export function stableVersion(tag) {
   if (!VERSION.test(version)) throw new Error("Expected a strict numeric stable release tag.");
   return version;
 }
-export function compareVersions(left, right) {
-  const a = stableVersion(left).split(".").map(BigInt);
-  const b = stableVersion(right).split(".").map(BigInt);
-  for (let i = 0; i < 3; i++) if (a[i] !== b[i]) return a[i] > b[i] ? 1 : -1;
-  return 0;
+// Absent, or an integer from 2: revision 1 is never written, so each release has one encoding.
+export function installerRevision(value) {
+  if (value === undefined) return 1;
+  if (!Number.isInteger(value) || value < 2) throw new Error("Invalid installer revision.");
+  return parseInstallerRevision(String(value));
+}
+export const compareVersions = (left, right) => compareReleases({ version: left }, { version: right });
+const revisionField = (revision) => revision > 1 ? { installerRevision: revision } : {};
+export function compareReleases(left, right) {
+  const order = compareInstallerRelease(
+    { version: stableVersion(left.version), installerRevision: installerRevision(left.installerRevision) },
+    { version: stableVersion(right.version), installerRevision: installerRevision(right.installerRevision) });
+  if (order === null) throw new Error("Installer releases cannot be compared.");
+  return order;
 }
 export function assertTrustedEvent(event, name, repository, ref) {
   if (event.repository?.full_name !== repository || !event.repository.default_branch) throw new Error("Untrusted repository event.");
@@ -121,11 +133,13 @@ export function assertReleaseImages(provider, images) {
     throw new Error("Release requires the exact provider runtime inventory pinned by digest.");
   }
 }
-export function releaseBuildArguments(provider, version, directory, pins) {
+export function releaseBuildArguments(provider, version, directory, pins, revision = 1) {
   releaseRepositories(provider);
   stableVersion(version);
+  if (!Number.isInteger(revision) || revision < 1) throw new Error("Invalid installer revision.");
   return ["infra/managed-deployments/tools/build-release.mjs", provider, version, directory, "--image-pins", pins,
-    ...(provider === "aws" ? ["--include-assistants"] : [])];
+    ...(provider === "aws" ? ["--include-assistants"] : []),
+    ...(revision > 1 ? ["--installer-revision", String(parseInstallerRevision(String(revision)))] : [])];
 }
 export function releaseImages({ provider, candidate, repository, inspectManifest, inspectRuntime }) {
   if (stableVersion(candidate.version) !== candidate.version || stableVersion(candidate.tag) !== candidate.version || !SHA.test(candidate.commit)) {
@@ -141,7 +155,8 @@ export function releaseImages({ provider, candidate, repository, inspectManifest
 
 export function releaseConfig(provider, value) {
   if (!["aws", "gcp"].includes(provider) || !value || typeof value !== "object" || Array.isArray(value)
-    || Object.keys(value).sort().join(",") !== "bundleSha256,bundleUrl,templateUrl,version") throw new Error("Invalid atomic release configuration.");
+    || Object.keys(value).filter((key) => key !== "installerRevision").sort().join(",") !== "bundleSha256,bundleUrl,templateUrl,version") throw new Error("Invalid atomic release configuration.");
+  const revision = installerRevision(value.installerRevision);
   if (stableVersion(value.version) !== value.version || value.version.length > 80) throw new Error("Atomic release version must be canonical numeric semver.");
   if (!HASH.test(value.bundleSha256 ?? "")) throw new Error("Invalid release bundle hash.");
   for (const field of ["templateUrl", "bundleUrl"]) {
@@ -156,7 +171,7 @@ export function releaseConfig(provider, value) {
       || (!aws && (!/^[1-9]\d*$/.test(url.searchParams.get(key))
         || !/^\/[a-z0-9][a-z0-9._-]{1,221}\/[^\\\s]+$/.test(url.pathname)))) throw new Error("Release URLs must be immutable cloud object versions.");
   }
-  return { version: value.version, templateUrl: value.templateUrl, bundleUrl: value.bundleUrl, bundleSha256: value.bundleSha256 };
+  return { version: value.version, ...revisionField(revision), templateUrl: value.templateUrl, bundleUrl: value.bundleUrl, bundleSha256: value.bundleSha256 };
 }
 export function publisherConfig(published) {
   if (Object.hasOwn(published, "DEN_MANAGED_DEPLOYMENT_AWS_RELEASE")) {
@@ -184,9 +199,9 @@ function parseCurrent(provider, snapshot) {
 }
 export function assertForward(current, candidate) {
   if (!current) return;
-  const order = compareVersions(candidate.version, current.version);
+  const order = compareReleases(candidate, current);
   if (order < 0) throw new Error("Refusing an installer downgrade.");
-  if (order === 0 && current.bundleSha256 !== candidate.bundleSha256) throw new Error("Same installer version has different bytes; refusing replacement.");
+  if (order === 0 && current.bundleSha256 !== candidate.bundleSha256) throw new Error("Same installer version and revision has different bytes; refusing replacement.");
 }
 
 export function renderClient(serviceId, token, fetchImpl = fetch) {
@@ -223,12 +238,13 @@ export async function promote({ candidate, expected, client, latest, publish, pr
   assertReleaseImages(provider, candidate.images);
   const current = parseCurrent(provider, expected);
   assertSameLatest(candidate, await latest());
-  assertForward(current, { version: candidate.version, bundleSha256: candidate.bundleSha256 });
+  const revision = installerRevision(candidate.installerRevision);
+  assertForward(current, { version: candidate.version, ...revisionField(revision), bundleSha256: candidate.bundleSha256 });
   const config = releaseConfig(provider, await publish()); // existing safe/idempotent publisher owns object writes
-  if (config.version !== candidate.version || config.bundleSha256 !== candidate.bundleSha256) throw new Error("Published release does not match the qualified candidate.");
+  if (config.version !== candidate.version || installerRevision(config.installerRevision) !== revision || config.bundleSha256 !== candidate.bundleSha256) throw new Error("Published release does not match the qualified candidate.");
   assertForward(current, config);
-  if (current?.version === config.version) {
-    if (JSON.stringify(current) !== JSON.stringify(config)) throw new Error("Same installer version has different configuration; refusing replacement.");
+  if (current && compareReleases(current, config) === 0) {
+    if (JSON.stringify(current) !== JSON.stringify(config)) throw new Error("Same installer version and revision has different configuration; refusing replacement.");
     return { status: "already-current" };
   }
   assertSameLatest(candidate, await latest());
@@ -267,6 +283,8 @@ export async function main(command = process.argv[2], env = process.env) {
     const provider = env.RELEASE_PROVIDER || "aws";
     if (!["aws", "gcp"].includes(provider)) throw new Error("Unknown installer provider.");
     const candidate = await githubLatest();
+    // An installer-only fix: the same published app images, a new installer revision.
+    const revision = env.INSTALLER_REVISION ? parseInstallerRevision(env.INSTALLER_REVISION) : 1;
     assertSameLatest(JSON.parse(readFileSync(resolve(directory, "plan.json"), "utf8")), candidate);
     const inspectRuntime = (pin) => {
       execFileSync("docker", ["pull", "--platform=linux/amd64", pin], { stdio: "ignore" });
@@ -276,11 +294,12 @@ export async function main(command = process.argv[2], env = process.env) {
     mkdirSync(directory, { recursive: true });
     const pins = resolve(directory, "image-pins.json");
     writeFileSync(pins, JSON.stringify(images) + "\n");
-    execFileSync(process.execPath, releaseBuildArguments(provider, candidate.version, directory, pins), { stdio: "inherit" });
+    execFileSync(process.execPath, releaseBuildArguments(provider, candidate.version, directory, pins, revision), { stdio: "inherit" });
     const manifestBytes = readFileSync(resolve(directory, "manifest.json"));
     const manifest = JSON.parse(manifestBytes);
-    writeFileSync(resolve(directory, "candidate.json"), JSON.stringify({ ...candidate, provider, images, bundleSha256: manifest.bundleSha256, manifestSha256: hash(manifestBytes) }, null, 2) + "\n");
-    summary(`### Prepared ${provider} stable installer ${candidate.version}\nRelease source: \`${candidate.commit}\`\n\nReviewed manifest SHA-256: \`${hash(manifestBytes)}\`\n\nNative checks and exact-digest OCI/platform verification are **not** real-cloud fresh-install/Update qualification. No publication, customer update or production activation occurred.`);
+    if (installerRevision(manifest.installerRevision) !== revision) throw new Error("Built manifest does not carry the requested installer revision.");
+    writeFileSync(resolve(directory, "candidate.json"), JSON.stringify({ ...candidate, ...revisionField(revision), provider, images, bundleSha256: manifest.bundleSha256, manifestSha256: hash(manifestBytes) }, null, 2) + "\n");
+    summary(`### Prepared ${provider} stable installer ${candidate.version}${revision > 1 ? ` (installer revision ${revision})` : ""}\nRelease source: \`${candidate.commit}\`\n\nReviewed manifest SHA-256: \`${hash(manifestBytes)}\`\n\nNative checks and exact-digest OCI/platform verification are **not** real-cloud fresh-install/Update qualification. No publication, customer update or production activation occurred.`);
     return;
   }
   if (command !== "promote") throw new Error("Use plan, prepare, check-promotion-policy or promote.");
@@ -315,7 +334,7 @@ export async function main(command = process.argv[2], env = process.env) {
     }
     if (!live) throw new Error("Render deploy did not become live within 15 minutes; inspect before retrying.");
   }
-  summary(`### AWS installer ${candidate.version}: ${result.status === "already-current" ? "already current (no deploy)" : "Den deploy live"}\nOperator attested fresh-install/approved-Update review: ${evidence.href}\n\nOnly the new-install default changed; existing customer installations were not updated.`);
+  summary(`### AWS installer ${candidate.version}${candidate.installerRevision ? ` (installer revision ${candidate.installerRevision})` : ""}: ${result.status === "already-current" ? "already current (no deploy)" : "Den deploy live"}\nOperator attested fresh-install/approved-Update review: ${evidence.href}\n\nOnly the new-install default changed; existing customer installations were not updated.`);
 }
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch(() => {
