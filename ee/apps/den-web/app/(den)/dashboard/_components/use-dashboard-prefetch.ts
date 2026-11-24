@@ -7,7 +7,6 @@ import { libraryQueryOptions } from "./library-data";
 import { mcpConnectionsQueryOptions } from "./mcp-connections-data";
 import { pluginSummariesQueryOptions } from "./plugin-data";
 
-/** Starts loading a sidebar destination's list on hover or focus, so the page opens filled in. */
 export function useDashboardPrefetch(): (href: string) => void {
   const queryClient = useQueryClient();
   const { orgId, orgSlug } = useOrgDashboard();

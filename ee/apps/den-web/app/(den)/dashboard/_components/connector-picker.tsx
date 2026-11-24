@@ -10,7 +10,6 @@ import { ConnectorLogo } from "./item-logo";
 import type { ExternalMcpPreset } from "./mcp-connections-data";
 import { classifySmartAddInput, pastedMcpAddress } from "./mcp-connection-smart-add";
 
-/** Catalog copy is written for admins; members get the first plain clause. */
 export function shortDescription(text: string): string {
   const first = text.split(/\s[—–-]\s|—|\.\s/)[0]?.trim() ?? "";
   return first.replace(/\.$/, "");
@@ -21,9 +20,9 @@ export type CatalogEntry = {
   name: string;
   description: string;
   url: string;
-  /** Where the row goes when this is already set up. */
   openHref?: string;
   addLabel?: "Add another";
+  signInNote?: string;
 };
 
 export function catalogEntriesFromPresets(presets: readonly ExternalMcpPreset[]): CatalogEntry[] {
@@ -32,6 +31,9 @@ export function catalogEntriesFromPresets(presets: readonly ExternalMcpPreset[])
     name: preset.displayName,
     description: shortDescription(preset.description),
     url: preset.url,
+    ...(preset.registrationStatus === "dynamic_refused" ? { signInNote: "Approved apps only" }
+      : preset.registrationStatus === "requires_client" && !preset.requiresOAuthClient && !preset.defaultOAuthClientId ? { signInNote: "Needs an OAuth app" }
+        : {}),
   }));
 }
 
@@ -109,11 +111,6 @@ function GlobeTile() {
   );
 }
 
-/**
- * The one connector catalog, used from My Library and from Manage. In Manage
- * the search also takes an MCP address, and "Add any MCP" opens the address
- * form in place; `customName` is that form's state, owned by the page header.
- */
 export function ConnectorPicker({ entries, loading, addHref, customHref, mode, customName, onCustomNameChange }: {
   entries: CatalogEntry[];
   loading: boolean;
@@ -179,6 +176,7 @@ export function ConnectorPicker({ entries, loading, addHref, customHref, mode, c
             logo={<ConnectorLogo name={entry.name} url={entry.url} />}
             title={entry.name}
             description={entry.description}
+            status={entry.signInNote}
             action={entry.openHref ? (
               <LinkButton size="xs" href={entry.openHref} aria-label={`Open ${entry.name}`}>Open</LinkButton>
             ) : (

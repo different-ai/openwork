@@ -1,5 +1,6 @@
 import {
   automationScheduleSchema,
+  type AutomationCalendarSchedule,
   type AutomationSchedule,
 } from "@openwork/types/automations"
 
@@ -74,7 +75,6 @@ function sameLocalDate(left: LocalDate, right: LocalDate): boolean {
   )
 }
 
-/** Zone offset (local minus UTC) at a minute-aligned instant, in milliseconds. */
 function zoneOffsetMs(timestamp: number, timezone: string): number {
   const minute = Math.floor(timestamp / 60_000) * 60_000
   return localKey(localDateTime(minute, timezone)) - minute
@@ -82,17 +82,6 @@ function zoneOffsetMs(timestamp: number, timezone: string): number {
 
 const OFFSET_PROBE_MS = 14 * 60 * 60 * 1_000
 
-/**
- * Resolves one wall-clock occurrence in an IANA zone without scanning.
- *
- * Semantics (shared by the scheduler, previews and the calendar range API):
- * - an ambiguous time (DST fall-back repeats it) resolves to its first instant;
- * - a nonexistent time (DST spring-forward skips it) shifts to the first valid
- *   minute after the gap, reported as `shifted`.
- *
- * The instant must lie within ±14h of the nominal UTC wall time, so the zone
- * offsets sampled at both ends (and the middle) contain every candidate offset.
- */
 function resolveLocalOccurrence(
   date: LocalDate,
   hour: number,
@@ -111,7 +100,6 @@ function resolveLocalOccurrence(
     .sort((left, right) => left - right)
   if (exact[0] !== undefined) return { timestamp: exact[0], shifted: false }
 
-  // Nonexistent wall time: binary-search the transition between the two offsets.
   const candidates = offsets.map((offset) => nominal - offset)
   let low = Math.min(...candidates)
   let high = Math.max(...candidates)
@@ -120,7 +108,6 @@ function resolveLocalOccurrence(
     const local = localDateTime(low, timezone)
     return sameLocalDate(local, date) ? { timestamp: low, shifted: true } : null
   }
-  // Invariant: key(low) <= nominal < key(high), both minute aligned.
   while (high - low > 60_000) {
     const middle = low + Math.floor((high - low) / 120_000) * 60_000
     if (localKey(localDateTime(middle, timezone)) > nominal) high = middle
@@ -129,14 +116,39 @@ function resolveLocalOccurrence(
   return sameLocalDate(localDateTime(high, timezone), date) ? { timestamp: high, shifted: true } : null
 }
 
-function isScheduledDay(
-  schedule: AutomationSchedule,
-  weekday: number,
-): boolean {
-  return (
-    schedule.kind === "daily" ||
-    (schedule.kind === "weekly" && schedule.daysOfWeek.includes(weekday))
-  )
+type RecurringSchedule = Exclude<AutomationSchedule, { kind: "once" | "calendar" }>
+
+function isScheduledDay(schedule: RecurringSchedule, weekday: number): boolean {
+  return schedule.kind === "daily" || schedule.daysOfWeek.includes(weekday)
+}
+
+function wallTimesOfDay(schedule: RecurringSchedule): { hour: number; minute: number }[] {
+  if (schedule.kind !== "interval") return [{ hour: schedule.hour, minute: schedule.minute }]
+  const times: { hour: number; minute: number }[] = []
+  for (let hour = schedule.startHour; hour < schedule.endHour; hour += schedule.everyHours) {
+    times.push({ hour, minute: 0 })
+  }
+  return times
+}
+
+const SHIFTED_WARNING = (timezone: string) =>
+  `A wall-clock occurrence falls inside a daylight-saving transition and was shifted to the next valid minute in ${timezone}.`
+
+function occurrencesOnLocalDay(
+  schedule: RecurringSchedule,
+  date: LocalDate,
+): { timestamp: number; shifted: boolean }[] {
+  const weekday = new Date(Date.UTC(date.year, date.month - 1, date.day)).getUTCDay()
+  if (!isScheduledDay(schedule, weekday)) return []
+  const resolved: { timestamp: number; shifted: boolean }[] = []
+  for (const time of wallTimesOfDay(schedule)) {
+    const occurrence = resolveLocalOccurrence(date, time.hour, time.minute, schedule.timezone)
+    if (!occurrence) continue
+    const previous = resolved.at(-1)
+    if (previous && occurrence.timestamp <= previous.timestamp) continue
+    resolved.push(occurrence)
+  }
+  return resolved
 }
 
 export function assertAutomationTimezone(timezone: string): void {
@@ -144,6 +156,29 @@ export function assertAutomationTimezone(timezone: string): void {
     formatter(timezone).format(new Date(0))
   } catch {
     throw new RangeError(`Invalid IANA timezone: ${timezone}`)
+  }
+}
+
+/**
+ * Reads a one-time run written as text: epoch milliseconds in digits, an ISO
+ * date-time with an offset, or one without, which is that wall time in the
+ * schedule's timezone. Returns null for anything else.
+ */
+export function automationTimestampFromText(text: string, timezone: string): number | null {
+  const value = text.trim()
+  if (/^\d{1,16}$/.test(value)) return Number(value)
+  const match = /^(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?$/i.exec(value)
+  if (!match) return null
+  if (match[6]) {
+    const instant = Date.parse(value.replace(" ", "T"))
+    return Number.isNaN(instant) ? null : instant
+  }
+  const [year, month, day, hour, minute] = match.slice(1, 6).map(Number)
+  if (month < 1 || month > 12 || day < 1 || day > 31 || hour > 23 || minute > 59) return null
+  try {
+    return resolveLocalOccurrence({ year, month, day }, hour, minute, timezone)?.timestamp ?? null
+  } catch {
+    return null
   }
 }
 
@@ -166,6 +201,7 @@ export function automationOccurrences(
   if (schedule.kind === "once") {
     return { occurrences: schedule.at > options.after ? [schedule.at] : [], warnings: [] }
   }
+  if (schedule.kind === "calendar") return { occurrences: [], warnings: [] }
 
   const after = Math.floor(options.after)
   const start = localDateTime(after, schedule.timezone)
@@ -173,35 +209,20 @@ export function automationOccurrences(
   const warnings = new Set<string>()
 
   for (let offset = 0; offset < 370 && occurrences.length < count; offset += 1) {
-    const date = addLocalDays(start, offset)
-    const weekday = new Date(
-      Date.UTC(date.year, date.month - 1, date.day),
-    ).getUTCDay()
-    if (!isScheduledDay(schedule, weekday)) continue
-    const resolved = resolveLocalOccurrence(
-      date,
-      schedule.hour,
-      schedule.minute,
-      schedule.timezone,
-    )
-    if (!resolved || resolved.timestamp <= after) continue
-    if (resolved.shifted) {
-      warnings.add(
-        `A wall-clock occurrence falls inside a daylight-saving transition and was shifted to the next valid minute in ${schedule.timezone}.`,
-      )
+    for (const resolved of occurrencesOnLocalDay(schedule, addLocalDays(start, offset))) {
+      if (resolved.timestamp <= after) continue
+      if (occurrences.length >= count) break
+      if (resolved.shifted) warnings.add(SHIFTED_WARNING(schedule.timezone))
+      occurrences.push(resolved.timestamp)
     }
-    occurrences.push(resolved.timestamp)
   }
 
   return { occurrences, warnings: [...warnings] }
 }
 
 export interface AutomationOccurrenceRangeOptions {
-  /** Inclusive lower bound (epoch ms). */
   from: number
-  /** Exclusive upper bound (epoch ms). */
   to: number
-  /** Maximum occurrences to return; the result says when more existed. */
   limit?: number
 }
 
@@ -230,29 +251,23 @@ export function automationOccurrencesInRange(
   if (schedule.kind === "once") {
     return { occurrences: schedule.at >= from && schedule.at < to ? [schedule.at] : [], truncated, warnings: [] }
   }
+  if (schedule.kind === "calendar") return { occurrences: [], truncated, warnings: [] }
 
   const occurrences: number[] = []
   const warnings = new Set<string>()
-  // A local day can start up to ~14h either side of UTC midnight; start one day
-  // early and stop one day late so the edges of the range are always covered.
   const first = addLocalDays(localDateTime(from, schedule.timezone), -1)
   const last = addLocalDays(localDateTime(to, schedule.timezone), 1)
   const lastKey = Date.UTC(last.year, last.month - 1, last.day)
-  for (let date = first; Date.UTC(date.year, date.month - 1, date.day) <= lastKey; date = addLocalDays(date, 1)) {
-    const weekday = new Date(Date.UTC(date.year, date.month - 1, date.day)).getUTCDay()
-    if (!isScheduledDay(schedule, weekday)) continue
-    const resolved = resolveLocalOccurrence(date, schedule.hour, schedule.minute, schedule.timezone)
-    if (!resolved || resolved.timestamp < from || resolved.timestamp >= to) continue
-    if (occurrences.length >= limit) {
-      truncated = true
-      break
+  days: for (let date = first; Date.UTC(date.year, date.month - 1, date.day) <= lastKey; date = addLocalDays(date, 1)) {
+    for (const resolved of occurrencesOnLocalDay(schedule, date)) {
+      if (resolved.timestamp < from || resolved.timestamp >= to) continue
+      if (occurrences.length >= limit) {
+        truncated = true
+        break days
+      }
+      if (resolved.shifted) warnings.add(SHIFTED_WARNING(schedule.timezone))
+      occurrences.push(resolved.timestamp)
     }
-    if (resolved.shifted) {
-      warnings.add(
-        `A wall-clock occurrence falls inside a daylight-saving transition and was shifted to the next valid minute in ${schedule.timezone}.`,
-      )
-    }
-    occurrences.push(resolved.timestamp)
   }
   return { occurrences, truncated, warnings: [...warnings] }
 }
@@ -293,3 +308,66 @@ export function recoverableAutomationOccurrence(
 }
 
 export const AUTOMATION_DAY_MS = DAY_MS
+
+const SUNDAY_UTC = Date.UTC(2024, 0, 7)
+
+/** Short weekday names for days of the week (0 = Sunday), e.g. "Mon, Wed". */
+export function formatAutomationWeekdays(daysOfWeek: readonly number[], locale?: Intl.LocalesArgument): string {
+  const weekday = new Intl.DateTimeFormat(locale, { weekday: "short", timeZone: "UTC" })
+  return daysOfWeek.map((day) => weekday.format(new Date(SUNDAY_UTC + day * DAY_MS))).join(", ")
+}
+
+function clockLabel(hour: number, minute = 0): string {
+  return `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`
+}
+
+/**
+ * One-line label for a schedule, shared by the desktop app, Den web and the
+ * agent's Automation listing, e.g. "Daily · 09:00 · Europe/Paris" or
+ * "Every 3 hours · 09:00–18:00 · Mon, Tue, Wed, Thu, Fri · UTC". Times are in
+ * the schedule's own zone, which the label always names.
+ */
+export function formatAutomationSchedule(schedule: AutomationSchedule, locale?: Intl.LocalesArgument): string {
+  if (schedule.kind === "once") {
+    const at = new Intl.DateTimeFormat(locale, {
+      timeZone: schedule.timezone,
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    }).format(new Date(schedule.at))
+    return `Once · ${at} · ${schedule.timezone}`
+  }
+  if (schedule.kind === "daily") return `Daily · ${clockLabel(schedule.hour, schedule.minute)} · ${schedule.timezone}`
+  if (schedule.kind === "weekly") {
+    return `Weekly · ${formatAutomationWeekdays(schedule.daysOfWeek, locale)} · ${clockLabel(schedule.hour, schedule.minute)} · ${schedule.timezone}`
+  }
+  if (schedule.kind === "calendar") {
+    const parts = [describeCalendarMoment(schedule)]
+    if (schedule.rule.withExternalAttendees) parts.push("with people outside the organization")
+    if (schedule.rule.titleIncludes) parts.push(`titles containing "${schedule.rule.titleIncludes}"`)
+    parts.push(schedule.timezone)
+    return parts.join(" · ")
+  }
+  const parts = [schedule.everyHours === 1 ? "Every hour" : `Every ${schedule.everyHours} hours`]
+  if (schedule.startHour !== 0 || schedule.endHour !== 24) parts.push(`${clockLabel(schedule.startHour)}–${clockLabel(schedule.endHour)}`)
+  if (schedule.daysOfWeek.length < 7) parts.push(formatAutomationWeekdays(schedule.daysOfWeek, locale))
+  parts.push(schedule.timezone)
+  return parts.join(" · ")
+}
+
+/**
+ * When a calendar trigger runs, in words: "After each meeting (+5 min)",
+ * "15 min before each meeting", "As each meeting starts".
+ */
+export function describeCalendarMoment(schedule: Pick<AutomationCalendarSchedule, "edge" | "offsetMinutes">): string {
+  const minutes = Math.abs(schedule.offsetMinutes)
+  if (schedule.edge === "end") {
+    if (schedule.offsetMinutes === 0) return "After each meeting"
+    return schedule.offsetMinutes > 0 ? `After each meeting (+${minutes} min)` : `${minutes} min before each meeting ends`
+  }
+  if (schedule.offsetMinutes === 0) return "As each meeting starts"
+  return schedule.offsetMinutes < 0 ? `${minutes} min before each meeting` : `${minutes} min into each meeting`
+}

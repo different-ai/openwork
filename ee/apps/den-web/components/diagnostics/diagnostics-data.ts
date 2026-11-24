@@ -12,36 +12,30 @@ import {
 export const DIAGNOSTICS_PATH = "/v1/org/diagnostics";
 export const DIAGNOSTICS_CHECK_PATH = `${DIAGNOSTICS_PATH}/check`;
 export const DIAGNOSTICS_POLL_MS = 2_000;
-/** Stop polling a check that never finishes; the next Check now reads the latest result. */
 export const DIAGNOSTICS_POLL_LIMIT_MS = 30_000;
 const MAX_RETRY_AFTER_SECONDS = 3_600;
 
-/** Strict parse: unknown fields, codes or shapes are rejected rather than rendered. */
 export function parseOrgDiagnostics(payload: unknown): OrgDiagnostics | null {
   const parsed = orgDiagnosticsSchema.safeParse(payload);
   return parsed.success ? parsed.data : null;
 }
 
-/** Bounded integer seconds only; HTTP dates and nonsense are ignored. */
 export function retryAfterSeconds(value: string | null): number | undefined {
   if (!value || !/^\d+$/.test(value)) return undefined;
   const seconds = Number(value);
   return Number.isSafeInteger(seconds) && seconds > 0 && seconds <= MAX_RETRY_AFTER_SECONDS ? seconds : undefined;
 }
 
-/** Any part of the report still waiting on a live check. */
 export function isChecking(report: OrgDiagnostics): boolean {
   return report.checking
     || (report.providers.access === "granted" && report.providers.checking)
     || (report.installation.access === "operator" && report.installation.services.checking);
 }
 
-/** Poll while a check runs, until the polling window (at most 30 s from its start) closes. */
 export function shouldPollDiagnostics(report: OrgDiagnostics | undefined, pollUntil: number | null, now: number): boolean {
   return Boolean(report && isChecking(report) && pollUntil !== null && now < pollUntil);
 }
 
-/** Errors first, then warnings; the server's order is kept within each severity. */
 export function orderAttention(items: readonly DiagnosticsAttention[]): DiagnosticsAttention[] {
   return items
     .map((item, index) => ({ item, index }))
@@ -57,7 +51,6 @@ export function attentionFor(report: OrgDiagnostics, section: DiagnosticsSection
   return orderAttention(report.attention).find((item) => item.section === section && item.targetId === targetId);
 }
 
-/** Newest live check across the sections the viewer can see. */
 export function latestCheckedAt(report: OrgDiagnostics): string | null {
   const candidates = [
     report.providers.access === "granted" ? report.providers.checkedAt : null,
@@ -81,21 +74,16 @@ export function overallStatus(report: OrgDiagnostics): OverallStatus {
   return desktopReported || latestCheckedAt(report) ? { kind: "working" } : { kind: "not_checked" };
 }
 
-/** Stable DOM id for a row an attention item points at. */
 export function diagnosticsRowId(section: DiagnosticsSectionId, targetId: string): string {
   return `diagnostics-${section}-${targetId.replace(/[^A-Za-z0-9_-]/g, "-")}`;
 }
 
-/** The pretty JSON that "Copy report" puts on the clipboard. */
 export function diagnosticsReportText(report: OrgDiagnostics): string {
   return JSON.stringify(report, null, 2);
 }
 
-// ── Desktop ────────────────────────────────────────────────────────────────
-
 export type StepSegment = { step: DesktopStartupStep; typicalMs: number; percent: number };
 
-/** Steps in launch order with their share of the typical launch; steps without timing are left out. */
 export function desktopStepSegments(desktop: DesktopDiagnostics): StepSegment[] {
   const timed = DESKTOP_STARTUP_STEPS.flatMap((step) => {
     const typicalMs = desktop.steps.find((entry) => entry.step === step)?.typicalMs;
@@ -113,17 +101,12 @@ export function desktopSummaryState(desktop: DesktopDiagnostics): DesktopSummary
   return desktop.connected === 0 ? "not_connecting" : "some_failed";
 }
 
-// ── Providers ──────────────────────────────────────────────────────────────
-
-/** Configured models the endpoint serves; null when the endpoint wasn't listed. */
 export function providerAvailableModels(provider: ProviderCheck): number | null {
   if (provider.models.served === null) return null;
   return provider.models.configured > 0
     ? Math.max(0, provider.models.configured - provider.models.missing.length)
     : provider.models.served;
 }
-
-// ── Formatting ─────────────────────────────────────────────────────────────
 
 export function formatDuration(ms: number): string {
   if (ms < 1_000) return `${Math.round(ms)} ms`;
@@ -141,7 +124,6 @@ function elapsedLabel(ms: number): string {
   return `${days} ${days === 1 ? "day" : "days"}`;
 }
 
-/** "just now", "2 min ago", "3 h ago", "2 days ago", then a date. Null for missing or invalid times. */
 export function formatAgo(value: string | null, now: number): string | null {
   if (!value) return null;
   const time = Date.parse(value);
@@ -152,7 +134,6 @@ export function formatAgo(value: string | null, now: number): string | null {
   return new Intl.DateTimeFormat("en-US", { month: "short", day: "numeric", timeZone: "UTC" }).format(new Date(time));
 }
 
-/** "Up 3 h" from a server start time. */
 export function formatUptime(startedAt: string, now: number): string | null {
   const time = Date.parse(startedAt);
   if (!Number.isFinite(time)) return null;

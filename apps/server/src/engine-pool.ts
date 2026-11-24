@@ -1,23 +1,3 @@
-/**
- * Blue/green rollover for the managed OpenCode engine.
- *
- * A config change the engine can only read at instance build time (provider
- * blocks, plugins, agents, permissions) normally forces a dispose, which
- * aborts every run in flight. Deferring the dispose until the engine idles
- * avoids the abort but leaves config hostage to long sessions.
- *
- * This pool takes the third option when a reload lands on a busy engine:
- * spawn a standby with the new config, point every new request at it, and
- * keep the old engine alive only until its running sessions finish. Sessions
- * live in OpenCode's shared SQLite, so only the live run is process-bound.
- *
- * Steady state stays one engine. During a drain there are two, and never more
- * than two long-lived ones: a config change arriving mid-drain coalesces into
- * a single pending rollover (latest wins) instead of stacking processes.
- *
- * Always on for managed engines. Attached engines have no pool, so their
- * callers keep the defer-while-busy behavior instead.
- */
 import { createHash, randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 
@@ -35,15 +15,13 @@ export type EnginePoolLogger = {
   log: (level: "info" | "warn" | "error", message: string, attributes?: Record<string, unknown>) => void;
 };
 
-/** Everything needed to spawn a replacement engine identical to the first one. */
 export type EngineSpawnTemplate = {
   bin?: string;
   cwd: string;
   runtimeConfigPath: string;
   env: Record<string, string | undefined>;
-  /** Ports a standby must avoid (the OpenWork server, and the live engine). */
+  stateDir?: string;
   reservedPorts: () => number[];
-  /** Readiness budget for a standby spawn. Defaults to the managed-engine default. */
   spawnTimeoutMs?: number;
 };
 
@@ -56,24 +34,14 @@ export type EnginePoolStandby = {
 };
 
 export type EnginePoolHooks = {
-  /** Today's in-place dispose. Used when the engine is idle. */
   reloadInPlace: (
     config: ServerConfig,
     workspace: WorkspaceInfo,
     options?: { awaitPostRefreshSync?: boolean },
   ) => Promise<void>;
-  /** Whether the given engine has non-idle sessions. */
   engineBusy: (config: ServerConfig, workspace: WorkspaceInfo) => Promise<boolean>;
-  /** Re-register runtime MCPs and reconcile cloud MCP against a fresh engine. */
   postRefreshSync: (config: ServerConfig, workspace: WorkspaceInfo) => Promise<void>;
-  /**
-   * Prepare a healthy standby before it becomes primary (managed provider
-   * credentials). A spawned engine receives no provider keys in its
-   * environment; without this the first sync after the flip re-delivers them,
-   * reports a credential change, and forces yet another standby.
-   */
   prepareStandby?: (config: ServerConfig, standby: EnginePoolStandby) => Promise<void>;
-  /** Rebuild the engine-visible runtime config file (workspace-independent). */
   writeRuntimeConfigFile: (config: ServerConfig) => Promise<{ path: string }>;
   registerTrusted: (config: ServerConfig, generation: { baseUrl: string; identity: string; isAlive: () => boolean }) => void;
   clearTrusted: (config: ServerConfig, identity: string) => void;
@@ -81,19 +49,12 @@ export type EnginePoolHooks = {
   now?: () => number;
   schedule?: (operation: () => void, delayMs: number) => ReturnType<typeof setTimeout>;
   waitForHealthy?: (handle: ManagedOpencodeServer) => Promise<void>;
-  /** Called once when the pool shuts down, before its engines are retired. */
   onDisposed?: () => void;
   logger?: EnginePoolLogger;
 };
 
 export type RolloverReason = string;
 
-/**
- * What a refresh request did. `updated_live`, `reloaded_in_place` and `rolled_over`
- * mean the engine now serves the requested config; `skipped` and `coalesced`
- * leave the caller's change owed, so a caller tracking a pending reload must
- * keep it pending until one of the applied outcomes arrives.
- */
 export type RolloverOutcome =
   | { action: "updated_live" }
   | { action: "skipped"; reason: "unchanged" | "disposed" }
@@ -127,13 +88,7 @@ type Generation = {
   handle: ManagedOpencodeServer;
   status: GenerationStatus;
   spawnedAt: number;
-  /** Config fingerprint this process was spawned with. */
   fingerprint: string;
-  /**
-   * Config fingerprint each directory's instance was last rebuilt against by
-   * an in-place reload. An in-place reload disposes ONE directory instance;
-   * the other directories keep serving what they read at build time.
-   */
   reloadedDirectories: Map<string, string>;
   registryId: string | null;
   trustedIdentity: string | null;
@@ -180,7 +135,6 @@ function positiveIntFromEnv(name: string, fallback: number): number {
   return Number.isFinite(raw) && raw > 0 ? raw : fallback;
 }
 
-/** Same, but an explicit 0 is meaningful (it disables the throttle). */
 function nonNegativeIntFromEnv(name: string, fallback: number): number {
   const value = process.env[name]?.trim();
   if (!value) return fallback;
@@ -188,21 +142,14 @@ function nonNegativeIntFromEnv(name: string, fallback: number): number {
   return Number.isFinite(raw) && raw >= 0 ? raw : fallback;
 }
 
-/**
- * How long a draining engine may go without any owned-session activity before
- * its sessions are aborted. Activity on the engine event stream pushes the
- * deadline out, so this bounds inactivity, not total drain time.
- */
 function drainTimeoutMs(): number {
   return positiveIntFromEnv("OPENWORK_ENGINE_DRAIN_TIMEOUT_MS", 15 * 60_000);
 }
 
-/** Delay before the drain activity watch reconnects to a lost engine event stream. */
 function drainActivityReconnectMs(): number {
   return positiveIntFromEnv("OPENWORK_ENGINE_DRAIN_ACTIVITY_RECONNECT_MS", 1_000);
 }
 
-/** Floor between automatic spawns, so a burst of triggers cannot thrash. 0 disables it. */
 function minSpawnIntervalMs(): number {
   return nonNegativeIntFromEnv("OPENWORK_ENGINE_MIN_SPAWN_INTERVAL_MS", 30_000);
 }
@@ -211,16 +158,10 @@ function drainPollIntervalMs(): number {
   return positiveIntFromEnv("OPENWORK_ENGINE_DRAIN_POLL_MS", 5_000);
 }
 
-/** Grace given to aborted sessions to unwind before the engine is closed. */
 function abortSettleMs(): number {
   return nonNegativeIntFromEnv("OPENWORK_ENGINE_ABORT_SETTLE_MS", 5_000);
 }
 
-/**
- * Budget for seeding a healthy standby (managed provider credentials) before
- * it may become primary. A seed that hangs past this is a failed rollover,
- * never a silent flip onto an engine without keys.
- */
 function standbyPrepareTimeoutMs(): number {
   return positiveIntFromEnv("OPENWORK_ENGINE_STANDBY_PREPARE_TIMEOUT_MS", 30_000);
 }
@@ -238,8 +179,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function isEngineConnectionFailure(error: unknown): boolean {
-  // Node/undici occasionally drops the transport cause. This classifier is
-  // only used for managed OpenCode engine traffic, never external egress.
   if (error instanceof TypeError && error.message === "fetch failed" && error.cause === undefined) return true;
   const visited = new Set<object>();
   let current: unknown = error;
@@ -250,7 +189,6 @@ export function isEngineConnectionFailure(error: unknown): boolean {
     if (!isRecord(current) || visited.has(current)) return false;
     visited.add(current);
     const code = current.code;
-    // An engine that dies mid-request closes the socket (UND_ERR_SOCKET, EPIPE).
     if (code === "ECONNREFUSED" || code === "ECONNRESET" || code === "ETIMEDOUT" || code === "EPIPE" || code === "UND_ERR_CONNECT_TIMEOUT" || code === "UND_ERR_HEADERS_TIMEOUT" || code === "UND_ERR_SOCKET") return true;
     const message = current.message;
     if (typeof message === "string" && /ECONNREFUSED|ECONNRESET|ETIMEDOUT|EPIPE|UND_ERR_CONNECT_TIMEOUT|UND_ERR_HEADERS_TIMEOUT|UND_ERR_SOCKET|socket hang up|other side closed|Unable to connect|Headers Timeout Error/i.test(message)) return true;
@@ -345,21 +283,8 @@ function eventIdentifiers(payload: unknown): { sessionIds: Set<string>; requestI
   return { sessionIds, requestIds };
 }
 
-/**
- * Cap on the text one unterminated SSE frame may buffer before the stream is
- * treated as malformed. Sized well above any legitimate single engine event
- * (large tool outputs included) so real frames are never truncated; only a
- * stream that stops terminating frames hits it.
- */
 export const ENGINE_SSE_FRAME_MAX_CHARS = 4 * 1024 * 1024;
 
-/**
- * Incremental SSE frame splitter shared by the client event fan-in and the
- * drain activity watch. It bounds the memory a single unterminated frame can
- * hold: completed frames are always returned, and `overflow` turns true once
- * the pending remainder exceeds the cap so the caller can drop that
- * connection instead of buffering it forever.
- */
 export class BoundedSseFrameBuffer {
   private readonly decoder = new TextDecoder();
   private buffered = "";
@@ -379,7 +304,6 @@ export class BoundedSseFrameBuffer {
   }
 }
 
-/** Decode one SSE frame's `data:` payload; null when the frame carries none. */
 function sseFramePayload(frame: string): unknown {
   const data = frame
     .split(/\r?\n/)
@@ -394,10 +318,6 @@ function sseFramePayload(frame: string): unknown {
   }
 }
 
-/**
- * Everything a spawned engine reads at build time. Comparing this is what
- * lets a repeated no-op reload skip spawning a replacement.
- */
 export async function computeEngineConfigFingerprint(template: EngineSpawnTemplate): Promise<string> {
   const content = await readFile(template.runtimeConfigPath, "utf8").catch(() => "");
   return createHash("sha256")
@@ -409,7 +329,6 @@ export async function computeEngineConfigFingerprint(template: EngineSpawnTempla
     .digest("hex");
 }
 
-/** The engine directory an in-place reload disposes for this workspace. */
 function directoryKey(workspace: WorkspaceInfo): string {
   return workspace.directory?.trim() || workspace.path;
 }
@@ -421,7 +340,6 @@ export class EnginePool {
   private generations: Generation[] = [];
   private inFlight: Promise<RolloverOutcome> | null = null;
   private pendingRollover: RolloverRequest | null = null;
-  /** Callers coalesced into `pendingRollover`; settled when that rollover runs. */
   private pendingWaiters: RolloverWaiter[] = [];
   private lastSpawnAt = 0;
   private consecutiveConnectionFailures = 0;
@@ -443,15 +361,10 @@ export class EnginePool {
     this.hooks = input.hooks;
   }
 
-  /** Directory every generation of this engine starts in. */
   cwd(): string {
     return this.template.cwd;
   }
 
-  /**
-   * Register the engine spawned during startup as the first generation, so a
-   * later rollover knows what it is replacing.
-   */
   adoptPrimary(input: {
     handle: ManagedOpencodeServer;
     fingerprint: string;
@@ -546,7 +459,6 @@ export class EnginePool {
     return { target: primaryConnection, fallback };
   }
 
-  /** Live proxied event streams, i.e. clients currently listening to this engine. */
   eventProxyCount(): number {
     return this.eventProxyControllers.size;
   }
@@ -568,12 +480,6 @@ export class EnginePool {
     };
   }
 
-  /**
-   * How the event fan-in should treat frames from a generation. With one
-   * primary generation and no ownership pinned elsewhere, every frame is
-   * forwarded verbatim and never parsed; `filter` requires the payload-level
-   * check in `shouldForwardEvent`, which is what a rollover needs.
-   */
   eventForwardMode(generationId: string): "forward" | "filter" | "drop" {
     const generation = this.generationForId(generationId);
     if (!generation) return "drop";
@@ -635,22 +541,15 @@ export class EnginePool {
     };
   }
 
-  /** Provider sync treats an active drain as busy so it defers instead of parking on waitForDrain(). */
   hasDrainingGeneration(): boolean {
     return this.generations.some((entry) => entry.status === "draining");
   }
 
-  /**
-   * Bring the engine onto current config. Idle engines reload in place; busy
-   * ones roll over to a standby. Serialized: concurrent requests collapse into
-   * one pending rollover so a burst never stacks processes.
-   */
   async requestRollover(input: {
     reason: RolloverReason;
     workspace: WorkspaceInfo;
     manual?: boolean;
     awaitPostRefreshSync?: boolean;
-    /** Apply a config change through a healthy standby even when the primary is idle. */
     forceStandby?: boolean;
   }): Promise<RolloverOutcome> {
     if (this.disposed) return { action: "skipped", reason: "disposed" };
@@ -662,8 +561,6 @@ export class EnginePool {
       forceStandby: input.forceStandby === true,
     };
     if (this.inFlight) {
-      // Latest wins: a manual request keeps its manual flag so it still
-      // bypasses the fingerprint guard when it runs.
       this.pendingRollover = {
         ...request,
         manual: request.manual || this.pendingRollover?.manual === true,
@@ -673,9 +570,6 @@ export class EnginePool {
       this.hooks.logger?.log("info", "Engine rollover coalesced into the in-flight request.", {
         "engine.rollover.reason": request.reason,
       });
-      // The in-flight spawn may have read config and credentials from before
-      // this request. Settle only when the queued rollover itself lands, so a
-      // caller never records a change as applied that the engine has not read.
       return new Promise<RolloverOutcome>((resolve, reject) => {
         this.pendingWaiters.push({ resolve, reject });
       });
@@ -711,20 +605,10 @@ export class EnginePool {
 
   private async runRollover(request: RolloverRequest): Promise<RolloverOutcome> {
     const { workspace, reason, manual, awaitPostRefreshSync, forceStandby } = request;
-    // The standby reads config from disk at spawn, so make sure the file is
-    // current before deciding anything.
     await this.hooks.writeRuntimeConfigFile(this.config).catch(() => undefined);
     const fingerprint = await this.currentFingerprint();
     const primary = this.generations.find((entry) => entry.status === "primary") ?? null;
 
-    // Nothing this workspace's instance reads at build time changed: either
-    // the process was spawned on this config or this directory was already
-    // reloaded onto it. Skipping here is what keeps a repeating no-op sync
-    // from spawning an engine every pass. Other directories reloaded in place
-    // do not count: their dispose left this one serving the previous config.
-    // A forced request is exempt: its caller knows an input the fingerprint
-    // cannot see changed (a rotated credential, a persisted policy), and
-    // skipping it left the engine serving with the old key.
     const directory = directoryKey(workspace);
     if (
       !manual
@@ -757,8 +641,6 @@ export class EnginePool {
         if (this.disposed) return { action: "skipped", reason: "disposed" };
         return this.runRollover(request);
       }
-      // Cap: one primary plus one draining. Park this change; it lands when
-      // the current drain finishes.
       this.pendingRollover = { reason, workspace, manual, awaitPostRefreshSync, forceStandby };
       this.hooks.logger?.log("info", "Engine rollover parked behind an active drain.", {
         "engine.rollover.reason": reason,
@@ -818,8 +700,6 @@ export class EnginePool {
     try {
       await this.waitForHealthy(handle);
     } catch (error) {
-      // Never flip onto an engine that has not answered: close the partial
-      // standby and leave the primary serving.
       this.generations = this.generations.filter((entry) => entry.id !== generation.id);
       await handle.close().catch(() => undefined);
       this.hooks.logger?.log("error", "Engine rollover standby never became healthy; the live engine is untouched.", {
@@ -833,10 +713,6 @@ export class EnginePool {
       try {
         await this.prepareStandbyBounded(generation, workspace);
       } catch (error) {
-        // A standby without its credentials would answer every run with
-        // "API key is missing" while status called the reload landed. Keep
-        // the primary serving, close the standby, and let the caller's retry
-        // path bring the change back once seeding works.
         this.generations = this.generations.filter((entry) => entry.id !== generation.id);
         await handle.close().catch(() => undefined);
         this.hooks.logger?.log("error", "Engine standby preparation failed; the live engine is untouched.", {
@@ -879,8 +755,6 @@ export class EnginePool {
       "engine.rollover.draining_sessions": drainingSessions.length,
     });
 
-    // Best-effort and off the critical path: the new engine already has disk
-    // config; this pushes the runtime-DB MCPs a fresh instance cannot see.
     this.detachPostRefreshSync(workspace);
 
     if (primary) this.startDrainMonitor(primary, workspace);
@@ -888,7 +762,6 @@ export class EnginePool {
     return { action: "rolled_over", generationId: generation.id, drainingSessions: drainingSessions.length };
   }
 
-  /** Seed the standby within a bounded budget; a hung seed is a failed rollover. */
   private async prepareStandbyBounded(generation: Generation, workspace: WorkspaceInfo): Promise<void> {
     const prepare = this.hooks.prepareStandby;
     if (!prepare) return;
@@ -916,11 +789,6 @@ export class EnginePool {
     }
   }
 
-  /**
-   * Point the server at the new generation. Synchronous on purpose: every
-   * request resolves its engine from `config`, so there must be no await
-   * between demoting the old engine and promoting the new one.
-   */
   private flip(
     next: Generation,
     previous: Generation | null,
@@ -951,7 +819,6 @@ export class EnginePool {
       try {
         this.hooks.clearTrusted(this.config, previous.trustedIdentity);
       } catch {
-        // The registry is advisory; a stale entry must not block the flip.
       }
     }
     next.trustedIdentity = [next.handle.pid ?? "unknown", randomUUID()].join(":");
@@ -962,7 +829,6 @@ export class EnginePool {
         isAlive: next.handle.isAlive,
       });
     } catch {
-      // Same: diagnostics eligibility only.
     }
 
     if (next.registryId) void updateEngineInstanceRole(this.config, next.registryId, "primary").catch(() => undefined);
@@ -972,14 +838,6 @@ export class EnginePool {
     this.abortEventProxies();
   }
 
-  /**
-   * Watch a draining engine and close it once its runs finish. The grace
-   * window bounds inactivity, not total drain time: engine events for an
-   * owned session push the deadline out, so a run that is actively making
-   * progress is never aborted mid-flight, while a non-idle session that stops
-   * reporting anything for the whole window is aborted rather than kept alive
-   * forever.
-   */
   private startDrainMonitor(generation: Generation, workspace: WorkspaceInfo): void {
     generation.drainDeadline = Date.now() + drainTimeoutMs();
     this.watchDrainActivity(generation);
@@ -1018,16 +876,9 @@ export class EnginePool {
     const timer = setInterval(() => void tick().catch(() => undefined), drainPollIntervalMs());
     timer.unref?.();
     generation.drainTimer = timer;
-    // Sessions can finish between the flip and the first poll.
     void tick().catch(() => undefined);
   }
 
-  /**
-   * Hold one global event-stream subscription on the draining engine so
-   * owned-session activity keeps extending the drain deadline. The client
-   * event fan-in only exists while a client is attached; the pool owns this
-   * watch so a background run with no observer still counts as active.
-   */
   private watchDrainActivity(generation: Generation): void {
     const controller = new AbortController();
     generation.drainActivityWatch = controller;
@@ -1072,8 +923,6 @@ export class EnginePool {
         for (const frame of parsed.frames) {
           this.noteDrainActivity(generation, sseFramePayload(frame));
         }
-        // A frame that never terminates would buffer without bound; drop the
-        // stream and let the watch loop reconnect.
         if (parsed.overflow) return;
       }
     } finally {
@@ -1082,7 +931,6 @@ export class EnginePool {
     }
   }
 
-  /** An engine event naming an owned session is proof of progress: push the deadline out. */
   private noteDrainActivity(generation: Generation, payload: unknown): void {
     if (payload === null || generation.status !== "draining" || generation.drainDeadline === null) return;
     const owned = this.activeSessionsByGeneration.get(generation.id);
@@ -1121,7 +969,6 @@ export class EnginePool {
       try {
         this.hooks.clearTrusted(this.config, generation.trustedIdentity);
       } catch {
-        // Advisory only.
       }
       generation.trustedIdentity = null;
     }
@@ -1148,7 +995,6 @@ export class EnginePool {
     if (closeError !== undefined && cause === "shutdown") throw closeError;
   }
 
-  /** Close every engine this pool owns. Draining generations go first. */
   async disposeAll(): Promise<void> {
     this.disposed = true;
     this.hooks.onDisposed?.();
@@ -1220,7 +1066,6 @@ export class EnginePool {
           try {
             this.hooks.clearTrusted(this.config, previous.trustedIdentity);
           } catch {
-            // Advisory only; process teardown must still happen.
           }
         }
         await previous.handle.close();
@@ -1308,6 +1153,7 @@ export class EnginePool {
       cwd: this.template.cwd,
       excludedPorts: this.template.reservedPorts(),
       ...(this.template.spawnTimeoutMs ? { timeoutMs: this.template.spawnTimeoutMs } : {}),
+      ...(this.template.stateDir ? { stateDir: this.template.stateDir } : {}),
       env: {
         ...this.template.env,
         OPENCODE_CONFIG: this.template.runtimeConfigPath,
@@ -1348,7 +1194,6 @@ export class EnginePool {
         });
         if (response.ok) return;
       } catch {
-        // Not up yet.
       }
       await new Promise((resolve) => setTimeout(resolve, 500));
     }
@@ -1414,8 +1259,6 @@ export class EnginePool {
             requestIds.add(requestId);
           }
         } catch {
-          // The legacy and v2 surfaces vary by bundled engine version. A missing
-          // list never blocks the rollover; path routing still handles scoped ids.
         }
       }),
     ));

@@ -104,8 +104,6 @@ function unwrapSessionResult<T>(result: FieldsResult<T>, notFoundCode?: string):
     return unwrap(result);
   } catch (error) {
     if (error instanceof Error) {
-      // A transport failure (timeout, refused connection) settles without a
-      // response; keep its own message rather than replacing it with a TypeError.
       const status = result.response?.status;
       if (status !== undefined) Object.assign(error, { status });
       const code = result.error && typeof result.error === "object" && "code" in result.error && typeof result.error.code === "string"

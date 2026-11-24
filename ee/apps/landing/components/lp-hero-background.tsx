@@ -3,7 +3,6 @@
 import { Dithering } from "@paper-design/shaders-react";
 import { useEffect, useState } from "react";
 
-// The mask lives in globals.css (.lp-hero-dither) so it can change per breakpoint.
 function canCreateWebGlContext(): boolean {
   if (typeof document === "undefined") return false;
   const canvas = document.createElement("canvas");

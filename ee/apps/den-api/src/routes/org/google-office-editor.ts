@@ -43,7 +43,6 @@ export function registerGoogleOfficeEditorRoutes<T extends { Variables: OrgRoute
   const app = new Hono<{ Variables: OrgRouteVariables }>()
   const store = configuredOfficeStore()
   const origins = configuredOrigins()
-  // Each session keeps the editor it opened on: the operator's service or the member's Cloud worker.
   const serviceFor = (serverUrl: string) => createCollaboraService({ serverUrl: validOrigin(serverUrl), ...origins! })
   const draftEditor = (draft: OfficeDraft) => draft.editorUrl ?? env.documentsOffice.serverUrl
   const enabled = async (id: string, userId: string) => await organizationFeatureEnabled(id, "workbotDocuments", { userId })
@@ -106,10 +105,6 @@ export function registerGoogleOfficeEditorRoutes<T extends { Variables: OrgRoute
       if (!fileType) return failure(c, "Open a Word, Excel, PowerPoint or OpenDocument file, or a Google Doc, Sheet or Slides presentation.")
       const canWrite = canWriteDriveDocument(auth.token.account.scopes, auth.token.enabledScopes)
       if (!canWrite || (native === null && !meta.file.capabilities?.canEdit)) return c.json({ error: "read_only", message: "You have read-only access to this file. You can keep reading the preview." }, 403)
-      // Reopening a file (after a reload, or from another tab) returns to its open session
-      // instead of starting another. Unsaved edits always come back; an unedited session is
-      // only reused while the Drive file is unchanged.
-      // Both paths place the editor at most once per request.
       let placed: Awaited<ReturnType<typeof placeOfficeEditor>> | undefined
       const place = async () => placed ??= await placeOfficeEditor({ organizationId: member.organization.id, userId: member.currentMember.userId })
       const open = await store.findOpen({ organizationId: member.organization.id, memberId: member.currentMember.id, connectionId: auth.connectionId, fileId })
@@ -128,7 +123,6 @@ export function registerGoogleOfficeEditorRoutes<T extends { Variables: OrgRoute
           if (current.workerId && current.workerId !== placement.workerId) await releaseOfficeWorker(current.workerId, current.id)
           current.expiresAt = Date.now() + OFFICE_TTL_SECONDS * 1000
           current.canEdit = current.canEdit && canWrite
-          // The draft lives in Den, so it can open in whichever editor serves the member now.
           if (placement.workerId) { current.editorUrl = placement.serverUrl; current.workerId = placement.workerId }
           else { delete current.editorUrl; delete current.workerId }
           await store.put(current)
@@ -158,7 +152,6 @@ export function registerGoogleOfficeEditorRoutes<T extends { Variables: OrgRoute
         expiresAt: Date.now() + OFFICE_TTL_SECONDS * 1000, ticket: randomBytes(32).toString("base64url"), source: Buffer.from(bytes).toString("base64"), draftVersion: 0,
         ...(placement.workerId ? { editorUrl: placement.serverUrl, workerId: placement.workerId } : {}),
       }
-      // Ask the editor first: a worker that just woke may still be starting it.
       let session: Awaited<ReturnType<ReturnType<typeof serviceFor>["session"]>>
       try { session = await serviceFor(placement.serverUrl).session(draft) }
       catch (error) { if (placement.workerId) return starting(c, OFFICE_EDITOR_STARTING); throw error }
@@ -199,7 +192,6 @@ export function registerGoogleOfficeEditorRoutes<T extends { Variables: OrgRoute
           body = new Blob([`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ name: draft.name, mimeType: draft.mimeType })}\r\n--${boundary}\r\nContent-Type: ${draft.mimeType}\r\n\r\n`, bytes.buffer, `\r\n--${boundary}--\r\n`])
         }
         const binaryDeps = { ...auth.deps, fetch: (request: Parameters<typeof fetch>[0], init?: RequestInit) => { const headers = new Headers(init?.headers); headers.set("content-type", contentType); return auth.deps.fetch(request, { ...init, headers, signal: AbortSignal.timeout(20_000) }) } }
-        // Persist uncertainty before writing: a lost response must never trigger an automatic duplicate/overwrite.
         draft.uncertain = true; await store.put(draft)
         const result = await requestGoogleAction(c, binaryDeps, [scope], url, { method: copy ? "POST" : "PATCH", body, ...(meta.etag && !copy ? { headers: { "if-match": meta.etag } } : {}) })
         if (!result.ok) return result.reply
@@ -227,8 +219,6 @@ export function registerGoogleOfficeEditorRoutes<T extends { Variables: OrgRoute
     const bearer = c.req.header("authorization")?.replace(/^Bearer /i, "")
     if (!draft || !origins || !draftEditor(draft) || !officeTicketMatches(draft, c.req.query("access_token") ?? bearer) || !await serviceAuthorized(c, draft)) return null
     if (write) {
-      // A rollout pause must not tell the engine that file access was revoked:
-      // its 403 handling can invalidate unsaved content. No staging/write succeeds.
       if (!await organizationFeatureEnabled(draft.organizationId, "workbotDocumentEditing", { userId: draft.userId })) throw new Response(JSON.stringify({ error: "document_editing_disabled" }), { status: 503, headers: { "content-type": "application/json", "retry-after": "5" } })
       const auth = await selected(c, draft.connectionId)
       if (!draft.canEdit || !auth.ok || !canWriteDriveDocument(auth.token.account.scopes, auth.token.enabledScopes)) return null
@@ -237,12 +227,9 @@ export function registerGoogleOfficeEditorRoutes<T extends { Variables: OrgRoute
     }
     const blocked = await beginAuditRequest(c); if (blocked) throw blocked
     c.header("cache-control", "no-store"); c.header("x-content-type-options", "nosniff")
-    // Editor traffic (loads, autosaves, lock refreshes) keeps the member's worker awake.
     if (draft.workerId) await holdOfficeWorker(draft.workerId, draft.id)
     return draft
   }
-  // Storage/lock failures are temporary, not revoked credentials. A 403 makes
-  // the engine invalidate a still-valid session and can strand unsaved edits.
   const wopiFailure = (c: GoogleContext, error: unknown) => error instanceof Response ? error : c.json({ error: "document_service_unavailable" }, 503)
   const lockConflict = (c: GoogleContext, value: string) => c.json({ error: "lock_mismatch" }, 409, { "X-WOPI-Lock": value })
 
@@ -295,7 +282,6 @@ export function registerGoogleOfficeEditorRoutes<T extends { Variables: OrgRoute
         if (!requested || (lock && lock !== previous) || (action !== "LOCK" && lock !== requested)) return lockConflict(c, lock)
         current.wopiLock = action === "UNLOCK" ? undefined : { value: requested, expiresAt: Date.now() + 30 * 60 * 1000 }
         await store.put(current)
-        // The editor unlocks when it closes the file, including after the tab is gone.
         if (action === "UNLOCK" && current.workerId) await releaseOfficeWorker(current.workerId, current.id)
         return c.json({ ok: true })
       })

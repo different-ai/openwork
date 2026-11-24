@@ -2,12 +2,6 @@ import type { MiddlewareHandler } from "hono"
 import type { AuthContextVariables } from "../session.js"
 import { findPreclaimWorkspaceForUser, preclaimActionAllowed, requiresClaimError } from "../workspace-preclaim.js"
 
-/**
- * Enforce pre-claim capabilities for a provisional workspace's agent user on
- * every `/v1` route, which covers both REST calls and MCP gateway operations
- * (they are dispatched through the same app). Anyone else passes untouched;
- * the email check keeps the database out of the common path.
- */
 export const preclaimScopeMiddleware: MiddlewareHandler<{ Variables: AuthContextVariables }> = async (c, next) => {
   const user = c.get("user")
   if (!user?.id) return next()

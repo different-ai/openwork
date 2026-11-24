@@ -1,4 +1,5 @@
 import { randomBytes } from "node:crypto";
+import { verifyViewer } from "./lib/private-viewer.ts";
 import { assertTrustedWorkshopRef } from "./lib/workshop-trust.ts";
 import { chmod, lstat, mkdir, realpath, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -28,6 +29,8 @@ import { redactWorkshopDiagnostic } from "./lib/workshop-redaction.ts";
 import { unlockWorkshopDesktop } from "./lib/workshop-unlock.ts";
 import { readWorkshopAudit, validateAuditedPilotRead } from "./lib/workshop-pilot-audit.ts";
 import { connectWorkshopBrowser, foregroundWorkshopDesktop, installWorkshopBrowser, verifyWorkshopBrowserHandoff, WORKSHOP_BROWSER_LAUNCHER, WORKSHOP_BROWSER_PROFILE } from "./lib/workshop-browser.ts";
+
+export { verifyViewer } from "./lib/private-viewer.ts";
 
 export const summary = "Private shared Den/Gateway and isolated workshop Linux desktops; pilot must pass before fan-out.";
 export const supportedTargets = ["daytona/linux"];
@@ -122,46 +125,20 @@ export async function verifySandbox(sandbox: string) {
   return validateSandboxInfo(JSON.parse(result.stdout));
 }
 
-async function rfb(url: string, expectOpen: boolean): Promise<void> {
-  const endpoint = new URL("/websockify", url);
-  endpoint.protocol = "wss:";
-  await new Promise<void>((resolve, reject) => {
-    const socket = new WebSocket(endpoint, ["binary"]);
-    socket.binaryType = "arraybuffer";
-    const timer = setTimeout(() => finish(new Error("Viewer WebSocket probe timed out.")), 15_000);
-    const finish = (error?: Error) => { clearTimeout(timer); socket.close(); error ? reject(error) : resolve(); };
-    socket.onmessage = (event) => {
-      const text = typeof event.data === "string" ? event.data : new TextDecoder().decode(event.data);
-      finish(expectOpen && text.startsWith("RFB 003.") ? undefined : new Error("Viewer RFB authentication check failed."));
-    };
-    socket.onopen = () => { if (!expectOpen) finish(new Error("Unsigned viewer WebSocket unexpectedly opened.")); };
-    socket.onerror = () => finish(expectOpen ? new Error("Signed viewer WebSocket failed.") : undefined);
-  });
-}
-export async function verifyViewer(signed: string, sandboxId: string): Promise<void> {
-  const origins = parsePrivatePreview(new URL(signed).origin, sandboxId, 6080);
-  const get = (url: string) => fetch(url, { redirect: "error", headers: { "X-Daytona-Skip-Preview-Warning": "true" }, signal: AbortSignal.timeout(30_000) });
-  const unsigned = await get(origins.unsignedOrigin);
-  if (![401, 403].includes(unsigned.status)) throw new Error("Unsigned viewer HTTP access was not denied.");
-  const response = await get(signed);
-  if (!response.ok || !/novnc|vnc/i.test(await response.text())) throw new Error("Signed noVNC viewer unavailable.");
-  await rfb(origins.unsignedOrigin, false);
-  await rfb(signed, true);
-}
-
 async function memberGet(member: DenSession, orgId: string, path: string): Promise<unknown> {
   const result = await denFetch(member, path, { headers: { authorization: `Bearer ${member.token}`, "x-openwork-org-id": orgId } });
   if (!result.response.ok) throw new Error(`Workshop member verification failed: HTTP ${result.response.status}.`);
   return result.body;
 }
-export async function verifyMember(member: DenSession, orgId: string, memberId: string) {
+export async function verifyMember(member: DenSession, orgId: string, memberId: string, allowanceUsd = 5) {
+  const allowanceMicroUsd = Math.round(allowanceUsd * 1_000_000);
   const context = await memberGet(member, orgId, "/v1/org");
   const current = record(context) ? context.currentMember : undefined;
   if (!record(current) || current.id !== memberId || current.role !== "member" || current.isOwner !== false) throw new Error("Workshop desktop is not an ordinary member.");
   const status = await memberGet(member, orgId, "/v1/gateway/usage-limits/me");
   const bucket = record(status) && Array.isArray(status.buckets) && status.buckets.length === 1 ? status.buckets[0] : undefined;
-  if (!record(bucket) || bucket.baseAllowanceMicroUsd !== 5_000_000 || bucket.allowanceMicroUsd !== 5_000_000
-    || bucket.extensionMicroUsd !== 0 || bucket.hardLimit !== true) throw new Error("Workshop effective member budget is not $5.");
+  if (!record(bucket) || bucket.baseAllowanceMicroUsd !== allowanceMicroUsd || bucket.allowanceMicroUsd !== allowanceMicroUsd
+    || bucket.extensionMicroUsd !== 0 || bucket.hardLimit !== true) throw new Error(`Workshop effective member budget is not $${allowanceUsd}.`);
   return bucket;
 }
 
@@ -344,7 +321,7 @@ export async function main(argv = process.argv.slice(2)): Promise<void> {
       den = stack.use(await server({ place, org: { name: `Workshop ${runId}`, admin: { email: hostEmail, password: hostPassword, name: "Workshop host" }, members },
         daytonaPrivate: true, daytonaSeedDemo: false, daytonaTtlMinutes: Math.floor(remainingSeconds(deadline) / 60),
         daytonaAutoStopMinutes: 0, daytonaPreviewExpirySeconds: remainingSeconds(deadline),
-        env: { OPENWORK_DEV_MODE: "0", OPENWORK_WORKSHOP_PRIVATE_COHOST: "1", DEN_REQUIRE_EMAIL_VERIFICATION: "false", GATEWAY_ENABLED: "true", GATEWAY_PORT: "8791", GATEWAY_EGRESS_ALLOWED_ORIGINS: "https://api.openai.com",
+        env: { OPENWORK_DEV_MODE: "0", OPENWORK_WORKSHOP_PRIVATE_COHOST: "1", DEN_REQUIRE_EMAIL_VERIFICATION: "false", GATEWAY_ENABLED: "true", GATEWAY_PORT: "8791", DEN_DASHBOARDS_ENABLED: "true", GATEWAY_EGRESS_ALLOWED_ORIGINS: "https://api.openai.com",
           DEN_DB_ENCRYPTION_KEY: randomSecret(), BETTER_AUTH_SECRET: randomSecret(), GATEWAY_WEBHOOK_SECRET: randomSecret(),
           DEN_DEMO_OWNER_EMAIL: hostEmail, DEN_DEMO_OWNER_PASSWORD: hostPassword, RESEND_API_KEY: "", SMTP_HOST: "", SMTP_USER: "", SMTP_PASS: "", EMAIL_FROM: "" },
       }));

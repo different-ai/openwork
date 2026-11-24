@@ -3,13 +3,13 @@ import { browserScript } from "@openwork/cdp";
 import type { Seed } from "@openwork/env";
 import { denForAppWeb, signedInAppWeb } from "./signed-in-app-web.ts";
 import { isRecord, records } from "./library.ts";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
+import { seededOrganizationId } from "./organization-capabilities.ts";
 
 export const EVERYONE_PROMPT = "Write for non-technical readers. Never share customer names outside the organization.";
 export const DESIGN_PROMPT = "Follow the brand guide in the Design folder and export images as PNG.";
 
 /**
- * An organization Avery owns with Prompts on, Riley in the Design team, and a
+ * An organization Avery owns, Riley in the Design team, and a
  * prompt for everyone already saved. Avery is on the Design team's Prompts
  * tab, where Design has no prompt of its own yet.
  */
@@ -24,7 +24,8 @@ export async function orgPromptsTeamTab(seed: Seed) {
   });
   const riley = den.members.riley;
   if (!riley) throw new Error("seed.den() did not provision Riley's session");
-  const organizationId = await enableOrganizationCapabilities(seed, den.admin, { orgPrompts: true });
+  const organizationId = await seededOrganizationId(seed, den.admin);
+  if (!organizationId) throw new Error("The seeded organization was not found.");
   const scope = { "x-openwork-org-id": organizationId };
 
   const org = await seed.api(riley, "/v1/org");
@@ -60,7 +61,7 @@ export async function orgPromptsTeamTab(seed: Seed) {
 export const REVISED_DESIGN_PROMPT = "Follow the brand guide in the Design folder and export images as SVG.";
 
 /**
- * Riley, in the Design team, signed in to a real Den with Prompts on and
+ * Riley, in the Design team, signed in to a real Den with
  * prompts saved for everyone and for Design, in the real app (in a browser)
  * on the OpenCode v2 engine. Turns go through OpenWork's server to the engine
  * as the app sends them; only the model is scripted. The model records
@@ -75,7 +76,8 @@ export async function orgPromptsDesktop(seed: Seed) {
   const model = den.mocks.agent;
   const riley = den.members.riley;
   if (!model || !riley) throw new Error("seed.den() did not provision the model or Riley's session");
-  const organizationId = await enableOrganizationCapabilities(seed, den.admin, { orgPrompts: true });
+  const organizationId = await seededOrganizationId(seed, den.admin);
+  if (!organizationId) throw new Error("The seeded organization was not found.");
   const scope = { "x-openwork-org-id": organizationId };
   const org = await seed.api(riley, "/v1/org");
   const member = isRecord(org.body) && isRecord(org.body.currentMember) ? org.body.currentMember : null;
@@ -177,11 +179,11 @@ export async function orgPromptsDesktop(seed: Seed) {
       return requests.some((entry) => entry.privateSentinelSeen === true);
     },
     reviseDesignPrompt: () => savePrompt(`/v1/org/prompts/teams/${encodeURIComponent(teamId)}`, REVISED_DESIGN_PROMPT),
-    async turnPromptsOff() {
-      const result = await seed.api(den.admin, `/v1/admin/organizations/${organizationId}/capabilities`, {
-        method: "PUT", body: JSON.stringify({ capabilities: { orgPrompts: false } }),
-      });
-      if (!result.response.ok) throw new Error(`Turning Prompts off failed: HTTP ${result.response.status}`);
+    async removePrompts() {
+      for (const path of ["/v1/org/prompts/everyone", `/v1/org/prompts/teams/${encodeURIComponent(teamId)}`]) {
+        const result = await seed.api(den.admin, path, { method: "DELETE", headers: scope });
+        if (!result.response.ok) throw new Error(`Removing ${path} failed: HTTP ${result.response.status}`);
+      }
     },
   };
 }

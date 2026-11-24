@@ -49,7 +49,6 @@ export const GATEWAY_DEFAULT_USAGE_SCOPE = ""
 export const gatewayUsagePolicyWriteSchema = z
   .object({
     name: z.string().trim().min(1).max(120),
-    /** Omit or null for a default limit; an organization Gateway provider id for a provider limit. */
     providerId: z.string().min(1).max(64).nullable().optional(),
     hardLimit: z.boolean().default(true),
     allowRequestReset: z.boolean().default(true),
@@ -89,12 +88,33 @@ export type GatewayUsageLimitPolicy = {
   hardLimit: boolean
   allowRequestReset: boolean
   revision: number
-  /** Null for a default limit; the organization Gateway provider this limit applies to otherwise. */
   providerId?: string | null
+  providerStatus?: GatewayUsagePolicyProviderStatus | null
   limits: { timeframe: GatewayUsageTimeframe; costLimitMicroUsd: number }[]
   assignments: { id: string; memberId: string | null; teamId: string | null; organization: boolean }[]
   archivedAt?: string | null
 }
+export const GATEWAY_USAGE_POLICY_PROVIDER_STATUSES = ["available", "removed"] as const
+export type GatewayUsagePolicyProviderStatus = (typeof GATEWAY_USAGE_POLICY_PROVIDER_STATUSES)[number]
+
+/**
+ * What happens to the usage limits scoped to a Gateway provider when it is
+ * deleted: move them to another active provider of the organization, or
+ * archive them. Required once such limits exist.
+ */
+export const GATEWAY_PROVIDER_REMOVAL_LIMIT_ACTIONS = ["move", "archive"] as const
+export type GatewayProviderRemovalLimitChoice =
+  | { action: "move"; providerId: string }
+  | { action: "archive" }
+/** One active usage limit that would be orphaned by deleting its provider. */
+export type GatewayProviderRemovalUsageLimit = {
+  id: string
+  name: string
+  revision: number
+  hardLimit: boolean
+  limits: { timeframe: GatewayUsageTimeframe; costLimitMicroUsd: number }[]
+}
+export const GATEWAY_PROVIDER_HAS_USAGE_LIMITS = "provider_has_usage_limits"
 export type GatewayUsageResetStatus = "pending" | "approved" | "denied" | "expired"
 export const gatewayUsageProvenanceSchema = z.discriminatedUnion("kind", [
   z
@@ -141,7 +161,6 @@ export type GatewayUsageBucket = {
   allowRequestReset: boolean
   canRequestReset: boolean
   resetRequestStatus: GatewayUsageResetStatus | null
-  /** Null or absent for default buckets; the provider for provider-limit buckets. */
   providerId?: string | null
 }
 export type GatewayUsageState = "unlimited" | "within_limit" | "over_limit" | "blocked"
@@ -176,9 +195,7 @@ export type GatewayUsageStatus = {
     lastSettlementRequestId?: string | null
     settlementReady?: boolean
   }
-  /** Default limits: govern every provider the member has no provider limit for. */
   buckets: GatewayUsageBucket[]
-  /** Provider limits, present only when per-provider limits are on and assigned to the member. */
   providers?: GatewayProviderUsage[]
 }
 export type GatewayUsageResetRequest = {
@@ -209,6 +226,7 @@ export const gatewayUsageLimitPolicySchema: z.ZodType<GatewayUsageLimitPolicy> =
   allowRequestReset: z.boolean(),
   revision: z.number().int(),
   providerId: z.string().nullable().optional(),
+  providerStatus: z.enum(GATEWAY_USAGE_POLICY_PROVIDER_STATUSES).nullable().optional(),
   limits: z.array(
     z.object({ timeframe: gatewayUsageTimeframeSchema, costLimitMicroUsd: moneySchema }),
   ),
@@ -222,6 +240,23 @@ export const gatewayUsageLimitPolicySchema: z.ZodType<GatewayUsageLimitPolicy> =
   ),
   archivedAt: z.iso.datetime().nullable().optional(),
 })
+export const gatewayProviderRemovalUsageLimitSchema: z.ZodType<GatewayProviderRemovalUsageLimit> =
+  z.object({
+    id: z.string(),
+    name: z.string(),
+    revision: z.number().int(),
+    hardLimit: z.boolean(),
+    limits: z.array(
+      z.object({ timeframe: gatewayUsageTimeframeSchema, costLimitMicroUsd: moneySchema }),
+    ),
+  })
+/** 409 body when a provider with active usage limits is deleted without a choice. */
+export const gatewayProviderHasUsageLimitsSchema = z.object({
+  error: z.literal(GATEWAY_PROVIDER_HAS_USAGE_LIMITS),
+  message: z.string(),
+  usageLimits: z.array(gatewayProviderRemovalUsageLimitSchema),
+})
+export type GatewayProviderHasUsageLimits = z.infer<typeof gatewayProviderHasUsageLimitsSchema>
 const gatewayUsageBucketSchema: z.ZodType<GatewayUsageBucket> = z.object({
   id: z.string(),
   timeframe: gatewayUsageTimeframeSchema,
@@ -381,6 +416,8 @@ export function gatewayRequestScope(
     : GATEWAY_DEFAULT_USAGE_SCOPE
 }
 export const GATEWAY_USAGE_LIMIT_ERROR_CODE = "openwork_gateway_usage_limit_exceeded"
+/** Every Gateway usage-limit message starts with this, with or without a provider name. */
+export const GATEWAY_USAGE_LIMIT_MESSAGE = "You have reached your AI Gateway usage limit"
 export const GATEWAY_USAGE_ACCOUNTING_ERROR_CODE = "openwork_gateway_accounting_unavailable"
 export function hasGatewayUsageLimitHttpMarker(
   response: Pick<Response, "status" | "headers">,
@@ -418,8 +455,8 @@ export function gatewayUsageLimitResponse(
         code: GATEWAY_USAGE_LIMIT_ERROR_CODE,
         source: "openwork_gateway",
         message: provider
-          ? `You have reached your AI Gateway usage limit for ${provider.name}. Models from another provider may still be available.`
-          : "You have reached your AI Gateway usage limit.",
+          ? `${GATEWAY_USAGE_LIMIT_MESSAGE} for ${provider.name}. Models from another provider may still be available.`
+          : `${GATEWAY_USAGE_LIMIT_MESSAGE}.`,
         details: { exhaustedBuckets, retryAt, ...(provider ? { provider } : {}) },
       },
     },

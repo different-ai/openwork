@@ -15,7 +15,6 @@ const toolSchema = z.object({
   state: z.object({
     status: z.enum(["completed", "error"]),
     time: z.object({ start: z.number(), end: z.number() }),
-    // Pick only capability identifiers. Tool arguments/results never leave the device.
     input: z.object({ name: z.string().optional() }),
     metadata: z.object({ skillVersion: z.string().optional(), mcp: z.string().optional() }).optional(),
   }),
@@ -63,8 +62,6 @@ async function flush() {
   const batch = pending.splice(0, 50).filter((item) => item.expiresAt > Date.now());
   try {
     if (!batch.length) return;
-    // Recheck consent at the upload boundary. A cached allowance must not send
-    // metadata after opt-out, or backfill it into a later consent period.
     const settingsResponse = await request(ctx, "settings");
     const settings = modelsAnalyticsSettingsSchema.safeParse(await settingsResponse.json());
     if (ctx.identity !== identity) return;
@@ -166,7 +163,6 @@ async function observe(workspaceId: string, event: { type: string; properties?: 
   }
 }
 
-/** Optional, bounded reporting from live runtime events. Never blocks chat. */
 export function observeModelsTaskEvent(workspaceId: string, event: { type: string; properties?: unknown }) {
   if (event.type !== "message.updated" && event.type !== "message.part.updated") return;
   void observe(workspaceId, event).catch(() => {});

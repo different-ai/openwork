@@ -4,8 +4,6 @@ type SessionBranchAction =
   | { status: "pending"; messageId: string; promise: Promise<void> }
   | { status: "failed"; error: unknown };
 
-// A surface owns navigation, but the request outlives that surface. Keep its
-// claim through both the history read and fork POST, including across remounts.
 const actions = new Map<string, SessionBranchAction>();
 const listeners = new Map<string, Set<() => void>>();
 
@@ -17,7 +15,6 @@ export function runSessionBranchAction(owner: string, messageId: string, run: ()
   const existing = actions.get(owner);
   if (existing?.status === "pending") return existing.promise;
   const promise = Promise.resolve().then(run).catch((error: unknown) => {
-    // Only retain failure feedback for a mounted subscriber, never its request.
     if (listeners.get(owner)?.size) actions.set(owner, { status: "failed", error });
     throw error;
   }).finally(() => {

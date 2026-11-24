@@ -7,12 +7,6 @@ type DotMatrixLoaderProps = React.ComponentPropsWithoutRef<"span"> & {
   label: string
 }
 
-/**
- * Paper rendering rules: 3×3 dot-matrix is the only "living mark" for
- * running work (sidebar rows, transcript tool lines). CSS shuffles the frames
- * without publishing React state on every animation step. Under
- * prefers-reduced-motion the first frame remains static.
- */
 const FIRST_FRAME: readonly number[] = [1, 0, 0, 1, 1, 0, 1, 0, 1]
 const DOT_ANIMATION_CLASSES = [
   "ow-dot-matrix-frame-a",

@@ -10,7 +10,7 @@ import {
   type EnterpriseMcpPersistenceContext,
   type StoredOAuthClientInformation,
   type StoredOAuthTokens,
-} from "@openwork/enterprise-mcp-client"
+} from "@openwork/mcp-enterprise-client"
 import type { OAuthDiscoveryState } from "@modelcontextprotocol/sdk/client/auth.js"
 import { and, eq } from "@openwork-ee/den-db/drizzle"
 import {
@@ -120,9 +120,6 @@ function parsePendingAuthorizations(value: string | null | undefined): PendingAu
     const envelope = pendingAuthorizationEnvelopeSchema.safeParse(parsed)
     return envelope.success ? envelope.data.transactions : []
   } catch {
-    // A verifier written by the current Den client is deliberately not
-    // reinterpreted as an enterprise transaction because it has no state,
-    // expiry, client revision, or single-use binding.
     return []
   }
 }
@@ -232,7 +229,7 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
   }
 
   private async refreshConnection(): Promise<void> {
-    const rows = await db
+    const rows = await db.$primary
       .select()
       .from(ExternalMcpConnectionTable)
       .where(and(
@@ -247,7 +244,7 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
 
   private async memberAccount() {
     if (!this.member) return null
-    const rows = await db
+    const rows = await db.$primary
       .select()
       .from(ConnectedAccountTable)
       .where(and(
@@ -291,7 +288,7 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
     load: async (context: EnterpriseMcpPersistenceContext): Promise<EnterpriseMcpOAuthClientRegistration | undefined> => {
       assertCommitActive(context)
       await this.refreshConnection()
-      const rows = await db
+      const rows = await db.$primary
         .select()
         .from(OrgOAuthClientTable)
         .where(and(
@@ -442,10 +439,6 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
           .limit(1)
         const client = clients[0]
         if (!client) return
-        // A provider rejection can only discard registrations Den created for
-        // itself. An administrator-supplied client is configuration: deleting it
-        // would silently fall back to dynamic registration and lose the
-        // registered redirect, so it stays until an administrator replaces it.
         if (input.reason === "provider-rejected" && !isSdkRegisteredOAuthClient(normalizeOAuthClientExtra(client.extra))) {
           throw new EnterpriseMcpOAuthContractError(
             "MCP_OAUTH_CLIENT_REJECTED",
@@ -693,11 +686,6 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
             "The OAuth credential does not match the selected authorization server issuer.",
           )
         }
-        // The connection-wide issuer selection is only ever derived from the
-        // administrator's configuration or the connection's own verified
-        // discovery state (see oauthIssuer). A token-response issuer stamp is
-        // caller-supplied evidence: it participates in the mismatch guard
-        // above but must never be persisted as the shared issuer selection.
         const account = this.member
           ? (await tx
               .select()
@@ -813,7 +801,6 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
             })
             .where(eq(ExternalMcpConnectionTable.id, connection.id))
         }
-        // Throwing here rolls back the token write and authorization consume.
         assertCommitActive(input.context)
       })
       await this.refreshConnection()
@@ -824,9 +811,6 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
       refreshToken: string
       refresh: () => Promise<{ tokens: StoredOAuthTokens; expiresAt?: number } | undefined>
     }): Promise<EnterpriseMcpOAuthRefreshOutcome> => {
-      // The row lock is held across the provider call, so a concurrent request
-      // waits here and then sees the rotated refresh token instead of sending
-      // the old one. Per-member refreshes lock only that member's account.
       const outcome = await db.transaction(async (tx): Promise<EnterpriseMcpOAuthRefreshOutcome> => {
         const connectionQuery = tx
           .select()
@@ -943,9 +927,6 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
           had_access: Boolean(current?.accessToken),
           had_refresh: Boolean(current?.refreshToken),
         }
-        // A delayed rejection may belong to credentials that another operation
-        // has already replaced. Only clear the revision this operation read.
-        // Callback validation can also fail before reading any saved credential.
         if ((snapshot.had_access || snapshot.had_refresh) && this.loadedRevision !== currentRevision) {
           return { ...snapshot, skipped: true }
         }
@@ -983,8 +964,6 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
         return { ...snapshot, skipped: false }
       })
       if (invalidated) {
-        // Log the committed decision, including requests initiated inside the
-        // SDK. Revision metadata is deliberately separate from secret values.
         const tracker = this.diagnosticTracker
         const { skipped, ...snapshot } = invalidated
         try {
@@ -1005,7 +984,6 @@ export class DenEnterpriseMcpOAuthPersistence implements EnterpriseMcpOAuthPersi
             ) : {}),
           })
         } catch {
-          // Diagnostics must not change the committed credential outcome.
         }
       }
       await this.refreshConnection()

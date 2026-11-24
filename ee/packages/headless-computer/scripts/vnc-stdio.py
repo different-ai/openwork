@@ -1,7 +1,6 @@
 #!/usr/bin/python3 -I
 """One private RFB transport per viewer; no shared TCP listener to impersonate."""
 import os
-from pathlib import Path
 import signal
 import socket
 import subprocess
@@ -12,13 +11,9 @@ import threading
 def serve(view, control, input_fd=0, output_fd=1):
     if os.geteuid() != 0 or view not in ('browser', 'computer') or control not in ('control', 'view'):
         raise PermissionError('The image-owned guest must start this viewer.')
-    state = Path('/var/lib/openwork-desktop')
+    # The browser has a display of its own (start.sh), so neither view ever shows the other's windows.
+    display = ':100' if view == 'browser' else ':99'
     extra = []
-    if view == 'browser':
-        window = (state / 'browser-window').read_text().strip()
-        if not window.isdecimal():
-            raise ValueError('The browser window is unavailable.')
-        extra += ['-id', window]
     if control == 'view':
         extra += ['-viewonly']
     # x11vnc already sends only changed regions; also poll and send at most ~10 times a second
@@ -33,7 +28,7 @@ def serve(view, control, input_fd=0, output_fd=1):
     signal.signal(signal.SIGINT, interrupted)
     try:
         process = subprocess.Popen(['/usr/sbin/runuser', '-u', 'openwork-browser', '--', 'x11vnc', '-inetd', '-q',
-                                    '-display', ':99', '-auth', '/run/openwork-desktop/99/.Xauthority',
+                                    '-display', display, '-auth', f'/run/openwork-desktop/{display[1:]}/.Xauthority',
                                     '-nopw', '-noxdamage', *pacing, *extra], stdin=child, stdout=child,
                                    stderr=subprocess.DEVNULL, start_new_session=True,
                                    env={'PATH': '/usr/local/bin:/usr/bin:/bin', 'HOME': '/home/openwork-browser',

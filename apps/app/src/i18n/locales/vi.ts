@@ -1,9 +1,12 @@
-/**
- * Tiếng Việt translations
- * Thuật ngữ chuyên môn KHÔNG dịch: Skills, Plugins, Commands, Sessions, OpenCode, OpenPackage, OpenWork, MCPs, OAuth, MCP
- */
-
 export default {
+  "artifact.office_empty": "Tệp này không có văn bản đọc được. Hãy mở bằng ứng dụng khác để xem bản gốc.",
+  "artifact.office_empty_slide": "Trang chiếu này không có văn bản đọc được.",
+  "artifact.office_loading": "Đang tải đề cương văn bản",
+  "artifact.office_slide": "Trang chiếu {number}",
+  "artifact.office_text_only": "Chỉ hiển thị đề cương văn bản, không hiển thị bố cục, hình ảnh hay màu sắc.",
+  "artifact.office_too_large": "Tệp này quá lớn để xem trước. Hãy mở bằng ứng dụng khác để xem toàn bộ tệp.",
+  "artifact.office_truncated": "Một phần văn bản không hiển thị vì bản xem trước đã đạt giới hạn.",
+  "artifact.office_unreadable": "Không thể đọc tệp này. Hãy thử mở bằng ứng dụng khác.",
   "app.error_audit_load": "Tải nhật ký kiểm toán thất bại.",
   "app.error_connect_first": "Kết nối worker này trước khi áp dụng thay đổi runtime.",
   "app.error_request_failed": "Yêu cầu thất bại",
@@ -18,6 +21,7 @@ export default {
   "common.hide": "Ẩn",
   "common.next": "Tiếp",
   "common.question": "Câu hỏi",
+  "common.permission": "Quyền",
   "common.refresh": "Làm mới",
   "common.remove": "Xóa",
   "common.reset": "Đặt lại",
@@ -317,8 +321,11 @@ export default {
   "providers.still_connected_suffix": ", nhưng worker vẫn báo đã kết nối. Xóa API key hoặc thông tin OAuth còn lại và khởi động lại worker để ngắt hoàn toàn.",
   "providers.unknown_provider": "Provider không xác định",
   "providers.use_api_key_suffix": "Dùng API key thay thế.",
+  "question_modal.collapse": "Thu nhỏ",
+  "question_modal.collapsed_status": "Đang chờ câu trả lời của bạn",
   "question_modal.custom_answer_label": "Hoặc nhập câu trả lời tùy chỉnh",
   "question_modal.custom_answer_placeholder": "Nhập câu trả lời của bạn...",
+  "question_modal.expand": "Hiện câu hỏi",
   "question_modal.question_counter": "Câu hỏi {current} / {total}",
   "session.allow_for_session": "Cho phép trong phiên này",
   "session.allow_once": "Cho phép một lần",
@@ -518,7 +525,6 @@ export default {
   "settings.group_workspace": "Workspace",
   "settings.hide_titlebar": "Ẩn thanh tiêu đề",
   "settings.hide_titlebar_desc": "Ẩn thanh tiêu đề cửa sổ. Hữu ích cho trình quản lý cửa sổ xếp gạch",
-  "settings.join_discord": "Tham gia Discord",
   "settings.language": "Ngôn ngữ",
   "settings.language.description": "Chọn ngôn ngữ ưa thích",
   "settings.last_error": "Lỗi cuối",

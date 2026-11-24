@@ -29,12 +29,6 @@ type WorkspaceOpencodeClient = ReturnType<typeof createOpencodeClient>;
 type PersistedConnectState = {
   connectEnabled: boolean;
   updatedAt: number;
-  /**
-   * Server-scoped OpenWork Connect (`openwork-cloud`) MCP desired config.
-   * Connect is identity/org scoped, not per-workspace — workspace runtime
-   * copies remain for engine registration, but catalog/skill injection reads
-   * this host-level entry.
-   */
   cloudMcp: Record<string, unknown> | null;
 };
 
@@ -115,9 +109,9 @@ export function googleWorkspaceCloudRequired(cloudHealth: CloudMcpHealth | null)
   return {
     ok: false,
     error: "use_openwork_cloud",
-    message: "Local Google Workspace actions are retired. Use Google Workspace through OpenWork Cloud Connect only. Discover the capability with search_capabilities, then call execute_capability with the exact returned name. If Cloud reports a connection or authorization requirement, relay its exact next action; local credentials cannot be used.",
+    message: "Local Google Workspace actions are retired. Use Google Workspace through OpenWork Cloud Connect only: call its Google Workspace tool for this action, or when Connect lists none, discover the capability with search_capabilities and call execute_capability with the exact returned name. If Cloud reports a connection or authorization requirement, relay its exact next action; local credentials cannot be used.",
     nextAction: cloudHealth?.usable
-      ? { tool: "search_capabilities", arguments: { query: "Google Workspace" } }
+      ? { recommendedAction: "Use OpenWork Cloud Connect's Google Workspace tools." }
       : failure
         ? { code: failure.code, stage: failure.stage, recommendedAction: failure.recommendedAction }
         : { recommendedAction: "Open Settings > Library > Connections to check your Cloud connections, or Settings > Debug to diagnose OpenWork Cloud agent access for this workspace." },
@@ -128,11 +122,6 @@ export async function readConnectState(config: ServerConfig): Promise<PersistedC
   return (await inspectConnectState(config)).state;
 }
 
-/**
- * Read the persisted Connect switch without collapsing corruption or I/O
- * failures into the legitimate first-run default. Diagnostics use the status
- * to avoid reporting an unreadable state file as a healthy disabled switch.
- */
 export async function inspectConnectState(
   config: ServerConfig,
   options?: ConnectStateInspectionOptions,
@@ -178,12 +167,10 @@ export async function writeConnectState(config: ServerConfig, state: { connectEn
   });
 }
 
-/** Read the host-level openwork-cloud MCP config used for Connect catalog/skills. */
 export async function readConnectCloudMcp(config: ServerConfig): Promise<Record<string, unknown> | null> {
   return (await readConnectState(config)).cloudMcp;
 }
 
-/** Persist the host-level openwork-cloud MCP config (server-scoped Connect). */
 export async function writeConnectCloudMcp(
   config: ServerConfig,
   cloudMcp: Record<string, unknown> | null,
@@ -301,12 +288,6 @@ export async function getConnectSnapshot(config: ServerConfig, options: ConnectS
   };
 }
 
-/**
- * Inspect Connect state without calling OpenCode or a remote MCP. This passive
- * path is intentionally separate from getConnectSnapshot's active health
- * check so diagnostics cannot create an egress attempt while building its
- * eligibility report.
- */
 export async function inspectConnectSnapshot(
   config: ServerConfig,
   options?: ConnectStateInspectionOptions,

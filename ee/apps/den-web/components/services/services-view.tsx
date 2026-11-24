@@ -10,7 +10,6 @@ import { DiagnosticsSkeletonRow } from "../diagnostics/diagnostics-row";
 import type { ServicesViewState } from "./service-readiness-data";
 import { InstallationRows } from "./service-rows";
 
-/** Admin › Services: the same installation rows as Settings › Diagnostics. */
 export function ServicesView({ state, cooldown, checkNow, refresh, now, testId = "services-page" }: {
   state: ServicesViewState;
   cooldown: boolean;

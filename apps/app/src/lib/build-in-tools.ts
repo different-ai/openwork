@@ -224,7 +224,8 @@ export interface RepoOverviewMetadata extends ToolMetadata {
 }
 
 export interface SkillInput {
-  name: string;
+  id?: string;
+  name?: string;
 }
 
 export interface SkillMetadata extends ToolMetadata {
@@ -291,6 +292,18 @@ type BuiltInDynamicToolPart<ToolName extends string, Input, Output = string> =
       }
   );
 
+export function sandboxToolRenderer(name: string) {
+  switch (name) {
+    case "sandbox_shell": return "bash";
+    case "sandbox_read": return "read";
+    case "sandbox_write": return "write";
+    case "sandbox_edit": return "edit";
+    case "sandbox_glob": return "glob";
+    case "sandbox_grep": return "grep";
+    default: return name;
+  }
+}
+
 export type BashToolPart = BuiltInDynamicToolPart<"bash", BashInput>;
 
 export function isBashToolPart(part: ToolUIPart | DynamicToolUIPart): part is BashToolPart {
@@ -341,6 +354,12 @@ export function isApplyPatchToolPart(part: ToolUIPart | DynamicToolUIPart): part
 
 export type SkillToolPart = BuiltInDynamicToolPart<"skill", SkillInput>;
 
+export function skillDisplayName(input: Partial<SkillInput> | undefined): string {
+  const raw = (input?.id ?? input?.name ?? "").trim();
+  if (!raw.startsWith("openwork-cloud-")) return raw;
+  return raw.slice("openwork-cloud-".length).replace(/-(?=[a-z0-9]*\d)[a-z0-9]{8}$/, "");
+}
+
 export function isSkillToolPart(part: ToolUIPart | DynamicToolUIPart): part is SkillToolPart {
   return part.type === "dynamic-tool" && part.toolName === "skill";
 }
@@ -375,10 +394,6 @@ export function isTaskToolPart(part: ToolUIPart | DynamicToolUIPart): part is Ta
   return part.type === "dynamic-tool" && part.toolName === "task";
 }
 
-/**
- * The sub-agent session a task tool call runs in. Forwarded from the engine's
- * task metadata by session sync (`callProviderMetadata.openwork.childSessionId`).
- */
 export function taskChildSessionId(part: TaskToolPart): string | null {
   const value = part.callProviderMetadata?.openwork?.childSessionId;
   return typeof value === "string" && value.trim() ? value.trim() : null;

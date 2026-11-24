@@ -1,0 +1,16 @@
+# CI-only override for docker-compose.web-local.yml: MySQL keeps its data in
+# memory and never syncs to disk. Every CI database is thrown away when the job
+# ends, so durability buys nothing, and each test file creating its own schema
+# was bound by fsync (about 3x slower per schema with 15 files at once).
+# Use it with `pnpm ci:den:mysql`; local development keeps its durable volume.
+services:
+  mysql:
+    volumes: !reset []
+    tmpfs:
+      - /var/lib/mysql
+    command:
+      - --innodb-flush-log-at-trx-commit=0
+      - --innodb-doublewrite=OFF
+      - --innodb-flush-method=nosync
+      - --sync-binlog=0
+      - --skip-log-bin

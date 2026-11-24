@@ -35,15 +35,11 @@ export function CreateAutomationCard({ anchor, assistantName, canSchedule, onClo
   const [instructions, setInstructions] = useState("");
   const [repeat, setRepeat] = useState<SlotRepeat>(DEFAULT_SLOT_REPEAT);
   const create = useCreateAutomation();
-  // The cloud default first, as Workbot's own scheduling uses; any model this member may use can replace it.
   const { models, isLoading: modelsLoading } = useAutomationModels({ includeCloudDefault: true });
   const [model, setModel] = useState<AutomationModel>(CLOUD_DEFAULT_MODEL);
   const field = useRef<HTMLTextAreaElement | null>(null);
   const options = slotScheduleOptions(anchor.slot);
   const chosen = options.find((option) => option.id === repeat) ?? options[0];
-  // The clicked slot is a virtual anchor; Base UI tracks viewport changes and shifts the actual card, not
-  // a guessed height. Shift on both axes lets a short screen use its full height instead of half of it.
-  // The card stays touching its anchor, so a slot point left outside a rotated or resized window is pulled back inside the 12px inset.
   const positionAnchor = useMemo(() => ({
     getBoundingClientRect: () => new DOMRect(
       Math.max(12, Math.min(anchor.x, window.innerWidth - 12)),

@@ -2,8 +2,6 @@ import { z } from "zod";
 
 export const INFERENCE_USAGE_CONVERSION_FACTOR = 100_000_000;
 
-// Den's web app loads this module from source, where a runtime relative import cannot resolve, so it keeps
-// its own copy of managed-models-policy's metadata reader instead of importing it.
 function readOrganizationMetadata(input: unknown): Record<string, unknown> {
   if (input === null || input === undefined) return {};
   const value: unknown = typeof input === "string" ? JSON.parse(input) : input;
@@ -94,8 +92,6 @@ export function hasOpenWorkModelsAllowanceHttpMarker(response: Pick<Response, "s
     && response.headers.get("X-OpenWork-Usage-State") === "blocked";
 }
 
-// For upstreamModel values, please get from models.dev/api.json provider = openrouter.models.id
-
 export const INFERENCE_MODEL_ALIASES = {
   "z-ai/glm-5.2": {
     upstreamModel: "z-ai/glm-5.2",
@@ -151,7 +147,6 @@ export const INFERENCE_MODEL_ALIASES = {
     enabled: true,
     usageFactor: 1,
   },
-  // The model behind free Auto, on the organization's own usage.
   "openai/gpt-6-luna": {
     upstreamModel: "openai/gpt-6-luna",
     displayName: "OpenWork: GPT-6 Luna",
@@ -167,6 +162,12 @@ export const INFERENCE_MODEL_ALIASES = {
   "deepseek/deepseek-v4.1-flash": {
     upstreamModel: "deepseek/deepseek-v4.1-flash",
     displayName: "OpenWork: DeepSeek V4.1 Flash",
+    enabled: true,
+    usageFactor: 1,
+  },
+  "openai/gpt-6.1-terra": {
+    upstreamModel: "openai/gpt-6.1-terra",
+    displayName: "OpenWork: GPT-6.1 Terra",
     enabled: true,
     usageFactor: 1,
   },
@@ -279,8 +280,8 @@ export function withFreeInferenceDefaultPinned(metadata: Record<string, unknown>
 }
 
 export function managedModelCatalog(): ManagedModelRecommendation[] {
-  return [{ modelID: INFERENCE_FREE_MODEL_ID, displayName: "Auto", providerName: "OpenWork",
-    summary: "Free automatic model", recommended: true, rank: 1, capabilities: ["tools"] }];
+  return [{ modelID: INFERENCE_FREE_MODEL_ID, displayName: "OpenWork Free", providerName: "OpenWork",
+    summary: "Free model with a usage limit", recommended: true, rank: 1, capabilities: ["tools"] }];
 }
 
 /**
@@ -314,7 +315,6 @@ export function freeInferenceAccess(input: {
   bucket?: { used_amount: number } | null;
   now?: Date;
 }): InferenceAccess {
-  // Like paid Models: the current limit applies, and the allowance is used up once usage reaches it.
   const limit = input.config.weeklyLimitAmount;
   const used = input.bucket?.used_amount ?? 0;
   const valid = [limit, used].every((amount) => Number.isSafeInteger(amount) && amount >= 0);
@@ -327,8 +327,6 @@ export function freeInferenceAccess(input: {
     remainingUsd: valid ? remaining / INFERENCE_USAGE_CONVERSION_FACTOR : null, resetsAt: freeInferenceWindow(input.now).end.toISOString(),
     reason, canUpgrade: false, catalog: managedModelCatalog() };
 }
-
-// --- Inference gateway (per-org provider destinations) ---
 
 export const INFERENCE_PROVIDER_CREDENTIAL_MODES = ["org", "member"] as const;
 export type InferenceProviderCredentialMode =
@@ -357,7 +355,6 @@ export const INFERENCE_PROVIDER_CREDENTIAL_STATUSES = [
 export type InferenceProviderCredentialStatus =
   (typeof INFERENCE_PROVIDER_CREDENTIAL_STATUSES)[number];
 
-// openwork_free: signed-in members' free Auto, served from the dedicated OpenAI key.
 export const INFERENCE_REQUEST_ROUTES = ["openwork_openrouter", "org_provider", "openwork_free"] as const;
 export type InferenceRequestRoute = (typeof INFERENCE_REQUEST_ROUTES)[number];
 
@@ -385,9 +382,6 @@ export type InferenceUsageSource = (typeof INFERENCE_USAGE_SOURCES)[number];
 
 export const INFERENCE_ROLLUP_GRANULARITIES = ["hour", "day"] as const;
 export type InferenceRollupGranularity = (typeof INFERENCE_ROLLUP_GRANULARITIES)[number];
-
-// Decrypted `secret` payloads for the structured credential kinds. `api_key`
-// is a plain string and has no schema.
 
 export const inferenceApiKeyMapSecretSchema = z
   .record(z.string(), z.string())
@@ -418,6 +412,43 @@ const authorizationRevisionSchema = z.string().regex(/^[A-Za-z0-9_-]{43}$/);
 /** A Microsoft Entra ID directory (tenant) ID. Only the GUID form: the token issuer names it. */
 export const microsoftTenantIdSchema = z.string().regex(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i);
 
+const MICROSOFT_API_SCOPE_EXAMPLE = "api://<application-id>/access";
+const MICROSOFT_GRAPH_APPLICATION_IDS = ["00000003-0000-0000-c000-000000000000", "00000002-0000-0000-c000-000000000000"];
+const MICROSOFT_GRAPH_HOSTS = ["graph.microsoft.com", "graph.microsoft.us", "dod-graph.microsoft.us", "microsoftgraph.chinacloudapi.cn", "graph.windows.net"];
+const MICROSOFT_COGNITIVE_SERVICES_HOSTS = ["cognitiveservices.azure.com", "cognitiveservices.azure.us", "cognitiveservices.azure.cn"];
+
+/**
+ * Why a value cannot be the API scope of a LiteLLM provider with member
+ * Microsoft Entra sign-in, or null when it can. The scope must be one scope of
+ * the organization's own app registration (`api://<application-id>/<scope>`):
+ * LiteLLM validates the token's issuer and audience, and it cannot validate a
+ * token for Microsoft Graph or another Microsoft service.
+ */
+export function microsoftApiScopeError(value: string): string | null {
+  const scope = value.trim();
+  if (!scope) return `Enter the API scope of your Entra app registration, for example ${MICROSOFT_API_SCOPE_EXAMPLE}.`;
+  if (scope.length > 512 || !/^[\x21-\x7e]+$/.test(scope)) return `Enter one API scope without spaces, for example ${MICROSOFT_API_SCOPE_EXAMPLE}.`;
+  const lower = scope.toLowerCase();
+  if (["openid", "profile", "email", "offline_access"].includes(lower)) {
+    return `OpenWork adds ${lower} itself. Enter the API scope your app registration exposes, for example ${MICROSOFT_API_SCOPE_EXAMPLE}.`;
+  }
+  const graph = `That is a Microsoft Graph scope, and LiteLLM cannot validate Microsoft Graph tokens. Use a scope your own app registration exposes, for example ${MICROSOFT_API_SCOPE_EXAMPLE}.`;
+  const incomplete = `Enter the application ID URI followed by the scope name, for example ${MICROSOFT_API_SCOPE_EXAMPLE}.`;
+  const separator = lower.lastIndexOf("/");
+  if (separator < 0) return graph;
+  if (separator === lower.length - 1) return incomplete;
+  const resource = lower.slice(0, separator);
+  if (MICROSOFT_GRAPH_APPLICATION_IDS.some((id) => resource === id || resource === `api://${id}`)) return graph;
+  const authority = /^[a-z][a-z0-9+.-]*:\/\/([^/?#@]+)(?:\/.*)?$/.exec(resource)?.[1];
+  if (!authority) return incomplete;
+  const host = authority.replace(/:\d+$/, "");
+  if (MICROSOFT_GRAPH_HOSTS.includes(host)) return graph;
+  if (MICROSOFT_COGNITIVE_SERVICES_HOSTS.includes(host)) {
+    return `That is the Azure Cognitive Services scope, which Microsoft Foundry uses. LiteLLM needs a scope your own app registration exposes, for example ${MICROSOFT_API_SCOPE_EXAMPLE}.`;
+  }
+  return null;
+}
+
 export const inferenceOauthTokenSecretSchema = z.object({
   accessToken: z.string().min(1),
   refreshToken: z.string().min(1).optional(),
@@ -429,14 +460,13 @@ export const inferenceOauthTokenSecretSchema = z.object({
     clientId: z.string().min(1),
     authorizationRevision: authorizationRevisionSchema.optional(),
   }).optional(),
-  /** Member Entra ID sign-in (Microsoft Foundry). The tenant and client the refresh token belongs to. */
   microsoftIdentity: z.object({
     tenantId: microsoftTenantIdSchema,
     objectId: z.string().min(1).max(255),
-    /** preferred_username or email from the ID token; display only, never an authorization input. */
     userName: z.string().min(1).max(320).nullable(),
     clientId: z.string().min(1),
     authorizationRevision: authorizationRevisionSchema,
+    scope: z.string().min(1).max(512).optional(),
   }).optional(),
 });
 export type InferenceOauthTokenSecret = z.infer<typeof inferenceOauthTokenSecretSchema>;
@@ -465,7 +495,6 @@ const awsRegionSchema = z.string().max(32).regex(/^[a-z]{2}(?:-[a-z]+)+-\d{1,2}$
  */
 export const gatewayAwsSsoSettingsSchema = z.object({
   startUrl: awsSsoStartUrlSchema,
-  /** IAM Identity Center home region, which can differ from the Bedrock region. */
   region: awsRegionSchema,
   accountId: awsAccountIdSchema,
   roleName: awsPermissionSetNameSchema,
@@ -481,13 +510,10 @@ export const inferenceAwsSsoSecretSchema = z.object({
   refreshToken: z.string().min(1).max(16_384),
   clientId: z.string().min(1).max(4096),
   clientSecret: z.string().min(1).max(16_384),
-  /** Epoch seconds after which the registered OIDC client, and its refresh token, stop working. */
   clientSecretExpiresAt: z.number().int().positive(),
   sso: gatewayAwsSsoSettingsSchema,
   identity: z.object({
-    /** The assumed-role ARN from STS GetCallerIdentity at sign-in. */
     arn: z.string().min(1).max(2048),
-    /** The role session name, normally the person's Identity Center user name. Display only. */
     userName: z.string().min(1).max(320).nullable(),
     authorizationRevision: authorizationRevisionSchema,
   }),
@@ -510,19 +536,21 @@ export const GATEWAY_MEMBER_SIGN_IN_CREDENTIAL_KINDS = {
 
 /**
  * The sign-in a provider supports for member credential sets, or null when
- * members cannot sign in (LiteLLM has its own per-person keys).
+ * members cannot sign in. LiteLLM has its own per-person keys, except in its
+ * member Microsoft Entra sign-in mode (`liteLlmEntraSignIn`), where each person
+ * signs in with Microsoft and their own access token is sent to the proxy.
  */
-export function gatewayMemberSignInMethod(providerId: string): GatewayMemberSignInMethod | null {
+export function gatewayMemberSignInMethod(providerId: string, options: { liteLlmEntraSignIn?: boolean } = {}): GatewayMemberSignInMethod | null {
   if (providerId === "google-vertex" || providerId === "google-vertex-anthropic") return "google";
   if (providerId === "amazon-bedrock" || providerId === "amazon-bedrock-mantle") return "aws_sso";
   if (providerId === MICROSOFT_FOUNDRY_PROVIDER_ID) return "microsoft";
+  if (providerId === "litellm" && options.liteLlmEntraSignIn === true) return "microsoft";
   return null;
 }
 
 export const gatewayMemberConnectionsResponseSchema = z.object({
   connections: z.array(z.object({
     providerId: z.string(),
-    /** Older Den responses omit it; they only offered Google sign-in. */
     signInMethod: z.enum(GATEWAY_MEMBER_SIGN_IN_METHODS).default("google"),
     credentialSetId: z.string(),
     providerName: z.string(),
@@ -580,4 +608,44 @@ export function parseInferenceProviderSecret(
     case "aws_sso":
       return { kind, awsSso: inferenceAwsSsoSecretSchema.parse(parseJsonSecret(raw)) };
   }
+}
+
+function isGatewayJsonRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/** Rejects catalog values that still carry unresolved env/template placeholders. */
+export function hasUnresolvedGatewayTemplate(value: unknown): boolean {
+  if (Array.isArray(value)) return value.some(hasUnresolvedGatewayTemplate);
+  if (isGatewayJsonRecord(value)) return Object.values(value).some(hasUnresolvedGatewayTemplate);
+  if (typeof value !== "string") return false;
+  let decoded = value;
+  for (let pass = 0; pass < 4; pass++) {
+    if (/[{}]|\$\(|\$[A-Za-z_][A-Za-z0-9_]*|<[A-Z_][A-Z0-9_]*>|%[A-Z_][A-Z0-9_]*%|process\.env\./.test(decoded)) return true;
+    try {
+      const next = decodeURIComponent(decoded);
+      if (next === decoded) return false;
+      decoded = next;
+    } catch { return true; }
+  }
+  return /%|[{}]|\$/.test(decoded);
+}
+
+/**
+ * Shared compatibility predicate used by both den-api and den-web: rejects models
+ * that override the provider's SDK package (e.g. third-party models under Vertex)
+ * or require unresolved template variables.
+ */
+export function gatewayModelConfigurationError(config: Record<string, unknown>, models: Record<string, unknown>[]): string | null {
+  const npm = typeof config.npm === "string" && config.npm.trim() ? config.npm : null;
+  for (const model of models) {
+    const provider = isGatewayJsonRecord(model.provider) ? model.provider : {};
+    if ([model.npm, provider.npm].some((override) => override !== undefined && override !== npm)) {
+      return "Selected models override the provider SDK. Use a separate gateway provider with the matching SDK.";
+    }
+    if (hasUnresolvedGatewayTemplate({ provider, options: model.options })) {
+      return "Model configuration contains unresolved environment/template dependencies.";
+    }
+  }
+  return null;
 }

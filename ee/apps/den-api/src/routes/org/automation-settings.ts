@@ -1,6 +1,7 @@
 import {
   organizationAutomationSettingsSchema,
   readOrganizationAutomationSettings,
+  type OrganizationAutomationSettings,
   withOrganizationAutomationSettings,
 } from "@openwork/types/den/automation-settings"
 import type { Hono } from "hono"
@@ -8,20 +9,16 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { automationAvailabilityFor, headlessAutomationsConfigured } from "../../automations/organization-availability.js"
 import { env } from "../../env.js"
-import { requireFeature } from "../../features.js"
 import { jsonValidator, orgMemberRoute, requireOrgPermission } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import { updateOrganizationMetadata } from "../../organization-metadata.js"
+import type { OrganizationContext } from "../../orgs.js"
 import type { OrgRouteVariables } from "./shared.js"
 
 const automationSettingsViewSchema = z.object({
-  /** What the organization chose. */
   settings: organizationAutomationSettingsSchema,
-  /** What members can run now: the choice, the deployment's own switch and, for Cloud, its headless runner. */
   available: organizationAutomationSettingsSchema,
-  /** The deployment runs Automations at all (DEN_AUTOMATIONS_ENABLED). */
   deploymentEnabled: z.boolean(),
-  /** The deployment has a headless runner, which Cloud Automations need. */
   headlessRunnerConfigured: z.boolean(),
 }).meta({ ref: "OrganizationAutomationSettings" })
 
@@ -32,7 +29,7 @@ const automationSettingsInputSchema = organizationAutomationSettingsSchema.parti
 const errorSchema = z.object({ error: z.string(), message: z.string() })
 
 function view(metadata: unknown) {
-  const availability = automationAvailabilityFor({ metadata, settingsEnabled: true, headlessRunnerConfigured: headlessAutomationsConfigured() })
+  const availability = automationAvailabilityFor({ metadata, headlessRunnerConfigured: headlessAutomationsConfigured() })
   return {
     settings: readOrganizationAutomationSettings(metadata),
     available: { desktop: availability.desktop, cloud: availability.cloud },
@@ -41,7 +38,14 @@ function view(metadata: unknown) {
   }
 }
 
-/** Settings › Automations: whether members may create and run Desktop and Cloud Automations. */
+export async function saveOrganizationAutomationSettings(organizationId: OrganizationContext["organization"]["id"], input: Partial<OrganizationAutomationSettings>) {
+  if (input.cloud === true && !headlessAutomationsConfigured()) {
+    return { ok: false as const, error: "headless_runner_required" as const, message: "Cloud Automations need OpenWork's headless runner on this deployment. Ask your OpenWork operator to set it up." }
+  }
+  const metadata = await updateOrganizationMetadata(organizationId, current => withOrganizationAutomationSettings(current, input))
+  return { ok: true as const, metadata }
+}
+
 export function registerOrgAutomationSettingsRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get(
     "/v1/org/automation-settings",
@@ -52,11 +56,9 @@ export function registerOrgAutomationSettingsRoutes<T extends { Variables: OrgRo
       responses: {
         200: jsonResponse("Automation settings returned.", automationSettingsViewSchema),
         401: jsonResponse("Authentication required.", unauthorizedSchema),
-        404: jsonResponse("Automation settings are not turned on for this organization.", errorSchema),
       },
     }),
     orgMemberRoute(),
-    requireFeature("organizationAutomationSettings"),
     async (c) => {
       c.header("Cache-Control", "no-store")
       return c.json(view(c.get("organizationContext").organization.metadata))
@@ -74,22 +76,17 @@ export function registerOrgAutomationSettingsRoutes<T extends { Variables: OrgRo
         400: jsonResponse("The request was invalid.", invalidRequestSchema),
         401: jsonResponse("Authentication required.", unauthorizedSchema),
         403: jsonResponse("The caller cannot edit organization settings.", forbiddenSchema),
-        404: jsonResponse("Automation settings are not turned on for this organization.", errorSchema),
         409: jsonResponse("Cloud Automations need the deployment's headless runner.", errorSchema),
       },
     }),
     orgMemberRoute(),
-    requireFeature("organizationAutomationSettings"),
     requireOrgPermission("organization.update"),
     jsonValidator(automationSettingsInputSchema),
     async (c) => {
       c.header("Cache-Control", "no-store")
-      const input = c.req.valid("json")
-      if (input.cloud === true && !headlessAutomationsConfigured()) {
-        return c.json({ error: "headless_runner_required", message: "Cloud Automations need OpenWork's headless runner on this deployment. Ask your OpenWork operator to set it up." }, 409)
-      }
-      const metadata = await updateOrganizationMetadata(c.get("organizationContext").organization.id, current => withOrganizationAutomationSettings(current, input))
-      return c.json(view(metadata))
+      const saved = await saveOrganizationAutomationSettings(c.get("organizationContext").organization.id, c.req.valid("json"))
+      if (!saved.ok) return c.json({ error: saved.error, message: saved.message }, 409)
+      return c.json(view(saved.metadata))
     },
   )
 }

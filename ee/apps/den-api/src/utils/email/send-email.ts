@@ -18,9 +18,6 @@ const DEV_EMAIL_OUTBOX_MAX = 20
 const devEmailOutbox: DevEmailOutboxEntry[] = []
 const logger = appLogger.child({ component: "email" })
 
-// Dev/eval-only affordance: when OPENWORK_DEV_MODE=1, keep the last few
-// rendered emails in memory so UI evals can inspect real HTML without a mail
-// provider. Never expose or populate this buffer outside dev mode.
 function recordDevEmail(input: DevEmailOutboxEntry) {
   if (!env.devMode) {
     return

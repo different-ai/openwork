@@ -44,7 +44,6 @@ export const orgPromptTeamSchema = z
   .object({
     teamId: z.string(),
     name: z.string(),
-    /** The team's own prompt, or null when it has none. */
     prompt: orgPromptSchema.nullable(),
   })
   .meta({ ref: "OrgPromptTeam" })
@@ -52,11 +51,8 @@ export type OrgPromptTeam = z.infer<typeof orgPromptTeamSchema>
 
 export const orgPromptSettingsSchema = z
   .object({
-    /** The prompt for everyone, or null when there is none. */
     everyone: orgPromptSchema.nullable(),
-    /** Every team, by name. */
     teams: z.array(orgPromptTeamSchema),
-    /** Whether the caller can change prompts. */
     canEdit: z.boolean(),
   })
   .meta({ ref: "OrgPromptSettings" })
@@ -77,7 +73,6 @@ export const memberPromptSchema = z
   .object({
     id: z.string(),
     source: z.enum(ORG_PROMPT_SOURCES),
-    /** The team it applies through, for team prompts. */
     teamName: z.string().optional(),
     content: z.string(),
   })
@@ -86,7 +81,6 @@ export type MemberPrompt = z.infer<typeof memberPromptSchema>
 
 export const memberPromptsSchema = z
   .object({
-    /** In the order desktops append them. */
     prompts: z.array(memberPromptSchema),
   })
   .meta({ ref: "MemberPrompts" })

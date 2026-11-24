@@ -1,16 +1,14 @@
 import type { Seed } from "@openwork/env";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
 
 function record(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
-/** One organization with the Automation settings rollout on, an owner on Settings and a member, on a Den without a headless runner. */
+/** An owner on Settings and a member, on a Den without a headless runner; no feature overrides are needed. */
 export async function organizationAutomationSettingsWorld(seed: Seed) {
   const den = await seed.den({ web: true, org: { name: "Automation settings workspace", admin: { name: "Ada Owner" }, members: { member: { name: "Mo Member" } } } });
   const member = den.members.member;
   if (!member) throw new Error("The member was not seeded.");
-  await enableOrganizationCapabilities(seed, den.admin, { organizationAutomationSettings: true });
   const viewport = { width: 1280, height: 1000 };
   const owner = await seed.web({ den, signedInAs: den.admin, startPath: "/dashboard/org-settings", headless: true, viewport });
   const memberWeb = await seed.web({ den, signedInAs: member, startPath: "/dashboard/org-settings", headless: true, viewport });

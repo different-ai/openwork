@@ -1,0 +1,68 @@
+---
+title: "Workbot"
+description: "Give your team an assistant in the browser that works in the apps they already use, and choose the model your cloud agents use."
+keywords: ["Workbot", "assistant", "browser assistant", "default model", "cloud agents", "Manage Workbot", "GPT-6 Luna", "Slack assistant", "cloud Automations"]
+---
+
+Workbot is your organization's assistant in the browser. Each member has one ongoing chat with it, with nothing to install. It works in Gmail, Google Calendar, Slack and the other apps your team connected, each person with their own account, and it can keep working on longer jobs on its own cloud computer while people keep chatting.
+
+## Open Workbot
+
+1. Open [app.openworklabs.com](https://app.openworklabs.com/) and choose your organization.
+2. Click **Workbot** in the sidebar, under **Work**.
+3. Workbot opens in its own tab. Sign in with your OpenWork account if asked.
+
+**Workbot** shows in the sidebar when it's available on your OpenWork deployment. On a self-hosted deployment, your deployment administrator has to set Workbot up first.
+
+### If Workbot needs an AI provider
+
+Workbot needs a model to answer with. When the default model needs your organization's [AI Gateway](/ai-gateway/overview) and the organization has no AI provider yet, clicking **Workbot** says **Workbot needs an AI provider** instead of opening it:
+
+- If you can manage AI providers, click **Add an AI provider** and add one in **AI Gateway**.
+- Otherwise you see **Workbot needs an organization admin to add an AI provider**. Ask an admin to add one.
+
+Where your organization has OpenWork's included models, Workbot can answer without an AI provider of your own.
+
+## Manage Workbot
+
+Admins set Workbot up in **Manage › Workbot**.
+
+- **View OpenWork Models settings** (admins by default) shows the page.
+- **Manage OpenWork Models** (admins by default) lets you change it.
+
+### Default model
+
+**Default model** is the model Workbot answers with for everyone in your organization. Until you choose one, Workbot uses its built-in default, GPT-6 Luna.
+
+The same model is your organization's default for its cloud agents:
+
+- Workbot
+- [OpenWork in Slack](/slack/overview), where your organization has it
+- Cloud [Automations](/start-here/do-work-with-it/automations) that use the cloud default
+
+To change it:
+
+1. Go to **Manage › Workbot**.
+2. Under **Default model**, open the model list and pick a model. The list shows the models Workbot can use. **Check availability** refreshes it.
+3. Click **Save model**.
+
+If the saved model stops being available, Workbot says so on this page and new messages won't send until you choose an available model. Existing conversations are kept.
+
+### Completion check
+
+Click **Test model** to send the default model a short test prompt and confirm it answers. The test doesn't use any chats or connected apps, but it may use paid inference. Open **Test details** to see the model that was requested and the model the provider reported.
+
+### Name
+
+Workbot introduces itself with your organization's brand name. To change it, click **Change in Brand appearance**.
+
+### Members' agents
+
+Where your organization has it, **Manage › Workbot** also has a **Members' agents** section for [My bot](/workbot/my-bot), a background agent that checks each member's email, calendar and team chat. It is being rolled out and isn't available to every organization yet.
+
+## Related
+
+- [My bot](/workbot/my-bot)
+- [AI Gateway](/ai-gateway/overview)
+- [OpenWork in Slack](/slack/overview)
+- [Open OpenWork Web in your browser](/cloud/run-in-the-cloud/open-cloud-in-browser): the full OpenWork app in the browser

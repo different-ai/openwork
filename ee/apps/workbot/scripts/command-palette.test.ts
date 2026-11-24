@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { Hono } from "hono"
-import { highlightRuns, loadPaletteRecents, matchIndexes, rankPaletteItems, recordPaletteRecent, SEARCH_LIMIT, type Rankable } from "../../../packages/workbot-ui/src/command-palette-search.js"
+import { loadPaletteRecents, rankPaletteItems, recordPaletteRecent, SEARCH_LIMIT, type Rankable } from "../../../packages/workbot-ui/src/command-palette-search.js"
 import { createAuth, type AppEnv } from "../src/server/auth.js"
 import { createDen, denSessionSchema } from "../src/server/den.js"
 import { loadConfig } from "../src/server/config.js"
@@ -23,11 +23,11 @@ async function me(session: Record<string, unknown>) {
   return body.commandPalette
 }
 
-test("the page sees the palette only when Den turns it on for a member Workbot is on for", async () => {
-  assert.equal(await me({ enabled: true }), false, "a Den from before the feature says nothing: off")
-  assert.equal(await me({ enabled: true, commandPalette: false }), false)
-  assert.equal(await me({ enabled: false, commandPalette: true }), false, "never while Workbot itself is off")
+test("the palette is available by default regardless of legacy Den rollout values", async () => {
+  assert.equal(await me({ enabled: true }), true, "older Dens may omit the compatibility field")
+  assert.equal(await me({ enabled: true, commandPalette: false }), true, "retired rollout values cannot hide the palette")
   assert.equal(await me({ enabled: true, commandPalette: true }), true)
+  assert.equal(await me({ enabled: false, commandPalette: false }), true, "Workbot access is enforced separately from the palette compatibility field")
 })
 
 const items: Rankable[] = [
@@ -61,11 +61,6 @@ test("a recently used entry wins a tie, and a long list stays short", () => {
   assert.equal(rankPaletteItems("plan", twins, ["b"])[0]?.items[0]?.id, "b")
   const many: Rankable[] = Array.from({ length: 500 }, (_, index) => ({ id: `chat:${index}`, group: "chats", title: `Weekly report ${index}` }))
   assert.equal(rankPaletteItems("weekly", many, []).flatMap((group) => group.items).length, SEARCH_LIMIT)
-})
-
-test("matched letters are emphasized in order, as plain text runs", () => {
-  assert.deepEqual(highlightRuns("Budget review", matchIndexes("bud", "Budget review")), [{ text: "Bud", match: true }, { text: "get review", match: false }])
-  assert.deepEqual(highlightRuns("Calendar", matchIndexes("", "Calendar")), [{ text: "Calendar", match: false }])
 })
 
 test("recents keep the newest eight, once each, and survive unreadable storage", () => {

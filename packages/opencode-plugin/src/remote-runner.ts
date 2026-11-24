@@ -1,4 +1,3 @@
-/** Explicitly approved native Location -> OpenWork session runner. Scheduling belongs here, not the shared core. */
 import { createHash, randomUUID } from "node:crypto"
 import { realpath } from "node:fs/promises"
 import { hostname } from "node:os"
@@ -15,12 +14,12 @@ import type { NativePluginContext } from "./opencode.ts"
 import { acquireRunnerOwnership, type RunnerOwnership } from "./runner-ownership.ts"
 
 const CAPABILITIES = ["remote_session_v1", "remote_session_control_v1", "remote_session_only_v1", "remote_session_recovery_v1"]
+const ANSWER_CAPABILITIES = [...CAPABILITIES, "remote_session_answer_v1"]
 const RENEW_MS = 30 * 60_000
 const INVENTORY_MS = 60_000
 const POLL_MS = 3000
 
 function hash(value: string): string { return createHash("sha256").update(value).digest("hex").slice(0, 32) }
-/** The pinned Promise host ignores RequestOptions.signal on API methods; bound our wait anyway. */
 function hostRead<T>(read: () => Promise<T>, signal: AbortSignal): Promise<T> {
   const bounded = AbortSignal.any([signal, AbortSignal.timeout(10_000)])
   bounded.throwIfAborted()
@@ -60,18 +59,14 @@ export interface RemoteRunnerStatus {
   phase: "credentials" | "registration" | "inventory" | "recovery" | "work"
   failures: number
   observedAt: number
-  /** Stable local diagnosis; never contains provider errors, credentials, or prompts. */
   error: string | null
 }
 
 export interface RemoteRunnerController {
   inspectStatus(): RemoteRunnerStatus
-  /** Starts in the background. Never wait for Den from plugin setup or a prompt hook. */
   start(): void
-  /** Call immediately on credential events; cancel old in-flight work before resolving credentials again. */
   credentialsChanged(): void
   close(): Promise<void>
-  /** Single-flight manual cycle, also used by deterministic local tests. */
   poll(): Promise<void>
 }
 
@@ -82,7 +77,6 @@ export function createRemoteRunnerController(input: {
   fetch?: Fetch
   now?: () => number
   random?: () => number
-  /** Test seams for timers and process-safe locking, not plugin options. */
   schedule?: (callback: () => void, delayMs: number) => () => void
   acquireOwnership?: (directory: string) => Promise<RunnerOwnership | null>
 }): RemoteRunnerController {
@@ -98,8 +92,6 @@ export function createRemoteRunnerController(input: {
   let disposed = false
   let started = false
   let active: Active | null = null
-  // Process-local, one-entry cache. Only a hash of the credential is retained;
-  // cached metadata/email cannot establish the authenticated member's identity.
   let verifiedMember: { key: string; userId: string } | null = null
   let ownership: RunnerOwnership | null = null
   let directory: string | null = null
@@ -113,8 +105,6 @@ export function createRemoteRunnerController(input: {
   const statusKey = `remoteSessions/status/${hash(ctx.location.directory)}`
   const recordStatus = async (state: RemoteRunnerStatus["state"], error: string | null = null) => {
     status = { state, phase, failures, observedAt: now(), error }
-    // Health recording is best-effort, unlike the execution journal. A broken
-    // diagnostic store must not turn an acknowledged native effect into failure.
     await hostRead(() => ctx.storage.set(statusKey, { ...status }), AbortSignal.timeout(1000)).catch(() => {})
   }
 
@@ -131,8 +121,6 @@ export function createRemoteRunnerController(input: {
     const key = hash(JSON.stringify([session.apiBaseUrl, session.orgId, session.token]))
     if (verifiedMember?.key !== key) {
       verifiedMember = null
-      // Validate every replacement access token before runner HTTP or native work.
-      // Keep the explicitly approved org, not /me's mutable active organization.
       const me = await hostRead(() => readMe((url, init) => fetcher(url, {
         ...init, signal: init?.signal ? AbortSignal.any([signal, init.signal]) : signal,
       }), session), signal)
@@ -154,14 +142,11 @@ export function createRemoteRunnerController(input: {
     if (!ownership) return null
     signal.throwIfAborted()
     const directoryKey = hash(directory)
-    // storage is plugin-wide; the directory lock is acquired before any identity/journal writes.
     let installation = await ctx.storage.get("remoteSessions/installation")
     if (typeof installation !== "string" || !installation) {
       installation = randomUUID()
       await ctx.storage.set("remoteSessions/installation", installation)
     }
-    // Den binds each runner to one organization member. Keep identities stable within an account,
-    // but never try to register the previous member's runner after an account switch.
     const identityKey = `remoteSessions/runner/${hash(JSON.stringify([directoryKey, value.identity]))}`
     let runnerId = await ctx.storage.get(identityKey)
     if (typeof runnerId !== "string" || !/^oc_runner_[a-f0-9]{32}$/.test(runnerId)) {
@@ -173,7 +158,6 @@ export function createRemoteRunnerController(input: {
     const prefix = `remoteSessions/${hash(JSON.stringify([value.identity, runnerId, directory]))}`
     const journalKey = `${prefix}/journal`
     const native = createNativeOpenCodeAdapter({ ctx, directory, workspaceId, storagePrefix: prefix, now })
-    // Token closure is evaluated on every retry. Renewing it never replaces the core or its journal/watch state.
     const state: Active = {
       account: value, runnerId, workspaceId, runner: createSessionRunner({
         adapter: native,
@@ -191,16 +175,21 @@ export function createRemoteRunnerController(input: {
       }),
       token: null, tokenExpiresAt: 0, registeredAt: 0, inventoryAt: 0,
     }
-    // Invalid storage must fail closed before claiming any work.
     await state.runner.inspect()
     signal.throwIfAborted()
     return state
   }
 
   async function register(state: Active, signal: AbortSignal): Promise<void> {
-    const response = await hostRead(() => denRequest(fetcher, state.account.session, "/v1/session-runners/token", { method: "POST", signal,
+    const mint = (capabilities: string[]) => hostRead(() => denRequest(fetcher, state.account.session, "/v1/session-runners/token", { method: "POST", signal,
       body: { runnerId: state.runnerId, protocolVersion: 1, supportedExecutionTargets: ["desktop"],
-        capabilities: CAPABILITIES, platform: platform(), appVersion: ctx.app.version, concurrency: 1 } }), signal)
+        capabilities, platform: platform(), appVersion: ctx.app.version, concurrency: 1 } }), signal)
+    let response: unknown
+    try { response = await mint(ANSWER_CAPABILITIES) }
+    catch (error) {
+      if (!(error instanceof DenRequestError) || error.status !== 400) throw error
+      response = await mint(CAPABILITIES)
+    }
     signal.throwIfAborted()
     if (!isRecord(response) || typeof response.token !== "string" || response.token.length < 32
       || response.token.length > 512 || /[\r\n]/.test(response.token)
@@ -225,8 +214,6 @@ export function createRemoteRunnerController(input: {
     let value: Account | null
     try { value = await account(signal) }
     catch (error) {
-      // Resolution or /me validation failures cannot authorize old runner tokens.
-      // An aborted stale resolution must not overwrite newer credential state.
       if (!signal.aborted) active = null
       throw error
     }
@@ -257,7 +244,6 @@ export function createRemoteRunnerController(input: {
       }
       state.inventoryAt = now()
     }
-    // Restore receipts and pending outboxes before fetching more claimed work.
     phase = "recovery"
     await state.runner.reconcile(signal)
     const journal = await state.runner.inspect()
@@ -277,7 +263,6 @@ export function createRemoteRunnerController(input: {
         } else if (item.kind === "remote_session_request" && typeof item.requestId === "string") {
           await state.runner.execute(await transport.claimRequest(item.requestId, signal), signal)
         } else {
-          // Never interpret Automation runs, unknown future work kinds, or arbitrary session IDs as native work.
           throw new Error("Unexpected session-runner work kind.")
         }
       } catch (error) {
@@ -301,7 +286,6 @@ export function createRemoteRunnerController(input: {
     }).catch(async error => {
       if (!controller.signal.aborted) {
         failures++
-        // Server-side feature disable/revocation withdraws approval immediately. Keep journals for safe reconnect.
         if (error instanceof DenAuthError || error instanceof RemoteSessionHttpError && (error.status === 401 || error.status === 403)
           || error instanceof DenRequestError && (error.status === 403 || error.status === 404)) active = null
         await recordStatus("retrying", `${phase}_failed`)

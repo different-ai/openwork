@@ -1,7 +1,6 @@
 import type { ConnectionInfo, CredentialValue, Json, ModelInfo, NativeMessage, NativePluginContext, NativeSessionInfo } from "./opencode.ts"
 import { isRecord } from "./den.ts"
 
-/** Mirror native 2.0.26's LocationQuery decoder, not a permissive mock. */
 function modelLocationQuery(input: unknown): void {
   if (input === undefined) return
   if (!isRecord(input) || (input.location !== undefined && (!isRecord(input.location)
@@ -16,7 +15,7 @@ export function testModel(): ModelInfo {
     cost: [], status: "active", limit: { context: 100_000, output: 10_000 } }
 }
 
-export function createNativeHost(directory = process.cwd()) {
+export function createNativeHost(directory = process.cwd(), options: { permissionReply?: boolean } = {}) {
   const storage = new Map<string, Json>()
   const calls: Array<{ method: string; input: unknown }> = []
   const sessions = new Map<string, NativeSessionInfo>()
@@ -72,7 +71,16 @@ export function createNativeHost(directory = process.cwd()) {
       list: async input => { modelLocationQuery(input); calls.push({ method: "model.list", input }); return { location: { directory }, data: [testModel()] } },
       default: async input => { modelLocationQuery(input); calls.push({ method: "model.default", input }); return { location: { directory }, data: testModel() } },
     },
-    permission: { list: async input => pendingPermissions ? [{ id: "perm_example", sessionID: input.sessionID }] : [] },
+    permission: {
+      list: async input => pendingPermissions
+        ? [{ id: "perm_example", sessionID: input.sessionID, action: "bash", resources: ["pnpm test"], metadata: { description: "Run the tests" } }] : [],
+      ...(options.permissionReply ? {
+        reply: async (input: { sessionID: string; requestID: string; decision: "once" | "reject" }) => {
+          calls.push({ method: "permission.reply", input })
+          pendingPermissions = false
+        },
+      } : {}),
+    },
   }
   return {
     ctx, calls, storage, histories, sessions,

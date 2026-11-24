@@ -230,7 +230,6 @@ function pluginFromLibraryItem(item: DenMeLibraryPlugin): DenOrgPlugin {
 export async function listAssignedConnectCapabilities(input: {
   client: ConnectCapabilityClient;
   organizationId: string;
-  /** Activity requires a complete answer; partial lists are not removal evidence. */
   requireComplete?: boolean;
 }): Promise<ConnectCapabilityInventory> {
   const [assigned, libraryPlugins] = await Promise.all([
@@ -254,8 +253,6 @@ export async function listAssignedConnectCapabilities(input: {
       item.marketplaceId ? [`${item.marketplaceId}:${item.pluginId}:${item.configObjectId}`] : []
     )),
   );
-  // The catalog listing is paginated and can include admin-only visibility.
-  // For change detection resolve the complete grant-scoped ID set directly.
   const marketplaces = input.requireComplete || assigned.length === 0
     ? []
     : (await input.client.listOrgMarketplaces(input.organizationId))
@@ -270,8 +267,6 @@ export async function listAssignedConnectCapabilities(input: {
       input.client.getOrgMarketplaceResolved(input.organizationId, marketplaceId)
     ),
   ))
-    // Both paths return the same inventory, so a complete pass can also serve
-    // the Connect views: active marketplaces only, in name order.
     .filter((resolved) => resolved.marketplace.status === "active")
     .sort((left, right) => left.marketplace.name.localeCompare(right.marketplace.name));
 
@@ -367,8 +362,6 @@ export async function listAssignedConnectCapabilities(input: {
   }
 
   const pluginCards = [...pluginsById.values()]
-    // Activity also observes plugins whose contents have no desktop file
-    // projection (for example, a cloud-only Workflow).
     .filter((plugin) => input.requireComplete || plugin.files.length > 0)
     .sort((left, right) => left.name.localeCompare(right.name));
   skills.sort((left, right) => left.name.localeCompare(right.name));

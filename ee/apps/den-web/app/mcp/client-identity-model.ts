@@ -1,13 +1,6 @@
-/**
- * What the consent page says about the app asking for access. The redirect
- * host comes from the signed OAuth query Better Auth hands the consent page,
- * so it is the address the authorization code will actually be sent to.
- */
 export type McpRedirectDescription = {
   host: string;
-  /** Full normalized callback, displayed as text so the person can inspect it. */
   url: string;
-  /** Only loopback redirects: the code goes to whatever runs on this computer. */
   loopbackOnly: boolean;
 };
 
@@ -25,17 +18,14 @@ export function describeMcpRedirect(redirectUri: string | null): McpRedirectDesc
     if (url.protocol === "http:" || url.protocol === "https:") {
       return { host: url.host, url: url.href, loopbackOnly: isLoopbackHost(url.hostname) };
     }
-    // Native app schemes (e.g. cursor://) name the app that will receive the code.
     return { host: `${url.protocol}//`, url: url.href, loopbackOnly: false };
   } catch {
     return null;
   }
 }
 
-/** A readable fallback name when the client registered none. */
 export function fallbackClientName(clientId: string): string {
   try {
-    // Client ID Metadata Documents use an HTTPS URL as the client id.
     return new URL(clientId).host;
   } catch {
     return "An app without a name";

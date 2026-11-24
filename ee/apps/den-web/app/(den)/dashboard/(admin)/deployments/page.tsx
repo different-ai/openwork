@@ -1,5 +1,5 @@
-import { ManagedDeploymentsScreen } from "../../_components/managed-deployments-screen";
+import { DeploymentsRoute } from "../../_components/deployments-route";
 
 export default function DeploymentsPage() {
-  return <ManagedDeploymentsScreen />;
+  return <DeploymentsRoute />;
 }

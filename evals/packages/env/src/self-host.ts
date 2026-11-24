@@ -1,6 +1,6 @@
 import { execFile, spawn } from "node:child_process";
 import { closeSync, openSync } from "node:fs";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
@@ -27,6 +27,10 @@ export interface SelfHostServerOptions {
   ownerEmails: string[];
   allowPublicSignup?: boolean;
   bootstrapCode?: string;
+  /** Extra browser origins Den trusts, e.g. the app served in headless Chrome. */
+  trustedOrigins?: string[];
+  /** Extra Den environment, applied after the defaults (e.g. a pinned installer release). */
+  env?: Record<string, string>;
 }
 
 export interface SelfHostDen {
@@ -187,7 +191,7 @@ export async function selfHostServer(options: SelfHostServerOptions): Promise<Se
     const [apiPort, webPort] = await allocateFreePorts(2);
     if (apiPort === undefined || webPort === undefined) throw new Error("Could not allocate Den API/Web ports.");
 
-    const origins = trustedOrigins(apiPort, webPort).join(",");
+    const origins = [...trustedOrigins(apiPort, webPort), ...(options.trustedOrigins ?? [])].join(",");
     const ref: DenRef = {
       apiUrl: `http://127.0.0.1:${apiPort}`,
       webUrl: `http://127.0.0.1:${webPort}`,
@@ -218,7 +222,14 @@ export async function selfHostServer(options: SelfHostServerOptions): Promise<Se
       DEN_PASSWORD_BREACH_SCREENING_ENABLED: "false",
       OPENWORK_DEV_MODE: "1",
       PROVISIONER_MODE: "stub",
+      ...options.env,
     };
+
+    if (process.env.OPENWORK_EVAL_DEN_RUNTIME_PREPARED !== "1") {
+      // Match the regular Den fixture: a fresh next dev process must not reuse
+      // a stale Turbopack graph that repeatedly reloads before hydration.
+      await rm(join(REPO_ROOT, "ee", "apps", "den-web", ".next", "dev"), { recursive: true, force: true });
+    }
 
     const api = spawnService("den-api", "dev:den:api", apiPort, {
       ...commonEnv,

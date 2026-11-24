@@ -13,10 +13,6 @@ function isBroker(value: unknown): value is CredentialBroker {
     && "fetchInventory" in value && typeof value.fetchInventory === "function"
 }
 
-// The native source loader gives each Location/import graph its own ESM module
-// instances. Native require of one absolute CJS filename bypasses that isolation:
-// every graph gets the same frozen broker, whose credential stays in its closure.
-// Only its credential-free code/path is on disk/in env; never the capability.
 const filename = process.env.OPENWORK_PROVIDER_SESSION_BROKER
 const loaded: unknown = filename ? createRequire(import.meta.url)(filename) : null
 if (loaded !== null && !isBroker(loaded)) throw new Error("Invalid desktop credential broker")

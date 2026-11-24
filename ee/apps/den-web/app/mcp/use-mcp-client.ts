@@ -5,12 +5,10 @@ import { denApiCredentials, denBrowserEndpoint } from "../(den)/_lib/den-api-ori
 import { getRuntimeConfig } from "../(den)/_lib/runtime-config";
 
 export type McpClient = {
-  /** The name the app registered, or null when it shared none. */
   name: string | null;
   logoUri: string | null;
   clientId: string | null;
   loaded: boolean;
-  /** The server accepted the signed query and returned public client metadata. */
   metadataResolved?: boolean;
 };
 
@@ -18,7 +16,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
 }
 
-/** A readable name when the app registered none: the host of a metadata-document client id. */
 export function fallbackMcpClientName(clientId: string | null): string | null {
   if (!clientId) return null;
   try {
@@ -29,7 +26,6 @@ export function fallbackMcpClientName(clientId: string | null): string | null {
   }
 }
 
-/** Parses Better Auth's public client response (DCR or Client ID Metadata Document). */
 export function readPublicMcpClient(payload: unknown): { name: string | null; logoUri: string | null } {
   if (!isRecord(payload)) return { name: null, logoUri: null };
   const name = typeof payload.client_name === "string" && payload.client_name.trim() ? payload.client_name.trim().slice(0, 80) : null;
@@ -39,8 +35,6 @@ export function readPublicMcpClient(payload: unknown): { name: string | null; lo
 
 async function loadPublicClient(clientId: string, oauthQuery: string) {
   await getRuntimeConfig();
-  // The prelogin variant is authorized by the signed OAuth query itself, so it
-  // works before the person has an account.
   const endpoint = denBrowserEndpoint("/api/auth/oauth2/public-client-prelogin");
   const response = await fetch(endpoint, {
     method: "POST",
@@ -53,10 +47,6 @@ async function loadPublicClient(clientId: string, oauthQuery: string) {
   return { ...readPublicMcpClient(payload), metadataResolved: isRecord(payload) };
 }
 
-/**
- * Which app is asking, from the signed authorize query the page was opened
- * with. Pass "" until the query is known; the result stays unloaded until then.
- */
 export function useMcpClient(oauthQuery: string): McpClient {
   const clientId = oauthQuery ? new URLSearchParams(oauthQuery).get("client_id") : null;
   const [loadedClient, setLoadedClient] = useState<{ clientId: string; name: string | null; logoUri: string | null; metadataResolved: boolean } | null>(null);

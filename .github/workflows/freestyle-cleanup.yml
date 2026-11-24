@@ -45,7 +45,7 @@ jobs:
         with:
           version: 11.4.0
       - name: Install the evidence controllers only
-        run: pnpm --filter @openwork/freestyle... --filter @openwork/daytona-evidence... install --frozen-lockfile --ignore-scripts
+        run: pnpm --filter @openwork/world-freestyle... --filter @openwork/evidence-daytona... install --frozen-lockfile --ignore-scripts
       - name: Delete snapshots OpenWork no longer needs
         env:
           FREESTYLE_API_KEY: ${{ secrets.FREESTYLE_API_KEY }}

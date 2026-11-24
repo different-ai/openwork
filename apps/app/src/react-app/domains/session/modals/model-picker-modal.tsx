@@ -12,7 +12,7 @@ import { useCheckDesktopRestriction } from "../../cloud/desktop-config-provider"
 import { useDenAuth } from "../../cloud/den-auth-provider";
 import type { ModelOption, ModelRef } from "@/app/types";
 import { openAutoProviderSettings } from "../../cloud/auto-access-ui";
-import { isAutoModel, type ModelCatalogOption, type ModelPickerCatalogState, type RetainedModelSelection } from "@/react-app/domains/models/model-catalog";
+import { isAutoModel, managesOwnBehavior, type ModelCatalogOption, type ModelPickerCatalogState, type RetainedModelSelection } from "@/react-app/domains/models/model-catalog";
 
 export const MODEL_PICKER_DEFAULT_SUBTITLE = "Select a model for this session.";
 export const MODEL_PICKER_UNAVAILABLE_SUBTITLE = "The model you were using is no longer available, please select a different model for this session.";
@@ -20,9 +20,7 @@ export function resolveModelPickerSubtitle(subtitle: string | undefined) { retur
 
 export type ModelPickerModalProps = {
   open: boolean;
-  /** What to list: the shared catalog's options for this surface. */
   options: readonly ModelCatalogOption[];
-  /** Everything the person could have chosen, disabled rows included; names a saved choice that is not listed. */
   knownOptions?: readonly ModelCatalogOption[];
   disabledProviders?: string[];
   organizationModelsEmpty?: boolean;
@@ -71,8 +69,6 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
   const choice = useModelChoice(JSON.stringify([props.open, props.current, props.currentBehaviorValue]));
   const restrictToCloud = props.restrictToCloud || checkRestriction({ restriction: "allowCustomProviders" });
   const catalogState = props.catalogState ?? { state: "ready", onRetry: props.onRefreshOrganizationModels } satisfies ModelPickerCatalogState;
-  // Callers pass the shared catalog; applying the same pipeline here keeps the dialog correct for any caller
-  // (it is idempotent) and applies this dialog's own policy, disabled-provider and gateway inputs.
   const catalog = buildModelCatalog({ runtime: [...(props.knownOptions ?? props.options)], signedIn: auth.isSignedIn, restrictToCloud, checkRestriction,
     disabledProviders: props.disabledProviders, gatewayProviderIds: props.gatewayProviderIds });
   const retained = resolveRetainedSelection({ current: props.current, catalog, saved: props.retainedSelection, signedIn: auth.isSignedIn,
@@ -84,7 +80,6 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
   useEffect(() => { if (props.open) props.setQuery(""); }, [props.open]);
   const openSettings = () => { props.onClose({ restorePromptFocus: false }); (props.onOpenProviderSettings ?? openAutoProviderSettings)(); };
   const pendingProviders = props.gatewayConnectProviders?.filter((provider) => !provider.models?.length) ?? [];
-  // The same panel as the composer's picker, in a dialog for surfaces without a composer.
   return <Dialog open={props.open} onOpenChange={(open) => { if (!open && !choice.loginOpen) props.onClose(); }}>
     <DialogContent ref={popupRef} showCloseButton={false} initialFocus={() => isMobile ? popupRef.current : searchInputRef.current} aria-describedby={undefined}
       className="flex max-h-[min(calc(100dvh-2rem),36rem)] min-h-0 w-90 max-w-[calc(100vw-2rem)] flex-col gap-0 overflow-hidden rounded-2xl p-0 sm:max-w-90 lg:w-90 lg:max-w-90 lg:rounded-2xl" data-testid="all-models-picker">
@@ -92,7 +87,7 @@ export function ModelPickerModal(props: ModelPickerModalProps) {
       <ModelPickerPanel searchInputRef={searchInputRef} options={options} current={props.current} behaviorValue={behaviorValue}
         onSelect={(option, behavior) => choice.choose(option, () => {
           props.onSelect({ providerID: option.providerID, modelID: option.modelID });
-          if (behavior && !isAutoModel(option)) props.onBehaviorChange({ providerID: option.providerID, modelID: option.modelID }, behavior.variant);
+          if (behavior && !managesOwnBehavior(option)) props.onBehaviorChange({ providerID: option.providerID, modelID: option.modelID }, behavior.variant);
         })}
         onBehaviorChange={(value) => props.onBehaviorChange(props.current, value)}
         catalogState={catalogState} retainedSelection={retained}

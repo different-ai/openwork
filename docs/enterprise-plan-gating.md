@@ -141,12 +141,12 @@ Rollout order (each step independently safe):
    grandfathered (acceptable — gating only blocks edits, never breaks what
    they configured; ship a follow-up data migration if the gap grows long).
 4. Manual plan assignment via the instance admin surface
-   (`routes/admin/index.ts`) still works; Stripe-billed Enterprise is described
-   under "Enterprise plan billing" below.
+   (`routes/admin/index.ts`) is how Enterprise is set; see "Plans and billing"
+   below.
 
 ## UX when gated
 
-- **den-web dashboard** (`dashboard/sso/`, `dashboard/(admin)/desktop-policies/`,
+- **den-web dashboard** (`dashboard/sso/` and its `auth-security` tab, `dashboard/(admin)/desktop-policies/`,
   org settings requireSso/version toggles): screens stay visible but show an
   "Enterprise" badge and a "Talk to us" CTA (→ `openworklabs.com/enterprise#book`)
   instead of the create/edit actions, driven by an `entitlements` object added
@@ -169,51 +169,69 @@ marketing story is:
 This is reflected on `/pricing` and `/enterprise` as "Desktop policies &
 version controls".
 
-## Enterprise plan billing (sales-led)
+## One place for an organization's plan and users
 
-Behind the `enterprisePlan` feature (cloud only, off). Enterprise is sold by
-us and billed through Stripe, not bought at checkout.
+A platform admin sets an organization's plan in `/admin` › organization ›
+**Billing** (`PATCH /v1/admin/organizations/:id/plan`, or the admin MCP tool
+`den_update_org_plan`; both call `setOrganizationPlanByAdmin`): Free, Team or
+Enterprise, how many users it allows, and for Team and Enterprise an optional
+end date. Stored in `organization.metadata.plan` (`tier`, `source`, `seats`,
+`endsAt`, `grantedAt`, `grandfatheredAt`); `limits.members` mirrors the number
+for one release. On Free the number is stored as `seatsFreeAdditional` above 5.
 
-- **Stripe setup:** one Enterprise product (`STRIPE_ENTERPRISE_PRODUCT_ID` on
-  den-api). Each customer gets their own recurring per-user price on that
-  product, so subscriptions are recognised by product, not price.
-- **Starting it:** a platform admin opens the organization's Control panel in
-  `/admin` and enters the contract price, the committed minimum users, the
-  billing email and the invoice terms
-  (`POST /v1/admin/organizations/:id/enterprise-subscription`). Den creates a
-  `send_invoice` subscription with `subscription_type: enterprise` and
-  `minimum_users` in its metadata. A Team plan (seat) subscription is canceled
-  with a prorated credit, and an admin-set or grandfathered plan is handed over
-  to Stripe (`plan: { tier: "enterprise", source: "stripe" }`).
-- **Quantity:** every user (the same count as Team, Models and Web), never
-  below the committed minimum, at least 1. It follows member and invitation
-  changes like the other subscriptions. The minimum is changed with
-  `PATCH .../enterprise-subscription` (stored in Stripe metadata and mirrored to
-  `org_subscriptions.minimum_quantity`).
-- **Plan:** while the Enterprise subscription is active, trialing or past due
-  the organization is Enterprise from Stripe; it outranks Team. When it ends the
-  organization falls back to Team if it still pays for Team, otherwise Free.
-  Admin-set and grandfathered plans are never changed by Stripe.
-- **User limit:** an active Enterprise subscription lifts the Free plan user
-  limit for invitations, SCIM and SSO. While the feature is on for the
-  organization, an Enterprise plan without one (admin-set or grandfathered)
-  lifts it too.
-- **Billing page:** organizations with an Enterprise subscription see an
-  Enterprise plan card (users billed, minimum, next invoice, invoices in the
-  Stripe portal) instead of the Team plan card. OpenWork Models and OpenWork
-  Web stay separate subscriptions.
-- **Turning it off:** blocks starting new Enterprise subscriptions and the
-  limit bypass for admin-set Enterprise plans. Existing Enterprise subscriptions
-  keep billing, keep the plan and keep their organization's invites working.
+One pure rule (`ee/apps/den-api/src/organization-plan.ts`) decides how many
+users an organization may have, counting pending invitations, for every way
+people join: email invitations, SSO sign-up and verified-domain joins, and
+SCIM. No feature flag takes part.
+
+- An active Team seat subscription in Stripe (active or trialing): no limit,
+  Stripe bills every user.
+- Otherwise a Team or Enterprise plan a platform admin set, or grandfathered:
+  its seats, never fewer than 5.
+- Otherwise Free: 5 plus any extra free users.
+
+Limits apply only where seat billing gates members (hosted multi-organization
+deployments with Stripe seat billing configured). A full Free workspace gets
+the 402 Team upgrade; a full plan OpenWork set gets `409 org_limit_reached`
+("Your Enterprise plan includes N users… Ask your OpenWork contact to add
+seats."), never the Team upgrade. The end date is display only: `/admin` and
+the customer Billing page show "Ended <date>", and nothing changes.
+
+## Plans and billing (no feature flags)
+
+There are no billing feature flags: `teamPlan` and `selfServeEnterprise` are
+retired keys.
+
+- **Free:** 5 users plus any extra free users a platform admin allows. The
+  sixth person gets the 402 Team upgrade.
+- **Team:** bought by card in Stripe at $10 per person per month, wherever the
+  deployment has Stripe seat billing set up (`STRIPE_SECRET_KEY` and
+  `STRIPE_SEAT_PRICE_ID`). Paying sets `plan: { tier: "team", source:
+  "stripe" }`; Stripe ending it returns a Stripe-set plan to Free.
+- **Enterprise:** set by a platform admin in `/admin` › organization ›
+  Billing (or `den_update_org_plan`): seats and an optional, display-only end
+  date. OpenWork invoices it outside OpenWork. It is never bought by card and
+  never linked to a Stripe subscription; the Stripe Enterprise subscription
+  routes, `STRIPE_ENTERPRISE_PRODUCT_ID`, `STRIPE_ENTERPRISE_PRICE_ID` and
+  `DEN_ENTERPRISE_UNIT_AMOUNT` are gone.
+- **Enterprise on a workspace that still pays for Team:** setting Enterprise
+  does not touch Stripe. The card keeps being charged and no user limit
+  applies while it pays, so `/admin` warns before saving; cancel the Team
+  subscription in Stripe.
+
+A Stripe subscription tagged `subscription_type: enterprise` (none exist) is
+still stored under its own type so it is never mistaken for another product,
+but it changes nothing.
 
 ## Open questions
 
-- Enterprise self-serve checkout: not built; sales-led only for now.
+- Self-serve Enterprise: not sold. The planned path is one setting in
+  `/admin` for the Enterprise price per person (empty means not sold), with no
+  feature flag and no environment variable.
 - Stripe billing sets `plan: { tier: "team", source: "stripe" }` while an
   organization's Team plan (seat) subscription is active, trialing or past due,
   and returns it to Free when it ends. Migration
   `0155_enterprise_plan_subscriptions` applies the same rule once to every
   environment.
-- Moving the existing admin-set and grandfathered Enterprise organizations onto
-  Stripe Enterprise subscriptions is a sales decision, made one organization at
-  a time from `/admin`.
+- Grandfathered Enterprise organizations without stored seats resolve to the
+  Free limit of 5; give each one its seats in `/admin` before it needs them.

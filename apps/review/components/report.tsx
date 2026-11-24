@@ -8,12 +8,13 @@ import { Icon } from "./icons";
 import { summarizeReview } from "@openwork/review";
 import type { ReviewEvidence, ReviewReport } from "@openwork/review";
 import { LaunchPreview } from "./launch-preview";
+import { MarkedShot } from "./marked-shot";
 import { CheckpointProvider } from "./open-checkpoint";
 import { StatusIcon } from "./status-icon";
 import type { PreviewProviderOption } from "../lib/preview-options";
 import { composeSections, designNotesLabel, visualState, type Verdict } from "../lib/sections";
+import { closesStep, describeChange, isRepeat, stepChecks, stepFound } from "../lib/change";
 
-/** One sentence of state per verdict: what is true, and where to look first (P1, C6). */
 function verdictLine(verdict: Verdict, failedSections: number, incompleteSections: number, gaps: number) {
   if (verdict === "Failed") return `${failedSections} ${failedSections === 1 ? "section has" : "sections have"} a failing check. Start there.`;
   if (verdict === "Incomplete") {
@@ -48,10 +49,8 @@ const formatUtc = (value: string) => new Date(value).toLocaleString("en-US", { d
 
 export function Report({ report, id, connected, providerLabel, checkpointProviders, previewProviders }: {
   report: ReviewReport; id: string; connected: boolean;
-  /** The provider new previews launch on, e.g. "Freestyle". */
   providerLabel: string;
   previewProviders?: readonly PreviewProviderOption[];
-  /** Providers whose saved checkpoints this server can open. */
   checkpointProviders: readonly string[];
 }) {
   const [filter, setFilter] = useState("All");
@@ -62,7 +61,6 @@ export function Report({ report, id, connected, providerLabel, checkpointProvide
   const visibleSections = sections.filter((section) => filter === "All" || section.verdict === filter);
   const failures = sections.filter((section) => section.verdict === "Failed");
   const incompletes = sections.filter((section) => section.verdict === "Incomplete");
-  /** Clears the filter so the target exists, then scrolls to and focuses it. */
   function jumpTo(sectionId: string) {
     setFilter("All");
     requestAnimationFrame(() => {
@@ -84,6 +82,7 @@ export function Report({ report, id, connected, providerLabel, checkpointProvide
           <div className="hero-text">
             <p className="eyebrow"><Icon name="fileText" size={14} />Evidence report</p>
             <h1>{report.title}</h1>
+            {report.notice && <p>{report.notice}</p>}
             <div className="report-toolbar">
               <span className="tag commit"><Icon name="commit" size={13} /><code title={report.gitSha}>{report.gitSha.slice(0, 7)}</code></span>
               <CopyButton label="Copy commit" value={report.gitSha} />
@@ -199,17 +198,25 @@ export function Report({ report, id, connected, providerLabel, checkpointProvide
                   {images.map((item, index) => {
                     const visual = visualState(item);
                     const notes = designNotesLabel(item);
+                    const repeat = isRepeat(item);
+                    const change = describeChange(item, index);
+                    const closing = closesStep(images, index);
+                    const checks = closing ? stepChecks(report, item).flatMap((entry) => entry.judgments) : [];
+                    const found = closing ? stepFound(images, item) : [];
                     return (
-                      <li key={item.id}>
+                      <li key={item.id} className={repeat ? "repeat" : undefined}>
                         <figure>
                           <figcaption>
                             <span className="step-number">{index + 1}</span>
                             <strong>{item.caption}</strong>
                           </figcaption>
-                          <a className="image-link" href={`#evidence-${item.id}`} aria-label={`Inspect ${item.caption}`}>
-                            <img src={assetUrl(item.asset)} alt={item.caption} loading="lazy" />
+                          {!repeat && <a className="image-link" href={`#evidence-${item.id}`} aria-label={`Inspect ${item.caption}`}>
+                            <MarkedShot image={item} src={assetUrl(item.asset)} alt={item.caption} loading="lazy" maxChanges={2} />
                             {item.checkpoint && <span className="saved-browser" title="Open the screenshot to enter a private copy of this browser."><Icon name="globe" size={12} />Saved browser</span>}
-                          </a>
+                            {item.failure && <span className="failed-here">Failed here</span>}
+                          </a>}
+                          {change && <p className="change">{change}{repeat && <> <a href={`#evidence-${item.id}`}>View</a></>}</p>}
+                          {item.settled === false && <p>Still changing when captured.</p>}
                           {(item.description || visual || notes) && (
                             <div className="figure-meta">
                               {item.description && <p>{item.description}</p>}
@@ -224,6 +231,16 @@ export function Report({ report, id, connected, providerLabel, checkpointProvide
                               </div>}
                             </div>
                           )}
+                          {checks.length > 0 && <ul className="proof" aria-label="Checked in this step">
+                            {checks.map((judgment, checkIndex) => (
+                              <li key={checkIndex} className={judgment.state}>
+                                <StatusIcon state={judgment.state} />
+                                <span>{judgment.expectation}{judgment.reasoning && <span className="observed">{judgment.reasoning}</span>}</span>
+                              </li>
+                            ))}
+                          </ul>}
+                          {found.length > 0 && <p className="found">Found on screen: {found.slice(0, 3).map((label) => `“${label}”`).join(", ")}{found.length > 3 ? ` and ${found.length - 3} more` : ""}.</p>}
+                          {closing && item.step !== undefined && checks.length === 0 && found.length === 0 && item.judgments.length === 0 && <p className="unchecked">Nothing was checked in this step.</p>}
                         </figure>
                       </li>
                     );

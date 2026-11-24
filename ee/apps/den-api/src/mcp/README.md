@@ -11,7 +11,7 @@ For third-party client setup and `invalid_target` troubleshooting, see
 including its purpose, public website, and scalable public SVG icon. Initialization
 keeps critical routing and safety guidance within 2048 UTF-8 bytes. Agents read
 `openwork://agent/guidance.md` for the full operating rules; those rules are retained
-rather than silently truncated. App authoring details live in `build-an-app`.
+rather than silently truncated. Artifact authoring details live in `build-an-app`.
 
 The fixed connection-action and Workflow-artifact views share one HTTPS widget
 origin and advertise descriptions through resource `_meta`, never resource
@@ -46,22 +46,55 @@ not invalidate calls from cached search-tool lists.
 ## Full tool view
 
 With `connectStandardTools` on, clients that search large tool lists themselves
-get every connection action, Workflow, App and remote session the member may use
-as its own tool instead of `search_capabilities` and `execute_capability`
-(`connect-tool-view.ts`). The existing supported-client allowlist recognizes
-Claude Code and OpenCode v2 (including OpenWork Desktop) by the request's
-`io.modelcontextprotocol/clientInfo`; `?tools=full` or `?tools=search` overrides
-that guess only while the flag is on. Unknown, missing and 2025-era clients keep
-the search view unless explicitly opted in. Off always restores the search view.
+get every connection action, Workflow, artifact and remote session the member may use
+as its own tool (`connect-tool-view.ts`). `search_capabilities` and
+`execute_capability` stay for OpenWork's own operations and skills, which have
+no tool of their own: search leaves out every source the full view lists, except
+for an explicit connect request. The supported-client allowlist recognizes Claude Code
+and standalone OpenCode v2 by the request's `io.modelcontextprotocol/clientInfo`.
+OpenWork Desktop, Web and headless runs report OpenCode's name but hold a token
+Den minted for OpenWork (`/v1/mcp/token` or a run token), so they keep
+`search_capabilities` and `execute_capability`, whose search ranks better than
+the engine's own. `?tools=full` or `?tools=search` overrides the choice only
+while the flag is on. Unknown, missing and 2025-era clients keep the search
+view unless explicitly opted in. Off always restores the search view.
+
+OpenWork's own engine has its own rollout, `connectEngineTools`
+(`engine-tool-view.ts`, docs/features/connect-engine-tools). With it on, the
+engine gets the full view whatever `connectStandardTools` says. Its instructions list
+the member's connected services by tool-name prefix, and its tool descriptions
+carry related words from Den's synonym table, because the engine's own search
+ranks plain keywords.
 
 Tools are named like their Code Mode calls (`linear.list_issues`), at most 64
 characters, and run through the executor `execute_capability` uses. Only
 external MCP tools advertise an output schema: the provider promises structured
 results for them, while Den's own routes return text. OpenWork's role-gated API
-operations stay in the search view, except the key request a connection card
-names. `connection_status` shows the card for a connection that is not ready. A write that changes what an organization's
+operations stay in `search_capabilities`, except the key request a connection
+card names, which is also a tool. `connection_status` shows the card for a connection that is not ready. A write that changes what an organization's
 members may use sends `notifications/tools/list_changed` to its full-view streams
 on the same replica; the `tools/list` cache hint (60 s, private) covers the rest.
+
+The per-connection servers (`/mcp/agent/servers/<id>`, and the directly exposed
+and App host views of `/mcp/agent/connections/<id>`) advertise `listChanged`
+and tell `subscriptions/listen` streams when their organization's inventory
+changes (`inventory-event-bus.ts`): at once for a write on the same replica, and
+on the next 30 s revision check for one on another. The bounded
+search/execute view of a connection never changes, so it says
+`listChanged: false`. A client must negotiate the 2026-07-28 protocol
+(`versionNegotiation: { mode: "auto" }` in the v2 client) to listen; 2025-era
+clients are served statelessly and rely on the cache hint.
+
+## Slack messages from the OpenWork bot
+
+`slack_send_as_bot` (`slack-send-as-bot.ts`, generally available without a
+rollout flag) is a Den-native capability next to the Slack connection's tools: a DM
+to the caller or a channel post from the OpenWork Slack app's bot, instead of
+as the member (`slack_send_message`). It needs a member and `mcp:write`, so
+read-only tokens never list or run it, and it is not in Code Mode scripts. Limits
+(20 a day, 5 a minute, no repeat of the same text to the same place within 24
+hours) are enforced in the tool. See
+[docs/features/slack-send-as-bot](../../../../../docs/features/slack-send-as-bot/README.md).
 
 ## Allowed Tags
 
@@ -125,9 +158,9 @@ These individual operations are blocked even though their tags may otherwise be 
 The dashboard's `DELETE /v1/mcp-connections/{connectionId}` stays blocked
 (`Authentication`), so no agent request can delete a connection. Agents
 prepare one with `requestMcpConnectionRemoval`
-(`POST /v1/mcp-connections/{connectionId}/removal-request`), shown and
-accepted only with the `agentConnectionRemoval` feature and only to a
-person's own agent (`usageSource: "agent"`, see `catalog-availability.ts`).
+(`POST /v1/mcp-connections/{connectionId}/removal-request`), available to all
+organizations but offered only to a person's own agent, never unattended
+Workflows, Automations or Apps (`usageSource: "agent"`, see `catalog-availability.ts`).
 It checks the same permissions as the dashboard (`connections.delete`, or
 having added the connection), requires the connection's exact
 `expectedName` (409 `connection_name_mismatch`), and refuses a connection
@@ -172,6 +205,17 @@ are not read-only, so hosts ask before each call. The App server advertises the
 flag, but every connection-tool call still needs `mcp:write`, as all external
 dispatch does.
 
+An author can set `loadOnOpen` on a tool that only reads but carries no
+read-only label, so it runs without a click for everyone who opens the App. Den
+refuses that for anything that reaches a Den or native write, a capability it
+cannot inspect or look up, or a connection tool bound directly and marked
+destructive. A Workflow is judged by what it reaches, in either mode, and a
+destructive label does not stop it: a code executor that can read or delete
+carries that label even where a saved Workflow only reads through it, so the
+author's judgment decides, as for an unlabeled tool. Each call of a Workflow that
+skips the click rechecks what it reaches; a connection the caller cannot use
+stops the call with its connection card.
+
 Calls run through the ordinary executor as the caller. `api` tools take
 `{ path, query, body }` and are rechecked as GETs on every call; `mcp` tools
 take the tool's own arguments and fail closed once the provider's input schema
@@ -183,8 +227,7 @@ drop the `openwork/mcpApp` and `openwork/serverTools` hints, which name tools on
 `/mcp/agent`. Plugin access is rechecked on every request; unavailable Apps
 return a JSON-RPC error.
 
-Agents learn App building from one owner per rule. Server instructions only
-route App requests to the built-in `build-an-app` skill
+Server instructions route artifact requests to the built-in `build-an-app` skill
 (`skill://build-an-app/SKILL.md`, listed while App servers are on), which owns
 the order of calls and the quality bar. `prepare_app` returns a starter wired
 to the verified tools: `lookup` when every tool reads, `action` when one

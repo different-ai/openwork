@@ -37,7 +37,6 @@ type CloudWorkspaceStatusContextValue = {
   accessRequired: boolean;
   requestFailed: boolean;
   updating: boolean;
-  /** The server deferred the last update request; the pill explains why. */
   updateDeferred: DenCloudInstanceUpdateDeferral | null;
   retrying: boolean;
   viewModel: CloudWorkspaceViewModel;
@@ -45,7 +44,6 @@ type CloudWorkspaceStatusContextValue = {
   retry: () => Promise<void>;
   signOut: () => void;
   updateNow: () => void;
-  /** Only one region owns the workspace wait indicator at a time. */
   takeoverActive: boolean;
   setTakeoverActive: (active: boolean) => void;
   startupStartedAt?: number;
@@ -75,7 +73,6 @@ const fallbackCloudWorkspaceStatus: CloudWorkspaceStatusContextValue = {
   setTakeoverActive: noopAction,
 };
 
-/** Exported so tests can mount the takeover without standing up Den auth. */
 export const CloudWorkspaceStatusContext = createContext<CloudWorkspaceStatusContextValue | null>(null);
 
 const readDenSettingsSnapshot = () => {
@@ -100,11 +97,6 @@ export function useCloudWorkspaceStatus() {
 const presenceInputEvents = ["pointerdown", "keydown", "wheel", "touchstart"] as const;
 const presenceEvaluateIntervalMs = 30_000;
 
-/**
- * Whether the person has stepped away from this tab (hidden for a while, or
- * visible but untouched). Re-evaluated on input, visibility changes, and a
- * slow timer, so a hidden tab still converges even under browser throttling.
- */
 function useUserAway(enabled: boolean): boolean {
   const [away, setAway] = useState(false);
 
@@ -279,8 +271,6 @@ export function CloudWorkspaceStatusProvider(props: { children: ReactNode }) {
     }
   }, [accessRequired, gatewayMode, instance, requestFailed, updating]);
 
-  // A deferral only describes a pending update; once the workspace is current
-  // (or no longer ready) the explanation is stale.
   useEffect(() => {
     if (!updateDeferred) return;
     if (instance?.status !== "ready" || !mapCloudWorkspaceState({ instance, updating: false, accessRequired, requestFailed }).updateAvailable) {
@@ -306,9 +296,6 @@ export function CloudWorkspaceStatusProvider(props: { children: ReactNode }) {
         if (!result.ok) {
           setUpdating(false);
           if (result.error === "busy" || result.error === "activity_unknown") {
-            // The workspace is mid-task somewhere (another tab, a remote
-            // session, an Automation) or could not be asked. Not a failure:
-            // keep the update pending and ask again later.
             setUpdateDeferred(result.error);
             lastAttemptedVersion.current = null;
             autoUpdateRetryNotBefore.current = Date.now() + CLOUD_AUTO_UPDATE_DEFERRED_RETRY_MS;
@@ -373,7 +360,6 @@ export function CloudWorkspaceStatusProvider(props: { children: ReactNode }) {
   );
 }
 
-/** The corner pill only appears when the main-pane status is absent. */
 const gatewayIndicatorLayoutId = "gateway-workspace-indicator";
 
 export function CloudWorkspaceBootTakeover(props: { decision: CloudWorkspaceMainContentDecision; onReconnect?: () => void }) {

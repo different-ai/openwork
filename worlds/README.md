@@ -23,7 +23,7 @@ dev, or demo work. Names follow `<lifecycle>-<surface>`:
 | `preview-full` | Den plus a desktop wired to it, seeded with `fresh`, `team`, `restricted`, or `workspace`. |
 | `preview-app-web` | The web app plus the server it needs (local, private Daytona URL, Freestyle). |
 | `acme-web` | The seeded Acme demo stack: Den, AI Gateway, and the web app. |
-| `preview-workbot` | Workbot with Den sign-in and the headless runner: the seeded Acme org, Workbot turned on. `-- --calendar` adds the owner's seeded Automations, the calendar mock and a desktop on the Calendar. |
+| `preview-workbot` | Workbot with Den sign-in and the headless runner: the seeded Acme org, Workbot turned on. `-- --calendar` adds the owner's seeded Automations, model choices and mock meetings for Workbot's Calendar. `-- --open-workplace` (local) makes Open Outlook, Open Calendar and Open Drive each person's Microsoft 365 through Den's real connector: Alex and Casey each get their own, already connected, and Workbot's turns run through the AI Gateway on a scripted model that really calls those tools (`--live` for a real model). |
 | `dev-app-web` | Your working tree as the local server plus web app (`pnpm dev:headless-web`). |
 | `live-desktop`, `live-app-web` | Source desktop or web app on your installed production state. |
 
@@ -115,6 +115,21 @@ never claim Automation runs or remote-session commands, even when signed in to
 a real account (`live-desktop` always is). `--env` cannot turn it back on; a
 spec or world opts in in code with `env: { OPENWORK_AUTOMATION_RUNNER: "on" }`,
 as `preview-full` does for its own disposable Den.
+
+## OpenWork Bench runs
+
+[OpenWork Bench](https://github.com/different-ai/openwork-bench) runs against
+the plain `preview-desktop` world. Its
+[`docs/openwork-desktop.md`](https://github.com/different-ai/openwork-bench/blob/main/docs/openwork-desktop.md)
+covers installing the benchmark next to the desktop and starting a run.
+
+[`evals/proofs/openwork-bench.proof.test.ts`](../evals/proofs/openwork-bench.proof.test.ts)
+records one task in the app, from the openwork-bench revision pinned in
+`evals/worlds/openwork-bench-source.ts`: the brief goes in through the
+composer, a scripted model works through the task world (attached as the
+`owb-world` MCP server, as the harness attaches it), and the task's own checks
+grade the result. Its before and after screenshots are footage for published
+results. It spends nothing on models and needs `uvx` or `pipx` on the runner.
 
 ## Writing a world
 

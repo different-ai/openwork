@@ -249,8 +249,8 @@ function parseAccessGrant(entry: unknown): MarketplaceAccessGrant | null {
   };
 }
 
-export function useMarketplaceAccess(marketplaceId: string | null) {
-  return useQuery({
+export function marketplaceAccessQueryOptions(marketplaceId: string | null) {
+  return {
     enabled: Boolean(marketplaceId),
     queryKey: marketplaceQueryKeys.access(marketplaceId ?? "none"),
     queryFn: async (): Promise<MarketplaceAccessGrant[]> => {
@@ -268,7 +268,11 @@ export function useMarketplaceAccess(marketplaceId: string | null) {
         .map(parseAccessGrant)
         .filter((value): value is MarketplaceAccessGrant => Boolean(value) && value?.removedAt === null);
     },
-  });
+  };
+}
+
+export function useMarketplaceAccess(marketplaceId: string | null) {
+  return useQuery(marketplaceAccessQueryOptions(marketplaceId));
 }
 
 export function useGrantMarketplaceAccess() {

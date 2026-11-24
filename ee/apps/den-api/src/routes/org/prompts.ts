@@ -2,7 +2,7 @@ import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { orgPromptSettingsSchema, orgPromptWriteSchema } from "@openwork/types/den/prompts"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
-import { requireFeature } from "../../features.js"
+import { db } from "../../db.js"
 import { jsonValidator, orgMemberRoute, paramValidator, requireOrgPermission } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import {
@@ -16,13 +16,13 @@ import { isDuplicateEntry, type ResourceActionContext } from "./declarative.js"
 import type { OrgRouteVariables } from "./shared.js"
 import { hasPermission, idParamSchema, type PermissionRouteContext } from "./shared.js"
 
-const notFound = jsonResponse("The organization or team was not found, or Prompts is off for the organization.", notFoundSchema)
+const notFound = jsonResponse("The organization or team was not found.", notFoundSchema)
 const teamParamsSchema = idParamSchema("teamId", "team")
 
 type PromptRouteContext = ResourceActionContext & PermissionRouteContext
 
-async function settingsView(c: PromptRouteContext, organizationId: DenTypeId<"organization">) {
-  return { ...await listPromptSettings(organizationId), canEdit: await hasPermission(c, "prompts.manage") }
+async function settingsView(c: PromptRouteContext, organizationId: DenTypeId<"organization">, database?: Parameters<typeof listPromptSettings>[1]) {
+  return { ...await listPromptSettings(organizationId, database), canEdit: await hasPermission(c, "prompts.manage") }
 }
 
 async function resolveScope(organizationId: DenTypeId<"organization">, teamId: DenTypeId<"team"> | null): Promise<PromptScope | null> {
@@ -41,11 +41,10 @@ async function save(c: PromptRouteContext, input: { teamId: DenTypeId<"team"> | 
   try {
     await write()
   } catch (error) {
-    // A concurrent first save of the same scope created the prompt; update it.
     if (!isDuplicateEntry(error)) throw error
     await write()
   }
-  return c.json(await settingsView(c, organizationId))
+  return c.json(await settingsView(c, organizationId, db.$primary))
 }
 
 async function remove(c: PromptRouteContext, teamId: DenTypeId<"team"> | null) {
@@ -55,7 +54,7 @@ async function remove(c: PromptRouteContext, teamId: DenTypeId<"team"> | null) {
   const scope = await resolveScope(organizationId, teamId)
   if (!scope) return c.json({ error: "team_not_found" }, 404)
   await removePromptForScope({ organizationId, scope })
-  return c.json(await settingsView(c, organizationId))
+  return c.json(await settingsView(c, organizationId, db.$primary))
 }
 
 const writeResponses = {
@@ -73,11 +72,6 @@ const removeResponses = {
   404: notFound,
 }
 
-/**
- * Prompts: system prompts admins write for everyone and for each team. Members'
- * desktops append the ones that apply to them to OpenWork's instructions
- * (GET /v1/me/prompts).
- */
 export function registerOrgPromptRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get(
     "/v1/org/prompts",
@@ -85,7 +79,7 @@ export function registerOrgPromptRoutes<T extends { Variables: OrgRouteVariables
       tags: ["Organizations"],
       summary: "Get prompts",
       description:
-        "Returns the organization's system prompts: the prompt for everyone (null for none) and each team's own prompt (null for none), teams by name. Desktops append the prompts that apply to a member to every agent's instructions, Everyone's first, then each team's by team name. Requires the View prompts permission and the Prompts feature.",
+        "Returns the organization's system prompts: the prompt for everyone (null for none) and each team's own prompt (null for none), teams by name. Desktops append the prompts that apply to a member to every agent's instructions, Everyone's first, then each team's by team name. Requires the View prompts permission.",
       responses: {
         200: jsonResponse("Prompts returned.", orgPromptSettingsSchema),
         401: jsonResponse("Authentication required.", unauthorizedSchema),
@@ -94,7 +88,6 @@ export function registerOrgPromptRoutes<T extends { Variables: OrgRouteVariables
       },
     }),
     orgMemberRoute(),
-    requireFeature("orgPrompts"),
     requireOrgPermission("prompts.view"),
     async (c) => {
       c.header("Cache-Control", "no-store")
@@ -108,11 +101,10 @@ export function registerOrgPromptRoutes<T extends { Variables: OrgRouteVariables
       tags: ["Organizations"],
       summary: "Set the prompt for everyone",
       description:
-        "Sets the system prompt every member's agents follow. The first save creates the prompt and assigns it to everyone. Desktops pick it up at their next provider sync. Requires the Manage prompts permission, a recent sign-in and the Prompts feature.",
+        "Sets the system prompt every member's agents follow. The first save creates the prompt and assigns it to everyone. Desktops pick it up at their next provider sync. Requires the Manage prompts permission and a recent sign-in.",
       responses: writeResponses,
     }),
     orgMemberRoute(),
-    requireFeature("orgPrompts"),
     requireOrgPermission("prompts.manage"),
     jsonValidator(orgPromptWriteSchema),
     async (c) => save(c, { teamId: null, content: c.req.valid("json").content }),
@@ -124,11 +116,10 @@ export function registerOrgPromptRoutes<T extends { Variables: OrgRouteVariables
       tags: ["Organizations"],
       summary: "Remove the prompt for everyone",
       description:
-        "Removes the system prompt for everyone; teams' prompts are kept. Requires the Manage prompts permission, a recent sign-in and the Prompts feature.",
+        "Removes the system prompt for everyone; teams' prompts are kept. Requires the Manage prompts permission and a recent sign-in.",
       responses: removeResponses,
     }),
     orgMemberRoute(),
-    requireFeature("orgPrompts"),
     requireOrgPermission("prompts.manage"),
     async (c) => remove(c, null),
   )
@@ -139,11 +130,10 @@ export function registerOrgPromptRoutes<T extends { Variables: OrgRouteVariables
       tags: ["Organizations"],
       summary: "Set a team's prompt",
       description:
-        "Sets the system prompt one team's members' agents follow, after the prompt for everyone. The first save creates the prompt and assigns it to the team. Requires the Manage prompts permission, a recent sign-in and the Prompts feature.",
+        "Sets the system prompt one team's members' agents follow, after the prompt for everyone. The first save creates the prompt and assigns it to the team. Requires the Manage prompts permission and a recent sign-in.",
       responses: writeResponses,
     }),
     orgMemberRoute(),
-    requireFeature("orgPrompts"),
     requireOrgPermission("prompts.manage"),
     paramValidator(teamParamsSchema),
     jsonValidator(orgPromptWriteSchema),
@@ -156,11 +146,10 @@ export function registerOrgPromptRoutes<T extends { Variables: OrgRouteVariables
       tags: ["Organizations"],
       summary: "Remove a team's prompt",
       description:
-        "Removes one team's system prompt; the prompt for everyone still applies. Requires the Manage prompts permission, a recent sign-in and the Prompts feature.",
+        "Removes one team's system prompt; the prompt for everyone still applies. Requires the Manage prompts permission and a recent sign-in.",
       responses: removeResponses,
     }),
     orgMemberRoute(),
-    requireFeature("orgPrompts"),
     requireOrgPermission("prompts.manage"),
     paramValidator(teamParamsSchema),
     async (c) => remove(c, normalizeDenTypeId("team", c.req.valid("param").teamId)),

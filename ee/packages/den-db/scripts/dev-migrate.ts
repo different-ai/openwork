@@ -6,8 +6,8 @@ import { parseMySqlConnectionConfig } from "../src/mysql-config.ts"
 import { ensureSchemaRepairs, type Executor } from "../src/schema-repairs.ts"
 import {
   MigrationSafetyError, foundationSql, historyPrefix, inspectSchema, journalTable,
-  loadMigrationPlan, planAuthLookupIndexRepairs, preflightRepairs, recognizeBaseline, record, recovery,
-  schemaDifferences, snapshotShape, stateTable, type MigrationPlan,
+  loadMigrationPlan, physicalSchemaShape, planAuthLookupIndexRepairs, preflightRepairs, recognizeBaseline, record, recordedSchemaLayout, recovery,
+  schemaDifferences, snapshotShape, stateTable, type MigrationPlan, type PhysicalSchemaLayout,
 } from "./migration-baseline.ts"
 
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..")
@@ -30,8 +30,6 @@ export function localConnectionConfig(databaseUrl: string) {
 export function matrixPreflightQueries(plan: MigrationPlan, completeSchema = true) {
   const migration = plan.find((entry) => entry.tag === "0097_gateway_access_matrix")
   if (!migration) throw new MigrationSafetyError("Missing 0097 preflight")
-  // Keep generated SQL untouched; the local runner owns the empty-source guard.
-  // Reconstruct the bytes rather than trusting a caller-supplied plan hash.
   const sourceHash = createHash("sha256").update(migration.sql.join("--> statement-breakpoint")).digest("hex")
   if (sourceHash !== "96e872e1fdf004ff4cdf66715a589a442dff80170f2b47e70204b38a2fd09470") {
     throw new MigrationSafetyError("0097 source changed; review local startup integration before execution.")
@@ -39,8 +37,6 @@ export function matrixPreflightQueries(plan: MigrationPlan, completeSchema = tru
   const snapshot = plan.find((entry) => entry.tag === (completeSchema
     ? "0096_inference_accounting_observations" : "0095_inference_gateway_providers"))?.snapshot
   if (!snapshot) throw new MigrationSafetyError("Missing 0097 prerequisite snapshot")
-  // The caller has already verified this baseline. At 0095 only the rollup
-  // lock is absent; 0096 creates it before the full guard runs again.
   return [
     "inference_providers", "inference_provider_models", "inference_provider_credentials",
     "inference_provider_access", "inference_provider_oauth_states",
@@ -68,8 +64,6 @@ export async function migrateLocalDatabase(executor: Executor, plan: MigrationPl
     throw new MigrationSafetyError("Local migrations require MySQL 8.0.16+ with strict SQL mode and enforced CHECK constraints.")
   }
   if (typeof server?.db !== "string" || !server.db) throw new MigrationSafetyError("No database selected")
-  // MySQL named locks are server-scoped and survive DDL commits. Worktree,
-  // credentials and localhost spelling must not change this lock's identity.
   const lock = `ow-dev:${createHash("sha256").update(server.db.toLowerCase()).digest("hex").slice(0, 56)}`
   if (Number((await executor.query("SELECT GET_LOCK(?, 0) AS acquired", [lock]))[0]?.acquired) !== 1) {
     throw new MigrationSafetyError("Another local migration runner holds this database's lock. Wait for it to finish; do not start a second schema tool.")
@@ -95,10 +89,10 @@ export async function migrateLocalDatabase(executor: Executor, plan: MigrationPl
       for (const repair of lookupRepairs) plannedShape.set(repair.key, repair.definition)
       applied = recognizeBaseline(plan, plannedShape)
     }
+    let physicalLayout: PhysicalSchemaLayout = "historical-replay"
     if (!empty && !baseline) {
-      const snapshot = plan[applied - 1]?.snapshot
-      if (!snapshot) throw new MigrationSafetyError(`No known snapshot for the recorded history prefix. ${recovery}`)
-      const differences = schemaDifferences(snapshotShape(snapshot), shape)
+      physicalLayout = recordedSchemaLayout(plan, applied, shape)
+      const differences = schemaDifferences(physicalSchemaShape(plan, applied, physicalLayout), shape)
       if (differences.length) throw new MigrationSafetyError(`Schema differs from its recorded migration (${differences.slice(0, 8).join(", ")}). ${recovery}`)
     }
     if (empty && applied) throw new MigrationSafetyError(`Migration receipts exist but the application schema is empty. ${recovery}`)
@@ -128,8 +122,6 @@ export async function migrateLocalDatabase(executor: Executor, plan: MigrationPl
     }
     await executor.query(`CREATE TABLE IF NOT EXISTS \`${journalTable}\` (id serial PRIMARY KEY, hash text NOT NULL, created_at bigint) ENGINE=InnoDB`)
     if (baseline) {
-      // Baseline receipts are atomic; the durable marker also covers DDL and
-      // the gap between journal creation, seeding, migration and repairs.
       await executor.query("START TRANSACTION")
       try {
         for (const entry of plan.slice(0, applied)) await executor.query(`INSERT INTO \`${journalTable}\` (hash, created_at) VALUES (?, ?)`, [entry.hash, entry.folderMillis])
@@ -146,10 +138,8 @@ export async function migrateLocalDatabase(executor: Executor, plan: MigrationPl
     }
     await executor.query(`UPDATE \`${stateTable}\` SET step='schema-repairs' WHERE id=1`)
     await ensureSchemaRepairs(executor)
-    const finalSnapshot = plan[plan.length - 1]?.snapshot
-    if (!finalSnapshot) throw new MigrationSafetyError("Missing final migration snapshot")
     const finalShape = (await inspectSchema(executor)).shape
-    const differences = schemaDifferences(snapshotShape(finalSnapshot), finalShape)
+    const differences = schemaDifferences(physicalSchemaShape(plan, plan.length, physicalLayout), finalShape)
     if (differences.length) throw new MigrationSafetyError(`Replay schema differs from the final snapshot (${differences.slice(0, 8).join(", ")}). ${recovery}`)
     const recorded = historyPrefix(plan, await executor.query(`SELECT hash, created_at FROM \`${journalTable}\` ORDER BY id`))
     if (recorded !== plan.length) throw new MigrationSafetyError(`Final migration receipts are incomplete. ${recovery}`)
@@ -164,8 +154,6 @@ async function main() {
   const args = process.argv.slice(2)
   if (args.some((arg) => !["--check", "--check-artifacts"].includes(arg))) throw new MigrationSafetyError("Supported options: --check (read-only database preflight), --check-artifacts (offline only)")
   const plan = loadMigrationPlan(path.join(packageDir, "drizzle"))
-  // Source schema is deliberately not imported: only canonical migration assets
-  // own this operation, never a build export or drizzle-kit push.
   if (args.includes("--check-artifacts")) {
     matrixPreflightQueries(plan)
     const seed = await foundationSql(plan)
@@ -185,8 +173,6 @@ async function main() {
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch((error: unknown) => {
-    // Driver errors can contain SQL, row values, URLs and credentials. Never log
-    // them here; the persistent marker and a code are sufficient for triage.
     const code = record(error) && typeof error.code === "string" && /^[A-Z0-9_]+$/.test(error.code) ? ` (${error.code})` : ""
     console.error(`[den-db] ${error instanceof MigrationSafetyError ? error.message : `Migration failed${code}; database error details withheld. ${recovery}`}`)
     process.exitCode = 1

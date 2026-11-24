@@ -42,7 +42,9 @@ export function automationOccurrenceIdentity(input: AutomationOccurrenceIdentity
   idempotencyKey: string
 } {
   if (input.scheduledFor === null && !input.nonce) throw new Error("A manual occurrence needs a nonce")
-  const occurrence = input.scheduledFor === null ? `manual:${input.nonce}` : String(input.scheduledFor)
+  const occurrence = input.scheduledFor === null
+    ? `manual:${input.nonce}`
+    : input.nonce ? `event:${input.nonce}` : String(input.scheduledFor)
   const stable = [input.automationId, occurrence]
     .map(encodeURIComponent).join(":")
   return {

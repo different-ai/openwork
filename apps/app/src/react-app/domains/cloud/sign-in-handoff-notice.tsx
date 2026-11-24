@@ -15,12 +15,6 @@ import { ComposerNoticeCard } from "./gateway-usage-panel";
 import { useSignInReturnTarget } from "./sign-in-return";
 import { useManualSignInCode } from "./use-manual-sign-in-code";
 
-/**
- * Shown above the composer of the conversation a sign-in started from while
- * the browser finishes it (`desktopSignInReturn`). The conversation and its
- * draft stay on screen; the code fallback is always visible, not only after
- * a failure (DESIGN P11).
- */
 export function SignInHandoffNotice(props: {
   workspaceId: string | null | undefined;
   sessionId: string | null | undefined;
@@ -34,8 +28,6 @@ export function SignInHandoffNotice(props: {
   const attempt = target?.startedAt;
   const { setCode } = manual;
   useEffect(() => {
-    // The notice stays mounted with the conversation across sign-out/sign-in.
-    // A new attempt must not inherit an open form or an earlier code/error.
     setPasteOpen(false);
     setCode("");
   }, [attempt, setCode]);

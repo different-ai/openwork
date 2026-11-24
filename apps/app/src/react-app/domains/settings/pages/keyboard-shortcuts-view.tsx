@@ -1,8 +1,4 @@
 /** @jsxImportSource react */
-// Settings › Keyboard shortcuts (ENG-398). The focal group is "Model
-// shortcuts": each saved model gets one key. Rows are compact (DESIGN.md S2),
-// unavailable models keep their key and say why (P4, C5), and removing a key
-// is undoable instead of confirmed (P8).
 import { useMemo, useState } from "react";
 import type * as React from "react";
 import { ChevronDown, Lock, Pencil, Plus, Trash2, Zap } from "lucide-react";
@@ -40,6 +36,7 @@ import { getConnectedProviderItems, useProviderListQuery } from "@/react-app/inf
 import { usePlatform } from "@/react-app/kernel/platform";
 import { favoriteModelShortcutLabel } from "@/react-app/shell/favorite-model-shortcut";
 import { fastModeShortcutLabel } from "@/react-app/shell/fast-mode-shortcut";
+import { ARCHIVE_SESSION_CHORD } from "@/react-app/shell/archive-session-shortcut";
 import { resolveThinkingModeShortcutOs, thinkingModeShortcutLabel } from "@/react-app/shell/thinking-mode-shortcut";
 
 import { LayoutSection, LayoutStack } from "../settings-layout";
@@ -52,7 +49,6 @@ type CatalogModel = ModelRef & {
 
 export type KeyboardShortcutsViewProps = {
   client: Client | null;
-  /** The shared model catalog, the same list the chat's model picker shows. */
   pickerOptions?: readonly ModelOption[];
   baseUrl: string;
   directory: string;
@@ -139,7 +135,6 @@ function ShortcutEditor(props: {
   target: EditorTarget;
   os: ShortcutOs;
   models: CatalogModel[];
-  /** The same rows the chat's model picker shows. */
   pickerOptions: readonly ModelOption[];
   savedKeys: Set<string>;
   shortcuts: Shortcut[];
@@ -372,6 +367,7 @@ export function KeyboardShortcutsView(props: KeyboardShortcutsViewProps) {
   const chatShortcuts = [
     { label: "New session", keys: formatChord("Mod+N", os) },
     { label: "Command palette", keys: formatChord("Mod+K", os) },
+    { label: "Archive session", keys: formatChord(ARCHIVE_SESSION_CHORD, os) },
     { label: "Next saved model", keys: os === "macos" ? "⌃⇧M" : favoriteModelShortcutLabel },
     { label: "Cycle reasoning", keys: thinkingModeShortcutLabel(thinkingOs) },
     { label: "Toggle Fast", keys: fastModeShortcutLabel(thinkingOs) },

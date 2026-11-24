@@ -43,6 +43,7 @@ import {
   drainPendingDeepLinks,
 } from "../../../app/lib/deep-link-bridge";
 import { parseDenAuthDeepLink } from "../../../app/lib/openwork-links";
+import { explainSignOutAfterDisconnect } from "../devices/disconnected-sign-out";
 import {
   AlertDialog,
   AlertDialogAction,
@@ -91,7 +92,6 @@ export async function resolveDenActiveOrganizationWithRetry(
           return organization;
         }
       } catch {
-        // A newly accepted membership can take a moment to become visible.
       }
       diagnostics.failed();
       diagnostics.record("den_org_unresolved", "failure");
@@ -113,13 +113,6 @@ export function hasRetainedDenSession(status: DenAuthStatus): boolean {
   return status === "signed_in" || status === "unavailable";
 }
 
-/**
- * True while a retained session has not produced a confirmed user yet: the
- * initial check is still running, or it failed with a transient error
- * ("unavailable") before the first success — e.g. the control plane or a
- * local proxy is unreachable during an app update or server restart. Account
- * UI must show a restoring state in this window, never "Sign in".
- */
 export function isDenSessionRestoring(input: {
   status: DenAuthStatus;
   hasUser: boolean;
@@ -183,14 +176,8 @@ function pendingServerSwitchForDeepLink(input: {
   isEnterpriseActivation: boolean;
 }): PendingServerSwitch | null {
   const bootstrap = readDenBootstrapConfig();
-  // An enterprise activation permanently binds the installation to the issuing
-  // Den, so confirm a control-plane change even when no bootstrap file
-  // provisioned one. Otherwise any openwork://den-auth link can repoint the
-  // control plane and activate the app in a single unattended step.
   if (bootstrap.source !== "file" && !input.isEnterpriseActivation) return null;
 
-  // Handoff links identify Den's web origin. Its configured API may live on
-  // another origin; compare the same identity used by the handoff transaction.
   const currentWebBaseUrl = resolveDenBaseUrls(bootstrap).baseUrl;
   const newWebBaseUrl = resolveDenBaseUrls(input.denBaseUrl).baseUrl;
   const currentOrigin = denOriginComparisonKey(currentWebBaseUrl);
@@ -206,12 +193,6 @@ function pendingServerSwitchForDeepLink(input: {
   };
 }
 
-/**
- * React port of the Solid `DenAuthProvider` (`apps/app/src/app/cloud/den-auth-provider.tsx`
- * on dev). Drives the Den auth status signal the forced-signin gate and
- * desktop-config reader rely on, and syncs Better-Auth's active organization
- * on every refresh so subsequent requests resolve against the right org.
- */
 export function DenAuthProvider({ children }: DenAuthProviderProps) {
   const [status, setStatus] = useState<DenAuthStatus>("checking");
   const [user, setUser] = useState<DenUser | null>(null);
@@ -221,7 +202,6 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
   } | null>(null);
   const verifiedCredentialRef = useRef<{ token: string; organizationId: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  // Monotonic token so stale async refreshes can't clobber a newer result.
   const refreshTokenRef = useRef(0);
   const statusRef = useRef<DenAuthStatus>("checking");
   const lastSignalRetryAtRef = useRef<number | null>(null);
@@ -278,9 +258,6 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       return;
     }
 
-    // Keep a usable session visible during background checks. Only the first
-    // check (or a refresh from a confirmed signed-out state) should gate the
-    // app while the request is in flight.
     if (statusRef.current === "signed_out") {
       updateStatus("checking");
     }
@@ -293,21 +270,6 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
         baseUrl: settings.baseUrl,
         token,
       }).getSession();
-
-      if (currentRun !== refreshTokenRef.current) return;
-
-      // While a desktop-initiated sign-in is waiting for the user's explicit
-      // organization choice, do not auto-resolve a default — that would
-      // silently commit an org the chooser is still asking about.
-      if (!readOrgSelectionPending().pending) {
-        await resolveDenActiveOrganizationWithRetry(() =>
-          ensureDenActiveOrganization({
-            forceServerSync:
-              !settings.activeOrgId?.trim() || !settings.activeOrgSlug?.trim(),
-            verifiedSession: { userId: nextUser.id, token, baseUrl: settings.baseUrl },
-          })
-        );
-      }
 
       if (currentRun !== refreshTokenRef.current) return;
 
@@ -329,6 +291,19 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       updateStatus("signed_in");
       markStartupStep("signed_in", { organizationId: confirmedOrganizationId || null });
       syncDesktopSentrySession(nextUser);
+
+      if (!readOrgSelectionPending().pending) {
+        await resolveDenActiveOrganizationWithRetry(() => {
+          if (currentRun !== refreshTokenRef.current || readOrgSelectionPending().pending) {
+            return Promise.resolve(null);
+          }
+          return ensureDenActiveOrganization({
+            forceServerSync:
+              !settings.activeOrgId?.trim() || !settings.activeOrgSlug?.trim(),
+            verifiedSession: { userId: nextUser.id, token, baseUrl: settings.baseUrl },
+          });
+        });
+      }
     } catch (nextError) {
       if (currentRun !== refreshTokenRef.current) return;
 
@@ -336,6 +311,7 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       failStartup("signed_in", classifyStartupError(nextError));
       const failureStatus = resolveDenAuthFailureStatus(nextError);
       if (failureStatus === "signed_out") {
+        explainSignOutAfterDisconnect();
         clearDenSession();
         setUser(null);
         verifiedCredentialRef.current = null;
@@ -423,10 +399,6 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
       retryUnavailableSession,
       DEN_AUTH_UNAVAILABLE_RETRY_INTERVAL_MS,
     );
-    // A signed-in session without an organization is a stranded first
-    // sign-in (e.g. org discovery was rate limited during a handoff). Keep
-    // repairing in the background until an organization resolves — unless the
-    // missing org is deliberate because the chooser is waiting for the user.
     const repairMissingOrganization = () => {
       if (statusRef.current !== "signed_in") return;
       if (readOrgSelectionPending().pending) return;
@@ -448,10 +420,6 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     };
   }, [refresh]);
 
-  // Strip the consumed one-time grant from the persisted bootstrap so a
-  // relaunch never re-exchanges it. Persisting is best-effort: a failure here
-  // must NOT be reported as an auth failure, since the user is already signed
-  // in at this point.
   const clearConsumedBootstrapHandoff = useCallback((bootstrap: DenBootstrapConfig, denBaseUrl: string) => {
     void setDenBootstrapConfig({
       baseUrl: denBaseUrl,
@@ -473,7 +441,6 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     const handoff = bootstrap.handoff;
     if (!handoff?.grant || handledGrantsRef.current.has(handoff.grant)) return;
 
-    // Already signed in: just drop the now-unused grant from disk.
     if (readDenSettings().authToken?.trim()) {
       handledGrantsRef.current.add(handoff.grant);
       clearConsumedBootstrapHandoff(bootstrap, bootstrap.baseUrl);
@@ -484,21 +451,13 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     void exchangeHandoffAndSignIn(handoff.grant, {
       baseUrl: handoff.denBaseUrl,
       activeOrg: { id: handoff.orgId, slug: handoff.orgSlug || null, name: handoff.orgName || null },
-      // The consumed grant is stripped from the persisted bootstrap in the
-      // same durable commit that enrolls the session, so a relaunch can
-      // neither re-exchange it nor lose the enrollment it produced.
       bootstrap: { clearHandoff: true },
     }).then((result) => {
       if (result.ok) return;
       if (!result.grantConsumed) {
-        // The grant never reached the destination; a later bootstrap heal may
-        // retry it.
         handledGrantsRef.current.delete(handoff.grant);
         return;
       }
-      // The one-time grant is spent but the enrollment did not commit. Drop
-      // the grant from disk (best effort) so restarts do not retry it forever;
-      // the user needs a fresh handoff link.
       clearConsumedBootstrapHandoff(bootstrap, bootstrap.baseUrl);
     });
   }, [clearConsumedBootstrapHandoff]);
@@ -506,8 +465,6 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    // Run now, and again whenever the bootstrap config heals in later (the
-    // shell IPC bridge can deliver the prepared bootstrap after first render).
     consumeBootstrapHandoff();
     const handleSettingsChanged = () => consumeBootstrapHandoff();
     window.addEventListener(denSettingsChangedEvent, handleSettingsChanged);
@@ -522,8 +479,6 @@ export function DenAuthProvider({ children }: DenAuthProviderProps) {
     handledGrantsRef.current.add(grant);
     void exchangeHandoffAndSignIn(grant, {
       baseUrl: denBaseUrl,
-      // Enterprise activation is part of the same durable commit as the
-      // enrollment: the stamp and the session it locks in land together.
       ...(isEnterpriseActivation
         ? {
             bootstrap: {

@@ -165,10 +165,7 @@ export function isSessionNumberModifierPressed(
   return os === "macos" ? event.metaKey : event.ctrlKey;
 }
 
-// Holding the modifier only reveals the hints after this delay, so quick
-// presses for other shortcuts (Cmd+K, Cmd+T, ...) never flash them.
-export const SESSION_NUMBER_HINT_REVEAL_DELAY_MS = 1500;
-// Matches the `duration-1000` fade on the sidebar badge.
+export const SESSION_NUMBER_HINT_REVEAL_DELAY_MS = 300;
 export const SESSION_NUMBER_HINT_FADE_IN_MS = 1000;
 
 type SessionNumberHintTimers = {
@@ -182,9 +179,7 @@ const defaultSessionNumberHintTimers: SessionNumberHintTimers = {
 };
 
 export type SessionNumberHintReveal = {
-  /** The modifier is (still) held: start the reveal timer if it is not running. */
   hold: () => void;
-  /** The modifier was released or the window lost focus: cancel and hide at once. */
   release: () => void;
   isVisible: () => boolean;
 };

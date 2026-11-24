@@ -11,9 +11,11 @@ There are two ways to do this. Both live under **AI Gateway › AI Providers** i
 | | **AI Gateway provider** (recommended) | **Legacy provider** (bring your own key) |
 | --- | --- | --- |
 | Where the key lives | Stays on the server | Synced to each member's desktop app |
-| Usage tracking and spend limits | Yes | No |
-| Custom OpenAI-compatible endpoint (your own base URL) | No, catalog providers only | Yes, see [Adding a custom LLM provider](/cloud/share-with-your-team/custom-llm-provider) |
-| Separate key per member | Google Vertex AI sign-in only | Through the API, see [Per-member LLM credentials](/cloud/share-with-your-team/per-member-llm-credentials) |
+| Usage tracking and spend limits | Yes, subject to supported usage/pricing; per-person LiteLLM keys are tokens-only | No AI Gateway tracking or limits |
+| Custom OpenAI-compatible endpoint (your own base URL) | Compatible catalog endpoint overrides and a dedicated [LiteLLM integration](/ai-gateway/litellm); not arbitrary model definitions | Yes, see [Adding a custom LLM provider](/cloud/share-with-your-team/custom-llm-provider) |
+| Separate credential per member | Google Vertex AI, Bedrock and Microsoft Foundry sign-in; personal or OpenWork-created LiteLLM keys | Through the API, see [Per-member LLM credentials](/cloud/share-with-your-team/per-member-llm-credentials) |
+
+See the [provider support matrix](/ai-gateway/provider-support) for authentication, APIs, and limits for each Gateway integration.
 
 For an AI Gateway provider, follow [AI Gateway: Set it up](/ai-gateway/overview#set-it-up). The rest of this page covers legacy providers.
 

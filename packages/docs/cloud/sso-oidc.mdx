@@ -1,0 +1,76 @@
+---
+title: "Set up OIDC single sign-on"
+description: "Connect your identity provider, verify your email domain, and test sign-in before enabling SSO."
+keywords: ["OIDC", "single sign-on", "SSO", "identity provider", "domain verification"]
+---
+
+Connect an OIDC identity provider so members can sign in with their company accounts.
+
+## Before you start
+
+- Use the organization owner or an account with **Manage single sign-on**, on a plan with SSO.
+- Obtain a confidential web application's issuer URL, client ID and client secret from your identity-provider administrator.
+- Have DNS access and a test identity whose email matches the OpenWork administrator doing the setup.
+- Agree on administrator recovery before enabling SSO. Don't assume password access bypasses enforcement.
+
+If your identity provider requires the final callback before creating an application, check the
+[OIDC callback URL reference](/cloud/auth-and-security#oidc-callback-urls) first.
+
+## 1. Save the connection in OpenWork
+
+1. Select the organization and open **Settings → Auth & Security → Single sign-on (SSO)**.
+2. Select **OIDC** and enter:
+
+   | Field | Value |
+   | --- | --- |
+   | **Issuer URL** | The issuer, for example `https://idp.example.com`. Don't include `/.well-known/openid-configuration`. |
+   | **Domain** | Members' email domain, without `@` |
+   | **Client ID** | Application client ID |
+   | **Client Secret** | Application secret, entered directly |
+   | **Scopes** | `openid email profile` |
+   | **Token endpoint auth method** | **Use provider default**, or a required method listed in the discovery document's `token_endpoint_auth_methods_supported` |
+
+3. Leave **Use manual OIDC endpoints instead of discovery** unchecked. Don't use it to bypass a discovery error.
+   Use it only if your provider publishes no discovery document or OpenWork's server can't reach that document.
+   Keep **Issuer URL** set to the base issuer. Copy `authorization_endpoint`, `token_endpoint` and `jwks_uri`
+   from the provider's discovery document into **Authorization endpoint**, **Token endpoint** and **JWKS endpoint**.
+   Copy `userinfo_endpoint` into **UserInfo endpoint** if needed. If no document exists, get these values from the provider.
+4. Select **Save SSO connection**, then copy the generated **Redirect URL**.
+
+<Note>
+If your organization uses multiple SSO connections, start with **Add SSO connection**, set **Name on the sign-in button**
+and **Email domains**, and save with **Add SSO connection**. Verify every listed domain.
+To disable one of these connections, use **Disable connection**.
+</Note>
+
+## 2. Finish the identity-provider application
+
+1. Set its allowed sign-in callback to the exact **Redirect URL** you copied. Don't substitute a different web or API host.
+2. Allow `openid email profile` and an email claim matching the administrator's OpenWork email.
+3. Assign the administrator's matching test account, then save the application.
+
+## 3. Verify the domain and enable SSO
+
+Return to the saved OpenWork connection:
+
+1. Under **Domain verification**, use the displayed token or select **Request token**.
+2. Create the displayed DNS **TXT** record using its **Host / name** and token value.
+   If your DNS console appends the zone automatically, enter only the host portion.
+3. Wait for DNS propagation, select **Verify domain**, and confirm verification succeeds.
+4. Select **Enable Config → SSO Login** and authenticate as the same administrator who started the test.
+5. Wait for **Authentication test successful**, then select **Enable SSO**.
+6. Complete a normal SSO sign-in and confirm the organization and email before assigning more users.
+
+Review [sign-in enforcement](/cloud/auth-and-security#single-sign-on) before requiring SSO.
+Don't delete a connection as rollback. Use **Disable SSO** while you have management access.
+
+## If setup stops
+
+| Problem | Next action |
+| --- | --- |
+| Page is read-only | Ask the owner to check your permission and plan. |
+| Discovery fails | Remove `/.well-known/openid-configuration` from **Issuer URL**. Confirm the document is publicly reachable from OpenWork and its `issuer` matches exactly (apart from a trailing slash). Only then consider manual endpoints. |
+| Callback is rejected | Compare the allowed callback with OpenWork's **Redirect URL** exactly. |
+| DNS verification fails | Check the displayed record name, zone suffix and propagation. |
+| Test fails or expires | Allow popups, check account assignment and email, then start a fresh test within five minutes. |
+| Enablement is blocked after an edit | Recheck domain verification and test the saved configuration again. |

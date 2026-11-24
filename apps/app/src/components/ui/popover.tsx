@@ -3,6 +3,8 @@ import { Popover as PopoverPrimitive } from "@base-ui/react/popover"
 
 import { cn } from "@/lib/utils"
 
+import { PortalContainerContext } from "./portal-container"
+
 function Popover({ ...props }: PopoverPrimitive.Root.Props) {
   return <PopoverPrimitive.Root data-slot="popover" {...props} />
 }
@@ -11,12 +13,6 @@ function PopoverTrigger({ ...props }: PopoverPrimitive.Trigger.Props) {
   return <PopoverPrimitive.Trigger data-slot="popover-trigger" {...props} />
 }
 
-/**
- * Portaled and collision-aware: the popup flips to the side with room and is
- * capped to the space Base UI measures (`--available-height/width`), so no
- * ancestor `overflow` can clip it. Pass `anchor` to position against an
- * element other than the trigger, such as an editor for typeahead lists.
- */
 function PopoverContent({
   className,
   align = "center",
@@ -31,8 +27,9 @@ function PopoverContent({
     PopoverPrimitive.Positioner.Props,
     "align" | "alignOffset" | "side" | "sideOffset" | "anchor" | "collisionPadding"
   >) {
+  const container = React.useContext(PortalContainerContext)
   return (
-    <PopoverPrimitive.Portal>
+    <PopoverPrimitive.Portal container={container}>
       <PopoverPrimitive.Positioner
         align={align}
         alignOffset={alignOffset}

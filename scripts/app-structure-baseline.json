@@ -1,0 +1,2487 @@
+{
+  "version": 1,
+  "imports": [
+    {
+      "file": "apps/app/src/app/lib/den.ts",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/surface/model-removal-inventory",
+      "count": 2
+    },
+    {
+      "file": "apps/app/src/app/lib/inference-access.ts",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/models/model-catalog",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/app/lib/mcp-app-presentation-cache.ts",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/dashboard/dashboard-tile-cache",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/app/lib/opencode-v2-adapter.ts",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/surface/composer/composer-pills",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/app/lib/opencode-v2-adapter.ts",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/surface/composer/sent-message-tokens",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/app/lib/opencode-v2-adapter.ts",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/kernel/local-preferences-storage",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/app-builder-step.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/apps/app-creation-progress",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/app-builder-step.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/apps/built-app-chat-preview",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/app-builder-step.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/apps/built-mcp-app-model",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/background-tasks.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/status/background-shell-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/capability-call-line.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/design-system/extension-icon-src",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/capability-call-line.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/connections/connector-tool-identity",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/code-mode-tool.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/connections/connector-tool-identity",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/composer-pill.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/surface/composer/composer-chips",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/composer-pill.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/surface/composer/composer-pills",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/computer-session-history.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/surface/composer-state-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/computer-session-history.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/surface/composer/mention-encoding",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/connection-card.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/connections/connector-tool-identity",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/credential-prompt-card.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/cloud/den-auth-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/credential-prompt-card.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/cloud/den-reauth-notice",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/current-tool-lifecycle-context.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/status/session-activity-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/mcp-app-frame.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/apps/app-chat-artifact",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/mcp-app-frame.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/connections/cloud-credential-revision",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/mcp-app-frame.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/dashboard/dashboard-connection-card",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/mcp-app-frame.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/dashboard/mcp-app-member-access",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/mcp-app-sign-in.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/dashboard/dashboard-connection-card",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/mcp-connection-action.ts",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/surface/mcp-chat-reconnect",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/message-list-provider.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/connections/connector-tool-identity",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/message-list-provider.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/models/model-catalog",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/message-list-provider.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/models/model-collections-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/message-list-provider.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/status/session-activity-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/message-list-provider.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/surface/composer/sent-message-tokens",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/message-list-provider.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/surface/mcp-chat-reconnect",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/message-list-provider.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/sync/auto-route-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/message-list-provider.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/sync/reply-model",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/message-list.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/design-system/provider-icon",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/message-list.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/apps/app-creation-progress",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/message-list.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/apps/built-app-chat-preview",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/message-list.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/apps/built-mcp-app-model",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/message-list.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/cloud/auto-access-ui",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/message-list.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/cloud/usage-limit-card",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/message-list.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/cloud/usage-limit-state",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/message-list.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/connections/connector-tool-identity",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/message-list.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/artifacts/open-target",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/message-list.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/remote-threads/remote-thread-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/message-list.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/status/session-activity-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/message-list.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/status/session-progress",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/message-list.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/surface/composer/composer-chips",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/message-list.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/surface/composer/composer-pills",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/message-list.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/surface/composer/sent-message-tokens",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/message-list.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/surface/mcp-chat-reconnect",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/message-list.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/sync/attachment-file-part",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/message-list.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/sync/rejected-turn",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/message-list.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/sync/reply-model",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/message-list.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/sync/session-error",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/message-list.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/sync/session-sync",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/message-list.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/sync/transcript-reconcile",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/message-list.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/shell/dev-profiler",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/message-list.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/shell/workspace-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/reasoning-block.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/chat/workbench-ui-state",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/remote-thread-run-line.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/panel/panel-tab-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/remote-thread-run-line.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/remote-threads/remote-thread-actions",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/remote-thread-run-line.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/remote-threads/remote-thread-row-answers",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/remote-thread-run-line.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/remote-threads/remote-thread-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/remote-thread-run-line.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/remote-threads/remote-thread-view",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/remote-thread-run-line.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/shell/ui-state-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/session-reference-link.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/design-system/extension-icon-src",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/subagent-run-line.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/status/session-activity-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/subagent-run-line.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/status/session-progress",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/subagent-run-line.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/sync/session-sync",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/subagent-run-line.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/infra/query-cache-state",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/task-suggestions.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/cloud/desktop-config-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/text-tool-aggregate-group.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/chat/workbench-ui-state",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/chat/utils.ts",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/artifacts/local-path",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/markdown/link-action-menu.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/artifacts/open-target",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/markdown/link-action-menu.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/artifacts/resolve-open-target",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/markdown/link-action-menu.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/kernel/platform",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/markdown/markdown-primitive.ts",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/artifacts/local-path",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/markdown/markdown-primitive.ts",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/artifacts/path-reference-context",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/markdown/markdown.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/artifacts/open-target",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/markdown/markdown.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/artifacts/path-reference-context",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/markdown/markdown.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/artifacts/resolve-open-target",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/markdown/session-reference-html.ts",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/design-system/extension-icon-src",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/model-select.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/cloud/auto-access-ui",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/model-select.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/cloud/desktop-config-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/model-select.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/models/model-catalog",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/model-select.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/models/model-picker-panel",
+      "count": 2
+    },
+    {
+      "file": "apps/app/src/components/model-select.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/models/use-model-catalog",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/model-select.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/models/model-collections-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/model-select.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/kernel/use-workspace-model-default",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/model-select.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/shell/new-providers-listener",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/model-select.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/shell/workspace-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/tools/mcp-reconnect-state.ts",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/surface/mcp-chat-reconnect",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/tools/openwork-automation-proposal.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/automations/automation-availability",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/tools/openwork-automation-proposal.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/automations/automation-editor",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/tools/openwork-automation-proposal.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/automations/automation-format",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/tools/openwork-automation-proposal.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/automations/automation-model-options",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/tools/openwork-automation-proposal.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/automations/automation-placement",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/tools/openwork-automation-proposal.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/cloud/den-auth-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/tools/openwork-automation-proposal.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/cloud/desktop-config-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/tools/openwork-automation-proposal.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/infra/provider-list-query",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/tools/openwork-automation-proposal.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/shell/workspace-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/tools/openwork-automation-proposal.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/shell/workspace-routes",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/tools/use-chat-tool-reconnect.ts",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/surface/mcp-chat-reconnect",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/components/ui/action-context-menu.tsx",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/kernel/platform",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/lib/artifacts.ts",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/artifacts/local-path",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/lib/artifacts.ts",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/artifacts/open-target",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/lib/current-tool-lifecycle.ts",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/status/session-activity-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/lib/remote-transcript-messages.ts",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/sync/session-error",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/lib/remote-transcript-messages.ts",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/sync/usechat-adapter",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/lib/target-provider.ts",
+      "rule": "legacy-react-app",
+      "target": "apps/app/src/react-app/domains/session/artifacts/open-target",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/design-system/extension-card.tsx",
+      "rule": "lower-layer-feature",
+      "target": "apps/app/src/react-app/domains/settings/extension-taxonomy",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/design-system/extension-detail-modal.tsx",
+      "rule": "lower-layer-feature",
+      "target": "apps/app/src/react-app/domains/session/surface/markdown",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/design-system/extension-detail-modal.tsx",
+      "rule": "lower-layer-feature",
+      "target": "apps/app/src/react-app/domains/settings/extension-taxonomy",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/apps/app-artifact.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/dashboard/dashboard-connection-card",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/apps/app-artifact.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/dashboard/mcp-app-tile",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/apps/app-chat-artifact.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/session/panel/panel-tab-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/apps/apps-page.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/dashboard/mcp-app-tile",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/apps/built-app-chat-preview.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/session/panel/panel-tab-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/apps/built-app-pin-button.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/dashboard/built-dashboard-apps",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/apps/built-app-share-button.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/settings/pages/library-share-page",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/apps/built-app-share-button.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/settings/use-library-cloud",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/apps/built-mcp-app-panel.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/session/panel/panel-tab-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/apps/generated-app-preview.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/dashboard/use-dashboard-tile-geometry",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/apps/live-generated-app-model.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/dashboard/dashboard-mcp-app-entry",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/apps/live-generated-app.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/dashboard/dashboard-tile-shell",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/apps/live-generated-app.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/dashboard/mcp-app-tile",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/apps/use-apps.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/den-auth-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/automations/automation-availability.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/desktop-config-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/automations/automation-editor.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/session/modals/model-picker-modal",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/automations/automation-failure-notifier.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/use-org-feature",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/automations/automation-runner-bridge.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/den-auth-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/automations/automation-runner-bridge.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/enterprise-activation-gate",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/automations/automation-runner-bridge.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/devices/computer-connection-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/automations/automations-page.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/cloud-sign-in-banner",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/automations/automations-page.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/den-auth-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/automations/use-automation-editor-setup.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/connector-tool-identity",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/automations/use-automation-editor-setup.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/use-org-mcp-connections",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/automations/use-automation-editor-setup.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/settings/extension-items",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/automations/use-automations.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/den-auth-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/automations/use-automations.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/desktop-config-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/cloud/activation/use-activation.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/provider-auth/cloud-provider-config",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/cloud/activation/use-activation.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/provider-auth/credential-health",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/cloud/activation/use-activation.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/models/model-catalog",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/cloud/auto-access-ui.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/models/picker-notice",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/cloud/auto-access-ui.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/session/status/session-activity-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/cloud/auto-access-ui.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/session/sync/draft-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/cloud/auto-access-ui.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/session/sync/rejected-turn",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/cloud/auto-access-ui.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/settings/state/update-check-request",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/cloud/connect-confirm-dialog.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/settings/cloud/control-plane-url",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/cloud/den-auth-provider.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/devices/disconnected-sign-out",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/cloud/den-signin-surface.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/settings/cloud/organization-server-affordance",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/cloud/desktop-config-provider.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/settings/extension-state",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/cloud/forced-signin-page.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/settings/cloud/control-plane-url",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/cloud/join-organization-dialog.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/settings/cloud/control-plane-url",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/cloud/member-activity-sync.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/session/surface/composer/slash-command",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/cloud/member-activity-sync.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/session/surface/connect-capability-inventory",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/cloud/member-activity-sync.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/settings/library",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/cloud/openwork-models-promo.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/settings/cloud/control-plane-url",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/cloud/sign-in-handoff-notice.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/session/sync/draft-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/cloud/sign-in-return-draft.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/session/sync/draft-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/cloud/use-member-activity-sync.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/cloud-inventory-cache",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/cloud/use-member-activity-sync.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/dashboard/mcp-app-member-access",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/cloud/use-org-feature.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/automations/use-automations",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/connections/cloud-inventory-cache.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/session/surface/connect-capability-inventory",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/connections/provider-auth/provider-auth-modal.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/activation/use-activation",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/connections/provider-auth/provider-auth-modal.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/models/model-catalog",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/connections/provider-auth/provider-auth-modal.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/settings/pages/provider-rows",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/connections/provider-auth/store.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/gateway-usage-refresh",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/connections/provider-auth/use-session-provider-auth.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/den-auth-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/connections/provider-auth/use-session-provider-auth.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/desktop-config-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/connections/provider-auth/use-session-provider-auth.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/use-cloud-provider-auto-sync",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/connections/use-cloud-mcp-submit-readiness.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/den-auth-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/connections/use-session-mcp-maintenance.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/den-auth-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/dashboard/artifacts-page.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/apps/built-app-share-button",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/dashboard/artifacts-page.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/apps/use-apps",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/dashboard/built-dashboard-apps.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/apps/built-app-share-button",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/dashboard/built-dashboard-apps.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/apps/use-apps",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/dashboard/dashboard-apps.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/apps/app-actions-menu",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/dashboard/dashboard-apps.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/apps/generated-app-preview",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/dashboard/dashboard-apps.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/apps/live-generated-app",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/dashboard/dashboard-apps.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/apps/use-apps",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/dashboard/dashboard-availability.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/den-auth-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/dashboard/dashboard-availability.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/desktop-config-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/dashboard/dashboard-connection-card.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/connector-tool-identity",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/dashboard/dashboard-connection-card.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/session/surface/mcp-chat-reconnect",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/dashboard/dashboard-page.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/apps/use-apps",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/dashboard/dashboard-page.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/cloud-sign-in-banner",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/dashboard/dashboard-page.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/den-auth-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/dashboard/mcp-app-member-access.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/session/surface/connect-capability-inventory",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/dashboard/mcp-app-tile.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/cloud-credential-revision",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/dashboard/share-dashboard-button.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/apps/use-apps",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/dashboard/share-dashboard-button.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/den-reauth-notice",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/devices/device-reporter.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/automations/automation-runner-identity",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/devices/device-reporter.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/automations/use-automations",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/devices/device-reporter.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/den-auth-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/devices/remote-access-ask.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/gateway-usage-panel",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/devices/session-access-section.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/settings/settings-layout",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/devices/this-device-store.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/automations/automation-runner-identity",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/devices/use-remote-devices.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/automations/use-automations",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/models/catalog.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/provider-auth/assigned-model-options",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/models/catalog.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/provider-auth/cloud-provider-config",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/models/catalog.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/provider-auth/provider-policy",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/models/catalog.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/session/models/model-collections-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/models/model-catalog.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/session/models/model-collections-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/models/model-picker-list.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/auto-access-ui",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/models/model-picker-list.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/session/models/model-collections-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/models/model-picker-list.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/session/status/use-desktop-feature",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/models/model-picker-list.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/shortcuts/model-shortcuts-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/models/model-picker-list.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/shortcuts/shortcut-keys",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/models/model-picker-panel.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/auto-access-ui",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/models/use-model-catalog.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/auto-access-ui",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/models/use-model-catalog.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/den-auth-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/models/use-model-catalog.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/desktop-config-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/models/use-model-catalog.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/provider-auth/gateway-model-access",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/models/use-model-catalog.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/session/models/model-collections-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/models/use-pre-workspace-gateway-models.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/den-auth-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/models/use-pre-workspace-gateway-models.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/provider-auth/assigned-model-options",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/chat/new-task-composer.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/cloud-inventory-cache",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/chat/new-task-composer.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/settings/library",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/chat/session-empty-hero.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/den-auth-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/chat/session-empty-hero.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/desktop-config-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/chat/session-empty-hero.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/openwork-models-promo",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/chat/session-empty-hero.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/sign-in-handoff-notice",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/chat/session-empty-hero.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/sign-in-return",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/chat/session-empty-hero.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/devices/remote-access-ask",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/chat/session-page.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/den-auth-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/chat/session-page.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/sign-in-return",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/chat/session-page.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/provider-auth/provider-auth-modal",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/chat/session-page.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/use-session-mcp-maintenance",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/chat/session-page.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/dashboard/retained-artifact-surface",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/chat/session-page.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/settings/state/desktop-updater-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/control/session-control-actions.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/den-auth-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/control/session-control-actions.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/desktop-config-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/control/session-control-actions.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/provider-auth/assigned-model-options",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/control/session-control-actions.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/provider-auth/provider-policy",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/modals/model-picker-modal.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/auto-access-ui",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/modals/model-picker-modal.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/den-auth-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/modals/model-picker-modal.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/desktop-config-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/modals/model-picker-modal.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/provider-auth/cloud-provider-config",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/modals/model-picker-modal.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/models/catalog",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/modals/model-picker-modal.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/models/model-catalog",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/modals/model-picker-modal.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/models/model-picker-panel",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/modals/model-picker-modal.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/models/use-model-catalog",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/modals/use-model-picker.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/provider-auth/cloud-provider-config",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/modals/use-model-picker.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/models/use-model-catalog",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/panel/side-panel.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/apps/app-artifact",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/panel/side-panel.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/apps/built-mcp-app-panel",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/sidebar/account-status-menu.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/den-auth-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/sidebar/account-status-menu.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/desktop-config-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/sidebar/account-status-menu.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/gateway-usage-panel",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/sidebar/account-status-menu.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/openwork-models-promo",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/sidebar/account-status-menu.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/sign-in-return",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/sidebar/account-status-menu.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/use-manual-sign-in-code",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/sidebar/account-status-menu.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/openwork-connect-status",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/sidebar/account-status-menu.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/use-session-mcp-maintenance",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/sidebar/account-status-menu.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/settings/cloud/control-plane-url",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/sidebar/app-sidebar.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/activation/activation-card",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/sidebar/app-sidebar.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/brand-theme",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/status/use-desktop-feature.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/automations/use-automations",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/status/use-desktop-feature.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/den-auth-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/status/use-desktop-feature.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/use-org-feature",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/surface/composer/composer-connections.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/native-provider-connections",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/surface/composer/composer-connections.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/settings/extension-items",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/surface/composer/composer.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/cloud-inventory-cache",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/surface/composer/composer.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/use-org-mcp-connections",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/surface/composer/composer.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/settings/library",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/surface/composer/model-recovery-note.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/models/model-catalog",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/surface/composer/workspace-run-mode-menu.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/desktop-config-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/surface/composer/workspace-run-mode-menu.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/settings/state/feature-flags-preferences",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/surface/model-availability.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/provider-auth/cloud-provider-config",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/surface/model-availability.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/provider-auth/managed-models-recovery",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/surface/model-display-memory.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/models/model-catalog",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/surface/model-removal.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/models/model-catalog",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/surface/session-surface.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/gateway-usage-panel",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/surface/session-surface.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/gateway-usage-state",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/surface/session-surface.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/sign-in-handoff-notice",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/surface/session-surface.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/use-gateway-usage",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/surface/session-surface.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/cloud-inventory-cache",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/surface/session-surface.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/cloud-mcp-submit-readiness",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/surface/session-surface.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/cloud-mcp-user-state",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/surface/session-surface.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/connector-tool-identity",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/surface/session-surface.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/mcp-silent-reauth",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/surface/session-surface.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/member-api-key-dialog",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/surface/session-surface.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/use-org-mcp-connections",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/surface/session-surface.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/devices/remote-access-ask",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/surface/session-surface.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/models/model-catalog",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/surface/session-surface.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/settings/library",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/surface/session-surface.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/settings/pages/environment-variable-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/surface/use-model-removal-confirmation.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/den-auth-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/surface/use-model-removal-confirmation.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/provider-auth/cloud-provider-config",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/sync/global-queue-drainer-bridge.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/enterprise-activation-gate",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/sync/global-queue-drainer.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/models/model-catalog",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/sync/reply-model.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/models/model-catalog",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/sync/session-error.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/gateway-usage-state",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/sync/session-error.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/usage-limit-state",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/sync/session-sync.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/activation/use-activation",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/sync/session-sync.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/gateway-usage-refresh",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/sync/session-sync.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/gateway-usage-state",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/session/sync/session-sync.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/provider-auth/credential-health",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/browser-extension-config.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/workspace/modal-styles",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/cloud/agent-access-card.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/cloud-mcp-diagnostics",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/cloud/agent-access-card.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/cloud-mcp-reconciler",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/cloud/agent-access-card.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/cloud-mcp-user-state",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/cloud/agent-access-card.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/openwork-connect-status",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/cloud/cloud-account-section.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/use-org-list-window",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/cloud/use-den-session.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/den-auth-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/cloud/use-den-session.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/open-browser-auth",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/cloud/use-den-session.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/devices/disconnected-sign-out",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/connect-cloud-readiness.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/native-provider-connections",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/connector-readiness.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/connection-sign-in-problem",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/extension-items.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/native-provider-connections",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/advanced-view-sections.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/desktop-config-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/agent-context-diagnostics-report.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/openwork-connect-status",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/ai-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/provider-auth/cloud-provider-config",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/ai-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/provider-auth/credential-health",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/ai-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/provider-auth/local-provider-engine-state",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/ai-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/provider-auth/provider-policy",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/ai-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/provider-auth/store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/ai-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/models/model-catalog",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/cloud-account-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/desktop-config-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/cloud-account-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/signin-fallback-notice",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/cloud-providers-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/provider-auth/cloud-provider-config",
+      "count": 2
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/cloud-providers-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/provider-auth/credential-health",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/cloud-providers-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/provider-auth/provider-policy",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/cloud-providers-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/provider-auth/store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/devices-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/automations/use-automations",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/devices-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/devices/computer-connection-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/devices-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/devices/session-access-section",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/devices-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/devices/this-device-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/devices-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/devices/use-remote-devices",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/diagnostics-summary.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/cloud-mcp-reconciler",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/environment-variable-provider.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/session/sync/env-context",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/keyboard-shortcuts-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/desktop-config-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/keyboard-shortcuts-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/models/catalog",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/keyboard-shortcuts-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/models/model-picker-list",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/keyboard-shortcuts-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/session/models/model-collections-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/keyboard-shortcuts-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/shortcuts/model-shortcuts-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/keyboard-shortcuts-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/shortcuts/shortcut-keys",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/keyboard-shortcuts-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/shortcuts/shortcut-row-state",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/keyboard-shortcuts-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/shortcuts/use-model-shortcut-keys",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/library-connector-pages.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/connection-sign-in-problem",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/library-connector-pages.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/native-provider-connections",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/mcp-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/cloud-sign-in-banner",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/mcp-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/den-auth-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/mcp-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/cloud-mcp-user-state",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/mcp-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/connection-sign-in-problem",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/mcp-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/modals/add-mcp-modal",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/mcp-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/native-provider-connections",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/mcp-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/opencode-connections-import",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/mcp-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/mcp-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/use-org-mcp-connections",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/mcp-view.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/session/surface/composer/connector-token",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/openwork-models-row.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/models/model-catalog",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/provider-rows.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/provider-auth/credential-health",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/pages/provider-rows.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/provider-auth/local-provider-engine-state",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/provider-share/device-provider-share.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/provider-auth/cloud-provider-config",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/provider-share/device-provider-share.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/provider-auth/credential-health",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/provider-share/device-provider-share.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/provider-auth/shared-provider-sync",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/provider-share/share-provider-dialog.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/den-reauth-notice",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/provider-share/use-device-provider-share-flow.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/den-auth-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/provider-share/use-device-provider-share-flow.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/provider-auth/credential-health",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/provider-share/use-device-provider-share.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/automations/use-automations",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/provider-share/use-device-provider-share.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/den-auth-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/provider-share/use-device-provider-share.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/provider-auth/credential-health",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/shell/settings-page.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/desktop-config-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/shell/settings-page.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/session/sidebar/sidebar-destination",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/state/debug-view-model.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/openwork-server-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/state/desktop-updater-provider.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/brand-theme",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/state/desktop-updater-provider.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/desktop-config-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/state/desktop-updater-provider.tsx",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/cloud/enterprise-activation-gate",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/state/extensions-store.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/cloud-inventory-cache",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/state/extensions-store.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/openwork-server-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/settings/use-library-cloud.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/connections/cloud-inventory-cache",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/domains/shortcuts/resolve-model-shortcut.ts",
+      "rule": "cross-domain",
+      "target": "apps/app/src/react-app/domains/session/surface/model-availability",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/infra/provider-list-query.ts",
+      "rule": "lower-layer-feature",
+      "target": "apps/app/src/react-app/domains/connections/provider-auth/live-provider-sync",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/kernel/use-workspace-model-default.ts",
+      "rule": "lower-layer-feature",
+      "target": "apps/app/src/react-app/domains/cloud/den-auth-provider",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/kernel/use-workspace-model-default.ts",
+      "rule": "lower-layer-feature",
+      "target": "apps/app/src/react-app/domains/session/sync/draft-store",
+      "count": 1
+    },
+    {
+      "file": "apps/app/src/react-app/kernel/use-workspace-model-default.ts",
+      "rule": "lower-layer-feature",
+      "target": "apps/app/src/react-app/shell/workspace-provider",
+      "count": 1
+    }
+  ],
+  "files": [
+    "apps/app/src/app/cloud/desktop-app-restrictions.ts",
+    "apps/app/src/app/cloud/desktop-cloud-sync.ts",
+    "apps/app/src/app/cloud/import-state.ts",
+    "apps/app/src/app/constants.ts",
+    "apps/app/src/app/enablement.ts",
+    "apps/app/src/app/extensions.ts",
+    "apps/app/src/app/index.css",
+    "apps/app/src/app/lib/agent-context-diagnostics-transport.ts",
+    "apps/app/src/app/lib/agent-context-diagnostics.ts",
+    "apps/app/src/app/lib/analytics-key.ts",
+    "apps/app/src/app/lib/analytics.ts",
+    "apps/app/src/app/lib/app-inspector.ts",
+    "apps/app/src/app/lib/background-shell-tasks.ts",
+    "apps/app/src/app/lib/built-mcp-app-catalog.ts",
+    "apps/app/src/app/lib/claude-agent.ts",
+    "apps/app/src/app/lib/claude-import.ts",
+    "apps/app/src/app/lib/connection-diagnostic-history.ts",
+    "apps/app/src/app/lib/crash-diagnostics.ts",
+    "apps/app/src/app/lib/dashboard-cache-storage.ts",
+    "apps/app/src/app/lib/deep-link-bridge.ts",
+    "apps/app/src/app/lib/den-dashboard-links.ts",
+    "apps/app/src/app/lib/den-device-login.ts",
+    "apps/app/src/app/lib/den-endpoint-sources.ts",
+    "apps/app/src/app/lib/den-handoff.ts",
+    "apps/app/src/app/lib/den-library.ts",
+    "apps/app/src/app/lib/den-mcp-discovery.ts",
+    "apps/app/src/app/lib/den-org-memory.ts",
+    "apps/app/src/app/lib/den-request-diagnostics.ts",
+    "apps/app/src/app/lib/den-session-events.ts",
+    "apps/app/src/app/lib/den-sign-in-intent.ts",
+    "apps/app/src/app/lib/den-sign-in-return.ts",
+    "apps/app/src/app/lib/den-telemetry.ts",
+    "apps/app/src/app/lib/den-types.ts",
+    "apps/app/src/app/lib/den.ts",
+    "apps/app/src/app/lib/desktop-types.ts",
+    "apps/app/src/app/lib/desktop.ts",
+    "apps/app/src/app/lib/dev-log.ts",
+    "apps/app/src/app/lib/device-login-control.ts",
+    "apps/app/src/app/lib/device-login-flow.ts",
+    "apps/app/src/app/lib/diagnostic-sanitizer.ts",
+    "apps/app/src/app/lib/diagnostics-bundle.ts",
+    "apps/app/src/app/lib/download.ts",
+    "apps/app/src/app/lib/electron-alpha.ts",
+    "apps/app/src/app/lib/enterprise-activation.ts",
+    "apps/app/src/app/lib/error-monitoring.ts",
+    "apps/app/src/app/lib/feedback.ts",
+    "apps/app/src/app/lib/font-zoom.ts",
+    "apps/app/src/app/lib/gateway-runtime.ts",
+    "apps/app/src/app/lib/gateway-usable-model.ts",
+    "apps/app/src/app/lib/gateway-usage-scope.ts",
+    "apps/app/src/app/lib/inference-access.ts",
+    "apps/app/src/app/lib/manual-auth-input.ts",
+    "apps/app/src/app/lib/mcp-app-discovery-scheduler.ts",
+    "apps/app/src/app/lib/mcp-app-document-store.ts",
+    "apps/app/src/app/lib/mcp-app-open-loads.ts",
+    "apps/app/src/app/lib/mcp-app-presentation-cache.ts",
+    "apps/app/src/app/lib/mcp-app-resolution.ts",
+    "apps/app/src/app/lib/mcp-app-result-cache.ts",
+    "apps/app/src/app/lib/migration.ts",
+    "apps/app/src/app/lib/model-behavior.ts",
+    "apps/app/src/app/lib/models-task-analytics.ts",
+    "apps/app/src/app/lib/opencode-connections-import.ts",
+    "apps/app/src/app/lib/opencode-interruption.ts",
+    "apps/app/src/app/lib/opencode-session-native.ts",
+    "apps/app/src/app/lib/opencode-session.ts",
+    "apps/app/src/app/lib/opencode-v2-adapter.ts",
+    "apps/app/src/app/lib/opencode.ts",
+    "apps/app/src/app/lib/openwork-deployment.ts",
+    "apps/app/src/app/lib/openwork-env-runtime.ts",
+    "apps/app/src/app/lib/openwork-links.ts",
+    "apps/app/src/app/lib/openwork-server.ts",
+    "apps/app/src/app/lib/organization-server-input.ts",
+    "apps/app/src/app/lib/perf-log.ts",
+    "apps/app/src/app/lib/platform-capabilities.ts",
+    "apps/app/src/app/lib/provider-events.ts",
+    "apps/app/src/app/lib/release-channels.ts",
+    "apps/app/src/app/lib/runtime-env.ts",
+    "apps/app/src/app/lib/session-ownership.ts",
+    "apps/app/src/app/lib/session-scope.ts",
+    "apps/app/src/app/lib/session-title.ts",
+    "apps/app/src/app/lib/startup-boot.ts",
+    "apps/app/src/app/lib/startup-diagnostics.ts",
+    "apps/app/src/app/lib/subagent-notices.ts",
+    "apps/app/src/app/lib/v2-prompt-context.ts",
+    "apps/app/src/app/lib/version-gate.ts",
+    "apps/app/src/app/lib/workflow-run-access.ts",
+    "apps/app/src/app/lib/workspace-creation-policy.ts",
+    "apps/app/src/app/lib/workspace-endpoint.ts",
+    "apps/app/src/app/mcp.ts",
+    "apps/app/src/app/theme.ts",
+    "apps/app/src/app/types.ts",
+    "apps/app/src/app/utils/index.ts",
+    "apps/app/src/app/utils/plugins.ts",
+    "apps/app/src/app/utils/providers.ts",
+    "apps/app/src/components/chat/activity-rail.tsx",
+    "apps/app/src/components/chat/app-builder-step.tsx",
+    "apps/app/src/components/chat/background-tasks.tsx",
+    "apps/app/src/components/chat/capability-call-line.tsx",
+    "apps/app/src/components/chat/code-mode-tool.tsx",
+    "apps/app/src/components/chat/composer-pill.tsx",
+    "apps/app/src/components/chat/computer-crew.tsx",
+    "apps/app/src/components/chat/computer-session-history-store.ts",
+    "apps/app/src/components/chat/computer-session-history.tsx",
+    "apps/app/src/components/chat/connection-card.tsx",
+    "apps/app/src/components/chat/created-skill-access.ts",
+    "apps/app/src/components/chat/created-skill-card.tsx",
+    "apps/app/src/components/chat/credential-prompt-card.tsx",
+    "apps/app/src/components/chat/credential-prompt-fields.ts",
+    "apps/app/src/components/chat/credential-prompt.ts",
+    "apps/app/src/components/chat/current-tool-lifecycle-context.tsx",
+    "apps/app/src/components/chat/file-chip.tsx",
+    "apps/app/src/components/chat/image-attachment-badge.tsx",
+    "apps/app/src/components/chat/image-lightbox.tsx",
+    "apps/app/src/components/chat/mcp-app-diagnostics.ts",
+    "apps/app/src/components/chat/mcp-app-frame.tsx",
+    "apps/app/src/components/chat/mcp-app-loading.tsx",
+    "apps/app/src/components/chat/mcp-app-origin.ts",
+    "apps/app/src/components/chat/mcp-app-sign-in.tsx",
+    "apps/app/src/components/chat/mcp-app-tool-change.tsx",
+    "apps/app/src/components/chat/mcp-app-warm-sandbox.tsx",
+    "apps/app/src/components/chat/mcp-connection-action.ts",
+    "apps/app/src/components/chat/message-list-provider.tsx",
+    "apps/app/src/components/chat/message-list.tsx",
+    "apps/app/src/components/chat/progressive-message-list.tsx",
+    "apps/app/src/components/chat/reasoning-block.tsx",
+    "apps/app/src/components/chat/remote-thread-run-line.tsx",
+    "apps/app/src/components/chat/session-reference-context.tsx",
+    "apps/app/src/components/chat/session-reference-link.tsx",
+    "apps/app/src/components/chat/session-reference.ts",
+    "apps/app/src/components/chat/shell-command-text.tsx",
+    "apps/app/src/components/chat/subagent-run-line.tsx",
+    "apps/app/src/components/chat/task-recovery.tsx",
+    "apps/app/src/components/chat/task-suggestions.tsx",
+    "apps/app/src/components/chat/text-activity-details.tsx",
+    "apps/app/src/components/chat/text-tool-aggregate-group.tsx",
+    "apps/app/src/components/chat/tool-aggregate-group.tsx",
+    "apps/app/src/components/chat/utils.ts",
+    "apps/app/src/components/descriptive-button.tsx",
+    "apps/app/src/components/dither-backdrop.tsx",
+    "apps/app/src/components/find-field.tsx",
+    "apps/app/src/components/markdown/github-references.ts",
+    "apps/app/src/components/markdown/link-action-menu.tsx",
+    "apps/app/src/components/markdown/markdown-math.ts",
+    "apps/app/src/components/markdown/markdown-primitive.ts",
+    "apps/app/src/components/markdown/markdown.tsx",
+    "apps/app/src/components/markdown/mermaid-zoom-viewport.tsx",
+    "apps/app/src/components/markdown/mermaid-zoom.ts",
+    "apps/app/src/components/markdown/mermaid.ts",
+    "apps/app/src/components/markdown/near-viewport.ts",
+    "apps/app/src/components/markdown/selection-stability.ts",
+    "apps/app/src/components/markdown/session-reference-html.ts",
+    "apps/app/src/components/markdown/text-highlights.ts",
+    "apps/app/src/components/markdown/untrusted-markdown.tsx",
+    "apps/app/src/components/model-select.tsx",
+    "apps/app/src/components/page.tsx",
+    "apps/app/src/components/panel-tabs.tsx",
+    "apps/app/src/components/secret-field.tsx",
+    "apps/app/src/components/tools/apply-patch.tsx",
+    "apps/app/src/components/tools/bash.tsx",
+    "apps/app/src/components/tools/collapsible-tool.tsx",
+    "apps/app/src/components/tools/edit.tsx",
+    "apps/app/src/components/tools/error-attribution.ts",
+    "apps/app/src/components/tools/file.tsx",
+    "apps/app/src/components/tools/glob.tsx",
+    "apps/app/src/components/tools/grep.tsx",
+    "apps/app/src/components/tools/lsp.tsx",
+    "apps/app/src/components/tools/mcp-reconnect-state.ts",
+    "apps/app/src/components/tools/openwork-automation-proposal.tsx",
+    "apps/app/src/components/tools/path.ts",
+    "apps/app/src/components/tools/question.tsx",
+    "apps/app/src/components/tools/skill.tsx",
+    "apps/app/src/components/tools/todowrite.tsx",
+    "apps/app/src/components/tools/use-chat-tool-reconnect.ts",
+    "apps/app/src/components/tools/webfetch.tsx",
+    "apps/app/src/components/tools/websearch.tsx",
+    "apps/app/src/hooks/use-mobile.ts",
+    "apps/app/src/hooks/use-visual-viewport-inset.ts",
+    "apps/app/src/lib/agent-inventory.ts",
+    "apps/app/src/lib/artifacts.ts",
+    "apps/app/src/lib/build-in-tools.ts",
+    "apps/app/src/lib/capability-call.ts",
+    "apps/app/src/lib/child-navigation.ts",
+    "apps/app/src/lib/code-mode-summary.ts",
+    "apps/app/src/lib/code-mode-tools.ts",
+    "apps/app/src/lib/computer-session-history.ts",
+    "apps/app/src/lib/created-skill.ts",
+    "apps/app/src/lib/current-tool-lifecycle.ts",
+    "apps/app/src/lib/error-text.ts",
+    "apps/app/src/lib/favicon.ts",
+    "apps/app/src/lib/latest-assistant-tool-parts.ts",
+    "apps/app/src/lib/messages.ts",
+    "apps/app/src/lib/openwork-native-activity.ts",
+    "apps/app/src/lib/remote-session-answers.ts",
+    "apps/app/src/lib/remote-session-route.ts",
+    "apps/app/src/lib/remote-session-thread.ts",
+    "apps/app/src/lib/remote-thread-starts.ts",
+    "apps/app/src/lib/remote-transcript-messages.ts",
+    "apps/app/src/lib/target-provider.ts",
+    "apps/app/src/lib/text-activity.ts",
+    "apps/app/src/lib/tool-activity.ts",
+    "apps/app/src/lib/tool-aggregate.test.ts",
+    "apps/app/src/lib/tool-aggregate.ts",
+    "apps/app/src/lib/tool-call-duration.ts",
+    "apps/app/src/lib/utils.ts",
+    "apps/app/src/lib/verify-child-target.ts",
+    "apps/app/src/lib/websearch-results.ts"
+  ]
+}

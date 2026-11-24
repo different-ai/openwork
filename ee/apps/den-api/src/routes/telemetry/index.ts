@@ -6,12 +6,15 @@ import {
   InvitationTable,
 } from "@openwork-ee/den-db/schema"
 import {
+  ANALYTICS_TREND_DAYS,
   ANALYTICS_TREND_WEEKS,
   buildSessionDimensionUpsert,
+  dailyTrendStart,
   isKnownTelemetryEventType,
   isKnownTelemetrySource,
   normalizeTelemetrySource,
   queryWindowMetrics,
+  selectDailyActivity,
   selectModelDimensionUsage,
   selectWeeklyActiveMembers,
   selectWeeklyActivity,
@@ -40,8 +43,6 @@ type TelemetryRouteVariables = AuthContextVariables & Partial<UserOrganizationsC
 
 const DAY_MS = 24 * 60 * 60 * 1000
 
-// OpenAPI-only view of the shared contract: den-web parses responses with the
-// shared schema, so the `date-time` format is declared here instead of there.
 const telemetryDimensionListDocumentSchema = telemetryDimensionListResponseSchema.extend({
   items: z.array(telemetryDimensionListResponseSchema.shape.items.element.extend({
     lastSeenAt: z.string().datetime(),
@@ -49,7 +50,6 @@ const telemetryDimensionListDocumentSchema = telemetryDimensionListResponseSchem
 }).meta({ ref: "TelemetryDimensionListResponse" })
 
 export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVariables }>(app: Hono<T>) {
-  // ── POST /v1/telemetry/ingest ─────────────────────────────────────────────
   app.post(
     "/v1/telemetry/ingest",
     describeRoute({
@@ -93,8 +93,6 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
           await db.insert(TelemetryEventTable).values(eventRows)
         }
 
-        // Deduplicate dimension sightings within the batch: last write per
-        // (source, session, dimension type) wins.
         const pending = new Map<string, { sessionId: string; source: string; dimension: TelemetryDimensionInput; seenAt: Date }>()
         for (const event of accepted) {
           if (!event.sessionId || !event.dimensions?.length) continue
@@ -117,14 +115,12 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
             .onDuplicateKeyUpdate({ set: upsert.update })
         }
       } catch {
-        // Telemetry must never break the app: drop the batch on any failure.
       }
 
       return c.body(null, 204)
     },
   )
 
-  // ── GET /v1/telemetry/dimensions ──────────────────────────────────────────
   app.get(
     "/v1/telemetry/dimensions",
     describeRoute({
@@ -138,7 +134,6 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
         402: jsonResponse("Usage analytics requires an Enterprise plan.", enterprisePlanRequiredSchema),
       },
     }),
-    // Organization-wide usage aggregates: the same admin and Enterprise gate as /v1/telemetry/analytics.
     orgPermissionRoute("usage_analytics.view"),
     queryValidator(telemetryDimensionsQuerySchema),
     async (c) => {
@@ -179,7 +174,6 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
     },
   )
 
-  // ── GET /v1/telemetry/adoption ────────────────────────────────────────────
   app.get(
     "/v1/telemetry/adoption",
     describeRoute({
@@ -192,8 +186,6 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
         402: jsonResponse("Usage analytics requires an Enterprise plan.", enterprisePlanRequiredSchema),
       },
     }),
-    // Organization-wide activity: the same admin and Enterprise gate as /v1/telemetry/analytics.
-    // Den web's overview falls back to /v1/org for member and invite counts.
     orgPermissionRoute("usage_analytics.view"),
     async (c) => {
       const orgId = c.get("activeOrganizationId")
@@ -237,13 +229,12 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
     },
   )
 
-  // ── GET /v1/telemetry/analytics ───────────────────────────────────────────
   app.get(
     "/v1/telemetry/analytics",
     describeRoute({
       tags: ["Telemetry"],
       summary: "Get usage analytics",
-      description: "Returns Layer 1 (who is using AI) and Layer 2 (how often) analytics for the active org: member counts, active members, session and task volume in 7d/30d windows, average task duration, model usage and selection in 30d, and a 12-week trend of active members, sessions, and tasks.",
+      description: "Returns Layer 1 (who is using AI) and Layer 2 (how often) analytics for the active org: member counts, active members, session and task volume in 7d/30d windows, average task duration, model usage and selection in 30d, and a 12-week trend of active members, sessions, and tasks. When daily trends are on for the organization, `daily` adds the same counts per UTC day for the last 30 days, today included.",
       responses: {
         200: jsonResponse("Analytics returned.", telemetryAnalyticsResponseSchema),
         400: jsonResponse("Invalid analytics query.", invalidRequestSchema),
@@ -278,8 +269,6 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
         })
       }
 
-      // Same enterprise gate as SSO / desktop policies (see entitlements.ts):
-      // collection (/ingest) stays open; only the analytics view is gated.
       const orgContext = c.get("organizationContext")
       const entitlement = checkEntitlement(orgContext?.organization.metadata ?? null, "analytics")
       if (!entitlement.ok) {
@@ -290,8 +279,9 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
       const sevenDaysAgo = new Date(now - 7 * DAY_MS)
       const thirtyDaysAgo = new Date(now - 30 * DAY_MS)
       const trendStart = new Date(now - ANALYTICS_TREND_WEEKS * 7 * DAY_MS)
+      const dayStart = dailyTrendStart(now)
 
-      const [memberRows, inviteRows, window7d, window30d, weeklyRows, modelDimensionRows] = await Promise.all([
+      const [memberRows, inviteRows, window7d, window30d, weeklyRows, modelDimensionRows, dailyRows] = await Promise.all([
         db
           .select({ count: sql<number>`count(*)` })
           .from(MemberTable)
@@ -304,6 +294,7 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
         queryWindowMetrics(db, orgId, thirtyDaysAgo, dimensionFilter),
         selectWeeklyActivity(db, orgId, trendStart, dimensionFilter),
         selectModelDimensionUsage(db, orgId, thirtyDaysAgo, dimensionFilter),
+        selectDailyActivity(db, orgId, dayStart, dimensionFilter),
       ])
 
       const weekly = Array.from({ length: ANALYTICS_TREND_WEEKS }, (_, i) => {
@@ -316,6 +307,19 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
           tasksFailed: Number(row?.tasksFailed ?? 0),
         }
       })
+
+      const daily = dailyRows
+        ? Array.from({ length: ANALYTICS_TREND_DAYS }, (_, i) => {
+          const row = dailyRows.find((r) => Number(r.day) === i)
+          return {
+            day: new Date(dayStart.getTime() + i * DAY_MS).toISOString().slice(0, 10),
+            activeMembers: Number(row?.activeMembers ?? 0),
+            sessions: Number(row?.sessions ?? 0),
+            tasksCompleted: Number(row?.tasksCompleted ?? 0),
+            tasksFailed: Number(row?.tasksFailed ?? 0),
+          }
+        })
+        : undefined
 
       const selectionSessions = (value: "default" | "manual") => Number(
         modelDimensionRows.find((row) => row.type === "model_selection" && row.value === value)?.sessions ?? 0,
@@ -334,6 +338,7 @@ export function registerTelemetryRoutes<T extends { Variables: TelemetryRouteVar
         tasksFailed30d: window30d.tasksFailed,
         avgTaskDurationMs30d: window30d.avgTaskDurationMs,
         weekly,
+        ...(daily ? { daily } : {}),
         models: {
           usage30d: modelDimensionRows
             .filter((row) => row.type === "model")

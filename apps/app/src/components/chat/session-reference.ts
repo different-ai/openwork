@@ -33,13 +33,11 @@ export type SessionReferenceMetadata = {
 
 export type SessionReferenceInventory = {
   workspaceId: string;
-  /** Shown next to a task in the `#` picker to tell tasks with similar titles apart. */
   workspaceTitle?: string;
   available: boolean;
   sessions: readonly SessionReferenceMetadata[];
 };
 
-/** A task the person can refer to from the composer `#` picker. */
 export type SessionReferenceCandidate = SessionReference & {
   workspaceTitle: string;
   updatedAt: number;
@@ -114,7 +112,6 @@ export function createSessionReferenceIndex(inventories: readonly SessionReferen
       };
       byPair.set(key, reference);
       bySessionId.set(session.id, bySessionId.has(session.id) ? undefined : reference);
-      // Sub-agent tasks live inside their parent; refer to the parent instead.
       if (!session.parentID) {
         candidates.push({
           ...reference,
@@ -126,8 +123,6 @@ export function createSessionReferenceIndex(inventories: readonly SessionReferen
   }
   candidates.sort((a, b) => Number(a.archived) - Number(b.archived) || b.updatedAt - a.updatedAt);
   return {
-    // Ignore inventory ordering and activity-only metadata so a title resolver
-    // does not invalidate every memoized message on unrelated session events.
     revision: JSON.stringify([
       [...unavailableWorkspaceIds].sort(),
       [...byPair.entries()].sort(([a], [b]) => a.localeCompare(b)),
@@ -142,7 +137,6 @@ export function createSessionReferenceIndex(inventories: readonly SessionReferen
     get(reference: SessionReferenceIdentity): SessionReference | undefined {
       return byPair.get(sessionReferenceKey(reference));
     },
-    /** Every task that can be referenced, unarchived and newest first. */
     candidates(): readonly SessionReferenceCandidate[] {
       return candidates;
     },

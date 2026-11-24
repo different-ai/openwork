@@ -1,10 +1,5 @@
 import type { ToolCall, ToolResult, ToolSpec } from "./types.js"
 
-/**
- * A reaction to the person's latest message: one emoji, the way people react to each other in chat. The runner only
- * checks that it is one emoji and keeps the call in the transcript; the caller shows it (Workbot puts it on the
- * person's message). Offered only to sessions created with `reactions: true`.
- */
 export const REACTION_TOOL_NAMES: ReadonlySet<string> = new Set(["react"])
 
 export const REACTION_TOOLS: ToolSpec[] = [
@@ -26,7 +21,6 @@ export const REACTION_TOOLS: ToolSpec[] = [
 
 const graphemes = new Intl.Segmenter(undefined, { granularity: "grapheme" })
 
-/** True for exactly one emoji (including ZWJ sequences, skin tones and flags). */
 export function isOneEmoji(text: string) {
   if (!text || text.length > 32) return false
   const parts = [...graphemes.segment(text)]
@@ -39,10 +33,6 @@ export function runReactionTool(input: Record<string, unknown>): ToolResult {
   return { output: `Reacted with ${emoji}; they see it on their message.`, isError: false }
 }
 
-/**
- * A step that only reacted, with `final`, is the whole reply: the turn ends there instead of asking the model for
- * words it was told not to write (models tend to add "You're welcome!" anyway).
- */
 export function reactionEndsTurn(calls: ToolCall[], outcomes: ToolResult[]) {
   return (
     calls.length > 0 &&

@@ -30,7 +30,6 @@ export function BuiltAppShareButton({
   );
 }
 
-/** The sharing dialog alone, for callers that open it from a menu item. */
 export function BuiltAppShareDialog({
   pluginId,
   title,
@@ -78,7 +77,6 @@ function AppSharing({
   title: string;
   onClose: () => void;
 }) {
-  // The caller verifies these before mounting. Avoid retaining another member's grants.
   if (!context.client || !context.orgId)
     throw new Error("Sign in to share this artifact.");
   const library = useLibraryCloud({

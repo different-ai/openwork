@@ -7,7 +7,6 @@ type InstallVisualOs = "macos" | "windows" | "linux";
 function AppBadge({ iconUrl, size = "size-14" }: { iconUrl: string | null; size?: string }) {
   if (iconUrl) {
     return (
-      // Organization icons may be served by private on-prem hosts that Next/Image cannot proxy.
       // eslint-disable-next-line @next/next/no-img-element
       <img src={iconUrl} alt="" className={`${size} rounded-[22%] object-contain shadow-[0_4px_12px_rgba(16,24,40,0.18)]`} />
     );
@@ -100,7 +99,6 @@ function LinuxTerminalVisual() {
   );
 }
 
-/** Decorative picture of the install gesture for the detected OS. */
 export function InstallVisual({
   os,
   appName,

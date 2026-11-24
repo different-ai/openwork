@@ -8,10 +8,6 @@ import {
   type InferenceWindowType,
 } from "@openwork/types/den/inference";
 
-/**
- * The organization used its OpenWork Models allowance (the gateway's classified 429). Stored on the transcript's
- * error message, so the reset time is absolute. No organization identifiers: they never reach the UI.
- */
 export const openWorkModelsLimitSchema = z.object({
   windowType: z.enum(INFERENCE_WINDOW_TYPES).nullable(),
   resetAt: z.iso.datetime().nullable(),
@@ -31,7 +27,6 @@ function header(headers: unknown, name: string): string | null {
   return null;
 }
 
-/** The gateway's own body: `{ error: { code: "openwork_models_allowance_reached", source: "openwork_models" } }`. */
 function allowanceBody(value: unknown): boolean {
   if (typeof value !== "string" || value.length > 16_384) return false;
   const start = value.indexOf("{");
@@ -45,11 +40,6 @@ function allowanceBody(value: unknown): boolean {
   }
 }
 
-/**
- * Reads the classified allowance error from whatever shape the engine reports (v1 APIError with headers and body,
- * v2 text naming HTTP 429 with the body, or v2's bare gateway message). Anything else, including an ordinary 429, is
- * not this limit.
- */
 export function parseOpenWorkModelsLimitError(value: unknown, now = Date.now()): OpenWorkModelsLimit | null {
   const records = [value, field(value, "data"), field(value, "cause"), field(field(value, "cause"), "data")];
   const statuses = records.flatMap((record) => [field(record, "statusCode"), field(record, "status")]).filter((status) => typeof status === "number");
@@ -60,7 +50,6 @@ export function parseOpenWorkModelsLimitError(value: unknown, now = Date.now()):
       && header(headers, "x-openwork-usage-state") === "blocked";
     const body = allowanceBody(field(record, "responseBody")) || allowanceBody(field(record, "message"));
     const http429 = statuses.includes(429) || /\bHTTP 429\b/.test(String(field(record, "message") ?? ""));
-    // Engine v2 reports the gateway's exact message without the response; it is the gateway's own constant.
     const gatewayMessage = field(record, "message") === OPENWORK_MODELS_ALLOWANCE_MESSAGE;
     if (!(http429 && (marked || body)) && !gatewayMessage) continue;
     const windowType = header(headers, "x-openwork-limit-window-type");
@@ -73,7 +62,6 @@ export function parseOpenWorkModelsLimitError(value: unknown, now = Date.now()):
   return null;
 }
 
-/** "in 3 hours", "in 20 minutes", "on Monday": when a limit ends. Null once it has passed or when unknown. */
 export function usageLimitResetPhrase(resetAt: string | null | undefined, now = Date.now()): string | null {
   const at = resetAt ? Date.parse(resetAt) : NaN;
   if (!Number.isFinite(at) || at <= now) return null;
@@ -101,28 +89,19 @@ export type UsageLimitActionId = "sign_in" | "get_models" | "add_team_provider" 
 export type UsageLimitAction = {
   id: UsageLimitActionId;
   label: string;
-  /** The one primary action, an optional secondary, and the quiet way to keep working. */
   emphasis: "primary" | "secondary" | "tertiary";
-  /** Present but not for this person: a lock that says who can (DESIGN P4). */
   lockedReason?: string;
 };
 
 export type UsageLimitViewer = {
   signedIn: boolean;
-  /** Owner or admin of the active organization: the roles that can buy and add providers by default. */
   canBuy: boolean;
-  /** OpenWork Models is sold on this control plane (hosted OpenWork Cloud). */
   modelsOffered: boolean;
-  /** A higher plan can be bought for this organization. */
   planUpgrade?: boolean;
 };
 
 const useAnotherModel: UsageLimitAction = { id: "use_another_model", label: "Use another model", emphasis: "tertiary" };
 
-/**
- * One primary action for the person's role, always a paid path for someone who can buy, and always a way to keep
- * working. The order is fixed: primary, secondary, tertiary.
- */
 export function usageLimitActions(kind: UsageLimitKind, viewer: UsageLimitViewer): UsageLimitAction[] {
   if (kind === "free_auto") {
     if (!viewer.signedIn) {

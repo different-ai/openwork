@@ -44,12 +44,10 @@ export type DenLlmProvider = {
   providerConfig: Record<string, unknown>;
   hasApiKey: boolean;
   configuredEnvKeys: string[];
-  /** The env names members' machines and cloud workers actually see for this provider. */
   runtimeEnvKeys: string[];
   createdAt: string | null;
   updatedAt: string | null;
   canManage: boolean;
-  /** providerConfig and model configs are the non-secret view (the caller can't edit the provider and isn't granted it). */
   configRedacted: boolean;
   accessibleVia: {
     orgMembershipIds: string[];
@@ -58,9 +56,7 @@ export type DenLlmProvider = {
   models: DenLlmProviderModel[];
   access: {
     allMembers: boolean;
-    /** People with direct access, counted even when their names are hidden. */
     memberCount: number;
-    /** Den returned no names or emails: the caller can't edit this provider. `members` is then empty. */
     membersHidden: boolean;
     members: DenLlmProviderMemberAccess[];
     teams: DenLlmProviderTeamAccess[];
@@ -106,7 +102,6 @@ function asStringList(value: unknown): string[] {
 }
 
 function asJsonRecord(value: unknown): Record<string, unknown> {
-  // Depending on the MySQL driver, JSON columns can come back as strings.
   if (typeof value === "string") {
     try {
       const parsed: unknown = JSON.parse(value);
@@ -311,11 +306,6 @@ export function getProviderDocUrl(config: Record<string, unknown>): string | nul
   return asString(config.doc);
 }
 
-/**
- * Simple Icons slugs for providers whose models.dev id does not match the CDN
- * slug. Anything missing here falls back to the provider id, then to the
- * favicon of the documentation domain, then to a monogram.
- */
 const SIMPLE_ICON_SLUG_BY_PROVIDER_ID: Record<string, string> = {
   google: "googlegemini",
   "google-vertex": "googlegemini",
@@ -450,10 +440,6 @@ function asProbeResult(value: unknown): LlmProviderProbeResult | null {
   };
 }
 
-/**
- * Probe an OpenAI-compatible endpoint through den-api: heals common URL
- * mistakes and returns the model ids the endpoint actually serves.
- */
 export async function requestLlmProviderTestConnection(input: {
   api: string;
   apiKey?: string;
@@ -522,6 +508,8 @@ export function useOrgLlmProviders(
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const scope = options.scope ?? "manageable";
+  const [loadedKey, setLoadedKey] = useState<string | null>(null);
+  const requestKey = `${orgId ?? ""}:${scope}`;
 
   async function loadProviders() {
     if (!orgId) {
@@ -550,6 +538,7 @@ export function useOrgLlmProviders(
       setError(loadError instanceof Error ? loadError.message : "Failed to load the provider library.");
     } finally {
       setBusy(false);
+      setLoadedKey(requestKey);
     }
   }
 
@@ -561,6 +550,7 @@ export function useOrgLlmProviders(
     llmProviders,
     busy,
     error,
+    loaded: Boolean(orgId) && loadedKey === requestKey && !busy,
     reloadProviders: loadProviders,
   };
 }

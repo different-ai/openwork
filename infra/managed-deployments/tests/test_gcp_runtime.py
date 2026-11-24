@@ -277,7 +277,7 @@ class OrchestrationMutexTests(unittest.TestCase):
                 patch.object(runner, "apply", side_effect=lambda *args: order.append("migration-and-rollout") or {"health_agent": "health"}), \
                 patch.object(runner, "verify_services", side_effect=lambda *args: order.append("services")), \
                 patch.object(runner, "verify_health", side_effect=lambda *args: order.append("https")), \
-                patch.object(runner, "gcloud", side_effect=lambda *args: order.append("signed-health-receipt")), patch("builtins.print"):
+                patch.object(runner, "verify_health_job", side_effect=lambda *args: order.append("signed-health-receipt")), patch("builtins.print"):
             runner.main()
         self.assertEqual(order, ["report-1", "report-2", "report-3", "acquire", "mirror", "migration-and-rollout", "report-4", "services", "report-5", "https", "signed-health-receipt", "release", "report-6"])
 
@@ -383,10 +383,10 @@ class RuntimeReadinessTests(unittest.TestCase):
                       "status": {"observedGeneration": observed, "conditions": [{"type": "Ready", "status": "True"}]}}
             with self.subTest(generation=generation, observed=observed), patch.dict(os.environ, ENV, clear=True), patch.object(runner, "gcloud", return_value=status):
                 if accepted:
-                    runner.verify_services({"service_names": {"den_api": "ow-api"}})
+                    runner.verify_services({"service_names": {"den_api": "ow-api"}}, timeout=0)
                 else:
                     with self.assertRaises(ValueError):
-                        runner.verify_services({"service_names": {"den_api": "ow-api"}})
+                        runner.verify_services({"service_names": {"den_api": "ow-api"}}, timeout=0)
 
     def test_html_and_api_health_are_not_web_upstream_readiness(self):
         outputs = {"web_url": "https://openwork.example.com", "api_url": "https://api.openwork.example.com"}

@@ -3,18 +3,13 @@
 import { Lock } from "lucide-react";
 import { buttonVariants } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
+import { ENTERPRISE_CONTACT_URL } from "../_lib/enterprise-contact";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
-
-const ENTERPRISE_CONTACT_URL =
-  process.env.NEXT_PUBLIC_ENTERPRISE_CONTACT_URL || "https://openworklabs.com/enterprise#book";
 
 type Props = {
   feature: string;
-  /** Feature-specific state only; guidance for the current actor is added below. */
   detail?: string;
-  /** Lowest plan that includes the feature. Team features link to billing; Enterprise features link to sales. */
   plan?: "team" | "enterprise";
-  /** Billing page for the Team upgrade. Required when plan is "team". */
   billingHref?: string;
 };
 

@@ -8,7 +8,8 @@ import {
 } from "@modelcontextprotocol/server"
 import { onInventoryChanged } from "../inventory-writes.js"
 
-/** The dual-era, sessionless HTTP entry used by the public agent MCP route. */
+export const AGENT_MCP_MAX_REQUEST_BYTES = 48 * 1024 * 1024
+
 export function createAgentMcpHttpHandler(
   serverForRequest: (request: Request) => McpServer,
   onerror?: (error: Error) => void,
@@ -22,24 +23,19 @@ export function createAgentMcpHttpHandler(
   })
 }
 
-/** Whose catalog a request or subscription stream belongs to. */
 export type AgentMcpAudience = {
   organizationId: string
   userId: string
-  /** The stream lists Connect's full tool view (connect-tool-view.ts). */
   fullTools: boolean
 }
 
 export type AgentMcpMember = Pick<AgentMcpAudience, "organizationId" | "userId">
 
 export type ScopedAgentMcpHttpHandlers = {
-  /** Serve one request inside a stable, authenticated catalog audience. */
   fetch: (audience: AgentMcpAudience, request: Request, server: McpServer) => Promise<Response>
-  /** Publish only to subscription streams in the matching audience. */
   notify: {
     toolsChanged: (member: AgentMcpMember) => void
     resourcesChanged: (member: AgentMcpMember) => void
-    /** Every full-view stream in the organization: what its members may use changed. */
     fullToolsChanged: (organizationId: string) => void
   }
   close: () => Promise<void>
@@ -100,25 +96,10 @@ class ScopedAgentMcpEventBus implements ServerEventBus {
     try {
       this.onerror?.(error instanceof Error ? error : new Error(String(error)))
     } catch {
-      // Error reporting must never alter subscription delivery.
     }
   }
 }
 
-/**
- * Keep the SDK's subscription bus isolated by authenticated catalog audience.
- *
- * One handler retains the SDK's global subscription bound and shutdown
- * semantics. Its event bus captures the authenticated audience when a listen
- * stream subscribes, then delivers a published catalog event only to listeners
- * captured in that same audience, or, for an organization-wide change, to the
- * organization's full-view listeners. Async-local scoping remains correct when
- * requests for different members execute concurrently.
- *
- * A request in this process that changed what an organization's members may
- * use (inventory-writes.ts) tells that organization's full-view streams their
- * tool list changed.
- */
 export function createScopedAgentMcpHttpHandlers(
   onerror?: (error: Error) => void,
 ): ScopedAgentMcpHttpHandlers {
@@ -132,6 +113,7 @@ export function createScopedAgentMcpHttpHandlers(
     legacy: "stateless",
     onerror,
     bus,
+    maxRequestBodySize: AGENT_MCP_MAX_REQUEST_BYTES,
   })
 
   const notify: ScopedAgentMcpHttpHandlers["notify"] = {

@@ -2,6 +2,24 @@
 # Required
 # ---------------------------------------------------------------------------
 
+variable "managed_legacy" {
+  description = "Managed-installer compatibility: retain its physical names, 48-character legacy generators, backup settings and separate unprivileged web identity. Does not convert secret storage mode; the managed root must explicitly set write_only_secrets=false. Direct consumers should leave false."
+  type        = bool
+  default     = false
+}
+
+variable "managed_maintenance" {
+  description = "Managed runner only: keep services disabled while migration-gated API-only revisions are prepared. Restore false only after verifying the new revisions own all traffic."
+  type        = bool
+  default     = false
+}
+
+variable "web_service_account_email" {
+  description = "Separate existing web identity for managed_legacy. It receives no secret or database grants."
+  type        = string
+  default     = ""
+}
+
 variable "project_id" {
   description = "Google Cloud project to deploy into."
   type        = string

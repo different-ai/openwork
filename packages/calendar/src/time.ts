@@ -73,7 +73,6 @@ export function zonedTimeToInstant(
     .filter((candidate) => nominal - offsetMs(candidate, timeZone) === candidate)
     .sort((left, right) => left - right)
   if (exact[0] !== undefined) return exact[0]
-  // Skipped wall time: apply the offset from before the gap, which lands after it.
   return nominal - Math.min(...offsets)
 }
 
@@ -109,11 +108,8 @@ export function startOfDay(date: LocalDate, timeZone: string): number {
 
 export type CalendarRange = {
   view: CalendarView
-  /** Days rendered, in order. Month view includes leading/trailing days of adjacent months. */
   days: LocalDate[]
-  /** Inclusive start instant of the first day. */
   start: number
-  /** Exclusive end instant (start of the day after the last). */
   end: number
 }
 
@@ -160,12 +156,6 @@ export function dayLengthMinutes(date: LocalDate, timeZone: string): number {
   return (startOfDay(addDays(date, 1), timeZone) - startOfDay(date, timeZone)) / MINUTE_MS
 }
 
-/**
- * Microsoft Graph returns `{ dateTime, timeZone }` pairs where the zone may be
- * "UTC", an IANA name, or a Windows zone name. Den's calendarView sends no
- * Prefer header, so it is "UTC" today; the others are handled for safety.
- * Unknown zones fall back to UTC rather than the browser's zone.
- */
 const WINDOWS_TIME_ZONES: Record<string, string> = {
   "UTC": "UTC",
   "Coordinated Universal Time": "UTC",

@@ -7,7 +7,6 @@ export const CLAUDE_COWORK_3P_URL = `https://openworklabs.com${CLAUDE_COWORK_3P_
 
 export const claudeCowork3pHeading = "OpenWork vs Claude Cowork on 3P";
 
-/** Hero sub-line. Keep it under 20 words. */
 export const claudeCowork3pAnswer =
   "Keep Bedrock, Vertex, or Foundry. Add any model, and share skills and MCP servers with every teammate.";
 
@@ -50,11 +49,11 @@ export const claudeCowork3pFaq: FaqEntry[] = [
   },
   {
     question: "Can we self-host OpenWork?",
-    answer: "Yes, with Helm or Docker Compose. Enterprise costs the same cloud or self-hosted."
+    answer: "Yes, with Helm on Kubernetes, Docker Compose for evaluation, or beta Terraform modules for AWS, Google Cloud, and Azure. Enterprise costs the same cloud or self-hosted."
   },
   {
     question: "Does OpenWork have a mobile app?",
-    answer: "Not yet; it is on the public roadmap. OpenWork runs on macOS, Windows, Linux, and in the browser."
+    answer: "Not yet; it is on the public roadmap. OpenWork runs on macOS, Windows, Linux, and in the browser, and your team can start work from Slack today."
   }
 ];
 

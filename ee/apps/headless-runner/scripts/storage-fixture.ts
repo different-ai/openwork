@@ -1,4 +1,3 @@
-/** Shared by the storage tests: an in-memory files bucket, seeded conversations, and the previous runner's Store. */
 import { execFileSync } from "node:child_process"
 import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
@@ -6,7 +5,6 @@ import type { BlobStore } from "../src/blobs.js"
 import { Store } from "../src/store.js"
 import type { Message } from "../src/types.js"
 
-/** A files bucket in memory, with hooks to make it fail the ways a real one can. */
 export function memoryBlobs(clock: () => number = Date.now) {
   const objects = new Map<string, { bytes: Uint8Array<ArrayBuffer>; at: number }>()
   const hooks: {
@@ -46,7 +44,6 @@ export function memoryBlobs(clock: () => number = Date.now) {
   return { store, objects, hooks, keys }
 }
 
-/** A finished turn: the person's message, a tool call and its result, and the answer. */
 export function finishedTurn(store: Store, sessionId: string, messageId: string, input: { output?: string; answer?: string; kind?: "task" | "report"; parent?: string } = {}) {
   store.admitTurn({ sessionId, messageId, prompt: `prompt for ${messageId}`, model: "test-model", kind: input.kind, parent: input.parent })
   store.startTranscript(sessionId, messageId)
@@ -58,7 +55,6 @@ export function finishedTurn(store: Store, sessionId: string, messageId: string,
   store.setTurnStatus(sessionId, messageId, "completed")
 }
 
-/** A conversation of `count` finished turns, each about `size` bytes, plus a task and its report early on. */
 export function seedConversation(store: Store, id: string, count: number, size = 1_500) {
   store.putSession(id, { owner: "test-owner", ref: "main", tasks: true, title: "Long chat" })
   for (let index = 0; index < count; index += 1) {
@@ -68,7 +64,6 @@ export function seedConversation(store: Store, id: string, count: number, size =
       finishedTurn(store, id, "m002.t1.r", { kind: "report", parent: "m002.t1" })
     }
   }
-  // One stopped before it started: its prompt is all it has.
   store.admitTurn({ sessionId: id, messageId: "m_stopped", prompt: "never started", model: null })
   store.setTurnStatus(id, "m_stopped", "aborted")
   for (let index = count; index < count + 3; index += 1) finishedTurn(store, id, `m${String(index).padStart(3, "0")}`)
@@ -77,11 +72,6 @@ export function seedConversation(store: Store, id: string, count: number, size =
 
 export const toolMessage = (output: string): Message => ({ role: "tool", callId: "c", name: "read_file", output, isError: false })
 
-/**
- * Runs `script` (TypeScript, with `Store` and `nodeSqlite` imported from the previous runner's src/) in a child
- * process, with the database path as its argument; returns its stdout. Null when that version can't be read here
- * (no git history), so the test says so instead of failing.
- */
 export function withBaseRunner(ref: string, project: string) {
   const work = join(project, "node_modules/.cache/storage-test", String(process.pid))
   try {

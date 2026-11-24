@@ -199,10 +199,12 @@ for (const protocol of ["anthropic", "openai", "openai-responses"] as const) {
   test(`${protocol}: scoped adapter and synthetic probe use only the scoped URL/key/protocol`, async () => {
     const modelAccess = { ...access, protocol }
     const paths: string[] = []
+    const sessions: (string | null)[] = []
     const transport: typeof fetch = async (url, init) => {
       paths.push(String(url))
       assert.ok(String(url).startsWith(access.baseUrl))
       const headers = new Headers(init?.headers)
+      sessions.push(headers.get("x-openwork-headless-session"))
       assert.equal(protocol === "anthropic" ? headers.get("x-api-key") : headers.get("authorization"), protocol === "anthropic" ? access.apiKey : `Bearer ${access.apiKey}`)
       const body = z.object({ model: z.string() }).parse(JSON.parse(String(init?.body)))
       assert.equal(body.model, "member-model")
@@ -211,10 +213,12 @@ for (const protocol of ["anthropic", "openai", "openai-responses"] as const) {
       return Response.json({ model: "member-model", choices: [{ message: { content: "READY" } }], usage: { prompt_tokens: 1, completion_tokens: 1 } })
     }
     const adapter = createModelAdapter(modelAccess, { maxOutputTokens: 32, fetch: transport })
-    assert.equal((await adapter.complete({ system: "test", messages: [{ role: "user", text: "Hello" }], model: "member-model", apiKey: access.apiKey, tools: [], signal: new AbortController().signal })).text, "READY")
+    assert.equal((await adapter.complete({ system: "test", messages: [{ role: "user", text: "Hello" }], model: "member-model", apiKey: access.apiKey, sessionId: "hs_usage_session_1", tools: [], signal: new AbortController().signal })).text, "READY")
     const probe = createModelProbe(config, transport)
     assert.deepEqual(await probe("member-model", new AbortController().signal, modelAccess), { status: "answered", errorCode: null, requestedModel: "member-model", reportedModel: "member-model" })
     assert.equal(paths.length, 2)
+    // A turn's call names its conversation for the gateway's Workbot usage; a model test has none.
+    assert.deepEqual(sessions, ["hs_usage_session_1", null])
   })
 }
 
@@ -302,4 +306,19 @@ test("typed client forwards model selection and minted access; legacy turns and 
   await client.listModels()
   assert.equal(requests.at(-1)?.init?.method, "GET")
   assert.equal(requests.at(-1)?.init?.body, undefined)
+})
+
+test("model access headers from Den reach every model call, and only the Workbot grant header is accepted", async () => {
+  const seen: Array<string | null> = []
+  const transport = async (_url: RequestInfo | URL, init?: RequestInit) => {
+    seen.push(new Headers(init?.headers).get("x-openwork-workbot-grant"))
+    return Response.json({ id: "resp_1", model: "member-model", output: [{ type: "message", content: [{ type: "output_text", text: "READY" }] }], usage: { input_tokens: 1, output_tokens: 1 } })
+  }
+  const modelAccess: HeadlessModelAccess = { ...access, protocol: "openai-responses", headers: { "x-openwork-workbot-grant": "signed-grant" } }
+  const adapter = createModelAdapter(modelAccess, { maxOutputTokens: 32, fetch: transport })
+  await adapter.complete({ system: "test", messages: [{ role: "user", text: "Hello" }], model: "member-model", apiKey: access.apiKey, tools: [], signal: new AbortController().signal })
+  assert.deepEqual(seen, ["signed-grant"])
+  const { headlessModelAccessSchema } = await import("../src/types.js")
+  const parsed = headlessModelAccessSchema.parse({ ...access, headers: { "x-openwork-workbot-grant": "g", authorization: "Bearer other" } })
+  assert.deepEqual(parsed.headers, { "x-openwork-workbot-grant": "g" })
 })

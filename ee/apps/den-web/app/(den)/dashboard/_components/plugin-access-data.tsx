@@ -76,7 +76,6 @@ function parsePluginAccessGrant(value: unknown): PluginAccessGrant | null {
   };
 }
 
-/** Active grants only; removed ones stay in the API response for history. */
 export function parsePluginAccessGrants(items: unknown): PluginAccessGrant[] {
   return (Array.isArray(items) ? items : [])
     .map(parsePluginAccessGrant)

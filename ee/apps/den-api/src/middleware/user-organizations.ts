@@ -3,6 +3,7 @@ import type { MiddlewareHandler } from "hono"
 import { beginUserOrganizationsAuditRequest } from "../audit/request-capture.js"
 import { getApiKeyScopedOrganizationId } from "../api-keys.js"
 import { resolveUserOrganizations, setSessionActiveOrganization, type UserOrgSummary } from "../orgs.js"
+import { findSsoBlockedOrganizations } from "../organization-sso-access.js"
 import type { AuthContextVariables } from "../session.js"
 
 export const LEGACY_ORG_PROXY_HEADER = "x-openwork-legacy-org-id"
@@ -71,7 +72,7 @@ export const resolveUserOrganizationsMiddleware: MiddlewareHandler<{
   const apiKey = c.get("apiKey")
   const apiKeyScopedOrganizationId = getApiKeyScopedOrganizationId(apiKey)
   const headerOrganizationId = getRequestScopedOrganizationId(c.req.raw.headers)
-  const scopedOrganizationId = apiKeyScopedOrganizationId ?? headerOrganizationId
+  const scopedOrganizationId = apiKeyScopedOrganizationId ?? session?.organizationScopeId ?? headerOrganizationId
   const resolved = await resolveUserOrganizations({
     activeOrganizationId: scopedOrganizationId ?? session?.activeOrganizationId ?? null,
     userId: normalizeDenTypeId("user", user.id),
@@ -81,10 +82,20 @@ export const resolveUserOrganizationsMiddleware: MiddlewareHandler<{
     ? resolved.orgs.filter((org) => org.id === scopedOrganizationId)
     : resolved.orgs
 
-  const activeOrganizationId = scopedOrganizationId ? scopedOrgs[0]?.id ?? null : resolved.activeOrgId
-  const activeOrganizationSlug = scopedOrganizationId
+  let activeOrganizationId = scopedOrganizationId ? scopedOrgs[0]?.id ?? null : resolved.activeOrgId
+  let activeOrganizationSlug = scopedOrganizationId
     ? scopedOrgs[0]?.slug ?? null
     : resolved.activeOrgSlug
+
+  const signInSessionId = c.get("signInSessionId")
+  if (signInSessionId && activeOrganizationId) {
+    const blocked = await findSsoBlockedOrganizations({ sessionId: signInSessionId, organizationIds: scopedOrgs.map((org) => org.id) })
+    if (blocked.has(activeOrganizationId)) {
+      const fallback = scopedOrganizationId ? null : scopedOrgs.find((org) => !blocked.has(org.id)) ?? null
+      activeOrganizationId = fallback?.id ?? null
+      activeOrganizationSlug = fallback?.slug ?? null
+    }
+  }
 
   if (shouldHydrateSessionActiveOrganization({
     scopedOrganizationId,
@@ -100,8 +111,6 @@ export const resolveUserOrganizationsMiddleware: MiddlewareHandler<{
   c.set("userOrganizations", scopedOrgs)
   c.set("activeOrganizationId", activeOrganizationId)
   c.set("activeOrganizationSlug", activeOrganizationSlug)
-  // The active organization is one of the caller's verified memberships: the
-  // handler acts on it, so it is the audit tenant (durable intent before next()).
   const activeMembership = activeOrganizationId ? scopedOrgs.find((org) => org.id === activeOrganizationId) : undefined
   if (activeMembership) {
     const auditBlocked = await beginUserOrganizationsAuditRequest(c, {

@@ -52,6 +52,8 @@ import {
   type PaletteResultGroup,
 } from "./command-palette-search";
 import { buildCommandPaletteSettingsItems } from "./command-palette-settings";
+import { buildSessionGroupActions } from "@/react-app/domains/session/sidebar/session-menu-actions";
+import { sessionGroupActionsToPalette } from "./command-palette-session-actions";
 
 export type { PaletteItem } from "./command-palette-search";
 
@@ -95,60 +97,45 @@ export type CommandPaletteProps = {
   open: boolean;
   onClose: () => void;
   developerMode: boolean;
-  /** Called when a session row is chosen. */
   onOpenSession: (workspaceId: string, sessionId: string) => void;
-  /** Opens a chosen session beside the current session without navigating away. */
   onOpenSessionInSplit?: (workspaceId: string, sessionId: string) => void;
   currentSession?: CommandPaletteSessionRef | null;
-  /** Called when "New session" is chosen. */
+  secondarySession?: CommandPaletteSessionRef | null;
+  onCloseSplitSession?: () => void;
   onCreateNewSession: () => void;
-  /** Starts an empty session beside the current session. */
   onCreateNewSplitSession?: () => void;
-  /** Called when "Open settings" is chosen. Accepts an optional route to jump straight to a tab. */
   onOpenSettings: (route?: string) => void;
-  /** Called when the first-class Extensions page is chosen. */
   onOpenExtensions: (section?: string) => void;
   onToggleSidebar?: () => void;
   onOpenAutomations?: () => void;
-  onOpenCalendar?: () => void;
   onOpenDashboard?: () => void;
+  dashboardLabel?: string;
   onCreateWorkspace?: () => void;
-  /** Optional: open the full default-model picker. */
   onOpenModelPicker?: () => void;
-  /** Optional: model data for the nested model picker. */
   modelOptions?: ModelOption[];
   selectedModel?: ModelRef;
   selectedModelBehavior?: string | null;
   onSelectModel?: (model: ModelRef, behavior?: string | null) => void;
   onNextPinnedModel?: () => void;
   onCycleModelSource?: () => void;
-  /** Optional — open a URL in the user's browser. Falls back to window.open. */
   onOpenUrl?: (url: string) => void;
-  /** Optional: current session servers/artifacts exposed through Cmd/Ctrl+K. */
   accessibleTargets?: AccessibleTargetOption[];
   onOpenAccessibleTarget?: (target: AccessibleTargetOption) => void;
   onHideAccessibleTarget?: (target: AccessibleTargetOption) => void;
-  /** Sessions available to the split-view picker. */
   sessions: SessionOption[];
   sessionGroups?: SessionGroupOption[];
   currentSessionForGroupMove?: { title: string } | null;
   currentSessionGroupId?: string | null;
-  onMoveCurrentSessionToGroup?: (groupId: string) => void;
+  onMoveCurrentSessionToGroup?: (groupId: string | null) => void;
+  onCreateGroup?: () => void;
   extraItems?: PaletteItem[];
-  /** Optional: agent picker submode (Switch agent). */
   listAgents?: () => Promise<Agent[]>;
   selectedAgent?: string | null;
   onSelectAgent?: (agent: string | null) => void;
 };
 
-/**
- * React command palette (Cmd/Ctrl+K).
- *
- * Root mode searches actions and settings, not conversations.
- */
 export function CommandPalette(props: CommandPaletteProps) {
   const platform = usePlatform();
-  // Key hints read the way this OS writes them: ⌃⇧M on macOS, Ctrl+Shift+M elsewhere.
   const shortcutOs = resolveShortcutOs(platform.os, typeof navigator === "undefined" ? "" : navigator.platform);
   const engine = useOpencodeEngineControls(props.engineClient, props.open);
   const [mode, setMode] = useState<CommandPaletteMode>("root");
@@ -176,7 +163,6 @@ export function CommandPalette(props: CommandPaletteProps) {
     return () => window.cancelAnimationFrame(frame);
   }, [mode, props.open]);
 
-  // Fetch agents lazily when the submode opens so the palette stays instant.
   const listAgents = props.listAgents;
   useEffect(() => {
     if (mode !== "agents" || !listAgents) return;
@@ -213,8 +199,6 @@ export function CommandPalette(props: CommandPaletteProps) {
     } });
   const currentModelOption = props.modelOptions?.find((option) => option.providerID === props.selectedModel?.providerID && option.modelID === props.selectedModel.modelID);
   const currentModelTitle = currentModelOption ? publicModelTitle(currentModelOption) : undefined;
-  // Organization policy (`allowControlSettings`) can hide desktop settings;
-  // the settings palette entries follow the same allow-list as the settings nav.
   const checkDesktopRestriction = useCheckDesktopRestriction();
 
   const rootItems = useMemo<PaletteItem[]>(() => [
@@ -256,6 +240,11 @@ export function CommandPalette(props: CommandPaletteProps) {
           },
         }]
       : []),
+    ...(props.onCloseSplitSession ? [{
+      id: "close-split", title: t("session_management.close_split_view"), meta: "Workbench",
+      searchText: "close side chat split view pane keep conversation",
+      action: () => { props.onClose(); props.onCloseSplitSession?.(); },
+    }] : []),
     ...(hasNestedModelPicker || props.onNextPinnedModel ? [{ id: "models.next-pinned", title: "Next pinned model", shortcut: formatChord(shortcutOs === "macos" ? "Ctrl+Shift+M" : "Mod+Shift+M", shortcutOs), group: ACTIONS_GROUP,
       detail: modelControls.nextPinnedOption ? [currentModelTitle, modelTitle(modelControls.nextPinnedOption)].filter(Boolean).join(" → ") : "No alternative pinned model",
       disabled: !modelControls.nextPinnedOption,
@@ -299,10 +288,8 @@ export function CommandPalette(props: CommandPaletteProps) {
     ...(canMoveCurrentSessionToGroup
       ? [{
           id: "move-to-group",
-          title: "Move to Group",
-          detail: props.currentSessionForGroupMove
-            ? `Add ${props.currentSessionForGroupMove.title} to an existing group`
-            : "Add the selected task to an existing group",
+          title: t("session_management.move_to_group"),
+          detail: props.currentSessionForGroupMove?.title,
           meta: sessionGroupCount > 0 ? `${sessionGroupCount.toLocaleString()} groups` : "No groups",
           searchText: "move to group add task session folder organize",
           group: ACTIONS_GROUP,
@@ -324,7 +311,6 @@ export function CommandPalette(props: CommandPaletteProps) {
         setMode("accessible-items");
       },
     },
-    // Top-bar shortcuts mirror the documentation and feedback controls.
     {
       id: "open-docs",
       title: t("session.support_docs"),
@@ -398,23 +384,11 @@ export function CommandPalette(props: CommandPaletteProps) {
           },
         }]
       : []),
-    ...(props.onOpenCalendar
-      ? [{
-          id: "calendar.open",
-          title: "Calendar",
-          keywords: ["week", "meetings", "schedule", "automations", "google calendar", "outlook"],
-          group: ACTIONS_GROUP,
-          action: () => {
-            props.onClose();
-            props.onOpenCalendar?.();
-          },
-        }]
-      : []),
     ...(props.onOpenDashboard
       ? [{
           id: "dashboard.open",
-          title: "Dashboard",
-          keywords: ["home", "overview", "apps"],
+          title: props.dashboardLabel ?? "Dashboard",
+          keywords: ["home", "overview", "apps", "artifacts", "dashboard"],
           group: ACTIONS_GROUP,
           action: () => {
             props.onClose();
@@ -463,7 +437,7 @@ export function CommandPalette(props: CommandPaletteProps) {
   );
 
   const splitSessionItems = useMemo<PaletteItem[]>(
-    () => buildCommandPaletteSplitSessions(props.sessions, props.currentSession).map((item) => ({
+    () => buildCommandPaletteSplitSessions(props.sessions, props.currentSession, props.secondarySession).map((item) => ({
       id: `split-session:${item.workspaceId}:${item.sessionId}`,
       title: item.title,
       detail: item.workspaceTitle,
@@ -474,7 +448,7 @@ export function CommandPalette(props: CommandPaletteProps) {
         props.onClose();
       },
     })),
-    [props.currentSession, props.onClose, props.onOpenSessionInSplit, props.sessions],
+    [props.currentSession, props.secondarySession, props.onClose, props.onOpenSessionInSplit, props.sessions],
   );
 
   const accessibleItems = useMemo<PaletteItem[]>(() => {
@@ -529,18 +503,12 @@ export function CommandPalette(props: CommandPaletteProps) {
     ];
   }, [agents, props]);
 
-  const groupItems = useMemo<PaletteItem[]>(() => (
-    (props.sessionGroups ?? []).map((group) => ({
-      id: `group:${group.id}`,
-      title: group.label,
-      meta: props.currentSessionGroupId === group.id ? "Current" : undefined,
-      searchText: `group ${group.label}`.toLowerCase(),
-      action: () => {
-        props.onClose();
-        props.onMoveCurrentSessionToGroup?.(group.id);
-      },
-    }))
-  ), [props]);
+  const groupItems = useMemo<PaletteItem[]>(() => sessionGroupActionsToPalette(buildSessionGroupActions({
+    groups: props.sessionGroups ?? [],
+    assignedGroupId: props.currentSessionGroupId ?? null,
+    onAssignGroup: (groupId) => props.onMoveCurrentSessionToGroup?.(groupId),
+    onCreateGroup: props.onCreateGroup,
+  }), props.onClose), [props]);
 
   const navigateBack = () => {
     const nextMode = commandPaletteBackMode(mode);
@@ -550,6 +518,7 @@ export function CommandPalette(props: CommandPaletteProps) {
 
   const handleEscape = (event: ReactKeyboardEvent<HTMLElement>) => {
     if (choice.loginOpen) return;
+    if (event.target instanceof Element && event.target.closest('[data-slot="select-content"]')) return;
     if (event.key === "Escape") {
       event.preventDefault();
       event.stopPropagation();
@@ -596,6 +565,7 @@ export function CommandPalette(props: CommandPaletteProps) {
       className="gap-2.5"
       disabled={item.disabled}
       onClick={() => {
+        if (item.disabled) return;
         setRecents(recordPaletteRecent(item.id));
         item.action();
       }}
@@ -641,7 +611,6 @@ export function CommandPalette(props: CommandPaletteProps) {
           }
         </CommandDialogTitle>
         {mode === "models" ? (
-          // The same list as the composer's model picker, in the palette's wider frame.
           <div data-testid="palette-model-picker" className="flex min-h-0 flex-1 flex-col"
             onKeyDownCapture={(event) => {
               if (event.key === "Backspace" && event.target instanceof HTMLInputElement && event.target.value === "") {

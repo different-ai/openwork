@@ -11,6 +11,7 @@ const catalogSchema = z.object({
     pluginName: z.string().optional(),
     digest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
     setup: z.object({ status: z.string(), message: z.string() }).optional(),
+    files: z.array(z.object({ path: z.string(), digest: z.string() })).optional(),
   })),
 });
 type Catalog = z.infer<typeof catalogSchema>;
@@ -19,6 +20,7 @@ type CatalogSkill = Catalog["skills"][number];
 type NativeSkill = { id: string; name: string; description: string; path: string; content: string };
 type Registration = { dispose(): Promise<void> };
 type PromptEvent = { prompt: { text: string; skills?: Array<{ id: string }> } };
+type ToolEvent = { tool: string; input: unknown };
 export type CloudSkillContext = {
   options: { url: string; token: string };
   skill: {
@@ -26,24 +28,27 @@ export type CloudSkillContext = {
     reload(): Promise<void>;
   };
   session?: { hook(name: "prompt", callback: (event: PromptEvent) => void | Promise<void>): Promise<Registration> };
+  tool?: { hook(name: "execute.before", callback: (event: ToolEvent) => void | Promise<void>): Promise<Registration> };
 };
+
+function skillToolId(event: ToolEvent): string | null {
+  if (event.tool !== "skill" || typeof event.input !== "object" || event.input === null || !("id" in event.input)) return null;
+  return typeof event.input.id === "string" ? event.input.id : null;
+}
 
 export const CLOUD_SKILL_ID_PREFIX = "openwork-cloud-";
 const MAX_SKILLS = 150;
-// Native entries carry Den's full description (at most 1,024 characters), the
-// same cap Claude Code applies to a skill listing.
 const NATIVE_BUDGET_CHARS = 64_000;
 const NATIVE_DESCRIPTION_CHARS = 1_024;
 const MAX_MENTIONED_SKILLS = 3;
-// Bodies kept for the skills messages used most recently, so using one again
-// needs no read before the model runs. Every other skill loads on use.
 const MAX_WARM_SKILLS = 8;
 
 const skillId = (skill: CatalogSkill) => `${CLOUD_SKILL_ID_PREFIX}${skill.name}`;
-// Not SKILL.md: the native skill tool must not scan a fake directory. The engine
-// requires path and disables this whole plugin, OpenWork's context tools
-// included, when a registered skill lacks it.
 const skillPath = (skill: CatalogSkill) => `/openwork/remote-skills/${skill.name}.md`;
+
+const folderKey = (skill: CatalogSkill) => skill.digest && skill.files?.length
+  ? JSON.stringify([skill.name, skill.digest, skill.files.map(file => [file.path, file.digest])])
+  : null;
 
 function discoveryContent(skill: CatalogSkill): string {
   return [
@@ -82,17 +87,18 @@ function budgeted(skills: CatalogSkill[], budget: number, descriptionChars: numb
   return result;
 }
 
-/**
- * Each organization skill is a native skill with its full description. A
- * skill whose authorized SKILL.md has been read for a message, verified against
- * the digest Den published, carries it; every other skill keeps the discovery
- * note, so it still works through get_skill.
- */
-export function nativeSkills(catalog: Catalog, contents: ReadonlyMap<string, string>): NativeSkill[] {
-  return budgeted(catalog.skills, NATIVE_BUDGET_CHARS, NATIVE_DESCRIPTION_CHARS, skill => {
+export function nativeSkills(catalog: Catalog, contents: ReadonlyMap<string, string>, folders: ReadonlyMap<string, string> = new Map()): NativeSkill[] {
+  const listed = budgeted(catalog.skills, NATIVE_BUDGET_CHARS, NATIVE_DESCRIPTION_CHARS, skill => {
     if (skill.setup) return setupContent(skill, skill.setup);
     const body = skill.digest ? contents.get(skill.digest) : undefined;
     return body ?? discoveryContent(skill);
+  });
+  const byId = new Map(catalog.skills.map(skill => [skillId(skill), skill]));
+  return listed.map(native => {
+    const skill = byId.get(native.id);
+    const key = skill && !skill.setup && skill.digest && contents.has(skill.digest) ? folderKey(skill) : null;
+    const folder = key ? folders.get(key) : undefined;
+    return folder ? { ...native, path: folder } : native;
   });
 }
 
@@ -100,7 +106,6 @@ export function sha256Digest(text: string): string {
   return `sha256:${createHash("sha256").update(text, "utf8").digest("hex")}`;
 }
 
-/** The name a person would type: Den's catalog name without its unique suffix. */
 function plainName(name: string): string {
   return name.replace(/-(?=[a-z0-9]*\d)[a-z0-9]{8}$/, "");
 }
@@ -109,13 +114,6 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/**
- * Organization skills the message names explicitly, so they load before the
- * model runs instead of depending on it noticing them. A multi-word name or
- * title ("crm-pipeline-sync", "Create Skill") matches as a phrase; a one-word
- * name matches only as a /name or $name mention, so everyday words never load
- * a skill by accident.
- */
 export function mentionedSkillIds(text: string, skills: ReadonlyArray<Pick<NativeSkill, "id" | "name">>): string[] {
   const haystack = text.toLowerCase();
   const ids: string[] = [];
@@ -135,26 +133,21 @@ export function mentionedSkillIds(text: string, skills: ReadonlyArray<Pick<Nativ
   return ids;
 }
 
-/** Setup starts background discovery without making Cloud a dependency of
- * chatting or local skill discovery. Only authorized catalog entries and
- * digest-verified bodies are added to the native registry. Discovery reads
- * metadata only; a body is read when a message names or attaches its skill. */
 export async function registerCloudSkillDiscovery(context: CloudSkillContext) {
   let skills: NativeSkill[] = [];
   let catalog: Catalog = { skills: [] };
   let fingerprint = "[]";
   let closed = false;
   let refreshing = false;
-  // Verified SKILL.md bodies by digest, in memory only, for the warm skills.
-  // A body is re-read only when Den publishes a new digest for one of them.
   const contents = new Map<string, string>();
-  // Skill IDs messages used, most recent last.
+  const folders = new Map<string, string>();
   const warm: string[] = [];
   const controller = new AbortController();
   let registration: Registration | undefined;
   let promptHook: Registration | undefined;
+  let toolHook: Registration | undefined;
 
-  const call = async (name: "openwork_skills" | "openwork_skill_read", input: unknown) => {
+  const call = async (name: "openwork_skills" | "openwork_skill_read" | "openwork_skill_folder", input: unknown) => {
     const response = await fetch(context.options.url, {
       method: "POST", redirect: "error",
       signal: AbortSignal.any([controller.signal, AbortSignal.timeout(10_000)]),
@@ -164,7 +157,6 @@ export async function registerCloudSkillDiscovery(context: CloudSkillContext) {
     return response.ok ? await response.json() : null;
   };
 
-  /** Read listed skills' bodies in one request and keep those matching Den's digest. */
   const readBodies = async (entries: CatalogSkill[], use: boolean) => {
     const loadable = entries.filter(skill => skill.url && skill.digest && !skill.setup);
     if (loadable.length === 0) return;
@@ -173,8 +165,18 @@ export async function registerCloudSkillDiscovery(context: CloudSkillContext) {
     if (!result.success) return;
     for (const skill of loadable) {
       const body = result.data.contents[skill.url!];
-      // Only a body that matches Den's published digest is used.
       if (body !== undefined && sha256Digest(body) === skill.digest) contents.set(skill.digest!, body);
+    }
+  };
+
+  const ensureFolders = async (entries: CatalogSkill[]) => {
+    for (const skill of entries) {
+      const key = folderKey(skill);
+      if (!key || skill.setup || !skill.url || !contents.has(skill.digest!)) continue;
+      const result = z.object({ ok: z.literal(true), path: z.string().min(1) })
+        .safeParse(await call("openwork_skill_folder", { url: skill.url }).catch(() => null));
+      if (result.success) folders.set(key, result.data.path);
+      else folders.delete(key);
     }
   };
 
@@ -183,13 +185,14 @@ export async function registerCloudSkillDiscovery(context: CloudSkillContext) {
     return catalog.skills.filter(skill => warm.includes(skillId(skill)) && listed.has(skillId(skill)));
   };
 
-  // Registry updates run one at a time, from refreshes and prompts alike.
   let publishing = Promise.resolve();
   const publish = () => {
     publishing = publishing.catch(() => {}).then(async () => {
       const wanted = new Set(warmEntries().flatMap(skill => skill.digest && !skill.setup ? [skill.digest] : []));
       for (const digest of contents.keys()) if (!wanted.has(digest)) contents.delete(digest);
-      const next = nativeSkills(catalog, contents);
+      const wantedFolders = new Set(warmEntries().flatMap(skill => folderKey(skill) ?? []));
+      for (const key of folders.keys()) if (!wantedFolders.has(key)) folders.delete(key);
+      const next = nativeSkills(catalog, contents, folders);
       const key = JSON.stringify(next);
       if (closed || key === fingerprint) return;
       skills = next;
@@ -199,7 +202,7 @@ export async function registerCloudSkillDiscovery(context: CloudSkillContext) {
         await current?.dispose();
       } else if (!registration) {
         const current = await context.skill.transform(editor => {
-          for (const skill of skills) if (!editor.get(skill.id)) editor.add(skill);
+          for (const skill of skills) editor.add(skill);
         });
         if (closed) { await current.dispose(); return; }
         registration = current;
@@ -211,32 +214,40 @@ export async function registerCloudSkillDiscovery(context: CloudSkillContext) {
     return publishing;
   };
 
-  const ensurePromptHook = async () => {
-    if (promptHook || !context.session) return;
-    promptHook = await context.session.hook("prompt", async event => {
-      if (skills.length === 0) return;
-      const attached = new Set((event.prompt.skills ?? []).map(skill => skill.id));
-      const mentioned = mentionedSkillIds(event.prompt.text, skills).filter(id => !attached.has(id));
-      if (mentioned.length) event.prompt.skills = [...(event.prompt.skills ?? []), ...mentioned.map(id => ({ id }))];
-      // Only registered skills: an unlisted ID never costs a read.
-      const registered = new Set(skills.map(skill => skill.id));
-      const used = new Set([...attached, ...mentioned].filter(id => registered.has(id)));
-      const entries = catalog.skills.filter(skill => used.has(skillId(skill)));
-      if (entries.length === 0) return;
-      try {
-        // Freshly authorized for this message, and counted by Den as a use.
-        // A body that cannot be read leaves the discovery note: get_skill still works.
-        await readBodies(entries, true);
-        for (const skill of entries) {
-          const id = skillId(skill);
-          warm.splice(0, warm.length, ...warm.filter(entry => entry !== id), id);
-        }
-        warm.splice(0, Math.max(0, warm.length - MAX_WARM_SKILLS));
-        await publish();
-      } catch {
-        // A message is never held back by Cloud skill loading.
+  const use = async (ids: Iterable<string>) => {
+    const registered = new Set(skills.map(skill => skill.id));
+    const used = new Set([...ids].filter(id => registered.has(id)));
+    const entries = catalog.skills.filter(skill => used.has(skillId(skill)));
+    if (entries.length === 0) return;
+    try {
+      await readBodies(entries, true);
+      await ensureFolders(entries);
+      for (const skill of entries) {
+        const id = skillId(skill);
+        warm.splice(0, warm.length, ...warm.filter(entry => entry !== id), id);
       }
-    });
+      warm.splice(0, Math.max(0, warm.length - MAX_WARM_SKILLS));
+      await publish();
+    } catch {
+    }
+  };
+
+  const ensureHooks = async () => {
+    if (!promptHook && context.session) {
+      promptHook = await context.session.hook("prompt", async event => {
+        if (skills.length === 0) return;
+        const attached = new Set((event.prompt.skills ?? []).map(skill => skill.id));
+        const mentioned = mentionedSkillIds(event.prompt.text, skills).filter(id => !attached.has(id));
+        if (mentioned.length) event.prompt.skills = [...(event.prompt.skills ?? []), ...mentioned.map(id => ({ id }))];
+        await use([...attached, ...mentioned]);
+      });
+    }
+    if (!toolHook && context.tool) {
+      toolHook = await context.tool.hook("execute.before", async event => {
+        const id = skillToolId(event);
+        if (id?.startsWith(CLOUD_SKILL_ID_PREFIX)) await use([id]);
+      });
+    }
   };
 
   const refresh = async () => {
@@ -246,13 +257,10 @@ export async function registerCloudSkillDiscovery(context: CloudSkillContext) {
       const value = await call("openwork_skills", {});
       if (value === null) return;
       catalog = catalogSchema.parse(value);
-      // Only warm skills whose digest changed are read again.
       await readBodies(warmEntries().filter(skill => skill.digest && !contents.has(skill.digest)), false);
-      await ensurePromptHook();
+      await ensureHooks();
       await publish();
     } catch {
-      // Cloud readiness is never a prerequisite to chatting. Discovery entries
-      // carry no body; native bodies are dropped as soon as Den stops listing them.
     } finally {
       refreshing = false;
     }
@@ -268,6 +276,7 @@ export async function registerCloudSkillDiscovery(context: CloudSkillContext) {
     contents.clear();
     await publishing.catch(() => {});
     await promptHook?.dispose();
+    await toolHook?.dispose();
     await registration?.dispose();
   };
 }

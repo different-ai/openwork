@@ -4,10 +4,6 @@ import { denTypeIdColumn } from "../columns"
 const tempFileStorageTiers = ["volume", "s3"] as const
 const tempFileStatuses = ["pending", "uploaded"] as const
 
-// Temporary files hold short-lived workspace bytes so URL-accepting tools can
-// fetch them. Bytes live in the configured storage backend, never in a column:
-// the PlanetScale HTTP driver inlines binary parameters as hex text, which
-// doubles a blob's size inside the SQL statement itself.
 export const TempFileTable = mysqlTable(
   "temp_file",
   {
@@ -23,9 +19,6 @@ export const TempFileTable = mysqlTable(
     storage_tier: mysqlEnum("storage_tier", tempFileStorageTiers).notNull(),
     storage_key: varchar("storage_key", { length: 512 }).notNull(),
     status: mysqlEnum("status", tempFileStatuses).notNull().default("pending"),
-    // Base64url SHA-256, unpadded: 43 characters. The expected digest is what
-    // the caller promised at mint time, and the content digest is what the
-    // stored bytes actually hashed to.
     expected_sha256: varchar("expected_sha256", { length: 64 }),
     content_sha256: varchar("content_sha256", { length: 64 }),
     uploaded_at: timestamp("uploaded_at", { fsp: 3 }),

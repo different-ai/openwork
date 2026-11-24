@@ -17,7 +17,6 @@ export type EmailTransportOutcome =
 
 export type EmailTransportCheck =
   | { provider: "smtp" | "resend"; outcome: EmailTransportOutcome }
-  /** Development sink: messages are only logged, there is nothing to reach. */
   | { provider: "dev" }
   | { provider: "none" }
 
@@ -33,7 +32,6 @@ export type SmtpVerifyOptions = {
 export type SmtpVerifyTransport = { verify(): Promise<true>; close(): void }
 
 export type VerifyEmailTransportOptions = {
-  /** Upper bound for the whole check. */
   timeoutMs: number
   signal?: AbortSignal
   fetch?: (url: string, init: RequestInit) => Promise<Response>
@@ -97,14 +95,12 @@ async function verifySmtp(config: EmailSendConfig, host: string, options: Verify
       socketTimeout: timeout,
     })
     const created = transporter
-    // verify() connects, says EHLO, upgrades with STARTTLS, signs in and sends QUIT.
     await withDeadline(created.verify(), timeout, options.signal, () => created.close())
     return "verified"
   } catch (error) {
-    // Never keep or return the error: SMTP replies can echo hosts and user names.
     return smtpOutcome(error)
   } finally {
-    try { transporter?.close() } catch { /* Release only. */ }
+    try { transporter?.close() } catch {}
   }
 }
 
@@ -157,7 +153,6 @@ export function emailSenderDomain(from: string | undefined): string | null {
 
 function senderVerified(body: unknown, domain: string): boolean | null {
   if (!body || typeof body !== "object" || !("data" in body) || !Array.isArray(body.data)) return null
-  // Resend verifies each domain and subdomain separately: the sender must match exactly.
   return body.data.some((entry: unknown) => {
     if (!entry || typeof entry !== "object" || !("name" in entry) || !("status" in entry)) return false
     if (typeof entry.name !== "string" || entry.name.trim().toLowerCase().replace(/\.$/, "") !== domain) return false
@@ -192,14 +187,11 @@ async function verifyResend(apiKey: string, from: string | undefined, options: V
         if (verified === null) return "unexpected_response"
         return verified ? "verified" : "sender_unverified"
       }
-      // Error bodies are small fixed objects; read only the error name.
       let name: string | null = null
       if (response.status >= 400 && response.status < 500) name = errorName(await boundedJson(response, 16_384))
       else void response.body?.cancel().catch(() => undefined)
-      // A send-only key cannot list domains, but Resend recognised it.
       if (response.status === 401 && name === "restricted_api_key") return "key_accepted"
       if (response.status === 401 || response.status === 403) return "auth_failed"
-      // Resend answers 400 validation_error for an unknown key on every endpoint except sending.
       if (response.status === 400 && name === "validation_error") return "auth_failed"
       if (response.status >= 500) return "unreachable"
       return "unexpected_response"

@@ -8,7 +8,6 @@ import artifacts from "./opencode-v2-artifacts.json" with { type: "json" };
 
 const exec = promisify(execFile);
 
-/** Install only the pinned native executable; never run registry lifecycle scripts. */
 export async function installOpencodeV2Binary(cacheRoot: string, version: string): Promise<string> {
   if (version !== artifacts.version) throw new Error(`No verified OpenCode v2 artifacts for ${version}`);
   const platform = process.platform === "win32" ? "windows" : process.platform;
@@ -19,11 +18,10 @@ export async function installOpencodeV2Binary(cacheRoot: string, version: string
   const artifact = Object.entries(artifacts.platforms).find(([name]) => name === key)?.[1];
   if (!artifact) throw new Error(`OpenCode v2 does not support ${key}`);
   const directory = join(cacheRoot, version, key);
-  // Keep OpenWork's sidecar name separate from the upstream archive name.
   const archiveName = platform === "windows" ? "opencode.exe" : "opencode";
   const name = platform === "windows" ? "opencode2.exe" : "opencode2";
   const binary = join(directory, name);
-  try { await access(binary); return binary; } catch { /* First installation. */ }
+  try { await access(binary); return binary; } catch {}
   await mkdir(cacheRoot, { recursive: true, mode: 0o700 });
   await chmod(cacheRoot, 0o700);
   await mkdir(directory, { recursive: true, mode: 0o700 });
@@ -37,8 +35,6 @@ export async function installOpencodeV2Binary(cacheRoot: string, version: string
     if (integrity !== artifact.integrity) throw new Error("OpenCode v2 archive integrity mismatch");
     const archive = join(staging, "binary.tgz");
     await writeFile(archive, bytes, { mode: 0o600 });
-    // Relative paths: a GNU tar on PATH (Git Bash, MSYS) reads a drive-letter
-    // path such as C:\... as a remote host ("Cannot connect to C:").
     await exec("tar", ["-xzf", "binary.tgz", `package/bin/${archiveName}`], { cwd: staging, timeout: 60_000 });
     const extracted = join(staging, "package", "bin", archiveName);
     await chmod(extracted, 0o755);

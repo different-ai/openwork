@@ -9,15 +9,22 @@ export type DocumentItem = {
   modifiedTime: string | null
   size: number | null
   openUrl: string | null
+  source?: DocumentSource
 }
-export type DocumentsPage = { items: DocumentItem[]; nextCursor: string | null; incomplete: boolean }
+/** A connected service in a combined listing; `storage` names it in sentences like "Save to Drive". */
+export type DocumentSource = { id: string; label: string; storage: string; connectionId?: string }
+/** A service a combined listing could not reach this time, shown beside the files that did load. */
+export type DocumentsUnavailable = { source: DocumentSource; code: string; message: string; connectionId?: string }
+export type DocumentsPage = { items: DocumentItem[]; nextCursor: string | null; incomplete: boolean; unavailable?: DocumentsUnavailable[] }
 export type DocumentsRequest = { view?: "recent" | "folder"; folderId: string; query: string; cursor?: string; signal?: AbortSignal }
 export type DocumentsProvider = {
   id: string
   label: string
   rootLabel: string
+  storage?: string
+  connectionId?: string
+  roots?: { id: string; name: string }[]
   list(request: DocumentsRequest): Promise<DocumentsPage>
-  /** Resolve a user-opened link with current provider permissions, without downloading bytes. */
   get?(id: string, signal?: AbortSignal): Promise<DocumentItem>
 }
 export type DocumentsViewContext = { kind: "file"; item: DocumentItem; unsaved: boolean }
@@ -54,7 +61,7 @@ export function googleDocumentUrl(value: string): string | null {
 /** Den owns OAuth, membership and connector policy; the host supplies its authenticated transport. */
 export function googleDriveProvider(transport: DocumentsTransport): DocumentsProvider {
   return {
-    id: "google-drive", label: "Google Drive", rootLabel: "My Drive",
+    id: "google-drive", label: "Google Drive", rootLabel: "My Drive", storage: "Drive",
     async get(id, signal) {
       if (!/^[A-Za-z0-9_-]{1,512}$/.test(id)) throw new DocumentsError(400, "invalid_request", "This document link is invalid.")
       const { response, payload } = await transport(`/v1/documents/google-drive/files/${encodeURIComponent(id)}/metadata`, signal)
@@ -67,7 +74,6 @@ export function googleDriveProvider(transport: DocumentsTransport): DocumentsPro
     },
     async list(input) {
       const params = new URLSearchParams({ maxResults: "25" })
-      // Search within the displayed folder, matching the breadcrumb's scope.
       if (input.view === "recent") { params.set("orderBy", "recency desc"); params.set("filesOnly", "true") }
       else { params.set("folderId", input.folderId); params.set("orderBy", "folder,name_natural") }
       if (input.query.trim()) params.set("query", input.query.trim())
@@ -115,4 +121,5 @@ export function documentType(item: DocumentItem): string {
 
 export { DOCUMENT_RECOVERY_MS } from "./access"
 export { googleDocumentsEditor } from "./google-editor"
+export { combinedDocumentsEditor, combinedDocumentsProvider, documentSourceFileId, microsoftDocumentsEditor, microsoftOneDriveProvider } from "./sources"
 export type { DocumentsEditor } from "./model"

@@ -28,7 +28,7 @@ export async function ensureDefaultDesktopPolicyForOrganization(input: {
   organizationId: OrgId
   createdByOrgMemberId: OrgMemberId
 }) {
-  const existing = await db
+  const existing = await db.$primary
     .select({ id: DesktopPolicyTable.id })
     .from(DesktopPolicyTable)
     .where(and(

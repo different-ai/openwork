@@ -11,11 +11,6 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "../../
 import type { DenOrgContext } from "../../_lib/den-org";
 import { getProviderIconSlug, type DenModelsDevProviderSummary } from "./llm-provider-data";
 
-/**
- * Combobox options for the models.dev provider picker. Shared by the BYOK
- * editor and the gateway provider editor so companies always render as
- * icon + name with the same metadata line.
- */
 export function buildCatalogProviderOptions(
     catalogProviders: DenModelsDevProviderSummary[],
     describe?: (catalogProvider: DenModelsDevProviderSummary) => string,
@@ -39,7 +34,6 @@ export function buildCatalogProviderOptions(
 
 export type ProviderModelOption = { id: string; name: string };
 
-/** Searchable multi-select over a provider's models. */
 export function ProviderModelPicker({
     models,
     selectedModelIds,
@@ -153,10 +147,6 @@ export type ProviderAccessValue = {
     teamIds: string[];
 };
 
-/**
- * "Who can use it": everyone toggle plus tabbed team / people pickers. The
- * locked member (creator) always keeps direct access and cannot be removed.
- */
 export function ProviderAccessPicker({
     orgContext,
     value,

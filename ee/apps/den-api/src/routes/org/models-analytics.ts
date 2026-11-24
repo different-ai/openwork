@@ -10,8 +10,6 @@ import { z } from "zod"
 import type { OrgRouteVariables } from "./shared.js"
 
 export function registerModelsAnalyticsRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
-  // Runtime collection outlives the retired Models and Task analytics screens:
-  // removing them must not revoke stored consent or interrupt existing exports.
   app.post("/v1/inference/analytics/events", describeRoute({
     tags: ["Inference"], summary: "Report task analytics events for the calling member's OpenWork Models calls",
     description: "Accepts runtime metadata for tasks the member actually ran through OpenWork Models; events for other members' tasks or BYOK calls are dropped. Answers 204 when the organization has not opted into task analytics.",
@@ -28,8 +26,6 @@ export function registerModelsAnalyticsRoutes<T extends { Variables: OrgRouteVar
     const settings = await readModelsAnalyticsSettings(db, orgId)
     if (!settings.enabled) return c.body(null, 204)
     const { events } = c.req.valid("json")
-    // Runtime metadata is accepted only for this member's actual Models calls.
-    // A client cannot attach events to another member's task or a BYOK call.
     const calls = await db.select({ sessionId: Event.session_id, taskId: Event.task_id }).from(Event).where(and(
       eq(Event.org_id, orgId), eq(Event.member_id, memberId), eq(Event.source, "inference"),
       inArray(Event.task_id, events.map((event) => event.taskId)),

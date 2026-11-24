@@ -105,7 +105,6 @@ function resultIsError(result: unknown): boolean {
   return typeof result === "object" && result !== null && "isError" in result && result.isError === true
 }
 
-/** `admin` is the verified platform admin; org-mutating tools are audited for it and need its mcp:write scope. */
 export async function executeAdminCapability(name: string, body: unknown, admin: AdminToolCaller): Promise<AdminToolResult | null> {
   const toolName = parseAdminCapabilityName(name)
   if (!toolName) return null

@@ -8,19 +8,15 @@ import { useAutomationsDenContext } from "@/react-app/domains/automations/use-au
 
 const FEATURE_STALE_MS = 30_000
 
-type DesktopFeatureKey = "computerUse" | "browserFloatingView" | "remoteComputers" | "usageLimitUpgrade" | "claudeHistoryImport"
+type DesktopFeatureKey = "remoteComputers" | "followUpSuggestions" | "questionMinimize" | "questionInThread" | "importOpencodeConnections" | "lowStorageWarning" | "sessionTree" | "sessionMultiSelect" | "sideChatPanel" | "sideChatFromSelection" | "sideQuestions" | "providerFilterSyncFix" | "sandboxTools" | "browserSecretHandles" | "chatRunCommands" | "chatTableExpand" | "officeOutlinePreview" | "composerInlineSuggestions"
 
-/**
- * Reads one desktop feature from the registry. Signed in, it follows the
- * active organization through the shared org-feature hook; signed out, the
- * deployment switch (`GET /v1/features`). Unreachable or missing means off.
- */
-export function useDesktopFeature(key: DesktopFeatureKey): boolean {
+export function useDesktopFeature(key: DesktopFeatureKey): boolean
+export function useDesktopFeature(key: DesktopFeatureKey, includePending: true): boolean | undefined
+export function useDesktopFeature(key: DesktopFeatureKey, includePending?: true): boolean | undefined {
   const denAuth = useDenAuth()
   const context = useAutomationsDenContext()
   const baseUrl = readDenSettings().baseUrl
   const deploymentClient = useMemo(() => createDenClient({ baseUrl }), [baseUrl])
-  // Not desktopOnly: the web app shows the cloud computer from these flags too.
   const organization = useOrgFeatureState(key)
   const deployment = useQuery({
     queryKey: ["den", "deployment-features", baseUrl],
@@ -32,5 +28,10 @@ export function useDesktopFeature(key: DesktopFeatureKey): boolean {
     retry: false,
     select: (features) => features[key] === true,
   })
+  if (includePending) {
+    if (context.ready) return organization.ready ? organization.resolved && organization.enabled : undefined
+    if (denAuth.status === "checking") return undefined
+    if (denAuth.status === "signed_out" && deployment.isPending) return undefined
+  }
   return context.ready ? organization.enabled : denAuth.status === "signed_out" && !deployment.isError && deployment.data === true
 }

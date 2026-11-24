@@ -1,17 +1,19 @@
-/** Native OpenCode 2.0.26 mapping. No service discovery, server URL, or auth overrides. */
 import { createHash } from "node:crypto"
 import { realpath } from "node:fs/promises"
 import { basename } from "node:path"
 import {
+  pendingPermission,
   SessionRunnerError,
   sessionIdForCommand,
   type HarnessAdapter,
   type InventoryWorkspace,
   type Model,
+  type Pending,
   type Progress,
   type Receipt,
   type SessionError,
   type TranscriptMessage,
+  type TranscriptPart,
   type TranscriptToolCall,
 } from "../../remote-sessions/src/index.ts"
 import { isRecord } from "./den.ts"
@@ -40,7 +42,6 @@ function errorOf(error: { type: string; message?: string } | undefined): Session
 }
 function summary(value: unknown): string | null { return value === undefined ? null : clipped(JSON.stringify(value) ?? "", 2000) }
 
-/** Only native mapping state: a prompt admitted to the durable inbox can precede context projection. */
 interface Admission { messageId: string; baselineIdle: number | null; admitted: boolean }
 function admission(value: unknown): Admission | null {
   if (!isRecord(value) || typeof value.messageId !== "string" || typeof value.admitted !== "boolean"
@@ -51,13 +52,10 @@ function admission(value: unknown): Admission | null {
 export async function nativeWorkspace(ctx: NativePluginContext, workspaceId: string, signal: AbortSignal): Promise<InventoryWorkspace> {
   signal.throwIfAborted()
   const [models, selected] = await Promise.all([
-    // The Promise host pins these reads to its own Location. Its LocationQuery
-    // decoder accepts an object, never a directory string; no override is needed.
     ctx.model.list(),
     ctx.model.default(),
   ])
   signal.throwIfAborted()
-  // Location responses carry their scope. Never advertise some other loaded Location's inventory.
   if (await realpath(models.location.directory) !== await realpath(ctx.location.directory)
     || await realpath(selected.location.directory) !== await realpath(ctx.location.directory)) {
     throw new SessionRunnerError("workspace_unavailable", "OpenCode returned models for a different Location.")
@@ -75,12 +73,13 @@ export function createNativeOpenCodeAdapter(input: {
   ctx: NativePluginContext
   directory: string
   workspaceId: string
-  /** Partitioned exactly like the runner journal; no tokens are stored here. */
   storagePrefix: string
   now?: () => number
 }): HarnessAdapter {
   const { ctx, directory, workspaceId } = input
   const now = input.now ?? Date.now
+  const reply = ctx.permission.reply
+  const answers = typeof reply === "function"
   const markerKey = (sessionId: string) => `${input.storagePrefix}/native/${digest(sessionId)}`
   const load = async (receipt: Receipt) => admission(await ctx.storage.get(markerKey(receipt.sessionId)))
   const save = (receipt: Receipt, value: Admission) => ctx.storage.set(markerKey(receipt.sessionId), { ...value })
@@ -122,14 +121,17 @@ export function createNativeOpenCodeAdapter(input: {
     const assistant = assistantIndex > turnBoundary ? messages[assistantIndex] : undefined
     const nativeError = assistant?.type === "assistant" ? errorOf(assistant.error) : null
     const status = waitingFor ? "waiting" : running ? "running" : info.outcome === "failed" ? "error" : "idle"
+    const first = permissions[0]
+    const waitingOn: Pending | null = waitingFor === "permission" && first && answers
+      ? pendingPermission({ requestId: first.id, action: first.action ?? "permission", resources: first.resources ?? [], metadata: first.metadata })
+      : null
     const finalText = !running && !waitingFor && assistant?.type === "assistant"
       ? clipped(assistant.content.filter(part => part.type === "text").map(part => part.text).join("\n"), 20_000) : ""
     const progress: Progress = {
       status, waitingFor, engine: "v2", model: remoteModel(info.model ?? (assistant?.type === "assistant" ? assistant.model : undefined)), finalText,
       error: status === "error" ? nativeError ?? { code: "native_error", message: "OpenCode's last execution failed." } : null,
-      // Count native context entries, including durable idle markers: a failed/interrupted turn
-      // can settle without an assistant. This is not a promised count of historical user/assistant messages.
       messageCount: messages.length,
+      ...(answers ? { pending: waitingOn } : {}),
       observedAt: now(),
     }
     return { info, messages, latestUser, progress }
@@ -143,19 +145,16 @@ export function createNativeOpenCodeAdapter(input: {
       if (command.workspaceId && command.workspaceId !== workspaceId) {
         throw new SessionRunnerError("workspace_unavailable", "The requested workspace is not this runner's approved directory.")
       }
-      // Native create is idempotent for a supplied id, but an existing session is returned without
-      // comparing location/metadata. Validate both before trusting a recovered receipt.
       const id = sessionIdForCommand(command.commandId)
       const created = await ctx.session.create({ id, title: command.title, location: { directory },
         metadata: { openwork: { commandId: command.commandId } },
         ...(command.model ? { model: nativeModel(command.model) } : {}) }, { signal })
       const owner = created.metadata?.openwork
       let actualDirectory: string | null = null
-      try { actualDirectory = await realpath(created.location.directory) } catch { /* unverifiable receipt fails closed */ }
+      try { actualDirectory = await realpath(created.location.directory) } catch {}
       if (created.id !== id || actualDirectory !== directory || !isRecord(owner) || owner.commandId !== command.commandId) {
         throw new SessionRunnerError("session_conflict", "The deterministic OpenCode session identity belongs to different work or a different Location.")
       }
-      // Retain a verified receipt even if cancellation arrived during an uncancellable 2.0.26 host call.
       return { sessionId: created.id, workspaceId }
     },
     async send(receipt, prompt, signal) {
@@ -173,7 +172,6 @@ export function createNativeOpenCodeAdapter(input: {
       signal.throwIfAborted()
       if (prompt.model) await ctx.session.switchModel({ sessionID: receipt.sessionId, model: nativeModel(prompt.model) }, { signal })
       signal.throwIfAborted()
-      // prompt's id (NOT messageID) is the native durable admission deduplication key, including across compaction.
       const admitted = await ctx.session.prompt({ sessionID: receipt.sessionId, id: prompt.messageId,
         text: prompt.prompt, delivery: "queue", resume: true }, { signal })
       if (admitted.id !== prompt.messageId || admitted.sessionID !== receipt.sessionId) {
@@ -188,7 +186,6 @@ export function createNativeOpenCodeAdapter(input: {
       if (guard.messageId && latestUser?.id !== guard.messageId) return { stopped: false, reason: "different_turn" }
       if (progress.status === "idle" || progress.status === "error") return { stopped: false, reason: null }
       signal.throwIfAborted()
-      // Native host has interrupt, not the full client's abort API. Never resume parked queued prompts on stop.
       const result = await ctx.session.interrupt({ sessionID: receipt.sessionId, resume: false }, { signal })
       return { stopped: result.interrupted, reason: null }
     },
@@ -217,10 +214,26 @@ export function createNativeOpenCodeAdapter(input: {
         historyScope: "context",
         messageCount: transcript.length, from: page.from, messages: selected,
         nextCursor: more && anchor ? `oc2:${page.from}:${epoch}:${digest(anchor.id)}` : null,
+        ...(progress.pending === undefined ? {} : { pending: progress.pending }),
       }
     },
   }
-  return adapter
+  if (!reply) return adapter
+  return {
+    ...adapter,
+    async answer(receipt, answer, signal) {
+      if (answer.kind !== "permission") {
+        throw new SessionRunnerError("answer_unsupported", "OpenCode can't take answers to its questions from here yet. Answer it on that computer.")
+      }
+      await owned(receipt, signal)
+      const permissions = await ctx.permission.list({ sessionID: receipt.sessionId }, { signal })
+      signal.throwIfAborted()
+      if (!permissions.some(permission => permission.id === answer.requestId && permission.sessionID === receipt.sessionId)) {
+        throw new SessionRunnerError("stale_request", "That permission is no longer pending. Read the task again.")
+      }
+      await reply.call(ctx.permission, { sessionID: receipt.sessionId, requestID: answer.requestId, decision: answer.decision }, { signal })
+    },
+  }
 }
 
 function toolCall(part: Extract<NativeAssistantContent, { type: "tool" }>): TranscriptToolCall {
@@ -233,26 +246,49 @@ function toolCall(part: Extract<NativeAssistantContent, { type: "tool" }>): Tran
     error: rawError === undefined ? null : clipped(rawError, 2000),
     truncated: rawInput.length > 2000 || (rawOutput?.length ?? 0) > 2000 || (rawError?.length ?? 0) > 2000 }
 }
+function transcriptParts(content: readonly NativeAssistantContent[]): TranscriptPart[] {
+  let chars = 20_000
+  const prose = (text: string, cap: number) => {
+    const kept = text.slice(0, Math.min(cap, chars))
+    chars -= kept.length
+    return kept
+  }
+  return content.filter(part => part.type === "tool" || part.text.trim()).slice(0, 200).map((part): TranscriptPart => {
+    if (part.type === "text") return { type: "text", text: prose(part.text, 20_000) }
+    if (part.type === "reasoning") return { type: "reasoning", text: prose(part.text, 4_000) }
+    const { id, name, status, input, output, error, truncated } = toolCall(part)
+    const text = "content" in part.state && part.state.content
+      ? part.state.content.flatMap(item => isRecord(item) && item.type === "text" && typeof item.text === "string" ? [item.text] : []).join("\n")
+      : ""
+    return { type: "tool", id, name, status, input, output: text ? clipped(text, 2000) : output, error,
+      truncated: truncated || text.length > 2000 }
+  })
+}
 function transcriptMessage(message: NativeMessage): TranscriptMessage {
   const text = message.type === "user" ? message.text : message.type === "assistant"
     ? message.content.filter(part => part.type === "text").map(part => part.text).join("\n") : ""
   const tools = message.type === "assistant" ? message.content.filter(part => part.type === "tool").map(toolCall) : []
   return { id: clipped(message.id, 240), role: message.type === "user" ? "user" : "assistant",
     createdAt: message.time.created, text: clipped(text, 20_000), truncated: text.length > 20_000 || tools.length > 200,
-    toolCalls: tools.slice(0, 200), error: message.type === "assistant" ? errorOf(message.error) : null }
+    toolCalls: tools.slice(0, 200), error: message.type === "assistant" ? errorOf(message.error) : null,
+    ...(message.type === "assistant" ? { parts: transcriptParts(message.content) } : {}),
+    ...(message.type === "assistant" && message.time.completed !== undefined ? { completedAt: message.time.completed } : {}) }
 }
-/** Keep whole pages below the wire byte cap, including multibyte text and tool summaries. */
 function boundTranscript(messages: TranscriptMessage[]): void {
   while (Buffer.byteLength(JSON.stringify(messages), "utf8") > 220_000) {
     let reduced = false
     for (const message of messages) {
       if (message.text.length > 256) { message.text = message.text.slice(0, Math.floor(message.text.length / 2)); message.truncated = true; reduced = true }
       if (message.toolCalls.length > 4) { message.toolCalls = message.toolCalls.slice(0, Math.ceil(message.toolCalls.length / 2)); message.truncated = true; reduced = true }
-      for (const tool of message.toolCalls) {
+      for (const tool of [...message.toolCalls, ...(message.parts ?? []).flatMap(part => part.type === "tool" ? [part] : [])]) {
         for (const key of ["input", "output", "error"] satisfies Array<"input" | "output" | "error">) {
           const value = tool[key]
           if (value && value.length > 256) { tool[key] = value.slice(0, Math.floor(value.length / 2)); tool.truncated = true; reduced = true }
         }
+      }
+      if (message.parts && message.parts.length > 4) { message.parts = message.parts.slice(0, Math.ceil(message.parts.length / 2)); message.truncated = true; reduced = true }
+      for (const part of message.parts ?? []) {
+        if (part.type !== "tool" && part.text.length > 256) { part.text = part.text.slice(0, Math.floor(part.text.length / 2)); message.truncated = true; reduced = true }
       }
     }
     if (!reduced) throw new SessionRunnerError("transcript_too_large", "The bounded recent context page is still too large. Request fewer messages.")

@@ -1,9 +1,3 @@
-/**
- * Pure merging for the admin dashboard Activity panel (GET /v1/org/activity).
- * Each source passes only its own newest candidates; the merged, deduplicated
- * newest DASHBOARD_ACTIVITY_LIMIT entries are returned. No I/O here.
- */
-
 export const DASHBOARD_ACTIVITY_LIMIT = 5
 
 export type DashboardActivityTarget =
@@ -27,17 +21,14 @@ export type DashboardActivitySources = {
   connections: ReadonlyArray<{ id: string; name: string; url: string | null; createdAt: Date }>
   llmProviders: ReadonlyArray<{ id: string; name: string; providerId: string; createdAt: Date }>
   gatewayProviders: ReadonlyArray<{ id: string; name: string; providerId: string; createdAt: Date }>
-  /** Active, non-system attachments of visible active plugins to visible active marketplaces. */
   pluginAttachments: ReadonlyArray<{
     id: string
     createdAt: Date
     pluginName: string
     marketplaceId: string
     marketplaceName: string
-    /** Active skills currently in the plugin. */
     skillCount: number
   }>
-  /** Non-deleted versions of active skills, each with one visible active parent plugin. */
   skillVersions: ReadonlyArray<{
     id: string
     createdAt: Date
@@ -52,7 +43,6 @@ function validDate(value: Date) {
   return Number.isFinite(value.getTime())
 }
 
-/** Newest first, then event id ascending; duplicate ids keep the last occurrence. */
 export function newestDashboardActivity(entries: readonly DashboardActivityEntry[], limit = DASHBOARD_ACTIVITY_LIMIT): DashboardActivityEntry[] {
   const unique = new Map<string, DashboardActivityEntry>()
   for (const entry of entries) {
@@ -63,10 +53,6 @@ export function newestDashboardActivity(entries: readonly DashboardActivityEntry
     .slice(0, limit)
 }
 
-/**
- * Only stored creation/version dates contribute: never updatedAt or the
- * current time. A recoverable snapshot of existing resources, not an audit log.
- */
 export function buildDashboardActivity(sources: DashboardActivitySources): DashboardActivityEntry[] {
   const entries: DashboardActivityEntry[] = []
   for (const connection of sources.connections) {
@@ -112,7 +98,6 @@ export function buildDashboardActivity(sources: DashboardActivitySources): Dashb
       kind: "plugin",
       title: `${attachment.pluginName} was added to the ${attachment.marketplaceName} marketplace`,
       detail: `Plugin with ${attachment.skillCount} ${attachment.skillCount === 1 ? "skill" : "skills"}`,
-      // The attachment's stored date, never an inferred re-add.
       occurredAt: attachment.createdAt.toISOString(),
       target: { type: "marketplace", marketplaceId: attachment.marketplaceId },
     })
@@ -131,7 +116,6 @@ export function buildDashboardActivity(sources: DashboardActivitySources): Dashb
   return newestDashboardActivity(entries)
 }
 
-/** The first parent per skill, in the given plugin order; skills without a parent are dropped. */
 export function pickSkillParents<T extends { skillId: string }>(rows: readonly T[]): Map<string, T> {
   const parents = new Map<string, T>()
   for (const row of rows) {

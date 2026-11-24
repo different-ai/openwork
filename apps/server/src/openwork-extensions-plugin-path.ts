@@ -40,13 +40,13 @@ export const openworkAnthropicToolSchemaPluginPath = () => openworkPluginPath("o
 export const openworkOfficeAttachmentsPluginPath = () => openworkPluginPath("openwork-office-attachments");
 export const openworkSpreadsheetsPluginPath = () => openworkPluginPath("openwork-spreadsheets");
 export const openworkPdfAttachmentsPluginPath = () => openworkPluginPath("openwork-pdf-attachments");
+export const openworkPrivateValuesPluginPath = () => openworkPluginPath("openwork-private-values");
+export const openworkPrivateValuesV2PluginPath = () => openworkPluginPath("openwork-private-values-v2");
 export const openworkTitleRecoveryPluginPath = () => openworkPluginPath("openwork-title-recovery");
 export const openworkGatewayQuotaPluginPath = () => openworkPluginPath("openwork-gateway-quota");
 export const openworkGatewayQuotaV2PluginPath = () => openworkPluginPath("openwork-gateway-quota-v2");
 export const openworkProviderSyncV2PluginPath = () => {
   const path = openworkPluginPath("openwork-provider-sync-v2");
-  // The provider-only entry belongs to the shared plugin package. Bundle it
-  // alongside server plugins for packaged apps; load its source in Bun dev.
   return path.endsWith(".ts")
     ? join(dirname(fileURLToPath(import.meta.url)), "../../../packages/opencode-plugin/server.ts")
     : path;
@@ -56,4 +56,6 @@ export const openworkProviderFiltersV2PluginPath = () => openworkPluginPath("ope
 export const openworkMcpResultsV2PluginPath = () => openworkPluginPath("openwork-mcp-results-v2");
 export const openworkMcpReadinessV2PluginPath = () => openworkPluginPath("openwork-mcp-readiness-v2");
 export const openworkVisibleReasoningV2PluginPath = () => openworkPluginPath("openwork-visible-reasoning-v2");
+export const openworkAutoRouteV2PluginPath = () => openworkPluginPath("openwork-auto-route-v2");
 export const openworkAgentPermissionsV2PluginPath = () => openworkPluginPath("openwork-agent-permissions-v2");
+export const openworkSandboxV2PluginPath = () => openworkPluginPath("openwork-sandbox-v2");

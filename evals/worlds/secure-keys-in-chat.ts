@@ -145,11 +145,22 @@ export async function secureKeysInChat(seed: Seed, context: { place: Place }) {
     return { isError: field(envelope, "result", "isError") === true, body, text };
   }
 
+  // Any current Gemini text model works: no inference is sent. models.dev marks
+  // retired models "deprecated" and unreleased ones "alpha" or "beta".
   const vertexModels = await (async () => {
     const result = await seed.api(den.admin, "/v1/llm-provider-catalog/google-vertex");
+    if (!result.response.ok) throw new Error(`Den could not load the google-vertex catalog (${result.response.status}): ${result.text.slice(0, 300)}`);
     const models = field(result.body, "provider", "models");
-    const ids = Array.isArray(models) ? models.flatMap((model) => isRecord(model) && typeof model.id === "string" && /^gemini-2\.5/.test(model.id) && !/preview|exp|lite|image|tts|live|embed/i.test(model.id) ? [model.id] : []) : [];
-    if (!ids.length) throw new Error("The google-vertex catalog has no Gemini 2.5 models");
+    const current = (model: unknown): model is { id: string } => {
+      if (!isRecord(model) || typeof model.id !== "string") return false;
+      const status = field(model, "config", "status");
+      const output = field(model, "config", "modalities", "output");
+      return /^gemini-/.test(model.id) && !/preview|exp|lite|image|tts|live|embed/i.test(model.id)
+        && (status === undefined || status === "active")
+        && Array.isArray(output) && output.length === 1 && output[0] === "text";
+    };
+    const ids = Array.isArray(models) ? models.filter(current).map((model) => model.id) : [];
+    if (!ids.length) throw new Error("The google-vertex catalog has no current Gemini text model (all are deprecated, preview, or non-text)");
     return ids.slice(0, 1);
   })();
   // OpenWork Cloud in headless Chrome, signed in as the admin.

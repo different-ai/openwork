@@ -60,11 +60,6 @@ export type CloudProviderMaterializationProvider = {
   name: string
   providerConfig: JsonRecord
   apiKey: string | null
-  /**
-   * Per-member providers carry no organization credential; `apiKey` is the
-   * worker owner's own active binding, or null when the owner has none or is
-   * not granted the provider.
-   */
   credentialMode?: LlmProviderCredentialMode
   models: Array<{
     modelId: string
@@ -89,13 +84,7 @@ type PreparedMaterialization = {
   fingerprint: string
   providers: MaterializedProvider[]
   envEntries: EnvEntry[]
-  /**
-   * Entries an earlier release wrote under a catalog provider's declared name
-   * before runtime names were provider-scoped. Deleted only while the worker
-   * still holds exactly the value now written under the scoped name.
-   */
   supersededEntries: EnvEntry[]
-  /** Providers left out because no usable credential reached Den for this worker. */
   skipped: CloudProviderMaterializationProvider[]
 }
 
@@ -106,7 +95,6 @@ type MaterializationLogger = {
   error: (message: string, metadata?: JsonRecord) => void
 }
 
-/** A per-member provider left off the worker because its owner has no active key for it. */
 export type MissingMemberCredentialProvider = {
   id: string
   name: string
@@ -143,19 +131,7 @@ export type MaterializeCloudWorkerProviders = typeof materializeCloudWorkerProvi
 
 const logger = appLogger.child({ component: "cloud_provider_materialization" })
 const requestTimeoutMs = 8_000
-/**
- * Cache of what we have already materialized, keyed by worker AND instance.
- *
- * Keying by worker alone was a bug: a recycle onto a new snapshot replaces the
- * sandbox, and the new instance starts with an empty env store (only the runtime
- * config survives, on the shared volume). With a worker-only key den-api kept
- * answering "cached" and never wrote the credential into the new instance, so
- * every provider failed with "API key is missing" while still showing up in the
- * picker.
- */
 const materializedFingerprintByWorkerInstance = new Map<string, string>()
-// Only write-phase failures are cached. Read failures can occur while the
-// sandbox engine is booting and are safe to retry immediately.
 const materializationFailureByWorkerInstance = new Map<string, {
   failedAt: number
   result: Extract<CloudProviderMaterializationResult, { ok: false }>
@@ -167,10 +143,6 @@ function materializationCacheKey(workerId: WorkerId, instanceUrl: string): strin
 const unsupportedLogFingerprintByWorker = new Map<WorkerId, string>()
 
 
-/**
- * The member a Cloud worker belongs to: the user who created it, while they are
- * still an active member of the organization.
- */
 async function resolveWorkerOwnerMemberId(organizationId: OrganizationId, workerId: WorkerId): Promise<MemberId | null> {
   const [owner] = await db
     .select({ memberId: MemberTable.id })
@@ -185,11 +157,6 @@ async function resolveWorkerOwnerMemberId(organizationId: OrganizationId, worker
   return owner?.memberId ?? null
 }
 
-/**
- * The worker owner's own active credential for each per-member provider they
- * are granted: what GET /v1/llm-providers/:id/connect returns to the same
- * member's desktop. A teammate's binding is never used.
- */
 async function listOwnerMemberCredentials(input: {
   organizationId: OrganizationId
   ownerMemberId: MemberId
@@ -424,8 +391,6 @@ function readOpenWorkInferenceBaseUrl(providerConfig: JsonRecord) {
 function providerEnvEntries(provider: CloudProviderMaterializationProvider): EnvEntry[] {
   const entries: EnvEntry[] = []
   const stored = decodeProviderCredential(provider.apiKey)
-  // Stored rows keep the catalog's declared names; the worker sees the
-  // provider-scoped runtime names for both the block and the multi-env map.
   const credential = toRuntimeProviderEnv({
     id: provider.id,
     source: provider.source,
@@ -735,8 +700,6 @@ function materializedProviderStateMatches(prepared: PreparedMaterialization, cur
   }
 
   const current = stableJson(currentManagedProviders)
-  // New v1 engines expose the expanded config; older servers still expose the
-  // disabled import metadata. Accept either to avoid reloads on every resolve.
   return current === stableJson(desiredManagedProviders)
     || current === stableJson(materializeLegacyFastProviders(desiredManagedProviders))
 }
@@ -786,18 +749,30 @@ async function readEnvSnapshot(input: {
   hostToken: string
   keys: string[]
 }): Promise<EnvSnapshot> {
-  const snapshot: EnvSnapshot = new Map()
-  for (const key of input.keys) {
-    if (snapshot.has(key)) {
-      continue
+  const keys = [...new Set(input.keys)]
+  const snapshot: EnvSnapshot = new Map(keys.map((key) => [key, null]))
+  let nextIndex = 0
+  let failed = false
+  const reads = await Promise.allSettled(Array.from({ length: Math.min(4, keys.length) }, async () => {
+    while (!failed) {
+      const key = keys[nextIndex++]
+      if (key === undefined) return
+      try {
+        const existing = await readEnvEntry({
+          fetchImpl: input.fetchImpl,
+          instanceUrl: input.instanceUrl,
+          hostToken: input.hostToken,
+          key,
+        })
+        snapshot.set(key, existing?.value ?? null)
+      } catch (error) {
+        failed = true
+        throw error
+      }
     }
-    const existing = await readEnvEntry({
-      fetchImpl: input.fetchImpl,
-      instanceUrl: input.instanceUrl,
-      hostToken: input.hostToken,
-      key,
-    })
-    snapshot.set(key, existing?.value ?? null)
+  }))
+  for (const read of reads) {
+    if (read.status === "rejected") throw read.reason
   }
 
   return snapshot
@@ -892,22 +867,12 @@ async function patchRuntimeProviders(input: {
     throw new MaterializationHttpError("runtime_provider_patch", response.status, await response.text())
   }
 
-  // An instance older than this route answers 200 with the SPA index.html
-  // instead of 404, because the web root is the catch-all. Observed on a real
-  // worker still running openwork-server 0.18.3: the patch "succeeded", the
-  // engine ended up with zero providers, and the org saw an opaque failure
-  // instead of "this workspace needs an update". Treat a non-JSON body as an
-  // unsupported route so the caller can degrade honestly.
   const body = await response.text()
   if (!looksLikeJsonObject(body)) {
     throw new MaterializationHttpError("runtime_provider_patch", UNSUPPORTED_ROUTE_STATUS, body.slice(0, 200))
   }
 }
 
-/**
- * Synthetic status for "this instance does not implement the route", used when
- * the instance answers 200 with something that is not the route's JSON.
- */
 const UNSUPPORTED_ROUTE_STATUS = 501
 
 function looksLikeJsonObject(body: string): boolean {
@@ -1041,11 +1006,6 @@ function logFailure(input: {
   input.logger.warn("cloud provider materialization failed", metadata)
 }
 
-/**
- * A provider without a usable credential is left out of the worker without
- * failing the pass, so say which one and why. Called only when the desired
- * state changed, not on every cached resolve.
- */
 function logSkippedProviders(input: {
   logger: MaterializationLogger
   workerId: WorkerId
@@ -1095,8 +1055,6 @@ async function logUnsupportedOnce(input: {
   })
 }
 
-// den-api must tolerate instances older than itself: sandbox images ship on the
-// release/snapshot cadence while den-api deploys from dev.
 export async function materializeCloudWorkerProviders(input: {
   organizationId: OrganizationId
   workerId: WorkerId
@@ -1160,22 +1118,26 @@ export async function materializeCloudWorkerProviders(input: {
       throw new Error("worker_tokens_missing")
     }
     const desiredProviderIds = prepared.providers.map((provider) => provider.runtimeProviderId)
-    const currentManagedProviders = await readRuntimeManagedProviders({
-      fetchImpl,
-      instanceUrl,
-      clientToken: tokens.clientToken,
-    })
+    const [providerRead, envRead] = await Promise.allSettled([
+      readRuntimeManagedProviders({
+        fetchImpl,
+        instanceUrl,
+        clientToken: tokens.clientToken,
+      }),
+      readEnvSnapshot({
+        fetchImpl,
+        instanceUrl,
+        hostToken: tokens.hostToken,
+        keys: [...prepared.envEntries, ...prepared.supersededEntries].map((entry) => entry.key),
+      }),
+    ])
+    if (providerRead.status === "rejected") throw providerRead.reason
+    if (envRead.status === "rejected") throw envRead.reason
+    const currentManagedProviders = providerRead.value
+    const envSnapshot = envRead.value
     const providerPatch = buildRuntimeProviderPatch(prepared, currentManagedProviders)
     const providerRollbackPatch = buildRuntimeProviderRollbackPatch(prepared, currentManagedProviders)
-    const envSnapshot = await readEnvSnapshot({
-      fetchImpl,
-      instanceUrl,
-      hostToken: tokens.hostToken,
-      keys: [...prepared.envEntries, ...prepared.supersededEntries].map((entry) => entry.key),
-    })
     const staleKeys = staleSupersededKeys(prepared.supersededEntries, envSnapshot)
-    // Roll back only what this pass writes or deletes; a bare-name entry that
-    // is left alone is never touched on the way out either.
     const touchedKeys = new Set([...prepared.envEntries.map((entry) => entry.key), ...staleKeys])
     const envRollbackSnapshot: EnvSnapshot = new Map([...envSnapshot].filter(([key]) => touchedKeys.has(key)))
     if (
@@ -1268,11 +1230,6 @@ export async function materializeCloudWorkerProviders(input: {
       throw error
     }
 
-    // The org credential an earlier release left under the bare catalog name
-    // would keep enabling OpenCode's built-in vendor catalog. Remove it only on
-    // an exact value match (a different value is the member's own), and only
-    // after the scoped names are in place; a failed delete is retried by the
-    // next pass because it keeps the state out of noop.
     for (const key of staleKeys) {
       await deleteEnvEntry({ fetchImpl, instanceUrl, hostToken: tokens.hostToken, key, ignoreNotFound: true }).catch(
         (deleteError) => {

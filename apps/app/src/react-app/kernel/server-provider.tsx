@@ -110,8 +110,6 @@ export function ServerProvider({ children, defaultUrl }: ServerProviderProps) {
     const gatewayOrigin = getOpenworkGatewayOrigin();
     const fallback = normalizeServerUrl(gatewayOrigin ? `${gatewayOrigin}/opencode` : defaultUrl) ?? "";
 
-    // Hosted web deployments served by OpenWork must reuse the OpenCode proxy
-    // rather than any persisted localhost target.
     const forceProxy =
       Boolean(gatewayOrigin) ||
       (!isDesktopRuntime() &&
@@ -143,17 +141,12 @@ export function ServerProvider({ children, defaultUrl }: ServerProviderProps) {
       window.localStorage.setItem("openwork.server.list", JSON.stringify(list));
       window.localStorage.setItem("openwork.server.active", active);
     } catch {
-      // ignore
     }
   }, [active, list]);
 
   useEffect(() => {
     if (!active) return;
     if (isDesktopRuntime() && !active.includes("/opencode")) {
-      // Desktop React routes now talk to OpenWork server workspace-mounted
-      // `/opencode` URLs directly. Ignore old persisted raw OpenCode daemon
-      // URLs here; their ephemeral ports go stale across restarts and otherwise
-      // produce noisy `/global/health` connection-refused polling forever.
       dispatchServer({ type: "healthy", healthy: undefined });
       return;
     }

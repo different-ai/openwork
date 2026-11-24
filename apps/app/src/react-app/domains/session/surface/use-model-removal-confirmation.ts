@@ -10,7 +10,6 @@ import { useModelRecoveryStore } from "./model-recovery-store";
 
 const EMPTY_MODELS: readonly ModelRef[] = [];
 
-/** An engine catalog is a transport snapshot, never evidence that an org removed access. */
 export function useModelRemovalConfirmation(input: {
   model: ModelRef | null;
   missing: boolean;
@@ -56,7 +55,6 @@ export function useModelRemovalConfirmation(input: {
         if (needsConfirmation && selected) {
           await pause();
           if (cancelled) return;
-          // Refetch after the reload grace period, then read Den independently a second time.
           const stillMissing = await current.current.refreshEngine();
           if (cancelled) return;
           const after = await client.getModelRemovalInventory(organizationId);
@@ -68,7 +66,6 @@ export function useModelRemovalConfirmation(input: {
             assignedModels: after.models.filter((model) => !locked.has(modelRefKey(model))) } : null);
         }
       } catch {
-        // Offline, sign-in failures, old Den versions and partial inventories are all unknown.
         if (!cancelled) setConfirmed(null);
       }
       if (!cancelled) timer = setTimeout(() => void inspect(), 30_000);

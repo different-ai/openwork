@@ -28,17 +28,13 @@ export type DaytonaProviderConfig = {
   apiKey: string
   apiUrl: string
   target?: string
-  /** The pinned runtime snapshot; `null` boots `image` with `resources` instead. */
   snapshot: string | null
   image: string
   resources: SandboxResources
   pollIntervalMs: number
   helperCreateTimeoutMs: number
-  /** Explicit platform for the configured snapshot; never inferred from its name. */
   platform?: SandboxPlatform
-  /** Operator verified this Daytona class supports memory-preserving pause. */
   supportsPause?: boolean
-  /** Renewed by real work, never by inventory polling. Expired idle computers are destroyed. */
   idleRetentionMinutes?: number
 }
 
@@ -168,8 +164,7 @@ function toSandboxClient(sandbox: Sandbox): DaytonaSandboxClient {
     refreshData: () => sandbox.refreshData(),
     start: (timeout) => sandbox.start(timeout),
     stop: (timeout) => sandbox.stop(timeout),
-    // The SDK's second argument is `wait` (block until destroyed); attached volumes are never deleted.
-    delete: (timeout) => sandbox.delete(timeout, /* wait */ true),
+    delete: (timeout) => sandbox.delete(timeout, true),
     pause: (timeout) => sandbox.pause(timeout),
     setTtl: minutes => sandbox.setTtl(minutes),
     refreshActivity: () => sandbox.refreshActivity(),
@@ -387,7 +382,6 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
     const sandbox = remember(await wrap(() => client.create(createParams(spec), { timeout: seconds(createTimeoutMs) })), spec.idempotencyKey)
     try {
       const exec = await execOn(sandbox, { command: `sh -lc ${shellQuote(command)}`, detach: false, timeoutMs: opts.timeoutMs })
-      // The helper's toolbox disappears on deletion; capture the result first.
       return {
         exitCode: await exec.exitCode(),
         logs: await exec.logs().catch(() => ({ stdout: "", stderr: "" })),
@@ -540,7 +534,10 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
   const storage: SandboxStorage = {
     async ensureVolume(name, opts) {
       const volumeName = slug(name).slice(0, 63)
-      await wrap(() => client.volume.get(volumeName, true))
+      const ensured = await wrap(() => client.volume.get(volumeName, true))
+      if (ensured.state === "ready") {
+        return { providerId, id: ensured.id, name: volumeName }
+      }
       const startedAt = now()
       while (now() - startedAt < opts.timeoutMs) {
         const volume = await wrap(() => client.volume.get(volumeName))
@@ -651,7 +648,6 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
       const labels = query.labels ?? {}
       return wrap(async () => {
         const seen = new Set<string>()
-        // Exhaust the iterator before callers delete anything and shift its pages.
         for await (const entry of client.list({ labels: { ...labels }, limit: 100 })) {
           if (seen.has(entry.id)) continue
           seen.add(entry.id)
@@ -717,8 +713,6 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
       return endpoint
     },
     storage,
-    // Existing Web instances leave platform unset. Opting in to a verified
-    // Linux flavor enables the POSIX process block; no Windows shell guessing.
     blocks: {
       ...(config.platform?.os === "linux" ? {
         run: async (handle, spec) => {
@@ -738,8 +732,6 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
             await wrap(() => sandbox.fs.createFolder(directory, "700"))
             let completed = false
             try {
-              // Session logs normalize line endings. Capture process streams as
-              // bytes so run preserves trailing whitespace and separates stderr.
               const script = `(${command}) >${shellQuote(`${directory}/stdout`)} 2>${shellQuote(`${directory}/stderr`)}`
               const exec = await execOn(sandbox, { script, detach: false, timeoutMs: spec.timeoutMs })
               const exitCode = await exec.exitCode()
@@ -749,8 +741,6 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
               const stderr = await wrap(() => download(`${directory}/stderr`, seconds(spec.timeoutMs)))
               return { exitCode, stdout: Buffer.from(stdout).toString("utf8"), stderr: Buffer.from(stderr).toString("utf8") }
             } finally {
-              // An unacknowledged launch might still write these files. Do not
-              // delete them or repeat the command while its outcome is unknown.
               if (completed) await wrap(() => sandbox.fs.deleteFile(directory, true)).catch(() => undefined)
             }
           })(), spec.timeoutMs, () => new RuntimeProviderError({ providerId, code: "timeout", retryable: false, message: "Run exceeded its deadline; execution outcome may be unknown, do not retry" }))
@@ -780,7 +770,6 @@ export function createDaytonaProvider(config: DaytonaProviderConfig, deps: Dayto
             const info = await boundedScriptOperation(wrap(() => details(path)), opts.timeoutMs, () => new RuntimeProviderError({ providerId, code: "timeout", message: "File metadata timed out", retryable: false }))
             return { size: info.size, kind: info.isDir ? "directory" : "file" }
           } catch (error) {
-            // A missing sandbox is NOT a missing file.
             if (toRuntimeProviderError(error, providerId).code === "not_found" && await provider.get(handle.ref)) return null
             throw error
           }

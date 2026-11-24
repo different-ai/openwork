@@ -2,15 +2,12 @@ import type { ReactNode } from "react";
 import { Lock } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { LocalProviderEngineState } from "../../connections/provider-auth/local-provider-engine-state";
+import type { ProviderCredentialHealth } from "../../connections/provider-auth/credential-health";
 import { ProviderIcon } from "../../../design-system/provider-icon";
 import { resolveExtensionIconSrc } from "@/react-app/design-system/extension-icon-src";
 
-// Shared rows for Settings › AI Providers and the Connect a provider sheet,
-// so both surfaces render a provider the same way (Paper boards 09–11).
-
 export type ProviderStatusTone = "ready" | "attention" | "neutral" | "locked" | "error";
 
-/** A provider mark in a rounded tile; OpenWork's own mark sits on a filled tile. */
 export function ProviderTile({ providerId, name, size = "md" }: { providerId: string; name?: string; size?: "sm" | "md" }) {
   const filled = providerId === "openwork";
   return (
@@ -26,7 +23,6 @@ export function ProviderTile({ providerId, name, size = "md" }: { providerId: st
   );
 }
 
-/** "● Ready to use" style status; attention renders as a soft pill, locked as neutral ink with a lock (blocked is not an error). */
 export function ProviderStatus({ tone, children }: { tone: ProviderStatusTone; children: ReactNode }) {
   if (tone === "attention") {
     return <span className="rounded-full bg-amber-3 px-2 py-0.5 text-xs font-medium text-amber-11">{children}</span>;
@@ -48,18 +44,19 @@ export function ProviderStatus({ tone, children }: { tone: ProviderStatusTone; c
   );
 }
 
-/**
- * A provider on this device as the engine chat runs on sees it: ready, held
- * back by the organization (a lock in neutral ink), or not usable on the new
- * engine yet. Never "Ready to use" for a provider the engine skipped.
- */
-export function LocalProviderStatus({ state, organizationName }: { state?: LocalProviderEngineState; organizationName?: string }) {
-  if (state === "managed_by_organization") return <ProviderStatus tone="locked">{organizationName || "Your organization"} manages AI providers</ProviderStatus>;
-  if (state === "not_on_engine") return <ProviderStatus tone="neutral">Not available on the new engine yet</ProviderStatus>;
+export function CredentialHealthStatus({ health }: { health: ProviderCredentialHealth }) {
+  if (health === "rejected") return <ProviderStatus tone="attention">Key not accepted</ProviderStatus>;
+  if (health === "unverified") return <ProviderStatus tone="neutral">Not checked yet</ProviderStatus>;
   return <ProviderStatus tone="ready">Ready to use</ProviderStatus>;
 }
 
-/** One meta line: an optional monospace id, then plain parts joined by middle dots. */
+export function LocalProviderStatus({ state, organizationName, credentialHealth }: { state?: LocalProviderEngineState; organizationName?: string; credentialHealth?: ProviderCredentialHealth }) {
+  if (state === "managed_by_organization") return <ProviderStatus tone="locked">{organizationName || "Your organization"} manages AI providers</ProviderStatus>;
+  if (state === "not_on_engine") return <ProviderStatus tone="neutral">Not available on the new engine yet</ProviderStatus>;
+  if (credentialHealth) return <CredentialHealthStatus health={credentialHealth} />;
+  return <ProviderStatus tone="ready">Ready to use</ProviderStatus>;
+}
+
 export function ProviderMeta({ id, parts }: { id?: string; parts: ReadonlyArray<string | null | undefined | false> }) {
   const rest = parts.filter((part): part is string => typeof part === "string" && part.trim().length > 0);
   return (
@@ -79,7 +76,6 @@ export function ProviderRow(props: {
   name: string;
   status?: ReactNode;
   meta: ReactNode;
-  /** Who can use it, shown before the actions (organization rows). */
   aside?: ReactNode;
   actions?: ReactNode;
   className?: string;
@@ -104,7 +100,6 @@ export function ProviderRow(props: {
   );
 }
 
-/** Initials for an organization mark, e.g. "Different AI" → "DA". */
 export function organizationInitials(name: string) {
   const words = name.trim().split(/\s+/).filter(Boolean);
   const initials = (words.length > 1 ? words.slice(0, 2).map((word) => word[0]) : [...(words[0] ?? "").slice(0, 2)]).join("");
@@ -120,7 +115,6 @@ export function OrganizationMark({ name, size = "md" }: { name: string; size?: "
   );
 }
 
-/** A quiet group label with its count, e.g. "ON THIS DEVICE 2"; shown in capitals as in the Connect a provider design. */
 export function ProviderSectionLabel({ id, count, children }: { id?: string; count?: number; children: ReactNode }) {
   return (
     <div className="flex items-center justify-between px-2 pb-1 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">

@@ -287,12 +287,22 @@ async function enableSquirrelDirectContentsWrite(
   await writeDefaults(["write", shipItDefaultsDomain, "SquirrelMacEnableDirectContentsWrite", "-bool", "YES"]);
 }
 
+// Home the ShipIt cache is resolved against. Everything else in the process
+// isolation points HOME at the profile it owns (electronSurfaceEnv in
+// evals/packages/hosts/src/local.ts), but `app.getPath("home")` resolves from
+// the OS account instead, so an isolated launch that overrides HOME would
+// still clean the developer's real cache. Prefer the overridden HOME and fall
+// back to Electron's for a normal install, where the two agree. Exported for
+// tests.
+export function staleUpdaterStateHome(app, env = process.env) {
+  return env?.HOME?.trim() || app.getPath("home");
+}
+
 // Path of the ShipIt cache that, when stuck, keeps aborting future installs.
 // Exported for tests.
-export function staleUpdaterStatePaths(app, shipItDefaultsDomain = SHIP_IT_DEFAULTS_DOMAIN) {
+export function staleUpdaterStatePaths(app, shipItDefaultsDomain = SHIP_IT_DEFAULTS_DOMAIN, env = process.env) {
   if (process.platform !== "darwin") return [];
-  const home = app.getPath("home");
-  return [path.join(home, "Library", "Caches", shipItDefaultsDomain)];
+  return [path.join(staleUpdaterStateHome(app, env), "Library", "Caches", shipItDefaultsDomain)];
 }
 
 // Remove a previously-failed, half-applied update so the next attempt starts
@@ -345,6 +355,8 @@ export function registerUpdaterIpc({
   let recoveryReleases = [];
   const recoveryWitness = { installRequests: [], openedArtifactUrls: [], quitRequested: false };
   let updaterOperationQueue = Promise.resolve();
+  // Set once Windows starts ending the session; never cleared for this process.
+  let sessionEnding = false;
 
   function queueUpdaterOperation(operation) {
     const result = updaterOperationQueue.then(operation, operation);
@@ -390,7 +402,7 @@ export function registerUpdaterIpc({
           autoUpdaterInstance = mod.autoUpdater ?? mod.default?.autoUpdater ?? null;
           if (autoUpdaterInstance) {
             autoUpdaterInstance.autoDownload = false;
-            autoUpdaterInstance.autoInstallOnAppQuit = true;
+            autoUpdaterInstance.autoInstallOnAppQuit = !sessionEnding;
             // Differential (blockmap) downloads reconstruct the update zip from the
             // installed app + a diff. On macOS that reconstructed bundle is what
             // feeds Squirrel's fragile move-based install, and is a common trigger
@@ -434,7 +446,7 @@ export function registerUpdaterIpc({
 
   async function downloadAndStageUpdate(updater, version) {
     if (platform !== "darwin") {
-      updater.autoInstallOnAppQuit = true;
+      updater.autoInstallOnAppQuit = !sessionEnding;
       await updater.downloadUpdate();
       return;
     }
@@ -861,5 +873,16 @@ export function registerUpdaterIpc({
     }
   }));
 
-  return { ensureAutoUpdater };
+  // Windows is shutting down, restarting or signing out. Windows does not wait
+  // for the silent NSIS installer, so starting it now can kill it after the old
+  // version's files are already removed (#6627). Keep the update downloaded and
+  // let a later, normal quit install it instead. Must stay synchronous: it has to
+  // run before Electron's quit handler starts the installer.
+  function holdInstallForSessionEnd() {
+    if (platform !== "win32") return;
+    sessionEnding = true;
+    preventPendingUpdaterInstall(autoUpdaterInstance);
+  }
+
+  return { ensureAutoUpdater, holdInstallForSessionEnd };
 }

@@ -1,26 +1,3 @@
-// Where an in-app sign-in comes back to (the `desktopSignInReturn` feature).
-//
-// A person who signs in from a conversation should land back in that same
-// conversation, with their draft and model, instead of on the session root.
-// The browser handoff can take minutes and may go through organization
-// selection, so the place to return to is recorded when sign-in starts and
-// consumed once the handoff commits:
-//
-//   start      an in-app entry point records the route (and its workspace and
-//              conversation) and opens the browser without leaving the route
-//   handoff    a desktop-initiated exchange marks the target as signed in; a
-//              remotely initiated one (install link, "Open in desktop")
-//              drops it, so a stale target is never reused
-//   return     once an organization is active, chat opens on the recorded
-//              route instead of the session root (directly, or when org
-//              onboarding finishes), exactly once
-//   draft      once the new identity is verified, explicit confirmation can
-//              move the unowned signed-out draft into that account, once
-//
-// Targets expire after 30 minutes; anything older falls back to the default
-// landing. Another sign-in entry point (Settings, the forced sign-in page)
-// clears the target when it starts its own attempt.
-
 import { z } from "zod";
 
 export const SIGN_IN_RETURN_STORAGE_KEY = "openwork.den.signInReturn.v1";
@@ -32,9 +9,7 @@ const signInReturnTargetSchema = z.object({
   path: z.string().regex(/^\/(?!\/)/),
   workspaceId: z.string().min(1).nullable(),
   sessionId: z.string().min(1).nullable(),
-  /** A message the person already sent is waiting (rejected-turn recovery). */
   pendingTurn: z.boolean(),
-  /** The browser sign-in link, for "Copy sign-in link". Not a credential. */
   authUrl: z.string().nullable(),
   startedAt: z.number().finite(),
   signedInAt: z.number().finite().nullable(),
@@ -60,7 +35,6 @@ function announce() {
   window.dispatchEvent(new CustomEvent(signInReturnChangedEvent));
 }
 
-/** Sign-in surfaces themselves are never a place to come back to. */
 const NON_RETURNABLE_PATHS = [/^\/signin(?:\/|$)/i, /^\/onboarding(?:\/|$)/i, /^\/welcome(?:\/|$)/i];
 
 export function isReturnablePath(path: string): boolean {
@@ -79,14 +53,12 @@ function decodeSegment(value: string | undefined): string | null {
   }
 }
 
-/** The app route on screen: the hash route on desktop, the path in a browser. */
 export function currentAppRoutePath(): string {
   if (typeof window === "undefined") return "/";
   const { hash, pathname, search } = window.location;
   return hash.startsWith("#/") ? hash.slice(1) : `${pathname}${search}`;
 }
 
-/** The workspace and conversation a session route points at, if any. */
 export function sessionRouteIds(path: string): { workspaceId: string | null; sessionId: string | null } {
   const pathname = path.split(/[?#]/, 1)[0] ?? "";
   const scoped = pathname.match(/^\/workspace\/([^/]+)\/session(?:\/([^/]+))?\/?$/);
@@ -114,7 +86,6 @@ function write(target: SignInReturnTarget, storage: SignInReturnStorage | null) 
   try {
     storage?.setItem(SIGN_IN_RETURN_STORAGE_KEY, JSON.stringify(target));
   } catch {
-    // Storage may be unavailable; the sign-in still works and lands on the default route.
   }
   announce();
 }
@@ -129,7 +100,6 @@ export function clearSignInReturnTarget(storage: SignInReturnStorage | null = br
   announce();
 }
 
-/** The live target, if any. An expired or unreadable one is removed. */
 export function readSignInReturnTarget(
   now: number = Date.now(),
   storage: SignInReturnStorage | null = browserStorage(),
@@ -146,11 +116,8 @@ export function readSignInReturnTarget(
 }
 
 export type SignInReturnStart = {
-  /** The route the person is on, including its query. */
   path: string;
-  /** Used when the route itself names no workspace (the new-task screen). */
   workspaceId?: string | null;
-  /** Used when the route itself names no conversation. */
   sessionId?: string | null;
   pendingTurn?: boolean;
   authUrl?: string | null;
@@ -183,11 +150,6 @@ export function recordSignInReturnTarget(
   return target;
 }
 
-/**
- * Called once a handoff commits. Only a desktop-initiated exchange (an in-app
- * button or a pasted code) completes the recorded attempt; a remotely
- * initiated one belongs to whatever link started it and drops the target.
- */
 export function noteSignInReturnHandoff(
   input: { desktopInitiated: boolean },
   now: number = Date.now(),
@@ -218,12 +180,10 @@ function claim(
   return target;
 }
 
-/** The route to open after sign-in, exactly once. */
 export function claimSignInReturnRoute(now: number = Date.now(), storage: SignInReturnStorage | null = browserStorage()) {
   return claim("routed", now, storage);
 }
 
-/** The conversation whose signed-out draft moves into the signed-in scope, exactly once. */
 export function claimSignInReturnDraft(now: number = Date.now(), storage: SignInReturnStorage | null = browserStorage()) {
   return claim("draftCarried", now, storage);
 }
@@ -232,7 +192,6 @@ export function canReturnAfterSignIn(target: SignInReturnTarget | null): target 
   return Boolean(target && target.signedInAt !== null && !target.routed);
 }
 
-/** A delayed auth redirect cannot replay an already returned or replaced attempt. */
 export function shouldHandleSignInReturnAttempt(attempt: SignInReturnTarget | null, current: SignInReturnTarget | null): boolean {
   if (!attempt) return current === null;
   return Boolean(current && current.startedAt === attempt.startedAt && !current.routed);
@@ -243,13 +202,6 @@ export type PostHandoffRoute =
   | { kind: "return"; path: string }
   | { kind: "default"; path: "/session" };
 
-/**
- * Where a successful handoff lands once its credential is active. Org
- * onboarding still owns an open organization choice (it auto-continues for
- * one organization and returns to the target when it finishes); with an
- * organization active, chat opens on the recorded route instead of the
- * session root. Null means the organization is not resolved yet.
- */
 export function resolvePostHandoffRoute(input: {
   hasToken: boolean;
   activeOrgId: string | null | undefined;
@@ -266,16 +218,9 @@ export function resolvePostHandoffRoute(input: {
 
 export type BeginSignInResult = "in-place" | "fallback";
 
-/**
- * Starts an in-app sign-in. With the feature on, records where to return,
- * marks the sign-in as desktop-initiated and opens the browser without
- * leaving the route. Off (or from a route that cannot be returned to), runs
- * the entry point's existing behaviour unchanged.
- */
 export function beginSignInReturn(
   request: SignInReturnStart & { authUrl: string },
   deps: {
-    enabled: boolean;
     openLink: (url: string) => void;
     markDesktopSignInInitiated: () => void;
     fallback: () => void;
@@ -283,7 +228,7 @@ export function beginSignInReturn(
     storage?: SignInReturnStorage | null;
   },
 ): BeginSignInResult {
-  if (!deps.enabled || !isReturnablePath(request.path)) {
+  if (!isReturnablePath(request.path)) {
     deps.fallback();
     return "fallback";
   }

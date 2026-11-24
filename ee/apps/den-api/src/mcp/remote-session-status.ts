@@ -1,7 +1,9 @@
 import { createHash } from "node:crypto"
-import { isRunning, toTranscript, type HeadlessThreadClient } from "@openwork/headless-threads"
+import { isRunning, latestStep, toTranscript, type HeadlessThreadClient } from "@openwork/headless-threads"
 import {
   REMOTE_SESSION_STATUS_PREVIEW_MAX_LENGTH,
+  type RemoteSessionPending,
+  type RemoteSessionPendingSummary,
   type RemoteSessionStatusRequest,
   type RemoteSessionStatusResult,
   type RemoteSessionThreadState,
@@ -10,41 +12,23 @@ import {
 import { automationRunnerRowId } from "../automations/repository.js"
 import type { RemoteSessionCommand } from "../remote-sessions/commands.js"
 
-/**
- * `remote-session:status`: the compact status of every remote session a
- * caller follows, in one call, whatever runs it.
- *
- * Cost is the point. A desktop or registered client's command is one indexed
- * read for all of them (its runner already reports progress to Den). A Cloud
- * session is a small worker read: the last few messages, the run state and,
- * only while it runs, its pending requests. Callers send back each version
- * they hold, so an unchanged thread answers with its ref and version only, and
- * `waitMs` holds the call, re-checking quietly, until one changes. Settled
- * threads end the wait at once: nothing is coming.
- */
-
-/** Re-checks while a call waits: a desktop task is one indexed read, a Cloud task a few worker requests. */
 const COMMAND_RECHECK_MS = 2_000
 const CLOUD_RECHECK_MS = 10_000
-/** Enough of the tail to see the latest reply and whether it failed. */
 const CLOUD_TAIL_MESSAGES = 6
 const RETRY_STARTING_MS = 2_000
 const RETRY_ACTIVE_MS = 5_000
 const UNAVAILABLE_VERSION = "unavailable"
 
 export type RemoteSessionStatusCloudClient = Pick<HeadlessThreadClient, "getThreadSnapshot">
-  & Partial<Pick<HeadlessThreadClient, "getThreadWaitingFor">>
+  & Partial<Pick<HeadlessThreadClient, "getThreadWaitingFor" | "getThreadPending">>
 
-/** Cloud for this caller: a client, a lasting reason it cannot be read, or null while it is waking or unreachable. */
 export type RemoteSessionStatusCloud =
   | { client: RemoteSessionStatusCloudClient }
   | { error: { code: string; message: string } }
   | null
 
-/** What the status read needs, already scoped to the caller. */
 export type RemoteSessionStatusSources = {
   commands: (commandIds: readonly string[]) => Promise<RemoteSessionCommand[]>
-  /** Display names of the caller's computers by computerId; read once, and only when a desktop thread changed. */
   computerLabels: () => Promise<ReadonlyMap<string, string>>
   cloud: () => Promise<RemoteSessionStatusCloud>
 }
@@ -68,15 +52,30 @@ function preview(text: string | null | undefined): string | null {
     : trimmed
 }
 
+export function pendingSummary(pending: RemoteSessionPending | null | undefined): RemoteSessionPendingSummary | null {
+  if (!pending) return null
+  if (pending.kind === "permission") return { kind: "permission", requestId: pending.requestId, title: pending.title }
+  const first = pending.questions[0]
+  if (!first) return null
+  return {
+    kind: "question",
+    requestId: pending.requestId,
+    question: first.question || first.header,
+    options: first.options.map((option) => option.label),
+    multiple: first.multiple,
+    custom: first.custom,
+    questionCount: pending.questions.length,
+  }
+}
+
 function known(projection: Projection, extra?: unknown): Observation {
-  // A heartbeat that only re-confirms the same state is not a change.
   return { kind: "known", projection, version: versionOf({ ...projection, observedAt: undefined, extra }) }
 }
 
 function failed(target: Projection["target"], code: string, message: string, now: number): Observation {
   return known({
     target, state: "error", waitingFor: null, title: null, computerId: null, sessionId: null,
-    workspaceId: null, messageCount: null, preview: null, error: { code, message }, observedAt: now,
+    workspaceId: null, messageCount: null, preview: null, latestStep: null, error: { code, message }, observedAt: now, pending: null,
   })
 }
 
@@ -102,7 +101,6 @@ export function commandProjection(command: RemoteSessionCommand): Projection {
     state,
     waitingFor: state === "waiting" ? session?.waitingFor ?? null : null,
     title: command.title,
-    // The computer that took it, or the one it waits for.
     computerId: command.claimedByRunnerId
       ? automationRunnerRowId({ organizationId: command.organizationId, ownerMemberId: command.ownerMemberId, runnerId: command.claimedByRunnerId })
       : command.targetComputerId,
@@ -110,8 +108,10 @@ export function commandProjection(command: RemoteSessionCommand): Projection {
     workspaceId: command.workspaceId,
     messageCount: session?.messageCount ?? null,
     preview: state === "idle" ? preview(session?.finalText) : null,
+    latestStep: state === "running" || state === "waiting" ? session?.latestStep ?? null : null,
     error,
     observedAt: session?.observedAt ?? command.updatedAt,
+    pending: state === "waiting" ? pendingSummary(session?.pending) : null,
   }
 }
 
@@ -132,8 +132,10 @@ async function observeCloudThread(client: RemoteSessionStatusCloudClient, sessio
   try {
     const snapshot = await client.getThreadSnapshot(sessionId, { limit: CLOUD_TAIL_MESSAGES, signal })
     const running = isRunning(snapshot.status)
-    // Two small reads, only while it runs: a settled thread waits on nobody.
-    const waitingFor = running && client.getThreadWaitingFor
+    const pending = running && client.getThreadPending
+      ? await client.getThreadPending(sessionId, { signal }).catch(() => null)
+      : null
+    const waitingFor = pending ? pending.kind : running && client.getThreadWaitingFor && !client.getThreadPending
       ? await client.getThreadWaitingFor(sessionId, { signal }).catch(() => null)
       : null
     const transcript = toTranscript(snapshot)
@@ -141,7 +143,6 @@ async function observeCloudThread(client: RemoteSessionStatusCloudClient, sessio
     while (lastUser >= 0 && snapshot.messages[lastUser]?.role !== "user") lastUser -= 1
     const replied = snapshot.messages.slice(lastUser + 1).some((message) => message.role === "assistant")
     const terminalError = !running && replied ? transcript.terminalError : null
-    // Idle with no reply yet is the moment between accepting a prompt and starting it.
     const state: RemoteSessionThreadState = terminalError ? "error" : waitingFor ? "waiting" : running || !replied ? "running" : "idle"
     const last = snapshot.messages.at(-1)
     return known({
@@ -154,10 +155,10 @@ async function observeCloudThread(client: RemoteSessionStatusCloudClient, sessio
       workspaceId: null,
       messageCount: null,
       preview: state === "idle" ? preview(transcript.finalAssistantText) : null,
+      latestStep: state === "running" || state === "waiting" ? latestStep(snapshot.messages) : null,
       error: terminalError ? { code: terminalError.name || "session_error", message: terminalError.message || "The task stopped with an error." } : null,
       observedAt: now,
-    // A new message changes the version, so an open transcript knows to refresh;
-    // a reply still streaming does not, or every check would be a change.
+      pending: state === "waiting" ? pendingSummary(pending) : null,
     }, last?.id ?? null)
   } catch (error) {
     if (typeof error === "object" && error !== null && "status" in error && error.status === 404) {
@@ -212,9 +213,11 @@ export async function readRemoteSessionStatus(
   const threads = [...byKey.values()]
   const commands = threads.filter((thread) => thread.kind === "command")
   const clouds = threads.filter((thread) => thread.kind === "cloud")
-  // Cloud access is resolved at most once per call, however long it waits.
   let cloudAccess: Promise<RemoteSessionStatusCloud> | null = null
-  const cloud = () => cloudAccess ??= sources.cloud()
+  const cloud = () => cloudAccess ??= sources.cloud().then((access) => {
+    if (access === null) cloudAccess = null
+    return access
+  })
 
   const changed = (observed: ReadonlyMap<string, Observation>) => threads.some((thread) => {
     const observation = observed.get(thread.key)
@@ -222,10 +225,11 @@ export async function readRemoteSessionStatus(
   })
   const startedAt = now()
   const deadline = startedAt + (body.waitMs ?? 0)
-  let observed = new Map([
-    ...await observeCommands(commands, sources, startedAt),
-    ...await observeCloud(clouds, cloud, startedAt, options.signal),
+  const [initialCommands, initialCloud] = await Promise.all([
+    observeCommands(commands, sources, startedAt),
+    observeCloud(clouds, cloud, startedAt, options.signal),
   ])
+  let observed = new Map([...initialCommands, ...initialCloud])
   let cloudCheckedAt = startedAt
   while (!changed(observed) && !threads.every((thread) => settled(observed.get(thread.key))) && !options.signal?.aborted) {
     const remaining = deadline - now()
@@ -234,11 +238,11 @@ export async function readRemoteSessionStatus(
     if (options.signal?.aborted) break
     const checkedAt = now()
     const cloudDue = checkedAt - cloudCheckedAt >= CLOUD_RECHECK_MS
-    observed = new Map([
-      ...observed,
-      ...await observeCommands(commands, sources, checkedAt),
-      ...cloudDue ? await observeCloud(clouds, cloud, checkedAt, options.signal) : [],
+    const [checkedCommands, checkedCloud] = await Promise.all([
+      observeCommands(commands, sources, checkedAt),
+      cloudDue ? observeCloud(clouds, cloud, checkedAt, options.signal) : [],
     ])
+    observed = new Map([...observed, ...checkedCommands, ...checkedCloud])
     if (cloudDue) cloudCheckedAt = checkedAt
   }
 

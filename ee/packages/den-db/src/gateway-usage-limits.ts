@@ -21,6 +21,7 @@ import { isGatewayUsageDeadlock } from "./gateway-usage-errors"
 import { readGatewayUsageResetPage } from "./gateway-usage-reset-page"
 import {
   activeUsageMember,
+  assignableUsageMember,
   usagePolicies,
   currentUsage,
   effectiveUsagePolicyScopes,
@@ -47,9 +48,14 @@ import {
 } from "./schema/gateway-usage-limits"
 
 export { GatewayUsageError, safeUsageDatabaseCode } from "./gateway-usage-errors"
-export { withGatewayUsageEntitlementMutation } from "./gateway-usage-entitlements"
+export { withGatewayUsageEntitlementMutation, lockUsageOrganization, moveUsageMemberAssignments } from "./gateway-usage-entitlements"
 export { gatewayProviderUsageLimitsEnabled } from "./gateway-usage-features"
 export { deleteGatewayUsageForOrganization } from "./gateway-usage-erasure"
+export {
+  GatewayProviderUsageLimitsError,
+  settleGatewayProviderUsageLimits,
+  type GatewayProviderRemovalLimitsResult,
+} from "./gateway-usage-provider-removal"
 export { reconcileGatewayUsageBatch } from "./gateway-usage-reconciliation"
 export { listPendingGatewayUsageRequests, recoverGatewayUsageRequests, rotateGatewayUsageEpoch } from "./gateway-usage-operations"
 export {
@@ -150,7 +156,6 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
       resetAt: row.resetAt.toISOString(),
     }
   }
-  /** Validates the provider a policy is limited to. Null keeps a default limit. */
   async function policyProvider(
     tx: UsageTx,
     scope: GatewayUsageScope,
@@ -177,7 +182,6 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
   return {
     listPolicies(scope: GatewayUsageScope) {
       return transaction(async (tx) => {
-        // Organization-wide read: share-lock the caller's active membership for it (see activeUsageMember).
         await activeUsageMember(tx, scope, true)
         return { policies: await usagePolicies(tx, scope.organizationId) }
       })
@@ -347,7 +351,7 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
               return fail("policy_archived", 409, "Archived policies cannot be assigned.")
             const memberId = "memberId" in target ? target.memberId : null
             const teamId = "teamId" in target ? target.teamId : null
-            if (memberId) await activeUsageMember(tx, { ...scope, memberId }, true)
+            if (memberId) await assignableUsageMember(tx, { ...scope, memberId })
             if (teamId) {
               const [team] = await tx
                 .select()
@@ -405,8 +409,6 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
     },
     members(scope: GatewayUsageScope, query = "") {
       return transaction(async (tx) => {
-        // Returns other members' names and emails: share-lock the caller's active membership so a
-        // concurrent removal can't land between this check and the read (as listResets does).
         await activeUsageMember(tx, scope, true)
         return {
           members: await tx
@@ -436,7 +438,6 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
       _options: { providerLimits?: boolean } = {},
     ) {
       return transaction(async (tx, now) => {
-        // Another member's usage: share-lock the caller's active membership for the read.
         if (memberId !== undefined) await activeUsageMember(tx, scope, true)
         return readUsageStatusWithProviders(
           tx,
@@ -453,7 +454,6 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
       options: { providerId?: string | null; providerLimits?: boolean } = {},
     ) {
       return transaction(async (tx, admittedAt) => {
-        // A provider limit for this provider governs the request instead of the default.
         const scopes =
           options.providerId
             ? await effectiveUsagePolicyScopes(tx, scope)
@@ -472,7 +472,6 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
         )
         const accountingUnavailable =
           usage.coverage.captureEnabled === false || (!accountable && usage.buckets.some((bucket) => bucket.hardLimit))
-        // Named only for the out-of-usage response, so ordinary admissions skip the lookup.
         const provider = providerScope && usage.state === "blocked"
           ? {
               id: providerScope,
@@ -573,8 +572,6 @@ export function createGatewayUsageLimits(db: GatewayUsageDb, clock = () => new D
     },
     listResets(scope: GatewayUsageScope, own: boolean, options: GatewayUsageResetListOptions = {}) {
       return transaction(async (tx, now) => {
-        // Organization-wide listings read other members' requests: share-lock the caller's
-        // active membership so a concurrent removal can't land between this check and the read.
         await activeUsageMember(tx, scope, !own)
         return readGatewayUsageResetPage(tx, scope, own, options, now)
       })

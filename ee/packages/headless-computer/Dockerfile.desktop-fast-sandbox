@@ -1,0 +1,20 @@
+# Workbot's desktop as an OpenSandbox Fast Sandbox (Firecracker) template, for
+# computers placed through a sandbox gateway (Differently). Build and push
+# Dockerfile.desktop first, then this on top of it:
+#   docker build -f ee/packages/headless-computer/Dockerfile.desktop-fast-sandbox \
+#     --build-arg DESKTOP_IMAGE=<registry>/workbot-desktop:<tag> ee/packages/headless-computer
+# The template is created from this image with scripts/fast-sandbox-guest-init.sh
+# as its entrypoint; see the runner README's sandbox gateway section.
+ARG DESKTOP_IMAGE
+FROM ${DESKTOP_IMAGE}
+USER root
+# Fast Sandbox's guest init needs nc; procps, tini and python3 complete
+# OpenSandbox's template image set, and chrony keeps the clock after restores.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+      netcat-openbsd procps curl ca-certificates tini python3 chrony \
+    && rm -rf /var/lib/apt/lists/*
+# Every restore jumps the clock, so step on any offset over a second.
+RUN printf 'server time.cloudflare.com iburst minpoll 4 maxpoll 5\nserver time.google.com iburst minpoll 4 maxpoll 5\nmakestep 1 -1\nrtcsync\ndriftfile /var/lib/chrony/drift\n' > /etc/chrony/fast-sandbox.conf
+COPY scripts/fast-sandbox-guest-init.sh /usr/local/sbin/fast-sandbox-guest-init
+RUN chmod 0755 /usr/local/sbin/fast-sandbox-guest-init
+USER ubuntu

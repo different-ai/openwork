@@ -8,7 +8,6 @@ import {
 } from "./dropdown-menu";
 import { dispatchMenuAction, type MenuAction } from "./action-menu-model";
 
-/** Both web presenters consume the same action definitions as the native menu. */
 export function ActionMenuItems({ actions, variant }: { actions: readonly MenuAction[]; variant: "context" | "dropdown" }) {
   const Item = variant === "context" ? ContextMenuItem : DropdownMenuItem;
   const Separator = variant === "context" ? ContextMenuSeparator : DropdownMenuSeparator;

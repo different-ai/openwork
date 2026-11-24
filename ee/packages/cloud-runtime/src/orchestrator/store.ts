@@ -11,7 +11,6 @@ export type RuntimeInstanceRecord = {
     workspaceVolumeId: string
     dataVolumeId: string
   }
-  /** Endpoint to reach the instance and the moment it stops being safe to use. */
   endpointUrl: string
   endpointExpiresAt: Date
   region: string | null
@@ -27,7 +26,6 @@ export interface RuntimeInstanceStore {
   get(workerId: string): Promise<RuntimeInstanceRecord | null>
   upsert(record: RuntimeInstanceRecord): Promise<void>
   updateEndpoint(workerId: string, update: RuntimeEndpointUpdate): Promise<void>
-  /** The image version the worker last booted, or `null` before its first healthy boot. */
   getWorkerImageVersion(workerId: string): Promise<string | null>
 }
 

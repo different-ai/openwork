@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto"
 import { fetchDesktopInventory, fetchDesktopSession } from "./desktop-credential-channel.ts"
 import { DenAuthError, isAllowedApiBaseUrl, isRecord, normalizeBaseUrl, type DenSession, type Fetch } from "./den.ts"
+import { joinDesktopSessionPoll } from "./desktop-session-poll.ts"
 import { subscribeSharedInventory } from "./inventory-events.ts"
 import { inventoryRetry } from "./inventory-retry.ts"
 import type { Json, PluginDefinition } from "./opencode.ts"
@@ -29,37 +30,61 @@ export interface DesktopSession {
   readonly inferenceKey: string
 }
 
-// The shared inventory helpers accept a token-shaped identity key. In desktop
-// mode this is ONLY an opaque hash, never a Den bearer, and the transport below
-// replaces those helper headers with an identity-bound local inventory request.
 function inventorySession(value: DesktopSession): DenSession {
   return { apiBaseUrl: value.apiBaseUrl, token: value.identity, orgId: value.orgId }
 }
 
-export async function readDesktopSession(fetcher: Fetch, endpoint: string, capability: string, signal?: AbortSignal): Promise<DesktopSession | null> {
-  if (!isDesktopSessionEndpoint(endpoint) || !capability) return null
-  const response = await fetcher(endpoint, {
-    headers: { accept: "application/json", authorization: `Bearer ${capability}` },
-    redirect: "error",
-    signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(1500)]) : AbortSignal.timeout(1500),
-  })
-  return parseDesktopSession(response, endpoint)
-}
+/**
+ * The local session check's answer. Only the bridge's explicit answer that no
+ * Den session exists is a sign-out. A slow, failed, or malformed check is
+ * unknown: it says nothing about the account, so callers keep what they have.
+ */
+export type SessionCheck =
+  | { readonly kind: "session"; readonly value: DesktopSession }
+  | { readonly kind: "signed_out" }
+  | { readonly kind: "unknown" }
 
-async function parseDesktopSession(response: Response | null, endpoint: string): Promise<DesktopSession | null> {
-  if (!response) return null
-  if (!response.ok) throw new Error("Desktop session unavailable")
-  const value: unknown = await response.json()
-  if (value === null) return null
+const UNKNOWN: SessionCheck = { kind: "unknown" }
+const SIGNED_OUT: SessionCheck = { kind: "signed_out" }
+
+/** signed_out only for a 2xx JSON `null`; non-2xx, bad JSON, bad shape or no response are unknown. */
+export async function classifyDesktopSession(response: Response | null, endpoint: string): Promise<SessionCheck> {
+  if (!response) return UNKNOWN
+  if (!response.ok) {
+    await response.body?.cancel().catch(() => {})
+    return UNKNOWN
+  }
+  let value: unknown
+  try { value = await response.json() } catch { return UNKNOWN }
+  if (value === null) return SIGNED_OUT
   if (!isRecord(value) || typeof value.apiBaseUrl !== "string" || !isAllowedApiBaseUrl(value.apiBaseUrl)
     || "token" in value || typeof value.identity !== "string" || !/^[a-f0-9]{64}$/.test(value.identity)
     || !(value.orgId === null || typeof value.orgId === "string")
     || typeof value.inferenceOrigin !== "string" || value.inferenceOrigin !== new URL(endpoint).origin
     || typeof value.inferenceKey !== "string" || !/^ow_local_[a-f0-9]{64}$/.test(value.inferenceKey)) {
-    throw new Error("Invalid desktop session")
+    return UNKNOWN
   }
-  return { apiBaseUrl: normalizeBaseUrl(value.apiBaseUrl), identity: value.identity, orgId: value.orgId,
-    inferenceOrigin: value.inferenceOrigin, inferenceKey: value.inferenceKey }
+  return { kind: "session", value: { apiBaseUrl: normalizeBaseUrl(value.apiBaseUrl), identity: value.identity, orgId: value.orgId,
+    inferenceOrigin: value.inferenceOrigin, inferenceKey: value.inferenceKey } }
+}
+
+/**
+ * One local session check. With a capability it calls the loopback endpoint
+ * directly; otherwise through the process credential broker. Never throws:
+ * timeouts, aborts and network errors are unknown.
+ */
+export async function checkDesktopSession(fetcher: Fetch, endpoint: string, capability: string | undefined, signal?: AbortSignal): Promise<SessionCheck> {
+  if (!isDesktopSessionEndpoint(endpoint)) return UNKNOWN
+  try {
+    const response = capability
+      ? await fetcher(endpoint, {
+        headers: { accept: "application/json", authorization: `Bearer ${capability}` },
+        redirect: "error",
+        signal: signal ? AbortSignal.any([signal, AbortSignal.timeout(1500)]) : AbortSignal.timeout(1500),
+      })
+      : await fetchDesktopSession(fetcher, endpoint, signal)
+    return await classifyDesktopSession(response, endpoint)
+  } catch { return UNKNOWN }
 }
 
 /** Provider-only host path: never registers login methods, revokes Den sessions, or touches MCP. */
@@ -69,8 +94,6 @@ export function createDesktopProviderPlugin(deps: { fetch?: Fetch; now?: () => n
   return {
     id: "openwork",
     async setup(ctx) {
-      // The server supplies the resolved registry value, not a new environment flag.
-      if (ctx.options.liveProviderSync !== true) return
       const endpoint = ctx.options.desktopSession
       const capability = deps.capability?.()
       if (!isDesktopSessionEndpoint(endpoint)) return
@@ -102,7 +125,6 @@ export function createDesktopProviderPlugin(deps: { fetch?: Fetch; now?: () => n
       let refreshController = new AbortController()
       let providers: readonly ProviderRecord[] = []
       let applied = digest(providers)
-      let polling = false
       let running: Promise<void> | null = null
       let queued = false
       let inventory: Inventory | null = null
@@ -116,14 +138,12 @@ export function createDesktopProviderPlugin(deps: { fetch?: Fetch; now?: () => n
         const fingerprint = digest(next)
         if (fingerprint === applied) return
         await ctx.provider.reload()
-        if (providers === next) applied = fingerprint // Failed/stale reloads remain retryable.
+        if (providers === next) applied = fingerprint
       }
       const safeHeaders = (headers: Record<string, string> | undefined) => headers ? Object.fromEntries(Object.entries(headers)
         .filter(([name]) => !["authorization", "x-api-key", "api-key", "x-goog-api-key", "cookie", "host"].includes(name.toLowerCase()))) : undefined
       const records = (value: Inventory | null): readonly ProviderRecord[] => {
         if (!session || value?.gateway?.apiKey !== "ow_local_catalog") return []
-        // Cached catalog definitions stay portable/public. Only publication binds
-        // them to this engine's current loopback origin and identity-scoped key.
         const source = session
         return snapshotFrom(value, options, { type: "env", name: "openwork-desktop" }).providers.map(provider => {
           const baseURL = `${source.inferenceOrigin}/api/v1/providers/${provider.info.id}`
@@ -140,7 +160,6 @@ export function createDesktopProviderPlugin(deps: { fetch?: Fetch; now?: () => n
         refreshController = new AbortController()
         inventory = null
         queued = false
-        // Keep the session/stream: membership can return without a new token.
         void ctx.storage.remove(CACHE_KEY).catch(() => {})
         void publish([]).catch(() => {})
       }
@@ -150,8 +169,6 @@ export function createDesktopProviderPlugin(deps: { fetch?: Fetch; now?: () => n
         refreshController.abort()
         stream?.abort()
         stream = null
-        // Keep the rejected identity key so local session checks cannot reopen
-        // it. Only a changed handoff (or engine restart) can authorize it again.
         session = null
         inventory = null
         queued = false
@@ -169,13 +186,10 @@ export function createDesktopProviderPlugin(deps: { fetch?: Fetch; now?: () => n
         const ticket = inventoryRequestTicket()
         running = (async () => {
           try {
-            // Deliberately no 30s freshness shortcut: every event/reconnect is authoritative.
             const gateway = await fetchSharedGatewayInventory({ fetch: inventoryFetch(source), session: inventorySession(source), scope: "desktop", ticket, signal: refreshController.signal })
             if (!current()) return
             const next: Inventory = { version: 1, connectionKey: accountKey, apiBaseUrl: source.apiBaseUrl, fetchedAt: now(), gateway, mcp: null }
             inventory = next
-            // Public definitions + a dummy credential only. Never persist raw
-            // reusable credentials or engine-specific origin/ephemeral keys.
             const json: Json = JSON.parse(JSON.stringify(next))
             await ctx.storage.set(CACHE_KEY, json).catch(() => {})
             if (!current()) return
@@ -197,71 +211,84 @@ export function createDesktopProviderPlugin(deps: { fetch?: Fetch; now?: () => n
         })
         return running
       }
+      const applySession = async (check: SessionCheck) => {
+        if (lifetime.signal.aborted || check.kind === "unknown") return
+        const next = check.kind === "session" ? check.value : null
+        const nextKey = next ? digest({ apiBaseUrl: next.apiBaseUrl, identity: next.identity, orgId: next.orgId }) : ""
+        if (nextKey === key) {
+          if (session) session = next
+          await publish(records(inventory)).catch(() => {})
+          return
+        }
+        epoch++
+        retry.reset()
+        refreshController.abort()
+        refreshController = new AbortController()
+        stream?.abort()
+        stream = null
+        session = next
+        key = nextKey
+        inventory = null
+        await publish([]).catch(() => {})
+        if (!next) {
+          await ctx.storage.remove(CACHE_KEY).catch(() => {})
+          return
+        }
+        const cached = parseInventory(await ctx.storage.get(CACHE_KEY).catch(() => undefined))
+        if (cached?.connectionKey === key && cached.gateway?.apiKey === "ow_local_catalog" && !lifetime.signal.aborted) {
+          inventory = cached
+          await publish(records(cached)).catch(() => {})
+        }
+        if (lifetime.signal.aborted) return
+        const controller = new AbortController()
+        stream = controller
+        void subscribeSharedInventory({
+          identity: inventorySession(next),
+          unauthorized,
+          revoked,
+          fetch: inventoryFetch(next),
+          signal: AbortSignal.any([lifetime.signal, controller.signal]),
+          session: async () => {
+            await pollSession()
+            return controller.signal.aborted || !session ? null : inventorySession(session)
+          },
+          changed: () => { void refresh() },
+        })
+        void refresh()
+      }
+      let pending: SessionCheck | null = null
+      let applying: Promise<void> | null = null
+      const receive = (check: SessionCheck) => {
+        if (lifetime.signal.aborted) return
+        pending = check
+        applying ??= (async () => {
+          while (pending && !lifetime.signal.aborted) {
+            const current = pending
+            pending = null
+            await applySession(current)
+          }
+        })().catch(() => {}).finally(() => {
+          applying = null
+          if (pending) receive(pending)
+        })
+      }
+      const checkNow = joinDesktopSessionPoll(endpoint, capability, {
+        check: signal => checkDesktopSession(fetcher, endpoint, capability, signal),
+        receive,
+        intervalMs: deps.sessionIntervalMs ?? 1000,
+        signal: lifetime.signal,
+      })
       const pollSession = async () => {
-        if (polling || lifetime.signal.aborted) return
-        polling = true
-        try {
-          // This local-only check detects sign-out/account/org/token changes without polling Den inventory.
-          const next = await (capability
-            ? readDesktopSession(fetcher, endpoint, capability, lifetime.signal)
-            : fetchDesktopSession(fetcher, endpoint, lifetime.signal).then(response => parseDesktopSession(response, endpoint))).catch(() => null)
-          if (lifetime.signal.aborted) return
-          const nextKey = next ? digest({ apiBaseUrl: next.apiBaseUrl, identity: next.identity, orgId: next.orgId }) : ""
-          if (nextKey === key) {
-            if (session) session = next
-            // A failed reload is independent of the network subscription and remains retryable.
-            await publish(records(inventory)).catch(() => {})
-            return
-          }
-          epoch++
-          retry.reset()
-          refreshController.abort()
-          refreshController = new AbortController()
-          stream?.abort()
-          stream = null
-          session = next
-          key = nextKey
-          inventory = null
-          // Drop stale providers before reading cache or issuing any new-account request.
-          await publish([]).catch(() => {})
-          if (!next) {
-            await ctx.storage.remove(CACHE_KEY).catch(() => {})
-            return
-          }
-          const cached = parseInventory(await ctx.storage.get(CACHE_KEY).catch(() => undefined))
-          if (cached?.connectionKey === key && cached.gateway?.apiKey === "ow_local_catalog" && !lifetime.signal.aborted) {
-            inventory = cached
-            await publish(records(cached)).catch(() => {})
-          }
-          if (lifetime.signal.aborted) return
-          const controller = new AbortController()
-          stream = controller
-          // Re-resolve the handoff on reconnect, rather than retaining an expired token.
-          void subscribeSharedInventory({
-            identity: inventorySession(next),
-            unauthorized,
-            revoked,
-            fetch: inventoryFetch(next),
-            signal: AbortSignal.any([lifetime.signal, controller.signal]),
-            session: async () => {
-              await pollSession()
-              return controller.signal.aborted || !session ? null : inventorySession(session)
-            },
-            changed: () => { void refresh() },
-          })
-          void refresh()
-        } finally { polling = false }
+        await checkNow()
+        await applying
       }
       void pollSession()
-      const timer = setInterval(() => { void pollSession().catch(() => {}) }, deps.sessionIntervalMs ?? 1000)
-      timer.unref?.()
       return () => {
         epoch++
         retry.reset()
         lifetime.abort()
         refreshController.abort()
         stream?.abort()
-        clearInterval(timer)
       }
     },
   }

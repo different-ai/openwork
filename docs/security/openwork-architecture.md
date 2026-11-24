@@ -459,7 +459,7 @@ Each data store sits next to the service that owns it. Dashed links are optional
 | Automation results | Den MySQL | Run status, a result summary, and an encrypted validated result. |
 | Cached session data | Redis (optional) | `rediss://` (TLS) required for non-local Redis unless explicitly overridden for a trusted private network. |
 | Computer files | Daytona or Freestyle | Third-party environment per conversation; separate from the authoritative chat history but may contain conversation-derived files. |
-| Error reports and analytics | Sentry (optional, per service) and PostHog (optional desktop analytics) | Each service's reporting is configured separately. Error reports may contain sensitive text. Turning off desktop analytics does not stop all first-party usage reporting to Den. |
+| Error reports and analytics | Sentry (optional, per service) and PostHog (optional desktop analytics) | Each service's reporting is configured separately. OpenWork Enterprise desktop builds send neither. Error reports may contain sensitive text. Turning off desktop analytics does not stop all first-party usage reporting to Den. |
 | Prompts sent for inference or tools | Model providers and called services | Governed by each provider's own terms, retention and region. |
 
 ## Trust boundaries in one list

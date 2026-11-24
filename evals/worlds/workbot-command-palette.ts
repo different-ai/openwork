@@ -5,8 +5,8 @@ import { chrome } from "@openwork/hosts";
 
 /**
  * The real Workbot page (Vite, the same client people load) with synthetic Workbot API answers: a member with side
- * chats, one conversation that started two background tasks, and the command palette switched by `?palette=off`
- * (the `workbotCommandPalette` feature as `/v1/workbot/me` reports it). Den and the runner are not involved.
+ * chats and one conversation that started two background tasks. The command palette is available by default,
+ * including when older API responses omit the compatibility field. Den and the runner are not involved.
  */
 export async function workbotCommandPalette(_seed: Seed, { place }: { place: Place }) {
   const resources = new AsyncDisposableStack();
@@ -38,10 +38,9 @@ export async function workbotCommandPalette(_seed: Seed, { place }: { place: Pla
         server.middlewares.use(async (req, res, next) => {
           const url = new URL(req.url ?? "/", `http://${req.headers.host}`);
           if (!url.pathname.startsWith("/v1/workbot")) return next();
-          const referring = new URL(req.headers.referer ?? "http://fixture");
           const json = (body: unknown, status = 200) => { res.statusCode = status; res.setHeader("content-type", "application/json"); res.end(JSON.stringify(body)); };
           if (url.pathname === "/v1/workbot/me") {
-            return json({ name: "Alex Example", email: "alex@example.test", userId: "user_example", organizationId: "org_example", organizationName: "Example", enabled: true, calendar: true, canSchedule: false, sideChats: true, commandPalette: referring.searchParams.get("palette") !== "off", denUrl: "https://workspace.example.test" });
+            return json({ name: "Alex Example", email: "alex@example.test", userId: "user_example", organizationId: "org_example", organizationName: "Example", enabled: true, calendar: true, canSchedule: false, sideChats: true, denUrl: "https://workspace.example.test" });
           }
           if (url.pathname === "/v1/workbot") return json({ available: true, name: "Workbot", organizationName: "Example", status: "idle", turns: url.searchParams.has("chat") ? [] : turns, hasEarlier: false, filesEnabled: false });
           if (url.pathname === "/v1/workbot/chats") {
@@ -65,7 +64,7 @@ export async function workbotCommandPalette(_seed: Seed, { place }: { place: Pla
     const url = vite.resolvedUrls?.local[0];
     if (!url) throw new Error("Workbot fixture did not start");
     resources.defer(release);
-    const web = resources.use(await chrome({ host: place.host(), name: "workbot-command-palette", startUrl: `${url}?palette=off`, headless: true }));
+    const web = resources.use(await chrome({ host: place.host(), name: "workbot-command-palette", startUrl: url, headless: true }));
     return {
       web,
       url,

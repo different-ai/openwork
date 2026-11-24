@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { createContext, useContext, useEffect, useState, type ReactNode } from "react";
-import { ArrowLeft, Building2, ChartNoAxesCombined, Flag, FlaskConical, LayoutDashboard, ScanSearch, Server, ShieldAlert, Users } from "lucide-react";
+import { Activity, ArrowLeft, Boxes, Building2, ChartNoAxesCombined, Flag, FlaskConical, LayoutDashboard, MessageSquare, Monitor, Package, ScanSearch, Server, ShieldAlert, Users } from "lucide-react";
 import { AdminBreadcrumbs } from "./admin-breadcrumbs";
 import { AdminAccessScreen } from "./admin-access-screen";
 import { requestAdmin, withStoredBearer, type AdminResult } from "./admin-request";
@@ -17,16 +17,18 @@ const SECTIONS = [
   { label: "Organizations", href: "/admin/organizations", icon: Building2 },
   { label: "Opportunities", href: "/admin/opportunities", icon: ScanSearch },
   { label: "Sandboxes", href: "/admin/sandbox-orgs", icon: FlaskConical },
+  { label: "Features", href: "/admin/feature-usage", icon: Activity },
   { label: "Feature rollouts", href: "/admin/features", icon: Flag },
   { label: "Free Auto usage", href: "/admin/free-auto", icon: ChartNoAxesCombined },
   { label: "Security", href: "/admin/security", icon: ShieldAlert },
+  { label: "Harness feedback", href: "/admin/harness-feedback", icon: MessageSquare },
   { label: "Services", href: "/admin/services", icon: Server },
+  { label: "Managed deployments", href: "/admin/managed-deployments", icon: Package },
+  { label: "Runner fleet", href: "/admin/runner-fleet", icon: Boxes },
+  { label: "Computer fleet", href: "/admin/computer-fleet", icon: Monitor },
 ];
 
 export function AdminShell({ hasSessionCookie, children }: { hasSessionCookie: boolean; children: ReactNode }) {
-  // Check access once per admin visit. Keying the gate by pathname re-ran the
-  // check and remounted every page on each click; each data endpoint still
-  // authorizes itself and pages show the access screen when it fails.
   return (
     <SessionCookieContext.Provider value={hasSessionCookie}>
       <AdminAccessGate hasSessionCookie={hasSessionCookie}>
@@ -51,8 +53,6 @@ function AdminAccessGate({ hasSessionCookie, children }: { hasSessionCookie: boo
       setState({ access: "error", message: "Could not check admin access. Retry to check your access." });
     }, 12_000);
     setState({ access: "checking" });
-    // A cookie/token is only a hint. Confirm the platform allowlist before
-    // mounting navigation or any page. Each data endpoint still authorizes itself.
     void requestAdmin<true>("/v1/admin/features", payload =>
       payload && typeof payload === "object" && "features" in payload && Array.isArray(payload.features) ? true : null,
     controller.signal).then(result => {

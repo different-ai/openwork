@@ -13,12 +13,9 @@ export const OrgDefaultModelTable = mysqlTable(
   {
     id: denTypeIdColumn("orgDefaultModel", "id").notNull().primaryKey(),
     organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
-    /** The team it applies to, or null for everyone. */
     teamId: denTypeIdColumn("team", "team_id"),
     scopeKey: varchar("scope_key", { length: 64 }).notNull(),
-    /** `openwork`, an `lpr_…` organization provider or an `ipr_…` AI Gateway provider. */
     providerId: varchar("provider_id", { length: 128 }).notNull(),
-    /** The model id; for the AI Gateway, the catalog model id rather than a member's alias. */
     modelId: varchar("model_id", { length: 255 }).notNull(),
     updatedByOrgMemberId: denTypeIdColumn("member", "updated_by_org_member_id"),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),

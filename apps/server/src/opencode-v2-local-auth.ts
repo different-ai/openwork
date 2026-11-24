@@ -1,23 +1,15 @@
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
-import { opencodeDataDirs } from "@openwork/paths";
+import { dirname, join } from "node:path";
+import { opencodeDataDirs, resolveGlobalOpencodeConfigPath } from "@openwork/paths";
+import { readJsoncFile } from "./jsonc.js";
 import { ORGANIZATION_PROVIDER_ID } from "./organization-provider-gate.js";
 import { loopbackFetch } from "./server-fetch.js";
 import type { ServerConfig } from "./types.js";
 
-/** Where the running OpenCode v1 engine answers, with its Basic credentials. */
 type EngineV1Connection = Pick<ServerConfig, "opencodeBaseUrl" | "opencodeUsername" | "opencodePassword">;
 
 const record = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object" && !Array.isArray(value);
 
-/**
- * Why a provider connected on this computer is not on OpenCode v2:
- * - `policy`: the organization allows only its own providers.
- * - `oauth`: a sign-in (such as ChatGPT) that needs the engine's own sign-in flow.
- * - `unsupported`: no built-in v2 adapter, or an endpoint the mirror does not trust.
- * - `metadata`: OpenCode v1 did not describe it in a shape the mirror can translate.
- * - `credentials`: its declared credential is missing.
- */
 export type EngineV2SkippedProviderReason = "policy" | "oauth" | "unsupported" | "metadata" | "credentials";
 
 export interface EngineV2SkippedProvider {
@@ -26,13 +18,10 @@ export interface EngineV2SkippedProvider {
 }
 
 export interface LocalProviderAuth {
-  /** API keys by provider id. */
   apiKeys: Map<string, string>;
-  /** Providers connected with OAuth or another sign-in instead of an API key. */
   signIns: Set<string>;
 }
 
-/** Only the active v1 profile, never another installation's fallback directory. */
 export async function readLocalProviderAuth(path = join(opencodeDataDirs()[0], "auth.json")): Promise<LocalProviderAuth> {
   let value: unknown;
   try { value = JSON.parse(await readFile(path, "utf8")); } catch (error) {
@@ -52,7 +41,24 @@ export async function readLocalProviderAuth(path = join(opencodeDataDirs()[0], "
   return { apiKeys, signIns };
 }
 
-/** OAuth credentials need their native authorization flow and are not API keys. */
+export async function readUserConfigProviders(path = resolveGlobalOpencodeConfigPath()): Promise<{
+  directory: string;
+  providers: Record<string, Record<string, unknown>>;
+}> {
+  const directory = dirname(path);
+  let value: unknown;
+  try {
+    value = (await readJsoncFile<unknown>(path, {}, { allowInvalid: true, regularFileOnly: true })).data;
+  } catch {
+    return { directory, providers: {} };
+  }
+  const providers = record(value) && record(value.provider) ? value.provider : {};
+  return {
+    directory,
+    providers: Object.fromEntries(Object.entries(providers).flatMap(([id, provider]) => record(provider) ? [[id, provider]] : [])),
+  };
+}
+
 export async function readLocalProviderApiKeys(path?: string): Promise<Map<string, string>> {
   return (await readLocalProviderAuth(path)).apiKeys;
 }
@@ -63,7 +69,6 @@ function enabledKinds(value: unknown): string[] | undefined {
   return record(value) ? Object.entries(value).flatMap(([kind, enabled]) => enabled === true ? [kind] : []) : undefined;
 }
 
-/** A v1 Provider.Info model in the models.dev field names the v2 config renderer reads. */
 function modelsDevModel(id: string, model: Record<string, unknown>, api: Record<string, unknown>): Record<string, unknown> {
   const capabilities = record(model.capabilities) ? model.capabilities : {};
   const input = enabledKinds(capabilities.input);
@@ -85,18 +90,6 @@ function modelsDevModel(id: string, model: Record<string, unknown>, api: Record<
   };
 }
 
-/**
- * Translate a GET /provider entry into the models.dev shape the v2 mirror
- * maps. OpenCode v1 1.18+ answers with Provider.Info: no top-level `npm` or
- * `api`; each model carries `api: { id, url, npm }` and `capabilities`. Older
- * engines answer in the models.dev shape, which is kept.
- *
- * Catalog responses are never a source of credentials or destinations: the
- * provider's `key`, `options` (which can hold `apiKey`, `baseURL`, a sign-in
- * placeholder or engine-specific headers) are dropped. The key comes from
- * auth.json and the endpoint from `api`, which the mapper accepts only on the
- * adapter's own origin.
- */
 export function normalizeLocalProviderDefinition(value: unknown): Normalized {
   if (!record(value) || !record(value.models)) return { reason: "metadata" };
   const base = {
@@ -107,8 +100,6 @@ export function normalizeLocalProviderDefinition(value: unknown): Normalized {
   if (typeof value.npm === "string") {
     return { definition: { ...base, npm: value.npm, ...(typeof value.api === "string" ? { api: value.api } : {}), models: value.models } };
   }
-  // Every model must name the same package and endpoint, otherwise one
-  // provider entry cannot describe it (for example a gateway mixing adapters).
   let shared: { npm: string; url: string | undefined } | undefined;
   const models: Record<string, unknown> = {};
   for (const [id, model] of Object.entries(value.models)) {
@@ -122,60 +113,100 @@ export function normalizeLocalProviderDefinition(value: unknown): Normalized {
   return { definition: { ...base, npm: shared.npm, ...(shared.url ? { api: shared.url } : {}), models } };
 }
 
-/**
- * One provider connected on this computer as the v2 mirror sees it: ready to
- * mirror with its definition and key, or skipped with a reason. Row-level
- * actions on a provider added on this computer start from the same answer.
- */
+export interface EngineV2NativeProvider {
+  name: string;
+  env: string[];
+}
+
+export type EngineV2NativeProviders = ReadonlyMap<string, EngineV2NativeProvider>;
+
+export function parseEngineV2NativeProviders(value: unknown): Map<string, EngineV2NativeProvider> {
+  const native = new Map<string, EngineV2NativeProvider>();
+  for (const integration of record(value) && Array.isArray(value.data) ? value.data : []) {
+    if (!record(integration) || typeof integration.id !== "string" || !Array.isArray(integration.methods)) continue;
+    const methods = integration.methods.filter(record);
+    if (!methods.some(method => typeof method.type === "string" && method.type !== "key")) continue;
+    native.set(integration.id, {
+      name: typeof integration.name === "string" && integration.name.trim() ? integration.name : integration.id,
+      env: methods.flatMap(method => method.type === "env" && Array.isArray(method.names)
+        ? method.names.filter((name): name is string => typeof name === "string" && name.trim() !== "") : []),
+    });
+  }
+  return native;
+}
+
+const NEEDS_MORE_THAN_A_KEY = /^(?:azure|amazon-bedrock|google-vertex|cloudflare)/;
+
+export function environmentProviderKey(id: string, provider: EngineV2NativeProvider, environment: NodeJS.ProcessEnv): string | undefined {
+  if (NEEDS_MORE_THAN_A_KEY.test(id)) return undefined;
+  if (!provider.env.length || !provider.env.every(name => /^[A-Z0-9_]+_API_KEY$/.test(name))) return undefined;
+  for (const name of provider.env) {
+    const value = environment[name]?.trim();
+    if (value) return value;
+  }
+  return undefined;
+}
+
 export type LocalProvider =
   | { id: string; status: "ready"; definition: Record<string, unknown>; apiKey: string }
+  | { id: string; status: "native"; name: string; apiKey: string }
   | { id: string; status: "skipped"; reason: EngineV2SkippedProviderReason };
 
 export interface LocalProviderOptions {
-  /** Translate v1 Provider.Info and report every provider that is skipped. Off keeps the older pass-through. */
-  normalize: boolean;
-  /** The organization's provider rule; providers it refuses are never read from the engine or mirrored. */
   allows?: ((providerId: string) => boolean) | null;
+  native?: EngineV2NativeProviders;
+  environment?: NodeJS.ProcessEnv;
+  onCatalogError?: (error: Error) => void;
 }
 
-/**
- * Providers connected in OpenCode v1 (auth.json) that have no OpenWork
- * runtime definition, resolved with trusted built-in metadata from the
- * running v1 engine. Organization providers are mirrored from their own
- * definitions and are not part of this list.
- */
 export async function resolveLocalProviders(
   config: EngineV1Connection,
   auth: LocalProviderAuth,
   configured: Record<string, unknown>,
-  options: LocalProviderOptions,
+  options: LocalProviderOptions = {},
 ): Promise<LocalProvider[]> {
   const local = (id: string) => !(id in configured) && !ORGANIZATION_PROVIDER_ID.test(id);
-  const ids = [...new Set([...auth.apiKeys.keys(), ...auth.signIns])].filter(local).sort((left, right) => left.localeCompare(right));
+  const native = options.native ?? new Map<string, EngineV2NativeProvider>();
+  const environmentKeys = new Map([...native].flatMap(([id, provider]) => {
+    if (auth.apiKeys.has(id) || auth.signIns.has(id) || !local(id)) return [];
+    if (options.allows && !options.allows(id)) return [];
+    const key = options.environment ? environmentProviderKey(id, provider, options.environment) : undefined;
+    return key ? [[id, key] as const] : [];
+  }));
+  const ids = [...new Set([...auth.apiKeys.keys(), ...auth.signIns, ...environmentKeys.keys()])].filter(local)
+    .sort((left, right) => left.localeCompare(right));
   const resolved: LocalProvider[] = [];
   const wanted: string[] = [];
   for (const id of ids) {
+    const apiKey = auth.apiKeys.get(id) ?? environmentKeys.get(id);
+    const catalog = native.get(id);
     if (options.allows && !options.allows(id)) resolved.push({ id, status: "skipped", reason: "policy" });
-    else if (!auth.apiKeys.has(id)) {
-      if (options.normalize) resolved.push({ id, status: "skipped", reason: "oauth" });
+    else if (apiKey === undefined) {
+      resolved.push({ id, status: "skipped", reason: "oauth" });
+    } else if (catalog) {
+      resolved.push({ id, status: "native", name: catalog.name, apiKey });
     } else wanted.push(id);
   }
   if (!wanted.length || !config.opencodeBaseUrl) return resolved;
   const url = new URL("/provider", config.opencodeBaseUrl);
-  const response = await loopbackFetch(url.toString(), { headers: {
-    Authorization: `Basic ${Buffer.from(`${config.opencodeUsername}:${config.opencodePassword}`).toString("base64")}`,
-  }, signal: AbortSignal.timeout(10_000) });
-  if (!response.ok) throw new Error("Could not read locally connected provider metadata");
-  const value: unknown = await response.json();
+  let value: unknown;
+  try {
+    const response = await loopbackFetch(url.toString(), { headers: {
+      Authorization: `Basic ${Buffer.from(`${config.opencodeUsername}:${config.opencodePassword}`).toString("base64")}`,
+    }, signal: AbortSignal.timeout(10_000) });
+    if (!response.ok) throw new Error("Could not read locally connected provider metadata");
+    value = await response.json();
+  } catch (error) {
+    if (!options.onCatalogError) throw error;
+    options.onCatalogError(error instanceof Error ? error : new Error("Could not read locally connected provider metadata"));
+    return [...resolved, ...wanted.map((id): LocalProvider => ({ id, status: "skipped", reason: "metadata" }))]
+      .sort((left, right) => left.id.localeCompare(right.id));
+  }
   const catalog = new Map((record(value) && Array.isArray(value.all) ? value.all : []).flatMap(provider =>
     record(provider) && typeof provider.id === "string" ? [[provider.id, provider] as const] : []));
   for (const id of wanted) {
     const apiKey = auth.apiKeys.get(id) ?? "";
     const entry = catalog.get(id);
-    if (!options.normalize) {
-      if (entry) resolved.push({ id, status: "ready", definition: entry, apiKey });
-      continue;
-    }
     const normalized = normalizeLocalProviderDefinition(entry);
     resolved.push("definition" in normalized
       ? { id, status: "ready", definition: normalized.definition, apiKey }
@@ -184,16 +215,16 @@ export async function resolveLocalProviders(
   return resolved;
 }
 
-/** The mirror's view: definitions to map, and what will not reach the engine. */
 export async function localProviderDefinitions(
   config: EngineV1Connection,
   auth: LocalProviderAuth,
   configured: Record<string, unknown>,
-  options: LocalProviderOptions,
-): Promise<{ providers: Record<string, unknown>; skipped: EngineV2SkippedProvider[] }> {
+  options: LocalProviderOptions = {},
+): Promise<{ providers: Record<string, unknown>; native: Array<{ id: string; name: string; apiKey: string }>; skipped: EngineV2SkippedProvider[] }> {
   const resolved = await resolveLocalProviders(config, auth, configured, options);
   return {
     providers: Object.fromEntries(resolved.flatMap(provider => provider.status === "ready" ? [[provider.id, provider.definition]] : [])),
+    native: resolved.flatMap(provider => provider.status === "native" ? [{ id: provider.id, name: provider.name, apiKey: provider.apiKey }] : []),
     skipped: resolved.flatMap(provider => provider.status === "skipped" ? [{ id: provider.id, reason: provider.reason }] : []),
   };
 }

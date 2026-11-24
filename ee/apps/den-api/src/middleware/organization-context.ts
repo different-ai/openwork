@@ -3,6 +3,7 @@ import type { MiddlewareHandler } from "hono"
 import { beginAuditRequest } from "../audit/request-capture.js"
 import { getApiKeyScopedOrganizationId, isScopedApiKeyForOrganization } from "../api-keys.js"
 import { getOrganizationContextForUser, resolveUserOrganizations, type OrganizationContext } from "../orgs.js"
+import { findSsoAccessBlock, ssoRequiredErrorBody } from "../organization-sso-access.js"
 import type { AuthContextVariables } from "../session.js"
 import { getRequestScopedOrganizationId, hydrateSessionActiveOrganization, shouldHydrateSessionActiveOrganization, type UserOrganizationsContext } from "./user-organizations.js"
 
@@ -21,8 +22,15 @@ export const resolveOrganizationContextMiddleware: MiddlewareHandler<{
   const apiKey = c.get("apiKey")
   const apiKeyScopedOrganizationId = getApiKeyScopedOrganizationId(apiKey)
   const headerOrganizationId = getRequestScopedOrganizationId(c.req.raw.headers)
-  const scopedOrganizationId = apiKeyScopedOrganizationId ?? headerOrganizationId
   const session = c.get("session")
+  const sessionScopedOrganizationId = session?.organizationScopeId ?? null
+  if (sessionScopedOrganizationId && headerOrganizationId && headerOrganizationId !== sessionScopedOrganizationId) {
+    return c.json({
+      error: "forbidden",
+      message: "This sign-in works in one organization only.",
+    }, 403)
+  }
+  const scopedOrganizationId = apiKeyScopedOrganizationId ?? sessionScopedOrganizationId ?? headerOrganizationId
   const userId = normalizeDenTypeId("user", user.id)
 
   let organizationId = scopedOrganizationId ?? c.get("activeOrganizationId") ?? null
@@ -96,6 +104,14 @@ export const resolveOrganizationContextMiddleware: MiddlewareHandler<{
     return c.json({ error: "organization_not_found" }, 404) as never
   }
 
+  const signInSessionId = c.get("signInSessionId")
+  if (signInSessionId) {
+    const ssoBlock = await findSsoAccessBlock({ sessionId: signInSessionId, organizationId: normalizedOrganizationId })
+    if (ssoBlock) {
+      return c.json(ssoRequiredErrorBody(ssoBlock), 403) as never
+    }
+  }
+
   if (apiKey && !isScopedApiKeyForOrganization({ apiKey, organizationId: normalizedOrganizationId })) {
     return c.json({
       error: "forbidden",
@@ -113,7 +129,6 @@ export const resolveOrganizationContextMiddleware: MiddlewareHandler<{
   c.set("organizationContext", context)
   c.set("activeOrganizationId", context.organization.id)
   c.set("activeOrganizationSlug", context.organization.slug)
-  // Durable audit intent (when captured) before the handler; 503 if it cannot be recorded.
   const auditBlocked = await beginAuditRequest(c)
   if (auditBlocked) {
     return auditBlocked as never

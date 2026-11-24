@@ -102,7 +102,6 @@ export function mergeHeadlessServerConfig(
       const parsed: unknown = JSON.parse(existingRaw);
       if (isRecord(parsed)) existing = parsed;
     } catch {
-      // Corrupt config: fall back to a minimal isolated document.
     }
   }
   const existingRoots = Array.isArray(existing.authorizedRoots)
@@ -214,4 +213,68 @@ export function buildHeadlessRuntimeManifest(input: {
     ...(input.supervisorPid === undefined ? {} : { supervisorPid: input.supervisorPid }),
     ...(input.world ? { world: input.world } : {}),
   };
+}
+
+const HEALTH_REQUEST_LINE = /^GET \/health \d{3}\b/;
+const ANSI_ESCAPE = /\x1b\[[0-9;]*m/g;
+const LOG_TAIL_LINES = 12;
+const LOG_LINE_CHARS = 300;
+
+export type HeadlessHealthTimeoutPart = {
+  probe: string;
+  process: string;
+  logPath: string;
+  log: string | null;
+};
+
+function redactSecrets(line: string, secrets: string[]): string {
+  return secrets.filter(Boolean).reduce((text, secret) => text.split(secret).join("[redacted]"), line);
+}
+
+function collapseRepeats(lines: string[]): Array<{ line: string; count: number }> {
+  const runs: Array<{ line: string; count: number }> = [];
+  for (const line of lines) {
+    const last = runs.at(-1);
+    if (last?.line === line) last.count += 1;
+    else runs.push({ line, count: 1 });
+  }
+  return runs;
+}
+
+function logTail(part: HeadlessHealthTimeoutPart, secrets: string[]): string[] {
+  if (part.log === null) return [`--- ${part.logPath}: unreadable ---`];
+  const lines = part.log.replace(ANSI_ESCAPE, "").split("\n").map((line) => line.trimEnd()).filter(Boolean);
+  const kept = lines.filter((line) => !HEALTH_REQUEST_LINE.test(line));
+  const omitted = lines.length - kept.length;
+  const tail = collapseRepeats(kept).slice(-LOG_TAIL_LINES).map(({ line, count }) => {
+    const redacted = redactSecrets(line, secrets);
+    const shortened = redacted.length > LOG_LINE_CHARS ? `${redacted.slice(0, LOG_LINE_CHARS)}…` : redacted;
+    return count > 1 ? `${shortened} (${count} times)` : shortened;
+  });
+  return [
+    `--- end of ${part.logPath}${omitted > 0 ? ` (${omitted} /health requests left out)` : ""} ---`,
+    ...tail,
+  ];
+}
+
+/**
+ * Explains a health timeout on its own: which probe failed, whether each
+ * process is still alive, host load and memory, and short log tails. CI only
+ * keeps this error, not the log files, so the cause has to be in the message.
+ */
+export function formatHeadlessHealthTimeout(input: {
+  timeoutMs: number;
+  server: HeadlessHealthTimeoutPart;
+  web: HeadlessHealthTimeoutPart;
+  host: string;
+  secrets: string[];
+}): string {
+  return [
+    `Headless web did not become healthy within ${Math.round(input.timeoutMs / 1_000)} s.`,
+    `  server /health: ${input.server.probe}; process ${input.server.process}`,
+    `  web: ${input.web.probe}; process ${input.web.process}`,
+    `  host: ${input.host}`,
+    ...logTail(input.server, input.secrets),
+    ...logTail(input.web, input.secrets),
+  ].join("\n");
 }

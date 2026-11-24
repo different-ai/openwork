@@ -130,8 +130,6 @@ function matchEntry<T>(query: string, entry: ComposerSearchEntry<T>): ComposerSe
   }
   const fuzzy = fuzzysort.single(query, label);
   if (fuzzy) {
-    // A query that covers most of a short label ("hbspt" in "HubSpot") beats a
-    // tighter run inside a long one ("Hubspot deal summary").
     const coverage = query.replace(/\s/g, "").length / Math.max(1, label.replace(/\s/g, "").length);
     return {
       entry,

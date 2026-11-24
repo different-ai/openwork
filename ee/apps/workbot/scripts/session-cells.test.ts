@@ -81,14 +81,14 @@ function fakeRunner(options: { split?: number } = {}) {
   return { calls, fetch, sessions, state }
 }
 
-function workbotWith(runner: ReturnType<typeof fakeRunner>, compat: { sessionCells?: boolean; indexCapability?: string } = {}) {
+function workbotWith(runner: ReturnType<typeof fakeRunner>, compat: { sessionCells?: boolean; indexCapability?: string; sandboxGateway?: boolean; browserRecovery?: boolean } = {}) {
   const client = createHeadlessRunnerClient({
     config: { url: "http://runner.test", token: "x".repeat(32), owner },
     fetch: runner.fetch,
     mintToken: async () => ({ token: "turn-token", ...(compat.indexCapability ? { indexCapability: compat.indexCapability } : {}) }),
     maxTokenTtlMs: 3_600_000,
   })
-  return createWorkbot({ client, canSchedule: async () => false, ...(compat.sessionCells ? { sessionCells: true } : {}) })
+  return createWorkbot({ client, canSchedule: async () => false, ...(compat.sessionCells ? { sessionCells: true } : {}), ...(compat.sandboxGateway !== undefined ? { sandboxGateway: compat.sandboxGateway } : {}), ...(compat.browserRecovery !== undefined ? { browserRecovery: compat.browserRecovery } : {}) })
 }
 
 const puts = (calls: Call[]) => calls.filter((call) => call.method === "PUT")
@@ -106,6 +106,47 @@ test("Den protocol compatibility: missing sessionCells from an older Den default
   const base = { user: { id: "u", name: null, email: "a@example.test" }, organization: { id: "o", name: "O", brandAppName: null }, memberId: "m", enabled: true, canSchedule: false }
   assert.equal(denSessionSchema.parse(base).sessionCells, false)
   assert.equal(denSessionSchema.parse({ ...base, sessionCells: true }).sessionCells, true)
+})
+
+test("Den's sandbox gateway flag reaches every chat's runner settings, and older Dens leave it out", async () => {
+  const base = { user: { id: "u", name: null, email: "a@example.test" }, organization: { id: "o", name: "O", brandAppName: null }, memberId: "m", enabled: true, canSchedule: false }
+  assert.equal(denSessionSchema.parse(base).sandboxGateway, false)
+  const runner = fakeRunner()
+  await workbotWith(runner, { sandboxGateway: true }).send(actor, { id: "message_0001", text: "Side", chat: SIDE })
+  assert.ok(puts(runner.calls).length >= 2, "main and side chat")
+  for (const call of puts(runner.calls)) assert.equal(call.body?.sandboxGateway, true)
+  restart()
+  const older = fakeRunner()
+  await workbotWith(older).send(actor, { id: "message_0001", text: "Hello" })
+  for (const call of puts(older.calls)) assert.equal(call.body?.sandboxGateway, undefined)
+})
+
+test("a Den that still sends a step limit is read without it, and no chat's runner settings carry one", async () => {
+  const base = { user: { id: "u", name: null, email: "a@example.test" }, organization: { id: "o", name: "O", brandAppName: null }, memberId: "m", enabled: true, canSchedule: false }
+  for (const maxSteps of [null, 0, 250]) assert.equal("maxSteps" in denSessionSchema.parse({ ...base, maxSteps }), false, String(maxSteps))
+  const runner = fakeRunner()
+  restart()
+  await workbotWith(runner).send(actor, { id: "message_0001", text: "Side", chat: SIDE })
+  const updates = puts(runner.calls)
+  assert.ok(updates.length >= 2, "main and side chat")
+  for (const call of updates) assert.equal(call.body !== undefined && "maxSteps" in call.body, false)
+})
+
+test("Den browser recovery defaults off and trusted Workbot settings update both main and side chats", async () => {
+  const base = { user: { id: "u", name: null, email: "a@example.test" }, organization: { id: "o", name: "O", brandAppName: null }, memberId: "m", enabled: true, canSchedule: false }
+  assert.equal(denSessionSchema.parse(base).browserRecovery, false)
+  assert.equal(denSessionSchema.parse({ ...base, browserRecovery: true }).browserRecovery, true)
+  const runner = fakeRunner()
+  for (const browserRecovery of [undefined, true, false]) {
+    runner.calls.length = 0
+    const workbot = workbotWith(runner, { browserRecovery })
+    await workbot.ensureComputer(actor)
+    await workbot.ensureComputer(actor, SIDE)
+    const updates = puts(runner.calls)
+    assert.ok(updates.some(call => call.path.endsWith(legacyMain)))
+    assert.ok(updates.some(call => call.path.endsWith(workbotSideChatSessionId(actor.organizationId, actor.memberId, SIDE))))
+    assert.ok(updates.every(call => call.body?.browserRecovery === (browserRecovery === true)), "explicit off clears a previous rollout on every chat")
+  }
 })
 
 test("older Den, new person: chats are created exactly as before (legacy ids, memoryOf, no split, no index capability)", async () => {
@@ -266,4 +307,32 @@ test("an index capability from Den goes to the runner in the turn's credentials"
   assert.ok(isRecord(turn?.body?.credentials))
   assert.equal(turn.body.credentials.indexCapability, "hic1.payload.mac")
   assert.equal(turn.body.credentials.mcpToken, "turn-token")
+})
+
+test("opening the page: warm finds the chat ahead of its read, which then reads the conversation and its files side by side", async () => {
+  const runner = fakeRunner()
+  let inFlight = 0
+  let most = 0
+  const slow: typeof runner.fetch = async (input, init) => {
+    most = Math.max(most, ++inFlight)
+    try {
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return await runner.fetch(input, init)
+    } finally {
+      inFlight--
+    }
+  }
+  const workbot = workbotWith({ ...runner, fetch: slow }, { sessionCells: true })
+  await workbot.send(actor, { id: "message_0001", text: "Hello" })
+  restart()
+  const before = lists(runner.calls).length
+  workbot.warm(actor)
+  await new Promise((resolve) => setTimeout(resolve, 80))
+  const listed = lists(runner.calls).length
+  assert.equal(listed, before + 1, "warm listed the person's chats")
+  most = 0
+  const thread = await workbot.readThread(actor)
+  assert.match(texts(thread), /Answer to Hello/)
+  assert.equal(lists(runner.calls).length, listed, "the read reuses what warm found")
+  assert.equal(most, 2, "the conversation and the files check are read side by side")
 })

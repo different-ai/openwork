@@ -3,11 +3,6 @@ import { MemberTable, OrganizationTable, TeamMemberTable, TeamTable } from "@ope
 import { db } from "./db.js"
 import { cache } from "./cache.js"
 
-/**
- * Cache the team join, never the revision or member-liveness check. Each hit is
- * bound to the revision committed with team changes, so even Redis rollback
- * cannot restore revoked access. Reads inside mutation transactions stay raw.
- */
 export function listTeamsForMember(member: Parameters<typeof loadMemberTeams>[0]) {
   return cache.org.memberTeams({
     ...member,

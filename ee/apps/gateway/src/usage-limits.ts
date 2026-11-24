@@ -19,9 +19,7 @@ export type GatewayUsagePreflight = {
   upstreamOrigin: string
   upstreamPath: string
   deferred: boolean
-  /** The selected model row carries its own price (synced LiteLLM models). */
   priced?: boolean
-  /** The organization's Gateway provider row, for per-provider limits. */
   inferenceProviderId?: string
 }
 
@@ -48,7 +46,6 @@ export type CheckGatewayUsage = (
   },
 ) => Promise<Response | null>
 
-// The kill switch must take effect without a deploy, so the flag is only cached briefly.
 const FEATURE_CACHE_MS = 10_000
 const providerLimitsCache = new Map<string, { enabled: boolean; expiresAt: number }>()
 
@@ -83,7 +80,6 @@ export const checkGatewayUsage: CheckGatewayUsage = async (input) => {
       try {
         providerLimits = await providerLimitsEnabled(db, input.organizationId)
       } catch (error) {
-        // Unknown flag state falls back to default limits, which stay enforced.
         console.warn("[gateway-usage]", { stage: "provider_limits_flag", code: safeUsageDatabaseCode(error) })
       }
     }

@@ -1,0 +1,21 @@
+id: workbot_in_sample_slack
+title: "Show Workbot in sample Slack"
+surface: slack
+label: SEEDED
+status: draft
+requires: [sample_slack_ready]
+do:
+  - {type: manual, instruction: "Use the isolated rehearsal Slack channel to ask Workbot for the fixture forecast."}
+  - {type: show, seconds: 5}
+say: "This uses a sample channel, not a customer Slack workspace."
+paste:
+  slack-workbot-question: In this isolated fictional thread, summarize the committed forecast from sample records only. Do not read outside this fixture or post elsewhere.
+see: "A reply scoped to the test thread."
+checks:
+  - {"type": "workbot_reply_received", "channel": "sample-finance"}
+reset: []
+fallback: Skip until verified on the rehearsal desktop; make no live claim.
+expect_seconds: 45
+questions:
+  - {question: Is this part of the verified live sequence?, answer: No. This is a rehearsal placeholder until its expected result is verified.}
+avoid: ["Never post to an outside or production workspace."]

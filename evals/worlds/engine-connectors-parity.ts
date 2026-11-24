@@ -75,9 +75,10 @@ export async function engineConnectorsParity(seed: Seed, context: { place: Place
       await base.prepareTurn(prompt, "The report was not returned", steps, "last-tool-text");
     },
     async connectHealth(repair = false) {
+      const { provider, model } = base.bootstrapModel;
       return repair
-        ? base.request(`/workspace/${workspace}/mcp/openwork-cloud/engine-refresh`, "POST", { provider: "opencode", model: "big-pickle" })
-        : base.request(`/workspace/${workspace}/mcp/openwork-cloud/health?provider=opencode&model=big-pickle`);
+        ? base.request(`/workspace/${workspace}/mcp/openwork-cloud/engine-refresh`, "POST", { provider, model })
+        : base.request(`/workspace/${workspace}/mcp/openwork-cloud/health?${new URLSearchParams({ provider, model })}`);
     },
     async prepareReport(prompt: string, failed = false) {
       const search = { query: failed ? "unavailable_violet_status" : "current_amber_report", type: "mcp", limit: 1 };

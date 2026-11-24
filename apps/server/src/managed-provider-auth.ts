@@ -9,21 +9,6 @@ import type { ServerConfig } from "./types.js";
 import { readOpenworkWorkspaceConfig, writeOpenworkWorkspaceConfig } from "./openwork-workspace-config-store.js";
 import { findManagedEngineWorkspace } from "./workspaces.js";
 
-/**
- * Deliver server-managed provider credentials to the engine.
- *
- * Cloud provider materialization writes two things: the provider entry into the
- * engine-global runtime config (which only *names* its credential env vars via
- * `env: [...]`), and the credential value into this server's env store. Nothing
- * bridged the two: the engine process is spawned with a fixed env allowlist and
- * never receives store values, so every run failed with "API key is missing"
- * while the provider still appeared in the picker.
- *
- * The desktop app has always delivered credentials by calling the engine's auth
- * API directly. This module does the same thing server-side, so cloud
- * credentials never need to reach a browser.
- */
-
 type ManagedProviderAuthLogger = {
   warn: (message: string, metadata?: Record<string, unknown>) => void;
   error: (message: string, metadata?: Record<string, unknown>) => void;
@@ -31,12 +16,6 @@ type ManagedProviderAuthLogger = {
 
 type EnvReader = { list: () => Promise<Array<{ key: string; value: string }>> };
 
-/**
- * A pool standby that is healthy but not yet primary. Seeding it before the
- * flip means the new generation never serves a request without credentials,
- * and the next primary-scoped sync finds the same applied fingerprints
- * instead of re-delivering.
- */
 export type ManagedProviderAuthStandbyTarget = {
   generationId: string;
   baseUrl: string;
@@ -49,19 +28,12 @@ export type ManagedProviderAuthInput = {
   env: EnvReader;
   fetchImpl?: typeof globalThis.fetch;
   logger?: ManagedProviderAuthLogger;
-  /** Deliver to this standby instead of the current primary. */
   target?: ManagedProviderAuthStandbyTarget;
-  /** Previously materialized cloud rows recovered before their runtime removal. */
   retiredProviderIds?: string[];
 };
 
 export type ManagedProviderAuthResult = {
   delivered: string[];
-  /**
-   * Delivered providers whose credential value differs from the last value
-   * this process delivered anywhere. Re-seeding a replaced engine with the
-   * same key is delivered but not rotated.
-   */
   rotated: string[];
   unchanged: string[];
   removed: string[];
@@ -73,7 +45,6 @@ type ManagedProviderAuthState = {
   epoch: number;
   appliedTargetScope: string | null;
   deliveredFingerprints: Map<string, string>;
-  /** Survives target changes: distinguishes rotation from re-seeding a new engine. */
   lastDeliveredValueFingerprints: Map<string, string>;
   ownedProviderIdsByScope: Map<string, Set<string>>;
   tail: Promise<void>;
@@ -87,26 +58,11 @@ type ManagedProviderAuthTarget = {
   isCurrent: () => boolean;
 };
 
-/**
- * Applied state belongs to one server config and one exact engine target. A
- * managed target includes the pool generation id, so even a replacement that
- * reuses a port starts with no applied-state assumptions. The tail serializes
- * competing startup, configuration, and env-store reconciliation requests.
- * Removal ownership survives managed generations but never crosses attached
- * workspace endpoints.
- */
 const stateByConfig = new WeakMap<ServerConfig, ManagedProviderAuthState>();
 let cacheEpoch = 0;
 
 const fingerprint = (value: string) => createHash("sha256").update(value).digest("hex");
 
-/**
- * Budget for one engine auth PUT/DELETE. The engine answers these on the
- * loopback in milliseconds; a request that hangs (instance rebuild wedged,
- * half-open socket) must surface as a failed delivery so the caller can keep
- * the reload owed and retry, instead of stalling the sync queue or a standby
- * flip forever.
- */
 function authRequestTimeoutMs(): number {
   const raw = Number(process.env.OPENWORK_PROVIDER_AUTH_TIMEOUT_MS ?? "");
   return Number.isFinite(raw) && raw > 0 ? raw : 10_000;
@@ -152,13 +108,8 @@ function resolveManagedProviderAuthTarget(
   config: ServerConfig,
   standby?: ManagedProviderAuthStandbyTarget,
 ): ManagedProviderAuthTarget | null {
-  // The managed engine is one process for every workspace and runs before
-  // the first one exists, so its credentials are keyed by engine generation.
-  // Only an attached engine (no pool) is reached through a workspace.
   const pool = enginePoolForConfig(config);
   if (standby) {
-    // Same scope shape as the primary branch below, so the flip that promotes
-    // this generation leaves the applied fingerprints valid.
     const baseUrl = normalizeBaseUrl(standby.baseUrl);
     if (!pool || !baseUrl) return null;
     const authHeader = basicAuthHeader(standby.username, standby.password);
@@ -217,11 +168,6 @@ function readEnvNames(entry: Record<string, unknown>): string[] {
 }
 
 
-/**
- * Forget what we believe the engine holds. Call this when the engine process is
- * replaced: opencode persists auth outside the process, but a fresh engine may
- * have been started against a different store, and re-delivery is cheap.
- */
 export function resetManagedProviderAuthCache(): void {
   cacheEpoch += 1;
 }
@@ -335,7 +281,6 @@ async function reconcileManagedProviderAuth(input: ManagedProviderAuthInput): Pr
     }
   }
 
-  // Delivery provenance survives restart and stays bound to this engine target.
   for (const providerId of [...ownedProviderIds]) {
     if (managedIds.has(providerId)) continue;
     if (!isCurrent()) return result;

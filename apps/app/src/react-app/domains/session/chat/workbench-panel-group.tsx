@@ -30,8 +30,6 @@ export function WorkbenchPanelGroup({ owner, primaryVisible, secondaryVisible, c
   const restore = (layout: Layout) => {
     const pending = restoration.current;
     if (!pending || pending.applied || !groupRef.current) return false;
-    // Panel registration is a separate layout pass. Never apply a two-panel
-    // layout to the one-panel registry (or persist that transitional layout).
     const ids = Object.keys(pending.layout);
     if (ids.length !== Object.keys(layout).length || ids.some((id) => !(id in layout))) return true;
     pending.applied = true;
@@ -53,8 +51,6 @@ export function WorkbenchPanelGroup({ owner, primaryVisible, secondaryVisible, c
         ? active : null;
     };
     const up = () => {
-      // The library focuses separators on pointer resize. Return only that
-      // incidental focus; keyboard divider navigation and deliberate focus stay.
       const active = element.ownerDocument.activeElement;
       if (focused?.isConnected && element.contains(focused) && active && element.contains(active)
         && active.hasAttribute("data-separator")) {

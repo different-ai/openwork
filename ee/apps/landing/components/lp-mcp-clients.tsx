@@ -12,8 +12,6 @@ import {
 
 export { MCP_SERVER_URL };
 
-// One-click install links, the same ones the docs publish
-// (packages/docs/model-context-protocol/cursor.mdx and vs-code.mdx).
 export const CURSOR_INSTALL_LINK =
   "cursor://anysphere.cursor-deeplink/mcp/install?name=openwork&config=eyJ1cmwiOiJodHRwczovL2FwaS5vcGVud29ya2xhYnMuY29tL21jcC9hZ2VudCJ9";
 export const VS_CODE_INSTALL_LINK =
@@ -26,11 +24,8 @@ export type McpClient = {
   id: string;
   name: string;
   mark: ReactNode;
-  /** Shell command to copy, when the client is set up from a terminal. */
   command?: string;
-  /** One-click link that opens the client, when it has one. */
   link?: { href: string; label: string };
-  /** What to do after the command or link. */
   next: string;
 };
 

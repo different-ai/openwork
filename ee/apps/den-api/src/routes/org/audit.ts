@@ -1,8 +1,8 @@
 import { AuditLogError, appendAuditEvent, setAuditCaptureState, type AuditContext, type AuditEventInput } from "@openwork-ee/den-db/audit-log"
 import { and, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { MemberTable } from "@openwork-ee/den-db/schema"
-import { createDenTypeId } from "@openwork-ee/utils/typeid"
-import { auditCaptureUpdateSchema, auditEventsResponseSchema, auditEventTypesResponseSchema, auditOperationOutcomeSchema, auditOperationsResponseSchema, auditOriginSchema, auditUsageResponseSchema } from "@openwork/types/den/audit"
+import { createDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
+import { auditCaptureUpdateSchema, auditEventsResponseSchema, type AuditCaptureUpdate, auditEventTypesResponseSchema, auditOperationOutcomeSchema, auditOperationsResponseSchema, auditOriginSchema, auditUsageResponseSchema } from "@openwork/types/den/audit"
 import type { Context, Hono } from "hono"
 import type { RequestIdVariables } from "hono/request-id"
 import { describeRoute, type DescribeRouteOptions } from "hono-openapi"
@@ -18,7 +18,7 @@ import { env } from "../../env.js"
 import { jsonValidator, orgPermissionRoute } from "../../middleware/index.js"
 import { appLogger } from "../../observability/logger.js"
 import { resolvePermissionsForMember } from "../../permissions/resolve.js"
-import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
+import { denTypeIdSchema, enterprisePlanRequiredSchema, forbiddenSchema, invalidRequestSchema, jsonResponse, ssoRequiredSchema, unauthorizedSchema } from "../../openapi.js"
 import { permissionDeniedResponse, permissionFailureHeaders, type OrgRouteVariables } from "./shared.js"
 
 type Variables = OrgRouteVariables & RequestIdVariables
@@ -39,14 +39,18 @@ const errors = {
   503: jsonResponse("Audit storage or required access capture unavailable; no audit content is released.", z.object({ error: z.enum(["audit_unavailable", "audit_storage_inconsistent"]) })),
 }
 const filterParameters: NonNullable<DescribeRouteOptions["parameters"]> = [
-  ...["from", "to"].map((name) => ({ in: "query", name, schema: { anyOf: [{ type: "string", format: "date" }, { type: "string", format: "date-time", maxLength: 40 }] }, description: "Inclusive operation-start bound; date-only is UTC midnight. from must not exceed to." } satisfies NonNullable<DescribeRouteOptions["parameters"]>[number])),
+  ...([["from", "lower"], ["to", "upper"]] as const).map(([name, bound]) => ({
+    in: "query", name,
+    schema: { anyOf: [{ type: "string", format: "date" }, { type: "string", format: "date-time", maxLength: 40 }] },
+    description: `Inclusive ${bound} bound on the operation's first-recorded time; unbounded when omitted. Use \`YYYY-MM-DD\` (UTC midnight) or \`YYYY-MM-DDTHH:MM:SS[.fraction]\` followed by \`Z\` or \`±HH:MM\`, e.g. \`2026-11-01T00:00:00+08:00\`. Seconds and a time zone are required for date-times; numeric offsets must include a colon. \`from\` must not be later than \`to\`.`,
+  } satisfies NonNullable<DescribeRouteOptions["parameters"]>[number])),
   { in: "query", name: "actorId", schema: { type: "string", pattern: "^usr_[0-7][0-9a-hjkmnp-tv-z]{25}$" }, description: "Initiating user ID, not a delegated event actor or membership ID." },
-  { in: "query", name: "action", schema: { type: "string", minLength: 1, maxLength: 128, pattern: "^[a-z][a-z0-9_.-]*$" }, description: "Exact stable action of any child event within the snapshot." },
+  { in: "query", name: "action", schema: { type: "string", minLength: 1, maxLength: 128, pattern: "^[a-z][a-z0-9_.-]*$" }, description: "Exact stable action of any child event within the snapshot. See `GET /v1/audit/event-types` for supported actions." },
   { in: "query", name: "outcome", schema: { type: "string", enum: auditOperationOutcomeSchema.options }, description: "Current operation outcome; not an individual event outcome." },
   { in: "query", name: "origin", schema: { type: "string", enum: auditOriginSchema.options }, description: "Stored operation origin." },
   { in: "query", name: "searchId", schema: { type: "string", minLength: 1, maxLength: 255, pattern: "^[^\\u0000-\\u001f\\u007f-\\u009f]+$" }, description: "Exact case-sensitive operation, child event, child request or stored child resource reference ID within the snapshot; OR across ID kinds, AND with other filters. Not free-text or legacy payload search." },
-  { in: "query", name: "resourceId", schema: { type: "string", minLength: 1, maxLength: 255 }, description: "Exact case-sensitive stored reference ID from any child within the snapshot." },
-  { in: "query", name: "resourceType", schema: { type: "string", minLength: 1, maxLength: 64, pattern: "^[a-z][a-z0-9_.-]*$" }, description: "Optional stored reference type; requires resourceId." },
+  { in: "query", name: "resourceId", schema: { type: "string", minLength: 1, maxLength: 255, pattern: "^[^\\u0000-\\u001f\\u007f]+$" }, description: "Exact case-sensitive stored reference ID from any child within the snapshot. No live-resource lookup." },
+  { in: "query", name: "resourceType", schema: { type: "string", minLength: 1, maxLength: 64, pattern: "^[a-z][a-z0-9_.-]*$" }, description: "Type of the same stored reference matched by resourceId. Requires resourceId." },
 ]
 const pageParameters: NonNullable<DescribeRouteOptions["parameters"]> = [
   { in: "query", name: "limit", schema: { type: "integer", minimum: 1, maximum: 100, default: 50 }, description: "Maximum rows in this page." },
@@ -77,7 +81,6 @@ async function serveAudit(c: AuditRouteContext, action: "event_types" | "operati
       principalKey: `user:${organization.currentMember.userId}:member:${organization.currentMember.id}:key:${credentialId ?? "session"}`,
       kind: "audit.access", scope: operationId ?? `audit.${action}`, origin: "api", originTrust: "authenticated", requestId: c.get("requestId") ?? createDenTypeId("request"),
     }
-    // Both appends are request-bound with idempotency keys, so a transient-failure retry is a replay.
     const retry = { idempotent: true, requestId: context.requestId ?? null, organizationId: context.organizationId }
     const capture = await withAuditRetry(() => db.transaction(async (tx) => {
       await readAuditAvailability(tx, context.organizationId)
@@ -112,6 +115,34 @@ async function serveAudit(c: AuditRouteContext, action: "event_types" | "operati
   }
 }
 
+export async function setOrganizationAuditCapture(params: {
+  organizationId: DenTypeId<"organization">
+  member: { id: DenTypeId<"member">; userId: DenTypeId<"user"> }
+  credentialId: string | undefined
+  requestId: string
+  input: AuditCaptureUpdate
+}): Promise<"forbidden" | "enterprise_plan_required" | "audit_capture_unavailable" | null> {
+  const { input, credentialId } = params
+  return db.transaction(async (tx) => {
+    const { entitlement } = await readAuditAvailability(tx, params.organizationId)
+    const [member] = await tx.select().from(MemberTable).where(and(eq(MemberTable.id, params.member.id), eq(MemberTable.organizationId, params.organizationId), eq(MemberTable.userId, params.member.userId), isNull(MemberTable.removedAt))).limit(1)
+    if (!member) return "forbidden"
+    const permissions = await resolvePermissionsForMember({ organizationId: params.organizationId, memberId: member.id, database: tx })
+    if (!permissions.has("audit.manage")) return "forbidden"
+    if (input.captureOn && !entitlement.enabled) return "enterprise_plan_required"
+    if (input.captureOn && !env.auditCaptureEnabled) return "audit_capture_unavailable"
+    const initialization = await initializeAuditPolicyInTx(tx, params.organizationId, env.auditCaptureEnabled)
+    if (input.expectedRevision === 0 && initialization.policy && !initialization.initialized) throw new AuditLogError("audit_policy_changed")
+    if (initialization.initialized && input.expectedRevision !== 0) throw new AuditLogError("audit_policy_changed")
+    await setAuditCaptureState(tx, { ...input, expectedRevision: initialization.initialized && input.expectedRevision === 0 ? 1 : input.expectedRevision, context: {
+      organizationId: params.organizationId, actor: { type: "user", id: member.userId, memberId: member.id, ...(credentialId ? { credentialId } : {}) },
+      principalKey: `user:${member.userId}:member:${member.id}:key:${credentialId ?? "session"}`,
+      kind: "audit.policy", scope: params.organizationId, origin: "api", originTrust: "authenticated", requestId: params.requestId,
+    } })
+    return null
+  })
+}
+
 export function registerOrgAuditRoutes<T extends { Variables: Variables }>(app: Hono<T>) {
   app.patch("/v1/audit/settings", describeAuditRoute({
     operationId: "updateAuditCapture", tags: ["Organizations"], "x-mcp": false, summary: "Set organization audit capture",
@@ -129,28 +160,12 @@ export function registerOrgAuditRoutes<T extends { Variables: Variables }>(app: 
     const organization = c.get("organizationContext")
     const input = c.req.valid("json")
     try {
-      const rejection = await db.transaction(async (tx) => {
-        const { entitlement } = await readAuditAvailability(tx, organization.organization.id)
-        const [member] = await tx.select().from(MemberTable).where(and(eq(MemberTable.id, organization.currentMember.id), eq(MemberTable.organizationId, organization.organization.id), eq(MemberTable.userId, organization.currentMember.userId), isNull(MemberTable.removedAt))).limit(1)
-        if (!member) return "forbidden"
-        // Re-check Manage audit settings through this transaction (read-only, share locks), so a
-        // permission revoked after the route check is seen before capture state changes.
-        const permissions = await resolvePermissionsForMember({ organizationId: organization.organization.id, memberId: member.id, database: tx })
-        if (!permissions.has("audit.manage")) return "forbidden"
-        if (input.captureOn && !entitlement.enabled) return "enterprise_plan_required"
-        if (input.captureOn && !env.auditCaptureEnabled) return "audit_capture_unavailable"
-        const initialization = await initializeAuditPolicyInTx(tx, organization.organization.id, env.auditCaptureEnabled)
-        // Revision zero means absent, not permission to overwrite a concurrent
-        // winner. Our own initial ON + explicit OFF commit in this one tx.
-        if (input.expectedRevision === 0 && initialization.policy && !initialization.initialized) throw new AuditLogError("audit_policy_changed")
-        if (initialization.initialized && input.expectedRevision !== 0) throw new AuditLogError("audit_policy_changed")
-        const credentialId = c.get("apiKey")?.id
-        await setAuditCaptureState(tx, { ...input, expectedRevision: initialization.initialized && input.expectedRevision === 0 ? 1 : input.expectedRevision, context: {
-          organizationId: organization.organization.id, actor: { type: "user", id: member.userId, memberId: member.id, ...(credentialId ? { credentialId } : {}) },
-          principalKey: `user:${member.userId}:member:${member.id}:key:${credentialId ?? "session"}`,
-          kind: "audit.policy", scope: organization.organization.id, origin: "api", originTrust: "authenticated", requestId: c.get("requestId") ?? createDenTypeId("request"),
-        } })
-        return null
+      const rejection = await setOrganizationAuditCapture({
+        organizationId: organization.organization.id,
+        member: { id: organization.currentMember.id, userId: organization.currentMember.userId },
+        credentialId: c.get("apiKey")?.id,
+        requestId: c.get("requestId") ?? createDenTypeId("request"),
+        input,
       })
       if (rejection === "forbidden") {
         const denied = permissionDeniedResponse("audit.manage")
@@ -208,13 +223,43 @@ export function registerOrgAuditRoutes<T extends { Variables: Variables }>(app: 
 
   app.get("/v1/audit/export", describeAuditRoute({
     operationId: "getAuditExport", tags: ["Organizations"], "x-mcp": false, summary: "Export one audit snapshot page",
-    description: `${coverage} ${pagination} ${filterDescription} Exports ALL matching operations' children within the snapshot in ascending event ID (recording time) order. Each response is one bounded attachment, not a continuous drain. Follow X-Audit-Next-Cursor with the same format and filters until that header is absent. X-Audit-Snapshot-At stays fixed. NDJSON has one full envelope per line. CSV has a header on every page and summary fields only: references and changed-field names are JSON cells, no before/after content. Every cell is quoted; formula-leading whitespace/control and =+-@ are prefixed with an apostrophe, backslashes are doubled, controls/multiline characters are encoded as literal backslash-u escapes.`,
-    parameters: [...pageParameters, ...filterParameters, { in: "query", name: "format", schema: { type: "string", enum: ["ndjson", "csv"], default: "ndjson" } }],
-    responses: { ...errors, 200: { description: "A bounded attachment page. No next-cursor header means this snapshot is exhausted.", content: { "application/x-ndjson": { schema: { type: "string" } }, "text/csv": { schema: { type: "string" } } }, headers: {
-      "X-Audit-Next-Cursor": { description: "Opaque continuation; absent on the last page.", schema: { type: "string" } },
-      "X-Audit-Snapshot-At": { description: "Frozen snapshot instant; events recorded after it are excluded.", schema: { type: "string", format: "date-time" } },
-      "Content-Disposition": { description: "Attachment filename for this page.", schema: { type: "string" } },
-    } } },
+    description: `Requires View audit history (\`audit.view\`) and deployment audit visibility. For scripts, send an organization API key in \`x-api-key\` without a Bearer prefix; its owner must be a current member with that permission.
+
+Exports retained, structured events only; not every cloud action is recorded. Omitted filters impose no restriction; supplied filters combine with AND.
+
+Read \`X-Audit-Next-Cursor\` from the response headers, not the body. Pass it as \`cursor\`; stop when a successful response omits the header, even if the page is full.
+
+[Download audit history with the API](https://openworklabs.com/docs/cloud/export-audit-logs) · [Audit export rules](https://openworklabs.com/docs/cloud/audit-export-api) · [How export snapshots and cursors work](https://openworklabs.com/docs/cloud/audit-logs#how-export-snapshots-and-cursors-work).`,
+    parameters: [
+      { ...pageParameters[0], description: "Maximum child events per page, excluding the CSV column header. Send decimal digits only, with no leading zero, sign, spaces or decimal point." },
+      { in: "query", name: "cursor", schema: { type: "string", minLength: 1, maxLength: 4096 }, description: "Omit for the first page. For later pages, URL-encode the entire opaque X-Audit-Next-Cursor response header value." },
+      ...filterParameters,
+      { in: "query", name: "format", schema: { type: "string", enum: ["ndjson", "csv"], default: "ndjson" }, description: "Attachment format." },
+    ],
+    responses: {
+      200: {
+        description: "One attachment page of retained, structured child events from matching operations, ordered by ascending event ID. `Content-Type` is `application/x-ndjson; charset=utf-8` for NDJSON or `text/csv; charset=utf-8` for CSV.",
+        content: {
+          "application/x-ndjson": { schema: { type: "string", description: "One complete audit event envelope per line, or an empty body when no events match." } },
+          "text/csv": { schema: { type: "string", description: "Summary fields only, without before or after values. References and changed-field names are JSON cells. Each page starts with a header row, even if no events match. Rows end with CRLF. Every cell is quoted. Formula-leading =, +, -, @, tab, CR or LF (including after leading whitespace or control characters) trigger an apostrophe prefix. Backslashes are doubled; control characters and Unicode line and paragraph separators use literal Unicode escapes." } },
+        },
+        headers: {
+          "X-Audit-Next-Cursor": { description: "Present only when more eligible events remain. Use its entire value as the next request's cursor query parameter.", schema: { type: "string" } },
+          "X-Audit-Snapshot-At": { required: true, description: "UTC cutoff, set to server time minus five seconds on the first page and unchanged on later pages. Events recorded after it are excluded.", schema: { type: "string", format: "date-time" } },
+          "Content-Disposition": { required: true, description: 'Attachment with a filename of the form `audit-<snapshot Unix time in milliseconds>.<format>`; the same on every page of a snapshot.', schema: { type: "string", example: 'attachment; filename="audit-1793462400000.ndjson"' } },
+        },
+      },
+      400: jsonResponse("`audit_invalid_query`: invalid parameters. All parameters are optional; unknown, repeated or empty parameters are rejected. `audit_invalid_cursor`: the cursor is invalid or does not match the organization, format or filters.", z.object({ error: z.enum(["audit_invalid_query", "audit_invalid_cursor"]) })),
+      401: jsonResponse("`unauthorized`: authentication failed or Den throttled the API key (401, not 429).", unauthorizedSchema),
+      403: jsonResponse("`forbidden`: access denied or missing `audit.view`. `audit_visibility_disabled`: deployment audit visibility (`DEN_AUDIT_VISIBILITY_ENABLED`, on by default) is off. `sso_required`: organization SSO is required for the session; does not apply to API keys.", z.union([
+        z.object({ error: z.literal("forbidden"), message: z.string(), code: z.literal("requires_admin").optional(), retryable: z.literal(false).optional(), action_url: z.string().optional(), requiredPermission: z.literal("audit.view").optional() }),
+        z.object({ error: z.literal("audit_visibility_disabled") }),
+        ssoRequiredSchema,
+      ])),
+      404: jsonResponse("`organization_not_found`: no organization context could be resolved for the authenticated user.", z.object({ error: z.literal("organization_not_found") })),
+      410: errors[410],
+      503: jsonResponse("`audit_unavailable`: audit storage or required access recording failed. `audit_storage_inconsistent`: retained audit data failed integrity checks. No export data is returned.", z.object({ error: z.enum(["audit_unavailable", "audit_storage_inconsistent"]) })),
+    },
   } satisfies AuditRouteDescription), orgPermissionRoute("audit.view"), (c) => serveAudit(c, "export", async (organizationId) => {
     const query = parseQuery(auditExportQuerySchema, c)
     const result = await listAuditExportEvents({ database: db, organizationId, secret: env.betterAuthSecret }, query)

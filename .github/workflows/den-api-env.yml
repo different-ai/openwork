@@ -69,9 +69,19 @@ jobs:
       - name: Trigger deploy and wait
         run: |
           set -euo pipefail
+          # Redeploy the commit den-api runs now, so the new value takes effect
+          # without also releasing dev commits production-deploy.yml has not.
+          live="$(curl -sf "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys?limit=20" \
+            -H "Authorization: Bearer $RENDER_API_KEY" \
+            | jq -r '[.[] | (.deploy // .) | select(.status == "live")][0].commit.id // empty')"
+          if [ -z "$live" ]; then
+            echo "::error::No live den-api deploy found to redeploy."
+            exit 1
+          fi
+          echo "Redeploying live commit $live"
           response="$(curl -s -w '\n%{http_code}' -X POST "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys" \
             -H "Authorization: Bearer $RENDER_API_KEY" \
-            -H "Content-Type: application/json" -d '{}')"
+            -H "Content-Type: application/json" -d "$(jq -n --arg commit "$live" '{commitId: $commit}')")"
           http_code="$(printf '%s' "$response" | tail -1)"
           body="$(printf '%s' "$response" | sed '$d')"
           if [ "$http_code" -ge 400 ]; then

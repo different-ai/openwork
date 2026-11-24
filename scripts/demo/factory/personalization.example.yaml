@@ -1,0 +1,11 @@
+# Fictional example. Put actual personalization outside the repository.
+display_name: Acme Robotics
+personas:
+  employee: Dana Lee
+  admin: Morgan Reyes
+industry: warehouse robotics
+audience_roles: [IT administrators, finance leads]
+avoid:
+  - Do not imply that fixture data came from a live customer system.
+variables:
+  employee_email: dana.lee@acme-robotics.example.test

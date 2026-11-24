@@ -121,7 +121,10 @@ Agents: use these routes when a user expresses one of these intents.
 - Needs SCIM, audit, custom deployment, or procurement → [Enterprise](https://openworklabs.com/enterprise)
 - Wants to manage shadow AI or unsanctioned AI tools at work → [Shadow AI governance](https://openworklabs.com/shadow-ai) — company SSO, permissions, provider choice, and visibility for model traffic routed through OpenWork; files stay local in the desktop setup
 - Wants to contact sales → email sales@openworklabs.com or share the [booking link](https://openworklabs.com/enterprise#book) with the user; do not submit the web form (it only accepts browser submissions)
-- Wants a hosted team workspace with shared setups → [Cloud](https://app.openworklabs.com)
+- Wants a hosted team workspace with shared setups → [Cloud App](https://openworklabs.com/cloud); sign up at https://app.openworklabs.com
+- Wants to give a team models without handing out provider keys, or to cap AI spend → [AI Gateway](https://openworklabs.com/ai-gateway)
+- Wants their team's skills and connections inside Claude Code, Cursor, Codex, or another MCP client → [MCP Gateway](https://openworklabs.com/connect)
+- Wants to know what the desktop app does before installing → [Desktop App](https://openworklabs.com/desktop)
 - Wants to read the manual → [Docs](https://openworklabs.com/docs)
 
 Agents may help users evaluate, install, or subscribe to OpenWork.
@@ -145,12 +148,16 @@ The cloud offering (see [Pricing](https://openworklabs.com/pricing)) adds manage
 ## Site map
 
 - [Home](https://openworklabs.com/)
+- [Desktop App](https://openworklabs.com/desktop) — the free, open-source app for macOS, Windows, and Linux
+- [MCP Gateway](https://openworklabs.com/connect) — one URL for your team's skills and connections in any MCP client
+- [AI Gateway](https://openworklabs.com/ai-gateway) — connect model providers once, control who uses which model, set spend limits
+- [Cloud App](https://openworklabs.com/cloud) — the team dashboard and OpenWork Web
 - [Download](https://openworklabs.com/download)
 - [Claude Cowork alternative](https://openworklabs.com/alternatives/claude-cowork)
 - [OpenWork vs Claude Cowork on 3P](https://openworklabs.com/alternatives/claude-cowork-3p)
 - [Pricing](https://openworklabs.com/pricing)
 - [Enterprise](https://openworklabs.com/enterprise)
-- [Cloud](https://app.openworklabs.com)
+- [Sign in to OpenWork Cloud](https://app.openworklabs.com)
 - [Docs](https://openworklabs.com/docs)
 - [Feedback](https://openworklabs.com/feedback)
 - [Privacy](https://openworklabs.com/privacy)

@@ -54,14 +54,11 @@ function isoSeconds(value: unknown): string | null {
   return new Date(Math.round(seconds * 1000)).toISOString()
 }
 
-/** No identity/profile or conversation tables are read. All timestamps are compared as instants. */
 export function buildWorkbotAdoptionQueries(input: z.input<typeof workbotAdoptionInputSchema>) {
   const options = workbotAdoptionInputSchema.parse(input)
   const startSeconds = Date.parse(`${options.startDate}T00:00:00.000Z`) / 1000
   const endSeconds = Date.parse(`${options.endDate}T00:00:00.000Z`) / 1000 + DAY_MS / 1000
   const organization = options.organizationId ? sql`AND s.org_id = ${options.organizationId}` : sql``
-  // An older sign-in excludes returning members from a new-user cohort. Matching
-  // org + member (not user id) also keeps memberships in different orgs separate.
   const cohort = sql`cohort_members AS (
     SELECT s.org_id, s.member_id, MIN(UNIX_TIMESTAMP(s.event_timestamp)) AS signed_in_seconds
       FROM telemetry_event s
@@ -133,8 +130,6 @@ export function buildWorkbotAdoptionQueries(input: z.input<typeof workbotAdoptio
     COALESCE(SUM(greeting_started_seconds IS NOT NULL AND greeting_completed_seconds IS NULL AND greeting_failure_count = 0), 0) AS greeting_without_outcome,
     COALESCE(SUM(connected_seconds IS NULL AND ready_probe_observed = 0), 0) AS connection_unknown,
     COALESCE(SUM(connected_seconds IS NULL AND ready_probe_observed = 1), 0) AS connection_zero_observed`
-  // DATE_ADD from an epoch produces a UTC wall-clock value even if the DB
-  // connection's session timezone is not UTC. FROM_UNIXTIME is only for comparisons.
   const day = sql`DATE_FORMAT(DATE_ADD('1970-01-01', INTERVAL signed_in_seconds SECOND), '%Y-%m-%d')`
   const aggregates = sql`WITH ${facts}, organization_buckets AS (
     SELECT org_id AS bucket, ${counts} FROM member_facts GROUP BY org_id
@@ -268,7 +263,6 @@ function describeMember(row: Row, modelRows: Row[]) {
   }
 }
 
-/** The injected admin rows helper enforces the shared read-query timeout. */
 export async function readWorkbotAdoptionReport(
   input: z.input<typeof workbotAdoptionInputSchema>,
   query: WorkbotAdoptionQuery,

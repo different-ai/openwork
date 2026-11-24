@@ -1,3 +1,4 @@
+import type { AgentForm } from "@openwork/types/agent-form";
 import type {
   Message,
   Part,
@@ -9,6 +10,7 @@ import type {
 } from "@opencode-ai/sdk/v2/client";
 import type { createClient } from "./lib/opencode";
 import type { OpencodeConfigFile, WorkspaceInfo } from "./lib/desktop-types";
+import type { SessionLink } from "@openwork/types/session-link";
 
 export type Client = ReturnType<typeof createClient>;
 
@@ -22,6 +24,7 @@ export type SidebarSessionItem = {
   state?: unknown;
   runStatus?: unknown;
   parentID?: string | null;
+  openworkSessionLink?: SessionLink | null;
   time?: {
     updated?: number | null;
     created?: number | null;
@@ -99,11 +102,9 @@ export type ComposerPart =
   | { type: "agent"; name: string }
   | { type: "skill"; name: string }
   | { type: "connect-skill"; slug: string; name: string; marketplace: string; capability: string }
-  /** A connection picked from the composer `+` menu (`[connector …]` pill). */
   | { type: "connector"; name: string }
   | { type: "file"; path: string; label?: string }
   | { type: "computer"; target: "cloud" | "desktop" }
-  /** Another task picked from the composer `#` menu (`[session …]` pill). */
   | { type: "session"; workspaceId: string; sessionId: string; title: string }
   | { type: "paste"; id: string; label: string; text: string; lines: number };
 
@@ -125,22 +126,13 @@ export type SlashCommandOption = {
 };
 
 export type ComposerDraft = {
-  /** Client identity for reconciling the pending user turn with server events. */
   messageId?: string;
   mode: PromptMode;
   parts: ComposerPart[];
   attachments: ComposerAttachment[];
-  /** Editor-visible text (may include collapsed paste placeholders). */
   text: string;
-  /**
-   * Resolved text to send to the model.
-   * When a paste is collapsed into a placeholder (e.g. "[pasted text 1]"),
-   * this includes the full pasted text instead.
-   */
   resolvedText?: string;
-  /** When set, draft is a slash command invocation */
   command?: { name: string; arguments: string } | undefined;
-  /** User-message boundary to revert immediately before this draft is sent. */
   revertMessageId?: string | undefined;
 };
 
@@ -170,15 +162,6 @@ export type View = "settings" | "session" | "signin";
 
 export type StartupPreference = "local" | "server";
 
-/**
- * Release channel the desktop app is subscribed to.
- *
- * - "stable": default. Auto-updates from the rolling stable GitHub release.
- * - "alpha": macOS-only. Auto-updates from the rolling alpha release that
- *   every merge to `dev` publishes to.
- *
- * See `apps/app/src/app/lib/release-channels.ts` for URL resolution.
- */
 export type ReleaseChannel = "stable" | "alpha";
 
 export type EngineRuntime = "direct";
@@ -203,6 +186,8 @@ export const SETTINGS_TAB_VALUES = [
   "import",
   "appearance",
   "shortcuts",
+  "computer",
+  "devices",
   "updates",
   "recovery",
   "debug",
@@ -355,7 +340,6 @@ export type McpServerEntry = {
   marketplaceName?: string;
   pluginName?: string;
   connectCapabilityName?: string;
-  /** Den organization connection this MCP is backed by, when sign-in is member-owned. */
   orgMcpConnectionId?: string;
   managedOAuth?: ManagedMcpOAuthConnection | null;
 };
@@ -400,12 +384,12 @@ export type PendingPermission = Omit<ApiPermissionRequest, "always"> & {
   receivedAt: number;
   protocol: "legacy" | "v2";
   v2?: Pick<PermissionV2Request, "action" | "resources" | "save">;
-  /** Development-only deterministic UI proof request; never comes from OpenCode. */
   evaluation?: true;
 };
 
 export type PendingQuestion = QuestionRequest & {
   receivedAt: number;
+  form?: AgentForm;
 };
 
 export type TodoItem = {
@@ -439,10 +423,8 @@ export type ModelOption = {
   behaviorOptions?: ModelBehaviorOption[];
   disabled?: boolean;
   isFree: boolean;
-  /** A free model of the engine's built-in OpenCode Zen provider that nobody configured: the silent fallback. */
   zenFallback?: boolean;
   isRecommended?: boolean;
-  /** "cloud" for org-managed providers (lpr_*), undefined for local. */
   source?: "cloud" | "gateway" | "local";
   organizationPinOrder?: number;
   gatewayAuthorization?: { cloudProviderId: string; credentialSetId: string };

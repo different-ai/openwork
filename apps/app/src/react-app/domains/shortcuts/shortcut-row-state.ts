@@ -1,6 +1,3 @@
-// State of one saved model shortcut in Settings. Same reasons as the notice
-// the person sees after pressing the key, so the two never disagree.
-
 export type ShortcutRowState =
   | { kind: "pending" }
   | { kind: "available" }
@@ -9,9 +6,7 @@ export type ShortcutRowState =
   | { kind: "model_missing"; providerName: string | null };
 
 export type ShortcutRowCatalog = {
-  /** Every provider the workspace knows about. */
   all: ReadonlyArray<{ id: string; name: string }>;
-  /** Connected providers (see getConnectedProviderItems) and their models. */
   connected: ReadonlyArray<{ id: string; models: Readonly<Record<string, unknown>> }>;
 };
 

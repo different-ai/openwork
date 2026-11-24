@@ -27,18 +27,10 @@ type PluginId = typeof PluginTable.$inferSelect.id
 type MarketplaceId = typeof MarketplaceTable.$inferSelect.id
 type ConfigObjectId = typeof ConfigObjectTable.$inferSelect.id
 
-/** Which sources the caller may read, mirroring the admin list endpoints. */
 export type DashboardActivityAccess = {
-  /** connections.view: GET /v1/mcp-connections?scope=manageable. */
   connections: boolean
-  /** llm_providers.view lists every provider; otherwise only the caller's own (scope=manageable). */
   allLlmProviders: boolean
-  /** gateway_providers.view on a deployment with Gateway management enabled. */
   gatewayProviders: boolean
-  /**
-   * Plugin and marketplace visibility. "all" for sharing.manage_all holders;
-   * otherwise the explicit ids the caller can view.
-   */
   plugins: "all" | readonly PluginId[]
   marketplaces: "all" | readonly MarketplaceId[]
 }
@@ -63,11 +55,6 @@ function activeSkill(organizationId: OrganizationId) {
   )
 }
 
-/**
- * Newest connections, excluding plugin-owned connections retired with every
- * owning plugin (same rule as listRetiredPluginOwnedExternalMcpConnectionIds),
- * filtered in SQL so the limit applies after visibility.
- */
 async function newestConnections(organizationId: OrganizationId) {
   const activeBinding = db
     .select({ id: PluginMcpRequirementBindingTable.externalMcpConnectionId })
@@ -154,7 +141,6 @@ async function newestPluginAttachments(organizationId: OrganizationId, access: D
     .where(and(
       eq(MarketplacePluginTable.organizationId, organizationId),
       isNull(MarketplacePluginTable.removedAt),
-      // The built-in catalog is provisioned by a read, not new workspace work.
       ne(MarketplacePluginTable.membershipSource, "system"),
       eq(MarketplaceTable.organizationId, organizationId),
       eq(MarketplaceTable.status, "active"),
@@ -203,8 +189,6 @@ async function newestSkillVersions(organizationId: OrganizationId, visible: Dash
     .limit(limit)
   const skillIds: ConfigObjectId[] = [...new Set(versions.map((row) => row.skillId))]
   if (skillIds.length === 0) return []
-  // One parent per skill: the most recently updated visible plugin, matching
-  // GET /v1/plugins order (updatedAt desc, id desc).
   const parents = pickSkillParents(await db
     .select({ skillId: PluginConfigObjectTable.configObjectId, pluginId: PluginTable.id, pluginName: PluginTable.name })
     .from(PluginConfigObjectTable)
@@ -221,7 +205,6 @@ async function newestSkillVersions(organizationId: OrganizationId, visible: Dash
   })
 }
 
-/** The newest five Activity entries for an organization admin, in a handful of bounded queries. */
 export async function readDashboardActivity(input: {
   organizationId: OrganizationId
   memberId: MemberId
@@ -240,7 +223,6 @@ export async function readDashboardActivity(input: {
   return buildDashboardActivity({ connections, llmProviders, gatewayProviders, pluginAttachments, skillVersions })
 }
 
-/** Ids of the organization's active plugins and marketplaces, for callers without sharing.manage_all. */
 export async function listActivePluginArchIds(organizationId: OrganizationId) {
   const [plugins, marketplaces] = await Promise.all([
     db.select({ id: PluginTable.id }).from(PluginTable).where(activePlugin(organizationId, "all")),

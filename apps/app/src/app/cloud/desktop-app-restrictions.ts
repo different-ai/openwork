@@ -1,6 +1,8 @@
 import {
   desktopPolicyKeyEnforced,
   desktopPolicyUserNotices,
+  isLocalModelProviderId,
+  localModelsAllowed,
   type DesktopPolicyKey,
 } from "@openwork/types/den/desktop-policies";
 import type { DenDesktopConfig } from "../lib/den";
@@ -17,31 +19,29 @@ export const DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID = "opencode";
 export function checkDesktopAppRestriction(input: {
   config: DenDesktopConfig | null | undefined;
   restriction: DesktopAppRestrictionKey;
-  /** The `removeOpencodeZen` feature as read signed out (`GET /v1/features`). */
-  opencodeZenRemoved?: boolean;
 }) {
-  // Removing OpenCode Zen is a product rollout, not an organization policy, so it
-  // applies even while desktop policy enforcement is off. It reuses the Zen
-  // restriction so every surface that already honors it (model list, Connect,
-  // Automations, the engine's disabled providers) drops Zen in one place.
-  if (input.restriction === "allowZenModel" && (input.opencodeZenRemoved === true || input.config?.removeOpencodeZen === true)) {
+  if (input.restriction === "allowZenModel") {
     return true;
+  }
+  if (input.restriction === "allowLocalModels") {
+    return Boolean(input.config) && !localModelsAllowed(input.config);
   }
   return desktopPolicyKeyEnforced(input.restriction) && input.config?.[input.restriction] === false;
 }
 
-/** Catalog copy explaining why the organization blocked a capability. */
+const RETIRED_OPENCODE_ZEN_TERMS = "opencode zen big pickle free";
+
+export function showsRetiredOpencodeZen(input: { providerIds: readonly string[]; query: string }) {
+  if (input.providerIds.some((id) => id.trim().toLowerCase() === DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID)) return false;
+  const query = input.query.trim().toLowerCase();
+  return !query || RETIRED_OPENCODE_ZEN_TERMS.includes(query);
+}
+
 export function desktopRestrictionNotice(restriction: DesktopAppRestrictionKey) {
   return desktopPolicyUserNotices[restriction];
 }
 
-/**
- * Settings tabs that stay reachable when `allowControlSettings` is blocked.
- * Members can still see their Cloud account, switch organizations, and use
- * Cloud features that are not desktop settings; every other tab is hidden and
- * redirected.
- */
-const SETTINGS_TABS_WITHOUT_CONTROL = new Set<SettingsTab>(["cloud-account", "usage"]);
+const SETTINGS_TABS_WITHOUT_CONTROL = new Set<SettingsTab>(["cloud-account", "usage", "devices"]);
 
 export const SETTINGS_TAB_WITHOUT_CONTROL: SettingsTab = "cloud-account";
 
@@ -62,6 +62,9 @@ export function isDesktopProviderBlocked(input: {
 
   if (providerId === DESKTOP_RESTRICTION_OPENCODE_PROVIDER_ID) {
     return input.checkRestriction({ restriction: "allowZenModel" });
+  }
+  if (isLocalModelProviderId(providerId)) {
+    return input.checkRestriction({ restriction: "allowLocalModels" });
   }
 
   return false;

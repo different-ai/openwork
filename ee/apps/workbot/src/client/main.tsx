@@ -3,6 +3,7 @@ import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-quer
 import { StrictMode, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { createRoot } from "react-dom/client"
 import { createHost, fetchMe, signIn, type Me } from "./host"
+import { reloadOnStaleBuild } from "./stale-build"
 import "./styles.css"
 import { WorkspaceAccess } from "./workspace-access"
 
@@ -12,14 +13,11 @@ const sameIdentity = (left: Me, right: Me) => left.userId === right.userId && le
 
 function Signed({ me, authorization, refreshIdentity }: { me: Me; authorization?: WorkbotHost["documentAuthorization"]; refreshIdentity(): Promise<Me | null> }) {
   const host = useMemo(() => createHost(me, { authorization, refreshIdentity }), [me, authorization, refreshIdentity])
-  // Existing query keys need not be globally unique: each retained owner has
-  // its own client, so a later account cannot inherit the previous cache.
   const queries = useMemo(() => new QueryClient({ defaultOptions: { queries: { retry: 1, refetchOnWindowFocus: false } } }), [me.organizationId, me.userId])
   const dispose = useRef<ReturnType<typeof setTimeout>>(undefined)
   const previousAuthorization = useRef(authorization)
   useEffect(() => {
     if (previousAuthorization.current !== undefined && authorization === undefined) {
-      // Resume ordinary reads, never mutations or document session factories.
       void queries.invalidateQueries({ predicate: query => query.queryKey[0] !== "documents" })
     }
     previousAuthorization.current = authorization
@@ -32,18 +30,30 @@ function Signed({ me, authorization, refreshIdentity }: { me: Me; authorization?
 }
 
 function App() {
-  const me = useQuery({ queryKey: ["workbot", "me"], queryFn: fetchMe, staleTime: 60_000, refetchOnReconnect: "always", refetchInterval: query => query.state.data?.nativeDictation === true ? 60_000 : false })
+  const me = useQuery({ queryKey: ["workbot", "me"], queryFn: fetchMe, staleTime: 60_000, refetchOnReconnect: "always" })
+  const enabled = me.data?.enabled === true
+  const refetchMe = me.refetch
+  useEffect(() => {
+    if (!enabled) return
+    const timer = setInterval(() => {
+      if (document.hidden) return
+      void fetchMe().then(next => {
+        const current = queryClient.getQueryData<Me | null>(["workbot", "me"])
+        if (next && current && sameIdentity(current, next)) queryClient.setQueryData(["workbot", "me"], next)
+        else void refetchMe()
+      }, () => {})
+    }, 60_000)
+    return () => clearInterval(timer)
+  }, [enabled, refetchMe])
   const [owner, setOwner] = useState<Me | null>(null)
   const [until, setUntil] = useState<number | null>(null)
   const [identityWaiters, setIdentityWaiters] = useState<Array<(value: Me | null) => void>>([])
   const changedIdentity = owner !== null && me.data != null && !sameIdentity(owner, me.data)
   const identityUnavailable = me.isError || me.failureCount > 0
   const workspaceDisabled = owner?.enabled === true && me.isSuccess && me.data != null && !changedIdentity && !me.data.enabled
-  // Cached success is not fresh authorization while a different browser session may be resolving.
   const verified = me.isSuccess && !me.isFetching && !identityUnavailable && me.data != null && !changedIdentity && !workspaceDisabled
   const blocked = owner !== null && !verified
   useEffect(() => {
-    // A successful response for another person must not replace a draft's owner.
     const next = me.data
     if (!me.isSuccess || identityUnavailable || !next) return
     setOwner(current => current === null ? next : sameIdentity(current, next) && !(current.enabled && !next.enabled) ? next : current)
@@ -63,8 +73,6 @@ function App() {
   }, [owner, me.isSuccess, me.data])
   const refreshIdentity = useCallback(async () => {
     await me.refetch()
-    // Fresh file checks must resume after React has committed the settled authorization,
-    // not while the retained owner's policy still reflects this request's pending mask.
     return new Promise<Me | null>(resolve => setIdentityWaiters(current => [...current, resolve]))
   }, [me.refetch])
   useEffect(() => {
@@ -75,7 +83,6 @@ function App() {
   if (owner !== null) {
     const authorization = blocked ? workspaceDisabled ? "disabled" : identityUnavailable || me.isFetching ? "blocked" : "signin" : undefined
     if (!blocked && !owner.enabled) return <WorkspaceAccess me={owner} />
-    // Hidden, not conditionally removed: auth revalidation cannot run editor teardown.
     return <>
       <div className="h-full" hidden={blocked} data-workbot-retained-owner><Signed key={JSON.stringify([owner.organizationId, owner.userId])} me={owner} authorization={authorization} refreshIdentity={refreshIdentity} /></div>
       {blocked && <main className="workbot grid h-full place-items-center px-6 text-center" role="status" aria-label="Workspace sign-in recovery" aria-busy={me.isFetching}><div className="flex max-w-sm flex-col items-center gap-3">
@@ -91,8 +98,39 @@ function App() {
   return null
 }
 
+function handOffBoot(root: HTMLElement) {
+  const boot = document.getElementById("workbot-boot")
+  if (!boot) return
+  const typed = boot.querySelector("textarea")
+  let draft: { text: string; start: number; end: number; focused: boolean } | null = null
+  const observer = new MutationObserver(() => {
+    if (!root.firstElementChild) return
+    if (boot.isConnected) {
+      const focused = document.activeElement === typed
+      draft = typed && (typed.value || focused) ? { text: typed.value, start: typed.selectionStart, end: typed.selectionEnd, focused } : null
+      boot.remove()
+    }
+    if (!draft) { observer.disconnect(); return }
+    const box = Array.from(root.querySelectorAll<HTMLTextAreaElement>("[data-workbot-composer] textarea")).find(node => node.offsetParent !== null && !node.disabled)
+    if (!box) return
+    observer.disconnect()
+    if (draft.text && !box.value) {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")?.set?.call(box, draft.text)
+      box.dispatchEvent(new Event("input", { bubbles: true }))
+    }
+    if (draft.focused) {
+      box.focus()
+      box.setSelectionRange(draft.start, draft.end)
+    }
+  })
+  observer.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ["hidden", "disabled", "style"] })
+  setTimeout(() => observer.disconnect(), 15_000)
+}
+
+reloadOnStaleBuild()
 const root = document.getElementById("root")
 if (root) {
+  handOffBoot(root)
   createRoot(root).render(
     <StrictMode>
       <QueryClientProvider client={queryClient}>

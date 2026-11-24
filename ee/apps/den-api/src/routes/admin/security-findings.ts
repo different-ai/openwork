@@ -1,9 +1,5 @@
 import { isIP } from "node:net"
 
-// Transparent, threshold-based detections for the platform admin Security page.
-// Every finding states its rule so a reviewer can tell why it fired; none of them
-// is a verdict, and none takes an action on an account.
-
 export type SecuritySeverity = "high" | "medium" | "low" | "clear"
 export type SecurityCategory = "access" | "accounts" | "automation" | "credentials" | "usage"
 export type SecurityUnit = "count" | "micro_usd"
@@ -30,11 +26,9 @@ export type SecurityFinding = {
   value: number
   unit: SecurityUnit
   entities: SecurityEntity[]
-  /** Matching entities, including any past the listed cap. */
   entityCount: number
 }
 
-/** Entities listed per finding; the rest are only counted. */
 export const SECURITY_ENTITY_LIMIT = 20
 
 const SEVERITY_RANK: Record<SecuritySeverity, number> = { high: 3, medium: 2, low: 1, clear: 0 }
@@ -81,10 +75,6 @@ function expandIpv6(address: string): string[] | null {
   return [...left, ...Array.from({ length: tail === undefined ? 0 : missing }, () => "0"), ...right]
 }
 
-/**
- * The network a sign-in came from: IPv4 /24 or IPv6 /64. Coarse on purpose, so
- * a page never needs a full address and one home or office reads as one place.
- */
 export function networkOf(ip: string | null | undefined): string | null {
   const value = ip?.trim().toLowerCase() ?? ""
   const mapped = value.startsWith("::ffff:") && isIP(value.slice(7)) === 4 ? value.slice(7) : value
@@ -106,13 +96,10 @@ function emailSample(emails: readonly string[]) {
   return emails.length > 3 ? `${shown} and ${emails.length - 3} more` : shown
 }
 
-// ── Accounts ────────────────────────────────────────────────────────────────
-
 export type NewAccount = { userId: string; email: string; emailVerified: boolean; createdAt: Date; network: string | null }
 
 export const SIGNUP_NETWORK_TIERS = { high: 15, medium: 5 }
 
-/** Many new accounts from one network. One company domain making most of them reads as a team joining. */
 export function signupNetworkFinding(accounts: readonly NewAccount[], personalDomains: ReadonlySet<string>): SecurityFinding {
   const byNetwork = new Map<string, NewAccount[]>()
   for (const account of accounts) {
@@ -149,7 +136,6 @@ export function signupNetworkFinding(accounts: readonly NewAccount[], personalDo
 
 export const UNVERIFIED_TIERS = { highShare: 0.25, highCount: 50, mediumShare: 0.1, mediumCount: 20 }
 
-/** The share of new accounts that never confirmed their email, against the previous window. */
 export function unverifiedSignupFinding(accounts: readonly NewAccount[], previous: { total: number; unverified: number }): SecurityFinding {
   const unverified = accounts.filter((account) => !account.emailVerified)
   const share = accounts.length ? unverified.length / accounts.length : 0
@@ -200,7 +186,6 @@ export function disposableSignupFinding(accounts: readonly NewAccount[]): Securi
 export type UnverifiedDomainCount = { domain: string; unverified: number; total: number }
 export const UNVERIFIED_DOMAIN_TIERS = { high: 20, medium: 5 }
 
-/** Company-looking domains with many unconfirmed sign-ups; personal and disposable domains are covered elsewhere. */
 export function unverifiedDomainFinding(rows: readonly UnverifiedDomainCount[], excluded: ReadonlySet<string>): SecurityFinding {
   const entities = rows.filter((row) => !excluded.has(row.domain)).flatMap((row): SecurityEntity[] => {
     const severity = tiered(row.unverified, UNVERIFIED_DOMAIN_TIERS)
@@ -237,27 +222,26 @@ export function networkSpreadFinding(rows: readonly UserNetworkSpread[]): Securi
   })
 }
 
-export type OrganizationCreator = { userId: string; email: string; organizations: number }
-export const ORGANIZATION_CREATION_TIERS = { high: 15, medium: 5 }
+type OrganizationCreator = { userId: string; email: string; organizations: number; spendMicroUsd: number }
+const FOUNDER_SPEND_TIERS = { medium: 5_000_000, high: 15_000_000 }
 
 export function organizationCreationFinding(rows: readonly OrganizationCreator[]): SecurityFinding {
-  const entities = rows.flatMap((row): SecurityEntity[] => {
-    const severity = tiered(row.organizations, ORGANIZATION_CREATION_TIERS)
-    return severity === "clear" ? [] : [{ id: row.userId, label: row.email, detail: `Owner of ${plural(row.organizations, "new organization")}`, value: row.organizations, severity, target: { type: "user", userId: row.userId } }]
-  })
+  const entities = rows.map((row): SecurityEntity => ({
+    id: row.userId, label: row.email, target: { type: "user", userId: row.userId },
+    detail: `${usd(row.spendMicroUsd)} across ${plural(row.organizations, "new organization")}`,
+    value: row.spendMicroUsd, severity: tiered(row.spendMicroUsd, { ...FOUNDER_SPEND_TIERS, low: 0 }),
+  }))
+  const total = entities.reduce((sum, entity) => sum + entity.value, 0)
   return finding({
-    id: "organization-creation", category: "accounts", title: "Many new organizations from one person",
-    summary: entities.length ? `${plural(entities.length, "person", "people")} created ${ORGANIZATION_CREATION_TIERS.medium}+ organizations.` : "Nobody created more than a few organizations.",
-    rule: `Counts organizations a person became the owner of in the range; ${ORGANIZATION_CREATION_TIERS.medium}+ is medium, ${ORGANIZATION_CREATION_TIERS.high}+ high.`,
-    why: "Every organization starts with its own free allowances, so repeated creation can multiply them.",
-    review: "Open the person and check whether the organizations hold real work or only used free model credits.",
-    value: entities.length, unit: "count", entities,
+    id: "organization-creation", category: "accounts", title: "Free spend across new organizations",
+    summary: entities.length ? `${usd(total)} in free usage across multiple new organizations per founder.` : "No founder used free models in two or more new organizations.",
+    rule: `Counts settled free usage in at least two organizations created by the same founder within the selected period. Low below ${usd(FOUNDER_SPEND_TIERS.medium)}, medium from ${usd(FOUNDER_SPEND_TIERS.medium)}, high from ${usd(FOUNDER_SPEND_TIERS.high)}.`,
+    why: "Concentrated free usage across new organizations can indicate repeated claims on the starter allowance.",
+    review: "Check the founder’s organizations and their model activity before taking action.",
+    value: total, unit: "micro_usd", entities,
   })
 }
 
-// ── Bot-like use ────────────────────────────────────────────────────────────
-
-/** Clients that announce automation in their user agent. Mobile app stacks (okhttp, CFNetwork) are left out. */
 export const AUTOMATION_CLIENTS: ReadonlyArray<{ label: string; pattern: RegExp }> = [
   { label: "Headless Chrome", pattern: /HeadlessChrome/i },
   { label: "Playwright", pattern: /Playwright/i },
@@ -307,11 +291,9 @@ export function automationClientFinding(rows: readonly AutomationSignIn[]): Secu
 }
 
 export type HourlyActivity = { userId: string; email: string; organization: string; days: number[]; automations: number }
-/** Distinct active UTC hours in one day that leave no room for sleep. */
 export const ROUND_THE_CLOCK_HOURS = 20
 export const ROUND_THE_CLOCK_TIERS = { high: 4, medium: 2, low: 1 }
 
-/** `days` holds the distinct active UTC hours of each active day. */
 export function roundTheClockFinding(rows: readonly HourlyActivity[]): SecurityFinding {
   const entities = rows.flatMap((row): SecurityEntity[] => {
     const fullDays = row.days.filter((hours) => hours >= ROUND_THE_CLOCK_HOURS).length
@@ -349,8 +331,6 @@ export function instantAllowanceFinding(rows: readonly InstantAllowance[], weekl
     })),
   })
 }
-
-// ── Credentials and privileges ──────────────────────────────────────────────
 
 export type AdminGrant = { id: string; email: string; note: string | null; createdAt: Date }
 
@@ -424,8 +404,6 @@ export function invitationFinding(rows: readonly Inviter[]): SecurityFinding {
   })
 }
 
-// ── Usage ───────────────────────────────────────────────────────────────────
-
 export type OrganizationSpend = { organizationId: string; name: string; currentMicroUsd: number; previousMicroUsd: number }
 export const SPEND_SPIKE = { mediumMicroUsd: 25_000_000, mediumGrowth: 3, highMicroUsd: 100_000_000, highGrowth: 10 }
 
@@ -449,8 +427,6 @@ export function spendSpikeFinding(rows: readonly OrganizationSpend[]): SecurityF
   })
 }
 
-// ── Access (request log, last 24 hours) ─────────────────────────────────────
-
 export type RequestRollupRow = { hour: number; action: string; outcome: "denied" | "failed" | "unknown"; status: number; requests: number }
 
 export type HourlySeries = number[]
@@ -462,7 +438,6 @@ function median(values: readonly number[]) {
   return sorted.length % 2 ? sorted[middle] ?? 0 : ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2
 }
 
-/** The busiest hour against a typical one. Quiet series use a floor of 1 so a first burst still shows. */
 export function spikeOf(series: HourlySeries) {
   const peak = Math.max(0, ...series)
   const typical = median(series)
@@ -500,7 +475,6 @@ export function rateLimitedFinding(byAction: ReadonlyMap<string, HourlySeries>):
   const hours = Math.max(0, ...[...byAction.values()].map((series) => series.length))
   const all = Array.from({ length: hours }, (_, index) => [...byAction.values()].reduce((sum, series) => sum + (series[index] ?? 0), 0))
   const spike = spikeOf(all)
-  // The limit is shared, so the whole series decides severity and every limited endpoint carries it.
   const severity = spikeSeverity(spike, RATE_LIMITED)
   const entities = [...byAction].map(([action, series]) => ({ action, ...spikeOf(series) })).filter((row) => row.total > 0)
     .sort((a, b) => b.total - a.total)

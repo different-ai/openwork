@@ -4,7 +4,6 @@ import { workbotModelCatalog, readOrganizationDefaultModel } from "./model.js"
 import { cloudAgentGatewayAccess } from "./gateway-model.js"
 import { workbotManagedLunaAccess } from "./managed-luna.js"
 
-/** Called only after user-session, feature, sensitive permission and durable diagnostic-rate checks. */
 export async function testOrganizationWorkbotModel(organizationId: string, userId: string): Promise<WorkbotModelTest> {
   const actor = { organizationId, userId }
   const catalog = await workbotModelCatalog(actor).catch(() => null)

@@ -5,11 +5,12 @@
 
 locals {
   # Without a certificate nothing is bound; den-api's precondition explains why.
-  bind_custom_domains = local.custom_domains && nonsensitive(var.custom_domain_certificate != null)
+  bind_custom_domains       = local.custom_domains && nonsensitive(var.custom_domain_certificate != null)
+  create_domain_certificate = (local.custom_domains || var.ai_gateway_enabled) && nonsensitive(var.custom_domain_certificate != null)
 }
 
 resource "azurerm_container_app_environment_certificate" "this" {
-  count = local.bind_custom_domains ? 1 : 0
+  count = local.create_domain_certificate ? 1 : 0
 
   name                         = "${var.name}-den"
   container_app_environment_id = local.environment_id

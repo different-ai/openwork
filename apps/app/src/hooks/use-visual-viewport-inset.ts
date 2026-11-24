@@ -1,16 +1,10 @@
 import { useEffect } from "react";
 
 export function visualViewportGeometry(height: number, offsetTop: number, scale: number) {
-  // Pinch zoom must remain browser-owned, rather than shrinking the app again.
   if (scale !== 1 || !Number.isFinite(height) || !Number.isFinite(offsetTop) || height <= 0) return null;
   return { height: Math.round(height), top: Math.max(0, Math.round(offsetTop)) };
 }
 
-/**
- * Fits the mobile chat shell to the visible viewport, including Safari's
- * focus pan. iOS Safari does not shrink `100vh` / `dvh`
- * when the keyboard opens; `visualViewport` does.
- */
 export function useVisualViewportInset() {
   useEffect(() => {
     const viewport = window.visualViewport;

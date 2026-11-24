@@ -17,7 +17,6 @@ export const OrganizationGrantTable = mysqlTable("organization_grant", {
   requestId: varchar("request_id", { length: 36 }).notNull(),
   feature: mysqlEnum("feature", ORGANIZATION_BENEFITS).notNull(),
   kind: mysqlEnum("kind", ORGANIZATION_GRANT_TYPES).notNull(),
-  /** Same integer usage units as Free Auto; a missing amount is access or unlimited, never zero. */
   amount: bigint("amount", { mode: "number" }),
   usedAmount: bigint("used_amount", { mode: "number" }).notNull().default(0),
   startsAt: timestamp("starts_at", { fsp: 3 }).notNull(),

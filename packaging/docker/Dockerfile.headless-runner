@@ -13,9 +13,42 @@ ENV NODE_ENV=production
 ENV HEADLESS_PORT=8795
 ENV HEADLESS_DB_PATH=/var/data/headless.sqlite
 
-COPY . /app
-RUN pnpm install --frozen-lockfile --filter "@openwork-ee/headless-runner..." \
-  && pnpm --filter @openwork-ee/headless-runner build \
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml tsconfig.declarations.json /app/
+COPY patches /app/patches
+# This pruned workspace does not install packages using every root patch.
+RUN node -e "const fs = require('node:fs'); fs.appendFileSync('/app/pnpm-workspace.yaml', '\nallowUnusedPatches: true\n')"
+
+# Only the runner's transitive workspace build/runtime dependencies belong in
+# this image. In particular, landing and unrelated desktop source are not inputs.
+COPY ee/apps/headless-runner/package.json /app/ee/apps/headless-runner/package.json
+COPY ee/packages/headless-computer/package.json /app/ee/packages/headless-computer/package.json
+COPY ee/packages/headless-protocol/package.json /app/ee/packages/headless-protocol/package.json
+COPY packages/codemode/package.json /app/packages/codemode/package.json
+COPY packages/computer-use/package.json /app/packages/computer-use/package.json
+COPY packages/managed-deployments/package.json /app/packages/managed-deployments/package.json
+COPY packages/sandbox/package.json /app/packages/sandbox/package.json
+COPY packages/sandbox-daytona/package.json /app/packages/sandbox-daytona/package.json
+COPY packages/sandbox-differently/package.json /app/packages/sandbox-differently/package.json
+COPY packages/sandbox-freestyle/package.json /app/packages/sandbox-freestyle/package.json
+COPY packages/types/package.json /app/packages/types/package.json
+COPY packages/workbook/package.json /app/packages/workbook/package.json
+RUN pnpm install --frozen-lockfile --filter "@openwork-ee/headless-runner..."
+
+COPY ee/apps/headless-runner /app/ee/apps/headless-runner
+COPY ee/packages/headless-computer /app/ee/packages/headless-computer
+COPY ee/packages/headless-protocol /app/ee/packages/headless-protocol
+COPY packages/codemode /app/packages/codemode
+COPY packages/computer-use /app/packages/computer-use
+COPY packages/managed-deployments /app/packages/managed-deployments
+COPY packages/sandbox /app/packages/sandbox
+COPY packages/sandbox-daytona /app/packages/sandbox-daytona
+COPY packages/sandbox-differently /app/packages/sandbox-differently
+COPY packages/sandbox-freestyle /app/packages/sandbox-freestyle
+COPY packages/types /app/packages/types
+COPY packages/workbook /app/packages/workbook
+# build-desktop.mjs copies and fingerprints this asset outside its workspace.
+COPY ee/apps/den-worker-runtime/scripts/cloud-desktop.sh /app/ee/apps/den-worker-runtime/scripts/cloud-desktop.sh
+RUN pnpm --filter @openwork-ee/headless-runner build \
   && mkdir -p /var/data
 
 EXPOSE 8795

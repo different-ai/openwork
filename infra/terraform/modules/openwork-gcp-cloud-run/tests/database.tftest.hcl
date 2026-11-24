@@ -66,6 +66,10 @@ run "legacy_generated_database_url_uses_connector" {
 run "safe_stateful_defaults" {
   command = apply
   assert {
+    condition     = google_sql_user.openwork[0].host == "%"
+    error_message = "Direct module users must retain the existing percent host default."
+  }
+  assert {
     condition     = output.database_identifier == google_sql_database_instance.this[0].id && output.migration_step_identifier == google_cloud_run_v2_job.migrate.id && output.web_url != "" && output.api_url != ""
     error_message = "The common output interface must expose URLs, Cloud SQL ID and Cloud Run job ID without renaming existing outputs."
   }

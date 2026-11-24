@@ -9,6 +9,7 @@ import { createBrowserDemonstration } from "@openwork/computer-use/browser-demon
 import { createDesktopApplications } from "./desktop-apps.mjs";
 import { ViewerTickets } from "./viewer-tickets.mjs";
 import { streamBrowser } from "./browser-screencast.mjs";
+import { DESKTOP_PROTOCOL } from "./desktop-protocol.mjs";
 
 const directory = process.env.WORKBOT_DESKTOP_STATE;
 if (!directory) throw new Error("WORKBOT_DESKTOP_STATE is required");
@@ -33,9 +34,12 @@ const authorized = request => {
   const expected = Buffer.from(`Bearer ${secret}`);
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 };
+// Only the image's helper on this computer sends requests. Viewers reach this port from outside, and computers made
+// from one snapshot start with the same secret, so the secret alone never admits a caller from another machine.
+const local = request => request.socket.remoteAddress === "127.0.0.1" && request.headers.host === "127.0.0.1:6080";
 const viewerScript = "/usr/local/share/openwork-desktop/vnc-stdio.py";
 const server = createServer(async (request, response) => {
-  if (request.method !== "POST" || !authorized(request)) return json(response, 404, { error: "not_found" });
+  if (request.method !== "POST" || !local(request) || !authorized(request)) return json(response, 404, { error: "not_found" });
   const viewerGeneration = tickets.generation;
   try {
     let raw = "";
@@ -49,7 +53,7 @@ const server = createServer(async (request, response) => {
     if (request.url === "/health") {
       const browser = await fetch("http://127.0.0.1:9222/json/version", { signal: AbortSignal.timeout(1500) }).then(async result => { await result.body?.cancel(); return result.ok; }).catch(() => false);
       const viewer = await Promise.all([access(viewerScript), access(`${directory}/browser-window`)]).then(() => true, () => false);
-      return json(response, browser && viewer ? 200 : 503, { ok: browser && viewer, version: process.env.WORKBOT_DESKTOP_VERSION ?? "unknown", ...(body.diagnostics === true ? { egress: await browserEgressStatus() } : {}) });
+      return json(response, browser && viewer ? 200 : 503, { ok: browser && viewer, version: process.env.WORKBOT_DESKTOP_VERSION ?? "unknown", protocol: DESKTOP_PROTOCOL, ...(body.diagnostics === true ? { egress: await browserEgressStatus() } : {}) });
     }
     if (request.url === "/browser/demonstration") {
       if (typeof body.sessionId !== "string" || !body.sessionId || body.sessionId.length > 256) return json(response, 400, { error: "invalid_session" });
@@ -102,13 +106,13 @@ server.on("upgrade", (request, socket, head) => {
   const [, transport, token] = /^\/(vnc|screencast)\/([A-Za-z0-9_-]{43})$/.exec(path) ?? [];
   const ticket = tickets.consume(token, request.headers.origin);
   if (!ticket || Date.now() >= until || sockets.size >= 4) return socket.destroy();
-  // The screencast only watches the browser; taking control still goes through VNC.
-  if (transport === "screencast" && (ticket.view !== "browser" || ticket.control)) return socket.destroy();
+  // The screencast shows only the browser; with control it also takes the person's input for the page.
+  if (transport === "screencast" && ticket.view !== "browser") return socket.destroy();
   websocket.handleUpgrade(request, socket, head, ws => {
     if (ticket.generation !== tickets.generation || Date.now() >= until) return ws.terminate();
     if (transport === "screencast") {
       const deadline = setTimeout(() => ws.close(1000, "Renew viewer access"), 60_000);
-      const stop = streamBrowser(ws, { onClose: () => { clearTimeout(deadline); sockets.delete(ws); transports.delete(ws); ws.close(); } });
+      const stop = streamBrowser(ws, { control: ticket.control, onClose: () => { clearTimeout(deadline); sockets.delete(ws); transports.delete(ws); ws.close(); } });
       sockets.add(ws);
       transports.set(ws, { destroy: stop });
       return;

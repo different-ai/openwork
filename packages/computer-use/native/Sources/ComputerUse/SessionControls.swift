@@ -2,21 +2,90 @@ import AppKit
 import ApplicationServices
 import Darwin
 
-// Held for the session, including while paused. The kernel releases it on exit.
-final class ControlLease {
-    private var fd: Int32 = -1
-    init() throws {
+enum LeaseFiles {
+    static func directory() throws -> URL {
         let directory = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("OpenWork/ComputerUse", isDirectory: true)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
-        fd = Darwin.open(directory.appendingPathComponent("control.lock").path, O_CREAT | O_RDWR | O_NOFOLLOW | O_CLOEXEC, 0o600)
-        guard fd >= 0 else { throw UseError("control_unavailable", "Could not reserve computer control.", next: "human_takeover") }
-        guard flock(fd, LOCK_EX | LOCK_NB) == 0 else {
-            Darwin.close(fd); fd = -1
-            throw UseError("computer_busy", "Another Computer Use session has control. Stop it before starting a new one.", next: "human_takeover")
+        return directory
+    }
+    /// An exclusive lock on `path`, or nil when another holder has it. The kernel releases it on exit.
+    static func lock(_ path: String) throws -> Int32? {
+        for _ in 0..<3 {
+            let fd = Darwin.open(path, O_CREAT | O_RDWR | O_NOFOLLOW | O_CLOEXEC, 0o600)
+            guard fd >= 0 else { throw UseError("control_unavailable", "Could not reserve computer control.", next: "human_takeover") }
+            guard flock(fd, LOCK_EX | LOCK_NB) == 0 else { Darwin.close(fd); return nil }
+            // A releasing holder unlinks its file: only a lock on the file still at `path` counts.
+            var held = stat(), named = stat()
+            if fstat(fd, &held) == 0, lstat(path, &named) == 0, held.st_dev == named.st_dev, held.st_ino == named.st_ino { return fd }
+            flock(fd, LOCK_UN); Darwin.close(fd)
+        }
+        return nil
+    }
+}
+
+// One agent per window, held for the session including while paused. Other
+// windows stay free for other chats; FocusLease keeps their input apart.
+final class ControlLease {
+    private var fd: Int32 = -1
+    private let path: String
+    init(pid: pid_t, window: CGWindowID, directory: URL? = nil) throws {
+        path = try (directory ?? LeaseFiles.directory()).appendingPathComponent("window-\(pid)-\(window).lock").path
+        guard let fd = try LeaseFiles.lock(path) else {
+            throw UseError("window_busy", "Another agent is working in this window. Choose another window, or wait for that chat to finish.", next: "open_session")
+        }
+        self.fd = fd
+    }
+    deinit {
+        guard fd >= 0 else { return }
+        unlink(path); flock(fd, LOCK_UN); Darwin.close(fd)
+    }
+}
+
+// The Mac has one keyboard focus and pointer. Held only while a control
+// session brings its window forward, reads it and sends input.
+final class FocusLease {
+    private var fd: Int32
+    /// Removed on release; the shared focus file stays.
+    private let path: String?
+    private init(fd: Int32, path: String? = nil) { self.fd = fd; self.path = path }
+    @MainActor static func acquire(directory: URL? = nil, timeout: TimeInterval = 15, check: () throws -> Void) async throws -> FocusLease {
+        let path = try (directory ?? LeaseFiles.directory()).appendingPathComponent("focus.lock").path
+        return FocusLease(fd: try await wait(path, timeout: timeout, check: check,
+            busy: "Another agent kept the keyboard and pointer too long. Nothing was dispatched. Observe again."))
+    }
+    /// An app sends its keys to its one key window. Held from the moment a control step
+    /// may change which window that is, by bringing its window forward or selecting it in
+    /// the background, until its input is sent, so agents in different windows of one app
+    /// never type into each other's window. Taken after the focus lease, never before.
+    @MainActor static func acquire(app pid: pid_t, directory: URL? = nil, timeout: TimeInterval = 15, check: () throws -> Void) async throws -> FocusLease {
+        let path = try (directory ?? LeaseFiles.directory()).appendingPathComponent("app-\(pid).lock").path
+        return FocusLease(fd: try await wait(path, timeout: timeout, check: check,
+            busy: "Another agent kept this app's keyboard focus too long. Nothing was dispatched. Observe again."), path: path)
+    }
+    @MainActor private static func wait(_ path: String, timeout: TimeInterval, check: () throws -> Void, busy: String) async throws -> Int32 {
+        let started = ProcessInfo.processInfo.systemUptime
+        while true {
+            try Task.checkCancellation(); try check()
+            if let fd = try LeaseFiles.lock(path) { return fd }
+            guard ProcessInfo.processInfo.systemUptime - started < timeout else {
+                throw UseError("focus_busy", busy, next: "observe")
+            }
+            try await Task.sleep(nanoseconds: 10_000_000)
         }
     }
-    deinit { if fd >= 0 { flock(fd, LOCK_UN); Darwin.close(fd) } }
+    /// The lease only when no other agent holds it right now; never waits.
+    static func attempt(directory: URL? = nil) -> FocusLease? {
+        guard let path = try? (directory ?? LeaseFiles.directory()).appendingPathComponent("focus.lock").path,
+              let fd = try? LeaseFiles.lock(path) else { return nil }
+        return FocusLease(fd: fd)
+    }
+    func release() {
+        guard fd >= 0 else { return }
+        if let path { unlink(path) }
+        flock(fd, LOCK_UN); Darwin.close(fd); fd = -1
+    }
+    deinit { release() }
 }
 
 @MainActor
@@ -73,20 +142,33 @@ final class SessionControls: NSObject {
         case "takeover":
             onPause?("You have control. Click Continue when you are ready.")
         case "watch":
-            guard let visible = try? Arguments(values: value).bool("visible", default: false) else { return }
-            onWatch?(visible)
+            // `visible`: the live view shows frames. `following`: this chat is on screen in
+            // OpenWork; `beside`: its window may go beside OpenWork. Each is optional.
+            let values = Arguments(values: value)
+            if value["visible"] != nil, let visible = try? values.bool("visible", default: false) { onWatch?(visible) }
+            // `stage_count` and `stage_slot`: the window's tile while several agents work in view.
+            if value["following"] != nil, let following = try? values.bool("following", default: false) {
+                let stage: StageSlot?? = value["stage_count"] == nil ? nil : .some((try? StageSlot.parse(values)) ?? nil)
+                onFollow?(following, value["beside"] == nil ? nil : try? values.bool("beside", default: true), stage)
+            }
         case "stop": onStop?()
         // Embedded sessions show no native panel; "hide"/"show" are accepted and ignored.
         default: break
         }
     }
     func narrate(_ text: String?) { AgentCursor.shared.narrate(text) }
-    func showAction(_ action: Action, records: [ElementRecord]) {
+    func react(_ reaction: CursorReaction) { AgentCursor.shared.react(reaction) }
+    /// `live` reads where a control is now, or nil once it is gone.
+    func showAction(_ action: Action, records: [ElementRecord], live: @escaping (ElementRecord) -> CGRect? = { $0.frame }) {
         switch action {
         case .press(let ref), .setValue(let ref, _):
-            if let record = records.first(where: { $0.ref == ref }) { AgentCursor.shared.highlight(screenRect: record.frame) }
+            if let record = records.first(where: { $0.ref == ref }) { AgentCursor.shared.highlight(screenRect: record.frame, live: { live(record) }) }
         default: break
         }
+    }
+
+    func showMenu(titleFrame: CGRect?, path: [String], shortcut: String?, menuBarShowing: Bool = true) {
+        AgentCursor.shared.showMenu(titleFrame: titleFrame, path: path, shortcut: shortcut, menuBarShowing: menuBarShowing)
     }
 
     private func showMenu() {
@@ -119,9 +201,10 @@ final class SessionControls: NSObject {
     var onStop: (() -> Void)?
     var onTick: (() -> Void)?
     var onWatch: ((Bool) -> Void)?
+    var onFollow: ((Bool, Bool?, StageSlot??) -> Void)?
     var isPaused = false
 
-    func show(app: AppIdentity, target: WindowTarget, mode: AccessMode, purpose: String) {
+    func show(app: AppIdentity, target: WindowTarget, mode: AccessMode, purpose: String, background: Bool = false) {
         Self.active = self; hostID = UUID().uuidString; hostState = [:]
         frameSequence = 0; inputSequence = 0; lastFrameAt = -.infinity
         isPaused = false; canContinue = true
@@ -136,7 +219,7 @@ final class SessionControls: NSObject {
             self.onResume?()
         }
         presence.onStop = { [weak self] in self?.onStop?() }
-        presence.begin(windowFrame: target.frame, windowID: target.id, appName: app.name)
+        presence.begin(windowFrame: target.frame, windowID: target.id, appName: app.name, purpose: purpose)
         if Self.embedded {
             showMenu()
             publish(["phase": "working", "appName": app.name, "appID": app.bundleID, "pid": Int(app.pid),
@@ -226,7 +309,7 @@ final class SessionControls: NSObject {
         expiry?.stringValue = "Computer use enabled"
     }
     func close(stoppedByPerson: Bool = false) {
-        AgentCursor.shared.end()
+        AgentCursor.shared.end(finished: !stoppedByPerson)
         if Self.active === self && hostState["phase"] as? String != "closed" {
             publish(["phase": "closed", "status": stoppedByPerson ? "Stopped by you." : "Session ended.", "canContinue": false, "cause": stoppedByPerson ? "human_stop" : "session_end"])
         }
