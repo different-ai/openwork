@@ -2,7 +2,7 @@ import type { CallToolResult, McpServer } from "@modelcontextprotocol/server"
 import { HARNESS_FEEDBACK_SURFACES } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { z } from "zod"
-import { env } from "../env.js"
+import { isHarnessFeedbackOrganization } from "../harness-feedback/access.js"
 import { captureHarnessFeedback, findHarnessFeedbackMember, type HarnessFeedbackIdentity } from "../harness-feedback/repository.js"
 import { isFirstPartyMcpPrincipal, type McpPrincipal } from "./auth.js"
 import { DEN_MCP_HEADLESS_RUN_CLIENT_ID } from "./headless-run-token.js"
@@ -21,7 +21,7 @@ const inputSchema = z.strictObject({
 })
 
 function eligibleIdentity(principal: McpPrincipal): HarnessFeedbackIdentity | null {
-  if (!env.harnessFeedbackOrgIds.has(principal.organizationId) || !isFirstPartyMcpPrincipal(principal)) return null
+  if (!isHarnessFeedbackOrganization(principal.organizationId) || !isFirstPartyMcpPrincipal(principal)) return null
   return {
     organizationId: normalizeDenTypeId("organization", principal.organizationId),
     userId: normalizeDenTypeId("user", principal.userId),

@@ -20,7 +20,7 @@ const report = z.object({
   state: z.enum(["pending", "classified", "rejected", "needs_review"]), createdAt: z.iso.datetime(),
 });
 const group = z.object({
-  id: z.string(), organizationId: z.string(), title: z.string(), category: z.string().nullable(), surface, tool: z.string().nullable(),
+  id: z.string(), organizationId: z.string(), title: z.string(), categoryLabel: z.string().nullish(), surface, tool: z.string().nullable(),
   reportCount: z.number(), firstSeenAt: z.iso.datetime(), lastSeenAt: z.iso.datetime(), notifyState: z.enum(["pending", "delivered", "failed"]),
 });
 const inbox = z.object({
@@ -35,7 +35,7 @@ const surfaces: Record<z.infer<typeof surface>, string> = {
   tool: "Tool", instructions: "Instructions", skill: "Skill", connector: "Connection", environment: "Environment", other: "Other",
 };
 const states: Record<z.infer<typeof report>["state"], string> = {
-  pending: "Awaiting classification", classified: "Classified", rejected: "Not grouped", needs_review: "Needs review",
+  pending: "Awaiting classification", classified: "Classified", rejected: "Not a harness issue", needs_review: "Needs review",
 };
 const notifications: Record<z.infer<typeof group>["notifyState"], string> = {
   pending: "Not posted", delivered: "Posted to Slack", failed: "Slack post failed",
@@ -62,48 +62,77 @@ function ReportMetadata({ item }: { item: z.infer<typeof report> }) {
   );
 }
 
-function GroupReports({ item, revision }: { item: z.infer<typeof group>; revision: number }) {
+function ReportDetails({ path, revision, groupCount }: { path: string; revision: number; groupCount?: number }) {
   const [retry, setRetry] = useState(0);
-  const result = useAdminReport(`${PATH}/${encodeURIComponent(item.organizationId)}/${encodeURIComponent(item.id)}`, parseDetail, revision + retry);
+  const result = useAdminReport(path, parseDetail, revision + retry);
   if (result.status === "loading" && !result.data) return <div role="status" aria-label="Loading reports" className="h-16 animate-pulse rounded-md bg-gray-100 motion-reduce:animate-none" />;
   if (result.status !== "loading" && result.status !== "ready") return <DenNotice message={<span>{result.message} <button type="button" className="underline underline-offset-2" onClick={() => setRetry((value) => value + 1)}>Try again</button></span>} />;
   const reports = result.data?.reports ?? [];
   return reports.length ? (
     <>
-      {item.reportCount > reports.length ? <p className="text-sm text-gray-600">Showing the latest {formatCount(reports.length)} reports.</p> : null}
+      {groupCount !== undefined && groupCount > reports.length ? <p className="text-sm text-gray-600">Showing the latest {formatCount(reports.length)} reports.</p> : null}
       <ul className="divide-y divide-gray-100">
         {reports.map((entry) => (
           <li key={entry.id} className="flex flex-col gap-2 py-3 text-sm">
-            <ReportMetadata item={entry} />
+            {groupCount !== undefined ? <ReportMetadata item={entry} /> : null}
             <p className="whitespace-pre-wrap break-words">{entry.symptom}</p>
             {entry.workaround ? <p className="whitespace-pre-wrap break-words"><span className="font-medium">Workaround:</span> {entry.workaround}</p> : null}
           </li>
         ))}
       </ul>
     </>
-  ) : <p className="text-sm text-gray-600">No reports in this group.</p>;
+  ) : <p className="text-sm text-gray-600">No reports found.</p>;
+}
+
+function DisclosureRow({ summary, children }: { summary: React.ReactNode; children: (open: boolean) => React.ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details className="group py-3" onToggle={(event) => setOpen(event.currentTarget.open)}>
+      <summary className="flex cursor-pointer list-none items-center gap-2 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-500 [&::-webkit-details-marker]:hidden">
+        <ChevronRight size={16} strokeWidth={1.5} aria-hidden="true" className="shrink-0 text-gray-500 transition-transform duration-150 group-open:rotate-90 motion-reduce:transition-none" />
+        {summary}
+      </summary>
+      {children(open)}
+    </details>
+  );
 }
 
 function GroupRow({ item, revision }: { item: z.infer<typeof group>; revision: number }) {
-  const [open, setOpen] = useState(false);
   return (
-    <details className="group border-t border-gray-100 py-3" onToggle={(event) => setOpen(event.currentTarget.open)}>
-      <summary className="flex cursor-pointer list-none items-center gap-2 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-500 [&::-webkit-details-marker]:hidden">
-        <ChevronRight size={16} strokeWidth={1.5} aria-hidden="true" className="shrink-0 text-gray-500 transition-transform duration-150 group-open:rotate-90 motion-reduce:transition-none" />
+    <div className="border-t border-gray-100">
+      <DisclosureRow summary={<>
         <span className="min-w-0 flex-1 break-words text-sm font-medium">{item.title}</span>
         <span className="shrink-0 text-sm text-gray-600">{formatCount(item.reportCount)} {item.reportCount === 1 ? "report" : "reports"}</span>
-      </summary>
-      <div className="ml-6 mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-gray-600">
-        <Organization id={item.organizationId} />
-        <span>{surfaces[item.surface]}</span>
-        {item.category ? <span>{item.category}</span> : null}
-        {item.tool ? <code className="break-all">{item.tool}</code> : null}
-        <DenBadge tone={item.notifyState === "failed" ? "warning" : "neutral"}>{notifications[item.notifyState]}</DenBadge>
-        <span>First seen <DateTime value={item.firstSeenAt} /></span>
-        <span>Last seen <DateTime value={item.lastSeenAt} /></span>
-      </div>
-      {open ? <div className="ml-6 mt-3"><GroupReports item={item} revision={revision} /></div> : null}
-    </details>
+      </>}>
+        {(open) => <>
+          <div className="ml-6 mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-gray-600">
+            <Organization id={item.organizationId} />
+            <span>{surfaces[item.surface]}</span>
+            {item.categoryLabel ? <span>{item.categoryLabel}</span> : null}
+            {item.tool ? <code className="break-all">{item.tool}</code> : null}
+            <DenBadge tone={item.notifyState === "failed" ? "warning" : "neutral"}>{notifications[item.notifyState]}</DenBadge>
+            <span>First seen <DateTime value={item.firstSeenAt} /></span>
+            <span>Last seen <DateTime value={item.lastSeenAt} /></span>
+          </div>
+          {open ? <div className="ml-6 mt-3"><ReportDetails path={`${PATH}/${encodeURIComponent(item.organizationId)}/${encodeURIComponent(item.id)}`} revision={revision} groupCount={item.reportCount} /></div> : null}
+        </>}
+      </DisclosureRow>
+    </div>
+  );
+}
+
+function UngroupedReportRow({ item, revision }: { item: z.infer<typeof report>; revision: number }) {
+  return (
+    <li>
+      <DisclosureRow summary={<ReportMetadata item={item} />}>
+        {(open) => open ? (
+          <div className="ml-6 mt-2 text-sm">
+            <Organization id={item.organizationId} />
+            <ReportDetails path={`${PATH}/reports/${encodeURIComponent(item.organizationId)}/${encodeURIComponent(item.id)}`} revision={revision} />
+          </div>
+        ) : null}
+      </DisclosureRow>
+    </li>
   );
 }
 
@@ -140,14 +169,10 @@ export function HarnessFeedbackPage() {
               </DenCard>
               <DenCard className="!rounded-lg">
                 <h2 className="mb-3 text-sm font-semibold">Ungrouped reports</h2>
-                {data.summary.ungrouped > data.ungroupedReports.length ? <p className="mb-3 text-sm text-gray-600">Showing the latest {formatCount(data.ungroupedReports.length)} ungrouped reports.</p> : null}
+                {data.summary.ungrouped > data.ungroupedReports.length ? <p className="mb-3 text-sm text-gray-600">Showing {formatCount(data.ungroupedReports.length)} ungrouped reports, with reports that need review first.</p> : null}
                 {data.ungroupedReports.length ? (
                   <ul className="divide-y divide-gray-100">
-                    {data.ungroupedReports.map((item) => (
-                      <li key={item.id} className="flex flex-wrap items-center gap-x-3 gap-y-1 py-3 text-sm text-gray-600">
-                        <ReportMetadata item={item} /><Organization id={item.organizationId} />
-                      </li>
-                    ))}
+                    {data.ungroupedReports.map((item) => <UngroupedReportRow key={item.id} item={item} revision={revision} />)}
                   </ul>
                 ) : <p className="text-sm text-gray-600">No ungrouped reports.</p>}
               </DenCard>

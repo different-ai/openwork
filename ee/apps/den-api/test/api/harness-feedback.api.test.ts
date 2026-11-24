@@ -3,7 +3,7 @@ import { after, test } from "node:test"
 import { eq } from "@openwork-ee/den-db/drizzle"
 import { AuthSessionTable, HarnessFeedbackGroupTable, HarnessFeedbackReportTable, MemberTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import { bootDen, field, summary } from "./harness.js"
+import { bootDen, field, list, summary } from "./harness.js"
 
 const den = await bootDen({ env: { DEN_HARNESS_FEEDBACK_ORG_IDS: "", DEN_FEATURE_CONNECT_STANDARD_TOOLS: "true" } })
 after(() => den.close())
@@ -20,6 +20,7 @@ const userId = normalizeDenTypeId("user", context.owner.userId)
 const outsideOrgId = normalizeDenTypeId("organization", other.orgId)
 const token = await den.mintMcpToken(context.owner, context.orgId)
 const otherToken = await den.mintMcpToken(other.owner, other.orgId)
+const admin = await den.signUp("Platform Admin", process.env.DEN_BOOTSTRAP_ADMIN_EMAILS)
 const tool = "harness_feedback"
 const path = "/v1/admin/harness-feedback"
 const input = { surface: "tool", tool: "demo_tool", symptom: "The tool does not explain why it needs a target.", workaround: "Read the tool guide." }
@@ -112,7 +113,6 @@ test("app and headless capture bounded reports, deduplicate concurrent calls, an
 
 test("platform admin inbox and detail are no-store and isolate groups by organization", async () => {
   env.harnessFeedbackOrgIds.add(organizationId)
-  const admin = await den.signUp("Platform Admin", process.env.DEN_BOOTSTRAP_ADMIN_EMAILS)
   const groupId = createDenTypeId("harnessFeedbackGroup")
   const otherGroupId = createDenTypeId("harnessFeedbackGroup")
   await db.insert(HarnessFeedbackGroupTable).values([
@@ -144,6 +144,39 @@ test("platform admin inbox and detail are no-store and isolate groups by organiz
     assert.equal(detail.status, 200, summary(detail))
     assert.equal(detail.headers.get("cache-control"), "no-store")
     assert.ok(detail.text.includes(input.symptom) && detail.text.includes(input.workaround) && !detail.text.includes(outsideOrgId))
+  } finally {
+    env.harnessFeedbackOrgIds.clear()
+  }
+})
+
+test("admin can read an ungrouped report that needs review without exposing its text in the inbox", async () => {
+  const reportId = createDenTypeId("harnessFeedbackReport")
+  const outsideReportId = createDenTypeId("harnessFeedbackReport")
+  const groupedReportId = createDenTypeId("harnessFeedbackReport")
+  const report = { organizationId, memberId, clientKind: "app", surface: "tool", symptom: input.symptom, workaround: input.workaround, state: "needs_review", createdAt: new Date(Date.now() - 60_000) } satisfies Omit<typeof HarnessFeedbackReportTable.$inferInsert, "id">
+  await db.insert(HarnessFeedbackReportTable).values([
+    { ...report, id: reportId },
+    { ...report, id: outsideReportId, organizationId: outsideOrgId },
+    { ...report, id: groupedReportId, groupId: createDenTypeId("harnessFeedbackGroup"), state: "classified" },
+  ])
+  env.harnessFeedbackOrgIds.add(organizationId)
+  try {
+    const detailPath = `${path}/reports/${organizationId}/${reportId}`
+    assert.equal((await den.request(null, "GET", detailPath)).status, 401)
+    assert.equal((await den.request(context.owner.token, "GET", detailPath)).status, 403)
+    assert.equal((await den.request(admin.token, "GET", `${path}/reports/${outsideOrgId}/${outsideReportId}`)).status, 404)
+    assert.equal((await den.request(admin.token, "GET", `${path}/reports/${organizationId}/${outsideReportId}`)).status, 404)
+    assert.equal((await den.request(admin.token, "GET", `${path}/reports/${organizationId}/${groupedReportId}`)).status, 404)
+    const listing = await den.request(admin.token, "GET", path)
+    assert.equal(listing.status, 200)
+    const [first] = list(field(listing.body, "ungroupedReports"))
+    assert.equal(first?.id, reportId)
+    assert.equal(first?.state, "needs_review")
+    assert.ok(!listing.text.includes(input.symptom) && !listing.text.includes(input.workaround))
+    const detail = await den.request(admin.token, "GET", detailPath)
+    assert.equal(detail.status, 200, summary(detail))
+    assert.equal(detail.headers.get("cache-control"), "no-store")
+    assert.ok(detail.text.includes(input.symptom) && detail.text.includes(input.workaround))
   } finally {
     env.harnessFeedbackOrgIds.clear()
   }
