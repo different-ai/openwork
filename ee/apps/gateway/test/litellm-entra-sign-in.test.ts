@@ -8,8 +8,6 @@ import { Hono } from "hono"
 import { isInferenceCredentialKindSupported, liteLlmEntraScope } from "@openwork-ee/gateway-catalog"
 import { isMicrosoftAccessTokenForApp, microsoftRefreshScopes, microsoftSignInScopes, readMicrosoftTokens } from "@openwork-ee/gateway-upstreams"
 import { createDenTypeId } from "@openwork-ee/utils/typeid"
-import { resolveFeatures, type FeatureContext } from "@openwork/features"
-import { createLiteLlmEntraFeatureCheck } from "../src/litellm-entra-feature.js"
 import { createOauthRefresher, providerHoldsRefreshableKind, sameOauthVersion, type OauthCredentialRow, type OauthRefreshStore, type RefreshMemberToken } from "../src/credentials/oauth-refresh.js"
 import type { GatewayAccessRow, GatewayMemberAccessRow } from "../src/provider-access.js"
 import { cursorModelsPath } from "../src/cursor.js"
@@ -395,7 +393,6 @@ function app(input: {
   credential: GatewayCredential
   credentialSet?: Partial<GatewayAccessRow["credentialSet"]>
   reloadedProvider?: Partial<GatewayProvider>
-  featureEnabled?: () => Promise<boolean>
   refreshMemberToken?: RefreshMemberToken
   onCredentialRead?: () => void
   memberRows?: GatewayMemberAccessRow[]
@@ -431,7 +428,6 @@ function app(input: {
       providerConsistencies.push(lookup.consistency)
       return ++providerReads <= 2 ? provider : { ...provider, ...input.reloadedProvider }
     },
-    checkLiteLlmEntraFeature: input.featureEnabled ?? (async () => true),
     loadMemberGatewayAccess: async () => input.memberRows ?? [],
     autoRouterRoutingConfigured: false,
     refreshMemberToken: input.refreshMemberToken,
@@ -529,81 +525,14 @@ test("a key-based LiteLLM provider never forwards an Entra ID token", async () =
   }
 })
 
-test("a member's own LiteLLM key keeps its read path without feature or extra provider reads", async () => {
-  let featureReads = 0
-  const { sent, send, providerReads, providerConsistencies, accessConsistencies, credentialConsistencies } = app({ settings: liteLlmSettings("personal"), credential: { id: credentialId, kind: "api_key", secret: "sk-member-litellm-fixture", expires_at: null, status: "active" },
-    featureEnabled: async () => { featureReads++; throw new Error("feature storage unavailable") } })
+test("a member's own LiteLLM key keeps its read path without extra provider reads", async () => {
+  const { sent, send, providerReads, providerConsistencies, accessConsistencies, credentialConsistencies } = app({ settings: liteLlmSettings("personal"), credential: { id: credentialId, kind: "api_key", secret: "sk-member-litellm-fixture", expires_at: null, status: "active" } })
   assert.equal((await send()).status, 200)
   assert.equal(sent[0]?.headers.get("authorization"), "Bearer sk-member-litellm-fixture")
-  assert.equal(featureReads, 0)
   assert.equal(providerReads(), 1)
   assert.deepEqual(providerConsistencies, [undefined])
   assert.ok(accessConsistencies.every((value) => value === undefined))
   assert.ok(credentialConsistencies.every((value) => value === undefined))
-})
-
-test("disabled, killed, organization and member overrides stop Entra before credential work", async () => {
-  const enabled: FeatureContext = { deployment: "cloud", locks: {}, overrides: {}, rollouts: { litellmEntraMemberSignIn: { enabled: true, killed: false } } }
-  const states: FeatureContext[] = [
-    { ...enabled, rollouts: {} },
-    { ...enabled, overrides: { litellmEntraMemberSignIn: false } },
-    { ...enabled, memberOverrides: { litellmEntraMemberSignIn: false } },
-    { ...enabled, locks: { litellmEntraMemberSignIn: false }, memberOverrides: { litellmEntraMemberSignIn: true } },
-    { ...enabled, rollouts: { litellmEntraMemberSignIn: { enabled: true, killed: true } }, overrides: { litellmEntraMemberSignIn: true }, memberOverrides: { litellmEntraMemberSignIn: true } },
-  ]
-  const userId = createDenTypeId("user")
-  for (const state of states) {
-    let credentialReads = 0
-    let refreshes = 0
-    const featureEnabled = createLiteLlmEntraFeatureCheck({
-      loadActiveMember: async (scope) => {
-        assert.equal(scope.organizationId, organizationId)
-        assert.equal(scope.orgMembershipId, orgMembershipId)
-        return { userId }
-      },
-      readMemberFeatures: async (org, user) => {
-        assert.equal(org, organizationId)
-        assert.equal(user, userId)
-        assert.notEqual(user, orgMembershipId)
-        return resolveFeatures(state)
-      },
-    })
-    const { sent, send } = app({ settings: liteLlmSettings("entra"), credential: { ...entraCredential(apiScope), expires_at: new Date(now.getTime() + 1_000) }, featureEnabled,
-      onCredentialRead: () => { credentialReads++ }, refreshMemberToken: async () => { refreshes++; return { kind: "auth_required" } } })
-    const response = await send()
-    assert.equal(response.status, 403)
-    assert.equal((await response.json()).error.code, "feature_disabled")
-    assert.equal(credentialReads, 0)
-    assert.equal(refreshes, 0)
-    assert.equal(sent.length, 0)
-  }
-})
-
-test("missing active user and failed feature reads fail closed", async () => {
-  const checks = [
-    createLiteLlmEntraFeatureCheck({ loadActiveMember: async () => null, readMemberFeatures: async () => { throw new Error("must not read") } }),
-    createLiteLlmEntraFeatureCheck({ loadActiveMember: async () => ({ userId: null }), readMemberFeatures: async () => { throw new Error("must not read") } }),
-    createLiteLlmEntraFeatureCheck({ loadActiveMember: async () => ({ userId: createDenTypeId("user") }), readMemberFeatures: async () => { throw new Error("unavailable") } }),
-    async () => { throw new Error("unavailable") },
-  ]
-  for (const featureEnabled of checks) {
-    const { sent, send } = app({ settings: liteLlmSettings("entra"), credential: entraCredential(apiScope), featureEnabled })
-    assert.equal((await send()).status, 403)
-    assert.equal(sent.length, 0)
-  }
-})
-
-test("disabling Entra while credentials prepare stops the final dispatch", async () => {
-  let enabled = true
-  let reads = 0
-  let credentialReads = 0
-  const { sent, send } = app({ settings: liteLlmSettings("entra"), credential: entraCredential(apiScope),
-    featureEnabled: async () => { reads++; return enabled }, onCredentialRead: () => { if (++credentialReads === 3) enabled = false } })
-  const response = await send()
-  assert.equal(response.status, 403)
-  assert.equal((await response.json()).error.code, "feature_disabled")
-  assert.equal(reads, 4)
-  assert.equal(sent.length, 0)
 })
 
 function discoveryRow(keySource: string | null, modelId: string, providerType = "litellm", mode: "org" | "member" = "member"): GatewayMemberAccessRow {
@@ -621,46 +550,15 @@ function discoveryRow(keySource: string | null, modelId: string, providerType = 
 }
 
 for (const path of [gatewayModelsPath, cursorModelsPath, claudeCodeModelsPath, codexModelsPath]) {
-  test(`${path} hides retained Entra models while off or unavailable, without hiding existing modes`, async () => {
-    const checks = [async () => false, async () => { throw new Error("feature storage unavailable") }, async () => true]
-    for (const [index, check] of checks.entries()) {
-      let featureReads = 0
-      const { api, providerReads, sent } = app({ settings: liteLlmSettings("personal"), credential: entraCredential(apiScope),
-        memberRows: [discoveryRow("entra", "retained-entra-model"), discoveryRow("personal", "existing-personal-model"),
-          discoveryRow("issued", "existing-issued-model"), discoveryRow("personal", "existing-org-model", "litellm", "org"), discoveryRow("entra", "existing-foundry-model", "microsoft-foundry")],
-        featureEnabled: async () => { featureReads++; return check() } })
-      const response = await api.request(path)
-      assert.equal(response.status, 200)
-      const body = await response.text()
-      if (index === 2) assert.match(body, /retained-entra-model/)
-      else assert.doesNotMatch(body, /retained-entra-model/)
-      for (const modelId of ["existing-personal-model", "existing-issued-model", "existing-org-model", "existing-foundry-model"]) assert.ok(body.includes(modelId), modelId)
-      assert.equal(featureReads, 1)
-      assert.equal(providerReads(), 0)
-      assert.equal(sent.length, 0)
-    }
-  })
-
-  test(`${path} does not read features or providers for ordinary discovery rows`, async () => {
-    let featureReads = 0
-    const { api, providerReads } = app({ settings: liteLlmSettings("personal"), credential: entraCredential(apiScope),
-      memberRows: [discoveryRow("personal", "existing-model"), discoveryRow("entra", "existing-foundry-model", "microsoft-foundry")],
-      featureEnabled: async () => { featureReads++; throw new Error("must not read") } })
+  test(`${path} lists Entra sign-in models alongside the other modes without reading providers`, async () => {
+    const { api, providerReads, sent } = app({ settings: liteLlmSettings("personal"), credential: entraCredential(apiScope),
+      memberRows: [discoveryRow("entra", "retained-entra-model"), discoveryRow("personal", "existing-personal-model"),
+        discoveryRow("issued", "existing-issued-model"), discoveryRow("personal", "existing-org-model", "litellm", "org"), discoveryRow("entra", "existing-foundry-model", "microsoft-foundry")] })
     const response = await api.request(path)
     assert.equal(response.status, 200)
-    assert.match(await response.text(), /existing-model/)
-    assert.equal(featureReads, 0)
+    const body = await response.text()
+    for (const modelId of ["retained-entra-model", "existing-personal-model", "existing-issued-model", "existing-org-model", "existing-foundry-model"]) assert.ok(body.includes(modelId), modelId)
     assert.equal(providerReads(), 0)
+    assert.equal(sent.length, 0)
   })
 }
-
-test("disabling Entra during credential lookup stops renewal before its network call", async () => {
-  let enabled = true
-  let refreshes = 0
-  const { sent, send } = app({ settings: liteLlmSettings("entra"), credential: { ...entraCredential(apiScope), expires_at: new Date(now.getTime() + 1_000) },
-    featureEnabled: async () => enabled, onCredentialRead: () => { enabled = false },
-    refreshMemberToken: async () => { refreshes++; return { kind: "auth_required" } } })
-  assert.equal((await send()).status, 403)
-  assert.equal(refreshes, 0)
-  assert.equal(sent.length, 0)
-})

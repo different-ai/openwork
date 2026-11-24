@@ -1,7 +1,7 @@
-# Select several sessions in the sidebar (`sessionMultiSelect`)
+# Select several sessions in the sidebar
 
-- **Feature key:** `sessionMultiSelect`
-- **Deployments:** cloud and self-hosted (`everywhere`), off by default
+- **Status:** generally available; `sessionMultiSelect` was retired in November 2026.
+- **Deployments:** cloud and self-hosted
 - **Author:** @reachjalil
 
 ## What people get
@@ -42,14 +42,12 @@ Rename, delete and side chat stay single-session actions.
 - `useSessionArchive().archiveSessionsInWorkspaces` archives or restores rows
   one after another and collects them for one undo toast.
 
-## Turning it off
+## Older desktop builds
 
-With the feature off, Cmd/Ctrl/Shift-clicks open the session as before, any
-selection is cleared and the bar and bulk menu disappear. Nothing is stored,
-so nothing needs cleaning up.
+Desktop builds that still read `sessionMultiSelect` get a fixed `true` from
+the features response, so they keep multi-select too. Stored overrides and
+operator locks for the key are ignored.
 
 ## What to watch
 
 - Archive errors are shown per session, as for a single archive.
-- Usage is recorded with `markFeatureUsed("sessionMultiSelect")` on the first
-  selecting click.

@@ -106,11 +106,8 @@ function thread(person: Member) {
   return id
 }
 
-test("default-off and unbound tokens expose no event tools; enabled hosted turns discover events", async () => {
+test("unbound tokens expose no event tools; bound hosted turns discover events", async () => {
   thread(org.owner); thread(member)
-  const disabled = await den.callMcpTool(await tokenFor(org.owner), "list_mcp_events", {})
-  assert.ok(disabled.rpcError, disabled.raw)
-  assert.equal((await den.setFeature(org.orgId, "mcpThreadEvents", true)).status, 200)
   const unbound = await den.callMcpTool(await den.mintMcpToken(org.owner, org.orgId), "list_mcp_events", {})
   assert.ok(unbound.rpcError, unbound.raw)
   token = await tokenFor(org.owner)
@@ -224,16 +221,10 @@ test("gap and termination controls are retained, deduplicated and delivered into
   assert.equal(await dispatchMcpEvent(), false)
 })
 
-test("flag off rejects callbacks and stops pending work; namespaced discovery can subscribe after re-enable", async () => {
-  assert.equal((await callback(remoteId, event("pending-at-kill"))).status, 202)
+test("namespaced discovery can subscribe; unsubscribe refuses callbacks and stops pending work", async () => {
   const before = turns.size
-  assert.equal((await den.setFeature(org.orgId, "mcpThreadEvents", false)).status, 200)
-  assert.equal((await callback(remoteId, event("after-kill"))).status, 410)
-  await dispatchMcpEvent()
-  assert.equal(turns.size, before)
-  assert.equal((await den.setFeature(org.orgId, "mcpThreadEvents", true)).status, 200)
   capability = "extension"
-  const next = await den.callMcpTool(token, "subscribe_mcp_event", input)
+  const next = await den.callMcpTool(token, "subscribe_mcp_event", { ...input, arguments: { folder: "namespaced" } })
   assert.equal(next.isError, false, next.raw)
   const nextId = text(field(next.body, "id"), "new subscription id")
   assert.notEqual(nextId, subscriptionId)
@@ -249,7 +240,7 @@ test("flag off rejects callbacks and stops pending work; namespaced discovery ca
 
 
 test("revoked connection access stops accepted events before a new turn", async () => {
-  const next = await den.callMcpTool(token, "subscribe_mcp_event", input)
+  const next = await den.callMcpTool(token, "subscribe_mcp_event", { ...input, arguments: { folder: "revocation" } })
   assert.equal(next.isError, false, next.raw)
   remoteId = `remote-${subscribed}`
   assert.equal((await callback(remoteId, event("before-revocation"))).status, 202)

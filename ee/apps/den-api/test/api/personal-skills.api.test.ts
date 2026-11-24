@@ -28,20 +28,12 @@ async function createPlugin(member: Member, orgId: string, name: string, source:
   return text(field(result.body, "item", "id"), "plugin id")
 }
 
-async function enable(orgId: string) {
-  const enabled = await den.setFeature(orgId, "personalSkillPortability", true)
-  assert.equal(enabled.status, 200, summary(enabled))
-}
-
-test("personal portability requires an enabled workspace, current membership, and a fresh user session", async () => {
+test("personal portability requires current membership and a fresh user session", async () => {
   for (const [method, path, body] of [["GET", EXPORT, undefined], ["POST", IMPORT, bundle()]] as const) {
-    const disabled = await den.as(author, from.orgId)(method, path, body)
-    assert.equal(disabled.status, 404, summary(disabled))
-    assert.equal(field(disabled.body, "error"), "feature_disabled")
-    assert.equal(disabled.headers.get("cache-control"), "no-store")
-    assert.equal((await den.request(null, method, path, { orgId: from.orgId, body })).status, 401)
+    const signedOut = await den.request(null, method, path, { orgId: from.orgId, body })
+    assert.equal(signedOut.status, 401, summary(signedOut))
+    assert.equal(signedOut.headers.get("cache-control"), "no-store")
   }
-  await enable(from.orgId)
   const token = await den.mintMcpToken(author, from.orgId)
   const apiKey = await den.as(from.owner, from.orgId)("POST", "/v1/api-keys", { name: "Portability test key" })
   assert.equal(apiKey.status, 201, summary(apiKey))
@@ -62,7 +54,6 @@ test("personal portability requires an enabled workspace, current membership, an
 })
 
 test("export returns latest source only for one's own active unshared manual skills in this workspace", async () => {
-  await enable(from.orgId)
   const privateSource = markdown("private-solo", "Updated instructions.")
   const standalone = await createSkill(author, from.orgId, markdown("private-solo"))
   const edited = await den.as(author, from.orgId)("POST", `/v1/config-objects/${standalone}/versions`, { input: {
@@ -101,7 +92,6 @@ test("export returns latest source only for one's own active unshared manual ski
 })
 
 test("import validates the whole format before creation and explicitly creates fresh private copies without overwrite", async () => {
-  await enable(to.orgId)
   const source = markdown("same-name", "New instructions.")
   const existingSource = markdown("same-name", "Keep these existing instructions.")
   const existing = await createSkill(recipient, to.orgId, existingSource)

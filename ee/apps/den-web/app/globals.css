@@ -56,8 +56,7 @@
     --ow-warning: #b45309;
     --ow-danger: #b42318;
     /*
-     * Dashboard shell colours. These defaults are the shell as it has always
-     * looked: a white sidebar and top bar beside lightly tinted pages.
+     * Dashboard shell colours for anything drawn outside the dashboard shell.
      */
     --den-shell-canvas: #fafafa;
     --den-shell-topbar: #ffffff;
@@ -73,10 +72,10 @@
 }
 
 /*
- * Feature `denGreySidebar`: the sidebar on a light grey band and every page on
- * white, as the admin dashboard is pictured on the website. Colours only.
+ * The dashboard shell: the sidebar on a light grey band and every page on
+ * white, as the admin dashboard is pictured on the website.
  */
-[data-den-shell="grey"] {
+[data-den-shell] {
     --den-shell-canvas: #ffffff;
     --den-shell-topbar: #ffffff;
     --den-shell-sidebar: #f7f8fa;

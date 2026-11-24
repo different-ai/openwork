@@ -16,7 +16,7 @@ export async function packagedDemoDesktop(cleanup: AsyncDisposableStack, input: 
   requireDemo(binary && !other.length, "Expected one packaged executable");
   const work = join(input.root, "Sandbox Demo");
   await mkdir(work);
-  const fixture = input.den ? null : await sandboxDenFixture(true);
+  const fixture = input.den ? null : await sandboxDenFixture();
   if (fixture) cleanup.defer(fixture.close);
   const state = { phase: "boot", hostSecret: randomUUID() };
   const profile = profiles.fable;
@@ -136,7 +136,7 @@ export async function runDesktopClip(n: string, desktop: Desktop, root: string, 
   const directory = join(root, "film");
   let progress = 0;
   const normal = "Run uname -s and tell me the result.";
-  const room = await settings(body => body.featureEnabled === true && body.verification === "verified" && body.useSandbox === false && body.forceSandbox === false);
+  const room = await settings(body => body.verification === "verified" && body.useSandbox === false && body.forceSandbox === false);
   requireDemo(room.status === 200, "Sandbox fixture did not enable the controls");
   let folder = "";
   if (n === "04") {

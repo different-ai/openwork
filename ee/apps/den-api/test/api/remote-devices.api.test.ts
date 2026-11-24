@@ -318,10 +318,9 @@ test("Workbot lists the same computers and reports what happens to its own", asy
 
   const session = await den.request(token, "GET", "/v1/workbot/session")
   assert.equal(field(session.body, "devices"), true, summary(session))
-  // What Workbot is doing on each computer is its own feature, off until turned on.
-  assert.equal(field(session.body, "deviceActivity"), false)
-  assert.equal((await den.setFeature(orgId, "workbotDeviceActivity", true)).status, 200)
-  assert.equal(field((await den.request(token, "GET", "/v1/workbot/session")).body, "deviceActivity"), true)
+  // Older Workbot servers and browser bundles still read these response fields.
+  assert.equal(field(session.body, "profileComputers"), true)
+  assert.equal(field(session.body, "deviceActivity"), true)
   const before = devicesOf(await den.request(token, "GET", "/v1/workbot/devices"))
   assert.deepEqual(before.map((device) => device.id).sort(), devicesOf(await asMember("GET", "/v1/remote-devices")).map((device) => device.id).sort())
   assert.ok(before.filter((device) => device.access === "shared").every((device) => !device.canRename && !device.canRemove), "Workbot never manages shared computers")

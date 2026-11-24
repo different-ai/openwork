@@ -30,7 +30,7 @@ function reply(...messages: { text: string; about: string[]; update?: boolean }[
 
 const review = { text: "Dana moved the review to *2 PM*.", about: ["calendar:review"] }
 
-function harness(input: { checks: string[]; briefOn?: AgentBriefWakeDeps["briefOn"]; sentToday?: number; told?: string[]; sendCheck?: AgentBriefWakeDeps["sendCheck"]; connections?: Awaited<ReturnType<AgentBriefWakeDeps["connections"]>> }) {
+function harness(input: { checks: string[]; allowed?: AgentBriefWakeDeps["allowed"]; sentToday?: number; told?: string[]; sendCheck?: AgentBriefWakeDeps["sendCheck"]; connections?: Awaited<ReturnType<AgentBriefWakeDeps["connections"]>> }) {
   const calls: string[] = []
   const checks: Parameters<AgentBriefWakeDeps["check"]>[0][] = []
   const delivered: string[] = []
@@ -41,7 +41,7 @@ function harness(input: { checks: string[]; briefOn?: AgentBriefWakeDeps["briefO
   let settled = row.state
   const deps: AgentBriefWakeDeps = {
     now: () => NOW,
-    allowed: async () => true,
+    allowed: input.allowed ?? (async () => true),
     settings: async () => ({
       ...DEFAULT_WORKBOT_PROACTIVE_SETTINGS,
       enabled: true,
@@ -53,9 +53,9 @@ function harness(input: { checks: string[]; briefOn?: AgentBriefWakeDeps["briefO
     user: async () => userId,
     calendar: async () => ({ kind: "ok", json: { timeZone: "UTC" } }),
     model: async () => "model",
-    turn: async () => { throw new Error("Unexpected legacy wake turn") },
     connections: async () => input.connections ?? [{ id: "emc_calendar", name: "Calendar", url: "https://calendar.google.com", native: "google-workspace", state: "connected" }],
     connectLink: (id) => `https://den.example/connect/${id}`,
+    agentLink: () => "https://den.example/dashboard/my-bot",
     sessionId: () => "check-session",
     messageId: (key, wakeAt) => `${key}:${wakeAt}`,
     told: async (_member, items) => new Set(items.map(agentLedgerKey).filter((key) => ledger.has(key))),
@@ -83,7 +83,6 @@ function harness(input: { checks: string[]; briefOn?: AgentBriefWakeDeps["briefO
     },
     recordChecks: async () => undefined,
     recordCheck: async (record) => { records.push(record) },
-    briefOn: input.briefOn ?? (async () => true),
     person: async () => "Lee",
     check: async (turn) => {
       calls.push("check")
@@ -116,8 +115,9 @@ test("a brief check combines unreadable-source notices into one DM", async () =>
   assert.deepEqual(h.records.map((record) => record.reason), ["source_disconnected", "source_disconnected"])
 })
 
-test("a brief message does not send when the rollout permission is lost", async () => {
-  const h = harness({ checks: [reply(review)], briefOn: async () => false })
+test("a brief message does not send when the member loses the agent during the check", async () => {
+  let asked = 0
+  const h = harness({ checks: [reply(review)], allowed: async () => (asked += 1) === 1 })
   await h.run()
   assert.deepEqual(h.delivered, [])
   assert.deepEqual(h.finishes, [[review.about[0], "failed"]])

@@ -5,7 +5,6 @@ import {
   AGENT_PERMISSION_EVERYONE,
   AGENT_SANDBOX_MODES_CAPABILITY_HEADER,
   AGENT_SANDBOX_ONLY_CAPABILITY_HEADER,
-  agentPermissionKeys,
   agentPermissionSettingsSchema,
   type AgentPermissionKey,
   type AgentPermissionSettings,
@@ -15,7 +14,6 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import {
   findOrganizationTeam,
-  isSandboxRequirement,
   listAgentPermissionPolicies,
   saveAgentPermissionPolicy,
   type AgentPermissionPolicyChange,
@@ -110,16 +108,11 @@ async function savePolicy(
   if (input.teamId && !team) return c.json({ error: "team_not_found" }, 404)
 
   const visibility = policyVisibility(input.supports)
-  const newRequirements = agentPermissionKeys.filter((key) => !visibility.preserveKeys.includes(key) && isSandboxRequirement(key, input.settings[key]))
-  const preserveKeys = newRequirements.length > 0
-    && !(await organizationFeatureEnabled(payload.organization.id, "sandboxTools", { userId: payload.currentMember.userId }))
-    ? [...visibility.preserveKeys, ...newRequirements]
-    : visibility.preserveKeys
   const save = () => saveAgentPermissionPolicy({
     organizationId: payload.organization.id,
     teamId: input.teamId,
     settings: input.settings,
-    preserveKeys,
+    preserveKeys: visibility.preserveKeys,
     updatedByOrgMemberId: payload.currentMember.id,
     onChange: auditPolicyChange(input.capture, payload.organization.id, team ? { kind: "team", teamId: team.id, teamName: team.name } : { kind: "everyone" }),
   })

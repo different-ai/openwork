@@ -9,7 +9,7 @@ import type { DenTypeId } from "@openwork-ee/utils/typeid"
 import { AGENT_CHECK_REQUEST_WHY_MAX, resolveAgentBrief } from "@openwork/types/den/workbot-proactive"
 import { z } from "zod"
 import { AUDIT_UNAVAILABLE_TOOL_MESSAGE, AuditUnavailableError, runMcpServiceAction, serviceAuditResourceId, type McpAuditPrincipal } from "../audit/mcp-service-audit.js"
-import { agentBriefAllowed, proactiveAllowed } from "../workbot-proactive/access.js"
+import { proactiveAllowed } from "../workbot-proactive/access.js"
 import { memberRhythm } from "../workbot-proactive/brief.js"
 import { memberLimits } from "../workbot-proactive/preferences.js"
 import { changeAgentCheckRequests } from "../workbot-proactive/repository.js"
@@ -20,9 +20,9 @@ export const REQUEST_CHECK_TOOL_NAME = "request_check"
 
 const REQUEST_CHECK_DESCRIPTION = "Your agent's background check only: ask for one extra check at a time today or tomorrow, when timing matters before your next scheduled check (a meeting at 2 PM, a deadline at 5). Den keeps it inside the member's hours, caps extra checks per day and shows the reason in My bot. Asking again for about the same time changes nothing."
 
-export function agentCheckRequestsAvailable(input: { scopes: ReadonlySet<string>; member: boolean; workbotAgentBrief: boolean }): boolean {
+export function agentCheckRequestsAvailable(input: { scopes: ReadonlySet<string>; member: boolean }): boolean {
   const allowlist = agentReadAllowlist(input.scopes)
-  return Boolean(input.member && input.workbotAgentBrief && allowlist && (allowlist.kinds.size > 0 || allowlist.connectionIds.size > 0))
+  return Boolean(input.member && allowlist && (allowlist.kinds.size > 0 || allowlist.connectionIds.size > 0))
 }
 
 function clockOf(at: number, timeZone: string) {
@@ -37,7 +37,7 @@ export function describeCheckRequest(decision: AgentCheckRequestDecision, timeZo
 }
 
 export async function requestAgentCheck(input: { organizationId: DenTypeId<"organization">; memberId: DenTypeId<"member">; userId: DenTypeId<"user">; at: string; why: string; now?: number }): Promise<{ ok: boolean; text: string }> {
-  if (!(await proactiveAllowed(input.organizationId, input.userId)) || !(await agentBriefAllowed(input.organizationId, input.userId))) {
+  if (!(await proactiveAllowed(input.organizationId, input.userId))) {
     return { ok: false, text: "Extra checks aren't on for this member." }
   }
   const now = input.now ?? Date.now()
