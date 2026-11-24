@@ -127,7 +127,13 @@ jobs:
           packages/computer-use/browser-task-secrets.test.mjs
           packages/computer-use/browser-secrets.review.test.mjs
           packages/computer-use/computer-control-secret-approval.test.mjs
+          packages/computer-use/value-command.test.mjs
+          packages/computer-use/browser-task-values.test.mjs
+          packages/computer-use/value-use.test.mjs
+          packages/computer-use/private-value-use.test.mjs
+          packages/computer-use/computer-control-value-approval.test.mjs
           apps/desktop/electron/session-runner-computer-requests.test.mjs
+          apps/desktop/test/ui-control-private-redact.test.mjs
       - name: Check outbound access manifest
         run: node scripts/check-outbound-access.mjs
       - name: Setup pnpm

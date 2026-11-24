@@ -58,6 +58,8 @@ document.querySelector('#signin').addEventListener('submit',async(event)=>{
 export interface SecretSiteState {
   /** Each sign-in the allowed site received: did it carry the real password? */
   signIns: Array<{ carriedSecret: boolean }>;
+  /** The email each of those sign-ins carried, as a SHA-256 digest. */
+  signInEmails: string[];
   /** Each request the other site received: did it carry the real password, and how long was the text it got? */
   tracker: Array<{ carriedSecret: boolean; length: number }>;
   /** Each time the page's script read the field: was that text the real password, and how long was it? */
@@ -77,7 +79,7 @@ export interface SecretSiteState {
  * names resolve to this machine without any resolver change. This world runs
  * the site in the test process, so it is local-only.
  */
-export async function browserSecretHandlesWorld(seed: Seed) {
+export async function browserSecretHandlesWorld(seed: Seed, denEnv: Record<string, string> = {}) {
   const stack = new AsyncDisposableStack();
   try {
     const tls = seed.tmpPath("browser-secret-handles-tls");
@@ -91,7 +93,7 @@ export async function browserSecretHandlesWorld(seed: Seed) {
     // Synthetic and made for this run. It is typed into OpenWork's own dialog and reaches only this server.
     const password = `fixture-${randomBytes(12).toString("hex")}`;
     const passwordDigest = createHash("sha256").update(password).digest("hex");
-    const state: SecretSiteState = { signIns: [], tracker: [], scriptReads: [], requests: [] };
+    const state: SecretSiteState = { signIns: [], signInEmails: [], tracker: [], scriptReads: [], requests: [] };
     const server = createServer({ key: readFileSync(join(tls, "key.pem")), cert }, async (request, response) => {
       const host = String(request.headers.host ?? "").split(":")[0];
       let body = "";
@@ -104,8 +106,10 @@ export async function browserSecretHandlesWorld(seed: Seed) {
         return;
       }
       if (request.method === "POST" && request.url === "/sign-in") {
-        const carriedSecret = new URLSearchParams(body).get("password") === password;
+        const form = new URLSearchParams(body);
+        const carriedSecret = form.get("password") === password;
         state.signIns.push({ carriedSecret });
+        state.signInEmails.push(createHash("sha256").update(form.get("email") ?? "").digest("hex"));
         response.writeHead(carriedSecret ? 200 : 401, { "Content-Type": "application/json" }).end("{}");
         return;
       }
@@ -131,7 +135,7 @@ export async function browserSecretHandlesWorld(seed: Seed) {
 
     // No turn is sent to a model: the agent's side is the browser tool endpoint the engine's tools call.
     // A signed-in desktop still needs a selectable model before it lets a chat start.
-    const den = await seed.den({ org: { name: "Secret handles workspace", admin: { name: "Avery Owner" } }, mocks: { model: seed.mock({}) } });
+    const den = await seed.den({ org: { name: "Secret handles workspace", admin: { name: "Avery Owner" } }, mocks: { model: seed.mock({}) }, env: denEnv });
     const model = den.mocks.model;
     if (!model) throw new Error("seed.den() did not boot the fixture model.");
     const app = await seed.desktop({
@@ -151,13 +155,15 @@ export async function browserSecretHandlesWorld(seed: Seed) {
     const neighbor = await firstSession(seed, app, "Separate research");
     const session = await firstSession(seed, app, "Pay the invoice");
     return {
-      app, session, neighbor, site, password,
+      app, den, session, neighbor, site, password, model, workspaceId: workspace.workspaceId,
       signInUrl: `${site}/`,
       siteName: `billing.localhost:${address.port}`,
       /** What the fixture site has received so far. */
       received: (): SecretSiteState => structuredClone(state),
       /** A platform admin turns secret handles on for the organization, as /admin does. */
       turnOnSecretHandles: () => enableOrganizationCapabilities(seed, den.admin, { browserSecretHandles: true }),
+      /** A platform admin turns filling from a command on for the organization, as /admin does. */
+      turnOnPrivateValues: () => enableOrganizationCapabilities(seed, den.admin, { privateValues: true }),
       async [Symbol.asyncDispose]() { await stack.disposeAsync(); },
     };
   } catch (error) {

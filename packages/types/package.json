@@ -204,6 +204,14 @@
       "development": "./src/den/agent-permissions.ts",
       "default": "./src/den/agent-permissions.ts"
     },
+    "./den/private-value-fills": {
+      "types": {
+        "openwork-build": "./dist/types/src/den/private-value-fills.d.ts",
+        "default": "./src/den/private-value-fills.ts"
+      },
+      "development": "./src/den/private-value-fills.ts",
+      "default": "./src/den/private-value-fills.ts"
+    },
     "./den/desktop-policies": {
       "types": {
         "openwork-build": "./dist/types/src/den/desktop-policies.d.ts",

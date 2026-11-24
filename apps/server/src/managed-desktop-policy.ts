@@ -1,6 +1,7 @@
 import { randomBytes, timingSafeEqual } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { DESKTOP_POLICY_ENFORCEMENT_ENABLED, desktopConfigSchema, isLocalModelProviderId, localModelsAllowed, type DesktopConfig } from "@openwork/types/den/desktop-policies-runtime";
+import { PRIVATE_VALUE_FILLS_ROUTE, privateValueFillReportResponseSchema, type PrivateValueFillReport } from "@openwork/types/den/private-value-fills";
 import type { CloudProviderDenSession } from "./cloud-provider-sync.js";
 import type { ServerConfig } from "./types.js";
 import { isRecord } from "./workspace-kv-store.js";
@@ -9,7 +10,7 @@ import { ApiError } from "./errors.js";
 import { clearManagedDesktopPolicy, readGlobalRuntimeOpencodeConfig, writeManagedDesktopPolicy, runtimeProviderMap } from "./runtime-opencode-config-store.js";
 import { policyDenial, policyRequestActions, type ManagedPolicyAction } from "./managed-policy-rules.js";
 import { agentPermissionDenial, agentPermissionRulesOf } from "./agent-permission-engine.js";
-import { AGENT_SANDBOX_MODES_CAPABILITY_HEADER, resolveSandboxRequirement, type AgentPermissionAction, type AgentPermissionRule } from "@openwork/types/den/agent-permissions-runtime";
+import { AGENT_PRIVATE_VALUES_CAPABILITY_HEADER, AGENT_PRIVATE_VALUE_PERMISSION_ACTIONS, AGENT_SANDBOX_MODES_CAPABILITY_HEADER, resolveSandboxRequirement, type AgentPermissionAction, type AgentPermissionRule } from "@openwork/types/den/agent-permissions-runtime";
 import { readSandboxSettings, readAppliedSandboxSettings, readSandboxRequirement, sandboxSettingsRevision, writeSandboxRequirement, type SandboxSettings } from "./sandbox-settings-store.js";
 import { readActivatedEnterpriseDenOrigin } from "./enterprise-den-origin.js";
 import { sandboxHostRequest, sandboxPromptHasHostFiles } from "./sandbox-host-guards.js";
@@ -162,7 +163,7 @@ class ManagedDesktopPolicy {
         onSend?.();
         const response = await externalFetch(`${session.baseUrl}${path}`, {
           headers: { Accept: "application/json", Authorization: `Bearer ${session.token}`, "x-openwork-org-id": session.orgId, "x-openwork-legacy-org-id": session.orgId,
-            ...(path === "/v1/me/desktop-config" ? { "X-OpenWork-Browser-Upload-Permissions": "1", "X-OpenWork-File-Send-Permissions": "1", "X-OpenWork-Sandbox-Only": "1", [AGENT_SANDBOX_MODES_CAPABILITY_HEADER]: "1" } : {}),
+            ...(path === "/v1/me/desktop-config" ? { "X-OpenWork-Browser-Upload-Permissions": "1", "X-OpenWork-File-Send-Permissions": "1", "X-OpenWork-Sandbox-Only": "1", [AGENT_SANDBOX_MODES_CAPABILITY_HEADER]: "1", [AGENT_PRIVATE_VALUES_CAPABILITY_HEADER]: "1" } : {}),
           },
           redirect: "error",
           signal: AbortSignal.timeout(Math.min(DEN_READ_ATTEMPT_TIMEOUT_MS, remainingMs)),
@@ -592,7 +593,53 @@ class ManagedDesktopPolicy {
     return this.organizationFeatureEnabled("browserSecretHandles");
   }
 
-  private async organizationFeatureEnabled(key: "remoteComputers" | "browserSecretHandles"): Promise<boolean> {
+  async privateValuesEnabled(): Promise<boolean> {
+    return this.organizationFeatureEnabled("privateValues");
+  }
+
+  async privateValuePolicy(): Promise<{ enabled: boolean; rules: AgentPermissionRule[] }> {
+    const session = this.session;
+    const generation = this.generation;
+    if (!session || !await this.privateValuesEnabled()) return { enabled: false, rules: [] };
+    const policy = desktopConfigSchema.parse(await this.readDenJson(session, "/v1/me/desktop-config", generation));
+    this.identityChanged(generation);
+    return { enabled: true, rules: agentPermissionRulesForActions(agentPermissionRulesOf(policy), AGENT_PRIVATE_VALUE_PERMISSION_ACTIONS) };
+  }
+
+  async recordPrivateValueFill(report: PrivateValueFillReport): Promise<{ ok: true; recorded: boolean } | { ok: false; code: string }> {
+    const session = this.session;
+    const generation = this.generation;
+    if (!session) return { ok: false, code: "not_signed_in" };
+    for (let attempt = 0; attempt < 3; attempt++) {
+      if (attempt > 0) await delay(100 * attempt);
+      if (generation !== this.generation) return { ok: false, code: "policy_identity_changed" };
+      try {
+        const response = await externalFetch(`${session.baseUrl}${PRIVATE_VALUE_FILLS_ROUTE}`, {
+          method: "POST",
+          headers: {
+            Accept: "application/json", "Content-Type": "application/json",
+            Authorization: `Bearer ${session.token}`, "x-openwork-org-id": session.orgId, "x-openwork-legacy-org-id": session.orgId,
+          },
+          body: JSON.stringify(report),
+          redirect: "error",
+          signal: AbortSignal.timeout(2_000),
+        });
+        if (!response.ok) {
+          void response.body?.cancel().catch(() => undefined);
+          if (response.status >= 500) continue;
+          return { ok: false, code: "den_rejected" };
+        }
+        const result = privateValueFillReportResponseSchema.safeParse(await response.json());
+        if (!result.success) return { ok: false, code: "den_invalid_response" };
+        return { ok: true, recorded: result.data.recorded };
+      } catch (error) {
+        if (!transientTransportReason(error)) break;
+      }
+    }
+    return { ok: false, code: "den_unavailable" };
+  }
+
+  private async organizationFeatureEnabled(key: "remoteComputers" | "browserSecretHandles" | "privateValues"): Promise<boolean> {
     const session = this.session;
     const generation = this.generation;
     if (!session) return false;

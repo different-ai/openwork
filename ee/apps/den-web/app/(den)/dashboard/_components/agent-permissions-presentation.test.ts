@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import { agentPermissionDefinition, type AgentPermissionSettings } from "@openwork/types/den/agent-permissions";
-import { agentPermissionBlockedBy, agentPermissionToggleState, sandboxRequirementVisibility, visibleAgentPermissionGroups } from "./agent-permissions-presentation";
+import { agentPermissionBlockedBy, agentPermissionToggleState, sandboxRequirementVisibility, storedAgentPermissionDecision, visibleAgentPermissionGroups } from "./agent-permissions-presentation";
 
 const on = { sandboxTools: true };
 const off = { sandboxTools: false };
@@ -66,4 +66,22 @@ test("rollout off shows the existing requirement and lets an admin switch it off
     assert.equal(agentPermissionToggleState(definition, "allow", lock?.key).disabled, true);
     assert.equal(agentPermissionToggleState(definition, "deny", lock?.key).disabled, false);
   }
+});
+
+test("private-value permissions sit with the browser's, only while their rollout is on", () => {
+  const keys = (area: "all" | "agents" | "browser", privateValues?: boolean) =>
+    visibleAgentPermissionGroups(area, { privateValues }).flatMap((group) => group.definitions.map((definition) => definition.key));
+  const rows = ["privateValueFills", "privateValueCommands", "privateValuePaste", "privateValueTerminal", "privateValueRuns"];
+  assert.deepEqual(keys("browser", true).filter((key) => rows.includes(key)), rows);
+  assert.deepEqual(keys("all", true).filter((key) => rows.includes(key)), rows);
+  for (const area of ["all", "browser"] as const) assert.equal(keys(area).some((key) => rows.includes(key)), false);
+  assert.equal(keys("agents", true).some((key) => rows.includes(key)), false);
+});
+
+test("letting private-value programs into the agent's terminal is stored, and the default block is not", () => {
+  const terminal = agentPermissionDefinition("privateValueTerminal");
+  assert.equal(storedAgentPermissionDecision(terminal, null, "allow"), "allow");
+  assert.equal(storedAgentPermissionDecision(terminal, null, "deny"), undefined);
+  assert.equal(storedAgentPermissionDecision(agentPermissionDefinition("browserUploads"), null, "allow"), "allow");
+  assert.equal(storedAgentPermissionDecision(agentPermissionDefinition("websites"), null, "allow"), undefined);
 });

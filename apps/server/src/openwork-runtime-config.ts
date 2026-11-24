@@ -19,6 +19,7 @@ import {
   openworkChromeDevtoolsPluginPath,
   openworkComputerUsePluginPath,
   openworkPdfAttachmentsPluginPath,
+  openworkPrivateValuesPluginPath,
 } from "./openwork-extensions-plugin-path.js";
 import type { ServerConfig } from "./types.js";
 import { runtimeStorageDir } from "./runtime-db.js";
@@ -96,6 +97,7 @@ export function buildOpenworkRuntimeConfigObjectFromSnapshot(
       openworkTitleRecoveryPluginPath(),
       openworkGatewayQuotaPluginPath(),
       ...runtimePluginList(runtimeConfig).filter((plugin) => !isManagedPolicyPlugin(plugin) && !isLegacyBrowserPlugin(plugin)),
+      openworkPrivateValuesPluginPath(),
     ],
     ...(disabledProviders.length || blockedLocal.length ? { disabled_providers: [...new Set([...disabledProviders, ...blockedLocal])] } : {}),
     mcp: Object.fromEntries(Object.entries(runtimeMcpMap(runtimeConfig))

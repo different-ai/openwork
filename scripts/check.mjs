@@ -30,8 +30,8 @@ export const CHECKS = [
   },
   {
     name: "browser-secrets",
-    command: ["node", "--test", "packages/computer-use/browser-secrets.test.mjs", "packages/computer-use/browser-task-secrets.test.mjs", "packages/computer-use/browser-secrets.review.test.mjs", "packages/computer-use/computer-control-secret-approval.test.mjs", "apps/desktop/electron/session-runner-computer-requests.test.mjs"],
-    fix: "Fix the secret isolation, approval or redaction regression above before enabling browser secret handles.",
+    command: ["node", "--conditions=development", "--test", "packages/computer-use/browser-secrets.test.mjs", "packages/computer-use/browser-task-secrets.test.mjs", "packages/computer-use/browser-secrets.review.test.mjs", "packages/computer-use/computer-control-secret-approval.test.mjs", "packages/computer-use/value-command.test.mjs", "packages/computer-use/browser-task-values.test.mjs", "packages/computer-use/value-use.test.mjs", "packages/computer-use/private-value-use.test.mjs", "packages/computer-use/computer-control-value-approval.test.mjs", "apps/desktop/electron/session-runner-computer-requests.test.mjs", "apps/desktop/test/ui-control-private-redact.test.mjs", "apps/desktop/electron/private-values.test.mjs"],
+    fix: "Fix the secret isolation, approval or redaction regression above before enabling browser secret handles or private values.",
   },
   {
     name: "node-source-imports",

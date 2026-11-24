@@ -1,15 +1,19 @@
 import { and, eq, gt, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import { AuthAccountTable, AuthUserTable, InvitationTable, MemberTable, OrganizationTable, RateLimitTable } from "@openwork-ee/den-db/schema"
 import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import { AGENT_SANDBOX_MODES_CAPABILITY_HEADER, AGENT_SANDBOX_ONLY_CAPABILITY_HEADER, agentPermissionRulesForClient } from "@openwork/types/den/agent-permissions"
+import { AGENT_PRIVATE_VALUES_CAPABILITY_HEADER, AGENT_SANDBOX_MODES_CAPABILITY_HEADER, AGENT_SANDBOX_ONLY_CAPABILITY_HEADER, agentPermissionRulesForClient } from "@openwork/types/den/agent-permissions"
 import { BILLING_PLAN_TIERS } from "@openwork/types/den/billing-plans"
+import { PRIVATE_VALUE_FILLS_ROUTE, privateValueFillReportResponseSchema, privateValueFillReportSchema } from "@openwork/types/den/private-value-fills"
 import { desktopConfigSchema } from "@openwork/types/den/desktop-policies"
 import type { Hono } from "hono"
-import { describeRoute } from "hono-openapi"
+import { describeRoute, type DescribeRouteOptions } from "hono-openapi"
 import { z } from "zod"
 import { OPENWORK_DOWNLOAD_URL } from "../../CONSTS.js"
 import { recordProfileUpdated } from "../../audit/domain/account.js"
+import { privateValueFillEvent } from "../../audit/domain/private-values.js"
 import { recordSessionOrganizationEntered } from "../../audit/domain/sessions.js"
+import { auditText } from "../../audit/domain/snapshot.js"
+import { appendAuditChanges, auditChangeCapture } from "../../audit/request-capture.js"
 import { cache } from "../../cache.js"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
@@ -24,13 +28,15 @@ import { readAgentPermissionRulesForMember } from "../../agent-permissions.js"
 import { desktopConfigDefaultModel } from "../../default-model.js"
 import { readPromptsForMember } from "../../prompts.js"
 import { memberPromptsSchema } from "@openwork/types/den/prompts"
-import { getOrganizationFeatures } from "../../features.js"
+import { getOrganizationFeatures, requireFeature } from "../../features.js"
 import { DenEmailSendError, sendEmail } from "../../utils/email/send-email.js"
 import { findSsoAccessBlock, listMemberSsoSignIns, ssoRequiredErrorBody, ssoSignInUrl } from "../../organization-sso-access.js"
 import { registerMeActivationRoutes } from "./activation.js"
 import { registerMeAgentRoutes } from "./agent.js"
 import { registerMeFeatureIntroRoutes } from "./feature-intros.js"
 import { registerMePersonalSkillsRoutes } from "./personal-skills.js"
+
+const describeDesktopRoute = (options: DescribeRouteOptions & { "x-mcp": false }) => describeRoute(options)
 
 const DOWNLOAD_LINK_RATE_LIMIT_WINDOW_MS = 60 * 60 * 1000
 const DOWNLOAD_LINK_RATE_LIMIT_MAX = 5
@@ -485,6 +491,34 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
     },
   )
 
+  app.post(
+    PRIVATE_VALUE_FILLS_ROUTE,
+    describeDesktopRoute({
+      tags: ["Users"],
+      operationId: "reportPrivateValueFill",
+      "x-mcp": false,
+      summary: "Report a private-value use outcome",
+      responses: {
+        200: jsonResponse("Whether the outcome was recorded in the organization audit log.", privateValueFillReportResponseSchema),
+        400: jsonResponse("The fill report was invalid.", invalidRequestSchema),
+        401: jsonResponse("The caller must be signed in to report a fill.", unauthorizedSchema),
+        404: jsonResponse("The organization is unavailable or private-value fills are off.", z.object({ error: z.enum(["organization_not_found", "feature_disabled"]), feature: z.string().optional() })),
+      },
+    }),
+    orgMemberRoute(),
+    requireFeature("privateValues"),
+    jsonValidator(privateValueFillReportSchema.refine(({ id }) => auditText(id) === id, { path: ["id"], message: "Invalid report identifier." })),
+    async (c) => {
+      const capture = auditChangeCapture(c)
+      if (!capture) return c.json({ recorded: false })
+      const { organization } = c.get("organizationContext")
+      const event = privateValueFillEvent(organization.id, c.req.valid("json"))
+      if (!event) return c.json({ recorded: false })
+      const ids = await db.transaction((tx) => appendAuditChanges(tx, capture, [event]))
+      return c.json({ recorded: ids.length > 0 })
+    },
+  )
+
   app.get(
     "/v1/me/desktop-config",
     describeRoute({
@@ -511,8 +545,9 @@ export function registerMeRoutes<T extends { Variables: AuthContextVariables & P
       const supportsFileSends = c.req.header("X-OpenWork-File-Send-Permissions") === "1"
       const supportsSandboxOnly = c.req.header(AGENT_SANDBOX_ONLY_CAPABILITY_HEADER) === "1"
       const supportsSandboxModes = c.req.header(AGENT_SANDBOX_MODES_CAPABILITY_HEADER) === "1"
+      const supportsPrivateValues = c.req.header(AGENT_PRIVATE_VALUES_CAPABILITY_HEADER) === "1" && features.privateValues === true
       const agentPermissions = {
-        rules: agentPermissionRulesForClient(rules, { browserUploads: supportsBrowserUploads, fileSends: supportsFileSends, sandboxOnly: supportsSandboxOnly, sandboxModes: supportsSandboxModes }),
+        rules: agentPermissionRulesForClient(rules, { browserUploads: supportsBrowserUploads, fileSends: supportsFileSends, sandboxOnly: supportsSandboxOnly, sandboxModes: supportsSandboxModes, privateValues: supportsPrivateValues }),
       }
       const defaultModel = await desktopConfigDefaultModel({ organizationId: organization.id, memberId: currentMember.id })
       const automations = automationAvailabilityFor({

@@ -1178,3 +1178,114 @@ test("a value stays redacted after its secret is removed or the store is cleared
     assert.equal(before.redactText(`${AWKWARD} fake-later-token`), "[secret] [secret]", end);
   }
 });
+
+test("a remembered value is redacted like a saved secret, and is never listed, issued or counted", () => {
+  const { secrets } = store();
+  assert.equal(secrets.remember("4821"), true);
+  assert.equal(secrets.remember(AWKWARD), true);
+  assert.deepEqual(secrets.list("s1"), []);
+  assert.deepEqual(secrets.availableFor("s1", SITE), []);
+  const shown = secrets.redact({ text: `Your code is 4821. ${AWKWARD}`, encoded: Buffer.from(AWKWARD, "utf8").toString("base64"), [AWKWARD]: 1 });
+  assert.ok(!JSON.stringify(shown).includes("4821"));
+  assert.ok(!JSON.stringify(shown).includes(JSON.stringify(AWKWARD).slice(1, -1)));
+  assert.ok(!JSON.stringify(shown).includes(Buffer.from(AWKWARD, "utf8").toString("base64")));
+  // It fills no conversation's allowance of saved secrets.
+  for (let index = 0; index < 20; index++) secrets.add({ sessionId: "s1", label: `Secret ${index}`, kind: "token", origins: [SITE], value: `made-up-value-${index}` });
+});
+
+test("the store says whether it holds anything to replace, and keeps saying so after the secret is removed", () => {
+  const { secrets } = store();
+  assert.equal(secrets.holding(), false);
+  assert.equal(secrets.remember("123"), false);
+  assert.equal(secrets.holding(), false);
+  const saved = secrets.add({ sessionId: "s1", label: "Token", kind: "token", origins: [SITE], value: "made-up-held-token" });
+  assert.equal(secrets.holding(), true);
+  secrets.remove("s1", saved.id);
+  assert.equal(secrets.holding(), true, "a site that was sent the value can still show it back");
+  const other = store().secrets;
+  other.remember("4821");
+  assert.equal(other.holding(), true);
+});
+
+test("remember refuses what it could not redact or a website could not take, and says only no", () => {
+  const { secrets } = store();
+  for (const value of ["", "123", "x".repeat(4097), "bad \ud800 surrogate", 4821, null, undefined, ["4821"]]) assert.equal(secrets.remember(value), false);
+  assert.equal(secrets.redact("123 and 4821"), "123 and 4821");
+});
+
+test("a value remembered while an operation runs is redacted by that operation's redactor", () => {
+  const { secrets } = store();
+  const mask = secrets.redactor();
+  assert.equal(mask.redact("code 735102"), "code 735102");
+  secrets.remember("735102");
+  assert.equal(mask.redact("code 735102"), "code [secret]");
+  assert.equal(mask.redactText("code 735102 and more", 8), "code [secret]");
+});
+
+test("a value kept for a conversation is found by its site and name there alone, and is never listed with what it is", () => {
+  const { secrets } = store();
+  assert.equal(secrets.holding(), false);
+  assert.equal(secrets.keep({ sessionId: "s1", site: SITE, label: "Example password", value: AWKWARD }), true);
+  assert.equal(secrets.holding(), true);
+  assert.equal(secrets.kept({ sessionId: "s1", site: SITE, label: "Example password" }), AWKWARD);
+  for (const where of [{ sessionId: "s2", site: SITE, label: "Example password" }, { sessionId: "s1", site: "https://other.example", label: "Example password" },
+    { sessionId: "s1", site: SITE, label: "example password" }]) {
+    assert.equal(secrets.kept(where), null, JSON.stringify(where));
+  }
+  assert.deepEqual(secrets.listKept("s1"), [{ site: SITE, label: "Example password" }]);
+  assert.deepEqual(secrets.listKept("s2"), []);
+  // It is not a saved secret: nothing issues a handle for it, and it is redacted wherever it is shown back.
+  assert.deepEqual([secrets.list("s1"), secrets.availableFor("s1", SITE)], [[], []]);
+  assert.equal(secrets.redactText(`Signed in with ${AWKWARD}`), "Signed in with [secret]");
+  // Keeping again under the same name replaces it; both stay redacted.
+  assert.equal(secrets.keep({ sessionId: "s1", site: SITE, label: "Example password", value: "a newer made-up value" }), true);
+  assert.equal(secrets.kept({ sessionId: "s1", site: SITE, label: "Example password" }), "a newer made-up value");
+  assert.equal(secrets.redactText(`${AWKWARD} a newer made-up value`), "[secret] [secret]");
+  assert.equal(secrets.listKept("s1").length, 1);
+});
+
+test("what is kept in every conversation is listed without a value, and all of it can be let go at once", () => {
+  const { secrets } = store();
+  secrets.keep({ sessionId: "s1", site: SITE, label: "Example password", value: AWKWARD });
+  secrets.keep({ sessionId: "s2", site: "command:/opt/homebrew/bin/bw", label: "BW_SESSION key", value: "kept by another chat" });
+  assert.deepEqual(secrets.listAllKept(), [{ sessionId: "s1", site: SITE, label: "Example password" }, { sessionId: "s2", site: "command:/opt/homebrew/bin/bw", label: "BW_SESSION key" }]);
+  secrets.forgetAllKept();
+  assert.deepEqual([secrets.listAllKept(), secrets.kept({ sessionId: "s1", site: SITE, label: "Example password" })], [[], null]);
+  assert.equal(secrets.redactText(`${AWKWARD} kept by another chat`), "[secret] [secret]");
+});
+
+test("a kept value ends when it is forgotten, with its conversation, or when the store is cleared, and stays redacted", () => {
+  for (const end of ["forget", "clearSession", "clear"]) {
+    const { secrets } = store();
+    secrets.keep({ sessionId: "s1", site: SITE, label: "Example password", value: AWKWARD });
+    secrets.keep({ sessionId: "s2", site: SITE, label: "Example password", value: "kept by another chat" });
+    if (end === "forget") {
+      assert.equal(secrets.forget({ sessionId: "s1", site: SITE, label: "Example password" }), true);
+      assert.equal(secrets.forget({ sessionId: "s1", site: SITE, label: "Example password" }), false);
+    } else if (end === "clearSession") secrets.clearSession("s1");
+    else secrets.clear();
+    assert.equal(secrets.kept({ sessionId: "s1", site: SITE, label: "Example password" }), null, end);
+    assert.deepEqual(secrets.listKept("s1"), [], end);
+    assert.equal(secrets.kept({ sessionId: "s2", site: SITE, label: "Example password" }), end === "clear" ? null : "kept by another chat", end);
+    assert.equal(secrets.redactText(`again ${AWKWARD}`), "again [secret]", end);
+    assert.equal(secrets.holding(), true, end);
+  }
+});
+
+test("keep refuses what it could not redact, what it has no place for, and more than a conversation's allowance", () => {
+  const { secrets } = store({ maxPerSession: 2 });
+  for (const value of ["", "123", "x".repeat(4097), "bad \ud800 surrogate", 4821, null, undefined]) {
+    assert.equal(secrets.keep({ sessionId: "s1", site: SITE, label: "Example password", value }), false, String(value).slice(0, 12));
+  }
+  for (const where of [{ sessionId: "", site: SITE, label: "x" }, { sessionId: "s1", site: "", label: "x" }, { sessionId: "s1", site: SITE, label: "" }, { sessionId: "s1", site: SITE }]) {
+    assert.equal(secrets.keep({ ...where, value: "made-up value" }), false, JSON.stringify(where));
+  }
+  assert.equal(secrets.holding(), false);
+  assert.equal(secrets.keep({ sessionId: "s1", site: SITE, label: "One", value: "made-up one" }), true);
+  assert.equal(secrets.keep({ sessionId: "s1", site: SITE, label: "Two", value: "made-up two" }), true);
+  assert.equal(secrets.keep({ sessionId: "s1", site: SITE, label: "Three", value: "made-up three" }), false);
+  assert.equal(secrets.redactText("made-up three"), "made-up three");
+  // Replacing one that is kept, and another conversation, are not over the allowance.
+  assert.equal(secrets.keep({ sessionId: "s1", site: SITE, label: "Two", value: "made-up two again" }), true);
+  assert.equal(secrets.keep({ sessionId: "s2", site: SITE, label: "Three", value: "made-up three" }), true);
+});

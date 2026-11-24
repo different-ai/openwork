@@ -2,6 +2,7 @@ import { cloudComputerCall, cloudComputerFor, cloudComputerJson, startCloudCompu
 import { createV2SessionHomes, nativeSession, nativeSessionDirectory } from "./opencode-v2-session-home.js";
 import { createNativeCloudMcpResolver, createRoutedCloudMcpRegistrar } from "./cloud-mcp-v2.js";
 import { managedDesktopPolicy } from "./managed-desktop-policy.js";
+import { privateValueFillReportSchema } from "@openwork/types/den/private-value-fills";
 import { createFileSendApprovals, markFileSendApproved, type FileSendApprovals } from "./file-send-approval.js";
 import { runtimeStorageDir } from "./runtime-db.js";
 import { readHostResponse } from "./host-response.js";
@@ -3516,6 +3517,13 @@ function createRoutes(
     jsonResponse({ enabled: await managedDesktopPolicy(config).remoteComputersEnabled() }));
   addRoute(routes, "GET", "/managed-policy/browser-secret-handles", "client", async () =>
     jsonResponse({ enabled: await managedDesktopPolicy(config).browserSecretHandlesEnabled() }));
+  addRoute(routes, "GET", "/managed-policy/private-values", "client", async () =>
+    jsonResponse(await managedDesktopPolicy(config).privateValuePolicy()));
+  addRoute(routes, "POST", "/managed-policy/private-values/record", "client", async (ctx) => {
+    const report = privateValueFillReportSchema.safeParse(await ctx.request.json().catch(() => null));
+    if (!report.success) return jsonResponse({ ok: false, code: "invalid_report" }, 400);
+    return jsonResponse(await managedDesktopPolicy(config).recordPrivateValueFill(report.data));
+  });
   addRoute(routes, "GET", "/managed-policy/website-rules", "client", async () =>
     jsonResponse({ rules: await managedDesktopPolicy(config).websiteRules() }));
   addRoute(routes, "GET", "/managed-policy/browser-upload-permissions", "client", async () =>

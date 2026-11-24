@@ -1,5 +1,7 @@
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import {
+  AGENT_PRIVATE_VALUES_CAPABILITY_HEADER,
+  AGENT_PRIVATE_VALUE_PERMISSION_KEYS,
   AGENT_PERMISSION_EVERYONE,
   AGENT_SANDBOX_MODES_CAPABILITY_HEADER,
   AGENT_SANDBOX_ONLY_CAPABILITY_HEADER,
@@ -67,13 +69,15 @@ function auditPolicyChange(capture: AuditChangeCapture | null, organizationId: s
   return (tx, { before, after }) => appendDomainChanges(tx, capture, [agentPermissionPolicyChangedEvent(organizationId, scope, before, after)])
 }
 
-type EditorSupport = { browserUploads: boolean; fileSends: boolean; sandboxOnly: boolean; sandboxModes: boolean }
-function editorSupport(c: { req: { header(name: string): string | undefined } }): EditorSupport {
+type EditorSupport = { browserUploads: boolean; fileSends: boolean; sandboxOnly: boolean; sandboxModes: boolean; privateValues: boolean }
+async function editorSupport(c: { req: { header(name: string): string | undefined } }, payload: ResourceOrganizationContext): Promise<EditorSupport> {
   return {
     browserUploads: c.req.header("X-OpenWork-Browser-Upload-Permissions") === "1",
     fileSends: c.req.header("X-OpenWork-File-Send-Permissions") === "1",
     sandboxOnly: c.req.header(AGENT_SANDBOX_ONLY_CAPABILITY_HEADER) === "1",
     sandboxModes: c.req.header(AGENT_SANDBOX_MODES_CAPABILITY_HEADER) === "1",
+    privateValues: c.req.header(AGENT_PRIVATE_VALUES_CAPABILITY_HEADER) === "1"
+      && await organizationFeatureEnabled(payload.organization.id, "privateValues", { userId: payload.currentMember.userId }),
   }
 }
 
@@ -83,6 +87,7 @@ function policyVisibility(supports: EditorSupport) {
   if (!supports.fileSends) preserveKeys.push("fileSends")
   if (!supports.sandboxOnly) preserveKeys.push("hostExecution")
   if (!supports.sandboxModes) preserveKeys.push("sandboxOptOut")
+  if (!supports.privateValues) preserveKeys.push(...AGENT_PRIVATE_VALUE_PERMISSION_KEYS)
   return {
     preserveKeys,
     settings(settings: AgentPermissionSettings) {
@@ -156,7 +161,7 @@ export function registerOrgAgentPermissionRoutes<T extends { Variables: OrgRoute
     async (c) => {
       const payload = c.get("organizationContext")
       if (!payload) return c.json({ error: "organization_not_found" }, 404)
-      const visibility = policyVisibility(editorSupport(c))
+      const visibility = policyVisibility(await editorSupport(c, payload))
       const policies = await listAgentPermissionPolicies(payload.organization.id)
       return c.json({
         everyone: {
@@ -198,7 +203,7 @@ export function registerOrgAgentPermissionRoutes<T extends { Variables: OrgRoute
     async (c) => {
       const payload = c.get("organizationContext")
       if (!payload) return c.json({ error: "organization_not_found" }, 404)
-      return savePolicy(c, payload, { teamId: null, settings: c.req.valid("json").settings, capture: auditChangeCapture(c), supports: editorSupport(c) })
+      return savePolicy(c, payload, { teamId: null, settings: c.req.valid("json").settings, capture: auditChangeCapture(c), supports: await editorSupport(c, payload) })
     },
   )
 
@@ -224,7 +229,7 @@ export function registerOrgAgentPermissionRoutes<T extends { Variables: OrgRoute
       const payload = c.get("organizationContext")
       if (!payload) return c.json({ error: "organization_not_found" }, 404)
       const teamId = normalizeDenTypeId("team", c.req.valid("param").teamId)
-      return savePolicy(c, payload, { teamId, settings: c.req.valid("json").settings, capture: auditChangeCapture(c), supports: editorSupport(c) })
+      return savePolicy(c, payload, { teamId, settings: c.req.valid("json").settings, capture: auditChangeCapture(c), supports: await editorSupport(c, payload) })
     },
   )
 
@@ -251,7 +256,7 @@ export function registerOrgAgentPermissionRoutes<T extends { Variables: OrgRoute
       if (!permission.ok) return c.json(permission.response, orgAccessFailureStatus(permission.response), permissionFailureHeaders(permission.response))
       const team = await findOrganizationTeam(payload.organization.id, normalizeDenTypeId("team", c.req.valid("param").teamId))
       if (!team) return c.json({ error: "team_not_found" }, 404)
-      const visibility = policyVisibility(editorSupport(c))
+      const visibility = policyVisibility(await editorSupport(c, payload))
       await saveAgentPermissionPolicy({
         organizationId: payload.organization.id,
         teamId: team.id,

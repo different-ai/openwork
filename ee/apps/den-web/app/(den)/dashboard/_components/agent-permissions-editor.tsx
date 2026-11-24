@@ -353,6 +353,11 @@ const ROW_COPY: Record<string, string> = {
   appScripting: "Run AppleScript and other scripts in Mac apps",
   websites: "Pages the agent fetches and the built-in browser opens",
   browserUploads: "Member decides asks unless remembered. Ask first asks every time.",
+  privateValueFills: "Passwords and codes the agent fills without seeing them. The member approves every fill.",
+  privateValueCommands: "Commands OpenWork runs to get a value, like a password manager's",
+  privateValuePaste: "The member pastes a value into OpenWork's own card",
+  privateValueTerminal: "Off keeps any program the agent fills private values from out of its own terminal",
+  privateValueRuns: "Programs the agent runs with a private value it never sees, like a deploy script's token",
   fileSends: "Drive uploads and saves, and Gmail and Outlook drafts with attachments",
   webSearch: "Look things up with a web search",
   localSkills: "Skills installed on the member's computer",
@@ -377,7 +382,7 @@ export function AgentPermissionsEditor({ scopeId, team, settings, saved, everyon
   const inherited = team === null ? null : everyone;
   const draftRows = sandboxRequirementVisibility(features, settings, inherited);
   const savedRows = sandboxRequirementVisibility(features, saved, inherited);
-  const sandboxRows = { hostExecution: draftRows.hostExecution || savedRows.hostExecution, sandboxOptOut: draftRows.sandboxOptOut || savedRows.sandboxOptOut };
+  const sandboxRows = { hostExecution: draftRows.hostExecution || savedRows.hostExecution, sandboxOptOut: draftRows.sandboxOptOut || savedRows.sandboxOptOut, privateValues: orgFeatureEnabled(orgContext, "privateValues") };
   return (
     <div className="min-w-0" data-testid="agent-permissions-editor" data-scope={scopeId}>
       <ItemPanel className="!py-0">

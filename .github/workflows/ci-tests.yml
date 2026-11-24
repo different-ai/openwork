@@ -63,9 +63,11 @@ jobs:
         run: |
           if [ "$RUNNER_OS" = "Linux" ]; then
             xvfb-run -a node --test apps/desktop/test/browser-secret-swap.test.mjs apps/desktop/test/browser-secret-pages.test.mjs apps/desktop/electron/browser-secret-hosts.review.test.mjs
+            node --conditions=development --test apps/desktop/electron/private-values.test.mjs
             OPENWORK_TEST_CHROMIUM="$CHROME_BIN" node --test packages/computer-use/browser-secrets-cloud.test.mjs
           else
             node --test apps/desktop/test/browser-secret-swap.test.mjs apps/desktop/test/browser-secret-pages.test.mjs apps/desktop/electron/browser-secret-hosts.review.test.mjs
+            node --conditions=development --test apps/desktop/electron/private-values.test.mjs
           fi
       - name: Build server plugins
         if: (success() || failure()) && steps.setup.outcome == 'success'
