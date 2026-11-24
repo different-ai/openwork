@@ -8,6 +8,7 @@ import app from "./app.js"
 import { startSlackAssistantWorker } from "./slack-assistant/worker.js"
 import { startSlackDesktopHandoffWorker } from "./slack-assistant/desktop-handoff.js"
 import { startWorkbotProactiveWorker } from "./workbot-proactive/worker.js"
+import { startHarnessFeedbackNotifier } from "./harness-feedback/notifier.js"
 import { startHarnessFeedbackWorker } from "./harness-feedback/worker.js"
 import { env } from "./env.js"
 import { appLogger } from "./observability/logger.js"
@@ -35,6 +36,7 @@ const stopMcpEventWorker = startMcpEventWorker()
 const stopNativeEventWorker = startNativeEventWorker()
 const stopWorkbotProactiveWorker = startWorkbotProactiveWorker()
 const stopHarnessFeedbackWorker = startHarnessFeedbackWorker()
+const stopHarnessFeedbackNotifier = startHarnessFeedbackNotifier()
 const stopScimMaintenanceLoop = startScimMaintenanceLoop()
 const stopBillingInvitationExpiryLoop = startBillingInvitationExpiryLoop()
 const stopSandboxExpiryLoop = startSandboxExpiryLoop()
@@ -73,6 +75,7 @@ async function stopBackgroundLoops() {
     stopSlackDesktopHandoffWorker(),
     stopWorkbotProactiveWorker(),
     stopHarnessFeedbackWorker(),
+    stopHarnessFeedbackNotifier(),
     stopMcpEventWorker(),
     stopNativeEventWorker(),
     stopCloudIdleStopLoop(),

@@ -65,6 +65,7 @@ const EnvSchema = z.object({
   DEN_PASSWORD_BREACH_SCREENING_ENABLED: z.string().optional(),
   DEN_API_KEY_RATE_LIMIT_MAX: z.string().optional(),
   DEN_HARNESS_FEEDBACK_ORG_IDS: z.string().optional(),
+  DEN_HARNESS_FEEDBACK_SLACK_WEBHOOK_URL: z.string().optional(),
   RESEND_API_KEY: z.string().optional(),
   SMTP_HOST: z.string().optional(),
   SMTP_PORT: z.string().optional(),
@@ -297,6 +298,16 @@ function automationTuning(value: string | undefined, fallback: number) {
 function optionalString(value: string | undefined) {
   const trimmed = value?.trim()
   return trimmed ? trimmed : undefined
+}
+
+function slackWebhookUrl(value: string | undefined) {
+  const configured = optionalString(value)
+  if (!configured) return undefined
+  const url = URL.parse(configured)
+  if (url?.origin !== "https://hooks.slack.com" || url.username || url.password || url.search || url.hash) {
+    throw new Error("DEN_HARNESS_FEEDBACK_SLACK_WEBHOOK_URL must be an HTTPS webhook URL on hooks.slack.com.")
+  }
+  return url.href
 }
 
 function readOptionalSecretFile(envName: string, pathValue: string | undefined) {
@@ -665,6 +676,7 @@ export const env = {
   authCookiePrefix: parsed.DEN_AUTH_COOKIE_PREFIX ?? "openwork-den",
   trustedProxies: splitCsv(parsed.DEN_TRUSTED_PROXIES),
   harnessFeedbackOrgIds: new Set(splitCsv(parsed.DEN_HARNESS_FEEDBACK_ORG_IDS)),
+  harnessFeedbackSlackWebhookUrl: slackWebhookUrl(parsed.DEN_HARNESS_FEEDBACK_SLACK_WEBHOOK_URL),
   webClientIpSecret,
   webUrl: normalizePublicWebOrigin(betterAuthUrl),
   databaseRedisUrl: normalizeRedisUrl(parsed.DATABASE_REDIS_URL, allowInsecureInternalRedis),

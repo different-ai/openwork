@@ -9,6 +9,7 @@ import { DenButton } from "../../../app/(den)/_components/ui/button";
 import { DenCard } from "../../../app/(den)/_components/ui/card";
 import { DenNotice } from "../../../app/(den)/_components/ui/notice";
 import { DenPageHeader } from "../../../app/(den)/_components/ui/page-header";
+import { sendAdmin } from "../admin-request";
 import { AdminAccessScreen } from "../admin-access-screen";
 import { useAdminReport } from "../use-admin-report";
 import { formatCount } from "../free-auto-usage/format";
@@ -38,7 +39,7 @@ const states: Record<z.infer<typeof report>["state"], string> = {
   pending: "Awaiting classification", classified: "Classified", rejected: "Not a harness issue", needs_review: "Needs review",
 };
 const notifications: Record<z.infer<typeof group>["notifyState"], string> = {
-  pending: "Not posted", delivered: "Posted to Slack", failed: "Slack post failed",
+  pending: "Waiting to send", delivered: "Sent to Slack", failed: "Couldn’t send",
 };
 
 const dateFormat = new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" });
@@ -84,10 +85,10 @@ function ReportDetails({ path, revision, groupCount }: { path: string; revision:
   ) : <p className="text-sm text-gray-600">No reports found.</p>;
 }
 
-function DisclosureRow({ summary, children }: { summary: React.ReactNode; children: (open: boolean) => React.ReactNode }) {
-  const [open, setOpen] = useState(false);
+function DisclosureRow({ summary, children, initiallyOpen = false }: { summary: React.ReactNode; children: (open: boolean) => React.ReactNode; initiallyOpen?: boolean }) {
+  const [open, setOpen] = useState(initiallyOpen);
   return (
-    <details className="group py-3" onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <details className="group py-3" open={open} onToggle={(event) => setOpen(event.currentTarget.open)}>
       <summary className="flex cursor-pointer list-none items-center gap-2 rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-500 [&::-webkit-details-marker]:hidden">
         <ChevronRight size={16} strokeWidth={1.5} aria-hidden="true" className="shrink-0 text-gray-500 transition-transform duration-150 group-open:rotate-90 motion-reduce:transition-none" />
         {summary}
@@ -97,26 +98,64 @@ function DisclosureRow({ summary, children }: { summary: React.ReactNode; childr
   );
 }
 
-function GroupRow({ item, revision }: { item: z.infer<typeof group>; revision: number }) {
+function GroupRow({ item, revision, selected, refresh, refreshing }: { item: z.infer<typeof group>; revision: number; selected: boolean; refresh: () => void; refreshing: boolean }) {
+  const path = `${PATH}/${encodeURIComponent(item.organizationId)}/${encodeURIComponent(item.id)}`;
+  const [confirm, setConfirm] = useState(false);
+  const [sending, setSending] = useState(false);
+  const [error, setError] = useState<string>();
+  const { notifyState } = item;
+
+  async function retry() {
+    setError(undefined);
+    setSending(true);
+    try {
+      const result = await sendAdmin(`${path}/retry`, "POST");
+      if (!result.ok) {
+        setError(result.message);
+        return;
+      }
+      setConfirm(false);
+      refresh();
+    } catch {
+      setError("Couldn’t check whether the retry was queued. Refresh the list before trying again.");
+      setConfirm(false);
+    } finally {
+      setSending(false);
+    }
+  }
+
   return (
     <div className="border-t border-gray-100">
-      <DisclosureRow summary={<>
-        <span className="min-w-0 flex-1 break-words text-sm font-medium">{item.title}</span>
-        <span className="shrink-0 text-sm text-gray-600">{formatCount(item.reportCount)} {item.reportCount === 1 ? "report" : "reports"}</span>
-      </>}>
-        {(open) => <>
-          <div className="ml-6 mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-gray-600">
-            <Organization id={item.organizationId} />
-            <span>{surfaces[item.surface]}</span>
-            {item.categoryLabel ? <span>{item.categoryLabel}</span> : null}
-            {item.tool ? <code className="break-all">{item.tool}</code> : null}
-            <DenBadge tone={item.notifyState === "failed" ? "warning" : "neutral"}>{notifications[item.notifyState]}</DenBadge>
-            <span>First seen <DateTime value={item.firstSeenAt} /></span>
-            <span>Last seen <DateTime value={item.lastSeenAt} /></span>
+      <div className="flex flex-wrap items-start justify-between gap-x-3 [&>details]:min-w-0 [&>details]:flex-1">
+        <DisclosureRow initiallyOpen={selected} summary={<>
+          <span className="min-w-0 flex-1 break-words text-sm font-medium">{item.title}</span>
+          <span className="shrink-0 text-sm text-gray-600">{formatCount(item.reportCount)} {item.reportCount === 1 ? "report" : "reports"}</span>
+          <DenBadge tone={notifyState === "failed" ? "warning" : "neutral"}>{notifications[notifyState]}</DenBadge>
+        </>}>
+          {(open) => open ? <>
+            <div className="ml-6 mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-gray-600">
+              <Organization id={item.organizationId} />
+              <span>{surfaces[item.surface]}</span>
+              {item.categoryLabel ? <span>{item.categoryLabel}</span> : null}
+              {item.tool ? <code className="break-all">{item.tool}</code> : null}
+              <span>First seen <DateTime value={item.firstSeenAt} /></span>
+              <span>Last seen <DateTime value={item.lastSeenAt} /></span>
+            </div>
+            <div className="ml-6 mt-3"><ReportDetails path={path} revision={revision} groupCount={item.reportCount} /></div>
+          </> : null}
+        </DisclosureRow>
+        {notifyState === "failed" && !confirm ? <DenButton className="my-1.5" size="sm" variant="secondary" disabled={refreshing} onClick={() => setConfirm(true)}>Retry Slack post</DenButton> : null}
+      </div>
+      {notifyState === "failed" && confirm ? (
+        <div className="ml-6 space-y-2 pb-3 text-sm" role="group" aria-label="Confirm Slack retry">
+          <p>Send this group’s title, category, surface, tool name (if present) and admin link to the internal Slack channel? If the first post went through, this could create a duplicate.</p>
+          <div className="flex flex-wrap gap-2">
+            <DenButton size="sm" variant="secondary" loading={sending} onClick={() => void retry()}>Retry Slack post</DenButton>
+            <DenButton size="sm" variant="ghost" disabled={sending} onClick={() => setConfirm(false)}>Cancel</DenButton>
           </div>
-          {open ? <div className="ml-6 mt-3"><ReportDetails path={`${PATH}/${encodeURIComponent(item.organizationId)}/${encodeURIComponent(item.id)}`} revision={revision} groupCount={item.reportCount} /></div> : null}
-        </>}
-      </DisclosureRow>
+        </div>
+      ) : null}
+      {error ? <DenNotice message={error} /> : null}
     </div>
   );
 }
@@ -136,10 +175,10 @@ function UngroupedReportRow({ item, revision }: { item: z.infer<typeof report>; 
   );
 }
 
-export function HarnessFeedbackPage() {
+export function HarnessFeedbackPage({ selectedGroup }: { selectedGroup?: string }) {
   const [revision, setRevision] = useState(0);
   const refresh = () => setRevision((value) => value + 1);
-  const result = useAdminReport(PATH, parseInbox, revision);
+  const result = useAdminReport(selectedGroup ? `${PATH}?group=${encodeURIComponent(selectedGroup)}` : PATH, parseInbox, revision);
   if (result.status === "signed-out" || result.status === "forbidden" || (result.status === "error" && !result.data)) {
     return <AdminAccessScreen state={result.status} message={result.message} onRetry={refresh} />;
   }
@@ -158,14 +197,15 @@ export function HarnessFeedbackPage() {
               <div className="flex gap-2" key={label}><dt className="text-gray-600">{label}</dt><dd className="font-medium tabular-nums">{formatCount(Number(count))}</dd></div>
             ))}
           </dl>
+          {selectedGroup && !data.groups.some((item) => item.id === selectedGroup) ? <DenNotice message="The linked group is no longer available." /> : null}
           {data.summary.reports === 0 && data.summary.groups === 0 ? (
             <DenCard><p role="status" className="text-sm text-gray-600">No harness feedback yet. Reports from agents in approved organizations will appear here.</p></DenCard>
           ) : (
             <>
               <DenCard className="!rounded-lg">
                 <h2 className="mb-3 text-sm font-semibold">Groups</h2>
-                {data.summary.groups > data.groups.length ? <p className="mb-3 text-sm text-gray-600">Showing the latest {formatCount(data.groups.length)} groups.</p> : null}
-                {data.groups.length ? data.groups.map((item) => <GroupRow key={item.id} item={item} revision={revision} />) : <p className="text-sm text-gray-600">No groups yet.</p>}
+                {data.summary.groups > data.groups.length ? <p className="mb-3 text-sm text-gray-600">Showing {formatCount(data.groups.length)} groups.</p> : null}
+                {data.groups.length ? data.groups.map((item) => <GroupRow key={`${item.id}:${item.id === selectedGroup}`} item={item} revision={revision} selected={item.id === selectedGroup} refresh={refresh} refreshing={result.status === "loading"} />) : <p className="text-sm text-gray-600">No groups yet.</p>}
               </DenCard>
               <DenCard className="!rounded-lg">
                 <h2 className="mb-3 text-sm font-semibold">Ungrouped reports</h2>

@@ -596,7 +596,10 @@ async function startSentry(state: RuntimeState) {
     beforeBreadcrumb: (breadcrumb) => sanitizeSentryBreadcrumb(breadcrumb),
     integrations(defaults) {
       return [
-        ...defaults.filter((integration) => integration.name !== "Http"),
+        ...defaults.filter((integration) => integration.name !== "Http" && integration.name !== "NodeFetch"),
+        Sentry.nativeNodeFetchIntegration({
+          ignoreOutgoingRequests: (url) => URL.parse(url)?.hostname === "hooks.slack.com",
+        }),
         Sentry.httpIntegration({
           ignoreIncomingRequests: (urlPath) => incomingHealthPath(urlPath),
         }),

@@ -194,3 +194,30 @@ test("removed members cannot list or submit feedback even with a previously issu
     env.harnessFeedbackOrgIds.clear()
   }
 })
+
+test("only platform admins can requeue a failed group in the matching allowlisted organization", async () => {
+  const id = createDenTypeId("harnessFeedbackGroup")
+  const group = { id, organizationId, title: "Tool error", surface: "tool", fingerprint: id,
+    notifyState: "failed", notifyAttempts: 3 } satisfies typeof HarnessFeedbackGroupTable.$inferInsert
+  await db.insert(HarnessFeedbackGroupTable).values(group)
+  env.harnessFeedbackOrgIds.add(organizationId)
+  env.harnessFeedbackOrgIds.add(outsideOrgId)
+  try {
+    const retry = `${path}/${organizationId}/${id}/retry`
+    assert.equal((await den.request(null, "POST", retry)).status, 401)
+    assert.equal((await den.request(context.owner.token, "POST", retry)).status, 403)
+    assert.equal((await den.request(admin.token, "POST", `${path}/${outsideOrgId}/${id}/retry`)).status, 404)
+    const listing = await den.request(admin.token, "GET", `${path}?group=${id}`)
+    assert.equal(listing.status, 200)
+    assert.equal(list(field(listing.body, "groups"))[0]?.id, id)
+    const requeued = await den.request(admin.token, "POST", retry)
+    assert.equal(requeued.status, 200, summary(requeued))
+    assert.equal(requeued.headers.get("cache-control"), "no-store")
+    assert.equal((await den.request(admin.token, "POST", retry)).status, 404)
+    const [row] = await db.$primary.select().from(HarnessFeedbackGroupTable).where(eq(HarnessFeedbackGroupTable.id, id))
+    assert.equal(row?.notifyState, "pending")
+    assert.equal(row?.notifyAttempts, 0)
+  } finally {
+    env.harnessFeedbackOrgIds.clear()
+  }
+})
