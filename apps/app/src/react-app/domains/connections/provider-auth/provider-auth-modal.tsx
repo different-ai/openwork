@@ -79,6 +79,7 @@ export const PROVIDER_LABELS: Record<string, string> = {
 };
 
 const OPENWORK_MODELS_PROVIDER_ID = "openwork";
+const OAUTH_CODE_COPY_ERROR = "Could not copy the code. Select the code and copy it manually.";
 
 export type ProviderAuthModalProps = {
   claudeAgent?: ClaudeAgentSetupState;
@@ -128,6 +129,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const [pollingBusy, setPollingBusy] = useState(false);
   const [oauthAutoBusy, setOauthAutoBusy] = useState(false);
   const [oauthCodeCopied, setOauthCodeCopied] = useState(false);
+  const [oauthCodeCopyFailed, setOauthCodeCopyFailed] = useState(false);
   const [oauthBrowserOpened, setOauthBrowserOpened] = useState(false);
   const [claudeCommandCopied, setClaudeCommandCopied] = useState(false);
   const [claudeFound, setClaudeFound] = useState(false);
@@ -144,6 +146,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const providerPollRef = useRef<number | null>(null);
   const oauthAutoPollRef = useRef<number | null>(null);
   const oauthCodeCopiedResetRef = useRef<number | null>(null);
+  const oauthCodeCopyAttempt = useRef(0);
   const autoOpenedPreferredProviderIdRef = useRef<string | null>(null);
 
   const formatProviderName = (id: string, fallback?: string) => {
@@ -252,7 +255,8 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const claudeMissing = claudeCanSignIn && !claudeChecking && !claudeSigningIn
     && (claudeInstalled === false || (claudeInstalled === undefined && claudeCodeMissing(claudeReason)));
   const claudeError = claudeCanSignIn && claudeCodeMissing(claudeReason) ? null : claudeReason;
-  const errorMessage = localError ?? (resolvedView === "external" ? claudeError : props.error);
+  const providerError = resolvedView === "external" ? claudeError : props.error;
+  const errorMessage = localError ?? (oauthCodeCopyFailed ? OAUTH_CODE_COPY_ERROR : providerError);
 
   const filteredEntries = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
@@ -298,11 +302,16 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
 
   const actionDisabled = props.loading || props.submitting;
 
-  const resetState = () => {
-    if (oauthCodeCopiedResetRef.current !== null && typeof window !== "undefined") {
+  const invalidateOauthCodeCopy = () => {
+    oauthCodeCopyAttempt.current += 1;
+    if (oauthCodeCopiedResetRef.current !== null) {
       window.clearTimeout(oauthCodeCopiedResetRef.current);
       oauthCodeCopiedResetRef.current = null;
     }
+  };
+
+  const resetState = () => {
+    invalidateOauthCodeCopy();
     setView("list");
     setSelectedProviderId(null);
     apiKeyField.current?.clear();
@@ -313,6 +322,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     setActiveEntryIndex(0);
     setLocalError(null);
     setOauthCodeCopied(false);
+    setOauthCodeCopyFailed(false);
     setOauthBrowserOpened(false);
     setClaudeCommandCopied(false);
     setClaudeFound(false);
@@ -423,10 +433,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     return () => {
       stopOauthAutoPolling();
       stopProviderPolling();
-      if (oauthCodeCopiedResetRef.current !== null) {
-        window.clearTimeout(oauthCodeCopiedResetRef.current);
-        oauthCodeCopiedResetRef.current = null;
-      }
+      invalidateOauthCodeCopy();
     };
   }, []);
 
@@ -484,16 +491,22 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
   const copyOauthDisplayCode = async () => {
     const code = oauthDisplayCode.trim();
     if (!code) return;
+    invalidateOauthCodeCopy();
+    const attempt = oauthCodeCopyAttempt.current;
+    setOauthCodeCopied(false);
     if (typeof navigator === "undefined" || !navigator.clipboard?.writeText) {
-      setLocalError("Clipboard is unavailable in this environment.");
+      setOauthCodeCopyFailed(true);
       return;
     }
-    await navigator.clipboard.writeText(code);
-    setOauthCodeCopied(true);
-    if (typeof window === "undefined") return;
-    if (oauthCodeCopiedResetRef.current !== null) {
-      window.clearTimeout(oauthCodeCopiedResetRef.current);
+    try {
+      await navigator.clipboard.writeText(code);
+    } catch {
+      if (attempt === oauthCodeCopyAttempt.current) setOauthCodeCopyFailed(true);
+      return;
     }
+    if (attempt !== oauthCodeCopyAttempt.current) return;
+    setOauthCodeCopyFailed(false);
+    setOauthCodeCopied(true);
     oauthCodeCopiedResetRef.current = window.setTimeout(() => {
       setOauthCodeCopied(false);
       oauthCodeCopiedResetRef.current = null;
@@ -551,8 +564,10 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     }
     setLocalError(null);
     setOauthCodeInput("");
+    invalidateOauthCodeCopy();
     setOauthSession(null);
     setOauthCodeCopied(false);
+    setOauthCodeCopyFailed(false);
     setOauthBrowserOpened(false);
     try {
       const started = await props.onSelect(entry.id, methodIndex);
@@ -687,14 +702,16 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
     if (resolvedView === "oauth-code" || resolvedView === "oauth-auto") {
       if ((selectedEntry?.methods.length ?? 0) > 1) {
         setView("method");
+        invalidateOauthCodeCopy();
+        setOauthSession(null);
+        setOauthCodeInput("");
+        setOauthCodeCopied(false);
+        setOauthCodeCopyFailed(false);
+        setOauthBrowserOpened(false);
+        setLocalError(null);
       } else {
         resetState();
       }
-      setOauthSession(null);
-      setOauthCodeInput("");
-      setOauthCodeCopied(false);
-      setOauthBrowserOpened(false);
-      setLocalError(null);
       return;
     }
 
@@ -845,7 +862,7 @@ export default function ProviderAuthModal(props: ProviderAuthModalProps) {
 
         <div className="flex min-h-0 flex-1 flex-col gap-4">
           {errorMessage ? (
-            <div className="rounded-xl border border-red-7/30 bg-red-1/40 px-3 py-2 text-xs text-red-11">
+            <div role="alert" className="rounded-xl border border-red-7/30 bg-red-1/40 px-3 py-2 text-xs text-red-11">
               {errorMessage}
             </div>
           ) : props.loading ? (
