@@ -27,7 +27,7 @@ async function settle(api: ReturnType<typeof den.as>, id: string) {
   throw new Error("Config request did not settle")
 }
 
-test("Config moves a private skill and its file to a member joining later, without duplicates", async () => {
+test("Config moves a private skill and its file to a member joining later, without duplicates", async (t) => {
   const source = await den.createOrg(await den.signUp("Source Admin"), "Source workspace")
   const target = await den.createOrg(await den.signUp("Target Admin"), "Target workspace")
   const creator = await den.newMember(source.owner, source.orgId, "Skill Creator")
@@ -58,16 +58,16 @@ test("Config moves a private skill and its file to a member joining later, witho
   assert.equal(list(field(skillsOnly, "areas", "plugins", "skills", "items")).filter((item) => item.name === name).length, 1)
   assert.equal(field(skillsOnly, "areas", "plugins", "plugins"), undefined)
 
-  async function importConfig() {
-    const submitted = expectStatus(await b("POST", "/v1/config-blobs/change-requests", { blob, mode: "merge" }), 202)
+  async function importConfig(api = b, file = blob) {
+    const submitted = expectStatus(await api("POST", "/v1/config-blobs/change-requests", { blob: file, mode: "merge" }), 202)
     const id = text(field(submitted, "changeRequest", "id"), "request id")
-    const analyzed = await settle(b, id)
+    const analyzed = await settle(api, id)
     assert.equal(field(analyzed, "changeRequest", "status"), "needs_review", JSON.stringify(analyzed))
-    const plan = expectStatus(await b("GET", `/v1/config-blobs/change-requests/${id}/plan`), 200)
+    const plan = expectStatus(await api("GET", `/v1/config-blobs/change-requests/${id}/plan`), 200)
     assert.equal(field(plan, "plan", "summary", "blocking"), 0, JSON.stringify(plan))
     const planHash = text(field(plan, "plan", "planHash"), "plan hash")
-    expectStatus(await b("POST", `/v1/config-blobs/change-requests/${id}/apply`, { planHash }), 200)
-    const applied = await settle(b, id)
+    expectStatus(await api("POST", `/v1/config-blobs/change-requests/${id}/apply`, { planHash }), 200)
+    const applied = await settle(api, id)
     assert.equal(field(applied, "changeRequest", "status"), "applied", JSON.stringify(applied))
   }
   await importConfig()
@@ -97,6 +97,16 @@ test("Config moves a private skill and its file to a member joining later, witho
   assert.equal((await load(peerToken)).isError, true)
   const adminRead = await load(adminToken)
   assert.equal(adminRead.isError, true, "the importing admin agent does not acquire the creator-only skill")
+
+  const skillTarget = await den.createOrg(await den.signUp("Skills Only Admin"), "Skills only workspace")
+  const skillOwner = await den.join(skillTarget.owner, skillTarget.orgId, creator)
+  const skillAdmin = den.as(skillTarget.owner, skillTarget.orgId)
+  expectStatus(await den.setFeature(skillTarget.orgId, "configPrivateItems", true), 200)
+  await importConfig(skillAdmin, skillsOnly)
+  const skillOnlyExport = expectStatus(await skillAdmin("GET", "/v1/config-blobs/export?areas=plugins.skills"), 200)
+  assert.ok(list(field(skillOnlyExport, "areas", "plugins", "skills", "items")).some((item) => item.name === name))
+  const skillOnlyRead = await load(await den.mintMcpToken(skillOwner, skillTarget.orgId))
+  t.diagnostic(`Skills-only import is loadable by the owner agent: ${!skillOnlyRead.isError && skillOnlyRead.text.includes(contents)}`)
 
   await importConfig()
   const after = expectStatus(await b("GET", "/v1/config-blobs/export?areas=plugins.skills,plugins.plugins"), 200)
