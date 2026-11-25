@@ -440,7 +440,7 @@ test("a key-based LiteLLM provider and Microsoft Foundry sign-in work as before"
   assert.equal(list(field(listed.body, "inferenceProviders")).find((provider) => provider.id === foundryId)?.credentialStatus, "ready")
 })
 
-test("litellmEntraConnectCheck probes the proxy on Entra callback only when enabled and warns on mismatch without blocking sign-in", async () => {
+test("Entra callback probes LiteLLM /v1/models and warns on mismatch without blocking sign-in", async () => {
   const created = await owner("POST", "/v1/inference-providers/litellm", entraProvider({ name: "LiteLLM (Connect Check)", baseUrl: liteLlm.url }))
   assert.equal(created.status, 201, summary(created))
   const checkProviderId = text(field(created.body, "inferenceProvider", "id"), "provider id")
@@ -455,15 +455,7 @@ test("litellmEntraConnectCheck probes the proxy on Entra callback only when enab
   }
 
   try {
-    // Flag off by default: callback does not contact LiteLLM.
-    const offSignIn = await signIn(person, checkProviderId)
-    assert.equal(offSignIn.callback.status, 200, summary(offSignIn.callback))
-    assert.equal(probeCount, 0)
-    assert.match(offSignIn.callback.text, /Connection complete/)
-    assert.doesNotMatch(offSignIn.callback.text, /Connection verified with LiteLLM/)
-
-    // Turn on for this organization: verified when all configured models are listed.
-    assert.equal((await den.asPlatformAdmin("PUT", `/v1/admin/organizations/${workspace.orgId}/capabilities`, { capabilities: { litellmEntraConnectCheck: true } })).status, 200)
+    // Verified when all configured models are listed.
     const verifiedSignIn = await signIn(person, checkProviderId)
     assert.equal(verifiedSignIn.callback.status, 200, summary(verifiedSignIn.callback))
     assert.equal(probeCount, 1)
@@ -487,15 +479,12 @@ test("litellmEntraConnectCheck probes the proxy on Entra callback only when enab
     assert.match(rejectedSignIn.callback.text, /issuer, audience, and v2 access token settings/)
     assert.equal(rejectedSignIn.callback.text.includes(ACCESS_TOKEN), false)
 
-    // Kill switch immediately stops outbound proxy checks.
-    assert.equal((await den.asPlatformAdmin("PUT", "/v1/admin/features/litellmEntraConnectCheck", { killed: true })).status, 200)
-    const beforeKilled = probeCount
-    const killedSignIn = await signIn(person, checkProviderId)
-    assert.equal(killedSignIn.callback.status, 200, summary(killedSignIn.callback))
-    assert.equal(probeCount, beforeKilled)
-    assert.match(killedSignIn.callback.text, /Connection complete/)
-    assert.equal((await den.asPlatformAdmin("PUT", "/v1/admin/features/litellmEntraConnectCheck", { killed: false })).status, 200)
-    assert.equal((await den.asPlatformAdmin("PUT", `/v1/admin/organizations/${workspace.orgId}/capabilities`, { capabilities: { litellmEntraConnectCheck: null } })).status, 200)
+    // Non-auth proxy error fails open silently with the standard completion page.
+    nextResponse = { status: 502, body: { error: "bad_gateway" } }
+    const skippedSignIn = await signIn(person, checkProviderId)
+    assert.equal(skippedSignIn.callback.status, 200, summary(skippedSignIn.callback))
+    assert.match(skippedSignIn.callback.text, /Connection complete/)
+    assert.doesNotMatch(skippedSignIn.callback.text, /LiteLLM needs attention/)
   } finally {
     liteLlmModelsHandler = null
     await owner("DELETE", `/v1/inference-providers/${checkProviderId}`)

@@ -32,8 +32,6 @@ import { effectiveGatewayGrants, lockMemberOAuthAuthorization, memberGatewayTeam
 import { isMigrationSourceLockConflict } from "../../llm/inference-provider-migration.js"
 import { getModelsDevCatalogProviders, getModelsDevProvider } from "../../llm/models-dev.js"
 import { LiteLlmError, createLiteLlmClient, liteLlmStaticModels, normalizeLiteLlmBaseUrl, verifyLiteLlmEntraToken } from "../../llm/litellm.js"
-import { organizationFeatureEnabled } from "../../features.js"
-import { markFeaturesUsed } from "../../feature-usage.js"
 import { isLiteLlmEntraSignIn, liteLlmCatalogProvider } from "../../llm/litellm-settings.js"
 import { liteLlmMemberIssueStatus, provisionLiteLlmMember, pruneLiteLlmIssuedKeys, reconcileLiteLlmIssuedKeys, scheduleLiteLlmProvisioning } from "../../llm/litellm-issued.js"
 import { applyLiteLlmSync, connectLiteLlmMemberKey, createLiteLlmEntraProvider, createLiteLlmProvider, liteLlmAdminKey, updateLiteLlmEntraProvider, updateLiteLlmIssueSettings, disconnectLiteLlmMember, emptyEntraSettings, emptySettings, liteLlmEndpoints, liteLlmErrorResponse, liteLlmMemberSet, planLiteLlmCatalog, planLiteLlmSync, pruneLiteLlmAssignments, readLiteLlmSettings, recordLiteLlmSyncError, replaceLiteLlmSyncKey, verifyLiteLlmKey } from "../../llm/litellm-sync.js"
@@ -1057,27 +1055,23 @@ export function registerOrgInferenceProviderRoutes<T extends { Variables: OrgRou
     let callbackDetail: string | undefined
     let callbackWarning: string | undefined
     if (entraAccessToken !== null && isLiteLlmProviderId(provider.provider_id)) {
-      const checkEnabled = await organizationFeatureEnabled(provider.organization_id, "litellmEntraConnectCheck", { userId: attempt.userId }).catch(() => false)
-      if (checkEnabled) {
-        markFeaturesUsed({ organizationId: provider.organization_id, memberId: state.org_membership_id, keys: ["litellmEntraConnectCheck"] })
-        const upstreamBaseUrl = typeof provider.settings.upstreamBaseUrl === "string" ? provider.settings.upstreamBaseUrl : ""
-        const configuredModels = readLiteLlmSettings(provider.settings)?.catalog.map((model) => model.id) ?? []
-        const check = await verifyLiteLlmEntraToken({ baseUrl: upstreamBaseUrl, accessToken: entraAccessToken, configuredModels })
-        console.info("litellm_entra_connect_check", {
-          requestId,
-          providerId: provider.id,
-          outcome: check.outcome,
-          ...(check.outcome === "rejected"
-            ? { status: check.status, reason: check.reason }
-            : check.outcome === "missing_models"
-              ? { missingCount: check.missingModels.length }
-              : check.outcome === "skipped"
-                ? { status: check.status, reason: check.reason }
-                : { listedCount: check.listedCount }),
-        })
-        if (check.outcome === "verified") callbackDetail = "Connection verified with LiteLLM."
-        else if (check.outcome === "rejected" || check.outcome === "missing_models") callbackWarning = check.warning
-      }
+      const upstreamBaseUrl = typeof provider.settings.upstreamBaseUrl === "string" ? provider.settings.upstreamBaseUrl : ""
+      const configuredModels = readLiteLlmSettings(provider.settings)?.catalog.map((model) => model.id) ?? []
+      const check = await verifyLiteLlmEntraToken({ baseUrl: upstreamBaseUrl, accessToken: entraAccessToken, configuredModels })
+      console.info("litellm_entra_connect_check", {
+        requestId,
+        providerId: provider.id,
+        outcome: check.outcome,
+        ...(check.outcome === "rejected"
+          ? { status: check.status, reason: check.reason }
+          : check.outcome === "missing_models"
+            ? { missingCount: check.missingModels.length }
+            : check.outcome === "skipped"
+              ? { status: check.status, reason: check.reason }
+              : { listedCount: check.listedCount }),
+      })
+      if (check.outcome === "verified") callbackDetail = "Connection verified with LiteLLM."
+      else if (check.outcome === "rejected" || check.outcome === "missing_models") callbackWarning = check.warning
     }
     if (redirectTo) {
       const destination = new URL(redirectTo)
