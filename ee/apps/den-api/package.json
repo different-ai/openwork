@@ -18,6 +18,7 @@
     "build:mcp-apps": "pnpm --filter @openwork/mcp-apps build",
     "openapi:snapshot": "tsx --conditions=development scripts/generate-openapi-snapshot.ts",
     "env:parity:write": "tsx --conditions=development scripts/write-env-parity-snapshots.ts",
+    "smoke:env-boot": "tsx --conditions=development scripts/smoke-env-boot.ts",
     "smoke:config-object-payload-boundary": "tsx scripts/smoke-config-object-payload-boundary.ts",
     "backfill:desktop-policies": "pnpm run build:den-db && tsx scripts/backfill-desktop-policies.ts",
     "migrate:skills-to-plugins": "pnpm run build:den-db && tsx scripts/migrate-skills-to-plugins.ts",
