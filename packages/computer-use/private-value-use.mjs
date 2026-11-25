@@ -73,7 +73,11 @@ export function createPrivateValueUse({ secrets, enabled, approveValues, runValu
     /** @typedef {{ program: string, env: string, ask: string, place: { site: string, label: string }, kept?: boolean, pasted?: string }} UseKey */
     /** @type {Map<string, UseKey>} */
     const unlocks = new Map();
-    /** @type {Array<{ value: import("./value-use.mjs").UseValue, field: string, command?: string[], ask?: string, key?: UseKey, kept?: true, pasted?: string }>} */
+    // A pasted value is kept under the NAME it is used as, so the same value is found however the agent words `ask`
+    // the next time. A sealed one is kept under the name it was sealed as, which `ask` gives.
+    /** @param {import("./value-use.mjs").UseValue} value */
+    const keptUnder = (value) => [value.ask, value.name].find((label) => typeof label === "string" && secrets.kept({ sessionId, site: where, label }) !== null);
+    /** @type {Array<{ value: import("./value-use.mjs").UseValue, field: string, command?: string[], ask?: string, key?: UseKey, keptAs?: string, pasted?: string }>} */
     const listed = use.values.map((value) => {
       const field = valueDestination(use, value);
       if (value.command !== undefined) {
@@ -87,13 +91,14 @@ export function createPrivateValueUse({ secrets, enabled, approveValues, runValu
         }
         return { value, field, command: [...value.command], ...(key ? { key } : {}) };
       }
-      return { value, field, ask: value.ask, ...(secrets.kept({ sessionId, site: where, label: value.ask }) === null ? {} : { kept: /** @type {const} */ (true) }) };
+      const keptAs = keptUnder(value);
+      return { value, field, ask: value.ask, ...(keptAs === undefined ? {} : { keptAs }) };
     });
     const keys = [...unlocks.values()];
     for (const key of keys) key.kept = secrets.kept({ sessionId, ...key.place }) !== null;
     const answer = await approveValues(sessionId, { use: target, fills: [
       ...listed.map((fill) => fill.ask === undefined ? { field: fill.field, command: [...fill.command], ...(fill.key ? { needs: fill.key.env } : {}) }
-        : { field: fill.field, ask: fill.ask, ...(fill.kept ? { kept: /** @type {const} */ (true) } : {}) }),
+        : { field: fill.field, ask: fill.ask, ...(fill.keptAs === undefined ? {} : { kept: /** @type {const} */ (true) }) }),
       ...keys.map((key) => ({ unlock: key.env, program: key.program, ask: key.ask, ...(key.kept ? { kept: /** @type {const} */ (true) } : {}) })),
     ] }, signal);
     signal.throwIfAborted();
@@ -105,8 +110,8 @@ export function createPrivateValueUse({ secrets, enabled, approveValues, runValu
       if (typeof pasted === "string") {
         if (!secrets.remember(pasted) || (inHeader(fill) && /[\r\n]/.test(pasted))) refuse("pasted_unusable");
         fill.pasted = pasted;
-        if (fill.ask !== undefined && answer.keep?.[index] === true) secrets.keep({ sessionId, site: where, label: fill.ask, value: pasted });
-      } else if (fill.ask !== undefined && !fill.kept) {
+        if (fill.ask !== undefined && answer.keep?.[index] === true) secrets.keep({ sessionId, site: where, label: fill.keptAs ?? fill.value.name, value: pasted });
+      } else if (fill.ask !== undefined && fill.keptAs === undefined) {
         refuse("credential_declined");
       }
     }
@@ -133,7 +138,7 @@ export function createPrivateValueUse({ secrets, enabled, approveValues, runValu
       const stop = (code, message) => { for (const rest of listed.slice(index)) note(rest, code); refuse(code, message); };
       let value;
       if (fill.ask !== undefined) {
-        value = fill.pasted ?? secrets.kept({ sessionId, site: where, label: fill.ask });
+        value = fill.pasted ?? (fill.keptAs === undefined ? null : secrets.kept({ sessionId, site: where, label: fill.keptAs }));
         if (typeof value !== "string" || !secrets.remember(value) || (inHeader(fill) && /[\r\n]/.test(value))) stop("pasted_unusable");
       } else {
         /** @type {Record<string, string> | undefined} */

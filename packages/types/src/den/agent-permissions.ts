@@ -251,7 +251,7 @@ export const agentPermissionDefinitions = [
     key: "privateValueRuns",
     section: "privateValues",
     label: "Give private values to programs",
-    description: "Programs the agent runs with a private value in their environment or in a file only they read, such as a deploy script that needs a token. The member approves every run on a card, and the agent sees what the program prints with every value hidden.",
+    description: "Programs the agent runs with a private value in their environment or in a file only they read, such as a deploy script that needs a token. The member approves each run on a card, or chooses Always there for one chat, and the agent sees what the program prints with every value hidden.",
     action: "private_value_run",
     control: "choice",
     decisions: ["allow", "deny"],

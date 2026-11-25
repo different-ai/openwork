@@ -1,5 +1,5 @@
 import { useId, useRef, useState, type ReactNode } from "react"
-import { KeyRound, Monitor, SquareTerminal } from "lucide-react"
+import { EyeOff, KeyRound, Monitor, SquareTerminal } from "lucide-react"
 import { useLocation, useNavigate } from "react-router"
 import type { PrivateValueFill, PrivateValueUse, ComputerRequest } from "@openwork/types/desktop-ipc"
 
@@ -308,14 +308,17 @@ function ValuesRequest({ sessionId, request, site, use, fills }: { sessionId: st
   const pastingField = fills.some((fill, index) => fill.unlock === undefined && typed[index] === true)
   const sent = use?.kind === "request"
   const explained = use ? (sent
-      ? `OpenWork gets each value${running > 0 ? `, running ${running === 1 ? "the command" : "the commands"} on ${request.computer} as you,` : ""} and sends this one request with them. The agent sees the answer with every value hidden, never the values. Check the address is the site you meant.`
-      : `OpenWork gets each value${running > 0 ? `, running ${running === 1 ? "the command that prints it" : "the commands that print them"},` : ""} and runs this command on ${request.computer} as you with them. The agent chose it and sees what it prints with every value hidden, never the values. Approve only what you recognize.`)
+      ? `OpenWork gets each value${running > 0 ? `, running ${running === 1 ? "the command" : "the commands"} on ${request.computer} as you,` : ""} and sends this one request with them. The agent sees the answer with every value hidden. Check the address is the site you meant.`
+      : `OpenWork gets each value${running > 0 ? `, running ${running === 1 ? "the command that prints it" : "the commands that print them"},` : ""} and runs this command on ${request.computer} as you with them. The agent chose it and sees what it prints with every value hidden. Approve only what you recognize.`)
     : !where ? "OpenWork can't tell which site this is for, so nothing will be filled."
-    : running > 0 && keyed && !pastingField ? `OpenWork runs ${one ? "it" : "each one"} on ${request.computer} as you, with the key ${pasting ? "you paste here" : "you kept for this chat"}, and types the result into the field. The agent chose the command and never sees the key or the result. Approve only what you recognize.`
-    : !pasting && running > 0 ? `OpenWork runs ${one ? "it" : "each one"} on ${request.computer} as you and types the result into the field. The agent chose the command and never sees the result. Approve only what you recognize.`
-    : running > 0 ? `OpenWork runs each command on ${request.computer} as you and types what it prints, and types what you paste here. The agent never sees any of it. Approve only what you recognize.`
-    : pasting ? `Paste ${one ? "it" : "each one"} here. OpenWork types ${one ? "it" : "them"} into the page, and the agent never sees ${one ? "it" : "them"}. Check the address is the site you meant.`
-    : `OpenWork types what you kept for this chat into the page. The agent never sees it. Check the address is the site you meant.`
+    : running > 0 && keyed && !pastingField ? `OpenWork runs ${one ? "it" : "each one"} on ${request.computer} as you, with the key ${pasting ? "you paste here" : "you kept for this chat"}, and types the result into the field. The agent chose the command. Approve only what you recognize.`
+    : !pasting && running > 0 ? `OpenWork runs ${one ? "it" : "each one"} on ${request.computer} as you and types the result into the field. The agent chose the command. Approve only what you recognize.`
+    : running > 0 ? `OpenWork runs each command on ${request.computer} as you and types what it prints, and types what you paste here. Approve only what you recognize.`
+    : pasting ? `Paste ${one ? "it" : "each one"} here. OpenWork types ${one ? "it" : "them"} into the page. Check the address is the site you meant.`
+    : `OpenWork types what you kept for this chat into the page. Check the address is the site you meant.`
+  const keptUse = use !== undefined && fills.some((fill) => fill.unlock === undefined && fill.ask !== undefined && fill.kept === true)
+  const always = where !== null && request.standing !== false && !pasting
+  const covered = !use || !keptUse ? null : revealHidden(use.kind === "run" ? use.command[0]?.split(/[\\/]/).pop() ?? "" : use.origin.replace(/^https:\/\//, ""))
   return (
     <div className="overflow-hidden border-b border-dls-border bg-transparent" data-testid="session-computer-request" data-reason="credential" data-credential="values">
       <div className="flex flex-col gap-3 px-4 py-3">
@@ -385,13 +388,22 @@ function ValuesRequest({ sessionId, request, site, use, fills }: { sessionId: st
                 )
               })}
             </ul>
+            {where ? (
+              <div className="mt-2 flex items-start gap-1.5 text-[12px] leading-5 text-dls-secondary" data-testid="session-computer-credential-unseen">
+                <EyeOff size={14} strokeWidth={1.9} className="mt-[3px] shrink-0" aria-hidden="true" />
+                <span>
+                  The model never sees {fills.length === 1 ? "this value" : "these values"}.
+                  {always && covered ? <> Always covers any {sent ? "request to" : "command that starts with"} <span dir="ltr" style={{ unicodeBidi: "bidi-override" }} className="wrap-anywhere font-mono" data-testid="session-computer-credential-covered">{covered.parts}</span> with {fields === 1 ? "this value" : "these values"} in this chat.</> : null}
+                </span>
+              </div>
+            ) : null}
             {hidden ? <div className="mt-2 text-[12px] font-medium leading-5 text-amber-11" data-testid="session-computer-credential-hidden">This request has {hidden === 1 ? "1 hidden character" : `${hidden} hidden characters`}, shown as &lt;U+…&gt;. Don't {running > 0 ? "run" : "fill"} it unless you expected that.</div> : null}
             {error ? <div role="alert" className="mt-1 text-[12px] leading-5 text-red-11">{error}</div> : null}
           </div>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-2">
           <Button type="button" variant="ghost" size="sm" disabled={busy !== null} aria-busy={busy === "dismiss"} data-testid="session-computer-credential-dismiss" onClick={() => void answer("dismiss")}>{use ? (sent ? "Don't send" : "Don't run") : running > 0 && !pastingField ? "Don't run" : "Don't fill"}</Button>
-          {where && request.standing !== false && !pasting ? <Button type="button" variant="outline" size="sm" disabled={busy !== null} aria-busy={busy === "always"} data-testid="session-computer-credential-always" onClick={() => void answer("always")}>{use ? (sent ? "Always for this request in this chat" : "Always for this command in this chat") : "Always for this site in this chat"}</Button> : null}
+          {always ? <Button type="button" variant="outline" size="sm" disabled={busy !== null} aria-busy={busy === "always"} data-testid="session-computer-credential-always" onClick={() => void answer("always")}>{!use || (keptUse && sent) ? "Always for this site in this chat" : keptUse ? "Always for this program in this chat" : sent ? "Always for this request in this chat" : "Always for this command in this chat"}</Button> : null}
           {where ? <Button type="button" size="sm" disabled={busy !== null || !ready} aria-busy={busy === "allow"} data-testid="session-computer-credential-allow" onClick={() => void answer("allow")}>{use ? (sent ? "Send" : "Run") : running > 0 ? "Run and fill" : "Fill"}</Button> : null}
         </div>
       </div>

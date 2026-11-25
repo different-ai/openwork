@@ -120,6 +120,19 @@ test("a command that needs a session key gets the one pasted on the card, and th
   assert.equal(keyed.core.redactText(`k ${KEY} v ${TOKEN}`), "k [secret] v [secret]");
 });
 
+test("a pasted value kept for the chat is found again by its NAME and program, however the agent words what it asks for", async () => {
+  const kept = world({ approve: async (requested) => requested.fills[0].kept ? { approved: true, values: [null], keep: [false] } : { approved: true, values: [PASTED], keep: [true] } });
+  const probe = (ask, script, name = "API_KEY", program = "node") => kept.use({ values: [{ name, ask }], run: { command: [program, script] } });
+  assert.equal((await probe("Example API key", "first.mjs")).ok, true);
+  assert.equal((await probe("Example API key (same as before)", "second.mjs")).ok, true);
+  assert.equal((await probe("Example API key", "third.mjs", "OTHER_KEY")).ok, true);
+  assert.equal((await probe("Example API key", "fourth.py", "API_KEY", "python3")).ok, true);
+  assert.deepEqual(kept.asked.map((card) => card.request.fills[0].kept === true), [false, true, false, false]);
+  assert.deepEqual(kept.notes.map((note) => note.source), ["paste", "kept", "paste", "paste"]);
+  assert.deepEqual(kept.core.listKept(SESSION), [{ site: "run:node", label: "API_KEY" }, { site: "run:node", label: "OTHER_KEY" }, { site: "run:python3", label: "API_KEY" }]);
+  assert.deepEqual(kept.calls.filter((call) => call[0] === "run").map((call) => call[2][0].value), [PASTED, PASTED, PASTED, PASTED]);
+});
+
 test("a value too short to tell apart from ordinary text is never used", async () => {
   const short = world({ answers: { [READ_TOKEN.join(" ")]: { ok: true, value: "abc" } } });
   assert.equal((await short.use({ values: [{ name: "A", command: READ_TOKEN }], run: { command: ["x"] } })).code, "value_unusable");

@@ -160,6 +160,15 @@ const validValueUseTarget = (use) => {
 };
 /** The key a standing "Always" is kept under for a use, as the person's list shows it. @param {ValueUse} use */
 const useKey = (use) => use.kind === "run" ? `run ${use.command.join(" ")}` : `${use.method} ${use.url}`;
+/**
+ * The key a standing "Always" is kept under when a use takes a value the person kept for the chat: the program
+ * whatever its arguments, or the site whatever the request. The person already chose to keep the value for this
+ * chat, and a program reads its script anew each run, so naming the exact command would promise nothing more.
+ * @param {ValueUse} use
+ */
+const keptUseKey = (use) => use.kind === "run" ? `run ${String(use.command[0]).split(/[\\/]/).pop()}` : use.origin;
+/** A value the person pasted earlier and kept for this chat, as a row of the card. */
+const isKeptValue = (fill) => !isUnlock(fill) && fill.ask !== undefined && fill.kept === true;
 /** One row of the card as the person is shown it, and nothing else that came with it. */
 const shownValueFill = (fill) => isUnlock(fill) ? { unlock: fill.unlock, program: fill.program, ask: fill.ask, ...(fill.kept ? { kept: /** @type {const} */ (true) } : {}) }
   : fill.ask === undefined ? { field: fill.field, command: [...fill.command], ...(fill.needs === undefined ? {} : { needs: fill.needs }) }
@@ -682,8 +691,11 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
    * field the card shows where its value comes from: a command OpenWork runs on this computer, typing what it
    * prints, or a name under which the person pastes the value into the card itself. One card lists them all.
    * "Always" covers exactly a card of commands alone: the same command into the same kind of field on the same
-   * site, for this chat. Nothing pasted is ever standing, and a standing "always" for typed credentials never
-   * covers a command, nor a command anything else.
+   * site, for this chat. Nothing pasted on a card is ever standing, and a standing "always" for typed credentials
+   * never covers a command, nor a command anything else.
+   * A use outside a page that takes values kept for this chat, with nothing to paste, offers "Always" too: it
+   * covers the same program or the same site with the same kept values, for this chat, and ends when one of them
+   * has to be pasted again.
    * `values` holds what the person pasted, one place per fill and null where none was; `keep` marks the ones to
    * keep for this chat. Both are all empty unless the answer is a yes.
    * `limits` narrow the card, never widen it: `everyTime` asks whatever was approved before and offers no
@@ -702,7 +714,14 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
       : typeof page !== "string" || page.length > 200 || !canonicalBrowserSite(page) || !page.startsWith("https://")) return { answer: "too_many", ...none };
     const site = use === undefined ? /** @type {string} */ (page) : useKey(use);
     const sealing = use?.kind === "request" && use.seal !== undefined;
-    const standing = limits.everyTime !== true && !sealing && fills.every((fill) => fill.ask === undefined) ? fills.map((fill) => JSON.stringify([site, fill.field, fill.command])) : null;
+    const scope = use === undefined ? null : keptUseKey(use);
+    const keptKey = (fill) => JSON.stringify([scope, fill.field, null]);
+    if (scope !== null) for (const fill of fills) if (!isUnlock(fill) && fill.ask !== undefined && fill.kept !== true) grant.valuesAlwaysFor?.delete(keptKey(fill));
+    const commandsAlone = fills.every((fill) => fill.ask === undefined);
+    const keptUse = scope !== null && !commandsAlone && fills.every((fill) => fill.ask === undefined || isKeptValue(fill));
+    const standing = limits.everyTime === true || sealing ? null
+      : commandsAlone ? fills.map((fill) => JSON.stringify([site, fill.field, fill.command]))
+      : keptUse ? fills.map((fill) => isKeptValue(fill) ? keptKey(fill) : JSON.stringify([scope, fill.field, fill.command])) : null;
     if (standing?.every((key) => grant.valuesAlwaysFor?.has(key))) return { answer: "always", ...none };
     if (scriptRequests.has(chatKey(grant))) return { answer: "busy", ...none };
     const target = targetFor(grant);
@@ -1935,14 +1954,15 @@ export function createComputerControl({ adapters, runProgram, runScript, onTimin
       return answer === "allow" || answer === "always" ? { approved: true, values, keep } : no;
     },
     /**
-     * Every command the person chose "Always" for, in every chat: the chat it holds in, the site, the kind of
-     * field and the command. Kept in memory only, so quitting OpenWork ends them all.
-     * @returns {Array<{ id: string, sessionId: string, site: string, field: string, command: string[] }>}
+     * Every "Always" the person chose, in every chat: the chat it holds in, the site, the kind of field and the
+     * command, or `kept` in its place for a value kept for the chat, where `site` is the program or the site it
+     * covers. Kept in memory only, so quitting OpenWork ends them all.
+     * @returns {Array<{ id: string, sessionId: string, site: string, field: string, command?: string[], kept?: true }>}
      */
     listValueGrants() {
       return [...grants.values()].flatMap((grant) => [...grant.valuesAlwaysFor ?? []].map((key) => {
         const [site, field, command] = JSON.parse(key);
-        return { id: JSON.stringify([grant.sessionId, key]), sessionId: chatKey(grant), site, field, command };
+        return { id: JSON.stringify([grant.sessionId, key]), sessionId: chatKey(grant), site, field, ...(command === null ? { kept: /** @type {const} */ (true) } : { command }) };
       }));
     },
     /** Ends one "Always", or with no id every one, so the next such fill asks again. @param {string} [id] */
