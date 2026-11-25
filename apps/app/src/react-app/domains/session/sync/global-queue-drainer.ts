@@ -44,6 +44,7 @@ import {
   subscribeQueuedSendContext,
   type QueuedSendContext,
 } from "./queued-send-context";
+import { submitAfterDismissingSessionQuestions } from "./session-question-dismissal";
 import { ensureWorkspaceSessionSync, trackWorkspaceSessionSync } from "./session-sync";
 
 type WatchedSession = {
@@ -417,11 +418,17 @@ async function attemptDrain(sessionId: string) {
     const send = () => performQueuedDraftSend(sendContext, sessionId, draft, generation, transport);
     const outcome = await (async () => {
       if (!nextItem.steer) return submitAfterInterruption(context.opencodeBaseUrl, sessionId, send, draft.messageId);
-      const messages = await getNativeSessionMessages({ opencodeBaseUrl: context.opencodeBaseUrl, token: context.openworkToken, ...transport }, sessionId, { limit: 140 });
-      assertQueuedSendCurrent(sessionId, generation);
       const createEngineClient = isOpencodeV2BaseUrl(context.opencodeBaseUrl) ? createClientV2 : createClient;
       const client = createEngineClient(context.opencodeBaseUrl, context.workspaceRoot || undefined, { token: context.openworkToken, mode: "openwork" }, transport);
-      return submitImmediateSessionTurn(context.opencodeBaseUrl, client, sessionId, messages, send, { directory: context.workspaceRoot || undefined, messageID: draft.messageId });
+      const directory = context.workspaceRoot || undefined;
+      return submitAfterDismissingSessionQuestions({ client, workspaceId: context.workspaceId, sessionId, directory }, () => {
+        assertQueuedSendCurrent(sessionId, generation);
+        if (sessionWorkHeld(context.opencodeBaseUrl, sessionId)) throw new Error("This conversation is being archived.");
+      }, () => submitAfterInterruption(context.opencodeBaseUrl, sessionId, send, draft.messageId), async () => {
+        const messages = await getNativeSessionMessages({ opencodeBaseUrl: context.opencodeBaseUrl, token: context.openworkToken, ...transport }, sessionId, { limit: 140 });
+        assertQueuedSendCurrent(sessionId, generation);
+        return submitImmediateSessionTurn(context.opencodeBaseUrl, client, sessionId, messages, send, { directory, messageID: draft.messageId });
+      });
     })();
     if (outcome === "cancelled" && context.rejectedOwner) {
       dispatchQueuedDrain(sessionId, { type: "send_error", itemId: nextItem.id });
