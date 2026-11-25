@@ -1,0 +1,1 @@
+ALTER TABLE `support_triage_settings` ADD `leads_slack_webhook_url` mediumtext;

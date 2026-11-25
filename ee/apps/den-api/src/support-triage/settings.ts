@@ -6,7 +6,7 @@ import { db } from "../db.js"
 import { env } from "../env.js"
 
 export type TriageSettings = typeof Settings.$inferSelect
-export type TriageSettingsUpdate = { enabled?: boolean; plainApiKey?: string | null; slackWebhookUrl?: string | null }
+export type TriageSettingsUpdate = { enabled?: boolean; plainApiKey?: string | null; slackWebhookUrl?: string | null; leadsSlackWebhookUrl?: string | null }
 const singleton = eq(Settings.id, "default")
 
 export async function readTriageSettings() {
@@ -17,7 +17,8 @@ export async function readTriageSettings() {
 export function publicTriageSettings(row: TriageSettings | null) {
   return {
     enabledAt: row?.enabledAt?.toISOString() ?? null,
-    plainConfigured: Boolean(row?.plainApiKey), slackConfigured: Boolean(row?.slackWebhookUrl), jevConfigured: Boolean(env.agentEvaluationApiKey),
+    plainConfigured: Boolean(row?.plainApiKey), slackConfigured: Boolean(row?.slackWebhookUrl), leadsSlackConfigured: Boolean(row?.leadsSlackWebhookUrl),
+    jevConfigured: Boolean(env.agentEvaluationApiKey),
     updatedAt: row?.updatedAt?.toISOString() ?? null, updatedBy: row?.updatedBy ?? null,
   }
 }
@@ -37,6 +38,7 @@ export function updateTriageSettings(input: TriageSettingsUpdate, updatedBy: Den
     const settings = {
       plainApiKey, enabledAt, revision, updatedAt, updatedBy,
       slackWebhookUrl: input.slackWebhookUrl === undefined ? current.slackWebhookUrl : input.slackWebhookUrl,
+      leadsSlackWebhookUrl: input.leadsSlackWebhookUrl === undefined ? current.leadsSlackWebhookUrl : input.leadsSlackWebhookUrl,
       polledThrough: enabledAt && enabledAt === current.enabledAt && plainApiKey === current.plainApiKey ? current.polledThrough : null,
     }
     await tx.update(Settings).set(settings).where(singleton)

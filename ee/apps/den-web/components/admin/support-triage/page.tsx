@@ -15,16 +15,25 @@ import { categoryLabels, parseThreads, TriageThreads } from "./threads";
 
 const root = "/v1/admin/support-triage";
 const limit = 25;
-const settingsSchema = z.object({ enabledAt: z.string().nullable(), plainConfigured: z.boolean(), slackConfigured: z.boolean(), jevConfigured: z.boolean() });
+const settingsSchema = z.object({ enabledAt: z.string().nullable(), plainConfigured: z.boolean(), slackConfigured: z.boolean(), leadsSlackConfigured: z.boolean(), jevConfigured: z.boolean() });
 const parseSettings = (payload: unknown) => settingsSchema.safeParse(payload).data ?? null;
 const cta = supportTriageIntro.ctas[0] ?? null;
+const plainPermissions = ["thread:read", "thread:setPriority", "thread:setStatus", "customer:read", "timeline:read", "workspace:read",
+  "labelType:read", "labelType:create", "label:create", "label:read"];
 
-function CredentialSetting({ kind, configured, disabled, run }: { kind: "plain" | "slack"; configured: boolean; disabled: boolean;
+const credentials = {
+  plain: { label: "Plain API key", field: "plainApiKey", testPath: "/plain/test", cleared: "Plain key cleared. Triage is off.", hint: null },
+  slack: { label: "Bugs Slack webhook", field: "slackWebhookUrl", testPath: "/slack/test", cleared: "Bugs Slack webhook cleared.",
+    hint: "Product bugs post here. Enterprise leads also post here unless a leads webhook is saved." },
+  leads: { label: "Leads Slack webhook", field: "leadsSlackWebhookUrl", testPath: "/slack/leads/test", cleared: "Leads Slack webhook cleared. Enterprise leads post to the bugs webhook.",
+    hint: "Enterprise leads post here. Leave empty to send them to the bugs webhook." },
+} as const;
+
+function CredentialSetting({ kind, configured, disabled, run }: { kind: keyof typeof credentials; configured: boolean; disabled: boolean;
   run: (method: "PUT" | "POST", path: string, body: unknown, success: string) => Promise<boolean> }) {
   const [value, setValue] = useState("");
   const plain = kind === "plain";
-  const label = plain ? "Plain API key" : "Slack webhook";
-  const field = plain ? "plainApiKey" : "slackWebhookUrl";
+  const { label, field, testPath, cleared, hint } = credentials[kind];
   const test = plain ? "Test connection" : "Send test message";
   return <details className="group border-b border-border py-2">
     <summary className="flex min-h-8 cursor-pointer list-none items-center justify-between gap-3 text-sm [&::-webkit-details-marker]:hidden">
@@ -37,13 +46,14 @@ function CredentialSetting({ kind, configured, disabled, run }: { kind: "plain" 
     }}>
       <DenInput aria-label={label} type="password" autoComplete="new-password" spellCheck={false} maxLength={2048} value={value}
         disabled={disabled} onChange={(event) => setValue(event.target.value)} placeholder={configured ? `Replace ${label.toLowerCase()}` : `Paste ${label.toLowerCase()}`} />
-      {plain ? <p className="text-xs text-muted-foreground">Permissions: <code>thread:read</code>, <code>thread:edit</code>, <code>customer:read</code>, <code>labelType:read</code>, <code>labelType:create</code>, <code>label:create</code>.</p> : null}
+      {plain ? <p className="text-xs text-muted-foreground">Permissions: {plainPermissions.map((permission, index) => <span key={permission}>{index ? ", " : ""}<code>{permission}</code></span>)}.</p>
+        : <p className="text-xs text-muted-foreground">{hint}</p>}
       <div className="flex flex-wrap gap-2">
         <DenButton type="submit" size="sm" variant="secondary" disabled={disabled || !value.trim()}>Save {plain ? "key" : "webhook"}</DenButton>
         <DenButton type="button" size="sm" variant="ghost" disabled={disabled || (!configured && !value.trim())}
-          onClick={() => void run("POST", `/${kind}/test`, value.trim() ? { [field]: value.trim() } : {}, plain ? "Plain connection verified." : "Test message sent.")}>{test}</DenButton>
+          onClick={() => void run("POST", testPath, value.trim() ? { [field]: value.trim() } : {}, plain ? "Plain connection verified." : "Test message sent.")}>{test}</DenButton>
         {configured ? <DenButton type="button" size="sm" variant="ghost" disabled={disabled}
-          onClick={() => void run("PUT", "/settings", { [field]: null }, plain ? "Plain key cleared. Triage is off." : "Slack webhook cleared.").then((ok) => { if (ok) setValue(""); })}>Clear {plain ? "key" : "webhook"}</DenButton> : null}
+          onClick={() => void run("PUT", "/settings", { [field]: null }, cleared).then((ok) => { if (ok) setValue(""); })}>Clear {plain ? "key" : "webhook"}</DenButton> : null}
       </div>
     </form>
   </details>;
@@ -104,6 +114,7 @@ export function SupportTriagePage() {
         </div>
         <CredentialSetting kind="plain" configured={data.plainConfigured} disabled={disabled} run={run} />
         <CredentialSetting kind="slack" configured={data.slackConfigured} disabled={disabled} run={run} />
+        <CredentialSetting kind="leads" configured={data.leadsSlackConfigured} disabled={disabled} run={run} />
         <div id="triage-readiness" className="flex min-h-11 flex-wrap items-center justify-between gap-2 border-b border-border py-1 text-sm">
           <span>Jev classification</span>
           {data.jevConfigured ? <span className="text-muted-foreground">Configured</span> : <FeatureIntroLockedAction reason="Deployment operator must configure Jev" />}

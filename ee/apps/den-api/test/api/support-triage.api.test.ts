@@ -10,12 +10,14 @@ after(() => den.close())
 const { db } = await import("../../src/db.js")
 const { createSupportTriageTick } = await import("../../src/support-triage/worker.js")
 const { classifySupportTriage } = await import("../../src/support-triage/classifier.js")
+const { slackWebhookFor } = await import("../../src/support-triage/slack.js")
 const admin = await den.signUp("Platform Admin", process.env.DEN_BOOTSTRAP_ADMIN_EMAILS)
 const outsider = await den.signUp("Fixture Outsider")
 const root = "/v1/admin/support-triage"
 const request = (method: Method, path: string, body?: unknown) => den.request(admin.token, method, `${root}${path}`, { body })
 const key = "fixture-plain-key"
 const webhook = "https://hooks.slack.com/services/T_FIXTURE/B_FIXTURE/placeholder"
+const leadsWebhook = "https://hooks.slack.com/services/T_FIXTURE/B_LEADS/placeholder"
 
 function fakeModel(scores: Record<string, number>, inspect?: (state: unknown) => void): EvaluationModel {
   return async ({ state, questions }) => {
@@ -54,9 +56,17 @@ test("fixed thresholds decide all categories and only bounded evidence goes to J
   await assert.rejects(classifySupportTriage(async () => ({ answers: null, durationMs: 1, inputTokens: null }), evidence), /malformed/)
 })
 
+test("enterprise leads use the leads webhook when set and bugs always use the bugs webhook", () => {
+  assert.equal(slackWebhookFor("bug", { slackWebhookUrl: webhook, leadsSlackWebhookUrl: leadsWebhook }), webhook)
+  assert.equal(slackWebhookFor("enterprise", { slackWebhookUrl: webhook, leadsSlackWebhookUrl: leadsWebhook }), leadsWebhook)
+  assert.equal(slackWebhookFor("enterprise", { slackWebhookUrl: webhook, leadsSlackWebhookUrl: null }), webhook)
+  assert.equal(slackWebhookFor("bug", { slackWebhookUrl: null, leadsSlackWebhookUrl: leadsWebhook }), null)
+})
+
 test("platform-only settings validate, hide encrypted credentials and audit changes", async (t) => {
   const realFetch = globalThis.fetch
   let testsSent = 0
+  let leadsTestsSent = 0
   t.mock.method(globalThis, "fetch", async (input: Parameters<typeof fetch>[0], options?: RequestInit) => {
     const url = String(input)
     if (url === "https://core-api.uk.plain.com/graphql/v1") {
@@ -68,9 +78,14 @@ test("platform-only settings validate, hide encrypted credentials and audit chan
       assert.match(String(options?.body), /Test message from OpenWork support triage/)
       return new Response("ok")
     }
+    if (url === leadsWebhook) {
+      leadsTestsSent++
+      assert.match(String(options?.body), /Enterprise leads will post here/)
+      return new Response("ok")
+    }
     return realFetch(input, options)
   })
-  for (const [method, path] of [["GET", "/settings"], ["PUT", "/settings"], ["POST", "/plain/test"], ["POST", "/slack/test"], ["GET", "/threads"]] satisfies [Method, string][]) {
+  for (const [method, path] of [["GET", "/settings"], ["PUT", "/settings"], ["POST", "/plain/test"], ["POST", "/slack/test"], ["POST", "/slack/leads/test"], ["GET", "/threads"]] satisfies [Method, string][]) {
     assert.equal((await den.request(outsider.token, method, `${root}${path}`, { body: method === "GET" ? undefined : {} })).status, 403)
   }
   const initial = await request("GET", "/settings")
@@ -80,23 +95,36 @@ test("platform-only settings validate, hide encrypted credentials and audit chan
   assert.equal((await request("PUT", "/settings", { enabled: true })).status, 409)
   assert.equal((await request("PUT", "/settings", { plainApiKey: "a\nb" })).status, 400)
   assert.equal((await request("PUT", "/settings", { slackWebhookUrl: "https://hooks.slack.com.example.invalid/secret" })).status, 400)
+  assert.equal((await request("PUT", "/settings", { leadsSlackWebhookUrl: "https://hooks.slack.com.example.invalid/secret" })).status, 400)
   assert.equal((await request("GET", "/threads?category=unknown")).status, 400)
   assert.equal((await request("POST", "/plain/test", {})).status, 409)
   assert.equal((await request("POST", "/slack/test", {})).status, 409)
+  assert.equal((await request("POST", "/slack/leads/test", {})).status, 409)
   assert.equal(field((await request("POST", "/plain/test", { plainApiKey: key })).body, "workspaceId"), "w_fixture")
   const saved = await request("PUT", "/settings", { plainApiKey: key, slackWebhookUrl: webhook, enabled: true })
   assert.equal(saved.status, 200, summary(saved))
   assert.equal(field(saved.body, "plainConfigured"), true)
   assert.equal(field(saved.body, "slackConfigured"), true)
+  assert.equal(field(saved.body, "leadsSlackConfigured"), false)
+  assert.equal((await request("POST", "/slack/leads/test", {})).status, 409)
+  const leads = await request("PUT", "/settings", { leadsSlackWebhookUrl: leadsWebhook })
+  assert.equal(field(leads.body, "leadsSlackConfigured"), true)
+  assert.equal(field(leads.body, "slackConfigured"), true)
+  assert.ok(!leads.text.includes(leadsWebhook))
   assert.equal(typeof field(saved.body, "enabledAt"), "string")
   assert.ok(!saved.text.includes(key) && !saved.text.includes(webhook))
-  const stored = JSON.stringify(await db.execute(sql`select plain_api_key, slack_webhook_url from support_triage_settings`))
-  assert.ok(!stored.includes(key) && !stored.includes(webhook))
+  const stored = JSON.stringify(await db.execute(sql`select plain_api_key, slack_webhook_url, leads_slack_webhook_url from support_triage_settings`))
+  assert.ok(!stored.includes(key) && !stored.includes(webhook) && !stored.includes(leadsWebhook))
   const audit = JSON.stringify(await db.execute(sql`select action from platform_audit_event where action = 'platform.support_triage.settings.update.succeeded'`))
   assert.match(audit, /platform.support_triage.settings.update/)
   assert.equal((await request("POST", "/plain/test", {})).status, 200)
   assert.equal((await request("POST", "/slack/test", {})).status, 200)
+  assert.equal((await request("POST", "/slack/leads/test", {})).status, 200)
   assert.equal(testsSent, 1)
+  assert.equal(leadsTestsSent, 1)
+  const leadsCleared = await request("PUT", "/settings", { leadsSlackWebhookUrl: null })
+  assert.equal(field(leadsCleared.body, "leadsSlackConfigured"), false)
+  assert.equal(field(leadsCleared.body, "slackConfigured"), true)
   const cleared = await request("PUT", "/settings", { plainApiKey: null, slackWebhookUrl: null })
   assert.equal(field(cleared.body, "enabledAt"), null)
   assert.equal(field(cleared.body, "plainConfigured"), false)
@@ -104,7 +132,7 @@ test("platform-only settings validate, hide encrypted credentials and audit chan
 })
 
 test("poll pagination, enable boundary, deduplication, category actions, and safe retries", async () => {
-  const configured = await request("PUT", "/settings", { plainApiKey: key, slackWebhookUrl: webhook, enabled: true })
+  const configured = await request("PUT", "/settings", { plainApiKey: key, slackWebhookUrl: webhook, leadsSlackWebhookUrl: leadsWebhook, enabled: true })
   assert.equal(configured.status, 200, summary(configured))
   const enabledAt = field(configured.body, "enabledAt")
   assert.equal(typeof enabledAt, "string")
@@ -120,6 +148,7 @@ test("poll pagination, enable boundary, deduplication, category actions, and saf
   const states = new Map(fixtures.map(({ id }) => [id, { status: "TODO", priority: 2, labels: new Array<{ labelType: { id: string } }>() }]))
   const windows: unknown[] = []
   const slack: string[] = []
+  const slackDestinations: string[] = []
   const classifications: string[] = []
   const pendingModel: EvaluationModel = async (input) => {
     const title = field(input.state, "report", "title")
@@ -195,9 +224,9 @@ test("poll pagination, enable boundary, deduplication, category actions, and saf
     throw new Error("Unexpected Plain GraphQL operation")
   }
   const slackFetch: typeof fetch = async (url, options) => {
-    assert.equal(String(url), webhook)
     const body = String(options?.body)
     slack.push(body)
+    slackDestinations.push(`${body.includes("Possible enterprise lead") ? "lead" : "bug"}->${String(url) === leadsWebhook ? "leads" : String(url) === webhook ? "bugs" : "unknown"}`)
     if (body.includes("th_uncertain")) throw new Error("fixture disconnected after send")
     return new Response("ok")
   }
@@ -241,6 +270,7 @@ test("poll pagination, enable boundary, deduplication, category actions, and saf
   assert.deepEqual(effects.get("th_broken"), ["lt_openwork_triage_pitch", "done", "done", "done"])
   assert.equal(classifications.length, 8)
   assert.equal(slack.length, 3)
+  assert.deepEqual([...slackDestinations].sort(), ["bug->bugs", "lead->leads", "lead->leads"])
   const review = await request("GET", "/threads?category=needs_review")
   assert.equal(field(review.body, "total"), 1)
   assert.ok(!review.text.includes("First customer message"))
