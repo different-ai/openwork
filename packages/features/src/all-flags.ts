@@ -41,3 +41,4 @@ export { default as workbotCalmChat } from "@openwork/features/flags/workbot-cal
 export { default as workbotDocuments } from "@openwork/features/flags/workbot-documents"
 export { default as workbotMobile } from "@openwork/features/flags/workbot-mobile"
 export { default as workbotWorkspaceAssistant } from "@openwork/features/flags/workbot-workspace-assistant"
+export { default as workspaceCreateLimit } from "@openwork/features/flags/workspace-create-limit"

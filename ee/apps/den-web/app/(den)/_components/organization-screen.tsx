@@ -3,7 +3,7 @@
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 import { ChevronRight, LogOut, Settings } from "lucide-react";
-import { getErrorMessage, requestJson } from "../_lib/den-flow";
+import { getErrorMessage, getWorkspaceLimitContact, requestJson } from "../_lib/den-flow";
 import { type DenOrgSummary, formatRoleLabel, getJoinOrgRoute, getOnboardingPeopleRoute, getOrgDashboardRoute, parseOrgListPayload } from "../_lib/den-org";
 import { useOrgListWindow } from "../_lib/use-org-list-window";
 import { countLabel, organizationPlanLabel } from "../_lib/plan-display";
@@ -28,6 +28,7 @@ export function OrganizationScreen() {
   const [createdOrg, setCreatedOrg] = useState<{ id: string; slug: string } | null>(null);
   const [createBusy, setCreateBusy] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
+  const [createErrorContact, setCreateErrorContact] = useState<string | null>(null);
 
   const userDisplayName = useMemo(() => {
     const trimmedName = user?.name?.trim();
@@ -129,6 +130,7 @@ export function OrganizationScreen() {
 
     setCreateBusy(true);
     setCreateError(null);
+    setCreateErrorContact(null);
     try {
       let nextOrg = createdOrg;
       if (!nextOrg) {
@@ -138,6 +140,7 @@ export function OrganizationScreen() {
         });
 
         if (!response.ok) {
+          setCreateErrorContact(getWorkspaceLimitContact(payload));
           throw new Error(getErrorMessage(payload, "Failed to create organization."));
         }
 
@@ -165,7 +168,8 @@ export function OrganizationScreen() {
       <span className="text-[13px] font-medium text-gray-900">Workspace name</span>
       <DenInput value={createName} onChange={(event) => setCreateName(event.target.value)} placeholder="My workspace" minLength={2} maxLength={120} disabled={createBusy || Boolean(createdOrg)} required autoFocus />
     </label>
-    {createError ? <p role="alert" className="text-[13px] text-red-600">{createError}</p> : null}
+    {createError && createErrorContact ? <p role="status" className="text-[13px] text-gray-700">{createError} <a href={createErrorContact} className="font-medium text-gray-900 underline">Contact us</a></p> : null}
+    {createError && !createErrorContact ? <p role="alert" className="text-[13px] text-red-600">{createError}</p> : null}
     <DenButton type="submit" loading={createBusy} disabled={createName.trim().length < 2} className="w-full">Create workspace</DenButton>
     <details className="group">
       <summary className="inline-flex cursor-pointer list-none items-center gap-1.5 rounded-md text-[13px] font-medium text-gray-500 hover:text-gray-900 [&::-webkit-details-marker]:hidden">
