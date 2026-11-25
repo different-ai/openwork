@@ -9,6 +9,7 @@ import { DenButton } from "../../../app/(den)/_components/ui/button";
 import { DenCard } from "../../../app/(den)/_components/ui/card";
 import { DenNotice } from "../../../app/(den)/_components/ui/notice";
 import { DenPageHeader } from "../../../app/(den)/_components/ui/page-header";
+import { DenSelect } from "../../../app/(den)/_components/ui/select";
 import { sendAdmin } from "../admin-request";
 import { AdminAccessScreen } from "../admin-access-screen";
 import { useAdminReport } from "../use-admin-report";
@@ -22,12 +23,12 @@ const report = z.object({
   state: z.enum(["pending", "classified", "rejected", "needs_review"]), createdAt: z.iso.datetime(),
 });
 const group = z.object({
-  id: z.string(), organizationId: z.string(), title: z.string(), categoryLabel: z.string().nullish(), surface, tool: z.string().nullable(),
+  id: z.string(), organizationId: z.string(), title: z.string(), categoryLabel: z.string().nullish(), theme: z.string().nullish(), themeLabel: z.string().nullish(), surface, tool: z.string().nullable(),
   reportCount: z.number(), firstSeenAt: z.iso.datetime(), lastSeenAt: z.iso.datetime(), notifyState: z.enum(["pending", "delivered", "failed"]),
 });
 const inbox = z.object({
   summary: z.object({ groups: z.number(), reports: z.number(), ungrouped: z.number(), pending: z.number() }),
-  groups: z.array(group), ungroupedReports: z.array(report),
+  groups: z.array(group), themes: z.array(z.object({ theme: z.string(), label: z.string(), count: z.number() })).default([]), ungroupedReports: z.array(report),
 });
 const detail = z.object({ reports: z.array(report.extend({ symptom: z.string(), workaround: z.string().nullable() })) });
 const parseInbox = (input: unknown) => inbox.safeParse(input).data ?? null;
@@ -129,7 +130,11 @@ function GroupRow({ item, revision, selected, refresh, refreshing }: { item: z.i
     <div className="border-t border-gray-100">
       <div className="flex flex-wrap items-start justify-between gap-x-3 [&>details]:min-w-0 [&>details]:flex-1">
         <DisclosureRow initiallyOpen={selected} summary={<>
-          <span className="min-w-0 flex-1 break-words text-sm font-medium">{item.title}</span>
+          <span className="flex min-w-0 flex-1 flex-wrap items-center gap-x-2 gap-y-1">
+            <span className="min-w-0 break-words text-sm font-medium">{item.title}</span>
+            {item.themeLabel ? <DenBadge>{item.themeLabel}</DenBadge> : null}
+            {item.categoryLabel ? <DenBadge>{item.categoryLabel}</DenBadge> : null}
+          </span>
           <span className="shrink-0 text-sm text-gray-600">{formatCount(item.reportCount)} {item.reportCount === 1 ? "report" : "reports"}</span>
           <DenBadge tone={notifyState === "failed" ? "warning" : "neutral"}>{notifications[notifyState]}</DenBadge>
         </>}>
@@ -137,7 +142,6 @@ function GroupRow({ item, revision, selected, refresh, refreshing }: { item: z.i
             <div className="ml-6 mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-gray-600">
               <Organization id={item.organizationId} />
               <span>{surfaces[item.surface]}</span>
-              {item.categoryLabel ? <span>{item.categoryLabel}</span> : null}
               {item.tool ? <code className="break-all">{item.tool}</code> : null}
               <span>First seen <DateTime value={item.firstSeenAt} /></span>
               <span>Last seen <DateTime value={item.lastSeenAt} /></span>
@@ -149,7 +153,7 @@ function GroupRow({ item, revision, selected, refresh, refreshing }: { item: z.i
       </div>
       {notifyState === "failed" && confirm ? (
         <div className="ml-6 space-y-2 pb-3 text-sm" role="group" aria-label="Confirm Slack retry">
-          <p>Send this group’s title, category, surface, tool name (if present) and admin link to the internal Slack channel? If the first post went through, this could create a duplicate.</p>
+          <p>Send this issue’s title, theme, category, tool name (if present) and admin link to the internal Slack channel? If the first post went through, this could create a duplicate.</p>
           <div className="flex flex-wrap gap-2">
             <DenButton size="sm" variant="secondary" loading={sending} onClick={() => void retry()}>Retry Slack post</DenButton>
             <DenButton size="sm" variant="ghost" disabled={sending} onClick={() => setConfirm(false)}>Cancel</DenButton>
@@ -178,12 +182,38 @@ function UngroupedReportRow({ item, revision }: { item: z.infer<typeof report>; 
 
 export function HarnessFeedbackPage({ selectedGroup }: { selectedGroup?: string }) {
   const [revision, setRevision] = useState(0);
+  const [theme, setTheme] = useState("");
+  const [reclassifying, setReclassifying] = useState(false);
+  const [reclassifyError, setReclassifyError] = useState<string>();
   const refresh = () => setRevision((value) => value + 1);
-  const result = useAdminReport(selectedGroup ? `${PATH}?group=${encodeURIComponent(selectedGroup)}` : PATH, parseInbox, revision);
+  const query = new URLSearchParams();
+  if (selectedGroup) query.set("group", selectedGroup);
+  if (theme) query.set("theme", theme);
+  const result = useAdminReport(query.size ? `${PATH}?${query}` : PATH, parseInbox, revision);
+
+  async function reclassify() {
+    setReclassifyError(undefined);
+    setReclassifying(true);
+    try {
+      const response = await sendAdmin(`${PATH}/reclassify`, "POST");
+      if (!response.ok) {
+        setReclassifyError(response.message);
+        return;
+      }
+      refresh();
+    } catch {
+      setReclassifyError("Couldn’t check whether reports were queued. Refresh the list before trying again.");
+    } finally {
+      setReclassifying(false);
+    }
+  }
+
   if (result.status === "signed-out" || result.status === "forbidden" || (result.status === "error" && !result.data)) {
     return <AdminAccessScreen state={result.status} message={result.message} onRetry={refresh} />;
   }
   const data = result.data;
+  const issues = data?.groups.filter((item) => !theme || item.theme === theme) ?? [];
+  const issueCount = theme ? data?.themes.find((item) => item.theme === theme)?.count ?? 0 : data?.summary.groups ?? 0;
   return (
     <div className="flex flex-col gap-6">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -195,22 +225,40 @@ export function HarnessFeedbackPage({ selectedGroup }: { selectedGroup?: string 
       {!data ? <div role="status" aria-label="Loading feedback" className="h-48 animate-pulse rounded-lg bg-gray-100 motion-reduce:animate-none" /> : (
         <>
           <dl className="flex flex-wrap gap-x-6 gap-y-2 text-sm">
-            {[["Reports", data.summary.reports], ["Groups", data.summary.groups], ["Ungrouped", data.summary.ungrouped], ["Awaiting classification", data.summary.pending]].map(([label, count]) => (
+            {[["Reports", data.summary.reports], ["Issues", data.summary.groups], ["Ungrouped", data.summary.ungrouped], ["Awaiting classification", data.summary.pending]].map(([label, count]) => (
               <div className="flex gap-2" key={label}><dt className="text-gray-600">{label}</dt><dd className="font-medium tabular-nums">{formatCount(Number(count))}</dd></div>
             ))}
           </dl>
-          {selectedGroup && !data.groups.some((item) => item.id === selectedGroup) ? <DenNotice message="The linked group is no longer available." /> : null}
+          {selectedGroup && !theme && result.status === "ready" && !data.groups.some((item) => item.id === selectedGroup) ? <DenNotice message="The linked issue is no longer available." /> : null}
           {data.summary.reports === 0 && data.summary.groups === 0 ? (
             <DenCard><p role="status" className="text-sm text-gray-600">No harness feedback yet. Reports from agents in approved organizations will appear here.</p></DenCard>
           ) : (
             <>
               <DenCard className="!rounded-lg">
-                <h2 className="mb-3 text-sm font-semibold">Groups</h2>
-                {data.summary.groups > data.groups.length ? <p className="mb-3 text-sm text-gray-600">Showing {formatCount(data.groups.length)} groups.</p> : null}
-                {data.groups.length ? data.groups.map((item) => <GroupRow key={`${item.id}:${item.id === selectedGroup}`} item={item} revision={revision} selected={item.id === selectedGroup} refresh={refresh} refreshing={result.status === "loading"} />) : <p className="text-sm text-gray-600">No groups yet.</p>}
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="text-sm font-semibold">Issues</h2>
+                  <DenSelect aria-label="Filter by theme" size="sm" value={theme} onChange={(event) => setTheme(event.target.value)}>
+                    <option value="">All themes ({formatCount(data.summary.groups)})</option>
+                    {data.themes.map((item) => <option key={item.theme} value={item.theme}>{item.label} ({formatCount(item.count)})</option>)}
+                  </DenSelect>
+                </div>
+                {result.status === "ready" && issueCount > issues.length ? <p className="mb-3 text-sm text-muted-foreground">Showing {formatCount(issues.length)} of {formatCount(issueCount)} issues.</p> : null}
+                {issues.length ? issues.map((item) => <GroupRow key={`${item.id}:${item.id === selectedGroup}`} item={item} revision={revision} selected={item.id === selectedGroup} refresh={refresh} refreshing={result.status === "loading"} />)
+                  : result.status === "loading" ? <div role="status" aria-label="Loading issues" className="h-12 animate-pulse rounded-md bg-muted motion-reduce:animate-none" />
+                  : <p className="text-sm text-muted-foreground">{theme ? "No issues in this theme." : "No issues yet."}</p>}
               </DenCard>
               <DenCard className="!rounded-lg">
-                <h2 className="mb-3 text-sm font-semibold">Ungrouped reports</h2>
+                <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                  <h2 className="text-sm font-semibold">Ungrouped reports</h2>
+                  {data.ungroupedReports.some((item) => item.state === "needs_review") ? (
+                    <div className="flex flex-wrap items-center gap-2">
+                      <span id="harness-feedback-reclassify-description" className="text-sm text-muted-foreground">Sends reports that need review back through classification.</span>
+                      <DenButton size="sm" variant="secondary" aria-describedby="harness-feedback-reclassify-description"
+                        loading={reclassifying} disabled={result.status === "loading"} onClick={() => void reclassify()}>Classify again</DenButton>
+                    </div>
+                  ) : null}
+                </div>
+                {reclassifyError ? <DenNotice presentation="inline" message={reclassifyError} /> : null}
                 {data.summary.ungrouped > data.ungroupedReports.length ? <p className="mb-3 text-sm text-gray-600">Showing {formatCount(data.ungroupedReports.length)} ungrouped reports, with reports that need review first.</p> : null}
                 {data.ungroupedReports.length ? (
                   <ul className="divide-y divide-gray-100">

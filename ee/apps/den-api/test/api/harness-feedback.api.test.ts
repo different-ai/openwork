@@ -128,8 +128,8 @@ test("platform admin inbox and detail are no-store and isolate groups by organiz
   const groupId = createDenTypeId("harnessFeedbackGroup")
   const otherGroupId = createDenTypeId("harnessFeedbackGroup")
   await db.insert(HarnessFeedbackGroupTable).values([
-    { id: groupId, organizationId, fingerprint: "fixture-fingerprint", title: "Tool guidance is missing", surface: "tool", reportCount: 1 },
-    { id: otherGroupId, organizationId: outsideOrgId, fingerprint: "fixture-fingerprint", title: "Outside feedback", surface: "tool", reportCount: 1 },
+    { id: groupId, organizationId, fingerprint: "fixture-fingerprint", title: "Tool guidance is missing", theme: "skills", surface: "tool", reportCount: 1 },
+    { id: otherGroupId, organizationId: outsideOrgId, fingerprint: "fixture-fingerprint", title: "Outside feedback", theme: "browser", surface: "tool", reportCount: 1 },
   ])
   // A cross-org reference must never expose another tenant's report, even when both tenants are allowlisted.
   await db.insert(HarnessFeedbackReportTable).values([
@@ -146,11 +146,19 @@ test("platform admin inbox and detail are no-store and isolate groups by organiz
     assert.equal(listing.status, 200, summary(listing))
     assert.equal(listing.headers.get("cache-control"), "no-store")
     assert.equal(field(listing.body, "summary", "groups"), 1)
+    assert.equal(list(field(listing.body, "groups"))[0]?.theme, "skills")
+    assert.deepEqual(field(listing.body, "themes"), [{ theme: "skills", label: "Skills and instructions", count: 1 }])
     assert.equal(field(listing.body, "summary", "pending"), HARNESS_FEEDBACK_RATE_LIMIT - 1)
     assert.equal(field(listing.body, "summary", "reports"), HARNESS_FEEDBACK_RATE_LIMIT)
     assert.ok(!listing.text.includes(outsideOrgId) && !listing.text.includes(input.symptom))
     assert.equal((await den.request(admin.token, "GET", `${path}/${outsideOrgId}/${otherGroupId}`)).status, 404)
     await setEnabled(outsideOrgId)
+    const filtered = await den.request(admin.token, "GET", `${path}?theme=browser`)
+    assert.equal(filtered.status, 200, summary(filtered))
+    assert.deepEqual(list(field(filtered.body, "groups")).map(({ id }) => id), [otherGroupId])
+    assert.deepEqual(field(filtered.body, "themes"), [
+      { theme: "browser", label: "Browser", count: 1 }, { theme: "skills", label: "Skills and instructions", count: 1 },
+    ])
     assert.equal((await den.request(admin.token, "GET", `${path}/${outsideOrgId}/${groupId}`)).status, 404)
     const detail = await den.request(admin.token, "GET", detailPath)
     assert.equal(detail.status, 200, summary(detail))

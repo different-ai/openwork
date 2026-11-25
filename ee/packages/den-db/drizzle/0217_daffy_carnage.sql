@@ -1,0 +1,1 @@
+ALTER TABLE `harness_feedback_group` ADD `theme` varchar(24);
