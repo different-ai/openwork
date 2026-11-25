@@ -793,14 +793,11 @@ export async function startServer(
       error: error instanceof Error ? error.message : "unknown",
     });
   }
-  let watcherHandle = startReloadWatchers({ config, reloadEvents, logger });
+  const watcherHandle = startReloadWatchers({ config, reloadEvents, logger });
   const refreshWorkspaceReloadBaseline = (workspaceId: string, reasons?: ReloadReason[]) =>
     watcherHandle.refreshWorkspace(workspaceId, reasons);
   reloadBaselineRefreshers.set(config, refreshWorkspaceReloadBaseline);
-  const restartReloadWatchers = () => {
-    watcherHandle.close();
-    watcherHandle = startReloadWatchers({ config, reloadEvents, logger });
-  };
+  const syncReloadWatchers = () => watcherHandle.sync();
   const engineMcpServerState = beginEngineMcpServerState(config);
   const engineInstanceReaper = new EngineInstanceReaper({
     engineBaseUrl: () => enginePoolForConfig(config)?.primaryUrl() ?? null,
@@ -873,7 +870,7 @@ export async function startServer(
     approvals,
     tokens,
     env,
-    restartReloadWatchers,
+    syncReloadWatchers,
     engineMcpServerState,
     logger,
     cloudProviderSync,
