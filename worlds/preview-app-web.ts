@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import { startLocalRuntime, startRemoteRuntime } from "../evals/packages/env/src/app-web-runtime.ts";
 import { defaultDaytonaExec } from "../evals/packages/hosts/src/daytona.ts";
+import { daytonaModelGuest, startModelRelay } from "./lib/preview-model-guest.ts";
 import { installLiveModel } from "./lib/preview-live-model.ts";
 import { deleteSandboxes, execInSandbox, provisionWebSandbox } from "../evals/packages/hosts/src/provision.ts";
 import { privateSandboxId, privateWebPreview, verifyPrivateWebPreview } from "../evals/packages/hosts/src/private-web-preview.ts";
@@ -65,7 +66,7 @@ export async function bootAppWebWorld(
     if (!options.ref) throw new Error("Freestyle requires a full pushed source SHA.");
     if (Object.keys(selectedEnv).length) throw new Error("Freestyle snapshots use isolated state and do not accept Den proxy overrides.");
     const { ensureSnapshot } = await import("../packages/world-freestyle/src/builder.ts");
-    const { launchPreview, deletePreview, client } = await import("../packages/world-freestyle/src/index.ts");
+    const { launchPreview, deletePreview, client, execChecked } = await import("../packages/world-freestyle/src/index.ts");
     await ensureSnapshot(options.ref, undefined, (message) => console.error(message));
     const preview = await launchPreview({ gitSha: options.ref, lifetimeMinutes });
     stack.defer(async () => {
@@ -76,12 +77,16 @@ export async function bootAppWebWorld(
     await deps.track({ kind: "freestyle-preview", id: preview.id, match: preview.id, label: runtimeName });
     let live = {};
     if (options.liveModelTeam) {
-      const vm = client().vms.ref(preview.id);
-      const outputs = JSON.parse(await vm.fs.readTextFile("/opt/openwork-preview/outputs.json"));
+      const vm = client((url, init) => fetch(url, { ...init, redirect: "error" })).vms.ref(preview.id);
+      const outputs = await vm.fs.readTextFile("/opt/openwork-preview/outputs.json").then((raw) => JSON.parse(raw))
+        .catch(() => { throw new Error("Could not read private Freestyle runtime credentials."); });
       const url = new URL(preview.url);
       const access = url.searchParams.get("token");
       if (!access) throw new Error("Private Freestyle access is missing.");
       live = await installLiveModel(stack, { team: options.liveModelTeam, modelId: options.modelId, origin: url.origin, expiresAt: preview.expiresAt,
+        startRelay: (key, model) => startModelRelay({
+          run: (command) => execChecked(vm, command), write: (path, content) => vm.fs.writeTextFile(path, content, { mode: 0o600 }),
+        }, key, model),
         headers: { cookie: `__Host-openwork-preview=${access}` }, token: outputs.openworkToken.value, hostToken: outputs.openworkHostToken.value });
     }
     return { ...live, placement: "freestyle", sourceSha: options.ref, sourceKind: "snapshot", snapshotId: preview.snapshotId,
@@ -124,10 +129,11 @@ export async function bootAppWebWorld(
   const expiresAt = new Date(previewIssuedAt + lifetimeMinutes * 60_000).toISOString();
   let live = {};
   if (options.liveModelTeam) {
-    const manifest = await execInSandbox(defaultDaytonaExec, sandboxId, `cat "${runtime.runtimeDirectory}/runtime.json"`,
-      { context: "read owned Daytona runtime connection" });
-    const { token, hostToken } = JSON.parse(manifest.stdout);
-    live = await installLiveModel(stack, { team: options.liveModelTeam, modelId: options.modelId, origin: preview.browserOrigin, expiresAt,
+    const { token, hostToken } = await execInSandbox(defaultDaytonaExec, sandboxId, `cat "${runtime.runtimeDirectory}/runtime.json"`,
+      { context: "read owned Daytona runtime connection" }).then(({ stdout }) => JSON.parse(stdout))
+      .catch(() => { throw new Error("Could not read private Daytona runtime credentials."); });
+    const guest = await daytonaModelGuest(sandboxId);
+    live = await installLiveModel(stack, { startRelay: (key, model) => startModelRelay(guest, key, model), team: options.liveModelTeam, modelId: options.modelId, origin: preview.browserOrigin, expiresAt,
       headers: { "X-Daytona-Skip-Preview-Warning": "true" }, token, hostToken });
   }
   return {

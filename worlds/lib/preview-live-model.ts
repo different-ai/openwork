@@ -14,7 +14,7 @@ async function vercelApi(args: string[], body?: object) {
 }
 
 export async function installLiveModel(stack: AsyncDisposableStack, input: {
-  team: string; modelId?: string; expiresAt: string; origin: string; headers: Record<string, string>; token: string; hostToken: string;
+  startRelay: (key: string, model: string) => Promise<number>; team: string; modelId?: string; expiresAt: string; origin: string; headers: Record<string, string>; token: string; hostToken: string;
 }, api = vercelApi, request = fetch) {
   const { team, token, hostToken } = input;
   const previewModel = { providerID: "preview-live", modelID: input.modelId ?? defaultPreviewModelId };
@@ -36,21 +36,27 @@ export async function installLiveModel(stack: AsyncDisposableStack, input: {
   const workspaceId = workspaces.items?.[0]?.id;
   if (typeof workspaceId !== "string" || !workspaceId) throw new Error("Live model preview is missing its initial workspace.");
   const query = `?teamId=${team}`;
-  const result = JSON.parse(await api([`/v1/api-keys${query}`, "-X", "POST"], {
+  const raw = await api([`/v1/api-keys${query}`, "-X", "POST"], {
     name: `openwork-preview-${randomUUID()}`, purpose: "ai-gateway", expiresAt,
     aiGatewayQuota: { limitAmount: 1, includeByokInQuota: true },
-  }));
-  const id = result.apiKey?.id;
+  });
+  let result;
+  try { result = JSON.parse(raw); }
+  catch { throw new Error("Vercel returned an invalid preview key response."); }
+  const id = result?.apiKey?.id;
   if (typeof id !== "string" || !/^[a-zA-Z0-9_-]+$/.test(id)) throw new Error("Vercel did not return a preview key ID.");
   stack.defer(async () => {
     await api([`/v1/api-keys/${id}${query}`, "-X", "DELETE", "--dangerously-skip-permissions"]);
   });
   if (typeof result.apiKeyString !== "string" || !result.apiKeyString) throw new Error("Vercel did not issue a preview credential.");
+  const workspace = `/workspace/${encodeURIComponent(workspaceId)}`;
+  const host = { "x-openwork-host-token": hostToken };
+  const port = await input.startRelay(result.apiKeyString, previewModel.modelID);
   const provider = { [previewModel.providerID]: { name: "Preview live model", npm: previewModel.modelID.startsWith("openai/") ? "@ai-sdk/openai" : "@ai-sdk/openai-compatible",
-    options: { baseURL: "https://ai-gateway.vercel.sh/v1", apiKey: result.apiKeyString },
+    options: { baseURL: `http://127.0.0.1:${port}/v1`, apiKey: "preview-local" },
     models: { [previewModel.modelID]: { name: `${previewModel.modelID} (development)` } } } };
-  const patched = await runtime("/runtime-config/providers", "PATCH", { "x-openwork-host-token": hostToken }, { provider });
+  const patched = await runtime("/runtime-config/providers", "PATCH", host, { provider });
   await patched.body?.cancel();
-  await (await runtime(`/workspace/${encodeURIComponent(workspaceId)}/default-model`, "PUT", auth, { model: previewModel })).body?.cancel();
+  await (await runtime(`${workspace}/default-model`, "PUT", auth, { model: previewModel })).body?.cancel();
   return { liveModel: `${previewModel.providerID}/${previewModel.modelID}`, liveModelKeyId: id };
 }

@@ -10,12 +10,12 @@ import { previewWorld, type PreviewWorld } from "@openwork/evidence-provider/rev
 export const PREVIEW_KIND = "openwork-review-v1";
 export const ACCESS_FILE = "/opt/openwork-preview/access.json";
 
-export function client(): Freestyle {
+export function client(request: typeof fetch = fetch): Freestyle {
   const apiKey = process.env.FREESTYLE_API_KEY?.trim();
   if (!apiKey) {
     throw new Error("FREESTYLE_API_KEY is not set. The process that creates or deletes Freestyle VMs needs it: the review server, or `pnpm world` on this computer (see `pnpm world help preview-desktop` for how to load it).");
   }
-  return new Freestyle({ apiKey, fetch });
+  return new Freestyle({ apiKey, fetch: request });
 }
 
 export { previewWorld, type PreviewWorld };

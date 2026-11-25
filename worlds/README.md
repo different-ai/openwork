@@ -100,7 +100,9 @@ For a real agent turn in a remote web preview, append `-- --live-model <developm
 pnpm world up preview-app-web --place daytona --source ref:dev --stage live-test --detach -- --live-model "$DEV_VERCEL_TEAM_ID"
 ```
 
-Use `--place freestyle` for Freestyle. The controller needs a Vercel CLI login authorized to create AI Gateway keys in that development team. The launcher makes GPT-6 Luna the initial workspace default and prints its model and usage key ID. Each preview receives a separate AI Gateway key with a $1 lifetime budget and an expiry bounded by the preview lifetime. Teardown revokes the key. Existing team and user budgets apply across runs. For an explicitly selected model available on the development account, append `--model <provider/model>`. Provider denials are returned to the agent. Omit the option for the ordinary preview.
+Use `--place freestyle` for Freestyle. The controller needs a Vercel CLI login authorized to create AI Gateway keys for the development team. Daytona also needs an API-key CLI profile or a scoped `DAYTONA_API_KEY` and `DAYTONA_API_URL` for private file uploads.
+
+Each preview gets a separate $1 lifetime budget and a key that expires with the preview. Teardown revokes it. Use a trusted source revision and keep the preview private. Code with guest administrator access is inside the credential boundary. A guest-local relay holds the key and forwards requests for the selected model. The launcher prints the model and usage key ID. GPT-6 Luna is the default. To select another model available on the development account, append `--model <provider/model>`. Omit the live-model option for the ordinary preview.
 
 ## App settings
 

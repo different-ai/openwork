@@ -16,8 +16,6 @@ for (const place of ["daytona", "freestyle"]) {
   });
 }
 
-
-
 for (const failSetup of [true, false]) {
   test(`preview key is bounded and revoked after ${failSetup ? "a failed setup" : "use"}`, async () => {
     const expiresAt = new Date(Date.now() + 60_000).toISOString();
@@ -34,13 +32,21 @@ for (const failSetup of [true, false]) {
     };
     const setup = async () => {
       await using stack = new AsyncDisposableStack();
-      const result = await installLiveModel(stack, { team: "team_dev", expiresAt, origin: "https://example.test",
+      const startRelay = async (key: string, model: string) => {
+        assert.equal(key, "test-preview-token");
+        assert.equal(model, defaultPreviewModelId);
+        calls.push("relay");
+        return 1234;
+      };
+      const result = await installLiveModel(stack, { startRelay, team: "team_dev", expiresAt, origin: "https://example.test",
         headers: {}, token: "client", hostToken: "owner" }, api, async (url, init) => {
         const path = new URL(String(url)).pathname;
         if (path.endsWith("/workspaces")) return Response.json({ items: [{ id: "ws" }] });
+        assert.equal(init?.redirect, "error");
+        assert.ok(!String(init?.body).includes("test-preview-token"));
         if (path.endsWith("/providers")) {
           assert.equal(new Headers(init?.headers).get("x-openwork-host-token"), "owner");
-          assert.ok(String(init?.body).includes("test-preview-token"));
+          assert.equal(JSON.parse(String(init?.body)).provider["preview-live"].options.baseURL, "http://127.0.0.1:1234/v1");
           return new Response(null, { status: failSetup ? 500 : 204 });
         }
         assert.equal(path, "/api/openwork/workspace/ws/default-model");
@@ -51,6 +57,32 @@ for (const failSetup of [true, false]) {
     };
     if (failSetup) await assert.rejects(setup, /HTTP 500/);
     else await setup();
-    assert.deepEqual(calls, ["POST", "DELETE"]);
+    assert.deepEqual(calls, ["POST", "relay", "DELETE"]);
   });
 }
+
+test("malformed key responses never reach the launcher error output", async () => {
+  await using stack = new AsyncDisposableStack();
+  const install = installLiveModel(stack, {
+    startRelay: async () => assert.fail("unexpected relay"), team: "team_dev", expiresAt: new Date(Date.now() + 60_000).toISOString(), origin: "https://example.test",
+    headers: {}, token: "client", hostToken: "owner",
+  }, async () => "secret-fixture is not JSON", async () => Response.json({ items: [{ id: "ws" }] }));
+  await assert.rejects(install, { message: "Vercel returned an invalid preview key response." });
+});
+
+test("a failed private file upload cannot print its body or pass the key as a command", async () => {
+  const { startModelRelay } = await import("./preview-model-guest.ts");
+  let attempted = false;
+  const key = "synthetic-upload-secret";
+  await assert.rejects(startModelRelay({
+    async run(command) { assert.ok(!command.includes(key)); return ""; },
+    async write(path, content) {
+      if (path.endsWith("/credential")) {
+        attempted = true;
+        assert.deepEqual(JSON.parse(content), { key, model: defaultPreviewModelId });
+        throw new Error(content);
+      }
+    },
+  }, key, defaultPreviewModelId), { message: "Could not start the private preview model relay." });
+  assert.equal(attempted, true);
+});
