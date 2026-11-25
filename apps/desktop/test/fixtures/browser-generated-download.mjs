@@ -15,8 +15,12 @@ setTimeout(() => { console.error("Timed out waiting for the generated download")
 async function run() {
   await app.whenReady();
   if (process.platform === "darwin") app.dock.hide();
-  const server = createServer((_request, response) => {
+  const server = createServer((request, response) => {
     response.setHeader("Content-Type", "text/html");
+    if (request.url === "/connected") {
+      response.end("<script>window.opener.postMessage('connected', location.origin); window.close();</script>");
+      return;
+    }
     response.end('<button onclick="window.open(window.URL.createObjectURL(new Blob([\'export bytes\'], {type:\'application/octet-stream\'})))">Export</button>');
   });
   server.listen(0, "127.0.0.1");
@@ -45,6 +49,18 @@ async function run() {
   assert.equal(await download, "completed");
   assert.equal(readFileSync(destination, "utf8"), "export bytes");
   console.log("Generated export saved with the original bytes");
+  const reply = await page.executeJavaScript(`(async () => {
+    const popup = window.open("", "_blank");
+    if (!popup) return "popup refused";
+    const reply = new Promise(resolve => window.addEventListener("message", event => {
+      if (event.origin === location.origin && event.source === popup) resolve(event.data);
+    }));
+    await new Promise(resolve => setTimeout(resolve, 0));
+    popup.location.href = "/connected";
+    return reply;
+  })()`, true);
+  assert.equal(reply, "connected", "a site can navigate a blank popup later and receive its reply");
+  console.log("The staged popup returned its result to its opener");
   server.close();
 }
 

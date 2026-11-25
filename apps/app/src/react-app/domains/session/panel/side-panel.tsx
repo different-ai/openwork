@@ -61,6 +61,9 @@ import { chooseTabPageSize } from "./agent-viewport";
 import { isBrowserSecretsDialogTarget } from "./browser-secrets";
 import { BrowserSecretsButton } from "./browser-secrets-dialog";
 import { NO_SESSION_SIDE_PANEL_KEY } from "./side-panel-session";
+import { useDesktopFeature } from "../status/use-desktop-feature";
+import { markFeatureUsed } from "@/app/lib/den";
+import { browserAddressDestination } from "./browser-address-input";
 import { useBrowserSecretsEnabled } from "./use-browser-secrets";
 
 export type BrowserPresentationControls = {
@@ -243,6 +246,7 @@ export function BrowserPanelContent({
   presentation,
 }: BrowserPanelContentProps) {
   const isAvailable = Boolean(getElectronBrowser());
+  const addressSearch = useDesktopFeature("browserAddressSearch");
   const suspended = tab.status === "suspended";
   const busy = tab.status === "suspending" || tab.status === "restoring";
   const pageFailure = tab.loadError?.code === "page_load_failed" ? tab.loadError : null;
@@ -263,11 +267,15 @@ export function BrowserPanelContent({
     }
   }, [tab.id, tab.url]);
 
-  const navigate = React.useCallback(() => {
-    void getElectronBrowser()?.navigate?.(urlInput).catch((error: unknown) => {
+  const navigate = React.useCallback(async () => {
+    try {
+      const destination = addressSearch ? browserAddressDestination(urlInput) : urlInput;
+      await getElectronBrowser()?.navigate?.(destination);
+      if (addressSearch) markFeatureUsed("browserAddressSearch");
+    } catch (error) {
       reportFailure("Could not open this page. Check the address and try again.", error);
-    });
-  }, [urlInput, reportFailure]);
+    }
+  }, [addressSearch, urlInput, reportFailure]);
   const extendedOccluders = presentation !== undefined;
 
   const back = React.useCallback(() => {
@@ -292,10 +300,15 @@ export function BrowserPanelContent({
   const handleUrlKeyDown = React.useCallback((event: React.KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Enter") {
       event.preventDefault();
-      navigate();
+      void navigate();
+      urlInputRef.current?.blur();
+    } else if (addressSearch && event.key === "Escape") {
+      event.preventDefault();
+      event.stopPropagation();
+      setUrlInput(tab.url);
       urlInputRef.current?.blur();
     }
-  }, [navigate]);
+  }, [addressSearch, navigate, tab.url]);
 
   React.useLayoutEffect(() => {
     const browser = getElectronBrowser();
@@ -455,7 +468,8 @@ export function BrowserPanelContent({
                 onBlur={() => {
                   urlFocusedRef.current = false;
                 }}
-                placeholder="Enter URL..."
+                aria-label={addressSearch ? "Search Google or enter an address" : "Website address"}
+                placeholder={addressSearch ? "Search Google or enter an address" : "Enter URL..."}
                 spellCheck={false}
                 autoComplete="off"
               />
