@@ -1666,7 +1666,28 @@ the browser only talks to Den. Use a shared read-only PVC when
 consumed in MySQL, so the guided flow is safe when preview and acceptance land
 on different API replicas.
 
+## Validate CI overrides before upgrading
+
+Run `helm lint` and `helm template` with the same files, in the same order, and
+with the same `--set` overrides as your deployment pipeline. Rendering rejects
+unknown chart settings and Den API/Web `env` overrides of core wiring; the
+error names the typed value to use instead. Extra environment variables such as
+`NODE_OPTIONS`, Kubernetes annotations and labels, and feature locks under
+`config.features` retain their existing interfaces.
+
+Keep explicit legacy worker or Cloud SaaS values during an upgrade if you still
+use them. Bare self-hosted values no longer put those defaults in the shared
+ConfigMap. Installation notes warn about legacy overrides and image tags that
+differ from the chart's `appVersion`. Resolve an unintentional mismatch before
+running the migration Job. The notes do not change your image selection.
+
 ## Health Probes
+
+Set `tests.liveHealthCheck: true`, then run `helm test <release> --namespace
+<namespace> --logs` after deployment to add an HTTP request to the Den API
+Service's `/health` endpoint. This is off by default. The hook fails on a
+network error, timeout, redirect or non-2xx response; it does not check public
+ingress, database readiness or organization configuration.
 
 The chart uses the existing service health endpoints:
 

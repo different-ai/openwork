@@ -13,14 +13,18 @@ function render(...args) {
   return execFileSync("helm", ["template", "runtime-test", chartDir, ...args], { encoding: "utf8" });
 }
 
-const rendered = render();
-const probe = rendered.split(/^---$/m).find((document) => document.includes("name: runtime-test-openwork-ee-env-probe"));
-assert.ok(probe, "existing env-probe test hook is rendered");
-const source = /^            - \|\n((?: {14}[^\n]*\n|\n)+)/m.exec(probe)?.[1]
-  .split("\n").map((line) => line.slice(14)).join("\n");
-assert.ok(source, "extract the complete rendered Node.js script, not a copied version check");
+function extractProbe(rendered) {
+  const probe = rendered.split(/^---$/m).find((document) => document.includes("name: runtime-test-openwork-ee-env-probe"));
+  assert.ok(probe, "existing env-probe test hook is rendered");
+  const script = /^            - \|\n((?: {14}[^\n]*\n|\n)+)/m.exec(probe)?.[1]
+    .split("\n").map((line) => line.slice(14)).join("\n");
+  assert.ok(script, "extract the complete rendered Node.js script, not a copied version check");
+  return script;
+}
 
-function runProbe(version, overrides = {}) {
+const source = extractProbe(render());
+
+function runProbe(version, overrides = {}, script = source, request) {
   const output = [];
   const errors = [];
   const exit = new Error("process.exit");
@@ -41,26 +45,31 @@ function runProbe(version, overrides = {}) {
     NODE_OPTIONS: "",
     ...overrides,
   };
+  const runtime = {
+    version: `v${version}`,
+    versions: { node: version },
+    platform: "linux",
+    arch: "arm64",
+    env,
+    exit: (code) => { status = code; throw exit; },
+  };
+  let pending;
   try {
-    runInNewContext(source, {
+    pending = runInNewContext(script, {
+      AbortSignal,
+      fetch: request,
       require,
       console: {
         log: (line) => output.push(line),
         error: (line) => errors.push(line),
       },
-      process: {
-        version: `v${version}`,
-        versions: { node: version },
-        platform: "linux",
-        arch: "arm64",
-        env,
-        exit: (code) => { status = code; throw exit; },
-      },
+      process: runtime,
     });
   } catch (error) {
     if (error !== exit) throw error;
   }
-  return { status, output: output.join("\n"), errors: errors.join("\n") };
+  const result = () => ({ status: runtime.exitCode ?? status, output: output.join("\n"), errors: errors.join("\n") });
+  return pending?.then ? pending.then(result) : result();
 }
 
 for (const version of ["24.22.1", "24.22.2", "24.22.10", "24.23.0", "24.100.0"]) {
@@ -112,5 +121,30 @@ test("existing test hook uses the same image tag precedence as Den API", () => {
     assert.match(hook, /"helm.sh\/hook": test/);
     assert.match(hook, /expected stable 24\.x >=24\.22\.1/);
     assert.match(hook, /Node\.js runtime:/);
+  }
+});
+
+
+test("HTTP health probe is opt-in and targets the rendered Service port, not a configured upstream", async () => {
+  assert.doesNotMatch(source, /healthUrl/);
+  const script = extractProbe(render("--set", "tests.liveHealthCheck=true", "--set", "denApi.service.port=9111", "--set", "config.internal.apiBaseUrl=http://other:8788"));
+  for (const status of [200, 503, null]) {
+    let requestCount = 0;
+    const result = await runProbe("24.22.1", {}, script, async (url, options) => {
+      requestCount++;
+      assert.equal(url, "http://runtime-test-openwork-ee-den-api:9111/health");
+      assert.equal(options.redirect, "error");
+      assert.ok(options.signal instanceof AbortSignal);
+      if (status === null) throw new Error("network unavailable");
+      return new Response("fixture", { status });
+    });
+    assert.equal(requestCount, 1);
+    if (status === 200) {
+      assert.equal(result.status, 0, result.errors);
+      assert.match(result.output, /Den API health probe passed/);
+    } else {
+      assert.equal(result.status, 1);
+      assert.match(result.errors, status === null ? /network unavailable/ : /HTTP 503/);
+    }
   }
 });

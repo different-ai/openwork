@@ -129,15 +129,20 @@ config:
     apiBaseUrl: ""
     authFallbackBaseUrl: ""
     inferenceProxyBaseUrl: ""
+  # Deprecated/internal: legacy Cloud Web worker provisioner, not self-hosted
+  # Cloud computers. Keep existing overrides through upgrades; new installs omit them.
   provisioner:
     mode: stub
     reconcileIntervalMs: "60000"
     reconcileStaleMs: "1200000"
     reconcileBatchSize: "10"
     workerUrlTemplate: ""
+  # Deprecated/internal: legacy Cloud Web worker tuning (not organization policy).
   daytona:
     apiUrl: ""
     target: ""
+    # Empty uses the runtime default (container).
+    sandboxClass: ""
     snapshot: ""
     sandboxImage: ""
     sandboxCpu: ""
@@ -145,6 +150,7 @@ config:
     sandboxDisk: ""
     sandboxPublic: ""
     sandboxAutoStopInterval: ""
+    sandboxAutoPauseInterval: ""
     sandboxAutoArchiveInterval: ""
     sandboxAutoDeleteInterval: ""
     signedPreviewExpiresSeconds: "86400"
@@ -161,6 +167,8 @@ config:
     createTimeoutSeconds: ""
     deleteTimeoutSeconds: ""
     healthcheckTimeoutMs: ""
+  # Deprecated/internal: OpenWork Cloud SaaS billing and OpenRouter settings.
+  # This is not the self-hosted AI Gateway configuration.
   inference:
     openRouterWorkspaceId: ""
     stripeInferencePriceId: ""
@@ -446,3 +454,7 @@ ingress:
     path: /
     pathType: Prefix
   tls: []
+
+tests:
+  # Opt in to an in-cluster Den API /health request during `helm test`.
+  liveHealthCheck: false
