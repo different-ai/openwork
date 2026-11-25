@@ -107,7 +107,7 @@ the file.
 | `settings.advanced.collections` | Settings › Advanced › Collections | `marketplaces.manage` | `marketplaces.manage` |
 | `settings.advanced.brand` | Settings › Advanced › Brand appearance | `branding.update` | `branding.update` |
 | `settings.audit` | Observability › Audit logs › Settings | `audit.view` | `audit.manage` |
-| `settings.features` | Feature flags (set by platform admins in `/admin`) | `organization.update` | `organization.update`; features are only turned on when the person applying is a platform admin (skipped otherwise) |
+| `settings.features` | Preview flags (set by platform admins in `/admin`). A file may also name this area `settings.preview_flags`; exports always write `settings.features`. | `organization.update` | `organization.update`; preview flags are only turned on when the person applying is a platform admin (skipped otherwise) |
 
 Importing an area (uploading, or a dry run) needs both permissions in its row: a
 plan shows the area's current settings next to the file's, so someone who may
@@ -166,7 +166,7 @@ Some areas carry only part of what their screen shows:
   or a personal one: after an import, an admin signs in to each shared OAuth
   connection again, and every member connects their own accounts and enters their
   own keys again.
-- **Feature flags** list only the features that are on for the organization (one
+- **Preview flags** (`settings.features`) list only the features that are on for the organization (one
   item per feature: its key as `id`, its name, and `"spec": { "enabled": true }`),
   whether they are on for everyone, locked on by the operator, or turned on for the
   organization in `/admin`. Features that are off, and features turned on for one
@@ -174,7 +174,7 @@ Some areas carry only part of what their screen shows:
   organization override `/admin` sets (the feature's history in `/admin` shows who),
   and never turns one off, even in mirror mode or when restoring. Only a platform
   admin can turn a feature on: for anyone else these items are skipped with the
-  reason ("… stays off here: only a platform admin can turn a feature on."), and the
+  reason ("… stays off here: only a platform admin can turn a preview flag on."), and the
   rest of the file applies. Ask a platform admin to turn the features on, then
   import the file again for the settings that need them. A feature is also skipped
   when it is already on, when this server doesn't know its key (or has retired it),

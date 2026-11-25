@@ -1,9 +1,9 @@
-import * as flags from "@openwork/features/all-flags"
+import * as previews from "@openwork/features/previews"
 
 export * from "@openwork/features/define"
 
-/** Every feature, by key, in alphabetical order. */
-export const FEATURES = { ...flags }
+/** Every preview flag, by key, in alphabetical order. */
+export const FEATURES = { ...previews }
 
 export type FeatureKey = keyof typeof FEATURES
 

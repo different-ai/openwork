@@ -28,7 +28,7 @@ type PageData = AdminOrganizationDetail & { usage?: AdminOrganizationUsage["usag
 type Member = AdminOrganizationDetail["members"][number];
 const SECTIONS: { id: Section; label: string }[] = [
   { id: "members", label: "Members" }, { id: "usage", label: "Usage" }, { id: "insights", label: "Insights" },
-  { id: "features", label: "Features" }, { id: "billing", label: "Billing" },
+  { id: "features", label: "Preview flags" }, { id: "billing", label: "Billing" },
 ];
 const zeroUsage: AdminOrganizationUsageTotals = { requests: 0, tokens: 0, costMicroUsd: 0, unreportedRequests: 0, unpricedRequests: 0 };
 const count = (value: number) => new Intl.NumberFormat().format(value);
@@ -231,7 +231,7 @@ function OrganizationFeatures({ organizationId, refreshKey, fail }: { organizati
   }
 
   return <>
-    <div className="pt-5"><DenSegmented aria-label="Feature views" options={FEATURES_VIEWS} value={view} onChange={choose} optionTestId={(value) => `admin-features-view-${value}`} /></div>
+    <div className="pt-5"><DenSegmented aria-label="Preview flag views" options={FEATURES_VIEWS} value={view} onChange={choose} optionTestId={(value) => `admin-features-view-${value}`} /></div>
     {opened.has("usage") ? <div hidden={view !== "usage"}>
       <AdminOrganizationFeatureUsageView key={`usage:${organizationId}`} organizationId={organizationId} refreshKey={refreshKey} onAccessFailure={fail} />
     </div> : null}
@@ -292,7 +292,7 @@ export function AdminOrganizationPage({ organizationId, section }: { organizatio
   const columns: DenTableColumn<Member>[] = section === "members" ? [
     personColumn,
     { key: "role", header: "Role", render: (member) => member.role },
-    { key: "features", header: "Features", render: (member) => member.userId ? <DenButton variant="ghost" size="inline" data-testid={`admin-member-features-${member.id}`} onClick={() => setFeatureMember(member)}>Edit features</DenButton> : <span className="text-gray-500">Invitation pending</span> },
+    { key: "features", header: "Preview flags", render: (member) => member.userId ? <DenButton variant="ghost" size="inline" data-testid={`admin-member-features-${member.id}`} onClick={() => setFeatureMember(member)}>Edit preview flags</DenButton> : <span className="text-gray-500">Invitation pending</span> },
     { key: "joined", header: "Joined", render: (member) => member.joinedAt ? date(member.joinedAt) : "Invitation pending" },
   ] : [
     personColumn,
@@ -325,7 +325,7 @@ export function AdminOrganizationPage({ organizationId, section }: { organizatio
       {section === "members" && featureMember ? <div className="border-b border-gray-200 py-4" data-testid="admin-member-feature-editor">
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-sm font-semibold text-gray-900">{featureMember.name || featureMember.email || "Member"}</h2>
-          <DenButton variant="ghost" size="inline" onClick={() => setFeatureMember(null)}>Close member features</DenButton>
+          <DenButton variant="ghost" size="inline" onClick={() => setFeatureMember(null)}>Close member preview flags</DenButton>
         </div>
         <AdminOrganizationFeatureControls key={`${organizationId}:${featureMember.id}`} organizationId={organizationId} memberId={featureMember.id} refreshKey={refreshKey} onAccessFailure={fail} />
       </div> : null}

@@ -149,7 +149,7 @@ function DetailRow({ featureKey, state, onRetry }: { featureKey: FeatureKey; sta
     return (
       <div className="flex items-center gap-3 pl-5 pt-1 text-[13px] text-red-700" role="alert">
         <span>{state.message}</span>
-        <DenButton variant="secondary" size="sm" onClick={onRetry}>Retry this feature</DenButton>
+        <DenButton variant="secondary" size="sm" onClick={onRetry}>Retry this preview flag</DenButton>
       </div>
     );
   }
@@ -173,7 +173,7 @@ export function FeatureUsagePage() {
     void requestAdmin(`/v1/admin/feature-usage?range=${range}`, parseFeatureUsageReport, controller.signal).then((result) => {
       if (!controller.signal.aborted) setState(result.access === "ready" ? { status: "ready", report: result.data } : { status: result.access, message: result.message });
     }).catch((error: unknown) => {
-      if (!controller.signal.aborted) setState({ status: "error", message: error instanceof Error ? error.message : "Could not load features." });
+      if (!controller.signal.aborted) setState({ status: "error", message: error instanceof Error ? error.message : "Could not load preview flags." });
     });
     return () => controller.abort();
   }, [range, attempt]);
@@ -232,7 +232,7 @@ export function FeatureUsagePage() {
   return (
     <div className="flex flex-col gap-5" data-testid="admin-feature-usage">
       <DenPageHeader
-        title="Features"
+        title="Preview flag usage"
         size="compact"
         caption={state.status === "ready" ? `Across ${number(state.report.organizations)} ${state.report.organizations === 1 ? "organization" : "organizations"}` : undefined}
         action={<DenSegmented aria-label="Range" optionTestId={(value) => `admin-feature-usage-range-${value}`} options={FEATURE_USAGE_RANGES} value={range} onChange={setRange} />}
@@ -241,11 +241,11 @@ export function FeatureUsagePage() {
       {state.status === "error" ? (
         <div className="flex items-center gap-3" role="alert">
           <DenNotice message={state.message} />
-          <DenButton variant="secondary" size="sm" onClick={() => setAttempt((value) => value + 1)}>Retry features</DenButton>
+          <DenButton variant="secondary" size="sm" onClick={() => setAttempt((value) => value + 1)}>Retry</DenButton>
         </div>
       ) : null}
       {state.status === "loading" ? (
-        <div className="grid gap-2" role="status" aria-label="Loading features" data-testid="admin-feature-usage-loading">
+        <div className="grid gap-2" role="status" aria-label="Loading preview flags" data-testid="admin-feature-usage-loading">
           {[0, 1, 2, 3, 4, 5].map((row) => <DenSkeleton key={row} className="h-11" />)}
         </div>
       ) : null}
@@ -258,7 +258,7 @@ export function FeatureUsagePage() {
           renderRowDetail={(row) => open.has(row.key)
             ? <div id={`admin-feature-usage-detail-${row.key}`}><DetailRow featureKey={row.key} state={details[`${range}:${row.key}`]} onRetry={() => loadDetail(row.key, range)} /></div>
             : null}
-          emptyLabel="No features on this deployment."
+          emptyLabel="No preview flags on this deployment."
         />
       ) : null}
     </div>
