@@ -5,11 +5,6 @@ export function useArtifactSurfaceActive() {
   return useContext(ArtifactSurfaceVisibility);
 }
 
-/**
- * Keep the one opened artifact alive across page navigation, not a grid of
- * background Apps. The owner keys this component by verified identity and
- * deployment; a sign-out, scope change or rollout kill tears it down.
- */
 export function RetainedArtifactSurface({ active, children }: { active: boolean; children: ReactNode }) {
   const [visited, setVisited] = useState(active);
   useEffect(() => {

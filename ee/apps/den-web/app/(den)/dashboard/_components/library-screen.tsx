@@ -21,7 +21,8 @@ import {
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { FilterInput, ItemMenu, ItemPanel, removeEntry } from "./item-list";
 import { ItemPage } from "./item-header";
-import { ConnectorLogo } from "./item-logo";
+import { ConnectorLogo, PluginLogo } from "./item-logo";
+import { RowTile } from "../_features/computers/computer-rows";
 import { LibraryAddDialog, type LibraryAddChoice } from "./library-add-dialog";
 import { type LibraryItem, libraryQueryKeys, useLibrary } from "./library-data";
 import {
@@ -47,6 +48,7 @@ import { matchesModelQuery } from "./library-models";
 import { useLibraryModels, useModelSignIn } from "./library-models-data";
 import { LibraryModelRow } from "./library-models-ui";
 import { MemberApiKeyDialog } from "./member-api-key-dialog";
+import { MemberGatewayApiKeysSection } from "./member-gateway-api-keys-section";
 import { useDenToast } from "./den-toast";
 import { requestJson, getRequestError } from "../../_lib/den-flow";
 import { pluginQueryKeys } from "./plugin-data";
@@ -55,7 +57,6 @@ import { FeatureIntroGate, useFeatureIntroRuntime, useFeatureIntroUnseen } from 
 import { LIBRARY_TAB_INTROS } from "../_features/feature-intros/intros/library";
 import { libraryIntroFacts } from "./library-intro-facts";
 
-/** Show the name filter once a Library holds more than this many items. */
 const FILTER_AFTER = 10;
 
 function itemHref(orgSlug: string | null, item: LibraryItem): string {
@@ -64,10 +65,6 @@ function itemHref(orgSlug: string | null, item: LibraryItem): string {
   return `/dashboard/library/workflows/${encodeURIComponent(item.id)}`;
 }
 
-/**
- * A saved workflow whose last run failed says so in its description slot: one
- * red word and the reason, never a tinted panel (DESIGN V2, T2).
- */
 function WorkflowFailedDescription({ reason }: { reason: string | null }) {
   const summary = workflowFailureSummary(reason);
   return (
@@ -134,8 +131,10 @@ function LibraryItemRow({ item, mine, signIn }: {
       kind={item.type}
       testName={item.name}
       logo={item.type === "connection"
-        ? <ConnectorLogo name={item.name} url={item.url} size="xs" />
-        : <LibraryKindIcon kind={item.type === "workflow" ? "workflow" : libraryFilterOf(item) === "skills" ? "skill" : "plugin"} />}
+        ? <ConnectorLogo name={item.name} url={item.url} size="sm" />
+        : item.type === "workflow" || libraryFilterOf(item) === "skills"
+          ? <LibraryKindIcon kind={item.type === "workflow" ? "workflow" : "skill"} />
+          : <PluginLogo name={item.name} />}
       name={item.name}
       description={workflowLastRunFailed(item)
         ? <WorkflowFailedDescription reason={item.failureReason} />
@@ -147,7 +146,6 @@ function LibraryItemRow({ item, mine, signIn }: {
   );
 }
 
-/** No saved workflows yet: say where they come from, in the person's words. */
 function WorkflowsEmpty() {
   return (
     <ItemPanel>
@@ -174,9 +172,6 @@ function LibraryEmpty({ onAdd }: { onAdd: () => void }) {
   );
 }
 
-// The boundary useSearchParams needs for the static build sits inside this module, not the
-// page: a boundary above the module would show its empty fallback while the module loads,
-// and React keeps a fallback up for at least 300ms.
 export function LibraryScreen() {
   return (
     <Suspense fallback={null}>
@@ -200,7 +195,6 @@ function LibraryContent() {
   const filter = parseLibraryFilter(searchParams.get("show"));
   const introsEnabled = useFeatureIntroRuntime().enabled;
   const introUnseen = useFeatureIntroUnseen();
-  // With feature intros on, the viewer's own keys load on every tab: they count toward "anything in my Library".
   const personal = useOrgLlmProviders(filter === "models" || introsEnabled ? orgContext?.organization.id ?? null : null);
   const personalProviders = personal.llmProviders.filter(provider => provider.source !== "openwork" && provider.createdByOrgMembershipId === orgContext?.currentMember.id);
   const addKeyHref = `${getLibraryRoute(orgSlug)}/model-providers/new`;
@@ -241,17 +235,13 @@ function LibraryContent() {
     ? (models.data ?? []).filter((provider) => matchesModelQuery(provider, query) && (!onlyNeedsSignIn || provider.state === "needs_signin"))
     : [];
   const hasModels = (models.data ?? []).length > 0;
-  // With feature intros on, the viewer's own keys still loading count as loading (never "empty" on a guess).
   const personalPending = introsEnabled && !personal.loaded && !personal.error;
   const empty = !library.isLoading && !library.error && items.length === 0 && !models.isLoading && !hasModels && personalProviders.length === 0 && !personalPending;
-  // Feature intros (flag `featureIntros`): null while anything is loading or failed, so the page shows as before.
   const introFacts = introsEnabled && !library.error && !models.error && !personal.error && personal.loaded
     ? libraryIntroFacts({ items: library.data, models: models.data?.length, personalModels: personalProviders.length })
     : null;
-  // A short Library is read at a glance; the filter earns its place once the list runs long.
   const showFilter = items.length + (models.data ?? []).length + personalProviders.length > FILTER_AFTER || query !== "";
 
-  // What waits on you first, then one section per kind.
   const mineKeys = new Set(groups.mine.map((item) => `${item.type}:${item.id}`));
   const visible = [...groups.mine, ...groups.received].sort((left, right) => left.name.localeCompare(right.name));
   const kindSections: { key: string; title: string; match: (item: LibraryItem) => boolean }[] = [
@@ -274,7 +264,7 @@ function LibraryContent() {
         <LibraryCompactSurface>
           <LibraryCompactSection title="Your model providers" count={personalRows.length} testId="library-personal-models">
             {personalRows.map(provider => <LibraryCompactRow key={provider.id} href={getLibraryLlmProviderRoute(orgSlug, provider.id)} kind="model" testName={provider.name}
-              logo={<KeyRound size={16} aria-hidden />} name={provider.name} source="You" />)}
+              logo={<RowTile icon={KeyRound} />} name={provider.name} source="You" />)}
           </LibraryCompactSection>
         </LibraryCompactSurface>
       ) : null}
@@ -293,13 +283,13 @@ function LibraryContent() {
       </LibraryCompactSurface> : null}
 
       {filter === "models" && models.error ? (
-        <p className="rounded-2xl border border-gray-100 bg-white px-5 py-4 text-[13px] text-gray-600">
+        <p className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]">
           {models.error instanceof Error ? models.error.message : "Your models did not load."}
         </p>
       ) : null}
 
       {filter === "models" && !models.isLoading && !models.error && !hasModels && !personal.busy && !personal.error && !personalPending && personalProviders.length === 0 ? (
-        <p className="rounded-2xl border border-gray-100 bg-white px-5 py-6 text-center text-[13px] text-gray-500" data-testid="library-models-empty">
+        <p className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]" data-testid="library-models-empty">
           Your organization hasn't given you any models yet.
         </p>
       ) : null}
@@ -307,7 +297,7 @@ function LibraryContent() {
       {filter === "workflows" && !library.isLoading && items.every((item) => item.type !== "workflow") ? <WorkflowsEmpty /> : null}
 
       {(filter !== "workflows" || items.some((item) => item.type === "workflow")) && !library.isLoading && !models.isLoading && !personalPending && groups.mine.length === 0 && groups.received.length === 0 && modelRows.length === 0 && personalRows.length === 0 && !(filter === "models" && (models.error || !hasModels)) ? (
-        <p className="rounded-2xl border border-gray-100 bg-white px-5 py-6 text-center text-[13px] text-gray-500">Nothing matches.</p>
+        <p className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--dls-text-secondary)]">{query.trim() || onlyNeedsSignIn ? "Nothing matches." : "Nothing here yet."}</p>
       ) : null}
     </>
   );
@@ -317,11 +307,15 @@ function LibraryContent() {
       <DenPageHeader
         title="My Library"
         size="compact"
-        action={filter === "models" ? <DenButton size="sm" icon={Plus} href={addKeyHref}>Add key</DenButton> : !empty ? <DenButton size="sm" icon={Plus} onClick={openAdd}>Add</DenButton> : undefined}
+        action={filter === "models" ? <DenButton size="sm" variant="secondary" icon={Plus} href={addKeyHref}>Add key</DenButton> : !empty ? <DenButton size="sm" variant="secondary" icon={Plus} onClick={openAdd}>Add</DenButton> : undefined}
       />
 
+      <div className="flex">
+        <DenButton href={`${getLibraryRoute(orgSlug)}/private-skills`} variant="secondary" size="sm">Move private skills</DenButton>
+      </div>
+
       {library.error ? (
-        <p className="rounded-2xl border border-gray-100 bg-white px-5 py-4 text-[13px] text-red-600">
+        <p role="alert" className="border-y border-[var(--den-list-line)] py-4 text-[13px] text-[var(--ow-danger)]">
           {library.error instanceof Error ? library.error.message : "Your Library did not load."}
         </p>
       ) : null}
@@ -333,11 +327,13 @@ function LibraryContent() {
           <div className="flex flex-wrap items-end" data-testid="library-compact-toolbar">
             <UnderlineTabs tabs={LIBRARY_FILTERS.map((tab) => ({ ...tab, unseen: tab.value === "all" || tab.value === "workflows" ? false : introUnseen(LIBRARY_TAB_INTROS[tab.value]) }))} activeTab={filter} onChange={setFilter} className="min-w-0 flex-1" />
             {showFilter ? (
-              <div className="w-full border-b border-gray-200 pb-2 pt-3 sm:w-auto sm:pl-4 sm:pt-0">
+              <div className="w-full border-b border-gray-200 pb-2 pt-3 sm:w-auto sm:pl-4 sm:pt-0" data-library-filter>
                 <FilterInput value={query} onChange={setQuery} className="w-full sm:w-56" />
               </div>
             ) : null}
           </div>
+
+          {filter === "models" ? <MemberGatewayApiKeysSection /> : null}
 
           {filter === "all" || filter === "workflows"
             ? listBody
@@ -350,7 +346,5 @@ function LibraryContent() {
     </ItemPage>
   );
 
-  // With feature intros on, the Library intro replaces the page while the viewer has nothing at all, and each
-  // tab with nothing of its kind shows its box (DESIGN.md I1, I2); with the flag off the page renders as before.
   return <FeatureIntroGate introKey="library" facts={introFacts}>{page}</FeatureIntroGate>;
 }

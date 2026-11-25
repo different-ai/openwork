@@ -13,11 +13,6 @@ export type { SessionReference, SessionReferenceCandidate, SessionReferenceIdent
 export type SessionReferences = {
   resolve: (rawHrefOrId: string) => SessionReference | undefined;
   openReference: (reference: SessionReferenceIdentity) => void;
-  /**
-   * Tasks the person can refer to right now, read when called so the `#`
-   * picker sees fresh titles without re-rendering every message on each
-   * session event. Only tasks that also resolve as links are returned.
-   */
   candidates: () => readonly SessionReferenceCandidate[];
 };
 

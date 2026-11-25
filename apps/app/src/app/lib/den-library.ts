@@ -65,7 +65,6 @@ export type DenLibraryPluginFile = {
   objectType: string;
   title: string;
   description: string | null;
-  /** The latest version's source, when Den includes it with the file. */
   rawSourceText: string | null;
 };
 
@@ -175,7 +174,6 @@ export function parseDenLibraryAccessGrants(payload: unknown): DenLibraryAccessG
   });
 }
 
-/** Grants per plugin from `GET /v1/plugins?includeAccess=true`; plugins the caller does not manage are absent. */
 export function parseDenPluginListAccess(payload: unknown): Map<string, DenLibraryAccessGrant[]> {
   const access = new Map<string, DenLibraryAccessGrant[]>();
   if (!isRecord(payload) || !Array.isArray(payload.items)) return access;

@@ -8,7 +8,6 @@ import { t } from "../../../../i18n";
 
 export type SessionActivityStatus = "idle" | "thinking" | "responding" | "error" | "compacting" | "waiting";
 
-/** What an unanswered request is asking the person for. */
 export type SessionWaitingKind = "permission" | "question";
 
 type SessionMessageRole = "assistant" | "system" | "user";
@@ -26,8 +25,6 @@ type SessionActivityRecord = {
   retrying: boolean;
   runStatusAt: number;
   runStartedAt: number;
-  // Only an active run first discovered by a read may inherit persisted age.
-  // Live status/admission writes cancel this pending hydration, even on ties.
   runHydrationAfter: number | null;
   transcriptActivity: TranscriptActivity | null;
   lastProgressAt: number;
@@ -40,8 +37,6 @@ type SessionActivityRecord = {
   compacting: boolean;
   waitingPermissionIds: string[];
   waitingQuestionIds: string[];
-  // When this session waited for a person's approval or answer, oldest first.
-  // Working time leaves these out; the newest wait is open while it lasts.
   waits: WaitInterval[];
   messageRoles: Record<string, SessionMessageRole>;
   childSessionIds: string[];
@@ -60,11 +55,6 @@ type SessionLike = {
 type SessionActivityStore = {
   recordsByWorkspaceId: Record<string, Record<string, SessionActivityRecord>>;
   statusesByWorkspaceId: Record<string, Record<string, SessionActivityStatus>>;
-  /**
-   * Sessions with an unanswered permission or question, by what they ask for.
-   * Derived like `statusesByWorkspaceId` so a parent roll-up can subscribe
-   * without re-rendering on every transcript progress write.
-   */
   waitingByWorkspaceId: Record<string, Record<string, SessionWaitingKind>>;
   getStatus: (workspaceId: string, sessionId: string) => SessionActivityStatus;
   getSessionError: (workspaceId: string, sessionId: string) => string | null;
@@ -225,10 +215,8 @@ function sameActivityRecord(
 
 type SessionActivityDerivedState = Pick<SessionActivityStore, "recordsByWorkspaceId" | "statusesByWorkspaceId" | "waitingByWorkspaceId">;
 
-// Waits before the current run no longer matter, so only the newest are kept.
 const MAX_WAIT_INTERVALS = 50;
 
-/** Opens a wait when an approval or answer is first requested and closes it when none remain. */
 function withWaits(record: SessionActivityRecord): SessionActivityRecord {
   const waiting = waitingKindForRecord(record) !== undefined;
   const last = record.waits.at(-1);
@@ -265,10 +253,6 @@ function updateRecord(
   };
 }
 
-// Message roles are only consulted while a run is active to decide whether a
-// streaming part belongs to an assistant message. Without a cap the dict grows
-// by one entry per message for a session's whole lifetime, so keep only the
-// most recently marked messages.
 export const MAX_TRACKED_MESSAGE_ROLES = 200;
 
 function withMessageRole(
@@ -299,8 +283,6 @@ function reconcileTranscriptActivity(record: SessionActivityRecord): SessionActi
   const snapshot = record.transcriptActivity;
   if (!record.runActive || !snapshot) return record;
   const hydrateRun = typeof record.runHydrationAfter === "number" && snapshot.startedAt > record.runHydrationAfter;
-  // Fresh history can reveal output for an already observed live run, but only
-  // a run first discovered by a read may inherit its persisted execution age.
   const assistantOutput = record.assistantOutput
     || ((hydrateRun || snapshot.startedAt > record.runStatusAt) && snapshot.assistantOutput);
   if (!hydrateRun && assistantOutput === record.assistantOutput) return record;
@@ -377,8 +359,6 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
       const normalized = normalizeRunStatus(status);
       const runActive = normalized === "running" || normalized === "retry";
       const snapshotStartedAt = options?.snapshotStartedAt;
-      // Order snapshot seeds against live writes so stale idle cannot kill a
-      // live spinner and stale busy cannot resurrect a run that already ended.
       if (typeof snapshotStartedAt === "number" && snapshotStartedAt < record.runStatusAt) return record;
       if (typeof snapshotStartedAt !== "number" && !runActive && record.status !== "idle") return record;
       return reconcileTranscriptActivity({
@@ -458,8 +438,6 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
           activeStartedAt: progress.activeStartedAt,
         },
       });
-      // History may have established progress before status arrived. Activity
-      // enrichment must still run when its fingerprint is already known.
       if (!progressChanged) return next;
       const hydratedActiveStartedAt = snapshot && snapshotStartedAt === undefined
         && record.progressRevision === null && next.runActive && next.runHydrationAfter !== null
@@ -467,9 +445,6 @@ export const useSessionActivityStore = create<SessionActivityStore>((set, get) =
         : 0;
       return {
         ...next,
-        // Snapshot fetch time establishes ordering, not execution age. Only a
-        // persisted in-flight part can move the first hydrated run anchor back;
-        // old terminal transcript rows must not age a newer accepted run.
         runStartedAt: hydratedActiveStartedAt > 0
           ? Math.min(record.runStartedAt || hydratedActiveStartedAt, hydratedActiveStartedAt)
           : next.runStartedAt,

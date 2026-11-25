@@ -6,6 +6,7 @@ import { FEATURE_CATEGORIES, FEATURE_KEYS, FEATURES, featureDocsUrl, featuresByC
 import { DenButton } from "../../app/(den)/_components/ui/button";
 import { DenChip } from "../../app/(den)/_components/ui/chip";
 import { DenSegmented } from "../../app/(den)/_components/ui/segmented";
+import { DenSelect } from "../../app/(den)/_components/ui/select";
 import { DenSwitch } from "../../app/(den)/_components/ui/switch";
 import { isNewFeature, monthLabel, NEW_FEATURE_DAYS } from "./admin-organization-feature-usage";
 import { requestAdmin, sendAdmin } from "./admin-request";
@@ -18,7 +19,6 @@ export type AdminFeatureState = {
   killed: boolean;
   override: boolean | null;
   overrideApplies: boolean;
-  /** Latest change that could affect this organization or member; absent from organization lists and older servers. */
   lastChange?: AdminFeatureChange | null;
 };
 export type AdminOrganizationFeatures = Record<FeatureKey, AdminFeatureState>;
@@ -33,7 +33,6 @@ function parseAdminFeatureSource(value: unknown): AdminFeatureState["source"] {
   return ADMIN_FEATURE_SOURCES.find((source) => source === value) ?? "everyone";
 }
 
-/** Server featureStates, falling back to the effective capabilities map from older servers. */
 export function parseAdminOrganizationFeatures(featureStates: unknown, capabilities: unknown): AdminOrganizationFeatures {
   const states = isRecord(featureStates) ? featureStates : {};
   const effective = isRecord(capabilities) ? capabilities : {};
@@ -55,7 +54,6 @@ export function parseAdminOrganizationFeatures(featureStates: unknown, capabilit
   });
 }
 
-/** "2026-10-23" → "23 Oct 2026", read as a calendar day (no time zone shift). */
 function formatAddedDay(added: string): string {
   return new Intl.DateTimeFormat(undefined, { day: "numeric", month: "short", year: "numeric", timeZone: "UTC" }).format(new Date(`${added}T00:00:00Z`));
 }
@@ -71,7 +69,6 @@ function describeSource(state: AdminFeatureState): string {
   }
 }
 
-/** Features this deployment has, in registry order. */
 function visibleKeys(features: AdminOrganizationFeatures): FeatureKey[] {
   return FEATURE_KEYS.filter((key) => features[key].source !== "unavailable");
 }
@@ -84,7 +81,6 @@ const SETTINGS_GROUPINGS = [
 
 const newestFirst = (keys: readonly FeatureKey[]) => [...keys].sort((a, b) => FEATURES[b].added.localeCompare(FEATURES[a].added));
 
-/** Newest: the last two weeks, then each earlier month. Author: by handle, newest first within. Category: registry order. */
 export function groupFeatureKeys(keys: readonly FeatureKey[], grouping: FeatureSettingsGrouping, now = Date.now()): FeatureKeyGroup[] {
   if (grouping === "category") return featuresByCategory(keys).map(({ category, keys: inCategory }) => ({ id: category, label: FEATURE_CATEGORIES[category].label, keys: inCategory }));
   const groups = new Map<string, FeatureKeyGroup>();
@@ -98,6 +94,32 @@ export function groupFeatureKeys(keys: readonly FeatureKey[], grouping: FeatureS
   }
   const ordered = [...groups.values()];
   return grouping === "author" ? ordered.sort((a, b) => a.id.localeCompare(b.id, undefined, { sensitivity: "base" })) : ordered;
+}
+
+export type FeatureAddedWindow = "any" | "7" | "30" | "90" | "older";
+export type FeatureSettingsFilter = { author: string | null; added: FeatureAddedWindow };
+export const NO_FEATURE_SETTINGS_FILTER: FeatureSettingsFilter = { author: null, added: "any" };
+const ANY_AUTHOR = "*";
+const ADDED_WINDOWS = [
+  { value: "any", label: "Any time" }, { value: "7", label: "Last 7 days" }, { value: "30", label: "Last 30 days" },
+  { value: "90", label: "Last 90 days" }, { value: "older", label: "More than 90 days ago" },
+] as const satisfies readonly { value: FeatureAddedWindow; label: string }[];
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function addedWithin(key: FeatureKey, added: FeatureAddedWindow, now: number): boolean {
+  if (added === "any") return true;
+  const age = now - Date.parse(`${FEATURES[key].added}T00:00:00.000Z`);
+  return added === "older" ? age >= 90 * DAY_MS : age < Number(added) * DAY_MS;
+}
+
+export function filterFeatureKeys(keys: readonly FeatureKey[], filter: FeatureSettingsFilter, now = Date.now()): FeatureKey[] {
+  return keys.filter((key) => (filter.author === null || FEATURES[key].author === filter.author) && addedWithin(key, filter.added, now));
+}
+
+export function featureAuthors(keys: readonly FeatureKey[]): { author: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const key of keys) counts.set(FEATURES[key].author, (counts.get(FEATURES[key].author) ?? 0) + 1);
+  return [...counts].map(([author, count]) => ({ author, count })).sort((a, b) => a.author.localeCompare(b.author, undefined, { sensitivity: "base" }));
 }
 
 export type AdminFeatureAccessFailure = { access: "signed-out" | "forbidden"; message: string };
@@ -121,6 +143,10 @@ export function AdminOrganizationFeatureControls({ organizationId, memberId, ref
   const savingRef = useRef(false);
   const [attempt, setAttempt] = useState(0);
   const [grouping, setGrouping] = useState<FeatureSettingsGrouping>("recent");
+  const [filter, setFilter] = useState<FeatureSettingsFilter>(NO_FEATURE_SETTINGS_FILTER);
+  const available = features ? visibleKeys(features) : [];
+  const shown = filterFeatureKeys(available, filter);
+  const filtered = filter.author !== null || filter.added !== "any";
   const path = `/v1/admin/organizations/${encodeURIComponent(organizationId)}${memberId ? `/members/${encodeURIComponent(memberId)}` : ""}/capabilities`;
 
   useEffect(() => {
@@ -177,6 +203,25 @@ export function AdminOrganizationFeatureControls({ organizationId, memberId, ref
         <DenSegmented aria-label="Group feature settings by" options={SETTINGS_GROUPINGS} value={grouping} onChange={setGrouping} className="max-w-full flex-wrap"
           optionTestId={(value) => `admin-feature-settings-group-${value}`} />
       </div>
+      {features ? <div className="mt-3 flex min-w-0 flex-wrap items-center gap-2 text-xs text-gray-600" data-testid="admin-feature-settings-filters">
+        <div className="w-44 max-w-full">
+          <DenSelect aria-label="Filter features by author" size="sm" menuWidth="trigger" value={filter.author ?? ANY_AUTHOR} data-testid="admin-feature-settings-filter-author"
+            onChange={(event) => setFilter((current) => ({ ...current, author: event.target.value === ANY_AUTHOR ? null : event.target.value }))}>
+            <option value={ANY_AUTHOR}>Author: anyone</option>
+            {featureAuthors(available).map(({ author, count }) => <option key={author} value={author}>{`@${author} · ${count}`}</option>)}
+          </DenSelect>
+        </div>
+        <div className="w-52 max-w-full">
+          <DenSelect aria-label="Filter features by date added" size="sm" menuWidth="trigger" value={filter.added} data-testid="admin-feature-settings-filter-added"
+            onChange={(event) => setFilter((current) => ({ ...current, added: ADDED_WINDOWS.find((option) => option.value === event.target.value)?.value ?? "any" }))}>
+            {ADDED_WINDOWS.map((option) => <option key={option.value} value={option.value}>{option.value === "any" ? "Added: any time" : `Added: ${option.label.toLowerCase()}`}</option>)}
+          </DenSelect>
+        </div>
+        {filtered ? <>
+          <span data-testid="admin-feature-settings-filter-count">{shown.length} of {available.length} features</span>
+          <DenButton variant="ghost" size="inline" type="button" data-testid="admin-feature-settings-filter-clear" onClick={() => setFilter(NO_FEATURE_SETTINGS_FILTER)}>Clear filters</DenButton>
+        </> : null}
+      </div> : null}
       {loadError ? <div className="mt-3 text-sm text-red-700" role="alert">
         <p>{loadError}</p>
         <DenButton variant="secondary" size="sm" onClick={() => setAttempt((value) => value + 1)}>Retry features</DenButton>
@@ -185,7 +230,8 @@ export function AdminOrganizationFeatureControls({ organizationId, memberId, ref
         {[0, 1, 2].map((row) => <div key={row} className="h-16 rounded-lg bg-gray-100" aria-hidden="true" />)}
       </div> : null}
       {saveError ? <p data-testid="admin-capability-error" role="alert" className="mt-3 text-sm text-red-700">Could not confirm the save. Showing the previous setting. {saveError}</p> : null}
-      {features ? groupFeatureKeys(visibleKeys(features), grouping).map(({ id: groupId, label, keys }) => {
+      {features && filtered && shown.length === 0 ? <p className="mt-4 text-sm text-gray-500" data-testid="admin-feature-settings-filter-empty">No features match these filters.</p> : null}
+      {features ? groupFeatureKeys(shown, grouping).map(({ id: groupId, label, keys }) => {
         const sectionId = grouping === "category" ? `admin-feature-group-${groupId}` : `admin-feature-group-${grouping}-${groupId}`;
         return <section key={sectionId} className="mt-4 min-w-0" aria-labelledby={sectionId} data-testid={sectionId}>
         <h3 id={sectionId} className="text-xs font-semibold uppercase tracking-wide text-slate-500">{label}{grouping === "category" ? null : ` · ${keys.length}`}</h3>

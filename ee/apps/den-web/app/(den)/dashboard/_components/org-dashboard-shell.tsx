@@ -1,6 +1,7 @@
 "use client";
 
 import { desktopPolicyScreenRemoved } from "../_lib/desktop-policy-screen-rollout";
+import { workbotSettingsInTeams } from "../_lib/workbot-settings-rollout";
 
 import { Popover } from "@base-ui/react/popover";
 import Link from "next/link";
@@ -26,6 +27,9 @@ import {
   getAuditLogsRoute,
   getBrandAppearanceRoute,
   getBillingRoute,
+  getConfigRoute,
+  getComputersRoute,
+  getMyComputersRoute,
   getCustomLlmProvidersRoute,
   getDiagnosticsRoute,
   getDeploymentsRoute,
@@ -45,8 +49,6 @@ import {
   getMarketplacesRoute,
   getMarketplaceOnboardingRoute,
   getPluginsRoute,
-  getSsoRoute,
-  getScimRoute,
   getAuthSecurityRoute,
   getWorkflowRunsRoute,
   getWebRoute,
@@ -74,14 +76,16 @@ import { useLibraryModels } from "./library-models-data";
 import { UserProfileDialog } from "./user-profile-dialog";
 import { DownloadOpenWorkButton } from "./download-openwork-button";
 import { useWorkbotEntry } from "./workbot-entry-dialog";
+import { BUILT_IN_ROLES } from "../../_lib/role-catalog";
 import { FeatureIntroHelpButton, FeatureIntroNavDot } from "../_features/feature-intros/feature-intro-help-button";
 
 const OPENWORK_DOCS_URL = "https://openworklabs.com/docs";
 
-/** The sidebar only tells people whether they can manage the organization. */
 function sidebarRoleLabel(role: string): string {
-  return getOrgAccessFlags(role, false).isAdmin ? "Admin" : "Member";
+  return getOrgAccessFlags(role, false).isAdmin ? BUILT_IN_ROLES.admin.label : BUILT_IN_ROLES.member.label;
 }
+
+const SHELL_BAR_HEIGHT = "h-[52px]";
 
 function OrgMark({ name }: { name: string }) {
   const initials = useMemo(() => {
@@ -146,7 +150,7 @@ export function SidebarBrandMark({
   if (metadata === undefined) {
     return (
       <div
-        className="h-10 w-10 rounded-xl"
+        className="h-8 w-8 rounded-lg"
         aria-label="Loading organization icon"
         data-sidebar-brand-icon="loading"
       />
@@ -157,14 +161,14 @@ export function SidebarBrandMark({
   if (!iconUrl || failedUrl === iconUrl) {
     return (
       <div data-sidebar-brand-icon="fallback">
-        <OpenWorkMark />
+        <OpenWorkMark className="h-8 w-auto" />
       </div>
     );
   }
 
   return (
     <div
-      className="h-10 w-10 overflow-hidden rounded-xl"
+      className="h-8 w-8 overflow-hidden rounded-lg"
       data-sidebar-brand-icon={loadedUrl === iconUrl ? "ready" : "loading"}
     >
       <img
@@ -190,7 +194,6 @@ export function WorkspaceFavicon({
 
   useEffect(() => {
     if (orgContextLoading) {
-      // Keep the server-rendered favicon until the org context is known.
       return;
     }
 
@@ -260,12 +263,6 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname.startsWith(getAuthSecurityRoute(orgSlug))) {
     return "Auth & Security";
   }
-  if (pathname.startsWith(getScimRoute(orgSlug))) {
-    return "SCIM";
-  }
-  if (pathname.startsWith(getSsoRoute(orgSlug))) {
-    return "SSO";
-  }
   if (pathname.startsWith(getAutomationsRoute(orgSlug))) {
     return "My Automations";
   }
@@ -278,6 +275,12 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   if (pathname.startsWith(getAiGatewayRoute(orgSlug))) {
     return "AI Gateway";
   }
+  if (pathname.startsWith(getMyComputersRoute(orgSlug))) {
+    return "My Computers";
+  }
+  if (pathname.startsWith(getComputersRoute(orgSlug))) {
+    return "Computers";
+  }
   if (pathname.startsWith(getDesktopPoliciesRoute(orgSlug))) {
     return "Desktop policies";
   }
@@ -289,6 +292,9 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
     || pathname.startsWith(getBrandAppearanceRoute(orgSlug))
   ) {
     return "Advanced";
+  }
+  if (pathname.startsWith(getConfigRoute(orgSlug))) {
+    return "Config";
   }
   if (pathname.startsWith(getDeploymentsRoute(orgSlug))) {
     return "Deployments";
@@ -330,8 +336,6 @@ function getDashboardPageTitle(pathname: string, orgSlug: string | null) {
   return "Home";
 }
 
-// Desktop and mobile mount their own copy of the sidebar. Keep open state in
-// each mounted switcher so opening one never portals the hidden copy as well.
 function WorkspaceSwitcher({ children }: { children: (close: () => void) => React.ReactNode }) {
   const [open, setOpen] = useState(false);
   return (
@@ -404,8 +408,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     commandPaletteWasOpenRef.current = commandPaletteOpen;
   }, [commandPaletteOpen]);
 
-  // Keep sidebar hooks unconditional across picker and onboarding transitions,
-  // but don't fetch sidebar data while the full-page shell is showing.
+
   const sidebarQueriesEnabled = !orgSelectionOpen && !isOnboarding && Boolean(activeOrg);
   const libraryModels = useLibraryModels(sidebarQueriesEnabled);
   const libraryNeedsSignIn = useLibraryNeedsSignInCount(sidebarQueriesEnabled)
@@ -423,7 +426,6 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     enabled: sidebarQueriesEnabled,
   });
 
-  // The picker replaces the whole shell until a workspace is chosen.
   if (orgSelectionOpen) {
     return (
       <OrgSelectionScreen
@@ -436,7 +438,6 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     );
   }
 
-  // Setup owns the full page until the user leaves for their dashboard.
   if (isOnboarding) {
     return (
       <>
@@ -447,7 +448,6 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   }
 
   const basePageTitle = getDashboardPageTitle(pathname, activeOrg?.slug ?? null);
-  // the permission pages are role pages.
   const pageTitle = basePageTitle === "Permissions" ? "Roles" : basePageTitle;
   const shouldShowProfilePrompt = Boolean(
     user &&
@@ -476,10 +476,10 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     runtimeConfigLoaded,
 
     managedDeployments: orgFeatureEnabled(orgContext, "managedDeployments"),
-    authSecuritySettings: orgFeatureEnabled(orgContext, "authSecuritySettings"),
     canManageDeploymentServices: orgContext?.canManageDeploymentServices === true,
 
     desktopPolicyScreenRemoved: desktopPolicyScreenRemoved(orgContext),
+    workbotSettingsInTeams: workbotSettingsInTeams(orgContext),
     workbotEntry: workbot.entry,
     myBot: myAgentAvailable(orgContext),
   });
@@ -500,7 +500,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
       <button
         type="button"
         onClick={() => void signOut()}
-        className="shrink-0 rounded-lg p-1.5 text-gray-400 transition hover:bg-gray-100 hover:text-gray-900"
+        className="shrink-0 rounded-lg p-1.5 text-gray-400 transition hover:bg-[var(--den-shell-sidebar-hover)] hover:text-gray-900"
         aria-label="Sign out"
       >
         <LogOut className="h-4 w-4" />
@@ -513,7 +513,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
           <Popover.Trigger
             type="button"
             data-testid="workspace-switcher-trigger"
-            className="flex w-full items-center justify-between gap-3 rounded-xl px-2 py-2 text-left transition-colors hover:bg-gray-100"
+            className="flex w-full items-center justify-between gap-3 rounded-xl px-2 py-2 text-left transition-colors hover:bg-[var(--den-shell-sidebar-hover)]"
           >
             <div className="flex min-w-0 items-center gap-3">
               <OrgMark name={activeOrg?.name ?? "OpenWork"} />
@@ -656,15 +656,31 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
 
   const sidebarContent = (
     <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col overflow-hidden">
-      <div className="shrink-0 border-b border-gray-100 px-4 pb-4 pt-5">
-        <div className="flex items-center justify-between gap-3">
-          <SidebarBrandMark
-            metadata={orgContext?.organization.metadata}
-            organizationName={activeOrg?.name ?? runtimeConfig.singleOrgName}
-          />
+      <div className={`flex ${SHELL_BAR_HEIGHT} shrink-0 items-center border-b border-[var(--den-shell-line)] px-4`}>
+        <div className="flex w-full items-center justify-between gap-3">
+          {activeOrg ? (
+            <Link
+              href={getOrgDashboardRoute(activeOrg.slug)}
+              aria-label="Go to dashboard"
+              title="Dashboard"
+              className="rounded-lg outline-none focus-visible:ring-2 focus-visible:ring-gray-300"
+              onClick={() => setSidebarOpen(false)}
+              data-testid="den-sidebar-brand-link"
+            >
+              <SidebarBrandMark
+                metadata={orgContext?.organization.metadata}
+                organizationName={activeOrg.name}
+              />
+            </Link>
+          ) : (
+            <SidebarBrandMark
+              metadata={orgContext?.organization.metadata}
+              organizationName={runtimeConfig.singleOrgName}
+            />
+          )}
           <button
             type="button"
-            className="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-gray-100 hover:text-gray-700 md:hidden"
+            className="rounded-lg p-1.5 text-gray-400 transition-colors hover:bg-[var(--den-shell-sidebar-hover)] hover:text-gray-700 md:hidden"
             onClick={() => setSidebarOpen(false)}
             aria-label="Close menu"
           >
@@ -723,8 +739,8 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                         onFocus={() => prefetch(item.href)}
                         className={`flex min-w-0 items-center justify-between gap-3 rounded-xl px-3 py-2.5 text-[13px] tracking-[-0.1px] transition-colors ${
                           selected
-                            ? "bg-gray-100 text-gray-900"
-                            : "text-gray-500 hover:bg-gray-50 hover:text-gray-700"
+                            ? "bg-[var(--den-shell-nav-selected)] text-[color:var(--den-shell-nav-selected-ink)] [font-weight:var(--den-shell-nav-selected-weight)]"
+                            : "text-gray-500 hover:bg-[var(--den-shell-nav-hover)] hover:text-gray-700"
                         }`}
                       >
                         <span className="flex min-w-0 items-center gap-3">
@@ -754,7 +770,7 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
                         </span>
                       </Link>
                       {item.children && groupActive ? (
-                        <div className="ml-[22px] mt-1 min-w-0 space-y-0.5 border-l border-gray-100 pl-3">
+                        <div className="ml-[22px] mt-1 min-w-0 space-y-0.5 border-l border-[var(--den-shell-line)] pl-3">
                           {item.children.map((child) => (
                             <Link
                               key={child.label}
@@ -802,26 +818,24 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
   );
 
   return (
-    <div className="flex min-h-screen flex-col bg-[#fafafa] md:h-screen md:flex-row">
+    <div data-den-shell="" className="flex min-h-screen flex-col bg-[var(--den-shell-canvas)] md:h-screen md:flex-row">
       <WorkspaceFavicon metadata={orgContext?.organization.metadata} />
-      {/* Desktop sidebar — always visible at md+ */}
-      <aside className="hidden min-h-0 shrink-0 overflow-hidden border-r border-gray-100 bg-white md:flex md:h-screen md:w-[260px] md:flex-col">
+      <aside className="hidden min-h-0 shrink-0 overflow-hidden border-r border-[var(--den-shell-line)] bg-[var(--den-shell-sidebar)] md:flex md:h-screen md:w-[260px] md:flex-col">
         {sidebarContent}
       </aside>
 
-      {/* Mobile sidebar — off-canvas drawer */}
       {sidebarOpen ? (
         <div className="fixed inset-0 z-50 md:hidden">
           <div className="absolute inset-0 bg-black/30" onClick={() => setSidebarOpen(false)} aria-hidden />
-          <aside className="relative z-10 flex h-full min-h-0 w-[280px] max-w-[85vw] flex-col overflow-hidden bg-white shadow-xl">
+          <aside className="relative z-10 flex h-full min-h-0 w-[280px] max-w-[85vw] flex-col overflow-hidden bg-[var(--den-shell-sidebar)] shadow-xl">
             {sidebarContent}
           </aside>
         </div>
       ) : null}
 
       <div className="flex min-w-0 flex-1 flex-col">
-        <header className="flex h-[52px] shrink-0 items-center justify-between border-b border-gray-100 bg-white px-4 md:px-6">
-          <div className="flex min-w-0 items-center gap-3">
+        <header className={`flex ${SHELL_BAR_HEIGHT} shrink-0 items-center justify-between border-b border-[var(--den-shell-line)] bg-[var(--den-shell-topbar)] px-4 md:px-8`}>
+          <div className="flex min-w-0 items-center gap-3 md:hidden">
             <button
               type="button"
               className="rounded-lg p-1.5 text-gray-500 transition-colors hover:bg-gray-100 hover:text-gray-900 md:hidden"
@@ -830,11 +844,11 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
             >
               <Menu className="h-5 w-5" />
             </button>
-            <span className="truncate text-[14px] tracking-[-0.1px] text-gray-900">{pageTitle}</span>
+            <span className="truncate text-[14px] tracking-[-0.1px] text-gray-900 md:hidden">{pageTitle}</span>
           </div>
 
           <>
-              <div className="flex shrink-0 justify-center px-2 lg:min-w-0 lg:flex-1 lg:px-4">
+              <div className="flex shrink-0 justify-center px-2 md:justify-start md:px-0 lg:min-w-0 lg:flex-1 lg:pr-4">
                 <DenSearchBar
                   ref={searchBarRef}
                   onOpen={() => handleCommandPaletteOpenChange(true)}
@@ -873,9 +887,9 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
           </>
         </header>
 
-        <main className="flex-1 overflow-y-auto bg-[#fafafa] scroll-pb-28">
+        <main className="flex-1 overflow-y-auto bg-[var(--den-shell-canvas)] scroll-pb-28">
           {setupPending && setupOrganizationId === activeOrg?.id ? (
-            <div className="border-b border-gray-100 px-4 py-3 text-sm md:px-6">
+            <div className="border-b border-[var(--den-shell-line)] px-4 py-3 text-sm md:px-6">
               <Link href={onboardingRoute} className="font-medium text-gray-900 underline underline-offset-4">Back to setup</Link>
             </div>
           ) : null}

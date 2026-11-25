@@ -1,7 +1,6 @@
-# Feature intros (`featureIntros`)
+# Feature intros
 
-- **Feature key:** `featureIntros`
-- **Deployments:** cloud and self-hosted (`everywhere`), off by default
+- **Status:** generally available on cloud and self-hosted (no feature flag; formerly `featureIntros`)
 - **Author:** @OmarMcAdam
 - **Design rules:** [DESIGN.md › Feature intros (I1–I10)](../../../DESIGN.md#feature-intros-onboarding-and-info)
 
@@ -26,7 +25,7 @@ someone who cannot set it up sees a locked action with who can.
 
 ## Who sees it
 
-Every member of an organization where the feature is on. State is stored per
+Every member of every organization. State is stored per
 member and per organization, so joining a second organization shows the intros
 again there.
 
@@ -44,31 +43,16 @@ everyone.
   `{ intro }`. A newer `introVersion` resets the stored timestamps first; an
   older one changes nothing.
 
-Both routes answer 404 `feature_disabled` while the feature is off. Contract:
+Contract:
 `packages/types/src/den/feature-intros.ts`
 (`@openwork/types/den/feature-intros`).
 
 ## Try it locally
 
-Start den-api with the operator lock on (or turn it on for your organization
-in `/admin` › Features):
-
-```sh
-DEN_FEATURE_FEATURE_INTROS=true
-```
-
-Then open any Den page that has nothing set up yet, e.g. AI Gateway in a new
+Open any Den page that has nothing set up yet, e.g. AI Gateway in a new
 organization.
-
-## Off
-
-Turning it off (kill switch or organization override) brings back the previous
-empty states and hides dots and the `?` button. The API answers 404, so den-web
-stops recording events. Stored rows are kept and are used again if the feature
-is turned back on; nothing else reads them. Safe to turn off at any moment.
 
 ## What to watch
 
 - 4xx/5xx on `/v1/me/feature-intros*` in den-api logs.
-- `/admin` › Features usage for `featureIntros` (gated routes count as use).
 - Funnel per intro from the table: seen → action clicked → completed.

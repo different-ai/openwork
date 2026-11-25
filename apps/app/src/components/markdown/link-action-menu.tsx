@@ -10,13 +10,12 @@ import { getCachedDesktopHomeDir, getDesktopApplicationsForFile } from "@/app/li
 import type { OpenTarget } from "@/react-app/domains/session/artifacts/open-target";
 import { usePlatform } from "@/react-app/kernel/platform";
 import { useOpenTargets, type OpenTargetOptions } from "@/lib/target-provider";
-import { filePathForCopy, nativeFileAction } from "@/react-app/domains/session/artifacts/resolve-open-target";
+import { filePathForCopy, nativeFileAction, resolveCollectibleOpenTarget } from "@/react-app/domains/session/artifacts/resolve-open-target";
 
 const SUPPORTED_PANEL_PREVIEWS = new Set(["markdown", "code", "sheet", "slides", "image", "pdf", "html", "text"]);
 
 type LinkActionMenuProps = {
   target: OpenTarget;
-  /** The link or chevron the menu was opened from. */
   anchor: HTMLElement;
   onOpenTarget: (target: OpenTarget, options?: OpenTargetOptions) => void;
   onClose: () => void;
@@ -26,9 +25,7 @@ export function LinkActionMenu({ target, anchor, onOpenTarget, onClose }: LinkAc
   const platform = usePlatform();
   const [apps, setApps] = useState<DesktopApplication[] | null>(null);
   const [appsLoading, setAppsLoading] = useState(false);
-  const canOpenInPanel = target.kind === "file" && SUPPORTED_PANEL_PREVIEWS.has(target.preview);
-  const { workspaceRoot, isLocalWorkspace } = useOpenTargets();
-  // `~/` links name a file in the home folder; the menu can reveal them once it is known.
+  const { workspaceRoot, isLocalWorkspace, client, workspaceId, sessionId } = useOpenTargets();
   const [homeDir, setHomeDir] = useState<string | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -37,17 +34,24 @@ export function LinkActionMenu({ target, anchor, onOpenTarget, onClose }: LinkAc
     }
     return () => { cancelled = true; };
   }, [isLocalWorkspace]);
-  const native = isLocalWorkspace && platform.capabilities.revealInFileManager && target.kind === "file"
-    ? nativeFileAction(workspaceRoot, target.resolvedPath ?? target.value, { homeDir }) : null;
+  const [resolvedTarget, setResolvedTarget] = useState<OpenTarget | null>(null);
+  useEffect(() => {
+    let cancelled = false;
+    setResolvedTarget(target.exists === true ? target : null);
+    if (target.kind !== "file" || target.exists === true || !client || !workspaceId) return;
+    void resolveCollectibleOpenTarget(client, workspaceId, target, sessionId, { search: true })
+      .then((found) => { if (!cancelled) setResolvedTarget(found); })
+      .catch(() => { if (!cancelled) setResolvedTarget(null); });
+    return () => { cancelled = true; };
+  }, [target, client, workspaceId, sessionId]);
+  const effectiveTarget = resolvedTarget ?? target;
+  const canOpenInPanel = effectiveTarget.kind === "file" && SUPPORTED_PANEL_PREVIEWS.has(effectiveTarget.preview);
+  const native = isLocalWorkspace && platform.capabilities.revealInFileManager && effectiveTarget.kind === "file"
+    ? nativeFileAction(workspaceRoot, effectiveTarget.resolvedPath ?? effectiveTarget.value, { homeDir }) : null;
   const canOpenExternally = native !== null;
-  // Named-app launches bypass the chat opener: offer them only for a file the
-  // owning workspace has verified, never a guessed root + bare filename.
-  const canLaunch = native?.action === "open" && target.exists === true;
+  const canLaunch = native?.action === "open" && effectiveTarget.exists === true;
   const nativePath = native?.path;
-  const copyPath = filePathForCopy(target, { origin: isLocalWorkspace ? "local" : "unknown", workspaceRoot, homeDir });
 
-  // Follow the link while the chat scrolls; a streamed re-render can replace
-  // the link element, so keep its last position instead of jumping to 0,0.
   const [openedRect] = useState(() => anchor.getBoundingClientRect());
   const positionAnchor = useMemo(() => ({
     contextElement: anchor,
@@ -74,23 +78,38 @@ export function LinkActionMenu({ target, anchor, onOpenTarget, onClose }: LinkAc
   }, [canLaunch, nativePath]);
 
   const handleOpenDefault = () => {
-    onOpenTarget(target, { external: true });
+    onOpenTarget(effectiveTarget, { external: true });
     onClose();
   };
 
   const handleOpenInPanel = () => {
-    onOpenTarget(target);
+    onOpenTarget(effectiveTarget);
     onClose();
   };
 
   const handleReveal = () => {
-    onOpenTarget(target, { external: true, reveal: true });
+    onOpenTarget(effectiveTarget, { external: true, reveal: true });
     onClose();
   };
 
   const handleCopyPath = async () => {
+    let current = effectiveTarget;
+    if (current.exists !== true && client && workspaceId) {
+      try {
+        const found = await resolveCollectibleOpenTarget(client, workspaceId, target, sessionId, { search: true });
+        if (found) {
+          current = found;
+          setResolvedTarget(found);
+        }
+      } catch {
+      }
+    }
     try {
-      await navigator.clipboard.writeText(copyPath);
+      await navigator.clipboard.writeText(filePathForCopy(current, {
+        origin: isLocalWorkspace ? "local" : "unknown",
+        workspaceRoot,
+        homeDir,
+      }));
       onClose();
     } catch {
       toast.error("Could not copy the path. Try again.");
@@ -99,9 +118,7 @@ export function LinkActionMenu({ target, anchor, onOpenTarget, onClose }: LinkAc
 
   const handleOpenWithApp = (app: DesktopApplication) => {
     if (!canLaunch) return;
-    // Re-resolve on activation, just like default open/reveal. A verified menu
-    // snapshot may already be stale by the time a person chooses an app.
-    onOpenTarget(target, { external: true, appPath: app.appPath });
+    onOpenTarget(effectiveTarget, { external: true, appPath: app.appPath });
     onClose();
   };
 

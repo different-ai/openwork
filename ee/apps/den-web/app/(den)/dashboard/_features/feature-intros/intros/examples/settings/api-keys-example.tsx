@@ -5,7 +5,6 @@ import { ExampleCaption, ExampleGroupLabel, ExampleRow, ExampleRows } from "../e
 import { useExampleStep } from "../use-example-step";
 import { apiKeysExampleRequest, apiKeysExampleRows } from "./api-keys-example-data";
 
-/** API Keys example: named keys, who owns each and when it was last used, and the header a script sends. */
 export function ApiKeysExample() {
   const step = useExampleStep(apiKeysExampleRows.length);
 

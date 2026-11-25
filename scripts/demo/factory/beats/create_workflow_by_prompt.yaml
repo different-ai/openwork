@@ -1,0 +1,20 @@
+id: create_workflow_by_prompt
+title: "Create a Workflow from a prompt"
+surface: desktop
+label: REAL
+status: draft
+requires: [employee_connected]
+do:
+  - {type: manual, instruction: "Ask for a reusable Q4 leadership review Workflow and inspect the proposed steps before saving."}
+  - {type: show, seconds: 5}
+say: "A Workflow can package instructions without scheduling them."
+paste: {}
+see: "A newly saved Workflow is listed by name, separate from the schedule."
+checks:
+  - {"type": "workflow_exists", "name": "Q4 trial leadership review"}
+reset: [Remove only the newly created fixture Workflow.]
+fallback: Skip until verified on the rehearsal desktop; make no live claim.
+expect_seconds: 45
+questions:
+  - {question: Is this part of the verified live sequence?, answer: No. This is a rehearsal placeholder until its expected result is verified.}
+avoid: ["Do not approve a Workflow with outbound or permission changes."]

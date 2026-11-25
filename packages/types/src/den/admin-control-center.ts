@@ -1,15 +1,6 @@
 import { z } from "zod"
 
-/**
- * The admin Control Center: platform product health served from snapshots a
- * den-api background job precomputes (see ee/apps/den-api/src/admin-metrics).
- * Every payload is aggregate counts, except organization names in the
- * accounts table. Days are UTC dates (YYYY-MM-DD); weeks start on Monday and
- * are named by that Monday's date.
- */
-
 const count = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER)
-/** A share or rate; null when its denominator is zero. */
 const rate = z.number().nonnegative().nullable()
 const date = z.string().regex(/^\d{4}-\d{2}-\d{2}$/)
 
@@ -36,7 +27,6 @@ export type ControlCenterPulse = z.infer<typeof controlCenterPulseSchema>
 export const controlCenterLifecycleSchema = z.object({
   weeks: z.array(z.object({ week: date, new: count, stillActive: count, returned: count, lost: count, gainsVsLosses: rate })).max(14),
   organizations: z.array(z.object({ week: date, personal: count, team: count })).max(14),
-  /** People who signed up in the range at least 7 days ago, so every step had time to happen. */
   activation: z.object({ from: date, to: date, signedUp: count, ranTaskWithin3Days: count, backAfterDay1: count, activeInWeek1: count }),
   cohorts: z.array(z.object({ week: date, signups: count, retention: z.array(z.object({ offset: count, users: count, rate: rate })).max(14) })).max(14),
   reactivation: z.object({
@@ -45,7 +35,6 @@ export const controlCenterLifecycleSchema = z.object({
     returned: count,
     lost: count,
     inactivePool: count,
-    /** People who came back in the previous complete week and were active again this week. */
     returnersStayed: z.object({ week: date, returned: count, stayed: count, rate }),
   }),
 }).meta({ ref: "AdminControlCenterLifecycle" })
@@ -56,10 +45,8 @@ export const controlCenterInvitationsSchema = z.object({
   joinedRanTask: count,
   joinedRanTaskWithin7Days: count,
   peopleWithAcceptedInvite: count,
-  /** Invitations created in the range, by current state. Counts only; never rows, emails or tokens. */
   invitations: z.object({ sent: count, accepted: count, expired: count, pending: count, canceled: count, medianHoursToAccept: z.number().nonnegative().nullable() }),
   pendingNow: count,
-  /** Null when no outreach has been recorded. */
   outreach: z.object({ contactedOrganizations: count, activeWithin7Days: count }).nullable(),
 }).meta({ ref: "AdminControlCenterInvitations" })
 export type ControlCenterInvitations = z.infer<typeof controlCenterInvitationsSchema>
@@ -69,8 +56,11 @@ export const controlCenterSharingSchema = z.object({
   skills: z.object({ creators: count, teamSkills: count, sharedTeamSkills: count, sharingRate: rate, teamUses: count, teammateUses: count, teammateReuseRate: rate }),
   mcp: z.object({ teamCalls: count, sharedConnectionCalls: count, sharedReuseRate: rate }),
   connectors: z.array(z.object({ name: z.string().max(255), people: count, calls: count, errors: count, errorRate: rate })).max(10),
-  /** Built-in default plugins and marketplaces every organization gets are excluded. */
-  catalog: z.object({ plugins: count, marketplaces: count }),
+  catalog: z.object({
+    plugins: count,
+    marketplaces: count,
+    pluginsCounted: z.boolean().optional(),
+  }),
 }).meta({ ref: "AdminControlCenterSharing" })
 export type ControlCenterSharing = z.infer<typeof controlCenterSharingSchema>
 
@@ -80,7 +70,6 @@ export const controlCenterRevenueSchema = z.object({
   activePlans: count,
   pastDue: count,
   monthly: z.array(z.object({ month: z.string().regex(/^\d{4}-\d{2}$/), type: controlCenterSubscriptionTypeSchema, started: count, canceled: count })).max(48),
-  /** Paid organizations whose active members use the smallest share of their seats. */
   atRisk: z.array(z.object({ organizationId: z.string(), name: z.string(), seats: count, activeMembers: count, seatUsage: rate })).max(10),
 }).meta({ ref: "AdminControlCenterRevenue" })
 export type ControlCenterRevenue = z.infer<typeof controlCenterRevenueSchema>
@@ -113,11 +102,8 @@ export const CONTROL_CENTER_SECTION_KEYS = Object.keys(CONTROL_CENTER_SECTIONS) 
 
 function sectionSchema<T extends z.ZodTypeAny>(data: T) {
   return z.object({
-    /** When the shown data was computed; null until the first successful refresh. */
     computedAt: z.string().datetime().nullable(),
-    /** True when the data is older than twice its refresh interval, or missing. */
     stale: z.boolean(),
-    /** The last refresh failed; the data shown is the last good snapshot. */
     error: z.string().max(500).nullable(),
     durationMs: count.nullable(),
     data: data.nullable(),

@@ -1,8 +1,6 @@
 import type { OrgDiagnostics, ProviderCheck } from "@openwork/types/den/diagnostics";
 import type { DeploymentServiceReadiness } from "@openwork/types/den/service-readiness";
 
-/** Shared report fixtures for the diagnostics unit tests. */
-
 export const NOW = Date.parse("2026-10-20T16:00:00.000Z");
 export const TWO_MIN_AGO = "2026-10-20T15:58:00.000Z";
 export const TWO_DAYS_AGO = "2026-10-18T16:00:00.000Z";
@@ -70,12 +68,10 @@ export function report(overrides: Partial<OrgDiagnostics> = {}): OrgDiagnostics 
       ],
     },
     installation: { access: "operator", server: { version: "0.19.2", startedAt: "2026-10-20T13:00:00.000Z", startupMs: 4_100 }, services: services() },
-    network: { access: "granted", canRun: true },
     ...overrides,
   };
 }
 
-/** Everything locked except what a member with no organization permissions on Cloud sees. */
 export function lockedReport(overrides: Partial<OrgDiagnostics> = {}): OrgDiagnostics {
   return report({
     deployment: "cloud",
@@ -84,7 +80,6 @@ export function lockedReport(overrides: Partial<OrgDiagnostics> = {}): OrgDiagno
     providers: { access: "locked", permission: "gateway_providers.view" },
     connectors: { access: "locked", permission: "connections.view" },
     installation: { access: "managed" },
-    network: { access: "locked", permission: "egress_diagnostics.view" },
     ...overrides,
   });
 }

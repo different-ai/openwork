@@ -1,3 +1,4 @@
+import type { SessionLink } from "@openwork/types/session-link";
 import { labelOpenworkSessionModel, type OpenworkCatalogModel, type OpenworkSessionActivityInventory, type OpenworkSessionModel } from "@openwork/types/openwork-affordance";
 
 import { getDisplaySessionTitle } from "../../../../app/lib/session-title";
@@ -11,11 +12,6 @@ export type ControlSessionWorkspace = {
   displayName?: string | null;
 };
 
-/**
- * The engine's session-level model as it arrives on the session record:
- * bound at creation or by the last prompt, `variant` being the reasoning
- * effort. The pinned SDK types predate this field, so it is declared here.
- */
 export type ControlSessionEngineModel = {
   id?: string;
   providerID?: string;
@@ -25,7 +21,6 @@ export type ControlSessionEngineModel = {
 export type ControlSessionLike = {
   id?: string;
   title?: string;
-  /** Set on delegated (sub-agent) sessions; their pending requests roll up to this parent. */
   parentID?: string | null;
   time?: {
     updated?: number;
@@ -33,6 +28,7 @@ export type ControlSessionLike = {
     archived?: number;
   };
   model?: ControlSessionEngineModel | null;
+  openworkSessionLink?: SessionLink | null;
 };
 
 export type ListedControlSession = OpenworkSessionActivityInventory & {
@@ -41,11 +37,7 @@ export type ListedControlSession = OpenworkSessionActivityInventory & {
   workspace: string;
   updatedAt: number;
   pinned: boolean;
-  /** On the sidebar's Settled row (OpenCode v2 workspaces only); false elsewhere. */
-  settled: boolean;
-  /** Live activity, the same source as the sidebar indicator. */
   status: SessionActivityStatus;
-  /** Model and reasoning effort the session is bound to; null before any model is bound. */
   model: OpenworkSessionModel | null;
 };
 
@@ -56,19 +48,12 @@ export type ListControlSessionsState = {
   modelCatalogByWorkspaceId?: Record<string, readonly OpenworkCatalogModel[]>;
   statusFor: (workspaceId: string, sessionId: string) => SessionActivityStatus;
   attentionFor?: (workspaceId: string, sessionId: string) => SessionAttention | undefined;
-  settledFor?: (workspaceId: string, session: ControlSessionLike & { id: string }) => boolean;
 };
 
-/** Anything but a finished or failed turn still needs Stop before archive. */
 export function isWorkingStatus(status: SessionActivityStatus): boolean {
   return status !== "idle" && status !== "error";
 }
 
-/**
- * Session-level model from the engine record, or null when none was ever
- * bound. The engine writes the literal variant "default" for a turn that
- * named none; agents read null for that, the composer pill's value.
- */
 export function controlSessionModel(session: ControlSessionLike): OpenworkSessionModel | null {
   const model = session.model;
   const providerId = model?.providerID?.trim();
@@ -91,13 +76,6 @@ function argsRecord(args: unknown): Record<string, unknown> {
   return args && typeof args === "object" ? args as Record<string, unknown> : {};
 }
 
-/**
- * `session.list_sessions`: sessions the app already holds in memory, pinned
- * first then newest first. `args` is the raw control-action payload; the list
- * is only truncated when it carries a positive integer `limit`, and an
- * unknown `workspaceId` yields no sessions rather than another workspace's.
- * A silent cap here made large workspaces impossible to inventory.
- */
 export function listControlSessions(args: unknown, state: ListControlSessionsState): ListedControlSession[] {
   const record = argsRecord(args);
   const workspaceQuery = typeof record.workspaceId === "string" ? record.workspaceId.trim() : "";
@@ -122,7 +100,6 @@ export function listControlSessions(args: unknown, state: ListControlSessionsSta
         workspace: controlWorkspaceLabel(workspace),
         updatedAt: session.time?.updated ?? session.time?.created ?? 0,
         pinned: state.pinnedIds.includes(sessionId),
-        settled: state.settledFor?.(workspace.id, { ...session, id: sessionId }) ?? false,
         status: activity.status,
         working: activity.working,
         descendantActivity: activity.descendantActivity,

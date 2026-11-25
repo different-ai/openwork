@@ -1,7 +1,3 @@
-/** Deliberately bounded email markdown, not a general Markdown/HTML renderer.
- * Both alternatives come from the same parse. Source HTML is always text;
- * only this module's fixed tags/styles and validated links become markup.
- */
 export type DraftBody = { plain: string; html: string }
 
 const lineStyle = "white-space:pre-wrap;overflow-wrap:anywhere"
@@ -11,7 +7,6 @@ function escapeHtml(text: string): string {
   return text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")
 }
 
-/** Attribute encoding is separate from text encoding; styles stay fixed/allowlisted. */
 export function escapeHtmlAttribute(value: string): string {
   return escapeHtml(value).replace(/"/g, "&quot;").replace(/'/g, "&#39;")
 }
@@ -68,8 +63,6 @@ function inline(text: string, depth = 0, allowLinks = true): DraftBody {
       index += image.length
       continue
     }
-    // Simple inline links, including balanced parentheses in a URL. Images and
-    // reference links are outside the subset and stay literal text.
     const labelEnd = rest.startsWith("[") && allowLinks ? rest.indexOf("](") : -1
     if (labelEnd > 0) {
       let end = labelEnd + 2
@@ -148,7 +141,6 @@ function cells(text: string): string[] {
   return result
 }
 
-/** Prose normalization is applied only outside structured blocks/code. */
 export function renderGmailDraftBody(body: string, normalizeProse: (text: string) => string): DraftBody {
   return blocks(body.replace(/\r\n?/g, "\n").split("\n"), normalizeProse, 0)
 }
@@ -177,7 +169,6 @@ function blocks(lines: string[], normalizeProse: (text: string) => string, depth
       if (!item || item.indent !== indent || item.ordered !== first.ordered) break
       const content = inline(item.text)
       let itemHtml = content.html
-      // Keep authored markers/numbers and indentation; normalize only the marker separator.
       text.push(item.prefix + content.plain)
       index++
       while (index < lines.length && lines[index].trim() !== "") {
@@ -238,8 +229,6 @@ function blocks(lines: string[], normalizeProse: (text: string) => string, depth
         index++
       }
       const widths = table.headers.map((_, column) => Math.max(3, ...rows.map(row => row[column].plain.length)))
-      // Avoid quadratic padding amplification for very wide/sparse tables.
-      // Normal email tables align; oversized tables retain every cell unpadded.
       const paddedSize = (widths.reduce((sum, width) => sum + width + 3, 1)) * (rows.length + 1)
       const padding = paddedSize <= 1_000_000 ? widths : widths.map(() => 0)
       const textRows = rows.map(row => `| ${row.map((cell, column) => cell.plain.padEnd(padding[column])).join(" | ")} |`)

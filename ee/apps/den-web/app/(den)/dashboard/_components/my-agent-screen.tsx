@@ -7,15 +7,15 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { ItemHeader, ItemPage } from "./item-header";
 import { useLibrary, type LibraryConnectionItem, type LibraryItem } from "./library-data";
 import { MyAgentPanel, MyAgentPanelSkeleton, MyAgentRow, MyAgentRowError, MyAgentRowSkeleton, type MyAgentLinks } from "./my-agent";
-import { useMyAgent, useMyAgentChecks, useSaveMyAgent } from "./my-agent-data";
+import { useMyAgent, useMyAgentChecks, useMyAgentToolCounts, useSaveMyAgent } from "./my-agent-data";
 import { fromMyAgent, myAgentGoogleHref } from "./my-agent-connector-navigation";
 import { myAgentAvailable } from "./my-agent-availability"
+import { useWorkbotReadiness } from "./workbot-readiness-data";
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error && error.message.trim() ? error.message : fallback;
 }
 
-/** The Library row, pinned above the filters. */
 export function MyAgentLibraryEntry() {
   const { orgSlug, orgContext } = useOrgDashboard();
   const orgId = orgContext?.organization.id ?? "";
@@ -37,27 +37,27 @@ const CONNECTION_STATUS: Record<LibraryConnectionItem["state"], string> = {
   available: "Not connected",
 };
 
-/** Work › My bot: the member's own agent. */
 export function MyAgentScreen() {
   const { orgSlug, orgContext } = useOrgDashboard();
   const orgId = orgContext?.organization.id ?? "";
   const available = myAgentAvailable(orgContext);
-  // Feature intros (flag `featureIntros`): My bot answers `?` only; its switch and settings are the setup.
   useFeatureIntro("my-bot", orgContext ? {} : null);
-  const agent = useMyAgent(orgId, available);
+  const readiness = useWorkbotReadiness(orgId || null, available);
+  const off = readiness.data?.enabled === false;
+  const agent = useMyAgent(orgId, available && !off);
+  const toolCounts = useMyAgentToolCounts(orgId, available && !off ? agent.data : undefined);
   const library = useLibrary();
   const save = useSaveMyAgent(orgId);
   const [earlierOpen, setEarlierOpen] = useState(false);
-  const earlier = useMyAgentChecks(orgId, available && earlierOpen);
+  const earlier = useMyAgentChecks(orgId, available && !off && earlierOpen);
   const libraryHref = getLibraryRoute(orgSlug);
 
   if (!available) return <ItemPage><ItemHeader title="My bot isn't on for you" description="Your organization hasn't turned it on yet." /></ItemPage>;
+  if (off) return <ItemPage><ItemHeader title="My bot is off for your team" description="An admin can turn it on in Members › Teams." /></ItemPage>;
   if (agent.isError) return <ItemPage><ItemHeader title="It did not load" description={`${errorMessage(agent.error, "Couldn't load your agent.")} Reload the page to try again.`} /></ItemPage>;
   if (!agent.data) return <MyAgentPanelSkeleton library={libraryHref} />;
 
   const connections = (library.data ?? []).filter(isConnection);
-  // The Google connection the agent reads through (one that needs the member first), not just the first one listed:
-  // a member can have a work and a personal Google connection.
   const used = (agent.data.sources ?? []).filter((source) => source.kind !== "other").flatMap((source) => source.connections);
   const googles = connections.filter((item) => item.provider === "google-workspace");
   const google = googles.find((item) => used.some((connection) => connection.id === item.id && connection.state !== "connected"))
@@ -75,7 +75,11 @@ export function MyAgentScreen() {
 
   return (
     <MyAgentPanel
-      view={agent.data}
+      view={{ ...agent.data, sources: agent.data.sources?.map((source) => source.readTools === null && toolCounts.data?.[source.id] != null
+        ? { ...source, readTools: toolCounts.data[source.id] } : source) }}
+      setAll={(batches) => save.mutate(batches)}
+      bulkDirection={save.isPending && Array.isArray(save.variables) ? save.variables[0]?.sources?.[0]?.on ?? undefined : undefined}
+      pendingSources={save.isPending && !Array.isArray(save.variables) ? save.variables?.sources : undefined}
       now={Date.now()}
       links={links}
       saving={save.isPending}

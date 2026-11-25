@@ -1,9 +1,3 @@
-/**
- * Thin localStorage wrapper for the React shell's "remember what the user had
- * open" behavior. Keys mirror those the Solid app used so users don't lose
- * their spot when switching between shells during the port.
- */
-
 const ACTIVE_WORKSPACE_KEY = "openwork.react.activeWorkspace";
 const SESSION_BY_WORKSPACE_KEY = "openwork.react.sessionByWorkspace";
 const WORKSPACE_ORDER_KEY = "openwork.react.workspaceOrder";
@@ -27,7 +21,6 @@ function safeSet(key: string, value: string | null): void {
     }
     window.localStorage.setItem(key, value);
   } catch {
-    // ignore storage errors (quota, privacy modes, etc.)
   }
 }
 
@@ -83,7 +76,6 @@ function readSessionByWorkspaceMap(): SessionByWorkspace {
       return result;
     }
   } catch {
-    // ignore malformed payload
   }
   return {};
 }

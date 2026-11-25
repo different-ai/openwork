@@ -25,11 +25,10 @@ function autoRouterOptionsQueryKey(orgId: string): string[] {
   return ["org-auto-routers", orgId, "options"];
 }
 
-/** The organization's Smart Routers, every task in use, and whether this person may change them. */
-export function useAutoRouters(orgId: string, enabled = true) {
+export function useAutoRouters(orgId: string) {
   return useQuery({
     queryKey: autoRoutersQueryKey(orgId),
-    enabled: enabled && Boolean(orgId),
+    enabled: Boolean(orgId),
     retry: false,
     queryFn: async ({ signal }): Promise<AutoRouterList> => {
       const { response, payload } = await requestJson(
@@ -45,7 +44,6 @@ export function useAutoRouters(orgId: string, enabled = true) {
   });
 }
 
-/** The AI Gateway models a Smart Router can use, and who can use each. */
 export function useAutoRouterOptions(orgId: string, enabled = true) {
   return useQuery({
     queryKey: autoRouterOptionsQueryKey(orgId),
@@ -74,10 +72,8 @@ type RouterRequest = {
   fallback: string;
 };
 
-/** What a write answers: the whole list, which replaces the cached one, and the router it saved. */
 export type AutoRouterWriteResult = { list: AutoRouterList; routerId: string | null };
 
-/** Every write returns the whole list, which replaces the cached one. */
 function useRouterMutation<Input>(orgId: string, name: string, toRequest: (input: Input) => RouterRequest) {
   const queryClient = useQueryClient();
   const { runReauthableAction } = useOrgDashboard();
@@ -117,11 +113,6 @@ function useRouterMutation<Input>(orgId: string, name: string, toRequest: (input
   });
 }
 
-/**
- * Step one: creates a Smart Router (it applies to nobody yet), or replaces an
- * existing one's name and models when `routerId` is set. Errors carry the
- * server's message.
- */
 export function useSaveAutoRouter(orgId: string) {
   return useRouterMutation(orgId, "save", ({ routerId, input }: { routerId: string | null; input: AutoRouterWrite }): RouterRequest => ({
     method: routerId ? "PUT" : "POST",
@@ -132,7 +123,6 @@ export function useSaveAutoRouter(orgId: string) {
   }));
 }
 
-/** Step two: sets who a Smart Router applies to. */
 export function useSaveAutoRouterAssignment(orgId: string) {
   return useRouterMutation(orgId, "assignment", ({ routerId, assignment }: { routerId: string; assignment: AutoRouterAssignment }): RouterRequest => ({
     method: "PUT",

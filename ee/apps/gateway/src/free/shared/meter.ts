@@ -8,28 +8,24 @@ export type FreeMeterConfig = Pick<AutoConfig, "upstreamModel" | "inputPrice" | 
 function record(value: unknown): value is Record<string, unknown> { return typeof value === "object" && value !== null && !Array.isArray(value) }
 function nonnegative(value: unknown): value is number { return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 }
 
-/** Why a free Auto response stopped before it completed. */
 export type FreeAutoFailureReason =
   | "client_cancelled"
-  /** OpenAI sent an error event (or a Chat Completions error chunk). */
   | "upstream_error"
-  /** Responses: OpenAI sent `response.failed`. */
   | "upstream_failed"
   | "upstream_ended"
   | "invalid_response"
   | "response_too_large"
-/**
- * OpenAI's error type and code, safe to log. The message is left out: OpenAI's validation
- * messages can quote values the caller sent, and no redaction can rule that out.
- */
 export type UpstreamErrorDetails = { type?: string; code?: string }
+const policyCodes = new Set(["safety_identifier_blocked", "identifier_blocked", "cyber_policy", "content_policy_violation", "misalignment_policy_violation"])
+export function isPolicyRefusal(details: UpstreamErrorDetails) {
+  return policyCodes.has(details.code ?? "") || policyCodes.has(details.type ?? "")
+}
 export class FreeAutoFailure extends Error {
   constructor(message: string, readonly reason: FreeAutoFailureReason, readonly upstream: UpstreamErrorDetails = {}) { super(message) }
 }
 const invalid = (message: string) => new FreeAutoFailure(message, "invalid_response")
 
 function errorLabel(value: unknown) { return typeof value === "string" && /^[\w.:-]{1,80}$/.test(value) ? value : undefined }
-/** Reads `{ error: { type, code } }`, a bare error object, or a Responses `error` event. */
 export function upstreamErrorDetails(value: unknown): UpstreamErrorDetails {
   const error = record(value) && record(value.error) ? value.error : value
   if (!record(error)) return {}
@@ -38,7 +34,6 @@ export function upstreamErrorDetails(value: unknown): UpstreamErrorDetails {
 function parseErrorEvent(text: string) {
   try { return upstreamErrorDetails(JSON.parse(text)) } catch { return {} }
 }
-/** OpenAI reports a dated snapshot (for example `gpt-6-luna-2026-09-22`) of the requested model. */
 export function isFreeUpstreamModel(value: unknown, config: FreeMeterConfig) {
   return typeof value === "string" && (value === config.upstreamModel || value.startsWith(`${config.upstreamModel}-`))
 }
@@ -52,7 +47,6 @@ export function readFreeUsage(value: unknown, eventId: string, config: FreeMeter
   if (!nonnegative(inputTokens) || !nonnegative(outputTokens)) return null
   if (record(details) && details.reasoning_tokens !== undefined
     && (!nonnegative(details.reasoning_tokens) || details.reasoning_tokens > outputTokens)) return null
-  // Input tokens include cache hits, which OpenAI bills at the cached input price.
   const cachedInputTokens = record(inputDetails) && inputDetails.cached_tokens != null ? inputDetails.cached_tokens : 0
   if (!nonnegative(cachedInputTokens) || cachedInputTokens > inputTokens) return null
   const amount = freeUsageAmount(config, inputTokens, outputTokens, cachedInputTokens)
@@ -111,7 +105,6 @@ export class FreeResponseReceipt {
   }
 }
 
-/** Responses finishes on a terminal response event, without Chat Completions' [DONE] sentinel. */
 export class FreeResponsesReceipt {
   private id: string | null = null
   private receipt: FreeUsageReceipt | null = null
@@ -158,7 +151,6 @@ export class FreeResponsesReceipt {
 export function meterFreeResponse(body: ReadableStream<Uint8Array>, input: {
   config: FreeMeterConfig; protocol?: FreeProtocol; streaming: boolean; maxBytes: number; signal: AbortSignal; choices?: number;
   settle: (receipt: FreeUsageReceipt | null) => Promise<void>;
-  /** Called once when the response stops before it completes. */
   onFailure?: (failure: FreeAutoFailure) => void;
 }) {
   const reader = body.getReader()
@@ -170,20 +162,24 @@ export function meterFreeResponse(body: ReadableStream<Uint8Array>, input: {
   const settle = (value: FreeUsageReceipt | null) => settlement ??= input.settle(value)
   const cleanup = () => { input.signal.removeEventListener("abort", abort); void reader.cancel().catch(() => undefined) }
   let output: ReadableStreamDefaultController<Uint8Array>
-  const report = (failure: FreeAutoFailure) => { try { input.onFailure?.(failure) } catch { /* Reporting cannot change the response. */ } }
+  const report = (failure: FreeAutoFailure) => { try { input.onFailure?.(failure) } catch {} }
   const cancelled = () => new FreeAutoFailure("Auto response cancelled", "client_cancelled")
   const fail = (error: unknown) => {
     if (closed) return
     closed = true
     cleanup()
-    // JSON and UTF-8 errors can quote the response, so only the meter's own failures are kept.
     const failure = error instanceof FreeAutoFailure ? error : invalid("Unreadable Auto response")
     report(failure)
     void settle(null).catch(() => { console.error("Auto allowance settlement failed") })
-    // The caller is gone. Erroring its stream would only make the HTTP server log a crash.
     if (failure.reason === "client_cancelled") output.close()
-    // The HTTP server logs the error that ends a response. The failure was reported with its context, so keep that to one line.
-    else output.error(Object.assign(new Error(failure.message), { stack: `Error: ${failure.message}` }))
+    else if (input.streaming && isPolicyRefusal(failure.upstream)) {
+      const error = { code: "free_policy_refusal", type: "policy_error", message: "The model provider stopped this request for safety." }
+      const frame = input.protocol === "responses"
+        ? `event: error\ndata: ${JSON.stringify({ type: "error", code: error.code, message: error.message })}\n\n`
+        : `data: ${JSON.stringify({ error })}\n\ndata: [DONE]\n\n`
+      output.enqueue(encoder.encode(frame))
+      output.close()
+    } else output.error(Object.assign(new Error(failure.message), { stack: `Error: ${failure.message}` }))
   }
   const errorEventFailure = () => new FreeAutoFailure("Auto upstream failed", "upstream_error", parseErrorEvent(data.join("\n")))
   const abort = () => fail(cancelled())
@@ -223,7 +219,6 @@ export function meterFreeResponse(body: ReadableStream<Uint8Array>, input: {
             const line = pending.slice(0, newline).replace(/\r$/, "")
             pending = pending.slice(newline + 1)
             if (line.startsWith("data:")) data.push(line.slice(5).replace(/^ /, ""))
-            // Read the error event's data before failing: it carries OpenAI's error type and code.
             else if (line.startsWith("event:")) errorEvent = line.slice(6).trim() === "error"
             else if (!line && errorEvent) throw errorEventFailure()
             else if (!line && data.length) {

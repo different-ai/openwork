@@ -7,14 +7,15 @@ import type { DenOrgLlmProvider, DenOrgLlmProviderAccess } from "@/app/lib/den";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { t } from "@/i18n";
-import { GatewayConnectRow } from "./ai-view";
+import { GatewayConnectRow, GatewayReadyRow } from "./ai-view";
 import { ProviderIcon } from "../../../design-system/provider-icon";
-import { gatewayConnectProviderKey, type GatewayConnectProvider } from "../../connections/provider-auth/cloud-provider-config";
+import { gatewayConnectProviderKey, resolveLiveGatewayReadyProviders, type GatewayConnectProvider, type LiveGatewayProvider } from "../../connections/provider-auth/cloud-provider-config";
 import { useCloudSession } from "@/react-app/domains/settings/cloud/cloud-session-provider";
 import {
   CloudProvidersSection,
   type CloudProviderRow,
   type CloudProviderRowStatus,
+  type OpenWorkModelsToggle,
 } from "@/react-app/domains/settings/cloud/sections";
 import {
   getCloudProviderEnv,
@@ -28,8 +29,8 @@ import type {
 } from "@/react-app/domains/connections/provider-auth/store";
 import { SettingsStack } from "@/react-app/domains/settings/settings-section";
 import { credentialHealthKey, useProviderCredentialHealth, type ProviderCredentialHealth } from "@/react-app/domains/connections/provider-auth/credential-health";
+import type { OrganizationShareEmptyState } from "@/react-app/domains/settings/provider-share/device-provider-share";
 
-/** "Everyone", the team names, or a member count; null when Den did not say. */
 export function providerAccessLabel(access: DenOrgLlmProviderAccess | undefined): string | null {
   if (!access) return null;
   if (access.allMembers) return "Everyone";
@@ -47,16 +48,7 @@ export type CloudProviderRowStateInput = {
   needsCredential: boolean;
   needsServer: boolean;
   syncError: CloudProviderSyncError | null;
-  /**
-   * The server-side sync skipped this provider (from
-   * /cloud-provider-sync/status skippedProviders, e.g. missing_credentials) —
-   * an honest attention state instead of a silent, permanent "Syncing".
-   */
   skippedByServer?: boolean;
-  /**
-   * The server still owes the engine a reload: the provider is materialized
-   * on disk but its models are not served yet, so "Connected" would lie.
-   */
   reloadPending?: boolean;
 };
 
@@ -91,13 +83,15 @@ export type CloudProvidersViewProps = {
   onOpenAccount: () => void;
   refreshCloudOrgProviders: (options?: { force?: boolean }) => Promise<DenOrgLlmProvider[]>;
   runCloudProviderSync: (reason: "manual") => Promise<unknown>;
-  /** Server-side sync facts (reload pending, skips); null on the legacy renderer-import path. */
   serverSync: CloudProviderServerSyncState | null;
   gatewayConnectProviders?: GatewayConnectProvider[];
+  liveGatewayProviders?: readonly LiveGatewayProvider[] | null;
   connectingGatewayProviderId?: string | null;
   onConnectGatewayProvider?: (provider: GatewayConnectProvider) => void | Promise<void>;
   onOpenDen?: () => void;
   onOpenModelConnections?: () => void;
+  shareEmptyState?: OrganizationShareEmptyState;
+  openWorkModelsToggle?: OpenWorkModelsToggle;
 };
 
 export function CloudProvidersView({
@@ -115,10 +109,13 @@ export function CloudProvidersView({
   runCloudProviderSync,
   serverSync,
   gatewayConnectProviders = [],
+  liveGatewayProviders = null,
   connectingGatewayProviderId,
   onConnectGatewayProvider,
   onOpenDen,
   onOpenModelConnections,
+  shareEmptyState,
+  openWorkModelsToggle,
 }: CloudProvidersViewProps) {
   const { activeOrganization, isSignedIn } = useCloudSession();
   const [busy, setBusy] = React.useState(false);
@@ -138,9 +135,6 @@ export function CloudProvidersView({
         restrictToCloud,
         checkRestriction: checkDesktopAppRestriction,
       });
-      // Modern server sync owns credential resolution, including local
-      // Environment variables. Den's shared-credential summary and errors
-      // from the legacy renderer path are not authoritative in this mode.
       const syncError = serverSync === null ? lastSyncError[provider.id] ?? null : null;
       const env = getCloudProviderEnv(provider.providerConfig);
       const status = resolveCloudProviderRowStatus({
@@ -267,6 +261,8 @@ export function CloudProvidersView({
     );
   }
 
+  const gatewayReadyProviders = resolveLiveGatewayReadyProviders(liveGatewayProviders, cloudOrgProviders.map((provider) => provider.id));
+
   const section = (
     <CloudProvidersSection
       actionError={actionError ?? (serverSync?.lastRun?.status === "failed" ? "Could not verify providers with Den. Sync again to retry." : null)}
@@ -277,9 +273,11 @@ export function CloudProvidersView({
       onRetry={retryProvider}
       onOpenDen={onOpenDen}
       onOpenModelConnections={onOpenModelConnections}
+      shareEmptyState={shareEmptyState}
       lastVerifiedAt={serverSync?.lastVerifiedAt}
-      additionalCount={gatewayConnectProviders.length}
-      additionalRows={gatewayConnectProviders.map((provider) => <GatewayConnectRow key={gatewayConnectProviderKey(provider)} provider={provider} busy={connectingGatewayProviderId === gatewayConnectProviderKey(provider)} onConnect={onConnectGatewayProvider} />)}
+      openWorkModelsToggle={openWorkModelsToggle}
+      additionalCount={gatewayReadyProviders.length + gatewayConnectProviders.length}
+      additionalRows={<>{gatewayReadyProviders.map((provider) => <GatewayReadyRow key={provider.id} provider={provider} />)}{gatewayConnectProviders.map((provider) => <GatewayConnectRow key={gatewayConnectProviderKey(provider)} provider={provider} busy={connectingGatewayProviderId === gatewayConnectProviderKey(provider)} onConnect={onConnectGatewayProvider} />)}</>}
     />
   );
 

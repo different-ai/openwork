@@ -4,7 +4,6 @@ import { useExampleStep } from "../use-example-step";
 import { ExampleCaption } from "../example-parts";
 import { promptCardsExampleCards } from "./prompt-cards-example-data";
 
-/** Desktop tab example: the suggestion cards someone sees when they start a new session. */
 export function PromptCardsExample() {
   const step = useExampleStep(promptCardsExampleCards.length);
 

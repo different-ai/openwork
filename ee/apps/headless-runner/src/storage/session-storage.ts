@@ -6,22 +6,17 @@ import { parseMessageRow, sqlRow, toTurn, TURN_COLUMNS, type ConversationRows, t
 import { ACTIVE, messageSchema, type Message } from "../types.js"
 import { bodyPrefix, LargeBodies, type LargeBodyRef, type PreparedMessage } from "./large-bodies.js"
 import { insertManifest, manifestOf, removeManifest, replaceManifest, SegmentReader, type ManifestEntry } from "./manifest.js"
+import type { SqlDriver } from "../sql.js"
 import { readMeta, writeMeta } from "./migrations.js"
 import { encodeSegment, SEGMENT_FORMAT, SEGMENT_VERSION, SegmentError, segmentKey, segmentPrefix, sha256Hex, type SegmentData, type SegmentHeader } from "./segments.js"
 
 type SqlRow = z.infer<typeof sqlRow>
 
-/** Runner settings for sealing and large bodies (config.ts). Off by default; reading what exists always works. */
 export type StorageSettings = {
-  /** HEADLESS_SEGMENTS: seal old turns and move large tool outputs to the files bucket. */
   segments: boolean
-  /** HEADLESS_HOT_LIMIT_BYTES: the hot database is kept under this. */
   hotLimitBytes: number
-  /** HEADLESS_SEGMENT_TARGET_BYTES: about this much per segment; a session with this much sealable is sealed. */
   segmentTargetBytes: number
-  /** HEADLESS_LARGE_BODY_BYTES: tool outputs over this go to the files bucket. */
   largeBodyBytes: number
-  /** The model's context budget: what a budget-bounded context read still reaches is never sealed. */
   contextCharBudget: number
 }
 
@@ -33,23 +28,27 @@ export const DEFAULT_STORAGE_SETTINGS: StorageSettings = {
   contextCharBudget: 400_000,
 }
 
-/** The newest turns of a session always stay hot (Workbot's first page, and well beyond the model's context). */
 export const MIN_HOT_TURNS = 30
 const TERMINAL = new Set(["completed", "failed", "aborted"])
-/** How long after a turn ends the sealer looks for work (turns often come in bursts). */
 const SEAL_DEBOUNCE_MS = 2_000
-/** Sessions whose hot bytes are counted per sealer run (databases from before they were kept). */
 const COUNT_PER_RUN = 5
-const ORPHAN_SCAN_MS = 24 * 3_600_000
 const ORPHAN_MIN_AGE_MS = 24 * 3_600_000
+const STORED_NOTE_EVERY_MS = 3_600_000
+const ORPHAN_COVER_MS = ORPHAN_MIN_AGE_MS + STORED_NOTE_EVERY_MS
 const NEAR_LIMIT_SHARE = 0.9
 const NEAR_LIMIT_REPORT_MS = 3_600_000
-/** Durable Object SQL binds at most 100 parameters per statement. */
 const ID_CHUNK = 90
 const ORPHANS_AT = "segment_orphans_at"
 const ORPHANS_COUNT = "segment_orphans_count"
+const STORED_SINCE = "segment_stored_since"
+const STORED_AT = "segment_stored_at"
+function metaNumber(db: SqlDriver, key: string): number | null {
+  const value = readMeta(db, key)
+  if (value === null) return null
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : 0
+}
 
-/** 1B's retry shape: immediately three times, then 30 s, 2 min, then hourly. */
 export function sealRetryDelayMs(attempt: number) {
   if (attempt <= 3) return 0
   if (attempt === 4) return 30_000
@@ -58,7 +57,6 @@ export function sealRetryDelayMs(attempt: number) {
 }
 const SEAL_REPORT_AFTER = 5
 
-/** Same grouping as Store.deleteTurns: a task and its report belong to the message that started them. */
 const rootOf = (id: string) => id.split(".")[0] ?? id
 const str = (row: SqlRow, column: string) => {
   const value = row[column]
@@ -71,7 +69,6 @@ const num = (row: SqlRow, column: string) => {
 const RESUME_GRANT = "resume_grant"
 const withoutGrant = (row: SqlRow): SqlRow => Object.fromEntries(Object.entries(row).filter(([name]) => name !== RESUME_GRANT))
 
-/** A sealed turn and where it is: segment `n`, position `index` in it. */
 type SealedTurn = { n: number; index: number; row: SqlRow; turn: Turn }
 type Cursor = { kind: "end" } | { kind: "hot"; messageId: string } | { kind: "sealed"; n: number; index: number } | { kind: "none" }
 
@@ -80,7 +77,6 @@ export type WindowRead = {
   messages: StoredMessage[]
   finalAssistantText: string
   hasEarlier: boolean | undefined
-  /** What sealed turns with no transcript were sent with (hot ones come from Store.waitingPrompts). */
   sealedPrompts: Map<string, string>
 }
 
@@ -88,11 +84,6 @@ const lightTurn = z.object({ message_id: z.string(), status: z.string() })
 const keyRow = z.object({ storage_key: z.string() })
 const numberRow = z.object({ n: z.number().nullable() })
 
-/**
- * The runner's one storage module: the hot SQLite (Store), sealed segments and large bodies in the files bucket, the
- * segment manifest, the sealer and orphan cleanup. Nothing else in the runner touches segment or body keys or the
- * bucket for them.
- */
 export class SessionStorage {
   readonly bodies: LargeBodies
   readonly segments: SegmentReader
@@ -102,7 +93,9 @@ export class SessionStorage {
   private sealMore = false
   private sealRetryAt: number | null = null
   private uncounted: boolean | null = null
-  private orphansDueAt: number | null = null
+  private orphansDueAt: number | null | undefined = undefined
+  private storedSince: number | null | undefined = undefined
+  private storedAt: number | null | undefined = undefined
   private deletionsDueAt: number | null | undefined = undefined
   private nearLimitReportedAt = 0
 
@@ -114,23 +107,24 @@ export class SessionStorage {
     now: () => number = Date.now,
   ) {
     this.now = now
-    this.bodies = new LargeBodies(store, blobs, this.sealing ? settings.largeBodyBytes : null, (error) => {
-      console.error("[headless-runner] large body upload failed; kept in the row", { error: error instanceof Error ? error.message : "unknown" })
-      void errors?.report({ code: "large_body_upload_failed", level: "warning", error })
-    })
+    this.bodies = new LargeBodies(
+      store,
+      blobs,
+      this.sealing ? settings.largeBodyBytes : null,
+      (error) => {
+        console.error("[headless-runner] large body upload failed; kept in the row", { error: error instanceof Error ? error.message : "unknown" })
+        void errors?.report({ code: "large_body_upload_failed", level: "warning", error })
+      },
+      () => this.noteStored(),
+    )
     this.segments = new SegmentReader(blobs)
-    // One look after the process (or cell) starts, then after turns end.
     this.sealDueAt = this.sealing ? now() : null
   }
 
-  /** Sealing and new large bodies are on (HEADLESS_SEGMENTS=on with a files bucket). */
   get sealing() {
     return this.settings.segments && this.blobs !== null
   }
 
-  // ------------------------------------------------------------------ writes (large bodies)
-
-  /** A message as its row keeps it (see LargeBodies.prepare). Never throws. */
   prepare(sessionId: string, message: Message): Promise<PreparedMessage> {
     return this.bodies.prepare(sessionId, message)
   }
@@ -139,18 +133,10 @@ export class SessionStorage {
     return this.bodies.prepareAll(sessionId, messages)
   }
 
-  /** Rows with their large outputs restored; throws LargeBodyUnavailableError when one can't be read. */
   restore(sessionId: string, rows: StoredMessage[]): Promise<StoredMessage[]> {
     return this.bodies.restore(sessionId, rows)
   }
 
-  // ------------------------------------------------------------------ reads (paged across hot and sealed)
-
-  /**
-   * The newest `count` turns before `before` with their newest `limit` messages, from the hot database where they are
-   * and from sealed segments before that. `before` is a turn's messageId (as callers page today) or a message seq
-   * (which never changes): the turns before the turn holding it.
-   */
   async readWindow(sessionId: string, count: number, limit: number, before?: string): Promise<WindowRead> {
     const { store } = this
     const manifest = manifestOf(store.db, sessionId)
@@ -177,7 +163,6 @@ export class SessionStorage {
         sealedEarlier = true
       }
     }
-    // Messages: the hot window's as today, and the sealed turns' from their segments; newest `limit` overall.
     const first = hotTurns.at(0)?.messageId
     const last = hotTurns.at(-1)?.messageId
     const hotMessages = first && last ? await this.restore(sessionId, store.windowMessages(sessionId, first, last, limit)) : []
@@ -201,7 +186,6 @@ export class SessionStorage {
     return { turns: [...sealed.map((entry) => entry.turn), ...hotTurns], messages, finalAssistantText, hasEarlier: hotEarlier || sealedEarlier, sealedPrompts }
   }
 
-  /** One turn's transcript (its newest `limit` messages) and its family, from wherever they are. */
   async readTurn(sessionId: string, messageId: string, limit: number): Promise<{ turns: Turn[]; messages: StoredMessage[]; finalAssistantText: string; sealedPrompts?: Map<string, string> }> {
     const { store } = this
     if (store.getTurn(sessionId, messageId)) {
@@ -211,7 +195,6 @@ export class SessionStorage {
     const manifest = manifestOf(store.db, sessionId)
     const found = await this.findSealed(manifest, messageId)
     if (!found) return { turns: [], messages: [], finalAssistantText: "" }
-    // Its tasks and their reports come after it: in its segment, later ones, or hot.
     const family: Turn[] = []
     const tasks = new Set<string>()
     for (const entry of manifest.filter((item) => item.n >= found.n)) {
@@ -242,13 +225,11 @@ export class SessionStorage {
     const transcript = found.data.messages.filter((row) => str(row, "message_id") === messageId).map(parseMessageRow)
     const row = found.data.turns[found.index]
     const own = row ? toTurn(row) : null
-    // A message stopped before it started has only its prompt, as a hot one shows it.
     const sealedPrompts = new Map<string, string>()
     if (row && own && own.kind === undefined && (own.status === "queued" || own.status === "aborted") && transcript.length === 0) sealedPrompts.set(messageId, str(row, "prompt"))
     return { turns: [...family, ...hotFamily], messages: transcript.slice(-limit), finalAssistantText: assistantText(transcript, messageId), sealedPrompts }
   }
 
-  /** Where a `before` cursor points. */
   private async resolveCursor(sessionId: string, before: string, manifest: ManifestEntry[]): Promise<Cursor> {
     const { store } = this
     if (store.getTurn(sessionId, before)) return { kind: "hot", messageId: before }
@@ -257,7 +238,6 @@ export class SessionStorage {
     return found ? { kind: "sealed", n: found.n, index: found.index } : { kind: "none" }
   }
 
-  /** The turns before seq `seq`: before the turn holding it, or else before the first turn starting at or after it. */
   private async seqCursor(sessionId: string, seq: number, manifest: ManifestEntry[]): Promise<Cursor> {
     const db = this.store.db
     const owner = z.object({ message_id: z.string() }).safeParse(db.prepare("SELECT message_id FROM messages WHERE session_id = ? AND seq = ?").get(sessionId, seq))
@@ -282,7 +262,6 @@ export class SessionStorage {
     return next.success ? { kind: "hot", messageId: next.data.message_id } : { kind: "end" }
   }
 
-  /** A sealed turn by messageId, newest segment first. */
   private async findSealed(manifest: ManifestEntry[], messageId: string): Promise<{ n: number; index: number; data: SegmentData } | null> {
     for (const entry of [...manifest].reverse()) {
       if (entry.turns === 0) continue
@@ -293,7 +272,6 @@ export class SessionStorage {
     return null
   }
 
-  /** Up to `needed` sealed turns before `position` (or the newest), oldest first. */
   private async sealedBefore(manifest: ManifestEntry[], position: { n: number; index: number } | null, needed: number) {
     const taken: SealedTurn[] = []
     const data = new Map<number, SegmentData>()
@@ -315,12 +293,6 @@ export class SessionStorage {
     return { turns: taken, hasEarlier, data }
   }
 
-  // ------------------------------------------------------------------ export
-
-  /**
-   * Every row of the conversation, sealed turns included and large bodies inline: an export stays lossless whatever
-   * was sealed. Never segment files or step checkpoints.
-   */
   async exportConversation(id: string): Promise<ConversationRows | null> {
     const hot = this.store.exportConversation(id)
     if (!hot) return null
@@ -334,7 +306,6 @@ export class SessionStorage {
     return { ...hot, turns: [...sealedTurns, ...hot.turns], messages: [...sealedMessages, ...(await this.inlineBodies(id, hot.messages))] }
   }
 
-  /** Message rows with any large body put back in, rewritten only where one was. */
   private async inlineBodies(sessionId: string, rows: SqlRow[]): Promise<SqlRow[]> {
     const refs = this.bodies.refs(sessionId, rows.map((row) => num(row, "seq")))
     if (refs.size === 0) return rows
@@ -347,13 +318,6 @@ export class SessionStorage {
     )
   }
 
-  // ------------------------------------------------------------------ deletes
-
-  /**
-   * Deletes the session: its hot rows (overwritten in place first, so the bytes leave the database file and the
-   * replicated pages that follow), and after they commit its segments, large bodies and kept files. Objects that
-   * can't be deleted now stay queued (storage_deletions) for the `segment-orphans` job. False when it doesn't exist.
-   */
   async deleteSession(id: string): Promise<boolean> {
     const { store } = this
     if (!store.getSession(id)) return false
@@ -368,7 +332,6 @@ export class SessionStorage {
       inTransaction: () => {
         scrubSession(store, id)
         for (const key of keys) this.queueDeletion(key, "object", now)
-        // Everything else under the session's prefix (previews, objects uploaded but never recorded).
         this.queueDeletion(`sessions/${id}/`, "prefix", now)
       },
     })
@@ -378,30 +341,18 @@ export class SessionStorage {
     return true
   }
 
-  /**
-   * What the host lets the runner do to drop deleted bytes from the database file. On Node: checkpoint the WAL so the
-   * old page images go. Durable Object hosts (celld, Cloudflare) deny every pragma but a short list and VACUUM (an
-   * internal ATTACH): nothing more is possible there; see README "Deleting a conversation".
-   */
   private purgeHostCopies() {
     try {
       this.store.db.exec("PRAGMA wal_checkpoint(TRUNCATE)")
     } catch {
-      // Not permitted on this host.
     }
   }
 
-  /**
-   * Removes a message and what it led to (as Store.deleteTurns), also when that reaches sealed turns: each segment
-   * holding one is rewritten without them (a new object, the manifest swapped in one transaction with the hot rows'
-   * deletion, the old object deleted after). Null while any of them is queued or running.
-   */
   async deleteTurns(sessionId: string, messageId: string, options: { andAfter?: boolean } = {}): Promise<string[] | null> {
     const { store } = this
     const manifest = manifestOf(store.db, sessionId)
     const hotRoot = store.getTurn(sessionId, rootOf(messageId)) !== null || rootOf(messageId) === messageId
     if (manifest.length === 0 || (store.getTurn(sessionId, messageId) && hotRoot)) return store.deleteTurns(sessionId, messageId, options)
-    // The whole ordered turn list, sealed first.
     const loaded = new Map<number, SegmentData>()
     const all: Array<{ turn: Turn; n: number | null }> = []
     for (const entry of manifest) {
@@ -419,7 +370,6 @@ export class SessionStorage {
     if (removed.some((entry) => ACTIVE.has(entry.turn.status))) return null
     const removedIds = new Set(removed.map((entry) => entry.turn.messageId))
     const hotIds = removed.filter((entry) => entry.n === null).map((entry) => entry.turn.messageId)
-    // Rewrite each segment that loses turns (or drop it when none stay).
     const rewrites: Array<{ old: ManifestEntry; next: ManifestEntry | null; data: SegmentData | null; size: number }> = []
     for (const entry of manifest) {
       const data = loaded.get(entry.n)
@@ -459,9 +409,6 @@ export class SessionStorage {
     return ids
   }
 
-  // ------------------------------------------------------------------ sealing
-
-  /** Encodes, uploads and verifies a segment; the caller commits its manifest entry. */
   private async writeSegment(sessionId: string, n: number, turns: SqlRow[], messages: SqlRow[], rev?: string) {
     const blobs = this.blobs
     if (!blobs) throw new SegmentError("segments_unavailable", "no file store is configured for sealed history")
@@ -481,8 +428,8 @@ export class SessionStorage {
     const bytes = await encodeSegment(data)
     const sha256 = sha256Hex(bytes)
     const storageKey = segmentKey(sessionId, n, rev)
+    this.noteStored()
     await blobs.put(storageKey, bytes, "application/gzip")
-    // Read back and verify before anything refers to it.
     const back = await blobs.get(storageKey)
     if (!back || sha256Hex(back) !== sha256) {
       await blobs.delete(storageKey).catch(() => undefined)
@@ -506,12 +453,6 @@ export class SessionStorage {
     return { entry, data, size: messages.reduce((sum, row) => sum + str(row, "body").length, 0) }
   }
 
-  /**
-   * The oldest whole turns of a session that may be sealed, up to about `targetBytes`: a prefix of its turns that are
-   * all completed, failed or aborted, with nothing of their task family still open, no next step scheduled, before
-   * the model's context (`context_from`, or where a budget-bounded read stops) and not among the newest
-   * MIN_HOT_TURNS.
-   */
   sealable(sessionId: string, targetBytes: number): { ids: string[]; bytes: number } | null {
     const db = this.store.db
     const turns = db.prepare("SELECT message_id, status FROM turns WHERE session_id = ? ORDER BY rowid").all(sessionId).map((row) => lightTurn.parse(row))
@@ -546,10 +487,6 @@ export class SessionStorage {
     return ids.length ? { ids, bytes } : null
   }
 
-  /**
-   * Where the model's view starts: `context_from` once the conversation outgrew the context; before that, where a
-   * budget-bounded context read of the newest turn stops (as Store.contextMessages reads). Null with no transcript.
-   */
   private contextBoundary(sessionId: string): number | null {
     const { store } = this
     const from = store.contextFrom(sessionId)
@@ -562,7 +499,6 @@ export class SessionStorage {
       .prepare("SELECT seq, message_id, body FROM messages WHERE session_id = ? AND message_id NOT IN (SELECT message_id FROM turns WHERE session_id = ? AND kind = 'task') ORDER BY seq DESC")
       .iterate(sessionId, sessionId)) {
       const value = z.object({ seq: z.number(), message_id: z.string(), body: z.string() }).parse(row)
-      // The newest turn plays the current one: its own rows don't count against the budget.
       if (current === null) current = value.message_id
       else if (used > this.settings.contextCharBudget && value.message_id !== previous) break
       oldest = value.seq
@@ -574,7 +510,6 @@ export class SessionStorage {
     return oldest
   }
 
-  /** The rows a seal of these turns writes, read the same way again inside its transaction to see nothing changed. */
   private sealRows(sessionId: string, ids: string[]) {
     const db = this.store.db
     const turns: SqlRow[] = []
@@ -599,12 +534,6 @@ export class SessionStorage {
     return { turns, messages, refs }
   }
 
-  /**
-   * Seals one segment of the session's oldest sealable turns: written, uploaded, read back and verified; then in one
-   * transaction the rows are checked unchanged (else the object is deleted and nothing happens), the manifest entry is
-   * added, the hot rows go and the Den index update is queued. A crash before the commit leaves at most an orphan
-   * object. `conflict`: something changed meanwhile; `none`: nothing to seal.
-   */
   async sealSession(sessionId: string, targetBytes = this.settings.segmentTargetBytes): Promise<"sealed" | "conflict" | "none"> {
     const { store } = this
     if (!this.blobs) throw new SegmentError("segments_unavailable", "no file store is configured for sealed history")
@@ -614,7 +543,6 @@ export class SessionStorage {
     const n = nextN()
     const read = this.sealRows(sessionId, selection.ids)
     const fingerprint = sha256Hex(JSON.stringify(read))
-    // Large bodies go into the segment whole: it alone pages and exports these turns.
     const inlined = await this.inlineBodies(sessionId, read.messages)
     const written = await this.writeSegment(sessionId, n, read.turns.map(withoutGrant), inlined)
     const now = this.now()
@@ -643,7 +571,6 @@ export class SessionStorage {
     return "sealed"
   }
 
-  /** Inside the seal's transaction: still nothing open in the turns' families and no next step scheduled. */
   private stillSealable(sessionId: string, ids: string[]) {
     const db = this.store.db
     const roots = new Set(ids.map(rootOf))
@@ -652,7 +579,6 @@ export class SessionStorage {
     return ![...open, ...scheduled].some((row) => roots.has(rootOf(z.object({ message_id: z.string() }).parse(row).message_id)))
   }
 
-  /** Re-encodes every segment of a session (verified on the way), swapping each in its own transaction. */
   async reseal(sessionId: string): Promise<number> {
     let count = 0
     for (const entry of manifestOf(this.store.db, sessionId)) {
@@ -674,7 +600,6 @@ export class SessionStorage {
     return count
   }
 
-  /** Each segment fetched and checked against its manifest checksum and header. */
   async verify(sessionId: string): Promise<Array<{ n: number; ok: boolean; error?: string }>> {
     const results: Array<{ n: number; ok: boolean; error?: string }> = []
     for (const entry of manifestOf(this.store.db, sessionId)) {
@@ -693,7 +618,6 @@ export class SessionStorage {
     return results
   }
 
-  /** What a session holds where: hot rows, manifest, large bodies, pending seal failures. */
   inspect(sessionId: string) {
     const db = this.store.db
     const count = (sql: string) => numberRow.parse(db.prepare(sql).get(sessionId)).n ?? 0
@@ -715,7 +639,6 @@ export class SessionStorage {
     }
   }
 
-  /** Seals everything sealable in a session now, whatever the triggers (the CLI's force-seal). Still never breaks a rule. */
   async sealAll(sessionId: string): Promise<number> {
     let sealed = 0
     for (let round = 0; round < 10_000; round += 1) {
@@ -726,9 +649,6 @@ export class SessionStorage {
     return sealed
   }
 
-  // ------------------------------------------------------------------ background jobs
-
-  /** The jobs this module runs with no request (registered in createRuntime). */
   jobs(): BackgroundJob[] {
     return [
       { name: "seal", nextAt: () => this.sealNextAt(), run: () => this.sealRun() },
@@ -745,18 +665,11 @@ export class SessionStorage {
     return due.length ? Math.min(...due) : null
   }
 
-  /**
-   * One sealer pass: counts a few sessions' hot bytes if any were never counted, then seals at most one segment from
-   * the session most in need, when the hot database is over its limit or a session's sealable part is over the
-   * segment target. Failures follow 1B's guarantees: a persisted attempt count and backoff, reported as `seal_failed`
-   * once they keep failing.
-   */
   private async sealRun() {
     const { store } = this
     this.sealSeen = store.turnsEnded
     this.sealDueAt = null
     this.sealMore = false
-    // A pass that fails before it ends (reported by BackgroundJobs) looks again in a minute, never in a tight loop.
     this.uncounted = false
     this.sealRetryAt = this.now() + 60_000
     const db = store.db
@@ -788,7 +701,6 @@ export class SessionStorage {
         if (result === "sealed") {
           console.log(`[headless-runner] sealed ${JSON.stringify({ sessionId, turns: selection.ids.length, bytes: selection.bytes, ms: Date.now() - started })}`)
         }
-        // Sealed (maybe more to do) or something changed meanwhile: look again right away.
         if (result !== "none") this.sealMore = true
       } catch (error) {
         this.sealFailed(sessionId, error, Date.now() - started)
@@ -815,27 +727,54 @@ export class SessionStorage {
   private orphansNextAt(): number | null {
     if (!this.blobs) return null
     if (this.deletionsDueAt === undefined) this.deletionsDueAt = numberRow.parse(this.store.db.prepare("SELECT MIN(due_at) AS n FROM storage_deletions").get()).n
-    if (this.sealing && this.orphansDueAt === null) this.orphansDueAt = (Number(readMeta(this.store.db, ORPHANS_AT) ?? "0") || 0) + ORPHAN_SCAN_MS
-    const due = [this.deletionsDueAt, this.sealing ? this.orphansDueAt : null].filter((at): at is number => at !== null)
+    if (this.sealing && this.orphansDueAt === undefined) this.orphansDueAt = this.orphanCheckDueAt()
+    const due = [this.deletionsDueAt, this.sealing ? this.orphansDueAt : null].filter((at): at is number => typeof at === "number")
     return due.length ? Math.min(...due) : null
   }
 
-  /** Retries queued deletions; once a day (with sealing on) deletes this cell's unreferenced segments and bodies. */
+  private orphanCheckDueAt(): number | null {
+    const db = this.store.db
+    const since = this.readStored().since
+    if (since === null) {
+      const checkedAt = metaNumber(db, ORPHANS_AT) ?? 0
+      const has = (table: "segments" | "large_bodies") => db.prepare(`SELECT 1 AS n FROM ${table} LIMIT 1`).get() !== undefined
+      return checkedAt > 0 || has("segments") || has("large_bodies") ? checkedAt + ORPHAN_MIN_AGE_MS : null
+    }
+    return since > 0 ? since + ORPHAN_COVER_MS : null
+  }
+
+  private readStored() {
+    if (this.storedSince === undefined) this.storedSince = metaNumber(this.store.db, STORED_SINCE)
+    if (this.storedAt === undefined) this.storedAt = metaNumber(this.store.db, STORED_AT)
+    return { since: this.storedSince, at: this.storedAt }
+  }
+
+  private noteStored() {
+    if (!this.sealing) return
+    const db = this.store.db
+    const now = this.now()
+    const stored = this.readStored()
+    if (stored.since === null || stored.since <= 0) {
+      writeMeta(db, STORED_SINCE, String(now))
+      this.storedSince = now
+      this.orphansDueAt = undefined
+    }
+    if (stored.at === null || now - stored.at >= STORED_NOTE_EVERY_MS) {
+      writeMeta(db, STORED_AT, String(now))
+      this.storedAt = now
+    }
+  }
+
   private async orphansRun() {
-    // A pass that fails before it ends tries again later, never in a tight loop.
     const now = this.now()
     if (this.deletionsDueAt !== null && this.deletionsDueAt !== undefined && this.deletionsDueAt <= now) this.deletionsDueAt = now + 60_000
     await this.processDeletions()
-    if (this.sealing && this.orphansDueAt !== null && this.orphansDueAt <= now) {
+    if (this.sealing && typeof this.orphansDueAt === "number" && this.orphansDueAt <= now) {
       this.orphansDueAt = now + 3_600_000
       await this.scanOrphans()
     }
   }
 
-  /**
-   * Deletes `sessions/<id>/segments/*` and `sessions/<id>/bodies/*` objects of this cell's sessions that nothing
-   * references and that are older than 24 hours (an upload a commit is about to reference is never that old).
-   */
   async scanOrphans(): Promise<number> {
     const blobs = this.blobs
     const db = this.store.db
@@ -851,7 +790,6 @@ export class SessionStorage {
         for (const prefix of [segmentPrefix(sessionId), bodyPrefix(sessionId)]) {
           for (const object of await blobs.list(prefix)) {
             if (referenced.has(object.key) || now - object.lastModified < ORPHAN_MIN_AGE_MS) continue
-            // Read the references again: a request may have committed one meanwhile.
             if (this.referenced(object.key)) continue
             await blobs.delete(object.key)
             orphans += 1
@@ -861,7 +799,11 @@ export class SessionStorage {
     }
     writeMeta(db, ORPHANS_AT, String(now))
     writeMeta(db, ORPHANS_COUNT, String(orphans))
-    this.orphansDueAt = now + ORPHAN_SCAN_MS
+    const storedAt = this.readStored().at
+    const since = storedAt !== null && storedAt + ORPHAN_COVER_MS > now ? storedAt : 0
+    writeMeta(db, STORED_SINCE, String(since))
+    this.storedSince = since
+    this.orphansDueAt = undefined
     if (orphans) console.log(`[headless-runner] orphan objects deleted ${JSON.stringify({ orphans })}`)
     return orphans
   }
@@ -875,21 +817,15 @@ export class SessionStorage {
     )
   }
 
-  /** Pending deletions were added from outside (a moved chat's, handed over by its owner cell): looked at again. */
   deletionsChanged() {
     this.deletionsDueAt = undefined
   }
 
-  /** Queues an object (or a whole prefix) for deletion after the current transaction commits. */
   private queueDeletion(key: string, kind: "object" | "prefix", dueAt: number) {
     this.store.db.prepare("INSERT INTO storage_deletions (key, kind, due_at, attempt) VALUES (?, ?, ?, 0) ON CONFLICT (key) DO UPDATE SET due_at = MIN(due_at, excluded.due_at)").run(key, kind, dueAt)
     this.deletionsDueAt = Math.min(this.deletionsDueAt ?? dueAt, dueAt)
   }
 
-  /**
-   * Deletes queued objects that are due (only `keys`, when given). One that is referenced again (a session re-created
-   * under the same id, the same large body written again) is kept. A failure is retried later with backoff.
-   */
   private async processDeletions(keys?: string[]) {
     const blobs = this.blobs
     if (!blobs) return
@@ -921,7 +857,6 @@ export class SessionStorage {
   }
 }
 
-/** The first transcript seq of each turn in a segment. */
 function firstSeqs(data: SegmentData) {
   const starts = new Map<string, number>()
   for (const row of data.messages) {
@@ -932,7 +867,6 @@ function firstSeqs(data: SegmentData) {
   return starts
 }
 
-/** What the assistant wrote in one turn, its messages joined. */
 export function assistantText(entries: StoredMessage[], messageId: string) {
   return entries
     .filter((entry) => entry.messageId === messageId)
@@ -940,11 +874,6 @@ export function assistantText(entries: StoredMessage[], messageId: string) {
     .join("\n\n")
 }
 
-/**
- * Overwrites a session's content in place with zero bytes of the same length before its rows are deleted: SQLite then
- * rewrites the same cells (and overflow pages) instead of leaving the old bytes in freed space, and the replicated
- * page images that follow carry zeros. Inside the delete's transaction.
- */
 function scrubSession(store: Store, id: string) {
   const zero = (column: string) => `CASE WHEN ${column} IS NULL THEN NULL ELSE zeroblob(LENGTH(CAST(${column} AS BLOB))) END`
   const db = store.db

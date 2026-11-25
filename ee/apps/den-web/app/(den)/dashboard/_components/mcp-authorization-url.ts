@@ -23,7 +23,6 @@ export function safeMcpAuthorizationUrl(rawUrl: string): string {
 }
 
 export type McpAuthorizationDebugDetails = {
-  /** "unavailable" when the browser never let the page read a response (network failure or CORS-blocked answer). */
   httpStatus: number | "unavailable"
   errorCode?: string
   diagnosticCode?: string
@@ -175,8 +174,6 @@ export function describeMcpAuthorizationFailure(input: {
     }
   }
 
-  // The provider refused to register OpenWork as an OAuth client: its registration is limited to apps it has approved
-  // (for example Figma answers 403 to unapproved clients while accepting allowlisted ones). Retrying cannot help.
   if (details?.phase === "AUTH_CLIENT_REGISTRATION" && (details.diagnosticCode === "MCP_HTTP_403" || details.providerStatus === 403)) {
     return {
       title: `${connectionName} only lets approved apps sign in`,
@@ -245,7 +242,6 @@ export function showMcpAuthorizationFailure(
     }), window.location.origin)
     tab.location.replace(failureUrl.toString())
   } catch {
-    // Leave an isolated provider tab open so its own error remains available.
   }
 }
 

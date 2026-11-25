@@ -16,25 +16,16 @@ import { useSidePanelTabs } from "./use-side-panel-tabs";
 import { getElectronBrowser } from "./utils";
 
 type BrowserWindowProps = {
-  /** The container inside the popped-out window. */
   slot: HTMLElement;
   sessionId: string;
-  /** The page on screen, one of `tabs`. */
   tab: BrowserPanelTab;
   tabs: BrowserPanelTab[];
   onPresent: (mode: BrowserPresentationMode) => void;
 };
 
-/**
- * The browser in its own OS window: the conversation's tabs in the title bar,
- * the same toolbar as beside the chat, and the live page below them. Closing
- * the window puts the page back beside the chat.
- */
 export function BrowserWindow({ slot, sessionId, tab, tabs, onPresent }: BrowserWindowProps) {
   const { createTab, closeTab } = useSidePanelTabs(sessionId);
 
-  // Straight to the host: a selection in the panel store would also move an
-  // artifact open beside the chat aside, and pull the page back there.
   const selectTab = (tabId: string) => {
     void getElectronBrowser()?.selectTab?.(tabId).catch((error: unknown) => {
       toast.error(error instanceof Error ? error.message : String(error));

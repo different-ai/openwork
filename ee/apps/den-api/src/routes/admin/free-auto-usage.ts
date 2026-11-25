@@ -1,5 +1,7 @@
+import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { and, count, eq, gte, inArray, isNotNull, isNull, sql } from "@openwork-ee/den-db/drizzle"
 import {
+  FreeAutoSafetyPauseTable,
   AnonymousInferenceUsageTable,
   InferenceFreeUsageBucketTable,
   InferenceFreeUsageTable,
@@ -18,12 +20,11 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { db } from "../../db.js"
 import { env } from "../../env.js"
-import { adminRoute, queryValidator } from "../../middleware/index.js"
+import { adminRoute, jsonValidator, queryValidator } from "../../middleware/index.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, unauthorizedSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 
 const DAY_MS = 86_400_000
-/** Organizations listed in full; the rest are summed into one row so totals always add up. */
 export const FREE_AUTO_USAGE_ORGANIZATION_LIMIT = 200
 
 const querySchema = z.object({ days: z.coerce.number().int().min(1).max(90).default(30) })
@@ -83,7 +84,6 @@ function number(value: unknown): number {
   if (!Number.isSafeInteger(parsed) || parsed < 0) throw new Error("free_auto_usage_invalid_totals")
   return parsed
 }
-/** Allowance amounts are stored at INFERENCE_USAGE_CONVERSION_FACTOR units per USD; reports use micro-USD. */
 function microUsd(amount: number): number {
   return Math.round(amount * 1_000_000 / INFERENCE_USAGE_CONVERSION_FACTOR)
 }
@@ -98,7 +98,6 @@ function addUsage(target: Usage, source: Usage) {
   target.cachedInputTokens += source.cachedInputTokens
   target.outputTokens += source.outputTokens
 }
-/** The driver returns an aggregated TIMESTAMP as a Date or as a "YYYY-MM-DD HH:MM:SS" string. */
 function timestamp(value: unknown): string | null {
   if (value instanceof Date) return Number.isFinite(value.getTime()) ? value.toISOString() : null
   if (typeof value !== "string" || !value) return null
@@ -109,17 +108,12 @@ function utcDayStart(time: number) {
   return Math.floor(time / DAY_MS) * DAY_MS
 }
 
-/**
- * Free Auto usage across all of OpenWork Cloud: members per organization and guests in aggregate.
- * Guests have no organization or account, so they are only ever reported as totals.
- */
 export async function readFreeAutoUsage(input: { days: number; now?: Date }): Promise<FreeAutoUsageReport> {
   const now = input.now ?? new Date()
   const from = new Date(utcDayStart(now.getTime()) - (input.days - 1) * DAY_MS)
   const week = freeInferenceWindow(now)
   const members = InferenceFreeUsageTable
   const guests = AnonymousInferenceUsageTable
-  // UNIX_TIMESTAMP on a TIMESTAMP column is UTC whatever the session time zone is.
   const memberDay = sql<number>`floor(unix_timestamp(${members.created_at}) / 86400)`
   const guestDay = sql<number>`floor(unix_timestamp(${guests.created_at}) / 86400)`
   const usageColumns = (table: typeof members | typeof guests) => ({
@@ -145,7 +139,6 @@ export async function readFreeAutoUsage(input: { days: number; now?: Date }): Pr
     }).from(members).where(gte(members.created_at, from)).groupBy(members.organization_id),
     db.select({ activePeople: sql<number>`count(distinct ${members.principal_hash})` }).from(members).where(gte(members.created_at, from)),
     db.select({ activePeople: sql<number>`count(distinct ${members.principal_hash})` }).from(members).where(gte(members.created_at, week.start)),
-    // The weekly allowance is per person across organizations; count a person against each organization they used this week.
     db.selectDistinct({ organizationId: members.organization_id, principalHash: members.principal_hash }).from(members)
       .innerJoin(InferenceFreeUsageBucketTable, and(
         eq(InferenceFreeUsageBucketTable.identity_hash, members.principal_hash),
@@ -242,6 +235,27 @@ export async function readFreeAutoUsage(input: { days: number; now?: Date }): Pr
 }
 
 export function registerAdminFreeAutoUsageRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
+  const pauseInput = z.object({
+    identifier: z.string().regex(/^[a-f0-9]{64}$/),
+    hours: z.number().int().min(0).max(168),
+    reason: z.enum(["provider_notice", "confirmed_misuse", "review_complete"]),
+  }).strict()
+  app.put("/v1/admin/free-auto/safety-pause", describeRoute({
+    tags: ["Admin"], summary: "Set a temporary Free Auto safety pause",
+    description: "Platform administrators can pause a reviewed identifier across organizations, or release it by setting hours to zero.",
+    responses: {
+      200: jsonResponse("Pause expiry.", z.object({ expiresAt: z.iso.datetime() })),
+      400: jsonResponse("Invalid safety pause.", invalidRequestSchema),
+      401: jsonResponse("Sign in required.", unauthorizedSchema),
+      403: jsonResponse("Platform administrator required.", forbiddenSchema),
+    },
+  }), adminRoute(), jsonValidator(pauseInput), async c => {
+    const { identifier, hours, reason } = c.req.valid("json")
+    const expiresAt = new Date(Date.now() + hours * 3_600_000)
+    const change = { expires_at: expiresAt, reason, actor_id: normalizeDenTypeId("user", c.get("user").id) }
+    await db.insert(FreeAutoSafetyPauseTable).values({ identifier, ...change }).onDuplicateKeyUpdate({ set: change })
+    return c.json({ expiresAt: expiresAt.toISOString() }, 200, { "cache-control": "no-store" })
+  })
   app.get(
     "/v1/admin/free-auto/usage",
     describeRoute({

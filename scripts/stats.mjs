@@ -10,8 +10,8 @@ const POSTHOG_LEGACY_EVENT = process.env.POSTHOG_LEGACY_EVENT || process.env.POS
 const POSTHOG_V2_EVENT = process.env.POSTHOG_V2_EVENT || "release_asset_snapshot"
 const POSTHOG_DISTINCT_ID = process.env.POSTHOG_DISTINCT_ID || "openwork-download"
 const GITHUB_REPO = process.env.GITHUB_REPO || "different-ai/openwork"
-const STATS_FILE = process.env.STATS_FILE || "STATS.md"
-const STATS_V2_FILE = process.env.STATS_V2_FILE || "STATS_V2.md"
+const STATS_FILE = process.env.STATS_FILE || "scripts/stats/STATS.md"
+const STATS_V2_FILE = process.env.STATS_V2_FILE || "scripts/stats/STATS_V2.md"
 
 const LEGACY_HEADER = [
   "# Download Stats",

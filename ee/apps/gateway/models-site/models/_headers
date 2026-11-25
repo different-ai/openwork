@@ -1,6 +1,9 @@
 # Cloudflare's edge reads Cloudflare-CDN-Cache-Control and does not forward it,
 # so clients keep the Pages default `Cache-Control: public, max-age=0,
-# must-revalidate`. The zone Cache Rule makes /api.json cacheable, and
-# .github/workflows/purge-model-catalog.yml purges it once a new catalog is live.
+# must-revalidate`. The zone Cache Rule makes both catalogs cacheable, and
+# .github/workflows/purge-model-catalog.yml purges them once a new catalog is live.
 /api.json
+  Cloudflare-CDN-Cache-Control: max-age=300, stale-while-revalidate=300, stale-if-error=86400
+
+/experimental/v2.0/api.json
   Cloudflare-CDN-Cache-Control: max-age=300, stale-while-revalidate=300, stale-if-error=86400

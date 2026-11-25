@@ -97,7 +97,6 @@ export function registerOrgWorkflowRunRoutes<T extends { Variables: OrgRouteVari
     },
   )
 
-  // TODO(workflows): remove this one-release compatibility alias.
   app.all("/v1/codemode-runs", (c) => {
     const url = new URL(c.req.raw.url)
     url.pathname = "/v1/workflow-runs"

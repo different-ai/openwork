@@ -67,9 +67,7 @@ type WakeCloudWorkerOptions = {
 type StopIdleCloudWorkersOptions = {
   store?: CloudLifecycleStore
   stopWorker?: StopWorker
-  /** Best-effort checkpoint flush before the stop; a failure never blocks the stop. */
   flushWorker?: FlushWorker
-  /** The running instance to ask before stopping it; `null` means it cannot be asked. */
   resolveInstance?: (workerId: WorkerId) => Promise<IdleStopInstance>
   probeActivity?: ProbeCloudWorkerActivity
   hasActiveAutomationRun?: (workerId: WorkerId) => Promise<boolean>
@@ -93,8 +91,6 @@ function tokenByScope(tokens: WorkerToken[], scope: typeof WorkerTokenTable.$inf
   return tokens.find((entry) => entry.scope === scope)?.token ?? null
 }
 
-// A scheduled headless run can be admitted before the worker's normal
-// activity heartbeat lands. Keep idle shutdown from racing that run.
 function noActiveCloudAutomationRun() {
   return notExists(
     db.select({ id: AutomationRunTable.id }).from(AutomationRunTable)
@@ -221,9 +217,6 @@ async function runClaimedCloudWorkerRecovery(workerId: WorkerId, options: WakeCl
       return
     }
 
-    // The caller atomically moved the worker to provisioning before entering
-    // this primitive. Only that claimant invokes the provider action; other
-    // replicas observe provisioning and poll instead.
     if (worker.status !== "provisioning") return
 
     const tokens = await store.getActiveTokens(workerId)
@@ -321,8 +314,6 @@ async function runWakeCloudWorker(workerId: WorkerId, options: WakeCloudWorkerOp
       return
     }
 
-    // The durable status transition is the cross-replica claim. Only its
-    // winner enters the explicit claimed-recovery primitive below.
     if (worker.status !== "stopped" || !await store.reserveWake(workerId)) return
     await runClaimedCloudWorkerRecovery(workerId, { ...options, store })
   } catch (error) {
@@ -345,7 +336,6 @@ export async function wakeCloudWorker(workerId: WorkerId, options: WakeCloudWork
   return runWorkerRecoveryOnce(workerId, () => runWakeCloudWorker(workerId, options))
 }
 
-/** Run provider recovery after the caller atomically claimed provisioning. */
 export async function recoverClaimedCloudWorker(workerId: WorkerId, options: WakeCloudWorkerOptions = {}) {
   return runWorkerRecoveryOnce(workerId, () => runClaimedCloudWorkerRecovery(workerId, options))
 }
@@ -354,11 +344,6 @@ function stopResultAllowsStoppedStatus(result: StopInstanceResult) {
   return result.status === "stopped" || result.status === "no_instance"
 }
 
-/**
- * Consecutive cycles in which an instance could not be asked. A wedged server
- * on a running VM must not stay up forever, so after this many unknown answers
- * the idle stop proceeds; the unreachable path would restart it anyway.
- */
 export const idleStopUnknownCyclesBeforeStop = 3
 const idleStopUnknownCycles = new Map<WorkerId, number>()
 
@@ -380,7 +365,6 @@ function idleStopMayProceed(workerId: WorkerId, interruptibility: CloudWorkerInt
   return true
 }
 
-/** Test seam: forget unknown-cycle counts between scenarios. */
 export function resetIdleStopUnknownCycles() {
   idleStopUnknownCycles.clear()
 }
@@ -414,8 +398,6 @@ export async function stopIdleCloudWorkers(options: StopIdleCloudWorkersOptions 
 
   for (const worker of workers) {
     try {
-      // The heartbeat is minutes old and only sees session updates. Ask the
-      // instance before taking it away from a run that is still going.
       const interruptibility = await resolveCloudWorkerInterruptibility({
         workerId: worker.id,
         trigger: "idle_stop",
@@ -425,8 +407,6 @@ export async function stopIdleCloudWorkers(options: StopIdleCloudWorkersOptions 
       })
       if (!idleStopMayProceed(worker.id, interruptibility)) continue
       if (!await store.reserveIdleStop({ workerId: worker.id, idleBefore })) continue
-      // Nothing changed since the last periodic flush, so this is normally a
-      // no-op; it exists so no Den-initiated stop can lose state.
       await flushWorker(worker.id).catch((error: unknown) => {
         logger.warn("cloud idle stop checkpoint flush failed", { worker_id: worker.id, error })
         return false

@@ -10,11 +10,6 @@ import { useMemo, useState } from "react";
 import { useRetainedSurface } from "./host";
 import { OpenWorkMark } from "./mark";
 
-/**
- * Which model an Automation uses, in Workbot's style: the current model with its provider's logo, and a list
- * of the models this member may use, grouped by provider with logos, searchable when the list is long.
- */
-
 const SEARCH_THRESHOLD = 8;
 const triggerClass = "flex h-9 w-full min-w-0 items-center gap-2 rounded-lg bg-[var(--wb-surface)] px-2 text-left text-[13px] shadow-[0_0_0_1px_var(--wb-ring)] hover:bg-[var(--wb-tray)] focus-visible:outline-none focus-visible:shadow-[var(--wb-focus)] disabled:opacity-60";
 const popupClass = "workbot flex w-[var(--anchor-width)] max-w-[min(var(--available-width),calc(100vw-1rem))] max-h-[min(18rem,var(--available-height))] flex-col overflow-hidden rounded-lg bg-[var(--wb-surface)] text-[var(--wb-text)] shadow-[var(--wb-panel-shadow)] outline-none";
@@ -33,7 +28,6 @@ function modelKey(option: AutomationModelOption) {
 export function ModelLogo({ option, size = 14 }: { option: Pick<AutomationModelOption, "providerId" | "providerName" | "logoProviderId" | "accessKind">; size?: number }) {
   return (
     <span className="grid shrink-0 place-items-center rounded-md bg-[var(--wb-surface)] text-[var(--wb-ink)] shadow-[0_0_0_1px_var(--wb-ring)]" style={{ width: size + 8, height: size + 8 }}>
-      {/* The organization's choice uses OpenWork's mark, not the resolved model's vendor mark. */}
       {option.accessKind === "cloud_default"
         ? <OpenWorkMark width={size} height={size} />
         : <ProviderIcon providerId={option.logoProviderId ?? option.providerId} providerName={option.providerName} size={size} />}
@@ -78,7 +72,6 @@ export function ModelPicker({ value, options, loading, onChange, label = "Model"
   loading?: boolean;
   onChange: (model: AutomationModel) => void;
   label?: string;
-  /** Preferred opening side; the list flips or shrinks to fit the viewport. */
   side?: "top" | "bottom";
 }) {
   const [open, setOpen] = useState(false);
@@ -110,7 +103,6 @@ export function ModelPicker({ value, options, loading, onChange, label = "Model"
     collisionAvoidance: { side: "flip", align: "shift", fallbackAxisSide: "none" },
   } satisfies Combobox.Positioner.Props;
 
-  // Short lists need Select's Home/End and typeahead, not an invisible combobox input (DESIGN P5).
   if (options.length <= SEARCH_THRESHOLD) {
     return (
       <Select.Root<AutomationModelOption>
@@ -127,7 +119,6 @@ export function ModelPicker({ value, options, loading, onChange, label = "Model"
       >
         <Select.Trigger aria-label={label} className={triggerClass}>{triggerContent}</Select.Trigger>
         <Select.Portal {...surface.portal}>
-          {/* The standalone headless primitive needs the same overlay layer as Workbot's dialogs. */}
           <Select.Positioner {...positioning} alignItemWithTrigger={false} className="z-50">
             <Select.Popup data-workbot-model-popup className={popupClass}>
               <Select.List aria-label={label} className={listClass}>

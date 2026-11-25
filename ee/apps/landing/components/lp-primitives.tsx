@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 import { DownloadLink } from "./download-link";
 
 type LpSectionHeaderProps = {
-  /** id for the heading, for aria-labelledby on the section. */
   id?: string;
   label: string;
   heading: string;
@@ -75,7 +74,6 @@ export function LpTonalCard({ children, className }: LpContainerProps) {
 type LpArrowLinkProps = {
   href: string;
   children: ReactNode;
-  /** Open in a new tab, for links that leave the site. */
   external?: boolean;
 };
 

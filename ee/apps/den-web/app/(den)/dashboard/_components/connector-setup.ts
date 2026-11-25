@@ -36,25 +36,21 @@ export type ConnectorTarget = {
   name: string;
   url: string;
   description: string;
-  /** The catalog preset's own sign-in requirement, when the target came from the catalog. */
   preset?: Pick<ExternalMcpPreset, "authType" | "requiresOAuthClient" | "defaultOAuthClientId">
     & Partial<Pick<ExternalMcpPreset, "presetId" | "defaultOAuthScopes" | "optionalOAuthScopes" | "oauthCallbackUrl">>
     | null;
-  /** Scopes the admin explicitly chose (guided Slack setup); they win over the preset's and the server's lists. */
   requestedScopes?: readonly string[];
 };
 
 const POLL_INTERVAL_MS = 1500;
 const POLL_TIMEOUT_MS = 90_000;
 
-/** "send_message" reads as "Send message". */
 export function toolTitle(tool: Pick<ExternalMcpTool, "name" | "title" | "annotations">): string {
   const raw = tool.title ?? tool.annotations?.title ?? tool.name.replace(/[_-]+/g, " ");
   const words = raw.trim();
   return words ? `${words.charAt(0).toUpperCase()}${words.slice(1)}` : tool.name;
 }
 
-/** One sentence from a tool description, without markdown or trailing detail. */
 export function toolSummary(tool: Pick<ExternalMcpTool, "description">): string {
   const text = (tool.description ?? "").replace(/[`*_#>]/g, "").replace(/\s+/g, " ").trim();
   if (!text) return "";
@@ -76,30 +72,19 @@ type SignInState =
 
 export type ConnectorSetupMode = "admin" | "member";
 
-/** The fields step two needs from an admin before anyone can sign in. */
 export type OAuthAppInput = { clientId: string; clientSecret: string; manualOAuthEndpoints?: { authorizationEndpoint: string; tokenEndpoint: string } };
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
 }
 
-/**
- * Runs the four setup checks for one connector: OpenWork finds the server,
- * learns how people sign in, signs the viewer in, and reads what the AI can do.
- * The connection is created for the viewer only: at sign-in, when an admin
- * saves the key or OAuth app step two asks for, or right away when there is
- * nothing to sign in to.
- */
 export function useConnectorSetup({ target, initialConnectionId, onConnectionCreated, mode = "member", route = null, routeRequired = false, liveDiscovery = false }: {
   target: ConnectorTarget | null;
   initialConnectionId: string | null;
   onConnectionCreated?: (connectionId: string) => void;
   mode?: ConnectorSetupMode;
-  /** The sign-in route the admin chose for a custom connector; it overrides detection. */
   route?: ConnectorRoute | null;
-  /** A custom connector waits for its route before any check creates a connection. */
   routeRequired?: boolean;
-  /** Stream real phase results for the opt-in custom connector checklist. */
   liveDiscovery?: boolean;
 }) {
   const queryClient = useQueryClient();
@@ -133,7 +118,6 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
   const [hasSubmittedConfiguration, setHasSubmittedConfiguration] = useState(false);
 
   const connection: ExternalMcpConnection | null = usable.data?.find((entry) => entry.id === connectionId) ?? null;
-  // A chosen route answers what detection could not, so only an unreachable server fails the first check.
   const findDone = !discoveryPending && discovery !== null && discovery.status !== "unreachable" && (discovery.status !== "unsupported" || route !== null);
   const awaitingRoute = routeRequired && route === null;
   const method: ConnectorSignInMethod | null = !findDone || !discovery || awaitingRoute
@@ -153,8 +137,6 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     const controller = new AbortController();
     let current = true;
     const identity = `${orgId}\n${discoveryUrl}`;
-    // Retrying the same server keeps its detected selection and own-app fields mounted.
-    // Different servers/organizations must never inherit the previous discovery.
     if (discoveryIdentity.current !== identity) setDiscovery(null);
     discoveryIdentity.current = identity;
     setDiscoveryPending(true);
@@ -240,7 +222,6 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     });
   }, [method, connectionId, createForMe]);
 
-  /** Step two for a server that takes a key: the admin's key is shared by everyone who gets it. */
   const saveApiKey = useCallback(async (apiKey: string, apiKeyAuthScheme: ExternalMcpApiKeyAuthScheme) => {
     const key = apiKey.trim();
     if (!key) {
@@ -258,7 +239,6 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     }
   }, [createForMe]);
 
-  /** Creates one organization connection; every granted member supplies their own key later. */
   const savePerMemberApiKeys = useCallback(async (apiKeyAuthScheme: ExternalMcpApiKeyAuthScheme) => {
     setSaving(true);
     setSaveError(null);
@@ -271,11 +251,6 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     }
   }, [createForMe]);
 
-  /**
-   * Step two for a server that only accepts a pre-registered OAuth app; sign-in follows.
-   * Also the way out when automatic sign-in setup fails: the OAuth app is
-   * added to the connection that sign-in already created.
-   */
   const saveOAuthApp = useCallback(async (input: OAuthAppInput) => {
     const clientId = input.clientId.trim();
     const clientSecret = input.clientSecret.trim();
@@ -291,7 +266,6 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     setSaveError(null);
     const oauthClient = { clientId, ...(clientSecret ? { clientSecret } : {}) };
     try {
-      // A failed sign-in attempt updates the connection, so read its latest version first.
       const latest = connection ? (await usable.refetch()).data?.find((entry) => entry.id === connection.id) ?? connection : null;
       if (latest && latest.authType === "oauth" && latest.updatedAt) {
         await updateConnection.mutateAsync({
@@ -390,7 +364,6 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     }
   }, [connectionId, createForMe, queryClient, startOAuth, stopPolling, target, usable]);
 
-  /** Edit an unpublished setup without leaving an orphan connection or silently losing its draft. */
   const restartSetup = useCallback(async (): Promise<boolean> => {
     setupSuspended.current = true;
     submittedConfiguration.current = null;
@@ -418,7 +391,6 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     } finally { setSaving(false); }
   }, [connectionId, createdHere, deleteConnection, queryClient, stopPolling]);
 
-  /** Cancel removes a connection this flow created and never finished. */
   const discard = useCallback(async () => {
     setupSuspended.current = true;
     submittedConfiguration.current = null;
@@ -432,11 +404,6 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     }
   }, [connectionId, createdHere, deleteConnection, queryClient, stopPolling]);
 
-  /**
-   * Add it without every check passing, e.g. when the provider refuses
-   * automatic sign-in setup. Creates the connection if no step has yet, so the
-   * admin can finish its settings on the connector's page later.
-   */
   const skipChecks = useCallback(async () => {
     stopPolling();
     setSkipping(true);
@@ -548,7 +515,6 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     tools: toolList,
     retryTools: tools.refetch,
     method,
-    /** Step two is waiting on a key or OAuth app from this viewer. */
     needsInput: needsAdminInput && mode === "admin" && !connection,
     discovery,
     discoveryChecks,
@@ -557,9 +523,7 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
       if (headers) setProbeHeaders(headers);
       setDiscoveryAttempt((attempt) => attempt + 1);
     },
-    /** The first check is still waiting on the server. */
     discovering: discoveryPending,
-    /** OpenWork could not reach the server at all. */
     unreachable: discoveryError !== null || discovery?.status === "unreachable",
     secretRequired: oauthClientSecretRequired(discovery),
     saving,
@@ -571,14 +535,12 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
     signedIn,
     signingIn: signIn.kind === "waiting",
     signInError: signIn.kind === "failed" ? signIn.message : null,
-    /** Sign-in failed for a server people sign in to; an admin can try their own OAuth app instead. */
     signInFailed: signIn.kind === "failed" && (method === "sign_in" || connection?.authType === "oauth"),
     startSignIn,
     restartSetup,
     canEditSetup: !connectionId || createdHere,
     connectionProblem: signIn.kind === "failed" ? signIn.message : saveError,
     discard,
-    /** A check failed, so an admin may add the connector anyway and finish it from its page. */
     canSkip: mode === "admin" && anyFailed && !skipped,
     skipped,
     skipping,
@@ -587,7 +549,6 @@ export function useConnectorSetup({ target, initialConnectionId, onConnectionCre
   };
 }
 
-/** Signs the viewer in to a connector someone gave them, from a list row or its page. */
 export function useMemberSignIn() {
   const queryClient = useQueryClient();
   const startOAuth = useStartMcpConnectionOAuth();

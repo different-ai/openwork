@@ -25,7 +25,6 @@ export type OrgPaymentRequiredError = {
   message: string;
   currentCount: number;
   freeSeatCount: number;
-  /** The Team plan with this person added (ENG-874); null from older Den APIs. */
   quote: SeatPlanQuote | null;
 };
 
@@ -142,7 +141,6 @@ export function trackPosthogEvent(eventName: string, properties: Record<string, 
   try {
     window.posthog?.capture?.(eventName, properties);
   } catch {
-    // Ignore analytics delivery failures.
   }
 }
 
@@ -157,7 +155,6 @@ export function identifyPosthogUser(user: AuthUser) {
       name: user.name ?? undefined
     });
   } catch {
-    // Ignore analytics delivery failures.
   }
 }
 
@@ -169,7 +166,6 @@ export function resetPosthogUser() {
   try {
     window.posthog?.reset?.();
   } catch {
-    // Ignore analytics delivery failures.
   }
 }
 
@@ -219,7 +215,6 @@ export function getSocialCallbackUrl(authCallbackBaseUrl = "", requestedReturnTo
       try {
         return new URL("/", authCallbackBaseUrl).toString();
       } catch {
-        // Fall through to the hosted default when the configured URL is invalid.
       }
     }
     return typeof window !== "undefined" ? `${window.location.origin}/` : "/";
@@ -340,7 +335,6 @@ function seatPlanQuote(value: unknown): SeatPlanQuote | null {
   return parsed.success ? parsed.data : null;
 }
 
-/** What people see when an invitation would take a Free plan workspace past its user limit. */
 export function freePlanUserLimitMessage(freeSeatCount: number): string {
   return `The Free plan is limited to ${freeSeatCount} users, counting pending invitations. Upgrade to the Team plan from Billing to invite more people.`;
 }
@@ -456,7 +450,6 @@ export function getWorkflowRuns(payload: unknown): WorkflowRun[] {
   });
 }
 
-/** Shared authenticated transport for JSON and streamed browser requests. */
 export async function requestResponse(path: string, init: RequestInit = {}, timeoutMs = 30000): Promise<Response> {
   const headers = new Headers(init.headers);
   if (!headers.has("Accept")) headers.set("Accept", "application/json");
@@ -488,8 +481,6 @@ export async function requestResponse(path: string, init: RequestInit = {}, time
   let response: Response;
   try {
     if (typeof window !== "undefined" && !isSameOriginBrowserRequest(path)) {
-      // Only cross-origin Den API URLs depend on the runtime API origin. Waiting
-      // for it on same-origin requests would serialize every page load behind it.
       await getRuntimeConfig();
     }
     const endpoint = path.startsWith("/api/auth/") ? path : denBrowserEndpoint(path);
@@ -506,8 +497,6 @@ export async function requestResponse(path: string, init: RequestInit = {}, time
       }).catch(() => null);
     }
   } catch (error) {
-    // Only the deadline created by this helper becomes a timeout. An abort
-    // supplied by a caller becomes a distinct cancellation error.
     if (didReachDashboardDeadline) {
       throw new DenRequestTimeoutError(timeoutMs, error);
     }

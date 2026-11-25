@@ -11,8 +11,7 @@ scripts/workshop/seat.sh attendee07 stop  # status|task|stop|unlock|reset|prepar
 scripts/workshop/stop.sh                  # tear everything down
 ```
 
-The `launch-workshop` skill wraps these, so "start the workshop with 30 seats"
-in OpenWork does the same. Private files (attendee links, member test logins)
+Private files (attendee links, member test logins)
 go to `~/.openwork/workshops/<stage>/` (override with `WORKSHOP_HOME`), never
 into a checkout.
 

@@ -5,15 +5,15 @@
 - **Author:** [benjaminshafii](https://github.com/benjaminshafii)
 - **Availability:** generally available; no organization override needed
 
-The desktop and web app replace the Dashboard masonry with an Artifacts list.
+Open Artifacts in the desktop or web app to find and open interactive views.
 The groups are **Pinned**, **Yours** (created by this member), and **Team**
-(other accessible artifacts). A newly built App is available in Yours without
+(other accessible artifacts). A newly built artifact is available in Yours without
 finding it in a second picker. Catalog provenance is display-only: existing
-App/plugin permissions continue to control access and sharing.
+Artifact and plugin permissions continue to control access and sharing.
 
 ## What changes
 
-- Listing artifacts does not mount or launch their Apps.
+- OpenWork launches an artifact when you select it.
 - Opening a row mounts one live artifact. Pinning, unpinning, or regrouping does
   not remount it.
 - The selected view stays mounted, hidden and inert, across Calendar, Library,
@@ -22,36 +22,36 @@ App/plugin permissions continue to control access and sharing.
 - The existing chat preview gains Pin/Unpin. Placement remains this member's
   existing local desktop/browser storage, not a new organization-wide pin.
 - Successful create/update calls invalidate the member's catalog. Updates stay
-  attached to the same App id; they do not create a new list entry.
-- App build progress becomes one named artifact row, with the existing stages
+  attached to the same artifact id; they do not create a new list entry.
+- Artifact build progress becomes one named artifact row, with the existing stages
   and technical output available on disclosure.
 - Legacy saved artifacts remain available. The list does not migrate or
   delete them, or infer authorship from an admin's edit permissions.
 
 The list does not run connectors to fill speculative summary columns. The first
-open still needs the normal authorized App launch and data reads. The list
+open still needs the normal authorized artifact launch and data reads. The list
 makes no sub-second latency promise and does not pre-authorize a tool, bypass
 consent, or convert a mutating workflow into a read-only one.
 
 ## Try it
 
-Sign in and open Artifacts; no rollout setup is needed. Create an App in chat
+Sign in and open Artifacts; no rollout setup is needed. Create an artifact in chat
 or open one already shared with the member.
 Use Pin in the preview and verify it moves to Pinned. Interact with the opened
 artifact, visit Calendar or a chat, and return: the same interaction should
-still be visible. No sibling App should have launched.
+still be visible. No sibling artifact should have launched.
 
 ## Availability
 
 The former rollout's disabled overrides, kill switch and operator locks no
-longer restore Dashboard or its old picker. App records, revisions, grants,
+longer restore Dashboard or its old picker. artifact records, revisions, grants,
 and local pins keep their existing meaning.
 
 ## Watch
 
-Check App launch failures, permission/reconnect states and catalog errors. A
+Check artifact launch failures, permission/reconnect states and catalog errors. A
 revoked or removed catalog entry must disappear and unmount its live view, and
-leave this device. Stored App data clears when a member loses a connection,
+leave this device. Stored artifact data clears when a member loses a connection,
 account, scope or plugin; until a session has compared that, stored reads are
 withheld.
 The selected view must not survive sign-out or a member/org/deployment change.
@@ -59,7 +59,7 @@ The selected view must not survive sign-out or a member/org/deployment change.
 ## Evidence
 
 `evals/proofs/artifacts-list-first.proof.test.ts` covers list-first entry,
-ownership groups, one selected live App, unsaved review state across page
+ownership groups, one selected live artifact, unsaved review state across page
 navigation and pinning, without an `artifactsListFirst` override.
 
 Screenshots below are captured from the real headless app with isolated test
@@ -71,7 +71,7 @@ accounts, not the design video.
 
 ### List first (now generally available)
 
-![Yours and Team are listed without mounting their Apps](./artifacts-list.png)
+![The Yours and Team groups in Artifacts](./artifacts-list.png)
 
 ### After: one retained view
 

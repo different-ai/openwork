@@ -7,8 +7,6 @@ const metadata = z.record(z.string().regex(/^[a-zA-Z][a-zA-Z0-9_.-]{0,63}$/),
   z.union([z.string().max(128), z.number().finite(), z.boolean()]))
   .refine((value) => Object.keys(value).length <= 16, "At most 16 metadata fields")
 
-// Content is deliberately absent. Adding content collection requires a separate
-// consent contract; enabling Models or metadata analytics never grants it.
 export const modelsAnalyticsEventSchema = z.object({
   id: identifier,
   type: z.enum(["task.started", "task.completed", "task.failed", "task.cancelled", "tool.executed", "skill.loaded", "model.call"]),
@@ -35,7 +33,6 @@ export const modelsAnalyticsEventSchema = z.object({
 
 export type ModelsAnalyticsEvent = z.infer<typeof modelsAnalyticsEventSchema>
 
-// Only the authenticated inference service may supply consumption records.
 export const modelsTaskBatchSchema = z.object({
   events: z.array(modelsAnalyticsEventSchema.refine((event) => event.type !== "model.call"
     && event.costUsd === undefined && event.inputTokens === undefined && event.outputTokens === undefined

@@ -1,27 +1,9 @@
 import type { IncomingMessage, Server, ServerResponse } from "node:http"
 
-/**
- * Graceful shutdown for the gateway.
- *
- * Render runs zero-downtime deploys: it moves traffic to the new instance,
- * waits 60s, sends SIGTERM to the old one, then SIGKILLs it after the
- * service's shutdown delay (`maxShutdownDelaySeconds`, default 30s, max 300s).
- * Without a handler Node exits on SIGTERM at once, which cuts every
- * in-flight model stream and surfaces as a 502 to callers.
- *
- * On the first signal we stop accepting connections, ask keep-alive clients
- * to reconnect elsewhere, wait for in-flight requests (bounded by the drain
- * deadline), let follow-up work such as usage settlement finish, then exit.
- * A second signal exits immediately.
- */
-
 export type GracefulShutdownOptions = {
-  /** Max time to wait for in-flight requests after the first signal. */
   drainTimeoutMs: number
-  /** Work to finish after requests drain (usage writes, telemetry flush). Bounded by `afterDrainTimeoutMs`. */
   afterDrain?: () => Promise<void>
   afterDrainTimeoutMs?: number
-  /** How often idle keep-alive sockets are closed while draining. */
   idleSweepMs?: number
   exit?: (code: number) => void
   log?: (message: string, details?: Record<string, unknown>) => void
@@ -65,8 +47,6 @@ export function installGracefulShutdown(server: Server, options: GracefulShutdow
   const responses = new Set<ServerResponse>()
   const idleWaiters = new Set<() => void>()
 
-  // Tell keep-alive callers (they pool connections to this instance) to open a
-  // fresh connection for their next request, which Render routes to a live instance.
   function askToReconnect(response: ServerResponse) {
     if (!response.headersSent) response.setHeader("Connection", "close")
   }
@@ -158,7 +138,6 @@ export function installGracefulShutdown(server: Server, options: GracefulShutdow
   }
 }
 
-/** Waits until a work queue reports nothing active or queued. */
 export async function waitForQueueIdle(state: () => { active: number; queued: number }, pollMs = 100) {
   while (true) {
     const { active, queued } = state()

@@ -9,7 +9,6 @@ export function usageWriteDatabase() {
   return usageWrites.db
 }
 let freeAuto: ReturnType<typeof createDenDb> | undefined
-/** Free Auto's own client, so public free traffic never shares a connection pool with paid Gateway requests. */
 export function freeAutoDatabase() {
   freeAuto ??= createDenDb(configuration)
   return freeAuto.db

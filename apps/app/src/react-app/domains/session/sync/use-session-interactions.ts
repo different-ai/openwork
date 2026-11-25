@@ -1,5 +1,3 @@
-// Pending interactions for a conversation and its descendants. Requests stay
-// owned by the session that asked; only their presentation bubbles to the parent.
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { QueryObserver } from "@tanstack/react-query";
 import { toast } from "sonner";
@@ -255,9 +253,6 @@ function createInteractionHydration(client: Client, workspaceId: string, session
     drain();
   };
   const refresh = () => refreshIds(children.keys());
-  // A child may ask after the initial shared snapshot, while its live event
-  // is missed. Reconcile only active or blocked sessions, using the same
-  // bounded queue and snapshot fences as initial hydration and reconnect.
   const interval = window.setInterval(() => {
     const records = useSessionActivityStore.getState().recordsByWorkspaceId[workspaceId] ?? {};
     const ids = [...children.keys()].filter(id => {
@@ -282,9 +277,6 @@ function createInteractionHydration(client: Client, workspaceId: string, session
         child.controller.abort();
         child.release?.();
       }
-      // A newly discovered child can already be waiting on a request whose
-      // event was missed. Recover failed shared reads, retaining successful
-      // snapshots and sharing any retry already in flight across additions.
       if (ids.some((id) => !children.has(id))) refreshShared(true);
       for (const id of ids) {
         if (children.has(id)) continue;
@@ -317,10 +309,11 @@ export type UseSessionInteractionsInput = {
   sessionId: string | null;
   interactionSessionIds?: string[];
   workspaceRoot: string;
+  rememberFileSend?: (requestID: string) => Promise<void>;
 };
 
 export function useSessionInteractions(input: UseSessionInteractionsInput) {
-  const { client, workspaceId, sessionId, workspaceRoot } = input;
+  const { client, workspaceId, sessionId, workspaceRoot, rememberFileSend } = input;
 
   const [permissionReplyBusy, setPermissionReplyBusy] = useState(false);
   const permissionReplyBusyRef = useRef(false);
@@ -411,15 +404,18 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
 
   const activePermission = pendingPermissions[0] ?? null;
   const respondPermission = useCallback(
-    async (requestID: string, reply: "once" | "always" | "reject") => {
+    async (requestID: string, reply: "once" | "always" | "reject", remember?: "always") => {
       if (!client || !workspaceId || !sessionId) return;
       if (permissionReplyBusyRef.current) return;
       permissionReplyBusyRef.current = true;
       setPermissionReplyBusy(true);
       try {
         const pendingPermission = pendingPermissions.find((permission) => permission.id === requestID);
+        if (remember === "always" && reply === "always" && !pendingPermission?.evaluation) {
+          if (!rememberFileSend) throw new Error(t("session.file_send_remember_unavailable"));
+          await rememberFileSend(requestID);
+        }
         if (pendingPermission?.evaluation) {
-          // A development-only proof request has no engine-side request to answer.
         } else if (pendingPermission?.protocol === "v2") {
           const result = await client.v2.session.permission.reply({
             sessionID: pendingPermission.sessionID,
@@ -448,11 +444,10 @@ export function useSessionInteractions(input: UseSessionInteractionsInput) {
         setPermissionReplyBusy(false);
       }
     },
-    [client, pendingPermissions, interactionSessionIds, sessionId, workspaceId, workspaceRoot],
+    [client, pendingPermissions, interactionSessionIds, sessionId, workspaceId, workspaceRoot, rememberFileSend],
   );
 
   const activeQuestion = pendingQuestions[0] ?? null;
-  // `answers: null` dismisses the question without answering it.
   const respondQuestion = useCallback(
     async (requestID: string, answers: string[][] | null) => {
       if (!client || !workspaceId || !sessionId) throw new Error("The conversation is no longer available.");

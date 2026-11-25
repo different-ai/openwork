@@ -13,7 +13,6 @@ import { ProviderIcon } from "@/react-app/design-system/provider-icon";
 import type { ActivityBaseline, ActivityResource, MemberActivityEntry } from "@/react-app/kernel/activity-types";
 import type { ActivityFeedItem } from "./use-activity-feed";
 
-/** Shared, actorless copy: Activity only knows what this device observed, never who did it. */
 export function activityLabel(entry: MemberActivityEntry, compact: boolean) {
   const { resource } = entry;
   const label = resource.label;
@@ -79,7 +78,6 @@ function ObservedTime({ timestamp, now, compact = false }: { timestamp: number; 
   );
 }
 
-/** Fixed slot so times align whether or not a row is unread (A1). */
 function UnreadDot({ unread }: { unread: boolean }) {
   return (
     <span className="flex size-1.5 shrink-0 items-center justify-center">
@@ -128,7 +126,6 @@ const RESOURCE_KIND: Record<ActivityResource["kind"], string> = {
 
 const ACTION_LAYOUT = "min-w-18 shrink-0 justify-end px-0 font-medium";
 
-/** A newly shared skill with a known Connect capability can be tried in a new session. */
 export function canTrySkill(entry: MemberActivityEntry) {
   return entry.resource.kind === "skill" && entry.change === "available"
     && Boolean(entry.resource.skillSlug && entry.resource.capability);
@@ -206,7 +203,6 @@ export function ActivityRow({ item, now, compact = false, onResourceOpen, onTryS
   let action: ReactNode = null;
   if (!compact) {
     if (removed) {
-      // P4/C5: the lock and who can change it, never a dead action.
       action = (
         <Tooltip>
           <TooltipTrigger render={<span tabIndex={0} />} className="min-w-18 shrink-0 rounded-sm text-right text-xs font-medium text-foreground outline-none focus-visible:ring-2 focus-visible:ring-ring" data-activity-ask-admin>

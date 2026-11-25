@@ -1,18 +1,14 @@
 import {
+  PERMISSION_DEFAULT_SET_LABELS,
   PERMISSION_KEYS,
   getPermissionDefinition,
+  isPermissionDefaultOn,
   isPermissionKey,
   isPermissionLockedOn,
   type PermissionDefaultSetKey,
   type PermissionKey,
 } from "@openwork/types/den/permissions"
 import type { PermissionSource } from "./effective.js"
-
-/**
- * Pure validation for the permission set endpoints (routes/org/permissions.ts;
- * docs/permissions/overview.md, sections 8 and 9). No database, no environment
- * and no relative runtime imports, so plain `node --test` can load it.
- */
 
 export type PermissionStatus = "allow" | "deny"
 
@@ -26,11 +22,9 @@ export type PermissionChange = {
   status: PermissionStatus
 }
 
-/** The editor's effective permissions. The owner and super-admins hold every key. */
 export type PermissionEditor = {
   isOwner: boolean
   isSuperAdmin?: boolean
-  /** Effective admin: a direct admin role or a member of an Admin team. */
   isAdmin: boolean
   has(key: PermissionKey): boolean
 }
@@ -39,6 +33,7 @@ export type PermissionEditProblem =
   | { error: "unknown_permission"; keys: string[] }
   | { error: "duplicate_permission"; keys: string[] }
   | { error: "admin_permissions_require_admin"; keys: PermissionKey[] }
+  | { error: "super_admin_permissions_require_super_admin"; keys: PermissionKey[] }
   | { error: "permission_locked"; keys: PermissionKey[] }
   | { error: "permission_not_held"; keys: PermissionKey[] }
 
@@ -50,7 +45,6 @@ function sorted<T extends string>(values: Iterable<T>): T[] {
   return [...new Set(values)].sort((left, right) => (left < right ? -1 : left > right ? 1 : 0))
 }
 
-/** Rejects keys outside the catalog and keys listed more than once. */
 function validateRequestedKeys(changes: readonly RequestedPermissionChange[]):
   | { ok: true; changes: PermissionChange[] }
   | { ok: false; problem: PermissionEditProblem } {
@@ -71,32 +65,18 @@ function validateRequestedKeys(changes: readonly RequestedPermissionChange[]):
 }
 
 function notHeld(editor: PermissionEditor, keys: Iterable<PermissionKey>): PermissionKey[] {
-  if (editor.isOwner || editor.isSuperAdmin === true) return []
+  if (editor.isOwner) return []
   return sorted([...keys].filter((key) => !editor.has(key)))
 }
 
-/** Whether `key` starts on in this default set (its catalog `defaultOn` includes it). */
 function isShippedDefault(key: PermissionKey, defaultKey: PermissionDefaultSetKey | null): boolean {
-  return defaultKey !== null && getPermissionDefinition(key).defaultOn.includes(defaultKey)
+  return defaultKey !== null && isPermissionDefaultOn(getPermissionDefinition(key), defaultKey)
 }
 
-/** Current status of a key in a set: no row means denied. */
 export function currentPermissionStatus(current: ReadonlyMap<string, PermissionStatus>, key: PermissionKey): PermissionStatus {
   return current.get(key) === "allow" ? "allow" : "deny"
 }
 
-/**
- * Plans an edit to an existing set (PUT /v1/permissions/sets/:id/permissions).
- * In order: unknown keys, duplicate keys, any edit to Admin permissions by an
- * editor who is neither the owner nor an effective admin, deny of a key locked
- * on for this default set, then allow of a key the editor does not hold (only
- * where the key is actually being turned on, so resending a set's current
- * state never fails). Re-allowing a key whose catalog `defaultOn` includes
- * this default set restores a shipped default and is exempt from the
- * hold-the-key rule, so admins can restore an Admin key they removed.
- * Returns only the changes whose status differs from the current one, in
- * request order.
- */
 export function planPermissionSetEdit(input: {
   defaultKey: PermissionDefaultSetKey | null
   current: ReadonlyMap<string, PermissionStatus>
@@ -109,6 +89,9 @@ export function planPermissionSetEdit(input: {
   const { defaultKey } = input
   if (defaultKey === "admin" && !input.editor.isOwner && input.editor.isSuperAdmin !== true && !input.editor.isAdmin) {
     return { ok: false, problem: { error: "admin_permissions_require_admin", keys: sorted(validated.changes.map((change) => change.key)) } }
+  }
+  if (defaultKey === "super-admin" && !input.editor.isOwner && input.editor.isSuperAdmin !== true) {
+    return { ok: false, problem: { error: "super_admin_permissions_require_super_admin", keys: sorted(validated.changes.map((change) => change.key)) } }
   }
 
   const locked = defaultKey === null
@@ -126,11 +109,6 @@ export function planPermissionSetEdit(input: {
   return { ok: true, changes }
 }
 
-/**
- * Plans the initial rows of a new team set (POST /v1/permissions/sets). Only
- * allowed keys get a row (no row means denied). The editor must hold every
- * key the new set allows.
- */
 export function planPermissionSetCreate(input: {
   permissions: readonly RequestedPermissionChange[]
   editor: PermissionEditor
@@ -144,7 +122,6 @@ export function planPermissionSetCreate(input: {
   return { ok: true, changes }
 }
 
-/** Human message for a rejected edit. */
 export function permissionEditProblemMessage(problem: PermissionEditProblem): string {
   const keys = problem.keys.join(", ")
   switch (problem.error) {
@@ -154,6 +131,8 @@ export function permissionEditProblemMessage(problem: PermissionEditProblem): st
       return `Each permission can appear only once. Listed more than once: ${keys}.`
     case "admin_permissions_require_admin":
       return "Only the owner and admins can change Admin permissions."
+    case "super_admin_permissions_require_super_admin":
+      return "Only the owner and super admins can change Super admin permissions."
     case "permission_locked":
       return `These permissions are always on for admins, so admins can't be locked out of managing permissions: ${keys}.`
     case "permission_not_held":
@@ -161,17 +140,12 @@ export function permissionEditProblemMessage(problem: PermissionEditProblem): st
   }
 }
 
-/** One stored row with the metadata the endpoints show. */
 export type PermissionRowWithMetadata = {
   id: string
   permissionKey: string
   createdAt: Date
 }
 
-/**
- * The latest row per key by (createdAt, id), the same order as
- * currentPermissionStates in den-db. Includes keys no longer in the catalog.
- */
 export function latestPermissionRows<Row extends PermissionRowWithMetadata>(rows: Iterable<Row>): Map<string, Row> {
   const latest = new Map<string, Row>()
   for (const row of rows) {
@@ -193,7 +167,6 @@ export type PermissionKeyState<Row> = {
   latest: Row | null
 }
 
-/** Status of every catalog key in a set, in catalog order, with its latest row and lock flag. */
 export function permissionSetKeyStates<Row extends PermissionRowWithMetadata & { status: PermissionStatus }>(input: {
   defaultKey: PermissionDefaultSetKey | null
   rows: Iterable<Row>
@@ -211,7 +184,6 @@ export function permissionSetKeyStates<Row extends PermissionRowWithMetadata & {
   })
 }
 
-/** Keys allowed in `after` but not `before`, and the reverse. */
 export function permissionKeyDelta(before: ReadonlySet<PermissionKey>, after: ReadonlySet<PermissionKey>): { granted: PermissionKey[]; revoked: PermissionKey[] } {
   return {
     granted: sorted([...after].filter((key) => !before.has(key))),
@@ -219,19 +191,19 @@ export function permissionKeyDelta(before: ReadonlySet<PermissionKey>, after: Re
   }
 }
 
-/** The name of a new team set, fixed forever: "${team.name} Permissions", within the 255-character column. */
 export function teamPermissionSetName(teamName: string): string {
   const suffix = " Permissions"
   return `${teamName.trim().slice(0, 255 - suffix.length)}${suffix}`
 }
 
-/** The user-facing label of a permission source, e.g. "Admin permissions (admin role)". */
 export function permissionSourceLabel(source: PermissionSource): string {
   switch (source.kind) {
     case "owner":
       return "Organization owner"
     case "super_admin":
       return "Super admin role"
+    case "super_admin_default":
+      return `${source.setName} (super admin role)`
     case "member_default":
       return source.setName
     case "admin_default":
@@ -240,7 +212,9 @@ export function permissionSourceLabel(source: PermissionSource): string {
         : `${source.setName} (via ${source.teamName ?? "an admin"} team)`
     case "team":
       return `${source.setName} (via ${source.teamName} team)`
+    case "direct":
+      return `${source.setName} (given directly)`
     case "code_default":
-      return source.set === "admin" ? "Admin permissions (default)" : "Member permissions (default)"
+      return `${PERMISSION_DEFAULT_SET_LABELS[source.set]} permissions (default)`
   }
 }

@@ -285,7 +285,7 @@ const cdpPortRaw = process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT?.trim() ?? ""
 const cdpPort = cdpPortRaw === "" || cdpPortRaw === "0" ? "" : cdpPortRaw;
 
 const blankSlateArgs = process.argv.includes("--blank-slate") ? ["--blank-slate"] : [];
-electronChild = run(pnpmCmd, ["exec", "electron", "./electron/main.mjs", ...blankSlateArgs], {
+electronChild = run(pnpmCmd, ["exec", "electron", "./electron/entry.mjs", ...blankSlateArgs], {
   cwd: desktopRoot,
   env: {
     ...process.env,

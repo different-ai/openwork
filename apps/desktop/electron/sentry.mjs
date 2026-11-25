@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { desktopErrorReportingAllowed } from "./desktop-distribution.mjs";
 
 let sentry = null;
 let initialized = false;
@@ -124,6 +125,7 @@ function readBuildConfig(app) {
 }
 
 export async function initOpenworkSentry({ app, distribution, packageMetadata }) {
+  if (!desktopErrorReportingAllowed(distribution)) return false;
   const buildConfig = readBuildConfig(app);
   const dsn = buildConfig.dsn;
   if (!dsn || envFlagEnabled("OPENWORK_DESKTOP_SENTRY_DISABLED")) return false;
@@ -206,6 +208,9 @@ export function captureException(error, context = {}) {
     if (context.surface) scope.setTag("surface", String(context.surface));
     if (context.route) scope.setTag("route", String(context.route));
     if (context.method) scope.setTag("method", String(context.method));
+    if (Array.isArray(context.fingerprint)) scope.setFingerprint(context.fingerprint.map(String));
+    if (context.level) scope.setLevel(String(context.level));
+    for (const [key, value] of Object.entries(context.tags ?? {})) scope.setTag(key, String(value));
     sentry.captureException(error);
   });
   return true;

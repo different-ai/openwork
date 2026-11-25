@@ -4,13 +4,11 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { requestAdmin, withStoredBearer, type AdminResult } from "../admin-request";
 import { useAdminSessionCookie } from "../admin-shell";
 
-/** Mirrors `GET /v1/admin/free-auto/usage`. Amounts are micro-USD; days are UTC. */
 export type FreeAutoUsage = {
   costMicroUsd: number;
   requests: number;
   estimatedRequests: number;
   inputTokens: number;
-  /** The part of inputTokens served from OpenAI's prompt cache. */
   cachedInputTokens: number;
   outputTokens: number;
 };
@@ -60,7 +58,6 @@ function isOrganization(value: unknown): value is FreeAutoOrganizationUsage {
     && (row.lastUsedAt === null || typeof row.lastUsedAt === "string");
 }
 
-/** Accepts only a complete report, so the page never renders half-understood numbers. */
 export function parseFreeAutoUsageReport(payload: unknown): FreeAutoUsageReport | null {
   if (!isRecord(payload) || !isRecord(payload.range) || !isRecord(payload.settings) || !isRecord(payload.week)) return null;
   if (!isUsage(payload.totals) || !isUsage(payload.members) || !isUsage(payload.guests)) return null;
@@ -76,7 +73,6 @@ export type FreeAutoUsageState =
   | { status: "ready"; report: FreeAutoUsageReport }
   | { status: Exclude<AdminResult<unknown>["access"], "ready">; message: string; report: FreeAutoUsageReport | null };
 
-/** Loads the report for a range; keeps the last report on screen while a new range or refresh loads. */
 export function useFreeAutoUsage(days: FreeAutoRange) {
   const hasSessionCookie = useAdminSessionCookie();
   const [state, setState] = useState<FreeAutoUsageState>(() => hasSessionCookie ? { status: "loading", report: null }
@@ -130,7 +126,6 @@ function csvCell(value: string | number | boolean | null) {
   return /[",\n]/.test(text) ? `"${text.replaceAll('"', '""')}"` : text;
 }
 
-/** One row per listed organization, amounts in USD, for spreadsheets. */
 export function organizationsCsv(report: FreeAutoUsageReport): string {
   const header = ["organization_id", "name", "subscribed", "members", "active_people", "requests", "estimated_requests",
     "input_tokens", "cached_input_tokens", "output_tokens", "spend_usd", "people_at_weekly_limit", "last_used_at"];

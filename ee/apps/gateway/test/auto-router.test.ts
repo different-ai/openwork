@@ -1,10 +1,8 @@
 import assert from "node:assert/strict"
 import { beforeEach, test } from "node:test"
 import { autoRouterIdFromModel, autoRouterModelId, autoRouterThinkingLevels, type AutoRouterThinkingLevel } from "@openwork/types/den/auto-router"
-import { anthropicJsonToChat, anthropicStreamToChat, claudeTakesEffort, toAnthropicBody } from "../src/auto-router/anthropic.js"
-import { createMemoryReasoningStore } from "../src/auto-router/reasoning-store.js"
-import { injectRouteIntoChatStream, readAutoPrompt, toOpenAiChatBody, type AutoRouteInfo } from "../src/auto-router/chat.js"
-import { annotateChatError, annotateChatStreamErrors, autoRouteNote } from "../src/auto-router/handler.js"
+import { anthropicJsonToChat, googleTranslator, anthropicStreamToChat, claudeTakesEffort, toAnthropicBody, createMemoryReasoningStore, injectRouteIntoChatStream, readAutoPrompt, toOpenAiChatBody, type AutoRouteInfo } from "@openwork-ee/gateway-protocols"
+import { annotateChatError, annotateChatStreamErrors, autoRouteNote, translateResponse } from "../src/auto-router/handler.js"
 import { clearAutoTurnChoices, decideAutoRoute, fallbackDecision, jevTasks, thinkingLevelFor, type AutoCandidate, type TurnChoice } from "../src/auto-router/decide.js"
 import { JEV_THINKING_KEY, jevRequestBody, readJevScores, type AskJev, type JevScores } from "../src/auto-router/jev.js"
 
@@ -316,7 +314,7 @@ test("a Messages stream becomes a chat stream, and its thinking is replayed on t
   const args = chunks.flatMap((chunk) => chunk.choices[0]?.delta?.tool_calls?.[0]?.function?.arguments ?? []).join("")
   assert.equal(args, "{\"path\":\"a.ts\"}")
   assert.equal(chunks.at(-2).choices[0].finish_reason, "tool_calls")
-  assert.deepEqual(chunks.at(-1).usage, { prompt_tokens: 15, completion_tokens: 7, total_tokens: 22, prompt_tokens_details: { cached_tokens: 5 } })
+  assert.deepEqual(chunks.at(-1).usage, { prompt_tokens: 15, completion_tokens: 7, total_tokens: 22, prompt_tokens_details: { cached_tokens: 5, cache_write_tokens: 0 } })
 
   const next = toAnthropicBody({ messages: [
     { role: "user", content: "read a.ts" },
@@ -376,6 +374,25 @@ test("a continuation on another gateway instance keeps the turn's model and thin
   assert.equal(next?.reason, "turn")
   assert.equal(next?.candidate.routeId, "arm_haiku")
   assert.equal(next?.thinkingLevel, "medium")
+})
+
+test("Smart keeps Gemini's error message when Google labels it as an event stream", async () => {
+  const chosen = { ...route, name: "Gemini 4 Neon", thinking: "low" as const }
+  const googleError = { error: { code: 400, message: "Function declaration parameter schema is invalid.", status: "INVALID_ARGUMENT" } }
+  const translate = (body: string) => translateResponse(
+    new Response(body, { status: 400, headers: { "content-type": "text/event-stream" } }),
+    googleTranslator,
+    { route: chosen, stream: true, remember: () => {} },
+  )
+  for (const body of [JSON.stringify(googleError), `data: ${JSON.stringify(googleError)}\n\n`]) {
+    const response = await translate(body)
+    assert.equal(response.status, 400)
+    const json = await response.json()
+    assert.equal(json.error.message, "Function declaration parameter schema is invalid. (Smart chose Gemini 4 Neon · Low thinking.)")
+    assert.equal(json.error.code, "INVALID_ARGUMENT")
+  }
+  const unreadable = await (await translate("upstream exploded")).json()
+  assert.equal(unreadable.error.message, "The provider failed with HTTP 400. (Smart chose Gemini 4 Neon · Low thinking.)")
 })
 
 test("every error says which model Smart chose", async () => {

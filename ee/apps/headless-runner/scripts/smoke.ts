@@ -1,14 +1,3 @@
-/**
- * End-to-end smoke test against a real AI Gateway and OpenWork MCP.
- *
- *   HEADLESS_API_TOKEN=... HEADLESS_MODEL_PROTOCOL=anthropic \
- *   HEADLESS_MODEL_BASE_URL=https://gateway.openworklabs.com/api/v1/providers/<ipr> \
- *   HEADLESS_MODEL=<gwm alias> HEADLESS_MCP_URL=https://api.openworklabs.com/mcp/agent \
- *   SMOKE_MODEL_API_KEY=ow_gw_... SMOKE_MCP_TOKEN=... pnpm smoke "What's waiting on me?"
- *
- * Boots the real HTTP app on a random port with a throwaway database and
- * prints timings, token usage, and process memory. Never prints credentials.
- */
 import { mkdtempSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"

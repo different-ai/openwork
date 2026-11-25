@@ -19,9 +19,7 @@ export type AutomationCalendarItem = {
   key: string
   automationId: string
   name: string
-  /** Where the block sits: the scheduled slot, else when the run started or was created. */
   at: number
-  /** Visual end for layout; real duration for finished runs, a fixed slot otherwise. */
   end: number
   status: AutomationCalendarStatus
   run: AutomationRun | null
@@ -91,7 +89,6 @@ export function buildAutomationCalendarItems(input: {
       })
     }
     if (automation.state !== "active" && automation.state !== "needs_attention") continue
-    // Slots start at the later of now and the range start; the past is receipts only.
     const from = Math.max(input.range.start, input.now, automation.createdAt)
     if (from >= input.range.end) continue
     const { occurrences } = automationOccurrencesInRange(revision.schedule, { from, to: input.range.end, limit: 500 })

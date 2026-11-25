@@ -1,9 +1,6 @@
 import type { ExampleService } from "../example-parts";
 import { LINEAR, NOTION, HUBSPOT } from "./plugins-example-data";
 
-/** Sample data only: no API calls (DESIGN.md I7). */
-
-/** One agent, command or hook as its tab lists it: what it is, and the plugin it came with. */
 export type PartsExampleRow = { title: string; detail: string; plugin: string };
 
 export const agentsExampleRows: readonly PartsExampleRow[] = [
@@ -18,7 +15,6 @@ export const commandsExampleRows: readonly PartsExampleRow[] = [
   { title: "/brand-check", detail: "Flags words that don't match the brand voice.", plugin: "Brand voice" },
 ];
 
-/** `detail` is the moment the hook runs. */
 export const hooksExampleRows: readonly PartsExampleRow[] = [
   { title: "Load the brand guide", detail: "When a session starts", plugin: "Brand voice" },
   { title: "Check before sending email", detail: "Before a tool is used", plugin: "Sales playbook" },

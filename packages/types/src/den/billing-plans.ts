@@ -56,8 +56,6 @@ export function quotePlan(input: {
   return { people, unitAmount, monthlyTotal: people * unitAmount };
 }
 
-// ─── Checkout return targets ─────────────────────────────────────────────────
-
 /** Show "Back to OpenWork Desktop" after paying instead of returning to a Den page. */
 export const BILLING_RETURN_DESKTOP = "desktop";
 export type BillingReturnTo = typeof BILLING_RETURN_DESKTOP | `/dashboard/${string}`;
@@ -84,7 +82,6 @@ export function parseBillingReturnTo(value: unknown): BillingReturnTo | null {
   if (value === BILLING_RETURN_DESKTOP) return BILLING_RETURN_DESKTOP;
   if (!isDashboardPath(value)) return null;
   if (value.includes("//") || value.includes("\\") || value.includes("#")) return null;
-  // Printable ASCII only: no whitespace, control or non-ASCII characters.
   if (!/^[\x21-\x7e]+$/.test(value)) return null;
   let parsed: URL;
   try {
@@ -92,8 +89,6 @@ export function parseBillingReturnTo(value: unknown): BillingReturnTo | null {
   } catch {
     return null;
   }
-  // The browser would land exactly here: same origin, no dot segments or
-  // percent-decoding that changes the path.
   if (parsed.origin !== RETURN_TO_PARSE_BASE || `${parsed.pathname}${parsed.search}` !== value) return null;
   return isDashboardPath(parsed.pathname) ? value : null;
 }
@@ -104,8 +99,6 @@ export function withReturnParams(path: `/dashboard/${string}`, params: Record<st
   for (const [key, value] of Object.entries(params)) url.searchParams.set(key, value);
   return `${url.pathname}${url.search}`;
 }
-
-// ─── Billing that is not configured ──────────────────────────────────────────
 
 export const BILLING_NOT_CONFIGURED_PRODUCTS = ["seat", "inference", "web", "team", "portal", "checkout"] as const;
 export type BillingNotConfiguredProduct = (typeof BILLING_NOT_CONFIGURED_PRODUCTS)[number];
@@ -130,20 +123,16 @@ export const billingNotConfiguredErrorSchema = z.object({
 });
 export type BillingNotConfiguredError = z.infer<typeof billingNotConfiguredErrorSchema>;
 
-// ─── Shapes in GET /v1/billing, checkout and the 402 seat quote ─────────────
-
 export const planCheckoutRequestSchema = z.object({
   type: z.enum(["inference", "seat", "web", "plan"]).optional(),
   plan: z.enum(PLAN_CHECKOUT_TIERS).optional(),
   addPeople: z.number().int().min(0).max(PLAN_MAX_ADD_PEOPLE).optional(),
-  /** `desktop` or a `/dashboard/...` path; anything else is ignored. */
   returnTo: z.string().max(2048).optional(),
 });
 export type PlanCheckoutRequest = z.infer<typeof planCheckoutRequestSchema>;
 
 export const checkoutStartResponseSchema = z.object({
   url: z.string(),
-  /** The plan changed without a new payment page; `url` is the return page. */
   completed: z.boolean().optional(),
 });
 export type CheckoutStartResponse = z.infer<typeof checkoutStartResponseSchema>;
@@ -165,10 +154,8 @@ export const organizationPlanStateSchema = z.object({
   tier: z.enum(BILLING_PLAN_TIERS),
   source: z.enum(BILLING_PLAN_SOURCES),
   paidBy: z.enum(PLAN_PAID_BY),
-  /** Joined members plus unexpired pending invitations. */
   users: z.number().int().nonnegative(),
   userLimit: z.number().int().positive().nullable(),
-  /** Users a platform admin set for a Team or Enterprise plan; null on Free. */
   seats: z.number().int().positive().nullable(),
   endsAt: planEndDateSchema.nullable(),
   ended: z.boolean(),
@@ -178,20 +165,16 @@ export type OrganizationPlanState = z.infer<typeof organizationPlanStateSchema>;
 export const billingPlanSummarySchema = z.object({
   tier: z.enum(BILLING_PLAN_TIERS),
   source: z.enum(BILLING_PLAN_SOURCES),
-  /** Joined plus invited people; pending invitations count toward the plan. */
   people: z.number().int(),
   joined: z.number().int(),
   invited: z.number().int(),
   freeSeatCount: z.number().int(),
-  /** Users the plan allows, counting pending invitations; null when nothing limits it. Older Den APIs omit it. */
   userLimit: z.number().int().nullable().default(null),
-  /** Optional end date of a plan a platform admin set (`YYYY-MM-DD`), display only. Older Den APIs omit it. */
   endsAt: z.string().nullable().default(null),
 });
 export type BillingPlanSummary = z.infer<typeof billingPlanSummarySchema>;
 
 const planOfferSchema = z.object({
-  /** Sold on this deployment (Stripe and the price are set up). */
   available: z.boolean(),
   unitAmount: z.number().int(),
   currency: z.string(),
@@ -206,7 +189,6 @@ export type BillingPlanOffer = z.infer<typeof planOfferSchema>;
 /** Attached to the 402 an invitation gets when the workspace has used its free people. */
 export const seatPlanQuoteSchema = z.object({
   plan: z.literal("team"),
-  /** People after this invitation. */
   people: z.number().int(),
   joined: z.number().int(),
   invited: z.number().int(),
@@ -214,7 +196,6 @@ export const seatPlanQuoteSchema = z.object({
   monthlyTotal: z.number().int(),
   currency: z.string(),
   interval: z.string(),
-  /** Team checkout is sold on this deployment. */
   available: z.boolean(),
 });
 export type SeatPlanQuote = z.infer<typeof seatPlanQuoteSchema>;

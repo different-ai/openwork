@@ -5,14 +5,10 @@ import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import type { AuditEntitlement } from "@openwork/types/den/audit"
 import { PILOT_DEFAULT_CATEGORIES } from "./pilot-policy.js"
 
-// Temporary server-owned declarations, not an enforced cap or a billing product.
-// Capacity counts retained OPERATIONS, never child events. Neither provenance
-// nor excess mode grants entitlement. No cleanup/deletion is enabled here.
 export const PROVISIONAL_AUDIT_ALLOWANCE = 6_000_000
 export const PROVISIONAL_AUDIT_ATTACHMENT_WINDOW_SECONDS = 300
 export const PROVISIONAL_AUDIT_SYSTEM_ACTOR = "den-api.audit-defaults"
 
-/** One fresh, unlocked organization read of the audit entitlement. */
 export async function readAuditAvailability(database: AuditDatabase | AuditTx, organizationId: string) {
   const [organization] = await database.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable)
     .where(eq(OrganizationTable.id, normalizeDenTypeId("organization", organizationId))).limit(1)
@@ -25,11 +21,6 @@ export async function readAuditEntitlement(database: AuditDatabase | AuditTx, or
   return (await readAuditAvailability(database, organizationId)).entitlement
 }
 
-/**
- * Lazily creates the default policy for a ready organization. No locks: the
- * policy primary key decides a concurrent first initialization, and only the
- * request whose INSERT created the row records the lifecycle event.
- */
 export async function initializeAuditPolicyInTx(tx: AuditTx, inputOrganizationId: string, captureAvailable: boolean): Promise<{ policy: AuditPolicy | null; initialized: boolean }> {
   if (!captureAvailable) return { policy: null, initialized: false }
   const organizationId = normalizeDenTypeId("organization", inputOrganizationId)
@@ -45,17 +36,13 @@ export async function initializeAuditPolicyInTx(tx: AuditTx, inputOrganizationId
     allowance: PROVISIONAL_AUDIT_ALLOWANCE, excessMode: source === "cloud" ? "delete_oldest" : "keep_all",
     effectiveAt: now.toISOString(), captureStartedAt: null, attachmentWindowSeconds: PROVISIONAL_AUDIT_ATTACHMENT_WINDOW_SECONDS,
   }
-  // On a duplicate key the existing row is left as it is (a no-op update).
   await tx.insert(AuditPolicyTable).values({
     organization_id: organizationId, revision: policy.revision, source: policy.source, enabled: policy.enabled,
     categories: policy.categories, allowance: policy.allowance, excess_mode: policy.excessMode,
     effective_at: now, capture_started_at: null, attachment_window_seconds: policy.attachmentWindowSeconds,
   }).onDuplicateKeyUpdate({ set: { organization_id: sql`${AuditPolicyTable.organization_id}` } })
   const stored = await readAuditPolicy(tx, organizationId)
-  // A concurrent first initialization committed after this transaction's read
-  // snapshot: its row is not visible here. Skip capture for this one request.
   if (!stored) return { policy: null, initialized: false }
-  // A concurrent request created the policy first: use its row, record nothing.
   if (stored.effectiveAt !== policy.effectiveAt || stored.source !== policy.source || stored.revision !== policy.revision) return { policy: stored, initialized: false }
   const { captureStartedAt: _captureStartedAt, ...after } = policy
   const event = await appendAuditEvent(tx, {
@@ -76,15 +63,12 @@ export async function initializeAuditPolicyInTx(tx: AuditTx, inputOrganizationId
 
 export async function readEffectiveAuditPolicy(database: AuditDatabase | AuditTx, organizationId: string, captureAvailable: boolean): Promise<AuditPolicy | null> {
   if (!captureAvailable) return null
-  // Both Drizzle adapters expose rollback only on transactions. Reuse the
-  // caller's transaction rather than opening a nested transaction/savepoint.
   const { policy } = "rollback" in database
     ? await initializeAuditPolicyInTx(database, organizationId, captureAvailable)
     : await database.transaction((tx) => initializeAuditPolicyInTx(tx, organizationId, captureAvailable))
   return policy?.enabled ? policy : null
 }
 
-/** Fresh, unlocked recheck that the organization still has audit capture available. */
 export async function recheckAuditEntitlement(database: AuditDatabase | AuditTx, organizationId: string): Promise<void> {
   const availability = await readAuditAvailability(database, organizationId)
   if (!availability.entitlement.enabled) throw new AuditLogError("audit_policy_changed")

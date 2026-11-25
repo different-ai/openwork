@@ -1,0 +1,20 @@
+id: cloud_automation_run
+title: "Cloud Automation run"
+surface: desktop
+label: REAL
+status: draft
+requires: [cloud_run_retained]
+do:
+  - {type: manual, instruction: "Open the rehearsal Cloud Automation and inspect a completed run."}
+  - {type: show, seconds: 5}
+say: "Show only a run that has a Cloud placement receipt."
+paste: {}
+see: "A persisted successful run with Cloud placement."
+checks:
+  - {"type": "automation_run_exists", "name": "Q4 sample cloud review", "status": "succeeded", "placement": "cloud"}
+reset: []
+fallback: Skip until verified on the rehearsal desktop; make no live claim.
+expect_seconds: 45
+questions:
+  - {question: Is this part of the verified live sequence?, answer: No. This is a rehearsal placeholder until its expected result is verified.}
+avoid: ["Do not start a new run or imply every Automation uses Cloud."]

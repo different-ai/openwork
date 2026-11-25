@@ -1,10 +1,10 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import type { Command, Complete, CreationMode, HarnessAdapter, Journal, JournalStore, Progress, Request, RequestComplete, SendReplayMode, Transport } from "../src/index.ts"
+import type { Command, Complete, CreateCommand, CreationMode, HarnessAdapter, Journal, JournalStore, Progress, Request, RequestComplete, SendReplayMode, Transport } from "../src/index.ts"
 import { createSessionRunner, emptyJournal, parseJournal, SessionRunnerError, stableMessageId, sessionIdForCommand, RemoteSessionHttpError } from "../src/index.ts"
 
 const signal = () => new AbortController().signal
-function assignment(overrides: Partial<Command> = {}): Command {
+function assignment(overrides: Partial<CreateCommand> = {}): Command {
   return { commandId: "cmd_01-a", kind: "remote_session_create", title: "Offload test", prompt: "First turn", model: null,
     expiresAt: 10_000, workspaceId: "workspace", ...overrides }
 }

@@ -36,21 +36,15 @@ const builtMcpAppListResponseSchema = z.object({
   apps: z.array(builtMcpAppSchema),
 }).meta({ ref: "BuiltMcpAppListResponse" })
 
-/**
- * Apps built in OpenWork that the signed-in member can use, for example on a
- * personal Dashboard, in the same element shape connection MCP Apps use. Each
- * element opens the App through its own MCP server, where the desktop finds it
- * by App id.
- */
 export function registerOrgMcpAppCatalogRoutes<T extends { Variables: OrgRouteVariables }>(app: Hono<T>) {
   app.get(
     "/v1/mcp-apps",
     describeRoute({
-      tags: ["Apps"],
-      summary: "List Apps built in OpenWork",
-      description: "Lists the Apps built in OpenWork that the calling member can use, in the same element shape connection MCP Apps use, so the desktop can show them on a personal Dashboard. Each element opens the App through its own MCP server with open_app. Members see an App only when its Plugin is shared with them. Empty when Apps built in OpenWork are turned off.",
+      tags: ["Artifacts"],
+      summary: "List artifacts built in OpenWork",
+      description: "Lists the artifacts built in OpenWork that the calling member can use, in the same element shape connection MCP Apps use, so OpenWork can list them in Artifacts. Each element opens the artifact through its own MCP server with open_app. Members see an App only when its Plugin is shared with them. Empty when Apps built in OpenWork are turned off.",
       responses: {
-        200: jsonResponse("Apps built in OpenWork the member can use.", builtMcpAppListResponseSchema),
+        200: jsonResponse("Artifacts the member can use.", builtMcpAppListResponseSchema),
         401: jsonResponse("The caller must be signed in.", unauthorizedSchema),
         403: jsonResponse("The caller must be an organization member.", forbiddenSchema),
       },
@@ -70,8 +64,6 @@ export function registerOrgMcpAppCatalogRoutes<T extends { Variables: OrgRouteVa
         .from(PluginTable)
         .where(and(eq(PluginTable.organizationId, payload.organization.id), inArray(PluginTable.id, pluginIds)))
       const pluginNames = new Map(plugins.map((plugin) => [plugin.id, plugin.name]))
-      // Only already-accessible objects enter this query. Return a boolean, not
-      // another member's identity, and keep access decisions in the App host.
       const appIds = apps.map((entry) => normalizeDenTypeId("configObject", entry.appId))
       const owned = appIds.length === 0 ? [] : await db.select({ id: ConfigObjectTable.id })
         .from(ConfigObjectTable)
@@ -97,7 +89,6 @@ export function registerOrgMcpAppCatalogRoutes<T extends { Variables: OrgRouteVa
             pluginName: pluginNames.get(normalizeDenTypeId("plugin", entry.pluginId)) ?? entry.title,
             isOwner: ownedIds.has(normalizeDenTypeId("configObject", entry.appId)),
             canDelete: roles.get(normalizeDenTypeId("configObject", entry.appId)) === "manager",
-            // open_app takes only optional launch input and runs no other tools.
             requiresInput: false,
             requiredInputKeys: [],
             requiresApproval: false,

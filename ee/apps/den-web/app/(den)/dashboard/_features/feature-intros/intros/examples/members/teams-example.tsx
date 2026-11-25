@@ -6,7 +6,6 @@ import { ExampleProviderMark } from "../ai-gateway/example-parts";
 import { ExampleAvatar, ExampleCaption, ExampleRow, ExampleRows, ExampleServiceMark } from "../example-parts";
 import { teamsExampleEveryone, teamsExampleRows } from "./teams-example-data";
 
-/** Teams tab example: each team, its size and role, and the models, apps and plugin it is given. */
 export function TeamsExample() {
   const step = useExampleStep(teamsExampleRows.length, 3000);
 

@@ -187,7 +187,6 @@ export async function initializeAuditPilot(database: AuditDatabase, input: Pilot
       allowance: config.allowance, excessMode: config.excessMode, effectiveAt: now.toISOString(),
       captureStartedAt: null, attachmentWindowSeconds: config.attachmentWindowSeconds,
     }
-    // The policy primary key rejects a concurrent initialization; no lock is taken.
     await tx.insert(AuditPolicyTable).values({
       organization_id: organizationId, revision: policy.revision, source: policy.source, enabled: policy.enabled,
       categories: policy.categories, allowance: policy.allowance, excess_mode: policy.excessMode,
@@ -226,8 +225,6 @@ export async function previewPilotRetention(database: AuditDatabase, inputOrgani
       .from(AuditPolicyTable).where(eq(AuditPolicyTable.organization_id, organizationId)).limit(1)
     if (!policy) throw new AuditPilotError("audit_pilot_policy_missing")
     if (policy.excessMode === "paid_overage" || policy.source === "cloud" && policy.excessMode !== "delete_oldest") throw new AuditPilotError("audit_pilot_retention_unsupported_policy")
-    // Counted live from this transaction's read snapshot: audit_state totals are
-    // only refreshed on a schedule and can lag.
     const retained = and(eq(AuditOperationTable.organization_id, organizationId), eq(AuditOperationTable.retention_state, "retained"))
     const [count] = await tx.select({ value: sql<number>`count(*)`.mapWith(Number) }).from(AuditOperationTable).where(retained)
     const state = { retainedOperations: count?.value ?? -1 }

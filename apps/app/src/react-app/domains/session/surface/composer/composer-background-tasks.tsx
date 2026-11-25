@@ -12,21 +12,11 @@ import type { BackgroundShell } from "@/react-app/domains/session/status/backgro
 
 type ComposerBackgroundTasksProps = {
   shells: readonly BackgroundShell[]
-  /** The connection cannot confirm the commands are still running: no shimmer, no ticking time. */
   syncDegraded: boolean
-  /** The Agents list sits above in the same panel; skip the top padding it already gives. */
   belowAgents?: boolean
-  /** V2 only. Terminating a command also removes the engine's retained output. */
   onStop?: (shellID: string) => Promise<void>
 }
 
-/**
- * Commands the agent left running, attached to the top of the composer like
- * the Agents list: the same header (label, count, chevron) and row geometry,
- * so the two read as one panel. Set apart as commands: the command itself in
- * monospace where an agent shows its name and task, with Stop in the same
- * fixed action lane as the agent rows above.
- */
 export function ComposerBackgroundTasks(props: ComposerBackgroundTasksProps) {
   const count = props.shells.length
   const [manualExpanded, setManualExpanded] = useState<boolean | null>(null)
@@ -69,7 +59,6 @@ export function ComposerBackgroundTasks(props: ComposerBackgroundTasksProps) {
           <BackgroundTaskRow key={shell.id} shell={shell} now={now} syncDegraded={props.syncDegraded} onStop={props.onStop} />
         ))}
       </div>
-      {/* Inset hairline between the list and the message, on the composer text's edges. */}
       <div aria-hidden="true" className={cn("mx-4 h-px bg-dls-border", !expanded && "mt-1.5")} />
     </div>
   )
@@ -117,7 +106,6 @@ function BackgroundTaskRow(props: { shell: BackgroundShell; now: number; syncDeg
           </>
         ) : t("session.background_task_running_prefix")}
       </span>
-      {/* Same action lane as an agent row; keep Stop visible on focus, touch, or failure. */}
       <span className={cn("flex w-[92px] shrink-0 justify-end max-sm:w-auto", !onStop && "max-sm:hidden")}>
         {onStop ? (
           <Button

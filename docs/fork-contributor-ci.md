@@ -21,47 +21,18 @@ comparisons at GitHub's 300-file limit or with an incomplete count fail
 closed and require a maintainer carry. Renames out of protected paths count.
 The bot identity is never an exemption for a fork.
 
-Only after authorization does sandboxed AI screening use a dedicated,
-spend-limited key through a restricted proxy. Clear AI screening (or a
-second maintainer `/test` after reading findings) permits test-run approval
-and sandboxed Warden review. Test approval rechecks the immutable file list,
-current fork head and target, then approves only this PR's waiting
-`pull_request` run IDs on that SHA and fork repository. A later push cannot
-change the code associated with those run IDs. Paid review also checks the
-fetched head and exits without model calls when it is stale. Repeated
-`/test` workflows are serialized per PR.
+After authorization, test approval rechecks the immutable file list, current
+fork head and target, then approves only this PR's waiting `pull_request` run
+IDs on that SHA and fork repository. A later push cannot change the code
+associated with those run IDs. Repeated `/test` workflows are serialized per
+PR.
 
 There is **no `contributor-pr-required` status writer or final status
-polling job** in this flow. The only App token here is the `warden-check`
-job's, scoped to checks. The other contributor statuses remain useful advisory reports.
-Do not delete the Warden App credentials or environment: ordinary
-`warden-clearance.yml` still uses them.
-
-## Warden is required on every PR
-
-The required `warden-clear` check carries Warden's verdict on the exact head
-of every PR, posted as a check run by the diff-warden App:
-
-- Same-repository PRs: `warden-clearance.yml` posts it after every Warden
-  run, before approving or commenting, so a failed approval can't lose it.
-- Fork PRs: after a maintainer's `/test`, the `warden-check` job in
-  `contributor-pr-test.yml` posts it from that run's sandboxed review result
-  (a job output, not a status anyone else can write).
-- PRs that change Warden itself (`warden.toml`, `.warden/`, the Warden
-  workflows and `warden-{clearance,report,check}.mjs`) get a failing check:
-  a maintainer reviews them and an admin merges them.
-
-The `dev` ruleset requires `warden-clear` from the diff-warden App
-(integration ID 4454147). That App's key is only in the `warden-clearance`
-environment, which only `dev` and `v*` tags can use, so no workflow on a
-branch can create the check. It uses the App's existing Checks permission,
-not commit statuses. Rollout: deploy, confirm the check appears on new PRs,
-run the "Warden check backfill" workflow once from `dev`, then add the
-required check. Dependabot PRs need `WARDEN_OPENAI_API_KEY` as a Dependabot
-secret, since Dependabot runs only get Dependabot secrets.
+polling job** in this flow, and no App token. The contributor screen status
+remains a useful advisory report.
 
 `/test` authorizes spending and test execution; it is not a GitHub PR
-approval. The free screen and AI screen statuses remain advisory.
+approval. The free screen status remains advisory.
 `openwork-tests-required` comes from the GitHub Actions App and does not
 distinguish a trusted workflow from a fork-edited one with the same name,
 which is why `/test` refuses machinery changes and maintainers must carry
@@ -76,10 +47,10 @@ trusted maintainer from deliberately bypassing policy. Members and existing
 repository collaborators may be exempt from GitHub's outside-collaborator
 approval setting: their fork `pull_request` jobs can start automatically.
 This design treats those identities as trusted; do not promise that every
-possible fork needs `/test` to consume a CI runner. Model-key workflows in
+possible fork needs `/test` to consume a CI runner.
 this contributor flow still require `/test` regardless of identity.
 
-If the requirement is **server-enforced Warden clearance before every fork
+If the requirement is **server-enforced review clearance before every fork
 merge**, removal alone is insufficient. The smallest alternative is a
 fork-only, SHA-bound human approval posted by a trusted reviewer after the
 reports are clear (the existing required-review rule supplies the merge
@@ -178,7 +149,7 @@ node --test .github/scripts/contributor-pr.test.mjs \
   .github/scripts/contributor-screen.test.mjs
 actionlint -shellcheck= .github/workflows/contributor-pr.yml \
   .github/workflows/contributor-pr-test.yml \
-  .github/workflows/contributor-warden.yml
+  .github/workflows/contributor-screen.yml
 ```
 
 The CLI tests use a local fake GitHub API to check actual requests and

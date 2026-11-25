@@ -7,15 +7,11 @@ import {
   type DesktopStartupStep,
 } from "@openwork/types/den/diagnostics"
 
-/** Pure startup math for Settings › Diagnostics. No database or network access. */
-
 export const DESKTOP_STARTUP_WINDOW_HOURS = 24
 export const DESKTOP_STARTUP_WINDOW_MS = DESKTOP_STARTUP_WINDOW_HOURS * 3_600_000
-/** Reports for older launches are accepted (a failed launch is sent on the next one) up to this age. */
 export const DESKTOP_STARTUP_MAX_AGE_MS = 7 * 86_400_000
 export const DESKTOP_STARTUP_MAX_FUTURE_MS = 5 * 60_000
 export const DESKTOP_STARTUP_RETENTION_MS = 30 * 86_400_000
-/** Bounded read for one aggregation; percentiles are computed in memory. */
 export const DESKTOP_STARTUP_AGGREGATE_LIMIT = 5_000
 
 export type DesktopStartupRow = {
@@ -31,13 +27,11 @@ export type DesktopStartupRow = {
   observedAt: Date
 }
 
-/** Whether a report's launch time is inside the accepted ingest window. */
 export function desktopStartupObservedAtAccepted(observedAt: Date, now: number): boolean {
   const at = observedAt.getTime()
   return Number.isFinite(at) && at >= now - DESKTOP_STARTUP_MAX_AGE_MS && at <= now + DESKTOP_STARTUP_MAX_FUTURE_MS
 }
 
-/** Nearest-rank percentile of non-empty values, rounded to whole milliseconds. */
 export function percentile(values: readonly number[], fraction: number): number | null {
   if (!values.length) return null
   const sorted = [...values].sort((left, right) => left - right)
@@ -49,11 +43,6 @@ function stepTimestamps(row: DesktopStartupRow): Record<DesktopStartupStep, numb
   return { window: row.windowMs, engine: row.engineMs, signed_in: row.signedInMs, org_tools: row.orgToolsMs }
 }
 
-/**
- * Time spent in each step of one launch. Steps are measured from process start
- * and may overlap, so each duration is the step's timestamp minus the previous
- * reached step's timestamp (window → engine → signed_in → org_tools), never negative.
- */
 export function desktopStartupStepDurations(row: DesktopStartupRow): Record<DesktopStartupStep, number | null> {
   const timestamps = stepTimestamps(row)
   const durations: Record<DesktopStartupStep, number | null> = { window: null, engine: null, signed_in: null, org_tools: null }
@@ -77,7 +66,6 @@ function readReason(value: string | null): DesktopStartupFailureReason | null {
   return parsed.success ? parsed.data : null
 }
 
-/** The desktop section for launches observed in the last 24 hours (rows outside the window are ignored). */
 export function summarizeDesktopStartups(rows: readonly DesktopStartupRow[], now: number): DesktopDiagnostics {
   const since = now - DESKTOP_STARTUP_WINDOW_MS
   const recent = rows.filter((row) => row.observedAt.getTime() >= since && row.observedAt.getTime() <= now + DESKTOP_STARTUP_MAX_FUTURE_MS)

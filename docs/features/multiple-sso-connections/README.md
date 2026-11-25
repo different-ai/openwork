@@ -1,16 +1,12 @@
 # SSO: several connections per organization
 
-- Feature: `multipleSsoConnections`
-- Deployments: cloud and self-hosted; default **off**
+- Retired rollout key: `multipleSsoConnections`
+- Deployments: cloud and self-hosted; generally available (no flag)
 - Owner: `OmarMcAdam`
-- Read on the organization that owns the connections.
 
 ## What changes
 
-Off: an organization has one SSO connection with one email domain. The SSO page
-edits that connection.
-
-On:
+Before, an organization had one SSO connection with one email domain. Now:
 
 - **Several connections.** The SSO page lists every connection with its state
   (On, Verify domain, Not tested, Test failed, Ready to enable) and one row per
@@ -52,7 +48,7 @@ On:
 
 ## API
 
-New, behind the flag (404 `feature_disabled` when off):
+Connection routes (404 `sso_connection_not_found` for a connection of another organization):
 
 | Route | Does |
 |---|---|
@@ -92,30 +88,13 @@ the test's own id (`/v1/sso/test/:intentId/*`).
 
 ## How to try it
 
-1. Platform admin › Organizations › the organization › Features: turn on
-   **SSO: several connections per organization**.
-2. Settings › SSO: **Add SSO connection** twice, for two identity providers on
-   the same domain. Verify, test and enable each.
-3. Sign out and enter an email on the domain: one button per identity
+1. Settings › Auth & Security › Single sign-on: **Add SSO connection** twice,
+   for two identity providers on the same domain. Verify, test and enable each.
+2. Sign out and enter an email on the domain: one button per identity
    provider. Open `/sso/<organization slug>`: the same choice.
-
-## Turning it off
-
-The kill switch or the organization override hides the connection list and the
-connection routes on the next request. Nothing is deleted:
-
-- Every enabled connection **keeps signing people in**: sign-in, login options
-  and `/sso/<slug>` read what is configured, not the flag, so nobody is locked
-  out.
-- The SSO page goes back to the single-connection screen, which manages the
-  oldest connection. The others can only be managed again with the flag on
-  (or deleted by an operator).
-- Names and multi-domain values stay stored and keep working.
 
 ## What to watch
 
-- 404 `feature_disabled` on `/v1/sso/connections*` for organizations that
-  should have the flag.
 - `/v1/auth/sso-options` 429s (limit 120 a minute per client address): the SSO
   link then falls back to the organization's oldest ready connection.
 - Support reports of a sign-in going to the wrong identity provider: check

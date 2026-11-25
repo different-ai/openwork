@@ -18,13 +18,16 @@ import type {
   AutomationSchedule,
   AutomationScheduleKind,
   CreateAutomationDefinition,
+  CopySharedAutomation,
   DesktopRunnerInventory,
   UpdateAutomation,
 } from "@openwork/types/automations"
+import { listSharedAutomations } from "./sharing.js"
 import { env } from "../env.js"
 import { isActiveAutomationOwner, resolveAutomationModelAccess } from "./authority.js"
+import { runnerStanding } from "../computer-disconnect.js"
 import { shouldApplyAutomationModelAccessFailure } from "./model-attention-rollout.js"
-import { automationRepository, runWorkspaceId } from "./repository.js"
+import { automationDesktopLeaseOwner, automationRepository, runWorkspaceId, type StoredRunnerSessionReport } from "./repository.js"
 import { recordAutomationRunCompleted, recordAutomationRunStarted } from "./audit.js"
 import { validateWorkflowAutomationAction } from "../workflows.js"
 import type { CloudAgentExecution, CloudAgentExecutorInput } from "./cloud-agent-executor.js"
@@ -45,24 +48,16 @@ const schedulerOwner = `den:${process.pid}:${randomUUID()}`
 const logger = appLogger.child({ component: "automations" })
 const AUTOMATION_LIST_AUTHORITY_BATCH_SIZE = 4
 const DAY_MS = 24 * 60 * 60_000
-/** A desktop that has not checked in for this long is forgotten; signing in again registers it anew. */
 const RUNNER_RETENTION_MS = 30 * DAY_MS
-/** Wake-up notifications are hints; a desktop's work poll finds anything they pointed at. */
 const RUNNER_NOTIFICATION_RETENTION_MS = 7 * DAY_MS
 const RUNNER_PRUNE_INTERVAL_MS = 10 * 60_000
 const RUNNER_PRUNE_BATCH_SIZE = 1_000
-/** Desktops listed as targets; every one of them can still claim work. */
 const DESKTOP_TARGET_LIST_LIMIT = 100
 
 type OwnerScope = {
   organizationId: string
   ownerMemberId: string
   modelAttentionCapable?: boolean
-  /**
-   * Schedule kinds the caller can read. Released desktops parse schedules
-   * strictly, so Automations with other kinds are left out of what they get,
-   * as if they did not exist. Absent or null: every kind.
-   */
   readableScheduleKinds?: ReadonlySet<AutomationScheduleKind> | null
 }
 
@@ -70,14 +65,8 @@ function readableBy(scope: OwnerScope, schedule: AutomationSchedule) {
   return !scope.readableScheduleKinds || scope.readableScheduleKinds.has(schedule.kind)
 }
 
-/**
- * `agentCaller`: the request came from an agent through MCP. Agents may move
- * work to the cloud but never onto the owner's desktop, for the same reason
- * they cannot create Desktop Automations.
- */
 export type AutomationPlacementOptions = { agentCaller?: boolean }
 export type AutomationRunNowOptions = AutomationPlacementOptions & {
-  /** Run this one occurrence here instead of on the Automation's own target. */
   executionTarget?: AutomationExecutionTarget
 }
 export type DesktopRunnerScope = OwnerScope & {
@@ -85,7 +74,7 @@ export type DesktopRunnerScope = OwnerScope & {
   capabilities?: readonly AutomationDesktopRunnerCapability[]
 }
 
-const desktopLeaseOwner = (scope: DesktopRunnerScope) => `desktop:${scope.ownerMemberId}:${scope.runnerId}`
+const desktopLeaseOwner = automationDesktopLeaseOwner
 
 type ModelSelection = { providerId: string; modelId: string; variant?: string | null }
 
@@ -95,11 +84,6 @@ function sameModel(left: ModelSelection, right: ModelSelection) {
     && (left.variant ?? null) === (right.variant ?? null)
 }
 
-/**
- * Whether a run executed where its Automation runs. A failure of a one-off run
- * on the other target is recorded on that run only; it never pauses the
- * Automation's own schedule.
- */
 function ownPlacement(revision: { executionTarget?: AutomationExecutionTarget | null }, runTarget: AutomationExecutionTarget) {
   return (revision.executionTarget ?? "desktop") === runTarget
 }
@@ -140,7 +124,6 @@ export function configureCloudAgentExecutor(input: {
   cloudAgentRuntimeAvailable = input.runtimeAvailable
 }
 
-/** Cloud agent runs for organizations on the headless runtime execute here instead of an OpenWork Web computer. */
 export function configureHeadlessAgentExecutor(execute: (input: CloudAgentExecutorInput) => Promise<CloudAgentExecution>): void {
   headlessAgentExecutor = execute
 }
@@ -148,12 +131,10 @@ export function configureHeadlessAgentExecutor(execute: (input: CloudAgentExecut
 export type AutomationServiceOptions = {
   getOpenWorkWebAccess?: OpenWorkWebRuntimeAccessResolver
   cloudRuntime?: (organizationId: string) => Promise<CloudAutomationRuntime>
-  /** Reads an owner's primary Google Calendar around now. */
   readCalendar?: CalendarTriggerSourceDeps["read"]
 }
 
 async function readOwnerCalendar(input: Parameters<CalendarTriggerSourceDeps["read"]>[0]) {
-  // Imported on first use: the route module is large and the scheduler only needs this one read.
   const { readMemberGoogleCalendar } = await import("../routes/org/google-workspace.js")
   return readMemberGoogleCalendar({
     organizationId: normalizeDenTypeId("organization", input.organizationId),
@@ -175,8 +156,6 @@ export class AutomationService {
     this.cloudRuntime = options.cloudRuntime ?? cloudAutomationRuntime
     this.calendarTriggers = new CalendarTriggerSource({
       list: (limit) => automationRepository.listActiveCalendarTriggers({ limit }),
-      // GA: Den reads the owner's calendar for every active calendar-triggered Automation,
-      // gated only by Cloud placement and the Google Calendar connection.
       read: options.readCalendar ?? readOwnerCalendar,
       claim: (item, occurrence) => this.claimAndDispatch(item, occurrence, Date.now()),
       needsConnection: async (item, message) => {
@@ -191,10 +170,6 @@ export class AutomationService {
     })
   }
 
-  /**
-   * Calendar triggers run only in the cloud; keeping the schedule an
-   * Automation already has needs no check (the per-kind flags are GA).
-   */
   private requireScheduleAllowed(
     _scope: OwnerScope,
     schedule: AutomationSchedule | undefined,
@@ -204,34 +179,21 @@ export class AutomationService {
     if (schedule?.kind === "calendar" && target !== "cloud") throw new Error("automation_calendar_trigger_cloud_only")
   }
 
-  /** The organization's setting (and, for Cloud, the deployment's headless runner) for this kind of Automation. */
   private async requireTargetAllowed(organizationId: string, target: AutomationExecutionTarget) {
     if (!await automationTargetAllowed(organizationId, target)) throw new Error(target === "cloud" ? "automation_cloud_disabled" : "automation_desktop_disabled")
   }
 
-  /**
-   * Cloud placement needs somewhere to run: the headless runner (included in
-   * Team, no Web seat) or, as before, the owner's OpenWork Web computer.
-   */
   private async requireCloudRuntimeAccess(scope: OwnerScope) {
     if (await this.cloudRuntime(scope.organizationId) === "headless") return
     await requireOpenWorkWebRuntimeAccess(scope.organizationId, this.getOpenWorkWebAccess, { memberId: scope.ownerMemberId })
   }
 
-  /** Whether the owner has an OpenWork Web computer that can run agent Automations, with its files. */
   private async cloudComputerAvailable(scope: OwnerScope) {
     return (await this.getOpenWorkWebAccess(scope.organizationId, { memberId: scope.ownerMemberId })).hasAccess
       && cloudAgentRuntimeAvailable !== null
       && await cloudAgentRuntimeAvailable(scope)
   }
 
-  /**
-   * Which engine runs a cloud agent Automation. Off the headless runtime it is
-   * always the owner's OpenWork Web computer. On it, the cloud default model
-   * ("only connected accounts") runs headless, and a chosen model runs on the
-   * owner's cloud computer when they have one, because it may need that
-   * computer's files; without one it runs headless too.
-   */
   private async agentEngine(scope: OwnerScope, model: ModelSelection): Promise<typeof HEADLESS_AGENT_ENGINE_KIND | typeof CLOUD_AGENT_ENGINE_KIND> {
     if (await this.cloudRuntime(scope.organizationId) !== "headless") return CLOUD_AGENT_ENGINE_KIND
     if (isAutomationCloudDefaultModel(model)) return HEADLESS_AGENT_ENGINE_KIND
@@ -243,11 +205,6 @@ export class AutomationService {
     return cloudAgentRuntimeAvailable !== null && await cloudAgentRuntimeAvailable(scope)
   }
 
-  /**
-   * Moving an Automation, or one run of it, to the other target. The cloud
-   * needs exactly what creating a Cloud Automation needs; the desktop never
-   * runs Workflows, and agents never put work there.
-   */
   private async requireTargetMove(
     scope: OwnerScope,
     action: AutomationAction | undefined,
@@ -258,7 +215,6 @@ export class AutomationService {
     if (target === "desktop") {
       if (action?.kind === "saved_script") throw new Error("automation_action_target_mismatch")
       if (options.agentCaller) throw new Error("automation_agent_desktop_placement")
-      // Only the headless runner can run the cloud default; a desktop needs a model it has.
       if (action?.kind === "agent" && isAutomationCloudDefaultModel(action.model)) {
         const error = new Error("Choose a model before running this Automation on a desktop.")
         error.name = "model_access_lost"
@@ -272,12 +228,6 @@ export class AutomationService {
     }
   }
 
-  /**
-   * Whether Cloud can run this owner's agent Automations now, as creation
-   * would decide, and on what: `runtime: "headless"` reaches only connected
-   * accounts; `cloudComputer` says the owner also has an OpenWork Web
-   * computer whose files a run can use.
-   */
   private async cloudTarget(scope: OwnerScope): Promise<AutomationCloudTarget> {
     if (!await automationTargetAllowed(scope.organizationId, "cloud")) return { kind: "cloud", available: false, runtime: null, cloudComputer: false }
     const runtime = await this.cloudRuntime(scope.organizationId)
@@ -288,7 +238,6 @@ export class AutomationService {
       : { kind: "cloud", available: false, runtime: null, cloudComputer: false }
   }
 
-  /** Every place this owner's Automations can run: their registered desktops, then Cloud. */
   async executionTargets(scope: OwnerScope): Promise<AutomationExecutionTargetList> {
     const now = Date.now()
     const [desktops, cloud, desktopAllowed] = await Promise.all([
@@ -311,11 +260,6 @@ export class AutomationService {
     }
   }
 
-  /**
-   * Runner rows and wake-up notifications only ever accumulate. Prune at most
-   * every few minutes per process, and on the next tick again while a full
-   * batch says more is waiting. A failure only delays the next attempt.
-   */
   private async pruneRunnerState(now: number) {
     if (now < this.runnerPruneDueAt) return
     this.runnerPruneDueAt = now + RUNNER_PRUNE_INTERVAL_MS
@@ -335,7 +279,6 @@ export class AutomationService {
 
   async list(scope: OwnerScope, input: { cursor?: string; limit?: number }) {
     const listed = await automationRepository.list({ ...scope, cursor: input.cursor, limit: input.limit ?? 50 })
-    // Filter first: a caller must not reconcile Automations it is not shown.
     const page = { ...listed, items: listed.items.filter((item) => readableBy(scope, item.revision.schedule)) }
     const modelAccessBySelection = new Map<string, ReturnType<typeof resolveAutomationModelAccess>>()
     const resolveModelAccess = (item: AutomationListItem) => {
@@ -370,7 +313,19 @@ export class AutomationService {
     return item && readableBy(scope, item.revision.schedule) ? this.reconcileModelAttention(item, scope) : null
   }
 
-  async create(scope: OwnerScope, definition: CreateAutomationDefinition) {
+  async copyShared(scope: OwnerScope, id: string, options: CopySharedAutomation) {
+    const [source] = (await listSharedAutomations(scope, { automationId: id, limit: 1 })).items
+    if (!source) throw new Error("automation_not_found")
+    const action = source.action.kind === "agent" && options.model
+      ? { ...source.action, model: options.model } : source.action
+    const common = { name: options.name ?? source.name, schedule: source.schedule }
+    const definition: CreateAutomationDefinition = source.executionTarget === "desktop" && action.kind === "agent"
+      ? { ...common, instructions: action.instructions, model: action.model }
+      : { ...common, action, executionTarget: "cloud" }
+    return this.create({ ...scope, modelAttentionCapable: true }, definition, { initialState: "inactive" })
+  }
+
+  async create(scope: OwnerScope, definition: CreateAutomationDefinition, options: { initialState?: "inactive" } = {}) {
     this.requireScheduleAllowed(scope, definition.schedule, "action" in definition ? definition.executionTarget : "desktop")
     await this.requireTargetAllowed(scope.organizationId, "action" in definition ? "cloud" : "desktop")
     if ("action" in definition) {
@@ -379,8 +334,6 @@ export class AutomationService {
       }
       await this.requireCloudRuntimeAccess(scope)
       if (definition.action.kind === "agent") {
-        // Action-based creation is Cloud placement. The legacy Zen exception
-        // exists only for already-published Desktop clients.
         await this.requireNewModel({ ...scope, modelAttentionCapable: true }, definition.action.model, "cloud")
       }
       else {
@@ -393,7 +346,7 @@ export class AutomationService {
     } else {
       await this.requireNewModel(scope, definition.model, "desktop")
     }
-    const created = await automationRepository.create({ ...scope, definition, now: Date.now() })
+    const created = await automationRepository.create({ ...scope, definition, initialState: options.initialState, now: Date.now() })
     return this.reconcileModelAttention(created, scope)
   }
 
@@ -408,7 +361,6 @@ export class AutomationService {
     if (nextTarget === "desktop" && nextAction?.kind === "saved_script") {
       throw new Error("automation_action_target_mismatch")
     }
-    // Moving off the cloud needs no cloud access; moving onto it needs what creation needs.
     if (moved) await this.requireTargetMove(scope, nextAction, nextTarget, options)
     else if (currentTarget === "cloud") await this.requireCloudRuntimeAccess(scope)
     if (nextAction?.kind === "saved_script") {
@@ -420,8 +372,6 @@ export class AutomationService {
       if (!moved && nextTarget === "cloud" && !await this.cloudAgentAvailable(scope, requestedModel)) {
         throw new Error("automation_cloud_worker_required")
       }
-      // Cloud placement never inherits the legacy Desktop model exception, so
-      // a move to the cloud revalidates even an unchanged model.
       if (moved || !sameModel(requestedModel, current.revision.model)) {
         await this.requireNewModel(
           nextTarget === "cloud" ? { ...scope, modelAttentionCapable: true } : scope,
@@ -471,18 +421,11 @@ export class AutomationService {
     if (!current || current.automation.state === "archived") return null
     const savedTarget = current.revision.executionTarget ?? "desktop"
     const target = options.executionTarget ?? savedTarget
-    // Cloud Automations execute on the headless runner or an OpenWork VM, so a
-    // manual run is gated like every other cloud boundary. Desktop-target
-    // Automations are untouched. openwork_web_access_required is already part
-    // of the shared Automation contract (packages/types/src/automations.ts) and
-    // published desktops surface the returned message in the action toast.
-    // Running once on the other target is checked like moving there.
     if (target !== savedTarget) await this.requireTargetMove(scope, current.revision.action, target, options)
     else {
       await this.requireTargetAllowed(scope.organizationId, target)
       if (target === "cloud") await this.requireCloudRuntimeAccess(scope)
     }
-    // This one occurrence runs on `target`; the Automation keeps its own.
     const revision = { ...current.revision, executionTarget: target }
     let blocked = current.automation.needsAttentionReason
     if (current.revision.action?.kind === "saved_script") {
@@ -498,7 +441,6 @@ export class AutomationService {
     }
     if (blocked) {
       const now = Date.now()
-      // A desktop-only model blocks one run in the cloud, not the Automation's own schedule.
       if (ownPlacement(current.revision, target)) await automationRepository.markNeedsAttention({
         automationId: current.automation.id,
         expectedRevisionId: current.revision.id,
@@ -551,7 +493,6 @@ export class AutomationService {
   async cancelRun(scope: OwnerScope, runId: string): Promise<AutomationRun | null> {
     const now = Date.now()
     const run = await automationRepository.requestCancellation({ ...scope, runId, now })
-    // A queued run is cancelled right here; running ones finish through their executor.
     if (run?.status === "cancelled") await recordAutomationRunCompleted({ runId: run.id, terminalAt: now, actor: { kind: "owner" } })
     return run
   }
@@ -561,7 +502,6 @@ export class AutomationService {
     const started: string[] = []
     const recovered = await automationRepository.recoverExpiredLeases({ now, limit: input.batchSize ?? env.automations.batchSize })
     const expired = await automationRepository.expireUnclaimedDesktop({ now, limit: input.batchSize ?? env.automations.batchSize })
-    // Only runs that ran out of attempts became terminal at `now`; re-queued ones record nothing.
     for (const runId of [...recovered.map((run) => run.id), ...expired]) await recordAutomationRunCompleted({ runId, terminalAt: now })
     await this.pruneRunnerState(now)
 
@@ -577,7 +517,6 @@ export class AutomationService {
       const runId = await this.claimAndDispatch(item, { scheduledFor }, now)
       if (runId) started.push(runId)
     }
-    // Meetings are another reason to run; a calendar that cannot be read never holds up the clock.
     try {
       started.push(...await this.calendarTriggers.tick(now))
     } catch (error) {
@@ -586,18 +525,11 @@ export class AutomationService {
     return started
   }
 
-  /**
-   * Claims one occurrence and starts its run, or records why it was skipped.
-   * Returns the run id when work started. The occurrence is claimed even when
-   * a check fails, so the schedule advances durably and the person sees why.
-   */
   private async claimAndDispatch(
     item: AutomationListItem,
     occurrence: { scheduledFor: number; nonce?: string; triggerContext?: AutomationRunTriggerContext },
     now: number,
   ): Promise<string | null> {
-    // Revalidate the owner's model access at dispatch time; a failed check
-    // becomes a skipped receipt instead of work for the runner.
     const access = item.revision.action?.kind === "saved_script"
       ? (await isActiveAutomationOwner(item.automation)
           ? { ok: true as const }
@@ -626,13 +558,11 @@ export class AutomationService {
       if (error instanceof Error && error.message === "automation_not_active") return null
       throw error
     }
-    // Scheduler-initiated work has no HTTP request: its start is service-layer evidence.
     if (claim.kind !== "duplicate") await recordAutomationRunStarted(claim.run.id)
     if (claim.kind === "overlap") await recordAutomationRunCompleted({ runId: claim.run.id, terminalAt: now })
     if (claim.kind !== "claimed") return null
     const target = item.revision.executionTarget ?? "desktop"
     if (!await automationTargetAllowed(item.automation.organizationId, target)) {
-      // The organization turned this kind off: the occurrence is recorded as skipped and the schedule advances.
       await this.skipRun({ runId: claim.run.id, code: "execution_runtime_unavailable", message: `${target === "cloud" ? "Cloud" : "Desktop"} Automations are turned off for this organization.`, now })
       return null
     }
@@ -640,8 +570,6 @@ export class AutomationService {
       model: item.revision.model,
       failure: access,
       executionTarget: item.revision.executionTarget ?? "desktop",
-      // Scheduling must remain compatible until a capable desktop claims
-      // the work or a capable management client reconciles the Automation.
       modelAttentionCapable: (item.revision.executionTarget ?? "desktop") === "cloud",
     })) {
       await this.skipRun({ runId: claim.run.id, code: access.code, message: access.message, now })
@@ -658,11 +586,9 @@ export class AutomationService {
   }
 
   async stop(): Promise<void> {
-    // Cloud run leases are durable. Shutdown must not wait for a user thread's
-    // full runtime; an interrupted run is recovered after its lease expires.
   }
 
-  registerDesktopRunner(scope: OwnerScope, registration: AutomationDesktopRunnerRegistration) {
+  registerDesktopRunner(scope: OwnerScope, registration: AutomationDesktopRunnerRegistration, authSessionId: string | null = null) {
     return automationRepository.registerDesktopRunner({
       organizationId: scope.organizationId,
       ownerMemberId: scope.ownerMemberId,
@@ -673,16 +599,15 @@ export class AutomationService {
       appVersion: registration.appVersion,
       platform: registration.platform,
       concurrency: registration.concurrency,
+      authSessionId,
       now: Date.now(),
     })
   }
 
-  /** Runner tokens are revoked in effect the moment the owner leaves the org. */
-  isActiveRunnerOwner(scope: OwnerScope) {
-    return isActiveAutomationOwner(scope)
+  runnerStanding(scope: DesktopRunnerScope) {
+    return runnerStanding(scope)
   }
 
-  /** False when the runner has no registration to attach the report to. */
   saveDesktopRunnerInventory(scope: DesktopRunnerScope, inventory: DesktopRunnerInventory) {
     return automationRepository.saveDesktopRunnerInventory({
       organizationId: scope.organizationId,
@@ -693,11 +618,21 @@ export class AutomationService {
     })
   }
 
+  saveDesktopRunnerSessions(scope: DesktopRunnerScope, report: StoredRunnerSessionReport) {
+    return automationRepository.saveDesktopRunnerSessions({
+      organizationId: scope.organizationId,
+      ownerMemberId: scope.ownerMemberId,
+      runnerId: scope.runnerId,
+      access: report.access,
+      sessions: report.sessions,
+      now: Date.now(),
+    })
+  }
+
   touchDesktopRunner(scope: DesktopRunnerScope) {
     return automationRepository.touchDesktopRunner({ ...scope, now: Date.now() })
   }
 
-  /** Lets a management client warn before a due occurrence instead of after it. */
   async desktopRunnerPresence(scope: OwnerScope): Promise<AutomationDesktopRunnerPresence> {
     const lastSeenAt = await automationRepository.desktopRunnerLastSeenAt(scope)
     return { connected: desktopRunnerConnected({ lastSeenAt, now: Date.now() }), lastSeenAt }
@@ -705,18 +640,13 @@ export class AutomationService {
 
   private async canRunScheduledAutomations(scope: DesktopRunnerScope) {
     if (scope.capabilities?.includes(REMOTE_SESSION_ONLY_RUNNER_CAPABILITY)) return false
-    // A token issued before the registration changed must not restore scheduled
-    // execution to a session-only runner.
     const registration = await automationRepository.desktopRunnerById(scope)
     return !registration?.capabilities.includes(REMOTE_SESSION_ONLY_RUNNER_CAPABILITY)
   }
 
-  /** The work route records the runner's presence before calling this. */
   async discoverDesktopRunnerWork(scope: DesktopRunnerScope) {
     if (!await this.canRunScheduledAutomations(scope)) return []
     if (!await automationTargetAllowed(scope.organizationId, "desktop")) return []
-    // Every desktop sees all of the owner's queued runs and skips the ones
-    // pinned to a workspace it lacks, so the window must reach past them.
     return automationRepository.discoverDesktopWork({ ...scope, now: Date.now(), limit: AUTOMATION_RUNNER_WORK_RUN_LIMIT })
   }
 
@@ -732,8 +662,6 @@ export class AutomationService {
       now: Date.now(),
     })
     if (!claimed?.run.leaseExpiresAt) return null
-    // Last gate before the assignment leaves Den: access revoked after the run
-    // was queued must not reach the runner with the stale model selection.
     const access = await resolveAutomationModelAccess({
       organizationId: scope.organizationId,
       ownerMemberId: scope.ownerMemberId,
@@ -817,10 +745,7 @@ export class AutomationService {
       attempt: result.attempt,
       now,
     })
-    // A retried callback returns the stored terminal run (older finished_at): no second event.
     await recordAutomationRunCompleted({ runId, terminalAt: now, actor: { kind: "runner", runnerId: scope.runnerId, ownerMemberId: scope.ownerMemberId } })
-    // A Cloud Automation run once on a desktop that lacks its model says
-    // nothing about the cloud, so only the Automation's own placement pauses.
     if ((result.error?.code === "model_access_lost" || result.error?.code === "provider_unavailable")
       && await automationRepository.revisionExecutionTarget(completed.revisionId) !== "cloud") {
       await automationRepository.markNeedsAttention({
@@ -841,13 +766,7 @@ export class AutomationService {
     return automationRepository.listRunnerNotifications({ ...scope, after, limit: 100 })
   }
 
-  /**
-   * Published Desktop admission remains compatible, including model-attention
-   * v1 clients. Cloud enforces provider filters here; updated Desktop runners
-   * check their effective workspace model catalog before creating a thread.
-   */
   private async requireNewModel(scope: OwnerScope, model: ModelSelection, target: "desktop" | "cloud") {
-    // The cloud default only means something where the runner picks the model.
     if (isAutomationCloudDefaultModel(model)
       && (target !== "cloud" || await this.cloudRuntime(scope.organizationId) !== "headless")) {
       const error = new Error("The cloud default model runs only cloud Automations on the headless runtime.")
@@ -900,7 +819,6 @@ export class AutomationService {
     }) ?? item
   }
 
-  /** completeCloud plus the run's single terminal audit outcome (only when this call made the transition). */
   private async completeCloud(input: Parameters<typeof automationRepository.completeCloud>[0]) {
     const completed = await automationRepository.completeCloud(input)
     await recordAutomationRunCompleted({ runId: input.runId, terminalAt: input.now })
@@ -916,13 +834,11 @@ export class AutomationService {
     const leaseOwner = `${schedulerOwner}:cloud:${runId}`
     const target = await automationRepository.cloudRunTarget(runId)
     if (!target) return
-    // Every queued, recovered or manual cloud run passes here: once the organization turns Cloud off, none starts.
     if (!await automationTargetAllowed(target.organizationId, "cloud")) {
       await this.skipRun({ runId, code: "execution_runtime_unavailable", message: "Cloud Automations are turned off for this organization.", now: Date.now() })
       return
     }
     const runtime = await this.cloudRuntime(target.organizationId)
-    // A run keeps the engine it started on, so recovery never switches runtimes mid-run.
     const engineKind = target.engineKind
       ?? (target.actionKind === "saved_script"
         ? CLOUD_CODEMODE_ENGINE_KIND
@@ -938,8 +854,6 @@ export class AutomationService {
       now: Date.now(),
     })
     if (!claimed) return
-    // Headless runs and in-Den Workflows need no OpenWork Web computer, so the
-    // Web seat gates only work that executes on one.
     const webAccess = headlessEngine || (runtime === "headless" && claimed.revision.action?.kind === "saved_script")
       ? { hasAccess: true }
       : await this.getOpenWorkWebAccess(claimed.automation.organizationId, { memberId: claimed.automation.ownerMemberId })
@@ -1006,7 +920,6 @@ export class AutomationService {
 
   private startCloudRun(runId: string): boolean {
     if (this.cloudExecutions.has(runId)) return true
-    // Each pool's own limit is enforced durably at claim time; this only bounds one process.
     if (this.cloudExecutions.size >= env.automations.maxConcurrency + env.automations.headlessMaxConcurrency) return false
     const task = this.executeCloudRun(runId)
       .catch((error) => {
@@ -1087,7 +1000,6 @@ export class AutomationService {
       })
     }, heartbeatIntervalMs)
     interval.unref()
-    // A calendar-triggered run is told which meeting started it, as data after the person's instructions.
     const meeting = claimed.run.triggerContext
     const schedule = claimed.revision.schedule
     const runAction = meeting?.kind === "calendar_meeting" && schedule.kind === "calendar"
@@ -1118,9 +1030,6 @@ export class AutomationService {
         status: controller.signal.aborted ? "cancelled" : "failed",
         code: controller.signal.aborted ? "cancelled" : "execution_failed",
         message: controller.signal.aborted ? "The Automation run was cancelled." : error instanceof Error ? error.message : "Cloud agent execution failed.",
-        // The executor may have admitted a deterministic native turn before an
-        // unexpected exception escaped. A person must inspect that run instead
-        // of risking a second set of external side effects.
         retryable: false,
       }))
     } finally {

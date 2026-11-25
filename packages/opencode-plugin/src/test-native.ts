@@ -1,7 +1,6 @@
 import type { ConnectionInfo, CredentialValue, Json, ModelInfo, NativeMessage, NativePluginContext, NativeSessionInfo } from "./opencode.ts"
 import { isRecord } from "./den.ts"
 
-/** Mirror native 2.0.26's LocationQuery decoder, not a permissive mock. */
 function modelLocationQuery(input: unknown): void {
   if (input === undefined) return
   if (!isRecord(input) || (input.location !== undefined && (!isRecord(input.location)

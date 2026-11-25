@@ -23,7 +23,6 @@ export type GeneralSettingsViewProps = {
   onNavigateTab: (tab: SettingsTab) => void;
   developerMode: boolean;
   onSendFeedback: () => void;
-  onJoinDiscord: () => void;
   onReportIssue: () => void;
 };
 
@@ -82,7 +81,6 @@ function SettingsCard(props: {
 export function GeneralSettingsView(props: GeneralSettingsViewProps) {
   return (
     <div className="w-full max-w-3xl space-y-8">
-      {/* Workspace settings */}
       <div className="space-y-3">
         <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-dls-secondary">
           Workspace
@@ -100,7 +98,6 @@ export function GeneralSettingsView(props: GeneralSettingsViewProps) {
         </div>
       </div>
 
-      {/* Global settings */}
       <div className="space-y-3">
         <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-dls-secondary">
           Global
@@ -118,7 +115,6 @@ export function GeneralSettingsView(props: GeneralSettingsViewProps) {
         </div>
       </div>
 
-      {/* Feedback */}
       <div className="space-y-3">
         <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-dls-secondary">
           Help
@@ -140,14 +136,6 @@ export function GeneralSettingsView(props: GeneralSettingsViewProps) {
               >
                 <MessageCircle size={12} />
                 {t("settings.send_feedback")}
-                <ArrowUpRight size={11} />
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={props.onJoinDiscord}
-              >
-                {t("settings.join_discord")}
                 <ArrowUpRight size={11} />
               </Button>
               <Button

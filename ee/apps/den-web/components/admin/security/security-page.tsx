@@ -30,7 +30,6 @@ import {
 const SEVERITY_TONE: Record<SecuritySeverity, DenBadgeTone> = { high: "danger", medium: "warning", low: "info", clear: "success" };
 const SEVERITY_LABEL: Record<SecuritySeverity, string> = { high: "High", medium: "Medium", low: "Low", clear: "Clear" };
 const CATEGORY_LABEL: Record<SecurityCategory, string> = { access: "Sign-in and access", accounts: "Accounts", automation: "Bot-like use", credentials: "Credentials and admins", usage: "Usage" };
-/** Findings whose entity values are amounts of money. */
 const MONEY_FINDINGS = new Set(["spend-spikes", "instant-allowance"]);
 type CategoryFilter = "all" | SecurityCategory;
 const CATEGORY_OPTIONS: Array<{ value: CategoryFilter; label: string }> = [
@@ -47,6 +46,7 @@ function SeverityBadge({ severity }: { severity: SecuritySeverity }) {
 }
 
 function entityColumns(finding: SecurityFinding): DenTableColumn<SecurityEntity>[] {
+  const showSpend = finding.unit === "micro_usd" || MONEY_FINDINGS.has(finding.id);
   return [
     {
       key: "entity", header: "Review", render: (entity) => {
@@ -60,7 +60,7 @@ function entityColumns(finding: SecurityFinding): DenTableColumn<SecurityEntity>
         );
       },
     },
-    { key: "value", header: MONEY_FINDINGS.has(finding.id) ? "Spend" : "Count", align: "right", render: (entity) => <span className="tabular-nums">{MONEY_FINDINGS.has(finding.id) ? formatUsd(entity.value) : formatCount(entity.value)}</span> },
+    { key: "value", header: showSpend ? "Spend" : "Count", align: "right", render: (entity) => <span className="tabular-nums">{showSpend ? formatUsd(entity.value) : formatCount(entity.value)}</span> },
     { key: "severity", header: "Severity", align: "right", width: "96px", render: (entity) => <SeverityBadge severity={entity.severity} /> },
   ];
 }

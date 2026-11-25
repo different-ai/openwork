@@ -11,15 +11,6 @@ import { jsonResponse } from "../openapi.js"
 import { activeHeadlessResumeGrantMember, exchangeHeadlessResumeGrant, findHeadlessResumeGrant } from "./resume-grants.js"
 import { HEADLESS_INDEX_MAX_UPDATES, HEADLESS_INDEX_ROUTE, headlessIndexRequestSchema, ingestHeadlessIndexUpdates } from "./session-index.js"
 
-/**
- * The headless runner's calls back into Den, both authenticated with DEN_HEADLESS_RUNNER_CALLBACK_TOKEN (404 when
- * unset), internal (not in the published API document) and never MCP capabilities:
- * - exchanging a turn's resume grant (saved step turns) for a fresh member-scoped MCP token, so it can
- *   continue the turn after a restart or refresh a long turn's token. Never log the grant or the token.
- * - reporting sessions' content-free totals and state to Den's session index, each update with the capability Den
- *   minted for that session (session-index.ts). Never log a capability.
- */
-
 const logger = appLogger.child({ component: "headless_resume_token" })
 
 type HeadlessRouteOptions = DescribeRouteOptions & { "x-mcp": false }
@@ -60,7 +51,6 @@ const indexResultSchema = z.object({
 const indexResponseSchema = z.object({ results: z.array(indexResultSchema) })
 const indexErrorSchema = z.object({ error: z.enum(["not_found", "unauthorized", "invalid_request", "index_failed"]) })
 
-/** Compares digests, so neither the value nor its length leaks through timing. */
 function sameSecret(presented: string, expected: string) {
   const left = new Uint8Array(crypto.createHash("sha256").update(presented).digest())
   const right = new Uint8Array(crypto.createHash("sha256").update(expected).digest())
@@ -71,7 +61,6 @@ function bearer(header: string | undefined) {
   return header?.toLowerCase().startsWith("bearer ") ? header.slice(7).trim() : null
 }
 
-/** The runner's callback token, checked in constant time; a response when it is missing, wrong or not configured. */
 function callbackRefusal(header: string | undefined): { error: "not_found"; status: 404 } | { error: "unauthorized"; status: 401 } | null {
   const callbackToken = env.headlessRunnerCallbackToken
   if (!callbackToken) return { error: "not_found", status: 404 }
@@ -151,7 +140,6 @@ export function registerHeadlessRunnerRoutes<T extends Env>(app: Hono<T>) {
         const row = await findHeadlessResumeGrant(grant)
         if (!row) return c.json({ error: "grant_invalid" as const }, 403)
         const memberId = await activeHeadlessResumeGrantMember(row)
-        // The callback token is verified and the grant names the organization and member it acts for.
         const audited = await attributeAuditRequest(c, {
           organizationId: row.organizationId,
           ...auditServiceAttribution("headless-runner", row.id, { memberId }),

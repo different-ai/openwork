@@ -1,17 +1,16 @@
 import type { AutomationDesktopRunnerRegistration, DesktopRunnerInventory } from "@openwork/types/automations"
-import { isActiveAutomationOwner } from "../../automations/authority.js"
-import { automationRepository } from "../../automations/repository.js"
+import { runnerStanding } from "../../computer-disconnect.js"
+import { automationRepository, type StoredRunnerSessionReport } from "../../automations/repository.js"
 
 export type SessionRunnerScope = { organizationId: string; ownerMemberId: string; runnerId: string }
 
-/** Shared runner storage and authority, independent of the scheduler runtime. */
 export class SessionRunnerService {
-  registerDesktopRunner(scope: Omit<SessionRunnerScope, "runnerId">, registration: AutomationDesktopRunnerRegistration) {
-    return automationRepository.registerDesktopRunner({ ...scope, ...registration, now: Date.now() })
+  registerDesktopRunner(scope: Omit<SessionRunnerScope, "runnerId">, registration: AutomationDesktopRunnerRegistration, authSessionId: string | null = null) {
+    return automationRepository.registerDesktopRunner({ ...scope, ...registration, authSessionId, now: Date.now() })
   }
 
-  isActiveRunnerOwner(scope: Omit<SessionRunnerScope, "runnerId">) {
-    return isActiveAutomationOwner(scope)
+  runnerStanding(scope: SessionRunnerScope) {
+    return runnerStanding(scope)
   }
 
   touchDesktopRunner(scope: SessionRunnerScope) {
@@ -20,6 +19,10 @@ export class SessionRunnerService {
 
   saveDesktopRunnerInventory(scope: SessionRunnerScope, inventory: DesktopRunnerInventory) {
     return automationRepository.saveDesktopRunnerInventory({ ...scope, inventory, now: Date.now() })
+  }
+
+  saveDesktopRunnerSessions(scope: SessionRunnerScope, report: StoredRunnerSessionReport) {
+    return automationRepository.saveDesktopRunnerSessions({ ...scope, access: report.access, sessions: report.sessions, now: Date.now() })
   }
 }
 

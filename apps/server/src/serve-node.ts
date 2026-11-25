@@ -1,10 +1,3 @@
-/**
- * Node.js HTTP adapter for the OpenWork server.
- *
- * Provides a `serve()` function with the same interface as Bun.serve()
- * but backed by `node:http`. This allows the server to run in any Node.js
- * environment (including Electron's main process) without Bun.
- */
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { Readable } from "node:stream";
 
@@ -20,8 +13,6 @@ export type ServeResult = {
   stop: () => void | Promise<void>;
 };
 
-// Attachments stream through the request body, so Node's 5-minute default would
-// cut a large one off on a slow connection.
 const REQUEST_BODY_TIMEOUT_MS = 12 * 60 * 60 * 1000;
 
 function isResponseWritable(nodeRes: ServerResponse): boolean {
@@ -77,9 +68,6 @@ async function waitForDrainOrClose(nodeRes: ServerResponse): Promise<void> {
   });
 }
 
-/**
- * Convert a Node.js IncomingMessage into a Web API Request.
- */
 function toWebRequest(
   nodeReq: IncomingMessage,
   hostname: string,
@@ -100,7 +88,6 @@ function toWebRequest(
     nodeReq.socket.once("close", abort);
   }
 
-  // Node headers can be string | string[] | undefined
   for (const [key, value] of Object.entries(nodeReq.headers)) {
     if (value == null) continue;
     if (Array.isArray(value)) {
@@ -112,8 +99,6 @@ function toWebRequest(
 
   const hasBody = method !== "GET" && method !== "HEAD";
 
-  // Readable.toWeb() returns a Node stream/web ReadableStream which is structurally
-  // compatible with the global ReadableStream but TypeScript treats them as distinct.
   const body = hasBody
     ? (Readable.toWeb(nodeReq) as unknown as ReadableStream<Uint8Array>)
     : null;
@@ -135,9 +120,6 @@ function toWebRequest(
   };
 }
 
-/**
- * Write a Web API Response to a Node.js ServerResponse.
- */
 export async function writeWebResponse(webRes: Response, nodeRes: ServerResponse): Promise<void> {
   const headersObj: Record<string, string | string[]> = {};
   webRes.headers.forEach((value, key) => {
@@ -165,10 +147,8 @@ export async function writeWebResponse(webRes: Response, nodeRes: ServerResponse
     if (cancelled) return;
     cancelled = true;
     try {
-      // Cancellation is best effort: it may throw, reject, or never settle.
       void reader.cancel(reason).catch(() => undefined);
     } catch {
-      // A synchronous cancellation failure must not escape cleanup.
     }
   };
   const cancelOnDisconnect = () => {
@@ -189,7 +169,6 @@ export async function writeWebResponse(webRes: Response, nodeRes: ServerResponse
       }
     }
   } catch (error) {
-    // A partial response must be aborted, not framed as a successful EOF.
     nodeRes.destroy();
     throw error;
   } finally {
@@ -198,18 +177,11 @@ export async function writeWebResponse(webRes: Response, nodeRes: ServerResponse
     try {
       reader.releaseLock();
     } catch {
-      // Bun 1.3.x can throw here for eagerly buffered fetch bodies, even after EOF.
-      // Lock cleanup must neither invalidate a complete body nor mask a stream error.
     }
   }
   if (completed) endResponse(nodeRes);
 }
 
-/**
- * Start an HTTP server with a Web-standard fetch handler.
- *
- * Interface mirrors Bun.serve() so the caller doesn't need to change.
- */
 export function serve(options: ServeOptions): Promise<ServeResult> {
   const { hostname, port, fetch: fetchHandler } = options;
 
@@ -247,7 +219,6 @@ export function serve(options: ServeOptions): Promise<ServeResult> {
     }
   });
 
-  // Set keep-alive timeout to match Bun's idleTimeout
   if (options.idleTimeout) {
     server.keepAliveTimeout = options.idleTimeout * 1000;
   }
@@ -256,10 +227,6 @@ export function serve(options: ServeOptions): Promise<ServeResult> {
   let boundPort = port;
 
   return new Promise<ServeResult>((resolve, reject) => {
-    // The caller probes port availability before calling us, but that
-    // check-then-bind is racy: a just-stopped server may not have released the
-    // socket yet. On EADDRINUSE, retry once with an OS-assigned free port
-    // (port 0) instead of failing the whole startup.
     let retriedFreePort = false;
     server.on("error", (error: NodeJS.ErrnoException) => {
       if (error.code === "EADDRINUSE" && !retriedFreePort) {
@@ -269,10 +236,6 @@ export function serve(options: ServeOptions): Promise<ServeResult> {
       }
       reject(error);
     });
-    // A standing "listening" listener, not the listen() callback: Node keeps
-    // the callback-registered once("listening") listener alive across the
-    // EADDRINUSE retry, but Bun does not — under Bun the fallback re-bind
-    // succeeded while this promise hung forever.
     server.on("listening", () => {
       const addr = server.address();
       if (addr && typeof addr === "object") {

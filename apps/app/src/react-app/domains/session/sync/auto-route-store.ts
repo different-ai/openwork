@@ -12,13 +12,6 @@ function routeKey(route: AutoRouterReplyRoute) {
   return `${route.at}:${route.provider}:${route.model}:${route.thinking}`;
 }
 
-/**
- * Smart Model Router (feature `autoRouter`): the routing decisions the engine
- * recorded for each session, so the chat can say which model answered a Smart
- * reply. A
- * session snapshot and live metadata updates may arrive in either order, so
- * both merge; the list only grows, apart from the engine dropping old turns.
- */
 export const useAutoRouteStore = create<{
   bySession: Record<string, readonly AutoRouterReplyRoute[]>;
   publish: (sessionId: string, routes: readonly AutoRouterReplyRoute[]) => void;
@@ -39,7 +32,6 @@ export function useSessionAutoRoutes(sessionId: string) {
   return useAutoRouteStore(state => state.bySession[sessionId] ?? EMPTY);
 }
 
-/** The routing decisions a native session snapshot carries, if any. */
 export function autoRoutesFromSession(session: unknown): AutoRouterReplyRoute[] {
   return session && typeof session === "object"
     ? autoRouterReplyRoutes(Reflect.get(session, AUTO_ROUTER_SESSION_ROUTES_KEY))

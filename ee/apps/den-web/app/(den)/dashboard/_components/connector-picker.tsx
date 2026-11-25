@@ -10,7 +10,6 @@ import { ConnectorLogo } from "./item-logo";
 import type { ExternalMcpPreset } from "./mcp-connections-data";
 import { classifySmartAddInput, pastedMcpAddress } from "./mcp-connection-smart-add";
 
-/** Catalog copy is written for admins; members get the first plain clause. */
 export function shortDescription(text: string): string {
   const first = text.split(/\s[—–-]\s|—|\.\s/)[0]?.trim() ?? "";
   return first.replace(/\.$/, "");
@@ -21,10 +20,8 @@ export type CatalogEntry = {
   name: string;
   description: string;
   url: string;
-  /** Where the row goes when this is already set up. */
   openHref?: string;
   addLabel?: "Add another";
-  /** A quiet note when people can't sign in with one click today. */
   signInNote?: string;
 };
 
@@ -114,11 +111,6 @@ function GlobeTile() {
   );
 }
 
-/**
- * The one connector catalog, used from My Library and from Manage. In Manage
- * the search also takes an MCP address, and "Add any MCP" opens the address
- * form in place; `customName` is that form's state, owned by the page header.
- */
 export function ConnectorPicker({ entries, loading, addHref, customHref, mode, customName, onCustomNameChange }: {
   entries: CatalogEntry[];
   loading: boolean;

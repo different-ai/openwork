@@ -11,7 +11,6 @@ import { isPrivateAddress } from "./capability-sources/url-guard.js"
 
 export const SERVICE_READINESS_TTL_MS = 60_000
 export const SERVICE_READINESS_TIMEOUT_MS = 2_000
-/** SMTP sign-in (connect, STARTTLS, AUTH) needs longer than a health GET, but stays bounded. */
 export const EMAIL_READINESS_TIMEOUT_MS = 8_000
 export const SERVICE_READINESS_RATE_KEY = "service-readiness:deployment:check:v1"
 export const SERVICE_READINESS_RATE_WINDOW_MS = 30_000
@@ -21,15 +20,12 @@ type Environment = Readonly<Record<string, string | undefined>>
 export type ReadinessFetch = (url: string, init: RequestInit) => Promise<Response>
 export type ServiceProbeDependencies = {
   env: Environment
-  /** Configured/derived public Den origin, never the incoming request origin. */
   denOrigin?: string
   database: (signal: AbortSignal) => Promise<unknown>
   fetch: ReadinessFetch
-  /** Live mail transport check; never sends a message. Omitted: complete settings stay unverified. */
   verifyEmail?: (signal: AbortSignal) => Promise<EmailTransportCheck>
   timeoutMs?: number
   emailTimeoutMs?: number
-  /** Monotonic milliseconds for check durations. */
   clock?: () => number
 }
 type Fact = Pick<DeploymentServiceStatus, "configured" | "state" | "reason" | "missingSettings" | "notes" | "durationMs">
@@ -47,7 +43,6 @@ function configuration(source: Environment, names: string[]): Fact | null {
   return missing.length ? fact("misconfigured", "missing_configuration", false, missing) : null
 }
 
-/** Trusted operator settings only. Reuses the deployment origin validator, with a stricter HTTP boundary. */
 export function readinessServiceOrigin(raw: string): string {
   const origin = gatewayOrigin(raw, "service origin", false)
   const url = new URL(origin)
@@ -76,18 +71,15 @@ function supportedInternalAddress(address: string): boolean {
     return first === 127 || first === 10 || (first === 172 && second >= 16 && second <= 31)
       || (first === 192 && second === 168) || (first === 100 && second >= 64 && second <= 127)
   }
-  // Reject transition/mapped/reserved IPv6, even for trusted service DNS. Only
-  // native loopback and unique-local service networks need private access.
   return host === "::1" || /^f[cd][0-9a-f]{2}:/.test(host)
 }
 
-/** Build only from validated operator settings, never from a request or redirect destination. */
 export function readinessServiceHosts(source: Environment): ReadonlySet<string> {
   const hosts = new Set<string>()
   const gateway = source.GATEWAY_ENABLED === "false" ? undefined : source.GATEWAY_PROXY_BASE_URL ?? source.INFERENCE_PROXY_BASE_URL
   for (const raw of [gateway, source.DEN_HEADLESS_RUNNER_URL, source.DEN_WORKBOT_URL]) {
     if (!raw) continue
-    try { hosts.add(new URL(readinessServiceOrigin(raw)).hostname.replace(/^\[|\]$/g, "").toLowerCase()) } catch { /* Invalid settings never grant network access. */ }
+    try { hosts.add(new URL(readinessServiceOrigin(raw)).hostname.replace(/^\[|\]$/g, "").toLowerCase()) } catch {}
   }
   return hosts
 }
@@ -95,10 +87,6 @@ export function readinessServiceHosts(source: Environment): ReadonlySet<string> 
 type ServiceAddresses = Array<{ address: string; family: number }>
 const resolveServiceAddresses = (hostname: string) => lookup(hostname, { all: true, verbatim: true })
 const noPrivateServiceHosts: ReadonlySet<string> = new Set()
-/** Used by the transport's DNS lookup itself (not a vulnerable resolve-then-fetch preflight).
- * Default policy is public-only. Native private/loopback networks require an
- * exact hostname explicitly derived from the operator's validated service origins.
- */
 export async function readinessLookup(hostname: string, resolve: (hostname: string) => Promise<ServiceAddresses> = resolveServiceAddresses, allowedPrivateHosts: ReadonlySet<string> = noPrivateServiceHosts): Promise<ServiceAddresses> {
   const addresses = await resolve(hostname)
   const trusted = allowedPrivateHosts.has(hostname.toLowerCase())
@@ -109,8 +97,6 @@ export async function readinessLookup(hostname: string, resolve: (hostname: stri
   return addresses
 }
 
-// Include every setting that influences a probe or configuration-derived fact.
-// Never expose the fingerprint, inputs or resulting Redis key in a response/log.
 const readinessConfigurationSettings = [
   "DB_MODE", "DATABASE_URL", "DATABASE_HOST", "DATABASE_USERNAME", "DATABASE_PASSWORD",
   "DATABASE_READ_USERNAME", "DATABASE_READ_PASSWORD",
@@ -118,10 +104,6 @@ const readinessConfigurationSettings = [
   "DEN_HEADLESS_RUNNER_URL", "DEN_HEADLESS_RUNNER_TOKEN", "DEN_HEADLESS_RUNNER_CALLBACK_TOKEN", "DEN_WORKBOT_URL",
   "DEN_API_PUBLIC_URL", "EMAIL_FROM", "RESEND_API_KEY", "SMTP_HOST", "SMTP_PORT", "SMTP_USER", "SMTP_PASS", "SMTP_SECURE", "OPENWORK_DEV_MODE",
 ]
-/** Internal namespace only: rolling replicas with changed settings cannot reuse old Ready facts.
- * The existing deployment encryption key also prevents dictionary-testing weak
- * individual settings against a visible cache key. No new secret is required.
- */
 export function readinessConfigurationFingerprint(source: Environment, denOrigin?: string): string {
   const inputs = readinessConfigurationSettings.map((name) => [name, source[name] ?? null])
   const key = source.DEN_DB_ENCRYPTION_KEY
@@ -182,7 +164,6 @@ type ProbeContext = ServiceProbeDependencies & { track: TrackProbe; begin?: () =
 async function health<T>(deps: ProbeContext, raw: string, path: "/health" | "/ready" | "/v1/health" | "/internal/readiness", schema: z.ZodType<T>, token?: string): Promise<T> {
   let origin: string
   try { origin = readinessServiceOrigin(raw) } catch { throw new ProbeFailure("misconfigured", "invalid_configuration") }
-  // The live check starts at the first network call, not at configuration validation.
   deps.begin?.()
   return bounded(async (signal) => {
     const headers: Record<string, string> = { accept: "application/json" }
@@ -203,11 +184,9 @@ async function health<T>(deps: ProbeContext, raw: string, path: "/health" | "/re
 }
 async function protect(probe: () => Promise<Fact>): Promise<Fact> {
   try { return await probe() } catch (error) {
-    // Never serialize, log or retain upstream errors: they can contain URLs, headers and bodies.
     return error instanceof ProbeFailure ? fact(error.state, error.reason) : fact("unreachable", "request_failed")
   }
 }
-/** durationMs covers the first network/database call until completion; null when none ran. */
 async function timed(clock: () => number, probe: (begin: () => void) => Promise<Fact>): Promise<Fact> {
   let started: number | null = null
   const result = await protect(() => probe(() => { started ??= clock() }))
@@ -220,11 +199,9 @@ function emailNotes(source: Environment): ServiceNote[] {
   if (source.SMTP_HOST?.trim()) return ["email_smtp"]
   return source.RESEND_API_KEY?.trim() ? ["email_resend"] : []
 }
-/** Configuration only. Complete SMTP/Resend settings are `not_checked` until the live check runs. */
 export function emailReadiness(source: Environment): Fact {
   const present = (name: string) => Boolean(source[name]?.trim())
   const notes = emailNotes(source)
-  // Match @openwork/email: SMTP_HOST > RESEND_API_KEY > development sink.
   if (present("SMTP_HOST")) {
     const missing = ["EMAIL_FROM", ...(present("SMTP_USER") ? ["SMTP_PASS"] : []), ...(present("SMTP_PASS") ? ["SMTP_USER"] : [])].filter((name) => !present(name))
     if (missing.length) return fact("misconfigured", "missing_configuration", false, missing, notes)
@@ -234,7 +211,6 @@ export function emailReadiness(source: Environment): Fact {
   }
   if (present("RESEND_API_KEY")) return present("EMAIL_FROM") ? fact("unknown", "not_checked", true, [], notes) : fact("misconfigured", "missing_configuration", false, ["EMAIL_FROM"], notes)
   if (["SMTP_PORT", "SMTP_USER", "SMTP_PASS", "SMTP_SECURE"].some(present)) return fact("misconfigured", "missing_configuration", false, ["SMTP_HOST"])
-  // The development sink only logs messages; no mail transport is set up.
   if (source.OPENWORK_DEV_MODE === "1") return fact("not_configured", "not_configured", false)
   if (present("EMAIL_FROM")) return fact("misconfigured", "missing_configuration", false, ["SMTP_HOST", "RESEND_API_KEY"])
   return fact("not_configured", "not_configured", false)
@@ -255,11 +231,6 @@ function emailFact(check: EmailTransportCheck, notes: ServiceNote[]): Fact {
 
 type RunnerHealth = z.infer<typeof headlessServiceHealthSchema>
 type ResumeFacts = { note: ServiceNote | null; missingSettings: string[]; misconfigured: boolean }
-/**
- * Resumable answers are part of the runner, not a service of their own. Den
- * cannot exercise the callback without a real turn, so this compares settings
- * on both sides. `health` is the runner's answer when it was reachable.
- */
 function resumeFacts(source: Environment, denOrigin: string | undefined, health?: RunnerHealth): ResumeFacts {
   const callback = source.DEN_HEADLESS_RUNNER_CALLBACK_TOKEN?.trim()
   const broken = (missingSettings: string[] = []): ResumeFacts => ({ note: "resume_misconfigured", missingSettings, misconfigured: true })
@@ -269,7 +240,6 @@ function resumeFacts(source: Environment, denOrigin: string | undefined, health?
   }
   if (callback.length < 32 || callback === source.DEN_HEADLESS_RUNNER_TOKEN?.trim()) return broken()
   if (!denOrigin) return broken(["DEN_API_PUBLIC_URL"])
-  // Without the runner's answer, configuration alone cannot show resume works.
   if (!health) return { note: null, missingSettings: [], misconfigured: false }
   if (!health.resumeConfigured || health.denOriginMatches === false) return broken()
   return { note: "resume_ready", missingSettings: [], misconfigured: false }
@@ -282,14 +252,12 @@ function withResume(runner: Fact, resume: ResumeFacts, healthy: boolean): Fact {
 }
 function runnerSettings(source: Environment): Fact | null {
   const incomplete = configuration(source, ["DEN_HEADLESS_RUNNER_URL", "DEN_HEADLESS_RUNNER_TOKEN"])
-  // A callback token without a runner is a partial runner setup, not an absent one.
   if (incomplete?.state === "not_configured" && source.DEN_HEADLESS_RUNNER_CALLBACK_TOKEN?.trim()) {
     return fact("misconfigured", "missing_configuration", false, ["DEN_HEADLESS_RUNNER_URL", "DEN_HEADLESS_RUNNER_TOKEN"])
   }
   return incomplete
 }
 
-/** At most five concurrent read-only probes; all other statuses derive from these same facts. Nothing is sent or invoked. */
 export async function probeDeploymentServices(deps: ServiceProbeDependencies): Promise<ProbeFacts> {
   const operations: Promise<unknown>[] = []
   const track: TrackProbe = (operation) => { operations.push(operation) }
@@ -316,8 +284,6 @@ export async function probeDeploymentServices(deps: ServiceProbeDependencies): P
     if (incomplete) return incomplete
     if (!runnerConfig) return fact("misconfigured", "invalid_configuration", false)
     runnerHealth = await health({ ...tracked, begin }, runnerConfig.url, "/v1/health", headlessServiceHealthSchema, runnerConfig.token)
-    // Per-member credentials may supply models; no model invocation or provider catalog lookup here.
-    // A Den origin mismatch only affects resumable answers and is reported there.
     return fact("ready", "health_verified")
   })
   const workbot = timed(clock, async (begin) => {
@@ -348,7 +314,6 @@ export async function probeDeploymentServices(deps: ServiceProbeDependencies): P
     ["database", databaseFact],
     ["gateway", gatewayFact],
     ["headlessRunner", withResume(runnerFact, resumeFacts(source, deps.denOrigin, runnerHealthy ? runnerHealth : undefined), runnerHealthy)],
-    // Workbot needs a reachable runner, not resumable answers.
     ["workbot", workbotFact.state === "ready" && !runnerHealthy ? { ...workbotFact, state: "unknown", reason: "dependency_unavailable" } : workbotFact],
     ["email", emailResult],
   ])
@@ -383,7 +348,6 @@ function configurationHint(id: ServiceId, source: Environment, denOrigin?: strin
   if (source.DEN_HEADLESS_RUNNER_TOKEN.trim().length < 32) return fact("misconfigured", "invalid_configuration", false)
   try { readinessServiceOrigin(source.DEN_WORKBOT_URL); return unchecked } catch { return fact("misconfigured", "invalid_configuration", false) }
 }
-/** No outbound work. `server` stays null here and in the shared cache; read handlers fill it per replica. */
 export function initialReadiness(source?: Environment, denOrigin?: string): DeploymentServiceReadiness {
   return { version: 2, checkedAt: null, checking: false, server: null, services: serviceIdSchema.options.map((id) => ({
     id, required: id === "database", ...(source ? configurationHint(id, source, denOrigin) : fact("unknown", "not_checked", false)), dependencies: dependencies(id), checkedAt: null, lastSuccessAt: null, stale: true,
@@ -393,7 +357,6 @@ export function organizationReadiness(snapshot: DeploymentServiceReadiness): Org
   return { version: 2, checkedAt: snapshot.checkedAt, checking: snapshot.checking, services: snapshot.services.map(({ required: _required, missingSettings: _missing, notes: _notes, durationMs: _duration, ...status }) => status) }
 }
 export type ReadinessControllerDependencies = {
-  /** Durable shared admission; null admits, otherwise seconds until another check may be admitted. */
   admit: () => Promise<number | null>
   probe: () => Promise<ProbeFacts>
   now?: () => number
@@ -402,7 +365,6 @@ export type ReadinessControllerDependencies = {
   save?: (snapshot: DeploymentServiceReadiness) => Promise<void>
 }
 
-/** Diagnostics are advisory: never an authorization input, never a startup or request dependency. */
 export function createReadinessController(deps: ReadinessControllerDependencies) {
   const now = deps.now ?? Date.now
   let current = deps.initial ?? initialReadiness()
@@ -421,8 +383,6 @@ export function createReadinessController(deps: ReadinessControllerDependencies)
       return { ...old, ...next, checkedAt, stale: false, lastSuccessAt: next.state === "ready" ? checkedAt : old.lastSuccessAt }
     }) }
     if (deps.save) await bounded(() => deps.save?.(current) ?? Promise.resolve(), 250).catch(() => undefined)
-    // A timeout publishes a fresh failed fact immediately, but an uncancellable
-    // database/DNS/body operation must drain before another local check starts.
     await result.drained
   }
   async function loadCache() {
@@ -440,14 +400,10 @@ export function createReadinessController(deps: ReadinessControllerDependencies)
     if (admission) return admission
     if (active) return Promise.resolve(null)
     admission = (async () => {
-      // A GET's recent background result is also the answer to Check now. Reuse
-      // it without changing timestamps, spending quota or launching more work.
-      // Loading first also preserves the previous replica's last-success facts.
       await loadCache()
       if (completedRecently()) return null
       const retryAfter = await deps.admit()
       if (retryAfter !== null) {
-        // Another replica may finish between our cache read and quota claim.
         await loadCache()
         return completedRecently() ? null : retryAfter
       }

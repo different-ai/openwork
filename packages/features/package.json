@@ -28,6 +28,30 @@
       },
       "development": "./src/resolve.ts",
       "default": "./src/resolve.ts"
+    },
+    "./define": {
+      "types": {
+        "openwork-build": "./dist/types/src/define.d.ts",
+        "default": "./src/define.ts"
+      },
+      "development": "./src/define.ts",
+      "default": "./src/define.ts"
+    },
+    "./all-flags": {
+      "types": {
+        "openwork-build": "./dist/types/src/all-flags.d.ts",
+        "default": "./src/all-flags.ts"
+      },
+      "development": "./src/all-flags.ts",
+      "default": "./src/all-flags.ts"
+    },
+    "./flags/*": {
+      "types": {
+        "openwork-build": "./dist/types/src/flags/*.d.ts",
+        "default": "./src/flags/*.ts"
+      },
+      "development": "./src/flags/*.ts",
+      "default": "./src/flags/*.ts"
     }
   },
   "scripts": {

@@ -1,4 +1,5 @@
-import { and, asc, desc, eq, gt, inArray, isNotNull, isNull, lt, lte, or } from "@openwork-ee/den-db/drizzle"
+import { createHash } from "node:crypto"
+import { and, asc, desc, eq, getTableColumns, gt, inArray, isNotNull, isNull, lt, lte, or, sql } from "@openwork-ee/den-db/drizzle"
 import { RemoteSessionCommandTable } from "@openwork-ee/den-db/schema/remote-session-commands"
 import { createDenTypeId, normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import {
@@ -12,6 +13,7 @@ import { automationUpdateChangedRows } from "../automations/update-result.js"
 import { signalRemoteSessionWork } from "./work-signal.js"
 
 export const DEFAULT_TTL_MS = 10 * 60_000
+const SESSION_COMMAND_LIMIT = 20
 
 export class RemoteSessionIdempotencyConflictError extends Error {
   constructor() {
@@ -20,7 +22,45 @@ export class RemoteSessionIdempotencyConflictError extends Error {
   }
 }
 
+export class RemoteSessionAttachClaimRefusedError extends Error {
+  constructor() {
+    super("remote_session_attach_claim_refused")
+    this.name = "RemoteSessionAttachClaimRefusedError"
+  }
+}
+
 export type RemoteSessionCommandStatus = "pending" | "claimed" | "delivered" | "failed" | "expired"
+
+export type RemoteSessionCommandKind = "create" | "attach"
+
+export const DETACHED_ERROR_CODE = "detached"
+export const DETACHED_MESSAGE = "This session is no longer connected. Connect to it again."
+
+export function remoteSessionCommandDetached(command: Pick<RemoteSessionCommand, "kind" | "status" | "error">): boolean {
+  return command.kind === "attach" && command.status === "failed" && command.error?.code === DETACHED_ERROR_CODE
+}
+
+export function detachedCommandValues(now: Date) {
+  return {
+    status: "failed" as const,
+    error_code: DETACHED_ERROR_CODE,
+    error_message: DETACHED_MESSAGE,
+    idempotency_key: null,
+    session_status: null,
+    session_waiting_for: null,
+    session_final_text: null,
+    session_error_code: null,
+    session_error_message: null,
+    session_latest_step: null,
+    session_pending: null,
+    session_observed_at: null,
+    updated_at: now,
+  }
+}
+
+export function detachableCommands() {
+  return and(eq(RemoteSessionCommandTable.kind, "attach"), eq(RemoteSessionCommandTable.status, "delivered"))
+}
 
 export type RemoteSessionProgress = {
   status: "running" | "waiting" | "idle" | "error"
@@ -30,9 +70,7 @@ export type RemoteSessionProgress = {
   finalText: string | null
   lastError: { code: string; message: string } | null
   messageCount: number | null
-  /** The step the session ran last, as a short sentence; null from older runners. */
   latestStep: string | null
-  /** What the session waits on, from runners that read it; null otherwise. */
   pending: RemoteSessionPending | null
   observedAt: number
 }
@@ -43,14 +81,14 @@ export type RemoteSessionCommand = {
   ownerMemberId: string
   createdByUserId: string
   status: RemoteSessionCommandStatus
+  kind: RemoteSessionCommandKind
   title: string
   prompt: string | null
   model: { providerId: string; modelId: string; variant: string | null } | null
   idempotencyKey: string | null
-  /** Computer (runner row id) the caller chose; only that runner may claim it. */
   targetComputerId: string | null
-  /** Workspace on that computer the session must be created in. */
   targetWorkspaceId: string | null
+  targetSessionId: string | null
   expiresAt: number
   claimedByRunnerId: string | null
   claimedAt: number | null
@@ -58,7 +96,6 @@ export type RemoteSessionCommand = {
   workspaceId: string | null
   resultSummary: string | null
   error: { code: string; message: string } | null
-  /** Latest progress the claiming runner reported after delivery; null until the first report. */
   session: RemoteSessionProgress | null
   createdAt: number
   updatedAt: number
@@ -77,11 +114,17 @@ type EnqueueInput = {
   targetWorkspaceId?: string
 }
 
-/**
- * The claiming desktop's computer ids: its runner row id, plus the install id
- * that named rows registered before rows were scoped. A command pinned to a
- * computer is visible only to the runner whose ids include its target.
- */
+type AttachEnqueueInput = {
+  organizationId: string
+  ownerMemberId: string
+  createdByUserId: string
+  title: string
+  ttlMs: number
+  targetComputerId: string
+  targetWorkspaceId: string
+  targetSessionId: string
+}
+
 type RunnerComputerIds = readonly string[]
 
 type ClaimInput = {
@@ -91,8 +134,8 @@ type ClaimInput = {
   runnerId: string
   computerIds: RunnerComputerIds
   now: number
-  /** Recovery clients may re-read their own sticky claim, never another runner's. */
   recoverClaimed?: boolean
+  claimAttach?: boolean
 }
 
 type CompleteInput = RemoteSessionCommandCompleteRequest & {
@@ -112,11 +155,12 @@ type ReportInput = RemoteSessionCommandSessionReport & {
 
 export type RemoteSessionReportResult = "reported" | "not_found" | "conflict"
 
-/** A delivered desktop session and the runner that owns it. */
 export type RemoteSessionDesktopSession = {
   commandId: string
   ownerMemberId: string
   runnerId: string
+  kind: RemoteSessionCommandKind
+  detached: boolean
   sessionId: string
   workspaceId: string
   title: string
@@ -125,67 +169,66 @@ export type RemoteSessionDesktopSession = {
   updatedAt: number
 }
 
+type RunnerKinds = { kinds?: readonly RemoteSessionCommandKind[] }
+
 export interface RemoteSessionCommandStore {
   enqueue(input: EnqueueInput): Promise<RemoteSessionCommand>
+  enqueueAttach(input: AttachEnqueueInput): Promise<RemoteSessionCommand>
   claim(input: ClaimInput): Promise<RemoteSessionCommand | null>
   complete(input: CompleteInput): Promise<RemoteSessionCommand | null>
-  /**
-   * Records session progress. Only the runner that claimed the command may
-   * report, and only while the command is delivered.
-   */
   report(input: ReportInput): Promise<RemoteSessionReportResult>
   get(input: { commandId: string; organizationId: string; createdByUserId: string }): Promise<RemoteSessionCommand | null>
-  /** Several of the caller's commands in one read, for status checks; unknown ids are left out. */
   getMany(input: { commandIds: readonly string[]; organizationId: string; createdByUserId: string }): Promise<RemoteSessionCommand[]>
-  /** The owner's command that most recently delivered or failed after `since`, or null. */
   latestSettled(input: { organizationId: string; ownerMemberId: string; since: number }): Promise<RemoteSessionCommand | null>
-  listPendingForRunner(input: {
+  listPendingForRunner(input: RunnerKinds & {
     organizationId: string
     ownerMemberId: string
     computerIds: RunnerComputerIds
     now: number
     limit: number
   }): Promise<RemoteSessionCommand[]>
-  /** Unexpired sticky claims, visible only to the same raw runner and owner. */
-  listRecoverableForRunner(input: {
+  listRecoverableForRunner(input: RunnerKinds & {
     organizationId: string
     ownerMemberId: string
     runnerId: string
     now: number
     limit: number
   }): Promise<RemoteSessionCommand[]>
-  /**
-   * Finds the delivered command that created this session for the caller, so
-   * read, send, and stop can be routed to the desktop that owns it. Null keeps
-   * the Cloud path.
-   */
+  listForSession(input: {
+    organizationId: string
+    createdByUserId: string
+    workspaceId: string
+    sessionId: string
+    now: number
+  }): Promise<RemoteSessionCommand[]>
+  listForCreator(input: {
+    organizationId: string
+    createdByUserId: string
+    now: number
+    limit: number
+  }): Promise<RemoteSessionCommand[]>
+  detach(input: {
+    organizationId: string
+    runner?: { ownerMemberId: string; runnerId: string }
+    now: number
+  }): Promise<void>
   findDesktopSession(input: {
     organizationId: string
     createdByUserId: string
     sessionId: string
     workspaceId?: string
   }): Promise<RemoteSessionDesktopSession | null>
-  /** Desktop sessions the caller created through remote-session commands, newest first. */
   listDesktopSessions(input: {
     organizationId: string
     createdByUserId: string
     workspaceId?: string
     limit: number
   }): Promise<RemoteSessionDesktopSession[]>
-  /**
-   * A follow-up was accepted: show the session as running again so callers
-   * polling the command do not read the previous turn's answer as final.
-   */
   markTurnStarted(input: { commandId: string; organizationId: string; ownerMemberId: string; runnerId: string; now: number }): Promise<void>
 }
 
 type CommandRow = typeof RemoteSessionCommandTable.$inferSelect
 
-/**
- * Command ids arrive from route params and MCP arguments, so a malformed
- * value is an ordinary caller mistake: it means "no such command", never an
- * internal error.
- */
 function commandIdOrNull(value: string): DenTypeId<"remoteSessionCommand"> | null {
   try {
     return normalizeDenTypeId("remoteSessionCommand", value)
@@ -231,6 +274,7 @@ function mapCommand(row: CommandRow): RemoteSessionCommand {
     ownerMemberId: row.owner_member_id,
     createdByUserId: row.created_by_user_id,
     status: row.status,
+    kind: row.kind,
     title: row.title,
     prompt: row.prompt,
     model: row.model_provider_id && row.model_model_id
@@ -239,6 +283,7 @@ function mapCommand(row: CommandRow): RemoteSessionCommand {
     idempotencyKey: row.idempotency_key,
     targetComputerId: row.target_computer_id,
     targetWorkspaceId: row.target_workspace_id,
+    targetSessionId: row.target_session_id,
     expiresAt: row.expires_at.getTime(),
     claimedByRunnerId: row.claimed_by_runner_id,
     claimedAt: row.claimed_at?.getTime() ?? null,
@@ -258,6 +303,8 @@ function mapDesktopSession(row: CommandRow): RemoteSessionDesktopSession | null 
     commandId: row.id,
     ownerMemberId: row.owner_member_id,
     runnerId: row.claimed_by_runner_id,
+    kind: row.kind,
+    detached: row.status !== "delivered",
     sessionId: row.session_id,
     workspaceId: row.workspace_id,
     title: row.title,
@@ -267,9 +314,10 @@ function mapDesktopSession(row: CommandRow): RemoteSessionDesktopSession | null 
   }
 }
 
-function desktopSessionScope(input: { organizationId: string; createdByUserId: string; workspaceId?: string }) {
-  // Scope ids come from the MCP principal; one that is not a Den id owns no
-  // desktop session rather than failing the call.
+function desktopSessionScope(
+  input: { organizationId: string; createdByUserId: string; workspaceId?: string },
+  options: { detached?: boolean } = {},
+) {
   let organizationId: DenTypeId<"organization">
   let createdByUserId: DenTypeId<"user">
   try {
@@ -278,10 +326,17 @@ function desktopSessionScope(input: { organizationId: string; createdByUserId: s
   } catch {
     return null
   }
+  const delivered = eq(RemoteSessionCommandTable.status, "delivered")
   return and(
     eq(RemoteSessionCommandTable.org_id, organizationId),
     eq(RemoteSessionCommandTable.created_by_user_id, createdByUserId),
-    eq(RemoteSessionCommandTable.status, "delivered"),
+    options.detached
+      ? or(delivered, and(
+        eq(RemoteSessionCommandTable.kind, "attach"),
+        eq(RemoteSessionCommandTable.status, "failed"),
+        eq(RemoteSessionCommandTable.error_code, DETACHED_ERROR_CODE),
+      ))
+      : delivered,
     isNotNull(RemoteSessionCommandTable.claimed_by_runner_id),
     isNotNull(RemoteSessionCommandTable.session_id),
     ...(input.workspaceId ? [eq(RemoteSessionCommandTable.workspace_id, input.workspaceId)] : []),
@@ -294,8 +349,29 @@ function targetableBy(computerIds: RunnerComputerIds) {
     : isNull(RemoteSessionCommandTable.target_computer_id)
 }
 
+function ofKinds(kinds: readonly RemoteSessionCommandKind[] = ["create"]) {
+  return inArray(RemoteSessionCommandTable.kind, [...kinds])
+}
+
+const { prompt: _prompt, session_final_text: _sessionFinalText, ...listedCommandColumns } = getTableColumns(RemoteSessionCommandTable)
+
+function mapListedCommand(row: Omit<CommandRow, "prompt" | "session_final_text">): RemoteSessionCommand {
+  return mapCommand({ ...row, prompt: null, session_final_text: null })
+}
+
+function attachIdempotencyKey(input: AttachEnqueueInput): string {
+  const scope = [
+    normalizeDenTypeId("organization", input.organizationId), normalizeDenTypeId("user", input.createdByUserId),
+    input.targetComputerId, input.targetWorkspaceId, input.targetSessionId,
+  ].join("\0")
+  return `attach_${createHash("sha256").update(scope).digest("hex")}`
+}
+
+function attachQueued(command: RemoteSessionCommand, now: number): boolean {
+  return (command.status === "pending" || command.status === "claimed") && command.expiresAt > now
+}
+
 async function commandById(commandId: string): Promise<RemoteSessionCommand | null> {
-  // primary: reads back the command enqueue just inserted.
   const rows = await db.$primary.select().from(RemoteSessionCommandTable)
     .where(eq(RemoteSessionCommandTable.id, normalizeDenTypeId("remoteSessionCommand", commandId)))
     .limit(1)
@@ -312,7 +388,6 @@ export function remoteSessionCommandRecoverable(command: RemoteSessionCommand, i
     && command.expiresAt > input.now
 }
 
-/** A terminal receipt is immutable; a lost HTTP response may be replayed. */
 export function remoteSessionCommandCompletionMatches(command: RemoteSessionCommand, input: CompleteInput) {
   return command.organizationId === normalizeDenTypeId("organization", input.organizationId)
     && command.ownerMemberId === normalizeDenTypeId("member", input.ownerMemberId)
@@ -331,9 +406,10 @@ function duplicateEntry(error: unknown, depth = 0): boolean {
   return "cause" in error && duplicateEntry(error.cause, depth + 1)
 }
 
-async function commandByIdempotencyScope(input: EnqueueInput): Promise<RemoteSessionCommand | null> {
+async function commandByIdempotencyScope(
+  input: Pick<EnqueueInput, "organizationId" | "createdByUserId" | "idempotencyKey">,
+): Promise<RemoteSessionCommand | null> {
   if (!input.idempotencyKey) return null
-  // primary: idempotency must see a retry's (or a concurrent winner's) insert.
   const rows = await db.$primary.select().from(RemoteSessionCommandTable).where(and(
     eq(RemoteSessionCommandTable.org_id, normalizeDenTypeId("organization", input.organizationId)),
     eq(RemoteSessionCommandTable.created_by_user_id, normalizeDenTypeId("user", input.createdByUserId)),
@@ -372,9 +448,6 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
     const now = Date.now()
     const existing = await commandByIdempotencyScope(input)
     if (existing && existing.expiresAt > now) return existingAdmission(existing, input)
-    // A key only protects retries of one create while its command can still be admitted. After
-    // that, the same key from a later chat is new work: release it from the old command so the
-    // old receipt stays readable and the new command can take the key.
     if (existing) await releaseIdempotencyKey(existing)
     const id = createDenTypeId("remoteSessionCommand")
     try {
@@ -398,14 +471,49 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
       })
     } catch (error) {
       if (!input.idempotencyKey || !duplicateEntry(error)) throw error
-      // The scoped re-read resolves a concurrent insert without exposing a
-      // command owned by someone else. Only a verified key collision is mapped.
       const winner = await commandByIdempotencyScope(input)
       if (winner) return existingAdmission(winner, input)
       const collisions = await db.$primary.select({ id: RemoteSessionCommandTable.id }).from(RemoteSessionCommandTable)
         .where(eq(RemoteSessionCommandTable.idempotency_key, input.idempotencyKey)).limit(1)
       if (collisions.length > 0) throw new RemoteSessionIdempotencyConflictError()
       throw error
+    }
+    const command = await commandById(id)
+    if (!command) throw new Error("remote_session_command_enqueue_failed")
+    signalRemoteSessionWork(command.organizationId, command.ownerMemberId)
+    return command
+  },
+
+  async enqueueAttach(input) {
+    const now = Date.now()
+    const key = attachIdempotencyKey(input)
+    const holder = await commandByIdempotencyScope({ ...input, idempotencyKey: key })
+    if (holder && attachQueued(holder, now)) return holder
+    if (holder) await releaseIdempotencyKey(holder)
+    const id = createDenTypeId("remoteSessionCommand")
+    try {
+      await db.insert(RemoteSessionCommandTable).values({
+        id,
+        org_id: normalizeDenTypeId("organization", input.organizationId),
+        owner_member_id: normalizeDenTypeId("member", input.ownerMemberId),
+        created_by_user_id: normalizeDenTypeId("user", input.createdByUserId),
+        status: "pending",
+        kind: "attach",
+        title: input.title,
+        prompt: null,
+        idempotency_key: key,
+        target_computer_id: input.targetComputerId,
+        target_workspace_id: input.targetWorkspaceId,
+        target_session_id: input.targetSessionId,
+        expires_at: new Date(now + input.ttlMs),
+        created_at: new Date(now),
+        updated_at: new Date(now),
+      })
+    } catch (error) {
+      if (!duplicateEntry(error)) throw error
+      const winner = await commandByIdempotencyScope({ ...input, idempotencyKey: key })
+      if (!winner) throw error
+      return winner
     }
     const command = await commandById(id)
     if (!command) throw new Error("remote_session_command_enqueue_failed")
@@ -425,6 +533,7 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
       const rows = await tx.select().from(RemoteSessionCommandTable).where(scope).limit(1).for("update")
       const existing = rows[0] ? mapCommand(rows[0]) : null
       if (!existing || existing.expiresAt <= input.now) return null
+      if (existing.kind === "attach" && !input.claimAttach) throw new RemoteSessionAttachClaimRefusedError()
       if (input.recoverClaimed && remoteSessionCommandRecoverable(existing, input)) return existing
       if (existing.status !== "pending") return null
       if (existing.targetComputerId && !input.computerIds.includes(existing.targetComputerId)) return null
@@ -452,9 +561,9 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
       if (existing.status === "delivered" || existing.status === "failed") {
         return remoteSessionCommandCompletionMatches(existing, input) ? existing : null
       }
-      // TTL limits admission, not receipt delivery. A native effect may finish
-      // while offline; only its recorded claiming owner can settle it later.
       if (!["claimed", "expired"].includes(existing.status) || existing.claimedAt === null) return null
+      if (existing.kind === "attach" && input.status === "delivered"
+        && (input.sessionId !== existing.targetSessionId || input.workspaceId !== existing.targetWorkspaceId)) return null
       const now = new Date(input.now)
       await tx.update(RemoteSessionCommandTable).set({
         status: input.status,
@@ -482,9 +591,7 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
     )
     const result = await db.update(RemoteSessionCommandTable).set({
       session_status: input.status,
-      // Waiting only means something while the session is waiting.
       session_waiting_for: input.status === "waiting" ? input.waitingFor ?? null : null,
-      // Engine and model are learned once; a report without them keeps the last value.
       ...(input.engine ? { session_engine: input.engine } : {}),
       ...(input.model
         ? {
@@ -511,8 +618,6 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
     const existing = await db.$primary.select().from(RemoteSessionCommandTable).where(scope).limit(1)
     const row = existing[0]
     if (!row) return "not_found"
-    // Equal-timestamp retransmits are acknowledged without changing progress.
-    // An older report must never replace a more recent turn or final answer.
     if (row.status === "delivered" && row.claimed_by_runner_id === input.runnerId
       && row.session_observed_at?.getTime() === input.observedAt) return "reported"
     return "conflict"
@@ -533,7 +638,6 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
     if (!commandId) return null
     const organizationId = normalizeDenTypeId("organization", input.organizationId)
     const createdByUserId = normalizeDenTypeId("user", input.createdByUserId)
-    // primary: polled right after enqueue; a lagging replica would report not found.
     const rows = await db.$primary.select().from(RemoteSessionCommandTable).where(and(
       eq(RemoteSessionCommandTable.id, commandId),
       eq(RemoteSessionCommandTable.org_id, organizationId),
@@ -565,14 +669,12 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
       organizationId: normalizeDenTypeId("organization", input.organizationId),
       createdByUserId: normalizeDenTypeId("user", input.createdByUserId),
     }
-    // primary: status polling right after enqueue.
     const rows = await db.$primary.select().from(RemoteSessionCommandTable).where(and(
       inArray(RemoteSessionCommandTable.id, commandIds),
       eq(RemoteSessionCommandTable.org_id, scope.organizationId),
       eq(RemoteSessionCommandTable.created_by_user_id, scope.createdByUserId),
     ))
     const now = Date.now()
-    // An unclaimed command past its expiry reads through get(), which records the expiry.
     return Promise.all(rows.map(mapCommand).map(async (command) => (
       ["pending", "claimed"].includes(command.status) && command.expiresAt <= now
         ? await databaseRemoteSessionCommandStore.get({ commandId: command.id, ...scope }) ?? command
@@ -581,13 +683,13 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
   },
 
   async listPendingForRunner(input) {
-    // primary: the runner asks for work as soon as a command is enqueued.
     const rows = await db.$primary.select().from(RemoteSessionCommandTable).where(and(
       eq(RemoteSessionCommandTable.org_id, normalizeDenTypeId("organization", input.organizationId)),
       eq(RemoteSessionCommandTable.owner_member_id, normalizeDenTypeId("member", input.ownerMemberId)),
       eq(RemoteSessionCommandTable.status, "pending"),
       gt(RemoteSessionCommandTable.expires_at, new Date(input.now)),
       targetableBy(input.computerIds),
+      ofKinds(input.kinds),
     )).orderBy(asc(RemoteSessionCommandTable.created_at), asc(RemoteSessionCommandTable.id)).limit(input.limit)
     return rows.map(mapCommand)
   },
@@ -599,17 +701,73 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
       eq(RemoteSessionCommandTable.claimed_by_runner_id, input.runnerId),
       eq(RemoteSessionCommandTable.status, "claimed"),
       gt(RemoteSessionCommandTable.expires_at, new Date(input.now)),
+      ofKinds(input.kinds),
     )).orderBy(asc(RemoteSessionCommandTable.claimed_at), asc(RemoteSessionCommandTable.id)).limit(input.limit)
     return rows.map(mapCommand)
   },
 
+  async listForSession(input) {
+    const rows = await db.$primary.select(listedCommandColumns).from(RemoteSessionCommandTable).where(and(
+      eq(RemoteSessionCommandTable.org_id, normalizeDenTypeId("organization", input.organizationId)),
+      eq(RemoteSessionCommandTable.created_by_user_id, normalizeDenTypeId("user", input.createdByUserId)),
+      or(
+        and(
+          eq(RemoteSessionCommandTable.status, "delivered"),
+          eq(RemoteSessionCommandTable.session_id, input.sessionId),
+          eq(RemoteSessionCommandTable.workspace_id, input.workspaceId),
+        ),
+        and(
+          eq(RemoteSessionCommandTable.kind, "attach"),
+          inArray(RemoteSessionCommandTable.status, ["pending", "claimed"]),
+          gt(RemoteSessionCommandTable.expires_at, new Date(input.now)),
+          eq(RemoteSessionCommandTable.target_session_id, input.sessionId),
+          eq(RemoteSessionCommandTable.target_workspace_id, input.workspaceId),
+        ),
+      ),
+    )).orderBy(desc(RemoteSessionCommandTable.updated_at), desc(RemoteSessionCommandTable.id)).limit(SESSION_COMMAND_LIMIT)
+    return rows.map(mapListedCommand)
+  },
+
+  async listForCreator(input) {
+    const rows = await db.$primary.select(listedCommandColumns).from(RemoteSessionCommandTable).where(and(
+      eq(RemoteSessionCommandTable.org_id, normalizeDenTypeId("organization", input.organizationId)),
+      eq(RemoteSessionCommandTable.created_by_user_id, normalizeDenTypeId("user", input.createdByUserId)),
+      or(
+        eq(RemoteSessionCommandTable.status, "delivered"),
+        and(
+          inArray(RemoteSessionCommandTable.status, ["pending", "claimed"]),
+          gt(RemoteSessionCommandTable.expires_at, new Date(input.now)),
+        ),
+      ),
+    )).orderBy(desc(RemoteSessionCommandTable.updated_at), desc(RemoteSessionCommandTable.id)).limit(input.limit)
+    return rows.map(mapListedCommand)
+  },
+
+  async detach(input) {
+    await db.update(RemoteSessionCommandTable).set(detachedCommandValues(new Date(input.now))).where(and(
+      eq(RemoteSessionCommandTable.org_id, normalizeDenTypeId("organization", input.organizationId)),
+      ...(input.runner
+        ? [
+          eq(RemoteSessionCommandTable.owner_member_id, normalizeDenTypeId("member", input.runner.ownerMemberId)),
+          eq(RemoteSessionCommandTable.claimed_by_runner_id, input.runner.runnerId),
+        ]
+        : []),
+      detachableCommands(),
+    ))
+  },
+
   async findDesktopSession(input) {
-    const scope = desktopSessionScope(input)
+    const scope = desktopSessionScope(input, { detached: true })
     if (!scope) return null
     const rows = await db.select().from(RemoteSessionCommandTable).where(and(
       scope,
       eq(RemoteSessionCommandTable.session_id, input.sessionId),
-    )).orderBy(desc(RemoteSessionCommandTable.updated_at), desc(RemoteSessionCommandTable.id)).limit(1)
+    )).orderBy(
+      desc(sql`${RemoteSessionCommandTable.status} = 'delivered'`),
+      desc(sql`${RemoteSessionCommandTable.kind} = 'create'`),
+      desc(RemoteSessionCommandTable.updated_at),
+      desc(RemoteSessionCommandTable.id),
+    ).limit(1)
     return rows[0] ? mapDesktopSession(rows[0]) : null
   },
 
@@ -637,8 +795,6 @@ export const databaseRemoteSessionCommandStore: RemoteSessionCommandStore = {
       session_final_text: null,
       session_error_code: null,
       session_error_message: null,
-      // Reset the observation epoch for the next turn; never mix Den's clock
-      // with monotonic runner observations.
       session_observed_at: null,
       updated_at: now,
     }).where(and(

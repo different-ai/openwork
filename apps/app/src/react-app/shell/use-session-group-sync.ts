@@ -79,7 +79,6 @@ function writeMigrationComplete(endpoint: ResolvedWorkspaceEndpoint): void {
   try {
     window.localStorage.setItem(migrationKey(endpoint), "1");
   } catch {
-    // ignore storage failures; the next launch can retry safely.
   }
 }
 
@@ -207,7 +206,6 @@ export function useSessionGroupSync(input: UseSessionGroupSyncInput): void {
             );
             if (cancelled) return;
           } catch {
-            // Best effort: normal workspace/session loading still surfaces connection issues.
           }
         }
       } finally {

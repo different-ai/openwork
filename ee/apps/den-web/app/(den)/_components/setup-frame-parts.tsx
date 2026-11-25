@@ -5,14 +5,6 @@ import type { ButtonHTMLAttributes, ReactNode } from "react";
 import styles from "./setup-frame.module.css";
 import { DenBrandMark } from "./ui/brand-mark";
 
-/*
- * Building blocks for the one-page flows that live in `SetupFrame` without a
- * step (agent sign-in, CLI device codes, workspace claims, connection links).
- * Every screen composes these so a workspace is always the same letter tile,
- * facts are always hairline rows, and results are always a status circle.
- */
-
-/** The first letter of a workspace, in the tile used everywhere a workspace appears. */
 export function SetupLetterTile({ name, size = "sm" }: { name: string; size?: "sm" | "lg" }) {
   const letter = name.trim().charAt(0).toUpperCase() || "W";
   return size === "lg" ? (
@@ -41,10 +33,6 @@ function simpleIconSlugFor(name: string) {
   return slug || undefined;
 }
 
-/**
- * The mark for an app or service by name: its logo when we can find one, a
- * generic app glyph when the app did not share a name.
- */
 export function SetupAppMark({ name, logoUri, size = 16 }: { name: string | null; logoUri?: string | null; size?: 16 | 26 }) {
   const box = size === 16 ? "size-4" : "size-[26px]";
   if (!name && !logoUri) {
@@ -63,10 +51,6 @@ export function SetupAppMark({ name, logoUri, size = 16 }: { name: string | null
 
 type StoryEnd = { label: string; mark: ReactNode; pending?: boolean };
 
-/**
- * Who is asking and where it goes: two tiles joined by a line. The line is
- * dashed while the connection is being made and solid once it exists.
- */
 export function SetupStoryTiles({ from, to, linked = false }: { from: StoryEnd; to: StoryEnd; linked?: boolean }) {
   const end = (item: StoryEnd, testId: string) => (
     <div className="flex w-30 shrink-0 flex-col items-center gap-2.5" data-testid={testId}>
@@ -85,7 +69,6 @@ export function SetupStoryTiles({ from, to, linked = false }: { from: StoryEnd; 
   );
 }
 
-/** The large tile that holds a logo or app glyph in the story column. */
 export function SetupStoryTile({ children, pending = false }: { children: ReactNode; pending?: boolean }) {
   return (
     <span aria-hidden="true" className={`flex size-16 shrink-0 items-center justify-center rounded-2xl bg-white ${pending ? "border-[1.5px] border-dashed border-[#bdbdbd]" : "border border-[var(--dls-border)]"}`}>
@@ -104,7 +87,6 @@ export function SetupNewWorkspaceTile() {
 
 export type SetupFact = { label: string; value: ReactNode; mono?: boolean; testId?: string };
 
-/** Label left, value right, hairline between rows. */
 export function SetupFacts({ rows }: { rows: SetupFact[] }) {
   return (
     <dl className="m-0 flex flex-col border-t border-[var(--setup-hairline)]" data-testid="setup-facts">
@@ -127,17 +109,14 @@ export function SetupPanelTitle({ children, id }: { children: ReactNode; id?: st
   return <h2 id={id} className="m-0 text-2xl font-semibold leading-[30px] tracking-[-0.03em] text-[var(--dls-text-primary)]">{children}</h2>;
 }
 
-/** Plain body copy in the panel. `muted` is the quieter second line. */
 export function SetupLine({ children, muted = false, testId }: { children: ReactNode; muted?: boolean; testId?: string }) {
   return <p className={`m-0 text-[13px] leading-5 ${muted ? "text-[var(--dls-text-secondary)]" : "text-[var(--dls-text-primary)]"}`} data-testid={testId}>{children}</p>;
 }
 
-/** A failure is one red line next to the action it belongs to. */
 export function SetupErrorLine({ children }: { children: ReactNode }) {
   return <p role="alert" className="m-0 text-[13px] leading-5 text-rose-600">{children}</p>;
 }
 
-/** Result screens: a status circle, a title and one line. */
 export function SetupStatus({ icon, title, line, children }: { icon?: ReactNode; title: string; line?: string; children?: ReactNode }) {
   return (
     <div className="grid justify-items-start gap-4" role="status">
@@ -151,7 +130,6 @@ export function SetupStatus({ icon, title, line, children }: { icon?: ReactNode;
   );
 }
 
-/** "Claude Code can" followed by plain sentences, each with a check. */
 export function SetupCanList({ actor, items }: { actor: string; items: string[] }) {
   if (items.length === 0) return null;
   return (
@@ -169,7 +147,6 @@ export function SetupCanList({ actor, items }: { actor: string; items: string[] 
   );
 }
 
-/** A quiet text action (Cancel, Deny, Use a different account, Show more). */
 export function SetupQuietButton({ children, className = "", ...props }: ButtonHTMLAttributes<HTMLButtonElement>) {
   return (
     <button type="button" className={`bg-transparent p-0 text-[13px] font-medium leading-[18px] text-[var(--dls-text-secondary)] hover:text-[var(--dls-text-primary)] disabled:cursor-not-allowed disabled:opacity-60 ${className}`} {...props}>
@@ -178,7 +155,6 @@ export function SetupQuietButton({ children, className = "", ...props }: ButtonH
   );
 }
 
-/** Raw details (scopes, full addresses) stay behind one collapsed row. */
 export function SetupTechnicalDetails({ children }: { children: ReactNode }) {
   return (
     <details className="group min-w-0 text-xs leading-4 text-[var(--dls-text-secondary)]">
@@ -191,7 +167,6 @@ export function SetupTechnicalDetails({ children }: { children: ReactNode }) {
   );
 }
 
-/** Skeleton rows that hold the place of workspaces while they load. */
 export function SetupSkeletonRows({ count = 2 }: { count?: number }) {
   return (
     <div className="flex flex-col border-t border-[var(--setup-hairline)]" aria-busy="true" aria-label="Loading workspaces" data-testid="setup-skeleton-rows">
@@ -208,17 +183,12 @@ export function SetupSkeletonRows({ count = 2 }: { count?: number }) {
   );
 }
 
-/** The panel's content column; the frame draws the band and padding. */
 export function SetupPanelBody({ children, gap = "lg" }: { children: ReactNode; gap?: "lg" | "md" }) {
   return <div className={`flex flex-col ${gap === "lg" ? "gap-[18px]" : "gap-4"}`}>{children}</div>;
 }
 
 export type SetupTerminalLine = { text: string; muted?: boolean };
 
-/**
- * The terminal a command-line sign-in started from, drawn in the story column
- * so the person can match the code on the page with the one in their terminal.
- */
 export function SetupTerminal({ lines }: { lines: SetupTerminalLine[] }) {
   return (
     <figure className="m-0 mt-10 w-full max-w-110" aria-label="Your terminal" data-testid="setup-terminal">
@@ -241,7 +211,6 @@ export function SetupTerminal({ lines }: { lines: SetupTerminalLine[] }) {
   );
 }
 
-/** A one-time code as the panel's first fact, in mono. */
 export function SetupCode({ code, testId, size = "sm" }: { code: string; testId?: string; size?: "sm" | "lg" }) {
   return (
     <span className={`font-mono font-semibold tracking-[0.12em] text-[var(--dls-text-primary)] ${size === "lg" ? "text-xl leading-7" : "text-sm leading-[18px]"}`} data-testid={testId}>

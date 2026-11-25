@@ -8,11 +8,8 @@ export type ConformanceCase = {
 }
 
 export type ConformanceOptions = {
-  /** Per-operation budget handed to the provider. */
   timeoutMs?: number
-  /** A volume name the provider may create and erase during the run. */
   volumeName?: string
-  /** A shell command that exits 0 quickly on this provider (default `true`). */
   trivialCommand?: string
 }
 

@@ -5,7 +5,6 @@ import { advanceSlackRun, type Checkpoint } from "../src/slack-assistant/run.js"
 
 export type SlackCallRecord = { method: string; body: Record<string, unknown> }
 
-/** Records Slack calls; streams and posts get a ts. `fail` makes a method throw a Slack error. */
 export function fakeSlack(fail: Record<string, string> = {}) {
   const calls: SlackCallRecord[] = []
   let ts = 0
@@ -40,7 +39,6 @@ export const snapshot = (input: Partial<SlackRunSnapshot> = {}): SlackRunSnapsho
 export const idle = (text: string, input: Partial<SlackRunSnapshot> = {}) =>
   snapshot({ status: "idle", finalAssistantText: text, lastAssistantText: text, assistantTexts: text ? [text] : [], ...input })
 
-/** A runner whose reads return `reads` in turn (the last one repeats). */
 export function fakeRunner(reads: SlackRunSnapshot[] = [idle("Here you go.")], overrides: Partial<SlackRunner> = {}) {
   const sent: Array<Parameters<SlackRunner["send"]>[0]> = []
   const created: Array<Parameters<SlackRunner["create"]>[0]> = []
@@ -63,7 +61,6 @@ export function fakeRunner(reads: SlackRunSnapshot[] = [idle("Here you go.")], o
   return { runner, sent, created, readCount: () => index }
 }
 
-/** A live feed the test pushes events into. */
 export function fakeLive() {
   const queue: RunnerEvent[] = []
   const tokens: number[] = []
@@ -83,7 +80,6 @@ export function fakeLive() {
   return { source, push: (...events: RunnerEvent[]) => queue.push(...events), tokens }
 }
 
-/** A clock the test moves; `sleep` advances it. */
 export function fakeClock(start = 1_000_000) {
   let current = start
   return {

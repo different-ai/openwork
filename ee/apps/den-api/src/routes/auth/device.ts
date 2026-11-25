@@ -33,11 +33,6 @@ const deviceErrorSchema = z.object({
   message: z.string(),
 })
 
-/**
- * Den web's `/device` page reads and decides RFC 8628 user codes through
- * these routes. The protocol endpoints the CLI calls stay on Better Auth
- * (`POST /api/auth/device/code`, `POST /api/auth/device/token`).
- */
 export function registerDeviceAuthRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
   app.get(
     "/v1/auth/device/:userCode",
@@ -95,9 +90,7 @@ export function registerDeviceAuthRoutes<T extends { Variables: AuthContextVaria
       }
       const input = c.req.valid("json")
       if (input.decision === "approve" && input.organizationId) {
-        // ssoPerOrganization: the device session inherits this approval, so an
-        // organization that requires SSO is approved only from an SSO session.
-        const ssoBlock = await findSsoAccessBlock({ sessionId: c.get("session")?.id ?? null, organizationId: input.organizationId })
+        const ssoBlock = await findSsoAccessBlock({ sessionId: c.get("signInSessionId"), organizationId: input.organizationId })
         if (ssoBlock) {
           return c.json(ssoRequiredErrorBody(ssoBlock), 403)
         }
@@ -108,8 +101,6 @@ export function registerDeviceAuthRoutes<T extends { Variables: AuthContextVaria
         approvingSessionId: c.get("session")?.id ?? null,
         decision: input.decision,
         organizationId: input.organizationId ?? null,
-        // Approval binds the CLI session to this organization: attribute it to
-        // the verified member before the code is decided (fails closed).
         beforeEffect: async (membership) => {
           const attribution = auditSessionUserAttribution(membership.userId, membership.memberId)
           if (!attribution) return null

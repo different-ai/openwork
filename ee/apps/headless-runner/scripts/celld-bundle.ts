@@ -1,11 +1,3 @@
-/**
- * Builds a deployable celld project for the runner: the bundled Worker plus a Wrangler config carrying its settings.
- *
- *   tsx scripts/celld-bundle.ts <out dir> <vars.json>
- *
- * celld 0.6 reads Worker settings only from the config's `vars` (secrets included), so they travel inside the
- * deployment in the fleet bucket. Write <out dir> somewhere private and delete it after `celld deploy`.
- */
 import { execFileSync } from "node:child_process"
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { builtinModules } from "node:module"
@@ -39,8 +31,6 @@ execFileSync(
   { cwd: project, stdio: "inherit" },
 )
 
-// wrangler.jsonc carries only whole-line comments; the script and class names in it name every cell, so they are
-// copied as they are.
 const source = readFileSync(join(project, "wrangler.jsonc"), "utf8")
   .split("\n")
   .filter((line) => !line.trimStart().startsWith("//"))

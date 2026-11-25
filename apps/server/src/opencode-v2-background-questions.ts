@@ -1,11 +1,10 @@
 import { z } from "zod";
-import type { askArgs } from "./opencode-plugins/openwork-agent-questions.js";
+import type { askArgs, askFormArgs } from "./opencode-plugins/openwork-agent-questions.js";
 import { loopbackFetch } from "./server-fetch.js";
 
 type EngineConnection = { url: string; username: string; password: string };
 type Question = z.infer<typeof askArgs>["questions"][number];
 
-/** How long an unanswered question can still reach the chat. */
 const OPEN_FOR_MS = 24 * 60 * 60_000;
 const createdForm = z.object({ data: z.object({ id: z.string() }) });
 const settledForm = z.object({
@@ -13,7 +12,6 @@ const settledForm = z.object({
   data: z.object({ id: z.string(), answer: z.record(z.string(), z.unknown()).optional() }),
 });
 
-/** The message the chat receives: each question with the person's answer. */
 export function answerText(questions: readonly Question[], answer: Record<string, unknown>): string {
   return questions.map((question, index) => {
     const value = answer[`q${index}`];
@@ -22,17 +20,9 @@ export function answerText(questions: readonly Question[], answer: Record<string
   }).join("\n");
 }
 
-/**
- * Asks in the chat through a v2 form that no tool call waits on, so the agent
- * keeps working. The form carries the question tool's own `metadata.kind`,
- * so the app shows it like any question, but no tool link: the app settles
- * questions whose tool call has ended. The answer is sent to the chat with
- * `steer` delivery: a running turn reads it at its next step, and an idle chat
- * starts a turn. A dismissed question sends nothing.
- */
 export async function askWithoutWaiting(
   engine: EngineConnection,
-  input: { directory: string; sessionId: string; questions: readonly Question[] },
+  input: { directory: string; sessionId: string; questions: readonly Question[]; form?: z.infer<typeof askFormArgs> },
   call: AbortSignal,
   lifetime: AbortSignal,
 ): Promise<{ id: string; settled: Promise<void> }> {
@@ -42,14 +32,13 @@ export async function askWithoutWaiting(
   const watching = new AbortController();
   const open = AbortSignal.any([lifetime, watching.signal, AbortSignal.timeout(OPEN_FOR_MS)]);
   try {
-    // Subscribe first so the answer cannot arrive unseen. The stream outlives this call.
     const events = await loopbackFetch(new URL(`/api/event?${location}`, engine.url), { headers: { authorization, accept: "text/event-stream" }, signal: open });
     if (!events.ok || !events.body) throw new Error("OpenWork could not ask the person, so nothing was asked.");
     const response = await loopbackFetch(new URL(`${session}/form?${location}`, engine.url), {
       method: "POST", headers: { authorization, "content-type": "application/json" }, signal: AbortSignal.any([open, call]),
       body: JSON.stringify({
         title: input.questions[0]?.header ?? "Question",
-        metadata: { kind: "question", background: true },
+        metadata: { kind: "question", background: true, ...(input.form ? { form: input.form } : {}) },
         fields: input.questions.map((question, index) => ({
           key: `q${index}`, type: question.multiple ? "multiselect" : "string", title: question.header, description: question.question,
           options: (question.options ?? []).map(option => ({ value: option.label, label: option.label, ...(option.description ? { description: option.description } : {}) })),

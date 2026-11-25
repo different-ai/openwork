@@ -7,13 +7,6 @@ import { parseManualAuthInput } from "@/app/lib/manual-auth-input";
 import { t } from "@/i18n";
 import { useDenAuth } from "./den-auth-provider";
 
-/**
- * The pasted sign-in link or one-time code, shared by the account menu and the
- * in-conversation "Finish signing in" notice. Pasted codes are
- * desktop-initiated sign-ins; `onBeforeExchange` runs right before the grant
- * is exchanged (for example to record where to return) and may return an
- * undo that runs if the exchange fails.
- */
 export function useManualSignInCode(options: { onBeforeExchange?: () => (() => void) | void } = {}) {
   const denAuth = useDenAuth();
   const { onBeforeExchange } = options;

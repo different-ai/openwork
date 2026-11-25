@@ -22,6 +22,7 @@ export function permissionsPolicyAllows(header, documentOrigin, targetOrigin) {
   if (!header) return null;
   const match = TOOLS_DIRECTIVE_PATTERN.exec(header);
   if (!match) return null;
+  /** @type {string[]} */
   const tokens = match[1].match(/"[^"]*"|'[^']*'|[^\s]+/g) ?? [];
   if (tokens.length === 0) return false;
   return tokens.some((rawToken) => {

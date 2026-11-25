@@ -9,7 +9,8 @@ import {
   useElapsedSeconds,
   useSubagentRunState,
 } from "@/components/chat/subagent-run-line"
-import { isTaskToolPart, type TaskToolPart } from "@/lib/build-in-tools"
+import { isTaskToolPart, taskChildSessionId, type TaskToolPart } from "@/lib/build-in-tools"
+import { useSessionActivityStore, type SessionActivityStatus } from "@/react-app/domains/session/status/session-activity-store"
 import { REMOTE_SESSION_STATUS_THREADS_MAX } from "@openwork/types/automations"
 import { readDenSettings } from "@/app/lib/den"
 import {
@@ -33,10 +34,8 @@ import { cn } from "@/lib/utils"
 import { t } from "@/i18n"
 import { AgentTrackerRow, type AgentTrackerKind } from "./agent-tracker-row"
 
-/** What the person needs to know about one agent, in the order the header reports it. */
 export type SubagentTrackerKind = AgentTrackerKind
 
-/** Interaction cards (approval, question) the Review action brings into focus. */
 export const COMPOSER_INTERACTION_SELECTOR = "[data-composer-interaction]"
 
 function currentTurnStart(messages: readonly UIMessage[]): number {
@@ -46,7 +45,6 @@ function currentTurnStart(messages: readonly UIMessage[]): number {
   return 0
 }
 
-/** Sub-agent tasks the current turn started: everything after the latest message the person sent. */
 export function currentTurnSubagentParts(messages: readonly UIMessage[]): TaskToolPart[] {
   const start = currentTurnStart(messages)
   const seen = new Set<string>()
@@ -62,10 +60,68 @@ export function currentTurnSubagentParts(messages: readonly UIMessage[]): TaskTo
   return parts
 }
 
-/** A task the current turn started on another computer. */
+export function earlierTurnSubagentParts(messages: readonly UIMessage[]): TaskToolPart[] {
+  const start = currentTurnStart(messages)
+  const seen = new Set<string>()
+  const parts: TaskToolPart[] = []
+  for (const message of messages.slice(0, start)) {
+    if (message.role !== "assistant") continue
+    for (const part of message.parts) {
+      if (!isToolUIPart(part) || !isTaskToolPart(part) || seen.has(part.toolCallId)) continue
+      seen.add(part.toolCallId)
+      parts.push(part)
+    }
+  }
+  return parts
+}
+
+function currentTurnKey(messages: readonly UIMessage[]): string {
+  const start = currentTurnStart(messages)
+  return start === 0 ? "" : messages[start - 1]?.id ?? ""
+}
+
+function childStillActive(status: SessionActivityStatus | undefined): boolean {
+  return status !== undefined && status !== "idle" && status !== "error"
+}
+
+const NO_PARTS: readonly TaskToolPart[] = []
+
+export function useComposerSubagentParts(
+  messages: readonly UIMessage[],
+  workspaceId: string,
+  options: { enabled: boolean; keepEarlier: boolean },
+): readonly TaskToolPart[] {
+  const current = useMemo(() => options.enabled ? currentTurnSubagentParts(messages) : [], [options.enabled, messages])
+  const earlier = useMemo(
+    () => options.enabled && options.keepEarlier ? earlierTurnSubagentParts(messages) : [],
+    [options.enabled, options.keepEarlier, messages],
+  )
+  const turnKey = currentTurnKey(messages)
+  const candidates = earlier
+    .map((part) => ({ part, childSessionId: taskChildSessionId(part) }))
+    .filter((entry): entry is { part: TaskToolPart; childSessionId: string } => Boolean(entry.childSessionId))
+  const activeSignature = useSessionActivityStore((state) => {
+    const statuses = state.statusesByWorkspaceId[workspaceId]
+    return candidates
+      .filter((entry) => childStillActive(statuses?.[entry.childSessionId]))
+      .map((entry) => entry.part.toolCallId)
+      .join("\n")
+  })
+  const kept = useRef<{ turnKey: string; ids: Set<string> }>({ turnKey, ids: new Set() })
+  const active = activeSignature ? activeSignature.split("\n") : []
+  if (kept.current.turnKey !== turnKey) kept.current = { turnKey, ids: new Set(active) }
+  else for (const id of active) kept.current.ids.add(id)
+  const keptSignature = [...kept.current.ids].sort().join("\n")
+  return useMemo(() => {
+    const ids = new Set(keptSignature ? keptSignature.split("\n") : [])
+    const listed = earlier.filter((part) => ids.has(part.toolCallId))
+    if (listed.length === 0 && current.length === 0) return NO_PARTS
+    return [...listed, ...current]
+  }, [earlier, current, keptSignature])
+}
+
 export type RemoteTrackerTask = { start: RemoteThreadStart; startedAt: number | null }
 
-/** Tasks the current turn started on other computers, directly or from a script, once each. */
 export function currentTurnRemoteTasks(messages: readonly UIMessage[]): RemoteTrackerTask[] {
   const seen = new Set<string>()
   const tasks: RemoteTrackerTask[] = []
@@ -80,13 +136,9 @@ export function currentTurnRemoteTasks(messages: readonly UIMessage[]): RemoteTr
   return tasks
 }
 
-/** A conversation's tasks on other computers, as the Agents list needs them. */
 export type ConversationRemoteTasks = {
-  /** Started by the current turn: always listed, as before. */
   current: RemoteTrackerTask[]
-  /** Started by an earlier turn and recent enough to still be followed, newest first: listed while they work or wait, or once this turn follows up on them. */
   earlier: RemoteTrackerTask[]
-  /** Follow-ups the current turn sent that their computer accepted. */
   followUps: RemoteThreadFollowUp[]
 }
 
@@ -94,12 +146,6 @@ function latest(left: number | null, right: number | null): number | null {
   return left === null ? right : right === null ? left : Math.max(left, right)
 }
 
-/**
- * Every task the conversation started on other computers, directly or from
- * a script, once each. An earlier turn's task is a candidate only while Den
- * would still follow it (6 hours after it last got work), and at most as
- * many as one status call checks, so reopening a long chat costs one call.
- */
 export function conversationRemoteTasks(messages: readonly UIMessage[], now = Date.now()): ConversationRemoteTasks {
   const turnStart = currentTurnStart(messages)
   const current = currentTurnRemoteTasks(messages)
@@ -119,7 +165,6 @@ export function conversationRemoteTasks(messages: readonly UIMessage[], now = Da
     if (index >= turnStart) followUps.push(...sent)
   })
   const candidates = [...earlier.values()]
-    // The task last got work when it started or was last followed up.
     .map((task) => ({
       ...task,
       startedAt: allFollowUps.filter((followUp) => remoteFollowUpMatches(followUp, task.start, null))
@@ -133,7 +178,6 @@ export function conversationRemoteTasks(messages: readonly UIMessage[], now = Da
 }
 
 function remoteEntryListed(entry: RemoteThreadEntry, followUps: readonly RemoteThreadFollowUp[], now: number): boolean {
-  // Until Den answers, an earlier task may long be finished: list it only once its state is known.
   if (!entry.status) return false
   if (followUps.some((followUp) => remoteFollowUpMatches(followUp, entry.start, entry.status?.sessionId ?? null))) return true
   if (remoteThreadAwaitingFollowUp(entry, now)) return true
@@ -141,14 +185,6 @@ function remoteEntryListed(entry: RemoteThreadEntry, followUps: readonly RemoteT
   return state !== undefined && state !== "idle" && state !== "error"
 }
 
-/**
- * Which of a conversation's tasks the Agents list shows: the current turn's,
- * plus an earlier turn's task while it still works or waits on the person,
- * or once this turn sent it a follow-up. Earlier tasks are followed (not
- * shown) until Den says which they are, so a finished task never flashes and
- * reopening the chat finds the ones still working. A follow-up the agent just
- * sent revives its task, however the agent sent it.
- */
 export function selectComposerRemoteTasks(
   tasks: ConversationRemoteTasks,
   threads: Readonly<Record<string, RemoteThreadEntry>>,
@@ -159,22 +195,17 @@ export function selectComposerRemoteTasks(
   const listable = (entry: RemoteThreadEntry | undefined): entry is RemoteThreadEntry =>
     Boolean(entry && organizationId && entry.organizationId === organizationId && remoteEntryListed(entry, tasks.followUps, now))
   const listed = tasks.earlier.filter((task) => listable(threads[task.start.key]))
-  // A task this window already follows for this conversation, whose start is
-  // outside the loaded history (a long chat opens on its newest page): the
-  // sidebar lists it under the chat, so the Agents list does too.
   const known = new Set([...tasks.earlier, ...tasks.current].map((task) => task.start.key))
   const ownerKey = owner ? `${owner.workspaceId}:${owner.sessionId}` : null
   const followed = ownerKey === null ? [] : Object.values(threads)
     .filter((entry) => !known.has(entry.start.key) && Object.hasOwn(entry.owners, ownerKey) && listable(entry))
     .sort((left, right) => (left.activeSince ?? left.firstSeenAt) - (right.activeSince ?? right.firstSeenAt))
     .map((entry) => ({ start: entry.start, startedAt: entry.activeSince }))
-  // Oldest first, in the order the conversation started them.
   return [...followed, ...listed.reverse(), ...tasks.current]
 }
 
 const NO_FOLLOW_UPS: readonly RemoteThreadFollowUp[] = []
 
-/** The Agents list's tasks on other computers for one conversation, following earlier ones while it is open. */
 export function useComposerRemoteTasks(messages: readonly UIMessage[], owner: RemoteThreadOwner): RemoteTrackerTask[] {
   const tasks = useMemo<ConversationRemoteTasks>(
     () => conversationRemoteTasks(messages),
@@ -185,21 +216,18 @@ export function useComposerRemoteTasks(messages: readonly UIMessage[], owner: Re
   const earlierSignature = tasks.earlier.map((task) => task.start.key).join("\n")
   const latestTasks = useRef(tasks)
   latestTasks.current = tasks
-  // Follow earlier tasks while the conversation is open, so their state is known before they are listed.
   useEffect(() => {
     if (!earlierSignature || !organizationId) return
     const store = useRemoteThreadStore.getState()
     const stops = latestTasks.current.earlier.map((task) => store.watch(task.start, { owner: { workspaceId, sessionId }, organizationId, startedAt: task.startedAt }))
     return () => { for (const stop of stops) stop() }
   }, [earlierSignature, organizationId, workspaceId, sessionId])
-  // The current turn's accepted follow-ups revive their task once its entry can be matched (a registered task's sessionId arrives with its status).
   const followUps = tasks.followUps.length > 0 ? tasks.followUps : NO_FOLLOW_UPS
   const matchSignature = useRemoteThreadStore((state) => followUps.length === 0 ? ""
     : Object.values(state.threads).map((entry) => `${entry.start.key}=${entry.status?.sessionId ?? entry.start.sessionId ?? ""}`).sort().join("\n"))
   useEffect(() => {
     if (followUps.length > 0) reviveRemoteThreads(followUps)
   }, [followUps, matchSignature])
-  // A string that changes only when the listed set does: status updates that change nothing here never re-render the chat.
   const listedSignature = useRemoteThreadStore((state) =>
     selectComposerRemoteTasks(tasks, state.threads, organizationId, Date.now(), owner).map((task) => task.start.key).join("\n"))
   return useMemo(() => {
@@ -211,7 +239,6 @@ export function useComposerRemoteTasks(messages: readonly UIMessage[], owner: Re
   }, [tasks, listedSignature, organizationId, workspaceId, sessionId])
 }
 
-/** The header's counts, attention first; empty groups are left out. */
 export function subagentTrackerSummary(kinds: readonly SubagentTrackerKind[]): { kind: SubagentTrackerKind; text: string }[] {
   const count = (kind: SubagentTrackerKind) => kinds.filter((value) => value === kind).length
   const attention = count("attention")
@@ -229,14 +256,12 @@ export function subagentTrackerSummary(kinds: readonly SubagentTrackerKind[]): {
 type ComposerSubagentTrackerProps = {
   messages: readonly UIMessage[]
   workspaceId: string
-  /** The parent turn is still running. Once it ends and every agent has settled, the list goes away. */
   parentActive: boolean
   syncDegraded: boolean
   onOpenSubagentSession?: (sessionId: string) => void
   onStopSubagentSession?: (sessionId: string) => void | Promise<void>
-  /** Local helpers are listed only where their state can be followed (OpenCode v2); defaults to true. */
   includeLocal?: boolean
-  /** Tasks the turn started on other computers, listed and counted with the local helpers. */
+  parts?: readonly TaskToolPart[]
   remote?: {
     tasks: readonly RemoteTrackerTask[]
     owner: RemoteThreadOwner
@@ -246,15 +271,13 @@ type ComposerSubagentTrackerProps = {
 
 const NO_REMOTE_TASKS: readonly RemoteTrackerTask[] = []
 
-/**
- * The current turn's sub-agents, attached to the top of the composer so they
- * stay in view while their transcript rows scroll away. Local helpers and
- * tasks on other computers share one row (AgentTrackerRow): name, task, one
- * status word or time, then a fixed action lane (DESIGN.md OW-LIST, V2).
- */
 export function ComposerSubagentTracker(props: ComposerSubagentTrackerProps) {
   const includeLocal = props.includeLocal !== false
-  const parts = useMemo(() => includeLocal ? currentTurnSubagentParts(props.messages) : [], [includeLocal, props.messages])
+  const providedParts = props.parts
+  const parts = useMemo(
+    () => !includeLocal ? [] : providedParts ?? currentTurnSubagentParts(props.messages),
+    [includeLocal, providedParts, props.messages],
+  )
   const remote = props.remote
   const remoteTasks = remote?.tasks ?? NO_REMOTE_TASKS
   const ids = [...parts.map((part) => part.toolCallId), ...remoteTasks.map((task) => task.start.key)]
@@ -264,7 +287,6 @@ export function ComposerSubagentTracker(props: ComposerSubagentTrackerProps) {
     setKinds((current) => (current[toolCallId] === kind ? current : { ...current, [toolCallId]: kind }))
   }, [])
   const partIds = parts.map((part) => part.toolCallId).join("\n")
-  // A new turn starts collapsed or expanded by its own rule again.
   const firstPartId = ids[0]
   useEffect(() => { setManualExpanded(null) }, [firstPartId])
 
@@ -276,8 +298,6 @@ export function ComposerSubagentTracker(props: ComposerSubagentTrackerProps) {
   const summary = subagentTrackerSummary(current)
 
   if (ids.length === 0 || (!props.parentActive && settled)) return null
-  // Reopening a finished turn: wait for every row's state before showing
-  // anything, so a list that is about to go away never flashes.
   const unresolved = !props.parentActive && current.length < ids.length
 
   return (
@@ -310,7 +330,6 @@ export function ComposerSubagentTracker(props: ComposerSubagentTrackerProps) {
           className={cn("shrink-0 text-gray-9 transition-transform duration-150 ease-out group-hover/toggle:text-gray-11 motion-reduce:transition-none", expanded && "rotate-90")}
         />
       </button>
-      {/* Rows stay mounted while collapsed so the header's counts stay live. */}
       <div hidden={!expanded} className="max-h-44 overflow-y-auto pt-0.5 pb-2">
         {parts.map((part) => (
           <SubagentTrackerRow
@@ -335,7 +354,6 @@ export function ComposerSubagentTracker(props: ComposerSubagentTrackerProps) {
           />
         )) : null}
       </div>
-      {/* Inset hairline between the list and the message, on the composer text's edges. */}
       <div aria-hidden="true" className={cn("mx-4 h-px bg-dls-border", !expanded && "mt-1.5")} />
     </div>
   )
@@ -390,8 +408,6 @@ function SubagentTrackerRow(props: {
       .finally(() => setStopping(false))
   }
   const review = () => {
-    // Approvals and answers for a sub-agent already sit above the composer;
-    // without one there, the agent's own chat is where it waits.
     if (!focusComposerInteraction()) open()
   }
 

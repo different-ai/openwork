@@ -30,6 +30,7 @@ export interface AutomationRepository {
     organizationId: string
     ownerMemberId: string
     definition: CreateAutomationDefinition
+    initialState?: "active" | "inactive"
     now: number
   }): Awaitable<AutomationListItem>
   update(input: {

@@ -1,8 +1,8 @@
 import { processBlankSlateProfile, resolveBlankSlateLaunch } from "./blank-slate-profile.mjs";
 import { DESKTOP_POLICY_ENFORCEMENT_ENABLED } from "@openwork/types/den/desktop-policies-runtime";
 import { execFile, execFileSync, spawn } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { createServer } from "node:http";
-import net from "node:net";
 import { existsSync, lstatSync, readFileSync, writeFileSync } from "node:fs";
 import {
   cp,
@@ -24,18 +24,26 @@ import { globalOpencodeConfigDir, workspaceOpencodeConfigCandidates } from "@ope
 
 import { configureFakeMediaForTests, installMediaPermissionHandlers } from "./media-permissions.mjs";
 import { registerMigrationIpc } from "./migration.mjs";
+import { createSystemProxyRelay, systemProxyRelayEnv } from "./system-proxy-relay.mjs";
+import { pickRemoteDebugPort, remoteDebugMenuItems, remoteDebugRelaunchArgs, resolveRemoteDebugPort } from "./remote-debug-port.mjs";
 import { registerSessionPins } from "./session-pins.mjs";
-import { createRuntimeManager, createSystemCaCertificateVerifyProc } from "./runtime.mjs";
+import { createRuntimeManager, createSystemCaCertificateVerifyProc, enrichedPath, sandboxFeatureDenOrigin } from "./runtime.mjs";
 import { registerUpdaterIpc, resolveAppVersion } from "./updater.mjs";
 import { createUiControlServer } from "./ui-control-server.mjs";
+import { createPrivateTextFilter } from "./private-text-filter.mjs";
 import { createApplicationMenu } from "./app-menu.mjs";
 import { createNativeContextMenus } from "./context-menu.mjs";
 import { createNativeDictation, createSpeechDictation } from "./native-dictation.mjs";
 import { applyBrandAppName } from "./brand-app-name.mjs";
 import { createBrowserPanel } from "./browser-panel.mjs";
+import { deferBrowserStop } from "@openwork/computer-use/browser-navigation";
+import { BrowserSecretError, createBrowserSecrets } from "@openwork/computer-use/browser-secrets";
 import { createComputerControl } from "@openwork/computer-use/computer-control";
+import { runValueCommand } from "@openwork/computer-use/value-command";
+import { createPrivateValueUse } from "@openwork/computer-use/private-value-use";
 import { createComputerAgentPermissions } from "./computer-agent-permissions.mjs";
 import { createBrowserUploadGrantStore, createBrowserUploadPermissions } from "./browser-upload-permissions.mjs";
+import { createPrivateValues, createPrivateValueSourceStore, createPrivateValueSwitchStore, privateValueReport } from "./private-values.mjs";
 import { installComputerHelper } from "./computer-helper-install.mjs";
 import { createLocalComputerAdapter } from "./computer-local.mjs";
 import { createComputerScripting } from "./computer-scripting.mjs";
@@ -60,7 +68,7 @@ import {
 } from "./connect-link-branding.mjs";
 import { resolveConnectLinkPublicKeys } from "./connect-link-keys.mjs";
 import { openExternalUrl } from "./open-external.mjs";
-import { chatOutputFolder, listChatOutputFiles, openChatWorkspaceFile, opensFromChatOutput, resolveChatFilePath, resolveWorkspaceFileLaunch } from "./workspace-file-access.mjs";
+import { chatOutputFolder, listChatOutputFiles, openChatWorkspaceFile, opensFromChatOutput, readChatOutputImage, resolveChatFilePath, resolveWorkspaceFileLaunch } from "./workspace-file-access.mjs";
 import { createOpenWithApplications, installedApplicationCommand } from "./open-with-applications.mjs";
 const openWithApplications = createOpenWithApplications();
 import { resolveAppIdentifier, resolveUserDataPath } from "./dev-profile.mjs";
@@ -71,6 +79,7 @@ import {
   createLinuxDesktopIntegration,
 } from "./linux-desktop-integration.mjs";
 import { automationRunnerDisabledReason, createComputerDescriber, createDesktopAutomationRunner, normalizeRunnerBaseUrl } from "./automation-runner.mjs";
+import { createComputerRequestAnswers } from "./session-runner-computer-requests.mjs";
 import { applyDesktopEngineForcePolicy } from "./engine-force-policy.mjs";
 import {
   desktopActivationRequired,
@@ -90,7 +99,8 @@ import { createWindowsShortcutScheduler, readWindowsShortcutMarker } from "./win
 import { resetMacDockIcon } from "./brand-icon-darwin.mjs";
 import { createDesktopVaultKeyProvider } from "./secure-vault-key.mjs";
 import { desktopFreeBootstrapEligible } from "./desktop-free-eligibility.mjs";
-import { applyDesktopFreeBuildSettings } from "./desktop-free-release.mjs";
+import { createDesktopFreeSigner } from "./desktop-free-signer.mjs";
+import { applyDesktopFreeBuildSettings, loadDesktopFreeReleaseKey } from "./desktop-free-release.mjs";
 import {
   captureStartupException,
   clearOpenworkSentrySession,
@@ -217,6 +227,12 @@ const applicationMenu = createApplicationMenu({
   docsUrl: DOCS_PAGE_URL,
   getWindow: () => createMainWindow(),
   closeBrowserTab: (host) => browserPanel?.closeFocusedBrowserTab(host) ?? false,
+  // Read when the menu is installed, after the launch's debug port is known.
+  helpDebugItems: () => remoteDebugMenuItems({
+    packaged: app.isPackaged,
+    port: remoteDebugPort,
+    restart: (debugging) => runDetachedTask("restart for debugging from menu", () => restartForDebugging(debugging)),
+  }),
 });
 
 let browserPanel = null;
@@ -224,6 +240,8 @@ let browserPanel = null;
 const COMPUTER_POPOUT_NAME = /^openwork-computer-view-\d+$/;
 
 // Keep each chat's chosen computer in app data outside the workspace.
+// Advanced settings switch for demos; lasts until OpenWork quits. The launch variable turns it on at start.
+let computerRecordableOverlay = process.env.OPENWORK_COMPUTER_USE_RECORDABLE_OVERLAY === "1";
 const computerTargetsPath = () => path.join(app.getPath("userData"), "computer-use-targets.json");
 // The System Settings entry macOS lists for computer use: the helper's own
 // bundle, which takes responsibility for itself so grants never restart OpenWork.
@@ -251,7 +269,7 @@ const computerControl = createComputerControl({
   },
   // Where computer steps spend their time: on this computer, or waiting for the model.
   onTiming: (_sessionId, step) => console.info(`[computer] ${step.name} computer ${Math.round(step.computerMs)} ms${step.modelMs === undefined ? "" : ` · model ${Math.round(step.modelMs)} ms`}${step.followed === undefined ? "" : step.followed ? " · in view" : " · background"}`),
-  runProgram: async (request, host, signal, options) => (await import("@openwork/computer-use/runtime")).runComputerProgram(request, host, signal, options),
+  runProgram: async (request, host, signal) => (await import("@openwork/computer-use/runtime")).runComputerProgram(request, host, signal),
   browserTask: (request, options) => browserPanel?.browserTask(request, options) ?? Promise.resolve({ ok: false, code: "browser_unavailable" }),
   readRemoteFeatureEnabled: async () => {
     const server = await runtimeManager.openworkServerInfo();
@@ -275,6 +293,7 @@ const computerControl = createComputerControl({
       directory: path.join(app.getPath("userData"), "computer-use"),
     }),
     permissionEntry: async () => (await readComputerPermissionEntry()).name,
+    recordableOverlay: () => computerRecordableOverlay,
     onSetupReturn: async () => {
       const window = await createMainWindow();
       if (window.isMinimized()) window.restore();
@@ -351,7 +370,7 @@ function computerPolicyDenied(message) {
 }
 
 /** The chat a call belongs to: a subagent's is the chat that started it, as the trusted bridge reports. */
-const computerChatOf = (args) => computerControl.parallelAgents() && typeof args?.rootSessionId === "string" && args.rootSessionId ? args.rootSessionId : args?.sessionId;
+const computerChatOf = (args) => typeof args?.rootSessionId === "string" && args.rootSessionId ? args.rootSessionId : args?.sessionId;
 
 /** @param {string} sessionId */
 async function checkComputerPermission(sessionId) {
@@ -363,15 +382,16 @@ async function checkComputerPermission(sessionId) {
   return null;
 }
 
-/** The renderer reports the `agentQuestions` feature; the engine offers ask_without_waiting while it is on. */
-let agentQuestionsEnabled = false;
-
 const uiControlServer = createUiControlServer({
   app,
   appName: APP_NAME,
   appIdentifier: APP_IDENTIFIER,
   getWindow: () => createMainWindow(),
   browserTask: (args, options) => browserPanel?.browserTask(args, options) ?? { ok: false, code: "browser_unavailable" },
+  redactPrivate: (texts) => redactPrivateTexts(texts),
+  terminalBlock: () => privateValues.terminal(),
+  privateValueUse: (request, options) => privateValueUse.request(request, options),
+  privateValuesOn: () => privateValues.enabled(),
   computerTask: async (args, options) => {
     if (!["computer_status", "computer_close"].includes(args?.name)) {
       const denied = await checkComputerPermission(computerChatOf(args));
@@ -391,9 +411,6 @@ const uiControlServer = createUiControlServer({
     if (decision.effect === "deny") return computerPolicyDenied(decision.message);
     return computerControl.script(args, { ...options, approveEachScript: decision.effect === "ask" });
   },
-  computerEnabled: () => computerControl.featureEnabled(),
-  computerParallel: () => computerControl.parallelAgents(),
-  agentQuestionsEnabled: () => agentQuestionsEnabled,
 });
 
 const terminalProcesses = new Map();
@@ -1183,40 +1200,24 @@ if (process.platform === "darwin" && INITIAL_APP_ICON_IMAGE && !INITIAL_APP_ICON
 }
 
 // Expose the Chrome DevTools Protocol for local debugging and test harnesses.
-// Use OPENWORK_ELECTRON_REMOTE_DEBUG_PORT to pin a specific port; otherwise
-// probe for a free one starting at 9223.
+// Use OPENWORK_ELECTRON_REMOTE_DEBUG_PORT to pin a specific port; a packaged app
+// opens one only then.
 // Must resolve before app.commandLine.appendSwitch (before `ready`).
-function probePort(port) {
-  return new Promise((resolve) => {
-    const srv = net.createServer();
-    srv.once("error", () => resolve(false));
-    srv.listen({ port, host: "127.0.0.1" }, () => {
-      srv.close(() => resolve(true));
-    });
-  });
-}
-
-async function findFreeCdpPort(candidates) {
-  for (const port of candidates) {
-    if (await probePort(port)) return port;
-  }
-  return 0;
-}
-
-const explicitCdpPort = Number.parseInt(
-  process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT?.trim() ?? "",
-  10,
-);
-const remoteDebugPort = Number.isFinite(explicitCdpPort) && explicitCdpPort > 0
-  ? explicitCdpPort
-  : await findFreeCdpPort([9223, 9224, 9225, 9226, 9227]);
+const remoteDebugPort = await resolveRemoteDebugPort({
+  packaged: app.isPackaged,
+  // The environment variable, or Chromium's own switch: Help > Restart with
+  // Debugging restarts the app with that switch.
+  requested: process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT?.trim() || app.commandLine.getSwitchValue("remote-debugging-port"),
+});
 if (remoteDebugPort > 0) {
   app.commandLine.appendSwitch("remote-debugging-port", String(remoteDebugPort));
   app.commandLine.appendSwitch("remote-debugging-address", "127.0.0.1");
+  // Publish the resolved port; child processes (and the shells they spawn)
+  // inherit it through the environment.
+  process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT = String(remoteDebugPort);
+} else {
+  delete process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT;
 }
-// Publish the resolved port; child processes (and the shells they spawn)
-// inherit it through the environment.
-process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT = String(remoteDebugPort);
 if (isDevMode && !app.isPackaged) {
   const cdpAddress = remoteDebugPort > 0 ? `http://127.0.0.1:${remoteDebugPort}` : "disabled";
   console.log(`[openwork] dev profile=${app.getPath("userData")} cdp=${cdpAddress}`);
@@ -1302,7 +1303,7 @@ const browserUploadPermissions = createBrowserUploadPermissions({
   readPolicy: async () => {
     const server = await runtimeManager.openworkServerInfo();
     if (!server.baseUrl || !(server.clientToken ?? server.ownerToken)) throw new Error("OpenWork server unavailable");
-    // Trusted local service verifies the current Den organization, member and rollout.
+    // loopback-fetch: the trusted local service verifies the current Den organization, member and rollout.
     const response = await fetch(`${server.baseUrl}/managed-policy/browser-upload-permissions`, {
       headers: { Authorization: `Bearer ${server.clientToken ?? server.ownerToken}` }, signal: AbortSignal.timeout(15_000),
     });
@@ -1322,11 +1323,126 @@ const browserUploadPermissions = createBrowserUploadPermissions({
   },
 });
 
+// Secrets the person enters for the agent's built-in browser (`browserSecretHandles`). Enrollment
+// keeps values in this process, never in configuration, logs, tool arguments or child environments.
+const browserSecrets = createBrowserSecrets();
+// On only once the local server, which verifies the signed-in member's rollout with Den,
+// confirmed the feature. What the app window reports can turn it off, never on.
+let browserSecretsEnabled = false;
+let browserSecretsReport = 0;
+async function setBrowserSecretsEnabled(requested) {
+  const report = ++browserSecretsReport;
+  if (!requested) {
+    // Turning off revokes enrollment and substitution; late readback still passes through redaction.
+    if (browserSecretsEnabled) browserSecrets.clear();
+    browserSecretsEnabled = false;
+    return false;
+  }
+  // Recheck on every use: a renderer's earlier report is not continuing rollout authority.
+  let confirmed = false;
+  try {
+    const server = await runtimeManager.openworkServerInfo();
+    if (server.baseUrl && (server.clientToken ?? server.ownerToken)) {
+      // loopback-fetch: the local policy service verifies the signed-in Den identity.
+      const response = await fetch(`${server.baseUrl}/managed-policy/browser-secret-handles`, {
+        headers: { Authorization: `Bearer ${server.clientToken ?? server.ownerToken}` }, signal: AbortSignal.timeout(10_000),
+      });
+      confirmed = response.ok && (await response.json())?.enabled === true;
+    }
+  } catch { /* Not confirmed: the feature stays off and the app asks again. */ }
+  // A newer report, such as the feature turning off meanwhile, decides instead of this answer.
+  if (report === browserSecretsReport) {
+    if (!confirmed && browserSecretsEnabled) browserSecrets.clear();
+    browserSecretsEnabled = confirmed;
+  }
+  return report === browserSecretsReport && confirmed && browserSecretsEnabled;
+}
+// Fields filled with a value the agent never sees (`privateValues`): from a command the person approves
+// or from what they paste into the card. The local server verifies the signed-in member's rollout and their
+// organization's rules with Den; this process asks it directly and trusts nothing the app window reports.
+const privateValues = createPrivateValues({
+  readPolicy: async () => {
+    const server = await runtimeManager.openworkServerInfo();
+    if (!server.baseUrl || !(server.clientToken ?? server.ownerToken)) throw new Error("OpenWork server unavailable");
+    // loopback-fetch: the local policy service verifies the signed-in Den identity.
+    const response = await fetch(`${server.baseUrl}/managed-policy/private-values`, {
+      headers: { Authorization: `Bearer ${server.clientToken ?? server.ownerToken}` }, signal: AbortSignal.timeout(10_000),
+    });
+    if (!response.ok) throw new Error("Private value policy unavailable");
+    return response.json();
+  },
+  onRecord: (record) => {
+    void (async () => {
+      const report = privateValueReport(record, randomUUID());
+      if (!report) return;
+      const server = await runtimeManager.openworkServerInfo();
+      const token = server.clientToken ?? server.ownerToken;
+      if (!server.baseUrl || !token) return;
+      // loopback-fetch: the local policy service sends only the fill metadata to Den.
+      const response = await fetch(`${server.baseUrl}/managed-policy/private-values/record`, {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify(report),
+        redirect: "error",
+        signal: AbortSignal.timeout(10_000),
+      });
+      await response.body?.cancel();
+    })().catch(() => undefined);
+  },
+  switches: createPrivateValueSwitchStore({ file: path.join(app.getPath("userData"), "private-values.json") }),
+  sources: createPrivateValueSourceStore({ file: path.join(app.getPath("userData"), "private-value-sources.json") }),
+  // A command runs, and a value the person pastes into the card is typed, only after they confirmed exactly it,
+  // its field and this site in the chat.
+  approveValues: (sessionId, request, signal) => computerControl.approveValues({ sessionId, site: request.site, use: request.use, fills: request.fills, limits: request.limits }, { signal }),
+  grants: { list: () => computerControl.listValueGrants(), remove: (id) => computerControl.removeValueGrant(id) },
+  secrets: browserSecrets,
+});
+const redactPrivateTexts = createPrivateTextFilter({ secrets: browserSecrets, enabled: privateValues.enabled });
+/** This app's environment with the PATH the person's own tools are on; an app started from the Finder has a bare one. */
+function valueCommandEnv() {
+  const env = { ...process.env };
+  const key = Object.keys(env).find((name) => name.toUpperCase() === "PATH") ?? "PATH";
+  const found = enrichedPath([], env[key]);
+  if (found) env[key] = found;
+  return env;
+}
+// Private values given to a program or one https request (`use_private_values`). It needs no browser: the same
+// store keeps and replaces the values, the same rules and card decide, and each command that prints a value runs
+// here, as the person, from their home folder.
+const privateValueUse = createPrivateValueUse({
+  secrets: browserSecrets,
+  enabled: privateValues.enabled,
+  approveValues: (sessionId, request, signal) => privateValues.approve(sessionId, request, signal),
+  noteValueFill: (sessionId, fill) => privateValues.note(sessionId, fill),
+  runValueCommand: (command, signal, unlock) => runValueCommand(command, { env: { ...valueCommandEnv(), ...unlock }, cwd: app.getPath("home"), signal }),
+  onFailure: ({ code, detail }) => console.error(`[private-values] use failed code=${code} detail=${detail}`),
+});
+/** @param {unknown} kind @returns {kind is "password" | "code" | "token"} */
+const isBrowserSecretKind = (kind) => kind === "password" || kind === "code" || kind === "token";
+/** A secret is entered, listed and removed only from the main OpenWork window, never from a page or another window. */
+function assertBrowserSecretsSender(event) {
+  if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) {
+    throw new Error("Browser secrets require the main OpenWork window.");
+  }
+}
+
 browserPanel = createBrowserPanel({
   // Organization policy is checked before any remembered or in-chat consent.
   approveFiles: (sessionId, request, signal) => browserUploadPermissions.approve(sessionId, request, signal),
   // A password or code is typed only on a site the person confirmed in the chat.
   approveCredential: (sessionId, request, signal) => computerControl.approveCredential({ sessionId, site: request.site }, { signal }),
+  secrets: browserSecrets,
+  secretsEnabled: async () => browserSecretsEnabled && await setBrowserSecretsEnabled(true),
+  // A secret is entered only after the person confirmed this secret for this exact site, each time.
+  approveSecret: async (sessionId, request, signal) => isBrowserSecretKind(request.kind)
+    && computerControl.approveCredential({ sessionId, site: request.site, secret: { label: request.label, kind: request.kind, field: request.field } }, { signal }),
+  valuesEnabled: privateValues.enabled,
+  // The organization's rules and the person's own switches decide before the card; the card decides the rest.
+  approveValues: (sessionId, request, signal) => privateValues.approve(sessionId, request, signal),
+  noteValueFill: (sessionId, fill) => privateValues.note(sessionId, fill),
+  // The approved command runs here, as the person, from their home folder: never in the agent's shell, so what
+  // it prints reaches only the secret store and the page. Its PATH is the one the person's terminal tools are on.
+  runValueCommand: (command, signal, unlock) => runValueCommand(command, { env: { ...valueCommandEnv(), ...unlock }, cwd: app.getPath("home"), signal }),
   showNativeContextMenu: nativeContextMenus.show,
   closeNativeContextMenu: nativeContextMenus.close,
   remoteDebugPort,
@@ -1524,10 +1640,28 @@ function validateSkillName(raw) {
 
 // Apply the build opt-out before the runtime captures inherited environment values.
 await applyDesktopFreeBuildSettings({ appVersion: resolveAppVersion(app) });
+// Started the first time an engine is to follow the computer's proxy
+// settings, and kept for the life of the app: engines hold its address.
+let systemProxyRelay;
+const engineSystemProxyEnv = async () => {
+  await app.whenReady();
+  systemProxyRelay ??= createSystemProxyRelay({
+    resolveProxy: (url) => session.defaultSession.resolveProxy(url),
+    log: (message) => console.log(message),
+  }).start();
+  try {
+    return systemProxyRelayEnv((await systemProxyRelay).url);
+  } catch (error) {
+    systemProxyRelay = undefined;
+    throw error;
+  }
+};
 const runtimeManager = createRuntimeManager({
   app,
   desktopRoot: path.resolve(__dirname, ".."),
   listLocalWorkspacePaths: () => workspaceStore.listLocalWorkspacePaths(),
+  engineSystemProxyEnv,
+  trustedDenOrigin: async () => sandboxFeatureDenOrigin((await workspaceStore.getDesktopBootstrapConfig()).apiBaseUrl),
   // This callback stays in Electron's main process. Engine tools and shell
   // commands cannot approve a Drive write by replaying a token or HTTP reply.
   driveFileApproval: async ({ provider, action, path: filePath, name, fileId, webViewLink, mode }) => {
@@ -1548,12 +1682,15 @@ const runtimeManager = createRuntimeManager({
     return response === 1;
   },
   anonymousInference: {
-    // Signed-out Auto has no device identity: like OpenCode Zen, the gateway limits it by IP.
-    desktop: {
-      // app.getVersion() is Electron's own version in development builds.
-      currentVersion: resolveAppVersion(app),
-      eligible: () => desktopFreeBootstrapEligible(DESKTOP_DISTRIBUTION, workspaceStore.readDesktopBootstrapConfigSync()),
-    },
+    desktop: createDesktopFreeSigner({
+      filePath: path.join(app.getPath("userData"), "desktop-free-identity.bin"),
+      loadSafeStorage: () => require("electron").safeStorage,
+      platform: process.platform,
+      arch: process.arch,
+      appVersion: resolveAppVersion(app),
+      isEligible: () => desktopFreeBootstrapEligible(DESKTOP_DISTRIBUTION, workspaceStore.readDesktopBootstrapConfigSync()),
+      releaseSecret: () => loadDesktopFreeReleaseKey(resolveAppVersion(app)),
+    }),
   },
   // When OPENWORK_ENCRYPTION_KEY is set, skip the safeStorage provider so it does not shadow the documented env override used by CI/headless/enterprise.
   localManagedMcpVaultKey: process.env.OPENWORK_ENCRYPTION_KEY?.trim()
@@ -1572,6 +1709,20 @@ const legacyRunnerBaseUrls = [
     : null,
   `${DEFAULT_DEN_BASE_URL}/api/den`,
 ].map((value) => normalizeRunnerBaseUrl(value)).filter(Boolean);
+// One name for this computer: its runner inventory and its entry in the organization's devices list agree.
+const describeThisComputer = createComputerDescriber({
+  platform: process.platform,
+  appVersion: resolveAppVersion(app),
+  hostname: () => os.hostname(),
+  readComputerName: () => new Promise((resolve, reject) => {
+    execFile("/usr/sbin/scutil", ["--get", "ComputerName"], { timeout: 2_000 }, (error, stdout) => {
+      if (error) reject(error);
+      else resolve(String(stdout));
+    });
+  }),
+});
+/** The id the renderer last registered this install's runner with; Den names this desktop's device by it. */
+let registeredRunnerId = null;
 const automationRunnerDisabledBy = automationRunnerDisabledReason(process.env);
 if (automationRunnerDisabledBy) {
   console.info(`[automation-runner] disabled by ${automationRunnerDisabledBy}; renderer runner configuration will be ignored`);
@@ -1582,8 +1733,9 @@ const desktopAutomationRunner = createDesktopAutomationRunner({
   // rollout only for endpoints trusted before the renderer starts issuing IPC.
   legacyBaseUrls: legacyRunnerBaseUrls,
   getJournalRoot: () => path.join(app.getPath("userData"), "session-runner"),
-  // Start remote-session tasks as soon as Den announces them (Den's remoteSessionPush feature).
-  remoteSessionPush: true,
+  // A task started from another computer reports the computer-use approval it waits on,
+  // so the person can answer it where they are instead of coming to this computer.
+  computerRequests: createComputerRequestAnswers(computerControl),
   getLocalRuntime: async () => {
     const server = await runtimeManager.openworkServerInfo();
     return { baseUrl: server.baseUrl, token: server.clientToken ?? server.ownerToken };
@@ -1592,21 +1744,16 @@ const desktopAutomationRunner = createDesktopAutomationRunner({
     getServerInfo: () => runtimeManager.openworkServerInfo(),
   }),
   // Remote-session callers choose a computer by this label, then a workspace and model.
-  describeComputer: createComputerDescriber({
-    platform: process.platform,
-    appVersion: resolveAppVersion(app),
-    hostname: () => os.hostname(),
-    readComputerName: () => new Promise((resolve, reject) => {
-      execFile("/usr/sbin/scutil", ["--get", "ComputerName"], { timeout: 2_000 }, (error, stdout) => {
-        if (error) reject(error);
-        else resolve(String(stdout));
-      });
-    }),
-  }),
+  describeComputer: describeThisComputer,
   log: (state) => console.info(`[automation-runner] ${state}`),
-  onCredentialRejected: () => {
+  onRunLifecycle: (event) => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
-    mainWindow.webContents.send(AUTOMATION_RUNNER_CREDENTIAL_REJECTED_EVENT);
+    mainWindow.webContents.send("openwork:automation-runner:lifecycle", event);
+  },
+  // `reason` tells a disconnected computer (wait for a new sign-in) from a credential to replace now.
+  onCredentialRejected: (rejection) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send(AUTOMATION_RUNNER_CREDENTIAL_REJECTED_EVENT, rejection);
   },
 });
 
@@ -1683,6 +1830,8 @@ const keepAwakeSenders = new Set();
 
 const quitSequencer = createQuitSequencer({
   stop: async () => {
+    // No secret outlives the app, nor the wait for the rest to shut down.
+    browserSecrets.clear();
     keepAwake.releaseAll();
     showShutdownScreen();
     desktopAutomationRunner.stop();
@@ -2177,6 +2326,16 @@ const desktopCommandHandlers = {
       assertComputerSender(event);
       return computerControl.status();
   },
+  "computerDevices": async (event) => {
+      assertComputerSender(event);
+      return computerControl.devices();
+  },
+  "desktopDeviceIdentity": async (event) => {
+      assertComputerSender(event);
+      let osVersion = null;
+      try { osVersion = String(process.getSystemVersion?.() || os.release()).trim() || null; } catch { /* unnamed system */ }
+      return { installId: registeredRunnerId, ...await describeThisComputer(), osVersion, arch: process.arch };
+  },
   "computerPresentation": async (event, sessionId, visible) => {
       assertComputerSender(event);
       return computerControl.presentation({ sessionId: String(sessionId ?? ""), visible: visible === true });
@@ -2212,7 +2371,12 @@ const desktopCommandHandlers = {
   },
   "computerAnswerRequest": async (event, input) => {
       assertComputerSender(event);
-      return computerControl.answerRequest({ sessionId: String(input?.sessionId ?? ""), answer: input?.answer, ...(typeof input?.id === "string" ? { id: input.id } : {}) });
+      // A value the person pasted into the card: from this line on it is replaced in everything bound for the
+      // agent, before anything else is done with it. One that cannot be told apart from ordinary text is refused.
+      const values = Array.isArray(input?.values) ? input.values.map((value) => typeof value === "string" ? value : null) : undefined;
+      if (values?.some((value) => value !== null && !browserSecrets.remember(value))) throw new Error("A pasted value must be 4 to 4096 characters long.");
+      return computerControl.answerRequest({ sessionId: String(input?.sessionId ?? ""), answer: input?.answer, ...(typeof input?.id === "string" ? { id: input.id } : {}),
+        ...(values ? { values } : {}), ...(Array.isArray(input?.keep) ? { keep: input.keep.map((kept) => kept === true) } : {}) });
   },
   "computerOpenSavedFile": async (event, input) => {
       assertComputerSender(event);
@@ -2235,40 +2399,50 @@ const desktopCommandHandlers = {
       const folder = chatOutputFolder(app.getPath("downloads"), computerControl.chatOf({ sessionId: String(input?.sessionId ?? "") }));
       return { files: folder ? await listChatOutputFiles(folder) : [] };
   },
+  "computerChatImage": async (event, input) => {
+      assertComputerSender(event);
+      // An image the chat shows in its reply: only one saved in this chat's own output folder.
+      const folder = chatOutputFolder(app.getPath("downloads"), computerControl.chatOf({ sessionId: String(input?.sessionId ?? "") }));
+      return readChatOutputImage(folder, String(input?.path ?? ""), { home: app.getPath("home") });
+  },
   "computerListFileGrants": async (event) => {
       assertComputerSender(event);
       return browserUploadPermissions.list();
+  },
+  "computerListPrivateValues": async (event) => {
+      assertComputerSender(event);
+      return privateValues.list();
+  },
+  "computerSetPrivateValueSwitch": async (event, name, enabled) => {
+      assertComputerSender(event);
+      return privateValues.setSwitch(name, enabled);
+  },
+  "computerRemovePrivateValue": async (event, kind, id) => {
+      assertComputerSender(event);
+      return privateValues.remove(kind, id);
   },
   "computerRemoveFileGrant": async (event, id) => {
       assertComputerSender(event);
       if (typeof id !== "string" || !id) throw new Error("Choose a remembered file sharing permission to remove.");
       return browserUploadPermissions.remove(id);
   },
-  "computerSetFeatureEnabled": async (event, enabled) => {
-      assertComputerSender(event);
-      return computerControl.setFeatureEnabled(enabled === true);
-  },
-  "agentQuestionsSetEnabled": async (event, enabled) => {
-      if (!mainWindow || event.sender !== mainWindow.webContents) throw new Error("Only the main OpenWork window reports features.");
-      agentQuestionsEnabled = enabled === true;
-      return agentQuestionsEnabled;
-  },
   "computerSetRemoteEnabled": async (event, enabled) => {
       assertComputerSender(event);
       return computerControl.setRemoteEnabled(enabled === true);
   },
-  "computerSetStandardCodeMode": async (event, enabled) => {
+  "computerRecordableOverlay": async (event) => {
       assertComputerSender(event);
-      return computerControl.setStandardCodeMode(enabled === true);
+      return computerRecordableOverlay;
   },
-  "computerSetParallelAgents": async (event, enabled) => {
+  "computerSetRecordableOverlay": async (event, enabled) => {
       assertComputerSender(event);
-      return computerControl.setParallelAgents(enabled === true);
+      computerRecordableOverlay = enabled === true;
+      return computerRecordableOverlay;
   },
-  // Compatibility for older renderers; background delivery now follows computerUse.
+  // Compatibility for older renderers; background delivery is always available.
   "computerSetBackgroundEnabled": async (event) => {
       assertComputerSender(event);
-      return computerControl.setBackgroundEnabled();
+      return true;
   },
   "computerResetPermission": async (event, permission) => {
       assertComputerSender(event);
@@ -2281,6 +2455,32 @@ const desktopCommandHandlers = {
   "computerEndTurn": async (event, sessionId) => {
       assertComputerSender(event);
       return computerControl.endTurn({ sessionId: String(sessionId ?? "") });
+  },
+  // Browser secrets. Only the main OpenWork window may enter, list or remove one. These handlers
+  // never throw anything built from their arguments and never log: an error thrown here would
+  // reach the console and error reports with its message.
+  "browserSecretsSetEnabled": async (event, enabled) => {
+      assertBrowserSecretsSender(event);
+      return setBrowserSecretsEnabled(enabled === true);
+  },
+  "browserSecretsList": async (event, sessionId) => {
+      assertBrowserSecretsSender(event);
+      return browserSecretsEnabled && typeof sessionId === "string" && await setBrowserSecretsEnabled(true) ? browserSecrets.list(sessionId) : [];
+  },
+  "browserSecretsAdd": async (event, input) => {
+      assertBrowserSecretsSender(event);
+      if (!browserSecretsEnabled || !await setBrowserSecretsEnabled(true)) return { ok: false, error: "Secrets for the built-in browser are not available yet. Try again in a moment." };
+      try {
+        const { sessionId, label, kind, origins, value } = input && typeof input === "object" ? input : {};
+        return { ok: true, secret: browserSecrets.add({ sessionId, label, kind, origins, value }) };
+      } catch (error) {
+        // The store's own messages never repeat what was typed; anything else is not passed on.
+        return { ok: false, error: error instanceof BrowserSecretError ? error.message : "The secret could not be saved. Check each field and try again." };
+      }
+  },
+  "browserSecretsRemove": async (event, input) => {
+      assertBrowserSecretsSender(event);
+      return typeof input?.sessionId === "string" && typeof input?.secretRef === "string" && browserSecrets.remove(input.sessionId, input.secretRef);
   },
   "getDesktopBootstrapConfig": async (event, ...args) => {
       return workspaceStore.getDesktopBootstrapConfig();
@@ -2378,6 +2578,8 @@ const desktopCommandHandlers = {
       return runtimeManager.openworkServerInfo();
   },
   "automationRunnerConfigure": async (event, ...args) => {
+      const runnerId = typeof args[0]?.runnerId === "string" ? args[0].runnerId.trim() : "";
+      registeredRunnerId = runnerId || null;
       return desktopAutomationRunner.configure(args[0] ?? null);
   },
   "openworkServerRestart": async (event, ...args) => {
@@ -2666,6 +2868,7 @@ const desktopCommandHandlers = {
         body: typeof init.body === "string" ? init.body : undefined,
         credentials: "omit",
         cache: "no-store",
+        ...(init.redirect === "error" ? { redirect: "error" } : {}),
       };
       if (init.agentContextDiagnostics && typeof init.agentContextDiagnostics === "object") {
         return fetchAgentContextDiagnosticsResponse(
@@ -2688,8 +2891,7 @@ const desktopCommandHandlers = {
         };
       };
       const method = (requestInit.method ?? "GET").toUpperCase();
-      const cancellable = ["GET", "PATCH"].includes(method)
-        || (method === "POST" && /\/(?:session\/[^/]+\/abort|permission\/[A-Za-z0-9_-]+\/reply)$/.test(new URL(url).pathname));
+      const cancellable = ["GET", "PATCH"].includes(method) || init.cancellable === true;
       return cancellable && init.transferId
         ? desktopTransfers.run(event, init.transferId, fetchResponse)
         : fetchResponse(undefined);
@@ -3045,19 +3247,17 @@ async function createMainWindowInner() {
   // to replace the entire workspace UI with the website, with no way back
   // (#2000). Catch those at `did-start-navigation`, cancel the load, and
   // reroute the URL into a built-in browser tab instead.
+  let mainNavigationRevision = 0;
   mainWindow.webContents.on("did-start-navigation", (_event, url, isInPlace, isMainFrame) => {
     if (!isMainFrame || isInPlace) return;
+    const revision = ++mainNavigationRevision;
     if (browserPanel.isMainWindowAllowedNavigation(url)) return;
-    // Stopping inside this event aborts the main process for navigations the
-    // PDF viewer starts (`chrome.tabs.update` on a link click), so cancel the
-    // load on the next tick instead.
-    setImmediate(() => {
-      try {
-        if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.stop();
-      } catch {
-        // best effort — routing below still gives the user a way back
-      }
-    });
+    // Capture the originating contents: the window may be replaced before
+    // Chromium has unwound its navigation callback. Never stop its successor.
+    const contents = mainWindow.webContents;
+    const previousUrl = contents.getURL();
+    deferBrowserStop(contents, () => mainWindow?.webContents === contents
+      && mainNavigationRevision === revision && contents.getURL() === previousUrl);
     routeBlockedNavigationOnce(url);
   });
 
@@ -3082,6 +3282,9 @@ registerSessionPins({
 ipcMain.on("openwork:desktop-bootstrap-sync", (event) => {
   event.returnValue = workspaceStore.readDesktopBootstrapConfigSync();
 });
+ipcMain.on("openwork:app-packaged-sync", (event) => {
+  event.returnValue = app.isPackaged;
+});
 ipcMain.on("openwork:desktop-distribution-sync", (event) => {
   event.returnValue = DESKTOP_DISTRIBUTION;
 });
@@ -3095,11 +3298,64 @@ ipcMain.handle("openwork:shell:openExternal", async (_event, url) => {
   }
   return openExternalUrl(url.trim());
 });
+/**
+ * Help > Restart with Debugging (and without): the way to open the debug port
+ * of an installed app for a support session without a terminal. Only the
+ * native menu calls this, and turning it on asks first.
+ */
+async function restartForDebugging(debugging) {
+  if (debugging) {
+    /** @type {import("electron").MessageBoxOptions} */
+    const options = {
+      type: "warning",
+      buttons: ["Restart with Debugging", "Cancel"],
+      defaultId: 1,
+      cancelId: 1,
+      message: `Restart ${APP_NAME} with debugging?`,
+      detail: `While debugging is on, other programs on this computer can inspect and control ${APP_NAME}, including your signed-in account. Turn it on only when you are working with someone you trust to look into a problem. It turns off when you quit ${APP_NAME} or choose Help > Restart without Debugging.`,
+    };
+    const { response } = mainWindow && !mainWindow.isDestroyed()
+      ? await dialog.showMessageBox(mainWindow, options)
+      : await dialog.showMessageBox(options);
+    if (response !== 0) return;
+  }
+  const port = debugging ? await pickRemoteDebugPort() : 0;
+  // A launch that set the variable would otherwise pass it on to the restart.
+  if (!debugging) delete process.env.OPENWORK_ELECTRON_REMOTE_DEBUG_PORT;
+  try {
+    mainWindow?.webContents.session.flushStorageData();
+    session.defaultSession.flushStorageData();
+  } catch {
+    // Best effort: never block the restart on a flush failure.
+  }
+  app.relaunch({ args: remoteDebugRelaunchArgs(process.argv.slice(1), port) });
+  app.quit();
+}
+
 ipcMain.handle("openwork:shell:relaunch", async () => {
   app.relaunch();
   app.quit();
 });
 ipcMain.handle("openwork:system:architecture", async () => resolveArchitectureInfo());
+
+// What its owner's other devices can do on this computer: nothing, start
+// tasks, or also open sessions started here (Settings > Devices). The choice
+// is kept per organization. Only the app's own page may read or change it.
+function assertSessionAccessSender(event) {
+  assertDesktopActivation();
+  if (!mainWindow || event.sender !== mainWindow.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) {
+    throw new Error("Session access is managed from the main OpenWork window.");
+  }
+}
+ipcMain.handle("openwork:remote-session-access:get", async (event) => {
+  assertSessionAccessSender(event);
+  return desktopAutomationRunner.getSessionAccess();
+});
+ipcMain.handle("openwork:remote-session-access:set", async (event, mode) => {
+  assertSessionAccessSender(event);
+  if (mode !== "off" && mode !== "created" && mode !== "all") throw new Error("Choose what other devices can do on this computer.");
+  return desktopAutomationRunner.setSessionAccess(mode);
+});
 
 // ── Terminal IPC ────────────────────────────────────────────────────────
 ipcMain.handle("openwork:terminal:create", async (event, options = {}) => {

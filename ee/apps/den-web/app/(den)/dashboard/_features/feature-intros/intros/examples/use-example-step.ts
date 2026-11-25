@@ -15,11 +15,6 @@ function reducedMotion() {
   return typeof window === "undefined" || window.matchMedia(REDUCED_MOTION_QUERY).matches;
 }
 
-/**
- * Gentle step through `count` sample items for a live example (DESIGN.md I7, V6).
- * Returns null under prefers-reduced-motion (and on the server), so the example
- * renders static with nothing highlighted.
- */
 export function useExampleStep(count: number, intervalMs = 2600): number | null {
   const reduced = useSyncExternalStore(subscribe, reducedMotion, () => true);
   const [step, setStep] = useState(0);

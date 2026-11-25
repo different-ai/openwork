@@ -16,7 +16,6 @@ type DataAttributes = { [key: `data-${string}`]: string | boolean | undefined };
 
 export type DenSecretInputProps = DataAttributes & {
   value: string;
-  /** Receives the new value. Called with "" when a replacement is cancelled. */
   onChange: (value: string) => void;
   id?: string;
   name?: string;
@@ -26,9 +25,7 @@ export type DenSecretInputProps = DataAttributes & {
   required?: boolean;
   minLength?: number;
   maxLength?: number;
-  /** Applied to the field itself, like DenInput / DenTextarea. */
   className?: string;
-  /** "new-password" keeps password managers from offering a sign-in password. */
   autoComplete?: "off" | "new-password";
   onBlur?: FocusEventHandler<HTMLInputElement | HTMLTextAreaElement>;
   onKeyDown?: KeyboardEventHandler<HTMLInputElement | HTMLTextAreaElement>;
@@ -37,18 +34,11 @@ export type DenSecretInputProps = DataAttributes & {
   "aria-describedby"?: string;
   "aria-invalid"?: boolean;
   "aria-required"?: boolean;
-  /** Pasted JSON credentials (service-account keys): a masked textarea. */
   multiline?: boolean;
   rows?: number;
-  /**
-   * A value is already stored. The field shows a masked row with "Replace"
-   * until the person chooses to type a new one.
-   */
   saved?: boolean;
-  /** Controlled replace state; omit to let the field manage it. */
   replacing?: boolean;
   onReplacingChange?: (replacing: boolean) => void;
-  /** data-testid for the Replace button. */
   replaceTestId?: string;
 };
 
@@ -65,7 +55,6 @@ const ICON_BUTTON = [
   "outline-hidden focus-visible:ring-2 focus-visible:ring-gray-900/20",
 ].join(" ");
 
-/** Margin utilities from the caller's field classes, so the saved row sits where the field would. */
 function marginClasses(className: string | undefined) {
   return (className ?? "").split(/\s+/).filter((token) => /^-?m[trblxy]?-/.test(token)).join(" ");
 }
@@ -74,13 +63,6 @@ function joinClasses(...parts: Array<string | false | null | undefined>) {
   return parts.filter(Boolean).join(" ");
 }
 
-/**
- * DenSecretInput
- *
- * The one field for typing a secret in Den (API keys, client secrets, tokens,
- * service-account JSON). Never a sign-in password: no autofill or password
- * manager, excluded from analytics and session replay.
- */
 export function DenSecretInput({
   value,
   onChange,
@@ -104,7 +86,6 @@ export function DenSecretInput({
   const [internalReplacing, setInternalReplacing] = useState(false);
   const [previousSaved, setPreviousSaved] = useState(saved);
   if (previousSaved !== saved) {
-    // A fresh save returns the field to its saved row.
     setPreviousSaved(saved);
     setInternalReplacing(false);
   }
@@ -118,7 +99,6 @@ export function DenSecretInput({
 
   const inputReveal = useSecretReveal<HTMLInputElement>({ field: inputRef, hasValue: value.length > 0, disabled });
   const textareaReveal = useSecretReveal<HTMLTextAreaElement>({ field: textareaRef, hasValue: value.length > 0, disabled });
-  // Only where the browser can mask a textarea; otherwise a password input.
   const multiline = multilineSupported && multilineRequested;
   const reveal = multiline ? textareaReveal : inputReveal;
   const revealed = reveal.revealed;
@@ -149,7 +129,6 @@ export function DenSecretInput({
           size="xs"
           disabled={disabled}
           data-testid={replaceTestId}
-          // Explicit, because callers wrap the field in a <label>.
           aria-label="Replace"
           className="outline-hidden focus-visible:ring-2 focus-visible:ring-gray-900/20"
           onClick={() => {
@@ -222,7 +201,6 @@ export function DenSecretInput({
           className,
         )}
       />
-      {/* Anchored to the bottom so a caller's top margin on the field keeps it centred. */}
       <span className="absolute bottom-[5px] right-1.5">{toggle}</span>
     </span>
   );

@@ -1,15 +1,3 @@
-/**
- * OpenWork for OpenCode (V2 plugin).
- *
- * - Registers the `openwork` integration: `opencode auth login openwork`
- *   signs the member in to OpenWork Cloud (Den device authorization).
- * - On every load, and every few minutes, fetches the member's AI Gateway
- *   providers (with their gateway key) and MCP connections from Den, caches
- *   them in plugin storage, and injects them with provider/MCP transforms.
- *
- * Transforms only ever read the in-memory snapshot below; they never touch the
- * network and never throw (a throwing transform disables the plugin).
- */
 import { createHash } from "node:crypto"
 import { createDesktopProviderPlugin } from "./desktop.ts"
 import {
@@ -46,7 +34,6 @@ export const PLUGIN_ID = "openwork"
 export const DEFAULT_API_BASE_URL = "https://api.openworklabs.com"
 const DEFAULT_REFRESH_INTERVAL_MS = 5 * 60 * 1000
 const MIN_REFRESH_INTERVAL_MS = 60 * 1000
-/** Several Locations load the plugin at once; storage is shared, so one fetch serves them all. */
 const FRESH_MS = 30 * 1000
 const INVENTORY_KEY = "inventory"
 const SESSIONS_KEY = "sessions"
@@ -55,7 +42,6 @@ export interface PluginOptions {
   readonly apiBaseUrl: string
   readonly providers: boolean
   readonly mcp: boolean
-  /** Sign-in alone is not permission to remotely run prompts on this machine. */
   readonly remoteSessions: boolean
   readonly label?: string
   readonly refreshIntervalMs: number
@@ -78,11 +64,8 @@ export function readOptions(options: Readonly<Record<string, unknown>>): PluginO
   }
 }
 
-// ---- Cached inventory (plugin storage, shared by every Location) ----
-
 export interface Inventory {
   readonly version: 1
-  /** Which signed-in credential produced it: id + token hash. */
   readonly connectionKey: string
   readonly apiBaseUrl: string
   readonly fetchedAt: number
@@ -94,7 +77,6 @@ export function parseInventory(value: Json | undefined): Inventory | null {
   if (!isRecord(value) || value.version !== 1 || typeof value.connectionKey !== "string" || typeof value.fetchedAt !== "number") {
     return null
   }
-  // Written only by this plugin; trust its shape beyond the version marker.
   return value as unknown as Inventory
 }
 
@@ -120,7 +102,6 @@ export function belongsTo(inventory: Inventory | null, connection: ConnectionInf
   return inventory.connectionKey.startsWith(`${connectionId(connection)}:`) ? inventory : null
 }
 
-/** What the transforms publish. */
 interface Snapshot {
   readonly providers: readonly ProviderRecord[]
   readonly mcp: Readonly<Record<string, RemoteMcpConfig>>
@@ -161,8 +142,6 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number; retryMs?
     id: PLUGIN_ID,
     async setup(ctx: PluginContext): Promise<Cleanup> {
       if (ctx.options.desktopSession !== undefined) {
-        // Keep provider-only setup in the entry graph; its credential broker is
-        // additionally shared through native require across Location-scoped graphs.
         return (await createDesktopProviderPlugin({ fetch: fetcher, now, retryMs: deps.retryMs }).setup(ctx)) ?? (() => {})
       }
       if (typeof ctx.integration?.transform !== "function"
@@ -194,7 +173,6 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number; retryMs?
         streamKey = ""
       }
 
-      // 1. Sign-in methods. Registered from constants: nothing here can fail.
       await ctx.integration.transform((editor) => {
         editor.update(INTEGRATION_ID, (integration) => {
           integration.name = INTEGRATION_NAME
@@ -204,9 +182,7 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number; retryMs?
         }
       })
 
-      // 2. Start from the cache so setup never waits on the network (it blocks the first prompt).
       const initialConnection = await ctx.integration.connection.active(INTEGRATION_ID).catch(() => undefined)
-      // Never publish another account's gateway key or MCP token after an account switch.
       const initialCredential = initialConnection ? await ctx.integration.connection.resolve(initialConnection).catch(() => undefined) : undefined
       const initialMetadata = initialCredential?.type === "oauth" ? readCredentialMetadata(initialCredential, options.apiBaseUrl) : null
       const initialKey = initialConnection && initialCredential?.type === "oauth" && initialMetadata
@@ -216,12 +192,8 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number; retryMs?
       snapshot = snapshotFrom(cachedInventory, options, initialConnection)
       applied = { providers: fingerprint([snapshot.providers, snapshot.sourceConnection]), mcp: fingerprint(snapshot.mcp) }
 
-      // 3. Transforms publish the current snapshot.
       await ctx.provider.transform((editor) => {
         for (const record of snapshot.providers) {
-          // No `sourceConnection`: OpenCode compares it with the connection of the
-          // provider's own integration (`openwork-gateway`, which has none), so it
-          // would hide every gateway provider. Account switches republish instead.
           editor.add({ info: record.info, models: record.models })
         }
       })
@@ -251,17 +223,12 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number; retryMs?
           .catch(() => {})
       }
 
-      /**
-       * Ends Den sessions whose OpenCode credential is gone (`opencode auth
-       * logout openwork` only deletes the local copy), and remembers the active one.
-       */
       const reconcileSessions = async (active: { id: string; token: string; apiBaseUrl: string } | null) => {
         const stored = await ctx.storage.get(SESSIONS_KEY).catch(() => undefined)
         const sessions: Record<string, { token: string; apiBaseUrl: string }> = isRecord(stored)
           ? (stored as Record<string, { token: string; apiBaseUrl: string }>)
           : {}
         const integration = await ctx.integration.get({ integrationID: INTEGRATION_ID }).catch(() => null)
-        // Without a readable connection list, never revoke anything.
         if (integration === null) return
         const live = new Set(
           readIntegrationConnections(integration).flatMap((connection) => (connection.type === "credential" ? [connection.id] : [])),
@@ -292,8 +259,6 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number; retryMs?
         refreshController = new AbortController()
         queued = false
         forceQueued = false
-        // A membership denial is recoverable with this same session. Keep the
-        // subscription that can authoritatively acknowledge the regrant.
         void ctx.storage.remove(INVENTORY_KEY).catch(() => {})
         void publish(EMPTY).catch(() => {})
       }
@@ -333,9 +298,6 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number; retryMs?
             if (!value || value.type !== "oauth" || controller.signal.aborted) return null
             const metadata = readCredentialMetadata(value, options.apiBaseUrl)
             const next = { apiBaseUrl: metadata.apiBaseUrl, token: value.access, orgId: metadata.orgId }
-            // The feature was resolved before joining. The SSE endpoint checks
-            // rollout/membership on every reconnect (404 kill vs 401/403 revoke);
-            // do not hide a revoked session behind a failed feature discovery.
             return controller.signal.aborted ? null : next
           },
           changed: () => {
@@ -374,7 +336,6 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number; retryMs?
           credential = value
         } catch {
           if (!current()) return
-          // `resolve` runs our refresh(); it fails when Den ended the session.
           await setNeedsAuth(connection, "Your OpenWork sign-in expired. Run: opencode auth login openwork")
           await publish(snapshotFrom(null, options, connection))
           return
@@ -383,15 +344,11 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number; retryMs?
         const metadata = readCredentialMetadata(credential, options.apiBaseUrl)
         const session: DenSession = { apiBaseUrl: metadata.apiBaseUrl, token: credential.access, orgId: metadata.orgId }
         const identity = fingerprint(session)
-        // A timer/credential event must not resurrect authority from the same
-        // denied session. Membership regrant is acknowledged by a successful
-        // stream reconnect; session denial requires an actually changed token.
         if (identity === unauthorizedIdentity) {
           await publish(EMPTY)
           return
         }
         if (identity === revokedIdentity) {
-          // Only a successful authenticated reconnect restores denied authority.
           syncStream(session)
           await publish(EMPTY)
           return
@@ -427,7 +384,6 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number; retryMs?
                   try {
                     return { token, servers: await fetchDirectServers(fetcher, session.apiBaseUrl, token.token) }
                   } catch {
-                    // The index is optional: keep openwork-cloud with the last known direct servers.
                     return { token, servers: sameAccount?.mcp?.servers ?? [] }
                   }
                 })()
@@ -465,10 +421,7 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number; retryMs?
             await publish(EMPTY)
             return
           }
-          // A live invalidation remains dirty until it converges, even while the
-          // stream is healthy and no further revision/event will be emitted.
           if (force || streamKey) retry.schedule()
-          // Offline or Den unavailable: keep what this account last had.
           await publish(snapshotFrom(sameAccount, options, connection))
         }
       }
@@ -495,11 +448,7 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number; retryMs?
         return running
       }
 
-      // 4. Refresh now, on sign-in, sign-out and account switches, and on a timer.
-      // Explicit remote approval starts a separate background loop; it never gates a native prompt.
       if (options.remoteSessions) {
-        // Keep ordinary Git sparse installs working without the optional shared source package.
-        // A missing optional module must never disable sign-in, providers, or MCP.
         remoteLoading = import("./remote-runner.ts").then(async module => {
           if (disposed) return
           if (!module.hasNativeSessionHost(ctx)) throw new Error("native_host_unavailable")
@@ -524,14 +473,12 @@ export function createPlugin(deps: { fetch?: Fetch; now?: () => number; retryMs?
               refreshController.abort()
               refreshController = new AbortController()
               stopStream()
-              // Clear synchronously before a slow old-account fetch can finish.
               void publish(EMPTY).catch(() => {})
               remote.current?.credentialsChanged()
               void refresh(true)
             }
           }
         } catch {
-          // The stream ends when the plugin unloads.
         }
       })()
 

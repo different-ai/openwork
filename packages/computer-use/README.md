@@ -38,7 +38,7 @@ told to use control to finish the task and to pick a narrower mode only when the
 person asks for one. On a parallel Mac computer, control works in the window
 where it is, without taking the front unless the app or step needs it
 ([docs](../../docs/features/computer-use-background/README.md)). This is
-included in `computerUse`, not a separate rollout.
+included in computer use.
 A kernel-held lock allows one session per window, so chats in different windows
 work at once. On a parallel Mac one chat keeps up to three apps open at once,
 each in its own window with its own helper session, so a task can move between
@@ -53,7 +53,7 @@ turn at the keyboard and pointer and its idle release; end of turn releases
 them all, Take over on any of them holds the whole chat until Continue, and Stop
 ends them all. Watch live shows the app being worked in, and the session card
 names the app of each step. Other computers keep one app per chat.
-With `parallelComputerUse` on ([docs](../../docs/features/parallel-computer-use/README.md)),
+With [parallel computer use](../../docs/features/parallel-computer-use/README.md),
 a subagent the chat starts (OpenCode's `subagent` tool) works on the chat's
 computer as part of the chat; off, it is its own chat. The bridge reads the subagent's root chat from the
 engine's session tree and sends it as `rootSessionId`; model input never names
@@ -196,7 +196,7 @@ minimized, counts as not following until the person is back in OpenWork. Each
 receipt's `desktop.followed` says which mode the step ran in. Other computers
 get neither argument.
 
-With `parallelComputerUse` on, a subagent's helpers follow when the person watches its chat, or the
+A subagent's helpers follow when the person watches its chat, or the
 subagent's own thread. Then every agent of the chat works in view and they take
 turns at the keyboard and pointer, one whole call at a time, as one chat's
 apps do. With apps of more than one agent open, none goes `beside_openwork` on
@@ -241,8 +241,13 @@ dialog gets none. A pill over the window's
 buttons offers Take over, Continue and Stop, shows "Your turn" while the person
 has control, and moves to the top of the screen when the window is hidden.
 When the session ends the cursor says it is "all yours" and fades out. Every
-overlay is excluded from screen capture, the frame and cursor ignore the mouse,
-and the pill never activates the helper. In a background session the frame and
+overlay is excluded from screen capture unless
+`OPENWORK_COMPUTER_USE_RECORDABLE_OVERLAY=1` is set, which lets screen
+recordings show the cursor, frame and pill for demos. OpenWork sets it from
+Settings → Advanced → Show computer use in screen recordings (or when it was
+launched with the same variable); the agent's screenshots capture only the selected window either
+way. The frame and cursor ignore the mouse, and the pill never activates the
+helper. In a background session the frame and
 cursor sit just above the selected window instead of above every window, so a
 window the person brings in front covers them too; the pill stays on top so
 Take over and Stop are always reachable.
@@ -347,11 +352,21 @@ a Windows chat starts on it.
 | Command | Purpose |
 | --- | --- |
 | `openwork-computer-use --check` | Prints `{protocol: "openwork.computer-use.windows/1", ok, reason, supported, session, integrity}` and exits. |
-| `openwork-computer-use serve --host-pid N` | Prints `{"type":"ready",...}`, then answers `windows`, `focus`, `capture`, `input` and `status` in order; `cancel` is answered at once and stops running input. It exits when stdin closes. |
+| `openwork-computer-use serve --host-pid N` | Prints `{"type":"ready",...}`, then answers `windows`, `apps`, `focus`, `capture`, `input` and `status` in order; `cancel` is answered at once and stops running input. It exits when stdin closes. |
 
 - Targets are app windows only; there is no whole-screen session. A window is
   identified by its handle, process id and process start time, so a restarted
   app never matches an old observation.
+- `computer_discover` also lists installed apps that are not open, and
+  `computer_open` starts one, waits up to 15 seconds for its window and then
+  attaches, as on a Mac. Installed means what the helper's `apps` request
+  lists: Start menu shortcuts that run a program with no arguments, and the app
+  aliases Windows keeps for packaged apps (Notepad and Paint on Windows 11).
+  The app id is the program's file name, the same id its open windows have.
+  The desktop starts the listed program directly, with no shell and no
+  arguments, and never from a path or command the agent supplies; excluded
+  apps (below) are not listed. An app that shows no window in time returns
+  `app_window_timeout`; one that is not installed returns `app_not_found`.
 - OpenWork's own windows are hidden. Terminals, code editors, password managers,
   security settings, apps in another Windows session, apps running with higher
   privileges than OpenWork (as administrator) and capture-protected windows are
@@ -432,6 +447,16 @@ already correct control. Form receipts verify the retained value and expose
 `value_mismatch` when a page rewrites or rejects it. Field values filled by the
 page or person stay withheld; only the exact value entered by the agent can be
 read back. Select option references are opaque and limited to the observed list.
+`fill_secret` enters a secret the person saved for the page's site, named by the
+`secretRef` an observation lists in `availableSecrets`: after the person
+confirms the site, secret and field, a random placeholder is typed and the host
+swaps it for the value only in a request to a site the secret is allowed for.
+The step is `verified` or `failed` and never returns the value or the
+placeholder; receipts and observations report what became of it in `secrets`
+(`pending`, `sent` or `not_sent`), and everything the browser host returns is
+redacted of saved secrets and placeholders, before any text is cut or trimmed.
+A placeholder works only in the document it was typed into. A tab that received
+one takes no more images until it closes.
 Submission still requires
 observing the resulting page; an uncertain submit must never be replayed.
 References expire after a minute and are consumed once. Before input, the host
@@ -454,7 +479,7 @@ it is a focused provider diagnostic, separate from the Web rollout UI proof.
 
 ## UI programs and shortcuts
 
-With `computerUse` enabled, `computer_run` executes one bounded JavaScript
+`computer_run` executes one bounded JavaScript
 program against the conversation's selected computer or built-in browser. It
 uses the same Stop/takeover controls and organization policy as direct tools.
 Programs share the enabled access, target validation and human handoff used by direct tools. The `remoteComputers` rollout is

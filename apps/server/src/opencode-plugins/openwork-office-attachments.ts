@@ -148,12 +148,6 @@ function decodeDataUrl(url: string): Buffer {
   return buffer;
 }
 
-/**
- * Read a regular file at exactly this path inside the real workspace root with
- * open-then-verify ordering (see workspace-file-identity.ts): the handle is
- * obtained first and proven to be the file at this path, with no link in any
- * component, before it is read.
- */
 async function readWorkspaceFile(realRoot: string, path: string, label: string): Promise<Buffer> {
   if (!isWithin(realRoot, path)) throw new Error(`${label} points outside the active workspace.`);
   const { handle, info } = await openWorkspaceFileForReading(realRoot, path, label);
@@ -175,13 +169,6 @@ async function bytesFromPart(part: OfficeFilePart, root: string | null): Promise
   return await readWorkspaceFile(realRoot, filePath, "Office attachment file URL");
 }
 
-/**
- * Ensure the materialization folder exists one component at a time, refusing
- * a link at any level, so the folder can only ever be the real directory
- * directly under the real workspace root. Creating a missing component is the
- * only pathname-dependent mutation here, and it can only ever produce an
- * empty directory.
- */
 async function ensureMaterializedDirectory(realRoot: string): Promise<string> {
   let current = realRoot;
   for (const segment of MATERIALIZED_DIR.split(sep)) {
@@ -207,11 +194,6 @@ async function existingDigest(realRoot: string, path: string): Promise<string | 
   }
 }
 
-/**
- * Create the file exclusively (never replacing anything), prove the new inode
- * is in place, then write through the handle. Bytes never travel through a
- * pathname after validation.
- */
 async function writeMaterializedFile(realRoot: string, target: string, bytes: Buffer): Promise<void> {
   const { handle } = await openWorkspaceFileForWriting(realRoot, target, null, "Materialized Office attachment");
   try {
@@ -304,8 +286,6 @@ async function transformMessage(value: unknown, root: string | null): Promise<un
   return value;
 }
 
-// Single export: the OpenCode plugin loader treats every export of a plugin
-// module as a plugin factory, so helpers must stay module-private.
 export const OpenWorkOfficeAttachments = async (factoryInput?: unknown) => {
   const factoryContext = normalizeOpenCodeContext(factoryInput);
   return {

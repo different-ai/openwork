@@ -1,9 +1,9 @@
 import type { TextPartInput } from "@opencode-ai/sdk/v2/client";
 
 import type { ComposerPart } from "@/app/types";
-import { computerMentionInstruction, isComputerTarget, type ComputerTarget } from "./computer-mentions";
+import { computerMentionInstruction, isComputerTarget, searchFirstComputerMentionInstruction, type ComputerTarget } from "./computer-mentions";
 import { connectSkillPrompt, encodeConnectSkillToken, parseConnectSkillToken } from "./connect-skill-token";
-import { connectorPrompt, encodeConnectorToken, parseConnectorToken } from "./connector-token";
+import { CONNECTOR_PROMPT_HISTORY, connectorPrompt, encodeConnectorToken, parseConnectorToken } from "./connector-token";
 import {
   encodeSessionReferenceToken,
   parseSessionReferenceToken,
@@ -11,21 +11,6 @@ import {
   sessionReferenceText,
 } from "./session-reference-token";
 
-/**
- * One source of truth for composer pills: the skills, connectors and
- * computers picked from the composer `+` menu or `@` mentions, and the tasks
- * referenced from the `#` menu.
- *
- * A pill has three faces, and each is owned here:
- * - its draft token (what the composer stores and re-renders as a chip),
- * - its visible text (what the user message holds, shown as the same chip),
- * - its model instruction (sent as a synthetic part, never shown).
- * How the chip looks lives in composer-chips.
- *
- * Every send path, the user message bubble, the queued-message list and the
- * composer read from this module, so a pill in the composer stays a pill in the
- * transcript and its instruction never expands into the user's text.
- */
 export type ComposerPill =
   | { kind: "skill"; name: string }
   | { kind: "connect-skill"; slug: string; name: string; marketplace: string; capability: string }
@@ -35,18 +20,14 @@ export type ComposerPill =
 
 type ComposerPillPart = Extract<ComposerPart, { type: "skill" | "connect-skill" | "connector" | "computer" | "session" }>;
 
-/** Splits a draft into text and token segments (one capture group, keep it for `split`). */
 export const COMPOSER_DRAFT_TOKEN_RE = /(\[attachment [^\]]+\]|\[pasted text [^\]]+\]|\[connect-skill [^\]]+\]|\[skill [^\]]+\]|\[connector [^\]]+\]|\[session [^\]\n]+\]|@[^\s@]+)/;
 
-/** Pill tokens whose visible text replaces them in the resolved draft. */
 export const COMPOSER_PILL_TOKEN_GLOBAL_RE = /\[connect-skill [^\]]+\]|\[skill [^\]]+\]|\[connector [^\]]+\]|\[session [^\]\n]+\]/g;
 
 const SKILL_TOKEN_RE = /^\[skill (.+)\]$/;
 
-/** Neutral chip for slash commands; pills and mentions use composer-chips badges. */
 export const COMPOSER_TOKEN_CLASS = "inline-flex items-center rounded-md bg-gray-3 px-1.5 py-0.5 text-xs font-medium text-gray-12";
 
-/** The pill a `[skill …]`, `[connect-skill …]` or `[connector …]` draft segment stands for. */
 export function parseComposerPillToken(segment: string): ComposerPill | null {
   const connectSkill = parseConnectSkillToken(segment);
   if (connectSkill) return { kind: "connect-skill", ...connectSkill };
@@ -73,7 +54,6 @@ export function composerPillFromPart(part: ComposerPillPart): ComposerPill {
   }
 }
 
-/** The draft token the composer stores for this pill. */
 export function composerPillToken(pill: ComposerPill): string {
   switch (pill.kind) {
     case "skill":
@@ -85,16 +65,10 @@ export function composerPillToken(pill: ComposerPill): string {
     case "computer":
       return `@${pill.target}`;
     case "session":
-      // Ids are validated when the pill is created or parsed.
       return encodeSessionReferenceToken(pill) ?? "";
   }
 }
 
-/**
- * The user-visible text the pill contributes to the message. It is short and
- * readable on its own (copy, edit, clients that cannot render pills), and it is
- * what the model sees as the user's words next to the synthetic instruction.
- */
 export function composerPillText(pill: ComposerPill): string {
   switch (pill.kind) {
     case "connect-skill":
@@ -121,7 +95,6 @@ export function composerPillTitle(pill: ComposerPill): string {
   }
 }
 
-/** Model-facing steering text. Only ever sent as a synthetic part. */
 export function composerPillInstruction(pill: ComposerPill): string {
   switch (pill.kind) {
     case "skill":
@@ -141,27 +114,23 @@ function skillInstruction(name: string) {
   return `Load [skill ${name}] and follow its instructions.`;
 }
 
-/**
- * The two prompt parts every send path emits for a pill: the visible text
- * (tagged with the pill so the transcript renders a chip) and the synthetic
- * instruction (hidden from the transcript).
- */
+export function composerPillTextMetadata(pill: ComposerPill): Record<string, unknown> {
+  return {
+    openworkComposerPill: pill,
+    ...(pill.kind === "connect-skill" ? { openworkComposerToken: encodeConnectSkillToken(pill) } : {}),
+    ...(pill.kind === "session" ? { openworkComposerToken: composerPillToken(pill) } : {}),
+  };
+}
+
 export function composerPillPromptParts(pill: ComposerPill): [TextPartInput, TextPartInput & { synthetic: true }] {
   return [{
     type: "text",
     text: composerPillText(pill),
-    metadata: {
-      openworkComposerPill: pill,
-      // Prompt history recalls a Connect skill from its durable token.
-      ...(pill.kind === "connect-skill" ? { openworkComposerToken: encodeConnectSkillToken(pill) } : {}),
-      ...(pill.kind === "session" ? { openworkComposerToken: composerPillToken(pill) } : {}),
-    },
+    metadata: composerPillTextMetadata(pill),
   }, {
     type: "text",
     text: composerPillInstruction(pill),
     synthetic: true,
-    // Preserve selection identity through every send path. v1 still receives
-    // the instruction; the v2 adapter replaces it with a native attachment.
     ...(pill.kind === "skill" ? { metadata: { openworkSelectedSkill: { name: pill.name } } } : {}),
   }];
 }
@@ -171,7 +140,6 @@ function stringField(value: object, key: string): string | null {
   return typeof field === "string" && field ? field : null;
 }
 
-/** Validate a pill read back from message metadata. */
 export function readComposerPill(value: unknown): ComposerPill | null {
   if (!value || typeof value !== "object") return null;
   const kind = stringField(value, "kind");
@@ -212,7 +180,6 @@ function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-/** A regex that matches `render(name)` for any name, capturing the name. */
 function templateRegExp(render: (slot: string) => string) {
   let first = true;
   const source = escapeRegExp(render(TEMPLATE_SLOT)).replaceAll(TEMPLATE_SLOT, () => {
@@ -228,15 +195,15 @@ let pillMatchers: PillMatcher[] | null = null;
 function getPillMatchers(): PillMatcher[] {
   if (pillMatchers) return pillMatchers;
   pillMatchers = [
-    // Draft tokens that reached the transcript as text.
     { re: /\[connect-skill [^\]]+\]/g, toPill: (match) => parseComposerPillToken(match[0]) },
     { re: /\[connector [^\]\n]+\]/g, toPill: (match) => parseComposerPillToken(match[0]) },
     { re: /\[skill [^\]\n]+\]/g, toPill: (match) => parseComposerPillToken(match[0]) },
     { re: /\[session [^\]\n]+\]/g, toPill: (match) => parseComposerPillToken(match[0]) },
-    // Instructions that older sends, or clients that flatten parts into one
-    // string, left inline in the user's text.
     { re: templateRegExp(skillInstruction), toPill: (match) => match[1] ? { kind: "skill", name: match[1] } : null },
-    { re: templateRegExp(connectorPrompt), toPill: (match) => match[1] ? { kind: "connector", name: match[1] } : null },
+    ...CONNECTOR_PROMPT_HISTORY.map((render): PillMatcher => ({
+      re: templateRegExp(render),
+      toPill: (match) => match[1] ? { kind: "connector", name: match[1] } : null,
+    })),
     ...(["cloud", "desktop"] as const).flatMap((target) => computerInstructionHistory(target).map((instruction): PillMatcher => ({
       re: new RegExp(escapeRegExp(instruction), "g"),
       toPill: () => ({ kind: "computer", target }),
@@ -245,28 +212,28 @@ function getPillMatchers(): PillMatcher[] {
   return pillMatchers;
 }
 
-/** Decode exact historical sends without offering the retired polling instruction on new sends. */
-function computerInstructionHistory(target: "cloud" | "desktop"): string[] {
-  const current = computerMentionInstruction(target);
-  const legacyEnding = target === "cloud"
+export function computerInstructionHistory(target: "cloud" | "desktop"): string[] {
+  const searchFirst = searchFirstComputerMentionInstruction(target);
+  const pollingEnding = target === "cloud"
     ? "Return the session link and use remote-session:read to check replies."
     : "Use remote-session:read with commandId to check delivery. A delivered receipt means the task was started, not that it finished; return the desktop session reference.";
-  return [current, current.replace(/OpenWork shows the started task.*(?=\]$)/, legacyEnding)];
+  return [
+    computerMentionInstruction(target),
+    searchFirst,
+    searchFirst.replace(/OpenWork shows the started task.*(?=\]$)/, pollingEnding),
+  ];
 }
 
 function isInstructionMatch(pill: ComposerPill, text: string) {
   if (pill.kind === "computer") {
     return computerInstructionHistory(pill.target).includes(text);
   }
+  if (pill.kind === "connector") {
+    return CONNECTOR_PROMPT_HISTORY.some((render) => render(pill.name) === text);
+  }
   return text === composerPillInstruction(pill);
 }
 
-/**
- * Split plain user-message text into text and pills. Recognizes pill tokens
- * and any expanded pill instruction, so no instruction is ever displayed as
- * the user's words. When an instruction directly follows its own visible text
- * (`[connector GitHub]This request is about…`) both collapse into one pill.
- */
 export function splitComposerPillText(text: string): ComposerPillTextSegment[] {
   const matchers = getPillMatchers();
   const segments: ComposerPillTextSegment[] = [];

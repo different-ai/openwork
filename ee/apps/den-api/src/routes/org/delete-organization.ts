@@ -18,6 +18,7 @@ import {
   ConfigObjectAccessGrantTable,
   ConfigObjectTable,
   ConfigObjectVersionTable,
+  SkillFileBlobTable,
   ConnectedAccountTable,
   ConnectorAccountTable,
   ConnectorInstanceAccessGrantTable,
@@ -26,8 +27,13 @@ import {
   ConnectorSourceBindingTable,
   ConnectorSourceTombstoneTable,
   ConnectorSyncEventTable,
+  ConnectorTargetReconcileTable,
   ConnectorTargetTable,
   CloudRuntimeInstanceTable,
+  ConfigApplyRunTable,
+  ConfigBlobAliasTable,
+  ConfigBlobExportTable,
+  ConfigChangeRequestTable,
   DaytonaSandboxTable,
   DesktopConnectGrantTable,
   DesktopPolicyMemberTable,
@@ -42,9 +48,11 @@ import {
   InferenceOrgLimitPolicyTable,
   InferenceOrgUpstreamProviderKeyTable,
   InferenceOrgUsageBucketTable,
+  GatewayApiKeyTable,
   GatewayKeyTable,
   GatewayCredentialSetTable,
   GatewayLiteLlmIssuedKeyTable,
+  GatewayTrueFoundryUserTable,
   GatewayModelGroupTable,
   GatewayModelGroupModelTable,
   GatewayProviderAccessTable,
@@ -56,6 +64,7 @@ import {
   InferenceUsageLedgerBucketChargeTable,
   InferenceUsageLedgerEntryTable,
   GatewayUsageRollupTable,
+  WorkbotUsageDayTable,
   InstallLinkTable,
   InvitationTable,
   LlmProviderAccessTable,
@@ -75,6 +84,7 @@ import {
   OrgSubscriptionTable,
   PermissionSetPermissionTable,
   PermissionSetTable,
+  PermissionSetMemberTable,
   PermissionSetTeamTable,
   PluginAccessGrantTable,
   PluginConfigObjectTable,
@@ -98,6 +108,11 @@ import {
   WorkspaceBootstrapTable,
   WorkspaceClaimTable,
   HeadlessResumeGrantTable,
+  McpNativeSubscriptionTable,
+  McpNativeDeliveryTable,
+  McpEventReceiptTable,
+  McpEventSubscriptionTable,
+  McpEventTurnTable,
   HeadlessResumeRevocationTable,
   SandboxOrganizationTable,
 } from "@openwork-ee/den-db/schema"
@@ -109,7 +124,9 @@ import { describeRoute } from "hono-openapi"
 import { z } from "zod"
 import { deleteOrganizationAgentPermissions } from "../../agent-permissions.js"
 import { deleteOrganizationDefaultModels } from "../../default-model.js"
+import { deleteOrganizationWorkbotTeamSettings } from "../../workbot/team-settings.js"
 import { deleteOrganizationFeatureIntroStates } from "../../feature-intros.js"
+import { deleteOrganizationRemoteDevices } from "../../remote-devices.js"
 import { deleteOrganizationPrompts } from "../../prompts.js"
 import { deleteOrganizationAutoRouters } from "../../auto-router.js"
 import { deleteHeadlessSessionIndexForOrganization } from "../../headless-runner/session-index.js"
@@ -142,11 +159,6 @@ type DeletionRequestSnapshot = {
   organizationCreatedAt: string | null
 }
 
-/**
- * What a deletion has done so far, kept in the organization's metadata until the final transaction deletes the
- * organization. A retry after a failure resumes from it: one Linear ticket and one round of external cleanup per
- * deletion, not per attempt.
- */
 type DeletionProgress = {
   requestId: string
   startedAt: string
@@ -154,7 +166,6 @@ type DeletionProgress = {
   externalCleanupAt?: string
 }
 
-/** An attempt that claimed the deletion this recently may still be creating its Linear ticket. */
 const DELETION_TICKET_CLAIM_MS = 60_000
 
 const logger = appLogger.child({ component: "delete_organization" })
@@ -352,7 +363,6 @@ function readDeletionProgress(metadata: Record<string, unknown>): DeletionProgre
   }
 }
 
-/** Starts the deletion, or resumes the one an earlier attempt started. `claimed` is true for the attempt that started it. */
 async function claimDeletion(organizationId: OrganizationId) {
   const started: DeletionProgress = { requestId: createDenTypeId("request"), startedAt: new Date().toISOString() }
   const metadata = await updateOrganizationMetadata(organizationId, (current) =>
@@ -417,9 +427,6 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
       },
     }),
     async (c) => {
-      // The purge removes this organization's tenant audit history, so the
-      // platform record (success or failure) carries it as the target; the id
-      // comes from the verified organizationContext, never request input.
       addAuditRequestResource(c, { type: "organization", id: c.get("organizationContext").organization.id, relationship: "target" })
       const permission = ensureOwner(c)
       if (!permission.ok) {
@@ -462,11 +469,8 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
       await db.transaction(async (tx) => {
         const [locked] = await tx.select({ metadata: OrganizationTable.metadata }).from(OrganizationTable)
           .where(eq(OrganizationTable.id, organizationId)).for("update")
-        // A concurrent attempt may have recorded the ticket after this one read the progress.
         linearIssueId = (locked ? readDeletionProgress(readOrganizationMetadata(locked.metadata))?.linearIssueId : undefined) ?? linearIssueId
         if (!locked) {
-          // A concurrent attempt already deleted the organization (and its rows) in this same transaction body,
-          // so there is nothing left to delete; finish as a successful, idempotent deletion.
           alreadyDeleted = true
           return
         }
@@ -504,8 +508,6 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
           }
         }
 
-        // Install links are no longer issued; erase rows created before that
-        // until a later migration drops both tables.
         const installLinkIds = (await tx
           .select({ id: InstallLinkTable.id })
           .from(InstallLinkTable)
@@ -562,8 +564,8 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
           .map((row) => row.id)
         if (gatewayProviderIds.length > 0) {
           await tx.delete(GatewayProviderOauthStateTable).where(inArray(GatewayProviderOauthStateTable.gateway_provider_id, gatewayProviderIds))
-          // Keys OpenWork created in a customer's LiteLLM outlive this record; that proxy is not ours to change.
           await tx.delete(GatewayLiteLlmIssuedKeyTable).where(inArray(GatewayLiteLlmIssuedKeyTable.gateway_provider_id, gatewayProviderIds))
+          await tx.delete(GatewayTrueFoundryUserTable).where(inArray(GatewayTrueFoundryUserTable.gateway_provider_id, gatewayProviderIds))
           const groups = await tx.select({ id: GatewayModelGroupTable.id }).from(GatewayModelGroupTable).where(inArray(GatewayModelGroupTable.gateway_provider_id, gatewayProviderIds))
           if (groups.length) await tx.delete(GatewayModelGroupModelTable).where(inArray(GatewayModelGroupModelTable.model_group_id, groups.map((group) => group.id)))
           await tx.delete(GatewayProviderAccessTable).where(inArray(GatewayProviderAccessTable.gateway_provider_id, gatewayProviderIds))
@@ -573,11 +575,12 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
           await tx.delete(GatewayProviderModelTable).where(inArray(GatewayProviderModelTable.gateway_provider_id, gatewayProviderIds))
         }
         await tx.delete(GatewayProviderCredentialTable).where(eq(GatewayProviderCredentialTable.organization_id, organizationId))
-        // Account erasure remains distinct from provider deletion, which retains its history.
         await tx.delete(GatewayRequestLogTable).where(eq(GatewayRequestLogTable.organization_id, organizationId))
         await tx.delete(GatewayUsageRollupTable).where(eq(GatewayUsageRollupTable.organization_id, organizationId))
+        await tx.delete(WorkbotUsageDayTable).where(eq(WorkbotUsageDayTable.organization_id, organizationId))
         await tx.delete(GatewayProviderTable).where(eq(GatewayProviderTable.organization_id, organizationId))
         await tx.delete(GatewayKeyTable).where(eq(GatewayKeyTable.organization_id, organizationId))
+        await tx.delete(GatewayApiKeyTable).where(eq(GatewayApiKeyTable.organization_id, organizationId))
 
         const llmProviderIds = (await tx
           .select({ id: LlmProviderTable.id })
@@ -589,7 +592,6 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
           await tx.delete(LlmProviderAccessTable).where(inArray(LlmProviderAccessTable.llmProviderId, llmProviderIds))
         }
 
-        // session.active_organization_id has no index; members' sessions are reached through their users.
         if (memberUserIds.length > 0) {
           affectedSessions = await tx
             .select({ id: AuthSessionTable.id, token: AuthSessionTable.token })
@@ -605,8 +607,8 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(WorkspaceBootstrapTable).where(eq(WorkspaceBootstrapTable.organizationId, organizationId))
         await tx.delete(InstallLinkTable).where(eq(InstallLinkTable.organizationId, organizationId))
         await tx.delete(OrganizationRoleTable).where(eq(OrganizationRoleTable.organizationId, organizationId))
-        // Permission rows are append-only; organization erasure is the one sanctioned hard delete.
         await tx.delete(PermissionSetTeamTable).where(eq(PermissionSetTeamTable.organizationId, organizationId))
+        await tx.delete(PermissionSetMemberTable).where(eq(PermissionSetMemberTable.organizationId, organizationId))
         await tx.delete(PermissionSetPermissionTable).where(eq(PermissionSetPermissionTable.organizationId, organizationId))
         await tx.delete(PermissionSetTable).where(eq(PermissionSetTable.organizationId, organizationId))
 
@@ -618,9 +620,6 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(SessionSsoAuthenticationTable).where(eq(SessionSsoAuthenticationTable.organizationId, organizationId))
         await tx.delete(SessionSsoProofTable).where(eq(SessionSsoProofTable.organizationId, organizationId))
 
-        // Explicit owner-authorized organization erasure, not resource cleanup.
-        // No settlement is active for these pilot facts. Billing evidence needs
-        // a separate retention policy before commercial settlement is enabled.
         await tx.delete(AuditEventResourceTable).where(eq(AuditEventResourceTable.organization_id, organizationId))
         await tx.delete(AuditEventTable).where(eq(AuditEventTable.org_id, organizationId))
         await tx.delete(AuditOperationStepTable).where(eq(AuditOperationStepTable.organization_id, organizationId))
@@ -635,8 +634,13 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(CapabilityUsageRollupTable).where(eq(CapabilityUsageRollupTable.organization_id, organizationId))
         await tx.delete(FeatureUsageTable).where(eq(FeatureUsageTable.organization_id, organizationId))
         await deleteOrganizationFeatureIntroStates(tx, organizationId)
+        await deleteOrganizationRemoteDevices(tx, organizationId)
+        await tx.delete(McpNativeDeliveryTable).where(eq(McpNativeDeliveryTable.organizationId, organizationId))
+        await tx.delete(McpNativeSubscriptionTable).where(eq(McpNativeSubscriptionTable.organizationId, organizationId))
+        await tx.delete(McpEventReceiptTable).where(eq(McpEventReceiptTable.organizationId, organizationId))
+        await tx.delete(McpEventSubscriptionTable).where(eq(McpEventSubscriptionTable.organizationId, organizationId))
+        await tx.delete(McpEventTurnTable).where(eq(McpEventTurnTable.organizationId, organizationId))
         await deleteHeadlessSessionIndexForOrganization(tx, organizationId)
-        // Resume grants are useless once the members are gone (the exchange needs an active member); delete them too.
         await unlessResumeTableMissing("headless_resume_grant", () => tx.delete(HeadlessResumeGrantTable).where(eq(HeadlessResumeGrantTable.organizationId, organizationId)))
         await unlessResumeTableMissing("headless_resume_revocation", () => tx.delete(HeadlessResumeRevocationTable).where(eq(HeadlessResumeRevocationTable.organizationId, organizationId)))
         await tx.delete(TeamTable).where(eq(TeamTable.organizationId, organizationId))
@@ -657,6 +661,7 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(DesktopPolicyMemberTable).where(eq(DesktopPolicyMemberTable.organizationId, organizationId))
         await deleteOrganizationAgentPermissions(tx, organizationId)
         await deleteOrganizationDefaultModels(tx, organizationId)
+        await deleteOrganizationWorkbotTeamSettings(tx, organizationId)
         await deleteOrganizationPrompts(tx, organizationId)
         await deleteOrganizationAutoRouters(tx, organizationId)
         await tx.delete(DesktopPolicyTable).where(eq(DesktopPolicyTable.organizationId, organizationId))
@@ -677,6 +682,7 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(ConnectorSourceTombstoneTable).where(eq(ConnectorSourceTombstoneTable.organizationId, organizationId))
         await tx.delete(ConnectorSourceBindingTable).where(eq(ConnectorSourceBindingTable.organizationId, organizationId))
         await tx.delete(ConfigObjectVersionTable).where(eq(ConfigObjectVersionTable.organizationId, organizationId))
+        await tx.delete(SkillFileBlobTable).where(eq(SkillFileBlobTable.organizationId, organizationId))
         await tx.delete(PluginConfigObjectTable).where(eq(PluginConfigObjectTable.organizationId, organizationId))
         await tx.delete(ConfigObjectAccessGrantTable).where(eq(ConfigObjectAccessGrantTable.organizationId, organizationId))
         await tx.delete(PluginAccessGrantTable).where(eq(PluginAccessGrantTable.organizationId, organizationId))
@@ -684,6 +690,7 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(MarketplacePluginTable).where(eq(MarketplacePluginTable.organizationId, organizationId))
         await tx.delete(ConnectorSyncEventTable).where(eq(ConnectorSyncEventTable.organizationId, organizationId))
         await tx.delete(ConnectorMappingTable).where(eq(ConnectorMappingTable.organizationId, organizationId))
+        await tx.delete(ConnectorTargetReconcileTable).where(eq(ConnectorTargetReconcileTable.organizationId, organizationId))
         await tx.delete(ConnectorTargetTable).where(eq(ConnectorTargetTable.organizationId, organizationId))
         await tx.delete(ConnectorInstanceAccessGrantTable).where(eq(ConnectorInstanceAccessGrantTable.organizationId, organizationId))
         await tx.delete(ConnectorInstanceTable).where(eq(ConnectorInstanceTable.organizationId, organizationId))
@@ -692,12 +699,16 @@ export function registerDeleteOrganizationRoutes<T extends { Variables: OrgRoute
         await tx.delete(PluginTable).where(eq(PluginTable.organizationId, organizationId))
         await tx.delete(ConfigObjectTable).where(eq(ConfigObjectTable.organizationId, organizationId))
 
+        await tx.delete(ConfigApplyRunTable).where(eq(ConfigApplyRunTable.organizationId, organizationId))
+        await tx.delete(ConfigChangeRequestTable).where(eq(ConfigChangeRequestTable.organizationId, organizationId))
+        await tx.delete(ConfigBlobAliasTable).where(eq(ConfigBlobAliasTable.organizationId, organizationId))
+        await tx.delete(ConfigBlobExportTable).where(eq(ConfigBlobExportTable.organizationId, organizationId))
+
         await tx.delete(InvitationTable).where(eq(InvitationTable.organizationId, organizationId))
         await tx.delete(MemberTable).where(eq(MemberTable.organizationId, organizationId))
         await tx.delete(OrganizationTable).where(eq(OrganizationTable.id, organizationId))
       })
 
-      // Org deletion removes every member row; clear aggregate and per-user membership cache keys.
       await cache.org.deleteMembers(organizationId)
       invalidateWebOriginApprovalCache()
       await Promise.all(affectedSessions.flatMap((session) => [

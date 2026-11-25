@@ -72,7 +72,7 @@ export const resolveUserOrganizationsMiddleware: MiddlewareHandler<{
   const apiKey = c.get("apiKey")
   const apiKeyScopedOrganizationId = getApiKeyScopedOrganizationId(apiKey)
   const headerOrganizationId = getRequestScopedOrganizationId(c.req.raw.headers)
-  const scopedOrganizationId = apiKeyScopedOrganizationId ?? headerOrganizationId
+  const scopedOrganizationId = apiKeyScopedOrganizationId ?? session?.organizationScopeId ?? headerOrganizationId
   const resolved = await resolveUserOrganizations({
     activeOrganizationId: scopedOrganizationId ?? session?.activeOrganizationId ?? null,
     userId: normalizeDenTypeId("user", user.id),
@@ -87,12 +87,9 @@ export const resolveUserOrganizationsMiddleware: MiddlewareHandler<{
     ? scopedOrgs[0]?.slug ?? null
     : resolved.activeOrgSlug
 
-  // ssoPerOrganization: never act in an organization that requires SSO from a
-  // session that did not sign in through it. Fall back to the first
-  // organization the session may open; the list itself stays complete so the
-  // person can still choose it (and be sent through its SSO).
-  if (!apiKey && activeOrganizationId) {
-    const blocked = await findSsoBlockedOrganizations({ sessionId: session?.id ?? null, organizationIds: scopedOrgs.map((org) => org.id) })
+  const signInSessionId = c.get("signInSessionId")
+  if (signInSessionId && activeOrganizationId) {
+    const blocked = await findSsoBlockedOrganizations({ sessionId: signInSessionId, organizationIds: scopedOrgs.map((org) => org.id) })
     if (blocked.has(activeOrganizationId)) {
       const fallback = scopedOrganizationId ? null : scopedOrgs.find((org) => !blocked.has(org.id)) ?? null
       activeOrganizationId = fallback?.id ?? null
@@ -114,8 +111,6 @@ export const resolveUserOrganizationsMiddleware: MiddlewareHandler<{
   c.set("userOrganizations", scopedOrgs)
   c.set("activeOrganizationId", activeOrganizationId)
   c.set("activeOrganizationSlug", activeOrganizationSlug)
-  // The active organization is one of the caller's verified memberships: the
-  // handler acts on it, so it is the audit tenant (durable intent before next()).
   const activeMembership = activeOrganizationId ? scopedOrgs.find((org) => org.id === activeOrganizationId) : undefined
   if (activeMembership) {
     const auditBlocked = await beginUserOrganizationsAuditRequest(c, {

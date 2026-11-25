@@ -4,8 +4,6 @@ import type { GatewayUsageBucket } from "@openwork/types/den/gateway-usage-limit
 
 export const GATEWAY_APPROVAL_DISMISSALS_KEY = "openwork:gateway-approval-dismissals:v1";
 
-// An increase can be approved once per bucket window. Do not key by session,
-// token, usage total, or query generation: those change without a new approval.
 export function gatewayApprovalKey(scopeKey: string, bucket: GatewayUsageBucket): string {
   return JSON.stringify([scopeKey, bucket.id, bucket.resetAt]);
 }
@@ -27,11 +25,10 @@ export const useGatewayApprovalDismissals = create<ApprovalDismissals>()(persist
         try { return localStorage.getItem(key); } catch { return null; }
       },
       setItem: (key, value) => {
-        // Dismiss in memory even if storage is unavailable or full.
-        try { localStorage.setItem(key, value); } catch { /* Best-effort persistence. */ }
+        try { localStorage.setItem(key, value); } catch {}
       },
       removeItem: (key) => {
-        try { localStorage.removeItem(key); } catch { /* Best-effort persistence. */ }
+        try { localStorage.removeItem(key); } catch {}
       },
     })),
     partialize: (state) => ({ dismissedKeys: state.dismissedKeys }),

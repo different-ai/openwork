@@ -28,39 +28,27 @@ export type ExtensionKind = "mcp" | "plugin" | "skill" | "ui-control" | "extensi
 
 export type McpDirectoryInfo = {
   id?: string;
-  /** Display name shown in the UI. */
   name: string;
-  /** Safe server name for opencode.jsonc (alphanumeric, - and _ only). Auto-derived from name if omitted. */
   serverName?: string;
   description: string;
   url?: string;
   type?: "remote" | "local";
   command?: string[];
   oauth: boolean;
-  /** Route OAuth through the local OpenWork gateway instead of delegating it to OpenCode. */
   managedOAuth?: boolean;
-  /** Identifies MCP entries owned by OpenWork Connect instead of workspace configuration. */
   managedBy?: "openwork-connect";
   oauthConfig?: {
     clientId?: string;
     clientSecret?: string;
     scope?: string;
   };
-  /** Extension category for UI grouping. Defaults to "mcp". */
   kind?: ExtensionKind;
-  /** Simple Icons slug for brand icon (e.g. "notion", "stripe", "figma"). */
   iconSlug?: string;
-  /** Direct icon URL (e.g. local SVG). Takes priority over iconSlug. */
   iconSrc?: string;
-  /** Prompt inserted from the composer extension picker. */
   composerPrompt?: string;
-  /** Whether OpenWork should show this extension as enabled before user setup. */
   defaultEnabled?: boolean;
-  /** Whether OpenWork should hide this extension from the default catalog view. */
   defaultHidden?: boolean;
-  /** Whether this extension is still in preview. */
   preview?: boolean;
-  /** Normalized extension manifest backing this catalog entry. */
   extensionManifest?: OpenWorkExtensionManifest;
 };
 
@@ -89,7 +77,6 @@ export function isBuiltInOpenWorkExtension(entry: Pick<McpDirectoryInfo, "kind" 
   return entry.kind === "extension" && isTrustedBuiltInExtension(entry.extensionManifest);
 }
 
-/** Derive a safe MCP server name from a display name or explicit serverName. */
 export function getMcpServerName(entry: McpDirectoryInfo): string {
   if (entry.serverName) return entry.serverName;
   return canonicalMcpServerName(entry.name);
@@ -156,11 +143,6 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
     serverName: "openwork-cloud",
     get description() { return t("mcp.quick_connect_openwork_cloud_desc"); },
     get url() {
-      // The desktop app connects to the minimal, harness-facing surface
-      // (/mcp/agent: search_capabilities + execute_capability only), not the
-      // full catalog at bare /mcp. getDenMcpUrl heals stale web-app origins;
-      // never at the web app's root (see
-      // packages/docs/cloud/run-in-the-cloud/cloud-mcp.mdx).
       try {
         return `${getDenMcpUrl()}/agent`;
       } catch {
@@ -172,9 +154,6 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
     managedBy: "openwork-connect",
     kind: "mcp",
     iconSrc: "/openwork-mark.svg",
-    // Auto-managed by the signed-in cloud reconciler (syncCloudControlMcp):
-    // configured + enabled while signed in to OpenWork Cloud. Hidden from the
-    // default catalog; "Show hidden" reveals it.
     defaultHidden: true,
   },
   {
@@ -182,13 +161,10 @@ export const MCP_QUICK_CONNECT: McpDirectoryInfo[] = [
     serverName: "openwork-ui",
     get description() { return t("mcp.quick_connect_openwork_ui_desc"); },
     type: "local",
-    // Dev builds replace this with the local checkout path before writing config.
     command: ["npx", "-y", "openwork-ui-mcp"],
     oauth: false,
     kind: "ui-control",
     iconSrc: "/openwork-mark.svg",
-    // Internal UI-control surface for agents driving the desktop app. Hidden
-    // from the default catalog; "Show hidden" reveals it.
     defaultHidden: true,
   },
   ...BUILT_IN_OPENWORK_EXTENSION_MANIFESTS.map(extensionManifestToDirectoryInfo),

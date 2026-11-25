@@ -5,12 +5,14 @@ import type { CapabilityUsageSource } from "@openwork-ee/den-db/schema"
 import { Effect } from "effect"
 import type { Hono } from "hono"
 import { z } from "zod"
+import { connectionActionAppSchemaVersion } from "@openwork/types/connection-action-app"
 import type { FeatureMap } from "../features.js"
+import { markFeaturesUsed } from "../feature-usage.js"
 import { AuditUnavailableError, auditUnavailableToolResult, runMcpServiceAction, serviceAuditResourceId, serviceErrorStatus, toolResultStatus, type McpAuditPrincipal } from "../audit/mcp-service-audit.js"
 import type { AuditServiceActionName } from "../audit/service-actions.js"
 import { isPlatformAdminUserId } from "../middleware/admin.js"
 import { mcpPrincipalCredentialId, type McpPrincipal } from "./auth.js"
-import { catalogOperationAvailableToCapabilities, nativeOperationAvailableToCapabilities } from "./catalog-availability.js"
+import { catalogOperationAvailableToCapabilities, filterGmailThreadRead } from "./catalog-availability.js"
 import type { McpToolOperation } from "./catalog.js"
 import {
   executeAdminCapability,
@@ -39,6 +41,7 @@ import {
 import {
   connectedConnectionActionPayload,
   connectionActionPayloadFromStatus,
+  connectionActionPayloadSchema,
   connectionActionAppMeta,
   connectionActionTextFallback,
 } from "./connection-action.js"
@@ -75,6 +78,7 @@ import {
   searchRemoteSessionCapabilities,
   type RemoteSessionAction,
 } from "./remote-session-capabilities.js"
+import { followRemoteSession } from "./remote-session-events.js"
 import { DEN_MCP_WRITE_SCOPE } from "./scopes.js"
 import {
   executeSlackSendAsBot,
@@ -91,20 +95,12 @@ import {
   type CapabilityMatch,
   type SearchCapabilityType,
 } from "./search.js"
-import { ENGINE_LISTED_SOURCE_KINDS, unlistedCapabilityMatches } from "./engine-tool-view.js"
 import { externalToolContent } from "./tool-content.js"
-import { capabilityCallInput, capabilityToolMatch, type CapabilityToolMatch } from "./capability-tool.js"
+import { capabilityCallInput } from "./capability-tool.js"
 
 export const CAPABILITY_SOURCE_KINDS = ["catalog", "native", "externalMcp", "marketplace", "builtinSkill", "remoteSession", "slackSendAsBot", "admin"] as const
 export type CapabilitySourceKind = (typeof CAPABILITY_SOURCE_KINDS)[number]
 
-/**
- * Sources whose capabilities Code Mode scripts (ad-hoc tests, saved Workflows,
- * Apps, Automations) can call. Platform-admin tools are left out: one script
- * could otherwise hand what an admin tool reads straight to a connection tool
- * with no call in between for the client to show. Admins call them one at a
- * time through execute_capability, their full-view tools or /mcp/admin.
- */
 const SCRIPT_SOURCE_KINDS: readonly CapabilitySourceKind[] = CAPABILITY_SOURCE_KINDS.filter((kind) => kind !== "admin")
 
 export type ParsedCapability =
@@ -127,13 +123,9 @@ export type ExecuteCapabilityToolResult = {
 export type CapabilityExecuteInput = {
   name: string
   schemaDigest?: string
-  /** Refuse an external tool whose input schema no longer matches schemaDigest. */
   requireSchemaMatch?: boolean
-  /** Refuse an external tool that its provider no longer marks read-only for this caller. */
   requireReadOnly?: boolean
-  /** Refuse an external tool that its provider now marks destructive for this caller. */
   refuseDestructive?: boolean
-  /** One object matching the search match's `inputSchema`; wins over path/query/body. */
   arguments?: unknown
   path?: unknown
   query?: unknown
@@ -149,15 +141,12 @@ export type CapabilityRegistryContext = {
   member: McpMemberIdentity | null
   redirectUriBase: string
   generatedArtifactViewsEnabled: boolean
-  /** Managed deployment planning, launch preparation and status (managed deployments enabled). */
   managedDeploymentsEnabled: boolean
-  /** remote-session:answer: the member's agent answers a task's question for the person, after asking them. */
   remoteSessionAnswersAllowed: boolean
+  remoteSessionAttachAllowed: boolean
   resolvePlatformAdmin: () => Promise<boolean>
   resolveNamespaceContext: () => Promise<CodemodeConnectionNamespaceContext>
-  /** Set only by MCP transports: direct service mutations are audited for this caller (src/audit/service-actions.ts). */
   audit: McpAuditPrincipal | null
-  /** What started these capability calls, recorded with each Library usage event. */
   usageSource: CapabilityUsageSource
 }
 
@@ -170,15 +159,8 @@ export type CapabilityRegistryContextInput = {
   member: McpMemberIdentity | null
   redirectUriBase: string
   generatedArtifactViewsEnabled: boolean
-  /** Effective features of the organization (see features.ts). */
-  organizationFeatures: Partial<Pick<FeatureMap, "managedDeployments" | "outlookAttachments">>
-  /** MCP transports pass the verified caller; route and Automation contexts omit it (their route records the request). */
+  organizationFeatures: Partial<Pick<FeatureMap, "managedDeployments" | "gmailThreadRead">>
   audit?: McpAuditPrincipal | null
-  /**
-   * What starts these calls, for Library usage: the member's agent (MCP agent
-   * transport), a saved Workflow run (the run route), a scheduled Automation,
-   * or an App. Live artifact renders derive an `artifact` context.
-   */
   usageSource: CapabilityUsageSource
 }
 
@@ -199,19 +181,15 @@ export function createCapabilityRegistryContext(input: CapabilityRegistryContext
   return {
     app: input.app,
     env: input.env,
-    // All capability paths (search, Code Mode, execution, saved Workflows) use this catalog.
-    // The route also checks the current rollout so a cached tool cannot bypass a kill switch.
-    catalog: input.catalog.filter((operation) => nativeOperationAvailableToCapabilities({
-      outlookAttachmentsEnabled: input.organizationFeatures.outlookAttachments === true,
-    }, operation)),
+    catalog: filterGmailThreadRead(input.catalog, input.organizationFeatures.gmailThreadRead),
     principal: input.principal,
     organizationId: input.organizationId,
     member: input.member,
     redirectUriBase: input.redirectUriBase,
     generatedArtifactViewsEnabled: input.generatedArtifactViewsEnabled,
     managedDeploymentsEnabled: input.organizationFeatures.managedDeployments === true,
-    // Only a chat with the person in it may answer: never an Automation, a Workflow run or an App.
     remoteSessionAnswersAllowed: input.usageSource === "agent",
+    remoteSessionAttachAllowed: input.usageSource === "agent",
     resolvePlatformAdmin,
     resolveNamespaceContext,
     audit: input.audit ?? null,
@@ -219,29 +197,21 @@ export function createCapabilityRegistryContext(input: CapabilityRegistryContext
   }
 }
 
-/** The same context with calls credited to another Library usage source. */
 export function withUsageSource<T extends Pick<CapabilityRegistryContext, "usageSource">>(ctx: T, usageSource: CapabilityUsageSource): T {
   return ctx.usageSource === usageSource ? ctx : { ...ctx, usageSource }
 }
 
-/**
- * Capabilities a saved Workflow's script calls count as Workflow use when the
- * member's agent started it; Automation, App and artifact runs keep their source.
- */
 export function workflowUsageContext<T extends Pick<CapabilityRegistryContext, "usageSource">>(ctx: T): T {
   return ctx.usageSource === "agent" ? withUsageSource(ctx, "workflow") : ctx
 }
 
-/** HTTP-equivalent status of a failed Workflow execution, or null on success. */
 export function workflowExecutionAuditStatus(result: { ok: true } | { ok: false; error: string }): number | null {
   if (result.ok) return null
   if (result.error === "invalid_arguments" || result.error === "invalid_result") return 400
-  // No provider call was attempted, so no external effect happened.
   if (result.error === "capability_unavailable" || result.error === "unsupported") return 424
   return 502
 }
 
-/** Service-layer audit of saved Workflow runs for MCP callers; undefined for route/Automation contexts. */
 export function workflowExecutionAudit(ctx: Pick<CapabilityRegistryContext, "audit">): MarketplaceWorkflowAudit | undefined {
   const principal = ctx.audit
   if (!principal) return undefined
@@ -250,16 +220,13 @@ export function workflowExecutionAudit(ctx: Pick<CapabilityRegistryContext, "aud
   })
 }
 
-/**
- * Whether this caller may see and run slack_send_as_bot: an active member and a token that may
- * write. Read-only tokens (Your agent's background turns) never list it.
- */
 export function slackSendAsBotAvailable(ctx: Pick<CapabilityRegistryContext, "member" | "principal">): boolean {
   return ctx.member !== null && ctx.principal.scopes.has(DEN_MCP_WRITE_SCOPE)
 }
 
 const remoteSessionAuditActions: Partial<Record<RemoteSessionAction, AuditServiceActionName>> = {
   create: "remote_session.create", send: "remote_session.send", stop: "remote_session.stop", answer: "remote_session.answer",
+  attach: "remote_session.attach",
 }
 
 function remoteSessionResourceId(body: unknown): string | null {
@@ -300,7 +267,6 @@ function textContent(text: string): { text: string; type: "text" }[] {
   return [{ type: "text", text }]
 }
 
-/** A tool execution error the model can act on, as text and as structured content. */
 function capabilityErrorResult(payload: Record<string, unknown>): ExecuteCapabilityToolResult {
   return { isError: true, content: textContent(JSON.stringify(payload)), structuredContent: payload }
 }
@@ -403,7 +369,6 @@ export function externalCapabilitySuccessToolResult(
     ...(isRecord(result.result) && typeof result.result.isError === "boolean" ? { isError: result.result.isError } : {}),
     content: [
       ...content,
-      // Only the advisory is model-visible; never serialize provider _meta.
       ...(result.schemaGuidance ? textContent(JSON.stringify({ "openwork/schemaGuidance": result.schemaGuidance })) : []),
     ],
     ...(providerStructuredContent ? { structuredContent: providerStructuredContent } : {}),
@@ -491,7 +456,6 @@ async function executeMarketplaceSource(
   input: CapabilityExecuteInput,
 ): Promise<MarketplaceCapabilityExecuteResult> {
   return executeMarketplaceCapability({
-    // Only a Workflow builds tools: what its script calls is Workflow use.
     buildTools: (required) => buildCapabilityToolTree(workflowUsageContext(ctx), required),
     organizationId: ctx.organizationId,
     member: ctx.member,
@@ -512,7 +476,6 @@ function parsedForKind<K extends CapabilitySourceKind>(parsed: ParsedCapability,
 
 const catalogSource: CapabilitySource = {
   kind: "catalog",
-  // Every name without a colon is a Den operation, except the Den-native capabilities named like tools.
   parseName: (name) => name.includes(":") || isSlackSendAsBotCapabilityName(name) ? null : { kind: "catalog", name },
   search: async (ctx, query, limit) => {
     if (!ctx.sourceFilter.api) return []
@@ -549,8 +512,14 @@ const catalogSource: CapabilitySource = {
         query: normalizeToolRecord(input.query),
         body,
       },
+      includePayload: true,
     })
-    return result
+    const reply = { isError: result.isError, content: result.content }
+    const status = result.isError && isRecord(result.payload) ? result.payload.connectionStatus : undefined
+    const card = isRecord(status) ? connectionActionPayloadSchema.safeParse({ ...status, schemaVersion: connectionActionAppSchemaVersion }) : null
+    return card?.success
+      ? { ...reply, structuredContent: card.data, _meta: connectionActionAppMeta(card.data.connectionId) }
+      : reply
   },
 }
 
@@ -628,9 +597,6 @@ const externalMcpSource: CapabilitySource = {
   execute: async (ctx, parsed, input) => {
     if (!parsedForKind(parsed, "externalMcp")) return unknownCapabilityResult(input.name)
     if (parsed.toolName === "*") {
-      // A connection_status match: probing is the capability. Report the live
-      // state as a successful result carrying the first-party connection
-      // card, so compatible hosts render the exact human action inline.
       const probe = await probeExternalConnectionStatus({
         organizationId: ctx.organizationId,
         member: ctx.member,
@@ -769,28 +735,33 @@ const remoteSessionSource: CapabilitySource = {
   },
   search: async (ctx, query, limit) => {
     if (!ctx.sourceFilter.api || !ctx.member) return []
-    return searchRemoteSessionCapabilities(query, limit, { answer: ctx.remoteSessionAnswersAllowed })
+    return searchRemoteSessionCapabilities(query, limit, { answer: ctx.remoteSessionAnswersAllowed, attach: ctx.remoteSessionAttachAllowed })
   },
-  // Deliberately absent from the confined-script tool tree in v1: remote
-  // sessions are long-lived side effects that agents should drive through
-  // explicit execute_capability calls, not batched scripts.
   enumerate: () => Promise.resolve([]),
   execute: async (ctx, parsed, input) => {
     if (!parsedForKind(parsed, "remoteSession")) return unknownCapabilityResult(input.name)
     if (parsed.action === "answer" && !ctx.remoteSessionAnswersAllowed) return unknownCapabilityResult(input.name)
+    if (parsed.action === "attach" && !ctx.remoteSessionAttachAllowed) return unknownCapabilityResult(input.name)
     if (!ctx.member) {
       return capabilityErrorResult({
         error: "membership_required",
         message: "Remote sessions require an active organization membership.",
       })
     }
-    const run = () => executeRemoteSessionCapability({
-      action: parsed.action,
+    if (parsed.action === "attach") {
+    }
+    const run = async () => followRemoteSession({
+      principal: ctx.principal,
       organizationId: ctx.organizationId,
-      userId: ctx.principal.userId,
-      hasWriteScope: ctx.principal.scopes.has(DEN_MCP_WRITE_SCOPE),
-      body: input.body,
-      headlessRunTokenId: headlessRunTokenId(ctx.principal.payload),
+      action: parsed.action,
+      result: await executeRemoteSessionCapability({
+        action: parsed.action,
+        organizationId: ctx.organizationId,
+        userId: ctx.principal.userId,
+        hasWriteScope: ctx.principal.scopes.has(DEN_MCP_WRITE_SCOPE),
+        body: input.body,
+        headlessRunTokenId: headlessRunTokenId(ctx.principal.payload),
+      }),
     })
     const auditAction = remoteSessionAuditActions[parsed.action]
     if (!auditAction || !ctx.audit) return run()
@@ -806,12 +777,10 @@ const remoteSessionSource: CapabilitySource = {
 const slackSendAsBotSource: CapabilitySource = {
   kind: "slackSendAsBot",
   parseName: (name) => isSlackSendAsBotCapabilityName(name) ? { kind: "slackSendAsBot", name } : null,
-  // Listed with Den's own operations and next to the Slack connection's tools.
   search: async (ctx, query) => {
     if (!(ctx.sourceFilter.api || ctx.sourceFilter.mcp) || !slackSendAsBotAvailable(ctx)) return []
     return searchSlackSendAsBotCapability(query)
   },
-  // Not in Code Mode scripts in v1: each message is one explicit call the person can see.
   enumerate: () => Promise.resolve([]),
   execute: async (ctx, parsed, input) => {
     if (!parsedForKind(parsed, "slackSendAsBot")) return unknownCapabilityResult(input.name)
@@ -840,10 +809,8 @@ const adminSource: CapabilitySource = {
   },
   search: async (ctx, query, limit) => {
     if (!ctx.sourceFilter.admin) return []
-    // No scriptPath: Code Mode scripts cannot call admin tools (SCRIPT_SOURCE_KINDS).
     return searchAvailableAdminCapabilities(await ctx.resolvePlatformAdmin(), query, limit)
   },
-  // Full-view tools list these; Code Mode trees leave them out.
   enumerate: async (ctx) => {
     const matches = await listAvailableAdminCapabilities(await ctx.resolvePlatformAdmin())
     return matches.flatMap((match) => {
@@ -894,8 +861,6 @@ export function createCapabilityRegistry(sources: Record<CapabilitySourceKind, C
         query: string
         limit: number
         type?: SearchCapabilityType
-        /** Only what has no tool of its own in the full view (engine-tool-view.ts). */
-        unlistedOnly?: boolean
       },
     ): Promise<{ matches: CapabilityMatch[]; externalCoverageHint?: string }> => {
       let externalCoverageHint: string | undefined
@@ -908,13 +873,9 @@ export function createCapabilityRegistry(sources: Record<CapabilitySourceKind, C
           externalCoverageHint = hint
         },
       }
-      const kinds = input.unlistedOnly
-        ? CAPABILITY_SOURCE_KINDS.filter((kind) => !ENGINE_LISTED_SOURCE_KINDS.has(kind))
-        : CAPABILITY_SOURCE_KINDS
-      const sourceMatches = (await Promise.all(kinds.map((kind) => (
+      const matches = (await Promise.all(CAPABILITY_SOURCE_KINDS.map((kind) => (
         sources[kind].search(searchContext, input.query, input.limit)
       )))).flat()
-      const matches = (input.unlistedOnly ? unlistedCapabilityMatches(sourceMatches) : sourceMatches)
         .sort(compareCapabilityMatches)
         .slice(0, input.limit)
       return {
@@ -963,14 +924,7 @@ export function createCapabilityRegistry(sources: Record<CapabilitySourceKind, C
   }
 }
 
-/** Den API and native connector operations take `{ path, query, body }` as their arguments. */
 const HTTP_ARGUMENT_KINDS: ReadonlySet<CapabilitySourceKind> = new Set(["catalog", "native"])
-
-/** A search match in MCP `Tool` shape, with its `inputSchema` built the way execute reads `arguments`. */
-export function capabilitySearchMatch(match: CapabilityMatch): CapabilityToolMatch {
-  const kind = CAPABILITY_SOURCE_KINDS.find((candidate) => CAPABILITY_SOURCES[candidate].parseName(match.name) !== null)
-  return capabilityToolMatch(match, kind !== undefined && HTTP_ARGUMENT_KINDS.has(kind))
-}
 
 export const CAPABILITY_REGISTRY = createCapabilityRegistry(CAPABILITY_SOURCES)
 export const searchCapabilityRegistry = CAPABILITY_REGISTRY.search

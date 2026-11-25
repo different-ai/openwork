@@ -37,8 +37,6 @@ function turnFor(baseUrl: string, sessionID: string) {
   return turn;
 }
 
-/** Shared by visible panes and the background queue. A successor cannot enter
- * the engine while Stop is still cancelling its predecessor's children. */
 export async function submitAfterInterruption<T>(baseUrl: string, sessionID: string, send: (afterStop: boolean) => Promise<T>, messageID?: string, waitForTerminal = false): Promise<T> {
   const turn = turnFor(baseUrl, sessionID);
   if (turn.holds) throw new Error("This conversation is being archived.");
@@ -75,9 +73,6 @@ function foregroundDelegations(messages: readonly { info: Message; parts: Part[]
     && !("metadata" in part.state && part.state.metadata?.background === true)));
 }
 
-/** Immediate follow-ups interrupt delegated work; ordinary steering and queued
- * sends retain their existing behavior. Register before awaiting cancellation so
- * another Stop can still cancel this successor. */
 export function submitImmediateSessionTurn<T>(
   baseUrl: string,
   client: Client,
@@ -93,8 +88,6 @@ export function submitImmediateSessionTurn<T>(
   return submitAfterInterruption(baseUrl, sessionID, send, options.messageID);
 }
 
-/** Commands can be acknowledged by the proxy before asynchronous dispatch.
- * Keep their exact admission in the shared Stop coordinator, even after HTTP settles. */
 export function sendSessionCommand(baseUrl: string, client: Client, parameters: Parameters<Client["session"]["command"]>[0]) {
   const messageID = parameters.messageID ?? createPromptMessageID();
   return submitAfterInterruption(baseUrl, parameters.sessionID, async () => {
@@ -150,8 +143,6 @@ export function subscribeSessionInterruption(baseUrl: string, sessionID: string,
   return () => { turn.listeners.delete(listener); };
 }
 
-/** Keep a failed interruption fenced until the user retries Stop. Forgetting
- * it on failure would silently steer the next message into the old run. */
 export function interruptSessionTurn(
   baseUrl: string,
   client: Client,
@@ -160,8 +151,6 @@ export function interruptSessionTurn(
   options: { timeoutMs?: number; admissionUnknown?: boolean; admissionMessageID?: string; onStopped?: () => void } = {},
 ): Promise<void> {
   const turn = turnFor(baseUrl, sessionID);
-  // Share the cancellation request, not permission for intervening sends to
-  // survive another explicit Stop.
   turn.generation += 1;
   if (turn.stopping && turn.interruption) return turn.interruption;
   turn.stopping = true;
@@ -176,7 +165,6 @@ export function interruptSessionTurn(
     stopForegroundTree(client, sessionID, directory, pending, controller.signal, options.admissionUnknown === true, options.admissionMessageID),
     deadline,
   ]).then(() => {
-    // Reconcile the old admission before releasing waiting successor sends.
     options.onStopped?.();
     for (const submission of pending) turn.submissions.delete(submission);
     turn.interruption = undefined;
@@ -189,7 +177,6 @@ export function interruptSessionTurn(
   });
   turn.interruption = interruption;
   for (const listener of turn.listeners) listener();
-  // Retain rejection for future submissions without an unhandled rejection.
   void interruption.catch(() => {});
   return interruption;
 }
@@ -218,20 +205,14 @@ async function stopForegroundTree(
   };
   const abort = async (sessionID: string) => {
     signal.throwIfAborted();
-    // A false acknowledgement may mean the native cascade already stopped a
-    // child. Only the final authoritative idle check establishes settlement.
     unwrap(await client.session.abort({ sessionID, directory }, options));
   };
-  // Stop must reach the engine even when session/transcript reads are broken.
-  // Read concurrently to retain child references, but never gate the root abort
-  // on discovery. Failed discovery still prevents claiming a complete handoff.
   const [aborted, rootResult, childResult, ownerResult] = await Promise.allSettled([
     abort(rootID),
     client.session.get({ sessionID: rootID, directory }, options).then(unwrap),
     children(rootID),
     directory === undefined ? undefined : engineDirectory(client, directory, options),
   ]);
-  // Do not let a fast discovery failure cancel an abort still in flight.
   if (aborted.status === "rejected") throw aborted.reason;
   if (rootResult.status === "rejected") throw rootResult.reason;
   if (childResult.status === "rejected") throw childResult.reason;
@@ -249,9 +230,6 @@ async function stopForegroundTree(
     targets.add(sessionID);
     const before = await children(sessionID);
     await abort(sessionID);
-    // Cancellation can race task metadata publication. Read again after the
-    // parent stops; include cancelled tool parts, but never completed or
-    // explicitly background tasks, nor descendants from an older user turn.
     const ids = new Set([...knownChildren, ...before, ...await children(sessionID)]);
     for (const id of ids) {
       signal.throwIfAborted();
@@ -280,9 +258,6 @@ async function stopForegroundTree(
         for (const submission of waiting) {
           const id = submission.messageID;
           if (id === undefined) continue;
-          // Exact terminal evidence reconciles a lost response, not an absent
-          // message or an idle snapshot on its own. Reject only the UI wait;
-          // never replay the request, and still stop/verify the child tree below.
           if (hasTerminalSessionReply(messages, rootID, id)) {
             reconciled.add(submission);
             submission.cancel();
@@ -293,8 +268,6 @@ async function stopForegroundTree(
         const admitted = [...waiting].filter(submission => submission.waitForTerminal && !interruptedCommands.has(submission)
           && messages.some(({ info }) => info.role === "user" && info.sessionID === rootID && info.id === submission.messageID));
         if (admitted.length) {
-          // The first abort can precede proxy dispatch. Stop the now-observed
-          // command before waiting for its terminal reply, retaining its children.
           before.push(...childrenInMessages(rootID, messages));
           await abort(rootID);
           for (const submission of admitted) interruptedCommands.add(submission);
@@ -305,8 +278,6 @@ async function stopForegroundTree(
   }
   signal.throwIfAborted();
   await stop(rootID, before);
-  // A lost admission response is not proof that the old POST cannot arrive
-  // later. Do not claim a clean handoff or replay that prompt.
   const unknown = admissionUnknown && !(admissionMessageID && hasTerminalSessionReply(
     unwrap(await client.session.messages({ sessionID: rootID, directory }, options)), rootID, admissionMessageID,
   ));
@@ -322,10 +293,6 @@ async function stopForegroundTree(
   await withdrawRequests(client, targets, directory, options);
 }
 
-/** The engine marks an interrupted tool part as aborted but keeps its unanswered
- * question or permission pending (tools run on detached fibers), so the stopped
- * tree would keep asking in every pane and after reload. Withdraw what nothing
- * can answer anymore; each kind is best-effort on its own. */
 async function withdrawRequests(client: Client, sessions: ReadonlySet<string>, directory: string | undefined, options: { signal: AbortSignal }) {
   try {
     const questions = unwrap(await client.question.list({ directory }, options));
@@ -333,7 +300,6 @@ async function withdrawRequests(client: Client, sessions: ReadonlySet<string>, d
       if (sessions.has(question.sessionID)) unwrap(await client.question.reject({ requestID: question.id, directory }, options));
     }
   } catch {
-    // The tree is already stopped; a failed withdrawal only leaves a stale prompt.
   }
   try {
     const permissions = unwrap(await client.permission.list({ directory }, options));
@@ -341,6 +307,5 @@ async function withdrawRequests(client: Client, sessions: ReadonlySet<string>, d
       if (sessions.has(permission.sessionID)) unwrap(await client.permission.reply({ requestID: permission.id, reply: "reject", directory }, options));
     }
   } catch {
-    // Same: the aborted tool cannot consume an answer, so a stale card is the only cost.
   }
 }

@@ -14,16 +14,12 @@ export const FeatureIntroStateTable = mysqlTable(
     id: denTypeIdColumn("featureIntroState", "id").notNull().primaryKey(),
     organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
     memberId: denTypeIdColumn("member", "member_id").notNull(),
-    /** Registry key, e.g. "ai-gateway.limits". */
     introKey: varchar("intro_key", { length: 120 }).notNull(),
     introVersion: int("intro_version").notNull(),
     firstSeenAt: timestamp("first_seen_at", { fsp: 3 }),
-    /** Drives the 30-day "not viewed yet" dot. */
     lastSeenAt: timestamp("last_seen_at", { fsp: 3 }),
-    /** Banner dismissed (hidden for 30 days). */
     dismissedAt: timestamp("dismissed_at", { fsp: 3 }),
     ctaClickedAt: timestamp("cta_clicked_at", { fsp: 3 }),
-    /** Set-up observed, for analytics. */
     completedAt: timestamp("completed_at", { fsp: 3 }),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
     updatedAt: timestamp("updated_at", { fsp: 3 })

@@ -34,6 +34,7 @@ import {
 import { t } from "@/i18n";
 import { useDenAuth } from "../../cloud/den-auth-provider";
 import { tryOpenBrowserAuthUrl } from "../../cloud/open-browser-auth";
+import { explainSignOutAfterDisconnect } from "../../devices/disconnected-sign-out";
 import {
   cloudSessionOrganizationFromSettings,
   useCloudSession,
@@ -67,7 +68,6 @@ async function runBeforeSignedOut(callback: UseDenSessionProps["onBeforeSignedOu
       }),
     ]);
   } catch {
-    // Best-effort cleanup must not trap the user in a signed-in state.
   } finally {
     if (timeout) clearTimeout(timeout);
   }
@@ -190,11 +190,6 @@ export function useDenSession({
       setAuthError(null);
       setSigninFallbackUrl(null);
       setStatusMessage(message ?? null);
-      // Remove ONLY the cloud (lpr_*) provider IDs from the acknowledged
-      // list. Local providers (openai, opencode) stay acknowledged so they
-      // don't re-trigger the onboarding modal. When the user signs in
-      // again, fresh cloud providers will be detected as new and surface
-      // the toast (which is the intended behavior).
       try {
         const raw = window.localStorage.getItem("openwork.acknowledgedProviders");
         if (raw) {
@@ -227,7 +222,6 @@ export function useDenSession({
     (mode: "sign-in" | "sign-up") => {
       const url = buildDenAuthUrl(baseUrl, mode);
       const usesPasteHandoff = new URL(url).searchParams.get("desktopAuth") === "1";
-      // A sign-in started here supersedes one started from a conversation.
       clearSignInReturnTarget();
       markDesktopSignInInitiated();
       setSigninFallbackUrl(url);
@@ -306,8 +300,6 @@ export function useDenSession({
     setBaseUrlError(null);
     setAuthError(null);
     try {
-      // Reset-to-default writes a default-pointing bootstrap file; clear removes
-      // bootstrap files entirely so an MDM-dropped config can win on next launch.
       await clearDesktopBootstrapConfig();
       const bootstrap = await initializeDenBootstrapConfig();
       const resolved = resolveDenBaseUrls(bootstrap);
@@ -354,10 +346,9 @@ export function useDenSession({
       .catch(async (error) => {
         if (cancelled) return;
         if (isDenSessionRevokedError(error)) {
+          explainSignOutAfterDisconnect();
           await clearSignedInState();
         }
-        // A timeout, offline state, or server failure does not invalidate the
-        // last confirmed session. Keep it available while surfacing the error.
         setAuthError(error instanceof Error ? error.message : t("den.error_no_session"));
       })
       .finally(() => {
@@ -385,8 +376,6 @@ export function useDenSession({
 
       try {
         const response = await client.listOrgs();
-        // An older request must not erase a choice made while it was loading,
-        // resurrect a signed-out session, or replace a newer handoff's org.
         if (!isDenSessionSnapshotCurrent(snapshot)) return;
         setOrgs((currentOrgs) => (
           currentOrgs.length === response.orgs.length
@@ -400,13 +389,9 @@ export function useDenSession({
             ? currentOrgs
             : response.orgs
         ));
-        // The onboarding picker owns an outstanding explicit choice. A
-        // settings refresh must not commit its server-provided suggestion.
         if (readOrgSelectionPending().pending) return;
         const current = snapshot.activeOrgId?.trim() ?? "";
 
-        // Prefer the durable local choice, then the authenticated session's
-        // valid choice. Only single-org accounts can select without either.
         const next = response.orgs.find((org) => org.id === current)?.id
           ?? response.orgs.find((org) => org.id === response.activeOrgId)?.id
           ?? (response.orgs.length === 1 ? response.orgs[0].id : "");
@@ -420,7 +405,6 @@ export function useDenSession({
           activeOrgSlug: nextOrg?.slug ?? null,
           activeOrgName: nextOrg?.name ?? null,
         });
-        // Push to context immediately so consumers see the new org
         if (nextOrg) {
           setActiveOrganization((currentOrg) => (
             currentOrg?.id === nextOrg.id
@@ -462,9 +446,6 @@ export function useDenSession({
       const nextToken =
         event.detail?.token?.trim() || nextSettings.authToken?.trim() || "";
       if (event.detail?.status === "success") {
-        // Clear the pre-handoff snapshot before restoring the newly persisted
-        // organization. Clearing afterward used to erase activeOrgId and let
-        // the org refresh persist a blank selection for multi-org users.
         clearSessionState();
       }
       setBaseUrl(nextBaseUrl);
@@ -505,14 +486,11 @@ export function useDenSession({
     setAuthBusy(true);
     setAuthError(null);
     setStatusMessage(t("den.signing_in"));
-    // A sign-in finished here supersedes one started from a conversation.
     clearSignInReturnTarget();
 
     try {
-      // The helper exchanges, persists, and dispatches the success/error session events.
       const result = await exchangeHandoffAndSignIn(parsed.grant, {
         baseUrl: nextBaseUrl,
-        // Pasted one-time codes are desktop-initiated sign-ins.
         desktopInitiated: true,
         fallbackErrorMessage: t("den.error_no_token"),
       });
@@ -564,8 +542,6 @@ export function useDenSession({
       setOrgsError(null);
 
       try {
-        // Sync, persist the choice, and remember its verified account before
-        // reporting success. The helper rejects a stale account/server snapshot.
         await selectDenActiveOrganization(nextOrg, {
           ...readDenSettings(),
           baseUrl,
@@ -577,12 +553,8 @@ export function useDenSession({
         return;
       }
 
-      // Update local state after the durable choice is committed.
       setActiveOrgId(nextId);
 
-      // Update CloudSessionProvider context immediately so consumers
-      //    (cloud providers / marketplace / workers views) re-fetch with
-      //    the new org without waiting for the sync effect to fire.
       setActiveOrganization({
         id: nextOrg.id,
         name: nextOrg.name,
@@ -590,12 +562,9 @@ export function useDenSession({
         slug: nextOrg.slug,
       });
 
-      // Force a full server sync (Den + localStorage reconciliation)
       try {
         await ensureDenActiveOrganization({ forceServerSync: true });
       } catch {
-        // Best-effort; the explicit setActiveOrganization above already
-        // covered the critical path.
       }
 
       setOrgsBusy(false);
@@ -603,8 +572,6 @@ export function useDenSession({
     [authToken, baseUrl, orgs, setActiveOrganization],
   );
 
-  // User is signed in, orgs loaded, multiple orgs available, but none selected yet.
-  // The UI should prompt the user to pick an org before cloud features activate.
   const needsOrgSelection =
     !!authToken.trim() && !!user && !orgsBusy && orgs.length > 1 && !activeOrgId;
 

@@ -13,11 +13,6 @@ function buildRedirectHeaders(response: Response, url: string) {
   return headers
 }
 
-/**
- * Better Auth returns JSON redirect envelopes for fetch-style requests. An
- * OAuth authorization endpoint must navigate the user agent, so normalize
- * that envelope to the same 302 response produced for browser-style requests.
- */
 export async function normalizeOAuthAuthorizeRedirect(response: Response) {
   const contentType = response.headers.get("content-type")?.toLowerCase() ?? ""
   if (!contentType.includes("application/json")) {

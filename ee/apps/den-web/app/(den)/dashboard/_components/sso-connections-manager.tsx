@@ -12,7 +12,6 @@ import { getOrgAccessFlags, parseOrgSsoConnectionsPayload, type DenOrgSsoConnect
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { SsoConnectionPanel, ssoConnectionEndpoints } from "./sso-connection-panel";
 
-/** What a connection needs next, or that it signs people in. Neutral unless it needs attention (DESIGN.md V2). */
 export function ssoConnectionState(connection: DenOrgSsoConnection): { label: string; tone: DenBadgeTone } {
   if (connection.status === "enabled") return { label: "On", tone: "success" };
   if (!connection.domainVerified) return { label: connection.domains.length > 1 ? "Verify domains" : "Verify domain", tone: "warning" };
@@ -25,13 +24,10 @@ export function ssoConnectionState(connection: DenOrgSsoConnection): { label: st
 type Selection = { kind: "list" } | { kind: "new" } | { kind: "connection"; id: string; token: string | null };
 
 export type SsoConnectionsManagerProps = {
-  /** `?setup=1`: with no connection yet, open the form to add the first one. */
   setupMode?: boolean;
-  /** Every connection after each load, for the page's intro facts. */
   onConnectionsChange?: (connections: DenOrgSsoConnection[]) => void;
 };
 
-/** multipleSsoConnections: every SSO connection with its state, one row each, and one connection at a time to set up. */
 export function SsoConnectionsManager({ setupMode = false, onConnectionsChange }: SsoConnectionsManagerProps) {
   const { orgId, orgContext, runReauthableAction } = useOrgDashboard();
   const [connections, setConnections] = useState<DenOrgSsoConnection[] | null>(null);
@@ -72,7 +68,6 @@ export function SsoConnectionsManager({ setupMode = false, onConnectionsChange }
     if (setupMode && connections?.length === 0 && access.canManageSso) setSelection({ kind: "new" });
   }, [setupMode, connections?.length, access.canManageSso]);
 
-  /** A change inside one connection: keep the list (and the page's intro facts) current. */
   function replaceConnection(connection: DenOrgSsoConnection | null, id: string) {
     const current = connections ?? [];
     const next = connection
@@ -98,7 +93,6 @@ export function SsoConnectionsManager({ setupMode = false, onConnectionsChange }
         {selection.kind === "new" ? (
           <SsoConnectionPanel
             key="new"
-            multiple
             endpoints={ssoConnectionEndpoints(null)}
             onCreated={(connection, token) => {
               replaceConnection(connection, connection.id);
@@ -108,7 +102,6 @@ export function SsoConnectionsManager({ setupMode = false, onConnectionsChange }
         ) : (
           <SsoConnectionPanel
             key={selection.id}
-            multiple
             endpoints={ssoConnectionEndpoints(selection.id)}
             initialDomainVerificationToken={selection.token}
             onConnectionChange={(connection) => {

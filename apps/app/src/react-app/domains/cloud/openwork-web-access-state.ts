@@ -2,7 +2,6 @@ import type { DenOpenWorkWebAccessSource } from "../../../app/lib/den";
 
 export type OpenWorkWebAccessCheck = {
   scope: string;
-  /** not_assigned: the organization has Web, but an admin has not given it to this member. */
   state: "granted" | "denied" | "not_assigned" | "error";
   accessSource: DenOpenWorkWebAccessSource;
 };

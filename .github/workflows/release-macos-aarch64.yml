@@ -143,14 +143,14 @@ jobs:
           echo "${ACTOR} is a repo admin."
 
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           # Tag resolution compares against every v* tag, and fresh dispatch
           # releases tag origin/dev HEAD — both need full history + tags.
           fetch-depth: 0
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24.22.1
 
@@ -174,6 +174,7 @@ jobs:
           INPUT_VERSION: ${{ github.event.inputs.version }}
           INPUT_BUMP: ${{ github.event.inputs.bump }}
           TAG_PUSH_TOKEN: ${{ steps.tag-token.outputs.token }}
+          QUICK_CHECK_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
 
@@ -210,6 +211,10 @@ jobs:
             fi
             git fetch origin dev
             SHA="$(git rev-parse origin/dev)"
+            # A release only ships a dev commit the quick check passed on. A
+            # tag pushed by hand (the audited expedited path) and a recovery
+            # rerun of an existing tag are not held here.
+            GH_TOKEN="${QUICK_CHECK_TOKEN}" node .github/scripts/require-quick-check.mjs --sha "$SHA" --wait-minutes 15
             # Create the tag ref via REST as the diff-warden app (a v* tag
             # ruleset bypass actor). Ruleset bypass attributes REST ref
             # creation to the app; a git-over-https push with the same
@@ -451,7 +456,7 @@ jobs:
       benchmark_only: ${{ needs.resolve-production.outputs.benchmark_only || needs.resolve-benchmark.outputs.benchmark_only }}
       prerelease: ${{ needs.resolve-production.outputs.prerelease || needs.resolve-benchmark.outputs.prerelease }}
     steps:
-      - run: true
+      - run: "true"
 
   verify-release:
     name: Verify Release Versions
@@ -466,13 +471,13 @@ jobs:
       RELEASE_MODE: ${{ needs.resolve-release.outputs.release_mode }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 0
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24.22.1
 
@@ -616,7 +621,7 @@ jobs:
 
     steps: &electron-build-steps
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           # Source is always pinned to the tag. Recovery reruns pick up
           # workflow-file fixes from the dispatched ref automatically (the
@@ -631,17 +636,17 @@ jobs:
         run: git config --global core.longpaths true
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 11.4.0
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24.22.1
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
           # Bun >= 1.3.10 is required by the server build and package-time helpers.
           bun-version: 1.3.10
@@ -652,13 +657,11 @@ jobs:
         run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
 
       - name: Cache pnpm store
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         continue-on-error: true
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
-          key: ${{ runner.os }}-electron-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            ${{ runner.os }}-electron-pnpm-
+          key: stable-release-${{ runner.os }}-${{ runner.arch }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
 
       - name: Install dependencies
         run: pnpm --filter @openwork/desktop... --filter @openwork/app... --filter openwork-server... install --frozen-lockfile --prefer-offline
@@ -724,7 +727,14 @@ jobs:
           # TARGET tells prepare-sidecar.mjs which architecture's opencode binary
           # to download (critical for cross-arch builds like x64 on arm64 mac).
           TARGET: ${{ matrix.target_triple }}
+          VITE_OPENWORK_OFFICIAL_RELEASE: ${{ github.repository == 'different-ai/openwork' && inputs.benchmark_only != true && '1' || '0' }}
         run: pnpm --filter @openwork/desktop build:electron
+
+      - name: Prepare desktop free model release proof
+        if: github.repository == 'different-ai/openwork' && inputs.benchmark_only != true
+        env:
+          DESKTOP_FREE_RELEASE_KEY: ${{ secrets.DESKTOP_FREE_RELEASE_KEY }}
+        run: node apps/desktop/scripts/prepare-desktop-free-release.mjs
 
       - name: Package Electron (macOS, signed + notarized)
         if: matrix.os_type == 'macos' && env.MACOS_NOTARIZE == 'true'
@@ -852,7 +862,7 @@ jobs:
 
       - name: Retain Windows signature evidence
         if: matrix.os_type == 'windows' && env.SIGN_WINDOWS == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: signatures-${{ matrix.artifact }}
           path: apps/desktop/dist-electron/signature-evidence
@@ -880,7 +890,7 @@ jobs:
 
       - name: Retain benchmark Electron assets
         if: env.BENCHMARK_ONLY == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: benchmark-${{ matrix.artifact }}
           path: |
@@ -890,7 +900,7 @@ jobs:
           retention-days: 1
 
       - name: Upload Electron updater manifest artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: ${{ matrix.artifact }}
           path: apps/desktop/dist-electron/${{ matrix.manifest_pattern }}
@@ -1009,20 +1019,20 @@ jobs:
     steps:
       - name: Checkout
         if: needs.resolve-release.outputs.build_electron == 'true'
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 1
 
       - name: Setup Node
         if: needs.resolve-release.outputs.build_electron == 'true'
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24.22.1
 
       - name: Download Electron updater manifest artifacts
         if: needs.resolve-release.outputs.build_electron == 'true'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: electron-*
           path: ${{ runner.temp }}/electron-dist
@@ -1103,23 +1113,23 @@ jobs:
       RELEASE_VERSION: ${{ needs.resolve-release.outputs.release_version }}
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ env.RELEASE_TAG }}
           fetch-depth: 1
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24.22.1
 
       - name: Setup pnpm
-        uses: pnpm/action-setup@v4
+        uses: pnpm/action-setup@b906affcce14559ad1aafd4ab0e942779e9f58b1 # v4
         with:
           version: 11.4.0
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
+        uses: oven-sh/setup-bun@f4d14e03ff726c06358e5557344e1da148b56cf7 # v1
         with:
           # Bun bundles openwork-server for Node (build:npm-bundle) before npm publish.
           bun-version: "1.3.10"
@@ -1130,13 +1140,11 @@ jobs:
         run: echo "path=$(pnpm store path --silent)" >> "$GITHUB_OUTPUT"
 
       - name: Cache pnpm store
-        uses: actions/cache@v5
+        uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         continue-on-error: true
         with:
           path: ${{ steps.pnpm-store.outputs.path }}
-          key: ubuntu-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
-          restore-keys: |
-            ubuntu-pnpm-
+          key: stable-release-${{ runner.os }}-${{ runner.arch }}-pnpm-${{ hashFiles('pnpm-lock.yaml') }}
 
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --prefer-offline
@@ -1179,7 +1187,7 @@ jobs:
 
       - name: Upload npm package
         if: steps.npm-versions.outputs.publish_server == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: openwork-server-npm-${{ env.RELEASE_VERSION }}
           path: apps/server/dist/npm
@@ -1219,17 +1227,17 @@ jobs:
       # Keep verification with this workflow revision, including recovery runs.
       # The package under test is still built from the immutable release tag.
       - name: Checkout smoke script
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: ${{ github.sha }}
           sparse-checkout: apps/server/scripts/npm-web-smoke.mjs
           sparse-checkout-cone-mode: false
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: ${{ matrix.node }}
       - name: Download npm package
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: openwork-server-npm-${{ needs.resolve-release.outputs.release_version }}
           path: ${{ runner.temp }}/openwork-server-npm
@@ -1268,13 +1276,20 @@ jobs:
     env:
       RELEASE_VERSION: ${{ needs.resolve-release.outputs.release_version }}
     steps:
+      - name: Checkout registry wait script
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: ${{ github.sha }}
+          sparse-checkout: .github/scripts/wait-for-npm-version.mjs
+          sparse-checkout-cone-mode: false
+
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24.22.1
 
       - name: Download npm package
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: openwork-server-npm-${{ env.RELEASE_VERSION }}
           path: ${{ runner.temp }}/openwork-server-npm
@@ -1314,22 +1329,21 @@ jobs:
           fi
           npm publish "$NPM_TARBALL" --access public --provenance
 
+      # npm publish returns while the registry is still processing the
+      # package (11-12 minutes for 0.18.69 and 0.18.70), so wait for the
+      # registry to serve this exact version before installing it.
+      - name: Wait for npm to serve the published version
+        run: node .github/scripts/wait-for-npm-version.mjs openwork-server "$RELEASE_VERSION"
+
       - name: Install the published package from npm
         shell: bash
         run: |
           set -euo pipefail
-          for attempt in 1 2 3 4 5 6; do
-            prefix="$(mktemp -d)"
-            if npm install -g --prefix "$prefix" "openwork-server@$RELEASE_VERSION" \
-              && actual="$("$prefix/bin/openwork-server" --version)" \
-              && [ "$actual" = "$RELEASE_VERSION" ]; then
-              echo "npm install -g openwork-server@$RELEASE_VERSION runs $actual"
-              exit 0
-            fi
-            echo "Registry not serving openwork-server@$RELEASE_VERSION yet (attempt $attempt); retrying in 30s."
-            sleep 30
-          done
-          exit 1
+          prefix="$(mktemp -d)"
+          npm install -g --prefer-online --prefix "$prefix" "openwork-server@$RELEASE_VERSION"
+          actual="$("$prefix/bin/openwork-server" --version)"
+          [ "$actual" = "$RELEASE_VERSION" ]
+          echo "npm install -g openwork-server@$RELEASE_VERSION runs $actual"
 
   publish-daytona-snapshot:
     name: Build + Push Daytona Snapshot
@@ -1370,7 +1384,7 @@ jobs:
       RELEASE_TAG: ${{ needs.resolve-release.outputs.release_tag }}
     steps:
       - name: Checkout dev
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           ref: dev
           fetch-depth: 0

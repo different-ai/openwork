@@ -1,7 +1,7 @@
 import { createCipheriv, createHash, randomBytes } from "node:crypto";
 import { queryDenDatabase, type Seed } from "@openwork/env";
 import { healthFixture } from "./den-service-readiness.ts";
-import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
+import { seededOrganizationId } from "./organization-capabilities.ts";
 
 /** A fixed, valid TypeID for the seeded connection. */
 export const SLACK_CONNECTION_ID = "emc_01k8z5wq0s0000000000000000";
@@ -22,7 +22,7 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 /**
  * Den with Workbot deployed here (DEN_WORKBOT_URL), a configured headless runner (the readiness fixture: it answers
- * health checks and nothing else), `workbotProactive` on for one organization, and the Workbot Slack app on a Slack
+ * health checks and nothing else), and the Workbot Slack app on a Slack
  * connection in Connectors, with synthetic credentials and nobody linked. No calendar, model or Slack is reached:
  * `installSlackApp` turns the app on, so the admin page shows the lock first and then the ready state. Nothing is sent.
  */
@@ -43,7 +43,7 @@ export async function workbotProactiveWorld(seed: Seed) {
         DEN_DB_ENCRYPTION_KEY: ENCRYPTION_KEY,
       },
     });
-    const organizationId = await enableOrganizationCapabilities(seed, den.admin, { workbotProactive: true });
+    const organizationId = await seededOrganizationId(seed, den.admin);
     const context = await seed.api(den.admin, "/v1/org");
     const currentMember = isRecord(context.body) && isRecord(context.body.currentMember) ? context.body.currentMember : null;
     const ownerMemberId = typeof currentMember?.id === "string" ? currentMember.id : "";

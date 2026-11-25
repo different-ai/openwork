@@ -1,17 +1,3 @@
-// Integrations slice: capability sources (Google Workspace, Microsoft 365), connectors,
-// MCP connections, OAuth providers, inference/LLM providers, gateway limits, analytics,
-// Slack assistant and Apps. One declaration per live route except the 14 provider routes
-// generated as domain_provider from coverage.ts providerCoveredRoutes:
-//   POST /v1/inference-providers
-//   PATCH|DELETE /v1/inference-providers/:inferenceProviderId
-//   POST /v1/inference-providers/:inferenceProviderId/enable-models
-//   POST /v1/inference-providers/:inferenceProviderId/model-groups
-//   PATCH|DELETE /v1/inference-providers/:inferenceProviderId/model-groups/:groupId
-//   POST /v1/inference-providers/:inferenceProviderId/credential-sets
-//   PATCH|DELETE /v1/inference-providers/:inferenceProviderId/credential-sets/:credentialSetId
-//   POST /v1/inference-providers/:inferenceProviderId/access-grants
-//   PATCH|DELETE /v1/inference-providers/:inferenceProviderId/access-grants/:grantId
-//   DELETE /v1/inference-providers/:inferenceProviderId/access/:grantId
 import type { AuditRouteAttribution, AuditRouteClass, AuditRouteDeclaration, AuditRouteMethod } from "./types.js"
 
 type Resource = AuditRouteDeclaration["resource"]
@@ -32,7 +18,6 @@ const external = (method: AuditRouteMethod, path: string, action: string, kind: 
   route("tenant_external", method, path, action, kind, resource, "org_context", { external: system, ...(notes ? { notes } : {}) })
 const job = (method: AuditRouteMethod, path: string, action: string, kind: string, resource: Resource, jobOutcome: string, attribution: AuditRouteAttribution = "org_context", notes?: string) =>
   route("tenant_job", method, path, action, kind, resource, attribution, { jobOutcome, ...(notes ? { notes } : {}) })
-/** Token/signature/state routes: the handler calls attributeAuditRequest() after verification and before the effect. */
 const handlerRoute = (cls: AuditRouteClass, method: AuditRouteMethod, path: string, action: string, kind: string, resource: Resource, extra: Extra) =>
   route(cls, method, path, action, kind, resource, "handler", extra)
 const support = (path: string, scope: string, notes: string) => route("support", "ALL", path, `middleware.context_storage.${scope}`, "support.middleware", res("none"), "none", { notes })
@@ -53,6 +38,8 @@ const INF = "inference.configuration"
 const IP = "inference_provider.configuration"
 const IPO = "inference_provider.member_oauth"
 const LITELLM = "Organization's LiteLLM proxy (admin API: key creation/deletion in issued mode)"
+const TRUEFOUNDRY = "Organization's TrueFoundry tenant (admin API: user lookup/registration and personal access token creation; tokens delete themselves)"
+const CUSTOM = "Organization's custom OpenAI-compatible provider (GET /models)"
 const MA = "models_analytics.reporting"
 const LLM = "llm_provider.configuration"
 const LLMC = "llm_provider.member_credential"
@@ -71,10 +58,10 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   support("/v1/direct-uploads/microsoft-365/*", "direct_uploads_microsoft_365", "app.use contextStorage for the Microsoft token resolver on direct-upload handlers; concrete handlers are declared."),
   support("/v1/direct-downloads/microsoft-365/*", "direct_downloads_microsoft_365", "app.use contextStorage for the Microsoft token resolver on direct-download handlers; concrete handlers are declared."),
 
-  // Google Workspace capabilities
   read(`${GW}/gmail-labels`, "capability.gmail.label.list", GWK, res("gmail_label"), CAP),
   access("GET", `${GW}/gmail-messages`, "capability.gmail.message.search", GWK, res("gmail_message"), CAP_CONTENT),
   access("GET", `${GW}/gmail-message/:messageId`, "capability.gmail.message.read", GWK, res("gmail_message", "messageId"), CAP_CONTENT),
+  access("GET", `${GW}/gmail-thread/:threadId`, "capability.gmail.thread.read", GWK, res("gmail_thread", "threadId"), CAP_CONTENT),
   access("GET", `${GW}/gmail-attachment/:messageId/:attachmentId`, "capability.gmail.attachment.download", GWK, res("gmail_attachment", "attachmentId"), `${CAP} Response carries attachment bytes.`),
   access("GET", `${GW}/gmail-drafts`, "capability.gmail.draft.list", GWK, res("gmail_draft"), CAP_CONTENT),
   access("GET", `${GW}/gmail-draft/:draftId`, "capability.gmail.draft.read", GWK, res("gmail_draft", "draftId"), `${CAP} Response carries draft content incl. raw MIME.`),
@@ -121,7 +108,6 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   access("GET", `${GW}/chat-spaces/:spaceId/messages`, "capability.google_chat.message.list", GWK, res("google_chat_space", "spaceId"), CAP_CONTENT),
   external("POST", `${GW}/chat-spaces/:spaceId/messages`, "capability.google_chat.message.send", GWK, res("google_chat_space", "spaceId"), GOOGLE, `${CAP} Posts a Google Chat message.`),
 
-  // Microsoft 365 capabilities
   access("GET", `${MS}/mail-messages`, "capability.outlook_mail.message.search", MSK, res("outlook_message"), CAP_CONTENT),
   access("GET", `${MS}/mail-message/:messageId`, "capability.outlook_mail.message.read", MSK, res("outlook_message", "messageId"), CAP_CONTENT),
   external("PATCH", `${MS}/mail-message/:messageId`, "capability.outlook_mail.message.update", MSK, res("outlook_message", "messageId"), GRAPH, CAP),
@@ -158,14 +144,12 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   access("GET", `${MS}/teams-chats/:chatId/messages`, "capability.teams.chat_message.list", MSK, res("teams_chat", "chatId"), CAP_CONTENT),
   external("POST", `${MS}/teams-chats/:chatId/messages`, "capability.teams.chat_message.send", MSK, res("teams_chat", "chatId"), GRAPH, `${CAP} Posts a Teams message.`),
 
-  // Apps
   read("/v1/apps", "app.list", APP, res("artifact_view")),
   access("GET", "/v1/apps/:appId", "app.open", "app.access", res("artifact_view", "appId"), "Live apps execute their workflow (tool calls, run receipt write); response carries workflow result data and compiled HTML."),
   change("POST", "/v1/apps/:appId/dashboard", "app.dashboard.update", APP, res("artifact_view", "appId")),
   change("POST", "/v1/apps/:appId/save", "app.revision.activate", APP, res("artifact_view", "appId")),
   change("POST", "/v1/apps/:appId/share", "app.share", APP, res("artifact_view", "appId"), "Grants another member access (security relevant)."),
 
-  // Connectors (plugin system)
   read("/v1/connector-accounts", "connector_account.list", CONN, res("connector_account")),
   read("/v1/connector-accounts/:connectorAccountId", "connector_account.read", CONN, res("connector_account", "connectorAccountId")),
   change("POST", "/v1/connector-accounts", "connector_account.create", CONN, res("connector_account")),
@@ -206,7 +190,6 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   external("POST", "/v1/connectors/github/setup", "connector.github.setup", GH, res("connector_instance"), "GitHub API", "Multi-resource local create without an enclosing transaction."),
   external("POST", "/v1/connectors/github/validate-target", "connector.github.target.validate", GH, res("connector_target"), "GitHub API", "Read-only GitHub probe; no local write."),
 
-  // Gateway usage limits and usage
   read("/v1/gateway/usage-limit-policies", "gateway_usage_limit.policy.list", GUL, res("gateway_usage_limit_policy")),
   change("POST", "/v1/gateway/usage-limit-policies", "gateway_usage_limit.policy.create", GUL, res("gateway_usage_limit_policy")),
   change("PATCH", "/v1/gateway/usage-limit-policies/:policyId", "gateway_usage_limit.policy.update", GUL, res("gateway_usage_limit_policy", "policyId")),
@@ -224,8 +207,8 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   read("/v1/gateway/usage-limits/members", "gateway_usage_limit.member.search", GUL, res("member")),
   read("/v1/gateway/usage-limits/members/:memberId", "gateway_usage_limit.status.read", GUL, res("member", "memberId")),
   read("/v1/inference-providers/usage", "gateway_usage.read", "gateway_usage.reporting", res("gateway_usage"), "Aggregate usage/cost per member and team."),
+  read("/v1/gateway/usage/me", "gateway_usage.read_own", "gateway_usage.reporting", res("member"), "The caller's own usage, token mix and usable models with listed prices; never another member's rows."),
 
-  // Inference settings and free tier
   read("/v1/inference", "inference.settings.read", INF, res("organization")),
   external("PATCH", "/v1/inference", "inference.settings.update", INF, res("organization"), "OpenRouter management API", "Enable/disable creates or deletes the org OpenRouter API key; unsubscribed enable only flips offerAllowed. setInferenceEnabled is also called by Stripe billing webhooks (no tenant route)."),
   read("/v1/inference/access", "inference.free.access.read", "inference.free", res("member")),
@@ -233,8 +216,8 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   change("PATCH", "/v1/inference/free/pins", "inference.free.pin.update", "inference.free", res("organization")),
   access("POST", "/v1/inference/free/credential", "inference.free.credential.issue", "inference.free", res("inference_key"), "Issues and returns a member inference API key (sensitive response)."),
 
-  // Inference providers (reads, member OAuth, uncovered mutations)
   read("/v1/inference-providers", "inference_provider.list", IP, res("provider")),
+  read("/v1/inference-providers/device-share-options", "inference_provider.device_share_options.read", IP, res("provider"), "Read-only organization-scoped sharing permission and catalog eligibility. No device or upstream credentials."),
   read("/v1/inference-providers/inventory/revision", "inference_provider.inventory.revision", IP, res("provider"), "Read-only opaque member-scoped inventory revision."),
   read("/v1/inference-providers/inventory/events", "inference_provider.inventory.watch", IP, res("provider"), "SSE opaque revisions only. Session, membership and rollout revalidated from the database every two seconds; fail closed on revocation or unavailable checks."),
   read("/v1/inference-providers/model-management", "inference_provider.model_management.list", IP, res("provider")),
@@ -251,33 +234,39 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   handlerRoute("tenant_read", "GET", "/v1/inference-providers/oauth/browser-status", "inference_provider.member_oauth.browser_status", IPO, res("provider_credential_set"), { notes: "Public poll. Attributed like browser-start once the cookie user matches the entry; sign_in_required/account_mismatch answers stay unattributed (platform store when reads are enabled). No writes." }),
   handlerRoute("tenant_external", "POST", "/v1/inference-providers/oauth/browser-aws-start", "inference_provider.member_oauth.browser_aws_start", IPO, res("provider_credential_set"), { external: "AWS IAM Identity Center OIDC (RegisterClient, StartDeviceAuthorization)", notes: "Public route. Attributed (attributeMemberOAuthEntry) like browser-start once the live signed session cookie matches the entry's initiating user and the provider/set binding is rechecked; before the device authorization and the state rotation write." }),
   handlerRoute("tenant_external", "POST", "/v1/inference-providers/oauth/browser-aws-poll", "inference_provider.member_oauth.browser_aws_poll", IPO, res("provider_credential"), { external: "AWS IAM Identity Center (CreateToken, GetRoleCredentials, Logout) and STS GetCallerIdentity", notes: "Public poll. Attributed like browser-aws-start once the cookie user matches the attempt; at most one AWS token request per polling interval. On approval verifies role credentials and identity, then stores the member credential and consumes the attempt." }),
-  handlerRoute("tenant_external", "GET", "/v1/inference-providers/oauth/callback", "inference_provider.member_oauth.complete", IPO, res("provider_credential"), { external: "Google OAuth or Microsoft Entra ID (code exchange; Google token revocation on cleanup)", notes: "Attributed after the signed cookie, single-use state and provider/set binding are verified and before the state claim and Google code exchange: org = provider.organization_id, actor = initiating user + member. Failures render HTML 400 or a 302 with an error parameter (a 302 maps to confirmed)." }),
+  handlerRoute("tenant_external", "GET", "/v1/inference-providers/oauth/callback", "inference_provider.member_oauth.complete", IPO, res("provider_credential"), { external: "Google OAuth or Microsoft Entra ID (code exchange; Google token revocation on cleanup; read-only LiteLLM /v1/models check for LiteLLM Entra sign-in)", notes: "Attributed after the signed cookie, single-use state and provider/set binding are verified and before the state claim and Google code exchange: org = provider.organization_id, actor = initiating user + member. Failures render HTML 400 or a 302 with an error parameter (a 302 maps to confirmed)." }),
   external("DELETE", "/v1/inference-providers/:inferenceProviderId/oauth", "inference_provider.member_oauth.disconnect", IPO, res("provider", "inferenceProviderId"), "Google OAuth token revocation; AWS IAM Identity Center logout", "Deletes the member credential locally, then best-effort revocation after commit; status reflects the local result."),
   external("POST", "/v1/inference-providers/test-connection", "inference_provider.connection.test", IP, res("provider"), "AI Gateway (one test prompt to the catalog provider)", "Sends the caller-supplied, unsaved organization key through AI Gateway to the trusted catalog provider; no local write and no usage recorded."),
   change("POST", "/v1/inference-providers/migrate-from-llm-provider", "inference_provider.llm_provider.migrate", IP, res("provider"), "Not covered by provider emitter (providerUncoveredRoutes)."),
 
-  // LiteLLM providers (litellm feature; not covered by the provider emitter, see providerUncoveredRoutes)
-  external("POST", "/v1/inference-providers/litellm", "inference_provider.litellm.create", IP, res("provider"), LITELLM, "Reads the proxy catalog with the write-only organization/admin key, creates the provider, groups and grants locally; issued mode then creates member keys in LiteLLM."),
+  external("POST", "/v1/inference-providers/litellm", "inference_provider.litellm.create", IP, res("provider"), LITELLM, "Reads the proxy catalog with the write-only organization/admin key, creates the provider, groups and grants locally; issued mode then creates member keys in LiteLLM. entra mode stores the Entra app registration (write-only client secret), API scope and model list and contacts nothing."),
   external("POST", "/v1/inference-providers/:inferenceProviderId/litellm/sync", "inference_provider.litellm.sync", IP, res("provider", "inferenceProviderId"), LITELLM, "Reads the proxy with the stored key and refreshes models, groups and member assignments locally (a failed read records the sync error); issued mode reconciles member keys in LiteLLM."),
-  external("PATCH", "/v1/inference-providers/:inferenceProviderId/litellm", "inference_provider.litellm.update", IP, res("provider", "inferenceProviderId"), LITELLM, "Verifies and stores a replacement write-only key and/or key creation settings, then syncs; issued mode replaces member keys in LiteLLM."),
+  external("PATCH", "/v1/inference-providers/:inferenceProviderId/litellm", "inference_provider.litellm.update", IP, res("provider", "inferenceProviderId"), LITELLM, "Verifies and stores a replacement write-only key and/or key creation settings, then syncs; issued mode replaces member keys in LiteLLM. For a provider whose members sign in with Microsoft: stores changed Entra sign-in settings (revoking members' tokens) or the model list, and contacts nothing."),
   change("PUT", "/v1/inference-providers/:inferenceProviderId/litellm/member-key", "inference_provider.litellm.member_key.connect", IPO, res("provider", "inferenceProviderId"), "Verifies the caller's own LiteLLM key with the proxy (read only), stores it as the member credential (write-only) and grants the matching model group."),
   handlerRoute("tenant_change", "POST", "/v1/inference-providers/oauth/browser-litellm-key", "inference_provider.member_oauth.browser_litellm_key", IPO, res("provider_credential"), { notes: "Public route. Attributed (attributeMemberOAuthEntry) like browser-start once the live signed session cookie matches the entry's initiating user and the provider/set binding and litellm feature are rechecked; before key verification and the credential write that consumes the entry." }),
+  external("POST", "/v1/inference-providers/truefoundry", "inference_provider.truefoundry.create", IP, res("provider"), TRUEFOUNDRY, "Verifies the write-only admin key and reads the tenant's chat models, creates the provider, access group and grants locally, then finds (or adds) each allowed person in TrueFoundry and creates their personal access token."),
+  external("POST", "/v1/inference-providers/:inferenceProviderId/truefoundry/sync", "inference_provider.truefoundry.sync", IP, res("provider", "inferenceProviderId"), TRUEFOUNDRY, "Reads the tenant's models with the stored admin key (a failed read records the sync error), rechecks each person's token, creates missing tokens and deletes the tokens of people who lost access."),
+  external("PATCH", "/v1/inference-providers/:inferenceProviderId/truefoundry", "inference_provider.truefoundry.update", IP, res("provider", "inferenceProviderId"), TRUEFOUNDRY, "Verifies and stores a replacement write-only admin key, the create-missing-users or track-usage-costs setting and/or the model pick, then syncs."),
+  external("POST", "/v1/inference-providers/:inferenceProviderId/truefoundry/members/:memberId/reset-tokens", "inference_provider.truefoundry.member_tokens.reset", IP, res("member", "memberId"), TRUEFOUNDRY, "For a person at TrueFoundry's token limit, after an admin confirms: revokes every personal access token the person holds in TrueFoundry (theirs included; TrueFoundry has nothing narrower), then creates a new OpenWork token for them."),
+  handlerRoute("tenant_external", "POST", "/v1/inference-providers/oauth/browser-truefoundry-check", "inference_provider.member_oauth.browser_truefoundry_check", IPO, res("provider_credential"), { external: TRUEFOUNDRY, notes: "Public route. Attributed like browser-litellm-key once the cookie user matches the entry, and the provider/set binding are rechecked; before TrueFoundry user lookup and token creation for that member." }),
   handlerRoute("tenant_external", "POST", "/v1/inference-providers/oauth/browser-litellm-check", "inference_provider.member_oauth.browser_litellm_check", IPO, res("provider_credential"), { external: LITELLM, notes: "Public route. Attributed like browser-litellm-key once the cookie user matches the entry and the provider/set binding and litellm feature are rechecked; before LiteLLM key creation for that member." }),
 
-  // Models analytics
+  external("POST", "/v1/inference-providers/custom/discover-models", "inference_provider.custom.discover_models", IP, res("provider"), CUSTOM, "Calls GET {baseUrl}/models with the caller-supplied key, or the saved key for the saved address's origin only; no local write."),
+  external("POST", "/v1/inference-providers/custom/test-connection", "inference_provider.custom.connection.test", IP, res("provider"), "AI Gateway (one test prompt to the custom provider)", "Sends the caller-supplied key, or the saved key for the saved address's origin only, and the unsaved model settings through AI Gateway; no local write and no usage recorded."),
+  change("POST", "/v1/inference-providers/custom", "inference_provider.custom.create", IP, res("provider"), "Creates the provider, its models, default group, organization credential set (write-only key) and grants locally; no call to the provider."),
+  change("PATCH", "/v1/inference-providers/:inferenceProviderId/custom", "inference_provider.custom.update", IP, res("provider", "inferenceProviderId"), "Updates name, address, models and/or replaces the write-only organization key locally; no call to the provider."),
+
   route("tenant_signal", "POST", "/v1/inference/analytics/events", "models_analytics.events.report", MA, res("models_analytics_event"), "org_context", { notes: "Desktop task metadata for the caller's own OpenWork Models calls; dropped unless the organization opted in. High volume." }),
 
-  // Organization Analytics (desktop adoption telemetry)
   route("tenant_signal", "POST", "/v1/telemetry/ingest", "telemetry.events.ingest", "telemetry.adoption", res("telemetry_event"), "org_context", { notes: "Desktop activity and session/task lifecycle pings for the calling member; identifiers and timings only. High volume." }),
   read("/v1/telemetry/dimensions", "telemetry.dimensions.list", "telemetry.adoption", res("telemetry_session_dimension")),
   read("/v1/telemetry/adoption", "telemetry.adoption.read", "telemetry.adoption", res("telemetry_event"), "Aggregates only."),
   read("/v1/telemetry/analytics", "telemetry.analytics.read", "telemetry.adoption", res("telemetry_event"), "Aggregates only."),
 
-  // Library usage
+  read("/v1/workbot-usage", "workbot_usage.read", "workbot_usage.reporting", res("workbot_usage_day"), "Aggregates only: Workbot's model requests, tokens and cost over the last 30 UTC days by day, by where it ran, by model and by member (name and email of current members). Never a conversation id or content."),
   read("/v1/library-usage", "library_usage.breakdown.read", "library_usage.reporting", res("capability_usage_event"), "Aggregates only: use, failure, distinct member and per-source counts grouped by item, member id and UTC day; member ids, never names or content."),
   read("/v1/library-usage/:kind", "library_usage.read", "library_usage.reporting", res("capability_usage_event"), "Aggregates only: per skill, plugin or connector use counts, failure counts, distinct member counts and last use; no member identities."),
 
-  // Legacy LLM providers
   read("/v1/llm-provider-catalog", "llm_provider_catalog.list", LLM, res("llm_provider_catalog")),
   read("/v1/llm-provider-catalog/:providerId", "llm_provider_catalog.read", LLM, res("llm_provider_catalog", "providerId")),
   read("/v1/llm-providers", "llm_provider.list", LLM, res("llm_provider"), "May repair member inference access (conditional local write); apiKey stripped."),
@@ -297,7 +286,6 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   change("PUT", "/v1/llm-providers/:llmProviderId/member-credentials/:orgMembershipId", "llm_provider.member_credential.set", LLMC, res("llm_provider_member_credential", "orgMembershipId"), "Stores an encrypted credential for another member; response is a summary only."),
   change("POST", "/v1/llm-providers/:llmProviderId/member-credentials/:orgMembershipId/block", "llm_provider.member_credential.block", LLMC, res("llm_provider_member_credential", "orgMembershipId")),
 
-  // MCP connections
   read("/v1/mcp-apps", "mcp_app.catalog.list", "mcp_app.catalog", res("mcp_app")),
   read("/v1/mcp-connections", "mcp_connection.list", MCP, res("mcp_connection")),
   read("/v1/mcp-connections/presets", "mcp_connection.preset.list", MCP, res("mcp_connection_preset")),
@@ -326,11 +314,10 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   external("POST", "/v1/mcp-connections/discover/stream", "mcp_connection.requirements.discover_stream", MCP, res("mcp_connection"), "Caller-supplied MCP server URL", "Guarded outbound discovery fetch with progress; no local write."),
   external("POST", "/v1/mcp-connections/resolve", "mcp_connection.resolve", MCP, res("mcp_connection"), "Candidate MCP server URLs", "Outbound probes of candidate URLs; no local write."),
   external("GET", "/v1/mcp-connections/:connectionId/connect/start", "mcp_connection.oauth.start", MCPO, res("mcp_connection", "connectionId"), "MCP authorization server (discovery; dynamic client registration)", "Writes pending OAuth state; may update issuer config and perform dynamic client registration at the authorization server."),
-  handlerRoute("tenant_external", "GET", "/v1/mcp-connections/:connectionId/connect/callback", "mcp_connection.oauth.complete", MCPO, res("mcp_connection", "connectionId"), { external: "MCP authorization server (token exchange; Slack auth.test for Slack)", notes: "Attributed (attributeOAuthCallbackMember) after the HMAC-signed state, connection and active initiating member are verified, before issuer validation and token exchange: org = state organization, actor = that member's user." }),
-  handlerRoute("tenant_external", "GET", "/v1/mcp-connections/oauth/callback", "mcp_connection.oauth.shared_callback.complete", MCPO, res("mcp_connection"), { external: "MCP authorization server (token exchange)", notes: "Fixed redirect URI; attributed like the per-connection callback once the signed state, connection and member are verified." }),
+  handlerRoute("tenant_external", "GET", "/v1/mcp-connections/:connectionId/connect/callback", "mcp_connection.oauth.complete", MCPO, res("mcp_connection", "connectionId"), { external: "MCP authorization server (token exchange; Slack auth.test for Slack)", notes: "Attributed (attributeOAuthCallbackMember) after the HMAC-signed state, connection and active initiating member are verified, before issuer validation and token exchange: org = state organization, actor = that member's user. A reply that reaches a browser signed in to OpenWork as another account (403), or one with no OpenWork session that has not confirmed the account yet (confirmation page), is answered before attribution and records nothing." }),
+  handlerRoute("tenant_external", "GET", "/v1/mcp-connections/oauth/callback", "mcp_connection.oauth.shared_callback.complete", MCPO, res("mcp_connection"), { external: "MCP authorization server (token exchange)", notes: "Fixed redirect URI; attributed like the per-connection callback once the signed state, connection and member are verified and the browser is the starter's or has confirmed the account." }),
   access("POST", "/v1/mcp/token", "mcp_token.mint", "mcp_token.issuance", res("oauth_access_token"), "Mints and returns MCP access tokens (token, appHostToken)."),
 
-  // Native OAuth providers (Google Workspace, Microsoft 365)
   read("/v1/oauth-providers/:providerId/client", "oauth_provider.client.read", "oauth_provider.configuration", res("oauth_client", "providerId"), "Client id only."),
   external("GET", "/v1/oauth-providers/:providerId/api-check", "oauth_provider.api_check.read", "oauth_provider.configuration", res("oauth_client", "providerId"), "Google Drive, Docs, Sheets, Gmail, Calendar and Chat APIs", "Google Workspace only. One read per needed API with the caller's own connector sign-in; returns only whether each API is turned on, never Google content."),
   change("POST", "/v1/oauth-providers/:providerId/client", "oauth_provider.client.update", "oauth_provider.configuration", res("oauth_client", "providerId"), "Client secret write-only."),
@@ -338,10 +325,9 @@ export const integrationsAuditRoutes: readonly AuditRouteDeclaration[] = [
   change("GET", "/v1/oauth-providers/:providerId/connect/start", "oauth_provider.connect.start", OAP, res("oauth_provider_connection", "providerId"), "Writes OAuth state; returns authorize URL."),
   change("GET", "/v1/mcp-connections/google-workspace/connect/start", "oauth_provider.google_workspace.connect.start", OAP, res("oauth_provider_connection"), "Alias of oauth-providers connect start for Google Workspace."),
   change("GET", "/v1/mcp-connections/microsoft-365/connect/start", "oauth_provider.microsoft_365.connect.start", OAP, res("oauth_provider_connection"), "Alias of oauth-providers connect start for Microsoft 365."),
-  handlerRoute("tenant_external", "GET", "/v1/oauth-providers/:providerId/connect/callback", "oauth_provider.connect.complete", OAP, res("oauth_provider_connection", "providerId"), { external: "native OAuth provider (Google / Microsoft token exchange)", notes: "Attributed after the HMAC-signed state, member credential resolution and pending verifier are verified, before the token exchange: org = state organization, actor = the active initiating member's user." }),
+  handlerRoute("tenant_external", "GET", "/v1/oauth-providers/:providerId/connect/callback", "oauth_provider.connect.complete", OAP, res("oauth_provider_connection", "providerId"), { external: "native OAuth provider (Google / Microsoft token exchange)", notes: "Attributed after the HMAC-signed state, member credential resolution and pending verifier are verified, before the token exchange: org = state organization, actor = the active initiating member's user. A reply that reaches a browser signed in to OpenWork as another account (403), or one with no OpenWork session that has not confirmed the account yet (confirmation page), is answered before attribution and records nothing." }),
   change("POST", "/v1/oauth-providers/:providerId/disconnect", "oauth_provider.connection.disconnect", OAP, res("oauth_provider_connection", "providerId"), "Removes stored credential; no upstream revocation."),
 
-  // Slack assistant
   read("/v1/mcp-connections/:connectionId/slack-assistant", "slack_assistant.settings.read", SLACK, res("slack_assistant_installation", "connectionId"), "Credentials never returned."),
   change("PUT", "/v1/mcp-connections/:connectionId/slack-assistant", "slack_assistant.settings.update", SLACK, res("slack_assistant_installation", "connectionId"), "Signing secret write-only."),
   change("POST", "/v1/mcp-connections/:connectionId/slack-assistant/install", "slack_assistant.install.start", SLACK, res("slack_assistant_installation", "connectionId"), "Writes single-use install state; returns authorize URL."),

@@ -34,8 +34,6 @@ export function resolveOrgOnboardingPostListStep({
   orgSelectionPending?: boolean;
 }): OrgOnboardingPostListStep {
   const singleOrg = orgs.length === 1 ? orgs[0] : null;
-  // Settings commit before the selection promise callback. Accept that commit
-  // across effect cleanup/remounts, but never confuse a suggestion with a choice.
   const hasCommittedOrganization = !orgSelectionPending
     && orgs.some((org) => org.id === committedOrgId);
 

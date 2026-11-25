@@ -4,7 +4,6 @@ import { ComputerCrew } from "./computer-crew"
 import type { DynamicToolUIPart } from "ai"
 import { ChevronRight, CodeXml, ExternalLink, FileText, FolderOpen, Monitor, MoreHorizontal, Paperclip, Pause, PictureInPicture2, Play } from "lucide-react"
 
-import { markFeatureUsed } from "@/app/lib/den"
 import { desktopBridge } from "@/app/lib/desktop"
 import { Button } from "@/components/ui/button"
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible"
@@ -22,11 +21,9 @@ export type SavedFileActions = {
   open: (path: string) => void
   reveal: (path: string) => void
   attach: (path: string) => void
-  /** The files in the chat's output folder, however they were made. */
   list?: () => Promise<ComputerFolderFile[]>
 }
 
-/** Puts a saved file in the chat's composer as a file mention, as the composer's own file picker does. */
 export function attachFileToComposer(sessionId: string, path: string) {
   const state = useComposerStateStore.getState()
   const draft = getComposerDraft(state, sessionId)
@@ -39,10 +36,6 @@ export function attachFileToComposer(sessionId: string, path: string) {
   useComposerStateStore.setState({ pendingFocusSessionId: sessionId })
 }
 
-/**
- * Open and Show in Finder go through the desktop, which launches only a file this chat made
- * (a save it confirmed, or a file in its output folder) and otherwise shows it in its folder.
- */
 export function desktopSavedFileActions(sessionId: string): SavedFileActions {
   const show = (path: string, reveal: boolean) => void desktopBridge.computerOpenSavedFile({ sessionId, path, ...(reveal ? { reveal } : {}) }).then(result => {
     if (!result.ok) toast.error(result.error || "Could not open this file.")
@@ -53,14 +46,8 @@ export function desktopSavedFileActions(sessionId: string): SavedFileActions {
     list: () => desktopBridge.computerChatFiles({ sessionId }).then(result => result.files) }
 }
 
-/** Saved files shown before the rest fold behind "Show N more". */
 const FILES_SHOWN = 2
 
-/**
- * `live` is the chat's working computer: the card shows its work, and its live
- * view opens only from here.
- */
-/** Replay speeds, in turn: a capture every 1.5 s at 1×. */
 const SPEEDS = [1, 2, 4, 0.5] as const
 
 export function ComputerSessionHistory({ history, active, renderAction, live, fileActions, turnEndedAt = null, turnStartedAt = null, crew }: {
@@ -68,16 +55,11 @@ export function ComputerSessionHistory({ history, active, renderAction, live, fi
   active: boolean
   renderAction: (part: DynamicToolUIPart) => ReactNode
   live?: { watching: boolean; onWatch: (watching: boolean) => void }
-  /** On the desktop: what the person can do with a file the session saved. */
   fileActions?: SavedFileActions
-  /** When this session's turn ended; null while it runs. Output-folder files after it belong to a later turn. */
   turnEndedAt?: number | null
-  /** When the turn started: the chat's subagents may have saved files before its own first step. */
   turnStartedAt?: number | null
-  /** `parallelComputerUse`: the chat's subagents on its computer, one row each. */
   crew?: { members: readonly ComputerCrewMember[]; onOpen: (member: ComputerCrewMember) => void }
 }) {
-  // The output folder is read again as the session works and when its turn ends.
   const [folder, setFolder] = useState<ComputerFolderFile[]>([])
   const list = fileActions?.list
   const steps = history.parts.length
@@ -92,10 +74,8 @@ export function ComputerSessionHistory({ history, active, renderAction, live, fi
   const [open, setOpen] = useState(false)
   const [playing, setPlaying] = useState(false)
   const [speed, setSpeed] = useState<(typeof SPEEDS)[number]>(1)
-  // Null follows the newest capture. Browsing pins a stable frame as work continues.
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [unavailable, setUnavailable] = useState<string | null>(null)
-  // The shown view's pixel size: action marks are in the image pixels the agent acted on.
   const [size, setSize] = useState<{ url: string; width: number; height: number } | null>(null)
   const { frames, parts } = history
   const selectedIndex = selectedId === null ? frames.length - 1 : frames.findIndex(frame => frame.id === selectedId)
@@ -106,7 +86,6 @@ export function ComputerSessionHistory({ history, active, renderAction, live, fi
   const nextFrameId = frames[index + 1]?.id
   const unfinished = parts.some(isToolPartInFlight)
   const title = unfinished ? active ? "Using computer" : "Computer status unavailable" : "Used computer"
-  // With several apps in one session, each step says which one it ran in.
   const several = history.apps.length > 1
 
   useEffect(() => {
@@ -141,7 +120,6 @@ export function ComputerSessionHistory({ history, active, renderAction, live, fi
       onOpenChange={value => {
         setOpen(value)
         if (!value) setPlaying(false)
-        else markFeatureUsed("computerSessionHistory")
       }}
     >
       <div className="flex min-w-0 items-center">
@@ -149,7 +127,6 @@ export function ComputerSessionHistory({ history, active, renderAction, live, fi
           <Monitor aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
           <span className="min-w-0 flex-1">
             <span className={cn("block text-sm font-medium", unfinished && active && "animate-text-shimmer motion-reduce:animate-none")}>{title}</span>
-            {/* While it works, what it is doing now; afterwards, what it was for. */}
             {(unfinished && active ? history.latest : history.purpose ?? history.latest)
               ? <span data-computer-session-description="" className="mt-0.5 block truncate text-xs font-normal text-muted-foreground">{unfinished && active ? history.latest : history.purpose ?? history.latest}</span> : null}
             <span className="mt-0.5 flex flex-wrap gap-x-3 text-xs font-normal text-muted-foreground">
@@ -166,7 +143,6 @@ export function ComputerSessionHistory({ history, active, renderAction, live, fi
         </Button> : null}
       </div>
       {crew ? <ComputerCrew members={crew.members} onOpen={crew.onOpen} /> : null}
-      {/* What the session made for the person, without opening the card. */}
       {handedBack.length > 0 ? <div data-computer-saved-files="" className="border-t border-border px-3 py-2">
         <ul aria-label="Saved files" className="space-y-1">
           {shownFiles.map(file => <li key={file.path} data-computer-saved-file="" className="flex min-w-0 items-center gap-2">
@@ -217,7 +193,6 @@ export function ComputerSessionHistory({ history, active, renderAction, live, fi
                   if (playing) setPlaying(false)
                   else { if (index === frames.length - 1) setSelectedId(frames[0]!.id); setPlaying(true) }
                 }}>{playing ? <Pause aria-hidden="true" /> : <Play aria-hidden="true" />}</Button>
-                {/* Native range: the shared UI has no slider primitive. Its end follows new captures. */}
                 <input type="range" min={0} max={frames.length - 1} step={1} value={index} disabled={frames.length < 2} aria-label="Browse captured views" aria-valuetext={`${index + 1} of ${frames.length}: ${frame.label}`} className="min-w-0 flex-1 accent-foreground" onInput={event => select(Number(event.currentTarget.value))} />
                 <span className="shrink-0 text-xs tabular-nums text-muted-foreground" data-computer-view-count="">{index + 1} / {frames.length}</span>
                 <Button variant="ghost" size="xs" className="shrink-0 tabular-nums text-muted-foreground" aria-label={`Playback speed ${speed}×`} disabled={frames.length < 2}
@@ -236,7 +211,6 @@ export function ComputerSessionHistory({ history, active, renderAction, live, fi
   )
 }
 
-/** Where the view's clicks landed and the paths its drags took, drawn over the capture. */
 function ActionMarks({ marks, width, height }: { marks: ComputerActionMark[]; width: number; height: number }) {
   const radius = Math.max(width, height) * 0.012
   return (

@@ -5,8 +5,12 @@
 // (createRuntimeManager pattern).
 import { randomBytes } from "node:crypto";
 import { createServer } from "node:http";
-import { rm, writeFile } from "node:fs/promises";
+import { open, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+
+// One request of texts to check. The engine sends a long conversation in several of about 8 million characters; one
+// text longer than that comes alone, and this is the most a single one may be.
+const PRIVATE_TEXT_LIMIT = 64_000_000;
 
 export function createUiControlServer({
   app,
@@ -17,9 +21,10 @@ export function createUiControlServer({
   computerTask = undefined,
   computerProgram = undefined,
   computerScript = undefined,
-  computerEnabled = undefined,
-  computerParallel = undefined,
-  agentQuestionsEnabled = undefined,
+  redactPrivate = undefined,
+  terminalBlock = undefined,
+  privateValueUse = undefined,
+  privateValuesOn = undefined,
 }) {
   let uiControlServer = null;
   let uiControlDiscoveryPath = null;
@@ -33,13 +38,13 @@ export function createUiControlServer({
     response.end(JSON.stringify(payload));
   }
 
-  function readJsonRequestBody(request) {
+  function readJsonRequestBody(request, limit = 128_000) {
     return new Promise((resolve, reject) => {
       let raw = "";
       request.setEncoding("utf8");
       request.on("data", (chunk) => {
         raw += chunk;
-        if (raw.length > 128_000) {
+        if (raw.length > limit) {
           reject(new Error("Request body too large"));
           request.destroy();
         }
@@ -171,15 +176,6 @@ export function createUiControlServer({
           sendJsonResponse(response, 200, await browserTask(await readJsonRequestBody(request), { signal: controller.signal }));
           return;
         }
-        if (request.method === "GET" && url.pathname === "/computer/enabled") {
-          sendJsonResponse(response, 200, { enabled: typeof computerEnabled === "function" && computerEnabled() === true,
-            parallel: typeof computerParallel === "function" && computerParallel() === true });
-          return;
-        }
-        if (request.method === "GET" && url.pathname === "/agent-questions/enabled") {
-          sendJsonResponse(response, 200, { enabled: typeof agentQuestionsEnabled === "function" && agentQuestionsEnabled() === true });
-          return;
-        }
         if (request.method === "POST" && url.pathname === "/computer/program") {
           if (typeof computerProgram !== "function") { sendJsonResponse(response, 503, { ok: false, code: "computer_unavailable" }); return; }
           const controller = new AbortController();
@@ -201,9 +197,39 @@ export function createUiControlServer({
           sendJsonResponse(response, 200, await computerTask(await readJsonRequestBody(request), { signal: controller.signal }));
           return;
         }
+        // What the engine is about to send to a model or keep in a conversation, with every private value this app
+        // holds replaced. The values never leave this process: the text comes here and goes back without them.
+        if (request.method === "POST" && url.pathname === "/private/redact") {
+          if (typeof redactPrivate !== "function") { sendJsonResponse(response, 200, { ok: true, held: false }); return; }
+          const body = await readJsonRequestBody(request, PRIVATE_TEXT_LIMIT);
+          const texts = Array.isArray(body?.texts) && body.texts.every((text) => typeof text === "string") ? body.texts : null;
+          sendJsonResponse(response, 200, { ok: true, ...await redactPrivate(texts) });
+          return;
+        }
+        // Whether private values are on for this person, so the engine offers the tool only then.
+        if (request.method === "POST" && url.pathname === "/private/state") {
+          sendJsonResponse(response, 200, { ok: true, enabled: typeof privateValuesOn === "function" && typeof privateValueUse === "function" && await privateValuesOn() === true });
+          return;
+        }
+        // Private values given to one program or one https request. The values are fetched, used and replaced in
+        // this process; what goes back holds none of them.
+        if (request.method === "POST" && url.pathname === "/private/use") {
+          if (typeof privateValueUse !== "function") { sendJsonResponse(response, 503, { ok: false, code: "values_unavailable" }); return; }
+          const controller = new AbortController();
+          response.once("close", () => { if (!response.writableEnded) controller.abort(); });
+          sendJsonResponse(response, 200, await privateValueUse(await readJsonRequestBody(request), { signal: controller.signal }));
+          return;
+        }
+        // Whether the organization keeps password managers out of the agent's own terminal. The engine asks before
+        // it runs a command that names one.
+        if (request.method === "POST" && url.pathname === "/private/terminal") {
+          if (typeof terminalBlock !== "function") { sendJsonResponse(response, 200, { ok: true, blocked: false }); return; }
+          sendJsonResponse(response, 200, { ok: true, ...await terminalBlock() });
+          return;
+        }
         sendJsonResponse(response, 404, { ok: false, error: "Not found" });
       } catch (error) {
-        if (/^\/browser(?:\/|$)/.test(request.url ?? "")) console.error("[ui-control] request failed");
+        if (/^\/(?:browser|private)(?:\/|$)/.test(request.url ?? "")) console.error("[ui-control] request failed");
         else console.error("[ui-control] request failed", error);
         sendJsonResponse(response, 500, { ok: false, error: "OpenWork UI control request failed." });
       }
@@ -216,11 +242,20 @@ export function createUiControlServer({
     const port = typeof address === "object" && address ? address.port : null;
     if (!port) throw new Error("Could not start OpenWork UI control bridge.");
     uiControlDiscoveryPath = path.join(app.getPath("userData"), "openwork-ui-control.json");
-    await writeFile(
-      uiControlDiscoveryPath,
-      `${JSON.stringify({ version: 2, app: appName, identifier: appIdentifier, platform: process.platform, baseUrl: `http://127.0.0.1:${port}`, token: uiControlToken }, null, 2)}\n`,
-      "utf8",
-    );
+    const discovery = `${JSON.stringify({ version: 2, app: appName, identifier: appIdentifier, platform: process.platform, baseUrl: `http://127.0.0.1:${port}`, token: uiControlToken }, null, 2)}\n`;
+    if (process.platform === "win32") {
+      await writeFile(uiControlDiscoveryPath, discovery, "utf8");
+    } else {
+      const file = await open(uiControlDiscoveryPath, "w", 0o600);
+      try {
+        // open's mode applies only to new files. Tighten an existing discovery
+        // file before writing the new bearer, not after exposing it briefly.
+        await file.chmod(0o600);
+        await file.writeFile(discovery, "utf8");
+      } finally {
+        await file.close();
+      }
+    }
     // Make the discovery path available to child processes (server → managed OpenCode → plugin).
     process.env.OPENWORK_UI_CONTROL_DISCOVERY = uiControlDiscoveryPath;
   }

@@ -4,14 +4,12 @@ import { DenChip } from "../../../../../../_components/ui/chip";
 import { ExampleAvatar, ExampleCaption, ExampleRow, ExampleRows } from "./example-parts";
 import { limitsExampleRows, type LimitsExampleRow } from "./limits-example-data";
 
-/** Neutral while there is room; amber near the limit, red once a limit has paused someone (V2). */
 function meterTone(row: LimitsExampleRow): string {
   if (row.percent >= 100) return row.whenReached === "Pauses them" ? "bg-red-500" : "bg-amber-500";
   if (row.percent >= 80) return "bg-amber-500";
   return "bg-gray-900";
 }
 
-/** Team and person limits with how much of each is used. */
 export function LimitsExample() {
   return (
     <div>

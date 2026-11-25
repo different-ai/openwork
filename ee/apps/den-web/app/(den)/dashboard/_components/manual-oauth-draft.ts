@@ -11,7 +11,6 @@ export function manualOAuthDraft(values: ManualOAuthAddresses = EMPTY_OAUTH_ADDR
   return { values: { ...values }, published: null };
 }
 
-/** Review is a reversible form edit, not authorization or a configuration write. */
 export function reviewPublishedAddresses(draft: ManualOAuthDraft, values: ManualOAuthAddresses, inconsistent: boolean): ManualOAuthDraft {
   return { values: { ...values }, published: { values: { ...values }, previous: { ...draft.values }, inconsistent } };
 }

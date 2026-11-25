@@ -13,12 +13,6 @@ function PopoverTrigger({ ...props }: PopoverPrimitive.Trigger.Props) {
   return <PopoverPrimitive.Trigger data-slot="popover-trigger" {...props} />
 }
 
-/**
- * Portaled and collision-aware: the popup flips to the side with room and is
- * capped to the space Base UI measures (`--available-height/width`), so no
- * ancestor `overflow` can clip it. Pass `anchor` to position against an
- * element other than the trigger, such as an editor for typeahead lists.
- */
 function PopoverContent({
   className,
   align = "center",

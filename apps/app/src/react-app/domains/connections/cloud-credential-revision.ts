@@ -1,7 +1,5 @@
 type CloudCredentialScope = { serverBaseUrl: string; workspaceId: string };
 
-// Keep only a revision per runtime scope, never credentials. Failed App views
-// wait for a real token installation rather than retrying unchanged access.
 let revision = 0;
 const scopeRevisions = new Map<string, number>();
 const listeners = new Set<() => void>();
@@ -19,8 +17,6 @@ export function markCloudCredentialRefreshed(scope: CloudCredentialScope): void 
   for (const listener of [...listeners]) listener();
 }
 
-/** One retry after a matching installation, including one that finished while
- * the old request was still in flight. The caller owns cancellation. */
 export function onCloudCredentialRefreshed(
   scopes: CloudCredentialScope[],
   since: number,

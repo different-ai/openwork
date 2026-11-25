@@ -98,11 +98,6 @@ type CloudMcpReconcilerInput = {
   refreshMarginMs: number;
   now?: number;
   configuredEnabled?: boolean | null;
-  /**
-   * Ask the OpenWork server to also verify the Cloud endpoint directly
-   * (initialize + tools/list outside the engine). Only meaningful for
-   * mode "health"; repair reconciles always probe on the server.
-   */
   probe?: boolean;
 };
 
@@ -118,9 +113,6 @@ type CleanupClient = {
 };
 
 const repairInFlight = new Map<string, Promise<CloudMcpOperationResult>>();
-// Older Den releases may not issue a private App-host token. Keep ordinary
-// Connect working without reminting on every focus/maintenance tick. Explicit
-// Repair bypasses this cooldown; sign-out clears the scoped attempt marker.
 const APP_HOST_AUTHORIZATION_RETRY_MS = 60 * 60 * 1_000;
 
 const APP_VERSION = String(import.meta.env.VITE_OPENWORK_APP_VERSION ?? "").trim();
@@ -234,10 +226,6 @@ export function isCloudMcpAuthTokenFailureCode(code: string | null | undefined):
   return normalized === "openwork_cloud_auth_required" ||
     normalized === "openwork_cloud_auth_invalid" ||
     normalized === "openwork_cloud_token_expired" ||
-    // The Den rejects an expired/missing first-party bearer with exactly these
-    // codes; the `_mcp_` infix means the `invalid_token` substring below never
-    // matches them (field incident: token sat expired for 7 days because the
-    // remint retry never fired).
     normalized === "invalid_mcp_token" ||
     normalized === "missing_mcp_token" ||
     normalized.includes("invalid_token") ||
@@ -246,11 +234,6 @@ export function isCloudMcpAuthTokenFailureCode(code: string | null | undefined):
     normalized.includes("auth");
 }
 
-/**
- * Health failures carry the primary `code` plus optional `aliases` (e.g. the
- * direct-probe 401 reports code `invalid_mcp_token` with alias
- * `openwork_cloud_token_expired`). Remint decisions must consider both.
- */
 export function isCloudMcpAuthTokenFailure(failure: Pick<OpenworkCloudMcpFailure, "code" | "aliases"> | null | undefined): boolean {
   if (!failure) return false;
   if (isCloudMcpAuthTokenFailureCode(failure.code)) return true;
@@ -265,20 +248,12 @@ function shouldSkipForPrerequisite(input: CloudMcpReconcilerInput, scope: CloudM
   if (input.configuredEnabled === false) {
     return { status: "skipped", health: null, skippedReason: "disabled", attempts: 0, markerWritten: false, reminted: false };
   }
-  // Recorded user intent only blocks provisioning (entry absent/unknown). A
-  // known-enabled entry must keep its token fresh even when a stale
-  // disabled/removed intent is still recorded.
   if (input.configuredEnabled !== true && readCloudMcpUserState(scope) !== null) {
     return { status: "skipped", health: null, skippedReason: "disabled", attempts: 0, markerWritten: false, reminted: false };
   }
   return null;
 }
 
-/**
- * After an organization switch the previous organization's entry still works,
- * so it is only usable here when it was minted for this scope's organization.
- * Older servers omit the organization; trust their health as before.
- */
 function usableForOrganization(
   health: OpenworkCloudMcpHealth | null,
   scope: CloudMcpScope,
@@ -378,8 +353,6 @@ async function repairCloudMcp(input: CloudMcpReconcilerInput, scope: CloudMcpSco
 
   const deferAppHostRepair = (): CloudMcpOperationResult => {
     writeCloudMcpUnhealthyRemintAttempt({ ...scope, attemptedAt: now });
-    // Preserve the last observed ordinary health, not a claim that private
-    // authorization was repaired. A supplemental failure must not block chat.
     return { status: "failed", health: appHostOnlyHealth, attempts: 1, markerWritten: false, reminted: false };
   };
   let first: Awaited<ReturnType<typeof mintAndPost>>;
@@ -413,8 +386,6 @@ async function repairCloudMcp(input: CloudMcpReconcilerInput, scope: CloudMcpSco
   }
   const markerWritten = writeUsableMarker({ health, scope, expiresAt: token.expiresAt });
   const repaired = health?.usable === true && health.appHostAuthorizationReady !== false;
-  // This path minted and installed a usable token. Catalog-only refreshes
-  // return earlier and must not wake views waiting for new credentials.
   if (repaired) markCloudCredentialRefreshed(scope);
   return {
     status: repaired ? "repaired" : "failed",
@@ -453,12 +424,6 @@ export type CloudMcpEngineRefreshRunResult = {
 
 const engineRefreshInFlight = new Map<string, Promise<CloudMcpEngineRefreshRunResult>>();
 
-/**
- * Force the engine to drop its openwork-cloud MCP client and reconnect.
- * OpenCode keeps a failed MCP failed forever (no automatic retry), so this is
- * the explicit "try again from scratch" lever: engine disconnect, then
- * re-registration from the persisted desired config, then a direct probe.
- */
 export async function runOpenworkCloudMcpEngineRefresh(input: {
   client: CloudMcpClient;
   context: CloudMcpOperationContext;

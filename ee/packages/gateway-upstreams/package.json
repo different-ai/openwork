@@ -1,0 +1,103 @@
+{
+  "name": "@openwork-ee/gateway-upstreams",
+  "private": true,
+  "type": "module",
+  "description": "AI Gateway's way to a provider: upstream URLs, egress rules, SigV4 and cloud sign-in (AWS, GCP, Microsoft Entra), provider auth headers and the signed provider-test request. Node only; no database, server or environment code.",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": {
+        "openwork-build": "./dist/types/src/index.d.ts",
+        "default": "./src/index.ts"
+      },
+      "development": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./aws-identity-center": {
+      "types": {
+        "openwork-build": "./dist/types/src/aws-identity-center.d.ts",
+        "default": "./src/aws-identity-center.ts"
+      },
+      "development": "./src/aws-identity-center.ts",
+      "default": "./src/aws-identity-center.ts"
+    },
+    "./aws-sigv4": {
+      "types": {
+        "openwork-build": "./dist/types/src/aws-sigv4.d.ts",
+        "default": "./src/aws-sigv4.ts"
+      },
+      "development": "./src/aws-sigv4.ts",
+      "default": "./src/aws-sigv4.ts"
+    },
+    "./aws-sso-role-credentials": {
+      "types": {
+        "openwork-build": "./dist/types/src/aws-sso-role-credentials.d.ts",
+        "default": "./src/aws-sso-role-credentials.ts"
+      },
+      "development": "./src/aws-sso-role-credentials.ts",
+      "default": "./src/aws-sso-role-credentials.ts"
+    },
+    "./egress": {
+      "types": {
+        "openwork-build": "./dist/types/src/egress.d.ts",
+        "default": "./src/egress.ts"
+      },
+      "development": "./src/egress.ts",
+      "default": "./src/egress.ts"
+    },
+    "./gcp-service-account": {
+      "types": {
+        "openwork-build": "./dist/types/src/gcp-service-account.d.ts",
+        "default": "./src/gcp-service-account.ts"
+      },
+      "development": "./src/gcp-service-account.ts",
+      "default": "./src/gcp-service-account.ts"
+    },
+    "./microsoft-entra": {
+      "types": {
+        "openwork-build": "./dist/types/src/microsoft-entra.d.ts",
+        "default": "./src/microsoft-entra.ts"
+      },
+      "development": "./src/microsoft-entra.ts",
+      "default": "./src/microsoft-entra.ts"
+    },
+    "./protocols": {
+      "types": {
+        "openwork-build": "./dist/types/src/protocols.d.ts",
+        "default": "./src/protocols.ts"
+      },
+      "development": "./src/protocols.ts",
+      "default": "./src/protocols.ts"
+    },
+    "./provider-test-signature": {
+      "types": {
+        "openwork-build": "./dist/types/src/provider-test-signature.d.ts",
+        "default": "./src/provider-test-signature.ts"
+      },
+      "development": "./src/provider-test-signature.ts",
+      "default": "./src/provider-test-signature.ts"
+    },
+    "./upstream": {
+      "types": {
+        "openwork-build": "./dist/types/src/upstream.d.ts",
+        "default": "./src/upstream.ts"
+      },
+      "development": "./src/upstream.ts",
+      "default": "./src/upstream.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --conditions=development --import tsx --test test/*.test.ts"
+  },
+  "dependencies": {
+    "@openwork-ee/gateway-catalog": "workspace:*",
+    "@openwork/types": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "tsx": "^4.23.1",
+    "typescript": "^5.5.4"
+  }
+}

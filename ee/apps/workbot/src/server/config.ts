@@ -2,7 +2,6 @@ import { z } from "zod"
 
 const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"])
 
-/** An origin (scheme, host, port): https, or plain http on loopback or an internal service name (no dots). */
 const origin = (allowInternal: boolean) =>
   z.string().transform((value, context) => {
     try {
@@ -10,50 +9,50 @@ const origin = (allowInternal: boolean) =>
       const internal = allowInternal && url.protocol === "http:" && !url.hostname.includes(".")
       if (url.protocol === "https:" || (url.protocol === "http:" && LOOPBACK_HOSTS.has(url.hostname)) || internal) return url.origin
     } catch {
-      // reported below
     }
     context.addIssue({ code: "custom", message: "must be an https URL (http only for localhost)" })
     return z.NEVER
   })
 
-/** Empty means unset, as an env file's `NAME=` line usually intends. */
 const optionalText = z
   .string()
   .optional()
   .transform((value) => value?.trim() || undefined)
 
 const schema = z.object({
-  /** Where people reach Workbot, e.g. https://chat.openworklabs.com. Den sends them back to `${this}/auth/callback`. */
   WORKBOT_PUBLIC_URL: origin(false),
-  /** Den's API, e.g. https://api.openworklabs.com: where Workbot discovers Den's sign-in and asks who someone is. */
   WORKBOT_DEN_API_URL: origin(false),
-  /** Den's web app for the "back to OpenWork" link and app logos; defaults to the origin of Den's sign-in. */
   WORKBOT_DEN_WEB_URL: optionalText.pipe(origin(false).optional()),
-  /** The headless runner every Workbot conversation runs on, and its service token. */
   WORKBOT_RUNNER_URL: origin(true),
   WORKBOT_RUNNER_TOKEN: z.string().min(32, "must be at least 32 characters"),
-  /** Encrypts the sign-in cookies (Den tokens and sign-ins in progress). Changing it signs everyone out. */
   WORKBOT_SESSION_SECRET: z.string().min(32, "must be at least 32 characters"),
-  /** The port to listen on; Render sets PORT. */
   PORT: z.coerce.number().int().min(1).max(65_535).optional(),
   WORKBOT_PORT: z.coerce.number().int().min(1).max(65_535).default(3020),
-  /**
-   * Testing only: read Calendar meetings from the calendar mock (evals/packages/labs/src/calendar-mock.mjs), which
-   * serves Den's calendar routes, instead of the member's real connections through Den. Unset in production.
-   */
   WORKBOT_CALENDAR_MOCK_URL: optionalText.pipe(origin(false).optional()),
-  /** Serve the page from Vite with hot reload instead of the built files. */
   WORKBOT_DEV: z.enum(["0", "1"]).default("0"),
-  /**
-   * Optional error reports to Sentry (see error-reporting.ts). Unset, nothing is sent anywhere: self-hosted
-   * installs ship without one. The release defaults to `workbot@<WORKBOT_VERSION>`.
-   */
+  WORKBOT_IOS_TEAM_ID: z.string().regex(/^[A-Z0-9]{10}$/, "must be a 10-character Apple team ID").optional(),
+  WORKBOT_ANDROID_CERT_SHA256: z.string().optional(),
   WORKBOT_SENTRY_DSN: optionalText.pipe(z.url().optional()),
   WORKBOT_SENTRY_ENVIRONMENT: optionalText,
   WORKBOT_SENTRY_RELEASE: optionalText,
-  /** Set by the Workbot image at build time. */
   WORKBOT_VERSION: optionalText,
 })
+
+export const WORKBOT_APP_ID = "com.differentai.openwork"
+export const WORKBOT_IOS_APP_ID = "com.differentai.openwork.ios"
+export const WORKBOT_APP_CALLBACK_PATH = "/auth/app/callback"
+function appRedirectUris(publicUrl: string): string[] {
+  return publicUrl.startsWith("https:") ? [`${publicUrl}${WORKBOT_APP_CALLBACK_PATH}`] : []
+}
+
+const CERT_SHA256 = /^([0-9A-F]{2}:){31}[0-9A-F]{2}$/
+
+function certFingerprints(value: string | undefined): string[] {
+  const list = (value ?? "").split(",").map((entry) => entry.trim().toUpperCase()).filter(Boolean)
+  const invalid = list.filter((entry) => !CERT_SHA256.test(entry))
+  if (invalid.length > 0) throw new Error(`Invalid Workbot configuration:\nWORKBOT_ANDROID_CERT_SHA256: not a SHA-256 certificate fingerprint: ${invalid.join(", ")}`)
+  return list
+}
 
 export type Config = {
   publicUrl: string
@@ -63,11 +62,10 @@ export type Config = {
   sessionSecret: string
   port: number
   dev: boolean
-  /** Testing only: where Calendar meetings come from instead of Den (see WORKBOT_CALENDAR_MOCK_URL). */
   calendarMockUrl: string | null
-  /** Cookies are Secure (and __Host- prefixed) whenever Workbot is served over https. */
   secureCookies: boolean
-  /** Where error reports go; null (no DSN) sends none. */
+  appRedirectUris: string[]
+  appLinks: { iosTeamId: string | null; androidCertSha256: string[] }
   errorReporting: { dsn: string; environment?: string; release?: string } | null
 }
 
@@ -88,6 +86,8 @@ export function loadConfig(env: Record<string, string | undefined> = process.env
     dev: value.WORKBOT_DEV === "1",
     calendarMockUrl: value.WORKBOT_CALENDAR_MOCK_URL ?? null,
     secureCookies: value.WORKBOT_PUBLIC_URL.startsWith("https:"),
+    appRedirectUris: appRedirectUris(value.WORKBOT_PUBLIC_URL),
+    appLinks: { iosTeamId: value.WORKBOT_IOS_TEAM_ID ?? null, androidCertSha256: certFingerprints(value.WORKBOT_ANDROID_CERT_SHA256) },
     errorReporting: value.WORKBOT_SENTRY_DSN
       ? {
           dsn: value.WORKBOT_SENTRY_DSN,

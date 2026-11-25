@@ -18,7 +18,6 @@ import { createInventoryRevisionGate } from "./inventory-revision";
 import { subscribeCloudProviderSyncTriggers } from "./use-cloud-provider-auto-sync";
 import { refreshMemberActivity } from "./member-activity-sync";
 
-/** One app-level observer using the same lifecycle triggers as desktop cloud sync. */
 export function useMemberActivitySync(enabled: boolean) {
   const { verifiedIdentity } = useDenAuth();
   const settings = readDenSettings();
@@ -49,10 +48,8 @@ export function useMemberActivitySync(enabled: boolean) {
     };
     const client = createDenClient({ baseUrl, apiBaseUrl: baseUrl, token, requireCompleteInventory: true });
     const gate = createInventoryRevisionGate();
-    /** "check" (app resume, timer) skips the reload while Den's inventory revision is unchanged. */
     const refresh = (trigger: "check" | "now" = "now") => {
       if (!isCurrent()) {
-        // Invalidate immediately, before React finishes verifying the next account.
         disposed = true;
         feed.setScope(null);
         setMemberAccessScope(null);
@@ -79,12 +76,8 @@ export function useMemberActivitySync(enabled: boolean) {
         const changed = selectActivityContext(useActivityStore.getState()).entries[0]?.id !== previousEntry;
         const cacheScope = readCloudInventoryScope();
         if (loaded.value && cacheScope?.organizationId === organizationId) {
-          // The composer and Settings reuse this complete inventory instead of
-          // fetching it again. The in-flight guard coalesces our own signal.
           storeCloudInventory(cacheScope, loaded.value, { changed });
         } else if (changed) {
-          // Opening a newly available resource must not land in an old cached
-          // Library inventory.
           clearCloudInventoryCache();
         }
       })().finally(() => {
@@ -100,7 +93,7 @@ export function useMemberActivitySync(enabled: boolean) {
       isDocumentVisible: () => document.visibilityState === "visible",
       sync: (reason) => refresh(reason === "sign_in" ? "now" : "check"),
     });
-    const unsubscribeProviders = subscribeProviderCatalogChanges(refreshNow);
+    const unsubscribeProviders = subscribeProviderCatalogChanges((scope) => refresh(scope.reason === "reconnect" ? "check" : "now"));
     window.addEventListener(ACTIVITY_REFRESH_EVENT, refreshNow);
     window.addEventListener(CLOUD_INVENTORY_CHANGED_EVENT, refreshNow);
     window.addEventListener(denSessionUpdatedEvent, refreshNow);

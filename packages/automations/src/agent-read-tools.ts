@@ -3,9 +3,8 @@ import type { AgentToolDecisionReason, AgentToolOverride } from "@openwork/types
 /**
  * Which of a connection's tools a member's background agent ("Your agent") may call. It only ever reads.
  *
- * Today (`workbotAgentBrief` off) only services with a hand-reviewed list of read tools can be read at all
- * (`reviewedReadTool`). With `workbotAgentBrief` on, any connected connector can be a source, so each tool gets its
- * own decision (`decideAgentReadTool`), in this order:
+ * Any connected connector can be a source, so each tool gets its own decision (`decideAgentReadTool`), in this
+ * order:
  *
  *   1. Never a tool its provider marks destructive (`destructiveHint: true`), whoever allowed it. Locked.
  *   2. An admin's choice for this tool on this connection ("Tools agents may use").
@@ -31,10 +30,6 @@ export type AgentReadToolInput = {
 
 export type AgentToolDecision = { allowed: boolean; reason: AgentToolDecisionReason; locked: boolean }
 
-/**
- * Tools reviewed as reads, by the service's MCP host (the URL its preset connects to). Moved here unchanged from
- * den-api's agent-read-sources.ts (#6630, "Your agent reads only reviewed tools").
- */
 const REVIEWED_READ_TOOLS: Record<string, ReadonlySet<string>> = {
   "mcp.slack.com": new Set([
     "slack_search_public", "slack_search_public_and_private", "slack_read_channel", "slack_read_thread", "slack_read_canvas",
@@ -55,7 +50,6 @@ const REVIEWED_READ_TOOLS: Record<string, ReadonlySet<string>> = {
   "mcp.granola.ai": new Set(["list_meetings", "get_meetings", "get_meeting", "get_meeting_transcript", "query_granola_meetings", "search_meetings"]),
 }
 
-/** A reviewed tool is never one whose name says it writes, even if it is listed by mistake (unchanged from #6630). */
 const REVIEWED_WRITE_WORDS = /(?:^|[_\-.\s]|[a-z](?=[A-Z]))(send|post|create|update|upsert|delete|remove|write|edit|modify|move|archive|add|set|schedule|reply|draft|upload|invite|share|assign|close|merge|comment|react|publish|trash|cancel|accept|decline|approve|mark|submit|execute|run|trigger)(?=$|[_\-.\s]|[A-Z])/i
 
 function hostOf(url: string): string | null {
@@ -83,16 +77,8 @@ export function reviewedReadTool(connectionUrl: string, tool: { name: string }):
   return reviewedReadTools(connectionUrl)?.has(tool.name) === true
 }
 
-// ---- The classifier: a tool's name and description, when its provider says nothing -------------------------------
-
-/** Verbs that only read. A tool reads only when one of these leads its name (after at most one namespace word). */
 const READ_VERBS: ReadonlySet<string> = new Set(["get", "list", "search", "read", "fetch", "query", "find", "describe", "view", "show", "lookup"])
 
-/**
- * Verbs that change something, anywhere in a tool's name ("get_or_create_*", "search_and_replace", "mark_read"). Broad
- * on purpose: a read caught here only needs an admin to allow it; a write that slips through could send, change or
- * delete something.
- */
 const WRITE_VERBS: ReadonlySet<string> = new Set([
   "send", "create", "update", "delete", "write", "archive", "move", "invite", "pay", "upsert", "remove", "edit", "modify",
   "add", "assign", "unassign", "merge", "react", "publish", "trash", "cancel", "accept", "decline", "approve", "mark",
@@ -106,10 +92,6 @@ const WRITE_VERBS: ReadonlySet<string> = new Set([
   "transition", "escalate", "rotate", "regenerate", "overwrite",
 ])
 
-/**
- * Verbs that are also common nouns ("get_email", "list_runs", "get_commit"): a write only when they lead the name
- * ("run_query", "post_message", "slack_post_message").
- */
 const LEADING_WRITE_VERBS: ReadonlySet<string> = new Set([
   "post", "run", "draft", "comment", "label", "tag", "message", "email", "text", "call", "order", "link", "block", "book",
   "star", "pin", "lock", "like", "bookmark", "favorite", "schedule", "reply", "share", "set", "export", "import", "commit",
@@ -117,7 +99,6 @@ const LEADING_WRITE_VERBS: ReadonlySet<string> = new Set([
   "finish", "sync", "start", "stop",
 ])
 
-/** A write verb in a description: leading it, or right after "and", "or", "then", "also", "will" or "to". */
 const DESCRIPTION_WRITE_VERBS = [
   "send", "create", "update", "delete", "post", "write", "archive", "move", "invite", "pay", "run", "execute", "modify",
   "remove", "replace", "publish", "upload", "submit", "cancel", "mark", "approve", "merge", "close", "edit", "insert",
@@ -147,13 +128,10 @@ export function classifyAgentTool(tool: { name: string; description?: string | n
   if (words.some((word) => WRITE_VERBS.has(word))) return "write"
   const description = tool.description?.trim() ?? ""
   if (description && DESCRIPTION_WRITE.test(description)) return "write"
-  // The verb that leads the name: its first word, or its second after a namespace ("notion-search", "slack_post_message").
   const lead = words.slice(0, 2).find((word) => READ_VERBS.has(word) || LEADING_WRITE_VERBS.has(word))
   if (lead === undefined) return "unclear"
   return READ_VERBS.has(lead) ? "read" : "write"
 }
-
-// ---- The decision -------------------------------------------------------------------------------------------------
 
 /** Whether one of a connection's tools may be called by a member's agent, why, and whether an admin can change it. */
 export function decideAgentReadTool(input: { connectionUrl: string; tool: AgentReadToolInput; override?: AgentToolOverride | null }): AgentToolDecision {

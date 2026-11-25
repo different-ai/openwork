@@ -157,6 +157,8 @@ const KEY_CODES: Readonly<Record<string, { code: string; virtualKeyCode: number 
   Space: { code: "Space", virtualKeyCode: 32 },
 };
 
+export type ClickModifier = "Alt" | "Control" | "Meta" | "Shift";
+
 const MODIFIERS: Readonly<Record<string, number>> = {
   Alt: 1,
   Control: 2,
@@ -565,10 +567,12 @@ export async function locate(surface: Surface, target: Target): Promise<Located>
 export async function clickAt(
   surface: Surface,
   point: Point,
-  options: { button?: "left" | "right" | "middle"; clickCount?: number } = {},
+  options: { button?: "left" | "right" | "middle"; clickCount?: number; modifiers?: readonly ClickModifier[] } = {},
 ): Promise<void> {
   const button = options.button ?? "left";
   const clickCount = options.clickCount ?? 1;
+  // Held keys ride on the mouse events themselves, as Shift-click or Cmd-click does for a person.
+  const modifiers = (options.modifiers ?? []).reduce((mask, key) => mask | (MODIFIERS[key] ?? 0), 0);
   // A person activates the window they click. Electron can leave an admin or
   // OAuth window foregrounded; synthetic input alone does not activate this
   // target, and subsequent insertText can otherwise be silently discarded.
@@ -577,8 +581,8 @@ export async function clickAt(
     if (!String(cause).includes("only be executed on top-level targets")) throw cause;
   });
   await surface.client.send("Input.dispatchMouseEvent", { type: "mouseMoved", x: point.x, y: point.y, button: "none" });
-  await surface.client.send("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button, clickCount });
-  await surface.client.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button, clickCount });
+  await surface.client.send("Input.dispatchMouseEvent", { type: "mousePressed", x: point.x, y: point.y, button, clickCount, modifiers });
+  await surface.client.send("Input.dispatchMouseEvent", { type: "mouseReleased", x: point.x, y: point.y, button, clickCount, modifiers });
 }
 
 export async function typeText(surface: Surface, text: string): Promise<void> {
@@ -698,7 +702,7 @@ function assertInteractive(found: Located): void {
 export async function clickTarget(
   surface: Surface,
   target: Target,
-  options: { timeoutMs?: number; mustHitTest?: boolean; button?: "left" | "right" | "middle"; clickCount?: number } = {},
+  options: { timeoutMs?: number; mustHitTest?: boolean; button?: "left" | "right" | "middle"; clickCount?: number; modifiers?: readonly ClickModifier[] } = {},
 ): Promise<Located> {
   const mustHitTest = options.mustHitTest ?? true;
   const found = await waitForLocated(surface, target, { timeoutMs: options.timeoutMs, mustHitTest });
@@ -709,7 +713,7 @@ export async function clickTarget(
     const covering = fresh.covering ? ` Covered by ${fresh.covering.tag}${fresh.covering.text ? ` text=${JSON.stringify(fresh.covering.text)}` : ""}.` : "";
     throw new Error(`Target ${JSON.stringify(fresh.name)} moved before the click could be dispatched: ${describeRect(found.rect)} → ${describeRect(fresh.rect)} (visible=${fresh.visible}, hitTestOk=${fresh.hitTestOk}).${covering}`);
   }
-  await clickAt(surface, fresh.center, { button: options.button, clickCount: options.clickCount });
+  await clickAt(surface, fresh.center, { button: options.button, clickCount: options.clickCount, modifiers: options.modifiers });
   return fresh;
 }
 

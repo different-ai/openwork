@@ -1,9 +1,6 @@
 import type { OrganizationInviteEmailProps } from "@openwork/email"
 import { env } from "./env.js"
 
-// Builds the invitation email for both products. Kept free of auth/db imports
-// so unit tests can exercise it without booting Better Auth.
-
 const CLOUD_SUPPORT_EMAIL = "team@openworklabs.com"
 const CLOUD_QUICKSTART_URL = "https://openworklabs.com/docs/cloud/team-quickstart"
 const SELF_HOSTED_QUICKSTART_URL = "https://openworklabs.com/docs/start-here/get-started"

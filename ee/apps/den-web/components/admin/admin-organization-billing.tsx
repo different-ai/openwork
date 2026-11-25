@@ -40,13 +40,6 @@ function Row({ label, children, testId }: { label: string; children: ReactNode; 
   );
 }
 
-/**
- * /admin › organization › Billing: the one place a platform admin sets an
- * organization's plan and how many users it may have (enforced the same way
- * by invitations, SSO and SCIM), plus its Team subscription in Stripe and
- * complimentary OpenWork Web. Enterprise is set here and invoiced outside
- * OpenWork; it is never linked to Stripe.
- */
 export function AdminOrganizationBilling({ organization, onSaved, onAccessFailure }: {
   organization: Organization;
   onSaved: () => void;
@@ -75,8 +68,6 @@ export function AdminOrganizationBilling({ organization, onSaved, onAccessFailur
   const users = Number(draft.users);
   const usersValid = Number.isInteger(users) && users >= FREE_USERS && users <= 100_000;
   const paidInStripe = plan.paidBy !== "none";
-  // Setting Enterprise does not touch Stripe: a workspace still paying for Team
-  // by card keeps being charged, and no user limit applies while it pays.
   const teamStillBilled = plan.paidBy === "stripe_team" && draft.tier === "enterprise";
   const joined = organization.people?.joined ?? plan.users;
   const invited = organization.people?.invited ?? 0;

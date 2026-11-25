@@ -21,7 +21,6 @@ function extensionHref(detailId: string) {
   return `/extensions/${encodeURIComponent(detailId)}`;
 }
 
-/** Persist a digest, not URLs which can contain credentials or private configuration. */
 async function connectionRevision(connection: DenExternalMcpConnection, versions: string[]) {
   const content = JSON.stringify([
     connection.name, connection.url, connection.authType,
@@ -46,9 +45,6 @@ async function connectionResources(inventory: ConnectCapabilityInventory, connec
       }
     }
   }
-  // The usable connection keeps its identity whether it was granted directly,
-  // through a plugin, or both. An unbound plugin config is not a connection yet;
-  // the plugin's own availability still appears in Activity.
   return Promise.all(connections
     .map(async (connection): Promise<ActivityResource> => ({
       id: connection.id,
@@ -65,7 +61,6 @@ function capabilityResources(inventory: ConnectCapabilityInventory): ActivityRes
     skill.connectCapabilityName ? [[skill.connectCapabilityName, skill] as const] : []));
   return inventory.plugins.flatMap((plugin): ActivityResource[] => {
     const skills = plugin.files.filter((file) => file.objectType === "skill");
-    // Items shared into the member's own Library have no marketplace to name.
     const marketplaceName = plugin.marketplaceId === "me-library" ? undefined : plugin.marketplaceName.trim() || undefined;
     return [
       {
@@ -96,17 +91,11 @@ function capabilityResources(inventory: ConnectCapabilityInventory): ActivityRes
   });
 }
 
-/**
- * The public sync -> feed boundary. Only a complete, current successful pass
- * advances the baselines. Credential health, local installation drift and
- * engine connectivity are deliberately not used as access evidence.
- */
 export async function refreshMemberActivity(input: {
   scope: ActivityScope;
   client: MemberActivityClient;
   feed: ActivityFeed;
   isCurrent: () => boolean;
-  /** The complete inventory this pass verified, before it reaches the feed. */
   onLoaded?: (loaded: { capabilities: ConnectCapabilityInventory; connections: DenExternalMcpConnection[] }) => void;
 }): Promise<"updated" | "failed" | "stale"> {
   if (!input.isCurrent()) return "stale";
@@ -141,7 +130,6 @@ export async function refreshMemberActivity(input: {
     return "updated";
   } catch (error) {
     if (!input.isCurrent()) return "stale";
-    // Keep the reason findable; the UI only says "Couldn't refresh".
     console.warn("[activity] member inventory refresh failed", error instanceof Error ? `${error.name}: ${error.message}` : error);
     input.feed.setRefreshState(input.scope, "error");
     return "failed";

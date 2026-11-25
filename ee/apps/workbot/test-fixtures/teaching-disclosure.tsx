@@ -4,8 +4,6 @@ import { TeachButton, WorkbotTeaching } from "../../../packages/workbot-ui/src/t
 import { setWorkbotHost } from "../../../packages/workbot-ui/src/host";
 import "../src/client/styles.css";
 
-// Bounded production-component harness: only the teaching API is replaced.
-// Two independently mounted windows exercise React's per-instance ID allocation.
 setWorkbotHost({
   async requestJson() {
     return { response: new Response(), payload: { demonstration: {

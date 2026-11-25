@@ -1,4 +1,3 @@
-/** Strong solid markers for dark sidebars — hashed per workspace, no gradients. */
 export const WORKSPACE_AVATAR_COLORS = [
   "#E23B4C",
   "#D44A7A",
@@ -49,7 +48,6 @@ export function resolveWorkspaceAvatarColor(
   return workspaceAvatarColor(workspaceId);
 }
 
-/** Read a local image file and shrink it to a small square data URL for localStorage. */
 export async function readWorkspaceAvatarImage(file: File): Promise<string> {
   const objectUrl = URL.createObjectURL(file);
   try {

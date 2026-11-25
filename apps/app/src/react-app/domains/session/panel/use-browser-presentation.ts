@@ -18,48 +18,31 @@ import { useOpenBrowserRailPane, useSelectTab } from "./use-side-panel-tabs";
 import { getElectronBrowser } from "./utils";
 
 export type BrowserPresentationController = {
-  /** The floating browser feature is on in the desktop app. */
   enabled: boolean;
-  /** What is on screen now: `side` while the side panel shows the browser. */
   mode: BrowserPresentationMode;
   presentation: BrowserPresentation;
-  /** The conversation's on-screen browser tab, if it has one. */
   tab: BrowserPanelTab | null;
-  /** The conversation's browser tabs, for the popped-out window's tab strip. */
   browserTabs: BrowserPanelTab[];
   status: string;
   needsYou: boolean;
   present: (mode: BrowserPresentationMode) => void;
-  /** The side rail's Browser button: opens or closes the browser beside the chat. */
   toggle: () => void;
   exitFullscreen: () => void;
-  /** Whether the conversation's browser is in its own window, where new pages arrive as tabs. */
   isPoppedOut: (ownerSessionId: string | null | undefined) => boolean;
-  /** Places a page the agent opened. False when the feature is off and the caller keeps today's behavior. */
   placeOpenedBrowser: (ownerSessionId: string | null | undefined) => boolean;
-  /** The host closed the owner's browser panel. */
   handlePanelClosed: (ownerSessionId: string | null | undefined) => void;
-  /** Where focus returns after full screen. */
   fullscreenReturnFocus: React.RefObject<HTMLElement | null>;
-  /** The person just popped the browser out, so its window takes focus when it opens. */
   focusWindowOnOpen: React.RefObject<boolean>;
 };
 
 type Options = {
   enabled: boolean;
-  /** The side panel key of the conversation on screen. */
   sessionKey: string;
-  /** The conversation the host shows browser tabs for. */
   visibleSessionId: string | null;
   sidePanel: SidePanelItem | null;
   setSidePanel: (panel: "panel" | null) => void;
 };
 
-/**
- * A new thread's first message makes it a session, under a new key. Its browser
- * goes with it, beside the chat or in its own window, so sending never loses the
- * page. Runs before the route changes, so the window stays open throughout.
- */
 export function carryDraftBrowser(sessionId: string) {
   const panels = usePanelTabStore.getState();
   const draft = panels.sessions[NO_SESSION_SIDE_PANEL_KEY];
@@ -94,8 +77,6 @@ export function useBrowserPresentationController({
   const openBrowserSide = useOpenBrowserRailPane(sessionKey, false, setSidePanel);
   const selectTab = useSelectTab();
 
-  // The side panel only remembers the active panel tab; an artifact may hold
-  // it while the native browser keeps its own on-screen page.
   React.useEffect(() => {
     if (!enabled) return;
     const browser = getElectronBrowser();
@@ -128,7 +109,6 @@ export function useBrowserPresentationController({
         : presentation.mode === "floating" && tab ? "floating"
           : "hidden";
 
-  // Actions run from events and IPC callbacks; they read the latest render.
   const latest = React.useRef({ mode, presentation, tab, browserInSide });
   React.useLayoutEffect(() => {
     latest.current = { mode, presentation, tab, browserInSide };
@@ -166,8 +146,6 @@ export function useBrowserPresentationController({
     present(current.presentation.returnMode);
   }, [present]);
 
-  // Only the browser's own Pop out control floats the page; this button docks
-  // a floating page back beside the chat rather than hiding it.
   const toggle = React.useCallback(() => {
     present(latest.current.mode === "side" ? "hidden" : "side");
   }, [present]);
@@ -185,8 +163,6 @@ export function useBrowserPresentationController({
     const key = presentationKey(ownerSessionId);
     const ownerPresentation = useBrowserPresentationStore.getState().sessions[key] ?? DEFAULT_BROWSER_PRESENTATION;
     if (ownerPresentation.mode === "fullscreen") return true;
-    // The agent acts only on a page the person can see, so a page it opens
-    // comes up beside the chat. The person can float it from there.
     useBrowserPresentationStore.getState().setMode(key, "side", "side");
     if (key === sessionKey) setSidePanel("panel");
     else useUiStateStore.getState().setSidePanelState(key, "panel");
@@ -198,14 +174,12 @@ export function useBrowserPresentationController({
     useBrowserPresentationStore.getState().setMode(presentationKey(ownerSessionId), "hidden");
   }, [enabled, presentationKey]);
 
-  // Showing the browser in the side panel by any route is choosing the side.
   React.useEffect(() => {
     if (!enabled || !browserInSide) return;
     if (presentation.mode === "side" || presentation.mode === "fullscreen") return;
     useBrowserPresentationStore.getState().setMode(sessionKey, "side", "side");
   }, [browserInSide, enabled, presentation.mode, sessionKey]);
 
-  // Rollback returns an existing floating page to the standard side panel.
   const wasEnabled = React.useRef(enabled);
   React.useEffect(() => {
     const reverted = wasEnabled.current && !enabled;
@@ -219,7 +193,6 @@ export function useBrowserPresentationController({
     }
   }, [enabled, presentation.mode, sessionKey, setSidePanel, selectTab, tab, visibleSessionId]);
 
-  // Full screen never survives a conversation switch or the page going away.
   React.useEffect(() => {
     if (!enabled) return;
     return () => useBrowserPresentationStore.getState().dropFullscreen(sessionKey);
@@ -230,10 +203,6 @@ export function useBrowserPresentationController({
     }
   }, [enabled, presentation.mode, sessionKey, tab]);
 
-  // A page needing attention opens beside the chat, and an agent that needs
-  // the page on screen to act brings it beside the chat. In its own window the
-  // page is already on screen, so only show that tab. This state covers every
-  // failed agent step, so it never takes focus from what the person is doing.
   const attentionTab = browserTabs.find(browserNeedsPerson);
   const attentionId = attentionTab
     ? `${attentionTab.id}:${attentionTab.browserTask?.operation ?? "needs_attention"}`
@@ -252,7 +221,6 @@ export function useBrowserPresentationController({
     setSidePanel("panel");
   }, [attentionId, attentionTab, enabled, mode, selectTab, sessionKey, setSidePanel]);
 
-  // Escape pressed inside the full-screen page leaves full screen.
   React.useEffect(() => {
     if (!enabled) return;
     return getElectronBrowser()?.onPresentationExit?.((payload) => {
@@ -260,7 +228,6 @@ export function useBrowserPresentationController({
     });
   }, [enabled, exitFullscreen, sessionKey]);
 
-  // The host needs only full screen, for Escape inside the page.
   React.useEffect(() => {
     if (!enabled) return;
     void getElectronBrowser()?.setPresentation?.(visibleSessionId, mode)?.catch(() => undefined);

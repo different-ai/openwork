@@ -288,8 +288,6 @@ const defaultWebhookDependencies: WebhookDependencies = {
   },
   async settleUsage({ inferenceKey, span, costAmount }) {
     return db.transaction(async (tx) => {
-      // Shared with both bucket writers and admin reset. Historical settlement
-      // never provisions access, changes a limit, or advances a current pointer.
       const policies = await tx.select().from(InferenceOrgLimitPolicyTable)
         .where(eq(InferenceOrgLimitPolicyTable.organization_id, inferenceKey.organization_id))
         .orderBy(asc(InferenceOrgLimitPolicyTable.window_type)).for("update")
@@ -320,7 +318,6 @@ const defaultWebhookDependencies: WebhookDependencies = {
           event_type: "openrouter_usage", occurred_at: occurredAt, provider_usage: providerUsage,
         }).onDuplicateKeyUpdate({ set: { id: sql`${InferenceUsageLedgerEntryTable.id}` } })
       }
-      // A unique event can collide across organizations despite the policy lock.
       const entries = await tx.select().from(InferenceUsageLedgerEntryTable).where(identity).for("update")
       const entry = entries[0]
       if (!entry || entries.length !== 1 || !matchesIdentity(entry)) return "skipped"
@@ -339,21 +336,15 @@ const defaultWebhookDependencies: WebhookDependencies = {
           eq(InferenceOrgUsageBucketTable.organization_id, entry.organization_id),
           lte(InferenceOrgUsageBucketTable.window_start_at, entry.occurred_at), gt(InferenceOrgUsageBucketTable.window_end_at, entry.occurred_at),
         )).orderBy(asc(InferenceOrgUsageBucketTable.id)).limit(2).for("update")
-        // Older writers could create overlapping windows. Do not guess which
-        // allowance owns this usage; retain it until that history is repaired.
         if (matches.length !== 1) return "deferred"
         buckets.push(matches[0]!)
       }
-      // Missing historical windows are durably deferred, not invented using
-      // today's entitlement. Provider retries remain safe if history is repaired.
       if (buckets.length !== INFERENCE_WINDOW_TYPES.length) return "deferred"
       for (const bucket of buckets) {
         const [charge] = await tx.select().from(InferenceUsageLedgerBucketChargeTable).where(and(
           eq(InferenceUsageLedgerBucketChargeTable.ledger_entry_id, entry.id), eq(InferenceUsageLedgerBucketChargeTable.bucket_id, bucket.id),
         )).limit(1).for("update")
-        if (charge) continue // Includes admin-forgiven zero-amount identities.
-        // Before provider facts existed, reset deleted identities. A legacy gap
-        // cannot safely be distinguished from forgiveness, so never backfill it.
+        if (charge) continue
         if (entry.provider_usage === null) return "deferred"
         if (!Number.isSafeInteger(bucket.used_amount + entry.cost_amount)) throw new Error("Usage total exceeds safe integer range")
         await tx.insert(InferenceUsageLedgerBucketChargeTable).values({
@@ -388,7 +379,6 @@ function reportUnknownPricedModel(input: { span: ParsedSpan; inferenceKey: Webho
 
 async function ingestSpan(span: ParsedSpan, dependencies: WebhookDependencies) {
   const inferenceKey = await dependencies.findInferenceKey(span.inferenceKeyId)
-  // Settlement may arrive after revocation; settleUsage checks admission time.
   if (!inferenceKey) {
     return "skipped"
   }

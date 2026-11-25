@@ -1,14 +1,3 @@
-// The model catalog's sources, read and validated in one place:
-//   base.json            the models.dev snapshot (Update Models workflow)
-//   providers/*.json     custom providers we add by hand, one file each
-//   openwork-models.json the OpenWork provider's models (added by build-models.mjs)
-//
-// The gateway (pricing, provider catalog) and scripts/build-models.mjs (the
-// published models.openworklabs.com/api.json) both read base + custom providers
-// from here, so Den and the gateway always see the same providers.
-//
-// Node runs this file directly with type stripping (scripts/build-models.mjs),
-// so it may only use erasable TypeScript and node: built-ins.
 import { readFileSync, readdirSync } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -16,15 +5,14 @@ import { fileURLToPath } from "node:url"
 export type JsonRecord = Record<string, unknown>
 export type ModelsCatalog = Record<string, JsonRecord>
 
-/** Provider ids a custom provider file may never use: added by build-models.mjs or derived in code. */
 export const RESERVED_PROVIDER_IDS: readonly string[] = [
   "openwork",
   "amazon-bedrock-mantle",
   "microsoft-foundry",
   "litellm",
+  "truefoundry",
 ]
 
-/** SDK packages the gateway can proxy that a custom provider may use (Den's SUPPORTED_GATEWAY_NPM_PACKAGES, minus cloud-specific ones). */
 export const CUSTOM_PROVIDER_NPM_PACKAGES: readonly string[] = [
   "@ai-sdk/openai-compatible",
   "@ai-sdk/openai",
@@ -34,11 +22,9 @@ export const CUSTOM_PROVIDER_NPM_PACKAGES: readonly string[] = [
   "@openrouter/ai-sdk-provider",
 ]
 
-/** Effort values OpenWork understands (AUTO_ROUTER_THINKING_LEVELS without `default`). */
 export const REASONING_EFFORT_VALUES: readonly string[] = ["none", "minimal", "low", "medium", "high", "xhigh", "max"]
 const REASONING_OPTION_TYPES: readonly string[] = ["toggle", "effort", "budget_tokens"]
 
-// From src/models (tsx) or dist/models (compiled), the JSON sources stay in src/models.
 export const MODELS_SOURCE_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "src", "models")
 
 export class CatalogValidationError extends Error {
@@ -146,11 +132,6 @@ function validateCustomModel(where: string, modelId: string, model: unknown, pro
   validateReasoningOptions(where, model.reasoning_options, problems)
 }
 
-/**
- * Problems with one custom provider file's contents, as readable lines. The
- * file is a models.dev-shaped object keyed by provider id; `taken` holds the
- * ids already used by base.json and earlier files.
- */
 export function validateCustomProviderFile(file: string, contents: unknown, taken: ReadonlySet<string>): string[] {
   const problems: string[] = []
   if (!isRecord(contents) || Object.keys(contents).length === 0) {
@@ -202,11 +183,6 @@ export function readBaseCatalog(sourceDir: string = MODELS_SOURCE_DIR): ModelsCa
   return catalog
 }
 
-/**
- * Every providers/*.json file, validated, in file-name order. Throws one
- * CatalogValidationError listing every problem, so a bad file fails the build
- * instead of silently dropping a provider.
- */
 export function readCustomProviders(base: ModelsCatalog, sourceDir: string = MODELS_SOURCE_DIR): ModelsCatalog {
   const providersDir = path.join(sourceDir, "providers")
   let files: string[]
@@ -231,7 +207,6 @@ export function readCustomProviders(base: ModelsCatalog, sourceDir: string = MOD
     problems.push(...fileProblems)
     if (!isRecord(contents)) continue
     for (const [id, provider] of Object.entries(contents)) {
-      // Claim ids even from a failing file, so later clashes are reported too.
       taken.add(id)
       if (fileProblems.length === 0 && isRecord(provider)) custom[id] = provider
     }
@@ -240,13 +215,11 @@ export function readCustomProviders(base: ModelsCatalog, sourceDir: string = MOD
   return custom
 }
 
-/** base.json plus every custom provider: the catalog the gateway serves from. */
 export function readProviderCatalog(sourceDir: string = MODELS_SOURCE_DIR): ModelsCatalog {
   const base = readBaseCatalog(sourceDir)
   return { ...base, ...readCustomProviders(base, sourceDir) }
 }
 
-/** The OpenWork provider built from openwork-models.json, served by the OpenWork inference API at `api`. */
 export function readOpenworkProvider(api: string, sourceDir: string = MODELS_SOURCE_DIR): ModelsCatalog {
   const models = readJson(path.join(sourceDir, "openwork-models.json"))
   if (!isRecord(models)) throw new CatalogValidationError(["openwork-models.json: must be an object keyed by model id"])
@@ -262,7 +235,6 @@ export function readOpenworkProvider(api: string, sourceDir: string = MODELS_SOU
   }
 }
 
-/** The published catalog (models-site/models/api.json): base, custom providers, then OpenWork. */
 export function readPublishedCatalog(openworkApi: string, sourceDir: string = MODELS_SOURCE_DIR): ModelsCatalog {
   return { ...readProviderCatalog(sourceDir), ...readOpenworkProvider(openworkApi, sourceDir) }
 }

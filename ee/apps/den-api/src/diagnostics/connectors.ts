@@ -21,7 +21,6 @@ const GOOGLE_WORKSPACE = "google-workspace"
 
 export type SlackConnectorTarget = Omit<SlackConnectorInput, "live"> & {
   connectionId: ConnectionId
-  /** Fingerprint of the stored bot token (ciphertext hash): a reinstall invalidates cached checks. */
   version: string
   needsLiveCheck: boolean
 }
@@ -29,7 +28,6 @@ export type SlackConnectorTarget = Omit<SlackConnectorInput, "live"> & {
 export type GoogleConnectorTarget = {
   id: string
   name: string
-  /** Connection id, or the provider id for an organization OAuth app saved before connections existed. */
   credentialProviderId: string
   features: string[]
   apis: Array<{ id: string; name: string }>
@@ -42,7 +40,6 @@ async function slackTargets(organizationId: OrganizationId, connections: Awaited
     try {
       return connection.kind === "external_mcp" && isSlackConnection(connection)
     } catch {
-      // A malformed stored URL is not a Slack connection; never fail the section for it.
       return false
     }
   })
@@ -55,7 +52,6 @@ async function slackTargets(organizationId: OrganizationId, connections: Awaited
     tokenVersion: sql<string | null>`left(sha2(${SlackAssistantInstallationTable.botToken}, 256), 16)`,
   }).from(SlackAssistantInstallationTable)
     .where(and(eq(SlackAssistantInstallationTable.organizationId, organizationId), inArray(SlackAssistantInstallationTable.connectionId, ids)))
-  // A Slack connection whose assistant was never set up is not a diagnostics row.
   if (!installations.length) return []
   const installed = installations.map((row) => row.connectionId)
   const [lastEvents, metrics] = await Promise.all([
@@ -96,7 +92,6 @@ async function googleTargets(organizationId: OrganizationId, connections: Awaite
     : [{ id: `google:${GOOGLE_WORKSPACE}`, name: "Google Workspace", credentialProviderId: GOOGLE_WORKSPACE }]
   const targets = await Promise.all(sources.map(async (source) => {
     const client = await getOrgOAuthClient(organizationId, source.credentialProviderId)
-    // An organization OAuth app saved before connections existed only counts when it is configured.
     if (!client && !native.length) return null
     const features = clientSelectedFeatures(provider, client?.extra ?? null)
     return { ...source, features, apis: requiredGoogleApis(features).map((api) => ({ id: api.id, name: api.name })) }
@@ -104,14 +99,12 @@ async function googleTargets(organizationId: OrganizationId, connections: Awaite
   return targets.flatMap((target) => target ? [target] : [])
 }
 
-/** The organization's Slack assistant and Google Workspace connector rows. No network, no secrets. */
 export async function loadConnectorTargets(organizationId: OrganizationId): Promise<ConnectorTargets> {
   const connections = await listExternalMcpConnections(organizationId)
   const [slack, google] = await Promise.all([slackTargets(organizationId, connections), googleTargets(organizationId, connections)])
   return { slack, google }
 }
 
-/** auth.test with the stored bot token; it must answer for the installed workspace. */
 export async function checkSlackAssistantToken(connectionId: ConnectionId, fetchImpl: typeof fetch = fetch): Promise<{ result: SlackLiveResult; version: string }> {
   const [installation] = await db.select({
     botToken: SlackAssistantInstallationTable.botToken,
@@ -127,10 +120,6 @@ export async function checkSlackAssistantToken(connectionId: ConnectionId, fetch
   }
 }
 
-/**
- * The caller's own check of the Google APIs a connector needs, with their own
- * sign-in on it. Null when the caller has no usable sign-in.
- */
 export async function checkGoogleConnectorForMember(input: {
   organizationId: OrganizationId
   orgMembershipId: MemberId

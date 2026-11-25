@@ -1,8 +1,3 @@
-/**
- * The `openwork` integration's sign-in methods. OpenCode runs them for
- * `opencode auth login openwork` and the TUI's `/connect`, then stores the
- * returned credential in its own credential store, where the plugin reads it.
- */
 import { DenAuthError, readAccount, readMe, type Fetch } from "./den.ts"
 import { pollDeviceToken, startDeviceAuthorization, timerWaker, type DeviceAuthorization } from "./device.ts"
 import { startReturnPage } from "./loopback.ts"
@@ -13,9 +8,7 @@ export const INTEGRATION_NAME = "OpenWork Cloud"
 export const BROWSER_METHOD_ID = "browser"
 export const CODE_METHOD_ID = "code"
 
-/** Used when Den does not report the session's expiry; Den sessions last 7 days and slide on use. */
 const FALLBACK_SESSION_MS = 6 * 24 * 60 * 60 * 1000
-/** After a transient refresh failure, try again soon without blocking the still-valid token. */
 const RETRY_REFRESH_MS = 15 * 60 * 1000
 
 export interface CredentialMetadata {
@@ -75,7 +68,6 @@ async function finish(input: {
   return {
     type: "oauth",
     methodID: input.methodID,
-    // Den device sessions have no refresh token; `refresh` re-validates the session itself.
     access: token,
     refresh: token,
     expires: account.sessionExpiresAt ?? input.now() + FALLBACK_SESSION_MS,
@@ -99,11 +91,9 @@ export function signInMethods(input: {
   const refresh = async (credential: OAuthCredential): Promise<OAuthCredential> => {
     const metadata = readCredentialMetadata(credential, input.apiBaseUrl())
     try {
-      // Any authenticated request slides the Den session; /v1/me also reports its new expiry.
       const me = await readMe(input.fetcher, { apiBaseUrl: metadata.apiBaseUrl, token: credential.access, orgId: metadata.orgId })
       return { ...credential, expires: me.sessionExpiresAt ?? now() + FALLBACK_SESSION_MS }
     } catch (error) {
-      // The session is gone: fail, so the plugin asks the member to sign in again.
       if (error instanceof DenAuthError) throw error
       return { ...credential, expires: now() + RETRY_REFRESH_MS }
     }
@@ -135,10 +125,8 @@ export function signInMethods(input: {
       const apiBaseUrl = input.apiBaseUrl()
       const authorization = await startDeviceAuthorization({ fetcher: input.fetcher, apiBaseUrl, now })
       const waker = timerWaker()
-      // The return page only wakes the poll; the token still arrives by polling Den.
       const page = await startReturnPage(() => waker.wake())
       const callback = finish({ fetcher: input.fetcher, apiBaseUrl, methodID: BROWSER_METHOD_ID, authorization, wait: waker.wait, now })
-      // Keep the page up briefly after the poll settles so the redirect still lands on it.
       const closeLater = () => setTimeout(() => page.close(), 30_000).unref()
       callback.then(closeLater, closeLater)
       return {
@@ -153,6 +141,5 @@ export function signInMethods(input: {
     label: credentialLabel,
   }
 
-  // Browser first: `opencode auth login openwork` lists methods in registration order.
   return [browser, code]
 }

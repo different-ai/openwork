@@ -6,12 +6,10 @@ import { McpAppFact } from "./mcp-story";
 import type { McpClient } from "./use-mcp-client";
 import { knownMcpCimdDomain, mcpCimdDomain } from "./client-trust-constants";
 
-/** Where the approval is sent, from the signed authorize query. */
 export function useMcpRedirect(oauthQuery: string): McpRedirectDescription | null {
   return describeMcpRedirect(oauthQuery ? new URLSearchParams(oauthQuery).get("redirect_uri") : null);
 }
 
-/** The App and Returns to rows that lead every consent panel (P9). */
 export function mcpIdentityFacts(client: McpClient, redirect: McpRedirectDescription | null): { app: SetupFact; returnsTo: SetupFact } {
   const domain = mcpCimdDomain(client.clientId);
   return {
@@ -25,10 +23,7 @@ export function mcpIdentityFacts(client: McpClient, redirect: McpRedirectDescrip
   };
 }
 
-/** Registration and a signed OAuth request do not verify the app's publisher. */
 export function McpUnverifiedAppWarning({ redirect, client }: { redirect: McpRedirectDescription | null; client?: McpClient }) {
-  // Wait for the signed-query public-client lookup to succeed before recognizing
-  // a domain. Never infer trust from a DCR callback, name, or logo.
   const knownDomain = client?.loaded && client.metadataResolved ? knownMcpCimdDomain(client.clientId) : null;
   if (knownDomain) {
     return (
@@ -56,11 +51,6 @@ export function McpUnverifiedAppWarning({ redirect, client }: { redirect: McpRed
   );
 }
 
-/**
- * One plain line above the button when the return address needs a second
- * look: a loopback-only redirect (anything on this computer could use the
- * access) or an app that shared no name (name the host to check).
- */
 export function McpReturnLine({ client, redirect, short = false }: { client: McpClient; redirect: McpRedirectDescription | null; short?: boolean }) {
   if (!client.loaded) return null;
   if (redirect?.loopbackOnly) {

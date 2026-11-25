@@ -7,23 +7,23 @@ import {
   writeConnectState,
 } from "../connect-state.js";
 import type { CloudMcpLiveStatusObserver } from "../cloud-mcp-health.js";
-import { readOpenWorkConnectSkillContent, readOpenWorkConnectSkillContents, readOpenWorkConnectSkillIndex, renderOpenWorkConnectSkillInstruction } from "../connect-skill-catalog.js";
+import { readOpenWorkConnectSkillContent, readOpenWorkConnectSkillContents, readOpenWorkConnectSkillIndex, readOpenWorkConnectSkillSource, renderOpenWorkConnectSkillInstruction } from "../connect-skill-catalog.js";
+import { cloudSkillFoldersRoot } from "../cloud-skill-folders-root.js";
+import { ensureCloudSkillFolder } from "../cloud-skill-folders.js";
 import { readOpenWorkAutomationCatalog, renderOpenWorkAutomationInstruction } from "../connect-automation-catalog.js";
 import { EnvStoreReadError, InvalidEnvKeyError, isValidEnvKey, type EnvService } from "../env-file.js";
 import { syncManagedProviderAuth, type ManagedProviderAuthResult } from "../managed-provider-auth.js";
 import { ApiError } from "../errors.js";
+import { readDiskSpace } from "../disk-space.js";
+import { runtimeStorageDir } from "../runtime-db.js";
 import { callExperimentalExtensionAction, listExperimentalExtensionActions } from "../extensions/index.js";
 import { takeApprovedDriveUpload } from "../extensions/approved-drive-upload.js";
 import { callDriveFileAction } from "../extensions/drive-files.js";
+import { takeFileSendApproved } from "../file-send-approval.js";
 import type { TokenService } from "../tokens.js";
 import type { Capabilities, ServerConfig, WorkspaceInfo } from "../types.js";
 import { addRoute, type Route } from "./registry.js";
 
-/**
- * Version reported by the engine binary actually in use. `opencodeVersion` on
- * /health is the version this server release was pinned to; the two differ
- * when an operator brings their own engine. Null until the launcher probes it.
- */
 let installedOpencodeVersion: string | null = null;
 
 export function setInstalledOpencodeVersion(version: string | null): void {
@@ -151,10 +151,6 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
 
   addRoute(routes, "GET", "/w/:id/health", "none", async () => healthResponse());
 
-  // Dev log sink: append browser console + error events to a file that an
-  // operator (or an AI driver) can tail. Unauth on purpose because this is
-  // scoped to the dev host and needs to work before clients finish wiring
-  // tokens; it is also a no-op when OPENWORK_DEV_LOG_FILE is unset.
   addRoute(routes, "POST", "/dev/log", "none", async (ctx) => {
     const target = resolveDevLogPath();
     if (!target) {
@@ -187,10 +183,6 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
   });
 
   addRoute(routes, "GET", "/dev/log", "none", async () => {
-    // Probe response: always 200 so the client's capability probe doesn't
-    // log a noisy "Failed to load resource: 404" in the browser console
-    // when the sink is simply disabled. Clients should key on `ok` + `reason`
-    // in the body, not on HTTP status.
     const target = resolveDevLogPath();
     if (!target) {
       return jsonResponse({ ok: false, reason: "dev_log_disabled" });
@@ -259,6 +251,10 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     });
   });
 
+  addRoute(routes, "GET", "/disk-space", "client", async () => {
+    return jsonResponse(await readDiskSpace(runtimeStorageDir(config)));
+  });
+
   addRoute(routes, "GET", "/runtime/versions", "client", async () => {
     const snapshot = await fetchRuntimeControl("/runtime/versions");
     return jsonResponse(snapshot);
@@ -298,7 +294,6 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
   });
 
   addRoute(routes, "GET", "/experimental/connect/skills", "client", async (_ctx) => {
-    // Connect skills are server/account-scoped (openwork-cloud on the host), not per-workspace.
     const { skills, delivery } = await readOpenWorkConnectSkillIndex(config);
     return jsonResponse({
       ok: true,
@@ -310,11 +305,9 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
   });
 
   addRoute(routes, "POST", "/experimental/connect/skills/read", "client", async (ctx) => {
-    // Listed skills' SKILL.md for native delivery; Den rechecks access.
     const body = await readJsonBody(ctx.request);
     const validUrl = (url: unknown): url is string => typeof url === "string" && url.startsWith("skill://") && url.length <= 2_048;
     if (Array.isArray(body.urls)) {
-      // Several bodies on one Den session; `use` marks a message that uses them.
       if (body.urls.length === 0 || body.urls.length > 150 || !body.urls.every(validUrl)) {
         return jsonResponse({ ok: false, reason: "invalid_url" }, 400);
       }
@@ -329,8 +322,24 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     return jsonResponse({ ok: true, content });
   });
 
+  addRoute(routes, "POST", "/experimental/connect/skills/folder", "client", async (ctx) => {
+    const body = await readJsonBody(ctx.request);
+    if (typeof body.url !== "string" || !body.url.startsWith("skill://") || !body.url.endsWith("/SKILL.md") || body.url.length > 2_048) {
+      return jsonResponse({ ok: false, reason: "invalid_url" }, 400);
+    }
+    const url = body.url;
+    const skill = (await readOpenWorkConnectSkillIndex(config)).skills.find((entry) => entry.url === url);
+    if (!skill?.digest || skill.setup || !skill.files?.length) return jsonResponse({ ok: false, reason: "unavailable" }, 404);
+    const path = await ensureCloudSkillFolder({
+      root: cloudSkillFoldersRoot(config),
+      spec: { name: skill.name, digest: skill.digest, files: skill.files },
+      read: () => readOpenWorkConnectSkillSource(config, url),
+    }).catch(() => null);
+    if (!path) return jsonResponse({ ok: false, reason: "unavailable" }, 404);
+    return jsonResponse({ ok: true, path });
+  });
+
   addRoute(routes, "GET", "/experimental/connect/automations", "client", async (_ctx) => {
-    // Owner-scoped through the same openwork-cloud connection as skills.
     const index = await readOpenWorkAutomationCatalog(config);
     return jsonResponse({
       ok: true,
@@ -369,8 +378,6 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     return jsonResponse(await callExperimentalExtensionAction(config, env, body, await getConnectSnapshot(config, { ...connectSnapshotBaseOptions, ...connectSnapshotOptionsFromBody(body) }), ctx.request.signal, approvedDriveFile));
   });
 
-  // Drive writes additionally require the in-process Desktop confirmation in
-  // callDriveFileAction. Neither an engine credential nor a request flag grants approval.
   addRoute(routes, "POST", "/experimental/drive-files/call", "client", async (ctx) => {
     if (ctx.actor?.scope === "viewer") {
       throw new ApiError(403, "forbidden", "Viewer tokens cannot call Drive file actions");
@@ -380,7 +387,8 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     const args = isRecord(body.args) ? body.args : {};
     const context = isRecord(body.context) ? body.context : {};
     if (action === "drive_push_file" || action === "drive_pull_file") ensureWritable(config);
-    const result = await callDriveFileAction(config, action, args, context, { signal: ctx.request.signal });
+    const approvedInChat = takeFileSendApproved(ctx.request) && action === "drive_push_file";
+    const result = await callDriveFileAction(config, action, args, context, { signal: ctx.request.signal, ...(approvedInChat ? { approvedInChat } : {}) });
     if (!result) throw new ApiError(404, "extension_action_not_found", "Drive file action not found");
     return jsonResponse(result);
   });
@@ -429,11 +437,6 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
     throw error;
   }
 
-  // User-level env vars (see apps/app/pr/environment-variables.md). All routes
-  // require the desktop host token (not owner bearer tokens). List callers can
-  // request metadata-only results so renderer settings panes do not receive
-  // every raw secret value up front. Reload semantics are driven from the UI
-  // after a write; this surface is user-scoped, not workspace-scoped, so no audit.
   addRoute(routes, "GET", "/env", "host-token", async (ctx) => {
     const includeValues = parseOptionalBoolean(ctx.url.searchParams.get("includeValues"), "includeValues") ?? true;
     const items = await env.list().catch(rethrowEnvStoreReadError);
@@ -532,8 +535,6 @@ export function registerCoreRoutes(options: RegisterCoreRoutesOptions): void {
       }
       throw error;
     }
-    // A stored credential is useless until the engine holds it: deliver it now
-    // rather than waiting for the next engine start.
     const authResult = await syncManagedProviderAuth({ config, env, logger: managedProviderAuthLogger }).catch(() => undefined);
     if (authResult && (authResult.delivered.length > 0 || authResult.removed.length > 0)) {
       await onManagedProviderAuthChanged?.(authResult).catch(() => undefined);

@@ -7,6 +7,7 @@ import { DenButton } from "../../_components/ui/button";
 import { DenNotice } from "../../_components/ui/notice";
 import { getMembersRoute, getPermissionKeyRoute, getPermissionKeysRoute, getPermissionSetRoute } from "../../_lib/den-org";
 import { PermissionsRequestError, usePermissionKeyStatus } from "./permissions-data";
+import { roleSetKindRank } from "../../_lib/role-catalog";
 import { roleKindLabel, roleName } from "./team-roles";
 import {
   PermissionAreaSection,
@@ -20,7 +21,6 @@ import {
 
 const rowClass = "group flex min-h-11 items-center gap-3 py-2 transition-colors hover:bg-gray-50/70 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-400";
 
-/** Every permission by area; each opens its status across sets. */
 export function PermissionKeysScreen() {
   const permissions = usePermissionsAccess();
 
@@ -52,9 +52,7 @@ export function PermissionKeysScreen() {
   );
 }
 
-const SET_KIND_ORDER = { member_default: 0, admin_default: 1, team: 2 } as const;
 
-/** One permission's status in Member, Admin and every team's permissions. */
 export function PermissionKeyScreen({ permissionKey }: { permissionKey: string }) {
   const permissions = usePermissionsAccess();
 
@@ -66,7 +64,7 @@ export function PermissionKeyScreen({ permissionKey }: { permissionKey: string }
     return <PermissionsPage title={title} testId="permission-key"><PermissionsAccessState access={permissions} /></PermissionsPage>;
   }
   const back = { href: getPermissionKeysRoute(ready.orgSlug), label: "By permission" };
-  const sets = [...(query.data?.sets ?? [])].sort((a, b) => SET_KIND_ORDER[a.kind] - SET_KIND_ORDER[b.kind]);
+  const sets = [...(query.data?.sets ?? [])].sort((a, b) => roleSetKindRank(a.kind) - roleSetKindRank(b.kind));
   const allowedCount = sets.filter((set) => set.status === "allow").length;
 
   return (

@@ -26,7 +26,6 @@ const confirmation = z.object({
 }).strict()
 const messageSchema = z.looseObject({ id: z.string().trim().min(1), threadId: z.string().trim().min(1) })
 const draftSchema = z.looseObject({ id: z.string().trim().min(1), message: messageSchema })
-// Draft lists document id + threadId; minimal/metadata reads promise only message ID and labels.
 const draftReadSchema = draftSchema.extend({ message: messageSchema.partial({ threadId: true }) })
 const labelSchema = z.looseObject({ id: z.string().trim().min(1), name: z.string().min(1), type: z.enum(["user", "system"]) })
 const draftListSchema = z.looseObject({
@@ -114,7 +113,6 @@ export function registerGmailManagementRoutes<T extends { Variables: OrgRouteVar
   async function remove(c: Context<{ Variables: OrgRouteVariables }>, scopes: readonly string[], url: URL) {
     const result = await requestGoogleAction(c, dependencies, scopes, url, { method: "DELETE" })
     if (!result.ok) return result.reply
-    // Gmail delete methods return no resource: accept 204 or the documented empty JSON object.
     if (result.response.status !== 204) {
       const parsed = await readGoogleJson(c, result.response, z.object({}).strict(), true)
       if (!parsed.ok) return parsed.reply

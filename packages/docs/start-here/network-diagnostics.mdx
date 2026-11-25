@@ -1,9 +1,9 @@
 ---
 title: "Network diagnostics"
-description: "Diagnose DNS, TLS, proxy, catalog, and Den outbound issues in locked-down OpenWork deployments."
+description: "Diagnose DNS, TLS, proxy, and catalog issues in locked-down OpenWork deployments."
 ---
 
-Use this page when OpenWork reaches the wrong server, cannot complete TLS, is blocked by a proxy, or needs proof that Den can reach an approved diagnostic origin. For non-network runtime, MCP, and stale-tool problems, use [Diagnostic prompts](/start-here/troubleshooting/diagnostic-prompts).
+Use this page when OpenWork reaches the wrong server, cannot complete TLS, or is blocked by a proxy. For non-network runtime, MCP, and stale-tool problems, use [Diagnostic prompts](/start-here/troubleshooting/diagnostic-prompts).
 
 ## Windows desktop network doctor
 
@@ -47,24 +47,10 @@ The value is a comma-separated list of bare origins: scheme, host, and optional 
 
 If the Den origin is not trusted, the diagnostic is skipped and sends no credentialed request to that untrusted origin. Cloud MCP itself is unaffected; this variable only controls the diagnostic probe. Set it in the launcher, MDM profile, service wrapper, or shell environment before launch because the in-app environment store strips `OPENWORK_*` and `OPENCODE_*` keys.
 
-## Den outbound diagnostic
-
-Den can run an optional, admin-triggered outbound diagnostic from the Den process. It exercises the real container DNS, proxy, TLS trust, firewall, service mesh, and NetworkPolicy path.
-
-- The default diagnostics origin is `https://diagnostic.openworklabs.com`.
-- A workspace owner or super-admin starts the check; it is not a background dependency for Den.
-- The diagnostic token must be synthetic and at least 24 characters. Do not use provider or customer credentials.
-- To use an internal diagnostics origin, deploy the diagnostics app at an internally reachable supported runtime/origin, then set `DEN_DIAGNOSTICS_ORIGIN` and `DEN_DIAGNOSTICS_BEARER_TOKEN` for Den. The service README currently documents its runtime and retention model; do not assume a generic Kubernetes package unless your deployment path has been validated.
-
-```dotenv
-DEN_DIAGNOSTICS_ORIGIN=https://diagnostics.example.internal
-DEN_DIAGNOSTICS_BEARER_TOKEN=<24-or-more-character-synthetic-token>
-```
-
-On Node.js 24.5 or newer, Den proxy configuration belongs in process-start environment such as `NODE_USE_ENV_PROXY=1`, `HTTPS_PROXY`, and `NO_PROXY`. Use `NODE_EXTRA_CA_CERTS` or Helm `customCa` when TLS inspection uses a private root. See [Certificate trust and proxies](/start-here/certificate-trust-and-proxies).
-
 ## Related diagnostics
 
+- [Diagnostics](/self-host/diagnostics) checks AI providers and installation services from the Den process.
+- [Certificate trust and proxies](/start-here/certificate-trust-and-proxies) covers Den's proxy and private CA settings.
 - [Outbound network access](/start-here/outbound-network-access) lists the destination inventory and what breaks when a host is blocked.
 - [Private network deployment](/start-here/private-network-deployment) explains the common VPN/private Den topology and internal MCP policy switch.
 - [Diagnostic prompts](/start-here/troubleshooting/diagnostic-prompts) covers non-network runtime, MCP, and stale-tool debugging.

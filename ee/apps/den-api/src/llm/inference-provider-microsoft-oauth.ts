@@ -1,11 +1,6 @@
-/**
- * Member Entra ID sign-in for Microsoft Foundry: authorization code + PKCE with
- * the organization's own confidential app registration. The Gateway renews the
- * access token with the stored refresh token (see gateway credentials/oauth-refresh).
- */
 import { createHmac } from "node:crypto"
 import { createRemoteJWKSet, errors, jwtVerify, type JWTVerifyGetKey } from "jose"
-import { classifyMicrosoftTokenError, MICROSOFT_SIGN_IN_SCOPES, microsoftAuthorizeUrl, microsoftIssuer, microsoftJwksUrl, microsoftTokenUrl, readMicrosoftTokens, type MicrosoftTokens } from "@openwork-ee/utils/microsoft-entra"
+import { classifyMicrosoftTokenError, isMicrosoftAccessTokenForApp, microsoftAuthorizeUrl, microsoftIssuer, microsoftJwksUrl, microsoftSignInScopes, microsoftTokenUrl, readMicrosoftTokens, type MicrosoftTokens } from "@openwork-ee/gateway-upstreams"
 import { OAuthTokenExchangeError } from "../capability-sources/generic-oauth.js"
 import type { FetchLike } from "./inference-provider-google-oauth.js"
 
@@ -17,14 +12,13 @@ export function microsoftOAuthNonce(verifier: string, state: string) {
   return createHmac("sha256", verifier).update(`gateway-microsoft-oidc-v1:${state}`).digest("base64url")
 }
 
-export function buildMicrosoftAuthorizeUrl(input: { tenantId: string; clientId: string; redirectUri: string; state: string; codeChallenge: string; nonce: string }) {
+export function buildMicrosoftAuthorizeUrl(input: { tenantId: string; clientId: string; redirectUri: string; state: string; codeChallenge: string; nonce: string; apiScope?: string | null }) {
   const url = new URL(microsoftAuthorizeUrl(input.tenantId))
   url.searchParams.set("client_id", input.clientId)
   url.searchParams.set("redirect_uri", input.redirectUri)
   url.searchParams.set("response_type", "code")
   url.searchParams.set("response_mode", "query")
-  url.searchParams.set("scope", MICROSOFT_SIGN_IN_SCOPES)
-  // Always show the account picker so "Switch account" can choose another work account.
+  url.searchParams.set("scope", microsoftSignInScopes(input.apiScope ?? null))
   url.searchParams.set("prompt", "select_account")
   url.searchParams.set("code_challenge", input.codeChallenge)
   url.searchParams.set("code_challenge_method", "S256")
@@ -42,10 +36,12 @@ export async function exchangeMicrosoftAuthorizationCode(input: {
   code: string
   codeVerifier: string
   redirectUri: string
+  apiScope?: string | null
   fetchImpl?: FetchLike
 }): Promise<MicrosoftAuthorizationTokens> {
+  const apiScope = input.apiScope ?? null
   const params = new URLSearchParams({ grant_type: "authorization_code", code: input.code, redirect_uri: input.redirectUri,
-    client_id: input.clientId, client_secret: input.clientSecret, code_verifier: input.codeVerifier, scope: MICROSOFT_SIGN_IN_SCOPES })
+    client_id: input.clientId, client_secret: input.clientSecret, code_verifier: input.codeVerifier, scope: microsoftSignInScopes(apiScope) })
   let response: Response
   try {
     response = await (input.fetchImpl ?? defaultFetch)(microsoftTokenUrl(input.tenantId), {
@@ -63,8 +59,11 @@ export async function exchangeMicrosoftAuthorizationCode(input: {
       ? "An administrator must repair this credential set's Microsoft app registration: check the client ID and that the client secret has not expired."
       : "Microsoft could not complete sign-in. Start Connect again.", code, { httpStatus: response.status })
   }
-  const tokens = readMicrosoftTokens(body)
+  const tokens = readMicrosoftTokens(body, apiScope)
   if (!tokens || !tokens.idToken) throw new OAuthTokenExchangeError("Microsoft returned an invalid token response. Sign in again.", "oauth_token_response_invalid")
+  if (apiScope !== null && !isMicrosoftAccessTokenForApp(tokens.accessToken, input.clientId)) {
+    throw new OAuthTokenExchangeError(`Microsoft issued a token for a different API than this provider's app registration. An administrator must set the API scope to one under api://${input.clientId}/ (or set the app registration to issue v2 access tokens), then Connect again.`, "oauth_token_response_invalid")
+  }
   if (!tokens.refreshToken) throw new OAuthTokenExchangeError("Microsoft did not grant offline access. Ask your administrator to allow the offline_access permission, then Connect again.", "oauth_refresh_token_required")
   return { ...tokens, refreshToken: tokens.refreshToken, idToken: tokens.idToken }
 }
@@ -81,7 +80,6 @@ function tenantKeys(tenantId: string): JWTVerifyGetKey {
 
 export type MicrosoftIdentity = { tenantId: string; objectId: string; userName: string | null; clientId: string }
 
-/** Verifies the ID token was issued by the configured tenant to this app for this sign-in attempt. */
 export async function verifyMicrosoftIdentity(input: { idToken: string; tenantId: string; clientId: string; nonce: string; keyResolver?: JWTVerifyGetKey }): Promise<MicrosoftIdentity> {
   const tenantId = input.tenantId.toLowerCase()
   const resolveKey: JWTVerifyGetKey = async (...args) => {

@@ -11,8 +11,6 @@ interface FenceState {
   selected?: Engine;
 }
 
-// Use the shared ServerConfig object's identity, without importing server/config
-// modules. Reads do not enter this gate and remain available during a handoff.
 const states = new WeakMap<object, FenceState>();
 
 function stateFor(config: object): FenceState {
@@ -37,11 +35,6 @@ async function waitFor(promise: Promise<void>, signal?: AbortSignal): Promise<vo
   finally { signal.removeEventListener("abort", abort); }
 }
 
-/** Hold until the forwarded mutation finishes (including its response body).
- * New mutations wait behind pending switches; a mutation queued for an engine
- * replaced by a successful switch receives 409 and must resolve routing again.
- * Explicit engine mutations outside a transition are deliberately not blocked.
- */
 export async function enterEngineMutation(config: object, engine: Engine, signal?: AbortSignal): Promise<() => Promise<void>> {
   const state = stateFor(config);
   const generation = state.generation;
@@ -63,20 +56,11 @@ export async function enterEngineMutation(config: object, engine: Engine, signal
   };
 }
 
-/** Block new mutations immediately, drain forwarded HTTP mutations, then run
- * the final idle/routing commit. This does not stop running tasks:
- * operation must reject if the engine is not idle. A destination that converts
- * the source database must not start before that check and routing commit.
- * All callers must share config identity.
- *
- * operation must resolve only after routing has committed, and must leave the
- * source selected if it throws. Successful transitions alone invalidate queued
- * requests; a failed switch releases them without changing their engine.
- */
 export async function withEngineSwitchFence<T>(config: object, options: {
   from: Engine;
   to: Engine;
   operation: () => Promise<T>;
+  rejectActive?: boolean;
 }): Promise<T> {
   const state = stateFor(config);
   const previous = state.tail;
@@ -85,6 +69,7 @@ export async function withEngineSwitchFence<T>(config: object, options: {
   state.pending++;
   try {
     await previous;
+    if (options.rejectActive && state.active) throw new ApiError(409, "engine_busy", "Wait for the current task or engine request to finish, then retry. Nothing was restarted.");
     if (state.active) await new Promise<void>(resolve => state.drained.add(resolve));
     const result = await options.operation();
     if (options.from !== options.to) {

@@ -48,8 +48,6 @@ function AlertDialogContent({
   return (
     <AlertDialogPortal>
       <AlertDialogOverlay />
-      {/* Dismissal hides the popup in the same frame: an exit animation would keep
-          the dialog on screen (and its text visible) until Base UI unmounts it. */}
       <AlertDialogPrimitive.Popup
         data-slot="alert-dialog-content"
         data-size={size}

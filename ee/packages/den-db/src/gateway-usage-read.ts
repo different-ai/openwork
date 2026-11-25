@@ -77,6 +77,27 @@ export async function activeUsageMember(
   return member
 }
 
+/**
+ * A member a limit can be assigned to directly: anyone still in the organization, joined or
+ * invited. An invited person's member row keeps its id when they accept, so what is assigned
+ * to it is enforced from their first request. A canceled invitation removes the row.
+ */
+export async function assignableUsageMember(tx: UsageReader, scope: GatewayUsageScope) {
+  const [member] = await tx
+    .select()
+    .from(MemberTable)
+    .where(
+      and(
+        eq(MemberTable.id, scope.memberId),
+        eq(MemberTable.organizationId, scope.organizationId),
+        isNull(MemberTable.removedAt),
+      ),
+    )
+    .for("share")
+  if (!member) return usageFail("member_not_found", 404, "Organization member not found.")
+  return member
+}
+
 export async function usagePolicies(
   tx: UsageReader,
   organizationId: GatewayUsageScope["organizationId"],
@@ -93,7 +114,6 @@ export async function usagePolicies(
     .select()
     .from(A)
     .where(and(eq(A.organizationId, organizationId), inArray(A.policyId, ids)))
-  // A provider limit whose provider was deleted applies to no requests; say so.
   const existingProviders = await usageProviderNames(
     tx,
     organizationId,
@@ -281,7 +301,6 @@ export function projectedBucket(
 ): UsageBucket {
   const period = gatewayUsagePeriod(timeframe, now)
   return {
-    // Default bucket ids keep their pre-provider shape.
     id: createHash("sha256")
       .update(
         `${scope.organizationId}/${scope.memberId}/${timeframe}/${period.start.toISOString()}${providerScope ? `/${providerScope}` : ""}`,
@@ -389,7 +408,6 @@ export function usageSnapshot(
         ...bucket
       }) => ({
         ...bucket,
-        // Default snapshots stay identical to the pre-provider shape for older readers.
         ...(providerScope ? { providerScope } : {}),
         startAt: bucket.startAt.toISOString(),
         resetAt: bucket.resetAt.toISOString(),

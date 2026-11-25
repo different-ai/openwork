@@ -3,14 +3,12 @@ import { create } from "zustand"
 import type { ComputerRequest } from "@openwork/types/desktop-ipc"
 
 import { desktopBridge } from "@/app/lib/desktop"
-import { useComputerSessionHistoryStore } from "@/components/chat/computer-session-history-store"
+import { useBrowserSecretsEnabled } from "../panel/use-browser-secrets"
 import { isActiveWorkSessionStatus } from "../sidebar/utils"
 import { useDesktopFeature } from "../status/use-desktop-feature"
 
 type ComputerStore = {
-  /** Chats whose agent is waiting for computer use: setup or the person's allowance. */
   requests: Record<string, ComputerRequest>
-  /** Bumped when the person presses Continue in a chat's Computer view. */
   continued: Record<string, number>
   setRequest: (sessionId: string, request: ComputerRequest | null) => void
   markContinued: (sessionId: string) => void
@@ -31,48 +29,19 @@ export const useComputerStore = create<ComputerStore>((set) => ({
 export const useComputerRequest = (sessionId: string | null | undefined) =>
   useComputerStore((state) => sessionId ? state.requests[sessionId] ?? null : null)
 
-/**
- * Connects the desktop's computer broker to the app, once per window and on
- * every route, Settings included: reports the `computerUse`,
- * `remoteComputers` and `standardCodeMode` features and keeps in-chat
- * requests current.
- */
 export function ComputerBridge() {
-  const enabled = useDesktopFeature("computerUse")
   const remote = useDesktopFeature("remoteComputers")
-  const standardCodeMode = useDesktopFeature("standardCodeMode")
-  const parallel = useDesktopFeature("parallelComputerUse")
   useEffect(() => {
-    void desktopBridge.computerSetRemoteEnabled(enabled && remote).catch(() => {})
-  }, [enabled, remote])
+    void desktopBridge.computerSetRemoteEnabled(remote).catch(() => {})
+  }, [remote])
+  useBrowserSecretsEnabled()
 
-  useEffect(() => {
-    void desktopBridge.computerSetFeatureEnabled(enabled).catch(() => {})
-  }, [enabled])
-
-  // Computer programs that start while it is on run as standard JavaScript.
-  useEffect(() => {
-    void desktopBridge.computerSetStandardCodeMode(standardCodeMode).catch(() => {})
-  }, [standardCodeMode])
-
-  // A chat's subagents work on its computer as part of it.
-  useEffect(() => {
-    void desktopBridge.computerSetParallelAgents(parallel).catch(() => {})
-    useComputerSessionHistoryStore.getState().setParallel(parallel)
-  }, [parallel])
-
-  // The broker raises computer-use requests only while computer use is on, but the
-  // built-in browser's sign-in confirmations arrive either way.
   useEffect(() => window.__OPENWORK_ELECTRON__?.computer?.onRequest?.(({ sessionId, request }) => {
     useComputerStore.getState().setRequest(sessionId, request)
   }), [])
   return null
 }
 
-/**
- * Hands the Mac back as soon as a chat's turn ends (the broker also releases
- * idle sessions on its own; this only makes it immediate).
- */
 export function useComputerEndTurn(statusById: Record<string, string>, enabled: boolean) {
   const previous = useRef<Record<string, string>>({})
   useEffect(() => {

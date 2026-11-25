@@ -10,7 +10,6 @@ import {
   teamModelsExampleTeam,
 } from "./team-models-example-data";
 
-/** Team models example: the model new chats start on, the providers the team can use and its spend limit. */
 export function TeamModelsExample() {
   const step = useExampleStep(teamModelsExampleProviders.length);
 

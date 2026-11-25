@@ -27,39 +27,71 @@ export function startReloadWatchers(input: {
   reloadEvents: ReloadEventStore;
   logger?: Logger | null;
   debounceMs?: number;
-}): { close: () => void; refreshWorkspace: (workspaceId: string, reasons?: ReloadReason[]) => Promise<void> } {
+}): { sync: () => void; close: () => void; refreshWorkspace: (workspaceId: string, reasons?: ReloadReason[]) => Promise<void> } {
   const { config, reloadEvents } = input;
   const logger = input.logger ?? null;
   const debounceMs = typeof input.debounceMs === "number" ? input.debounceMs : 750;
 
-  const workspaceWatchers = new Map<string, WorkspaceReloadWatcher>();
+  const workspaceWatchers = new Map<string, WorkspaceReloadWatcher & { path: string }>();
+  let closed = false;
 
-  for (const workspace of config.workspaces) {
-    try {
-      const watcher = startWorkspaceReloadWatcher({ workspace, reloadEvents, logger, debounceMs });
-      workspaceWatchers.set(workspace.id, watcher);
-    } catch (error) {
-      logger?.log("warn", "Reload watcher failed to start", {
-        workspaceId: workspace.id,
-        workspacePath: workspace.path,
-        error: error instanceof Error ? error.message : String(error),
+  const sync = () => {
+    if (closed) return;
+    const desired = new Map<string, WorkspaceInfo>();
+    for (const workspace of config.workspaces) {
+      try {
+        if (!workspace.path?.trim()) continue;
+        desired.set(workspace.id, { ...workspace, path: resolve(workspace.path) });
+      } catch (error) {
+        logger?.log("warn", "Reload watcher failed to start", {
+          workspaceId: workspace.id,
+          workspacePath: workspace.path,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    for (const [id, watcher] of workspaceWatchers) {
+      if (desired.get(id)?.path === watcher.path) continue;
+      try {
+        watcher.close();
+      } catch {
+      }
+      workspaceWatchers.delete(id);
+    }
+
+    let added = 0;
+    for (const workspace of desired.values()) {
+      if (workspaceWatchers.has(workspace.id)) continue;
+      try {
+        const watcher = startWorkspaceReloadWatcher({ workspace, reloadEvents, logger, debounceMs });
+        workspaceWatchers.set(workspace.id, { ...watcher, path: workspace.path });
+        added++;
+      } catch (error) {
+        logger?.log("warn", "Reload watcher failed to start", {
+          workspaceId: workspace.id,
+          workspacePath: workspace.path,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    if (added) {
+      logger?.log("info", `Reload watcher enabled (${workspaceWatchers.size})`, {
+        workspaceCount: workspaceWatchers.size,
       });
     }
-  }
+  };
 
-  if (config.workspaces.length) {
-    logger?.log("info", `Reload watcher enabled (${config.workspaces.length})`, {
-      workspaceCount: config.workspaces.length,
-    });
-  }
+  sync();
 
   return {
+    sync,
     close: () => {
+      closed = true;
       for (const watcher of workspaceWatchers.values()) {
         try {
           watcher.close();
         } catch {
-          // ignore
         }
       }
       workspaceWatchers.clear();
@@ -104,16 +136,13 @@ function startWorkspaceReloadWatcher(input: {
   const refreshBaseline = async (reasons: ReloadReason[] = fingerprintedReloadReasons) => {
     for (const reason of reasons) {
       if (!fingerprintedReloadReasons.includes(reason)) continue;
-      baselines.set(reason, await computeReloadFingerprint(root, reason));
+      if (closed) return;
+      const current = await computeReloadFingerprint(root, reason);
+      if (closed) return;
+      baselines.set(reason, current);
     }
   };
 
-  // Best-known named trigger per reason. fs.watch event order and filename
-  // presence are platform-dependent (macOS often omits filenames or fires a
-  // named check before the write has flushed), so a triggerless path can be
-  // the one that finally observes the fingerprint change. Remember the most
-  // recent named trigger briefly and attach it to such records instead of
-  // emitting trigger-less reload events.
   const NAMED_TRIGGER_TTL_MS = 5_000;
   const lastNamedTrigger = new Map<ReloadReason, { trigger: ReloadTrigger; at: number }>();
 
@@ -121,11 +150,6 @@ function startWorkspaceReloadWatcher(input: {
     if (trigger) return trigger;
     const recent = lastNamedTrigger.get(reason);
     if (recent && Date.now() - recent.at <= NAMED_TRIGGER_TTL_MS) return recent.trigger;
-    // Last line of defense: macOS fs.watch can coalesce a config-file write
-    // into a single directory-level event (e.g. ".opencode") and never
-    // deliver a file-named event at all. If a config/agents fingerprint
-    // change is about to be recorded with no trigger, infer it from the
-    // files that can produce it — same inference the watch callbacks use.
     if (reason === "config") {
       const candidates = [
         join(root, "opencode.jsonc"),
@@ -148,6 +172,7 @@ function startWorkspaceReloadWatcher(input: {
     if (!fingerprintedReloadReasons.includes(reason)) return;
 
     const current = await computeReloadFingerprint(root, reason);
+    if (closed) return;
     const previous = baselines.get(reason);
     baselines.set(reason, current);
 
@@ -170,14 +195,11 @@ function startWorkspaceReloadWatcher(input: {
       pendingChecks.delete(reason);
       void checkReason(reason, pending?.trigger ?? trigger);
     }, debounceMs);
-    // Coalescing must not lose a named trigger: a triggerless directory-level
-    // event arriving inside the debounce window previously overwrote the
-    // pending file trigger with undefined (platform-dependent event order —
-    // surfaced as a macOS-only CI flake in reload-events.e2e.test.ts).
     pendingChecks.set(reason, { timer, trigger: trigger ?? existing?.trigger });
   };
 
   const ensureOpencodeRootWatcher = () => {
+    if (closed) return;
     if (!existsSync(opencodeRoot)) {
       opencodeRootWatcher?.close();
       opencodeRootWatcher = null;
@@ -190,6 +212,7 @@ function startWorkspaceReloadWatcher(input: {
         opencodeRoot,
         { persistent: false },
         (_eventType, filename) => {
+          if (closed) return;
           const raw = filename ? filename.toString() : "";
           const name = raw.trim();
           if (!name) {
@@ -221,6 +244,7 @@ function startWorkspaceReloadWatcher(input: {
         },
       );
       opencodeRootWatcher.on("error", (error) => {
+        if (closed) return;
         logger?.log("warn", "Reload watcher .opencode error", {
           workspaceId: workspace.id,
           workspacePath: root,
@@ -236,19 +260,16 @@ function startWorkspaceReloadWatcher(input: {
     }
   };
 
-  // Watch the workspace root for top-level config files.
   if (existsSync(root)) {
     try {
       rootWatcher = watch(
         root,
         { persistent: false },
         (_eventType, filename) => {
+          if (closed) return;
           const raw = filename ? filename.toString() : "";
           const name = raw.trim();
           if (!name) {
-            // macOS fs.watch may omit the filename for directory events.
-            // Infer the trigger like ensureOpencodeRootWatcher does so config
-            // reload events keep their trigger {name, path} on macOS.
             const inferredConfigPath = existsSync(join(root, "opencode.jsonc"))
               ? join(root, "opencode.jsonc")
               : existsSync(join(root, "opencode.json"))
@@ -284,7 +305,6 @@ function startWorkspaceReloadWatcher(input: {
             return;
           }
 
-          // If .opencode is created/removed, rescan the relevant trees.
           if (name === ".opencode") {
             ensureOpencodeRootWatcher();
             scheduleReasonCheck("config");
@@ -293,6 +313,7 @@ function startWorkspaceReloadWatcher(input: {
         },
       );
       rootWatcher.on("error", (error) => {
+        if (closed) return;
         logger?.log("warn", "Reload watcher root error", {
           workspaceId: workspace.id,
           workspacePath: root,
@@ -361,7 +382,6 @@ function startWorkspaceReloadWatcher(input: {
     }),
   );
 
-  // Kick off an initial scan so we start watching existing trees.
   for (const tree of trees) {
     tree.scheduleRescan();
   }
@@ -399,7 +419,6 @@ function createDirectoryTreeWatcher(input: {
       try {
         watcher.close();
       } catch {
-        // ignore
       }
     }
     watchers.clear();
@@ -448,6 +467,7 @@ function createDirectoryTreeWatcher(input: {
   };
 
   const ensureWatcher = (dir: string) => {
+    if (closed) return;
     if (watchers.has(dir)) return;
     try {
       const watcher = watch(
@@ -465,6 +485,7 @@ function createDirectoryTreeWatcher(input: {
         },
       );
       watcher.on("error", (error) => {
+        if (closed) return;
         logger?.log("warn", "Reload watcher dir error", {
           workspaceId: workspace.id,
           reason,
@@ -523,7 +544,6 @@ function createDirectoryTreeWatcher(input: {
           try {
             watcher.close();
           } catch {
-            // ignore
           }
         }
         watchers.clear();
@@ -531,6 +551,7 @@ function createDirectoryTreeWatcher(input: {
       }
 
       const dirs = await scanDirs();
+      if (closed) return;
       for (const dir of dirs) {
         ensureWatcher(dir);
       }
@@ -540,7 +561,6 @@ function createDirectoryTreeWatcher(input: {
           try {
             watcher?.close();
           } catch {
-            // ignore
           }
           watchers.delete(dir);
         }

@@ -5,7 +5,6 @@ import { OpenworkServerError } from "@/app/lib/openwork-server";
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
 import type { Client } from "@/app/types";
 
-/** Whether chat runs on OpenCode v2 for this server. A legacy server's 404 means v1. */
 export async function readChatRoutesToV2(endpoint: Pick<ResolvedWorkspaceEndpoint, "client">): Promise<boolean> {
   try {
     const status = await endpoint.client.getEngineV2PreviewStatus();
@@ -16,12 +15,6 @@ export async function readChatRoutesToV2(endpoint: Pick<ResolvedWorkspaceEndpoin
   }
 }
 
-/**
- * The engine chat actually runs on, for screens outside a chat that list or
- * choose models (Settings). Their own client always talks to v1, which on a v2
- * desktop lacks the organization's live-synced models, so the lists differed
- * from the chat's picker. Falls back to `fallback` while routing is unknown.
- */
 export function useChatEngineClient(input: {
   endpoint: ResolvedWorkspaceEndpoint | null;
   workspaceRoot: string;

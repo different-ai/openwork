@@ -48,21 +48,13 @@ function ServiceMark({ name, iconUrl }: { name: string; iconUrl: string | null |
   )
 }
 
-/**
- * Native presentation of one OpenWork connection report in the transcript.
- * One state-first line (P1/P2), flat (S1), 40px row (S2), at most two verb
- * labels (C1/T4); blocked states are neutral with a lock (C5); the raw failure
- * lives behind an icon-only disclosure (T2/P3).
- */
 export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectScope, connectorIdentities, allowDiscovery = false, subject }: {
   callbacks?: ChatToolReconnectCallbacks
   part: DynamicToolUIPart
   reconnectCallbacks?: ChatToolReconnectCallbacks
   reconnectScope?: string
   connectorIdentities?: ConnectorToolIdentity[]
-  /** Read the connection from ordinary discovery too; only for a bound native question. */
   allowDiscovery?: boolean
-  /** What the sign-in unlocks, such as an App's title: the card then asks to "Sign in to X to use it". */
   subject?: string
 }) {
   const messageList = useOptionalMessageList()
@@ -87,9 +79,6 @@ export function ConnectionCard({ part, callbacks, reconnectCallbacks, reconnectS
   const iconUrl = identity?.iconUrl
   const readOnly = messageList?.readOnly ?? false
   const skipped = reconnectState === "skipped"
-  // The tool result is a snapshot from when the step ran; the live org
-  // connection list says whether this member is connected now, so a card
-  // signed in earlier stays connected after leaving and reopening the session.
   const connected = connection.state === "connected" || reconnectState === "connected" || identity?.connectedForMe === true
   const settled = connected || skipped
   const opening = !settled && reconnectState === "opening"

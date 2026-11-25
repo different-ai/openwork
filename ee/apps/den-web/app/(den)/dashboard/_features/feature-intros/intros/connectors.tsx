@@ -6,19 +6,10 @@ import { ConnectorAccessExample } from "./examples/connectors/access-example";
 import { ConnectorAddExample } from "./examples/connectors/add-example";
 import { ConnectorsExample } from "./examples/connectors/connectors-example";
 
-/**
- * Facts the Connectors pages report from data they already load
- * (`GET /v1/mcp-connections`). A missing fact means "not loaded yet": a
- * section never takes over the page on a guess.
- */
 export type ConnectorsFacts = {
-  /** Connectors in the list, Google Workspace and Microsoft 365 included. */
   connectors?: number;
-  /** Who added them, when that was one other person (`createdByName`). */
   setUpBy?: string | null;
-  /** Connector page: shared with everyone, a team or anyone besides the viewer. */
-  sharedBeyondYou?: boolean;
-  /** Connector page: the viewer may change who can use it (`connections.manage`, or they added it). */
+  sharedBeyondCreator?: boolean | null;
   canEditAccess?: boolean;
 };
 
@@ -27,7 +18,6 @@ type Ctx = FeatureIntroContext<ConnectorsFacts>;
 const PATH = getMcpConnectionsRoute();
 const MANAGE_CONNECTIONS_LOCK = permissionLockReason("connections.manage");
 const DOCS = "cloud/share-with-your-team/connectors";
-/** The full step-by-step guide behind the overview. */
 const DOCS_GUIDE = "cloud/share-with-your-team/shared-mcp-connections";
 
 function connectorsSetUp(ctx: Ctx): boolean {
@@ -64,7 +54,6 @@ export const connectorsIntros = [
       { when: (ctx) => ctx.can("canManageConnections"), label: "Add a connector", href: getAddConnectorRoute() },
       { when: () => true, label: "Add your first connector", href: getAddConnectorRoute(), locked: { reason: MANAGE_CONNECTIONS_LOCK } },
     ],
-    // Full screen only once the list has loaded and is empty.
     setupState: (ctx) => {
       if (ctx.facts.connectors === undefined) return "done";
       return connectorsSetUp(ctx) ? "done" : "none";
@@ -74,7 +63,6 @@ export const connectorsIntros = [
   defineFeatureIntro<ConnectorsFacts>({
     key: "connectors.add",
     version: 1,
-    // Never shown on its own: the add flow is the setup step. It answers `?` on the catalog and setup forms.
     match: { path: getAddConnectorRoute() },
     icon: Plus,
     title: "Add a connector",
@@ -119,7 +107,6 @@ export const connectorsIntros = [
       { when: (ctx) => ctx.facts.canEditAccess === true || ctx.can("canManageConnections"), label: "Choose who can use it", href: "#who-can-use-it" },
       { when: () => true, label: "Choose who can use it", href: "#who-can-use-it", locked: { reason: MANAGE_CONNECTIONS_LOCK } },
     ],
-    // Banner only: a connector nobody but the viewer can use yet. Unknown shows nothing.
-    setupState: (ctx) => (ctx.facts.sharedBeyondYou === false ? "partial" : "done"),
+    setupState: (ctx) => (ctx.facts.sharedBeyondCreator === false ? "partial" : "done"),
   }),
 ];

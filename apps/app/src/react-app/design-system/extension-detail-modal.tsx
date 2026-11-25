@@ -41,84 +41,53 @@ export type ExtensionDetailModalProps = {
   iconSlug?: string;
   iconSrc?: string;
   taxonomy?: ExtensionTaxonomy;
-  /** Show the local stdio wrapper setup used by the OpenWork UI MCP. */
   uiControl?: boolean;
   connected?: boolean;
   connectedLabel?: string;
   disconnectedLabel?: string;
-  /** A saved personal key: show a neutral "Key saved" badge, never a green "Ready" claim. */
   savedKeyOnly?: boolean;
   connecting?: boolean;
-  /** Whether this item is hidden from the normal extensions catalog. */
   hidden?: boolean;
-  /** Whether this extension is still in preview. */
   preview?: boolean;
-  /** Whether this extension is beta / untested. */
   beta?: boolean;
-  /** Reason this item is visible but unavailable. */
   disabledReason?: string | null;
-  /** Actionable error from the most recent connection attempt. */
   errorInfo?: string | null;
-  /** Remote URL if applicable. */
   url?: string;
-  /** Declarative setup instructions from an extension manifest. */
   setupInstructions?: string;
-  /** Declarative install resource labels from an extension manifest. */
   resourceLabels?: string[];
-  /** Declarative UI/runtime contribution labels from an extension manifest. */
   contributionLabels?: string[];
-  /** Whether OAuth is required. */
   oauth?: boolean;
-  /** Exact local command this extension will launch, when known. */
   launchCommand?: string[];
-  /** Environment passed to the local MCP process, when known. */
   environment?: Record<string, string>;
-  /** Filesystem path (for skills). Not shown directly, used for reveal. */
   path?: string;
-  /** Skill trigger phrase (e.g. "when user asks to create an agent"). */
   trigger?: string;
-  /** Trigger phrases shown as rows (commands, skills, agents). */
   triggers?: string[];
   triggerHint?: string;
-  /** Caption under the title, e.g. a path or "Available in composer". */
   sourceLabel?: string;
   openFileLabel?: string;
   facts?: Array<{ label: string; value: string }>;
-  /** Nested capabilities shown on plugin (and similar) detail pages. */
   contents?: Array<{ key: string; kindLabel: string; name: string; onOpen: () => void }>;
   contentsTitle?: string;
   contentsEmptyLabel?: string;
-  /** Reveal the file in Finder/Explorer. */
   onReveal?: () => void;
-  /** Skill content preview (first ~500 chars of the SKILL.md). */
   contentPreview?: string;
-  /** Connect handler. */
   onConnect?: () => void;
   connectLabel?: string;
   onReconnect?: () => void;
   reconnectLabel?: string;
   connectingLabel?: string;
-  /** Start a new chat with this item already in the composer. */
   onChat?: () => void;
-  /** Open the share page. Only for things the member owns. */
   onShare?: () => void;
-  /** Remove/disconnect handler. Shown when connected. */
   onUninstall?: () => void;
   uninstallLabel?: string;
   closeOnUninstall?: boolean;
-  /** Hide from the normal catalog view. */
   onHide?: () => void;
-  /** Show again in the normal catalog view. */
   onShow?: () => void;
-  /** Extension-specific configuration UI rendered inside the modal body. */
   configSlot?: React.ReactNode;
   showEnablementCard?: boolean;
   size?: "default" | "wide";
-  /** Dialog overlay (default) or dedicated settings page shell. */
   presentation?: "dialog" | "page";
-  /** Back-link label when presentation is "page". */
   backLabel?: string;
-  /** Ancestors of this detail page; the current item is appended automatically. */
   breadcrumbs?: LibraryBreadcrumb[];
 };
 
@@ -130,6 +99,7 @@ const taxonomyDesc: Record<ExtensionTaxonomy, string> = {
   command: "A slash command the composer can run in this workspace.",
   agent: "A named agent the composer can run a session as.",
   plugin: "Extends OpenWork with additional capabilities managed by your organization.",
+  model: "AI models your organization lets you use.",
 };
 
 const uiControlClientConfig = `{
@@ -166,28 +136,20 @@ const fallbackUiControlOpencodeConfig = `{
   }
 }`;
 
-/**
- * Strip YAML-like frontmatter from the beginning of a skill content string.
- * Handles both `---` delimited blocks and bare `key: value` lines at the top.
- */
 function stripSkillFrontmatter(content: string): string {
   let text = content;
 
-  // Handle --- delimited frontmatter block
   const fencedMatch = text.match(/^---\s*\n([\s\S]*?)\n---\s*\n?/);
   if (fencedMatch) {
     text = text.slice(fencedMatch[0].length);
   } else {
-    // Handle bare key: value lines at the top
     const lines = text.split("\n");
     let startIndex = 0;
 
-    // Skip leading blank lines
     while (startIndex < lines.length && !lines[startIndex].trim()) {
       startIndex++;
     }
 
-    // Skip any key: value lines (common frontmatter keys)
     while (startIndex < lines.length) {
       const line = lines[startIndex].trim();
       if (/^[a-zA-Z_-]+\s*:/.test(line) && !line.startsWith("#")) {

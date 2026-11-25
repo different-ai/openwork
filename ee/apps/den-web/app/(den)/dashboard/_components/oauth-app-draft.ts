@@ -1,4 +1,4 @@
-import { manualOAuthEndpointSchema } from "@openwork/enterprise-mcp-client/manual-oauth";
+import { manualOAuthEndpointSchema } from "@openwork/mcp-enterprise-client/manual-oauth";
 import type { OAuthAppInput } from "./connector-setup";
 import { manualOAuthDestination, manualOAuthDraft, type ManualOAuthDraft } from "./manual-oauth-draft";
 
@@ -13,7 +13,6 @@ export function createOAuthAppDraft(): OAuthAppDraft {
   return { clientId: "", clientSecret: "", manualDraft: manualOAuthDraft(), trustConfirmed: false };
 }
 
-/** Consent belongs to the exact endpoint pair, not to the client credentials. */
 export function withOAuthAppManualDraft(draft: OAuthAppDraft, manualDraft: ManualOAuthDraft): OAuthAppDraft {
   const before = draft.manualDraft;
   const endpointsChanged = before.values.authorizationEndpoint !== manualDraft.values.authorizationEndpoint
@@ -36,10 +35,8 @@ export type OAuthAppValidationError = {
 
 type OAuthAppValidation = { input: OAuthAppInput; error: null } | { input: null; error: OAuthAppValidationError };
 
-/** Used by the real form submit handler, including Enter and external footer submits. */
 export function validateOAuthAppDraft(draft: OAuthAppDraft, options: {
   secretRequired: boolean;
-  /** Custom setup requires reviewed destinations; preset forms use their existing validation. */
   setupValidation?: boolean;
   url?: string;
   issuerMismatch?: boolean;
@@ -55,7 +52,6 @@ export function validateOAuthAppDraft(draft: OAuthAppDraft, options: {
       for (const field of ["authorizationEndpoint", "tokenEndpoint"] satisfies (keyof typeof draft.manualDraft.values)[]) {
         const value = draft.manualDraft.values[field].trim();
         if (!value) return { input: null, error: { field, message: mismatch ? "Enter both sign-in addresses confirmed by the server owner before saving." : "Enter both sign-in addresses, or clear both to use automatic discovery." } };
-        // Reuse the backend's browser-safe schema, including its credential-query policy.
         if (!manualOAuthEndpointSchema.safeParse(value).success) return { input: null, error: { field, message: "Use an HTTPS URL (HTTP only on localhost), without credentials, fragments or credential-like query parameters." } };
       }
     }
@@ -63,6 +59,5 @@ export function validateOAuthAppDraft(draft: OAuthAppDraft, options: {
       return { input: null, error: { field: "trustConfirmed", message: "Confirm the sign-in destinations with the server owner, then select the confirmation below." } };
     }
   }
-  // Confirmation is local UI state. The complete manual pair is the existing API trust boundary.
   return { input: { clientId: draft.clientId, clientSecret: draft.clientSecret, ...(hasManual ? { manualOAuthEndpoints: { authorizationEndpoint, tokenEndpoint } } : {}) }, error: null };
 }

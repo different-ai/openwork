@@ -16,16 +16,24 @@ export type GoogleWorkspaceAttachmentData = {
   dataBase64: string
 }
 
-export type GoogleWorkspaceGmailMessage = {
+type GmailMessageMetadata = {
   id: string
   threadId: string
+  internalDate: number | null
   from: string
   to: string
+  cc: string
   bcc: string
+  replyTo: string
   subject: string
   date: string
   snippet: string
+  labelIds: string[]
+}
+
+export type GoogleWorkspaceGmailMessage = GmailMessageMetadata & {
   body: string
+  bodyTruncated: boolean
   attachments: GoogleWorkspaceAttachment[]
 }
 
@@ -219,8 +227,6 @@ export function extractGmailThreadReplyContext(json: unknown): { lastMessageId: 
 function formatGmailQuoteDate(value: string, timeZone?: string): string {
   const date = new Date(value)
   if (Number.isNaN(date.getTime())) return value
-  // RFC 5322 dates carry their own offset. Never default to the server's zone.
-  // Intl accepts fixed offsets as well as IANA zones on the shipping Node runtime.
   const offset = value.match(/([+-]\d{2})(\d{2})(?:\s*\([^)]*\))?\s*$/)
   const obsoleteZone = value.match(/\b(UT|GMT|[ECMP][SD]T)\s*$/i)?.[1]?.toUpperCase()
   const namedOffsets: Record<string, string> = { UT: "+00:00", GMT: "+00:00", EST: "-05:00", EDT: "-04:00", CST: "-06:00", CDT: "-05:00", MST: "-07:00", MDT: "-06:00", PST: "-08:00", PDT: "-07:00" }
@@ -253,8 +259,6 @@ export function buildGmailQuote(input: { from: string; date: string; body: strin
   const attributionHtml = sender ? `${escapeQuoteHtml(prefix)}${senderHtml} wrote:` : "Original message:"
   const truncated = input.body.length > GMAIL_QUOTE_BODY_LIMIT
   const body = input.body.slice(0, GMAIL_QUOTE_BODY_LIMIT).replace(/\r\n?/g, "\n")
-  // Sanitize before cutting, then parse the cut fragment again to close any open
-  // elements. An oversized original must not swallow the rest of the draft.
   const safeHtml = input.html ? sanitizeGmailQuoteHtml(input.html) || undefined : undefined
   const html = safeHtml === undefined ? undefined : sanitizeGmailQuoteHtml(safeHtml.slice(0, GMAIL_QUOTE_BODY_LIMIT)) + (safeHtml.length > GMAIL_QUOTE_BODY_LIMIT ? "<div>[message trimmed]</div>" : "")
   return { attribution, attributionHtml, body: truncated ? `${body}\n[message trimmed]` : body, html }
@@ -305,33 +309,46 @@ export function buildDriveMultipartUpload(input: { metadata: GoogleWorkspaceDriv
   return body
 }
 
-export function extractGmailMessage(payloadJson: unknown): GoogleWorkspaceGmailMessage {
-  const message = isRecord(payloadJson) ? payloadJson : {}
-  const payload = readRecord(message, "payload") ?? {}
+function extractGmailMessageMetadata(message: Record<string, unknown>, payload: Record<string, unknown>): GmailMessageMetadata {
   const headers = readGmailHeaders(payload)
-  const state: GmailBodyState = { plain: null, html: null, attachments: [] }
-  collectGmailPart(payload, state)
-  const snippet = readString(message, "snippet")
-  const body = truncateText(state.plain ?? state.html ?? snippet, GMAIL_MESSAGE_BODY_LIMIT).text
-
+  const timestamp = readString(message, "internalDate")
+  const internalDate = /^\d+$/.test(timestamp) ? Number(timestamp) : NaN
   return {
     id: readString(message, "id"),
     threadId: readString(message, "threadId"),
+    internalDate: Number.isSafeInteger(internalDate) ? internalDate : null,
     from: headers.get("from") ?? "",
     to: headers.get("to") ?? "",
+    cc: headers.get("cc") ?? "",
     bcc: headers.get("bcc") ?? "",
+    replyTo: headers.get("reply-to") ?? "",
     subject: headers.get("subject") ?? "",
     date: headers.get("date") ?? "",
-    snippet,
-    body,
-    attachments: state.attachments,
+    snippet: readString(message, "snippet"),
+    labelIds: readArray(message, "labelIds").filter((label): label is string => typeof label === "string"),
   }
 }
 
-/**
- * Gmail's attachments.get returns base64url data. Normalize to standard
- * base64 so callers can decode the bytes locally with any base64 decoder.
- */
+export function extractGmailThreadMetadata(json: unknown, threadId: string) {
+  const thread = isRecord(json) ? json : {}
+  const messages = readArray(thread, "messages")
+    .filter(isRecord)
+    .map((message) => extractGmailMessageMetadata(message, readRecord(message, "payload") ?? {}))
+    .sort((a, b) => (a.internalDate ?? Infinity) - (b.internalDate ?? Infinity))
+  const historyId = readString(thread, "historyId")
+  return { threadId, ...(historyId ? { historyId } : {}), messages }
+}
+
+export function extractGmailMessage(payloadJson: unknown): GoogleWorkspaceGmailMessage {
+  const message = isRecord(payloadJson) ? payloadJson : {}
+  const payload = readRecord(message, "payload") ?? {}
+  const metadata = extractGmailMessageMetadata(message, payload)
+  const state: GmailBodyState = { plain: null, html: null, attachments: [] }
+  collectGmailPart(payload, state)
+  const body = truncateText(state.plain ?? state.html ?? metadata.snippet, GMAIL_MESSAGE_BODY_LIMIT)
+  return { ...metadata, body: body.text, bodyTruncated: body.truncated, attachments: state.attachments }
+}
+
 export function extractGmailAttachmentData(json: unknown): GoogleWorkspaceAttachmentData | null {
   const root = isRecord(json) ? json : {}
   const data = readString(root, "data")

@@ -2,10 +2,9 @@
 
 import { useEffect, useState } from "react";
 import { SsoSessionRequiredError } from "../../_lib/den-flow";
+import { readOrganizationSsoPolicy } from "@openwork-ee/den-sso";
 import {
   getOrgAccessFlags,
-  getSsoSettingsFromMetadata,
-  orgFeatureEnabled,
   permissionLockReason,
 } from "../../_lib/den-org";
 import { ssoSettingsChanges, type SsoSettings } from "../../_lib/sso-settings";
@@ -16,10 +15,9 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { EnterprisePlanNotice } from "./enterprise-plan-notice";
 import { SsoRequirementFields, ssoRequirementDescription } from "./sso-requirement-fields";
 
-/** SSO › Authentication: whether members must sign in with this organization's SSO. */
 export function SsoRequirementSection() {
   const { orgContext, mutationBusy, updateOrganizationSettings } = useOrgDashboard();
-  const [draft, setDraft] = useState<SsoSettings>({ requireSso: false, restrictDomainToSso: false, ssoSessionMaxAgeHours: null });
+  const [draft, setDraft] = useState<SsoSettings>({ requireSso: false, restrictDomainToSso: false });
   const [error, setError] = useState<string | null>(null);
   const [ssoRecoveryPath, setSsoRecoveryPath] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
@@ -29,7 +27,7 @@ export function SsoRequirementSection() {
       return;
     }
 
-    setDraft(getSsoSettingsFromMetadata(orgContext.organization.metadata));
+    setDraft(readOrganizationSsoPolicy(orgContext.organization.metadata));
   }, [orgContext]);
 
   if (!orgContext) {
@@ -41,10 +39,8 @@ export function SsoRequirementSection() {
     orgContext.currentMember.isOwner,
     orgContext.currentMember.permissions,
   ).canManageSettings;
-  const ssoPerOrganization = orgFeatureEnabled(orgContext, "ssoPerOrganization");
   const changes = ssoSettingsChanges({
-    perOrganization: ssoPerOrganization,
-    saved: getSsoSettingsFromMetadata(orgContext.organization.metadata),
+    saved: readOrganizationSsoPolicy(orgContext.organization.metadata),
     draft,
   });
   const dirty = Object.keys(changes).length > 0;
@@ -88,7 +84,7 @@ export function SsoRequirementSection() {
           <h2 className="text-[24px] font-semibold tracking-[-0.04em] text-gray-900">
             Single sign-on requirement
           </h2>
-          <p className="text-[14px] text-gray-500">{ssoRequirementDescription(ssoPerOrganization)}</p>
+          <p className="text-[14px] text-gray-500">{ssoRequirementDescription()}</p>
         </div>
 
         {!orgContext.entitlements.orgControls ? <EnterprisePlanNotice feature="Enforced SSO" /> : null}
@@ -105,13 +101,12 @@ export function SsoRequirementSection() {
         ) : null}
 
         <SsoRequirementFields
-          perOrganization={ssoPerOrganization}
           draft={draft}
           disabled={!canManageSettings}
           onChange={updateDraft}
         />
 
-        {ssoPerOrganization ? (
+        {(
           <div className="flex min-w-0 flex-wrap items-center justify-between gap-3">
             <p className="text-[13px] text-gray-500" role="status">
               {!canManageSettings
@@ -128,7 +123,7 @@ export function SsoRequirementSection() {
               Save
             </DenButton>
           </div>
-        ) : null}
+        )}
       </DenCard>
     </form>
   );

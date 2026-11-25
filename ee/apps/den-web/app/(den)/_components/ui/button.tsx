@@ -2,8 +2,6 @@
 
 import type { AnchorHTMLAttributes, ButtonHTMLAttributes, ElementType, ReactNode } from "react";
 
-// ─── Variant / size tokens ────────────────────────────────────────────────────
-
 export type ButtonVariant = "primary" | "secondary" | "destructive" | "ghost" | "plain";
 export type ButtonSize = "md" | "sm" | "xs" | "compact" | "inline";
 
@@ -17,7 +15,6 @@ const variantClasses: Record<ButtonVariant, string> = {
     plain: "text-gray-900 hover:text-gray-600",
 };
 
-// md is sized to match the Shared Workspaces reference buttons (px-5 py-2.5 ≈ h-10)
 const sizeClasses: Record<ButtonSize, string> = {
     md: "h-10 px-5 text-[13px] gap-2",
     sm: "h-8 px-3.5 text-[12px] gap-1.5",
@@ -26,12 +23,6 @@ const sizeClasses: Record<ButtonSize, string> = {
     inline: "h-8 px-0 text-xs leading-4 gap-1.5",
 };
 
-// ─── buttonVariants helper (for <Link> / <a> elements) ───────────────────────
-
-/**
- * Returns the className string for button styles.
- * Use this on <Link> and <a> elements that should look like buttons.
- */
 export function buttonVariants({
     variant = "primary",
     size = "md",
@@ -50,8 +41,6 @@ export function buttonVariants({
         .filter(Boolean)
         .join(" ");
 }
-
-// ─── Spinner ──────────────────────────────────────────────────────────────────
 
 function Spinner({ px }: { px: number }) {
     return (
@@ -81,27 +70,15 @@ function Spinner({ px }: { px: number }) {
     );
 }
 
-// ─── DenButton ────────────────────────────────────────────────────────────────
-
 type DenButtonBaseProps = {
     variant?: ButtonVariant;
     size?: ButtonSize;
     disabled?: boolean;
-    /**
-     * Lucide icon component rendered on the left.
-     * In loading state the icon is replaced by a spinner.
-     */
     icon?: ElementType<{
         size?: number;
         className?: string;
         strokeWidth?: number;
     }>;
-    /**
-     * Shows a spinner and forces the button into a disabled state.
-     * - With icon: spinner replaces the icon; text stays visible.
-     * - Without icon: text becomes invisible (preserving button width) and a
-     *   spinner appears centered over it.
-     */
     loading?: boolean;
 };
 

@@ -17,7 +17,6 @@ function committedOffset(response: Response, total: number, sentThrough: number)
   return offset;
 }
 
-/** Bytes only go to Google; development hosts may point at a loopback Google test server. */
 export function googleDriveUploadApiBase(env: NodeJS.ProcessEnv = process.env) {
   const override = env.OPENWORK_GOOGLE_API_BASE_URL?.trim();
   if (override && env.OPENWORK_DEV_MODE === "1") {
@@ -25,7 +24,6 @@ export function googleDriveUploadApiBase(env: NodeJS.ProcessEnv = process.env) {
       const url = new URL(override);
       if (url.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(url.hostname)) return url.origin;
     } catch {
-      // Fall back to Google.
     }
   }
   return "https://www.googleapis.com";
@@ -39,7 +37,6 @@ async function completedReceipt(response: Response, size: number) {
   const value: unknown = await response.json().catch(() => null);
   if (!isRecord(value) || typeof value.id !== "string" || !/^[A-Za-z0-9_-]{1,512}$/.test(value.id)) fail("Google returned no completed file id. Check Drive before retrying.");
   if (value.size !== undefined && value.size !== String(size)) fail("Google returned an unexpected completed file size. Check Drive before retrying.");
-  // Never echo unexpected provider fields (especially bearer session URLs) to the model.
   const file: Record<string, string> = { id: value.id };
   for (const field of ["name", "mimeType", "modifiedTime", "webViewLink", "size", "md5Checksum", "headRevisionId", "version"]) {
     const entry = value[field];
@@ -48,17 +45,14 @@ async function completedReceipt(response: Response, size: number) {
   return { ok: true, file };
 }
 
-/** Bounded chunks; uncertain writes probe the SAME session, never create another file. */
 export async function uploadDriveResumableFile(input: {
   path: string;
-  /** An already opened and checked file; the caller closes it. */
   file?: FileHandle;
   uploadUrl: string;
   size: number;
   mimeType: string;
   fetch: UploadFetch;
   signal?: AbortSignal;
-  /** Preserve a host-approved file's identity/baseline through each read. */
   verifyFile?: () => Promise<void>;
 }) {
   if (!isGoogleDriveUploadSessionUrl(input.uploadUrl, googleDriveUploadApiBase())) throw new ApiError(502, "invalid_upload_session", "The upload destination is not a Google Drive session.");
@@ -88,8 +82,6 @@ export async function uploadDriveResumableFile(input: {
         if (!part.bytesRead) throw new ApiError(409, "file_changed", "The file was truncated during upload.");
         read += part.bytesRead;
       }
-      // Check after the read, including the final chunk: an in-place edit
-      // during read must not send bytes that were never approved.
       const afterRead = await file.stat({ bigint: true });
       if (afterRead.size !== initial.size || afterRead.mtimeNs !== initial.mtimeNs || afterRead.ctimeNs !== initial.ctimeNs) {
         throw new ApiError(409, "file_changed", "The file changed during upload. Completion is not confirmed; do not retry automatically.");

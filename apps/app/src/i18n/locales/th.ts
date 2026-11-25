@@ -1,9 +1,12 @@
-/**
- * Thai translations
- * Professional terms (Skills, Plugins, Commands, Sessions, OpenCode, OpenPackage, OpenWork) are NOT translated
- */
-
 export default {
+  "artifact.office_empty": "ไฟล์นี้ไม่มีข้อความที่อ่านได้ เปิดในแอปอื่นเพื่อดูต้นฉบับ",
+  "artifact.office_empty_slide": "สไลด์นี้ไม่มีข้อความที่อ่านได้",
+  "artifact.office_loading": "กำลังโหลดโครงร่างข้อความ",
+  "artifact.office_slide": "สไลด์ {number}",
+  "artifact.office_text_only": "แสดงเฉพาะโครงร่างข้อความ ไม่แสดงเค้าโครง รูปภาพ และสี",
+  "artifact.office_too_large": "ไฟล์นี้ใหญ่เกินกว่าจะแสดงตัวอย่าง เปิดในแอปอื่นเพื่อดูไฟล์ทั้งหมด",
+  "artifact.office_truncated": "ข้อความบางส่วนไม่แสดงเนื่องจากถึงขีดจำกัดของการแสดงตัวอย่าง",
+  "artifact.office_unreadable": "ไม่สามารถอ่านไฟล์นี้ได้ ลองเปิดในแอปอื่น",
   "app.error_audit_load": "โหลดบันทึกการตรวจสอบไม่สำเร็จ",
   "app.error_connect_first": "เชื่อมต่อ worker นี้ก่อนใช้การเปลี่ยนแปลง runtime",
   "app.error_request_failed": "คำขอล้มเหลว",
@@ -318,8 +321,11 @@ export default {
   "providers.still_connected_suffix": " แต่ worker ยังรายงานว่าเชื่อมต่ออยู่ ล้าง API key หรือข้อมูล OAuth ที่เหลือแล้วรีสตาร์ท worker เพื่อตัดการเชื่อมต่อทั้งหมด",
   "providers.unknown_provider": "ผู้ให้บริการที่ไม่รู้จัก",
   "providers.use_api_key_suffix": "ใช้ API key แทน",
+  "question_modal.collapse": "ย่อ",
+  "question_modal.collapsed_status": "กำลังรอคำตอบของคุณ",
   "question_modal.custom_answer_label": "หรือพิมพ์คำตอบเอง",
   "question_modal.custom_answer_placeholder": "พิมพ์คำตอบที่นี่...",
+  "question_modal.expand": "แสดงคำถาม",
   "question_modal.question_counter": "คำถามที่ {current} จาก {total}",
   "session.allow_for_session": "อนุญาตตลอดเซสชัน",
   "session.allow_once": "อนุญาตครั้งเดียว",
@@ -519,7 +525,6 @@ export default {
   "settings.group_workspace": "พื้นที่ทำงาน",
   "settings.hide_titlebar": "ซ่อนแถบชื่อหน้าต่าง",
   "settings.hide_titlebar_desc": "ซ่อนแถบชื่อหน้าต่าง เหมาะสำหรับ tiling window",
-  "settings.join_discord": "เข้าร่วม Discord",
   "settings.language": "ภาษา",
   "settings.language.description": "เลือกภาษาที่คุณต้องการ",
   "settings.last_error": "ข้อผิดพลาดล่าสุด",

@@ -11,8 +11,6 @@ export type OrganizationAdminTeam = { id: string; name: string }
 
 export type TeamMutationTransaction = Parameters<Parameters<typeof db.transaction>[0]>[0]
 
-// Share this lock with invitations and SCIM teardown so a concurrent grant cannot
-// turn an already-authorized routine membership edit into a role assignment.
 export function withOrganizationTeamMutation<T>(
   organizationId: typeof TeamTable.$inferSelect.organizationId,
   mutation: (tx: TeamMutationTransaction) => Promise<T>,
@@ -21,8 +19,6 @@ export function withOrganizationTeamMutation<T>(
     await tx.select({ id: OrganizationTable.id }).from(OrganizationTable)
       .where(eq(OrganizationTable.id, organizationId)).for("update")
     const result = await mutation(tx)
-    // Version and source rows commit together. Redis failure, eviction or
-    // snapshot rollback cannot resurrect entries keyed by the old revision.
     await tx.update(OrganizationTable).set({ teamMembershipRevision: randomUUID() })
       .where(eq(OrganizationTable.id, organizationId))
     return result
@@ -37,7 +33,6 @@ export function withOrganizationMembershipUsageMutation<T>(
   return withOrganizationTeamMutation(organizationId, async (tx) => {
     const affected = [...new Set(typeof memberIds === "function" ? await memberIds(tx) : memberIds)]
     const result = await withGatewayUsageEntitlementMutation(tx, organizationId, () => mutation(tx), affected)
-    // Team membership is one of the grants a personal MCP key relies on.
     await pruneUnreachableMemberApiKeys(tx, { organizationId, orgMembershipIds: affected })
     return result
   })
@@ -61,15 +56,11 @@ export async function invitationHasAdminTeam(tx: TeamMutationTransaction, invita
   return teams.length > 0
 }
 
-// Never cache authority: IdP removals and designation changes apply on the next check.
-// The SCIM projection filter lives in den-db (listAuthoritativeTeamMemberships)
-// so team permission sets and desktop policies apply the same rule.
 export async function listOrganizationAdminTeamGrants(organizationId: typeof TeamTable.$inferSelect.organizationId, database: typeof db | TeamMutationTransaction = db) {
   const grants = await listAuthoritativeTeamMemberships(database, { organizationId, adminTeamsOnly: true })
   return grants.map((grant) => ({ memberId: grant.memberId, id: grant.teamId, name: grant.teamName }))
 }
 
-/** One member's Admin teams, under the same rule as listOrganizationAdminTeamGrants. */
 export async function listMemberAdminTeams(input: {
   organizationId: typeof TeamTable.$inferSelect.organizationId
   memberId: typeof MemberTable.$inferSelect.id

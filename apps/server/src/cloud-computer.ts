@@ -21,11 +21,11 @@ export function cloudComputerFor(config: ServerConfig): CloudComputer {
 export async function startCloudComputerBridge(config: ServerConfig): Promise<() => Promise<void>> {
   const discovery = process.env.OPENWORK_UI_CONTROL_DISCOVERY;
   const display = process.env.OPENWORK_CLOUD_COMPUTER_DISPLAY;
-  // These describe the operator-installed runtime, never grant feature access.
   if (process.platform !== "linux" || process.env.DEN_RUNTIME_MANAGED !== "1" || !display || !discovery) return async () => {};
   const computer = await createCloudComputer({ directory: join(dirname(discovery), "computer"), display,
     enabled: () => managedDesktopPolicy(config).remoteComputersEnabled(),
-    standardCodeMode: () => managedDesktopPolicy(config).standardCodeModeEnabled(), onActivity: touchCloudComputerActivity });
+    secretsEnabled: async () => false,
+    onActivity: touchCloudComputerActivity });
   computers.set(config, computer);
   const token = randomBytes(32).toString("base64url");
   const bridge = await serve({ hostname: "127.0.0.1", port: 0, fetch: async request => {
@@ -50,7 +50,6 @@ export async function startCloudComputerBridge(config: ServerConfig): Promise<()
   return async () => { computers.delete(config); await bridge.stop(); await computer.close(); await rm(discovery, { force: true }); };
 }
 
-/** Translate protocol failures without turning a disabled rollout into a server error. */
 export async function cloudComputerCall<T>(operation: () => Promise<T>): Promise<T> {
   try { return await operation(); }
   catch (error) {

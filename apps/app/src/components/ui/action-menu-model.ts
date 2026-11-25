@@ -16,7 +16,6 @@ export type MenuAction = { type: "separator" } | {
   onSelect?: () => void | Promise<void>;
 };
 
-/** Only explicit, plain descriptors cross IPC; presentation and callbacks stay local. */
 export function serializeMenuActions(actions: readonly MenuAction[]): NativeContextMenuItem[] {
   return actions.map((action) => {
     if (action.type === "separator") return { type: "separator" };
@@ -48,7 +47,6 @@ export async function dispatchMenuAction(actions: readonly MenuAction[], id: str
   return true;
 }
 
-// Native menus are window-wide, so a request from another row also supersedes us.
 let latestNativeRequest: AbortController | undefined;
 
 export function createNativeMenuController(showContextMenu: (request: NativeContextMenuRequest, signal?: AbortSignal) => Promise<string | null>) {
@@ -68,7 +66,6 @@ export function createNativeMenuController(showContextMenu: (request: NativeCont
         if (request.signal.aborted || pending !== request || latestNativeRequest !== request) return false;
         return await dispatchMenuAction(actions, id);
       } catch {
-        // Dismissal and IPC failures never open a second, HTML menu.
         return false;
       } finally {
         if (pending === request) pending = undefined;

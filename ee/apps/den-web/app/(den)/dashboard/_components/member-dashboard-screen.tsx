@@ -7,11 +7,6 @@ import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
 const OPEN_APP_URL = "openwork://open";
 
-/**
- * Members have exactly one job on the dashboard: install the app. The
- * authenticated install guide resolves the active workspace directly, so no
- * bearer token needs to appear in the page URL or browser history.
- */
 export function MemberDashboardScreen() {
   const router = useRouter();
   const { activeOrg } = useOrgDashboard();

@@ -14,27 +14,15 @@ import { PluginsExample } from "./examples/plugins/plugins-example";
 import { PluginCreateExample, PluginImportExample, PluginSkillExample } from "./examples/plugins/setup-example";
 import { PluginSourcesExample } from "./examples/plugins/sources-example";
 
-/**
- * Facts the Plugins pages report from data they already load
- * (`GET /v1/plugins`, `GET /v1/connector-accounts?connectorType=github`,
- * a plugin's access grants). A missing fact means "not loaded yet": a section
- * never takes over the page on a guess.
- */
 export type PluginsFacts = {
-  /** Active plugins the viewer can see. */
   plugins?: number;
-  /** Who made them, when that was one other person (`createdByOrgMembershipId`). */
   setUpBy?: string | null;
-  /** Agents, commands, hooks and MCPs across those plugins (Plugin Directory tabs). */
   agents?: number;
   commands?: number;
   hooks?: number;
   mcps?: number;
-  /** Connected GitHub accounts (Sources). */
   githubSources?: number;
-  /** Plugin page: shared with everyone, a team or anyone besides its owner. */
-  sharedBeyondOwner?: boolean;
-  /** Plugin page: the viewer may change who can use it (owner, plugin manager or `sharing.manage_all`). */
+  sharedBeyondOwner?: boolean | null;
   canEditAccess?: boolean;
 };
 
@@ -52,21 +40,17 @@ function pluginsSetUp(ctx: Ctx): boolean {
   return (ctx.facts.plugins ?? 0) > 0;
 }
 
-/** A tab with nothing in it while plugins exist shows its box; unknown shows nothing. */
 function tabState(count: number | undefined) {
   return count === undefined || count > 0 ? "done" : "none";
 }
 
-/** Agents and hooks only arrive with Claude-compatible plugins synced from a GitHub repository. */
 const githubSourceCtas: readonly FeatureIntroCta<PluginsFacts>[] = [
-  // Sources lists each connected account with its repositories and where to add another.
   { when: (ctx) => ctx.can("canManageSyncSources") && (ctx.facts.githubSources ?? 0) > 0, label: "Add a repository", href: getPluginSourcesRoute() },
   { when: (ctx) => ctx.can("canManageSyncSources"), label: "Connect GitHub", href: getPluginSourcesRoute() },
   { when: () => true, label: "Connect GitHub", href: getPluginSourcesRoute(), locked: { reason: SOURCES_LOCK } },
 ];
 
 const createPluginCtas: readonly FeatureIntroCta<PluginsFacts>[] = [
-  // Any member can create a plugin (`plugin.create` needs no permission), so there is no locked variant.
   { when: () => true, label: "Create a plugin", href: getNewPluginRoute() },
 ];
 
@@ -94,7 +78,6 @@ export const pluginsIntros = [
       { when: (ctx) => pluginsSetUp(ctx), label: "See your plugins", href: PATH, note: (ctx) => (ctx.facts.setUpBy ? `Set up by ${ctx.facts.setUpBy}` : null) },
       ...createPluginCtas,
     ],
-    // Full screen only once the list has loaded and is empty.
     setupState: (ctx) => {
       if (ctx.facts.plugins === undefined) return "done";
       return pluginsSetUp(ctx) ? "done" : "none";
@@ -178,7 +161,6 @@ export const pluginsIntros = [
 
   defineFeatureIntro<PluginsFacts>({
     key: "plugins.sources",
-    // No parent: Sources is where an empty organization connects GitHub, so it never gives way to the section intro.
     version: 1,
     match: { path: PATH, tab: "sources", tabParam: "view" },
     icon: GitFork,
@@ -221,14 +203,12 @@ export const pluginsIntros = [
       { when: (ctx) => ctx.facts.canEditAccess === true, label: "Choose who can use it", href: "#who-can-use-it" },
       { when: () => true, label: "Choose who can use it", href: "#who-can-use-it", locked: { reason: permissionLockReason("sharing.manage_all") } },
     ],
-    // Banner only: a plugin nobody but its owner can use yet. Unknown shows nothing.
     setupState: (ctx) => (ctx.facts.sharedBeyondOwner === false ? "partial" : "done"),
   }),
 
   defineFeatureIntro<PluginsFacts>({
     key: "plugins.new",
     version: 1,
-    // Never shown on its own: the form is the setup step. It answers `?` there.
     match: { path: getNewPluginRoute() },
     icon: Puzzle,
     title: "Create a plugin",
@@ -247,7 +227,6 @@ export const pluginsIntros = [
   defineFeatureIntro<PluginsFacts>({
     key: "plugins.import",
     version: 1,
-    // Never shown on its own: the import form is the setup step. It answers `?` there.
     match: { path: getImportPluginRoute() },
     icon: Github,
     title: "Import from GitHub",
@@ -269,7 +248,6 @@ export const pluginsIntros = [
   defineFeatureIntro<PluginsFacts>({
     key: "plugins.skill",
     version: 1,
-    // Never shown on its own: answers `?` on a plugin's new and edit skill forms (the edit form registers it).
     match: { path: `${PATH}/:pluginId/skills/new` },
     icon: FileText,
     title: "Skills",
@@ -281,7 +259,6 @@ export const pluginsIntros = [
     ],
     example: { Component: PluginSkillExample, alt: "Example: the prep-a-sales-call skill, used when someone has a customer call coming up, with three steps." },
     docsUrl: docsPage(`${DOCS_PUBLISH}#1-create-the-skill`),
-    // The form on screen is the action; a link back to it would go nowhere.
     ctas: [],
     setupState: () => "done",
   }),

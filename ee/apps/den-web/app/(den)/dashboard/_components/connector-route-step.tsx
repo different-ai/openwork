@@ -35,7 +35,6 @@ function DetectedBadge({ loading }: { loading: boolean }) {
   return <DenBadge size="sm" tone="neutral">Detected</DenBadge>;
 }
 
-/** One radio row: the choice, whether detection found it, and its fields once picked. */
 function RouteOption({ group, value, checked, onSelect, title, description, detected, detecting, locked, testId, children }: {
   group: string;
   value: string;
@@ -45,7 +44,6 @@ function RouteOption({ group, value, checked, onSelect, title, description, dete
   description: ReactNode;
   detected: boolean;
   detecting: boolean;
-  /** Why the option cannot be used here; shown in place of the description. */
   locked?: string | null;
   testId: string;
   children?: ReactNode;
@@ -99,14 +97,8 @@ function newHeaderRow(): RequestHeaderDraft {
   return { id: `header-${nextHeaderId}`, name: "", value: "" };
 }
 
-/**
- * Before a custom connector's checks run, OpenWork shows what it detected
- * (how people sign in, and how OpenWork registers its OAuth app) and lets the
- * admin take another route: their own OAuth app, an API key, or extra headers.
- */
 export function ConnectorRouteStep({ name, url, back, initial = null, discovery, discovering, unreachable, secretRequired, liveChecks, callbackUrl, oauthDraft, onOAuthDraftChange, onCancel, onContinue }: {
   name: string;
-  /** The route picked before Back, so going back keeps the admin's choices. */
   initial?: ConnectorRoute | null;
   url: string;
   back: { href: string; label: string };
@@ -137,7 +129,6 @@ export function ConnectorRouteStep({ name, url, back, initial = null, discovery,
   const [accessError, setAccessError] = useState<string | null>(null);
   const metadataInconsistent = discovery?.warnings.some((warning) => warning.code === "oauth_issuer_mismatch") === true;
 
-  // OAuth only rules automatic registration out when the server answered and offers neither method.
   const automaticLocked = detected.auth === "oauth" && detected.automaticRegistration === null
     ? metadataInconsistent ? "Automatic setup could not be verified. Review the sign-in addresses for your own app." : `${name} doesn't let apps register themselves.`
     : null;

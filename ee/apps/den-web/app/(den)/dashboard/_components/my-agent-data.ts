@@ -2,6 +2,7 @@
 
 import {
   memberAgentChecksSchema,
+  memberConnectorSavedSchema,
   memberAgentSavedSchema,
   memberAgentViewSchema,
   type MemberAgentCheck,
@@ -13,10 +14,7 @@ import { getErrorMessage, getRequestError, requestJson } from "../../_lib/den-fl
 import { ORG_SCOPE_HEADER } from "../../_lib/org-scope";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 
-/**
- * My agent (`workbotProactive`): the member's own agent, read from and changed through `/v1/me/agent`, the same
- * API chat uses through Connect. A change here is saved as from the page.
- */
+import { connectorSwitches, mergeSavedConnectorSwitches } from "./my-agent-connector-save";
 
 const agentPath = "/v1/me/agent";
 
@@ -24,24 +22,40 @@ export function myAgentQueryKey(orgId: string): string[] {
   return ["me-agent", orgId];
 }
 
+async function fetchAgent(orgId: string, signal: AbortSignal, toolCounts: "cached" | "discover"): Promise<MemberAgentView> {
+  const { response, payload } = await requestJson(`${agentPath}?toolCounts=${toolCounts}`, { method: "GET", headers: { [ORG_SCOPE_HEADER]: orgId }, cache: "no-store", signal }, 15000);
+  if (!response.ok) throw new Error(getErrorMessage(payload, `Couldn't load your agent (${response.status}).`));
+  const parsed = memberAgentViewSchema.safeParse(payload);
+  if (!parsed.success) throw new Error("Your agent returned an unexpected response.");
+  return parsed.data;
+}
+
 export function useMyAgent(orgId: string, enabled = true) {
   return useQuery({
     queryKey: myAgentQueryKey(orgId),
     enabled: enabled && Boolean(orgId),
     retry: false,
-    // Checks land in the background; keep the last check current while the page is open.
     refetchInterval: 60_000,
-    queryFn: async ({ signal }): Promise<MemberAgentView> => {
-      const { response, payload } = await requestJson(agentPath, { method: "GET", headers: { [ORG_SCOPE_HEADER]: orgId }, cache: "no-store", signal }, 15000);
-      if (!response.ok) throw new Error(getErrorMessage(payload, `Couldn't load your agent (${response.status}).`));
-      const parsed = memberAgentViewSchema.safeParse(payload);
-      if (!parsed.success) throw new Error("Your agent returned an unexpected response.");
-      return parsed.data;
+    queryFn: ({ signal }) => fetchAgent(orgId, signal, "cached"),
+  });
+}
+
+export function useMyAgentToolCounts(orgId: string, view: MemberAgentView | undefined) {
+  const missing = (view?.sources ?? []).filter((source) => source.readTools === null
+    && source.connections.some((connection) => connection.state === "connected")).map((source) => source.id).sort();
+  return useQuery({
+    queryKey: [...myAgentQueryKey(orgId), "tool-counts", missing],
+    enabled: Boolean(orgId) && missing.length > 0,
+    retry: false,
+    staleTime: 60_000,
+    refetchInterval: 60_000,
+    queryFn: async ({ signal }) => {
+      const detail = await fetchAgent(orgId, signal, "discover");
+      return Object.fromEntries((detail.sources ?? []).map((source) => [source.id, source.readTools]));
     },
   });
 }
 
-/** The week's checks, for "Earlier this week"; loaded when it is opened. */
 export function useMyAgentChecks(orgId: string, enabled: boolean) {
   return useQuery({
     queryKey: [...myAgentQueryKey(orgId), "checks"],
@@ -57,7 +71,6 @@ export function useMyAgentChecks(orgId: string, enabled: boolean) {
   });
 }
 
-/** Saves one change and shows the agent as Den saved it. */
 export function useSaveMyAgent(orgId: string) {
   const queryClient = useQueryClient();
   const { runReauthableAction } = useOrgDashboard();
@@ -65,19 +78,33 @@ export function useSaveMyAgent(orgId: string) {
   return useMutation({
     mutationKey: [...key, "save"],
     retry: false,
-    mutationFn: async (change: MemberAgentInput): Promise<MemberAgentView | null> => {
-      const result: { saved: MemberAgentView | null } = { saved: null };
-      await runReauthableAction("save-my-agent", async () => {
-        const { response, payload } = await requestJson(agentPath, { method: "PUT", headers: { [ORG_SCOPE_HEADER]: orgId }, body: JSON.stringify(change) }, 15000);
-        if (!response.ok) throw getRequestError(payload, response, `Couldn't save (${response.status}).`);
-        const parsed = memberAgentSavedSchema.safeParse(payload);
-        result.saved = parsed.success ? parsed.data : null;
-      });
-      return result.saved;
+    mutationFn: async (changes: MemberAgentInput | MemberAgentInput[]) => {
+      for (const change of Array.isArray(changes) ? changes : [changes]) {
+        await runReauthableAction("save-my-agent", async () => {
+          const switches = connectorSwitches(change, queryClient.getQueryData<MemberAgentView>(key));
+          if (switches) {
+            const { response, payload } = await requestJson(`${agentPath}/connectors`, {
+              method: "PATCH", headers: { [ORG_SCOPE_HEADER]: orgId }, body: JSON.stringify(switches),
+            }, 15000);
+            if (response.ok) {
+              const saved = memberConnectorSavedSchema.parse(payload);
+              await queryClient.cancelQueries({ queryKey: key, exact: true });
+              queryClient.setQueryData<MemberAgentView>(key, (view) => view && mergeSavedConnectorSwitches(view, saved));
+              return;
+            }
+            if (!(response.status === 404 && getErrorMessage(payload, "") === "not_found")) {
+              throw getRequestError(payload, response, `Couldn't save (${response.status}).`);
+            }
+          }
+          const { response, payload } = await requestJson(agentPath, { method: "PUT", headers: { [ORG_SCOPE_HEADER]: orgId }, body: JSON.stringify(change) }, 15000);
+          if (!response.ok) throw getRequestError(payload, response, `Couldn't save (${response.status}).`);
+          const parsed = memberAgentSavedSchema.safeParse(payload);
+          if (!parsed.success) throw new Error("Couldn't verify the saved settings.");
+          await queryClient.cancelQueries({ queryKey: key, exact: true });
+          queryClient.setQueryData<MemberAgentView>(key, parsed.data);
+        });
+      }
     },
-    onSuccess: (saved) => {
-      if (saved) queryClient.setQueryData<MemberAgentView>(key, saved);
-      else void queryClient.invalidateQueries({ queryKey: key });
-    },
+    onError: () => { void queryClient.invalidateQueries({ queryKey: key, exact: true }); },
   });
 }

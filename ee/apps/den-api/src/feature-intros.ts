@@ -5,10 +5,6 @@ import type { FeatureIntroEventRequest, FeatureIntroState } from "@openwork/type
 import { db } from "./db.js"
 import { applyFeatureIntroEvent, featureIntroStateView, type FeatureIntroTimestamps } from "./feature-intro-state.js"
 
-/**
- * Feature intros (DESIGN.md I1–I10): per member and organization, which intros were seen, dismissed or acted
- * on. Den web owns the registry of intro keys and versions; Den only stores what happened. Behind featureIntros.
- */
 type OrganizationId = DenTypeId<"organization">
 type MemberId = DenTypeId<"member">
 type Database = typeof db | Parameters<Parameters<typeof db["transaction"]>[0]>[0]
@@ -38,11 +34,6 @@ export async function listFeatureIntroStates(actor: FeatureIntroActor): Promise<
   return rows.map((row) => featureIntroStateView(row.introKey, row))
 }
 
-/**
- * Records one event, idempotently: the row is created on first use and locked while the event is applied, so
- * parallel tabs never lose a timestamp. A newer intro version resets the timestamps first; an older one changes
- * nothing and returns what is stored.
- */
 export async function recordFeatureIntroEvent(actor: FeatureIntroActor, event: FeatureIntroEventRequest, now = new Date()): Promise<FeatureIntroState> {
   return db.transaction(async (tx) => {
     await tx
@@ -78,7 +69,6 @@ async function writeFeatureIntroState(database: Database, id: DenTypeId<"feature
     .where(eq(FeatureIntroStateTable.id, id))
 }
 
-/** Removes every intro state of an organization inside the transaction that deletes it. */
 export async function deleteOrganizationFeatureIntroStates(database: Database, organizationId: OrganizationId): Promise<void> {
   await database.delete(FeatureIntroStateTable).where(eq(FeatureIntroStateTable.organizationId, organizationId))
 }

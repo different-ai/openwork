@@ -1,3 +1,4 @@
+import { sandboxSendDisposition } from "@/react-app/kernel/sandbox-transition";
 import type { Session } from "@opencode-ai/sdk/v2/client";
 import { create } from "zustand";
 import { snapshotComposerSessionState, type ComposerSessionState } from "../surface/composer-state-store";
@@ -7,16 +8,15 @@ import { useWorkbenchStore, workbenchSessionKey } from "./workbench-store";
 import type { ResolvedWorkspaceEndpoint } from "@/app/lib/workspace-endpoint";
 import { composerAutoSendScopeKey, type ComposerAutoSendPayload } from "../surface/composer-auto-send";
 
-/** Local navigation identity. It is never an engine session ID. */
 export type PendingConversation = {
   id: string;
   scope: string | null;
   destination: NewSessionDestination;
   submitted: ComposerSessionState;
-  phase: "creating" | "creation-failed" | "persisted";
+  phase: "creating" | "creation-failed" | "sandbox-deferred" | "persisted";
   error: unknown;
+  sandboxNote?: string;
   sessionId?: string;
-  /** Bridges publication until the route's session list acknowledges this ID. */
   session?: Session;
   groupAssigned: boolean;
 };
@@ -25,7 +25,6 @@ export const usePendingConversationStore = create<{ conversations: Record<string
 const retries = new Map<string, () => Promise<void>>();
 const assignments = new Map<string, Promise<void>>();
 
-/** Sidebar destinations use route IDs; the receiving surface uses server-owned IDs. */
 export function pendingConversationAutoSendPayload(entry: PendingConversation, endpoint: Pick<ResolvedWorkspaceEndpoint, "workspaceId" | "opencodeBaseUrl">, sessionId: string): ComposerAutoSendPayload {
   return {
     scopeKey: composerAutoSendScopeKey({ draftScope: entry.scope, workspaceId: endpoint.workspaceId, opencodeBaseUrl: endpoint.opencodeBaseUrl, sessionId }),
@@ -62,7 +61,6 @@ export function withPendingGroupAssignments(assignments: Record<string, string>,
   return next;
 }
 
-/** Replace only this pending side pane; closing/switching it is a newer intent. */
 export function publishPendingSideChat(entry: PendingConversation, session: Session, workspaceTitle?: string) {
   const parent = entry.destination.parent;
   if (!parent) return;
@@ -83,7 +81,6 @@ function update(id: string, patch: Partial<PendingConversation>) {
   });
 }
 
-/** Begin synchronously, before consuming the source draft or starting network work. */
 export function beginPendingConversation(input: Pick<PendingConversation, "scope" | "destination" | "submitted">) {
   if (!input.scope) throw new Error("Wait for your account to finish loading before sending.");
   const id = crypto.randomUUID();
@@ -95,29 +92,34 @@ export function beginPendingConversation(input: Pick<PendingConversation, "scope
   return conversation;
 }
 
-/** Retries are scoped to this submission, not whichever draft is now on screen. */
 export function createPendingConversation<T extends { session: Session }>(id: string, create: () => Promise<T>, publish: (created: T) => void) {
   const once = createDraftFirstSend<T>();
   const run = () => {
     const current = usePendingConversationStore.getState().conversations[id];
     if (!current || current.phase === "persisted") return Promise.resolve();
-    update(id, { phase: "creating", error: null });
+    update(id, { phase: "creating", error: null, sandboxNote: undefined });
     return once.run(id, create, async (created) => {
-      // Publish the real ID to the sidebar before any assignment/admission work.
       update(id, { phase: "persisted", sessionId: created.session.id, session: created.session, error: null });
       publish(created);
       retries.delete(id);
     }).catch((error: unknown) => {
-      // A publication failure must never turn a real session back into a create retry.
-      if (!usePendingConversationStore.getState().conversations[id]?.sessionId) update(id, { phase: "creation-failed", error });
-      else update(id, { error });
+      if (usePendingConversationStore.getState().conversations[id]?.sessionId) {
+        update(id, { error });
+        return;
+      }
+      const disposition = sandboxSendDisposition(error);
+      if (disposition.kind === "deferred") update(id, { phase: "sandbox-deferred", sandboxNote: disposition.note });
+      else update(id, { phase: "creation-failed", error });
     });
   };
   retries.set(id, run);
   return run();
 }
 
-export function retryPendingConversation(id: string) { return retries.get(id)?.() ?? Promise.resolve(); }
+export function retryPendingConversation(id: string, submitted?: ComposerSessionState) {
+  if (submitted) update(id, { submitted: snapshotComposerSessionState(submitted) });
+  return retries.get(id)?.() ?? Promise.resolve();
+}
 
 export function acknowledgePendingSession(scope: string | null, workspaceId: string, sessionId: string) {
   for (const entry of Object.values(usePendingConversationStore.getState().conversations)) {
@@ -125,7 +127,6 @@ export function acknowledgePendingSession(scope: string | null, workspaceId: str
   }
 }
 
-/** Called by the real session's ordinary send/retry path, never by the hero. */
 export async function ensurePendingConversationGroup(scope: string | null, workspaceId: string, sessionId: string, assign: (workspaceId: string, sessionId: string, groupId: string) => Promise<void>) {
   const entry = Object.values(usePendingConversationStore.getState().conversations).find((item) => item.scope === scope && item.destination.workspaceId === workspaceId && item.sessionId === sessionId);
   if (!entry || entry.groupAssigned || !entry.destination.groupId) return;

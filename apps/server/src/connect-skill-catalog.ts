@@ -18,12 +18,8 @@ const SKILL_INDEX_SCHEMA = "https://schemas.agentskills.io/discovery/0.2.0/schem
 const CATALOG_CACHE_TTL_MS = 30_000;
 const SKILL_BODY_RETRY_MAX = 512;
 const SKILL_BODY_RETRY_MS = 10 * 60_000;
-// Den's opt-in incremental sync fields (ee/apps/den-api/src/mcp/skill-index-sync.ts).
 const SKILL_SYNC_META_KEY = "io.openwork/skills";
 const SKILL_BATCH_MAX = 20;
-// Desktops already trust an unchanged inventory revision for this long before
-// they rebuild what it covers; a write Den made outside any request does not
-// move the revision, so past this the index is diffed in full again.
 const SKILL_REVISION_TRUST_MS = 15 * 60_000;
 const READER_IDLE_MS = 5 * 60_000;
 
@@ -34,21 +30,22 @@ const skillIndexSchema = z.object({
     type: z.literal("skill-md"),
     title: z.string().max(1_024).optional(),
     description: z.string().max(1_024),
-    // Compatibility metadata for clients that still read the discovery marker.
     modelDiscovery: z.boolean().optional(),
     marketplaceName: z.string().max(1_024).optional(),
     pluginName: z.string().max(1_024).optional(),
     url: z.string().startsWith("skill://"),
     capability: z.string().regex(/^(?:skill:[^:]+|plugin:[^:]+:[^:]+)$/),
-    // Native delivery only: the SKILL.md digest and size, or why it is withheld.
     digest: z.string().regex(/^sha256:[a-f0-9]{64}$/).optional(),
     size: z.number().int().nonnegative().optional(),
     setup: z.object({ status: z.string().max(64), message: z.string().max(4_000) }).optional(),
+    files: z.array(z.object({
+      path: z.string().min(1).max(255),
+      digest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
+      size: z.number().int().nonnegative(),
+    })).max(500).optional(),
   }).passthrough()),
-  // Delivery metadata retained for older clients.
   delivery: z.enum(["native"]).optional(),
 }).passthrough();
-// What a Den that understands the sync fields answers instead of the full index.
 const skillIndexSyncSchema = z.union([
   z.object({ sync: z.literal("unchanged"), revision: z.string() }),
   z.object({
@@ -63,15 +60,9 @@ export type OpenWorkConnectSkill = z.infer<typeof skillIndexSchema>["skills"][nu
 export type OpenWorkConnectSkillIndex = { skills: OpenWorkConnectSkill[]; delivery?: "native" };
 type CloudIndex = { cloud: Record<string, unknown>; index: OpenWorkConnectSkillIndex };
 const catalogCache = new Map<string, { expiresAt: number; value: Promise<OpenWorkConnectSkillIndex | null> }>();
-// The last index each config returned, so the next read asks only what changed.
 type SyncedIndex = { index: OpenWorkConnectSkillIndex; etags: Map<string, string>; revision?: string; syncedAt: number };
 const syncedIndexes = new Map<string, SyncedIndex>();
-// One initialized MCP session per config, reused by every read of a refresh.
 const readers = new Map<string, { usedAt: number; fetcher: McpFetch; reader: Promise<McpResourceReader | null> }>();
-// Digests whose read failed or did not match, and when to try them again. A
-// digest names exact bytes, so retrying it on every refresh cannot help; it
-// only repeats the same Den request. Bodies themselves are never kept here:
-// every body served comes from a read Den authorized.
 const skillBodyRetryAt = new Map<string, number>();
 
 function sha256Digest(text: string): string {
@@ -88,7 +79,6 @@ function configKey(config: Record<string, unknown>): string {
   return createHash("sha256").update(JSON.stringify(config)).digest("hex");
 }
 
-/** The config's open session, or a new one when it failed or sat idle. */
 async function sessionReader(config: Record<string, unknown>, fetcher: McpFetch): Promise<McpResourceReader | null> {
   const key = configKey(config);
   const current = readers.get(key);
@@ -108,16 +98,6 @@ function sortedSkills(skills: Iterable<OpenWorkConnectSkill>): OpenWorkConnectSk
   return [...skills].sort((a, b) => a.name.localeCompare(b.name) || a.capability.localeCompare(b.capability));
 }
 
-/**
- * Read the standards-shaped skill index through one openwork-cloud config.
- * Returns the index on success (possibly empty), or null when the config
- * is unusable (invalid URL, disabled, auth rejected, transport/protocol error)
- * so callers can fall back to another candidate config.
- *
- * The read sends the revision and entry etags of the last index, so a Den that
- * supports it answers "unchanged" or only the entries that changed. An older
- * Den ignores them and returns the full index, which replaces what is held.
- */
 export async function readMcpSkillIndex(config: Record<string, unknown>, fetcher: McpFetch): Promise<OpenWorkConnectSkillIndex | null> {
   const key = configKey(config);
   const held = syncedIndexes.get(key);
@@ -151,7 +131,6 @@ export async function readMcpSkillIndex(config: Record<string, unknown>, fetcher
     syncedIndexes.set(key, { index: merged, etags, revision: synced.data.revision, syncedAt: Date.now() });
     return merged;
   }
-  // An older Den: the full index, nothing to diff against next time.
   syncedIndexes.delete(key);
   return { skills: index.skills, ...delivery };
 }
@@ -165,14 +144,6 @@ async function readIndexCached(cloud: Record<string, unknown>, fetcher: McpFetch
   return await value;
 }
 
-/**
- * Resolve the skill catalog from the first *working* openwork-cloud config.
- * Candidates are tried in order: the global runtime row, the server-scoped
- * connect-state cache, then each workspace runtime row (legacy scope). Stale rows — e.g. a revoked token
- * or a dead local Den URL left behind by an old session — are skipped instead
- * of shadowing a valid config, and the winning workspace copy is promoted to
- * server scope so Connect stays account-level.
- */
 async function readWorkingCloudIndex(config: ServerConfig, fetcher: McpFetch): Promise<CloudIndex | null> {
   const serverCloud = await readConnectCloudMcp(config);
   const candidates: Array<{ cloud: Record<string, unknown>; source: "server" | "workspace" }> = [];
@@ -193,7 +164,6 @@ async function readWorkingCloudIndex(config: ServerConfig, fetcher: McpFetch): P
     if (index === null) continue;
     if (candidate.source === "workspace") {
       await writeConnectCloudMcp(config, candidate.cloud).catch(() => {
-        // Catalog reads should still succeed even if promotion fails.
       });
     }
     return { cloud: candidate.cloud, index };
@@ -201,14 +171,6 @@ async function readWorkingCloudIndex(config: ServerConfig, fetcher: McpFetch): P
   return null;
 }
 
-/**
- * Resolve the skill index from the first *working* openwork-cloud config.
- * Candidates are tried in order: the global runtime row, the server-scoped
- * connect-state cache, then each workspace runtime row (legacy scope). Stale rows — e.g. a revoked token
- * or a dead local Den URL left behind by an old session — are skipped instead
- * of shadowing a valid config, and the winning workspace copy is promoted to
- * server scope so Connect stays account-level.
- */
 export async function readOpenWorkConnectSkillIndex(
   config: ServerConfig,
   fetcher: McpFetch = externalFetch,
@@ -227,7 +189,6 @@ export async function readOpenWorkConnectSkillCatalog(
   return (await readOpenWorkConnectSkillIndex(config, fetcher)).skills;
 }
 
-/** Several SKILL.md bodies on one session: batched where Den supports it, one read each where it does not. */
 async function readSkillBodies(reader: McpResourceReader, urls: string[], use: boolean): Promise<Map<string, string>> {
   const bodies = new Map<string, string>();
   for (let start = 0; start < urls.length && !reader.broken; start += SKILL_BATCH_MAX) {
@@ -240,7 +201,6 @@ async function readSkillBodies(reader: McpResourceReader, urls: string[], use: b
       if (body !== undefined) bodies.set(url, body);
     }
     const sync = result.meta[SKILL_SYNC_META_KEY];
-    // An older Den answered only the first URI; read the rest one at a time.
     if (batched && !(typeof sync === "object" && sync !== null && "batch" in sync && sync.batch === true)) {
       for (const url of chunk.slice(1)) {
         if (reader.broken) break;
@@ -252,14 +212,6 @@ async function readSkillBodies(reader: McpResourceReader, urls: string[], use: b
   return bodies;
 }
 
-/**
- * Read listed skills' SKILL.md bodies through the same working openwork-cloud
- * config, on one session. Only URLs in the current index are read, so this
- * cannot be used to fetch arbitrary resources. Den rechecks access on every
- * read. A background read (`use` false) skips a digest whose read failed or
- * did not match in the last ten minutes; a read for a message that uses the
- * skill is always tried, and Den counts it as a Library use.
- */
 export async function readOpenWorkConnectSkillContents(
   config: ServerConfig,
   urls: string[],
@@ -290,7 +242,6 @@ export async function readOpenWorkConnectSkillContents(
   }
 }
 
-/** One listed skill's SKILL.md: a background read of a single URL. */
 export async function readOpenWorkConnectSkillContent(
   config: ServerConfig,
   url: string,
@@ -323,9 +274,6 @@ function logInjectedMarketplaceSkills(skills: InjectedMarketplaceSkill[]): void 
   });
 }
 
-// Every request carries the whole catalog, so each rendered character is a
-// recurring prompt cost. Descriptions are discovery hints, not documentation;
-// the full SKILL.md arrives only when the capability is executed.
 const MAX_RENDERED_DESCRIPTION_CHARS = 360;
 
 function clampDescription(value: string): string {
@@ -337,15 +285,6 @@ function collapseWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
-/**
- * Render the member's remote skills as prompt guidance.
- *
- * The block is named <available_remote_skills> so it cannot be confused with
- * the engine's own <available_skills> list, which is loaded through the native
- * skill tool. Each skill is one line: attributes carry the machine facts an
- * execution needs, the element text carries the human-readable title and
- * description used to decide whether the skill applies.
- */
 export function renderOpenWorkConnectSkillInstruction(skills: OpenWorkConnectSkill[]): string {
   if (skills.length === 0) {
     logInjectedMarketplaceSkills([]);
@@ -366,10 +305,6 @@ export function renderOpenWorkConnectSkillInstruction(skills: OpenWorkConnectSki
       .flatMap((value) => (value ? [collapseWhitespace(value)] : []))
       .filter((value) => value.length > 0)
       .join(" / ");
-    // Prompt-size discipline: the title is folded into the text only when it
-    // adds information beyond the name, and <location> is omitted entirely —
-    // execution goes through the capability, and the skill:// URL is
-    // derivable server-side when anything ever needs it.
     const text = title !== skill.name && description !== title ? `${title}: ${description}` : description;
     lines.push(
       `  <skill name="${escapeXml(skill.name)}" capability="${escapeXml(skill.capability)}"${source ? ` source="${escapeXml(source)}"` : ""}>${escapeXml(text)}</skill>`,
@@ -388,4 +323,44 @@ export function renderOpenWorkConnectSkillInstruction(skills: OpenWorkConnectSki
   lines.push("</available_remote_skills>");
   logInjectedMarketplaceSkills(injectedMarketplaceSkills);
   return lines.join("\n");
+}
+
+export type OpenWorkConnectSkillSource = { skill: OpenWorkConnectSkill; markdown: string; files: Array<{ path: string; bytes: Uint8Array }> };
+
+function bytesDigest(bytes: Uint8Array): string {
+  return `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
+}
+
+function skillFileUrl(skillUrl: string, path: string): string {
+  return `${skillUrl.slice(0, -"SKILL.md".length)}${path.split("/").map(encodeURIComponent).join("/")}`;
+}
+
+export async function readOpenWorkConnectSkillSource(
+  config: ServerConfig,
+  url: string,
+  fetcher: McpFetch = externalFetch,
+): Promise<OpenWorkConnectSkillSource | null> {
+  try {
+    const working = await readWorkingCloudIndex(config, fetcher);
+    const skill = working?.index.skills.find((entry) => entry.url === url);
+    if (!working || !skill?.digest || skill.setup) return null;
+    const reader = await sessionReader(working.cloud, fetcher);
+    if (!reader) return null;
+    const markdown = await reader.read(url);
+    if (markdown === null || sha256Digest(markdown) !== skill.digest) return null;
+    const files: OpenWorkConnectSkillSource["files"] = [];
+    for (const file of skill.files ?? []) {
+      if (reader.broken) return null;
+      const fileUrl = skillFileUrl(url, file.path);
+      const result = await reader.readContents(fileUrl);
+      const text = result?.texts.get(fileUrl);
+      const blob = result?.blobs.get(fileUrl);
+      const bytes = text !== undefined ? new Uint8Array(Buffer.from(text, "utf8")) : blob !== undefined ? new Uint8Array(Buffer.from(blob, "base64")) : null;
+      if (!bytes || bytesDigest(bytes) !== file.digest) return null;
+      files.push({ path: file.path, bytes });
+    }
+    return { skill, markdown, files };
+  } catch {
+    return null;
+  }
 }

@@ -1,9 +1,12 @@
-/**
- * Russian translations
- * Product terms like OpenWork, OpenCode, OpenPackage, Skills, Plugins, Commands, Sessions, and MCP stay as project terminology where needed.
- */
-
 export default {
+  "artifact.office_empty": "В этом файле нет читаемого текста. Откройте его в другом приложении, чтобы увидеть оригинал.",
+  "artifact.office_empty_slide": "На этом слайде нет читаемого текста.",
+  "artifact.office_loading": "Загрузка текстового плана",
+  "artifact.office_slide": "Слайд {number}",
+  "artifact.office_text_only": "Только текстовый план, без оформления, изображений и цветов.",
+  "artifact.office_too_large": "Файл слишком большой для предпросмотра. Откройте его в другом приложении, чтобы увидеть целиком.",
+  "artifact.office_truncated": "Часть текста не показана из-за ограничения предпросмотра.",
+  "artifact.office_unreadable": "Не удалось прочитать файл. Попробуйте открыть его в другом приложении.",
   "app.error_audit_load": "Не удалось загрузить журнал аудита.",
   "app.error_connect_first": "Подключитесь к этому воркеру перед применением изменений среды выполнения.",
   "app.error_request_failed": "Запрос не выполнен",
@@ -267,8 +270,11 @@ export default {
   "providers.still_connected_suffix": ", но воркер по-прежнему сообщает, что подключен. Очистите оставшийся API key или OAuth-учетные данные и перезапустите воркер, чтобы полностью отключиться.",
   "providers.unknown_provider": "Неизвестный провайдер",
   "providers.use_api_key_suffix": "Используйте вместо этого API key.",
+  "question_modal.collapse": "Свернуть",
+  "question_modal.collapsed_status": "Ожидает вашего ответа",
   "question_modal.custom_answer_label": "Или введите свой ответ",
   "question_modal.custom_answer_placeholder": "Введите ваш ответ здесь...",
+  "question_modal.expand": "Показать вопрос",
   "question_modal.question_counter": "Вопрос {current} из {total}",
   "session.allow_for_session": "Разрешить для сеанса",
   "session.allow_once": "Разрешить один раз",
@@ -559,7 +565,6 @@ export default {
   "settings.group_workspace": "Рабочее пространство",
   "settings.hide_titlebar": "Скрыть title bar",
   "settings.hide_titlebar_desc": "Скрыть заголовок окна. Полезно для оконной раскладки",
-  "settings.join_discord": "Присоединиться к Discord",
   "settings.language": "Язык",
   "settings.language.description": "Выберите предпочитаемый язык",
   "settings.last_error": "Последняя ошибка",

@@ -3,7 +3,6 @@ export interface EngineAutoUpgradeRetry {
   retryAt: number;
 }
 
-/** One attempt per boot; checkpointed failures back off from one minute to one day. */
 export function engineAutoUpgradeRetry(attempts: number, now = Date.now()): EngineAutoUpgradeRetry {
   const next = Math.min(Math.max(0, attempts) + 1, 32);
   return { attempts: next, retryAt: now + Math.min(60_000 * 2 ** (next - 1), 86_400_000) };
@@ -25,7 +24,6 @@ export async function waitForEngineIdle(options: IdleOptions): Promise<void> {
     signal.addEventListener("abort", abort, { once: true });
     if (signal.aborted) abort();
   }));
-  // Waiting for idle is not a second migration attempt. Unknown activity fails closed.
   for (let check = 0; check < (options.idleChecks ?? 60); check++) {
     options.signal.throwIfAborted();
     if (await options.idle()) return;

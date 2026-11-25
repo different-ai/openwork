@@ -17,7 +17,6 @@ export interface WorldView {
     receipt: string;
     log?: string;
     preflight?: PreflightResult[];
-    /** Preformatted lines such as the source commit or a stale-checkout note. */
     notes?: string[];
   }): void;
   apply(event: WorldEvent): void;
@@ -37,7 +36,6 @@ export interface WorldView {
     lastLog: string[];
     logPath: string;
     hint?: string;
-    /** Known causes recognised in the failure, each with its fix. */
     hints?: string[];
   }): void;
   stop(): void;
@@ -100,15 +98,12 @@ export function createWorldView(options: {
   const waitingDetail = (step: StepRow): string | undefined => {
     const waiting = now() - step.updatedAt;
     if (step.status !== "start" || waiting < heartbeatMs) return undefined;
-    // Keep the current sub-phase visible; only append how long it has been quiet.
     return `${step.detail ? `${step.detail} · ` : ""}still waiting (${formatElapsed(waiting)})${step.log ? ` · log ${step.log}` : ""}`;
   };
 
   const ttyLines = (): string[] => {
     if (terminalFrame) return terminalFrame;
     const lines = [...headerLines];
-    // Before the world reports its first step (process start, imports, source
-    // pinning) show that it is alive instead of an apparently hung screen.
     if (steps.length === 0 && launchedAt !== undefined) {
       lines.push(`${paint("cyan", SPINNER[spinnerFrame % SPINNER.length])} Starting world… (${formatElapsed(now() - launchedAt)})`);
     }

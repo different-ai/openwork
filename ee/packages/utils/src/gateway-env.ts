@@ -20,8 +20,6 @@ export function gatewayInteger(value: string | undefined, name: string, fallback
 function validHost(host: string): boolean {
   if (isIP(host.replace(/^\[|\]$/g, ""))) return true
   if (host.length > 253 || !host.split(".").every((label) => /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/i.test(label))) return false
-  // mysql: URLs do not normalize numeric hosts. Reject alternate IP spellings
-  // before a database client can resolve one to a forbidden loopback address.
   try {
     return new URL(`http://${host}`).hostname === host.toLowerCase()
   } catch {
@@ -56,22 +54,18 @@ export function gatewayOrigin(value: string | undefined, name: string, productio
   return url.origin
 }
 
-// No network/health probes: capability is deployment intent, validated at startup.
 export function parseGatewayDeploymentEnv(source: Environment) {
   const enabled = gatewayBoolean(source.GATEWAY_ENABLED, "GATEWAY_ENABLED")
   const proxyBaseUrl = source.GATEWAY_PROXY_BASE_URL ?? source.INFERENCE_PROXY_BASE_URL
   const publicBaseUrl = source.GATEWAY_PUBLIC_BASE_URL
   const production = source.NODE_ENV === "production" || source.OPENWORK_DEV_MODE !== "1"
   let modelsPublicBaseUrl: string | undefined
-  // Client destinations are independent of management admission. Optional bad
-  // origins must not add startup requirements while management is disabled.
   for (const candidate of [source.INFERENCE_PROXY_BASE_URL, publicBaseUrl]) {
     if (candidate === undefined) continue
     try {
       modelsPublicBaseUrl = gatewayOrigin(candidate, "Models desktop origin", production, true)
       break
     } catch {
-      // Try the other public destination before retaining legacy-only behavior.
     }
   }
   if (!enabled) return { enabled, proxyBaseUrl, publicBaseUrl, modelsPublicBaseUrl }

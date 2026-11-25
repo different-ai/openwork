@@ -1,4 +1,3 @@
-/** Setup and model recovery have separate destinations and rollout requirements. */
 export function workbotLinkPurpose(href: string): "setup" | "recovery" | null {
   const url = new URL(href);
   if (url.pathname === "/dashboard/members") return "setup";
@@ -15,7 +14,6 @@ export function workbotLinkPurpose(href: string): "setup" | "recovery" | null {
   return null;
 }
 
-/** Only known Workbot destinations may survive sign-in; access is checked after authentication. */
 export function workbotAuthReturnTo(value: string | null | undefined): string | null {
   if (!value || value.length > 2048 || !value.startsWith("/") || value.startsWith("//") || /[\\\s\u0000-\u001f\u007f]/.test(value)) return null;
   const url = new URL(value, "https://workbot-return.invalid");
@@ -32,7 +30,6 @@ export function workbotSignInRoute(href: string): string {
   return returnTo ? `/?${new URLSearchParams({ mode: "sign-in", workbotReturnTo: returnTo })}` : "/";
 }
 
-/** Workbot links choose an explicit member workspace, never the browser's last active workspace. */
 export function linkedWorkbotOrganization(href: string, organizations: readonly { id: string }[]): string | null {
   const url = new URL(href);
   if (!url.searchParams.has("workbotOrganizationId")) return null;

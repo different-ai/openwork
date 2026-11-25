@@ -22,6 +22,18 @@ function job(source, id) {
   return lines.slice(start, next === -1 ? undefined : next).join("\n");
 }
 
+test("Daytona service launchers retain runtime options while enabling workspace source imports", () => {
+  const launches = [...read(".devcontainer/start-daytona-server.sh").matchAll(/^\s+NODE_OPTIONS="([^"]+)" \\$/gm)];
+  assert.equal(launches.length, 2, "check both Den API and the AI Gateway");
+  for (const [, value] of launches) {
+    assert.equal(value, "${NODE_OPTIONS:-} --conditions=development");
+    const observed = execFileSync("bash", ["-c", `NODE_OPTIONS="${value}"\nprintf '%s' "$NODE_OPTIONS"`], {
+      encoding: "utf8", env: { ...process.env, NODE_OPTIONS: "--trace-warnings --max-old-space-size=1024" },
+    });
+    assert.equal(observed, "--trace-warnings --max-old-space-size=1024 --conditions=development");
+  }
+});
+
 const scopedBuilds = [
   ["ci-sdk", "sdk", "generated-sdk"],
   ["api-contract", "den-contract", "openapi-snapshot-and-lint"],
@@ -133,7 +145,7 @@ test("runtime/SDK/contract/API-docs inputs exclude unrelated landing, docs and s
     assert.equal(isBuildAffected(target, null), true, `${target}: unknown diff`);
   }
   for (const [target, paths] of [
-    ["runtime", ["apps/app/src/react-app/app.tsx", "apps/server/src/server.ts", "packages/types/src/index.ts", "packages/opencode-plugin/src/plugin.ts", "packages/remote-sessions/src/index.ts", "ee/apps/den-worker-runtime/documents-editor-proxy.mjs", "scripts/create-daytona-openwork-snapshot.sh", ".github/workflows/dev-daytona-snapshot.yml"]],
+    ["runtime", ["apps/app/src/react-app/app.tsx", "apps/server/src/server.ts", "packages/types/src/index.ts", "packages/opencode-plugin/src/plugin.ts", "packages/remote-sessions/src/index.ts", "ee/apps/den-worker-runtime/Dockerfile.daytona-snapshot", "scripts/create-daytona-openwork-snapshot.sh", ".github/workflows/dev-daytona-snapshot.yml"]],
     ["sdk", ["ee/apps/den-api/src/app.ts", "packages/sdk/script/generate.mjs", "scripts/den-contract.mjs", ".github/workflows/ci-sdk.yml"]],
     ["den-contract", ["ee/apps/den-api/src/app.ts", ".spectral.yaml", "scripts/api-lint.mjs", ".github/workflows/api-contract.yml"]],
     ["api-docs", ["ee/apps/den-api/src/app.ts", "scripts/den-contract.mjs", ".github/scripts/runtime-scope.mjs", ".github/workflows/refresh-api-docs.yml"]],
@@ -184,7 +196,7 @@ test("snapshot COPY retains the app/server dependency closure without copying un
   for (const path of ["package.json", "pnpm-lock.yaml", "pnpm-workspace.yaml", "constants.json", "tsconfig.declarations.json", "turbo.json", ".nvmrc", ".node-version", ".npmrc", ".pnpmfile.cjs", "pnpmfile.cjs"]) {
     if (existsSync(join(ROOT, path))) assert.ok(copied(path), `Snapshot is missing root configuration ${path}`);
   }
-  for (const path of ["apps/desktop/package.json", "packages/opencode-plugin/server.ts", "packages/remote-sessions/src/index.ts", "ee/apps/den-worker-runtime/documents-editor-proxy.mjs"]) {
+  for (const path of ["apps/desktop/package.json", "packages/opencode-plugin/server.ts", "packages/remote-sessions/src/index.ts"]) {
     assert.ok(copied(path), `Snapshot is missing source-level input ${path}`);
   }
   for (const path of ["ee/apps/landing/app/page.tsx", "packages/docs/docs.json", "docs/example.md", "reports/screenshot.png", "apps/desktop/src/main.ts", "ee/apps/den-api/src/app.ts"]) {

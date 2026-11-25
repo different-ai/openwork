@@ -5,7 +5,6 @@ import { ExampleCaption, ExampleRow, ExampleRows } from "../example-parts";
 import { useExampleStep } from "../use-example-step";
 import { workflowRunsExampleRows } from "./workflow-runs-example-data";
 
-/** Tab example: recent runs with their result, one failed. */
 export function WorkflowRunsExample() {
   const step = useExampleStep(workflowRunsExampleRows.length);
 

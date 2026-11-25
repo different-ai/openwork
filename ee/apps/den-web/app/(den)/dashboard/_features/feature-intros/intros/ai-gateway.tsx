@@ -1,8 +1,9 @@
-import { Boxes, LayoutDashboard, Network, Plug, Route, SlidersHorizontal, Users } from "lucide-react";
+import { Boxes, KeyRound, LayoutDashboard, Network, Plug, Route, SlidersHorizontal, Users } from "lucide-react";
 import {
   getAiGatewayProvidersRoute,
   getAiGatewayRoute,
   getInferenceRoute,
+  getLibraryRoute,
   getNewAiGatewayLimitRoute,
   getNewAiGatewayProviderRoute,
   getNewAiGatewaySmartRouterRoute,
@@ -10,6 +11,7 @@ import {
 } from "../../../../_lib/den-org";
 import { defineFeatureIntro, type FeatureIntroContext } from "../types";
 import { docsPage } from "./docs";
+import { ApiKeysExample } from "./examples/ai-gateway/api-keys-example";
 import { AiGatewayExample } from "./examples/ai-gateway/gateway-example";
 import { LimitsExample } from "./examples/ai-gateway/limits-example";
 import { OpenWorkModelsExample } from "./examples/ai-gateway/openwork-models-example";
@@ -18,23 +20,15 @@ import { ProvidersExample } from "./examples/ai-gateway/providers-example";
 import { SmartRouterExample } from "./examples/ai-gateway/smart-router-example";
 import { UsersTeamsExample } from "./examples/ai-gateway/users-teams-example";
 
-/**
- * Facts the AI Gateway pages report from data they already load. A missing
- * fact means "not loaded yet": a section never takes over the page on a guess.
- */
 export type AiGatewayFacts = {
-  /** Gateway providers (`GET /v1/inference-providers?scope=manageable`). */
   providers?: number;
-  /** OpenWork Models turned on (`GET /v1/inference`). */
   openworkModels?: boolean;
-  /** Who added the first provider, when it was someone else (only returned to provider managers). */
   setUpBy?: string | null;
-  /** Smart Routers (`GET /v1/org/auto-routers`); only reported where the feature is on. */
   smartRouters?: number;
-  /** Spend limit policies, not archived (`GET /v1/gateway/usage-limit-policies`). */
   policies?: number;
-  /** Provider access grants to anyone (everyone, a team or a person). */
   accessGrants?: number;
+  memberApiKeys?: boolean;
+  apiKeys?: number;
 };
 
 type Ctx = FeatureIntroContext<AiGatewayFacts>;
@@ -81,7 +75,6 @@ export const aiGatewayIntros = [
       { when: (ctx) => ctx.can("canManageGatewayProviders"), label: "Add your first AI provider", href: getNewAiGatewayProviderRoute() },
       { when: () => true, label: "Add your first AI provider", href: getNewAiGatewayProviderRoute(), locked: { reason: MANAGE_PROVIDERS_LOCK } },
     ],
-    // Full screen only once both facts are known and neither is set up.
     setupState: (ctx) => {
       if (ctx.facts.providers === undefined || ctx.facts.openworkModels === undefined) return "done";
       return gatewaySetUp(ctx) ? "done" : "none";
@@ -107,7 +100,6 @@ export const aiGatewayIntros = [
       { when: (ctx) => ctx.can("canManageGatewayProviders"), label: "Add an AI provider", href: getNewAiGatewayProviderRoute() },
       { when: () => true, label: "Add an AI provider", href: getNewAiGatewayProviderRoute(), locked: { reason: MANAGE_PROVIDERS_LOCK } },
     ],
-    // Usage comes from your own providers, so the overview has nothing to show without one.
     setupState: (ctx) => ((ctx.facts.providers ?? 0) > 0 ? "done" : "none"),
   }),
 
@@ -138,7 +130,6 @@ export const aiGatewayIntros = [
     key: "ai-gateway.smart-routers",
     parent: "ai-gateway",
     version: 1,
-    // Smart Routers live on AI Providers; old `?tab=auto-router` links still land there.
     match: { path: PATH, tab: "auto-router" },
     icon: Route,
     title: "Smart Routers",
@@ -158,7 +149,6 @@ export const aiGatewayIntros = [
       { when: (ctx) => ctx.can("canManageGatewayProviders"), label: "Set up a Smart Router", href: getNewAiGatewaySmartRouterRoute() },
       { when: () => true, label: "Set up a Smart Router", href: getNewAiGatewaySmartRouterRoute(), locked: { reason: MANAGE_PROVIDERS_LOCK } },
     ],
-    // Banner only: providers exist but no router yet. Unknown (or feature off) shows nothing.
     setupState: (ctx) => {
       if ((ctx.facts.providers ?? 0) === 0 || ctx.facts.smartRouters === undefined) return "done";
       return ctx.facts.smartRouters === 0 ? "partial" : "done";
@@ -212,12 +202,36 @@ export const aiGatewayIntros = [
       { when: (ctx) => ctx.can("canManageGatewayProviders"), label: "Choose who can use your providers", href: getAiGatewayProvidersRoute() },
       { when: () => true, label: "Choose who can use your providers", href: getAiGatewayProvidersRoute(), locked: { reason: MANAGE_PROVIDERS_LOCK } },
     ],
-    // OpenWork Models reach everyone, so only an org on its own providers alone can have nobody with access.
     setupState: (ctx) => {
       if (ctx.facts.accessGrants === undefined) return "none";
       if (ctx.facts.openworkModels === undefined) return "done";
       return ctx.facts.accessGrants === 0 && !ctx.facts.openworkModels ? "partial" : "done";
     },
+  }),
+
+  defineFeatureIntro<AiGatewayFacts>({
+    key: "ai-gateway.api-keys",
+    parent: "ai-gateway",
+    version: 2,
+    match: { path: PATH, tab: "api-keys" },
+    icon: KeyRound,
+    title: "Members create their own keys",
+    summary: "Each person creates API keys for themselves, to use your Gateway's models from the tools they already work in.",
+    highlights: [
+      { title: "Created in their Library.", text: "Members make keys in My Library › Models for Claude Code, Codex, Cursor or any compatible tool." },
+      { title: "Same access, same limits.", text: "A key reaches only the models its owner is allowed, and counts toward their limit." },
+      { title: "One place to revoke.", text: "Every key shows up here with who owns it and when it was last used." },
+    ],
+    example: {
+      Component: ApiKeysExample,
+      alt: "Example: four API keys, each with the tool it is for, the person who owns it and when it was last used.",
+    },
+    docsUrl: docsPage("ai-gateway/third-party-tools"),
+    ctas: [
+      { when: (ctx) => ctx.facts.memberApiKeys === true, label: "Create your own key now", href: `${getLibraryRoute()}?show=models&create-key=1` },
+      { when: () => true, label: "Create your own key now", href: `${getLibraryRoute()}?show=models&create-key=1`, locked: { reason: "Turn on Allow 3rd party tools & harnesses above to let members create keys." } },
+    ],
+    setupState: (ctx) => ((ctx.facts.apiKeys ?? 0) > 0 ? "done" : "none"),
   }),
 
   defineFeatureIntro<AiGatewayFacts>({

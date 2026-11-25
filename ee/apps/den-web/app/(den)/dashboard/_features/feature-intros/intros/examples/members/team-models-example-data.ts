@@ -1,8 +1,6 @@
 import type { ExampleProvider } from "../ai-gateway/example-parts";
 import { ANTHROPIC, OPENAI } from "../ai-gateway/gateway-example-data";
 
-/** Sample data only: no API calls (DESIGN.md I7). Laid out like a team's Models tab. */
-
 export const teamModelsExampleTeam = "Engineering";
 
 export const teamModelsExampleDefault = { provider: ANTHROPIC, model: "claude-sonnet-4-5" };
