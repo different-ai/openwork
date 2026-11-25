@@ -1,8 +1,9 @@
 import { NextRequest } from "next/server";
-import { joinBaseUrl, readBaseUrlEnv } from "@openwork/types/url";
+import { joinBaseUrl } from "@openwork/types/url";
 
 import { denWebLogger, reportScimProxyFailure } from "../../../observability/runtime-logger";
 import { canonicalScimProxyPath, scimProxyFailureFields } from "../../../observability/scim-proxy-failure";
+import { readDenApiBase } from "../../_lib/den-api-base";
 import { readPublicWebOrigin } from "../../_lib/public-web-origin";
 import { applySignedClientIp } from "./signed-client-ip";
 
@@ -634,15 +635,15 @@ export async function proxyUpstream(
   if (browserSession && !isSameOriginBrowserRequest(request)) {
     return Response.json({ error: "forbidden_origin" }, { status: 403 });
   }
-  const apiBase = readBaseUrlEnv(process.env, "DEN_API_BASE");
+  const apiBase = readDenApiBase();
   if (!apiBase) {
     denWebLogger.error("den-web upstream proxy misconfigured", {
       route_prefix: options.routePrefix,
       method: request.method,
       duration_ms: elapsedMs(startedAtMs),
-      missing: "DEN_API_BASE",
+      missing: "DEN_BASE_URL",
     });
-    return new Response(JSON.stringify({ error: "DEN_API_BASE must be configured." }), {
+    return new Response(JSON.stringify({ error: "DEN_BASE_URL or DEN_API_BASE must be configured." }), {
       status: 503,
       headers: { "content-type": "application/json" },
     });
