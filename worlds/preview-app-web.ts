@@ -81,7 +81,7 @@ export async function bootAppWebWorld(
       const url = new URL(preview.url);
       const access = url.searchParams.get("token");
       if (!access) throw new Error("Private Freestyle access is missing.");
-      live = await installLiveModel(stack, { team: options.liveModelTeam, origin: url.origin, expiresAt: preview.expiresAt,
+      live = await installLiveModel(stack, { team: options.liveModelTeam, modelId: options.modelId, origin: url.origin, expiresAt: preview.expiresAt,
         headers: { cookie: `__Host-openwork-preview=${access}` }, token: outputs.openworkToken.value, hostToken: outputs.openworkHostToken.value });
     }
     return { ...live, placement: "freestyle", sourceSha: options.ref, sourceKind: "snapshot", snapshotId: preview.snapshotId,
@@ -127,7 +127,7 @@ export async function bootAppWebWorld(
     const manifest = await execInSandbox(defaultDaytonaExec, sandboxId, `cat "${runtime.runtimeDirectory}/runtime.json"`,
       { context: "read owned Daytona runtime connection" });
     const { token, hostToken } = JSON.parse(manifest.stdout);
-    live = await installLiveModel(stack, { team: options.liveModelTeam, origin: preview.browserOrigin, expiresAt,
+    live = await installLiveModel(stack, { team: options.liveModelTeam, modelId: options.modelId, origin: preview.browserOrigin, expiresAt,
       headers: { "X-Daytona-Skip-Preview-Warning": "true" }, token, hostToken });
   }
   return {

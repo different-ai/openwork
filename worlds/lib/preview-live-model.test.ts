@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { defaultPreviewModelId, installLiveModel } from "./preview-live-model.ts";
 import { parseAppWebOptions } from "./app-web-options.ts";
 
 const ref = "a".repeat(40);
@@ -9,11 +10,13 @@ for (const place of ["daytona", "freestyle"]) {
     assert.equal(parseAppWebOptions(["--ref", ref], env, true).liveModelTeam, undefined);
     assert.equal(parseAppWebOptions(["--live-model", "team_example", "--ref", ref], env, true).liveModelTeam, "team_example");
     assert.throws(() => parseAppWebOptions(["--live-model", "team_example", "--ref", ref], env));
+    assert.equal(parseAppWebOptions(["--ref", ref, "--model", "example/model", "--live-model", "team_dev"], env, true).modelId, "example/model");
+    assert.throws(() => parseAppWebOptions(["--ref", ref, "--model", "example/model"], env, true));
     assert.throws(() => parseAppWebOptions(["--live-model", "default", "--ref", ref], env, true));
   });
 }
 
-import { installLiveModel, previewModel } from "./preview-live-model.ts";
+
 
 for (const failSetup of [true, false]) {
   test(`preview key is bounded and revoked after ${failSetup ? "a failed setup" : "use"}`, async () => {
@@ -25,7 +28,7 @@ for (const failSetup of [true, false]) {
       if (body) {
         assert.deepEqual(body, { name: (body as { name: string }).name, purpose: "ai-gateway",
           expiresAt: Date.parse(expiresAt), aiGatewayQuota: { limitAmount: 1, includeByokInQuota: true } });
-        return JSON.stringify({ apiKey: { id: "key_123" }, apiKeyString: "test-preview-token" });
+        return JSON.stringify({ apiKey: { id: "exampleOpaqueId" }, apiKeyString: "test-preview-token" });
       }
       return "";
     };
@@ -41,7 +44,7 @@ for (const failSetup of [true, false]) {
           return new Response(null, { status: failSetup ? 500 : 204 });
         }
         assert.equal(path, "/api/openwork/workspace/ws/default-model");
-        assert.deepEqual(JSON.parse(String(init?.body)).model, previewModel);
+        assert.deepEqual(JSON.parse(String(init?.body)).model, { providerID: "preview-live", modelID: defaultPreviewModelId });
         return Response.json({ ok: true });
       });
       assert.ok(!JSON.stringify(result).includes("test-preview-token"));
