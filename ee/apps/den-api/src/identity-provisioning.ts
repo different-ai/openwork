@@ -53,6 +53,15 @@ export async function provisionSsoMembership(input: { organizationId: OrgId; use
 
   if (!await organizationAllowsProvisioning(input.organizationId, "sso")) return "invitation_required"
 
+  const placeholder = await acceptPendingInvitationForBootstrapMembership({
+    organizationId: input.organizationId,
+    userId: input.userId,
+    email: input.email,
+    defaultRole: ORGANIZATION_SSO_JIT_ROLE,
+    afterSsoAdmission: true,
+  })
+  if (placeholder) return "joined_by_invitation"
+
   await ensureBootstrapMembershipForOrganization({
     organizationId: input.organizationId,
     userId: input.userId,

@@ -3,8 +3,12 @@ import { after, test } from "node:test"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { bootDen, field, list, summary, text, type Call } from "./harness.js"
 
-const den = await bootDen()
+const den = await bootDen({ env: { DEN_PLAN_GATING_ENABLED: "true" } })
 after(() => den.close())
+const { client } = await import("../../src/db.js")
+if (!("getConnection" in client)) throw new Error("An isolated MySQL test database is required")
+const mysql = client
+const dayMs = 24 * 60 * 60 * 1000
 const { runConfigBlobWorkerOnce } = await import("../../src/config-blobs/worker.js")
 const { provisionSsoMembership } = await import("../../src/identity-provisioning.js")
 
@@ -64,7 +68,20 @@ test("Config moves a private skill and its file to a member joining later, witho
 
   const orgId = normalizeDenTypeId("organization", target.orgId)
   const userId = normalizeDenTypeId("user", creator.userId)
+  const [pending] = await mysql.execute("SELECT i.id, m.id AS member_id, TIMESTAMPDIFF(SECOND, i.created_at, i.expires_at) AS lifetime FROM invitation i JOIN member m ON m.invite_id = i.id WHERE i.organization_id = ? AND i.email = ?", [orgId, creator.email])
+  const [placeholder] = list(pending)
+  assert.ok(placeholder)
+  assert.ok(Math.abs(Number(placeholder.lifetime) * 1000 - 90 * dayMs) < 2_000)
+  const sentAt = Date.now()
+  const ordinary = expectStatus(await b("POST", "/v1/invitations", { email: `ordinary-${den.stamp}@example.test`, role: "member" }), 201)
+  const ordinaryExpiry = Date.parse(text(field(ordinary, "expiresAt"), "standard invitation expiry"))
+  assert.ok(Math.abs(ordinaryExpiry - sentAt - 7 * dayMs) < 2_000)
+  await mysql.execute("UPDATE invitation SET expires_at = DATE_SUB(NOW(3), INTERVAL 1 DAY) WHERE id = ?", [placeholder.id])
+  assert.equal(await provisionSsoMembership({ organizationId: orgId, userId, email: creator.email }), "invitation_required")
+  await mysql.execute("UPDATE organization SET metadata = JSON_SET(COALESCE(metadata, '{}'), '$.plan', JSON_OBJECT('tier', 'team')) WHERE id = ?", [orgId])
   assert.equal(await provisionSsoMembership({ organizationId: orgId, userId, email: creator.email }), "joined_by_invitation")
+  const [joined] = await mysql.execute("SELECT id FROM member WHERE organization_id = ? AND user_id = ?", [orgId, userId])
+  assert.deepEqual(joined, [{ id: placeholder.member_id }])
   const creatorToken = await den.mintMcpToken(creator, target.orgId)
   const adminToken = await den.mintMcpToken(target.owner, target.orgId)
   const peerToken = await den.mintMcpToken(peer, target.orgId)
