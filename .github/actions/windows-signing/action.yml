@@ -42,8 +42,19 @@ runs:
         }
         'SIGN_WINDOWS=true' | Out-File -FilePath $env:GITHUB_ENV -Append
         "WINDOWS_PRESERVED_SIGNATURES=$env:RUNNER_TEMP\windows-preserved-signatures.jsonl" | Out-File -FilePath $env:GITHUB_ENV -Append
-        # Same module version used by azure/artifact-signing-action v2.
-        Install-Module -Name ArtifactSigning -RequiredVersion 0.1.8 -Force -Repository PSGallery
+        # Same module version used by azure/artifact-signing-action v2. A fresh
+        # runner sometimes cannot reach or has not registered the gallery yet.
+        foreach ($attempt in 1..3) {
+          try {
+            if (-not (Get-PSRepository -Name PSGallery -ErrorAction SilentlyContinue)) { Register-PSRepository -Default }
+            Install-Module -Name ArtifactSigning -RequiredVersion 0.1.8 -Force -Repository PSGallery
+            break
+          } catch {
+            if ($attempt -eq 3) { throw }
+            Write-Warning "Installing the signing module failed (attempt $attempt of 3): $_"
+            Start-Sleep -Seconds (20 * $attempt)
+          }
+        }
 
     - name: Azure login with GitHub OIDC
       uses: azure/login@f5d393ae46f8fde4be8b75f32e3fc50e654ad0ca # v3.0.1
