@@ -5,6 +5,12 @@ description: "Run OpenWork on Amazon EKS or ECS Fargate with Amazon RDS for MySQ
 
 The recommended AWS path is Helm on Amazon EKS with Amazon RDS for MySQL. For the smallest first deployment, use EKS Auto Mode and Kubernetes `LoadBalancer` Services so AWS provisions Network Load Balancers for Den web and Den API. Move to an ALB or an existing ingress platform when you need shared layer-7 routing, WAF policy, or more advanced certificate handling.
 
+## Choose capabilities, then import Org Config
+
+Before deploying, review the [five installation capabilities](/self-host/deploy-to-your-cloud/overview#choose-your-installation-capabilities). EKS uses the Helm chart's AI Gateway and Automations settings; the chart does not install Workbot or the headless runner used by Workbot, the Slack assistant, cloud Automations and Cloud computers. For ECS, the direct module has separate inputs for those services and the computer provider, as described below.
+
+After verifying migrations and HTTPS, complete [`/setup`](/self-host/deploy-to-your-cloud/first-administrator). Sign in to the organization and [import `<org>.config.json`](/self-host/export-import-configuration) in **Settings › Config › Import**, or configure settings in the dashboard.
+
 ## What AWS manages
 
 - EKS control plane, compute, pod networking, and load-balancer integration
@@ -127,7 +133,7 @@ You provide a VPC, two hostnames (the web host and `api.` plus the web host), an
 
 The module can also run OpenWork Web, so members chat in the browser with each workspace in a [Daytona](https://www.daytona.io) sandbox: set `openwork_web_enabled = true` and provide a Daytona API key and sandbox snapshot.
 
-It can also run the headless runner, so the Slack assistant, headless Automations and Workbot (a chat app at `chat.` plus your web host) work on your deployment with your own model provider: set `headless_runner`, `workbot` and `slack_assistant_enabled`.
+Use `headless_runner` to deploy the shared execution service for cloud Automations, Workbot and the Slack assistant, with your own model provider. Use `workbot` to serve Workbot at `chat.` plus your web host, and `slack_assistant_enabled` to enable the Slack assistant before connecting Slack. For Cloud computers, configure a provider with `headless_computer` and its secret reference; the separate computer rollout must also be on. These inputs do not configure your organization.
 
 See the [module README](https://github.com/different-ai/openwork/tree/dev/infra/terraform/modules/openwork-aws-ecs) for inputs, a complete example, and cost notes.
 

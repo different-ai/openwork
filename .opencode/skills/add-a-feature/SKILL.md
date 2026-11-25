@@ -5,13 +5,18 @@ description: Decide whether work needs a feature flag (any change to product beh
 
 # Skill: Add a feature
 
-**Default: flag what users see.** Any change to product behavior that users
-can see ships behind a feature, so it can be turned off without a deploy.
-Work users won't notice as a behavior change ships directly and is reverted
-with a normal revert if needed.
+## Choose the control by who owns it
 
-When a flag is warranted, it is a **feature** in the registry, declared
-**before any feature code**, off.
+| Control | Use it for | Where it belongs |
+| --- | --- | --- |
+| **Capability** | What the installation can run: AI Gateway, Workbot, Slack assistant, Automations, or Cloud computers. The deployment operator owns availability; model settings and policy do not provision services. | `packages/managed-deployments/src/capabilities.ts`. Record supported targets, defaults, dependencies and gaps; expose typed Helm, Terraform or installer inputs, not raw `DEN_*` product switches. |
+| **Org Config** | How an organization uses what is installed: providers, models, access and policy. Organization admins manage the same stored settings in the dashboard or through a reviewed import. | `ee/apps/den-api/src/config-blobs/areas/*.ts` for supported import/export areas; use the normal setting APIs and permissions. Do not put organization policy in Helm or environment variables. |
+| **Preview** | A temporary rollout of new or changed user-visible behavior, off by default and safe to turn off. | Intended design: `previews.ts`, with an `owner` and `expiresOn` for each preview. That registry and expiry enforcement have not shipped. Use the existing feature registry below for current rollouts; name an owner and removal date in the rollout plan. |
+
+One change can need more than one control: a Preview can stage a new Capability
+or Org Config setting, but is not its permanent switch. Work that doesn't change
+user-visible behavior ships directly. Declare a rollout flag **before any feature
+code**, off.
 
 Registry: `packages/features/src/flags/` (package `@openwork/features`), one
 file per feature. Adding that file is the only edit that declares a feature;
@@ -38,9 +43,8 @@ organization's row) or with the admin MCP tools `den_list_features`,
 
 Every change made in `/admin` or by those tools (on, off, reset, kill switch,
 restore) is appended to the `feature_change` table with who made it and when.
-`/admin` shows the latest one on each row, e.g. "Last change: On for this
-organization by Omar McAdam · 26 Oct 2026, 14:03". Deploy-time operator locks
-(`DEN_FEATURE_*`) are not changes and are not recorded.
+`/admin` shows the latest actor and time on each row. Deploy-time operator
+locks are not changes and are not recorded.
 
 Member overrides are scoped to a membership, never a user globally. Pass `{ userId }` for caller-specific checks; organization-owned background policy without a person intentionally uses only organization state. The member editor supports true/false and null to restore inheritance.
 
@@ -66,10 +70,10 @@ These ship without a flag:
   wording.
 - Refactors, internal tooling, dev/eval/CI scripts.
 
-Not a feature either: something that only keeps older clients working
-(compat shim with a removal condition), something worked out from what is
-configured (derive it in code), or a setting that changes *how* something
-works rather than *whether* people get it (put it in `env.ts` / Helm `config.<area>`).
+Do not use a rollout flag as a permanent configuration setting. Compatibility
+shims need a removal condition; availability derived from configuration should
+be computed in code. Use installation inputs for infrastructure settings and
+Org Config for organization policy.
 
 If you are unsure, add a flag. When you ship without one, say in the PR why users won't see a behavior change.
 
@@ -173,7 +177,7 @@ Evals turn features on per organization through the admin API:
 
 ## Never
 
-- Add a `DEN_*_ENABLED` env var for a product surface (CI rejects new ones).
+- Add or document a raw `DEN_*` switch for a product surface. CI rejects new `DEN_*_ENABLED` product flags.
 - Read or write `organization.metadata.capabilities` (CI rejects it).
 - Hand-write an `/admin` control, a `/v1/org` field, or a Helm line for a feature.
 - Ship something on self-hosted by accident: choose `deployments` on purpose.

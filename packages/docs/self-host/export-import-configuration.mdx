@@ -3,13 +3,9 @@ title: "Export and import organization configuration"
 description: "Download an organization's configuration as one JSON file, review it in git, and import it into the same or another OpenWork through reviewed change requests."
 ---
 
-A **config blob** is one JSON file holding all or part of an organization's
-configuration: teams, roles and people, connectors, AI Gateway providers and
-limits, plugins and skills, desktop policies, Workbot, settings and the feature flags
-that are on (27 areas, listed
-below). You can export it, keep it in version control, edit it, and
-import it again into the same organization or into another OpenWork (for example
-from OpenWork Cloud to a self-hosted Den).
+An **Org Config** file (called a *config blob* in the API) holds all or part of an organization's configuration: teams, roles and people, connectors, AI Gateway providers and limits, plugins and skills, desktop policies, Workbot settings, and other supported areas. Export it from **Settings › Config › Export**. The download is named `openwork-config-<org>-<date>.json`; you can keep it as `<org>.config.json` in version control. Review the file for sensitive organization data before committing it.
+
+For a fresh self-hosted install, [provision infrastructure and choose capabilities](/self-host/deploy-to-your-cloud/overview#choose-your-installation-capabilities) first. Complete `/setup` and sign in to the target organization before uploading the file in **Settings › Config › Import**. An import cannot install a service or turn on a deployment capability. Review the plan, resolve references and secrets, then approve and apply it.
 
 Nothing is written when you upload a file. Every import becomes a **change
 request**: OpenWork matches the file against what exists, shows a plan, and only
@@ -21,6 +17,16 @@ This page complements [Provision organization configuration](/self-host/declarat
 The keyed `PUT …/by-key/{key}` routes stay supported and are the simplest choice when a
 script owns a handful of resources. Use config blobs to copy a whole organization, to
 review configuration changes as a diff, or to move between deployments.
+
+## Which change takes effect
+
+The dashboard, an approved import, and the supported [by-key APIs](/self-host/declarative-configuration#choose-one-writer-per-resource) change stored organization settings. There is no file-over-UI or UI-over-file priority, and nothing watches your JSON file. The latest successful write to a field determines its value, subject to each writer's conflict checks and update rules.
+
+- **Dashboard:** A save takes effect without an import. A later reviewed import can change the same setting.
+- **Import:** Uploading does not change settings. Apply follows the approved plan and checks for changes to the items it will write. A dashboard or by-key edit that changes one of those items after planning can make the plan stale; review the refreshed plan before approving again. `merge` leaves items absent from the file alone; `mirror` can remove them only in scoped areas and with explicit delete decisions. Neither mode claims ownership of a resource after apply.
+- **By key:** A script can overwrite the fields it manages on its next successful PUT, even if a dashboard save or import changed them. A new key does not adopt an existing unkeyed resource. Check each endpoint's omission and concurrency behavior before scripting.
+
+Pick one normal writer for each setting or resource. If you make an emergency edit in the dashboard, update the file or script before its next apply. Deployment capability checks still apply independently, regardless of how the organization setting was written. The existing `settings.features` area is a special case: eligible imports can turn on a rollout for an organization only when a platform admin applies them. Imports never turn rollouts off or override deployment exclusions, kill switches, or operator locks.
 
 ## The file
 
@@ -507,8 +513,7 @@ or another.
 ## Move from OpenWork Cloud to a self-hosted Den
 
 1. **On Cloud**, export everything (Settings › Config › Export, or `GET /v1/config-blobs/export`).
-2. **On the self-hosted Den**, create the organization and sign in as its owner. If
-   you want to supply secrets from the environment, set `DEN_CONFIG_BLOB_SECRET_ENV_ALLOWLIST` and the variables on den-api.
+2. **On the self-hosted Den**, install the capabilities you need, complete `/setup`, and sign in as the target organization's owner. If you want to supply secrets from the environment, configure the [import secret allowlist](#secrets).
 3. **Upload** the file in Settings › Config › Import (or `POST …/change-requests`),
    in `merge` mode.
 4. **Review** the plan. Everything is a `create`; source IDs are reused. People
