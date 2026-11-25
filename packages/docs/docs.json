@@ -391,6 +391,7 @@
               "start-here/enterprise-desktop-deployment",
               "self-host/gateway",
               "self-host/gateway-upgrade",
+              "self-host/workbot-kubernetes",
               "self-host/declarative-configuration",
               "self-host/export-import-configuration",
               "start-here/installer-delivery",

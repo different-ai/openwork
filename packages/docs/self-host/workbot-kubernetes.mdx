@@ -1,0 +1,99 @@
+---
+title: "Set up Workbot on Kubernetes"
+description: "Enable the private runner and Workbot on a self-hosted OpenWork Helm release, then verify a reply as a regular member."
+---
+
+<Note>
+  Requires an OpenWork release newer than `v0.18.73` (`v0.18.74` or later) whose `openwork-ee` OCI chart includes `headlessRunner` and `workbot` support.
+</Note>
+
+Add Workbot to an existing OpenWork Kubernetes deployment so members can chat from your own dashboard. Workbot needs the headless runner. Roll out the runner first so you can verify it before opening Workbot to members.
+
+## Prepare your release and model access
+
+1. Choose a [published OpenWork release](https://github.com/different-ai/openwork/releases) whose `openwork-ee` OCI chart includes both `headlessRunner` and `workbot` support. Use that same release for the Den API, Den Web, AI Gateway, headless runner and Workbot images. Installing a newer chart with older images does not add support.
+2. Start with your complete, reviewed Helm values for the existing release. Keep your database, authentication and networking settings and existing Secret references. Pin the chart with `--version` in the commands below and set the top-level `image.tag` in that file to the matching published image tag. Remove or reconcile per-component tags, including any legacy `inference.image.tag` inherited by Gateway. Make sure your cluster can pull all five matching images, including from your mirrors if you use them.
+3. Make sure [AI Gateway is enabled](/self-host/gateway) (`gateway.enabled: true`). In the dashboard, open **AI Gateway › AI Providers** and [configure a provider](/ai-gateway/overview#set-it-up). Put the model in an active model group with working credentials. Grant access to the intended members and to the admin who will choose the default model. If the provider requires individual sign-in, connect the relevant accounts before testing.
+4. Look up the runner's startup model alias in this deployment. With an account that has the grant, select the organization, open the browser's Network panel and reload **My Library › Models**. Inspect the response to `GET /v1/inference-providers?scope=usable`. In the intended provider's `models` list, match the model, model group and credential set and copy the entry's `id` starting with `gwm_`, not its `upstreamModelId`. Use the matching protocol: `anthropic` for Anthropic Messages, `openai` for Chat Completions or `openai-responses` for OpenAI Responses. Choose a different model if your provider does not support a runner protocol. The startup alias does not grant anyone access; Workbot uses each signed-in member's Gateway permissions.
+
+## Prepare Secrets, storage and HTTPS
+
+Create two existing Kubernetes Secrets in the release namespace through your secret manager. Keep them separate from the shared Den Secret. Use independent, stable values of at least 32 characters and restrict access to the Secrets. Put only their names in Helm values.
+
+| Secret name in the example | Required keys | Who receives them |
+| --- | --- | --- |
+| `runner-runtime` | `HEADLESS_API_TOKEN`, `HEADLESS_DEN_CALLBACK_TOKEN`, `HEADLESS_GRANT_KEY` | The API token goes to the runner, Den API and Workbot; the callback token goes to the runner and Den API; the grant key goes only to the runner. |
+| `workbot-runtime` | `WORKBOT_SESSION_SECRET` | Workbot only. |
+
+Use a ReadWriteOnce volume for the runner and plan to back up its SQLite database and files together. The runner is a single writer and restarts with a brief interruption during upgrades. Keep its Service private on a trusted cluster network. The [chart reference](https://github.com/different-ai/openwork/blob/dev/packaging/helm/openwork-ee/companions.md) covers existing claims, backups and Pod Security requirements. The companion workloads as rendered do not meet Restricted Pod Security admission.
+
+Set `config.public.webOrigin` and `config.public.apiOrigin` to your browser-facing Den Web and Den API HTTPS origins, respectively, and retain `config.public.gatewayPublicBaseUrl` for AI Gateway. Use origins without path prefixes. The runner needs network access and TLS trust for the Den API and Gateway endpoints.
+
+Give Workbot its own HTTPS hostname, distinct from Den and Gateway. For the Ingress example below, point DNS at your existing maintained Ingress controller and provision a TLS Secret for that hostname. Browsers **and Den API pods** must resolve and trust the Workbot URL; Den API uses it to check readiness. Configure every proxy hop to pass streaming responses without buffering and allow long-lived connections. If you terminate TLS at a separate reverse proxy, follow the [external edge instructions](https://github.com/different-ai/openwork/blob/dev/packaging/helm/openwork-ee/companions.md#stage-3-workbot) instead.
+
+## Enable the private runner
+
+If you already run an eligible Automation or Slack integration, review its model access first: enabling the runner can let those integrations use it before Workbot is on. If you are replacing manually configured companions, follow the [chart migration notes](https://github.com/different-ai/openwork/blob/dev/packaging/helm/openwork-ee/companions.md#manual-destinations-and-terraform-classification) before proceeding. Helm does not adopt those workloads or migrate their data.
+
+Add this configuration to your complete `openwork-values.yaml`. Replace the model alias and protocol with the ones you looked up. The storage example uses the cluster's default StorageClass; review the storage choice before applying.
+
+```yaml
+headlessRunner:
+  enabled: true
+  model:
+    protocol: openai-responses
+    alias: REPLACE_WITH_YOUR_GATEWAY_ALIAS
+  secret:
+    existingSecret: runner-runtime
+  persistence:
+    enabled: true
+    size: 10Gi
+workbot:
+  enabled: false
+```
+
+Confirm your Helm and `kubectl` context points to the target cluster. Use your existing release name and namespace throughout. Set the variables, render the chart and review the image tags, Secret references and private runner Service before upgrading:
+
+```bash
+CHART=oci://ghcr.io/different-ai/charts/openwork-ee
+VERSION=REPLACE_WITH_PUBLISHED_CHART_VERSION
+RELEASE=openwork-ee
+NAMESPACE=openwork
+
+helm template "$RELEASE" "$CHART" --version "$VERSION" \
+  --namespace "$NAMESPACE" --values openwork-values.yaml
+
+helm upgrade "$RELEASE" "$CHART" --version "$VERSION" \
+  --namespace "$NAMESPACE" --reset-values --values openwork-values.yaml \
+  --wait --timeout 30m
+```
+
+Check `kubectl --namespace "$NAMESPACE" get deployments,pods,pvc`. The `-headless-runner` Deployment should have one ready replica and its claim should be **Bound**. As a deployment admin, open **Services** (`/admin/services`) on Den Web and check that the runner is **Ready**. If the runner is already managed by this chart and ready, keep its values and continue to the next step.
+
+## Enable Workbot
+
+Keep the runner settings and replace the `workbot` block in `openwork-values.yaml`. Set `publicUrl` to your Workbot HTTPS origin and use your real IngressClass and TLS Secret names.
+
+```yaml
+workbot:
+  enabled: true
+  publicUrl: https://workbot.example.com
+  secret:
+    existingSecret: workbot-runtime
+  ingress:
+    enabled: true
+    className: REPLACE_WITH_YOUR_INGRESS_CLASS
+    tlsSecretName: workbot-tls
+```
+
+Run the same render and upgrade commands. Check `kubectl --namespace "$NAMESPACE" get deployments,pods,ingress` for a ready `-workbot` Deployment and the Ingress for your Workbot hostname. In **Services**, check that Workbot is **Ready**. A ready pod alone does not prove Den API can reach the Workbot HTTPS endpoint.
+
+## Select the model and verify a member reply
+
+1. As an organization admin, open **Manage › Workbot** in your OpenWork dashboard. Under **Default model**, choose the Gateway model you granted to members and click **Save model**. Use **Check availability** to refresh the list if needed. **Test model** is a quick admin check and may use paid inference; it does not verify member access.
+2. In a separate browser session, sign in as a regular member with the model grant. On your self-hosted dashboard, choose the same organization and click **Workbot** under **Work**. Confirm the tab opens on your Workbot hostname. Sign in there if asked.
+3. Send a non-sensitive prompt, such as `Reply with the words Workbot is ready.` Wait for the reply to appear in the chat. Before a wider rollout, also check that a longer response streams through your edge without disconnecting.
+
+If the model is missing or the member cannot send, recheck their model-group grant and provider connection. If the pods are ready but Workbot is not ready in **Services**, check DNS, routing and certificate trust from Den API to Workbot. If the chat disconnects mid-response, check proxy buffering and idle timeouts before retrying; the runner may still be working.
+
+See the [chart's disable and data retention instructions](https://github.com/different-ai/openwork/blob/dev/packaging/helm/openwork-ee/companions.md#stage-4-disable-and-re-enable) before removing workloads or changing storage.
