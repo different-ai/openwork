@@ -11,7 +11,6 @@ export { default as browserSecretHandles } from "@openwork/features/flags/browse
 export { default as chatSkillCardShare } from "@openwork/features/flags/chat-skill-card-share"
 export { default as composerInlineSuggestions } from "@openwork/features/flags/composer-inline-suggestions"
 export { default as connectionSelectedScopesOnly } from "@openwork/features/flags/connection-selected-scopes-only"
-export { default as desktopLibraryModels } from "@openwork/features/flags/desktop-library-models"
 export { default as desktopSystemProxy } from "@openwork/features/flags/desktop-system-proxy"
 export { default as gatewayOpenCodeSetup } from "@openwork/features/flags/gateway-open-code-setup"
 export { default as gmailThreadRead } from "@openwork/features/flags/gmail-thread-read"
