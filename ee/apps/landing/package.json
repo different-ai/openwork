@@ -18,6 +18,7 @@
     "plain:setup-fields": "node scripts/setup-plain-feedback-fields.mjs",
     "prebuild": "pnpm --dir ../../../packages/ui build && node ../../../scripts/check-connect-installer-parity.mjs && node scripts/copy-bootstrap-cli.mjs",
     "build": "next build",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "start": "next start --hostname 0.0.0.0",
     "lint": "next lint"
   },

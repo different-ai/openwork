@@ -9,6 +9,7 @@
     "dev": "NODE_OPTIONS=--conditions=development OPENWORK_DEV_MODE=1 tsx watch src/server.ts",
     "dev:local": "NODE_OPTIONS=--conditions=development OPENWORK_DEV_MODE=1 PORT=${DEN_GATEWAY_PORT:-8788} tsx watch src/server.ts",
     "build": "node build.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "start": "node dist/server.js"
   },
   "dependencies": {

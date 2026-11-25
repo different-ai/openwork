@@ -4,6 +4,7 @@
   "type": "module",
   "scripts": {
     "build": "pnpm run mock-server:build && tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "check": "pnpm run build",
     "dev": "NODE_OPTIONS=--conditions=development tsx watch --include '../../../packages/mcp-enterprise-mock-server/src/**/*.ts' src/server.ts",
     "mock-server:build": "pnpm --filter @openwork/mcp-enterprise-mock-server build",

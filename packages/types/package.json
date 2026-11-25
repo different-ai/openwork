@@ -688,6 +688,7 @@
   ],
   "scripts": {
     "build": "tsup && tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "node --test test/*.test.ts"
   },
   "dependencies": {

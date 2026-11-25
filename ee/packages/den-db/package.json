@@ -161,6 +161,7 @@
   },
   "scripts": {
     "build": "node scripts/build.mjs",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "build:utils": "pnpm --dir ../utils run build",
     "db:baseline": "node --import tsx scripts/baseline-migrations.ts",
     "db:migrate:local": "node --import tsx scripts/dev-migrate.ts",
