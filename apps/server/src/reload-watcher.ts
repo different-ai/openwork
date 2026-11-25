@@ -27,34 +27,67 @@ export function startReloadWatchers(input: {
   reloadEvents: ReloadEventStore;
   logger?: Logger | null;
   debounceMs?: number;
-}): { close: () => void; refreshWorkspace: (workspaceId: string, reasons?: ReloadReason[]) => Promise<void> } {
+}): { sync: () => void; close: () => void; refreshWorkspace: (workspaceId: string, reasons?: ReloadReason[]) => Promise<void> } {
   const { config, reloadEvents } = input;
   const logger = input.logger ?? null;
   const debounceMs = typeof input.debounceMs === "number" ? input.debounceMs : 750;
 
-  const workspaceWatchers = new Map<string, WorkspaceReloadWatcher>();
+  const workspaceWatchers = new Map<string, WorkspaceReloadWatcher & { path: string }>();
+  let closed = false;
 
-  for (const workspace of config.workspaces) {
-    try {
-      const watcher = startWorkspaceReloadWatcher({ workspace, reloadEvents, logger, debounceMs });
-      workspaceWatchers.set(workspace.id, watcher);
-    } catch (error) {
-      logger?.log("warn", "Reload watcher failed to start", {
-        workspaceId: workspace.id,
-        workspacePath: workspace.path,
-        error: error instanceof Error ? error.message : String(error),
+  const sync = () => {
+    if (closed) return;
+    const desired = new Map<string, WorkspaceInfo>();
+    for (const workspace of config.workspaces) {
+      try {
+        if (!workspace.path?.trim()) continue;
+        desired.set(workspace.id, { ...workspace, path: resolve(workspace.path) });
+      } catch (error) {
+        logger?.log("warn", "Reload watcher failed to start", {
+          workspaceId: workspace.id,
+          workspacePath: workspace.path,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+    for (const [id, watcher] of workspaceWatchers) {
+      if (desired.get(id)?.path === watcher.path) continue;
+      try {
+        watcher.close();
+      } catch {
+      }
+      workspaceWatchers.delete(id);
+    }
+
+    let added = 0;
+    for (const workspace of desired.values()) {
+      if (workspaceWatchers.has(workspace.id)) continue;
+      try {
+        const watcher = startWorkspaceReloadWatcher({ workspace, reloadEvents, logger, debounceMs });
+        workspaceWatchers.set(workspace.id, { ...watcher, path: workspace.path });
+        added++;
+      } catch (error) {
+        logger?.log("warn", "Reload watcher failed to start", {
+          workspaceId: workspace.id,
+          workspacePath: workspace.path,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    if (added) {
+      logger?.log("info", `Reload watcher enabled (${workspaceWatchers.size})`, {
+        workspaceCount: workspaceWatchers.size,
       });
     }
-  }
+  };
 
-  if (config.workspaces.length) {
-    logger?.log("info", `Reload watcher enabled (${config.workspaces.length})`, {
-      workspaceCount: config.workspaces.length,
-    });
-  }
+  sync();
 
   return {
+    sync,
     close: () => {
+      closed = true;
       for (const watcher of workspaceWatchers.values()) {
         try {
           watcher.close();
@@ -103,7 +136,10 @@ function startWorkspaceReloadWatcher(input: {
   const refreshBaseline = async (reasons: ReloadReason[] = fingerprintedReloadReasons) => {
     for (const reason of reasons) {
       if (!fingerprintedReloadReasons.includes(reason)) continue;
-      baselines.set(reason, await computeReloadFingerprint(root, reason));
+      if (closed) return;
+      const current = await computeReloadFingerprint(root, reason);
+      if (closed) return;
+      baselines.set(reason, current);
     }
   };
 
@@ -136,6 +172,7 @@ function startWorkspaceReloadWatcher(input: {
     if (!fingerprintedReloadReasons.includes(reason)) return;
 
     const current = await computeReloadFingerprint(root, reason);
+    if (closed) return;
     const previous = baselines.get(reason);
     baselines.set(reason, current);
 
@@ -162,6 +199,7 @@ function startWorkspaceReloadWatcher(input: {
   };
 
   const ensureOpencodeRootWatcher = () => {
+    if (closed) return;
     if (!existsSync(opencodeRoot)) {
       opencodeRootWatcher?.close();
       opencodeRootWatcher = null;
@@ -174,6 +212,7 @@ function startWorkspaceReloadWatcher(input: {
         opencodeRoot,
         { persistent: false },
         (_eventType, filename) => {
+          if (closed) return;
           const raw = filename ? filename.toString() : "";
           const name = raw.trim();
           if (!name) {
@@ -205,6 +244,7 @@ function startWorkspaceReloadWatcher(input: {
         },
       );
       opencodeRootWatcher.on("error", (error) => {
+        if (closed) return;
         logger?.log("warn", "Reload watcher .opencode error", {
           workspaceId: workspace.id,
           workspacePath: root,
@@ -226,6 +266,7 @@ function startWorkspaceReloadWatcher(input: {
         root,
         { persistent: false },
         (_eventType, filename) => {
+          if (closed) return;
           const raw = filename ? filename.toString() : "";
           const name = raw.trim();
           if (!name) {
@@ -272,6 +313,7 @@ function startWorkspaceReloadWatcher(input: {
         },
       );
       rootWatcher.on("error", (error) => {
+        if (closed) return;
         logger?.log("warn", "Reload watcher root error", {
           workspaceId: workspace.id,
           workspacePath: root,
@@ -425,6 +467,7 @@ function createDirectoryTreeWatcher(input: {
   };
 
   const ensureWatcher = (dir: string) => {
+    if (closed) return;
     if (watchers.has(dir)) return;
     try {
       const watcher = watch(
@@ -442,6 +485,7 @@ function createDirectoryTreeWatcher(input: {
         },
       );
       watcher.on("error", (error) => {
+        if (closed) return;
         logger?.log("warn", "Reload watcher dir error", {
           workspaceId: workspace.id,
           reason,
@@ -507,6 +551,7 @@ function createDirectoryTreeWatcher(input: {
       }
 
       const dirs = await scanDirs();
+      if (closed) return;
       for (const dir of dirs) {
         ensureWatcher(dir);
       }
