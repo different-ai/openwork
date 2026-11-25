@@ -28,6 +28,7 @@ test("an administrator downloads private work with Whole organization and review
     const path = await world.download();
     if (!path) throw new Error("The browser did not finish the Config download.");
     await target.click({ role: "tab", label: "Import" });
+    await target.see({ testId: "config-import-drop" });
     await target.attachFiles("[data-testid=config-import-input]", [path]);
     await target.type({ testId: "config-import-title" }, "Move field notes");
     await target.click({ role: "button", label: "Upload for review" });
