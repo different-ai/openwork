@@ -54,7 +54,7 @@ export function autoQuietlyUnavailable(status: { code?: string | null } | null |
 function notOfferedCopy(code?: string | null) {
   switch (code) {
     case "free_not_enrolled": return { subtitle: "Not on for your organization yet", detail: "Your organization hasn’t turned on OpenWork Free yet. An admin can turn it on. Other models still work." };
-    case "free_not_offered": case "admin_disabled": return { subtitle: "Turned off by your organization", detail: "Your organization has turned off OpenWork Free. Other models still work." };
+    case "free_not_offered": case "admin_disabled": return { subtitle: "Unavailable for your account here", detail: "Ask your admin to check your Free model access and, for a sandbox, whether it’s still active." };
     case "managed_models_disabled_for_dpa": return { subtitle: "Not available for your organization", detail: "OpenWork Free isn’t available under your organization’s data agreement. Other models still work." };
     case "desktop_app_required": return { subtitle: "Desktop app only", detail: "OpenWork Free works in the OpenWork desktop app. Other models still work." };
     default: return { subtitle: "Not available for this account", detail: "OpenWork Free isn’t available for this account. Other models still work." };
@@ -165,7 +165,8 @@ export function autoWallCopy(wall: AutoAccessWall, signedIn: boolean, now = Date
       case "not_offered":
         if (wall.code === "free_not_enrolled") return { title: "OpenWork Free isn’t on for your organization yet", detail: `An admin can turn it on. ${NEXT_STEP}` };
         if (wall.code === "managed_models_disabled_for_dpa") return { title: "OpenWork Free isn’t available for your organization", detail: NEXT_STEP };
-        return limitCopy(wall, signedIn, now);
+        if (wall.code === "free_not_offered" || wall.code === "admin_disabled") return { title: "You don’t have access to OpenWork Free in this organization", detail: notOfferedCopy(wall.code).detail };
+        return { title: "OpenWork Free isn’t available here", detail: notOfferedCopy(wall.code).detail };
       case "limit": case "update": return limitCopy(wall, signedIn, now);
     }
   })();
