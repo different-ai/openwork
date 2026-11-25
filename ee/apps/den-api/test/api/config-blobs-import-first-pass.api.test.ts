@@ -51,7 +51,7 @@ const production = den.production
 assert.ok(production, "booted production-like")
 
 const SECRETS = { gateway: "sk-first-pass-gateway-SECRET-1", oidc: "first-pass-oidc-client-SECRET-1" }
-const FEATURE = "denGreySidebar"
+const FEATURE = "administratorRecovery"
 const BLOCKING = ["needs_mapping", "ref_unresolved", "drift", "collision.unique", "conflict.identity", "blocked", "needs_input"]
 const skillMarkdown = (name: string, body: string) => `---\nname: ${name}\ndescription: A skill of the first-pass import.\n---\n\n${body}\n`
 

@@ -7,7 +7,6 @@ import { env } from "../env.js"
 import { requestExternalMcpEvents } from "../capability-sources/enterprise-mcp-client-adapter.js"
 import { validateExternalMcpToolArguments } from "../mcp/external-mcp-tool-arguments.js"
 import { checkRateLimit } from "../utils/rate-limit.js"
-import { markFeaturesUsed } from "../feature-usage.js"
 import { canonicalArguments, eventListSchema, MAX_SUBSCRIPTION_TTL_MS, subscribedSchema } from "./protocol.js"
 import { eventAccess, EventAccessError, requireEventThread, type EventThread } from "./context.js"
 import { findSubscription, stopSubscription, type EventSubscription } from "./repository.js"
@@ -88,7 +87,6 @@ export async function subscribe(thread: EventThread, originalScopes: readonly st
     await db.update(Subscription).set({ remoteId: result.id, expiresAt: grantedUntil, status: "active", cursor: result.cursor, incomplete: result.truncated }).where(and(eq(Subscription.id, row.id), eq(Subscription.status, "pending")))
     const saved = await findSubscription(row.id)
     if (!saved || saved.status !== "active") throw new Error("Subscription stopped")
-    markFeaturesUsed({ organizationId: thread.organizationId, memberId: thread.memberId, keys: ["mcpThreadEvents"] })
     return { ...subscriptionSummary(saved), truncated: result.truncated }
   } catch {
     await stopSubscription(row.id)

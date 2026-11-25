@@ -1,7 +1,5 @@
 import {
-  freeAutoDesktopProofRequiredBy,
   readFeatures,
-  lockFeatureForMutation,
   readOrganizationFeatureOverridesForMany,
   readOrganizationMemberFeatureOverrides,
   setFeatureRollout,
@@ -49,10 +47,6 @@ export async function organizationFeatureEnabled(organizationId: string, key: Fe
   return (await getOrganizationFeatures(organizationId, options))[key]
 }
 
-export async function lockOrganizationFeatureForMutation(database: Parameters<typeof lockFeatureForMutation>[0], organizationId: string, userId: string, key: FeatureKey): Promise<boolean> {
-  return lockFeatureForMutation(database, organizationId, userId, key, env.features)
-}
-
 export async function getOrganizationFeaturesByMember(organizationId: string): Promise<{ organization: FeatureMap; forMember(memberId: string): FeatureMap }> {
   const id = normalizeDenTypeId("organization", organizationId)
   const [{ rollouts, overrides }, memberOverrides] = await Promise.all([
@@ -84,11 +78,6 @@ export async function getFeaturesForOrganizations(organizationIds: readonly stri
 
 export async function deploymentFeatureEnabled(key: FeatureKey): Promise<boolean> {
   return resolveFeatures({ ...env.features, rollouts: await cache.features.rollouts(), overrides: {} })[key]
-}
-
-export async function freeModelsNeedDesktop(organizationId: string): Promise<boolean> {
-  const deployment = resolveFeatures({ ...env.features, rollouts: await cache.features.rollouts(), overrides: {} })
-  return freeAutoDesktopProofRequiredBy(deployment, await getOrganizationFeatures(organizationId))
 }
 
 export async function updateFeatureRollout(input: Parameters<typeof setFeatureRollout>[1]) {

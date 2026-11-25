@@ -14,6 +14,7 @@ export type ExtensionsSection =
   | "commands"
   | "agents"
   | "plugins"
+  | "models"
   | "needs-sign-in"
   | "needs-admin-setup"
   | "ready";
@@ -33,6 +34,8 @@ export function filterForSection(section: ExtensionsSection | undefined): Extens
       return "agent";
     case "plugins":
       return "plugin";
+    case "models":
+      return "model";
     default:
       return "all";
   }
@@ -54,6 +57,8 @@ export function sectionForFilter(filter: ExtensionInventoryFilter): ExtensionsSe
       return "agents";
     case "plugin":
       return "plugins";
+    case "model":
+      return "models";
     case "all":
       return "all";
   }

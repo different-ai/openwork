@@ -20,10 +20,6 @@ type Database = typeof db | Parameters<Parameters<typeof db["transaction"]>[0]>[
 
 const EVERYONE_SCOPE = "everyone"
 
-export function isSandboxRequirement(key: AgentPermissionKey, setting: AgentPermissionSettings[AgentPermissionKey]): boolean {
-  return (key === "hostExecution" || key === "sandboxOptOut") && setting?.decision === "deny"
-}
-
 export type AgentPermissionPolicyRecord = {
   teamId: TeamId | null
   settings: AgentPermissionSettings

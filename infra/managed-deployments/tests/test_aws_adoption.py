@@ -133,6 +133,13 @@ class AdoptionPermissionAndSecretTests(unittest.TestCase):
                 if statement.get("Effect") == "Allow" and "ecs:DeregisterTaskDefinition" in actions_of(statement):
                     self.assertNotEqual(statement["Resource"], "*")
 
+    def test_load_balancer_creation_can_list_vpc_security_groups(self):
+        # CreateLoadBalancer is denied without this action, and ec2:Describe* does not include it.
+        template = json.loads((ROOT / "bootstrap/cloudformation.json").read_text())
+        for mode in ("dedicated", "existing"):
+            by_sid = {s["Sid"]: s for s in runner_statements(template, mode) if "Sid" in s}
+            self.assertIn("ec2:GetSecurityGroupsForVpc", actions_of(by_sid["Read"]))
+
     def test_policy_covers_the_real_provider_invocation_qualifier(self):
         terraform = shutil.which("terraform")
         self.assertIsNotNone(terraform, "Terraform is required by the managed workflow")

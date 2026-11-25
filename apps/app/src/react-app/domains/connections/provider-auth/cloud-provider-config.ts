@@ -139,6 +139,12 @@ export const resolveLiveGatewayConnectProviders = (providers: readonly LiveGatew
     return [{ cloudProviderId: provider.id, providerId: provider.id, name: provider.name, authUrl: null }];
   });
 
+export const resolveLiveGatewayReadyProviders = (
+  providers: readonly LiveGatewayProvider[] | null,
+  listedCloudProviderIds: readonly string[] = [],
+): LiveGatewayProvider[] =>
+  (providers ?? []).filter((provider) => provider.models.length > 0 && !listedCloudProviderIds.includes(provider.id));
+
 export const resolveLiveGatewayImportedProviders = (providers: readonly LiveGatewayProvider[]): Record<string, CloudImportedProvider> =>
   Object.fromEntries(providers.filter((provider) => provider.models.length > 0).map((provider) => [provider.id, {
     cloudProviderId: provider.id,
@@ -209,6 +215,17 @@ export function isGatewayModelReady(
 
 export const GATEWAY_CONNECT_POLL_INTERVAL_MS = 10_000;
 export const GATEWAY_CONNECT_POLL_ATTEMPTS = 60;
+export function subscribeWindowRefocus(wake: () => void): () => void {
+  if (typeof window === "undefined" || typeof document === "undefined") return () => {};
+  const onVisibility = () => { if (document.visibilityState === "visible") wake(); };
+  window.addEventListener("focus", wake);
+  document.addEventListener("visibilitychange", onVisibility);
+  return () => {
+    window.removeEventListener("focus", wake);
+    document.removeEventListener("visibilitychange", onVisibility);
+  };
+}
+
 export const GATEWAY_CONNECT_TIMEOUT_MESSAGE = "Sign-in has not been confirmed. Check the browser, then refresh AI Providers. If consent expired or was canceled, retry sign-in.";
 
 export async function connectGatewayProvider(input: {
@@ -219,6 +236,7 @@ export async function connectGatewayProvider(input: {
   resync: () => Promise<unknown>;
   isConnected: () => boolean;
   wait?: (ms: number) => Promise<void>;
+  subscribeWake?: (wake: () => void) => () => void;
   pollIntervalMs?: number;
   attempts?: number;
 }): Promise<boolean> {
@@ -227,13 +245,21 @@ export async function connectGatewayProvider(input: {
   if (input.signal.aborted) return false;
   await input.openUrl(authorizationUrl);
   if (input.signal.aborted) return false;
+  const subscribeWake = input.subscribeWake ?? subscribeWindowRefocus;
   const wait = input.wait ?? ((ms: number) => new Promise<void>((resolve) => {
+    let done = false;
+    let unsubscribe = () => {};
     const finish = () => {
+      if (done) return;
+      done = true;
       clearTimeout(timer);
+      unsubscribe();
       input.signal.removeEventListener("abort", finish);
       resolve();
     };
     const timer = setTimeout(finish, ms);
+    unsubscribe = subscribeWake(finish);
+    if (done) unsubscribe();
     input.signal.addEventListener("abort", finish, { once: true });
     if (input.signal.aborted) finish();
   }));

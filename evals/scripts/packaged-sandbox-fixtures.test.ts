@@ -102,11 +102,11 @@ describe("packaged sandbox proof prerequisites", () => {
     await symlink("/bin/sh", join(root, "escaped-runtime"));
     await expect(bundleIdentity(root)).rejects.toThrow("symlink escapes the artifact");
   });
-  it("keeps a disposable Den rollout fixture separate from any production organization", async () => {
+  it("keeps a disposable Den fixture separate from any production organization", async () => {
     const den = await sandboxDenFixture();
     try {
       const response = await fetch(`${den.url}/v1/features`);
-      expect(await response.json()).toEqual({ features: { sandboxTools: true } });
+      expect(await response.json()).toEqual({ features: {} });
       expect(den.reads).toEqual(["/v1/features"]);
       expect((await fetch(`${den.url}/v1/org`)).status).toBe(404);
     } finally { await den.close(); }

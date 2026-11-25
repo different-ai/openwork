@@ -7,7 +7,7 @@ import type { AgentInstanceRow } from "../src/workbot-proactive/repository.js"
 import { resolveMemberSources, stoppedSources, type MemberConnection, type MemberSourceChoice } from "../src/workbot-proactive/sources.js"
 import { noticeStoppedSources, type CheckRecordInput } from "../src/workbot-proactive/wake-shared.js"
 
-/** A member's agent saying when it stops reading a source (`workbotAgentStoppedSources`): which sources count, and what is sent and recorded. */
+/** A member's agent saying when it stops reading a source: which sources count, and what is sent and recorded. */
 
 const HOUR = 3_600_000
 const DAY = 24 * HOUR
@@ -24,7 +24,6 @@ function sourcesOf(input: { policy?: Partial<AgentSourcesPolicy>; choices?: Reco
     policy: { calendar: "everyone", connections: {}, ...input.policy },
     choices: input.choices ?? {},
     lastLook: input.lastLook ?? {},
-    mode: "any",
   })
 }
 
@@ -73,15 +72,12 @@ const row: AgentInstanceRow = {
   updatedAt: new Date(NOW),
 }
 
-function harness(options: { feature?: "on" | "off" | "absent"; delivers?: boolean } = {}) {
+function harness(options: { delivers?: boolean } = {}) {
   const sent: string[] = []
   const records: CheckRecordInput[] = []
-  let asked = 0
-  const feature = options.feature ?? "on"
   return {
     sent,
     records,
-    asked: () => asked,
     run: (input: { policy?: Partial<AgentSourcesPolicy>; choices?: Record<string, MemberSourceChoice>; lastLook?: Record<string, number>; told?: Record<string, number>; othersReadable?: boolean }) => noticeStoppedSources({
       row,
       organizationId,
@@ -101,12 +97,7 @@ function harness(options: { feature?: "on" | "off" | "absent"; delivers?: boolea
           sent.push(text)
           return { ok: true }
         },
-        ...(feature === "absent" ? {} : {
-          stoppedSources: async () => {
-            asked += 1
-            return feature === "on" ? { link: LINK } : null
-          },
-        }),
+        agentLink: () => LINK,
       },
       record: async (record) => {
         records.push(record)
@@ -150,23 +141,8 @@ test("forgets a notice once the source is on again", async () => {
   const h = harness()
   const notices = await h.run({ policy: { connections: { emc_slack: "everyone" } }, lastLook: { emc_slack: NOW - HOUR }, told: { "stopped:emc_slack": NOW - DAY } })
   assert.deepEqual(notices, {})
-  assert.equal(h.asked(), 0)
-})
-
-test("with the feature off, or not wired, nothing is told, recorded or kept", async () => {
-  for (const feature of ["off", "absent"] as const) {
-    const h = harness({ feature })
-    const notices = await h.run({ lastLook: { emc_slack: NOW - HOUR }, told: { "stopped:emc_slack": NOW - DAY } })
-    assert.deepEqual(notices, {})
-    assert.deepEqual(h.sent, [])
-    assert.deepEqual(h.records, [])
-  }
-})
-
-test("the feature is not asked when no source stopped", async () => {
-  const h = harness()
-  assert.deepEqual(await h.run({ policy: { connections: { emc_slack: "everyone" } }, lastLook: { emc_slack: NOW - HOUR } }), {})
-  assert.equal(h.asked(), 0)
+  assert.deepEqual(h.sent, [])
+  assert.deepEqual(h.records, [])
 })
 
 test("a message that could not be sent is recorded and tried again at the next check", async () => {

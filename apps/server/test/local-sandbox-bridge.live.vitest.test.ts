@@ -24,11 +24,10 @@ test.skipIf(process.env.MICROSANDBOX_LIVE !== "1")("local bridge executes tools 
   const external = join(temp, "authorized");
   await mkdir(workspace); await mkdir(external);
   await writeFile(join(external, "reference.txt"), "authorized-host-nonce");
-  let enabled = true;
+  let restricted = false;
   const den = await serve({ hostname: "127.0.0.1", port: 0, fetch: request => {
     const path = new URL(request.url).pathname;
-    if (path === "/v1/org") return Response.json({ features: { sandboxTools: enabled } });
-    if (path === "/v1/me/desktop-config") return Response.json({ agentPermissions: { rules: [] } });
+    if (path === "/v1/me/desktop-config") return Response.json({ agentPermissions: { rules: restricted ? [{ action: "edit", resource: "*", effect: "deny", source: "Test policy" }] : [] } });
     return new Response(null, { status: 404 });
   } });
   const config: ServerConfig = {
@@ -124,7 +123,7 @@ test.skipIf(process.env.MICROSANDBOX_LIVE !== "1")("local bridge executes tools 
     expect(await readFile(join(external, "reference.txt"), "utf8")).toBe("authorized-host-nonce");
     const after = await request("read", { path: join(workspace, "result.txt") });
     expect(after.status).toBe(200);
-    enabled = false;
+    restricted = true;
     const revoked = await request("write", { path: join(workspace, "forbidden.txt"), content: "must-not-exist" });
     expect(revoked.status).toBe(503);
     await expect(readFile(join(workspace, "forbidden.txt"))).rejects.toThrow();

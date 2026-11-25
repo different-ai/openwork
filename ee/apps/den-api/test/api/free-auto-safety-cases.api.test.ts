@@ -9,7 +9,6 @@ import { bootDen, field } from "./harness.js"
 const secret = randomBytes(32)
 const den = await bootDen({ env: { OPENAI_SAFETY_READ_KEY: "safety-read-fixture", OPENAI_SAFETY_WEBHOOK_SECRET: "whsec_" + secret.toString("base64") } })
 const { db } = await import("../../src/db.js")
-const { setFeatureRollout } = await import("@openwork-ee/den-db/organization-features")
 const { createFreeAllowanceStore } = await import("../../../gateway/src/free/shared/allowance.js")
 const { readAutoConfig } = await import("../../../gateway/src/free/shared/config.js")
 after(async () => {
@@ -50,7 +49,6 @@ test("signed warnings, reviewed blocks, appeals and provider deactivations reach
   assert.equal(fixture.mock.callCount(), 0)
   assert.equal((await den.request(null, "GET", path)).status, 401)
   assert.equal((await den.request(member.token, "POST", path + "/import", { body: { caseId: "C-warning" } })).status, 403)
-  await setFeatureRollout(db, { key: "freeAutoSafetyCases", enabled: true, defaultEnabled: false })
   assert.equal(await store.safetyPaused(principal), false)
   failRead = true
   assert.equal((await delivery("safety.warning_issued", "C-warning")).status, 503)
@@ -93,8 +91,6 @@ test("signed warnings, reviewed blocks, appeals and provider deactivations reach
   assert.equal((await delivery("safety.warning_issued", "C-warning")).status, 204)
   assert.equal(await store.safetyPaused(principal), true)
   assert.equal(await store.safetyPaused({ ...principal, id: createDenTypeId("user") }), false)
-  await setFeatureRollout(db, { key: "freeAutoSafetyCases", enabled: false, defaultEnabled: false })
-  assert.equal(await store.safetyPaused(principal), false)
 })
 
 test("an organization notice can be investigated from a recorded request without assigning a guest to a person", async () => {
@@ -145,9 +141,7 @@ test("verified provider account holds cover funded routes across memberships and
   assert.equal((await apply(member.token, member.userId, "C-request")).status, 403)
   const pending = await apply(admin.token, member.userId, "C-request")
   assert.equal(pending.status, 200)
-  assert.equal(field(pending.body, "enforcementEnabled"), false)
-  assert.equal(await guard(memberScope, { kind: "managed" }), null)
-  await setFeatureRollout(db, { key: "fundedModelAccountSuspensions", enabled: true, defaultEnabled: false })
+  assert.equal((await guard(memberScope, { kind: "managed" }))?.status, 403)
   assert.equal((await apply(admin.token, admin.userId, "C-request")).status, 409)
   assert.equal((await apply(admin.token, member.userId, "C-request")).status, 200)
   assert.equal((await apply(admin.token, member.userId, "C-second-hold")).status, 200)
@@ -157,7 +151,7 @@ test("verified provider account holds cover funded routes across memberships and
     assert.equal(field(await denied.json(), "error", "code"), "funded_model_account_suspended")
   }
   assert.equal(await guard({ ...memberScope, orgMembershipId: other.owner.memberId }, { kind: "managed" }), null)
-  assert.equal((await guard({ ...memberScope, orgMembershipId: null }, { kind: "managed" }))?.status, 503)
+  assert.equal(await guard({ ...memberScope, orgMembershipId: null }, { kind: "managed" }), null)
   await assert.rejects(assertFundedUserAllowed(member.userId), /funded_model_account_suspended/)
   assert.equal(await guard(memberScope, { kind: "sandbox" }), null)
   const set = createDenTypeId("gatewayCredentialSet")
@@ -172,5 +166,4 @@ test("verified provider account holds cover funded routes across memberships and
   assert.equal(await guard(memberScope, { kind: "managed" }), null)
   const status = await den.request(admin.token, "GET", api(member.userId))
   assert.equal(field(status.body, "suspended"), false)
-  assert.equal(field(status.body, "enforcementEnabled"), true)
 })

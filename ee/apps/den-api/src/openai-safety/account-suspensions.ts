@@ -2,18 +2,14 @@ import { createHash } from "node:crypto"
 import { and, desc, eq } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, FreeAutoSafetyCaseTable as Cases, FundedModelSuspensionTable as Holds } from "@openwork-ee/den-db/schema"
 import { fundedUserSuspended } from "@openwork-ee/den-db"
-import { readFeatures } from "@openwork-ee/den-db/organization-features"
 import { freeInferenceDigest } from "@openwork-ee/utils/free-inference-digest"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { db } from "../db.js"
 import { env } from "../env.js"
 
 const hash = (reference: string) => createHash("sha256").update(reference).digest("hex")
-export async function suspensionEnforced() {
-  return (await readFeatures(db.$primary, null, env.features)).fundedModelAccountSuspensions
-}
 export async function assertFundedUserAllowed(userId: string) {
-  if (await suspensionEnforced() && await fundedUserSuspended(db.$primary, userId)) throw new Error("funded_model_account_suspended")
+  if (await fundedUserSuspended(db.$primary, userId)) throw new Error("funded_model_account_suspended")
 }
 
 export async function applyProviderSuspension(reference: string, target: string, reviewer: string) {
@@ -45,11 +41,11 @@ export async function releaseProviderSuspension(reference: string, target: strin
 }
 export async function fundedSuspensionStatus(target: string) {
   const userId = normalizeDenTypeId("user", target)
-  const [enforcementEnabled, active, rows] = await Promise.all([
-    suspensionEnforced(), fundedUserSuspended(db.$primary, userId),
+  const [active, rows] = await Promise.all([
+    fundedUserSuspended(db.$primary, userId),
     db.$primary.select().from(Holds).where(eq(Holds.user_id, userId)).orderBy(desc(Holds.suspended_at), desc(Holds.reference_hash)).limit(50),
   ])
-  return { userId, enforcementEnabled, suspended: active, recent: rows.map(r => ({
+  return { userId, suspended: active, recent: rows.map(r => ({
     reference: r.provider_reference, suspendedAt: r.suspended_at.toISOString(), suspendedBy: r.suspended_by,
     releasedAt: r.released_at?.toISOString() ?? null, releasedBy: r.released_by, releaseReference: r.release_reference,
   })) }

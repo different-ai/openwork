@@ -17,25 +17,9 @@ test("an admin connects a LiteLLM proxy that only takes sign-in tokens, and a me
   const member = user.on(world.memberWeb);
   const issuer = `https://login.microsoftonline.com/${world.setup.tenantId}/v2.0`;
 
-  await step("before: with the feature off, Microsoft sign-in is locked on Add LiteLLM and the API refuses it", async () => {
+  await step("the admin enters the proxy, the Entra app registration, one API scope and the model", async () => {
     await admin.click({ testId: "gateway-provider-pick-litellm" });
     await admin.see({ testId: "gateway-provider-title", text: "Add LiteLLM" }, { timeoutMs: WITHIN });
-    await admin.see({ text: /Microsoft sign-in for LiteLLM is turned off for your account/ });
-    const refused = await world.addProviderThroughApi();
-    const added = await world.provider();
-    evidence.recordAssertionEvidence("Nobody can add this kind of provider while the feature is off",
-      `POST /v1/inference-providers/litellm with mode "entra" → ${refused.status} ${refused.error}; LiteLLM providers in the organization: ${added ? 1 : 0}`,
-      refused.status === 403 && refused.error === "feature_disabled" && added === null);
-    expect(refused).toEqual({ status: 403, error: "feature_disabled" });
-    expect(added).toBeNull();
-    await admin.screenshot();
-  });
-
-  await step("the platform admin turns the feature on, and the admin enters the proxy, the Entra app registration, one API scope and the model", async () => {
-    await world.setFeature(true);
-    await admin.reload();
-    await admin.see({ testId: "gateway-provider-title", text: "Add LiteLLM" }, { timeoutMs: WITHIN });
-    await admin.notSee({ text: /Microsoft sign-in for LiteLLM is turned off for your account/ });
     await admin.type({ testId: "litellm-base-url" }, world.setup.proxyUrl);
     await admin.click({ role: "radio", text: "Microsoft sign-in" });
     await admin.type({ testId: "litellm-entra-tenant-id" }, world.setup.tenantId);
@@ -162,31 +146,5 @@ test("an admin connects a LiteLLM proxy that only takes sign-in tokens, and a me
     expect(refused).toMatchObject({ status: 401, error: "openwork_auth_required", sentTo: "gateway" });
     expect(reachedAfter).toBe(reachedBefore);
     await admin.see({ testId: "litellm-entra-signed-in", text: "1" });
-  });
-
-  await step("after the feature is turned off again, the signed-in member is refused before LiteLLM, and nobody can connect", async () => {
-    // A Connect page the member opened while the feature was still on.
-    const opened = await world.startConnect("member");
-    await world.setFeature(false);
-    const reachedBefore = world.proxyCalls().length;
-    const refused = await probe.eventually(() => world.chat("member"), { within: WITHIN, label: "the member's request is refused", until: (answer) => answer.status !== 200 });
-    const access = await world.access("member");
-    const connect = await world.startConnect("member");
-    const reachedAfter = world.proxyCalls().length;
-    await member.navigate(opened.link ?? "");
-    await member.see({ text: "Sign-in unavailable" }, { timeoutMs: WITHIN });
-    await member.notSee({ role: "button", label: "Continue to Microsoft" });
-    await admin.reload();
-    await admin.see({ text: /Read only\. Microsoft sign-in for LiteLLM is turned off for your account/ }, { timeoutMs: WITHIN });
-    evidence.recordAssertionEvidence("Turning the feature off stops the mode, including for a person who already signed in",
-      `chat → ${refused.status} ${refused.error} from ${refused.sentTo}; OpenWork lists ${access.models} models for the member; selecting Connect → ${connect.status} ${connect.error}; new requests at LiteLLM: ${reachedAfter - reachedBefore}`,
-      refused.status === 403 && refused.error === "feature_disabled" && access.models === 0 && connect.status === 403 && connect.error === "feature_disabled" && reachedAfter === reachedBefore);
-    expect(opened.link).toBeTruthy();
-    expect(refused).toMatchObject({ status: 403, error: "feature_disabled", sentTo: "gateway" });
-    expect(access.models).toBe(0);
-    expect(connect).toEqual({ status: 403, error: "feature_disabled", link: null });
-    expect(reachedAfter).toBe(reachedBefore);
-    await member.screenshot();
-    await admin.screenshot();
   });
 });

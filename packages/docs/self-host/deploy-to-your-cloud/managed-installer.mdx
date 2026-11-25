@@ -129,8 +129,9 @@ If a portal is already saved and you're signed in to the right account, click **
 - **Google Cloud**: click **Prepare Google Cloud approval**. Click **Copy
   command**, then **Open Google Cloud Shell**, and run the command there. It
   checks the installer before running it, asks you to type the project ID to
-  approve, and asks for your consent to use your Google credentials. It never
-  asks for service account keys.
+  approve, then starts the installation as a Cloud Build build in your project
+  and prints its log link. You can close Cloud Shell after that. It never asks
+  for service account keys or a second Google sign-in.
 
 OpenWork shows each installer step as it happens: **Installer connected**,
 **Release verified**, account (or project) **and domain verified**,

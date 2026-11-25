@@ -3,7 +3,7 @@ import { test } from "node:test"
 import { Hono } from "hono"
 import { eq } from "@openwork-ee/den-db/drizzle"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import { AuthUserTable, FeatureRolloutTable, InferenceFreeUsageTable } from "@openwork-ee/den-db/schema"
+import { AuthUserTable, InferenceFreeUsageTable } from "@openwork-ee/den-db/schema"
 import { MEMBER_FREE_CHAT_PATH, MEMBER_FREE_STATUS_PATH } from "@openwork/free-auto"
 import { freeUsageAmount } from "@openwork/free-auto/accounting"
 import { deriveReleaseSecret } from "@openwork/free-auto/node"
@@ -55,7 +55,6 @@ test("one verified email opens two organizations with one founder allowance", as
   const teammateKey = await credential(teammate, first.orgId)
   // The existing model key must observe a subsequent change in the account's verification state.
   await db.update(AuthUserTable).set({ emailVerified: false }).where(eq(AuthUserTable.id, normalizeDenTypeId("user", teammate.userId)))
-  await db.insert(FeatureRolloutTable).values({ feature_key: "freeAutoCrossOrgBudgets", enabled: true })
 
   const { readAutoConfig } = await import("../../../gateway/src/free/shared/config.js")
   const { createFreeMemberHandler } = await import("../../../gateway/src/free/member/handler.js")
