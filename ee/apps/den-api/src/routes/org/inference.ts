@@ -101,13 +101,13 @@ export function registerOrgInferenceRoutes<T extends { Variables: OrgRouteVariab
     return c.json({ access })
   })
   const FREE_REFUSAL_MESSAGES = {
-    free_not_offered: "Your organization has turned off Auto.",
+    free_not_offered: "OpenWork Free is unavailable for your account in this organization.",
     not_eligible: "Auto isn't available for this account.",
   } as const
   app.post("/v1/inference/free/credential", describeRoute({ tags: ["Inference"], summary: "Get my free Auto credential",
-    description: "Issues or reuses the member's OpenWork Models key for free Auto, within the member's weekly allowance. Organizations with an OpenWork Models subscription get it too; Auto is never billed to them. A refusal names its reason: free_not_offered (the organization turned the free starter model off) or not_eligible.",
+    description: "Issues or reuses the member's OpenWork Models key for free Auto, within the member's weekly allowance. Organizations with an OpenWork Models subscription get it too; Auto is never billed to them. A refusal names its reason: free_not_offered or not_eligible. A closed or expired sandbox also returns the reason free_sandbox_ended.",
     responses: { 200: jsonResponse("Member Auto credential returned.", freeCredentialSchema),
-      401: jsonResponse("Authentication required.", unauthorizedSchema), 403: jsonResponse("Auto access denied.", forbiddenSchema),
+      401: jsonResponse("Authentication required.", unauthorizedSchema), 403: jsonResponse("Auto access denied.", z.union([forbiddenSchema, managedModelsPolicyErrorSchema, z.object({ error: z.enum(["free_not_offered", "not_eligible"]), reason: z.literal("free_sandbox_ended").optional(), message: z.string() })])),
       503: jsonResponse("Auto unavailable.", z.object({ error: z.string() })) },
   }), orgMemberRoute(), async (c) => {
     const context = c.get("organizationContext")
@@ -123,6 +123,7 @@ export function registerOrgInferenceRoutes<T extends { Variables: OrgRouteVariab
         return c.json({ credential })
       }
       if (result.refusal === "free_disabled") return c.json({ error: "free_disabled" }, 503)
+      if (result.refusal === "free_sandbox_ended") return c.json({ error: "free_not_offered", reason: result.refusal, message: "This sandbox has ended. A platform admin can reopen it." }, 403)
       return c.json({ error: result.refusal, message: FREE_REFUSAL_MESSAGES[result.refusal] }, 403)
     } catch (error) {
       if (error instanceof ManagedModelsPolicyError) return c.json({ error: error.code, message: error.message }, error.status)

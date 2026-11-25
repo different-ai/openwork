@@ -18,3 +18,11 @@ test("an exhausted allowance still reports a usage limit", () => {
   if (!wall) throw new Error("Expected an exhausted Free allowance");
   expect(autoWallCopy(wall, true).title).toBe("You’ve reached the OpenWork Free limit");
 });
+
+test("a sandbox that ended points the member to the platform admin", () => {
+  const wall = autoAccessWallFromError({ code: "free_sandbox_ended" });
+  if (!wall) throw new Error("Expected a sandbox access refusal");
+  expect(wall.state).toBe("not_offered");
+  expect(autoWallCopy(wall, true).title).toBe("This sandbox has ended");
+  expect(autoPickerCopy("not_offered", true, null, wall.code).detail).toContain("reopen this sandbox");
+});

@@ -43,7 +43,7 @@ export function freeAutoSwitchedOff(status: { code?: string | null } | null | un
   return status?.code === "free_disabled" || status?.code === "inference_disabled";
 }
 
-const NOT_OFFERED_CODES = ["free_not_enrolled", "free_not_offered", "admin_disabled", "not_eligible", "member_free_policy_denied", "managed_models_disabled_for_dpa", "desktop_build_unverified", "desktop_app_required"];
+const NOT_OFFERED_CODES = ["free_sandbox_ended", "free_not_enrolled", "free_not_offered", "admin_disabled", "not_eligible", "member_free_policy_denied", "managed_models_disabled_for_dpa", "desktop_build_unverified", "desktop_app_required"];
 export function autoNotOffered(status: { code?: string | null } | null | undefined): boolean {
   return typeof status?.code === "string" && NOT_OFFERED_CODES.includes(status.code);
 }
@@ -53,8 +53,9 @@ export function autoQuietlyUnavailable(status: { code?: string | null } | null |
 }
 function notOfferedCopy(code?: string | null) {
   switch (code) {
+    case "free_sandbox_ended": return { subtitle: "Sandbox has ended", detail: "Ask a platform admin to reopen this sandbox to use OpenWork Free." };
     case "free_not_enrolled": return { subtitle: "Not on for your organization yet", detail: "Your organization hasn’t turned on OpenWork Free yet. An admin can turn it on. Other models still work." };
-    case "free_not_offered": case "admin_disabled": return { subtitle: "Unavailable for your account here", detail: "Ask your admin to check your Free model access and, for a sandbox, whether it’s still active." };
+    case "free_not_offered": case "admin_disabled": return { subtitle: "Unavailable for your account here", detail: "Ask your admin to check Free model access for your account." };
     case "managed_models_disabled_for_dpa": return { subtitle: "Not available for your organization", detail: "OpenWork Free isn’t available under your organization’s data agreement. Other models still work." };
     case "desktop_app_required": return { subtitle: "Desktop app only", detail: "OpenWork Free works in the OpenWork desktop app. Other models still work." };
     default: return { subtitle: "Not available for this account", detail: "OpenWork Free isn’t available for this account. Other models still work." };
@@ -163,6 +164,7 @@ export function autoWallCopy(wall: AutoAccessWall, signedIn: boolean, now = Date
       case "unavailable": return { title: "OpenWork Free is busy right now", detail: "Pick another model to keep going, or try OpenWork Free again in a bit." };
       case "sync": return { title: "OpenWork Free is still getting ready", detail: "Wait a moment, or pick another model to keep going." };
       case "not_offered":
+        if (wall.code === "free_sandbox_ended") return { title: "This sandbox has ended", detail: notOfferedCopy(wall.code).detail };
         if (wall.code === "free_not_enrolled") return { title: "OpenWork Free isn’t on for your organization yet", detail: `An admin can turn it on. ${NEXT_STEP}` };
         if (wall.code === "managed_models_disabled_for_dpa") return { title: "OpenWork Free isn’t available for your organization", detail: NEXT_STEP };
         if (wall.code === "free_not_offered" || wall.code === "admin_disabled") return { title: "You don’t have access to OpenWork Free in this organization", detail: notOfferedCopy(wall.code).detail };
