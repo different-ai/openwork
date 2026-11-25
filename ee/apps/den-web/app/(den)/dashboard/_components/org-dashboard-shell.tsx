@@ -1,5 +1,6 @@
 "use client";
 
+import { SandboxTrialNotice } from "./sandbox-trial-notice";
 import { desktopPolicyScreenRemoved } from "../_lib/desktop-policy-screen-rollout";
 import { workbotSettingsInTeams } from "../_lib/workbot-settings-rollout";
 
@@ -360,6 +361,11 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
     mutationBusy,
     switchOrganization,
   } = useOrgDashboard();
+  const showSandboxNotice = activeOrg?.isSandbox
+    && orgContext?.organization.id === activeOrg.id
+    && orgContext.features.endedSandboxNotice
+    && !orgBusy
+    && mutationBusy !== "switch-organization";
   const prefetch = useDashboardPrefetch();
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [commandPaletteOpen, setCommandPaletteOpen] = useState(false);
@@ -888,6 +894,9 @@ export function OrgDashboardShell({ children }: { children: React.ReactNode }) {
         </header>
 
         <main className="flex-1 overflow-y-auto bg-[var(--den-shell-canvas)] scroll-pb-28">
+          {showSandboxNotice ? (
+            <SandboxTrialNotice key={activeOrg.id} orgId={activeOrg.id} memberId={orgContext.currentMember.id} />
+          ) : null}
           {setupPending && setupOrganizationId === activeOrg?.id ? (
             <div className="border-b border-[var(--den-shell-line)] px-4 py-3 text-sm md:px-6">
               <Link href={onboardingRoute} className="font-medium text-gray-900 underline underline-offset-4">Back to setup</Link>

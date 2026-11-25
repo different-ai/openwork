@@ -1,9 +1,11 @@
+import { memberSandboxStatusSchema } from "@openwork/types/den/sandbox-organizations"
+import { sandboxState } from "../../sandbox-organizations.js"
 import { createHash } from "node:crypto"
 import { WorkspaceLimitReachedError, recordWorkspaceLimitReached, workspaceLimitReachedSchema } from "../../workspace-create-limit.js"
 import { deploymentCapabilitiesSchema } from "@openwork/types/den/deployment-capabilities"
 import { permissionKeySchema } from "@openwork/types/den/permissions"
 import { eq } from "@openwork-ee/den-db/drizzle"
-import { OrganizationTable, ScimProviderTable, SsoConnectionTable } from "@openwork-ee/den-db/schema"
+import { OrganizationTable, SandboxOrganizationTable, ScimProviderTable, SsoConnectionTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import type { Hono } from "hono"
 import { describeRoute } from "hono-openapi"
@@ -692,6 +694,23 @@ export function registerOrgCoreRoutes<T extends { Variables: OrgRouteVariables }
       })
     },
   )
+
+  app.get("/v1/org/sandbox-status", describeRoute({
+    tags: ["Organizations"], summary: "Get the current organization's sandbox trial status",
+    description: "Returns the sandbox lifecycle state for the signed-in member. A null state means the organization has no sandbox notice.",
+    responses: {
+      200: jsonResponse("Sandbox status for the active organization.", memberSandboxStatusSchema),
+      401: jsonResponse("Sign-in required.", unauthorizedSchema),
+      404: jsonResponse("Organization unavailable.", notFoundSchema),
+    },
+  }), orgMemberRoute(), async c => {
+    c.header("Cache-Control", "no-store")
+    const { organization, features } = c.get("organizationContext")
+    if (!features.endedSandboxNotice) return c.json({ state: null })
+    const [row] = await db.select({ expiresAt: SandboxOrganizationTable.expiresAt, closedAt: SandboxOrganizationTable.closedAt })
+      .from(SandboxOrganizationTable).where(eq(SandboxOrganizationTable.organizationId, organization.id)).limit(1)
+    return c.json({ state: row ? sandboxState(row) : null })
+  })
 
   app.get(
     "/v1/org",
