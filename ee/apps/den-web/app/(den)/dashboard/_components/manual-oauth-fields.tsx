@@ -11,7 +11,6 @@ import { type McpRequirementsDiscovery, useDiscoverMcpConnectionRequirements } f
 import { EMPTY_OAUTH_ADDRESSES, manualOAuthDestination, oauthAddressHost, publishedFieldUnsaved, reviewPublishedAddresses, undoPublishedAddresses, type ManualOAuthAddresses, type ManualOAuthDraft, type ManualOAuthField } from "./manual-oauth-draft";
 import type { OAuthAppValidationError } from "./oauth-app-draft";
 
-/** Collapsible group title, shared with "Authorization server selection" in connector settings. */
 export const DETAILS_SUMMARY_CLASS = "flex cursor-pointer list-none items-center gap-1.5 text-[12px] font-medium text-gray-700 [&::-webkit-details-marker]:hidden";
 
 function EndpointField({ field, label, draft, saved, disabled, onChange, validationError }: {
@@ -26,7 +25,6 @@ function EndpointField({ field, label, draft, saved, disabled, onChange, validat
   const errorId = useId();
   const fieldError = validationError?.field === field ? validationError.message : null;
   const testId = field === "authorizationEndpoint" ? "manual-oauth-authorization-endpoint" : "manual-oauth-token-endpoint";
-  // Same anatomy as the connector settings Field: 12px label over a DenInput.
   return <label className="flex min-w-0 flex-col gap-1.5">
     <span className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[12px] font-medium text-gray-700">
       {label}
@@ -39,8 +37,7 @@ function EndpointField({ field, label, draft, saved, disabled, onChange, validat
   </label>;
 }
 
-/** Reviewing published addresses only edits this draft. Save remains the trust boundary. */
-export function ManualOAuthFields({ url, draft, onChange, saved = EMPTY_OAUTH_ADDRESSES, hasClientSecret = false, disabled = false, discovery, revisedSetup = false, trustConfirmed = false, onTrustConfirmedChange, validationError }: {
+export function ManualOAuthFields({ url, draft, onChange, saved = EMPTY_OAUTH_ADDRESSES, hasClientSecret = false, disabled = false, discovery, setupValidation = false, trustConfirmed = false, onTrustConfirmedChange, validationError }: {
   url: string;
   draft: ManualOAuthDraft;
   onChange: (draft: ManualOAuthDraft) => void;
@@ -48,7 +45,7 @@ export function ManualOAuthFields({ url, draft, onChange, saved = EMPTY_OAUTH_AD
   hasClientSecret?: boolean;
   disabled?: boolean;
   discovery?: McpRequirementsDiscovery | null;
-  revisedSetup?: boolean;
+  setupValidation?: boolean;
   trustConfirmed?: boolean;
   onTrustConfirmedChange?: (confirmed: boolean) => void;
   validationError?: OAuthAppValidationError | null;
@@ -89,8 +86,6 @@ export function ManualOAuthFields({ url, draft, onChange, saved = EMPTY_OAUTH_AD
   }
 
   return <details className="group" open={Boolean(discovery?.warnings.some((warning) => warning.code === "oauth_issuer_mismatch")) || manuallyConfigured} data-testid="manual-oauth-settings" onToggle={(event) => {
-    // Opening unconfigured sign-in settings may inspect public metadata. Saved
-    // manual configurations never discover implicitly, even when this row opens.
     if (event.currentTarget.open && !result && !manuallyConfigured && !discover.isPending && !disabled) void inspect();
   }}>
     <summary className={DETAILS_SUMMARY_CLASS} data-testid="manual-oauth-summary">
@@ -100,7 +95,6 @@ export function ManualOAuthFields({ url, draft, onChange, saved = EMPTY_OAUTH_AD
     <div className="mt-3 flex min-w-0 flex-col gap-3">
       {!pendingReview ? <>
         {mismatch ? <div data-testid="manual-oauth-failure">
-          {/* The shared error notice with its next action, as Den's other "failed · Try again" notices. */}
           <DenNotice
             tone="error"
             message={<>
@@ -122,10 +116,9 @@ export function ManualOAuthFields({ url, draft, onChange, saved = EMPTY_OAUTH_AD
           </dl>
         </details> : null}
       </> : null}
-      <EndpointField field="authorizationEndpoint" label="Authorization endpoint URL" draft={draft} saved={saved} disabled={disabled} onChange={onChange} validationError={revisedSetup ? validationError : null} />
-      <EndpointField field="tokenEndpoint" label="Token endpoint URL" draft={draft} saved={saved} disabled={disabled} onChange={onChange} validationError={revisedSetup ? validationError : null} />
+      <EndpointField field="authorizationEndpoint" label="Authorization endpoint URL" draft={draft} saved={saved} disabled={disabled} onChange={onChange} validationError={setupValidation ? validationError : null} />
+      <EndpointField field="tokenEndpoint" label="Token endpoint URL" draft={draft} saved={saved} disabled={disabled} onChange={onChange} validationError={setupValidation ? validationError : null} />
       {pendingReview || destination.differentHost ? <div data-testid="manual-oauth-trust-warning">
-        {/* The shared warning notice (amber icon, neutral surface); Undo sits in its action slot. */}
         <DenNotice
           tone="warning"
           message={<>
@@ -137,12 +130,12 @@ export function ManualOAuthFields({ url, draft, onChange, saved = EMPTY_OAUTH_AD
           action={pendingReview ? <DenButton type="button" variant="secondary" size="sm" disabled={disabled} onClick={() => onChange(undoPublishedAddresses(draft))}>Undo</DenButton> : undefined}
         />
       </div> : null}
-      {revisedSetup && draft.values.authorizationEndpoint.trim() && draft.values.tokenEndpoint.trim() && (mismatch || pendingReview || destination.differentHost) ? <label className="flex items-start gap-2 text-[12px] leading-5 text-gray-700" data-testid="manual-oauth-trust-confirmation">
+      {setupValidation && draft.values.authorizationEndpoint.trim() && draft.values.tokenEndpoint.trim() && (mismatch || pendingReview || destination.differentHost) ? <label className="flex items-start gap-2 text-[12px] leading-5 text-gray-700" data-testid="manual-oauth-trust-confirmation">
         <DenCheckbox name="trustConfirmed" checked={trustConfirmed} disabled={disabled || !onTrustConfirmedChange} onCheckedChange={(checked) => onTrustConfirmedChange?.(checked)} aria-invalid={validationError?.field === "trustConfirmed" || undefined} aria-describedby={validationError?.field === "trustConfirmed" ? trustErrorId : undefined} className="mt-1" />
         <span>I checked these addresses with the server owner and approve sending users to <strong>{oauthAddressHost(draft.values.authorizationEndpoint)}</strong> to sign in, and sending their sign-in codes{hasClientSecret ? " and the client secret" : ""} to <strong>{oauthAddressHost(draft.values.tokenEndpoint)}</strong>.</span>
       </label> : null}
-      {revisedSetup && validationError?.field === "trustConfirmed" ? <p id={trustErrorId} role="alert" className="text-[12px] text-red-600">{validationError.message}</p> : null}
-      {!revisedSetup && Boolean(draft.values.authorizationEndpoint) !== Boolean(draft.values.tokenEndpoint) ? <p role="alert" className="text-[12px] text-red-600">Enter both addresses, or clear both to use automatic discovery.</p> : null}
+      {setupValidation && validationError?.field === "trustConfirmed" ? <p id={trustErrorId} role="alert" className="text-[12px] text-red-600">{validationError.message}</p> : null}
+      {!setupValidation && Boolean(draft.values.authorizationEndpoint) !== Boolean(draft.values.tokenEndpoint) ? <p role="alert" className="text-[12px] text-red-600">Enter both addresses, or clear both to use automatic discovery.</p> : null}
       {error ? <p role="alert" className="text-[12px] text-red-600">{error}</p> : null}
     </div>
   </details>;

@@ -1,4 +1,3 @@
-/** Build the computer image in the operator's Daytona organization; no model or Den credentials enter it. */
 import { mkdtemp, writeFile, rm } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
@@ -22,12 +21,8 @@ try {
 }
 const directory = await mkdtemp(join(tmpdir(), "openwork-computer-image-"))
 try {
-  // Ubuntu matches the current Freestyle guest: same username, paths and
-  // install script. Only the host mechanics differ (no systemd in the image).
   await writeFile(join(directory, "install.sh"), COMPUTER_INSTALL_SCRIPT)
   await writeFile(join(directory, "Dockerfile"), `FROM ubuntu:24.04\nENV DEBIAN_FRONTEND=noninteractive\nRUN apt-get update -qq && apt-get install -y --no-install-recommends bash sudo python3 python3-pip ca-certificates && (id ubuntu || useradd -m -u 1000 -s /bin/bash ubuntu) && echo 'ubuntu ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/ubuntu\nCOPY install.sh /tmp/install-computer.sh\nRUN bash /tmp/install-computer.sh && rm /tmp/install-computer.sh\nUSER ubuntu\nWORKDIR /workspace\n`)
-  // Image builds are provider-native, not running-VM snapshot capture. The
-  // CLI's Dockerfile build also avoids the SDK's S3/XML context-upload path.
   await new Promise<void>((resolve, reject) => {
     const child = spawn("daytona", ["snapshot", "create", name, "--dockerfile", join(directory, "Dockerfile"), "--cpu", "2", "--memory", "4", "--disk", "8", "--sandbox-class", "container"], {
       cwd: directory, stdio: "inherit", env: { ...process.env, DAYTONA_API_KEY: apiKey, DAYTONA_API_URL: process.env.DAYTONA_API_URL ?? "https://app.daytona.io/api" },

@@ -55,14 +55,6 @@ If the private network uses TLS inspection, private roots, or an outbound proxy,
 
 **Fix:** trust your Den origin before OpenWork launches. This affects the diagnostic only; Cloud MCP itself can still work in real chats without this variable, so do not treat a skipped probe as proof that the deployment is broken. See [Network diagnostics](/start-here/network-diagnostics) for exact syntax and launch-surface guidance.
 
-### Den's outbound self-check points at a public host
-
-**Symptom:** an admin-triggered Den outbound diagnostic cannot reach the default public diagnostic host from a VPN-isolated Den deployment.
-
-**Why:** `DEN_DIAGNOSTICS_ORIGIN` defaults to the public OpenWork diagnostic service.
-
-**Fix:** deploy the diagnostics app at an internally reachable supported runtime/origin, then point Den at it with `DEN_DIAGNOSTICS_ORIGIN` and `DEN_DIAGNOSTICS_BEARER_TOKEN`. Do not assume a generic Kubernetes package unless your deployment path has been validated. The check is optional and admin-triggered; it is not a background dependency for Den. See [Network diagnostics](/start-here/network-diagnostics).
-
 ## Verification checklist
 
 | Chain | Success looks like | First place to look if it fails |

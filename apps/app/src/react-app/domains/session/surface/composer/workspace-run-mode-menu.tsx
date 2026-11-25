@@ -21,8 +21,6 @@ export function WorkspaceRunModeMenu(props: Props) {
   const { workspaceRunModeEnabled } = useFeatureFlagsPreferences();
   const restricted = useDesktopRestriction("allowControlSettings");
   if (!workspaceRunModeEnabled || restricted || !isDesktopRuntime() || !props.client || !props.workspaceId) return null;
-  // Remount on endpoint/workspace changes so a pending confirmation cannot
-  // apply the previous pane's choice to a newly selected workspace.
   return <WorkspaceRunModePicker key={`${props.client.baseUrl}:${props.workspaceId}`} client={props.client} workspaceId={props.workspaceId} busy={props.busy} />;
 }
 

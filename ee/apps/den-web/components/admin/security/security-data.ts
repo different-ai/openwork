@@ -1,10 +1,8 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { requestAdmin, withStoredBearer, type AdminResult } from "../admin-request";
-import { useAdminSessionCookie } from "../admin-shell";
+import { useCallback, useState } from "react";
+import { useAdminReport } from "../use-admin-report";
 
-/** Mirrors `AdminSecurityFinding` from `GET /v1/admin/security` and `/v1/admin/security/requests`. */
 export type SecuritySeverity = "high" | "medium" | "low" | "clear";
 export type SecurityCategory = "access" | "accounts" | "automation" | "credentials" | "usage";
 export type SecurityTarget = { type: "user"; userId: string } | { type: "organization"; organizationId: string } | null;
@@ -80,7 +78,6 @@ function isFinding(value: unknown): value is SecurityFinding {
     && Array.isArray(value.entities) && value.entities.every(isEntity) && isCount(value.entityCount);
 }
 
-/** Accepts only a complete report, so the page never renders half-understood findings. */
 export function parseSecurityReport(payload: unknown): SecurityReport | null {
   if (!isRecord(payload) || !isText(payload.generatedAt) || !isRecord(payload.range) || !isCount(payload.range.days)) return null;
   if (!Array.isArray(payload.findings) || !payload.findings.every(isFinding)) return null;
@@ -114,48 +111,10 @@ export function severityCounts(findings: readonly SecurityFinding[]): Record<Sec
   return counts;
 }
 
-/** Where a reviewer goes next for an entity. User ids, never emails, go in the address. */
 export function targetHref(target: SecurityTarget): string | null {
   if (!target) return null;
   if (target.type === "user") return `/admin/users?${new URLSearchParams({ search: target.userId })}`;
   return `/admin/organizations/${encodeURIComponent(target.organizationId)}`;
-}
-
-export type AdminLoadState<T> =
-  | { status: "loading"; data: T | null }
-  | { status: "ready"; data: T }
-  | { status: Exclude<AdminResult<unknown>["access"], "ready">; message: string; data: T | null };
-
-/** Loads an admin report; keeps the last one on screen while a new range or refresh loads. */
-function useAdminReport<T>(path: string, parse: (payload: unknown) => T | null, nonce: number) {
-  const hasSessionCookie = useAdminSessionCookie();
-  const [state, setState] = useState<AdminLoadState<T>>(() => hasSessionCookie ? { status: "loading", data: null }
-    : { status: "signed-out", message: "", data: null });
-  const last = useRef<T | null>(null);
-  useEffect(() => {
-    const controller = new AbortController();
-    if (nonce === 0 && !hasSessionCookie && !withStoredBearer({}).Authorization) {
-      last.current = null;
-      setState({ status: "signed-out", message: "", data: null });
-      return () => controller.abort();
-    }
-    setState({ status: "loading", data: last.current });
-    requestAdmin(path, parse, controller.signal)
-      .then((result) => {
-        if (controller.signal.aborted) return;
-        if (result.access === "ready") { last.current = result.data; setState({ status: "ready", data: result.data }); }
-        else {
-          if (result.access !== "error") last.current = null;
-          setState({ status: result.access, message: result.message, data: last.current });
-        }
-      })
-      .catch((error: unknown) => {
-        if (controller.signal.aborted) return;
-        setState({ status: "error", message: error instanceof Error ? error.message : "The request failed.", data: last.current });
-      });
-    return () => controller.abort();
-  }, [path, parse, hasSessionCookie, nonce]);
-  return state;
 }
 
 export function useSecurity(days: SecurityRange) {

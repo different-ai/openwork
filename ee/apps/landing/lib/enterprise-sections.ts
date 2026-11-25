@@ -1,14 +1,8 @@
-/**
- * Copy for /enterprise. Keep claims in step with lib/enterprise.ts (FAQ),
- * lib/agent-markdown.ts (crawler view) and the public roadmap.
- */
-
 export type EnterpriseFact = {
   title: string;
   detail: string;
 };
 
-/** Shown under the AI gateway preview in the hero. */
 export const enterpriseControls: EnterpriseFact[] = [
   {
     title: "Company identity",

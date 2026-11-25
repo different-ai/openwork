@@ -4,9 +4,8 @@ import {
   credentialPromptSchema,
   type CredentialPrompt,
 } from "@openwork/types/den/credential-prompt"
-import { MICROSOFT_FOUNDRY_PROVIDER_ID, microsoftFoundryBaseUrl } from "@openwork-ee/utils/microsoft-foundry-catalog"
-import { inferenceCredentialEnvNames } from "@openwork-ee/utils/inference-credentials"
-import { isLiteLlmProviderId } from "@openwork-ee/utils/litellm-catalog"
+import { MICROSOFT_FOUNDRY_PROVIDER_ID, microsoftFoundryBaseUrl, gatewaySdkDefaultBaseUrl, isLiteLlmProviderId, isTrueFoundryProviderId, inferenceCredentialEnvNames } from "@openwork-ee/gateway-catalog"
+import { isGatewayCustomProviderId } from "@openwork/types/den/gateway-custom-providers"
 import { env } from "./env.js"
 import { openworkOrganizationConnectionsUrl, openworkYourConnectionsUrl } from "./mcp/connection-navigation.js"
 
@@ -19,19 +18,6 @@ function text(record: unknown, ...path: string[]): string | null {
   return typeof value === "string" && value.trim() ? value.trim() : null
 }
 
-/** SDK defaults mirror ee/apps/gateway/src/protocols.ts; a parity test keeps them aligned. */
-const GATEWAY_SDK_DEFAULTS: Record<string, string> = {
-  "@ai-sdk/openai": "https://api.openai.com/v1",
-  "@ai-sdk/anthropic": "https://api.anthropic.com/v1",
-  "@ai-sdk/mistral": "https://api.mistral.ai/v1",
-  "@ai-sdk/google": "https://generativelanguage.googleapis.com/v1beta",
-}
-
-/**
- * Where an AI Gateway provider sends its key, shown above the private field.
- * An explicit upstream wins; an unparseable one shows nothing rather than a
- * different, default destination.
- */
 export function gatewayUpstreamDestination(providerId: string, providerConfig: unknown, settings: unknown): string | null {
   const explicit = text(settings, "upstreamBaseUrl") ?? text(providerConfig, "options", "baseURL") ?? text(providerConfig, "api")
   if (explicit) return credentialPromptDestination(explicit)
@@ -39,13 +25,9 @@ export function gatewayUpstreamDestination(providerId: string, providerConfig: u
   if (providerId === MICROSOFT_FOUNDRY_PROVIDER_ID) return credentialPromptDestination(microsoftFoundryBaseUrl(resourceName))
   const npm = text(providerConfig, "npm")
   if (npm === "@ai-sdk/azure" && resourceName && /^[a-zA-Z0-9][a-zA-Z0-9-]{0,62}$/.test(resourceName)) return `https://${resourceName.toLowerCase()}.openai.azure.com/openai`
-  return npm ? GATEWAY_SDK_DEFAULTS[npm] ?? null : null
+  return gatewaySdkDefaultBaseUrl(npm)
 }
 
-/**
- * Credential prompts are Den tool-result metadata that ask the person, in
- * OpenWork, for a key the agent must never see. They carry no value field.
- */
 export function mcpConnectionKeyPrompt(connection: { id: string; name: string; url: string }): CredentialPrompt {
   return credentialPromptSchema.parse({
     schemaVersion: "1",
@@ -56,7 +38,6 @@ export function mcpConnectionKeyPrompt(connection: { id: string; name: string; u
   })
 }
 
-/** The signed-in person's own key for a connection where each person uses their own. */
 export function mcpConnectionMemberKeyPrompt(connection: { id: string; name: string; url: string }): CredentialPrompt {
   return credentialPromptSchema.parse({
     schemaVersion: "1",
@@ -67,11 +48,6 @@ export function mcpConnectionMemberKeyPrompt(connection: { id: string; name: str
   })
 }
 
-/**
- * One shared key that replaces each person's own. The prompt changes nothing:
- * the connection switches only when a person saves a key that works, and only
- * while it is still as it was at `updatedAt`.
- */
 export function mcpConnectionSharedSwitchPrompt(input: {
   connection: { id: string; name: string; url: string; updatedAt: Date }
   audience: { orgWide: boolean; memberCount: number; teamCount: number }
@@ -100,7 +76,6 @@ export function pluginConnectionKeyPrompt(input: { pluginId: string; configObjec
   })
 }
 
-/** What a person enters for one AI Gateway provider's shared credential, or null when chat can't collect it. */
 export type GatewayCredentialShape =
   | { kind: "api_key" }
   | { kind: "aws_keys" }
@@ -108,7 +83,8 @@ export type GatewayCredentialShape =
   | { kind: "api_key_map"; envNames: string[] }
 
 export function gatewayCredentialShape(providerId: string, envNames: readonly string[]): GatewayCredentialShape | null {
-  if (isLiteLlmProviderId(providerId)) return null
+  if (isLiteLlmProviderId(providerId) || isTrueFoundryProviderId(providerId)) return null
+  if (isGatewayCustomProviderId(providerId)) return { kind: "api_key" }
   if (providerId === "google-vertex" || providerId === "google-vertex-anthropic") return { kind: "gcp_service_account" }
   if (providerId === "amazon-bedrock" || providerId === "amazon-bedrock-mantle") return { kind: "aws_keys" }
   if (envNames.length === 1) return { kind: "api_key" }
@@ -143,7 +119,6 @@ export function gatewayProviderKeyPrompt(input: { inferenceProviderId: string; c
   })
 }
 
-/** The dashboard page where a person can add the same key outside OpenWork chat. */
 export function credentialPromptManageUrl(prompt: CredentialPrompt): string | null {
   try {
     if (prompt.target.type === "mcp_connection_member_key") return openworkYourConnectionsUrl(prompt.target.connectionId)
@@ -156,7 +131,6 @@ export function credentialPromptManageUrl(prompt: CredentialPrompt): string | nu
   }
 }
 
-/** Fields added to a REST response so the agent and the host both read the prompt. */
 export function credentialPromptResponseFields(prompt: CredentialPrompt) {
   const manageUrl = credentialPromptManageUrl(prompt)
   return { credentialPrompt: prompt, nextStep: credentialPromptInstruction(manageUrl) }

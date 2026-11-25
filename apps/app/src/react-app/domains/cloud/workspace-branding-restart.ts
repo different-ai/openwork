@@ -58,18 +58,6 @@ export function bootstrapBrandingNeedsSync(
   return BOOTSTRAP_BRANDING_KEYS.some((key) => (bootstrap[key] ?? null) !== next[key]);
 }
 
-/**
- * Level-based reconcile between a fresh org desktop config and the shell's
- * applied brand-icon state. The provider's config diff is edge-triggered, but
- * the shell restores its cached/bootstrap icon at every launch — so a clear
- * whose edge was missed (stale localStorage cache, failed IPC, org switch)
- * would otherwise never be retried and the branded icon would stick forever.
- *
- * Returns the URL to apply (`{ apply: string | null }`, where null means
- * "reset to the stock icon"), or null when the shell already matches. A
- * mismatch between two applied URLs is left to the edge diff, which owns
- * config-change transitions.
- */
 export function brandIconReconcileAction(
   config: Pick<DenDesktopConfig, "brandIconUrl">,
   state: Pick<BrandIconState, "applied"> | null,

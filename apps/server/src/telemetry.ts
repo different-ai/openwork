@@ -1,8 +1,12 @@
+import { isDiskFullError, watchedDiskFreeMegabytes } from "./disk-space.js";
+
 export type ServerTelemetryContext = {
   method?: string;
   route?: string;
   surface?: string;
-  /** Internal-only context; never forwarded to the desktop telemetry host. */
+  fingerprint?: string[];
+  level?: "warning";
+  tags?: Record<string, string>;
   requestSignal?: AbortSignal;
 };
 
@@ -11,8 +15,6 @@ export type OpenworkDesktopTelemetry = {
 };
 
 declare global {
-  // Provided by the Electron host when the embedded server runs in desktop mode.
-  // The standalone openwork-server package leaves this unset.
   var __openworkDesktopTelemetry: OpenworkDesktopTelemetry | undefined;
 }
 
@@ -22,7 +24,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 export function isExpectedRequestCancellation(error: unknown, requestSignal: AbortSignal | undefined): boolean {
   if (!requestSignal?.aborted) return false;
-  // Abort reasons may legally be null (including a canceled empty HEAD body).
   if (error === requestSignal.reason) return true;
   const visited = new Set<object>();
   let current: unknown = error;
@@ -44,11 +45,33 @@ export function isExpectedRequestCancellation(error: unknown, requestSignal: Abo
   return false;
 }
 
+const DISK_FULL_REPORT_INTERVAL_MS = 10 * 60 * 1000;
+let lastDiskFullReportAt: number | null = null;
+
+function diskFullReport(): Pick<ServerTelemetryContext, "fingerprint" | "level" | "tags"> | null {
+  const now = Date.now();
+  if (lastDiskFullReportAt !== null && now - lastDiskFullReportAt < DISK_FULL_REPORT_INTERVAL_MS) return null;
+  lastDiskFullReportAt = now;
+  const freeMegabytes = watchedDiskFreeMegabytes();
+  return {
+    fingerprint: ["disk-full"],
+    level: "warning",
+    tags: { "disk.free_mb": freeMegabytes === null ? "unknown" : String(freeMegabytes) },
+  };
+}
+
+export function resetDiskFullReportsForTests(): void {
+  lastDiskFullReportAt = null;
+}
+
 export function captureServerException(error: unknown, context: ServerTelemetryContext = {}): boolean {
   const { requestSignal, ...telemetryContext } = context;
   if (isExpectedRequestCancellation(error, requestSignal)) return false;
+  const diskFull = isDiskFullError(error) ? diskFullReport() : undefined;
+  if (diskFull === null) return false;
   return globalThis.__openworkDesktopTelemetry?.captureException(error, {
     surface: "server",
     ...telemetryContext,
+    ...diskFull,
   }) ?? false;
 }

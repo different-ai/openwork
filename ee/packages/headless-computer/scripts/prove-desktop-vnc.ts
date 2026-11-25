@@ -1,4 +1,3 @@
-/** Exercise the production desktop bridge on a dedicated, already-created CLI-authenticated Daytona VM. */
 import { execFile } from "node:child_process"
 import { promisify } from "node:util"
 import { randomUUID } from "node:crypto"
@@ -50,13 +49,10 @@ const box = await fake.create({ idempotencyKey: "desktop-proof", image: null, la
 await desktop.start(box)
 const fixture = `/tmp/openwork-vnc-proof-${randomUUID()}`
 const html = `<!doctype html><title>Workbot computer check</title><style>body{font:24px sans-serif;padding:60px}input,button{font:inherit;padding:12px}</style><h1>Workbot desktop</h1><label>Title <input id="entry"></label><button onclick="document.querySelector('#saved').textContent='Saved: '+document.querySelector('#entry').value">Save</button><p id="saved">Not saved</p>`
-// Keep the fixture program constant; HTML and paths are data rather than JS source.
 const fixtureSource = `const fs=require('node:fs'),path=require('node:path');const dir=process.argv[2];const server=require('node:http').createServer((_,res)=>res.end(fs.readFileSync(path.join(dir,'index.html'))));server.listen(0,'0.0.0.0',()=>fs.writeFileSync(path.join(dir,'port'),String(server.address().port)));fs.writeFileSync(path.join(dir,'pid'),String(process.pid));`
 await remote(`mkdir -p ${fixture}; printf %s ${shellQuote(Buffer.from(html).toString("base64"))} | base64 -d > ${fixture}/index.html; printf %s ${shellQuote(Buffer.from(fixtureSource).toString("base64"))} | base64 -d > ${fixture}/server.cjs; setsid -f node ${fixture}/server.cjs ${shellQuote(fixture)} > ${fixture}/server.log 2>&1 < /dev/null; for n in 1 2 3 4 5 6 7 8 9 10; do test -s ${fixture}/port && break; sleep 0.1; done`)
 const port = Number((await remote(`cat ${fixture}/port`)).trim())
 assert.ok(Number.isInteger(port) && port > 0)
-// Use the private sandbox's signed public preview instead of granting a shell
-// administrative access or bypassing the desktop's private-network guard.
 const fixturePreview = await cli(["preview-url", sandbox, "--port", String(port), "--expires", "600"])
 const fixtureUrl = fixturePreview.match(/https:\/\/\S+/)?.[0]
 if (!fixtureUrl) throw new Error("Daytona returned no signed fixture URL.")
@@ -65,7 +61,6 @@ const opened = await browser("open", { url: fixtureUrl })
 assert.ok(typeof opened === "object" && opened !== null && "tabId" in opened)
 const tabId = Reflect.get(opened, "tabId")
 
-// First validate the exact RFB handshake over the signed, origin-bound WebSocket; never print its credentials.
 for (const view of ["browser", "computer"] as const) {
   const ticket = await desktop.viewer(box, { view, control: false, origin: "http://localhost:3020" })
   const received = await new Promise<string>((resolve, reject) => {

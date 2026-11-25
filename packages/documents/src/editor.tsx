@@ -8,15 +8,14 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { OfficeEditorTab } from "./office-editor"
 import { UnsavedChangesDialog } from "./unsaved-dialog"
 import { googleAppNames, officeMimeTypes } from "./office-engine"
-import { columnLetters } from "@openwork/workbook"
 import { DocumentsError, type DocumentItem } from "./index"
 import type { DocumentSave, DocumentsEditor, EditorDocument, SpreadsheetDocument, TextDocument } from "./model"
 import type { DocumentTabControlsChange } from "./document-tabs"
+import { documentEditorKey } from "./queries"
 
 export function DocumentEditorTab(props: Parameters<typeof BasicDocumentEditorTab>[0]) {
   const [editing, setEditing] = useState(false)
   const [officeReady, setOfficeReady] = useState(false)
-  // A combined editor names which providers have the full Office editor; OneDrive files edit inline.
   const office = officeMimeTypes.has(props.item.mimeType) && (props.editor.hasOffice?.(props.item.id) ?? true) ? props.editor.office : undefined
   const fullEditor = editing && office
   return <div className="ow-document-mode" hidden={!props.active}>
@@ -28,11 +27,9 @@ export function DocumentEditorTab(props: Parameters<typeof BasicDocumentEditorTa
 }
 
 function BasicDocumentEditorTab({ toolbarHost, item, editor, enabled, editingEnabled = false, editing = false, onEdit, showActions = true, active, scope, connectionsHref, renderConnect, onDirtyChange, onSavingChange, onControlsChange, onClose }: { toolbarHost?: HTMLElement | null; item: DocumentItem; editor: DocumentsEditor; enabled: boolean; editingEnabled?: boolean; editing?: boolean; onEdit?(): void; showActions?: boolean; active: boolean; scope: readonly string[]; connectionsHref?: string | null; renderConnect?(connectionId?: string, reconnect?: boolean): ReactNode; onDirtyChange?(id: string, dirty: boolean): void; onSavingChange?(id: string, saving: boolean): void; onResourceChange?(tabId: string, resource: DocumentItem): void; onControlsChange?: DocumentTabControlsChange; onClose(): void }) {
-  // Where this file is saved, in the words people see: "Drive" or "OneDrive".
   const storage = item.source?.storage ?? "Drive"
   const [sheetId, setSheetId] = useState<string>()
   const [startRow, setStartRow] = useState(1)
-  // Pin the selected Drive account without changing the query identity after its first response.
   const connection = useRef<string>(undefined)
   const connectionId = connection.current
   const [draft, setDraft] = useState<Record<string, string>>({})
@@ -54,7 +51,7 @@ function BasicDocumentEditorTab({ toolbarHost, item, editor, enabled, editingEna
   useEffect(() => { onSavingChange?.(item.id, saving); return () => onSavingChange?.(item.id, false) }, [item.id, saving, onSavingChange])
   useEffect(() => { onDirtyChange?.(item.id, dirty); return () => onDirtyChange?.(item.id, false) }, [dirty, item.id, onDirtyChange])
   const query = useQuery({
-    queryKey: ["documents", ...scope, "editor", item.id, sheetId, startRow, editingEnabled],
+    queryKey: documentEditorKey(scope, item.id, sheetId, startRow, editingEnabled),
     queryFn: async ({ signal }) => {
       const document = await editor.open(item.id, { sheetId, startRow, connectionId: connection.current }, signal)
       connection.current ??= document.connectionId
@@ -64,6 +61,7 @@ function BasicDocumentEditorTab({ toolbarHost, item, editor, enabled, editingEna
     retry: false, gcTime: 0, staleTime: Infinity, refetchOnWindowFocus: false,
   })
   const data = query.data
+  if (data) connection.current ??= data.connectionId
   useEffect(() => {
     if (!dirty) return
     const warn = (event: BeforeUnloadEvent) => { event.preventDefault(); event.returnValue = "" }
@@ -85,7 +83,6 @@ function BasicDocumentEditorTab({ toolbarHost, item, editor, enabled, editingEna
     setSaving(true); setError(null); setNeedsConnection(false)
     try {
       await editor.save(item.id, payload)
-      // A save can have succeeded even if reloading fails; never retry the write automatically.
       setDraft({}); setFormulas(new Set()); setSaved(true)
       if (closing) onClose()
       else await query.refetch()
@@ -97,9 +94,9 @@ function BasicDocumentEditorTab({ toolbarHost, item, editor, enabled, editingEna
   const reconnectLabel = `Reconnect ${item.source?.label ?? "Google Drive"}`
   const information = editing && editingEnabled ? [data?.notice, data && !data.canEdit && data.kind !== "preview" ? "Editing requires write access to this file and the connector's enabled write permission." : null].filter(Boolean).join(" ") : ""
   return <section className="ow-document-editor" hidden={!active} aria-label={item.name}>
-    <EditorActions active={active && showActions} host={toolbarHost}><span role="status">{saving ? `Saving to ${storage}…` : dirty ? "Unsaved changes" : saved ? `Saved to ${storage}` : !editing ? "Preview" : data?.canEdit ? `Saved in ${storage}` : "Read-only"}</span>{information && <DocumentInformation>{information}</DocumentInformation>}{item.openUrl && (googleApp
+    <EditorActions active={active && showActions} host={toolbarHost}><span role="status">{saving ? `Saving to ${storage}…` : dirty ? "Unsaved changes" : saved ? `Saved to ${storage}` : !editing ? "" : data?.canEdit ? `Saved in ${storage}` : "Read-only"}</span>{information && <DocumentInformation>{information}</DocumentInformation>}{editingEnabled && !editing && data?.canEdit && <button type="button" disabled={!enabled} onClick={onEdit}>Edit</button>}{item.openUrl && (googleApp
       ? <a className="ow-editor-open-google" href={item.openUrl} target="_blank" rel="noopener noreferrer"><ExternalLink size={15} aria-hidden />Open in {googleApp}</a>
-      : <a href={item.openUrl} target="_blank" rel="noopener noreferrer" aria-label={`Open original in ${storage}`}><ExternalLink size={16} /></a>)}{editingEnabled && !editing && data?.canEdit && <button type="button" disabled={!enabled} onClick={onEdit}>Edit</button>}{editing && <button type="button" disabled={!dirty || readonly} onClick={() => void save()}><Save size={15} aria-hidden />Save to {storage}</button>}{!onControlsChange && <button type="button" aria-label={`Close ${item.name}`} disabled={saving} onClick={() => closeAction.current()}><X size={16} /></button>}</EditorActions>
+      : <a className="ow-editor-open-original" href={item.openUrl} target="_blank" rel="noopener noreferrer" aria-label={`Open original in ${storage}`} title={`Open in ${storage}`}><ExternalLink size={16} aria-hidden /></a>)}{editing && <button type="button" disabled={!dirty || readonly} onClick={() => void save()}><Save size={15} aria-hidden />Save to {storage}</button>}{!onControlsChange && <button type="button" aria-label={`Close ${item.name}`} disabled={saving} onClick={() => closeAction.current()}><X size={16} /></button>}</EditorActions>
     {editing && !editingEnabled && <div className="ow-editor-message" role="status">Editing is off for this workspace. Your draft is kept in this tab.</div>}
     {closing && <UnsavedChangesDialog name={item.name} saveLabel={`Save to ${storage}`} saving={saving} canSave={!readonly} error={error} onSave={() => void save()} onDiscard={onClose} onCancel={() => setClosing(false)} />}
     {!enabled ? <div className="ow-editor-message">Documents is off for this workspace. Your draft remains in this tab.</div>
@@ -112,6 +109,16 @@ function BasicDocumentEditorTab({ toolbarHost, item, editor, enabled, editingEna
           : <DocumentPreview data={data} editor={editor} item={item} />}
       </>}
   </section>
+}
+function columnLetters(column: number) {
+  let value = column
+  let letters = ""
+  while (value > 0) {
+    const remainder = (value - 1) % 26
+    letters = String.fromCharCode(65 + remainder) + letters
+    value = Math.floor((value - 1) / 26)
+  }
+  return letters
 }
 function Spreadsheet({ data, draft, formulas, setFormulas, readonly, change, onSheet, onPage, dirty }: { data: SpreadsheetDocument; draft: Record<string, string>; formulas: Set<string>; setFormulas(value: Set<string>): void; readonly: boolean; change(key: string, value: string, base: string): void; onSheet(id: string): void; onPage(row: number): void; dirty: boolean }) {
   const [selected, setSelected] = useState("1:1")
@@ -152,9 +159,9 @@ function RichDocument({ data, draft, readonly, change }: { data: TextDocument; d
 }
 function DocumentPreview({ data, editor, item }: { data: Extract<EditorDocument, { kind: "preview" }>; editor: DocumentsEditor; item: DocumentItem }) {
   const url = `${editor.contentUrl(item.id)}?connectionId=${encodeURIComponent(data.connectionId)}`
-  // Keep one mounted viewer while its protected file bytes load, including Slides' PDF export.
   const pdf = data.mimeType === "application/pdf" || data.mimeType === "application/vnd.google-apps.presentation"
   if (pdf || ["image/png", "image/jpeg", "image/gif", "image/webp"].includes(data.mimeType)) return <BinaryPreview key={url} url={url} item={item} pdf={pdf} />
+  if (data.media) return <MediaPreview key={url} url={url} item={item} kind={data.media} />
   return <div className="ow-documents-state"><p>No inline preview is available.</p>{item.openUrl && <a href={item.openUrl} target="_blank" rel="noopener noreferrer">Open in {item.source?.storage ?? "Drive"}</a>}</div>
 }
 
@@ -165,5 +172,23 @@ function BinaryPreview({ url, item, pdf }: { url: string; item: DocumentItem; pd
     {state === "error" ? <div className="ow-documents-state"><p>Couldn't load this preview.</p><button type="button" onClick={() => setState("loading")}>Try again</button>{item.openUrl && <a href={item.openUrl} target="_blank" rel="noopener noreferrer">Open in {item.source?.storage ?? "Drive"}</a>}</div>
       : pdf ? <iframe className="ow-editor-preview" src={url} title={item.name} sandbox="allow-same-origin" onLoad={() => setState("ready")} onError={() => setState("error")} />
       : <div className="ow-editor-image"><img src={url} alt={item.name} onLoad={() => setState("ready")} onError={() => setState("error")} /></div>}
+  </div>
+}
+
+function MediaPreview({ url, item, kind }: { url: string; item: DocumentItem; kind: "video" | "audio" }) {
+  const [failed, setFailed] = useState(false)
+  const player = useRef<HTMLVideoElement & HTMLAudioElement>(null)
+  useEffect(() => {
+    const element = player.current
+    if (!element || typeof IntersectionObserver === "undefined") return
+    const observer = new IntersectionObserver(entries => { if (entries.some(entry => !entry.isIntersecting)) element.pause() })
+    observer.observe(element)
+    return () => observer.disconnect()
+  }, [failed])
+  if (failed) return <div className="ow-documents-state" role="status"><p>This {kind} can't be played here.</p><button type="button" onClick={() => setFailed(false)}>Try again</button>{item.openUrl && <a href={item.openUrl} target="_blank" rel="noopener noreferrer">Open in {item.source?.storage ?? "Drive"}</a>}</div>
+  return <div className="ow-editor-media" data-kind={kind}>
+    {kind === "video"
+      ? <video ref={player} src={url} controls playsInline preload="metadata" aria-label={item.name} onError={() => setFailed(true)} />
+      : <audio ref={player} src={url} controls preload="metadata" aria-label={item.name} onError={() => setFailed(true)} />}
   </div>
 }

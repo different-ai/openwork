@@ -1,13 +1,5 @@
 "use client";
 
-/**
- * The tab that opens while someone signs in to a connector.
- * It is usually on screen for under a second before the provider's page replaces it,
- * so it carries one focal line (DESIGN P7), reports state rather than explaining
- * itself (P1), offers a way back if the hand-off stalls (C6), and keeps diagnostics
- * behind "Technical details" (P3).
- */
-
 import { Check, ChevronRight, Copy, X } from "lucide-react";
 import { type ReactNode, useEffect, useState } from "react";
 import { DenButton } from "../../(den)/_components/ui/button";
@@ -19,10 +11,8 @@ import {
 import { detailRows, fallbackCopy } from "./oauth-details";
 
 const CONNECTIONS_HREF = "/dashboard/your-connections";
-/** A provider page normally replaces this tab within a few seconds. */
 const SLOW_AFTER_MS = 12_000;
 
-/** "Linear (live)" is the admin's label; the logo belongs to "Linear". */
 function brandName(name: string): string {
   return name.replace(/\s*\([^)]*\)\s*$/, "").trim() || name;
 }

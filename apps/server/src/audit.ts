@@ -68,7 +68,6 @@ export async function readAuditEntries(
     try {
       entries.push(JSON.parse(slice[i]) as AuditEntry);
     } catch {
-      // ignore malformed entry
     }
   }
   return entries;

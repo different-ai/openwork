@@ -41,10 +41,9 @@ export type RequestLogStartInput = {
   requestBytes?: number | null
   startedAt?: Date
   gatewayUsage?: GatewayUsageSnapshot
+  headlessSession?: string | null
   signal?: AbortSignal
-  /** Per-request prices that override the models.dev snapshot (synced LiteLLM models). */
   pricing?: PricingCatalog
-  /** False records tokens without pricing or charging them (per-user LiteLLM keys). */
   spendTracking?: boolean
 }
 
@@ -73,26 +72,18 @@ export type RequestLogFinishInput = {
 
 export type RequestLogRecorderDependencies = {
   insertRequestLog: InsertRequestLog
-  // Must update by id only, never upsert: retention may already have consumed
-  // an abandoned pending row. False means there is no row left to finalize.
   updateRequestLog?: UpdateRequestLog
   reporter: InferenceReporter
   now?: () => Date
   pricing?: PricingCatalog
-  /** How long a request waits for its write-ahead row before the gateway gives up. */
   startDeadlineMs?: number
 }
 
-/** A request is held, never forwarded, until its usage row is written or this much time has passed. */
 export const REQUEST_LOG_START_DEADLINE_MS = 30_000
-/** Answer sent when the write-ahead row could not be written in time. The request never reached a provider. */
 export const REQUEST_LOG_UNAVAILABLE_MESSAGE = "AI Gateway unavailable."
 
 const START_RETRY_DELAYS_MS = [25, 100, 250, 500, 1000, 2000]
 
-// Conflicts (member removed, request identity owned by someone else, stale
-// capture epoch) will not change by waiting. Everything else, including
-// database errors and a congested write queue, is retried until the deadline.
 function isPermanentStartFailure(error: unknown) {
   return error instanceof GatewayUsageError && error.status < 500
 }
@@ -108,8 +99,6 @@ function waitOrAbort(ms: number, signal: AbortSignal) {
 
 export type RequestLogRecorder = {
   start(input: RequestLogStartInput): void
-  // Optional for existing recorder mocks. The real recorder always exposes it.
-  // Gateway must await true BEFORE forwarding to make write-ahead a guarantee.
   whenStarted?(): Promise<boolean>
   markFirstByte(): void
   setUsage(input: RequestLogUsageInput): void
@@ -131,8 +120,6 @@ export async function updateRequestLogInDb(row: GatewayRequestLogRow): Promise<b
     const { createGatewayUsageLimits } = await import("@openwork-ee/den-db/gateway-usage-limits")
     return gatewayUsageWrites.settle(row.org_membership_id, row.openwork_request_id, () => createGatewayUsageLimits(usageWriteDatabase()).record(row))
   }
-  // A transaction/locking read also distinguishes a no-op retry from a missing
-  // row without relying on driver-specific affectedRows/CLIENT_FOUND_ROWS.
   return db.transaction(async (tx) => {
     const [existing] = await tx.select({ id: GatewayRequestLogTable.id }).from(GatewayRequestLogTable)
       .where(eq(GatewayRequestLogTable.id, row.id)).for("update")
@@ -161,8 +148,6 @@ function hasUsageTokens(usage: RequestLogUsageInput) {
     .some((value) => typeof value === "number")
 }
 
-// Snapshot cost from models.dev pricing when the upstream did not report an
-// authoritative cost (OpenRouter's usage.cost wins when present).
 function estimateCost(started: RequestLogStartInput, usage: RequestLogUsageInput | null, upstreamModel: string | null, pricing: PricingCatalog) {
   const reported = costMicroUsd(usage?.costUsd)
   if (reported !== null) return reported
@@ -191,12 +176,9 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
   let finishWrite: Promise<void> | null = null
 
   function report(reason: string) {
-    // DB exceptions frequently embed INSERT parameters (and upstream values).
-    // No exception/message, arbitrary path, model or response body leaves here.
     try {
       dependencies.reporter.handledError({ reason, route: "request_log", method: "WRITE" })
     } catch {
-      // A telemetry sink must never reject a relay callback or start promise.
     }
   }
 
@@ -213,9 +195,6 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
     return false
   }
 
-  // Write-ahead: the request waits here and is never forwarded without its row.
-  // Retries back off up to 2s between attempts until the row is written, the
-  // client goes away, a failure that waiting cannot fix, or the deadline.
   async function persistStart(write: (signal: AbortSignal) => Promise<void>, clientSignal?: AbortSignal) {
     const deadline = AbortSignal.timeout(dependencies.startDeadlineMs ?? REQUEST_LOG_START_DEADLINE_MS)
     const signal = clientSignal ? AbortSignal.any([clientSignal, deadline]) : deadline
@@ -251,7 +230,8 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
         organization_id: input.identity.organizationId,
         org_membership_id: input.identity.orgMembershipId,
         inference_key_id: input.identity.kind === "models" ? input.identity.inferenceKeyId : null,
-        gateway_key_id: input.identity.kind === "gateway" ? input.identity.gatewayKeyId : null,
+        gateway_key_id: input.identity.kind === "gateway" && input.identity.keySource === "member" ? input.identity.gatewayKeyId : null,
+        gateway_api_key_id: input.identity.kind === "gateway" && input.identity.keySource === "api_key" ? input.identity.gatewayKeyId : null,
         gateway_provider_id: input.identity.kind === "gateway" ? input.gatewayProviderId ?? null : null,
         gateway_provider_credential_id: input.identity.kind === "gateway" ? input.gatewayProviderCredentialId ?? null : null,
         model_group_id: input.identity.kind === "gateway" ? input.modelGroupId ?? null : null,
@@ -262,12 +242,12 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
         upstream_path: input.upstreamPath, method: input.method,
         requested_model: input.requestedModel, upstream_model: input.upstreamModel,
         stream: input.stream, started_at: startedAt, completed_at: null,
-        // Existing enum placeholder; completed_at NULL is the pending marker.
         outcome: "client_aborted", usage_source: "missing",
         openwork_request_id: input.openworkRequestId, request_bytes: input.requestBytes ?? null,
         metadata: {
           ...(input.requestedModelSource ? { requested_model_source: input.requestedModelSource } : {}),
           ...(input.gatewayUsage ? { gateway_usage: input.gatewayUsage } : {}),
+          ...(input.headlessSession ? { headless_session: input.headlessSession } : {}),
         },
       }
       const row = pending
@@ -299,6 +279,7 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
         org_membership_id: started.identity.orgMembershipId,
         inference_key_id: pending.inference_key_id,
         gateway_key_id: pending.gateway_key_id,
+        gateway_api_key_id: pending.gateway_api_key_id,
         gateway_provider_id: pending.gateway_provider_id,
         gateway_provider_credential_id: pending.gateway_provider_credential_id,
         model_group_id: pending.model_group_id,
@@ -336,7 +317,6 @@ export function createRequestLogRecorder(dependencies: RequestLogRecorderDepende
       if (row.cost_micro_usd === null) row.metadata = { ...pending.metadata, cost_source: "unknown" }
       row.metadata = { ...row.metadata, cost_complete: row.outcome === "ok" && row.cost_micro_usd !== null && usage?.complete !== false && (costMicroUsd(usage?.costUsd) !== null || typeof usage?.inputTokens === "number" && typeof usage?.outputTokens === "number") }
       if (started.spendTracking === false) {
-        // The upstream (LiteLLM) owns this spend: keep tokens, never price or charge them.
         row.cost_micro_usd = null
         row.metadata = { ...pending.metadata, cost_source: "unknown", cost_complete: false, spend_tracking: "disabled" }
       }

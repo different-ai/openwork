@@ -1,4 +1,3 @@
-/** Google Docs body text, including nested tabs and tables. Indices use Google's UTF-16 offsets. */
 export type DocumentPassage = { startIndex: number; endIndex: number; text: string }
 export type DocumentTab = { id: string; title: string; parentId: string | null; passages: DocumentPassage[]; headings: { startIndex: number; text: string; style: string }[] }
 export type GoogleDocument = { documentId: string; title: string; revisionId: string | null; tabs: DocumentTab[]; suggestionsOmitted: boolean }
@@ -94,7 +93,6 @@ export function parseGoogleDocument(value: unknown): GoogleDocument {
   return { documentId: label(root.documentId, 512), title: label(root.title, 1000), revisionId: root.revisionId === undefined ? null : label(root.revisionId, 512), tabs, suggestionsOmitted }
 }
 
-/** Keep boundaries between surrogate pairs so pagination neither loses nor corrupts emoji. */
 function slicePassage(passage: DocumentPassage, startIndex: number, maxCharacters: number): DocumentPassage {
   let start = Math.max(0, startIndex - passage.startIndex)
   if (start > 0 && /[\uDC00-\uDFFF]/.test(passage.text[start] ?? "") && /[\uD800-\uDBFF]/.test(passage.text[start - 1])) start--
@@ -107,7 +105,6 @@ export function readDocumentPassages(tab: DocumentTab, input: { startIndex: numb
   const passages: DocumentPassage[] = []
   let remaining = input.maxCharacters
   let nextStartIndex: number | null = null
-  // Literal, Unicode case-insensitive search; escaping prevents user-supplied regular expressions.
   const expression = input.query ? new RegExp(input.query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "giu") : null
   for (const source of tab.passages) {
     if (source.endIndex <= input.startIndex) continue
@@ -135,7 +132,6 @@ export function readDocumentPassages(tab: DocumentTab, input: { startIndex: numb
   return { passages, nextStartIndex }
 }
 
-/** A precise edit stays inside one text span and never deletes structural boundaries. */
 export function documentTextMatches(tab: DocumentTab, startIndex: number, expectedText: string): boolean {
   return tab.passages.some(passage => {
     const start = startIndex - passage.startIndex

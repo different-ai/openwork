@@ -2,6 +2,7 @@ import type { WorkbotCorrectionReference, WorkbotViewContext } from "@openwork/t
 import type { WorkbotAttachment, WorkbotFile } from "./data";
 import { WorkbotSendError } from "./data";
 import type { WorkbotAccessReason } from "@openwork/types/den/workbot-settings";
+import { isHeic, isImage, uploadableFiles } from "./images";
 
 export type Upload = {
   key: string;
@@ -22,7 +23,6 @@ export type Pending = {
   sentAt: number;
   uploads: Upload[];
   attachments: WorkbotAttachment[];
-  /** A correction is appended; it never removes the original conversation. */
   correctionOf?: string;
   correctionReference?: WorkbotCorrectionReference;
   failed: string | null;
@@ -42,8 +42,9 @@ export function createComposerState(uploadFile: Uploader) {
   const previewUrls = new Set<string>();
   const publish = (next: Snapshot) => { state = next; for (const listener of listeners) listener(); };
   const updateUpload = (key: string, patch: Partial<Upload>) => {
-    const update = (uploads: Upload[]) => uploads.map(upload => upload.key === key ? { ...upload, ...patch } : upload);
-    publish({ ...state, uploads: update(state.uploads), pending: state.pending.map(entry => ({ ...entry, uploads: update(entry.uploads) })) });
+    const update = (uploads: Upload[]) => uploads.some(upload => upload.key === key) ? uploads.map(upload => upload.key === key ? { ...upload, ...patch } : upload) : uploads;
+    const pending = state.pending.map(entry => { const uploads = update(entry.uploads); return uploads === entry.uploads ? entry : { ...entry, uploads }; });
+    publish({ ...state, uploads: update(state.uploads), pending: pending.some((entry, index) => entry !== state.pending[index]) ? pending : state.pending });
   };
   const start = (upload: Upload) => {
     if (upload.saved || waiters.has(upload.key)) return;
@@ -62,17 +63,24 @@ export function createComposerState(uploadFile: Uploader) {
     waiters.delete(upload.key);
     if (upload.previewUrl) { URL.revokeObjectURL(upload.previewUrl); previewUrls.delete(upload.previewUrl); }
   };
+  let disposed = false;
+  const addFiles = (files: File[]) => {
+    if (disposed) return;
+    const added: Upload[] = files.map(file => ({ key: crypto.randomUUID(), file,
+      previewUrl: isImage(file.type) ? URL.createObjectURL(file) : null,
+      loaded: 0, status: "uploading", error: null, saved: null }));
+    for (const upload of added) if (upload.previewUrl) previewUrls.add(upload.previewUrl);
+    publish({ ...state, uploads: [...state.uploads, ...added] });
+    for (const upload of added) start(upload);
+  };
   return {
     getSnapshot: () => state,
     subscribe: (listener: () => void) => { listeners.add(listener); return () => { listeners.delete(listener); }; },
     setText: (text: string) => publish({ ...state, text }),
     add: (files: FileList | File[]) => {
-      const added: Upload[] = Array.from(files).map(file => ({ key: crypto.randomUUID(), file,
-        previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : null,
-        loaded: 0, status: "uploading", error: null, saved: null }));
-      for (const upload of added) if (upload.previewUrl) previewUrls.add(upload.previewUrl);
-      publish({ ...state, uploads: [...state.uploads, ...added] });
-      for (const upload of added) start(upload);
+      const list = Array.from(files);
+      if (list.some(isHeic)) void uploadableFiles(list).then(addFiles);
+      else addFiles(list);
     },
     retryUpload: (key: string) => {
       const upload = state.uploads.find(upload => upload.key === key);
@@ -85,7 +93,6 @@ export function createComposerState(uploadFile: Uploader) {
       if (upload) release(upload);
       publish({ ...state, uploads: state.uploads.filter(upload => upload.key !== key) });
     },
-    /** `keepDraft`: a message that isn't the draft (a correction, a tap on Show me) leaves the draft and its uploads alone. */
     enqueue: ({ keepDraft = false, ...input }: { id: string; text: string; context?: WorkbotViewContext; teachingId?: string; teachingStepId?: number; correctionOf?: string; correctionReference?: WorkbotCorrectionReference; attachments?: WorkbotAttachment[]; keepDraft?: boolean }) => {
       const separate = keepDraft || input.correctionOf !== undefined;
       const entry: Pending = { ...input, attachments: input.attachments ?? [], sentAt: Date.now(),
@@ -105,7 +112,6 @@ export function createComposerState(uploadFile: Uploader) {
       }) });
       try {
         if (retry) for (const upload of entry.uploads) {
-          // Only explicitly failed uploads retry. Successful ones keep their saved ids, even after send failure.
           if (upload.status !== "failed" || upload.saved) continue;
           waiters.delete(upload.key);
           start(upload);
@@ -120,11 +126,11 @@ export function createComposerState(uploadFile: Uploader) {
     },
     acknowledge: (ids: ReadonlySet<string>) => {
       if (!state.pending.some(entry => ids.has(entry.id))) return;
-      // The conversation can still be using the local preview while its remote thumbnail loads.
       for (const entry of state.pending) if (ids.has(entry.id)) for (const upload of entry.uploads) waiters.delete(upload.key);
       publish({ ...state, pending: state.pending.filter(entry => !ids.has(entry.id)) });
     },
     dispose: () => {
+      disposed = true;
       for (const upload of [...state.uploads, ...state.pending.flatMap(entry => entry.uploads)]) release(upload);
       for (const url of previewUrls) URL.revokeObjectURL(url);
       previewUrls.clear();

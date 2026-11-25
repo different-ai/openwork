@@ -17,7 +17,6 @@ import { DesktopConfigProvider } from "@/react-app/domains/cloud/desktop-config-
 import { RestrictionNoticeProvider } from "@/react-app/domains/cloud/restriction-notice-provider";
 import { LocalProvider } from "@/react-app/kernel/local-provider";
 import { KeepAwakeBridge } from "@/react-app/domains/session/status/keep-awake-bridge";
-import { MermaidZoomFeatureProvider } from "@/react-app/domains/session/status/mermaid-zoom-feature";
 import { ServerProvider } from "@/react-app/kernel/server-provider";
 import { ArchitectureMismatchGate } from "./architecture-mismatch-gate";
 import { BootStateProvider } from "./boot-state";
@@ -56,11 +55,6 @@ type AppProvidersProps = {
   children: ReactNode;
 };
 
-// One provider tree for every activation state. The runtime bridges below
-// (DesktopRuntimeBoot, AutomationRunnerBridge,
-// GlobalQueueDrainerBridge) each render nothing until enterprise activation
-// completes, so AppRoot-level consumers such as DesktopUpdaterProvider always
-// find the same contexts and nothing privileged starts before activation.
 export function EnterpriseAwareAppProviders({ children }: AppProvidersProps) {
   return (
     <>
@@ -75,9 +69,7 @@ export function EnterpriseAwareAppProviders({ children }: AppProvidersProps) {
                 <AutoRejectedTurnRecoveryBridge />
                 <FreeAutoAnalyticsBridge />
                 <KeepAwakeBridge />
-                <MermaidZoomFeatureProvider>
-                  <ReloadCoordinatorProvider>{children}</ReloadCoordinatorProvider>
-                </MermaidZoomFeatureProvider>
+                <ReloadCoordinatorProvider>{children}</ReloadCoordinatorProvider>
                 <LinkOpenDialog />
                 <Toaster />
               </LocalProvider>
@@ -93,9 +85,6 @@ export function AppProviders({ children }: AppProvidersProps) {
   hydrateOpenworkServerSettingsFromEnv();
 
   useEffect(() => {
-    // Start the dev observability forwarder. Reads the current openwork-server
-    // URL on every flush so reconnects after port changes still work. In prod
-    // builds `startDebugLogger` is a no-op.
     startDebugLogger({
       serverUrl: async () => (await resolveOpenworkConnection()).normalizedBaseUrl,
     });

@@ -12,11 +12,9 @@ name: Publish OpenCode plugin
 # push a tag `opencode-plugin-v<version>` (or run this workflow by hand), then
 # approve the staged version.
 
+# Not on PRs: "OpenCode plugin" (ci-opencode-openwork.yml) tests, typechecks
+# and dry-run publishes the plugin on every dev push that changes it.
 on:
-  pull_request:
-    paths:
-      - "packages/opencode-plugin/**"
-      - ".github/workflows/publish-opencode-plugin.yml"
   push:
     tags:
       - "opencode-plugin-v*"

@@ -20,7 +20,6 @@ export type DenComboboxOption = {
   description?: string;
   meta?: string;
   keywords?: string[];
-  /** Leading brand/icon slot, shown in the list and next to the selected value. */
   icon?: ReactNode;
 };
 
@@ -102,8 +101,6 @@ export function DenCombobox({
 
   function focusInput(selectText = false) {
     requestAnimationFrame(() => {
-      // A touch click can focus the portaled option before commit. Returning to
-      // the input must not treat that focus restoration as a fresh open action.
       restoringFocusRef.current = true;
       inputRef.current?.focus({ preventScroll: true });
       restoringFocusRef.current = false;
@@ -337,8 +334,6 @@ export function DenCombobox({
         <DenDropdownTrigger
           nativeButton={false}
           disabled={disabled}
-          // The input owns its value/keyboard contract; the primitive still
-          // registers it and merges inputRef through the element render API.
           onClick={(event) => event.preventBaseUIHandler()}
           onKeyDown={(event) => event.preventBaseUIHandler()}
           render={(

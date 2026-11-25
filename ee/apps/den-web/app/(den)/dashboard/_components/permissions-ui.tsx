@@ -1,5 +1,7 @@
 "use client";
 
+import { DASHBOARD_PAGE_CLASS } from "../../_components/ui/dashboard-styles";
+import { BackLink } from "./item-header";
 import Link from "next/link";
 import { useState, type ReactNode } from "react";
 import { ArrowLeft, LockKeyhole } from "lucide-react";
@@ -27,11 +29,9 @@ export type PermissionsAccess =
     orgSlug: string | null;
     access: DenOrgAccessFlags;
     currentMemberId: string;
-    /** Keys the signed-in member holds; the owner holds every key. */
     held: ReadonlySet<string>;
   };
 
-/** Whether the Permissions screens can load, from GET /v1/org. */
 export function usePermissionsAccess(): PermissionsAccess {
   const { orgId, orgSlug, orgContext, orgBusy, orgError } = useOrgDashboard();
   if (orgError && !orgBusy) return { state: "error" };
@@ -51,20 +51,18 @@ export function PermissionsPage({ title, back, action, caption, children, testId
   testId?: string;
 }) {
   return (
-    <section className="mx-auto flex w-full max-w-[860px] flex-col gap-6 px-4 py-6 text-[13px] sm:px-6 md:px-8" data-testid={testId}>
-      {back ? (
-        <Link href={back.href} className="inline-flex w-fit items-center gap-1.5 rounded text-[13px] text-gray-500 transition-colors hover:text-gray-900 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-gray-400">
-          <ArrowLeft className="size-4" aria-hidden="true" strokeWidth={1.5} />
-          {back.label}
-        </Link>
-      ) : null}
-      <DenPageHeader size="compact" title={title} action={action} caption={caption ? <span className="text-gray-500">{caption}</span> : undefined} />
-      {children}
+    <section className={`${DASHBOARD_PAGE_CLASS} text-[13px]`} data-testid={testId}>
+      <div className="mx-auto flex w-full max-w-[860px] flex-col gap-6">
+        <div className="flex flex-col gap-4">
+          {back ? <BackLink href={back.href} label={back.label} /> : null}
+          <DenPageHeader size="compact" title={title} action={action} caption={caption ? <span className="text-[var(--dls-text-secondary)]">{caption}</span> : undefined} />
+        </div>
+        {children}
+      </div>
     </section>
   );
 }
 
-/** The page body for states that come before data: checking and error. */
 export function PermissionsAccessState({ access }: { access: PermissionsAccess }) {
   if (access.state === "error") return <DenNotice tone="error" message="Couldn't check your access to Permissions. Reload the page to try again." />;
   return <PermissionRowsSkeleton />;
@@ -106,7 +104,6 @@ export function RelativeTime({ value }: { value: string }) {
 
 export type PermissionArea = { key: PermissionAreaKey; label: string; keys: PermissionKey[] };
 
-/** Catalog keys grouped by area, in catalog order. Only keys in `include` when given. */
 export function permissionAreas(include?: ReadonlySet<string>): PermissionArea[] {
   const areas = new Map<PermissionAreaKey, PermissionKey[]>();
   for (const key of PERMISSION_KEYS) {
@@ -129,14 +126,12 @@ export function PermissionAreaSection({ label, meta, children, testId }: { label
   );
 }
 
-/** The permission's description, shown under its title. */
 export function PermissionDescription({ permissionKey, id }: { permissionKey: PermissionKey; id?: string }) {
   const definition = getPermissionDefinition(permissionKey);
   if (!definition.description) return null;
   return <p id={id} className="mt-0.5 text-[12px] leading-4 text-gray-500">{definition.description}</p>;
 }
 
-/** Whether a permission's title or description contains the search text. */
 export function permissionMatchesSearch(key: PermissionKey, search: string): boolean {
   const needle = search.trim().toLowerCase();
   if (!needle) return true;
@@ -144,7 +139,6 @@ export function permissionMatchesSearch(key: PermissionKey, search: string): boo
   return definition.label.toLowerCase().includes(needle) || (definition.description ?? "").toLowerCase().includes(needle);
 }
 
-/** Compact filter over permission titles and descriptions, using the shared list control. */
 export function PermissionSearch({ value, onChange }: { value: string; onChange: (value: string) => void }) {
   return (
     <div className="w-[240px] max-w-full" data-testid="permission-search">
@@ -155,25 +149,15 @@ export function PermissionSearch({ value, onChange }: { value: string; onChange:
 
 export type PermissionEditorRow = {
   key: PermissionKey;
-  /** Saved status. */
   status: PermissionStatus;
-  /** Status in the editor, including unsaved changes. */
   draft: PermissionStatus;
-  /** Why this toggle can't be changed, or null when it can. */
   lockedReason: string | null;
 };
 
-/**
- * Permissions grouped by area with one labelled toggle each, a search over
- * titles and descriptions, and an "Allow all" toggle per area. Locked rows stay
- * visible, on or off, with the reason (DESIGN.md P4, C5).
- */
 export function PermissionEditor({ rows, onToggle, readOnlyReasonId, beforeList }: {
   rows: PermissionEditorRow[];
   onToggle: (key: PermissionKey, next: PermissionStatus) => void;
-  /** When set, every toggle is read only and described by this element (the page's read-only notice). */
   readOnlyReasonId?: string;
-  /** Rendered between the search field and the list, e.g. a read-only notice. */
   beforeList?: ReactNode;
 }) {
   const [search, setSearch] = useState("");
@@ -196,9 +180,7 @@ export function PermissionEditor({ rows, onToggle, readOnlyReasonId, beforeList 
             });
             const totalInArea = rows.filter((row) => getPermissionDefinition(row.key).area === area.key);
             const allowed = totalInArea.filter((row) => row.draft === "allow").length;
-            // "Allow all" acts on the rows shown (all of them unless a search is active) that can change.
             const toggleable = readOnly ? [] : areaRows.filter((row) => row.lockedReason === null);
-            // With nothing to change (locked or read only), reflect whether everything shown is allowed.
             const allOn = (toggleable.length > 0 ? toggleable : areaRows).every((row) => row.draft === "allow");
             const setAll = (next: boolean) => {
               for (const row of toggleable) {
@@ -276,7 +258,6 @@ function PermissionEditorRowView({ row, onToggle, readOnlyReasonId }: {
   );
 }
 
-/** "Allowed" / "Not allowed", with a lock when it can't be turned off. */
 export function PermissionStatusLabel({ status, locked }: { status: PermissionStatus; locked?: boolean }) {
   return (
     <span className={`inline-flex shrink-0 items-center gap-1 text-[12px] ${status === "allow" ? "font-medium text-gray-900" : "text-gray-500"}`} data-status={status}>

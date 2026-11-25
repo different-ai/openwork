@@ -31,8 +31,8 @@ jobs:
         uses: actions/cache@caa296126883cff596d87d8935842f9db880ef25 # v5
         with:
           path: |
-            STATS.md
-            STATS_V2.md
+            scripts/stats/STATS.md
+            scripts/stats/STATS_V2.md
           key: download-stats-${{ github.ref }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             download-stats-${{ github.ref }}-
@@ -53,7 +53,7 @@ jobs:
         with:
           name: download-stats
           path: |
-            STATS.md
-            STATS_V2.md
+            scripts/stats/STATS.md
+            scripts/stats/STATS_V2.md
           if-no-files-found: error
           retention-days: 90

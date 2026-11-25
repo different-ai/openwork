@@ -47,8 +47,6 @@ export function CloudAccountSection({
   const controlsDisabled = authBusy || sessionBusy;
   const switchOrganization = activeOrg && orgs.length > 1
     ? () => {
-        // Deliberate switching always opens the picker; remembering a choice
-        // must never remove the member's way to change it.
         markOrgSelectionPending(activeOrg);
         navigate("/onboarding");
       }
@@ -56,7 +54,6 @@ export function CloudAccountSection({
 
   return (
     <section className="flex flex-col gap-y-6">
-      {/* User identity */}
       <div className="flex items-center justify-between gap-3">
         <div className="min-w-0 flex items-center gap-3">
           <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-dls-hover text-sm font-semibold text-dls-text">
@@ -93,7 +90,6 @@ export function CloudAccountSection({
         </div>
       </div>
 
-      {/* Org picker (stepper-style) or connected org display */}
       {needsOrgSelection ? (
         <OrgPicker
           orgs={orgs}
@@ -119,10 +115,6 @@ export function CloudAccountSection({
     </section>
   );
 }
-
-/* ------------------------------------------------------------------ */
-/*  Connected org and explicit organization switching                  */
-/* ------------------------------------------------------------------ */
 
 function ConnectedOrg({ org, onSwitchOrganization, disabled }: {
   org: DenOrgSummary;
@@ -150,10 +142,6 @@ function ConnectedOrg({ org, onSwitchOrganization, disabled }: {
     </div>
   );
 }
-
-/* ------------------------------------------------------------------ */
-/*  Org picker: card-per-org selection                                 */
-/* ------------------------------------------------------------------ */
 
 function OrgPicker({
   orgs,

@@ -35,7 +35,6 @@ function resolveDrizzleDbCredentials() {
     user,
     password,
     database,
-    // PlanetScale requires TLS for MySQL-protocol connections.
     ssl: { rejectUnauthorized: true },
   }
 }

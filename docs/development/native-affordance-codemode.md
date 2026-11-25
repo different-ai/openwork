@@ -1,21 +1,15 @@
 # Native OpenWork affordances in Code Mode
 
-`nativeAffordanceCodeMode` makes the V2 context plugin's `openwork_context`,
-`openwork_query` and `openwork_execute` discoverable in the engine's Code Mode
-catalog. The feature defaults off on cloud and self-hosted deployments. It
-changes how existing tools can be composed, not which host operations they can
-perform. Browser, computer, Drive and Gmail tools remain direct-only.
+The V2 context plugin's `openwork_context`, `openwork_query` and
+`openwork_execute` are discoverable in the engine's Code Mode catalog by default
+on cloud and self-hosted deployments. `nativeAffordanceCodeMode` is retired.
+This changes composition, not host authority. Browser, computer, Drive and Gmail
+tools remain direct-only.
 
-## Try it and roll it out
-
-Enable the feature for an organization through the existing admin Features
-controls. Start a new V2 engine instance to capture the enabled catalog.
-Missing feature state and older Den responses remain off. All three existing
-direct tools, including sidebar commands, continue working when disabled.
-No local environment flag bypasses the rollout.
+## Try it
 
 Ask the assistant to list sidebar groups and move selected sessions, preserving
-an exception. With the feature on it can discover the native tools through Code
+an exception. It can discover the native tools through Code
 Mode's `search` and run a query → loop of moves → verification query in one script.
 Discover exact paths rather than hard-coding a namespace. Native tool results
 are JSON text; parse them before inspecting fields.
@@ -28,17 +22,10 @@ are JSON text; parse them before inspecting fields.
 - Existing workspace resolution, session/group validation, confirmation for
   group removal, and verification of the saved assignment remain unchanged.
 - Conversation-browser credentials still cannot authorize context/group calls.
-- Native tools mark snapshots admitted to Code Mode. Before every marked command,
-  the host rechecks the resolved feature, including for an already captured
-  executor. Turning it off rejects later marked writes with `feature_disabled`;
-  already dispatched writes may finish. Original direct commands still work.
-- Unreachable Den disables the cached rollout grant rather than authorizing new
-  Code Mode writes from stale state. Model-access policy retains its existing
-  offline behavior.
 - Stopping the calling session aborts the request. After an interrupted or
   uncertain write, query state rather than automatically replaying it.
-- A later engine restart restores the direct-only catalog. Disabling the
-  feature never moves sessions back or deletes groups.
+- No feature switch removes Code Mode access. Existing host authorization and
+  validation still apply to every command.
 
 ## Verification
 

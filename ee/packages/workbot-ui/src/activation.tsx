@@ -3,6 +3,7 @@
 import { Popover } from "@base-ui/react/popover";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  ACTIVATION_OPTIONAL_DETAIL,
   ACTIVATION_STEP_TITLES,
   activationChecklistPresentation,
   activationProgress,
@@ -18,12 +19,6 @@ import { useWorkbotConnect, WorkbotConnectionButton } from "./connect";
 import type { WorkbotConnection, WorkbotTurn } from "./data";
 import { workbotHost } from "./host";
 
-/**
- * The "Get set up" chip in Workbot's header (feature `activationChecklist`): the same six steps, in the same order, as
- * Desktop's sidebar card. Den computes every step; Workbot only reports its first answer and hiding the checklist.
- * Nothing shows before the first answer or after all six are done.
- */
-
 /** An answer to something the person asked (not Workbot's own hello) finished. */
 export function hasAnsweredTurn(turns: readonly Pick<WorkbotTurn, "greeting" | "status">[] | undefined): boolean {
   return Boolean(turns?.some((turn) => !turn.greeting && turn.status === "done"));
@@ -37,18 +32,16 @@ export function claimActivationReport(key: string): boolean {
   return true;
 }
 
-/** Den pages a step opens in a new tab, in the workspace Workbot is signed in to. */
 const DEN_PAGES = {
   invite_teammate: "members",
   use_skill: "library?show=skills",
-  own_provider: "library?show=models",
+  own_provider: "library/model-providers/new",
   gateway_provider: "ai-gateway?tab=ai-providers",
   connector: "library?show=connectors",
 } as const;
 
 export function activationDenUrl(destination: { denUrl: string; organizationId: string }, step: keyof typeof DEN_PAGES): string {
   const path = DEN_PAGES[step];
-  // Scan the suffix once: an unanchored trailing-slash regex can backtrack quadratically.
   let end = destination.denUrl.length;
   while (end > 0 && destination.denUrl[end - 1] === "/") end -= 1;
   return `${destination.denUrl.slice(0, end)}/dashboard/${path}${path.includes("?") ? "&" : "?"}workbotOrganizationId=${encodeURIComponent(destination.organizationId)}`;
@@ -66,7 +59,6 @@ function useWorkbotActivation() {
     enabled: Boolean(host.activation && host.identity && host.documentAuthorization === undefined),
     queryFn: async (): Promise<ActivationState | null> => {
       const { response, payload } = await host.requestJson("/v1/workbot/activation", { method: "GET" }, 15_000);
-      // Off for this workspace (or an older Den): no checklist.
       if (response.status === 404) return null;
       if (!response.ok) throw new Error("Couldn't check your setup.");
       return activationStateSchema.parse(payload);
@@ -110,7 +102,6 @@ function StepAction({ step, flow }: { step: ActivationStep; flow: ReturnType<typ
 }
 
 export function WorkbotSetupChip({ answered }: { answered: boolean }) {
-  // Off (feature, or an older Workbot server): nothing renders and nothing is requested.
   return workbotHost().activation ? <SetupChip answered={answered} /> : null;
 }
 
@@ -126,7 +117,6 @@ function SetupChip({ answered }: { answered: boolean }) {
     if (next?.success) client.setQueryData(activationKey(), next.data);
   };
 
-  // Workbot's first answer is something Den may not have heard about yet (the runner reports turns on its own schedule).
   const firstResponseDone = state ? orderedActivationSteps(state)[0]?.done === true : true;
   useEffect(() => {
     if (!answered || firstResponseDone || !host.identity) return;
@@ -144,7 +134,6 @@ function SetupPopover({ state, presentation, onHide }: { state: ActivationState;
   const flow = useWorkbotConnect();
   const readyConnections = flow.connections.data?.filter((connection) => connection.ready).length ?? 0;
   const lastReady = useRef(readyConnections);
-  // Connected is Den's word: when its readiness read changes, ask Den for the step again.
   useEffect(() => {
     if (readyConnections === lastReady.current) return;
     lastReady.current = readyConnections;
@@ -180,7 +169,7 @@ function SetupPopover({ state, presentation, onHide }: { state: ActivationState;
             <ol className="flex flex-col">
               {steps.map((step) => {
                 const status = rowState(step);
-                const line = step.done ? step.detail : step.lockedReason;
+                const line = step.done ? step.detail : step.lockedReason ?? (step.optional ? ACTIVATION_OPTIONAL_DETAIL : undefined);
                 return (
                   <li key={step.id} data-testid={`workbot-setup-step-${step.id}`} data-state={status} className="flex min-h-11 items-center gap-2.5 border-t border-[var(--wb-hairline)] px-2.5 py-2 first:border-t-0">
                     <StepMark state={status} />

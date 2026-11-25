@@ -26,12 +26,10 @@ export function cloudInstallerFileName(platform: InstallPlatform | null, version
   return installerFileName(platform, version)?.replace(/^openwork-enterprise-/, "openwork-cloud-") ?? null;
 }
 
-/** The normal install page; people sign in there and get their own organization's setup. */
 export function installPageUrl() {
   return new URL("/install", window.location.origin).toString();
 }
 
-/** Downloads the desktop app approved for the signed-in member's active organization. */
 export function installDownloadHref(platform: InstallPlatform) {
   return denBrowserEndpoint(`/v1/me/install/${platform}`);
 }

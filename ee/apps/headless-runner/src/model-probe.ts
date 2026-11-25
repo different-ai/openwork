@@ -12,7 +12,6 @@ export type ModelProbeError = "credentials_unavailable" | "authentication_failed
 export type ModelProbeResult = { status: "answered" | "failed"; errorCode: ModelProbeError | null; requestedModel: string; reportedModel: string | null }
 export type ModelProbe = (model: string, signal: AbortSignal, modelAccess?: HeadlessModelAccess) => Promise<ModelProbeResult>
 
-/** Closed vocabulary only: neither a provider error type/code nor its text becomes a diagnostic result. */
 export function sanitizeModelError(error: unknown): ModelProbeError {
   if (error instanceof ModelError) {
     if (error.code === "model_http_401" || error.code === "model_http_403") return "authentication_failed"
@@ -22,7 +21,6 @@ export function sanitizeModelError(error: unknown): ModelProbeError {
   return "provider_unavailable"
 }
 
-/** The probe never uses a session, runner instructions, tools, files, MCP or member content. */
 export function createModelProbe(config: Config, transport: typeof fetch = fetch): ModelProbe {
   let active = false
   return async (requestedModel, callerSignal, modelAccess) => {
@@ -34,7 +32,6 @@ export function createModelProbe(config: Config, transport: typeof fetch = fetch
     const deadline = AbortSignal.timeout(MODEL_PROBE_TIMEOUT_MS)
     const signal = AbortSignal.any([deadline, callerSignal])
     let reportedModel: string | null = null
-    // Use the real adapter while bounding its response and observing only the provider's model identifier.
     const boundedFetch: typeof fetch = async (input, init) => {
       const response = await transport(input, { ...init, signal })
       const reader = response.body?.getReader()
@@ -58,7 +55,7 @@ export function createModelProbe(config: Config, transport: typeof fetch = fetch
           const envelope = z.object({ model: modelId.optional() }).safeParse(JSON.parse(raw))
           const id = envelope.success ? envelope.data.model : undefined
           if (id && !id.includes(apiKey) && !apiKey.includes(id) && !/^(?:sk-|ow_|key[-_])/i.test(id)) reportedModel = id
-        } catch { /* The adapter will reject malformed JSON. */ }
+        } catch {}
       }
       const headers = new Headers(response.headers)
       headers.delete("content-length")
@@ -87,7 +84,6 @@ export function createModelProbe(config: Config, transport: typeof fetch = fetch
   }
 }
 
-/** Mounted after existing service-token and body-limit middleware; never forwarded into an owner's cell. */
 export async function modelProbeResponse(request: Request, probe: ModelProbe | undefined): Promise<Response> {
   const headers = { "cache-control": "no-store" }
   const body = bodySchema.safeParse(await request.json().catch(() => null))

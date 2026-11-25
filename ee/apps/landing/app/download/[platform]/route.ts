@@ -1,5 +1,3 @@
-// GET /download/<platform> → 302 to the current public installer for that OS.
-// See lib/download-platforms.ts for the slugs.
 import { downloadPlatformHref, downloadPlatforms, isDownloadPlatform } from "../../../lib/download-platforms";
 import { getGithubData } from "../../../lib/github";
 

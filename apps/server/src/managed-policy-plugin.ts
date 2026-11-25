@@ -4,8 +4,6 @@ export function managedPolicyPluginPath(next = false): string {
   return openworkPluginPath(next ? "managed-policy-next" : "managed-policy");
 }
 
-// Remove only our own registrations, including file-URL copies persisted by
-// older runtime configs. A third-party plugin with the same basename is valid.
 export function isManagedPolicyPlugin(value: string): boolean {
   let path = value;
   if (value.startsWith("file:")) {

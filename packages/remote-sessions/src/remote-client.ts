@@ -5,7 +5,6 @@ import { bounded, throwIfAborted } from "./timeout.ts"
 
 export interface RemoteSessionTransportOptions {
   baseUrl: string
-  /** Evaluated for EVERY attempt. Never cached or written to the journal. */
   token: () => string | null
   fetch?: typeof globalThis.fetch
   timeoutMs?: number
@@ -54,7 +53,6 @@ async function smallJson(response: Response, signal: AbortSignal): Promise<unkno
     try { return JSON.parse(body) }
     catch { throw new SessionRunnerError("invalid_response", "Remote-session response is not valid JSON.") }
   } finally {
-    // Cancels unread data on parse/size errors; also releases the reader on success.
     await reader.cancel().catch(() => {})
     reader.releaseLock()
   }
@@ -84,7 +82,6 @@ export function createRemoteSessionTransport(options: RemoteSessionTransportOpti
       }
       if (!response.ok) {
         await response.body?.cancel()
-        // Provider body can contain secrets/user content; never copy it into an exception or journal.
         throw new RemoteSessionHttpError(response.status)
       }
       return smallJson(response, s)

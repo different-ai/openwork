@@ -68,6 +68,16 @@ export const forbiddenSchema = z.object({
   message: z.string().optional(),
 }).meta({ ref: "ForbiddenError" })
 
+export const ssoRequiredSchema = z.object({
+  error: z.literal("sso_required"),
+  message: z.string(),
+  organizationId: z.string(),
+  organizationSlug: z.string(),
+  organizationName: z.string(),
+  signInPath: z.string(),
+  signInUrl: z.string().url(),
+}).meta({ ref: "SsoRequiredError" })
+
 export const enterprisePlanRequiredSchema = z.object({
   error: z.literal("enterprise_plan_required"),
   feature: z.string(),
@@ -85,7 +95,6 @@ export const successSchema = z.object({
 
 export const emptyObjectSchema = z.object({}).passthrough().meta({ ref: "OpaqueObject" })
 
-/** `{ ok: true }` acknowledgement returned by several mutation endpoints. */
 export const okSchema = z.object({
   ok: z.literal(true),
 }).meta({ ref: "OkResponse" })
@@ -147,7 +156,6 @@ export function xmlResponse(description: string) {
   }
 }
 
-/** Raw bytes served under one of the listed media types (`type: string, format: binary`). */
 export function binaryResponse(description: string, mediaTypes: readonly string[]) {
   return {
     description,

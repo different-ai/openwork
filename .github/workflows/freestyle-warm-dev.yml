@@ -53,7 +53,7 @@ jobs:
           restore-keys: ${{ runner.os }}-pnpm-core-
       - name: Install only the test tools
         run: |
-          pnpm --filter @openwork/freestyle... --filter @openwork/daytona-evidence... --filter @openwork/review... --filter @openwork/world... --filter @openwork/types... --filter @openwork/sdk... install --frozen-lockfile --ignore-scripts --prefer-offline
+          pnpm --filter @openwork/world-freestyle... --filter @openwork/evidence-daytona... --filter @openwork/review... --filter @openwork/world... --filter @openwork/types... --filter @openwork/sdk... install --frozen-lockfile --ignore-scripts --prefer-offline
           pnpm --dir evals install --frozen-lockfile --ignore-scripts --prefer-offline
       # Only the provider PRs use (the repository variable) fails this workflow;
       # the other is kept warm as a fallback.

@@ -8,27 +8,16 @@ export const DIFFERENTLY_PROVIDER_ID = "differently"
  * the options here can only narrow that placement, never widen it.
  */
 export type DifferentlyProviderOptions = {
-  /** API base URL, e.g. https://differently.example.com */
   url: string
   apiKey: string
-  /** Template new sandboxes boot when the spec has no image; Differently maps it to each pool's own image. */
   template?: string | null
   placement?: { strategy?: "private-first" | "cost" | "spread"; allowedPools?: string[]; external?: "never" | "overflow" }
   classification?: string
-  /** What this installation's pools provide; Differently reports isolation per pool, not per request. */
   platform?: SandboxPlatform
-  /**
-   * Whether the pools this key reaches publish port URLs. Freestyle and Daytona pools do; OpenSandbox
-   * pools behind its server's proxy do not. Defaults to true.
-   */
   endpoints?: boolean
-  /** The size of a sandbox whose spec names none; unset, the project's default profile decides. */
   resources?: { cpu: number; memoryGb: number; diskGb: number }
-  /** What the pools this key reaches can do (`differentlyLifecycle`); unset, pause and stop are assumed. */
   lifecycle?: { pause: boolean; stop: boolean }
-  /** Read `lifecycle` from Differently alongside each create, at most every five minutes, instead of fixing it. */
   discoverLifecycle?: boolean
-  /** Differently has no TTL-free sandboxes: `autoDeleteMinutes: -1` keeps a computer this long after each resume. */
   persistentTtlMinutes?: number
   pollIntervalMs?: number
 }
@@ -37,8 +26,9 @@ export type DifferentlyProviderDeps = { fetch?: typeof fetch; now?: () => number
 /** Labels the adapter owns on every sandbox. */
 export const KEY_LABEL = "openwork.sandbox.key"
 const IDLE_LABEL = "openwork.sandbox.idle-minutes"
-const LIVE = "queued,provisioning,running,paused,stopped,terminating"
+const LIVE = "queued,provisioning,running,pausing,paused,stopped,terminating"
 const DEFAULT_PERSISTENT_TTL_MINUTES = 365 * 1440
+const LIFECYCLE_REQUEST_MS = 30_000
 
 type Sandbox = { id: string; status: string; statusReason?: string; region?: string; labels?: Record<string, string> }
 type ErrorBody = { error?: { code?: string; message?: string } }
@@ -60,7 +50,6 @@ const codes: Record<string, SandboxErrorCode> = {
   internal: "transient",
 }
 
-/** Drops trailing slashes in linear time, with no backtracking pattern over caller input. */
 function trimTrailingSlashes(value: string): string {
   let end = value.length
   while (end > 0 && value[end - 1] === "/") end--
@@ -69,7 +58,6 @@ function trimTrailingSlashes(value: string): string {
 
 type PoolView = { enabled?: boolean; health?: string; capabilities?: string[] }
 
-/** The pools this key may be placed on, from `GET /v1/capabilities`. */
 async function readPools(options: Pick<DifferentlyProviderOptions, "url" | "apiKey">, deps: { fetch?: typeof fetch; timeoutMs?: number }): Promise<PoolView[]> {
   const response = await (deps.fetch ?? fetch)(`${trimTrailingSlashes(options.url)}/v1/capabilities`, { headers: { Authorization: `Bearer ${options.apiKey}` }, signal: AbortSignal.timeout(deps.timeoutMs ?? 3000) })
   if (!response.ok) throw new Error(`capabilities answered HTTP ${response.status}`)
@@ -132,7 +120,7 @@ export function createDifferentlyProvider(options: DifferentlyProviderOptions, d
   async function call(method: string, path: string, init: { body?: unknown; bytes?: Uint8Array; headers?: Record<string, string>; timeoutMs?: number; raw?: boolean } = {}): Promise<Response> {
     const headers: Record<string, string> = { Authorization: `Bearer ${options.apiKey}`, ...init.headers }
     let body: BodyInit | undefined
-    if (init.bytes) { headers["Content-Type"] = "application/octet-stream"; body = init.bytes.slice() } // an ArrayBuffer-backed copy fetch accepts
+    if (init.bytes) { headers["Content-Type"] = "application/octet-stream"; body = init.bytes.slice() }
     else if (init.body !== undefined) { headers["Content-Type"] = "application/json"; body = JSON.stringify(init.body) }
     let response: Response
     try {
@@ -150,7 +138,7 @@ export function createDifferentlyProvider(options: DifferentlyProviderOptions, d
     switch (status) {
       case "queued": case "provisioning": return "creating"
       case "running": return "running"
-      case "paused": case "stopped": return "stopped" // start resumes a paused sandbox; the pause block distinguishes them
+      case "pausing": case "paused": case "stopped": return "stopped"
       case "terminating": return "stopping"
       case "terminated": return "missing"
       default: return "error"
@@ -162,16 +150,28 @@ export function createDifferentlyProvider(options: DifferentlyProviderOptions, d
   async function read(sandboxId: string): Promise<Sandbox | null> {
     try { return await json<Sandbox>("GET", path(sandboxId)) } catch (error) { if (error instanceof SandboxError && error.code === "not_found") return null; throw error }
   }
-  /** Polls until the sandbox reaches one of `want`; a terminal state ends the wait early. */
-  async function settle(sandboxId: string, want: readonly string[], timeoutMs: number): Promise<Sandbox | null> {
+  async function settle(sandboxId: string, want: readonly string[], timeoutMs: number, over?: (s: Sandbox) => boolean): Promise<Sandbox | null> {
     const deadline = now() + timeoutMs
     while (true) {
       const s = await read(sandboxId)
-      if (!s || want.includes(s.status)) return s
+      if (!s || want.includes(s.status) || over?.(s)) return s
       if (s.status === "terminated" || s.status === "failed") return s
       if (now() >= deadline) throw new SandboxError({ providerId: id, code: "timeout", retryable: false, message: `Sandbox is still ${s.status} after ${timeoutMs} ms` })
       await sleep(poll)
     }
+  }
+  async function ask(sandboxId: string, action: "pause" | "resume" | "start" | "stop", timeoutMs: number) {
+    try { await call("POST", path(sandboxId, `/${action}`), { timeoutMs: Math.min(timeoutMs, LIFECYCLE_REQUEST_MS) }) }
+    catch (error) {
+      if (!(error instanceof SandboxError) || (error.code !== "timeout" && error.code !== "conflict")) throw error
+      return error.code
+    }
+    return null
+  }
+  async function pause(sandboxId: string, timeoutMs: number) {
+    const deadline = now() + timeoutMs
+    let pausing = await ask(sandboxId, "pause", timeoutMs) === "conflict"
+    await settle(sandboxId, ["paused"], Math.max(1, deadline - now()), s => (pausing ||= s.status === "pausing") && s.status === "running")
   }
   async function live(sandboxId: string): Promise<Sandbox> {
     const s = await read(sandboxId)
@@ -180,7 +180,6 @@ export function createDifferentlyProvider(options: DifferentlyProviderOptions, d
   }
   async function running(s: Sandbox, timeoutMs: number): Promise<Sandbox> {
     const out = s.status === "running" ? s : await settle(s.id, ["running"], timeoutMs)
-    // A sandbox that failed to start is the pool's failure, not a policy refusal: hosts may place the next one elsewhere.
     if (!out || out.status !== "running") throw new SandboxError({ providerId: id, code: out?.status === "failed" ? "transient" : "invalid_state", ...(out?.status === "failed" ? { retryable: false } : {}), message: `Sandbox ${s.id} is ${out?.status ?? "gone"}${out?.statusReason ? `: ${out.statusReason}` : ""}` })
     return out
   }
@@ -196,7 +195,6 @@ export function createDifferentlyProvider(options: DifferentlyProviderOptions, d
     if (!Number.isFinite(spec.timeoutMs) || spec.timeoutMs <= 0) unsupported("non-positive timeouts")
     const result = await json<{ exitCode: number; stdout: string; stderr: string }>("POST", path(identity(h.ref), "/exec"), {
       body: { command: spec.command, ...(spec.env ? { env: { ...spec.env } } : {}), ...(spec.cwd ? { cwd: spec.cwd } : {}), timeoutSeconds: Math.max(1, Math.ceil(spec.timeoutMs / 1000)) },
-      // Differently enforces timeoutSeconds in the sandbox; this bounds the request around it.
       timeoutMs: spec.timeoutMs + 15_000,
     })
     return { exitCode: result.exitCode, stdout: result.stdout ?? "", stderr: result.stderr ?? "" }
@@ -204,16 +202,14 @@ export function createDifferentlyProvider(options: DifferentlyProviderOptions, d
 
   const provider: SandboxProvider = {
     id,
-    describe: () => ({ stopResume: lifecycle ? lifecycle.pause || lifecycle.stop : true, persistentStorage: false, memorySnapshotRestore: false, warmPool: false, endpointKind: "stable", exec: true, regions: [], createEnvironment: true, detachedExec: false, endpoints: options.endpoints ?? true, platform: options.platform ?? { os: "linux", isolation: "unknown" } }),
+    describe: () => ({ stopResume: lifecycle ? lifecycle.pause || lifecycle.stop : true, callsOffPause: true, persistentStorage: false, memorySnapshotRestore: false, warmPool: false, endpointKind: "stable", exec: true, regions: [], createEnvironment: true, detachedExec: false, endpoints: options.endpoints ?? true, platform: options.platform ?? { os: "linux", isolation: "unknown" } }),
     currentImage: () => options.template ? { id: options.template, version: options.template } : null,
     async create(spec, opts) {
       if (spec.storage.length) unsupported("storage attachments")
       if (spec.lifecycle?.autoPauseMinutes !== undefined || spec.lifecycle?.autoArchiveMinutes !== undefined) unsupported("provider-side auto-pause or auto-archive")
-      // autoStopMinutes is a cost backstop Differently does not provide: jobs that need idle stops pause themselves.
       const image = spec.image ?? (options.template ? { id: options.template, version: options.template } : null)
       const minutes = ttlMinutes(spec)
       const resources = spec.resources ?? options.resources
-      // Alongside the create, never in its way: what the pools can do decides how hosts idle the sandbox later.
       const discovering = discoverLifecycle()
       const deadline = now() + opts.timeoutMs
       const response = await call("POST", "/v1/sandboxes", {
@@ -229,7 +225,6 @@ export function createDifferentlyProvider(options: DifferentlyProviderOptions, d
         },
         timeoutMs: opts.timeoutMs,
       })
-      // 200 replays the live sandbox this key already names; the contract reports that as a conflict.
       if (response.status === 200) throw new SandboxError({ providerId: id, code: "conflict", message: `Idempotency key ${spec.idempotencyKey} already names a live sandbox` })
       const created = await response.json() as Sandbox
       const box = handle(await running(created, Math.max(1, deadline - now())))
@@ -258,24 +253,22 @@ export function createDifferentlyProvider(options: DifferentlyProviderOptions, d
     async start(h, opts) {
       const deadline = now() + opts.timeoutMs
       const s = await live(identity(h.ref))
-      if (s.status === "paused") await call("POST", path(s.id, "/resume"), { timeoutMs: opts.timeoutMs })
-      else if (s.status === "stopped") await call("POST", path(s.id, "/start"), { timeoutMs: opts.timeoutMs })
+      if (s.status === "paused" || s.status === "pausing") await ask(s.id, "resume", opts.timeoutMs)
+      else if (s.status === "stopped") await ask(s.id, "start", opts.timeoutMs)
       await running(s.status === "running" ? s : await live(s.id), Math.max(1, deadline - now()))
-      // A computer's idle clock restarts when it resumes: the backend deletes it N minutes after its last use.
       const minutes = Number(s.labels?.[IDLE_LABEL])
       if (minutes > 0) await call("PATCH", path(s.id), { body: { ttlSeconds: minutes * 60 }, timeoutMs: Math.max(1, deadline - now()) })
     },
     async stop(h, opts) {
       const s = await live(identity(h.ref))
-      if (s.status === "stopped" || s.status === "paused") return
+      if (s.status === "stopped" || s.status === "paused" || s.status === "pausing") return
       const sandboxId = s.id
       if (lifecycle && !lifecycle.stop && !lifecycle.pause) unsupported("stopping or pausing on these pools")
-      if (lifecycle && !lifecycle.stop) return void await call("POST", path(sandboxId, "/pause"), { timeoutMs: opts.timeoutMs })
+      if (lifecycle && !lifecycle.stop) return pause(sandboxId, opts.timeoutMs)
       try { await call("POST", path(sandboxId, "/stop"), { timeoutMs: opts.timeoutMs }) }
       catch (error) {
-        // OpenSandbox has no stop; pausing keeps memory as well as the disk.
         if (!(error instanceof SandboxError) || error.code !== "invalid_state") throw error
-        await call("POST", path(sandboxId, "/pause"), { timeoutMs: opts.timeoutMs })
+        await pause(sandboxId, opts.timeoutMs)
       }
     },
     async destroy(h, opts) {
@@ -307,7 +300,6 @@ export function createDifferentlyProvider(options: DifferentlyProviderOptions, d
           const chmod = await run(h, { command: `chmod ${opts.mode.toString(8)} ${shellQuote(file)}`, timeoutMs: opts.timeoutMs })
           if (chmod.exitCode !== 0) throw new SandboxError({ providerId: id, code: "unknown", message: `chmod failed: ${chmod.stderr.trim()}` })
         },
-        // Differently has no stat yet: list the parent directory and read the entry.
         async stat(h, file, opts) {
           const trimmed = trimTrailingSlashes(file) || "/"
           if (trimmed === "/") return { size: 0, kind: "directory" }
@@ -323,19 +315,17 @@ export function createDifferentlyProvider(options: DifferentlyProviderOptions, d
           }
         },
       },
-      // Left out where the configured pools can't pause: hosts check for this block before pausing.
       ...(options.lifecycle?.pause === false ? {} : {
         pause: async (h: SandboxHandle, opts: { timeoutMs: number }) => {
           const sandboxId = identity(h.ref)
-          // Discovered after hosts read the block (wrappers copy it): pools that can only stop do that, keeping the disk.
           if (lifecycle && !lifecycle.pause) {
             if (!lifecycle.stop) unsupported("pausing or stopping on these pools")
-            await call("POST", path(sandboxId, "/stop"), { timeoutMs: opts.timeoutMs })
-            await settle(sandboxId, ["stopped"], opts.timeoutMs)
+            const deadline = now() + opts.timeoutMs
+            await ask(sandboxId, "stop", opts.timeoutMs)
+            await settle(sandboxId, ["stopped"], Math.max(1, deadline - now()))
             return
           }
-          await call("POST", path(sandboxId, "/pause"), { timeoutMs: opts.timeoutMs })
-          await settle(sandboxId, ["paused"], opts.timeoutMs)
+          await pause(sandboxId, opts.timeoutMs)
         },
       }),
       snapshots: {

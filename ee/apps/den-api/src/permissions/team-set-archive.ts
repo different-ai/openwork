@@ -6,18 +6,6 @@ type OrganizationId = typeof TeamTable.$inferSelect.organizationId
 type TeamId = typeof TeamTable.$inferSelect.id
 type MemberId = typeof MemberTable.$inferSelect.id
 
-/**
- * Stops the teams' permission sets applying (overview section 10): soft-removes
- * their active permission set links. Roles outlive the teams using them; sets
- * are only archived when explicitly deleted. Nothing is deleted.
- * Used when a team is deleted, and when a SCIM provider is deleted or changes
- * how it maps groups, alongside clearing those teams' Admin designation: the
- * retained teams keep their members but grant nothing until the owner sets
- * their permissions again. `actorMemberId` is null for SCIM-driven changes.
- *
- * The permission_set rows are locked FOR UPDATE before their links, the same
- * order permission set edits and archives use, so these never deadlock.
- */
 export async function archiveTeamPermissionSets(tx: TeamMutationTransaction, input: {
   organizationId: OrganizationId
   teamIds: readonly TeamId[]

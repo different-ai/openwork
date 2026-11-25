@@ -1,0 +1,1 @@
+CREATE INDEX `audit_operation_usage` ON `audit_operation` (`organization_id`,`retention_state`,`event_count`,`logical_bytes`);

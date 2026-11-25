@@ -1,21 +1,3 @@
-/**
- * Desktop startup report: how long this launch took from process start until
- * it was connected to the member's Den (window shown → engine ready → signed
- * in → organization tools loaded), sent once per launch to
- * POST /v1/diagnostics/desktop-startup so admins see it in
- * Settings › Diagnostics.
- *
- * Desktop only, and only when the app starts with a Den session (cloud or
- * self-hosted). A member who is not signed in sends nothing. The report holds
- * step timings, the app version, the platform and a failure reason: no paths,
- * URLs, emails or message content. Den attributes the organization and member
- * from the session that sends it.
- *
- * The in-progress report is kept in localStorage (STARTUP_PENDING_STORAGE_KEY)
- * so a launch that quit, crashed or could not reach Den is sent on a later
- * launch, once that launch has signed in to the same Den. Sending is one
- * attempt with a short timeout; nothing here blocks the UI or throws.
- */
 import {
   DESKTOP_STARTUP_STEPS,
   desktopStartupFailureReasonSchema,
@@ -34,14 +16,12 @@ import { appBuildInfo, startupTimings, type DesktopStartupTimings } from "./desk
 import { isDesktopRuntime } from "./runtime-env";
 
 export const STARTUP_PENDING_STORAGE_KEY = "openwork.startup.pending";
-/** A launch that is not connected this long after process start is reported as timed out. */
 export const STARTUP_DEADLINE_MS = 120_000;
 export const STARTUP_PENDING_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const STARTUP_SEND_TIMEOUT_MS = 5_000;
 const STARTUP_TIMINGS_TIMEOUT_MS = 3_000;
 const MAX_STEP_MS = 3_600_000;
 
-/** Steps the renderer observes; the window step comes from the main process. */
 export type StartupRendererStep = Exclude<DesktopStartupStep, "window">;
 
 export type StartupDenSession = {
@@ -54,7 +34,6 @@ export type StartupReportTarget = {
   organizationId: string | null;
 };
 
-/** sent: delivered. drop: Den refused it for good (e.g. a Den without the endpoint). retry: keep it for a later launch. */
 export type StartupSendOutcome = "sent" | "drop" | "retry";
 
 type StartupStorage = Pick<Storage, "getItem" | "setItem" | "removeItem">;
@@ -67,20 +46,16 @@ export type StartupDiagnosticsDeps = {
   send: (report: DesktopStartupReport, target: StartupReportTarget) => Promise<StartupSendOutcome>;
   storage: () => StartupStorage | null;
   now: () => number;
-  /** Fallback launch start when the main process has no timings: this document's start. */
   timeOrigin: () => number;
   randomId: () => string;
   schedule: (run: () => void, delayMs: number) => () => void;
 };
 
 export type StartupDiagnostics = {
-  /** The Den session found when the app checked it; null when there is no session token. */
   denSession: (session: StartupDenSession | null) => void;
   markStep: (step: StartupRendererStep, context?: { organizationId?: string | null }) => void;
   fail: (step: DesktopStartupStep, reason: DesktopStartupFailureReason) => void;
-  /** A load of the organization's tools failed; reported if none succeeds before the deadline. */
   orgToolsFailed: () => void;
-  /** Settles once queued storage and network work is done. */
   idle: () => Promise<void>;
 };
 
@@ -93,15 +68,12 @@ const startupTimingsSchema = z.object({
 
 const pendingStartupRecordSchema = z.object({
   version: z.literal(1),
-  /** Main-process start of the launch (epoch ms); identifies it across renderer reloads. */
   launchStartedAt: z.number(),
   denBaseUrl: z.string().min(1),
   organizationId: z.string().nullable(),
   savedAt: z.number(),
   finished: z.boolean(),
-  /** False when the main process had no timings, so a missing window step is not a failure. */
   measuresWindow: z.boolean(),
-  /** The wire report once finished; before that, `reason` may hold a recorded hint. */
   report: z.object({
     attemptId: z.string(),
     appVersion: z.string(),
@@ -116,7 +88,6 @@ const pendingStartupRecordSchema = z.object({
 type PendingStartupRecord = z.infer<typeof pendingStartupRecordSchema>;
 type StepTimes = DesktopStartupReport["steps"];
 
-/** App version as Den accepts it: allowed characters only, at most 64. */
 export function sanitizeStartupAppVersion(raw: string | null | undefined): string {
   const cleaned = (raw ?? "")
     .trim()
@@ -139,7 +110,6 @@ function errorStatus(error: unknown): number | null {
   return typeof error.status === "number" ? error.status : null;
 }
 
-/** Message, name and code of an error and its causes, for matching transport failures. */
 function errorText(error: unknown): string {
   const parts: string[] = [];
   let current: unknown = error;
@@ -158,7 +128,6 @@ function errorText(error: unknown): string {
   return parts.join(" ");
 }
 
-/** Maps a failed Den request to a startup failure reason. */
 export function classifyStartupError(
   error: unknown,
   online: boolean = typeof navigator === "undefined" || navigator.onLine !== false,
@@ -200,7 +169,6 @@ function firstUnreachedStep(steps: StepTimes, measuresWindow: boolean): DesktopS
   return "org_tools";
 }
 
-/** A record left by another launch, as the report it stands for. */
 function reportFromRecord(record: PendingStartupRecord): DesktopStartupReport {
   if (record.finished) return record.report;
   const failedStep = firstUnreachedStep(record.report.steps, record.measuresWindow);
@@ -218,9 +186,7 @@ type Launch = {
 
 export function createStartupDiagnostics(deps: StartupDiagnosticsDeps): StartupDiagnostics {
   let initialized = false;
-  /** inert: nothing to do this document (web, no session, or already reported). */
   let inert = false;
-  /** Whether this document measures the launch; a reloaded document only offers old records. */
   let measuring = false;
   let session: "unknown" | "present" | "absent" = "unknown";
   let denBaseUrl: string | null = null;
@@ -232,10 +198,8 @@ export function createStartupDiagnostics(deps: StartupDiagnosticsDeps): StartupD
   let launch: Launch | null = null;
   let launchLoading: Promise<void> | null = null;
   let stored: PendingStartupRecord | null = null;
-  /** A record from another launch (or this launch's finished one), offered once after sign-in. */
   let leftover: PendingStartupRecord | null = null;
   let leftoverOffered = false;
-  /** A Den session check succeeded in this document, even after the launch's outcome. */
   let signedIn = false;
   let delivered = false;
   let cancelDeadline: (() => void) | null = null;
@@ -269,11 +233,9 @@ export function createStartupDiagnostics(deps: StartupDiagnosticsDeps): StartupD
     try {
       storage()?.removeItem(STARTUP_PENDING_STORAGE_KEY);
     } catch {
-      // Storage is best effort.
     }
   };
 
-  /** Clears the slot only while it still holds this report; a newer launch may own it. */
   const clearRecordFor = (id: string) => {
     if (readRecord()?.report.attemptId === id) removeRecord();
   };
@@ -327,8 +289,6 @@ export function createStartupDiagnostics(deps: StartupDiagnosticsDeps): StartupD
     const engineAt = reached.engine === null
       ? null
       : mainEngineAt !== null && mainEngineAt <= reached.engine ? mainEngineAt : reached.engine;
-    // A load with the stored session can finish before the session check
-    // does; the tools count as loaded once the member is also signed in.
     const orgToolsAt = reached.org_tools === null || reached.signed_in === null
       ? reached.org_tools
       : Math.max(reached.org_tools, reached.signed_in);
@@ -372,7 +332,6 @@ export function createStartupDiagnostics(deps: StartupDiagnosticsDeps): StartupD
     try {
       storage()?.setItem(STARTUP_PENDING_STORAGE_KEY, JSON.stringify(record));
     } catch {
-      // Storage is best effort.
     }
   };
 
@@ -418,8 +377,6 @@ export function createStartupDiagnostics(deps: StartupDiagnosticsDeps): StartupD
       }
       return;
     }
-    // Hold this launch's record until the last launch's record had its chance
-    // to be sent; there is one slot.
     if (leftover && !leftoverOffered) return;
     const record = currentRecord();
     if (record) persist(record);
@@ -431,7 +388,6 @@ export function createStartupDiagnostics(deps: StartupDiagnosticsDeps): StartupD
     await refreshTimings();
     if (inert || outcome) return;
     const failedStep = firstUnreachedStep(currentSteps(), Boolean(launch?.fromMain));
-    // Loads of the organization's tools failed and none succeeded.
     const reason = failedStep === "org_tools" && orgToolsFailure ? "org_unavailable" : "timeout";
     outcome = { failedStep, reason };
     settle();
@@ -472,11 +428,8 @@ export function createStartupDiagnostics(deps: StartupDiagnosticsDeps): StartupD
     };
 
     if (sameLaunch && sameLaunch.finished) {
-      // This document is a reload of a launch that already finished; at most
-      // its unsent report is offered again.
       leftover = sameLaunch;
     } else if (sameLaunch) {
-      // A reload during startup continues the launch's report.
       measuring = true;
       attemptId = sameLaunch.report.attemptId;
       launch.appVersion = sameLaunch.report.appVersion;
@@ -490,8 +443,6 @@ export function createStartupDiagnostics(deps: StartupDiagnosticsDeps): StartupD
       }
       orgToolsFailure ||= sameLaunch.report.reason === "org_unavailable";
     } else if (timings && timings.windowShownAt !== null && timings.windowShownAt < deps.timeOrigin()) {
-      // A reload of a launch with nothing in progress: the launch was already
-      // reported, or it had no Den session. Measuring now would time the reload.
     } else {
       measuring = true;
       attemptId = deps.randomId();
@@ -510,7 +461,6 @@ export function createStartupDiagnostics(deps: StartupDiagnosticsDeps): StartupD
       if (inert) return;
       run();
     } catch {
-      // Startup diagnostics never affect the app.
     }
   };
 
@@ -522,7 +472,6 @@ export function createStartupDiagnostics(deps: StartupDiagnosticsDeps): StartupD
             session = "absent";
             stop();
           } else if (session === "present" && !outcome) {
-            // The session ended during startup, e.g. the member signed out.
             outcome = { failedStep: reached.signed_in === null ? "signed_in" : "org_tools", reason: "signed_out" };
             settle();
           }
@@ -577,15 +526,12 @@ export function createStartupDiagnostics(deps: StartupDiagnosticsDeps): StartupD
   };
 }
 
-// ── App wiring ─────────────────────────────────────────────────────────────
-
 async function sendStartupReport(
   report: DesktopStartupReport,
   target: StartupReportTarget,
 ): Promise<StartupSendOutcome> {
   const settings = readDenSettings();
   const token = settings.authToken?.trim() ?? "";
-  // Only the session of the Den the launch belongs to may send it.
   if (!token || !sameDenBaseUrl(settings.baseUrl, target.denBaseUrl)) return "retry";
   const status = await createDenClient({ baseUrl: settings.baseUrl, token })
     .reportDesktopStartup(report, { organizationId: target.organizationId, timeoutMs: STARTUP_SEND_TIMEOUT_MS });
@@ -627,7 +573,6 @@ function startupDiagnostics(): StartupDiagnostics {
   return appStartupDiagnostics;
 }
 
-/** Called on each Den session check; null when the app has no session token. */
 export function noteStartupDenSession(session: StartupDenSession | null): void {
   startupDiagnostics().denSession(session);
 }
@@ -640,7 +585,6 @@ export function failStartup(step: DesktopStartupStep, reason: DesktopStartupFail
   startupDiagnostics().fail(step, reason);
 }
 
-/** The organization's tools are loaded when this load succeeds. */
 export function trackStartupOrgTools(loading: Promise<unknown>): void {
   loading.then(
     () => startupDiagnostics().markStep("org_tools"),

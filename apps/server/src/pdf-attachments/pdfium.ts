@@ -4,15 +4,6 @@ import { pathToFileURL } from "node:url";
 import { PDFiumLibrary } from "@hyzyla/pdfium";
 import type { PDFiumDocument } from "@hyzyla/pdfium";
 
-/**
- * PDFium (the PDF engine used by Chrome) compiled to WebAssembly. It runs the
- * same way inside the OpenCode engine (Bun) and the OpenWork server (Node or
- * Electron), needs no native build step, and keeps rendering sandboxed.
- *
- * The wasm binary is looked up next to the running module first — the server
- * build copies it beside the bundled plugin — and falls back to the installed
- * package during development, where the plugin is imported from source.
- */
 export const PDFIUM_WASM_FILENAME = "pdfium.wasm";
 
 export type PdfPageText = {
@@ -20,7 +11,6 @@ export type PdfPageText = {
   text: string;
 };
 
-/** One rendered page as opaque BGRA pixels, ready for the encoder of choice. */
 export type PdfRenderedBitmap = {
   page: number;
   width: number;
@@ -48,7 +38,6 @@ function wasmCandidates(): URL[] {
   try {
     candidates.push(pathToFileURL(createRequire(import.meta.url).resolve("@hyzyla/pdfium/pdfium.wasm")));
   } catch {
-    // The package is only present in development installs; the packaged plugin ships the sibling file.
   }
   return candidates;
 }
@@ -78,10 +67,6 @@ function library(): Promise<LoadedLibrary> {
   return libraryPromise;
 }
 
-/**
- * PDFium is single-threaded and shares one wasm heap, so document work is
- * serialized. Callers never observe partial state from another document.
- */
 function serialized<T>(task: () => Promise<T>): Promise<T> {
   const run = queue.then(task, task);
   queue = run.then(
@@ -119,11 +104,6 @@ function openDocument(document: PDFiumDocument): OpenDocument {
   };
 }
 
-/**
- * Opens a PDF for the duration of `work`, on the shared PDFium runtime. Throws
- * when the bytes are not a PDF PDFium can open (corrupt, or password protected
- * without the password).
- */
 export function withPdfDocument<T>(bytes: Uint8Array, work: (document: OpenDocument) => Promise<T>): Promise<T> {
   return serialized(async () => {
     const pdfium = await library();

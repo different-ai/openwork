@@ -1,11 +1,3 @@
-// Availability of one provider/model identity against the active workspace's
-// provider catalogs. The route builds a resolver from its catalog state and
-// each composer (an existing conversation or the New Task default) evaluates
-// its OWN effective model through it, so a missing global default can never
-// disable a conversation that remembers a different, valid model — and vice
-// versa. `pending` is explicit: an unsettled catalog (still loading, cloud
-// provider sync incomplete, or superseded by a workspace switch) never
-// produces a definitive "unavailable" verdict.
 import type { ProviderListResponse } from "@opencode-ai/sdk/v2/client";
 
 import {
@@ -30,27 +22,15 @@ export type ModelAvailability =
 export type ModelAvailabilityResolver = (model: ModelRef | null) => ModelAvailability;
 
 export type ModelAvailabilityContext = {
-  /** Workspace + engine client are resolved (route is not still booting). */
   workspaceReady: boolean;
-  /** Route-level loading flag; nothing is settled while it is true. */
   loading: boolean;
   signedIn: boolean;
-  /** Cloud provider sync completed for the CURRENT workspace/org context. */
   cloudProviderSyncReady: boolean;
   openWorkModelsSyncing: boolean;
-  /** Org policy restricts members to cloud-managed providers. */
   restrictToCloud: boolean;
   checkRestriction: DesktopAppRestrictionChecker;
-  /** Settled cloud-managed catalog for the current context, if any. */
   cloudProviderList: ProviderListResponse | null;
-  /** Live sync deliberately has no app-side cloud snapshot; use the subscribed engine query. */
   liveProviderSync?: boolean;
-  /**
-   * Provider catalog for the current workspace (query keyed by server +
-   * directory). `null`/`undefined` means the catalog has not settled for this
-   * context yet — a stale catalog from a previous workspace never appears
-   * here because the query key changes with the workspace.
-   */
   providerList: ProviderListResponse | null | undefined;
 };
 
@@ -60,7 +40,6 @@ export function computeModelAvailability(
 ): ModelAvailability {
   if (!context.workspaceReady || context.loading) return { status: "pending" };
   if (!model?.providerID?.trim() || !model.modelID?.trim()) {
-    // No selection to validate: never claim a model is unavailable.
     return { status: "pending" };
   }
 
@@ -78,7 +57,6 @@ export function computeModelAvailability(
   }
   if (usesCloudProvider && !context.cloudProviderSyncReady) return { status: "pending" };
 
-  // Desktop policy blocks are definitive regardless of catalog state.
   if (
     isDesktopProviderBlocked({
       providerId,
@@ -90,7 +68,6 @@ export function computeModelAvailability(
 
   const providerList = usesCloudProvider && !context.liveProviderSync ? context.cloudProviderList : context.providerList;
   if (!providerList) {
-    // Catalog not settled for the current context: pending, not unavailable.
     return { status: "pending" };
   }
 
@@ -108,33 +85,13 @@ export function computeModelAvailability(
   return { status: "available" };
 }
 
-/**
- * How long a catalog-derived "unavailable" verdict must persist before it is
- * shown. Settings visits and engine reload/restart churn can settle a
- * momentarily incomplete catalog (e.g. `connected` not yet populated), which
- * used to flash "Model no longer available" for a beat before the next
- * refresh restored the model.
- */
 export const MODEL_UNAVAILABLE_CONFIRMATION_MS = 1_200;
 
 export type UnavailableConfirmationGate = {
-  /**
-   * Confirm one verdict for one model identity. Catalog denials
-   * (`model_missing`, `provider_not_connected`) surface only after they have
-   * persisted for the confirmation window; younger denials render as pending
-   * so a transition blip never flashes the warning or blocks a send. Policy
-   * blocks (`provider_blocked`) are deliberate local state and pass through
-   * immediately, as do `available` and `pending`.
-   */
   confirm: (
     model: ModelRef | null | undefined,
     verdict: ModelAvailability,
   ) => ModelAvailability;
-  /**
-   * Milliseconds until the next immature denial matures, or null when every
-   * tracked denial has matured (or none are tracked). Mature denials must not
-   * schedule a busy loop or hide another model's pending deadline.
-   */
   nextRecheckDelay: (nowMs?: number) => number | null;
 };
 

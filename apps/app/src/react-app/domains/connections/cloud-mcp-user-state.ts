@@ -1,13 +1,6 @@
 import { CLOUD_MCP_SYNC_MARKER_STORAGE_KEY } from "../../../app/lib/den";
 
-/** Durable, scoped records for the auto-managed OpenWork Cloud MCP. */
-
 export const CLOUD_MCP_SERVER_NAME = "openwork-cloud";
-/**
- * OpenCode MCP entries the local server projects for org connections an admin
- * exposed directly. They are owned by the `openwork-cloud` reconcile and are
- * represented in the UI by their org connection card, never as local MCPs.
- */
 export const CONNECT_DIRECT_MCP_SERVER_NAME_PREFIX = "openwork-direct-";
 
 export function isConnectDirectMcpServerName(name: string): boolean {
@@ -40,10 +33,6 @@ type StorageLike = Pick<Storage, "getItem" | "setItem" | "removeItem">;
 
 let storageOverrideForTest: StorageLike | null = null;
 
-/**
- * Bun on Linux exposes a readonly `globalThis.window`, so tests cannot stub
- * the global. Inject a storage instead (pass null to restore the default).
- */
 export function __setCloudMcpUserStateStorageForTest(storage: StorageLike | null) {
   storageOverrideForTest = storage;
 }
@@ -127,7 +116,6 @@ function readCloudMcpUserStateEntries(): { entries: CloudMcpUserStateEntry[]; le
       legacyState: null,
     };
   } catch {
-    // Storage unavailable or corrupt — treat as no recorded intent.
   }
   return { entries: [], legacyState: null };
 }
@@ -147,8 +135,6 @@ export function readCloudMcpUserState(scope: CloudMcpScope): CloudMcpUserState |
   if (entry) return entry.state;
 
   if (legacyState) {
-    // One-time compatibility: old builds stored a single global intent. Move it
-    // to the currently active scope so it does not suppress other workspaces.
     writeCloudMcpUserState(legacyState, normalized);
     return legacyState;
   }
@@ -165,7 +151,6 @@ export function writeCloudMcpUserState(state: CloudMcpUserState, scope: CloudMcp
     );
     writeCloudMcpUserStateEntries([...entries, { ...normalized, state, updatedAt: Date.now() }]);
   } catch {
-    // Storage unavailable — the enabled-flag guard in reconciliation still applies.
   }
 }
 
@@ -179,7 +164,6 @@ export function clearCloudMcpUserState(scope: CloudMcpScope) {
     if (entries.length) writeCloudMcpUserStateEntries(entries);
     else getStorage()?.removeItem(CLOUD_MCP_USER_STATE_KEY);
   } catch {
-    // ignore
   }
 }
 
@@ -214,7 +198,6 @@ function readCloudMcpUnhealthyRemintAttempts(): { entries: CloudMcpUnhealthyRemi
       legacyOrgId: null,
     };
   } catch {
-    // Corrupt marker or storage unavailable — treat as no recorded attempt.
   }
   return { entries: [], legacyOrgId: null };
 }
@@ -226,7 +209,6 @@ function writeCloudMcpUnhealthyRemintAttempts(entries: CloudMcpUnhealthyRemintAt
   );
 }
 
-/** One re-mint attempt per unhealthy Cloud MCP episode, scoped to this exact workspace/org/server/deployment. */
 export function readCloudMcpUnhealthyRemintAttempt(scope: CloudMcpScope): CloudMcpUnhealthyRemintAttempt | null {
   const normalized = normalizeCloudMcpScope(scope);
   if (!normalized) return null;
@@ -250,7 +232,6 @@ export function writeCloudMcpUnhealthyRemintAttempt(marker: CloudMcpUnhealthyRem
     );
     writeCloudMcpUnhealthyRemintAttempts([...entries, { ...normalized, attemptedAt: marker.attemptedAt }]);
   } catch {
-    // Storage unavailable — in-memory guards still suppress same-operation retries.
   }
 }
 
@@ -264,7 +245,6 @@ export function clearCloudMcpUnhealthyRemintAttempt(scope: CloudMcpScope) {
     if (entries.length) writeCloudMcpUnhealthyRemintAttempts(entries);
     else getStorage()?.removeItem(CLOUD_MCP_UNHEALTHY_REMINT_ATTEMPT_KEY);
   } catch {
-    // ignore
   }
 }
 
@@ -295,7 +275,6 @@ function readCloudMcpSyncMarkers(): CloudMcpSyncMarker[] {
       return marker ? [marker] : [];
     });
   } catch {
-    // Corrupt or legacy marker — force one safe re-sync.
   }
   return [];
 }
@@ -319,7 +298,6 @@ export function writeCloudMcpSyncMarker(marker: CloudMcpSyncMarker) {
       JSON.stringify({ version: 1, markers: [...markers, normalizedMarker] }),
     );
   } catch {
-    // Storage unavailable — reconciliation will simply run again later.
   }
 }
 
@@ -334,7 +312,6 @@ export function clearCloudMcpSyncMarker(scope: CloudMcpSyncMarkerScope) {
       getStorage()?.removeItem(CLOUD_MCP_SYNC_MARKER_STORAGE_KEY);
     }
   } catch {
-    // ignore
   }
 }
 
@@ -343,10 +320,6 @@ export function clearCloudMcpScopedMetadata(scope: CloudMcpScope) {
   clearCloudMcpUnhealthyRemintAttempt(scope);
 }
 
-/**
- * Pure marker-freshness check for the cloud MCP sync marker. Extracted so
- * the margin arithmetic is unit-testable.
- */
 export function isCloudMcpSyncMarkerFresh(input: {
   expiresAt: string;
   now: number;

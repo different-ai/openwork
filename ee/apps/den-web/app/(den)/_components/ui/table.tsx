@@ -4,7 +4,6 @@ export type DenTableColumn<T> = {
   key: string;
   header: string;
   align?: "left" | "right";
-  /** Fixed lane width (e.g. "190px") so cells stay aligned across rows. */
   width?: string;
   render: (row: T) => ReactNode;
 };
@@ -17,7 +16,6 @@ export type DenTableProps<T> = {
   density?: "default" | "compact";
   renderRowDetail?: (row: T) => ReactNode;
   emptyLabel?: string;
-  /** `plain` drops the filled header row for tables that sit on a white surface. */
   headerTone?: "muted" | "plain";
 };
 

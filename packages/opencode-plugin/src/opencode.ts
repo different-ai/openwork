@@ -18,14 +18,11 @@ export interface Registration {
 
 export type Transform<Editor> = (callback: (editor: Editor) => void) => Promise<Registration>
 
-// ---- Credentials and integrations ----
-
 export interface OAuthCredential {
   readonly type: "oauth"
   readonly methodID: string
   readonly refresh: string
   readonly access: string
-  /** Milliseconds since the epoch. */
   readonly expires: number
   readonly metadata?: Record<string, unknown>
 }
@@ -101,8 +98,6 @@ export interface IntegrationDomain {
   }
 }
 
-// ---- Providers and models ----
-
 export interface ProviderInfo {
   readonly id: string
   readonly name: string
@@ -158,8 +153,6 @@ export interface ProviderDomain {
   readonly reload: () => Promise<void>
 }
 
-// ---- MCP ----
-
 export interface RemoteMcpConfig {
   readonly type: "remote"
   readonly url: string
@@ -178,8 +171,6 @@ export interface McpDomain {
   readonly reload: () => Promise<void>
 }
 
-// ---- Storage and events ----
-
 export interface StorageDomain {
   readonly get: (key: string) => Promise<Json | undefined>
   readonly set: (key: string, value: Json) => Promise<void>
@@ -189,11 +180,6 @@ export interface StorageDomain {
 export interface EventDomain {
   readonly subscribe: (options?: { signal?: AbortSignal }) => AsyncIterable<unknown>
 }
-
-// ---- Native sessions (verified against the 2.0.26 tag, not the full HTTP client) ----
-// packages/plugin/src/promise/{adapter,session,permission}.ts,
-// packages/client/src/promise/generated/{client,types}.ts and packages/schema/src/session-message.ts.
-// Promise host methods return encoded timestamps (milliseconds), not Effect DateTime objects.
 
 export interface NativeModelRef {
   readonly providerID: string
@@ -261,11 +247,19 @@ export interface NativeModelDomain {
   default(input?: { location?: { directory?: string } }): Promise<{ readonly location: NativeLocation; readonly data?: ModelInfo }>
 }
 
-export interface NativePermissionDomain {
-  list(input: { sessionID: string }, options?: NativeRequestOptions): Promise<readonly { readonly id: string; readonly sessionID: string }[]>
+/** packages/schema permission Request in 2.0.26: action and resources, with optional metadata. */
+export interface NativePermissionRequest {
+  readonly id: string
+  readonly sessionID: string
+  readonly action?: string
+  readonly resources?: readonly string[]
+  readonly metadata?: Readonly<Record<string, unknown>>
 }
 
-// ---- Plugin ----
+export interface NativePermissionDomain {
+  list(input: { sessionID: string }, options?: NativeRequestOptions): Promise<readonly NativePermissionRequest[]>
+  reply?(input: { sessionID: string; requestID: string; decision: "once" | "reject" }, options?: NativeRequestOptions): Promise<void>
+}
 
 export interface PluginContext {
   readonly app: { readonly version: string }
@@ -276,7 +270,6 @@ export interface PluginContext {
   readonly mcp: McpDomain
   readonly storage: StorageDomain
   readonly event: EventDomain
-  /** Needed only when the member explicitly opts this Location into remote sessions. */
   readonly session?: NativeSessionDomain
   readonly model?: NativeModelDomain
   readonly permission?: NativePermissionDomain

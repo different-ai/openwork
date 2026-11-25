@@ -8,6 +8,7 @@ import io
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tarfile
@@ -31,7 +32,12 @@ ENV = {"PROJECT_ID": "test-project", "PROJECT_NUMBER": "123456789012", "REGION":
        "DOMAIN_NAME": "openwork.example.com", "DNS_ZONE_NAME": "zone", "OWNER_EMAIL": "admin@example.com",
        "CONTROL_PLANE_ORIGIN": "https://api.example.com", "DEPLOYMENT_ID": DEPLOYMENT, "RUN_ID": RUN,
        "CHALLENGE": "a" * 64, "VERSION": "0.18.0", "STATE_BUCKET": "ow-123456781234-123456789012-state",
-       "RUNNER_SERVICE_ACCOUNT": "ow-123456781234-runner@test-project.iam.gserviceaccount.com"}
+       "RUNNER_SERVICE_ACCOUNT": "ow-123456781234-runner@test-project.iam.gserviceaccount.com",
+       "BUILD_ID": "0f0e0d0c-1111-4222-8333-444455556666",
+       "BUNDLE_URL": "https://storage.googleapis.com/releases/gcp/0.18.0/bundle.tar.gz?generation=123",
+       "BUNDLE_SHA256": "a" * 64}
+# Launch values only; the rest is added by install.py inside the build.
+BUILD_ONLY = ("STATE_BUCKET", "RUNNER_SERVICE_ACCOUNT", "BUILD_ID", "BUNDLE_URL", "BUNDLE_SHA256")
 
 
 PINS = {"den_api": install.IMAGE_REPOSITORIES["den_api"] + "@sha256:" + "a" * 64,
@@ -40,14 +46,23 @@ PINS = {"den_api": install.IMAGE_REPOSITORIES["den_api"] + "@sha256:" + "a" * 64
 
 
 def args():
-    return argparse.Namespace(**{key.lower(): value for key, value in ENV.items() if key not in ("STATE_BUCKET", "RUNNER_SERVICE_ACCOUNT")},
-                              bundle_url="https://storage.googleapis.com/releases/gcp/0.18.0/bundle.tar.gz?generation=123",
-                              bundle_sha256="a" * 64)
+    return argparse.Namespace(**{key.lower(): value for key, value in ENV.items() if key not in BUILD_ONLY},
+                              bundle_url=ENV["BUNDLE_URL"], bundle_sha256=ENV["BUNDLE_SHA256"])
+
+
+@contextlib.contextmanager
+def quiet_run_boundaries():
+    """runner.main() steps that reach the state bucket; each has its own tests."""
+    with patch.object(runner, "refuse_ejected_run"), patch.object(runner, "customer_overrides", return_value=None), \
+            patch.object(runner, "write_applied") as written:
+        yield written
 
 
 def bundle(extra=None, manifest_change=None):
     files = {"infra/managed-deployments/gcp/" + path: b"# fixture\n" for path in
              ["runner/install.py", "runner/runner.py", "health/health_agent.py", "terraform/main.tf", "terraform/.terraform.lock.hcl"]}
+    files.update({"infra/terraform/modules/openwork-gcp-cloud-run/" + name: b"# fixture\n" for name in
+                  ("main.tf", "cloudrun.tf", "database.tf", "lb.tf", "variables.tf", "versions.tf", "outputs.tf")})
     manifest = {"provider": "gcp", "version": "0.18.0", "protocolVersion": 1, "images": dict(PINS),
                 "files": {name: hashlib.sha256(data).hexdigest() for name, data in files.items()}}
     if manifest_change:
@@ -69,7 +84,8 @@ class BootstrapTests(unittest.TestCase):
         required = ["iam.googleapis.com", "iamcredentials.googleapis.com", "serviceusage.googleapis.com",
                     "cloudresourcemanager.googleapis.com", "storage.googleapis.com", "run.googleapis.com", "sqladmin.googleapis.com",
                     "secretmanager.googleapis.com", "artifactregistry.googleapis.com", "compute.googleapis.com",
-                    "dns.googleapis.com", "cloudscheduler.googleapis.com", "monitoring.googleapis.com"]
+                    "dns.googleapis.com", "cloudscheduler.googleapis.com", "monitoring.googleapis.com",
+                    "cloudbuild.googleapis.com", "logging.googleapis.com"]
         self.assertEqual(install.APIS, required)
         with patch.object(install, "cloud", side_effect=RuntimeError("stop after API enablement")) as cloud:
             with self.assertRaisesRegex(RuntimeError, "stop after API enablement"):
@@ -79,6 +95,16 @@ class BootstrapTests(unittest.TestCase):
     def test_validation_and_names_match_api(self):
         self.assertEqual(install.validate(args()), "ow-123456781234")
         self.assertEqual(install.name(DEPLOYMENT) + "-runner@test-project.iam.gserviceaccount.com", ENV["RUNNER_SERVICE_ACCOUNT"])
+
+    def test_every_region_the_form_offers_passes_validation(self):
+        schema = (ROOT / "packages/managed-deployments/src/schema.ts").read_text()
+        regions = json.loads(re.search(r"gcpRegionSchema = z\.enum\((\[[^\]]+\])\)", schema).group(1))
+        self.assertIn("asia-east2", regions)
+        for region in regions:
+            with self.subTest(region=region):
+                value_args = args()
+                value_args.region = region
+                self.assertEqual(install.validate(value_args), "ow-123456781234")
 
     def test_invalid_launch_values(self):
         for field, value in [("deployment_id", "../../x"), ("project_id", "test-project;rm"),
@@ -189,10 +215,13 @@ class BootstrapTests(unittest.TestCase):
                   "release": {"apiOrigin": ENV["CONTROL_PLANE_ORIGIN"], "version": ENV["VERSION"], "bundleUrl": args().bundle_url, "bundleSha256": "a" * 64}}
         encoded = base64.b64encode(json.dumps(launch).encode()).decode()
         with patch.object(sys, "argv", ["install.py", "--config-base64", encoded]), patch.object(install, "verify_target"), \
-                patch("builtins.input", return_value="wrong-project"), patch.object(install, "bootstrap") as writes, patch.object(install, "request") as fetch:
+                patch.object(install, "access_token", return_value="person-token"), patch.object(install, "refuse_if_ejected"), \
+                patch("builtins.input", return_value="wrong-project"), patch.object(install, "bootstrap") as writes, \
+                patch.object(install, "submit_build") as build, patch.object(install, "request") as fetch, patch("builtins.print"):
             with self.assertRaises(ValueError):
                 install.main()
             writes.assert_not_called()
+            build.assert_not_called()
             fetch.assert_not_called()
 
     def test_existing_state_bucket_security_and_ownership_are_required(self):
@@ -252,11 +281,53 @@ class RunnerTests(unittest.TestCase):
             identity.assert_called_once_with(expected + "#" + ENV["CHALLENGE"])
             self.assertEqual(json.loads(request.call_args.args[1]), {"provider": "gcp", "idToken": "google-jwt"})
 
-    def test_identity_token_impersonates_runner_and_includes_email(self):
-        with patch.dict(os.environ, ENV, clear=True), patch.object(subprocess, "run", return_value=Mock(stdout="jwt\n")) as run:
-            self.assertEqual(runner.id_token("https://api.example.com/audience"), "jwt")
-            self.assertIn("--include-email", run.call_args.args[0])
-            self.assertIn("--impersonate-service-account=" + ENV["RUNNER_SERVICE_ACCOUNT"], run.call_args.args[0])
+    def test_runner_mints_its_own_email_bearing_identity_token(self):
+        # Den rejects a token without email/email_verified, so the token comes
+        # from IAM Credentials for the runner itself, never from impersonation.
+        audience = "https://api.example.com/v1/managed-deployments/x/runs/y/enroll#" + "a" * 64
+        with patch.dict(os.environ, ENV, clear=True), patch.object(runner, "access_token", return_value="runner-access") as access, \
+                patch.object(runner, "request", return_value=b'{"token":"jwt"}') as request:
+            self.assertEqual(runner.id_token(audience), "jwt")
+        access.assert_called_once_with()
+        url, body, headers = request.call_args.args[:3]
+        self.assertEqual(url, "https://iamcredentials.googleapis.com/v1/projects/-/serviceAccounts/"
+                         + ENV["RUNNER_SERVICE_ACCOUNT"] + ":generateIdToken")
+        self.assertEqual(json.loads(body), {"audience": audience, "includeEmail": True})
+        self.assertEqual(headers["Authorization"], "Bearer runner-access")
+        # A first install's self-binding may be seconds old: only a 403 is asked again.
+        import urllib.error
+        def http(code):
+            return urllib.error.HTTPError("https://iamcredentials.googleapis.com", code, "refused", {}, None)
+        with patch.dict(os.environ, ENV, clear=True), patch.object(runner, "access_token", return_value="t"), \
+                patch.object(runner, "request", side_effect=[http(403), http(403), b'{"token":"jwt"}']) as request, patch.object(runner.time, "sleep") as wait:
+            self.assertEqual(runner.id_token(audience), "jwt")
+            self.assertEqual((request.call_count, wait.call_count), (3, 2))
+        for failure, calls in ((http(403), 8), (http(404), 1), (http(500), 1), (OSError("network"), 1)):
+            with self.subTest(failure=failure), patch.dict(os.environ, ENV, clear=True), patch.object(runner, "access_token", return_value="t"), \
+                    patch.object(runner, "request", side_effect=failure) as request, patch.object(runner.time, "sleep"):
+                with self.assertRaises(OSError):
+                    runner.id_token(audience)
+                self.assertEqual(request.call_count, calls)
+        for reply in (b"{}", b'{"token":""}', b'{"token":7}'):
+            with patch.dict(os.environ, ENV, clear=True), patch.object(runner, "access_token", return_value="t"), \
+                    patch.object(runner, "request", return_value=reply):
+                with self.assertRaises(ValueError):
+                    runner.id_token(audience)
+
+    def test_no_command_or_configuration_impersonates(self):
+        for path in ("runner/install.py", "runner/runner.py"):
+            source = (GCP / path).read_text()
+            for forbidden in ("--impersonate-service-account", "print-identity-token", "application-default\", \"login",
+                              '"application-default"', "impersonate_service_account"):
+                self.assertNotIn(forbidden, source, path)
+        # The only mention left removes inherited impersonation from the environment.
+        self.assertEqual((GCP / "runner/runner.py").read_text().count("GOOGLE_IMPERSONATE_SERVICE_ACCOUNT"), 1)
+        root = (GCP / "terraform/main.tf").read_text() + (GCP / "terraform/moved.tf").read_text()
+        self.assertNotIn("impersonate", root)
+        with patch.dict(os.environ, ENV, clear=True), patch.object(subprocess, "run", return_value=Mock(stdout="{}")) as run:
+            runner.gcloud("run", "services", "list")
+            install.cloud("projects", "describe", "p", project="p")
+            self.assertFalse(any("impersonate" in argument for call in run.call_args_list for argument in call.args[0]))
 
     def test_rejects_enrollment_without_token(self):
         with patch.dict(os.environ, ENV, clear=True), patch.object(runner, "id_token", return_value="jwt"), patch.object(runner, "request", return_value=b'{"ok":true}'):
@@ -280,22 +351,22 @@ class RunnerTests(unittest.TestCase):
 
     def test_all_six_milestones_and_first_signed_health_receipt(self):
         outputs = {"health_agent": "ow-health"}
-        with patch.dict(os.environ, ENV, clear=True), patch.object(runner, "enroll", return_value="run-token"), \
+        with patch.dict(os.environ, ENV, clear=True), quiet_run_boundaries(), patch.object(runner, "enroll", return_value="run-token"), \
                 patch.object(runner, "orchestration_mutex", side_effect=contextlib.nullcontext), \
                 patch.object(runner, "report") as report, patch.object(runner, "verify_target"), \
                 patch.object(runner, "mirror_images", return_value={}), patch.object(runner, "apply", return_value=outputs), \
-                patch.object(runner, "verify_services"), patch.object(runner, "verify_health"), patch.object(runner, "gcloud") as cloud:
+                patch.object(runner, "verify_services"), patch.object(runner, "verify_health"), patch.object(runner, "verify_health_job") as health_job:
             runner.main()
             self.assertEqual([c.args[1:3] for c in report.call_args_list], [(1, "runner_connected"), (2, "release_verified"),
                 (3, "account_verified"), (4, "infrastructure_applied"), (5, "services_ready"), (6, "health_verified")])
-            self.assertIn("--wait", cloud.call_args.args)
+            health_job.assert_called_once_with(outputs)
 
     def test_first_health_rejection_does_not_mark_ready(self):
-        with patch.dict(os.environ, ENV, clear=True), patch.object(runner, "enroll", return_value="run-token"), \
+        with patch.dict(os.environ, ENV, clear=True), quiet_run_boundaries(), patch.object(runner, "enroll", return_value="run-token"), \
                 patch.object(runner, "orchestration_mutex", side_effect=contextlib.nullcontext), \
                 patch.object(runner, "report") as report, patch.object(runner, "verify_target"), \
                 patch.object(runner, "mirror_images", return_value={}), patch.object(runner, "apply", return_value={"health_agent": "job"}), \
-                patch.object(runner, "verify_services"), patch.object(runner, "verify_health"), patch.object(runner, "gcloud", side_effect=ValueError("rejected")):
+                patch.object(runner, "verify_services"), patch.object(runner, "verify_health"), patch.object(runner, "verify_health_job", side_effect=ValueError("rejected")):
             with self.assertRaises(ValueError):
                 runner.main()
             self.assertEqual(report.call_args.args, ("run-token", 6, "health_verified", "failed", "health_check_failed"))
@@ -306,7 +377,7 @@ class RunnerTests(unittest.TestCase):
                 runner.verify_health({"web_url": "https://evil.test", "api_url": "https://api.evil.test"})
             request.assert_not_called()
 
-    def test_apply_uses_impersonated_locked_backend_and_migrates_before_services(self):
+    def test_apply_uses_locked_backend_as_itself_and_migrates_before_services(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             (root / "infra/managed-deployments/gcp/terraform").mkdir(parents=True)
@@ -323,10 +394,13 @@ class RunnerTests(unittest.TestCase):
                     patch.object(runner, "gcloud", side_effect=lambda *a: calls.append(list(a))):
                 runner.apply(root, {})
             self.assertIn("-lockfile=readonly", calls[0])
-            self.assertIn("-backend-config=impersonate_service_account=" + ENV["RUNNER_SERVICE_ACCOUNT"], calls[0])
-            self.assertEqual([c[1] for c in calls], ["init", "plan", "apply", "jobs", "plan", "apply"])
-            self.assertIn("-target=google_cloud_run_v2_job.migrate", calls[1])
-            self.assertIn("--wait", calls[3])
+            # Same bucket and prefix as every earlier run of this deployment; no identity.
+            self.assertEqual([argument for argument in calls[0] if argument.startswith("-backend-config=")],
+                             ["-backend-config=bucket=" + ENV["STATE_BUCKET"], "-backend-config=prefix=deployments/" + DEPLOYMENT])
+            self.assertEqual([c[1] for c in calls], ["init", "plan", "apply"])
+            self.assertFalse(any("-target=" in argument for command in calls for argument in command))
+            # Native module execution token owns migration and waiting; no second CLI execution.
+            self.assertFalse(any(command[0] == "run" for command in calls))
             self.assertTrue(all("-lock-timeout=120s" in c for c in calls if c[1] in ("plan", "apply")))
 
     def test_apply_rejects_data_destruction_before_any_apply(self):
@@ -495,9 +569,10 @@ print(json.dumps({"Descriptor": {"digest": digest, "platform": {"os": "linux", "
             docker.chmod(0o700)
             pins = path / "approved-pins.json"
             pins.write_text(json.dumps({kind: PINS[kind] for kind in ("den_api", "den_web")}))
-            subprocess.run(["node", str(ROOT / "infra/managed-deployments/tools/build-release.mjs"), "gcp", "0.18.0", directory,
+            built = subprocess.run(["node", str(ROOT / "infra/managed-deployments/tools/build-release.mjs"), "gcp", "0.18.0", directory,
                             "--image-pins", str(pins)], env={**os.environ, "PATH": str(bin_path) + os.pathsep + os.environ["PATH"]},
-                           check=True, capture_output=True)
+                           capture_output=True, text=True)
+            self.assertEqual(built.returncode, 0, built.stderr)
             path = Path(directory)
             manifest = json.loads((path / "manifest.json").read_text())
             data = (path / "bundle.tar.gz").read_bytes()
@@ -507,10 +582,20 @@ print(json.dumps({"Descriptor": {"digest": digest, "platform": {"os": "linux", "
             extracted = path / "verified"
             extracted.mkdir()
             install.extract_verified(data, manifest["bundleSha256"], extracted, "0.18.0")
-            self.assertEqual(json.loads((extracted / "release.json").read_text())["images"], PINS)
-            for file in extracted.rglob("*"):
-                self.assertFalse(file.name.endswith((".tfstate", ".tfvars", ".tfplan")))
-                self.assertNotIn(".terraform/", str(file.relative_to(extracted)))
+            release = json.loads((extracted / "release.json").read_text())
+            self.assertEqual(release["images"], PINS)
+            module = "infra/terraform/modules/openwork-gcp-cloud-run/"
+            self.assertEqual({name for name in release["files"] if name.startswith(module)},
+                             {module + source.name for source in (ROOT / module).glob("*.tf")})
+            self.assertFalse(any("/tests/" in name or "/examples/" in name for name in release["files"]))
+            tf_root = extracted / "infra/managed-deployments/gcp/terraform"
+            for command in (["terraform", "init", "-backend=false", "-input=false", "-lockfile=readonly",
+                             "-plugin-dir=" + str(GCP / "terraform/.terraform/providers")], ["terraform", "validate", "-no-color"]):
+                checked = subprocess.run(command, cwd=tf_root, capture_output=True, text=True, timeout=120)
+                self.assertEqual(checked.returncode, 0, checked.stdout + checked.stderr)
+            for file in release["files"]:
+                self.assertFalse(file.endswith((".tfstate", ".tfvars", ".tfplan")))
+                self.assertNotIn(".terraform/", file)
 
 
 if __name__ == "__main__":

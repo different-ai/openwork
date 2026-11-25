@@ -23,7 +23,7 @@ export async function providerCredentialStatus(seed: Seed) {
       response.setHeader("access-control-allow-headers", "authorization,content-type");
       response.setHeader("access-control-allow-methods", "GET,POST,OPTIONS");
       if (request.method === "OPTIONS") { response.writeHead(204); response.end(); return; }
-      if (path === "/v1/features") return sendJson(response, 200, { features: { providerCredentialStatus: true } });
+      if (path === "/v1/features") return sendJson(response, 200, { features: {} });
       if (path === "/api/auth/get-session") return sendJson(response, 200, null);
       if (request.method !== "POST" || !path.endsWith("/chat/completions")) {
         sendJson(response, 404, { error: { message: "Unexpected local provider route" } });

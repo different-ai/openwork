@@ -6,7 +6,7 @@ test("stopped native Code Mode commands do not dispatch and propagate the cancel
   type Editor = Parameters<Parameters<Parameters<typeof nativeContext.setup>[0]["tool"]["transform"]>[0]>[0];
   const tools: Array<Parameters<Editor["add"]>[0]> = [];
   const stop = await nativeContext.setup({
-    options: { url: "http://127.0.0.1:1/read", token: "read-only", codeMode: true },
+    options: { url: "http://127.0.0.1:1/read", token: "read-only" },
     tool: { async transform(callback) { callback({ add: tool => tools.push(tool) }); return { async dispose() {} }; } },
     skill: { async transform() { return { async dispose() {} }; }, async reload() {} },
   });

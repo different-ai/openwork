@@ -972,8 +972,6 @@ function GithubDiscoveryPhase({ connectorInstanceId, onBack }: { connectorInstan
         .filter((plugin) => plugin.supported && plugin.selectedByDefault)
         .map((plugin) => plugin.key),
     );
-    // Discovery is a fresh-intent operation: default the toggle ON each time
-    // the user enters the flow, regardless of the previously saved value.
     setAutoImportNewPlugins(true);
   }, [discoveryQuery.data]);
 

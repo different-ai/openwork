@@ -4,6 +4,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { TaskRecovery } from "@/components/chat/task-recovery";
 import { Button } from "@/components/ui/button";
 import { PickerNotice } from "../models/picker-notice";
+import { FreeEmailVerification } from "./free-email-verification";
 import { useState } from "react";
 import { useSessionActivityStore } from "../session/status/session-activity-store";
 import { useCheckDesktopRestriction } from "./desktop-config-provider";
@@ -31,7 +32,6 @@ export function AutoRejectedTurnRecoveryBridge() {
   return null;
 }
 
-/** Same as the native "Check for Updates…" menu: start the check, then show the Updates tab in this workspace. */
 export function openAutoUpdate() {
   useUpdateCheckRequestStore.getState().requestUpdateCheck();
   const workspace = window.location.hash.match(/^#(\/workspace\/[^/]+)/)?.[1] ?? "";
@@ -43,10 +43,6 @@ function openCloudAccountSettings() {
   window.location.hash = `${workspace}/settings/cloud-account`;
 }
 
-/**
- * Auto's "Sign in". The conversation stays on screen while the browser
- * finishes, and the unsent message resends when sign-in returns here.
- */
 export function openAutoSignIn(
   recovery: { owner: RejectedTurnOwner; id: string } | undefined,
   signIn: (request: CloudSignInRequest) => unknown,
@@ -109,6 +105,9 @@ export function AutoPickerRecovery({ state, code, resetsAt, onRetry, onReload, h
   const reloadWorkspace = onReload ?? (workspace?.openworkServerClient && workspace.workspaceId ? () => workspace.openworkServerClient!.reloadEngine(workspace.workspaceId) : undefined);
   const reload = reloadWorkspace ? async () => { await reloadWorkspace(); await retry(); } : undefined;
   if (state === "ready" || freeAutoSwitchedOff(observed)) return null;
+  if ((code ?? observed?.code) === "email_verification_required" && auth.user?.email) {
+    return <PickerNotice action={<FreeEmailVerification key={auth.user.id} email={auth.user.email} />}>{copy.detail}</PickerNotice>;
+  }
   return <PickerNotice testId="auto-picker-recovery" action={<>
     {copy.action === "Sign in" ? <Button size="sm" onClick={() => openAutoSignIn(undefined, signIn)}>Sign in</Button> : null}
     {copy.action === "Update" ? <Button size="sm" onClick={openAutoUpdate}>Update</Button> : null}
@@ -121,11 +120,6 @@ export function AutoAccessFooter(props: { available: boolean; syncing?: boolean 
   return props.available || props.syncing ? <AutoAccessFooterContent {...props} /> : null;
 }
 
-/**
- * The one owner of the Auto status query for this workspace and identity.
- * Pickers, the footer and the first-use caption all call it; react-query
- * dedupes them. Read-only views use `useObservedAutoAccessSnapshot`.
- */
 export function useAutoAccess(available: boolean, override?: AutoAccessWorkspace) {
   const context = useWorkspaceMaybe();
   const workspace = override ?? context;
@@ -151,7 +145,6 @@ function AutoAccessFooterContent({ available, syncing = false }: { available: bo
   const { query, auth } = useAutoAccess(available);
   const signIn = useCloudSignIn();
   if ((!available && !syncing) || freeAutoSwitchedOff(query.data) || autoQuietlyUnavailable(query.data)) return null;
-  // Every other Auto state has its own notice above the picker footer (Paper "Availability and recovery").
   const status = !syncing && query.data?.state === "ready" && auth.status === "signed_out" ? "OpenWork Free works on this device" : null;
   if (!status) return null;
   return <div className="flex items-center justify-between gap-2 border-t border-border px-3 py-2 text-xs text-muted-foreground">
@@ -160,7 +153,6 @@ function AutoAccessFooterContent({ available, syncing = false }: { available: bo
   </div>;
 }
 
-/** Free Auto ran out: the shared usage-limit card, with sign-in and OpenWork Models as the ways to get more. */
 function FreeAutoLimitCard({ wall, sessionId, workspaceId, recovery }: { wall: AutoAccessWall; sessionId: string; workspaceId?: string; recovery?: { owner: RejectedTurnOwner; id: string } }) {
   const viewer = useUsageLimitViewer();
   const signIn = useCloudSignIn();
@@ -182,12 +174,12 @@ function AutoAccessWallNotice({ wall, sessionId, workspaceId, recovery }: { wall
   const auth = useDenAuth();
   const signIn = useCloudSignIn();
   const copy = autoWallCopy(wall, auth.isSignedIn);
-  // Signing in raises the free limit; offer it wherever the notice reads as the limit.
   const offerSignIn = auth.status === "signed_out" && ["limit", "update", "not_offered"].includes(wall.state)
     && wall.code !== "free_not_enrolled" && wall.code !== "managed_models_disabled_for_dpa";
   return <div data-testid="auto-access-wall" data-state={wall.state}>
     <TaskRecovery compact state="paused" title={copy.title} description={copy.detail} technicalDetails={copy.technicalDetails}
       actions={<>
+        {wall.code === "email_verification_required" && auth.user?.email && <FreeEmailVerification key={auth.user.id} email={auth.user.email} />}
         {offerSignIn ? <Button size="xs" variant="outline" onClick={() => openAutoSignIn(recovery, signIn, { workspaceId, sessionId })}>Sign in</Button> : null}
         <Button size="xs" variant="ghost" onClick={() => openAlternativeModelPicker(sessionId)}>Choose a model</Button>
       </>} />

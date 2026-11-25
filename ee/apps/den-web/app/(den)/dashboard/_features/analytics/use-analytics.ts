@@ -11,7 +11,6 @@ import {
 import { requestJson } from "../../../_lib/den-flow";
 import { useOrgDashboard } from "../../_providers/org-dashboard-provider";
 
-/** The analytics screen filters by the "project" dimension only. */
 export const PROJECT_DIMENSION = "project";
 
 const REQUEST_TIMEOUT_MS = 12000;
@@ -27,7 +26,6 @@ function lastSeenTime(item: TelemetryDimensionListItem): number {
   return Number.isNaN(time) ? 0 : time;
 }
 
-/** Project filter options, most recently active first, then alphabetical. */
 export function useProjectOptions(enabled: boolean): TelemetryDimensionListItem[] {
   const { activeOrg } = useOrgDashboard();
   const { data } = useQuery({
@@ -48,7 +46,6 @@ export function useProjectOptions(enabled: boolean): TelemetryDimensionListItem[
   }, [data]);
 }
 
-/** Org usage analytics, optionally narrowed to one project. */
 export function useAnalytics(enabled: boolean, projectValue: string) {
   const { activeOrg } = useOrgDashboard();
   return useQuery({

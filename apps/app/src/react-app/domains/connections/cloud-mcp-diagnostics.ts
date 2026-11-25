@@ -23,7 +23,6 @@ function compactText(value: string): string {
   return `${collapsed.slice(0, MAX_INLINE_ERROR_LENGTH)}…`;
 }
 
-/** Flatten an unknown error payload into one support-readable line. */
 export function describeCloudMcpErrorDetail(error: unknown): string | null {
   if (error === undefined || error === null) return null;
   if (typeof error === "string") return compactText(error) || null;
@@ -35,11 +34,6 @@ export function describeCloudMcpErrorDetail(error: unknown): string | null {
   }
 }
 
-/**
- * The engine stores only `Error.message` for a failed MCP connection (a
- * network/TLS failure surfaces as the bare "fetch failed"), so the raw string
- * matters on a support call even when it looks unhelpfully short.
- */
 export function cloudMcpEngineErrorText(health: OpenworkCloudMcpHealth | null): string | null {
   return describeCloudMcpErrorDetail(health?.engine.error);
 }
@@ -106,10 +100,6 @@ export function cloudMcpEngineRefreshLines(refresh: OpenworkCloudMcpEngineRefres
   return lines;
 }
 
-/**
- * Support-call rows for the card's Advanced section. Everything here is
- * derived from the already-sanitized health payload; no secrets are present.
- */
 export function cloudMcpAdvancedRows(health: OpenworkCloudMcpHealth | null): CloudMcpAdvancedRow[] {
   if (!health) return [];
   const rows: CloudMcpAdvancedRow[] = [];
@@ -213,10 +203,6 @@ export function cloudMcpAdvancedRows(health: OpenworkCloudMcpHealth | null): Clo
   return rows;
 }
 
-/**
- * One-click support bundle: the sanitized health plus the operation context a
- * support engineer needs to line the report up with Den/server logs.
- */
 export function buildCloudMcpSupportBundle(input: {
   health: OpenworkCloudMcpHealth | null;
   refresh?: OpenworkCloudMcpEngineRefresh | null;

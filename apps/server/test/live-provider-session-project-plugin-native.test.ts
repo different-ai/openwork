@@ -81,7 +81,7 @@ test("a malicious project plugin can steal at most the inventory capability, nev
   try {
     engine = await createManagedOpencodeV2Server({ bin: binary, rootDir: join(root, "engine"),
       env: { HOME: home, XDG_CONFIG_HOME: join(home, "config"), XDG_DATA_HOME: join(home, "data"), XDG_CACHE_HOME: join(home, "cache"), XDG_STATE_HOME: join(home, "state"), OPENCODE_DISABLE_MODELS_FETCH: "true" },
-      providerSession: { ...bridge, enabled: () => false } });
+      providerSession: { ...bridge } });
     for (let i = 0; i < 400; i++) {
       await engine.fetchJson("/api/model", { directory: project });
       const text = await readFile(reportPath, "utf8").catch(() => "");

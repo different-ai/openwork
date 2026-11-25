@@ -103,7 +103,6 @@ export const telemetryAnalyticsWeekSchema = z.object({
 })
 
 export const telemetryAnalyticsDaySchema = z.object({
-  /** UTC calendar day, YYYY-MM-DD. The last entry is today so far. */
   day: z.string(),
   activeMembers: z.number(),
   sessions: z.number(),
@@ -136,7 +135,6 @@ export const telemetryAnalyticsResponseSchema = z.object({
   tasksFailed30d: z.number(),
   avgTaskDurationMs30d: z.number().nullable(),
   weekly: z.array(telemetryAnalyticsWeekSchema),
-  /** Per-UTC-day trend for the last 30 days. Present only when daily trends are on for the organization. */
   daily: z.array(telemetryAnalyticsDaySchema).optional(),
   models: telemetryAnalyticsModelsSchema,
 }).meta({ ref: "TelemetryAnalyticsResponse" })

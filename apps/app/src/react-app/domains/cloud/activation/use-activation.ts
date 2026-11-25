@@ -4,14 +4,13 @@ import type { ActivationClientEvent, ActivationState } from "@openwork/types/den
 import { createDenClient, denOriginComparisonKey } from "@/app/lib/den";
 import { readGatewayUsageScope, subscribeGatewayUsageScope } from "@/app/lib/gateway-usage-scope";
 import { getReactQueryClient } from "@/react-app/infra/query-client";
+import { AUTO_PROVIDER_ID } from "@/react-app/domains/models/model-catalog";
+import { isCloudManagedProviderKey } from "@/react-app/domains/connections/provider-auth/cloud-provider-config";
+import { providerCredentialScope, useProviderCredentialHealth } from "@/react-app/domains/connections/provider-auth/credential-health";
 import { useDenAuth } from "../den-auth-provider";
-import { createActivationReporter, draftUsesSkill } from "./activation-model";
+import { useOrgFeature } from "../use-org-feature";
+import { activationHiddenStorageKey, createActivationReporter, draftUsesSkill, hasDeviceConnection, hasVerifiedDeviceProvider } from "./activation-model";
 import { createActivationCache } from "./activation-cache";
-
-/**
- * The signed-in person's Get set up checklist from Den (`GET /v1/me/activation`). Den answers 404 while the
- * `activationChecklist` feature is off; the client then has no checklist and reports nothing.
- */
 
 type DenScope = ReturnType<typeof readGatewayUsageScope>;
 
@@ -39,22 +38,62 @@ export function useActivation() {
     queryKey: [...activationQueryPrefix(scope), principalId],
     enabled: authorized,
     queryFn: async (): Promise<ActivationState | null> => (organizationId ? clientFor(scope).getActivation(organizationId) : null),
-    // Off (null) rarely changes: check again on focus or after a few minutes, not on every render.
     staleTime: (current) => (current.state.data === null ? 300_000 : 30_000),
     refetchOnWindowFocus: "always",
     retry: false,
   });
   const state = authorized ? query.data ?? null : null;
   const prefixKey = JSON.stringify(activationQueryPrefix(scope));
-  // An answer that finished before Den's checklist was known is reported once it is.
   useEffect(() => {
     if (!state || !pendingFirstAnswer || pendingFirstAnswer.key !== prefixKey) return;
     const { durationMs } = pendingFirstAnswer;
     pendingFirstAnswer = null;
     void reportActivationEvent("first_response", durationMs);
   }, [state, prefixKey]);
-  return { state, refetch: query.refetch };
+  const localSetup = useOrgFeature("activationLocalSetup");
+  useEffect(() => {
+    if (!authorized || !localSetup) return;
+    localSetupKey = prefixKey;
+    reportDeviceConnection();
+    return () => { if (localSetupKey === prefixKey) localSetupKey = null; };
+  }, [authorized, localSetup, prefixKey]);
+  const deviceProviderWorks = useProviderCredentialHealth((health) => hasVerifiedDeviceProvider(health, managedProvider));
+  useEffect(() => {
+    if (state && localSetup && deviceProviderWorks) void reportActivationEvent("own_provider");
+  }, [state, localSetup, deviceProviderWorks]);
+  const denOrigin = denOriginComparisonKey(scope.baseUrl);
+  const hiddenKey = authorized && denOrigin && organizationId && principalId
+    ? activationHiddenStorageKey({ origin: denOrigin, organizationId, principalId })
+    : null;
+  const hidden = useSyncExternalStore(subscribeHidden, () => readHidden(hiddenKey), () => false);
+  const hide = () => {
+    if (!hiddenKey) return;
+    writeHidden(hiddenKey);
+    void reportActivationEvent("dismiss");
+  };
+  return { state, hidden, hide, refetch: query.refetch };
 }
+
+const hiddenListeners = new Set<() => void>();
+
+function subscribeHidden(listener: () => void) {
+  hiddenListeners.add(listener);
+  return () => { hiddenListeners.delete(listener); };
+}
+
+function readHidden(key: string | null): boolean {
+  if (!key) return false;
+  if (hiddenOverrides.has(key)) return true;
+  try { return window.localStorage.getItem(key) === "1"; } catch { return false; }
+}
+
+function writeHidden(key: string) {
+  try { window.localStorage.setItem(key, "1"); } catch {}
+  hiddenOverrides.add(key);
+  for (const listener of hiddenListeners) listener();
+}
+
+const hiddenOverrides = new Set<string>();
 
 type ReporterScope = DenScope & { key: string; source: DenScope; queryKey: readonly unknown[] };
 
@@ -66,7 +105,6 @@ const report = createActivationReporter<ReporterScope>({
   onState: (scope, state) => { activationCache.write(scope.source, state, scope.queryKey); },
 });
 
-/** Reports a step only this app can observe, while Den shows the checklist; never throws. */
 export function reportActivationEvent(step: ActivationClientEvent, durationMs?: number): Promise<boolean> {
   const scope = readGatewayUsageScope();
   if (!scope.token || !scope.organizationId) return Promise.resolve(false);
@@ -75,15 +113,33 @@ export function reportActivationEvent(step: ActivationClientEvent, durationMs?: 
   return report({ ...scope, source: scope, queryKey, key: JSON.stringify(queryKey) }, step, durationMs);
 }
 
+function managedProvider(providerId: string): boolean {
+  return isCloudManagedProviderKey(providerId) || providerId === AUTO_PROVIDER_ID;
+}
+
+let localSetupKey: string | null = null;
+
+let deviceConnectionSeen = false;
+
+export function noteActivationConnectionStatuses(engineBaseUrl: string, statuses: Readonly<Record<string, { status: string }>>) {
+  deviceConnectionSeen = providerCredentialScope(engineBaseUrl) === "device" && hasDeviceConnection(statuses);
+  reportDeviceConnection();
+}
+
+function reportDeviceConnection() {
+  if (!deviceConnectionSeen || !localSetupKey) return;
+  const scope = readGatewayUsageScope();
+  if (!scope.token || !scope.organizationId || localSetupKey !== JSON.stringify(activationQueryPrefix(scope))) return;
+  void reportActivationEvent("connector");
+}
+
 const skillRuns = new Set<string>();
 let pendingFirstAnswer: { key: string; durationMs: number } | null = null;
 
-/** A message was sent: remember whether it runs a skill, to report once its answer completes. */
 export function noteActivationRunStarted(sessionId: string, parts: readonly { type: string }[] | undefined) {
   if (draftUsesSkill(parts)) skillRuns.add(sessionId);
 }
 
-/** An answer completed: the first answer (with how long it took) and, if the message ran a skill, using a skill. */
 export function noteActivationRunCompleted(sessionId: string, durationMs: number) {
   const scope = readGatewayUsageScope();
   if (scope.token && scope.organizationId) pendingFirstAnswer ??= { key: JSON.stringify(activationQueryPrefix(scope)), durationMs };

@@ -10,7 +10,6 @@ export type LiveProviderSyncStatus = {
   liveProviderSync?: boolean;
 };
 
-/** Only an engine confirming ownership can replace the legacy refresh path. */
 export function usesLiveProviderSync(input: {
   baseUrl: string;
   status?: LiveProviderSyncStatus | null;
@@ -30,12 +29,19 @@ export function skipsLegacyProviderRefresh(reason: string, liveProviderSync: boo
   return liveProviderSync && (reason === "model_picker_open" || reason === "new_chat" || reason === "manual");
 }
 
-/**
- * Models the app read from Den itself, for merging into the pickers. With live
- * sync the engine's list is authoritative and current, while this list is only
- * refreshed at start and sign-in: once the engine has answered, merging it
- * would keep showing a model the organization turned off.
- */
+export type GatewaySignInSyncOutcome = void | { outcome: "handled_server_side" | "handled_live" };
+
+export async function resyncAfterGatewaySignIn(input: {
+  runSync: () => Promise<GatewaySignInSyncOutcome>;
+  refreshProviders: () => Promise<unknown>;
+  gatewayUsageProviderScope: () => number | null | undefined;
+}): Promise<boolean> {
+  const result = await input.runSync();
+  await input.refreshProviders();
+  if (result && (result.outcome === "handled_live" || result.outcome === "handled_server_side")) return true;
+  return input.gatewayUsageProviderScope() != null;
+}
+
 export function pickerFallbackModels<T>(input: { liveProviderSync: boolean; engineListLoaded: boolean; assigned: readonly T[] }): readonly T[] {
   return input.liveProviderSync && input.engineListLoaded ? [] : input.assigned;
 }

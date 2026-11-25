@@ -1,8 +1,11 @@
 # AI provider credential status
 
-- Feature: `providerCredentialStatus`
+> **GA:** Available without a feature flag. The former rollout key is retired.
+> Off/on screenshots below are historical comparisons, not current deployment options.
+
+- Retired rollout key: `providerCredentialStatus`
 - Deployments: cloud and self-hosted
-- Default: off
+- Status: generally available (no flag)
 - Owner: `benjaminshafii`
 
 AI Providers distinguishes a saved credential from one that has actually
@@ -22,8 +25,7 @@ credential rejections.
 
 ## Try it
 
-Enable the feature for a test organization in `/admin`, or on the deployment
-for a signed-out desktop. Connect a provider, send a chat, then reopen
+Connect a provider, send a chat, then reopen
 Settings > AI Providers. A newly saved key reads **Not checked yet**. A rejected
 key offers recovery rather than claiming readiness. Replacing it clears the
 old verdict; a later successful request earns **Ready to use**.
@@ -69,13 +71,8 @@ another client is not detected until a configuration refresh or a request
 provides new evidence. The app never probes a provider merely to display the
 status. Chat error copy and upstream Gateway mappings are unchanged.
 
-## Turning it off
+## Availability
 
-The kill switch restores the previous provider statuses and actions. It does
-not alter credentials, catalogs, model selections, sessions or in-flight work.
-Stored observations remain harmless local data, reusable when re-enabled.
-Watch for incorrect attribution after model switches, false rejections on
-non-authentication errors, and recovery actions on the wrong provider.
-
-Design: P1 (report observed state), P5 (reuse rows and buttons), C6 (recovery
-beside failure), V2 (existing neutral and attention tokens).
+Generally available. The rollout flag is retired; organization/member overrides,
+operator locks and old kill-switch rows no longer disable this behavior.
+Authorization, provider setup, consent and runtime compatibility still apply.

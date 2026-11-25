@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState, type ReactNode } from "react";
 
-/** Close a popover on outside pointer or Escape. */
 export function useDismiss(open: boolean, onClose: () => void) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
@@ -31,13 +30,11 @@ type DemoMenuProps = {
   items: MenuItem[];
   onSelect: (id: string) => void;
   triggerClassName: string;
-  /** Open above the trigger (composer) or below it (toolbars). */
   placement?: "top" | "bottom";
   align?: "start" | "end";
   title?: string;
 };
 
-/** Small menu for the product previews. Button + list, closes on pick, outside click or Escape. */
 export function DemoMenu({ label, trigger, items, onSelect, triggerClassName, placement = "top", align = "start", title }: DemoMenuProps) {
   const [open, setOpen] = useState(false);
   const ref = useDismiss(open, () => setOpen(false));

@@ -1,5 +1,12 @@
 import type { DynamicToolUIPart } from "ai";
-import { getConnectionStatusProbeId } from "@/lib/capability-call";
+import {
+  CONNECT_STATUS_TOOL,
+  connectActionForConnection,
+  connectActionToolName,
+  connectDenOperation,
+  connectToolNamespace,
+  getConnectionStatusProbeId,
+} from "@/lib/capability-call";
 
 import { getMcpServerName, MCP_QUICK_CONNECT } from "@/app/constants";
 import type { DenExternalMcpConnection } from "@/app/lib/den";
@@ -17,7 +24,6 @@ export type ConnectorToolIdentity = {
   serviceUrl: string | null;
   toolNamespace: string | null;
   connectionId: string | null;
-  /** Live member status from the org connection list; absent when unknown. */
   connectedForMe?: boolean;
 };
 
@@ -107,11 +113,6 @@ function identityFromConnection(connection: DenExternalMcpConnection): Connector
   };
 }
 
-/**
- * One first-class presentation inventory for every connector source the
- * desktop knows about. Later, user- and organization-specific entries replace
- * catalog fallbacks with the exact name, URL, and connection id in use.
- */
 export function buildConnectorToolIdentities(input: {
   mcpServers: McpServerEntry[];
   orgConnections: DenExternalMcpConnection[];
@@ -154,17 +155,10 @@ function capabilityName(part: DynamicToolUIPart): string | null {
   return typeof name === "string" && name.trim() ? name.trim() : null;
 }
 
-/** Same slug the server uses in `connectDirectMcpRuntimeName`. */
 function directSlug(name: string): string {
   return name.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40);
 }
 
-/**
- * Directly exposed org connections run as `openwork-direct-<slug>-<digest>`
- * tools. Attribute them to the org connection with that name (its own icon
- * and display name); when the name is ambiguous or unknown, fall back to the
- * catalog entry for the service so the logo still shows.
- */
 function directConnectionIdentity(toolName: string, identities: ConnectorToolIdentity[]): ConnectorToolIdentity | null {
   if (!toolName.startsWith(CONNECT_DIRECT_MCP_SERVER_NAME_PREFIX)) return null;
   const namespace = toolName.split("_")[0] ?? "";
@@ -184,7 +178,30 @@ function directConnectionIdentity(toolName: string, identities: ConnectorToolIde
   } : null;
 }
 
-/** Resolve a rendered tool call only when it can be attributed to a connector. */
+function connectToolIdentity(part: DynamicToolUIPart, identities: ConnectorToolIdentity[]): ConnectorToolIdentity | null {
+  const owns = connectToolOwnerTest(part);
+  if (!owns) return null;
+  const owned = identities
+    .filter((identity) => owns(identity.name))
+    .sort((left, right) => (
+      connectToolNamespace(right.name).length - connectToolNamespace(left.name).length
+      || Number(Boolean(right.connectionId)) - Number(Boolean(left.connectionId))
+    ));
+  return owned[0] ?? null;
+}
+
+function connectToolOwnerTest(part: DynamicToolUIPart): ((connectionName: string) => boolean) | null {
+  if (part.toolName === CONNECT_STATUS_TOOL) {
+    const input = part.input && typeof part.input === "object" && "connection" in part.input ? part.input.connection : null;
+    if (typeof input !== "string") return null;
+    const namespace = input.trim().replace(/_\d+$/, "");
+    return (name) => [input.trim(), namespace].includes(connectToolNamespace(name));
+  }
+  const action = connectActionToolName(part.toolName);
+  if (!action || connectDenOperation(part.toolName)) return null;
+  return (name) => connectActionForConnection(action, name) !== null;
+}
+
 export function resolveConnectorToolIdentity(
   part: DynamicToolUIPart,
   identities: ConnectorToolIdentity[],
@@ -214,6 +231,9 @@ export function resolveConnectorToolIdentity(
     ));
     if (named) return named;
   }
+
+  const connectTool = connectToolIdentity(part, identities);
+  if (connectTool) return connectTool;
 
   const direct = directConnectionIdentity(part.toolName, identities);
   if (direct) return direct;

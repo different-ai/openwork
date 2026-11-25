@@ -13,8 +13,10 @@ with a normal revert if needed.
 When a flag is warranted, it is a **feature** in the registry, declared
 **before any feature code**, off.
 
-Registry: `packages/features/src/registry.ts` (package `@openwork/features`).
-That file is the only one you edit to declare a feature. The rules live in
+Registry: `packages/features/src/flags/` (package `@openwork/features`), one
+file per feature. Adding that file is the only edit that declares a feature;
+no shared list is edited by hand, so two PRs that each add a feature do not
+conflict. The rules live in
 `resolve.ts` and are tested in `resolve.test.ts`
 (`pnpm --filter @openwork/features test`).
 
@@ -73,8 +75,13 @@ If you are unsure, add a flag. When you ship without one, say in the PR why user
 
 ## 1. Declare it, off
 
+Create `packages/features/src/flags/new-thing.ts`. The file name is the key
+in kebab-case: `new-thing.ts` declares `newThing`.
+
 ```ts
-newThing: {
+import { defineFeature } from "@openwork/features/define"
+
+export default defineFeature({
   label: "New thing",
   description: "What a person gets, in words they see in the product.",
   category: "workbot",
@@ -84,11 +91,11 @@ newThing: {
   docs: "docs/features/new-thing/README.md",
   deployments: ["cloud", "self_hosted"],
   default: false,
-},
+})
 ```
 
 - **Key**: lowerCamelCase, no consecutive capitals. Permanent: also the Helm key, `DEN_FEATURE_NEW_THING`, the API field and stored rows.
-- **category**: the group `/admin` lists it under, one of `FEATURE_CATEGORIES` at the top of the registry. Pick the one a platform admin would look under; add a group there only when none fits.
+- **category**: the group `/admin` lists it under, one of `FEATURE_CATEGORIES` in `packages/features/src/define.ts`. Pick the one a platform admin would look under; add a group there only when none fits.
 - **added**: the day you add the flag, `YYYY-MM-DD`. It never changes (`since` moves when the entry changes). Shown in `/admin` as "Added 26 Oct 2026".
 - **Deployments**: leave one out on purpose (e.g. `["cloud"]` for a cloud-only feature).
 - **default**: false for new work. A fresh deployment, and a client that cannot reach Den, uses it, so never ship half-done work as `true`.
@@ -99,7 +106,12 @@ newThing: {
   - Both: the feature key, its deployments, and the author.
 - **permanent: true** only when the switch itself is part of the product (e.g. turning Connect off for one organization). Rollouts are temporary.
 
-Then run `pnpm features:sync` and commit the Helm files with the registry.
+Then run `pnpm features:sync` and commit `packages/features/src/all-flags.ts`
+with the new file. That generated list is the only shared file a new feature
+touches; if it conflicts in a merge, keep either side and run
+`pnpm features:sync` again. To remove a feature, delete its file and run the
+same command. The Helm chart in git lists no feature keys: the publish
+workflow writes them into the chart it packages.
 OpenAPI and SDK outputs are ignored build artifacts: CI regenerates, lints and
 typechecks them from the source change. `pnpm sdk:build` generates them locally
 when needed; use `pnpm den:contract` for a forced generation with disposable

@@ -1,0 +1,1 @@
+ALTER TABLE `remote_session_command` ADD `session_latest_step` varchar(240);

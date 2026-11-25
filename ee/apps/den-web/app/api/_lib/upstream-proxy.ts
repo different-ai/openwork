@@ -17,8 +17,6 @@ const HOP_BY_HOP_HEADERS = new Set([
   "transfer-encoding",
   "upgrade",
 ]);
-// The incoming body is fully read before forwarding. Do not repeat the client's
-// 100-continue handshake: Node/undici fetch rejects an explicit Expect header.
 const REQUEST_ONLY_HEADERS = new Set(["host", "content-length", "expect"]);
 const RESPONSE_ONLY_HEADERS = new Set(["content-length", "content-encoding"]);
 const SPOOFABLE_FORWARDING_HEADERS = new Set(["forwarded", "x-forwarded-host", "x-forwarded-prefix", "x-forwarded-proto"]);
@@ -50,25 +48,8 @@ const AUTH_COOKIE_PREFIXES = [
   "__Secure-better-auth.",
   "better-auth-",
 ];
-// Covers the existing 20 MiB Gmail attachment flow after base64/JSON overhead;
-// individual upload endpoints keep enforcing their narrower limits downstream.
 const DEFAULT_REQUEST_BODY_MAX_BYTES = 32 * 1024 * 1024;
 
-/**
- * OpenWork Cloud instances are served from Daytona preview origins that are
- * re-signed (and therefore renamed) on every wake, so they can never appear in
- * a static CORS allowlist. The signed-in SPA running there has to reach Den for
- * /v1/me, /v1/me/orgs, MCP tokens and org connections.
- *
- * We reflect those origins, and make that safe by stripping the cookie header
- * from the forwarded request: an instance-origin call is authenticated by its
- * bearer token alone and can never ride the viewer's app.openworklabs.com
- * session. A hostile page on some other origin therefore gains nothing from the
- * reflection - it has no bearer token and its cookies are discarded.
- *
- * Only the Den API proxy opts in; /api/auth keeps cookies and the strict
- * allowlist, because that is where sessions are actually established.
- */
 const DEN_API_ROUTE_PREFIX = "/api/den";
 const BROWSER_API_ROUTE_PREFIX = "/api/browser/v1";
 const DEFAULT_CLOUD_INSTANCE_ORIGIN_SUFFIXES = [".daytonaproxy01.net"];
@@ -104,8 +85,6 @@ function reflectsCloudInstanceOrigin(request: NextRequest, options: ProxyOptions
 }
 
 function applyCloudInstanceCorsHeaders(headers: Headers, origin: string): void {
-  // Never emit a second allow-origin: browsers reject duplicates, and den-api
-  // already reflects on the grant-exchange route.
   if (!headers.has("access-control-allow-origin")) {
     headers.set("access-control-allow-origin", origin);
     headers.set("access-control-allow-credentials", "true");
@@ -155,7 +134,6 @@ function requestPublicOrigin(request: NextRequest): URL {
         return forwarded;
       }
     } catch {
-      // Fall through to the request URL when the ingress headers are malformed.
     }
   }
 
@@ -168,8 +146,6 @@ function isSameOriginBrowserRequest(request: NextRequest): boolean {
 
   const origin = request.headers.get("origin");
   if (origin !== null) return origin === requestPublicOrigin(request).origin;
-  // Browsers omit Origin for same-origin reads, but writes must prove the
-  // exact web origin. A sibling site's cookies are not authority to mutate Den.
   return request.method === "GET" || request.method === "HEAD";
 }
 
@@ -281,8 +257,6 @@ async function cloneRequestHeaders(
   const headers = new Headers();
   request.headers.forEach((value, name) => {
     if (shouldSkipRequestHeader(name)) return;
-    // Bearer-only for reflected instance origins - see the note above
-    // isCloudInstanceOrigin. This is what makes reflection safe.
     if (stripCookies && name.toLowerCase() === "cookie") return;
     if ((routePrefix === "/api/auth" || routePrefix === BROWSER_API_ROUTE_PREFIX) && name.toLowerCase() === "cookie") {
       const authCookies = value
@@ -614,7 +588,6 @@ async function readRequestBody(request: NextRequest, maxBytes: number): Promise<
       if (chunk.done) break;
       observedBytes += chunk.value.byteLength;
       if (observedBytes > maxBytes) {
-        // Refusal must not wait for an uncooperative producer to finish cancelling.
         void reader.cancel().catch(() => {});
         return { ok: false, observedBytes };
       }
@@ -624,11 +597,6 @@ async function readRequestBody(request: NextRequest, maxBytes: number): Promise<
     reader.releaseLock();
   }
 
-  // Forward a Blob, never an ArrayBuffer or a view: Next 16's patched fetch
-  // hands buffer-backed bodies to undici with their backing ArrayBuffer
-  // detached — even a fresh copy — so every proxied write threw "Cannot
-  // perform ArrayBuffer.prototype.slice on a detached ArrayBuffer" while
-  // GETs (null body) kept working. A Blob owns its bytes and survives the hop.
   return { ok: true, body: new Blob(chunks as BlobPart[]), observedBytes };
 }
 
@@ -690,8 +658,6 @@ export async function proxyUpstream(
     ? request.headers.get("origin")
     : null;
 
-  // Answer the preflight here: den-api's allowlist cannot know this origin, and
-  // the browser will not send the real request without it.
   if (instanceOrigin && request.method === "OPTIONS") {
     const preflight = new Headers({
       "access-control-allow-origin": instanceOrigin,
@@ -786,7 +752,6 @@ export async function proxyUpstream(
             expect: requestHeaders.get("expect"),
           }));
         } catch {
-          // Collection/export must not replace the original response or abort.
         }
       }
       if (cause === "client") {

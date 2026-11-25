@@ -1,9 +1,3 @@
-/**
- * Whether every effective linked assignment can be represented by the public
- * usable/auth-required aliases. A universe-policy exclusion is deliberate; a
- * missing catalog row, invalid model config, or omitted credential target is
- * not evidence that the assignment was removed.
- */
 export function gatewayGroupAssignmentsComplete(input: {
   linkedModelIds: Iterable<string>;
   catalogModelsById: ReadonlyMap<string, { model_id: string }>;

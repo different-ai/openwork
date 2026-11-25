@@ -77,13 +77,11 @@ export function createManagedProcessClose(
       try {
         child.kill("SIGTERM");
       } catch {
-        // Re-check through the exit event before escalating.
       }
       if (await waitForExit(options.termTimeoutMs ?? 1_000)) return;
       try {
         child.kill("SIGKILL");
       } catch {
-        // Re-check below; kill can race a natural exit.
       }
       if (!await waitForExit(options.killTimeoutMs ?? 500)) {
         throw new Error("Managed OpenCode process did not exit after SIGKILL");
@@ -133,15 +131,10 @@ type ManagedOpencodeServerOptions = {
   excludedPorts?: number[];
   timeoutMs?: number;
   env?: Record<string, string | undefined>;
-  /**
-   * OpenWork-owned directory engine v1 may move its database or global config
-   * into when a standalone OpenCode v2 install owns the shared ones. Omit it to
-   * keep that recovery disabled.
-   */
   stateDir?: string;
 };
 
-class ManagedOpencodeExitError extends Error {
+export class ManagedOpencodeExitError extends Error {
   readonly exitCode: number | null;
   readonly addressInUse: boolean;
 
@@ -158,16 +151,6 @@ function isRetryableAddressInUseExit(error: unknown): boolean {
     error.addressInUse;
 }
 
-/**
- * Engine v1 and a standalone OpenCode v2 share the same default database and
- * global config paths. A v2 database has `session_v2` and no `session`, and a
- * v2 global config may use the `permissions` array; v1 exits 1 on either, and
- * the whole app then fails to start.
- *
- * Each collision moves only the part that collided, and only after v1 refused
- * it. A shared database that v1 can open is never moved, so existing v1 history
- * (the source of the v1 to v2 history migration) stays where it was.
- */
 type ForeignStorage = "database" | "config";
 
 const FOREIGN_DATABASE_EXIT = /Database is not empty and has no session table/;
@@ -182,10 +165,9 @@ function isInside(parent: string, child: string): boolean {
   return path === "" || (!path.startsWith("..") && !isAbsolute(path));
 }
 
-/** Which shared store, if any, made engine v1 exit. Project config errors are not ours to move. */
-function foreignStorageExit(error: unknown, env: NodeJS.ProcessEnv): ForeignStorage | null {
+export function foreignStorageExit(error: unknown, env: NodeJS.ProcessEnv): ForeignStorage | null {
   if (!(error instanceof ManagedOpencodeExitError) || error.exitCode !== 1) return null;
-  if (!env.OPENCODE_DB?.trim() && FOREIGN_DATABASE_EXIT.test(error.message)) return "database";
+  if (FOREIGN_DATABASE_EXIT.test(error.message)) return "database";
   const config = error.message.match(FOREIGN_CONFIG_EXIT)?.[1]?.trim();
   if (config && isInside(globalOpencodeConfigDir(env), config)) return "config";
   return null;
@@ -193,20 +175,10 @@ function foreignStorageExit(error: unknown, env: NodeJS.ProcessEnv): ForeignStor
 
 let isolatedDatabase: string | undefined;
 
-/**
- * The private database engine v1 was moved to in this process, if any. Its
- * chats live there rather than in the shared path, so the v1 to v2 history
- * migration must read them from here.
- */
 export function isolatedOpencodeV1Database(): string | undefined {
   return isolatedDatabase;
 }
 
-/**
- * Private storage for the part that collided. `XDG_CONFIG_HOME` is the only way
- * to move v1's global config: `OPENCODE_CONFIG_DIR` only adds a layer on top.
- * It is set on the engine process alone, so OpenWork's own paths do not move.
- */
 async function isolatedEngineStorageEnv(stateDir: string, storage: ForeignStorage): Promise<Record<string, string>> {
   await mkdir(stateDir, { recursive: true, mode: 0o700 });
   await chmod(stateDir, 0o700);
@@ -228,10 +200,6 @@ async function startManagedOpencodeServer(
   const password = randomSecret();
   const args = ["serve", "--hostname", hostname, "--port", String(port), "--cors", "*"];
   const command = options.bin?.trim() || "opencode";
-  // The engine's in-process npm installs use Arborist, which audits by default.
-  // That audit POST depends on npm's advisories endpoint, which has been observed
-  // to hang for the full five-minute registry timeout, so first-run must not wait.
-  // @npmcli/config reads npm_config_* settings from the environment.
   const engineEnvDefaults = { npm_config_audit: "false" };
   const env: NodeJS.ProcessEnv = mergeEnv([
     process.env,
@@ -239,8 +207,6 @@ async function startManagedOpencodeServer(
     options.env,
     { OPENCODE_SERVER_USERNAME: username, OPENCODE_SERVER_PASSWORD: password },
   ]);
-  // The managed engine needs its own provider environment, but never the key
-  // that decrypts OpenWork-owned OAuth credentials, under any Windows spelling.
   deleteEnv(env, "OPENWORK_ENCRYPTION_KEY");
   const injectedEnv = Object.entries({
     ...engineEnvDefaults,
@@ -272,9 +238,6 @@ async function startManagedOpencodeServer(
       let addressInUse = false;
       const output = () => `stdout:\n${stdout}\nstderr:\n${stderr}`;
       const collect = (tail: string, text: string) => {
-        // Remember the retry signal even if later diagnostics evict it. Keep
-        // stream boundaries separate, including a token split across chunks.
-        // Do not invent a word boundary where the overlap was cut.
         addressInUse ||= /\bEADDRINUSE\b[\s\S]/.test((tail.length > 16 ? "_" : "") + tail.slice(-16) + text);
         return appendEngineOutputTail(tail, text);
       };
@@ -308,7 +271,6 @@ async function startManagedOpencodeServer(
           addressInUse || /\bEADDRINUSE$/.test(stdout) || /\bEADDRINUSE$/.test(stderr)));
       };
       child.stdout?.on("data", (chunk) => {
-        // Keep draining both pipes after startup, without decoding or parsing.
         if (settled) return;
         const text = chunk.toString();
         stdout = collect(stdout, text);
@@ -319,8 +281,6 @@ async function startManagedOpencodeServer(
         stderr = collect(stderr, chunk.toString());
       });
       child.on("error", fail);
-      // ChildProcess can emit "exit" before its stdio pipes have drained. Wait
-      // for "close" so retry classification includes every diagnostic line.
       child.once("close", onClose);
     });
   } catch (error) {
@@ -352,17 +312,11 @@ async function createManagedOpencodeServerInner(options: ManagedOpencodeServerOp
   const hostname = options.hostname ?? "127.0.0.1";
   let port = options.port ?? await findFreePort(hostname, options.excludedPorts);
   let env = options.env;
-  // Each recovery is taken at most once, independently: a machine whose v2
-  // install owns both the database and the global config needs both moved, and
-  // a moved engine can still lose the free-port race.
   const retried = new Set<"port" | ForeignStorage>();
   for (;;) {
     try {
       return await startManagedOpencodeServer({ ...options, env }, hostname, port);
     } catch (error) {
-      // The automatic free-port probe is necessarily racy. Retry exactly once on
-      // the one startup failure that a new port can safely fix; explicit ports
-      // and all other code-1 exits remain actionable.
       if (options.port === undefined && !retried.has("port") && isRetryableAddressInUseExit(error)) {
         retried.add("port");
         port = await findFreePort(hostname, [...(options.excludedPorts ?? []), port]);

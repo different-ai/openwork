@@ -52,8 +52,6 @@ export function buildGoogleAuthorizeUrl(input: {
   url.searchParams.set("response_type", "code")
   url.searchParams.set("scope", GOOGLE_OAUTH_SCOPES)
   url.searchParams.set("access_type", "offline")
-  // Always show Google's account chooser so "Switch account" can pick another
-  // account; consent keeps Google issuing the refresh token the Gateway needs.
   url.searchParams.set("prompt", "consent select_account")
   url.searchParams.set("include_granted_scopes", "true")
   url.searchParams.set("code_challenge", input.codeChallenge)

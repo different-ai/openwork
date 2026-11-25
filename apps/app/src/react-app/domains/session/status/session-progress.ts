@@ -13,11 +13,9 @@ export function activeDelegatedTasks(messages: UIMessage[]): TaskToolPart[] {
       if (isToolUIPart(part) && isTaskToolPart(part)) calls.set(part.toolCallId, part);
     }
   }
-  // A child being idle is not evidence that the delegating tool completed.
   return [...calls.values()].filter(isToolPartInFlight);
 }
 
-/** Fixed tool categories keep context useful without reflecting arguments or payloads. */
 function safeToolActivity(part: UIMessage["parts"][number]): string {
   if (!isToolUIPart(part)) return "Tool activity received";
   const name = part.type === "dynamic-tool" ? part.toolName : part.type.slice(5);
@@ -52,8 +50,6 @@ function fingerprint(value: unknown): string {
   return String(hash >>> 0);
 }
 
-// Settled parts retain identity during streaming. Do not rehash old text or
-// large tool results on every new token; the weak keys follow cache eviction.
 const partFingerprints = new WeakMap<UIMessage["parts"][number], string>();
 function partFingerprint(part: UIMessage["parts"][number], value: () => unknown): string {
   const cached = partFingerprints.get(part);
@@ -63,7 +59,6 @@ function partFingerprint(part: UIMessage["parts"][number], value: () => unknown)
   return next;
 }
 
-/** Only content and lifecycle changes count. Never hash polling/timing metadata. */
 export function transcriptProgress(messages: UIMessage[], previousParts: Record<string, string> = {}): Progress {
   const parts: Record<string, string> = {};
   let label: string | null = null;
@@ -89,7 +84,7 @@ export function transcriptProgress(messages: UIMessage[], previousParts: Record<
     for (const [index, part] of message.parts.entries()) {
       const key = `${message.id}:${isToolUIPart(part) ? part.toolCallId : index}`;
       let activity: string;
-      if ((part.type === "text" || part.type === "reasoning") && (part.text.trim() || (part.type === "reasoning" && typeof part.providerMetadata?.opencode?.startedAt === "number"))) {
+      if ((part.type === "text" || part.type === "reasoning") && part.text.trim()) {
         parts[key] = partFingerprint(part, () => [part.type, part.text, part.state]);
         activity = part.type === "text" ? "Response updated" : "Reasoning activity received";
       } else if (isToolUIPart(part)) {
@@ -97,7 +92,6 @@ export function transcriptProgress(messages: UIMessage[], previousParts: Record<
           part.state === "output-available" ? part.output : null,
           part.state === "output-error" ? part.errorText : null]);
         if (isToolPartInFlight(part)) active = true;
-        // Fixed labels, not raw arguments, outputs, prompts, or tool payloads.
         activity = part.state === "output-available" ? "Tool result received"
           : part.state === "output-error" ? "Tool reported an error"
           : safeToolActivity(part);

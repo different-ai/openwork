@@ -73,7 +73,7 @@ resource "aws_iam_role_policy_attachment" "execution" {
 data "aws_iam_policy_document" "execution_secrets" {
   statement {
     actions   = ["secretsmanager:GetSecretValue"]
-    resources = concat([aws_secretsmanager_secret.app.arn], aws_secretsmanager_secret.runner[*].arn, [for a in local.extra_secret_resource_arns : a if strcontains(a, ":secretsmanager:")])
+    resources = concat([aws_secretsmanager_secret.app.arn], aws_secretsmanager_secret.runner[*].arn, aws_secretsmanager_secret.workbot[*].arn, values(local.runner_external_secrets), [for a in local.extra_secret_resource_arns : a if strcontains(a, ":secretsmanager:")])
   }
 
   dynamic "statement" {

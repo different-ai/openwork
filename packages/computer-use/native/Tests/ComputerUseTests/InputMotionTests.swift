@@ -2,6 +2,51 @@ import XCTest
 @testable import ComputerUse
 
 final class InputMotionTests: XCTestCase {
+    func testTheAgentsCursorTakesLongerForLongerMovesWithinBounds() {
+        XCTAssertEqual(CursorGlide.duration(distance: 0), 0, "no move, no wait")
+        let distances: [CGFloat] = [4, 40, 200, 800, 4_000]
+        let durations = distances.map { CursorGlide.duration(distance: $0) }
+        XCTAssertEqual(durations, durations.sorted(), "a longer move never arrives sooner")
+        XCTAssertTrue(durations.allSatisfy { $0 >= CursorGlide.shortest && $0 <= CursorGlide.longest })
+        XCTAssertLessThan(durations[0], durations[2], "a short hop is quicker than a sweep")
+        XCTAssertEqual(durations[4], CursorGlide.longest, "a sweep across the screen is capped")
+    }
+
+    func testTheAgentsCursorMovesToFitTheStepAndLeansIntoLongMoves() {
+        let click = CursorGlide.duration(distance: 300, action: "click")
+        XCTAssertLessThan(CursorGlide.duration(distance: 300, action: "scroll"), click, "a scroll zips over")
+        XCTAssertLessThan(CursorGlide.duration(distance: 300, action: "move"), click)
+        XCTAssertEqual(CursorGlide.duration(distance: 300, action: "press"), click, "a press takes the full approach")
+        XCTAssertEqual(CursorGlide.lean(dx: 80, distance: 80), 0, "short hops stay upright")
+        XCTAssertLessThan(CursorGlide.lean(dx: 600, distance: 600), 0, "moving right leans clockwise, forward")
+        XCTAssertGreaterThan(CursorGlide.lean(dx: -600, distance: 600), 0)
+        XCTAssertEqual(abs(CursorGlide.lean(dx: 2_000, distance: 2_000)), 0.12, accuracy: 0.0001, "at most about 7 degrees")
+    }
+
+    func testTheAgentsCursorVariesHowItSaysItIsPlanningAndReactsToOutcomes() {
+        let labels = (0..<CursorGlide.planning.count).map { CursorGlide.planningLabel(turn: $0, goal: nil) }
+        XCTAssertEqual(Set(labels).count, CursorGlide.planning.count, "each turn says it differently")
+        XCTAssertEqual(CursorGlide.planningLabel(turn: 0, goal: nil), CursorGlide.planningLabel(turn: CursorGlide.planning.count, goal: nil), "then it starts over")
+        XCTAssertEqual(CursorGlide.planningLabel(turn: 2, goal: "Draw a wave"), "Draw a wave", "a named goal says what it is working toward")
+        XCTAssertEqual(CursorGlide.label("Draw the curling wave silhouette across the canvas"), "Draw the curling wave silhouette ac…")
+        XCTAssertEqual(CursorGlide.label("Draw the curling wave silhouette across the canvas").count, CursorGlide.labelLength, "one short line")
+        XCTAssertEqual(CursorGlide.label("all yours"), "all yours")
+        XCTAssertNil(CursorReaction.after(nil), "an observation after no action has nothing to react to")
+        XCTAssertEqual(CursorReaction.after(["elements_changed": true]), .worked)
+        XCTAssertEqual(CursorReaction.after(["elements_changed": false, "no_visible_change": true]), .unchanged)
+    }
+
+    func testTheAgentsCursorBowsSlightlyAndAlwaysTheSameWay() {
+        let from = CGPoint(x: 100, y: 100), to = CGPoint(x: 500, y: 100)
+        let bend = CursorGlide.bend(from: from, to: to)
+        XCTAssertEqual(bend.x, 300, accuracy: 0.001, "it bows from the middle of the move")
+        XCTAssertEqual(bend.y - 100, 32, accuracy: 0.001, "8% of the distance, toward the top")
+        XCTAssertEqual(CursorGlide.bend(from: to, to: from).y, bend.y, accuracy: 0.001, "the same side either way")
+        let far = CursorGlide.bend(from: .zero, to: CGPoint(x: 0, y: 2_000))
+        XCTAssertEqual(far.x, 36, accuracy: 0.001, "a long vertical move bows right, at most 36 points")
+        XCTAssertEqual(CursorGlide.bend(from: from, to: from), from, "no move, no bow")
+    }
+
     func testPathEndsOnEveryPointWithShortSteps() {
         let points = [CGPoint(x: 0, y: 0), CGPoint(x: 100, y: 0), CGPoint(x: 100, y: 35)]
         let path = PointerMotion.path(points, maxStep: 10)

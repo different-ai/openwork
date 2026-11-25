@@ -6,7 +6,6 @@ import { Checkbox } from "@/components/ui/checkbox"
 import { Input } from "@/components/ui/input"
 import { Label } from "@/components/ui/label"
 import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select"
-import { useOrgFeature } from "@/react-app/domains/cloud/use-org-feature"
 
 const WEEKDAYS = [
   { value: 1, label: "Mon" },
@@ -45,7 +44,6 @@ const meetingMinutesLabel = (minutes: number, edge: "start" | "end") => minutes 
 const INTERVAL_HOURS = [1, 2, 3, 4, 6, 8, 12] as const
 const hourLabel = (hour: number) => `${String(hour).padStart(2, "0")}:00`
 
-/** One schedule choice on the shared Select, labelled by the field's <Label htmlFor>. */
 function ScheduleSelect<T extends string | number>(props: {
   id: string
   value: T
@@ -73,23 +71,16 @@ function ScheduleSelect<T extends string | number>(props: {
   )
 }
 
-/**
- * Frequency, time, days and time zone of an Automation schedule. Shared by the
- * full Automation editor and the Calendar's "Edit schedule" dialog so both
- * edit schedules the same way.
- */
 export function AutomationScheduleFields(props: {
   schedule: AutomationSchedule
   onChange: (schedule: AutomationSchedule) => void
-  /** Prefix for element ids, so two editors can share a page. */
   idPrefix?: string
 }) {
   const id = (name: string) => `${props.idPrefix ?? "automation"}-${name}`
   const schedule = props.schedule
   const time = timeForSchedule(schedule)
-  // An Automation that already repeats every few hours keeps the choice even if the feature is turned off.
-  const intervalOffered = useOrgFeature("automationIntervalSchedules") || schedule.kind === "interval"
-  const meetingsOffered = useOrgFeature("automationCalendarTriggers") || schedule.kind === "calendar"
+  const intervalOffered = true
+  const meetingsOffered = true
 
   const changeScheduleKind = (kind: AutomationSchedule["kind"]) => {
     const timezone = schedule.timezone
@@ -248,7 +239,6 @@ export function AutomationScheduleFields(props: {
   )
 }
 
-/** The time zone input, kept separate so the full editor can pair it with the model picker. */
 export function AutomationTimezoneField(props: {
   timezone: string
   onChange: (timezone: string) => void

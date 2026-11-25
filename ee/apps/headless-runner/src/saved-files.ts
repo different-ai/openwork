@@ -3,14 +3,8 @@ import { z } from "zod"
 import type { BlobStore } from "./blobs.js"
 import { normalizePath } from "./files.js"
 import type { SavedFile, Store } from "./store.js"
-import { formatBytes, readToolFile, type FileReading } from "./tool-files.js"
+import { formatBytes, readToolFile, unreadableNote, type FileReading } from "./tool-files.js"
 import type { Attachment, ToolResult, ToolSpec } from "./types.js"
-
-/**
- * Saved files: what a person sends with a message, and files the agent hands back. They outlive the turn
- * and the context window: the model sees a file's content in the turn it was sent, and can open it again in
- * any later turn. Only offered when the runner has a blob store and the conversation asked for files.
- */
 
 const EXTENSION_TYPES: Record<string, string> = {
   md: "text/markdown",
@@ -41,13 +35,11 @@ export function mediaTypeFor(name: string, declared?: string | null) {
   return EXTENSION_TYPES[extension] ?? "application/octet-stream"
 }
 
-/** A display name that is safe in headers and paths: no control characters or separators. */
 export function cleanFileName(name: string) {
   const cleaned = name.replace(/[\u0000-\u001f\u007f/\\]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 200)
   return cleaned || "file"
 }
 
-/** A file's preview: one PNG per page plus a manifest written last, so a manifest always means a complete set. */
 const previewManifestKey = (storageKey: string) => `${storageKey}.preview/manifest.json`
 const previewPageKey = (storageKey: string, page: number) => `${storageKey}.preview/page-${page}.png`
 export type PreviewManifest = { pages: number; width: number; height: number }
@@ -63,10 +55,8 @@ function safeJson(text: string): unknown {
 
 export const asAttachment = (file: SavedFile): Attachment => ({ id: file.id, name: file.name, mediaType: file.mediaType, size: file.size })
 
-/** How much one conversation may keep: per file, and in total. */
 export type SavedFileLimits = { maxFileBytes: number; maxSessionBytes: number }
 
-/** A file that would go over a limit; `message` is written for the model and the person. */
 export class SavedFileLimitError extends Error {
   constructor(
     readonly code: "file_too_large" | "files_full",
@@ -85,12 +75,10 @@ export class SavedFiles {
     private readonly now: () => number = Date.now,
   ) {}
 
-  /** The largest single file this runner keeps. */
   get maxFileBytes() {
     return this.limits.maxFileBytes
   }
 
-  /** Throws when `size` bytes would not fit: over the per-file limit, or past the conversation's total. */
   private checkFits(sessionId: string, size: number, replacing = 0) {
     if (size > this.limits.maxFileBytes) {
       throw new SavedFileLimitError("file_too_large", `That file is ${formatBytes(size)}; the most a kept file can be is ${formatBytes(this.limits.maxFileBytes)}.`)
@@ -104,8 +92,7 @@ export class SavedFiles {
     }
   }
 
-  async add(sessionId: string, input: { name: string; mediaType?: string | null; bytes: Uint8Array<ArrayBuffer>; source: SavedFile["source"] }) {
-    this.checkFits(sessionId, input.bytes.byteLength)
+  private newFile(sessionId: string, input: { name: string; mediaType?: string | null; size: number; source: SavedFile["source"] }) {
     const id = `fl_${randomUUID().replaceAll("-", "")}`
     const name = cleanFileName(input.name)
     const file: SavedFile = {
@@ -113,22 +100,22 @@ export class SavedFiles {
       sessionId,
       name,
       mediaType: mediaTypeFor(name, input.mediaType),
-      size: input.bytes.byteLength,
+      size: input.size,
       source: input.source,
       createdAt: this.now(),
       updatedAt: this.now(),
     }
-    const storageKey = `sessions/${sessionId}/${id}`
-    // Bytes first: a row never points at an object that was not written.
+    return { file, storageKey: `sessions/${sessionId}/${id}` }
+  }
+
+  async add(sessionId: string, input: { name: string; mediaType?: string | null; bytes: Uint8Array<ArrayBuffer>; source: SavedFile["source"] }) {
+    this.checkFits(sessionId, input.bytes.byteLength)
+    const { file, storageKey } = this.newFile(sessionId, { ...input, size: input.bytes.byteLength })
     await this.blobs.put(storageKey, input.bytes, file.mediaType)
     this.store.addSavedFile({ ...file, storageKey })
     return file
   }
 
-  /**
-   * Replaces a kept file's bytes with a new version: same id, so everything that points at it (the answer's
-   * card, an open preview) follows it. Its old preview is dropped first, so it is never shown for the new bytes.
-   */
   async replace(sessionId: string, id: string, input: { bytes: Uint8Array<ArrayBuffer>; mediaType?: string | null }) {
     const entry = this.store.getSavedFile(sessionId, id)
     if (!entry) return null
@@ -152,6 +139,44 @@ export class SavedFiles {
     return bytes ? { file: entry.file, bytes } : null
   }
 
+  async downloadUrl(sessionId: string, id: string, expiresSeconds: number): Promise<string | null> {
+    const entry = this.blobs.link ? this.store.getSavedFile(sessionId, id) : null
+    return entry && this.blobs.link ? this.blobs.link("GET", entry.storageKey, expiresSeconds) : null
+  }
+
+  async receive(sessionId: string, input: { name: string; size: number; source: SavedFile["source"]; replaces?: string; expiresSeconds: number }) {
+    const blobs = this.blobs
+    const { link, size: sizeOf, copy } = blobs
+    if (!link || !sizeOf || !copy) return null
+    const earlier = () => (input.replaces ? this.store.getSavedFile(sessionId, input.replaces) : null)
+    this.checkFits(sessionId, input.size, earlier()?.file.size ?? 0)
+    const holding = `sessions/${sessionId}/incoming-${randomUUID().replaceAll("-", "")}`
+    const url = await link.call(blobs, "PUT", holding, input.expiresSeconds)
+    const finish = async (): Promise<SavedFile | null> => {
+      try {
+        const size = await sizeOf.call(blobs, holding)
+        if (size === null) return null
+        const entry = earlier()
+        this.checkFits(sessionId, size, entry?.file.size ?? 0)
+        if (entry) {
+          const mediaType = mediaTypeFor(entry.file.name, entry.file.mediaType)
+          await this.deletePreview(entry.storageKey)
+          await copy.call(blobs, holding, entry.storageKey, mediaType)
+          const updatedAt = this.now()
+          this.store.updateSavedFile(sessionId, entry.file.id, { size, mediaType, updatedAt })
+          return { ...entry.file, size, mediaType, updatedAt }
+        }
+        const { file, storageKey } = this.newFile(sessionId, { name: input.name, size, source: input.source })
+        await copy.call(blobs, holding, storageKey, file.mediaType)
+        this.store.addSavedFile({ ...file, storageKey })
+        return file
+      } finally {
+        await blobs.delete(holding).catch(() => undefined)
+      }
+    }
+    return { url, finish }
+  }
+
   async delete(sessionId: string, id: string) {
     const entry = this.store.getSavedFile(sessionId, id)
     if (!entry) return false
@@ -161,7 +186,6 @@ export class SavedFiles {
     return true
   }
 
-  /** Keeps a page-by-page rendering of a kept file (slides, documents), shown when the person opens it. */
   async putPreview(sessionId: string, id: string, pages: Array<Uint8Array<ArrayBuffer>>, size: { width: number; height: number }) {
     const entry = this.store.getSavedFile(sessionId, id)
     if (!entry || pages.length === 0) return false
@@ -171,7 +195,6 @@ export class SavedFiles {
     return true
   }
 
-  /** How many preview pages a file has and their size, or null when it has no preview. */
   async readPreview(sessionId: string, id: string): Promise<PreviewManifest | null> {
     const entry = this.store.getSavedFile(sessionId, id)
     const bytes = entry ? await this.blobs.get(previewManifestKey(entry.storageKey)) : null
@@ -180,7 +203,6 @@ export class SavedFiles {
     return parsed.success ? parsed.data : null
   }
 
-  /** One preview page as PNG. */
   async readPreviewPage(sessionId: string, id: string, page: number) {
     const entry = this.store.getSavedFile(sessionId, id)
     return entry ? this.blobs.get(previewPageKey(entry.storageKey, page)) : null
@@ -194,10 +216,6 @@ export class SavedFiles {
     await Promise.all(Array.from({ length: pages }, (_, index) => this.blobs.delete(previewPageKey(storageKey, index + 1)).catch(() => undefined)))
   }
 
-  /**
-   * Deletes the bytes of every file in a session, and their previews; the rows go with the session. `keys`: the files'
-   * storage keys, read before the session's rows were deleted.
-   */
   async deleteSession(sessionId: string, keys: string[] = this.store.savedFileKeys(sessionId)) {
     await Promise.all(keys.map(async (key) => {
       await this.blobs.delete(key).catch(() => undefined)
@@ -205,15 +223,16 @@ export class SavedFiles {
     }))
   }
 
-  /** A file in the form the model reads best: image or PDF input, extracted text, or a note. */
   async reading(sessionId: string, id: string): Promise<{ file: SavedFile; reading: FileReading } | null> {
-    const found = await this.read(sessionId, id)
-    if (!found) return null
-    const reading = await readToolFile(
-      { name: found.file.name, mimeType: found.file.mediaType, data: Buffer.from(found.bytes).toString("base64") },
-      { images: 0, documents: 0 },
-    )
-    return { file: found.file, reading }
+    const entry = this.store.getSavedFile(sessionId, id)
+    if (!entry) return null
+    const { file } = entry
+    const note = unreadableNote({ name: file.name, mimeType: file.mediaType, size: file.size })
+    if (note) return { file, reading: { text: note } }
+    const bytes = await this.blobs.get(entry.storageKey)
+    if (!bytes) return null
+    const reading = await readToolFile({ name: file.name, mimeType: file.mediaType, data: Buffer.from(bytes).toString("base64") }, { images: 0, documents: 0 })
+    return { file, reading }
   }
 }
 
@@ -278,7 +297,6 @@ export async function runSavedFileTool(files: SavedFiles, store: Store, sessionI
     if (content === null) return { output: `There is no scratch file at ${path}. Write it with write_file first.`, isError: true }
     const name = cleanFileName(parsed.data.name?.trim() || (path.split("/").pop() ?? path))
     const bytes = new Uint8Array(Buffer.from(content, "utf8"))
-    // Saving a file it already handed over again (same name) is a new version of that file, not a second copy.
     const earlier = files.list(sessionId).find((file) => file.source === "agent" && file.name === name)
     const revised = earlier ? await files.replace(sessionId, earlier.id, { bytes }) : null
     if (revised) return { output: `Updated ${revised.name} in their Files (id ${revised.id}).`, isError: false }

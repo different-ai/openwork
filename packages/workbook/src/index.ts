@@ -1,5 +1,6 @@
 export {
   MAX_COMPRESSED_BYTES,
+  OfficeSizeLimitError,
   MAX_ENTRY_UNCOMPRESSED_BYTES,
   buildZip,
   listZipEntries,
@@ -20,10 +21,12 @@ export {
   cellInputFromText,
   columnIndex,
   columnLetters,
+  excelSerialToElapsedTime,
   excelSerialToIso,
   findSheet,
   formulaSummary,
   isDateNumberFormat,
+  isElapsedTimeFormat,
   isFormulaInput,
   numberFormatSummary,
   openXlsxWorkbook,
@@ -56,3 +59,4 @@ export {
   type OfficeKind,
   type OfficeTextOptions,
 } from "./office-text.js";
+export type { OfficeOutline } from "./office-outline.js";

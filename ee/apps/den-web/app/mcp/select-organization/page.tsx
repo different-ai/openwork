@@ -31,6 +31,7 @@ import { useLocationQuery } from "../use-location-query";
 import { FIRST_PARTY_APP_CLIENT_IDS } from "../client-trust-constants";
 import { useMcpClient } from "../use-mcp-client";
 import { isWorkbotSignIn } from "../workbot-sign-in";
+import { TeamToolsStep } from "./team-tools-step";
 
 type Organization = {
   id: string;
@@ -152,10 +153,9 @@ function parseEmail(payload: unknown) {
 
 export default function McpSelectOrganizationPage() {
   const [orgs, setOrgs] = useState<Organization[]>([]);
-  // Invitations sent to this person's email that they haven't joined yet. A person invited before they ever
-  // signed up lands here with no workspace, and should join their team rather than create a new one.
   const [invitations, setInvitations] = useState<Invitation[]>([]);
   const [createInstead, setCreateInstead] = useState(false);
+  const [teamToolsFor, setTeamToolsFor] = useState<Organization | null>(null);
   const [selectedOrgId, setSelectedOrgId] = useState("");
   const [flowState, setFlowState] = useState<FlowState>("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -169,7 +169,6 @@ export default function McpSelectOrganizationPage() {
   const requestedScope = params.get("scope") ?? "openid profile email mcp:read";
   const client = useMcpClient(oauthQuery);
   const workbot = isWorkbotSignIn(oauthQuery);
-  // OpenWork's own apps (Workbot): choosing a workspace is all there is to it.
   const firstParty = client.clientId !== null && FIRST_PARTY_APP_CLIENT_IDS.has(client.clientId);
   const redirect = useMcpRedirect(oauthQuery);
   const appName = client.name ?? "this app";
@@ -269,9 +268,6 @@ export default function McpSelectOrganizationPage() {
     window.location.reload();
   }
 
-  // A brand-new person reaches this page with no workspace. Create it here
-  // and keep going with the same signed query, so their agent's
-  // authorization never has to restart.
   async function createWorkspaceAndContinue(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const name = workspaceName.trim();
@@ -290,6 +286,11 @@ export default function McpSelectOrganizationPage() {
 
     setOrgs([org]);
     setSelectedOrgId(org.id);
+    if (workbot) {
+      setFlowState("ready");
+      setTeamToolsFor(org);
+      return;
+    }
     await continueFlow(org);
   }
 
@@ -355,6 +356,20 @@ export default function McpSelectOrganizationPage() {
         {workbot ? null : <SetupLine>Sign in to OpenWork, then {appName} can finish connecting.</SetupLine>}
         <a className="den-button-primary w-full" href={`/?${oauthQuery}`}>{workbot ? "Sign in to Workbot" : "Sign in to OpenWork"}</a>
       </SetupPanelBody>,
+    );
+  }
+
+  if (teamToolsFor) {
+    const org = teamToolsFor;
+    return frame(
+      <TeamToolsStep
+        organizationId={org.id}
+        request={requestJson}
+        onContinue={() => {
+          setTeamToolsFor(null);
+          void continueFlow(org).catch(() => setFlowState("error"));
+        }}
+      />,
     );
   }
 

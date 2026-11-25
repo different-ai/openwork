@@ -1,34 +1,15 @@
 import type { Client } from "../types";
 
-/**
- * Lightweight runtime-inspection surface for the React app.
- *
- * The goal is to give agents/humans a single readable snapshot of routing,
- * workspaces, sessions, composer draft, boot phase, and the last
- * refreshRouteState() call — without crawling the UI tree.
- *
- * Consumers read via `window.__openwork` from a devtools console or from
- * browser-tool `evaluate_script`. The surface is intentionally plain JSON so
- * it survives postMessage-style bridges.
- *
- * Writers are any component that wants to publish a named slice via
- * `publishInspectorSlice("route", () => ({...}))`. Slices expose a pull
- * function so we never hold stale snapshots.
- */
 export type InspectorSliceGetter = () => unknown;
 
 type InspectorAPI = {
   version: number;
-  /** Active workspace's authenticated OpenCode SDK client when developer mode is enabled. */
   readonly opencode: Client | null;
   snapshot(): Record<string, unknown>;
   slice(name: string): unknown;
   listSlices(): string[];
-  /** Returns the last N records from the event log. */
   events(limit?: number): Array<{ at: number; name: string; data: unknown }>;
-  /** Push a timestamped event for later inspection. */
   record(name: string, data?: unknown): void;
-  /** Clear the in-memory event log. */
   clearEvents(): void;
 };
 

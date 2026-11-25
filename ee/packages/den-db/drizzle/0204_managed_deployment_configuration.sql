@@ -1,0 +1,2 @@
+ALTER TABLE `managed_deployment_run` MODIFY COLUMN `kind` enum('install','update','retry','configure') NOT NULL;--> statement-breakpoint
+ALTER TABLE `managed_deployment_run` ADD `configuration_change` json;

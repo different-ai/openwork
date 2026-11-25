@@ -1,11 +1,6 @@
 import { type ConnectorSignInMethod, connectorSignInMethod } from "./connector-sign-in-method";
 import type { McpRequestHeaderInput, McpRequirementsDiscovery } from "./mcp-connections-data";
 
-/**
- * The route an admin picks for a custom connector before its checks run.
- * OpenWork detects one; the admin may take another, as Claude's custom
- * connector dialog allows.
- */
 export type ConnectorRouteAuth = "oauth" | "api_key" | "none";
 export type ConnectorRouteClient = "automatic" | "own";
 
@@ -15,7 +10,6 @@ export type ConnectorRoute = {
   auth: ConnectorRouteAuth;
   client: ConnectorRouteClient;
   requestHeaders: McpRequestHeaderInput[];
-  /** Explicitly chosen OAuth permissions for the revised setup; absent preserves discovery defaults. */
   requestedScopes?: string[];
 };
 
@@ -23,11 +17,9 @@ export const MAX_REQUEST_HEADERS = 4;
 
 type DiscoveryAuthentication = Pick<McpRequirementsDiscovery, "authentication">;
 
-/** What detection found, so each matching option can say "Detected". */
 export type DetectedRoute = {
   auth: ConnectorRouteAuth | null;
   client: ConnectorRouteClient | null;
-  /** How OpenWork registers itself when it can: its published client details, or dynamic registration. */
   automaticRegistration: "client_metadata" | "dynamic" | null;
 };
 
@@ -53,7 +45,6 @@ export function detectedRoute(discovery: (DiscoveryAuthentication & Pick<McpRequ
   }
 }
 
-/** The setup check's sign-in method for the route the admin chose. */
 export function routeSignInMethod(route: Pick<ConnectorRoute, "auth" | "client">): ConnectorSignInMethod {
   if (route.auth === "api_key") return "api_key";
   if (route.auth === "none") return "none";
@@ -62,7 +53,6 @@ export function routeSignInMethod(route: Pick<ConnectorRoute, "auth" | "client">
 
 const HEADER_NAME_PATTERN = /^[A-Za-z0-9!#$%&'*+.^_`|~-]{1,64}$/;
 
-/** OpenWork or the MCP transport sets these; a custom value would break the connection or its sign-in. */
 const RESERVED_HEADER_NAMES = new Set([
   "host",
   "content-length",
@@ -82,7 +72,6 @@ const RESERVED_HEADER_NAMES = new Set([
   "last-event-id",
 ]);
 
-/** Plain-English problem with one header row, or null when it can be saved. */
 export function requestHeaderProblem(
   draft: Pick<RequestHeaderDraft, "name" | "value">,
   others: readonly Pick<RequestHeaderDraft, "name">[],
@@ -102,7 +91,6 @@ export function requestHeaderProblem(
   return null;
 }
 
-/** Rows with a name or value, checked together; `problems` is keyed by row id. */
 export function requestHeadersFromDrafts(drafts: readonly RequestHeaderDraft[], auth: ConnectorRouteAuth): {
   headers: McpRequestHeaderInput[];
   problems: Record<string, string>;

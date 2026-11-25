@@ -5,11 +5,6 @@ import { createCalendarAdapter, type CalendarTransport } from "./adapters"
 import type { CalendarConnectionError, CalendarProviderId, CalendarRangeRead } from "./event"
 import { readRunsInRange, type AutomationRunsSource, type RunsInRange } from "./runs"
 
-/**
- * TanStack Query hooks both apps use for the Calendar's data. Each app passes
- * its own key prefix (organization, member) so caches never cross identities.
- */
-
 const ACTIVE = new Set<AutomationRun["status"]>(["queued", "claimed", "running"])
 export const CALENDAR_FAST_POLL_MS = 10_000
 export const CALENDAR_SLOW_POLL_MS = 60_000

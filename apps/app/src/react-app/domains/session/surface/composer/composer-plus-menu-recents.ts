@@ -31,7 +31,6 @@ export function recordComposerPlusMenuRecent(id: string, storage = browserStorag
   try {
     storage.setItem(COMPOSER_PLUS_MENU_RECENTS_KEY, JSON.stringify(next));
   } catch {
-    // A blocked or full localStorage should not prevent the pick.
   }
   return next;
 }

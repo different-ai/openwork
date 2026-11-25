@@ -7,9 +7,7 @@ export type PluginImportServer = {
   url: string | null;
   supported: boolean;
   skippedReason: "headers_unsupported" | "invalid_config" | "invalid_url" | "local_unsupported" | "missing_url" | "native_connector" | "unsupported_auth" | null;
-  /** The provider OpenWork already knows for this connector (e.g. "Google Workspace"). */
   mapsToName: string | null;
-  /** The organization's existing connection the import will use. */
   reuseConnectionName: string | null;
 };
 
@@ -20,11 +18,14 @@ export type PluginImportSkill = {
   sourcePath: string;
   supported: boolean;
   skippedReason: "invalid_skill" | null;
+  supportingFileCount: number | null;
 };
 
 export type PluginImportPreview = {
   repositoryFullName: string;
+  requiresSkillSelection: boolean;
   rootPath: string;
+  sourceRevisionRef: string;
   servers: PluginImportServer[];
   skills: PluginImportSkill[];
   warnings: string[];
@@ -128,7 +129,9 @@ export function parsePluginImportPreview(payload: unknown): PluginImportPreview 
 
   return {
     repositoryFullName: typeof item.repositoryFullName === "string" ? item.repositoryFullName : "",
+    requiresSkillSelection: item.requiresSkillSelection === true,
     rootPath: typeof item.rootPath === "string" ? item.rootPath : "",
+    sourceRevisionRef: typeof item.sourceRevisionRef === "string" ? item.sourceRevisionRef : "",
     servers: Array.isArray(item.servers)
       ? item.servers.flatMap((entry) => {
           if (!isRecord(entry) || typeof entry.name !== "string") return [];
@@ -153,6 +156,7 @@ export function parsePluginImportPreview(payload: unknown): PluginImportPreview 
             sourcePath: typeof entry.sourcePath === "string" ? entry.sourcePath : "SKILL.md",
             supported: entry.supported === true,
             skippedReason: entry.skippedReason === "invalid_skill" ? "invalid_skill" : null,
+            supportingFileCount: typeof entry.supportingFileCount === "number" ? entry.supportingFileCount : null,
           }];
         })
       : [],
@@ -166,8 +170,6 @@ function parseStoredDraft(value: unknown): PluginImportDraft | null {
   if (!isRecord(value) || value.version !== 1 || typeof value.githubUrl !== "string" || !isRecord(value.preview)) {
     return null;
   }
-  // Current drafts store only allowlisted, non-sensitive option labels. Older
-  // version-one drafts used the internal field names or omitted the options.
   const options = storedImportOptions(value);
   if (!options) return null;
   if (!Array.isArray(value.selectedServerKeys) || !value.selectedServerKeys.every((entry) => typeof entry === "string")) return null;
@@ -189,6 +191,13 @@ function parseStoredDraft(value: unknown): PluginImportDraft | null {
   } catch {
     return null;
   }
+}
+
+export function pluginImportSkillFolderUrl(preview: PluginImportPreview, sourcePath: string): string | null {
+  if (!preview.repositoryFullName || !preview.sourceRevisionRef) return null;
+  const folder = [preview.rootPath, sourcePath.replace(/\/?SKILL\.md$/, "")].filter(Boolean).join("/");
+  const encoded = folder.split("/").map(encodeURIComponent).join("/");
+  return `https://github.com/${preview.repositoryFullName}/tree/${encodeURIComponent(preview.sourceRevisionRef)}${encoded ? `/${encoded}` : ""}`;
 }
 
 export function loadPluginImportDraft(): PluginImportDraft | null {
@@ -227,7 +236,9 @@ export function minimizePluginImportDraft(draft: PluginImportDraft): PluginImpor
     githubUrl,
     preview: {
       repositoryFullName: draft.preview.repositoryFullName,
+      requiresSkillSelection: draft.preview.requiresSkillSelection,
       rootPath: draft.preview.rootPath,
+      sourceRevisionRef: draft.preview.sourceRevisionRef,
       servers: selectedServers.map((server) => ({ ...server, url: null })),
       skills: selectedSkills.map((skill) => ({
         ...skill,

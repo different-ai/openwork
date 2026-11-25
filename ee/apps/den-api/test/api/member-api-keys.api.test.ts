@@ -170,6 +170,22 @@ test("a member cannot save a key for a connection they were not given, and nothi
   assert.deepEqual(wireSince(start, "/owner-only"), [])
 })
 
+test("reading a connection's tools before adding a key reports the connection, so chat can show its card", async () => {
+  const id = await personalKeyConnection("Solo status service", "/solo/mcp", { orgWide: true, memberIds: [], teamIds: [] })
+
+  const direct = await den.as(riley, orgId)("GET", `/v1/mcp-connections/${id}/tools`)
+  assert.equal(direct.status, 409, summary(direct))
+  assert.equal(field(direct.body, "error"), "connection_not_ready")
+  assert.equal(field(direct.body, "connectionStatus", "connectionId"), id)
+
+  const viaAgent = await den.callMcpTool(rileyToken, "execute_capability", { name: "getMcpConnectionsTools", path: { connectionId: id } })
+  assert.equal(viaAgent.isError, true, viaAgent.raw)
+  assert.equal(field(viaAgent.body, "connectionStatus", "state"), "needs_connection")
+  assert.equal(field(viaAgent.structured, "connectionId"), id)
+  assert.equal(field(viaAgent.structured, "connectionName"), "Solo status service")
+  assert.equal(field(viaAgent.structured, "action", "type"), "update_credentials")
+})
+
 test("leaving the team that gives a connection removes the person's key from it", async () => {
   const teamId = await den.createTeam(owner, orgId, "Status readers", [riley.memberId])
   const id = await personalKeyConnection("Team status service", "/team/mcp", { orgWide: false, teamIds: [teamId] })

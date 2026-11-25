@@ -1,7 +1,7 @@
 "use client";
 
 import { FileText, MessageSquare } from "lucide-react";
-import type { ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { DenButton } from "../../_components/ui/button";
 import { getEditPluginSkillRoute, getLibraryPluginRoute, getPluginRoute } from "../../_lib/den-org";
@@ -12,18 +12,18 @@ import { ItemMenu, removeEntry } from "./item-list";
 import { usePlugin } from "./plugin-data";
 import { pluginChatDeepLink, skillTitle } from "./plugin-page-screen";
 import { SkillInstructions } from "./skill-instructions";
+import { downloadSkillZip } from "./skill-zip-actions";
 
-/** Admin mode edits and removes; member mode (from My Library) only reads. */
 export function SkillDetailScreen({ pluginId, skillId, mode = "admin" }: { pluginId: string; skillId: string; mode?: "admin" | "member" }) {
   const router = useRouter();
   const { orgSlug } = useOrgDashboard();
   const { data: skill, isLoading, error } = useSkill(pluginId, skillId);
   const plugin = usePlugin(pluginId);
   const deleteSkill = useDeleteSkill(pluginId);
+  const [downloadError, setDownloadError] = useState<string | null>(null);
   const pluginHref = mode === "admin" ? getPluginRoute(orgSlug, pluginId) : getLibraryPluginRoute(orgSlug, pluginId);
   const back = { href: pluginHref, label: plugin.data?.name ?? "Back to plugin" };
 
-  // The query waits for the workspace; until it answers, this is still loading.
   if (!skill && (isLoading || !error)) {
     return (
       <ItemPage>
@@ -67,6 +67,14 @@ export function SkillDetailScreen({ pluginId, skillId, mode = "admin" }: { plugi
           <>
             <ItemMenu size="md" label={`More for ${title}`} entries={[
               { label: "Edit", href: getEditPluginSkillRoute(orgSlug, pluginId, skill.id) },
+              {
+                label: "Download .zip",
+                testId: "skill-download-zip",
+                onSelect: async () => {
+                  setDownloadError(null);
+                  await downloadSkillZip(skill.id).catch((error: unknown) => setDownloadError(error instanceof Error ? error.message : "The skill could not be downloaded."));
+                },
+              },
               removeEntry(title, async () => {
                 await deleteSkill.mutateAsync(skill.id);
                 router.push(pluginHref);
@@ -76,6 +84,7 @@ export function SkillDetailScreen({ pluginId, skillId, mode = "admin" }: { plugi
           </>
         )}
       />
+      {downloadError ? <p role="alert" className="text-[13px] text-red-700">{downloadError}</p> : null}
       <InstructionsSection>
         <SkillInstructions markdown={skill.body} title={title} />
       </InstructionsSection>
@@ -83,7 +92,6 @@ export function SkillDetailScreen({ pluginId, skillId, mode = "admin" }: { plugi
   );
 }
 
-/** Title with its description directly beneath, so the two read as one unit. */
 function SkillHeader({ back, title, description, actions }: {
   back: { href: string; label: string };
   title: ReactNode;

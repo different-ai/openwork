@@ -1,0 +1,163 @@
+import type { ConfigBlobItem, ConfigFieldChange, ConfigPlanFlag, ConfigSpec } from "@openwork/types/den/config-blobs"
+import { isConfigRef, isConfigSecret } from "@openwork/types/den/config-blobs"
+import type { ConfigArea, ConfigItem } from "../area.js"
+import { canonicalJson, compareStrings, itemRev } from "./canonical.js"
+import {
+  type ArrayLayout,
+  arrayElementKey,
+  comparableTop,
+  elementSchemaPath,
+  isDerivedField,
+  isInformationalField,
+  isOrderedArray,
+  isPlainObject,
+  joinPath,
+} from "./util.js"
+
+export type EngineFieldChange = ConfigFieldChange
+
+export function diffSpecs(layout: ArrayLayout, before: unknown, after: unknown): EngineFieldChange[] {
+  const changes: EngineFieldChange[] = []
+  const left = comparableTop(layout, before)
+  walk(left.layout, left.value, comparableTop(layout, after).value, "", "", changes)
+  return changes
+}
+
+function walk(layout: ArrayLayout, before: unknown, after: unknown, path: string, schemaPath: string, out: EngineFieldChange[]): void {
+  if (canonicalJson(layout, before, schemaPath) === canonicalJson(layout, after, schemaPath)) return
+  const displayPath = path || "(spec)"
+  if (isStructObject(before) && isStructObject(after)) {
+    const keys = [...new Set([...Object.keys(before), ...Object.keys(after)])]
+      .filter((key) => !isInformationalField(layout, joinPath(schemaPath, key)) && !isDerivedField(layout, joinPath(schemaPath, key)))
+      .sort(compareStrings)
+    for (const key of keys) walk(layout, before[key], after[key], joinPath(path, key), joinPath(schemaPath, key), out)
+    return
+  }
+  if (Array.isArray(before) && Array.isArray(after)) {
+    if (isOrderedArray(layout, schemaPath)) {
+      out.push({ path: displayPath, from: before, to: after })
+      return
+    }
+    const childSchema = elementSchemaPath(schemaPath)
+    const beforeKeyed = new Map<string, { label: string; element: unknown }>()
+    const afterKeyed = new Map<string, { label: string; element: unknown }>()
+    const beforeLoose = new Map<string, unknown>()
+    const afterLoose = new Map<string, unknown>()
+    const sort = (elements: unknown[], keyed: typeof beforeKeyed, loose: typeof beforeLoose) => {
+      for (const element of elements) {
+        const key = arrayElementKey(layout, childSchema, element)
+        if (key && key.field !== "$ref") keyed.set(key.value, { label: `${key.field}=${key.value}`, element })
+        else loose.set(key ? `$ref=${key.value}` : canonicalJson(layout, element, childSchema), element)
+      }
+    }
+    sort(before, beforeKeyed, beforeLoose)
+    sort(after, afterKeyed, afterLoose)
+    for (const key of [...new Set([...beforeKeyed.keys(), ...afterKeyed.keys()])].sort(compareStrings)) {
+      const left = beforeKeyed.get(key)
+      const right = afterKeyed.get(key)
+      const label = (left ?? right)!.label
+      const elementPath = `${path}[${label}]`
+      if (left && right) walk(layout, left.element, right.element, elementPath, childSchema, out)
+      else if (right) out.push({ path: elementPath, to: right.element })
+      else if (left) out.push({ path: elementPath, from: left.element })
+    }
+    const added = [...afterLoose.entries()].filter(([key]) => !beforeLoose.has(key)).map(([, element]) => displayMember(element))
+    const removed = [...beforeLoose.entries()].filter(([key]) => !afterLoose.has(key)).map(([, element]) => displayMember(element))
+    if (added.length || removed.length) out.push({ path: displayPath, added, removed })
+    return
+  }
+  out.push({ path: displayPath, from: before, to: after })
+}
+
+function isStructObject(value: unknown): value is { [key: string]: unknown } {
+  return isPlainObject(value) && !isConfigRef(value) && !isConfigSecret(value)
+}
+
+function displayMember(element: unknown): unknown {
+  if (isConfigRef(element)) return element.name ?? element.$ref
+  return element
+}
+
+export function isDestructiveChange(change: EngineFieldChange): boolean {
+  if (change.removed && change.removed.length > 0) return true
+  return change.from !== undefined && change.to === undefined && change.added === undefined
+}
+
+export type MatchedClassification = {
+  op: "update" | "rename" | "unchanged" | "untouched"
+  fields: EngineFieldChange[]
+  flags: ConfigPlanFlag[]
+  reasons: string[]
+  targetRev: string
+  oursRev: string
+}
+
+export type ClassifyMatchedInput = {
+  area: Pick<ConfigArea, "orderedArrays" | "arrayKeys" | "informationalFields" | "derivedFields" | "comparableSpec" | "informationalName" | "assignedKeys" | "cosmeticFields">
+  blob: Pick<ConfigBlobItem, "name" | "key" | "rev" | "spec">
+  localizedSpec: ConfigSpec
+  target: ConfigItem
+  threeWay: boolean
+  override: boolean
+  baseSpec?: ConfigSpec
+}
+
+export function classifyMatched(input: ClassifyMatchedInput): MatchedClassification {
+  const { area, blob, target } = input
+  const targetRev = itemRev(area, target)
+  const oursRev = itemRev(area, blob)
+  const fields = diffSpecs(area, target.spec, input.localizedSpec)
+  const nameChanged = !area.informationalName && blob.name !== target.name
+  const keyChanged = area.assignedKeys
+    ? Boolean(blob.key) && !target.key
+    : blob.key !== undefined && (blob.key ?? null) !== (target.key ?? null)
+  const flags: ConfigPlanFlag[] = []
+  const reasons: string[] = []
+  if (nameChanged) fields.unshift({ path: "name", from: target.name, to: blob.name })
+  if (keyChanged) fields.unshift({ path: "key", from: target.key ?? null, to: blob.key ?? null })
+
+  const base = input.threeWay ? blob.rev : undefined
+  if (base && base !== targetRev) {
+    if (oursRev === base && !input.override) {
+      return {
+        op: "untouched",
+        fields,
+        flags,
+        reasons: ["changed on the target since export and not edited in the blob: left as it is (choose overwrite to apply the blob)"],
+        targetRev,
+        oursRev,
+      }
+    }
+    if (input.override) reasons.push("changed on the target since export: overwrite with blob (confirmed)")
+    else {
+      flags.push("drift")
+      reasons.push("changed both on the target and in the blob since export")
+    }
+    if (input.baseSpec) markConflicts(area, fields, input.baseSpec, blob.spec, target.spec)
+  }
+
+  const specFields = fields.filter((field) => field.path !== "name" && field.path !== "key")
+  if (fields.length === 0) return { op: "unchanged", fields, flags, reasons, targetRev, oursRev }
+  if (specFields.length > 0 && fields.some(isDestructiveChange)) flags.push("destructive")
+  const cosmetic = area.cosmeticFields ?? []
+  const onlyCosmetic = specFields.every((field) => cosmetic.some((prefix) => field.path === prefix || field.path.startsWith(`${prefix}.`) || field.path.startsWith(`${prefix}[`)))
+  if ((nameChanged || keyChanged) && onlyCosmetic) return { op: "rename", fields, flags, reasons, targetRev, oursRev }
+  return { op: "update", fields, flags, reasons, targetRev, oursRev }
+}
+
+function overlaps(a: string, b: string): boolean {
+  return a === b || a.startsWith(`${b}.`) || a.startsWith(`${b}[`) || b.startsWith(`${a}.`) || b.startsWith(`${a}[`)
+}
+
+function markConflicts(layout: ArrayLayout, fields: EngineFieldChange[], baseSpec: ConfigSpec, ours: ConfigSpec, theirs: ConfigSpec): void {
+  const oursChanges = diffSpecs(layout, baseSpec, ours)
+  const theirsChanges = diffSpecs(layout, baseSpec, theirs)
+  for (const field of fields) {
+    if (field.path === "name" || field.path === "key") continue
+    const ourChange = oursChanges.find((change) => overlaps(change.path, field.path))
+    const theirChange = theirsChanges.find((change) => overlaps(change.path, field.path))
+    const exact = oursChanges.find((change) => change.path === field.path) ?? theirsChanges.find((change) => change.path === field.path)
+    if (exact && exact.added === undefined) field.base = exact.from
+    field.conflict = Boolean(ourChange && theirChange)
+  }
+}

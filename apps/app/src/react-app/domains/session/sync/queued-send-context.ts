@@ -19,8 +19,6 @@ export type QueuedSendContext = {
   afterMessageId?: () => string | null;
 };
 
-// Context is registered by the mounted surface (enqueueing only happens there)
-// and consumed by the global drainer after the surface unmounts.
 const queuedSendContexts = new Map<string, QueuedSendContext>();
 const listeners = new Set<() => void>();
 

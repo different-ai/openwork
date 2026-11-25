@@ -2,14 +2,6 @@ import type { AuditChangeEventInput } from "../request-capture.js"
 import { auditResourceId } from "../request-capture.js"
 import { auditChangeEvent, auditText, organizationParent, relatedResource, targetResource } from "./snapshot.js"
 
-// oauth_token.issued / oauth_token.revoked (change) for MCP OAuth tokens bound
-// to an organization (the consent referenceId, carried as the token's org
-// claim). Recorded in that organization with the token's user as actor. The
-// snapshot holds the client id, scope list, grant type and MCP resource only:
-// never access/refresh token values, authorization codes, client secrets or
-// any hash of them. Target: the MCP grant (oauth_consent id) when known, else
-// the client.
-
 export type OAuthTokenAuditFacts = Readonly<{
   organizationId: string
   memberId: string
@@ -17,7 +9,6 @@ export type OAuthTokenAuditFacts = Readonly<{
   scopes: readonly string[]
   grantType: string | null
   resource: string | null
-  /** oauth_consent id (the MCP grant claim), when found. */
   grantId: string | null
   tokenType?: "access_token" | "refresh_token"
 }>

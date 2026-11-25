@@ -18,7 +18,6 @@ export type CalendarEventTiming =
  * Recurring series arrive already expanded into instances by both providers.
  */
 export type CalendarEvent = {
-  /** Stable across refetches: `${provider}:${providerEventId}`. */
   key: string
   provider: CalendarProviderId
   providerEventId: string
@@ -27,7 +26,6 @@ export type CalendarEvent = {
   location: string | null
   meetingUrl: string | null
   timing: CalendarEventTiming
-  /** Only when the provider supplies it. */
   status: "confirmed" | "tentative" | "cancelled" | null
   attendeeCount: number
 }
@@ -63,19 +61,12 @@ export class CalendarConnectionError extends Error {
 
 export type CalendarRangeRead = {
   events: CalendarEvent[]
-  /**
-   * False when a window still returned the page maximum after splitting to the
-   * smallest window, i.e. some meetings may be missing.
-   */
   complete: boolean
-  /** Upstream requests made to read the range. */
   requests: number
 }
 
 export type CalendarRangeRequest = {
-  /** Inclusive start instant. */
   start: number
-  /** Exclusive end instant. */
   end: number
   signal?: AbortSignal
 }

@@ -12,11 +12,9 @@ import { isOrgMcpConnectionReady } from "../extension-items";
 import { resolveExtensionIconUrl } from "../../../design-system/extension-icon-src";
 import { IconImage } from "../../../design-system/icon-image";
 import { SecretTextInput } from "../../../design-system/secret-text-input";
-import { TextInput } from "../../../design-system/text-input";
-import { libraryFieldClass, librarySecretFieldClass } from "./add-library-item-page";
+import { librarySecretFieldClass } from "./add-library-item-page";
 import { LibraryPage } from "./library-page";
 
-/** Den's preset copy leads with what it does; the rest is admin detail. */
 export function connectorSummary(preset: Pick<DenExternalMcpPreset, "description">) {
   const first = preset.description.split(/\.\s/)[0]?.trim() ?? "";
   return first.replace(/\.$/, "");
@@ -24,15 +22,8 @@ export function connectorSummary(preset: Pick<DenExternalMcpPreset, "description
 
 export type LibraryConnectorSetupInput = {
   apiKey?: string;
-  /** Only without libraryConnectorOrgSetup: the codes from the provider's app, typed on this page. */
-  oauthClient?: { clientId: string; clientSecret?: string };
 };
 
-/**
- * The provider only accepts an app the organization registers with it (Slack,
- * GitHub), so an admin adds that app in OpenWork Cloud before anyone signs in.
- * A preset with OpenWork's own app signs in like any other.
- */
 export function connectorNeedsOrganizationApp(
   preset: Pick<DenExternalMcpPreset, "authType" | "requiresOAuthClient" | "defaultOAuthClientId">,
 ) {
@@ -44,10 +35,6 @@ type CatalogConnection = Pick<
   "authType" | "credentialMode" | "connected" | "connectedForMe" | "needsReconnect" | "missingFeatures" | "credentialHealth"
 >;
 
-/**
- * An organization connector the member signs in to with their own account and
- * has not yet (or must again). Shared connectors and keys stay "Added".
- */
 export function catalogConnectionNeedsSignIn(connection: CatalogConnection) {
   return connection.authType === "oauth"
     && connection.credentialMode === "per_member"
@@ -65,20 +52,16 @@ function ConnectorIcon(props: { preset: DenExternalMcpPreset; size?: "sm" | "md"
   );
 }
 
-/** The organization already has this connector; the member has not signed in to their own account yet. */
 export type LibraryConnectorCatalogSignIn = {
   onSignIn: () => void;
   busy: boolean;
-  /** The member's last sign-in came back but a setting in the service's app blocks it. */
   problem?: { reason: string; settings: ProviderSettingsLink | null };
   onOpenSettings?: (url: string) => void;
 };
 
-/** Every connector the member can add, plus a way to add any other MCP server. */
 export function LibraryConnectorCatalogPage(props: {
   presets: DenExternalMcpPreset[];
   addedUrls: Set<string>;
-  /** Added connectors the member still signs in to, by URL. Others that are added just say so. */
   signInsByUrl?: ReadonlyMap<string, LibraryConnectorCatalogSignIn>;
   onBack: () => void;
   onPick: (preset: DenExternalMcpPreset) => void;
@@ -175,22 +158,9 @@ export function LibraryConnectorCatalogPage(props: {
   );
 }
 
-/**
- * The one setup page every listed connector shares. Only the grey box and the
- * button change with how the connector signs in. A connector that needs the
- * organization's own app is set up by an admin in OpenWork Cloud; members see
- * it locked with who can change that (P4, C5).
- */
 export function LibraryConnectorSetupPage(props: {
   preset: DenExternalMcpPreset;
-  /**
-   * libraryConnectorOrgSetup. Off: a connector that needs the provider's own
-   * app asks for its client ID and secret here, as before.
-   */
-  organizationSetup: boolean;
-  /** Owners and admins add the organization's app in OpenWork Cloud. */
   canSetUpOrganizationApp: boolean;
-  /** Opens OpenWork Cloud's setup for this connector; absent when no Cloud address is known. */
   onSetUpInCloud?: () => void;
   onBack: () => void;
   onCatalog: () => void;
@@ -198,24 +168,15 @@ export function LibraryConnectorSetupPage(props: {
 }) {
   const { preset } = props;
   const apiKeyField = useRef<SecretFieldHandle>(null);
-  const clientSecretField = useRef<SecretFieldHandle>(null);
   const [hasApiKey, setHasApiKey] = useState(false);
-  const [clientId, setClientId] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const needsOrganizationApp = props.organizationSetup && connectorNeedsOrganizationApp(preset);
-  const needsCodes = !props.organizationSetup && preset.authType === "oauth" && preset.requiresOAuthClient === true;
+  const needsOrganizationApp = connectorNeedsOrganizationApp(preset);
   const lockedForMember = needsOrganizationApp && !props.canSetUpOrganizationApp;
   const signsIn = preset.authType === "oauth";
 
   const submit = async () => {
-    if (needsCodes && !clientId.trim()) {
-      setError(t("extensions.connector_codes_required", { name: preset.displayName }));
-      return;
-    }
-    // Each secret is read once here and the field empties.
     const apiKey = preset.authType === "apikey" ? apiKeyField.current?.take() ?? "" : "";
-    const clientSecret = needsCodes ? clientSecretField.current?.take() ?? "" : "";
     if (preset.authType === "apikey" && !apiKey.trim()) {
       setError(t("extensions.add_mcp_api_key_required"));
       return;
@@ -225,7 +186,6 @@ export function LibraryConnectorSetupPage(props: {
     try {
       await props.onSubmit({
         ...(preset.authType === "apikey" ? { apiKey: apiKey.trim() } : {}),
-        ...(needsCodes ? { oauthClient: { clientId: clientId.trim(), ...(clientSecret.trim() ? { clientSecret: clientSecret.trim() } : {}) } } : {}),
       });
     } catch (cause) {
       setError(cause instanceof Error && cause.message.trim() ? cause.message : t("common.something_went_wrong"));
@@ -241,9 +201,7 @@ export function LibraryConnectorSetupPage(props: {
         ? props.canSetUpOrganizationApp
           ? t("extensions.connector_note_org_app_admin", { name: preset.displayName })
           : t("extensions.connector_note_org_app_member", { name: preset.displayName })
-        : needsCodes
-          ? t("extensions.connector_note_codes", { name: preset.displayName })
-          : t("extensions.connector_note_sign_in", { name: preset.displayName });
+        : t("extensions.connector_note_sign_in", { name: preset.displayName });
   const lockedReason = t("extensions.connector_org_app_locked_reason", { name: preset.displayName });
 
   const primaryAction = needsOrganizationApp
@@ -329,25 +287,6 @@ export function LibraryConnectorSetupPage(props: {
             onValueChange={setHasApiKey}
             className={librarySecretFieldClass}
           />
-        ) : null}
-        {needsCodes ? (
-          <div className="grid gap-3 sm:grid-cols-2">
-            <TextInput
-              label={t("extensions.add_mcp_oauth_client_id_label")}
-              autoComplete="off"
-              value={clientId}
-              disabled={busy}
-              className={libraryFieldClass}
-              onChange={(event) => setClientId(event.currentTarget.value)}
-            />
-            <SecretTextInput
-              id="library-connector-client-secret"
-              label={t("extensions.add_mcp_oauth_client_secret_label")}
-              disabled={busy}
-              handleRef={clientSecretField}
-              className={librarySecretFieldClass}
-            />
-          </div>
         ) : null}
       </div>
       {error ? <p role="alert" className="text-[13px] text-red-11">{error}</p> : null}

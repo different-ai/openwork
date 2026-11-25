@@ -1,0 +1,134 @@
+---
+title: "Sign in with your own Anthropic subscription"
+sidebarTitle: "Use your Anthropic subscription"
+description: "Use your paid Claude plan in the OpenWork desktop app through the Claude Code signed in on your own computer. Local only: it does not work with OpenWork Cloud."
+keywords: ["anthropic", "claude", "claude subscription", "claude pro", "claude max", "claude code", "claude auth login", "sign in", "connect provider", "local only", "den", "openwork cloud"]
+---
+
+<Warning>
+**Local only. This does not work with OpenWork Cloud (Den).** Your Claude plan is used through the Claude Code app on your own computer, so it only works in the desktop app, for you, on that computer. An admin cannot add it for a team, and it does not run in OpenWork in the browser, Workbot or Slack. See [What "local only" means](#what-local-only-means).
+</Warning>
+
+If you pay for Claude, you can use that plan to run OpenWork on your own computer, with no API key.
+
+OpenWork does not sign you in to Anthropic itself. You install [Claude Code](https://code.claude.com/docs/en/setup), Anthropic's own app, and sign in to it once. OpenWork then runs your tasks through that Claude Code, with the login it already has.
+
+<Note>
+**Rolling out.** This option is being turned on gradually. If step 3 below only offers an API key, it is not on for you yet. Use [an Anthropic API key](/start-here/connect-your-stack/add-anthropic-api-key) in the meantime.
+</Note>
+
+## What "local only" means
+
+It works here:
+
+- The OpenWork desktop app, in a workspace on your own computer, with Claude Code installed and signed in on that same computer.
+- You can be signed in to OpenWork Cloud at the same time. Claude Code stays a personal connection under **On this device**.
+
+It does not work here:
+
+- **For a team.** Admins cannot add a Claude subscription in **AI Gateway** or share yours with anyone. Each person connects their own, on their own computer.
+- **In the cloud.** OpenWork in the browser, Workbot and OpenWork in Slack run on servers, where your Claude Code login does not exist.
+- **On another computer.** A workspace that runs somewhere else would need Claude Code installed and signed in there, not on yours.
+
+It is also not counted by your organization. Usage does not appear in AI Gateway usage and does not count toward limits an admin set. It counts against your own Claude plan.
+
+If your organization chose **Only models you provide** under **AI Gateway**, **Connect a provider** is locked and you cannot use your own Claude plan in OpenWork. Ask your admin, or use the models your organization shares with you.
+
+To give a whole team Claude models, an admin adds Anthropic with an API key instead. See [Adding a managed LLM provider](/cloud/share-with-your-team/managed-llm-provider).
+
+## Before you start
+
+- A paid Claude plan that includes Claude Code, such as Pro or Max.
+- Claude Code version 2.1.248 or later, installed on the computer where you use OpenWork. Follow [Anthropic's setup guide](https://code.claude.com/docs/en/setup). If it is not installed yet, OpenWork tells you in the steps below and links to that guide. To check your version, run `claude --version` in a terminal.
+- The latest OpenWork desktop app.
+
+## Sign in to Claude Code
+
+If Claude Code is already signed in on this computer, skip to the next section.
+
+If it is not, OpenWork opens the sign-in for you when you click **Connect** in the steps below. To do it yourself first, run this in a terminal on the same computer:
+
+```bash
+claude auth login
+```
+
+Either way a browser tab opens. Sign in with the account that holds your Claude plan.
+
+OpenWork never sees this sign-in. Claude Code runs it, and OpenWork does not ask for your Claude email, password or any token.
+
+## Connect it in OpenWork
+
+1. Open **Settings › AI Providers** and click **Connect a provider**.
+
+<Frame>
+  ![AI Providers in OpenWork settings, with the Connect a provider button](/images/claude-code-ai-providers.png)
+</Frame>
+
+2. Search for **Anthropic** and choose it. Its line reads "Sign in with Claude Code or paste an API key".
+
+<Frame>
+  ![Connect a provider, with Anthropic offering Claude Code or an API key](/images/claude-code-anthropic-entry.png)
+</Frame>
+
+3. You see "Choose how you'd like to connect." Choose **Claude Code**.
+
+<Frame>
+  ![The two ways to connect Anthropic: Claude Code and API key](/images/claude-code-choose-how.png)
+</Frame>
+
+4. Click **Connect**. If Claude Code is not signed in yet, its sign-in opens in your browser and the step reads "Continue in your browser" until you finish.
+
+   If the step reads "Claude Code is not on this computer yet", click **Get Claude Code** and follow Anthropic's guide. You do not need to restart OpenWork: when the install finishes, the step reads "Claude Code is installed" and offers **Connect**.
+
+<Frame>
+  ![The Claude Code step with the claude auth login command and the Connect button](/images/claude-code-sign-in-step.png)
+</Frame>
+
+5. The button reads "Checking Claude Code…" while OpenWork checks that Claude Code is installed and signed in. This takes a few seconds.
+6. When the check passes, the dialog closes and you see "Claude Code connected". **Claude Code** is now listed under **On this device** as **Ready to use**.
+
+<Frame>
+  ![AI Providers with Claude Code listed as Ready to use](/images/claude-code-connected.png)
+</Frame>
+
+## Pick a Claude model
+
+1. In a chat, click the model name under the message box.
+2. Choose a model under **Claude Code**. The list comes from Claude Code and depends on your plan.
+
+<Frame>
+  ![The model list in a chat, showing the models from Claude Code](/images/claude-code-model-list.png)
+</Frame>
+
+## If the check does not pass
+
+The dialog stays open and says why.
+
+<Frame>
+  ![The Claude Code step showing that Claude Code is not logged in, with a Check again button](/images/claude-code-not-signed-in.png)
+</Frame>
+
+- **"Claude Code is not logged in."** Click **Sign in again** and finish the sign-in in your browser. You can also run `claude auth login` in a terminal first.
+- **"Claude Code is not on this computer yet."** Click **Get Claude Code** and follow Anthropic's guide. OpenWork finds Claude Code by itself once it is installed, then offers **Connect**.
+- **"Claude Code could not finish signing in."** The browser sign-in was closed or did not complete. Click **Sign in again**.
+- **"Couldn't confirm that Claude Code is ready."** Claude Code did not answer in time. Make sure it opens in a terminal on this computer, then click **Sign in again**.
+
+## What the status means later
+
+The **Claude Code** row under **Settings › AI Providers › On this device** shows one of these:
+
+- **Ready to use.** OpenWork checked Claude Code and it is signed in.
+- **Not checked yet.** OpenWork has restarted and has not checked Claude Code again. You can keep using it. If something is wrong, the row changes to **Needs your sign-in**.
+- **Needs your sign-in.** Claude Code got signed out or stopped working. Click **Sign in again** on the row and again in the dialog, then finish the sign-in in your browser.
+
+## Disconnect
+
+Click **Disconnect** on the **Claude Code** row. This removes the connection from OpenWork only. Claude Code itself stays installed and signed in on your computer.
+
+## Common issues
+
+- **Anthropic only offers an API key.** The option is not turned on for you yet, or your OpenWork is out of date. Update the desktop app, or use [an Anthropic API key](/start-here/connect-your-stack/add-anthropic-api-key).
+- **Connect a provider is locked.** Your organization only allows the models it provides. Your own Claude plan cannot be used in OpenWork there.
+- **A chat says Claude Code is too old.** Run `claude update` in a terminal, then send the message again.
+- **A teammate cannot see your Claude models.** That is expected. This connection is yours alone and stays on your computer.
+- **You want Claude for your whole team.** Use an API key through AI Gateway: [Adding a managed LLM provider](/cloud/share-with-your-team/managed-llm-provider).

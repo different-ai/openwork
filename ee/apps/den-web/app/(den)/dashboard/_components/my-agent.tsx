@@ -1,60 +1,53 @@
 "use client";
 
 import Link from "next/link";
-import { ChevronRight, Lock, PencilLine } from "lucide-react";
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { Check, ChevronDown, ChevronRight, Lock, PencilLine } from "lucide-react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import {
-  AGENT_PREFERENCE_COPY,
-  AGENT_PREFERENCE_FIELDS,
+  AGENT_CHECK_EVERY_HOURS,
+  AGENT_MEMBER_BRIEF_MAX,
   AGENT_PREFERENCE_MAX,
   type AgentChangeField,
-  type AgentPreferenceField,
   type MemberAgentCheck,
   type MemberAgentInput,
   type MemberAgentSource,
+  type MemberAgentSourceConnection,
   type MemberAgentView,
 } from "@openwork/types/den/workbot-proactive";
 import { DenBadge } from "../../_components/ui/badge";
 import { DenButton } from "../../_components/ui/button";
+import { DenDropdownPopup, DenDropdownRoot, DenDropdownTrigger } from "../../_components/ui/dropdown-popup";
+import { denDropdownListClass, denDropdownRowBaseClass, denDropdownRowIdleClass, denDropdownRowSelectedClass } from "../../_components/ui/dropdown-styles";
 import { DenSelect } from "../../_components/ui/select";
 import { DenSwitch } from "../../_components/ui/switch";
 import { DenTextarea } from "../../_components/ui/textarea";
 import { ItemPanel, ItemRow, ItemRowsSkeleton, ItemSection } from "./item-list";
 import { ItemHeader, ItemPage } from "./item-header";
 import { ConnectorLogo } from "./item-logo";
+import { connectorBatches } from "./my-agent-enable-connectors";
 import { SourceIcon } from "./source-icon";
 import {
   OUTCOME_PILL,
   changeSourceLine,
   clockLabel,
   dayClockLabel,
+  everyHoursLabel,
   hourLabel,
   hoursLabel,
   isSameDay,
   latestChange,
   myAgentStateLine,
+  nextChecksLine,
   sentTodayLabel,
   whenPhrase,
 } from "./my-agent-view";
 
-/**
- * My agent in the Library (`workbotAgentLibrary`): the member's own background agent, what it did and why it stayed
- * quiet, and what they told it. Chat is the main way to change it; every change shows where it came from with an
- * Undo, here and in chat alike. These components only render; my-agent-screen.tsx loads and saves.
- */
+const ADMIN_LOCK = "Set by your admin.";
 
-const ADMIN_LOCK = "Set by your admin in Manage › Workbot.";
-
-/** A field as tall as what's written in it: CSS where the browser sizes fields itself, a line estimate elsewhere. */
 const GROW = "resize-none [field-sizing:content]";
 function growRows(text: string) {
   const lines = text.split("\n").reduce((total, line) => total + Math.max(1, Math.ceil(line.length / 72)), 0);
   return Math.min(6, Math.max(1, lines));
-}
-
-function joinNames(names: readonly string[]) {
-  const unique = [...new Set(names)];
-  return unique.length <= 1 ? unique[0] ?? "" : `${unique.slice(0, -1).join(", ")} and ${unique.at(-1)}`;
 }
 
 export function AgentLogo({ size = "sm" }: { size?: "sm" | "lg" }) {
@@ -70,9 +63,6 @@ function LockNote({ children }: { children: ReactNode }) {
   );
 }
 
-// ---- The Library row ------------------------------------------------------------------------------------------------
-
-/** Pinned above the Library's filters: where the agent stands, today's count, its switch and the way in. */
 export function MyAgentRow({ view, href, now, saving, onToggle }: {
   view: MemberAgentView;
   href: string;
@@ -91,7 +81,7 @@ export function MyAgentRow({ view, href, now, saving, onToggle }: {
           href={href}
           logo={<AgentLogo />}
           title="My bot"
-          description={locked ? <LockNote>Turned off by your admin in Manage › Workbot.</LockNote> : myAgentStateLine(view, now)}
+          description={locked ? <LockNote>Turned off by your admin.</LockNote> : myAgentStateLine(view, now)}
           status={count ?? ""}
           action={(
             <span className="flex items-center gap-2">
@@ -122,21 +112,15 @@ export function MyAgentRowError({ message, retrying, onRetry }: { message: strin
   );
 }
 
-// ---- The page -------------------------------------------------------------------------------------------------------
-
 export type MyAgentLinks = {
   library: string;
-  /** The Google Workspace connector in the member's Library, or where to add it. */
   google: { href: string; status: string };
-  /** A connection's page in the member's Library, where they connect or reconnect their account. */
   connector: (connectionId: string) => string;
-  /** The Library's connector catalog, for a source the organization has no connection for yet. */
   catalog: string;
 };
 
 type Change = (change: MemberAgentInput) => void;
 
-/** "Saved from chat at 11:20 AM. Undo" for the change behind a field. */
 function ChangeNote({ view, field, now, saving, onChange }: { view: MemberAgentView; field: AgentChangeField; now: number; saving: boolean; onChange: Change }) {
   const change = latestChange(view, field);
   if (!change) return null;
@@ -151,7 +135,6 @@ function ChangeNote({ view, field, now, saving, onChange }: { view: MemberAgentV
   );
 }
 
-/** A compact settings row: label left, its state or control right, one note under it. */
 function Row({ label, labelId, hint, note, children, testId }: { label: string; labelId?: string; hint?: string; note?: ReactNode; children?: ReactNode; testId?: string }) {
   return (
     <div className="flex flex-col gap-1 py-2.5" data-testid={testId}>
@@ -180,55 +163,60 @@ function CheckRow({ check, label }: { check: MemberAgentCheck; label: string }) 
   );
 }
 
-function wordsChange(field: AgentPreferenceField, text: string): NonNullable<MemberAgentInput["preferences"]> {
-  const preferences: NonNullable<MemberAgentInput["preferences"]> = {};
-  preferences[field] = text;
-  return preferences;
-}
-
-function WordsField({ view, field, now, saving, onChange }: { view: MemberAgentView; field: AgentPreferenceField; now: number; saving: boolean; onChange: Change }) {
+function BriefSection({ view, now, saving, onChange }: { view: MemberAgentView; now: number; saving: boolean; onChange: Change }) {
   const id = useId();
-  const value = view.preferences?.[field] ?? "";
+  const brief = view.brief;
+  const value = brief.lines;
   const [draft, setDraft] = useState(value);
   useEffect(() => setDraft(value), [value]);
   const changed = draft.trim() !== value.trim();
-  const change = latestChange(view, field);
+  const change = latestChange(view, "brief");
   return (
-    <div className="grid gap-1.5 py-2.5 sm:grid-cols-[180px_minmax(0,1fr)] sm:items-start sm:gap-x-4" data-testid={`my-agent-words-${field}`}>
-      <label htmlFor={id} className="text-[13px] font-medium text-gray-900 sm:pt-2.5">{AGENT_PREFERENCE_COPY[field].label}</label>
-      <div className="flex min-w-0 flex-col gap-1.5">
-        <DenTextarea id={id} rows={growRows(draft)} maxLength={AGENT_PREFERENCE_MAX} value={draft} disabled={saving} placeholder={AGENT_PREFERENCE_COPY[field].placeholder}
-          className={GROW} onChange={(event) => setDraft(event.target.value)} />
-        {change || changed ? (
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <ChangeNote view={view} field={field} now={now} saving={saving} onChange={onChange} />
-            {changed ? (
-              <span className="ml-auto flex gap-2">
-                <DenButton variant="secondary" size="xs" onClick={() => setDraft(value)}>Discard</DenButton>
-                <DenButton size="xs" disabled={saving} onClick={() => onChange({ preferences: wordsChange(field, draft.trim()) })}>Save</DenButton>
-              </span>
-            ) : null}
-          </div>
-        ) : null}
+    <ItemSection title="Your brief" variant="rule" testId="my-agent-brief">
+      <div className="flex flex-col gap-1.5 py-2.5">
+        <label htmlFor={id} className="sr-only">Your brief</label>
+        <DenTextarea id={id} rows={Math.max(3, growRows(draft))} maxLength={AGENT_MEMBER_BRIEF_MAX} value={draft} disabled={saving}
+          placeholder={"Also watch our Render bill.\nNever tell me about newsletters."} className={GROW} onChange={(event) => setDraft(event.target.value)} />
+        <div className="flex min-h-5 flex-wrap items-center justify-between gap-2">
+          {change
+            ? <ChangeNote view={view} field="brief" now={now} saving={saving} onChange={onChange} />
+            : brief.carriedOver ? <span className="text-[12px] leading-4 text-gray-500" data-testid="my-agent-brief-carried">From your earlier settings.</span> : <span />}
+          {changed ? (
+            <span className="ml-auto flex gap-2">
+              <DenButton variant="secondary" size="xs" onClick={() => setDraft(value)}>Discard</DenButton>
+              <DenButton size="xs" disabled={saving} onClick={() => onChange({ brief: { set: draft.trim() } })}>Save</DenButton>
+            </span>
+          ) : null}
+        </div>
       </div>
-    </div>
+      <details className="group border-t border-gray-100" data-testid="my-agent-organization-brief">
+        <summary className="flex min-h-10 cursor-pointer list-none items-center gap-1.5 text-[13px] font-medium text-gray-700 [&::-webkit-details-marker]:hidden">
+          <ChevronRight className="h-4 w-4 text-gray-500 transition-transform duration-150 ease-out group-open:rotate-90 motion-reduce:transition-none" aria-hidden />
+          Your organization's brief
+        </summary>
+        <p className="whitespace-pre-wrap pb-3 pl-5.5 text-[13px] leading-5 text-gray-700">{brief.organization}</p>
+      </details>
+    </ItemSection>
   );
 }
 
 function focalLine(view: MemberAgentView, now: number): { title: string; sentence: ReactNode } {
-  if (!view.available) return { title: "Turned off by your admin", sentence: <LockNote>Your admin turns it on in Manage › Workbot.</LockNote> };
-  if (!view.on) return { title: "Off", sentence: "It isn't checking your email or calendar." };
+  if (!view.available) return { title: "Turned off by your admin", sentence: <LockNote>Your admin can turn it on.</LockNote> };
+  if (!view.on) return { title: "Off", sentence: "It isn't checking your calendar or connectors." };
   if (view.snoozedUntil) return { title: `Snoozed until ${clockLabel(view.snoozedUntil, view.timeZone)}`, sentence: view.lastCheck ? `Last check ${whenPhrase(view.lastCheck.at, view.timeZone, now)}: ${view.lastCheck.summary}` : "No checks yet." };
   if (view.lastCheck) return { title: `Last check ${whenPhrase(view.lastCheck.at, view.timeZone, now)}`, sentence: view.lastCheck.summary };
-  return { title: "No checks yet", sentence: view.destination?.blocked === "member_not_linked" ? "Link your Slack account to Workbot to get its messages." : "It reads your calendar, email and team chat in your working hours." };
+  return { title: "No checks yet", sentence: view.destination?.blocked === "member_not_linked" ? "Link your Slack account to Workbot to get its messages." : "It reads your calendar and connectors in your working hours." };
 }
 
-export function MyAgentPanel({ view, now, links, saving, error, earlier, onChange }: {
+export function MyAgentPanel({ view, now, links, saving, error, earlier, onChange, setAll, bulkDirection, pendingSources }: {
   view: MemberAgentView;
   now: number;
   links: MyAgentLinks;
   saving: boolean;
   error: string | null;
+  setAll: (batches: MemberAgentInput[]) => void;
+  bulkDirection?: boolean;
+  pendingSources?: MemberAgentInput["sources"];
   earlier: { open: boolean; onToggle: (open: boolean) => void; checks: MemberAgentCheck[] | null; loading: boolean; error: string | null };
   onChange: Change;
 }) {
@@ -241,6 +229,8 @@ export function MyAgentPanel({ view, now, links, saving, error, earlier, onChang
   const fix = view.lastCheck?.fix ?? null;
   const reconnect = view.lastCheck?.sources[0] ?? null;
   const google = links.google;
+  const enable = connectorBatches(view.sources ?? [], true);
+  const disable = connectorBatches(view.sources ?? [], false);
 
   return (
     <ItemPage testId="my-agent-screen">
@@ -258,7 +248,8 @@ export function MyAgentPanel({ view, now, links, saving, error, earlier, onChang
         <p className="text-[14px] leading-5 text-gray-700">{focal.sentence}</p>
         {active ? (
           <p className="flex flex-wrap items-center gap-x-4 gap-y-1 text-[13px] leading-5 text-gray-500">
-            {view.nextCheckAt ? <span>{`Next check ${whenPhrase(view.nextCheckAt, view.timeZone, now)}`}</span> : null}
+            {view.nextChecks ? (nextChecksLine(view, now) ? <span data-testid="my-agent-next-checks">{nextChecksLine(view, now)}</span> : null)
+              : view.nextCheckAt ? <span>{`Next check ${whenPhrase(view.nextCheckAt, view.timeZone, now)}`}</span> : null}
             {limits && view.sentToday !== undefined ? <span>{`${view.sentToday} of ${limits.dailyCap} sent today`}</span> : null}
             {view.snoozedUntil ? <DenButton variant="secondary" size="xs" disabled={saving} onClick={() => onChange({ snooze: null })}>Resume</DenButton> : null}
             {fix === "reconnect_google" ? <Link href={google.href} className="font-medium text-gray-900 underline-offset-2 hover:underline">Reconnect Google</Link> : null}
@@ -286,31 +277,20 @@ export function MyAgentPanel({ view, now, links, saving, error, earlier, onChang
         </details>
       </ItemSection>
 
-      <ItemSection title="What it tells you about" variant="rule" testId="my-agent-responsibilities">
-        <div className="flex flex-col divide-y divide-gray-100">
-          {view.responsibilities.map((responsibility) => (
-            <Row key={responsibility.id} label={responsibility.label} hint={responsibility.tells} testId={`my-agent-${responsibility.id}`}
-              note={!responsibility.enabled
-                ? <LockNote>Turned off by your admin in Manage › Workbot.</LockNote>
-                : <ChangeNote view={view} field={responsibility.id} now={now} saving={saving} onChange={onChange} />}>
-              <DenSwitch size="sm" aria-label={responsibility.label} checked={responsibility.enabled && !responsibility.muted} disabled={!responsibility.enabled || saving}
-                onChange={(on) => onChange(on ? { unmute: [responsibility.id] } : { mute: [responsibility.id] })} />
-            </Row>
-          ))}
-        </div>
-      </ItemSection>
+      <BriefSection view={view} now={now} saving={saving} onChange={onChange} />
 
-      <ItemSection title="In your words" variant="rule" testId="my-agent-words">
-        <div className="flex flex-col divide-y divide-gray-100">
-          {AGENT_PREFERENCE_FIELDS.map((field) => <WordsField key={field} view={view} field={field} now={now} saving={saving} onChange={onChange} />)}
+      <ItemSection title="What it reads" variant="rule" testId="my-agent-uses" meta={enable.length > 0 || disable.length > 0 || bulkDirection !== undefined ? (
+        <div className="flex flex-wrap justify-end gap-2">
+          <DenButton size="xs" variant="secondary" disabled={saving || !view.available || !enable.length} loading={bulkDirection === true}
+            onClick={() => setAll(enable)}>Enable all connected apps</DenButton>
+          <DenButton size="xs" variant="secondary" disabled={saving || !view.available || !disable.length} loading={bulkDirection === false}
+            onClick={() => setAll(disable)}>Turn all off</DenButton>
         </div>
-      </ItemSection>
-
-      <ItemSection title="What it reads" variant="rule" testId="my-agent-uses">
+      ) : undefined}>
         <div className="flex flex-col divide-y divide-gray-100">
-          {(view.sources ?? []).map((source) => <SourceRow key={source.id} view={view} source={source} now={now} saving={saving} links={links} onChange={onChange} />)}
+          {(view.sources ?? []).map((source) => <SourceRow key={source.id} view={view} source={source} pendingOn={pendingSources?.find((change) => change.source === source.id)?.on} now={now} saving={saving} links={links} onChange={onChange} />)}
         </div>
-        {(view.sources ?? []).some((source) => source.policy !== "members") ? (
+        {(view.sources ?? []).some(sourceLocked) ? (
           <p className="border-t border-gray-100 pt-2.5" data-testid="my-agent-sources-locked"><LockNote>{`Locked sources are ${ADMIN_LOCK.charAt(0).toLowerCase()}${ADMIN_LOCK.slice(1)}`}</LockNote></p>
         ) : null}
       </ItemSection>
@@ -318,6 +298,16 @@ export function MyAgentPanel({ view, now, links, saving, error, earlier, onChang
       {limits ? (
         <ItemSection title="Limits" variant="rule" testId="my-agent-limits">
           <div className="flex flex-col divide-y divide-gray-100">
+            {limits.checkEveryHours !== undefined && limits.admin.checkEveryHours !== undefined ? (
+              <Row label="Checks" testId="my-agent-check-every" note={limits.narrowed.checkEveryHours ? <ChangeNote view={view} field="checkEveryHours" now={now} saving={saving} onChange={onChange} /> : null}>
+                <div className="w-40">
+                  <DenSelect aria-label="How often your agent checks" menuWidth="trigger" value={String(limits.checkEveryHours)} disabled={saving}
+                    onChange={(event) => onChange({ checkEveryHours: Number(event.target.value) === limits.admin.checkEveryHours ? null : AGENT_CHECK_EVERY_HOURS.find((hours) => String(hours) === event.target.value) ?? null })}>
+                    {AGENT_CHECK_EVERY_HOURS.filter((hours) => hours >= (limits.admin.checkEveryHours ?? 1)).map((hours) => <option key={hours} value={String(hours)}>{everyHoursLabel(hours)}</option>)}
+                  </DenSelect>
+                </div>
+              </Row>
+            ) : null}
             <Row label="Hours" labelId={ids.hours} testId="my-agent-hours"
               note={limits.narrowed.hours ? <ChangeNote view={view} field="hours" now={now} saving={saving} onChange={onChange} /> : null}>
               <span className="text-[13px] text-gray-500">{limits.workingDays === "everyday" ? "Every day" : "Weekdays"}</span>
@@ -336,7 +326,7 @@ export function MyAgentPanel({ view, now, links, saving, error, earlier, onChang
               </div>
             </Row>
             {limits.quietWindow ? (
-              <Row label="Only urgent" testId="my-agent-quiet-window" note={<ChangeNote view={view} field="quietWindow" now={now} saving={saving} onChange={onChange} />}>
+              <Row label="Quiet hours" testId="my-agent-quiet-window" note={<ChangeNote view={view} field="quietWindow" now={now} saving={saving} onChange={onChange} />}>
                 <span className="text-[13px] text-gray-900">{hoursLabel(limits.quietWindow)}</span>
               </Row>
             ) : null}
@@ -353,26 +343,98 @@ export function MyAgentPanel({ view, now, links, saving, error, earlier, onChang
   );
 }
 
-/** "Saved from chat at 10:42 AM." for the latest change to one source's switch or instruction. */
 function SourceChangeNote({ view, sourceId, field, now }: { view: MemberAgentView; sourceId: string; field: "source" | "sourceInstruction"; now: number }) {
   const change = (view.changes ?? []).find((entry) => entry.field === field && entry.sourceId === sourceId && !entry.undone);
   return change ? <span data-source={change.source}>{changeSourceLine(change, view.timeZone, now)}</span> : null;
 }
 
-/**
- * One source in What it reads, as one row: the source and the account(s) it reads through, when it was last read,
- * a Connect action when the member's account isn't ready, a quiet button for their instruction, and its switch (with
- * a lock when the admin decided; the reason is said once, under the list). The instruction, once written, sits under it.
- */
-function SourceRow({ view, source, now, saving, links, onChange }: { view: MemberAgentView; source: MemberAgentSource; now: number; saving: boolean; links: MyAgentLinks; onChange: Change }) {
+export const NO_READ_TOOLS = "No read-only tools found. An admin can review its tools.";
+
+function sourceLocked(source: MemberAgentSource) {
+  return source.policy === "off" || (source.kind === "other" && source.policy === "everyone");
+}
+
+const PICKER_NOUN: Record<Exclude<MemberAgentSource["kind"], "other">, string> = { calendar: "calendar" };
+
+function pickerTitle(kind: Exclude<MemberAgentSource["kind"], "other">) {
+  return `Read your ${PICKER_NOUN[kind]} from`;
+}
+
+export function AccountPickerOptions({ kind, options, chosen, onPick }: {
+  kind: Exclude<MemberAgentSource["kind"], "other">;
+  options: MemberAgentSourceConnection[];
+  chosen: MemberAgentSourceConnection | null;
+  onPick: (connectionId: string) => void;
+}) {
+  const title = pickerTitle(kind);
+  return (
+    <>
+      <p className="px-4 pb-1 pt-3 text-[12px] font-medium text-gray-500">{title}</p>
+      <div className={denDropdownListClass} role="menu" aria-label={title}>
+        {options.map((option) => {
+          const selected = option.id === chosen?.id;
+          return (
+            <button key={option.id} type="button" role="menuitemradio" aria-checked={selected} aria-label={option.name}
+              className={`${denDropdownRowBaseClass} ${selected ? denDropdownRowSelectedClass : denDropdownRowIdleClass} items-center`}
+              onClick={() => onPick(option.id)}>
+              <span className="flex min-w-0 items-center gap-3">
+                <ConnectorLogo name={option.name} url={option.url} size="xs" />
+                <span className="truncate text-[13px] text-gray-900">{option.name}</span>
+                {selected ? <Check size={14} strokeWidth={1.5} aria-hidden className="shrink-0 text-gray-900" /> : null}
+              </span>
+              {option.state !== "connected" ? <span className="shrink-0 text-[12px] font-medium text-gray-700">{option.state === "reconnect" ? "Reconnect" : "Connect"}</span> : null}
+            </button>
+          );
+        })}
+      </div>
+    </>
+  );
+}
+
+function AccountPicker({ kind, options, chosen, disabled, onPick }: {
+  kind: Exclude<MemberAgentSource["kind"], "other">;
+  options: MemberAgentSourceConnection[];
+  chosen: MemberAgentSourceConnection | null;
+  disabled: boolean;
+  onPick: (connectionId: string) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const popupRef = useRef<HTMLDivElement>(null);
+  const title = pickerTitle(kind);
+  return (
+    <DenDropdownRoot open={open} onOpenChange={setOpen}>
+      <DenDropdownTrigger ref={triggerRef} type="button" disabled={disabled} aria-label={`${title}: ${chosen?.name ?? "choose an app"}`} data-testid={`my-agent-picker-${kind}`}
+        className="flex h-8 min-w-0 max-w-[240px] items-center gap-2 rounded-lg border border-gray-200 bg-white pl-1.5 pr-2.5 text-[13px] text-gray-900 outline-hidden transition-colors duration-150 ease-out hover:border-gray-300 hover:bg-gray-50 focus-visible:ring-2 focus-visible:ring-gray-900/10 disabled:cursor-not-allowed disabled:opacity-60 motion-reduce:transition-none">
+        {chosen ? <ConnectorLogo name={chosen.name} url={chosen.url} size="xs" /> : null}
+        <span className="truncate">{chosen?.name ?? "Choose an app"}</span>
+        <ChevronDown size={14} strokeWidth={1.5} aria-hidden className="shrink-0 text-gray-500" />
+      </DenDropdownTrigger>
+      {open ? (
+        <DenDropdownPopup anchor={triggerRef} popupRef={popupRef}>
+          <AccountPickerOptions kind={kind} options={options} chosen={chosen}
+            onPick={(connectionId) => {
+              setOpen(false);
+              if (connectionId !== chosen?.id) onPick(connectionId);
+            }} />
+        </DenDropdownPopup>
+      ) : null}
+    </DenDropdownRoot>
+  );
+}
+
+function SourceRow({ view, source, pendingOn, now, saving, links, onChange }: { pendingOn?: boolean; view: MemberAgentView; source: MemberAgentSource; now: number; saving: boolean; links: MyAgentLinks; onChange: Change }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(source.instruction);
   useEffect(() => setDraft(source.instruction), [source.instruction]);
-  const locked = source.policy !== "members";
+  const core = source.kind === "other" ? null : source.kind;
+  const locked = sourceLocked(source);
   const ready = source.connections.find((connection) => connection.state === "connected") ?? null;
   const fix = source.connections.find((connection) => connection.state !== "connected") ?? null;
   const logoFrom = ready ?? source.connections[0] ?? null;
   const steerable = source.on && source.policy !== "off";
+  const chosen = source.options.find((option) => option.id === source.connections[0]?.id) ?? null;
+  const showSwitch = !core || source.policy !== "everyone";
   const save = (instruction: string) => {
     onChange({ sources: [{ source: source.id, instruction }] });
     setEditing(false);
@@ -386,25 +448,44 @@ function SourceRow({ view, source, now, saving, links, onChange }: { view: Membe
         : !ready
           ? null
           : source.lastReadAt ? `Last read ${whenPhrase(source.lastReadAt, view.timeZone, now)}` : "Not read yet";
-  // Which account(s) a calendar, email or chat source reads through: the answer when a member has more than one.
-  const via = source.kind === "other" ? "" : joinNames(source.connections.filter((connection) => connection.state === "connected").map((connection) => connection.name));
   const instructionLabel = `${source.instruction ? "Edit the" : "Add an"} instruction for ${source.name}`;
+  const noReadTools = !core && source.policy !== "off" && source.readTools === 0;
+  const connectAction = source.on && source.policy !== "off" && !ready ? (
+    fix
+      ? <Link href={links.connector(fix.id)} className="whitespace-nowrap text-[12px] font-medium text-gray-900 underline-offset-2 hover:underline">{`${fix.state === "reconnect" ? "Reconnect" : "Connect"} ${fix.name}`}</Link>
+      : <Link href={links.catalog} className="whitespace-nowrap text-[12px] font-medium text-gray-900 underline-offset-2 hover:underline">{`Connect ${source.name.toLowerCase()}`}</Link>
+  ) : null;
   return (
     <div className="group flex flex-col gap-1.5 py-2" data-testid={`my-agent-source-${source.id}`} data-on={source.on} data-policy={source.policy}>
       <div className="flex min-h-[36px] items-center justify-between gap-3">
         <span className="flex min-w-0 items-center gap-3">
-          {logoFrom ? <ConnectorLogo name={logoFrom.name} url={logoFrom.url} size="xs" /> : <SourceIcon kind={source.kind} />}
+          {core ? <SourceIcon kind={core} /> : logoFrom ? <ConnectorLogo name={logoFrom.name} url={logoFrom.url} size="xs" /> : <SourceIcon kind={source.kind} />}
           <span className="flex min-w-0 flex-col">
             <span className={`truncate text-[13px] font-medium ${source.on ? "text-gray-900" : "text-gray-500"}`}>{source.name}</span>
-            {via && via !== source.name ? <span className="truncate text-[12px] leading-4 text-gray-500" data-testid={`my-agent-via-${source.id}`}>{via}</span> : null}
+            {noReadTools ? (
+              <span className="text-[12px] leading-4 text-gray-500" data-testid={`my-agent-no-read-tools-${source.id}`}>{NO_READ_TOOLS}</span>
+            ) : null}
+            {core && (status || connectAction) ? (
+              <span className="flex min-w-0 items-center gap-2 text-[12px] leading-4 text-gray-500" data-testid={`my-agent-state-${source.id}`}>
+                {status ? <span className="truncate">{status}</span> : null}
+                {connectAction}
+              </span>
+            ) : null}
           </span>
         </span>
         <span className="flex shrink-0 items-center gap-2">
-          {status ? <span className="whitespace-nowrap text-[12px] text-gray-500">{status}</span> : null}
-          {source.on && !ready ? (
-            fix
-              ? <Link href={links.connector(fix.id)} className="whitespace-nowrap text-[12px] font-medium text-gray-900 underline-offset-2 hover:underline">{`${fix.state === "reconnect" ? "Reconnect" : "Connect"} ${fix.name}`}</Link>
-              : <Link href={links.catalog} className="whitespace-nowrap text-[12px] font-medium text-gray-900 underline-offset-2 hover:underline">{`Connect ${source.name.toLowerCase()}`}</Link>
+          {pendingOn !== undefined ? <span role="status" className="text-[12px] text-gray-500">Saving…</span> : null}
+          {!core && status && pendingOn === undefined ? <span className="whitespace-nowrap text-[12px] text-gray-500">{status}</span> : null}
+          {!core ? connectAction : null}
+          {core && source.policy !== "off" && source.options.length > 1 ? (
+            <AccountPicker kind={core} options={source.options} chosen={chosen} disabled={saving}
+              onPick={(connectionId) => onChange({ sources: [{ source: source.id, connectionId }] })} />
+          ) : null}
+          {core && source.policy !== "off" && source.options.length === 1 && chosen ? (
+            <span className="flex min-w-0 max-w-[220px] items-center gap-2 px-2 text-[12px] text-gray-700" data-testid={`my-agent-app-${source.id}`}>
+              <ConnectorLogo name={chosen.name} url={chosen.url} size="xs" />
+              <span className="truncate">{chosen.name}</span>
+            </span>
           ) : null}
           {steerable && !editing ? (
             <button type="button" disabled={saving} onClick={() => setEditing(true)} aria-label={instructionLabel} title={instructionLabel}
@@ -412,11 +493,15 @@ function SourceRow({ view, source, now, saving, links, onChange }: { view: Membe
               <PencilLine size={16} strokeWidth={1.5} aria-hidden />
             </button>
           ) : null}
-          <span className="flex w-4 justify-center">
-            {locked ? <Lock size={14} strokeWidth={1.5} className="text-gray-500" role="img" aria-label={source.policy === "off" ? "Not allowed by your admin" : "On for everyone, set by your admin"} /> : null}
-          </span>
-          <DenSwitch size="sm" aria-label={source.name} checked={source.on} disabled={locked || saving}
-            onChange={(on) => onChange({ sources: [{ source: source.id, on }] })} />
+          {showSwitch ? (
+            <>
+              <span className="flex w-4 justify-center">
+                {locked ? <Lock size={14} strokeWidth={1.5} className="text-gray-500" role="img" aria-label={source.policy === "off" ? "Not allowed by your admin" : "On for everyone, set by your admin"} /> : null}
+              </span>
+              <DenSwitch size="sm" aria-label={source.name} checked={pendingOn ?? source.on} disabled={locked || saving}
+                onChange={(on) => onChange({ sources: [{ source: source.id, on }] })} />
+            </>
+          ) : null}
         </span>
       </div>
       {steerable && editing ? (
@@ -442,7 +527,6 @@ function hourRange(from: number, to: number): number[] {
   return Array.from({ length: Math.max(0, to - from + 1) }, (_, index) => from + index);
 }
 
-/** The page's layout while the agent loads: the focal line and sections where they will be. */
 export function MyAgentPanelSkeleton({ library }: { library: string }) {
   return (
     <ItemPage testId="my-agent-screen">

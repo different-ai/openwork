@@ -77,7 +77,6 @@ export function CompareSection({
   id: string;
   heading: string;
   children: ReactNode;
-  /** Constrain heading and content to a reading width, for two-column tables. */
   narrow?: boolean;
 }) {
   return (

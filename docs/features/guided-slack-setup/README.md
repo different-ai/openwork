@@ -1,6 +1,9 @@
 # Guided Slack setup
 
-Feature key: `guidedSlackSetup` · Deployments: cloud and self-hosted · Default: off · Author: @benjaminshafii
+> **GA:** Available without a feature flag. The former rollout key is retired.
+> Off/on screenshots below are historical comparisons, not current deployment options.
+
+Retired rollout key: `guidedSlackSetup` · Deployments: cloud and self-hosted · Status: generally available (no flag) · Author: @benjaminshafii
 
 ## What people get
 
@@ -33,13 +36,12 @@ get one checklist instead of the shared connector checks:
    "Set up @openwork in Slack next" opens the connector page at its OpenWork in
    Slack section.
 
-With the flag on, the new Slack connection requests exactly the chosen scopes,
+The new Slack connection requests exactly the chosen scopes,
 so the request always matches the manifest. A connection created before any
 choice (for example **Add anyway** after a failed check) requests only the
-preset's default 11, never the optional ones. Off, setup requests what the
-server advertises, exactly as before.
+preset's default 11, never the optional ones.
 
-Flag on, fresh setup (nothing chosen, the app link locked):
+Fresh setup (nothing chosen, the app link locked):
 
 ![Add Slack, guidedSlackSetup on](./flag-on.png)
 
@@ -51,31 +53,29 @@ After the client ID is saved and MCP is confirmed:
 
 ![Ready to sign in](./ready-to-sign-in.png)
 
-Flag off (as shipped), the shared checks:
+Historical before GA, the shared checks:
 
 ![Add Slack, guidedSlackSetup off](./flag-off.png)
 
 ## How to try it
 
-Turn it on for an organization in `/admin`, then open
+Open
 `/dashboard/mcp-connections/new/slack` as an organization admin. The proof
 `evals/proofs/den-slack-guided-setup.proof.test.ts` walks through it without
 contacting Slack.
 
-## Turning it off
+## Availability
 
-The Slack preset goes back to the shared setup checks on the next page load.
-Nothing is stored by the checklist itself (the MCP confirmation is page
-state); connections it created stay as they are, with their requested scopes.
+Generally available. The rollout flag is retired; organization/member overrides,
+operator locks and old kill-switch rows no longer disable this behavior.
+Authorization, provider setup, consent and runtime compatibility still apply.
 
 ## What to watch
 
 - `external_mcp_readiness_check_failed` logs with `category` and
-  `http_status` for Slack connections created after turning it on.
-- `/admin` › organization › Features usage: counted when an admin clicks
-  Create app in Slack or Sign in with Slack from the checklist.
+  `http_status` for Slack connections created by the guided setup.
 
-## Not behind the flag
+## Additive API behavior
 
 - `GET /v1/mcp-connections/presets` returns `oauthCallbackUrl` for presets that
   need a pre-registered OAuth app (additive API field).

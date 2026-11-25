@@ -1,21 +1,22 @@
+import { useState } from "react";
 import { Message, MessageContent } from "@/components/ui/message";
 import { TaskRecovery } from "@/components/chat/task-recovery";
-import { gatewayProviderAuthPresentationForFeature, presentOpencodeSessionError } from "../sync/session-error";
-import { useOrgFeature } from "@/react-app/domains/cloud/use-org-feature";
+import { presentOpencodeSessionError } from "../sync/session-error";
 import { persistableComposerDraftText } from "../surface/composer-state-store";
 import { resolvePastedTextPlaceholders } from "../surface/composer/pasted-text";
 import { retryPendingConversation, type PendingConversation } from "./pending-conversation-store";
 import { NewTaskComposer, type NewTaskComposerContext } from "./new-task-composer";
+import { WorkspaceSandboxModePill } from "../surface/composer/sandbox-mode-pill";
 
 const noop = () => {};
 
 export function PendingConversationView({ conversation, composer }: { conversation: PendingConversation; composer: NewTaskComposerContext | null }) {
+  if (conversation.phase === "sandbox-deferred") {
+    return <DeferredConversationComposer key={conversation.id} conversation={conversation} composer={composer} />;
+  }
   const failed = conversation.phase === "creation-failed";
-  const gatewayProviderAuthEnabled = useOrgFeature("gatewayProviderAuthErrors");
   const text = persistableComposerDraftText(resolvePastedTextPlaceholders(conversation.submitted.draft, conversation.submitted.pasteParts));
-  const error = failed ? gatewayProviderAuthPresentationForFeature(
-    presentOpencodeSessionError(conversation.error, "Couldn’t send your message"), gatewayProviderAuthEnabled,
-  ) : null;
+  const error = failed ? presentOpencodeSessionError(conversation.error, "Couldn’t send your message") : null;
   const gatewayProviderAuthFailure = error?.kind === "gateway-provider-authentication-failed" || error?.kind === "gateway-provider-permission-denied";
   return <div className="flex h-full min-h-0 flex-col" data-pending-conversation={conversation.id}>
     <div className="relative min-h-0 flex-1">
@@ -38,11 +39,25 @@ export function PendingConversationView({ conversation, composer }: { conversati
       </div>
     </div>
     <div className="shrink-0 px-0 pb-2 pt-2 max-lg:pb-0" inert>
-      {/* Keep the ordinary dock visible without giving a local identity to a
-          session API or letting this read-only shell reclaim the source draft. */}
       <NewTaskComposer draft="" onDraftChange={noop} onRunTask={noop} busy flush={false}
         context={composer ? { ...composer, draftOwnerKey: undefined, draftScope: null,
           draftSessionId: undefined, destination: undefined, client: null, workspaceId: null } : null} />
     </div>
+  </div>;
+}
+
+function DeferredConversationComposer({ conversation, composer }: { conversation: PendingConversation; composer: NewTaskComposerContext | null }) {
+  const [draft, setDraft] = useState(conversation.submitted.draft);
+  return <div className="flex h-full min-h-0 flex-col justify-end">
+    <p role="status" data-testid="sandbox-send-note" className="mx-3 mb-2 text-xs text-muted-foreground">{conversation.sandboxNote}</p>
+    <NewTaskComposer draft={draft} onDraftChange={setDraft} initialComposer={conversation.submitted} busy={false} flush={false}
+      context={composer ? { ...composer, draftOwnerKey: undefined, draftScope: null,
+        draftSessionId: undefined, destination: undefined, client: null, workspaceId: null } : null}
+      sandboxModeControl={<WorkspaceSandboxModePill client={composer?.client ?? null} workspaceId={composer?.workspaceId ?? null}
+        onOpenPermissions={() => composer?.onOpenSettingsSection?.("permissions")} />}
+      onRunTask={(_text, _attachments, handoff) => {
+        handoff?.consume?.();
+        return retryPendingConversation(conversation.id, handoff?.submitted);
+      }} />
   </div>;
 }

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "vitest";
-import { answerTool, chatCompletionsModel, replayPrompt, runReplay, scoreReplay, type ReplayModel } from "./harness.ts";
+import { REPLAY_TOOLS, answerTool, chatCompletionsModel, replayPrompt, runReplay, scoreReplay, type ReplayModel } from "./harness.ts";
 import { REPLAY_TIMELINES } from "./timelines.ts";
 
 // The replay harness itself, with a scripted model: the timelines' tools answer like Connect, the real wake prompt and
@@ -25,11 +25,11 @@ function scripted(calls: { name: string; args: Record<string, unknown> }[], answ
 }
 
 describe("agent replay harness", () => {
-  test("the prompt is Den's real wake prompt: calendar, email and team chat with their last read", () => {
+  test("the prompt is Den's real wake prompt: the calendar, Google Workspace and Slack with their last read", () => {
     const prompt = replayPrompt(timeline("slack-ask-before-call"));
     expect(prompt).toMatch(/^\[wake\] Scheduled check\. It is Tue, Oct 20, 9:40 AM \(America\/New_York\)\./);
-    expect(prompt).toMatch(/- email: Email through Gmail: their inbox\. last read today at 8:05 AM \(Gmail search after:\d+\)\./);
-    expect(prompt).toMatch(/- chat: Team chat through Slack: DMs to them, mentions of them and threads they're in\. last read today at 8:05 AM \(Slack search after:2026-10-19/);
+    expect(prompt).toMatch(/- email: Google Workspace: their inbox first, then anything else there the brief asks for\. last read today at 8:05 AM \(\S+; Gmail search after:\d+\)\./);
+    expect(prompt).toMatch(/- chat: Slack: DMs to them, mentions of them and threads they're in\. last read today at 8:05 AM \(Slack search after:2026-10-19/);
   });
 
   test("tools answer from the timeline like Connect: a calendar window, Gmail and Slack since a time, threads, notes", () => {
@@ -90,7 +90,7 @@ describe("agent replay harness", () => {
       return new Response(JSON.stringify({ choices: [{ message: { content: null, tool_calls: [{ id: "c1", type: "function", function: { name: "gmail_search_threads", arguments: "{\"query\":\"after:1\"}" } }] } }] }), { status: 200 });
     };
     const model = chatCompletionsModel({ baseUrl: "https://models.example/v1/", apiKey: "test-key", model: "test-model", fetch: fake });
-    const answer = await model({ messages: [{ role: "user", content: "hi" }], tools: [] });
+    const answer = await model({ messages: [{ role: "user", content: "hi" }], tools: REPLAY_TOOLS.slice(0, 1) });
     expect(answer.tool_calls?.[0]?.function.name).toBe("gmail_search_threads");
     expect(requests[0]).toMatchObject({ model: "test-model", tool_choice: "auto" });
   });

@@ -4,10 +4,8 @@ import type { ServerConfig, WorkspaceInfo } from "./types.js";
 
 export const RECOVERY_INTERVAL_MS = 2_000;
 export const RECOVERY_CONCURRENCY = 2;
-/** Consecutive failed observations before a record is retried with backoff. */
 export const RECOVERY_FAILURES_BEFORE_BACKOFF = 3;
 const RECOVERY_MAX_BACKOFF_MS = 5 * 60_000;
-/** A new prompt is watched this long for an interruption worth resuming. */
 const OBSERVING_WINDOW_MS = 30_000;
 const MAX_TASKS = 1_000;
 const recordSchema = z.object({
@@ -25,13 +23,11 @@ const store = createWorkspaceKvStore<RecoveryRecord[]>({
 });
 const RECOVERY_PROMPT = "Continue the interrupted task from the current state. First inspect the conversation and workspace to verify which actions already completed. Preserve completed work, do not repeat side effects, and finish only what remains. Stop and ask if an earlier action's outcome cannot be verified.";
 
-/** One desktop server owns this journal; no transcript, prompt, or credentials are persisted. */
 export async function createTaskRecovery(
   config: ServerConfig,
   request: (request: Request) => Promise<Response>,
   beforeResume: () => Promise<void> = async () => {},
   options: {
-    /** False while an engine is stopped (v2 after switching back to v1): its records wait instead of polling 503s. */
     engineAvailable?: (engine: Engine) => boolean;
   } = {},
 ) {
@@ -65,15 +61,11 @@ export async function createTaskRecovery(
     records.delete(key(record)); startup.delete(key(record)); recovered.delete(key(record));
     observingSince.delete(key(record)); failures.delete(key(record));
   };
-  // Unavailable state still never grants permission to send; it only stops a
-  // record that cannot be read from costing five engine reads every tick.
   const observationFailed = async (record: RecoveryRecord) => {
     const recordKey = key(record);
     const count = (failures.get(recordKey)?.count ?? 0) + 1;
     if (count >= RECOVERY_FAILURES_BEFORE_BACKOFF && record.phase === "observing" && !startup.has(recordKey)
       && Date.now() - (observingSince.get(recordKey) ?? 0) > OBSERVING_WINDOW_MS && current(record)) {
-      // Only a successful read settles a watch, and it is past the window in
-      // which a quick interruption would be resumed.
       remove(record); await persist(); return;
     }
     const delay = count < RECOVERY_FAILURES_BEFORE_BACKOFF ? 0
@@ -112,8 +104,6 @@ export async function createTaskRecovery(
       call(record, sessionPath), call(record, v2 ? "/session/active" : "/session/status"),
       call(record, `${sessionPath}/${v2 ? "context" : "message?limit=100"}`),
       call(record, v2 ? `${sessionPath}/permission` : "/permission"),
-      // Only this session's forms decide `blocked`; the workspace-wide list
-      // pages every conversation the engine has and fails with any of them.
       call(record, v2 ? `${sessionPath}/form` : "/question"),
       v2 ? [] : call(record, `/api${sessionPath}/permission`),
     ]);
@@ -132,8 +122,6 @@ export async function createTaskRecovery(
       .reverse().find((message) => message[v2 ? "type" : "role"] === "assistant");
     const status = statuses[record.sessionId];
     const active = isRecord(status) && ["busy", "retry", "running"].includes(String(status.type));
-    // A delegated task can be waiting on a child permission while the root
-    // remains busy. Do not resume its parent independently of that child.
     const delegated = messages.some((message: unknown) => {
       if (!isRecord(message)) return false;
       const item = v2 ? message : message.info;
@@ -147,8 +135,6 @@ export async function createTaskRecovery(
     const archived = isRecord(info.time) && typeof info.time.archived === "number" && info.time.archived > 0;
     const completed = assistant && isRecord(assistant.time) && typeof assistant.time.completed === "number";
     const aborted = assistant && isRecord(assistant.error) && assistant.error.name === "MessageAbortedError";
-    // Idle alone is not proof of interruption. Require the same unfinished turn,
-    // or an abort produced after our own graceful-shutdown checkpoint.
     const unfinished = assistant && (!assistant.error && (!completed || assistant.finish === "tool-calls")
       || record.shutdown && aborted) || record.shutdown && info.outcome === "interrupted";
     const terminal = archived || info.outcome === "succeeded" || info.outcome === "failed"
@@ -164,8 +150,6 @@ export async function createTaskRecovery(
       if (current(record)) { remove(record); await persist(); }
       return;
     }
-    // Wait for restored sign-in/policy before claiming work. The actual send
-    // still traverses the authenticated policy-enforcing proxy.
     if (startup.has(key(record))) await beforeResume();
     let snapshot: Awaited<ReturnType<typeof observe>>;
     try { snapshot = await observe(record); }
@@ -182,7 +166,6 @@ export async function createTaskRecovery(
       remove(record); await persist(); return;
     }
     if (snapshot.active || snapshot.blocked) {
-      // An engine which recovered its own run is observed, never re-prompted.
       startup.delete(key(record));
       if (pending) recovered.add(key(record));
       record.phase = snapshot.blocked ? "blocked" : "running";
@@ -196,8 +179,6 @@ export async function createTaskRecovery(
     }
     if (!snapshot.unfinished || !record.userId) { remove(record); await persist(); return; }
     if (recovered.size >= RECOVERY_CONCURRENCY || snapshot.activeCount >= RECOVERY_CONCURRENCY || Date.now() < nextLaunch) return;
-    // Claim durably before admission. A lost acknowledgement is never retried,
-    // including across another process restart.
     record.phase = "claimed";
     startup.delete(key(record));
     recovered.add(key(record));
@@ -228,12 +209,9 @@ export async function createTaskRecovery(
       const failure = failures.get(key(record));
       return !failure || failure.retryAt <= now;
     });
-    // Bound background reads as well as starts; rotate so a large backlog is fair.
     const selected = batch.length ? [batch[cursor % batch.length], batch[(cursor + 1) % batch.length]] : [];
     cursor += RECOVERY_CONCURRENCY;
     ticking = Promise.all([...new Set(selected)].map((record) => check(record).catch(() => {
-      // Unavailable or ambiguous state never grants permission to send. A claimed
-      // send retains its slot until a later observation establishes its outcome.
     }))).then(() => {}).finally(() => { ticking = undefined; });
     return ticking;
   };
@@ -261,8 +239,6 @@ export async function createTaskRecovery(
         finally { if (admissions.get(admissionKey) === operation) admissions.delete(admissionKey); }
       };
       if (owned) return serializedSend();
-      // Permission replies may let a tracked blocked turn continue. All other
-      // manual mutations invalidate recovery before the engine sees them.
       if (/^\/(permission|form)\//.test(suffix)) return serializedSend();
       const record: RecoveryRecord = { workspaceId: workspace.id, directory: workspace.path, engine, sessionId,
         phase: "observing", userId: null, shutdown: false };
@@ -282,12 +258,8 @@ export async function createTaskRecovery(
     async stop() {
       if (stopped) return writes;
       clearInterval(timer);
-      // Freeze before engines are killed, so their shutdown idle/error cannot
-      // erase intent. In-flight observations are discarded by current().
       stopped = true;
       const candidates = [...records.values()].filter((record) => record.phase !== "claimed" && !startup.has(key(record)));
-      // An unprocessed or unavailable final snapshot is not eligible. Checkpoint
-      // at most two sessions at once, within one bounded shutdown window.
       for (const record of candidates) { record.phase = "blocked"; record.shutdown = false; }
       await persist();
       const deadline = Date.now() + 10_000;
@@ -302,7 +274,7 @@ export async function createTaskRecovery(
               && snapshot.userId && (record.userId === null || snapshot.userId === record.userId)) {
               record.phase = "running"; record.shutdown = true; record.userId = snapshot.userId;
             }
-          } catch { /* Leave unverified work excluded. */ }
+          } catch {}
         }
       }));
       await persist();

@@ -3,11 +3,9 @@ import { headlessModelAccessSchema, type HeadlessModelAccess } from "@openwork-e
 import type { Config } from "./config.js"
 import { fetchGatewayModels, type ModelOption } from "./model.js"
 
-/** A catalog is verified only by an authenticated gateway read, never by the configured default alone. */
 export function gatewayModelCatalog(config: Config, readModels = fetchGatewayModels) {
   let cached: { at: number; models: ModelOption[] } | null = null
   return async (modelAccess?: HeadlessModelAccess) => {
-    // Member catalogs are never cached under a deployment key or replaced by the deployment catalog.
     if (modelAccess) {
       try {
         const models = (await readModels(modelAccess)).filter((model) =>
@@ -37,7 +35,6 @@ export function gatewayModelCatalog(config: Config, readModels = fetchGatewayMod
 
 const catalogRequest = z.strictObject({ modelAccess: headlessModelAccessSchema })
 
-/** Service-authenticated only; a credential-bearing catalog request is never cacheable. */
 export async function scopedCatalogResponse(request: Request, catalog?: (access?: HeadlessModelAccess) => Promise<{ defaultModel: string; models: ModelOption[]; verified?: boolean }>): Promise<Response> {
   const headers = { "cache-control": "no-store" }
   const body = catalogRequest.safeParse(await request.json().catch(() => null))

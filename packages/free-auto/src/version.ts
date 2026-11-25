@@ -1,10 +1,5 @@
 import type { DesktopFreeVersionError } from "./protocol.js";
 
-/**
- * The desktop reports its version in the signed proof, like a user agent. Every
- * version may use signed-out Auto unless the server says otherwise: a blocked
- * version, or one below a configured minimum, is asked to update.
- */
 const identifier = "(?:0|[1-9][0-9]*|[0-9]*[A-Za-z-][0-9A-Za-z-]*)";
 const semver = new RegExp(`^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)(?:-(${identifier}(?:\\.${identifier})*))?(?:\\+[0-9A-Za-z-]+(?:\\.[0-9A-Za-z-]+)*)?$`);
 export function parseDesktopVersion(value: string): { core: number[]; prerelease: string | undefined } | null {
@@ -28,7 +23,6 @@ export function compareDesktopVersions(a: string, b: string): number | null {
 
 export type DesktopVersionPolicy = { minimumVersion: string | null; blocked: readonly string[] };
 export function desktopFreeVersionError(currentVersion: string, policy: DesktopVersionPolicy): DesktopFreeVersionError | null {
-  // Blocked versions are listed without build metadata ("1.2.4-alpha.3244", not "…+4d3cfbd").
   const plus = currentVersion.indexOf("+");
   const withoutBuild = plus >= 0 ? currentVersion.slice(0, plus) : currentVersion;
   const { minimumVersion } = policy;

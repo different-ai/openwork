@@ -1,14 +1,15 @@
 import { env } from "../env.js"
 import { SLACK_ASSISTANT_INSTRUCTIONS } from "../slack-assistant/protocol.js"
-import { BUILD_AN_APP_SKILL_SOURCE, BUILTIN_BUILD_AN_APP_CAPABILITY } from "./build-an-app-skill.js"
+import { buildAnAppSkillSource, BUILTIN_BUILD_AN_APP_CAPABILITY } from "./build-an-app-skill.js"
+import type { CodemodeLanguage } from "./codemode-script-object.js"
 import type { RemoteSkillDescriptor } from "./marketplace-capabilities.js"
 import { scoreText, tokenize, type CapabilityMatch } from "./search.js"
+import { newWorkflowLanguage } from "./workflow-service.js"
 
 export type BuiltinSkillDefinition = {
   descriptor: RemoteSkillDescriptor
-  source: string
+  source: string | ((language: CodemodeLanguage) => string)
   searchExtraTokens: string
-  /** Listed only while the tools it teaches exist on this deployment. */
   available?: () => boolean
 }
 
@@ -56,7 +57,7 @@ When the skill captures work you just finished in this conversation, write it so
 - **Inputs:** the few values that change per use (for example customer, use case, recipient) and how to read them from a short request.
 - **Sources:** the exact pages, files or records you used (titles plus IDs or links). Tell the next run to read them directly instead of searching.
 - **Steps:** the shortest sequence of calls that worked, in order.
-- **Assets:** if you wrote a script or template that produced the output, save it in the workspace (for example \`tools/<skill-name>.py\`) and include a verbatim copy in a fenced code block, with how to run it on new inputs. The next run reuses the workspace file when it exists.
+- **Assets:** if you wrote a script, template or reference that produced the output, save it with the skill as a supporting file (for example \`scripts/build-report.py\` or \`templates/report.md\`) and say in \`SKILL.md\` when to read or run it, by that path.
 - **Output:** file name pattern, location and format, any reply or draft template, and the one check to run before reporting.
 
 Keep it general: don't present one customer's results as facts for another.
@@ -64,11 +65,12 @@ Keep it general: don't present one customer's results as facts for another.
 ## Workflow
 
 1. Draft the complete \`SKILL.md\`.
-2. Execute \`create_skill\` with:
+2. Execute \`create_skill\` with (omit \`files\` when the skill needs none; send images, fonts, office templates and other binary files as \`{ "path": "...", "base64": "..." }\`):
    \`\`\`json
    {
      "pluginName": "<plugin title>",
-     "skillMarkdown": "<complete SKILL.md>"
+     "skillMarkdown": "<complete SKILL.md>",
+     "files": [{ "path": "scripts/build-report.py", "text": "<complete file>" }]
    }
    \`\`\`
 3. Use the returned plugin id and skill id to report that the skill is ready to use now. The result contains text and structured skill details; report the saved result in text.
@@ -244,7 +246,7 @@ Work on a local copy with shell tools; never paste file bytes or base64 into a t
 
 ## In OpenWork (the drive_pull_file, drive_file_status and drive_push_file tools)
 
-1. \`drive_pull_file\` with the Drive file ID or link, or a OneDrive, SharePoint or Teams file link (or an item id with its driveId). Desktop confirms the file's Drive identity and download before transferring bytes. Docs, Sheets and Slides arrive as docx, xlsx and pptx unless you choose a format (csv holds only a Sheet's first tab; md, txt, pdf...). The result is a workspace path plus metadata, never content.
+1. \`drive_pull_file\` with the Drive file ID or link, or a OneDrive, SharePoint or Teams file link (or an item id with its driveId). Leave out \`path\` to save under drive/; Desktop asks the person first for any other folder. Docs, Sheets and Slides arrive as docx, xlsx and pptx unless you choose a format (csv holds only a Sheet's first tab; md, txt, pdf...). The result is a workspace path plus metadata, never content.
 2. Inspect and edit the file with bash (recipes below). Load only the part you need.
 3. \`drive_file_status\` shows what changed locally and in Drive.
 4. Only when the user asked to save it: \`drive_push_file\`, which the person approves. A stored file, including Office files in OneDrive and SharePoint, is replaced in place: same link and sharing, with the previous version in the version history. A Google Docs, Sheets or Slides file (or a PDF converted from an Office file) is saved as a new file next to the original unless the user asked for something else.
@@ -328,12 +330,12 @@ export const BUILTIN_SKILLS: BuiltinSkillDefinition[] = [
   {
     descriptor: {
       name: "build-an-app",
-      title: "Build an App",
-      description: "Build or change an App, such as a dashboard, tracker, lookup, form, or calculator, that opens beside the chat.",
+      title: "Build an artifact",
+      description: "Build or change an artifact, such as a dashboard, tracker, lookup, form, or calculator, that opens beside the chat.",
       capability: BUILTIN_BUILD_AN_APP_CAPABILITY,
       location: "skill://build-an-app/SKILL.md",
     },
-    source: BUILD_AN_APP_SKILL_SOURCE,
+    source: buildAnAppSkillSource,
     searchExtraTokens: "app apps build make create edit update dashboard tracker calculator form lookup interactive view mcp artifact",
     available: () => env.appMcpServersEnabled,
   },
@@ -405,7 +407,7 @@ export function searchBuiltinSkillCapabilities(query: string, limit = 5): Builti
     .slice(0, Math.max(1, Math.min(20, Math.trunc(limit) || 5)))
 }
 
-export function executeBuiltinSkillCapability(name: string): BuiltinSkillExecutePayload | null {
+export async function executeBuiltinSkillCapability(name: string, organizationId: string): Promise<BuiltinSkillExecutePayload | null> {
   const skill = findBuiltinSkill(name)
   if (!skill) return null
   return {
@@ -413,6 +415,6 @@ export function executeBuiltinSkillCapability(name: string): BuiltinSkillExecute
     name: skill.descriptor.title,
     description: skill.descriptor.description,
     provenance: "Built into OpenWork Cloud.",
-    content: skill.source,
+    content: typeof skill.source === "string" ? skill.source : skill.source(await newWorkflowLanguage()),
   }
 }

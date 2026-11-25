@@ -6,14 +6,9 @@ import { getGithubData } from "../lib/github";
 import { renderMarkdown } from "../lib/render-markdown";
 
 interface LegalPageProps {
-  /** Path to the .md file relative to the app directory (e.g. "privacy/privacy-policy.md") */
   file: string;
 }
 
-/**
- * Full-page layout for legal pages. Reads a markdown file at build time
- * and renders it with nav, footer, and prose styling. No external dependencies.
- */
 export async function LegalPage({ file }: LegalPageProps) {
   const github = await getGithubData();
   const callUrl = process.env.NEXT_PUBLIC_CAL_URL || "/enterprise#book";

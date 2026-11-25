@@ -22,7 +22,6 @@ export async function resolveOpencodeModelsUrl(
     });
     if (response.ok) return LOCAL_MODELS_URL;
   } catch {
-    // A standalone desktop dev session does not run the local inference stack.
   }
 
   return PRODUCTION_MODELS_URL;

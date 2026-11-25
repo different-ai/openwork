@@ -15,12 +15,6 @@ function outputText(value: unknown): string | null {
   return null;
 }
 
-/**
- * The script's own error, when the engine recorded one. A failed Den script
- * returns `{ error: "script_failed", message, kind }` as the step's result;
- * that message ("`.then` is not supported, use await…") is what a person or a
- * support engineer needs, not a generic placeholder.
- */
 export function codeModeScriptError(part: DynamicToolUIPart): string | null {
   const raw = part.state === "output-error" ? part.errorText : part.state === "output-available" ? outputText(part.output) : null;
   if (!raw) return null;
@@ -29,11 +23,6 @@ export function codeModeScriptError(part: DynamicToolUIPart): string | null {
   return part.state === "output-error" && raw.trim() ? raw.trim() : null;
 }
 
-/**
- * The engine wraps a thrown script result, so the payload can arrive as
- * `{"error":"Error: {\"error\":\"script_failed\",\"message\":…}"}`. Unwrap a
- * few levels to the first `message`.
- */
 function structuredMessage(text: string, depth: number): string | null {
   if (depth > 3) return null;
   const start = text.indexOf("{");
@@ -45,7 +34,6 @@ function structuredMessage(text: string, depth: number): string | null {
     return null;
   }
   if (!isRecord(parsed)) return null;
-  // The wrapper's own `message` can be the inner JSON string; keep unwrapping.
   for (const key of ["message", "error"]) {
     const value = parsed[key];
     if (typeof value !== "string" || !value.trim()) continue;
@@ -65,12 +53,6 @@ function stableJson(value: unknown): string | undefined {
   }
 }
 
-/**
- * Each call's own captured result, from the server's results plugin. The
- * engine's call list also counts native `search()` calls, which never reach
- * the plugin, so pair calls with captures by their occurrence of the same
- * tool, and let an equal input settle reordered parallel calls.
- */
 function capturedDetails(part: DynamicToolUIPart, codeMode: Record<string, unknown>, calls: unknown[]): Array<Record<string, unknown> | null> {
   const details = (Array.isArray(codeMode.details) ? codeMode.details : []).filter((detail): detail is Record<string, unknown> =>
     isRecord(detail) && typeof detail.tool === "string"
@@ -97,14 +79,11 @@ function capturedDetails(part: DynamicToolUIPart, codeMode: Record<string, unkno
   });
 }
 
-/** Project recorded calls, never infer execution by parsing the generated code. */
 export function codeModeToolCalls(part: DynamicToolUIPart): DynamicToolUIPart[] | null {
   const codeMode = part.callProviderMetadata?.openwork?.codeMode;
   if (!isRecord(codeMode) || !Array.isArray(codeMode.calls)) return null;
   const calls = codeMode.calls;
   const details = capturedDetails(part, codeMode, calls);
-  // The engine reports one error for the whole script. Attribute it to the
-  // call that failed last; earlier failures keep the honest placeholder.
   const lastFailed = calls.reduce<number>((found, call, index) => isRecord(call) && call.status === "error" ? index : found, -1);
   const scriptError = lastFailed >= 0 ? codeModeScriptError(part) : null;
   return calls.flatMap((call, ordinal): DynamicToolUIPart[] => {
@@ -112,7 +91,6 @@ export function codeModeToolCalls(part: DynamicToolUIPart): DynamicToolUIPart[] 
     const detail = details[ordinal] ?? null;
     const startedAt = typeof detail?.startedAt === "number" && Number.isFinite(detail.startedAt) ? detail.startedAt : null;
     const base = {
-      // v2 reports calls in their invocation order, including repeated/parallel calls.
       toolCallId: `${part.toolCallId}:call:${ordinal}`,
       toolName: call.tool.replaceAll(".", "_"),
       input: call.input,
@@ -122,7 +100,6 @@ export function codeModeToolCalls(part: DynamicToolUIPart): DynamicToolUIPart[] 
     if (call.status === "completed") return [{ ...base, type: "dynamic-tool", state: "output-available", output: detail?.output }];
     if (call.status === "error") return [{
       ...base, type: "dynamic-tool", state: "output-error",
-      // The call's own captured error wins over the script's single error.
       errorText: typeof detail?.error === "string" && detail.error.trim() ? detail.error
         : ordinal === lastFailed && scriptError ? scriptError : NO_INDIVIDUAL_ERROR,
     }];

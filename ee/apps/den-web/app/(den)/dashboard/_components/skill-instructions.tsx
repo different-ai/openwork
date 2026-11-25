@@ -2,12 +2,6 @@
 
 import { Fragment, type ReactNode } from "react";
 
-/**
- * Reads a skill's Markdown body as a document: headings, paragraphs, lists,
- * quotes and code. Builds React elements only (no HTML injection), so any
- * unsupported syntax simply shows as text.
- */
-
 type Block =
   | { kind: "heading"; level: number; text: string }
   | { kind: "paragraph"; text: string }
@@ -90,7 +84,6 @@ function parseBlocks(markdown: string): Block[] {
   return blocks;
 }
 
-/** `code`, **bold** and *italic*; everything else stays literal text. */
 function inline(text: string): ReactNode {
   const parts = text.split(/(`[^`]+`|\*\*[^*]+\*\*|__[^_]+__|\*[^*\s][^*]*\*)/g);
   return parts.map((part, index) => {
@@ -113,7 +106,6 @@ function normalize(value: string): string {
 
 export function SkillInstructions({ markdown, title }: { markdown: string; title: string }) {
   const blocks = parseBlocks(markdown);
-  // The page already shows the title; a leading "# Same title" would repeat it.
   const first = blocks[0];
   if (first?.kind === "heading" && normalize(first.text) === normalize(title)) blocks.shift();
 

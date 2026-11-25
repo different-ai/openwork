@@ -1,5 +1,6 @@
 import { createHmac, createSign, randomUUID, timingSafeEqual } from "node:crypto"
 import { isAgentPluginManifestSchema } from "./agent-plugin-v1.js"
+import { requireApprovedGithubInstallation } from "./github-installation-policy.js"
 
 export class GithubConnectorConfigError extends Error {
   constructor(message: string) {
@@ -93,7 +94,6 @@ export function clearGithubInstallationTokenCache() {
   githubInstallationTokenRequests.clear()
 }
 
-// Overridable so @openwork/testkit specs can point the connector at a mock GitHub witness.
 function githubApiBase(): string {
   const override = process.env.GITHUB_CONNECTOR_API_BASE?.trim()
   return override ? override.replace(/\/+$/, "") : "https://api.github.com"
@@ -289,7 +289,8 @@ export function buildGithubAppInstallUrl(input: { app: GithubAppSummary; state: 
   return url.toString()
 }
 
-export async function getGithubInstallationSummary(input: { config: GithubConnectorAppConfig; fetchFn?: GithubFetch; installationId: number }) {
+export async function getGithubInstallationSummary(input: { config: GithubConnectorAppConfig; fetchFn?: GithubFetch; installationId: number; organizationId: string }) {
+  requireApprovedGithubInstallation(input.organizationId, input.installationId)
   const jwt = createGithubAppJwt(input.config)
   const response = await requestGithubJson<{
     account?: {
@@ -307,7 +308,10 @@ export async function getGithubInstallationSummary(input: { config: GithubConnec
     path: `/app/installations/${input.installationId}`,
   })
 
-  const installationId = typeof response.body.id === "number" ? response.body.id : input.installationId
+  if (response.body?.id !== input.installationId) {
+    throw new GithubConnectorRequestError("GitHub returned an unexpected installation.", 502)
+  }
+  const installationId = input.installationId
   const accountLogin = typeof response.body.account?.login === "string" ? response.body.account.login.trim() : ""
   const accountType = response.body.account?.type === "Organization" ? "Organization" : "User"
   const repositorySelection = response.body.repository_selection === "selected" ? "selected" : "all"
@@ -325,7 +329,8 @@ export async function getGithubInstallationSummary(input: { config: GithubConnec
   } satisfies GithubInstallationSummary
 }
 
-async function createGithubInstallationAccessToken(input: { config: GithubConnectorAppConfig; fetchFn?: GithubFetch; installationId: number; requestTimeoutMs?: number }) {
+async function createGithubInstallationAccessToken(input: { config: GithubConnectorAppConfig; fetchFn?: GithubFetch; installationId: number; organizationId: string; requestTimeoutMs?: number }) {
+  requireApprovedGithubInstallation(input.organizationId, input.installationId)
   const jwt = createGithubAppJwt(input.config)
   const response = await requestGithubJson<{ token?: string }>({
     fetchFn: input.fetchFn,
@@ -345,16 +350,18 @@ async function createGithubInstallationAccessToken(input: { config: GithubConnec
   return token
 }
 
-export async function getGithubInstallationAccessToken(input: {
+async function getGithubInstallationAccessToken(input: {
   config: GithubConnectorAppConfig
   fetchFn?: GithubFetch
   installationId: number
   nowMs?: number
+  organizationId: string
   requestTimeoutMs?: number
 }) {
+  requireApprovedGithubInstallation(input.organizationId, input.installationId)
   const nowMs = input.nowMs ?? Date.now()
   const generation = githubInstallationTokenCacheGeneration
-  const cacheKey = `${input.config.appId}:${input.installationId}`
+  const cacheKey = JSON.stringify([input.config.appId, input.organizationId, input.installationId])
   const cached = githubInstallationTokenCache.get(cacheKey)
   if (cached && cached.expiresAtMs > nowMs) {
     return cached.token
@@ -410,7 +417,7 @@ function normalizeGithubRepository(entry: unknown): GithubRepositorySummary | nu
   }
 }
 
-export async function listGithubInstallationRepositories(input: { config: GithubConnectorAppConfig; fetchFn?: GithubFetch; installationId: number }) {
+export async function listGithubInstallationRepositories(input: { config: GithubConnectorAppConfig; fetchFn?: GithubFetch; installationId: number; organizationId: string }) {
   const token = await getGithubInstallationAccessToken(input)
   const normalizedRepositories: GithubRepositorySummary[] = []
   for (let page = 1; page <= GITHUB_REPOSITORY_MAX_PAGES; page += 1) {
@@ -530,7 +537,6 @@ async function detectRepositoryManifest(input: { fetchFn?: GithubFetch; ownerAnd
         return { manifestKind: "agent-plugin", marketplacePluginCount: null }
       }
     } catch {
-      // A malformed root plugin.json is not a supported manifest marker.
     }
   }
 
@@ -550,17 +556,17 @@ export async function getGithubRepositoryTextFile(input: {
   config: GithubConnectorAppConfig
   fetchFn?: GithubFetch
   installationId: number
+  organizationId: string
   path: string
   ref: string
   repositoryFullName: string
-  token?: string
 }) {
   const repositoryParts = splitRepositoryFullName(input.repositoryFullName)
   if (!repositoryParts) {
     throw new GithubConnectorRequestError("GitHub repository full name is invalid.", 400)
   }
 
-  const token = input.token ?? await getGithubInstallationAccessToken(input)
+  const token = await getGithubInstallationAccessToken(input)
   const response = await requestGithubJson<{ content?: string; encoding?: string }>({
     allowStatuses: [404],
     fetchFn: input.fetchFn,
@@ -608,14 +614,12 @@ export async function fetchGithubImportFilesWithRevisionGuard(input: {
       const file = input.files[index]
       if (file.lastSeenSourceRevisionRef !== null
         && (file.lastSeenSourceRevisionRef === file.sourceFileRevisionRef || file.lastSeenSourceRevisionRef === file.sourceRevisionRef)) {
-        // The bound source file already matches this revision: skip the contents API call entirely.
         results[index] = { status: "skipped_unchanged" }
         continue
       }
       try {
         results[index] = { rawSourceText: await input.fetchFile(file.path), status: "fetched" }
       } catch (error) {
-        // One file failing must not abort the others; the caller decides how to surface it.
         results[index] = { error, status: "failed" }
       }
     }
@@ -624,25 +628,20 @@ export async function fetchGithubImportFilesWithRevisionGuard(input: {
   return results
 }
 
-/**
- * Resolve the current head commit SHA of a branch with a single commits API
- * call. Used as a cheap staleness probe for the discovery cache: a branch
- * name alone says nothing about content (#1871).
- */
 export async function getGithubRepositoryHeadSha(input: {
   branch: string
   config: GithubConnectorAppConfig
   fetchFn?: GithubFetch
   installationId: number
+  organizationId: string
   repositoryFullName: string
-  token?: string
 }) {
   const repositoryParts = splitRepositoryFullName(input.repositoryFullName)
   if (!repositoryParts) {
     throw new GithubConnectorRequestError("GitHub repository full name is invalid.", 400)
   }
 
-  const token = input.token ?? await getGithubInstallationAccessToken(input)
+  const token = await getGithubInstallationAccessToken(input)
   const commitResponse = await requestGithubJson<{ sha?: string }>({
     fetchFn: input.fetchFn,
     headers: {
@@ -663,15 +662,15 @@ export async function getGithubRepositoryTree(input: {
   config: GithubConnectorAppConfig
   fetchFn?: GithubFetch
   installationId: number
+  organizationId: string
   repositoryFullName: string
-  token?: string
 }) {
   const repositoryParts = splitRepositoryFullName(input.repositoryFullName)
   if (!repositoryParts) {
     throw new GithubConnectorRequestError("GitHub repository full name is invalid.", 400)
   }
 
-  const token = input.token ?? await getGithubInstallationAccessToken(input)
+  const token = await getGithubInstallationAccessToken(input)
   const authHeaders = {
     Authorization: `Bearer ${token}`,
   }
@@ -739,10 +738,10 @@ export async function validateGithubInstallationTarget(input: {
   config: GithubConnectorAppConfig
   fetchFn?: GithubFetch
   installationId: number
+  organizationId: string
   ref: string
   repositoryFullName: string
   repositoryId: number
-  token?: string
 }) {
   const repositoryParts = splitRepositoryFullName(input.repositoryFullName)
   if (!repositoryParts) {
@@ -753,7 +752,7 @@ export async function validateGithubInstallationTarget(input: {
     }
   }
 
-  const token = input.token ?? await getGithubInstallationAccessToken(input)
+  const token = await getGithubInstallationAccessToken(input)
   const authHeaders = {
     Authorization: `Bearer ${token}`,
   }

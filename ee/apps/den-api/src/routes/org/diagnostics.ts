@@ -45,7 +45,7 @@ export function registerOrgDiagnosticsRoutes<T extends { Variables: OrgRouteVari
     describeRoute({
       tags: ["Diagnostics"],
       summary: "Read Settings › Diagnostics",
-      description: "One read for cloud, single-org and self-hosted Den: desktop startups (last 24 hours), model providers, connectors, installation services and network diagnostics, plus a summary of what needs attention. Each section is present for every caller; a section the caller's permissions do not open is `locked` and names the permission. Installation details are only for self-hosted installation administrators (local allowlist). Never returns credentials, upstream responses or another member's identity. Missing or expired provider and connector checks start in the background (rate limited); the read never waits for them.",
+      description: "One read for cloud, single-org and self-hosted Den: desktop startups (last 24 hours), model providers, connectors and installation services, plus a summary of what needs attention. Each section is present for every caller; a section the caller's permissions do not open is `locked` and names the permission. Installation details are only for self-hosted installation administrators (local allowlist). Never returns credentials, upstream responses or another member's identity. Missing or expired provider and connector checks start in the background (rate limited); the read never waits for them.",
       responses: {
         200: jsonResponse("Diagnostics for this caller.", orgDiagnosticsSchema),
         400: jsonResponse("The query was invalid.", invalidRequestSchema),

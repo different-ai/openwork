@@ -208,10 +208,15 @@ test("a contractor's agent asks before commands, runs the ones the team allows, 
 
   await step("before: Riley's engine restarts with the Contractors rules already stored, and starts", async () => {
     const restarted = await world.restartEngine();
-    evidence.recordAssertionEvidence(`the ${world.engine} engine after a restart with stored rules`, restarted.running ? "running" : `not running: ${restarted.error ?? "unknown"}`, restarted.running);
+    evidence.recordAssertionEvidence(`the ${world.engine} engine after a restart with stored rules`, JSON.stringify(restarted), restarted.running);
     expect(restarted.running).toBe(true);
-    // Reopen the app after the fixture swaps engine routing, matching the
-    // quit-and-reopen scenario instead of retaining the stopped engine's state.
+    if (world.engine === "v2") {
+      expect(restarted.previousPid).toBeTypeOf("number");
+      expect(restarted.pid).toBeTypeOf("number");
+      expect(restarted.pid).not.toBe(restarted.previousPid);
+    }
+    // Reconnect the renderer to the restarted local server instead of retaining
+    // its old engine connection, as after quitting and reopening the app.
     await user.reload();
     await user.see("composer", { editable: true, timeoutMs: 120_000 });
     await user.screenshot();

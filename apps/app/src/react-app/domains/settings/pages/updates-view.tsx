@@ -39,7 +39,7 @@ type UpdateDownloadProgressProps = {
   totalBytes: number | null;
 };
 
-export function UpdateDownloadProgress(props: UpdateDownloadProgressProps) {
+function UpdateDownloadProgress(props: UpdateDownloadProgressProps) {
   const downloadedBytes = props.downloadedBytes ?? 0;
   const progressPercent =
     props.totalBytes != null && props.totalBytes > 0 ? Math.min(100, Math.round((downloadedBytes / props.totalBytes) * 100)) : 0;
@@ -72,19 +72,8 @@ export type UpdatesViewProps = {
   checkForUpdates: () => void | Promise<void>;
   downloadUpdate: () => void | Promise<void>;
   installUpdateAndRestart: () => void | Promise<void>;
-  /** Currently selected release channel. Optional; callers may omit. */
   releaseChannel?: ReleaseChannel;
-  /**
-   * Change the release channel. When not provided, the channel row is
-   * rendered read-only — useful for contexts where the pref can't be
-   * mutated (e.g. web preview).
-   */
   onReleaseChannelChange?: (next: ReleaseChannel) => void;
-  /**
-   * Whether the alpha channel is available on this platform. Alpha is
-   * macOS-only today; other platforms should receive `false` so the
-   * toggle is hidden.
-   */
   alphaChannelSupported?: boolean;
 };
 

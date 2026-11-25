@@ -12,7 +12,6 @@ const PHASES: Array<{ id: DiscoveryCheck["id"]; title: string }> = [
   { id: "provider", title: "Checking the sign-in provider" },
 ];
 
-/** Display only receipts from the server; an HTTP 200 is not proof of valid OAuth metadata. */
 export function discoveryCheckDescription(check: DiscoveryCheck | undefined, discovering: boolean): string {
   if (!check) return discovering ? "Waiting" : "No result reported";
   if (check.status === "running") return "Checking";
@@ -24,7 +23,6 @@ export function discoveryCheckDescription(check: DiscoveryCheck | undefined, dis
   return "Could not verify the sign-in provider. Use your own OAuth app or check again.";
 }
 
-/** The reference's three live checks, inline with the connector rather than another setup page. */
 export function ConnectorDiscoveryChecks({ checks, discovering, failed, manualCredentials = false, onRetry }: {
   checks: DiscoveryCheck[];
   discovering: boolean;
@@ -32,8 +30,6 @@ export function ConnectorDiscoveryChecks({ checks, discovering, failed, manualCr
   manualCredentials?: boolean;
   onRetry: () => void;
 }) {
-  // A server that advertises no usable OAuth metadata may use manual credentials.
-  // Absence is not a verified OAuth success; show it neutrally, never hide an issuer mismatch.
   const displayed = checks.map((check): DiscoveryCheck => manualCredentials && check.id !== "server" && check.code === "unavailable"
     ? { ...check, status: "skipped" } : check);
   const needsAttention = failed || displayed.some((check) => check.status === "failed");

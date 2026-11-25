@@ -20,13 +20,11 @@ import { OpenWorkMark } from "./openwork-mark";
 type View = { kind: "session"; id: SessionId } | { kind: "new" } | { kind: "library" } | { kind: "automations" };
 
 type Props = {
-  /** Show macOS window controls (desktop) or not (inside a browser). */
   windowControls?: boolean;
 };
 
 const PREVIEW_DELAY_MS = 900;
 
-/** The OpenWork app as a working preview: every session, view and control responds. */
 export function LpDemoDesktop({ windowControls = true }: Props) {
   const [sessions, setSessions] = useState<DemoSession[]>(INITIAL_SESSIONS);
   const [view, setView] = useState<View>({ kind: "session", id: "weekly" });

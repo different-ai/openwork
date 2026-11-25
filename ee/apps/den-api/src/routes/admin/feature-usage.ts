@@ -1,6 +1,6 @@
 import { and, eq, isNull, isNotNull } from "@openwork-ee/den-db/drizzle"
 import { AuthUserTable, MemberTable, OrganizationTable } from "@openwork-ee/den-db/schema"
-import { readFeatureRollouts, readOrganizationFeatureOverrides, readOrganizationFeatureUsage, readOrganizationMemberFeatureOverrides } from "@openwork-ee/den-db/organization-features"
+import { readFeatureRollouts, readLatestFeatureChanges, readOrganizationFeatureOverrides, readOrganizationFeatureUsage, readOrganizationMemberFeatureOverrides } from "@openwork-ee/den-db/organization-features"
 import { isDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { availableFeatureKeys, featureAvailableOn, featureKeySchema, resolveFeature, type FeatureKey } from "@openwork/features"
 import type { Hono } from "hono"
@@ -11,6 +11,9 @@ import { env } from "../../env.js"
 import type { FeatureHealth, FeatureOutcomeSummary, FeatureOutcomeTotals } from "../../feature-outcomes/outcomes.js"
 import { readFeatureReport, readFeatureReports, type FeatureReport } from "../../feature-outcomes/report.js"
 import { adminRoute, queryValidator } from "../../middleware/index.js"
+import { adminFeatureChangeSchema, serializeFeatureChange } from "./feature-changes.js"
+import { featureHealth, featureOutcomeRange, summarizeFeatureOutcomes } from "../../feature-outcomes/outcomes.js"
+import { readSlackSendAsBotOutcomes } from "../../feature-outcomes/slack-send-as-bot.js"
 import { forbiddenSchema, invalidRequestSchema, jsonResponse, notFoundSchema, unauthorizedSchema } from "../../openapi.js"
 import type { AuthContextVariables } from "../../session.js"
 
@@ -20,7 +23,6 @@ const featureUsageMemberSchema = z.object({
   memberId: z.string(),
   name: z.string().nullable(),
   email: z.string().nullable(),
-  /** Whether the feature is on for this member now; a member can have used it before it was turned off. */
   enabled: z.boolean(),
   firstUsedAt: z.iso.datetime(),
   lastUsedAt: z.iso.datetime(),
@@ -29,12 +31,10 @@ const featureUsageMemberSchema = z.object({
 
 const featureUsageSchema = z.object({
   key: featureKeySchema,
-  /** Active members the feature is on for now. */
   enabledMembers: z.number().int(),
-  /** Members who used it in the last 7 and 30 days. */
   usedLast7Days: z.number().int(),
   usedLast30Days: z.number().int(),
-  /** Everyone who ever used it, most recent first. */
+  lastChange: adminFeatureChangeSchema.nullable(),
   members: z.array(featureUsageMemberSchema),
 })
 
@@ -50,7 +50,6 @@ const rangeQuerySchema = z.object({ range: rangeSchema.default("7d") })
 const outcomeUnitSchema = z.enum(["run", "meeting", "check", "message"])
 
 const featureHealthSchema = z.object({
-  /** not_used, in_use (no outcomes to judge), healthy, failing (count failed), limited (count members at a limit), mostly_skipped. */
   status: z.enum(["not_used", "in_use", "healthy", "failing", "limited", "mostly_skipped"]),
   count: z.number().int().nullable(),
 })
@@ -60,31 +59,23 @@ const outcomeTotalsSchema = z.object({
   succeeded: z.number().int(),
   failed: z.number().int(),
   skipped: z.number().int(),
-  /** Of the runs, messages that reached the member; null when the feature's store does not say. */
   delivered: z.number().int().nullable(),
-  /** Members held back by a limit; null when the feature has none. */
   limited: z.number().int().nullable(),
   lastRunAt: z.iso.datetime().nullable(),
 })
 
 const featureOutcomesSchema = outcomeTotalsSchema.extend({
-  /** What one run is: run, meeting (one per meeting), check or message. */
   unit: outcomeUnitSchema,
-  /** Every UTC day of the range, oldest first. */
   days: z.array(z.object({ day: z.string(), runs: z.number().int(), failed: z.number().int() })),
-  /** Set when the store keeps less than the range: from when, and whether that limits all counts or only failures. */
   coverage: z.object({ from: z.iso.datetime(), counts: z.enum(["all", "failed"]) }).nullable(),
 })
 
 const featureReportSchema = z.object({
   key: featureKeySchema,
-  /** Organizations the feature is on for now. */
   organizationsOn: z.number().int(),
-  /** Active members who used it in the range (feature_usage). */
   membersUsing: z.number().int(),
   lastUsedAt: z.iso.datetime().nullable(),
   health: featureHealthSchema,
-  /** Null when the feature has no outcome reader: adoption only. */
   outcomes: featureOutcomesSchema.nullable(),
 })
 
@@ -92,7 +83,6 @@ const rangeFields = {
   range: rangeSchema,
   from: z.iso.datetime(),
   to: z.iso.datetime(),
-  /** Every organization on the deployment. */
   organizations: z.number().int(),
 }
 
@@ -105,12 +95,10 @@ const featureOutcomesResponseSchema = z.object({
 const featureOutcomeDetailResponseSchema = z.object({
   ...rangeFields,
   feature: featureReportSchema.extend({
-    /** Failed and skipped runs by reason code, most first. */
     reasons: z.array(z.object({ reason: z.string(), outcome: z.enum(["failed", "skipped"]), count: z.number().int() })),
     byOrganization: z.array(z.object({
       organizationId: z.string(),
       name: z.string(),
-      /** Whether the feature is on for the organization now. */
       enabled: z.boolean(),
       membersUsing: z.number().int(),
       lastUsedAt: z.iso.datetime().nullable(),
@@ -160,6 +148,45 @@ function featureJson(feature: FeatureReport) {
 }
 
 export function registerAdminFeatureUsageRoutes<T extends { Variables: AuthContextVariables }>(app: Hono<T>) {
+  app.get(
+    "/v1/admin/slack-send-as-bot/outcomes",
+    describeRoute({
+      tags: ["Admin"],
+      summary: "Slack bot message outcomes",
+      description: "Slack bot message totals, failures by reason, limits, coverage and daily outcomes for the last 7 or 30 UTC days. Independent of feature rollouts. Counts only; never message text. Platform administrators only.",
+      responses: {
+        200: jsonResponse("Slack bot message outcomes.", z.object({
+          range: rangeSchema,
+          from: z.iso.datetime(),
+          to: z.iso.datetime(),
+          health: featureHealthSchema,
+          outcomes: featureOutcomesSchema,
+          reasons: z.array(z.object({ reason: z.string(), outcome: z.enum(["failed", "skipped"]), count: z.number().int() })),
+          byOrganization: z.array(z.object({ organizationId: z.string(), outcomes: outcomeTotalsSchema })),
+        })),
+        400: jsonResponse("Invalid range.", invalidRequestSchema),
+        401: jsonResponse("Sign in required.", unauthorizedSchema),
+        403: jsonResponse("Platform administrator required.", forbiddenSchema),
+      },
+    }),
+    adminRoute(),
+    queryValidator(rangeQuerySchema),
+    async (c) => {
+      const { range } = c.req.valid("query")
+      const window = featureOutcomeRange(range === "30d" ? 30 : 7, new Date())
+      const outcomes = summarizeFeatureOutcomes(await readSlackSendAsBotOutcomes(window), window)
+      return c.json({
+        range,
+        from: window.from.toISOString(),
+        to: window.to.toISOString(),
+        health: healthJson(featureHealth({ membersUsing: 0, outcomes })),
+        outcomes: outcomesJson(outcomes),
+        reasons: outcomes.reasons,
+        byOrganization: [...outcomes.byOrganization].map(([organizationId, totals]) => ({ organizationId, outcomes: totalsJson(totals) })),
+      })
+    },
+  )
+
   app.get(
     "/v1/admin/feature-usage",
     describeRoute({
@@ -239,7 +266,7 @@ export function registerAdminFeatureUsageRoutes<T extends { Variables: AuthConte
     describeRoute({
       tags: ["Admin"],
       summary: "Who has and uses each feature in an organization",
-      description: "For every feature on this deployment: how many active members have it on now, how many used it in the last 7 and 30 days, and each member who used it with first and last use and days used. A use is a request through a feature-gated route, a client report (POST /v1/org/feature-usage), or background work done for the member (an interval or calendar Automation occurrence, a Your agent check, a slack_send_as_bot message). Platform administrators only.",
+      description: "For every feature on this deployment: how many active members have it on now, how many used it in the last 7 and 30 days, the latest change that could affect the organization (who turned it on or off and when), and each member who used it with first and last use and days used. A use is a request through a feature-gated route, a client report (POST /v1/org/feature-usage), or background work done for the member (an interval or calendar Automation occurrence, a Your agent check, a slack_send_as_bot message). Platform administrators only.",
       responses: {
         200: jsonResponse("Feature usage returned.", responseSchema),
         400: jsonResponse("Invalid organization id.", invalidRequestSchema),
@@ -255,7 +282,7 @@ export function registerAdminFeatureUsageRoutes<T extends { Variables: AuthConte
       const [organization] = await db.select({ id: OrganizationTable.id }).from(OrganizationTable).where(eq(OrganizationTable.id, organizationId)).limit(1)
       if (!organization) return c.json({ error: "not_found", message: "Organization not found." }, 404)
 
-      const [members, rollouts, overrides, memberOverrides, usage] = await Promise.all([
+      const [members, rollouts, overrides, memberOverrides, usage, changes] = await Promise.all([
         db.select({ id: MemberTable.id, name: AuthUserTable.name, email: AuthUserTable.email })
           .from(MemberTable).leftJoin(AuthUserTable, eq(MemberTable.userId, AuthUserTable.id))
           .where(and(eq(MemberTable.organizationId, organizationId), isNull(MemberTable.removedAt), eq(MemberTable.isSetupAgent, false), isNotNull(MemberTable.userId))),
@@ -263,6 +290,7 @@ export function registerAdminFeatureUsageRoutes<T extends { Variables: AuthConte
         readOrganizationFeatureOverrides(db, organizationId),
         readOrganizationMemberFeatureOverrides(db, organizationId),
         readOrganizationFeatureUsage(db, organizationId),
+        readLatestFeatureChanges(db, { organizationId }),
       ])
 
       const context = { ...env.features, rollouts, overrides }
@@ -280,6 +308,7 @@ export function registerAdminFeatureUsageRoutes<T extends { Variables: AuthConte
           enabledMembers: members.filter((member) => enabledFor(key, member.id)).length,
           usedLast7Days: usedWithin(7),
           usedLast30Days: usedWithin(30),
+          lastChange: serializeFeatureChange(changes[key]),
           members: used.map((row) => {
             const person = people.get(row.memberId)
             return {

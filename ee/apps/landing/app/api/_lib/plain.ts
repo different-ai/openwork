@@ -5,8 +5,6 @@ type MutationResult = { error?: Pick<MutationError, "code"> | null };
 type CustomerResult = MutationResult & { customer?: { id: string } | null };
 type ThreadResult = MutationResult & { thread?: { id: string } | null };
 
-// Generated SDK mutations expand related resources, requiring permissions beyond
-// this form's customer/thread scopes. Select only the IDs and error codes we use.
 const upsertCustomerDocument = parse(`
   mutation LandingUpsertCustomer($input: UpsertCustomerInput!) {
     upsertCustomer(input: $input) {

@@ -23,7 +23,6 @@ const pageSchema = {
   pageSize: z.coerce.number().int().min(1).max(100).default(25),
   pageToken: z.string().min(1).max(2048).optional().describe("nextPageToken from the previous page of the same request."),
 }
-// Zod objects strip unlisted keys, so responses keep only what an agent needs.
 const spaceSchema = z.object({
   name: z.string().regex(/^spaces\/[A-Za-z0-9_-]+$/),
   spaceType: z.string().optional(),

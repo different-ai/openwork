@@ -3,29 +3,12 @@ import { recordAuditForUserMemberships, type AuditUserMembership } from "../fano
 import { auditResourceId } from "../request-capture.js"
 import { auditChanges, auditText, fieldOf, organizationParent, relatedResource, stringOf, targetResource, type AuditSnapshot } from "./snapshot.js"
 
-// Account security changes of a user, fanned out to EVERY organization where
-// the user is an active member (src/audit/fanout.ts): account.profile_updated,
-// account.email_changed, account.password_changed, account.identity_linked,
-// account.identity_unlinked, account.deleted (change) and
-// account.provider_token.accessed (access). Allowlisted values only: the
-// display name before/after; image and email changes are opaque markers;
-// password, provider tokens, account ids and verification tokens are never read
-// into evidence.
-// Chokepoints (src/auth.ts): databaseHooks.user.update.before/after (every
-// better-auth user update: update-user, change-email + verify-email,
-// email-otp change-email), databaseHooks.account.create/delete.after (link-social,
-// implicit linking at the social/SSO callback, unlink-account),
-// databaseHooks.user.delete.before (delete-user, memberships still active),
-// hooks.after for password changes and provider token reads, and the
-// PATCH /v1/me/profile handler (direct database update, no hooks).
-
 export type AuditPasswordMethod = "change_password" | "reset_password" | "email_otp_reset" | "other"
 
 const PROVIDER_ID = /^[A-Za-z0-9_.-]{1,64}$/
 const PROFILE_FIELDS = ["name", "image", "email"] as const
 type ProfileField = typeof PROFILE_FIELDS[number]
 type PendingUserUpdate = { fields: Set<ProfileField>; prior: Readonly<{ userId: string; name: string | null; image: string | null; email: string | null }> | null }
-/** Fields a user update is about to change, keyed by the better-auth endpoint context of the update. */
 const pendingUserUpdates = new WeakMap<object, PendingUserUpdate>()
 
 function userResources(userId: string) {
@@ -46,7 +29,6 @@ async function fanOutAccountChange(input: Readonly<{ userId: string; action: str
   })
 }
 
-/** PATCH /v1/me/profile and the user.update hooks: name before/after, image as a marker. */
 export async function recordProfileUpdated(input: Readonly<{ userId: string; before: string | null | undefined; after: string | null | undefined; imageChanged?: boolean }>): Promise<void> {
   const nameKnown = input.before !== undefined && input.after !== undefined
   const before: AuditSnapshot = nameKnown ? { name: auditText(input.before) } : {}
@@ -61,7 +43,6 @@ function contextKey(context: unknown): object | null {
   return typeof context === "object" && context !== null ? context : null
 }
 
-/** databaseHooks.user.update.before: remember which profile fields change (and the session user's prior values). */
 export function auditUserUpdateBefore(data: unknown, context: unknown): void {
   if (!env.auditCaptureEnabled) return
   const key = contextKey(context)
@@ -78,7 +59,6 @@ export function auditUserUpdateBefore(data: unknown, context: unknown): void {
   })
 }
 
-/** databaseHooks.user.update.after: account.profile_updated / account.email_changed in every membership. */
 export async function auditUserUpdateAfter(user: unknown, context: unknown): Promise<void> {
   const key = contextKey(context)
   const pending = key ? pendingUserUpdates.get(key) : undefined
@@ -86,7 +66,6 @@ export async function auditUserUpdateAfter(user: unknown, context: unknown): Pro
   pendingUserUpdates.delete(key)
   const userId = stringOf(user, "id")
   if (!userId) return
-  // Prior values only when they describe this same user (verify-email may run under another session).
   const prior = pending.prior?.userId === userId ? pending.prior : null
   const name = stringOf(user, "name")
   const imageChanged = pending.fields.has("image") && (!prior || prior.image !== stringOf(user, "image"))
@@ -99,7 +78,6 @@ export async function auditUserUpdateAfter(user: unknown, context: unknown): Pro
   }
 }
 
-/** hooks.after on a successful change-password / reset-password / email-otp reset-password. */
 export async function recordPasswordChanged(userId: string, method: AuditPasswordMethod): Promise<void> {
   await fanOutAccountChange({ userId, action: "account.password_changed", changes: auditChanges(null, { method }, ["password"]), discriminator: `${userId}:${method}` })
 }
@@ -113,7 +91,6 @@ function linkMethod(context: unknown): string {
   return "other"
 }
 
-/** databaseHooks.account.create.after: account.identity_linked (provider id only). */
 export async function recordIdentityLinked(account: unknown, context: unknown): Promise<void> {
   const userId = stringOf(account, "userId")
   if (!userId) return
@@ -124,7 +101,6 @@ export async function recordIdentityLinked(account: unknown, context: unknown): 
   })
 }
 
-/** databaseHooks.account.delete.after: account.identity_unlinked (provider id only). */
 export async function recordIdentityUnlinked(account: unknown): Promise<void> {
   const userId = stringOf(account, "userId")
   if (!userId) return
@@ -132,18 +108,12 @@ export async function recordIdentityUnlinked(account: unknown): Promise<void> {
   await fanOutAccountChange({ userId, action: "account.identity_unlinked", changes: auditChanges({ providerId }, null), discriminator: `${auditResourceId(stringOf(account, "id"))}:unlinked` })
 }
 
-/**
- * databaseHooks.user.delete.before (delete-user and its token callback; disabled
- * in Den today because user.deleteUser is not enabled): account.deleted while the
- * memberships still exist.
- */
 export async function recordAccountDeleted(user: unknown): Promise<void> {
   const userId = stringOf(user, "id")
   if (!userId) return
   await fanOutAccountChange({ userId, action: "account.deleted", changes: auditChanges({ userId }, null) })
 }
 
-/** hooks.after on get-access-token / refresh-token: provider id only, never the token. */
 export async function recordProviderTokenAccessed(input: Readonly<{ userId: string; providerId: string | null; refresh: boolean; error: unknown }>): Promise<void> {
   if (!env.auditCaptureEnabled) return
   const providerId = providerIdOf(input.providerId)

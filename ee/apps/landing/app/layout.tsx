@@ -9,8 +9,6 @@ import { getGithubData } from "../lib/github";
 import { DownloadProvider } from "../components/download-link";
 import { baseOpenGraph, baseTwitter } from "../lib/seo";
 
-// Local pnpm dev, local prod builds, and Vercel previews load no PostHog at all (no autocapture/pageviews), so only real production traffic reaches analytics.
-// VERCEL_ENV is baked at build time for static pages, which is correct on Vercel production builds.
 const posthogEnabled = process.env.VERCEL_ENV === "production";
 
 const organizationSchema = {

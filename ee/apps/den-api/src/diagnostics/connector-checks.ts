@@ -2,17 +2,13 @@ import type { ConnectorCheck } from "@openwork/types/den/diagnostics"
 import type { GoogleApiCheck } from "../routes/org/google-api-check.js"
 import { SlackApiError } from "../slack-assistant/protocol.js"
 
-/** Pure connector state mapping for Settings › Diagnostics. */
-
 export type SlackLiveResult = "accepted" | "rejected" | "unavailable"
 
-/** Slack errors that mean the stored bot token no longer works for this workspace. */
 const SLACK_REJECTED_CODES = new Set([
   "invalid_auth", "not_authed", "account_inactive", "token_revoked", "token_expired",
   "no_permission", "org_login_required", "team_access_not_granted", "missing_scope",
 ])
 
-/** auth.test must succeed for the installed workspace; transient failures stay unchecked. */
 export function classifySlackAuthTest(outcome: { ok: true; teamId: unknown } | { ok: false; error: unknown }, installedTeamId: string | null): SlackLiveResult {
   if (outcome.ok) return installedTeamId !== null && outcome.teamId === installedTeamId ? "accepted" : "rejected"
   if (outcome.error instanceof SlackApiError && SLACK_REJECTED_CODES.has(outcome.error.code)) return "rejected"
@@ -30,7 +26,6 @@ export type SlackConnectorInput = {
   live: { result: SlackLiveResult; checkedAt: string } | null
 }
 
-/** Whether a Slack row's state depends on a live token check. */
 export function slackNeedsLiveCheck(input: Pick<SlackConnectorInput, "runnerAvailable" | "enabled" | "hasBotToken">): boolean {
   return input.enabled && input.runnerAvailable && input.hasBotToken
 }
@@ -55,9 +50,7 @@ export function slackConnectorCheck(input: SlackConnectorInput): ConnectorCheck 
 export type GoogleConnectorInput = {
   id: string
   name: string
-  /** APIs the connector's enabled permissions call. */
   apis: ReadonlyArray<{ id: string; name: string }>
-  /** The caller's own check: null checks = the caller has no sign-in on this connector. */
   live: { checks: readonly Pick<GoogleApiCheck, "id" | "name" | "status">[] | null; checkedAt: string } | null
 }
 
@@ -73,6 +66,5 @@ export function googleConnectorCheck(input: GoogleConnectorInput): ConnectorChec
   if (apis.every((api) => api.status === "enabled")) {
     return { ...base, state: "ready", reason: "google_apis_enabled", checkedAt: input.live.checkedAt, apis }
   }
-  // Some APIs could not be checked: the caller's sign-in lacks that permission, or Google was unreachable.
   return { ...base, state: "not_checked", reason: "google_sign_in_required", checkedAt: input.live.checkedAt, apis }
 }

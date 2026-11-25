@@ -4,7 +4,6 @@ import { registerWorkbotRoutes } from "../src/server/routes.js"
 import { loadConfig } from "../src/server/config.js"
 import type { AppEnv, Member } from "../src/server/auth.js"
 
-/** Test-only host: real routes, Den membership, audit and skill storage; a deterministic runner. */
 export async function teachingServer(input: { denUrl: string; publicUrl: string; runnerUrl: string; token: string }) {
   const config = loadConfig({ WORKBOT_PUBLIC_URL: input.publicUrl, WORKBOT_DEN_API_URL: input.denUrl, WORKBOT_RUNNER_URL: input.runnerUrl, WORKBOT_RUNNER_TOKEN: "r".repeat(32), WORKBOT_SESSION_SECRET: "s".repeat(32) })
   const den = createDen({ apiUrl: config.denApiUrl, publicUrl: config.publicUrl })

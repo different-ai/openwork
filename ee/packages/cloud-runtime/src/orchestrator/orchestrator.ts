@@ -5,7 +5,6 @@ import {
   renderRestoreMarkerExistsCommand,
   type OpenWorkBootstrapConfig,
   type OpenWorkCheckpointConfig,
-  type OpenWorkDocumentsEditorConfig,
 } from "../bootstrap/openwork-runtime"
 import { runtimeProviderErrorCode } from "@openwork/sandbox"
 import type {
@@ -64,20 +63,15 @@ export type CloudRuntimeOrchestratorConfig = {
   publicEndpoint: boolean
   lifecycle: SandboxLifecyclePolicy
   resources: SandboxResources
-  /** Requested endpoint lifetime; the provider may cap it. */
   endpointTtlSeconds: number
-  /** Stop handing out an endpoint this long before it expires. */
   endpointRefreshLeadMs: number
   createTimeoutMs: number
   stopTimeoutMs: number
   destroyTimeoutMs: number
   healthcheckTimeoutMs: number
   pollIntervalMs: number
-  /** Bound for the best-effort checkpoint flush before a running instance is stopped for recovery. */
   stopFlushTimeoutMs?: number
   activityHeartbeatUrl: (workerId: string) => string
-  /** Start the image's document editor beside the server; absent leaves it off. */
-  documentsEditor?: OpenWorkDocumentsEditorConfig
   bootstrap: {
     cloudComputerDisplay?: string
     imageDescription: string
@@ -108,7 +102,6 @@ export interface CloudRuntimeOrchestrator {
   currentImageVersion(): string | null
   instanceName(input: InstanceNameInput): string
   provision(input: ProvisionInput): Promise<ProvisionedInstance>
-  /** Throws `instance_missing` when there is nothing to wake; callers fall back to `provision`. */
   wake(input: ProvisionInput): Promise<ProvisionedInstance>
   stop(workerId: string): Promise<StopInstanceResult>
   deprovision(workerId: string): Promise<void>
@@ -116,7 +109,6 @@ export interface CloudRuntimeOrchestrator {
   inspect(workerId: string): Promise<RuntimeInstanceInspection | null>
   recordActivity(workerId: string): Promise<void>
   refreshEndpoint(workerId: string): Promise<RuntimeInstanceRecord | null>
-  /** A fresh signed endpoint for another port on the live instance; not stored. */
   portEndpoint(workerId: string, port: number, ttlSeconds: number): Promise<{ url: string; expiresAt: Date | null } | null>
   getRecord(workerId: string): Promise<RuntimeInstanceRecord | null>
 }
@@ -194,7 +186,6 @@ export function createCloudRuntimeOrchestrator(deps: CloudRuntimeOrchestratorDep
       cloudComputerDisplay: config.bootstrap.cloudComputerDisplay,
       imageDescription: config.bootstrap.imageDescription,
       rebuildHint: config.bootstrap.rebuildHint,
-      ...(config.documentsEditor ? { documentsEditor: config.documentsEditor } : {}),
     }
   }
 
@@ -312,7 +303,6 @@ export function createCloudRuntimeOrchestrator(deps: CloudRuntimeOrchestratorDep
           return
         }
       } catch {
-        // ignore transient startup failures
       }
 
       try {
@@ -432,12 +422,6 @@ export function createCloudRuntimeOrchestrator(deps: CloudRuntimeOrchestratorDep
     throw lastError ?? new CloudRuntimeError("instance_start_failed", `Instance ${describeHandle(handle)} start failed`)
   }
 
-  /**
-   * Save whatever the instance still has on disk before it is stopped. The
-   * periodic flush runs every few minutes, so a stop without this can lose that
-   * much session and workspace state. Best effort and bounded: a dead or wedged
-   * instance must not delay its own recovery.
-   */
   async function flushBeforeStop(workerId: string, handle: SandboxHandle) {
     try {
       const exec = await provider.exec(handle, {
@@ -457,12 +441,8 @@ export function createCloudRuntimeOrchestrator(deps: CloudRuntimeOrchestratorDep
 
   async function wakeExisting(context: WakeContext): Promise<ProvisionedInstance> {
     let handle = context.handle
-    // A resolve can arrive while the provider is still finishing pause.
     const canResumeMemory = ["stopped", "stopping"].includes(handle.state) && Boolean(provider.blocks?.pause) && provider.describe().memorySnapshotRestore
     if (handle.state === "running") {
-      // A failed health probe means an already-running OpenWork process cannot be
-      // trusted. Restart the instance before launching a new process so recovery
-      // cannot leave two servers competing for the same port and state files.
       await flushBeforeStop(context.input.workerId, handle)
       await provider.stop(handle, { timeoutMs: config.stopTimeoutMs })
       handle = await provider.inspect(handle)
@@ -478,13 +458,11 @@ export function createCloudRuntimeOrchestrator(deps: CloudRuntimeOrchestratorDep
         const checks = await Promise.all([
           fetchImpl(`${baseUrl}/health`, { redirect: "error", signal: AbortSignal.timeout(healthRequestTimeoutMs) }),
           fetchImpl(`${baseUrl}/whoami`, { redirect: "error", headers: { Authorization: `Bearer ${context.input.clientToken}` }, signal: AbortSignal.timeout(healthRequestTimeoutMs) }),
-          // Host-only probe, with no bearer fallback. A token rotated while the
-          // VM slept must reach the live server before clients reconnect.
           fetchImpl(`${baseUrl}/tokens`, { redirect: "error", headers: { "x-openwork-host-token": context.input.hostToken }, signal: AbortSignal.timeout(healthRequestTimeoutMs) }),
         ])
         healthy = checks.every(response => response.ok)
         for (const response of checks) void response.body?.cancel().catch(() => {})
-      } catch { /* Cold stopped VMs have no process to resume. Bootstrap below. */ }
+      } catch {}
       if (healthy) {
         const resumed = { endpointUrl: endpoint.url, endpointExpiresAt: endpointSafeUntil(endpoint.expiresAt, issuedAtMs, ttlSeconds) }
         await persist(context.input, handle, resumed, context.workspaceVolumeId, context.dataVolumeId)
@@ -559,7 +537,6 @@ export function createCloudRuntimeOrchestrator(deps: CloudRuntimeOrchestratorDep
       logger.warn("instance recycle failed; waking existing instance", { worker_id: input.provisionInput.workerId, error })
       return wakeExisting({
         input: input.provisionInput,
-        // A failed wake may have started the old instance since this handle was read.
         handle: await provider.inspect(input.oldHandle),
         workspaceVolumeId: input.oldWorkspaceVolumeId,
         dataVolumeId: input.oldDataVolumeId,
@@ -684,8 +661,6 @@ export function createCloudRuntimeOrchestrator(deps: CloudRuntimeOrchestratorDep
     }
   }
 
-  // This preserves customer data: deprovision erases workers/<id>/, while stop
-  // must not destroy the instance, erase data, or touch volumes.
   async function stop(workerId: string): Promise<StopInstanceResult> {
     const record = await store.get(workerId)
     if (!record) {
@@ -756,8 +731,6 @@ export function createCloudRuntimeOrchestrator(deps: CloudRuntimeOrchestratorDep
     if (!activity) return
     const record = await store.get(workerId)
     if (!record) return
-    // Preview requests do not refresh Daytona's idle timer. Only actual work
-    // heartbeats reach this path; a dormant or paused instance stays asleep.
     const handle = await provider.get(record.sandbox)
     if (handle?.state === "running") await activity(handle, { timeoutMs: 5_000 })
   }

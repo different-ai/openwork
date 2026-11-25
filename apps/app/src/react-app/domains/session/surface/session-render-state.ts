@@ -167,8 +167,6 @@ export function deriveRenderedSessionMessages(input: {
   latestHistory?: LatestSessionHistory | null;
 }) {
   const revertMessageId = input.snapshot?.session.revert?.messageID ?? null;
-  // Neither a newest window nor saved neighbors prove their position relative
-  // to a revert cursor. Withhold them until the ordered full history arrives.
   if (input.historyComplete === false && revertMessageId) return [];
   const liveMessages = input.transcriptState ?? [];
 
@@ -180,9 +178,6 @@ export function deriveRenderedSessionMessages(input: {
     ? snapshotToUIMessages(input.snapshot)
     : [];
 
-  // Render the server snapshot as the history floor and layer live stream
-  // updates on top. During prompt submission the live cache can briefly contain
-  // only the new turn; it must not replace the older persisted transcript.
   const messages = snapshotMessages.length > 0
     ? dropDuplicateTurnErrors(mergeSnapshotAndLiveMessages(snapshotMessages, liveMessages, { appendLiveOnlyMessages: true }), snapshotMessages)
     : liveMessages;
@@ -192,8 +187,6 @@ export function deriveRenderedSessionMessages(input: {
 
 export function deriveComposerHistory(messages: readonly UIMessage[]): string[] {
   const history: string[] = [];
-  // Use the reconciled transcript: native projections already exclude synthetic
-  // and ignored text, and message identity reconciles snapshots with live sends.
   for (const message of messages) {
     if (message.role !== "user") continue;
     let unsafe = false;
@@ -209,8 +202,6 @@ export function deriveComposerHistory(messages: readonly UIMessage[]): string[] 
         if (session && part.text === sessionReferenceText(session)) return [token];
         unsafe = true;
       }
-      // Older labels have no durable skill identity. Never recall them as commands
-      // or try to recover that identity from generated model instructions.
       if (parseSlashCommandInvocation(part.text.replace(/\s+/g, " "))) unsafe = true;
       return [part.text];
     }).join("\n").trim();

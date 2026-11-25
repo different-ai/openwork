@@ -6,10 +6,11 @@ import { Input } from "@/components/ui/input";
 import { useDenAuth } from "./den-auth-provider";
 import { tryOpenBrowserAuthUrl } from "./open-browser-auth";
 
-/** Verification replaces only this account's session; it cannot enroll another account or workspace. */
-export function DenReauthNotice({ onVerified, onCancel }: {
-  onVerified: (client: ReturnType<typeof createDenClient>, commitSession: () => void) => Promise<void>;
+export function DenReauthNotice({ onVerified, onCancel, title = "Confirm your identity to share artifacts", description = "Verify in your browser, then return here. Your selected artifacts and teammate’s email will be kept." }: {
+  onVerified: (client: ReturnType<typeof createDenClient>, commitSession: () => void, token: string) => Promise<void>;
   onCancel: () => void;
+  title?: string;
+  description?: string;
 }) {
   const auth = useDenAuth();
   const [user] = useState(auth.user);
@@ -25,9 +26,9 @@ export function DenReauthNotice({ onVerified, onCancel }: {
 
   const url = new URL("/reauth/desktop", settings.baseUrl);
   url.searchParams.set("nonce", nonce);
-  // Keep the opaque account reference out of requests; the browser gets the
-  // email from its own matching session or asks the user to enter it.
-  url.hash = new URLSearchParams({ userId: user?.id ?? "" }).toString();
+  const identity = new URLSearchParams({ userId: user?.id ?? "" });
+  if (settings.activeOrgId) identity.set("orgId", settings.activeOrgId);
+  url.hash = identity.toString();
 
   useEffect(() => {
     active.current = true;
@@ -61,7 +62,6 @@ export function DenReauthNotice({ onVerified, onCancel }: {
     };
     try {
       ensureCurrent();
-      // Never send a grant to a destination supplied by a link.
       const exchange = await createDenClient(settings).exchangeDesktopHandoff(grant);
       if (!exchange.token || exchange.user?.id !== user.id) {
         throw new Error(`Sign in as ${user.email} to confirm this share.`);
@@ -70,12 +70,9 @@ export function DenReauthNotice({ onVerified, onCancel }: {
       const verifiedUser = await client.getSession();
       if (verifiedUser.id !== user.id) throw new Error(`Sign in as ${user.email} to confirm this share.`);
       ensureCurrent();
-      // The resumed mutation still enforces freshness and resource permissions on the server.
-      // Commit when the share dialog closes: settings changes reload deployment
-      // policy and can unmount the dashboard while its pending action is running.
       await completeRef.current(client, () => {
         if (isCurrentSession()) writeDenSettings({ ...settings, authToken: exchange.token }, { persistBootstrap: false });
-      });
+      }, exchange.token);
     } catch (cause) {
       if (active.current) setError(cause instanceof Error ? cause.message : "Could not confirm your identity. Try again.");
     } finally {
@@ -95,7 +92,7 @@ export function DenReauthNotice({ onVerified, onCancel }: {
           if (returned.protocol === "openwork:" && returned.hostname === "den-reauth" && returned.searchParams.get("nonce") === nonce) {
             void finishRef.current(value);
           }
-        } catch { /* Other deep links belong to their existing handlers. */ }
+        } catch {}
       }
     };
     window.addEventListener(deepLinkBridgeEvent, receive);
@@ -103,8 +100,8 @@ export function DenReauthNotice({ onVerified, onCancel }: {
   }, [nonce]);
 
   return <div className="space-y-3 rounded-lg border p-4">
-    <p className="text-sm font-medium">Confirm your identity to share apps</p>
-    <p className="text-sm text-muted-foreground">Verify in your browser, then return here. Your selected apps and teammate’s email will be kept.</p>
+    <p className="text-sm font-medium">{title}</p>
+    <p className="text-sm text-muted-foreground">{description}</p>
     <Button type="button" disabled={busy || !user} onClick={() => {
       setError(null);
       void tryOpenBrowserAuthUrl(url.toString()).then((opened) => {

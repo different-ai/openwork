@@ -13,7 +13,6 @@ import { createOAuthAppDraft, validateOAuthAppDraft, withOAuthAppManualDraft, ty
 
 export { createOAuthAppDraft, type OAuthAppDraft } from "./oauth-app-draft";
 
-/** Step two's one field for a server that takes a key. */
 export function ApiKeyFields({ name, saving, error, onSave }: {
   name: string;
   saving: boolean;
@@ -50,23 +49,18 @@ export function ApiKeyFields({ name, saving, error, onSave }: {
   );
 }
 
-/** Step two's fields for a server that only accepts a pre-registered OAuth app. */
-export function OAuthAppFields({ secretRequired, saving, error, onSave, url, discovery, formId, hideSubmit = false, draft, onDraftChange, revisedSetup = false, callbackUrl }: {
+export function OAuthAppFields({ secretRequired, saving, error, onSave, url, discovery, formId, hideSubmit = false, draft, onDraftChange, setupValidation = false, callbackUrl }: {
   url?: string;
   discovery?: McpRequirementsDiscovery | null;
   secretRequired: boolean;
   saving: boolean;
   error: string | null;
   onSave: (input: OAuthAppInput) => void;
-  /** Supply both props to retain the sole draft in the parent across setup choices. */
   draft?: OAuthAppDraft;
   onDraftChange?: (draft: OAuthAppDraft) => void;
-  revisedSetup?: boolean;
-  /** Exact callback supplied by a backend preset or verified runtime, never inferred here. */
+  setupValidation?: boolean;
   callbackUrl?: string;
-  /** Lets a page footer button submit these fields. */
   formId?: string;
-  /** The page footer carries the submit action instead. */
   hideSubmit?: boolean;
 }) {
   const [localDraft, setLocalDraft] = useState(() => draft && onDraftChange ? null : createOAuthAppDraft());
@@ -85,20 +79,20 @@ export function OAuthAppFields({ secretRequired, saving, error, onSave, url, dis
   const hasManual = Boolean(manualAddresses.authorizationEndpoint.trim() && manualAddresses.tokenEndpoint.trim());
   const halfSet = Boolean(manualAddresses.authorizationEndpoint.trim()) !== Boolean(manualAddresses.tokenEndpoint.trim());
   const issuerMismatch = discovery?.warnings.some((warning) => warning.code === "oauth_issuer_mismatch") === true;
-  const validationOptions = { secretRequired, revisedSetup, url, issuerMismatch };
-  const ready = revisedSetup ? validateOAuthAppDraft(current, validationOptions).error === null
+  const validationOptions = { secretRequired, setupValidation, url, issuerMismatch };
+  const ready = setupValidation ? validateOAuthAppDraft(current, validationOptions).error === null
     : !halfSet && Boolean(clientId.trim()) && (hasManual || !secretRequired || Boolean(clientSecret.trim()));
-  const fieldError = (field: OAuthAppValidationError["field"]) => revisedSetup && validationError?.field === field
+  const fieldError = (field: OAuthAppValidationError["field"]) => setupValidation && validationError?.field === field
     ? <p id={`${fieldId}-${field}-error`} className="text-[12px] text-red-600" role="alert">{validationError.message}</p> : null;
   return (
     <form
       id={formId}
       className="flex flex-col gap-2"
       data-testid="setup-oauth-app"
-      noValidate={revisedSetup}
+      noValidate={setupValidation}
       onSubmit={(event) => {
         event.preventDefault();
-        if (revisedSetup && saving) return;
+        if (setupValidation && saving) return;
         const result = validateOAuthAppDraft(current, validationOptions);
         if (result.error) {
           setValidationError(result.error);
@@ -113,37 +107,37 @@ export function OAuthAppFields({ secretRequired, saving, error, onSave, url, dis
         onSave(result.input);
       }}
     >
-      {revisedSetup && callbackUrl ? <div className="flex min-h-10 items-center gap-3 border-b border-gray-100 py-1.5" data-testid="oauth-app-callback">
+      {callbackUrl ? <div className="flex min-h-10 items-center gap-3 border-b border-gray-100 py-1.5" data-testid="oauth-app-callback">
         <span className="shrink-0 text-[12px] font-medium text-gray-700">Callback URL</span>
         <code className="min-w-0 flex-1 break-all font-mono text-[12px] text-gray-600">{callbackUrl}</code>
         <DenButton type="button" size="xs" variant="secondary" aria-label="Copy callback URL" onClick={() => {
           void navigator.clipboard.writeText(callbackUrl).then(() => setCopyStatus("copied")).catch(() => setCopyStatus("failed"));
         }}>{copyStatus === "copied" ? "Copied" : copyStatus === "failed" ? "Copy failed" : "Copy"}</DenButton>
       </div> : null}
-      {revisedSetup ? <label htmlFor={`${fieldId}-client-id`} className="text-[12px] font-medium text-gray-700">Client ID</label> : null}
+      <label htmlFor={`${fieldId}-client-id`} className="text-[12px] font-medium text-gray-700">Client ID</label>
       <McpCredentialInput
         id={`${fieldId}-client-id`}
         kind="identifier"
         name="connector-oauth-client-id"
         aria-label="Client ID"
-        aria-invalid={revisedSetup && validationError?.field === "clientId" || undefined}
-        aria-describedby={revisedSetup && validationError?.field === "clientId" ? `${fieldId}-clientId-error` : undefined}
+        aria-invalid={setupValidation && validationError?.field === "clientId" || undefined}
+        aria-describedby={setupValidation && validationError?.field === "clientId" ? `${fieldId}-clientId-error` : undefined}
         placeholder="Client ID"
         value={clientId}
         onChange={(event) => change({ ...current, clientId: event.target.value })}
         disabled={saving}
-        autoFocus={!revisedSetup}
+        autoFocus={!setupValidation}
       />
       {fieldError("clientId")}
-      {revisedSetup ? <label htmlFor={`${fieldId}-client-secret`} className="text-[12px] font-medium text-gray-700">Client secret{secretRequired ? "" : " (optional)"}</label> : null}
+      <label htmlFor={`${fieldId}-client-secret`} className="text-[12px] font-medium text-gray-700">Client secret{secretRequired ? "" : " (optional)"}</label>
       <div className="flex items-center gap-2">
         <McpCredentialInput
           id={`${fieldId}-client-secret`}
           kind="secret"
           name="connector-oauth-client-secret"
           aria-label="Client secret"
-          aria-invalid={revisedSetup && validationError?.field === "clientSecret" || undefined}
-          aria-describedby={revisedSetup && validationError?.field === "clientSecret" ? `${fieldId}-clientSecret-error` : undefined}
+          aria-invalid={setupValidation && validationError?.field === "clientSecret" || undefined}
+          aria-describedby={setupValidation && validationError?.field === "clientSecret" ? `${fieldId}-clientSecret-error` : undefined}
           placeholder={secretRequired ? "Client secret" : "Client secret (optional)"}
           value={clientSecret}
           onChange={(clientSecret) => change({ ...current, clientSecret })}
@@ -151,8 +145,8 @@ export function OAuthAppFields({ secretRequired, saving, error, onSave, url, dis
         />
       </div>
       {fieldError("clientSecret")}
-      {url ? <ManualOAuthFields url={url} draft={manualDraft} onChange={(manualDraft) => change(withOAuthAppManualDraft(current, manualDraft))} hasClientSecret={Boolean(clientSecret.trim())} disabled={saving} discovery={discovery} revisedSetup={revisedSetup} trustConfirmed={current.trustConfirmed} onTrustConfirmedChange={(trustConfirmed) => change({ ...current, trustConfirmed })} validationError={revisedSetup && validationError && validationError.field !== "clientId" && validationError.field !== "clientSecret" ? validationError : null} /> : null}
-      {!url && revisedSetup && validationError && validationError.field !== "clientId" && validationError.field !== "clientSecret" ? <p className="text-[12px] text-red-600" role="alert">{validationError.message}</p> : null}
+      {url ? <ManualOAuthFields url={url} draft={manualDraft} onChange={(manualDraft) => change(withOAuthAppManualDraft(current, manualDraft))} hasClientSecret={Boolean(clientSecret.trim())} disabled={saving} discovery={discovery} setupValidation={setupValidation} trustConfirmed={current.trustConfirmed} onTrustConfirmedChange={(trustConfirmed) => change({ ...current, trustConfirmed })} validationError={setupValidation && validationError && validationError.field !== "clientId" && validationError.field !== "clientSecret" ? validationError : null} /> : null}
+      {!url && setupValidation && validationError && validationError.field !== "clientId" && validationError.field !== "clientSecret" ? <p className="text-[12px] text-red-600" role="alert">{validationError.message}</p> : null}
       {error ? <p className="text-[12px] text-red-600" role="alert">{error}</p> : null}
       {hideSubmit ? null : (
         <div className="flex justify-end pt-1">
@@ -163,7 +157,6 @@ export function OAuthAppFields({ secretRequired, saving, error, onSave, url, dis
   );
 }
 
-/** Rarely changed key transport; collapsed so the default path is only the decision that matters. */
 export function ApiKeySchemeAdvanced({ value, onChange, disabled, testId }: {
   value: ExternalMcpApiKeyAuthScheme;
   onChange: (value: ExternalMcpApiKeyAuthScheme) => void;

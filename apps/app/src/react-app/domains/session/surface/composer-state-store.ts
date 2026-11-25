@@ -40,7 +40,6 @@ export type ComposerStateStore = {
   failedDrafts: Record<string, ComposerSessionState[]>;
   pendingMessages: Record<string, {
     draft: ComposerDraft & { messageId: string };
-    /** The composer as submitted, so a send whose hold is released later can still be saved as unsent. */
     composer: ComposerSessionState;
     previousMessageIds: string[];
     submissionMessageIds: readonly string[];
@@ -95,15 +94,6 @@ export function persistableComposerDraftText(text: string) {
   return text.replace(/\[attachment [^\]]+\]/g, "");
 }
 
-/**
- * Decide whether the persisted draft snapshot should replace the in-memory
- * composer. Crossing an account or organization boundary always rehydrates so
- * the previous scope's text and attachments never survive into the next one.
- * Inside one claimed scope the person's live composer is the newest source of
- * truth: a snapshot that moved underneath it (another window, a queue mirror,
- * a refused compare-and-swap) may only fill an empty composer, never replace
- * text or attachments that are being edited here.
- */
 export function composerDraftNeedsHydration(input: {
   claimedScopeKey: string | null;
   nextScopeKey: string;

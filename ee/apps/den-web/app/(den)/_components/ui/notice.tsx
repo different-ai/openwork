@@ -34,7 +34,6 @@ export function DenNotice({
 }: {
   message: ReactNode;
   action?: ReactNode;
-  /** Inline notices share their containing surface instead of adding a tinted panel. */
   presentation?: "panel" | "inline";
   tone?: DenNoticeTone;
   className?: string;
@@ -58,8 +57,7 @@ export function DenNotice({
         .join(" ")}
     >
       {Icon ? <Icon className={`mt-0.5 size-4 shrink-0 ${resolvedTone === "warning" ? "text-[var(--ow-warning)]" : ""}`} aria-hidden="true" /> : null}
-      <span className={action ? "min-w-0 flex-1" : undefined}>{message}</span>
-      {/* Inline actions keep their hit area without increasing the text row's height. */}
+      <span className={action || presentation === "inline" ? "min-w-0 flex-1" : undefined}>{message}</span>
       {action ? <span className={`flex shrink-0 items-center ${presentation === "inline" ? "-my-2" : ""}`}>{action}</span> : null}
     </div>
   );

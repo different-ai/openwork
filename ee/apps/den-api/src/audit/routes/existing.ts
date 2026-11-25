@@ -1,8 +1,6 @@
 import { auditReadCoveredRoutes, auditSettingsCoveredRoute, providerCoveredRoutes } from "../covered-routes.js"
 import type { AuditRouteDeclaration, AuditRouteMethod } from "./types.js"
 
-// Routes whose dedicated emitters predate generic request capture. The generic
-// layer records nothing for these classes; the emitters below own their events.
 const providerIdParam = (path: string) => path.includes(":inferenceProviderId") ? "inferenceProviderId" : null
 
 export const existingAuditRoutes: readonly AuditRouteDeclaration[] = [
@@ -25,9 +23,6 @@ export const existingAuditRoutes: readonly AuditRouteDeclaration[] = [
   },
 ]
 
-// The better-auth catch-all (routes/auth/index.ts) only dispatches: the concrete
-// endpoint declarations "/api/auth" + endpoint.path (./auth.ts) are resolved from
-// the request path and record; an unknown endpoint is a 404 (access log only).
 const betterAuthCatchAllMethods: readonly AuditRouteMethod[] = ["GET", "POST", "PUT", "PATCH", "DELETE"]
 export const betterAuthDispatchRoutes: readonly AuditRouteDeclaration[] = betterAuthCatchAllMethods.map((method) => ({
   method, path: "/api/auth/*", class: "proxy", action: "auth.endpoint.dispatch", kind: "platform.auth", resource: { type: "auth_endpoint", idParam: null }, attribution: "none",

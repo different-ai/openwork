@@ -47,16 +47,12 @@ function EnterpriseActivationPage() {
   const [browserBusy, setBrowserBusy] = useState(false);
   const [authBusy, setAuthBusy] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
-  // Set once the browser hand-off starts: the sign-in page link the person can
-  // open by hand, and whether the browser confirmed it opened.
   const [browserHandoff, setBrowserHandoff] = useState<{ url: string; status: BrowserAuthOpenStatus } | null>(null);
   const [linkCopied, setLinkCopied] = useState(false);
 
   const submitServer = (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    // The address field quietly accepts a pasted openwork:// sign-in link as
-    // the recovery path when the browser round trip cannot come back.
     const pastedLink = parseManualAuthInput(serverInput);
     if (pastedLink?.baseUrl && pastedLink.grant) {
       const linkBaseUrl = normalizeOrganizationServerInput(pastedLink.baseUrl);
@@ -88,9 +84,6 @@ function EnterpriseActivationPage() {
     setServerError(null);
     setStatusMessage("Finishing OpenWork Enterprise sign-in…");
     try {
-      // The confirmed server, session, and activation stamp commit in one
-      // handoff transaction, so activation can never leave the bootstrap and
-      // the session pointing at different servers.
       const result = await exchangeHandoffAndSignIn(grant, {
         baseUrl,
         desktopInitiated: true,
@@ -124,8 +117,6 @@ function EnterpriseActivationPage() {
 
     setPendingConfirmation(null);
     if (pending.kind === "manual") {
-      // Keep the pasted code in the field: if the exchange fails (for example a
-      // timeout on a busy machine), Continue retries it without pasting again.
       setServerInput(pending.pasted);
       await exchangeConfirmedGrant(pending.grant, pending.baseUrl);
       return;
@@ -142,7 +133,6 @@ function EnterpriseActivationPage() {
       const status = await openBrowserAuthUrl(signInUrl);
       setBrowserHandoff({ url: signInUrl, status });
       setLinkCopied(false);
-      // The field now takes the sign-in code the browser page shows; the address is saved.
       setServerInput("");
       if (status === "failed") {
         setStatusMessage(null);
@@ -162,8 +152,6 @@ function EnterpriseActivationPage() {
     }
   };
 
-  // While the origin confirmation is on screen it is the only decision; the
-  // redundant "Confirm X before continuing" status would repeat its question.
   const liveMessage = serverError ?? authError ?? (pendingConfirmation ? null : statusMessage);
 
   return (

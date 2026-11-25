@@ -20,7 +20,6 @@ export function externalMcpSharedCallbackUrl(): string {
   return publicApiUrl("/v1/mcp-connections/oauth/callback")
 }
 
-/** The shared callback, or null on a deployment without DEN_API_PUBLIC_URL (setup screens omit it then). */
 export function externalMcpSharedCallbackUrlIfConfigured(): string | null {
   return env.apiPublicUrl ? externalMcpSharedCallbackUrl() : null
 }
@@ -29,11 +28,6 @@ export function externalMcpLegacyCallbackUrl(connectionId: string): string {
   return publicApiUrl(`/v1/mcp-connections/${encodeURIComponent(connectionId)}/connect/callback`)
 }
 
-/**
- * Whether a recorded redirect URI lands on the deployment-wide callback route,
- * on any public host or base path Den has emitted (including the hosted web
- * proxy, which forwards to the same route).
- */
 export function isExternalMcpSharedCallbackRedirectUri(redirectUri: string): boolean {
   try {
     return new URL(redirectUri).pathname.endsWith("/v1/mcp-connections/oauth/callback")
@@ -82,14 +76,8 @@ export function externalMcpCompatibleCallbackUrl(input: {
   createdAt: Date
   registeredRedirectUri?: string | null
 }): string {
-  // The provider's OAuth app registration is authoritative for reconnects: if
-  // Den recorded the redirect URI used when the client was registered, keep
-  // sending that exact URI through authorize and token exchange.
   const registered = validAbsoluteUrl(input.registeredRedirectUri)
   if (registered) return registered
-  // Rows created before the hosted Den API split may not have a recorded client
-  // redirect. Keep those on the old app/proxy callback so existing provider
-  // allowlists continue to work, while new rows use the direct API callback.
   if (input.createdAt.getTime() < HOSTED_MCP_CALLBACK_MIGRATION_CUTOFF.getTime() && usesHostedDirectApiMigration()) {
     return externalMcpHostedWebProxyCallbackUrl(input)
   }
