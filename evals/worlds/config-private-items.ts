@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { connect } from "@openwork/cdp/cdp";
 import { createAdmin, type Seed } from "@openwork/env";
 import { enableOrganizationCapabilities } from "./organization-capabilities.ts";
+import { isRecord } from "./library.ts";
 
 export async function configPrivateItemsWorld(seed: Seed) {
   const name = "field-notes-migration";
@@ -42,7 +43,17 @@ export async function configPrivateItemsWorld(seed: Seed) {
       return { async [Symbol.asyncDispose]() { browser.close(); } };
     },
     async joinCreator() {
+      const saved = await seed.api(target.admin, "/v1/org");
+      const invitations = isRecord(saved.body) && Array.isArray(saved.body.invitations) ? saved.body.invitations : [];
+      const invitation = invitations.find((row: unknown) => isRecord(row) && row.email === creator.email && row.status === "pending");
+      if (!isRecord(invitation) || typeof invitation.id !== "string") throw new Error("Config did not create the recipient's pending invitation.");
+      const link = await seed.api(target.admin, `/v1/invitations/${encodeURIComponent(invitation.id)}/link`);
+      if (!link.response.ok || !isRecord(link.body) || typeof link.body.inviteLink !== "string") throw new Error("Could not resolve the imported invitation.");
+      const id = new URL(link.body.inviteLink).searchParams.get("invite");
+      if (!id) throw new Error("The imported invitation has no join identifier.");
       const member = await createAdmin(target, { email: creator.email, name: "Skill Creator", password: "SyntheticConfig123!" });
+      const accepted = await seed.api(member, "/v1/orgs/invitations/accept", { method: "POST", body: JSON.stringify({ id }) });
+      if (!accepted.response.ok) throw new Error(`Could not accept the imported invitation: HTTP ${accepted.response.status}.`);
       return seed.web({ den: target, signedInAs: member, startPath: "/dashboard/library", headless: true });
     },
     async enable() {
