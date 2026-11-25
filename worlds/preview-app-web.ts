@@ -62,8 +62,8 @@ export async function bootAppWebWorld(
   if (options.place === "freestyle") {
     if (!options.ref) throw new Error("Freestyle requires a full pushed source SHA.");
     if (Object.keys(selectedEnv).length) throw new Error("Freestyle snapshots use isolated state and do not accept Den proxy overrides.");
-    const { ensureSnapshot } = await import("../packages/freestyle/src/builder.ts");
-    const { launchPreview, deletePreview } = await import("../packages/freestyle/src/index.ts");
+    const { ensureSnapshot } = await import("../packages/world-freestyle/src/builder.ts");
+    const { launchPreview, deletePreview } = await import("../packages/world-freestyle/src/index.ts");
     await ensureSnapshot(options.ref, undefined, (message) => console.error(message));
     const preview = await launchPreview({ gitSha: options.ref, lifetimeMinutes });
     stack.defer(async () => {

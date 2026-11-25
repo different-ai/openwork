@@ -16,29 +16,51 @@ name: Review app deploy
 on:
   push:
     branches: [dev]
-    paths:
-      - apps/review/**
-      - packages/review/**
-      - packages/freestyle/**
-      - pnpm-lock.yaml
-      - pnpm-workspace.yaml
-      - .github/workflows/review-app-deploy.yml
+    # The cheap changes job follows workspace dependencies and external source
+    # reads (including apps/app/src/styles/colors.css), not a copied path list.
   workflow_dispatch:
 
 permissions:
   contents: read
 
-concurrency:
-  group: review-app-deploy
-  cancel-in-progress: false
-
+# Lock only selected deploys so unrelated pushes cannot replace a pending
+# review deployment before the input classifier runs.
 jobs:
+  changes:
+    name: Detect review app build inputs
+    if: github.repository == 'different-ai/openwork'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      affected: ${{ steps.classify.outputs.affected }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          persist-credentials: false
+      - name: Setup Node
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.22.1
+      - name: Classify review app build inputs
+        id: classify
+        env:
+          BUILD_BASE: ${{ github.event.before }}
+          BUILD_HEAD: ${{ github.sha }}
+        # Unknown ranges and manual dispatches must deploy, not silently skip.
+        run: node .github/scripts/build-inputs.mjs --target review --base "${BUILD_BASE:-0000000000000000000000000000000000000000}" --head "$BUILD_HEAD"
+
   deploy:
+    needs: changes
     if: >-
       github.repository == 'different-ai/openwork' &&
+      needs.changes.outputs.affected == 'true' &&
       vars.OPENWORK_REVIEW_URL != '' &&
       vars.OPENWORK_REVIEW_VERCEL_ORG_ID != '' &&
       vars.OPENWORK_REVIEW_VERCEL_PROJECT_ID != ''
+    concurrency:
+      group: review-app-deploy
+      cancel-in-progress: false
     runs-on: ubuntu-latest
     # The Vercel token belongs to this environment; no deployment is recorded.
     environment:

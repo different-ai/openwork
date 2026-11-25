@@ -18,7 +18,7 @@ import {
   isDesktopNotificationPreference,
   type DesktopNotificationPreference,
 } from "./desktop-notification-preferences";
-import { DEFAULT_SHOW_THINKING, isLinkOpenDestination, LOCAL_PREFERENCES_KEY, needsShowThinkingReset, type LinkOpenDestination } from "./local-preferences-storage";
+import { DEFAULT_SHOW_THINKING, isFollowUpDefault, isLinkOpenDestination, LOCAL_PREFERENCES_KEY, needsShowThinkingReset, type FollowUpDefault, type LinkOpenDestination } from "./local-preferences-storage";
 import {
   readStoredDefaultModel,
   storedDefaultModelChangedEvent,
@@ -32,43 +32,21 @@ export type LocalUIState = {
 
 export type LocalPreferences = {
   showThinking: boolean;
-  /** Set once the one-time reset of Show model reasoning to off has run. */
   showThinkingResetToOff: boolean;
   modelVariant: string | null;
   defaultModel: ModelRef | null;
-  /**
-   * Name of the opencode agent used for new prompts (null = the server's
-   * default, usually "build"). Persisted so a reload does not silently
-   * fall back to the default agent (#2101).
-   */
   selectedAgent: string | null;
-  /**
-   * Release channel the desktop app is subscribed to. Defaults to
-   * "stable". Alpha is only honored on macOS; the updater helper falls
-   * back to stable elsewhere.
-   */
   releaseChannel: ReleaseChannel;
   featureFlags: {
     workspaceRunMode: boolean;
   };
-  /**
-   * Set to true after the user completes the welcome/onboarding flow
-   * (creates or connects their first workspace). When false and the
-   * workspace list is empty, the app redirects to /welcome.
-   */
   hasCompletedOnboarding: boolean;
-  /**
-   * Anonymous product analytics (PostHog). On by default with a visible
-   * opt-out in Settings -> Preferences. Never includes message content.
-   */
   analyticsEnabled: boolean;
-  /**
-   * Native OS notifications from the desktop app. Off by default so upgrading
-   * users are not surprised by system popups.
-   */
   desktopNotifications: DesktopNotificationPreference;
   linkOpenDestination: LinkOpenDestination;
   askBeforeOpeningLinks: boolean;
+  keepAwake: boolean;
+  followUpDefault: FollowUpDefault;
 };
 
 type LocalContextValue = {
@@ -98,6 +76,8 @@ const INITIAL_PREFS: LocalPreferences = {
   desktopNotifications: DEFAULT_DESKTOP_NOTIFICATION_PREFERENCE,
   linkOpenDestination: "openwork",
   askBeforeOpeningLinks: true,
+  keepAwake: true,
+  followUpDefault: "queue",
 };
 
 function readStored(key: string): unknown {
@@ -130,7 +110,6 @@ function writePersisted(key: string, value: unknown) {
   try {
     window.localStorage.setItem(key, JSON.stringify(value));
   } catch {
-    // ignore quota errors
   }
 }
 
@@ -150,6 +129,7 @@ export function LocalProvider({ children }: LocalProviderProps) {
     persisted.linkOpenDestination = isLinkOpenDestination(persisted.linkOpenDestination)
       ? persisted.linkOpenDestination
       : "openwork";
+    persisted.followUpDefault = isFollowUpDefault(persisted.followUpDefault) ? persisted.followUpDefault : "queue";
     persisted.desktopNotifications = isDesktopNotificationPreference(persisted.desktopNotifications)
       ? persisted.desktopNotifications
       : DEFAULT_DESKTOP_NOTIFICATION_PREFERENCE;
@@ -158,7 +138,6 @@ export function LocalProvider({ children }: LocalProviderProps) {
         return { ...persisted, defaultModel: readStoredDefaultModel() };
       }
     } catch {
-      // Retain the preferences migration when storage is unavailable.
     }
     if (persisted.defaultModel) return persisted;
     return {
@@ -216,7 +195,6 @@ export function LocalProvider({ children }: LocalProviderProps) {
         writeStoredDefaultModel(prefsRef.current.defaultModel);
       }
     } catch {
-      // Storage may be unavailable.
     }
     updateDefaultModel();
     return () => window.removeEventListener(storedDefaultModelChangedEvent, updateDefaultModel);
@@ -227,12 +205,9 @@ export function LocalProvider({ children }: LocalProviderProps) {
     if (migratedThinkingRef.current) return;
     migratedThinkingRef.current = true;
 
-    // The legacy value predates the one-time reset of Show model reasoning to
-    // off, so it is discarded rather than applied.
     try {
       window.localStorage.removeItem(THINKING_PREF_KEY);
     } catch {
-      // ignore
     }
   }, []);
 

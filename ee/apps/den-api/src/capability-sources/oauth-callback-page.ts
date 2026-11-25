@@ -1,19 +1,25 @@
-/**
- * Shared completion page for OAuth callbacks. Used by both external MCP
- * connection callbacks and native provider callbacks.
- */
-
 import type { WorkbotOAuthReturn } from "../workbot/connect-return-schema.js"
 
 export function escapeHtml(value: string): string {
   return value.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;")
 }
 
+export type ConnectCallbackFixLink = { label: string; href: string }
+
+function safeFixLink(link: ConnectCallbackFixLink | undefined): ConnectCallbackFixLink | undefined {
+  if (!link) return undefined
+  try {
+    return new URL(link.href).protocol === "https:" ? link : undefined
+  } catch {
+    return undefined
+  }
+}
+
 export function connectCallbackPage(input:
-  | { ok: true; name: string }
-  | { ok: false; name: string; message: string; referenceId?: string }, workbotReturn?: WorkbotOAuthReturn & { connectionId: string }): string {
+  | { ok: true; name: string; detail?: string; warning?: string }
+  | { ok: false; name: string; message: string; referenceId?: string; fixLink?: ConnectCallbackFixLink }, workbotReturn?: WorkbotOAuthReturn & { connectionId: string }): string {
+  const fixLink = input.ok ? undefined : safeFixLink(input.fixLink)
   const brand = workbotReturn ? "Workbot" : "OpenWork"
-  // Finishing OAuth is not a readiness check. Workbot verifies the usable connection on return.
   const title = workbotReturn ? input.ok ? `Signed in to ${input.name}` : "Connection not verified" : input.ok ? "You're connected" : "Connection failed"
   const body = workbotReturn
     ? input.ok
@@ -25,26 +31,68 @@ export function connectCallbackPage(input:
     : input.ok
     ? `<div class="status-row success">
         <span class="status-icon" aria-hidden="true">✓</span>
-        <span><strong>${escapeHtml(input.name)} is connected to OpenWork.</strong><small>Connection complete</small></span>
-      </div>
+        <span><strong>${escapeHtml(input.name)} is connected to OpenWork.</strong><small>${escapeHtml(input.detail ?? "Connection complete")}</small></span>
+      </div>${input.warning ? `
+      <div class="status-row warning" role="status">
+        <span class="status-icon" aria-hidden="true">!</span>
+        <span><strong>LiteLLM needs attention</strong><small>${escapeHtml(input.warning)}</small></span>
+      </div>` : ""}
       <p>You can close this window and return to OpenWork.</p>`
     : `<div class="status-row failure">
         <span class="status-icon" aria-hidden="true">!</span>
         <span><strong>${escapeHtml(input.name)}</strong><small>${escapeHtml(input.message)}</small></span>
       </div>
+      ${fixLink ? `<p><a class="fix-link" href="${escapeHtml(fixLink.href)}" target="_blank" rel="noopener noreferrer">${escapeHtml(fixLink.label)}</a></p>` : ""}
       ${input.referenceId ? `<p class="reference">Diagnostic reference: <code>${escapeHtml(input.referenceId)}</code></p>` : ""}
       <p>Return to OpenWork to try connecting again. You can close this window.</p>`
-  // No token, account detail, or provider error crosses the popup boundary. The opener must re-read readiness.
   const completion = workbotReturn ? JSON.stringify({ type: "openwork:connection-result", requestId: workbotReturn.requestId, connectionId: workbotReturn.connectionId, ok: input.ok }).replace(/</g, "\\u003c") : null
   const returnUrl = workbotReturn ? new URL(workbotReturn.returnPath, workbotReturn.origin).toString() : null
   const targetOrigin = workbotReturn ? JSON.stringify(workbotReturn.origin).replace(/</g, "\\u003c") : null
+  return callbackPageShell({
+    title,
+    brand,
+    workbot: Boolean(workbotReturn),
+    alert: !input.ok,
+    body: `${body}
+      ${returnUrl ? `<p><a href="${escapeHtml(returnUrl)}">Return to Workbot</a></p>` : ""}`,
+    script: completion ? `<script>if (window.opener) { window.opener.postMessage(${completion}, ${targetOrigin}); window.close(); }</script>` : "",
+  })
+}
+
+export function connectConfirmationPage(input: {
+  name: string
+  accountEmail: string
+  organizationName: string
+  fields: { code: string; state: string; iss?: string; confirm: string }
+}, workbotReturn?: WorkbotOAuthReturn & { connectionId: string }): string {
+  const brand = workbotReturn ? "Workbot" : "OpenWork"
+  const hidden = Object.entries(input.fields)
+    .filter((entry): entry is [string, string] => typeof entry[1] === "string")
+    .map(([name, value]) => `<input type="hidden" name="${escapeHtml(name)}" value="${escapeHtml(value)}">`)
+    .join("")
+  return callbackPageShell({
+    title: "Confirm this connection",
+    brand,
+    workbot: Boolean(workbotReturn),
+    alert: false,
+    body: `<div class="status-row">
+        <span class="status-icon" aria-hidden="true">→</span>
+        <span><strong>${escapeHtml(input.name)}</strong><small>Will be connected to ${escapeHtml(input.accountEmail)} in ${escapeHtml(input.organizationName)}</small></span>
+      </div>
+      <p>Continue only if you started this connection from ${brand} with that account. Otherwise, close this window.</p>
+      <form method="get">${hidden}<button class="confirm-button" type="submit">Continue</button></form>`,
+    script: "",
+  })
+}
+
+function callbackPageShell(page: { title: string; brand: string; workbot: boolean; alert: boolean; body: string; script: string }): string {
   return `<!doctype html>
 <html lang="en">
   <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light">
-    <title>${escapeHtml(title)} — ${brand}</title>
+    <title>${escapeHtml(page.title)} — ${page.brand}</title>
     <style>
       :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; --dls-surface: #ffffff; --dls-border: #e5e7eb; --dls-text-primary: #011627; --dls-text-secondary: #667085; --dls-hover: #f2f4f7; }
       * { box-sizing: border-box; }
@@ -62,10 +110,15 @@ export function connectCallbackPage(input:
       .status-icon { flex: 0 0 auto; width: 32px; height: 32px; display: grid; place-items: center; border-radius: 8px; color: var(--dls-text-secondary); background: var(--dls-hover); font-size: 17px; }
       .failure { border-color: #fecaca; background: #fef2f2; }
       .failure .status-icon { color: #b42318; background: #fee2e2; }
+      .warning { margin-top: 12px; border-color: #fde68a; background: #fffbeb; }
+      .warning .status-icon { color: #b45309; background: #fef3c7; }
       .reference { margin-top: 18px; font-size: 13px; }
+      .fix-link { color: var(--dls-text-primary); font-weight: 500; text-underline-offset: .2em; }
       code { font: 12px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; overflow-wrap: anywhere; user-select: all; }
+      .confirm-button { margin-top: 24px; padding: 10px 18px; border: 0; border-radius: 10px; color: #ffffff; background: #011627; font: inherit; font-size: 15px; font-weight: 500; cursor: pointer; }
+      .confirm-button:focus-visible { outline: 2px solid #011627; outline-offset: 2px; }
       @media (max-width: 640px) { main { padding: 40px 32px 48px; } h1 { margin-top: 40px; font-size: 30px; line-height: 38px; } }
-      @media (max-width: 380px) { body { padding: 32px 16px; } main { padding: 32px 24px; } }${workbotReturn ? `
+      @media (max-width: 380px) { body { padding: 32px 16px; } main { padding: 32px 24px; } }${page.workbot ? `
       .workbot-callback { --text-sm: 0.8125rem; --text-xl: 1.25rem; --spacing: 0.25rem; width: min(100%, 32rem); padding: calc(var(--spacing) * 6); }
       .workbot-callback h1 { margin-top: calc(var(--spacing) * 6); font-size: var(--text-xl); line-height: 1.4; letter-spacing: -.015em; overflow-wrap: anywhere; }
       .workbot-callback p { margin-top: calc(var(--spacing) * 4); font-size: var(--text-sm); line-height: 1.5; }
@@ -75,7 +128,7 @@ export function connectCallbackPage(input:
     </style>
   </head>
   <body>
-    <main${workbotReturn ? ' class="workbot-callback"' : ""} role="${input.ok ? "status" : "alert"}" aria-live="${input.ok ? "polite" : "assertive"}">
+    <main${page.workbot ? ' class="workbot-callback"' : ""} role="${page.alert ? "alert" : "status"}" aria-live="${page.alert ? "assertive" : "polite"}">
       <div class="brand"><svg aria-hidden="true"
   xmlns="http://www.w3.org/2000/svg"
   viewBox="0 0 834 649"
@@ -105,12 +158,11 @@ export function connectCallbackPage(input:
     fill="#FFFFFF"
     d="M443.216 29.48C452.02 29.0815 460.018 30.0261 467.903 34.1434C489.625 45.4892 510.693 58.4477 532.373 69.8693C514.905 78.2946 493.564 90.995 476.372 100.542L386.895 149.628C376.357 155.498 365.774 161.287 355.148 166.992C337.373 176.588 322.776 183.695 307.595 197.464C287.772 215.608 273.675 239.14 267.014 265.17C262.116 284.284 262.909 298.302 262.917 317.836L262.939 357.47L262.926 471.524L262.961 530.447C262.98 532.198 263.562 543.941 263.164 544.751L262.58 544.549L215.582 518.061C189.232 503.261 169.189 495.747 169.845 460.795C170.068 448.934 169.804 435.617 169.812 423.605L169.831 344.391L169.818 269.769C169.814 254.383 168.977 231.859 171.873 217.311C175.825 198.048 184.641 180.127 197.478 165.236C204.056 157.596 211.686 150.929 220.143 145.432C231.916 137.708 249.246 128.979 262.061 121.995L328.787 85.3185L391.28 50.97C401.594 45.3095 412 39.3027 422.528 34.3441C428.812 31.3849 436.148 30.2484 443.216 29.48Z"
   />
-</svg><span>${brand}</span></div>
-      <h1>${escapeHtml(title)}</h1>
-      ${body}
-      ${returnUrl ? `<p><a href="${escapeHtml(returnUrl)}">Return to Workbot</a></p>` : ""}
+</svg><span>${page.brand}</span></div>
+      <h1>${escapeHtml(page.title)}</h1>
+      ${page.body}
     </main>
-    ${completion ? `<script>if (window.opener) { window.opener.postMessage(${completion}, ${targetOrigin}); window.close(); }</script>` : ""}
+    ${page.script}
   </body>
 </html>`
 }

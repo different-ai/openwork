@@ -1,0 +1,269 @@
+---
+title: "Back up conversation history"
+sidebarTitle: "Back up conversation history"
+description: "Save your local OpenWork conversation history and the app state needed to find it on Windows, macOS, and Linux."
+---
+
+Choose your operating system and follow its steps to save a local conversation-history
+backup. This guide covers standard local desktop installations, not OpenWork Cloud,
+a remote engine, or your organization's server database.
+
+<Tabs>
+  <Tab title="Windows">
+
+    <Steps>
+    <Step title="Record the version and quit">
+
+    Finish running tasks. Before quitting, open **Settings** > **Updates** in
+    OpenWork and note **Current version**. Then fully quit OpenWork. If the app is
+    already closed, leave it closed and record the version if you know it.
+
+    Quit any other OpenWork or OpenCode apps you have open. If an app won't close
+    normally, ask your administrator or OpenWork support for help before copying.
+
+    </Step>
+    <Step title="Find the folders to save">
+
+    Press **Windows+R** to open **Run**. Paste `%APPDATA%` exactly as written,
+    including both `%` characters, and press **Enter**. A File Explorer window opens.
+    Windows fills in the folder names between `%` characters for you. You don't
+    need to replace them with your username.
+
+    For each row, open the location in the first column using **Run**, then find the
+    folder named in the second column. Don't open that named folder yet.
+
+    | Paste into Run | Folder to select in File Explorer |
+    | --- | --- |
+    | `%APPDATA%` | `com.differentai.openwork` |
+    | `%APPDATA%` | `openwork` |
+    | `%USERPROFILE%\.local\share` | `opencode` |
+
+    Confirm that you can find all three folders before copying. If a folder is
+    missing or your administrator uses different storage locations, stop and ask
+    them or OpenWork support to [confirm the paths](#custom-storage-and-other-installations).
+    Share only paths. Don't share configuration files or credentials.
+
+    </Step>
+    <Step title="Create the backup folder">
+
+    Choose an encrypted or company-approved backup location. If you aren't sure
+    which location to use, ask your administrator before copying: these folders can
+    contain private conversations and credentials. Don't upload them to a public
+    issue, support chat, or Slack.
+
+    Create one dated folder there, for example `OpenWork backup 2026-11-05`. Keep it
+    outside the three folders you are saving. Save a note alongside the copies with
+    your operating system, the app version if known, and the folder table from step 2.
+    For custom storage, record the exact paths your administrator provides instead.
+
+    </Step>
+    <Step title="Copy the folders">
+
+    Use **Run** as in step 2 to return to each location. Select the **named folder
+    itself**, then use **Copy**, not **Cut**. Open your dated backup folder and use
+    **Paste**. Put all three folder copies inside that same dated backup folder,
+    keeping their names unchanged. Copy folders, not selected files inside them.
+    Leave the originals unchanged.
+
+    </Step>
+    <Step title="Check the copies">
+
+    Wait for all copying to finish and resolve any copy errors. For the default
+    locations, your dated backup folder should now contain:
+
+    - `com.differentai.openwork`
+    - `openwork`
+    - `opencode`
+
+    Confirm that you saved the note with your operating system, version if known,
+    and source locations alongside the copies. Then reopen OpenWork. This finishes
+    the folder copy. Read [recovery limits](#what-this-backup-includes) before using it to restore data.
+
+    </Step>
+    </Steps>
+  </Tab>
+  <Tab title="macOS">
+
+    <Steps>
+    <Step title="Record the version and quit">
+
+    Finish running tasks. Before quitting, open **Settings** > **Updates** in
+    OpenWork and note **Current version**. Then choose **Quit** from the app menu,
+    not just the window's close button. If the app is already closed, leave it closed
+    and record the version if you know it.
+
+    Quit any other OpenWork or OpenCode apps you have open. If an app won't close
+    normally, ask your administrator or OpenWork support for help before copying.
+
+    </Step>
+    <Step title="Find the folders to save">
+
+    Open Finder and choose **Go** > **Go to Folder**. Paste the first location from
+    the table exactly as written and press **Return**. A Finder window opens with
+    the named source folder inside it. Repeat for the other rows. The `~` character
+    means your home folder. Keep it in the pasted path.
+
+    | Paste into Go to Folder | Folder to select in Finder |
+    | --- | --- |
+    | `~/Library/Application Support` | `com.differentai.openwork` |
+    | `~/.config` | `openwork` |
+    | `~/.local/share` | `opencode` |
+
+    Confirm that you can find all three folders before copying. If a folder is
+    missing or your administrator uses different storage locations, stop and ask
+    them or OpenWork support to [confirm the paths](#custom-storage-and-other-installations).
+    Share only paths. Don't share configuration files or credentials.
+
+    </Step>
+    <Step title="Create the backup folder">
+
+    Choose an encrypted or company-approved backup location. If you aren't sure
+    which location to use, ask your administrator before copying: these folders can
+    contain private conversations and credentials. Don't upload them to a public
+    issue, support chat, or Slack.
+
+    Create one dated folder there, for example `OpenWork backup 2026-11-05`. Keep it
+    outside the three folders you are saving. Save a note alongside the copies with
+    your operating system, the app version if known, and the folder table from step 2.
+    For custom storage, record the exact paths your administrator provides instead.
+
+    </Step>
+    <Step title="Copy the folders">
+
+    Use **Go** > **Go to Folder** as in step 2 to return to each location. Select the
+    **named folder itself**, then choose **Edit** > **Copy**. Open your dated backup
+    folder and choose **Edit** > **Paste Item**. Put all three folder copies inside
+    that same dated backup folder, keeping their names unchanged. Copy folders, not
+    selected files inside them. Leave the originals unchanged.
+
+    </Step>
+    <Step title="Check the copies">
+
+    Wait for all copying to finish and resolve any copy errors. For the default
+    locations, your dated backup folder should now contain:
+
+    - `com.differentai.openwork`
+    - `openwork`
+    - `opencode`
+
+    Confirm that you saved the note with your operating system, version if known,
+    and source locations alongside the copies. Then reopen OpenWork. This finishes
+    the folder copy. Read [recovery limits](#what-this-backup-includes) before using it to restore data.
+
+    </Step>
+    </Steps>
+  </Tab>
+  <Tab title="Linux">
+
+    <Steps>
+    <Step title="Record the version and quit">
+
+    Finish running tasks. Before quitting, open **Settings** > **Updates** in
+    OpenWork and note **Current version**. Then fully quit OpenWork. If the app is
+    already closed, leave it closed and record the version if you know it.
+
+    Quit any other OpenWork or OpenCode apps you have open. If an app won't close
+    normally, ask your administrator or OpenWork support for help before copying.
+
+    </Step>
+    <Step title="Find the folders to save">
+
+    Open **Files** or **Dolphin**. Press **Ctrl+L** to show the
+    location field. Paste the first location from the table and press **Enter**.
+    The folder opens with the named source folder inside it. Repeat for the other
+    rows. The `~` character means your home folder. Keep it in the pasted path.
+
+    | Paste into the location field | Folder to select |
+    | --- | --- |
+    | `~/.config` | `com.differentai.openwork` |
+    | `~/.config` | `openwork` |
+    | `~/.local/share` | `opencode` |
+
+    These navigation steps cover Files and Dolphin, not every Linux file manager.
+    If you use a different file manager, ask your administrator for its path-entry
+    control. If any folder is missing, or your setup uses `XDG_CONFIG_HOME`,
+    `XDG_DATA_HOME`, or other custom storage, stop before copying and have your
+    administrator or OpenWork support [confirm the paths](#custom-storage-and-other-installations).
+    Share only paths. Don't share configuration files or credentials.
+
+    </Step>
+    <Step title="Create the backup folder">
+
+    Choose an encrypted or company-approved backup location. If you aren't sure
+    which location to use, ask your administrator before copying: these folders can
+    contain private conversations and credentials. Don't upload them to a public
+    issue, support chat, or Slack.
+
+    Create one dated folder there, for example `OpenWork backup 2026-11-05`. Keep it
+    outside the three folders you are saving. Save a note alongside the copies with
+    your operating system, the app version if known, and the folder table from step 2.
+    For custom storage, record the exact paths your administrator provides instead.
+
+    </Step>
+    <Step title="Copy the folders">
+
+    Use **Ctrl+L** as in step 2 to return to each location. Select the **named folder
+    itself** and use **Copy**. Don't use **Cut** or **Move**. Open your dated backup folder
+    and use **Paste**. Put all three folder copies inside that same dated backup
+    folder, keeping their names unchanged. Copy folders, not selected files inside
+    them. Leave the originals unchanged.
+
+    </Step>
+    <Step title="Check the copies">
+
+    Wait for all copying to finish and resolve any copy errors. For the default
+    locations, your dated backup folder should now contain:
+
+    - `com.differentai.openwork`
+    - `openwork`
+    - `opencode`
+
+    Confirm that you saved the note with your operating system, version if known,
+    and source locations alongside the copies. Then reopen OpenWork. This finishes
+    the folder copy. Read [recovery limits](#what-this-backup-includes) before using it to restore data.
+
+    </Step>
+    </Steps>
+  </Tab>
+</Tabs>
+
+## Custom storage and other installations
+
+Ask your administrator or OpenWork support to confirm the desktop profile, runtime
+folder, and history database paths before copying. Relevant overrides include
+`OPENWORK_ELECTRON_USERDATA`, `OPENWORK_SERVER_CONFIG`, `OPENWORK_RUNTIME_DB`,
+`OPENCODE_DB`, `XDG_CONFIG_HOME`, and `XDG_DATA_HOME`. A saved engine selection may
+point at another history database. Share only paths. Don't share configuration
+files or credentials.
+
+For custom sources, record each full original path in the backup notes. If different
+sources have the same folder name, put each copy inside a distinct labelled folder
+within the dated backup. Record which source belongs to each copy, and don't merge
+or replace different sources.
+
+A populated `~/Library/Application Support/opencode` on macOS or
+`%APPDATA%\opencode` on Windows may be another OpenCode data store. Keep it in a
+distinct backup location until your administrator confirms its role. A local copy
+can't capture history held by an external or remote engine.
+
+## What this backup includes
+
+The folder set includes the desktop profile, OpenWork runtime state, and original
+OpenCode data. History may be in the original data folder or a separate engine
+store inside the runtime folder. Save the complete set, not whichever database
+filename looks newest.
+
+Whole-folder capture includes SQLite's write-ahead log, whose name has a `-wal`
+suffix. A live copy of the database and its sidecars doesn't establish a consistent
+capture. This is why you quit the apps first and copy folders rather than a single
+`.db` file.
+
+This isn't a complete backup of workspace documents, global skills, or OS-protected
+credentials. You don't need to copy every project folder just to save the standard
+chat stores. If a conversation links to an original local file outside these
+folders, save that file in its own backup location if you need its original bytes.
+
+File copies don't export the OS keychain or keyring or make sign-in credentials
+portable between computers, users, or operating systems. A completed folder copy
+isn't proof of a successful restore. Contact your administrator or OpenWork support
+before attempting recovery. Don't overwrite your current profile to test a backup.

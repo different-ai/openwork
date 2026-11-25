@@ -33,7 +33,6 @@ const readStoredMode = (): ThemeMode => {
       }
     }
   } catch {
-    // ignore
   }
   return "system";
 };
@@ -58,8 +57,6 @@ const emitThemeChange = () => {
 
 const syncNativeTheme = (mode: ThemeMode) => {
   if (typeof window === "undefined") return;
-  // Fire-and-forget window chrome: the shell refuses this before enterprise
-  // activation, and the window simply keeps its default theme then.
   void window.__OPENWORK_ELECTRON__?.invokeDesktop?.("__setNativeTheme", mode)?.catch(() => undefined);
 };
 
@@ -103,7 +100,6 @@ const persistThemeMode = (mode: ThemeMode) => {
   try {
     window.localStorage.setItem(THEME_PREF_KEY, mode);
   } catch {
-    // ignore
   }
 };
 

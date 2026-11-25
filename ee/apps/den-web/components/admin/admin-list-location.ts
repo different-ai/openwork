@@ -28,7 +28,6 @@ export function adminOrganizationHref(organizationId: string, search: string, pa
   return `/admin/organizations/${encodeURIComponent(organizationId)}${section ? `/${section}` : ""}${query.size ? `?${query}` : ""}`;
 }
 
-/** Only the organization list's search and page can be used as a parent link. */
 function organizationsReturnHref(params: { get: (key: string) => string | null }) {
   const returnTo = params.get("returnTo") ?? "";
   const separator = returnTo.indexOf("?");
@@ -46,7 +45,6 @@ export function adminDataEndpoint(section: AdminDataSection, params: { get: (key
   return `/v1/admin/${section}?${query}`;
 }
 
-/** URL state is shared by direct entry, refresh, navigation and browser history. */
 export function useAdminListLocation() {
   const params = useSearchParams();
   const { search, page, offset } = readAdminListLocation(params);
@@ -58,8 +56,6 @@ export function useAdminListLocation() {
     if (nextSearch) query.set("search", nextSearch); else query.delete("search");
     if (nextPage > 1) query.set("page", String(Math.min(MAX_PAGE, nextPage))); else query.delete("page");
     const href = `${window.location.pathname}${query.size ? `?${query}` : ""}`;
-    // Native history integrates with Next's useSearchParams without rerunning
-    // the access request for every search keystroke.
     if (history === "push") window.history.pushState(null, "", href);
     else window.history.replaceState(null, "", href);
   }, []);

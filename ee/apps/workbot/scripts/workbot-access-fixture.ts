@@ -8,7 +8,6 @@ import { createAuth, type AppEnv } from "../src/server/auth.js";
 import { loadConfig } from "../src/server/config.js";
 import { registerWorkbotRoutes } from "../src/server/routes.js";
 
-/** Real Workbot request/error path. Synthetic Den grants, local runner, no external access or provisioning. */
 export async function workbotAccessFixture(input: { actor: WorkbotActor; runnerUrl: string; modelAccess: HeadlessModelAccess; managed?: boolean; refusal?: WorkbotAccessReason }) {
   let paidAccessRestored = false;
   const denServer = createHttpServer(async (req, res) => {

@@ -44,6 +44,7 @@ export const AuditOperationTable = mysqlTable("audit_operation", {
   uniqueIndex("audit_operation_binding").on(table.organization_id, table.binding_key),
   index("audit_operation_org_time").on(table.organization_id, table.first_recorded_at, table.id),
   index("audit_operation_retention").on(table.organization_id, table.retention_state, table.first_recorded_at, table.id),
+  index("audit_operation_usage").on(table.organization_id, table.retention_state, table.event_count, table.logical_bytes),
 ])
 
 export const AuditOperationStepTable = mysqlTable("audit_operation_step", {
@@ -86,10 +87,6 @@ export const AuditUsageFactTable = mysqlTable("audit_usage_fact", {
   index("audit_usage_org_time").on(table.organization_id, table.effective_at, table.id),
 ])
 
-// Requests without a trustworthy tenant (public, authentication, session-only or
-// failed-before-attribution routes). No organization column by design: an
-// untrusted organization id is never stored, nor IP, user agent, headers or bodies.
-// Not billed, not counted and not tenant-visible.
 export const PlatformAuditEventTable = mysqlTable("platform_audit_event", {
   id: denTypeIdColumn("platformAuditEvent", "id").notNull().primaryKey(),
   occurred_at: timestamp("occurred_at", { fsp: 3 }).notNull(),
@@ -104,8 +101,6 @@ export const PlatformAuditEventTable = mysqlTable("platform_audit_event", {
   actor_id: varchar("actor_id", { length: 255 }),
   credential_id: varchar("credential_id", { length: 255 }),
   origin: mysqlEnum("origin", ["api", "cloud_ui", "mcp", "scheduler", "webhook", "platform_admin"]).notNull(),
-  // Resource reference (declared type + validated path id or handler-named resource).
-  // A target of type organization is only ever an id from trusted authenticated context.
   target_type: varchar("target_type", { length: 64 }),
   target_id: varchar("target_id", { length: 255 }),
 }, (table) => [

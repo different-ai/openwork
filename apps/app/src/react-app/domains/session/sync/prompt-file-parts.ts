@@ -79,25 +79,14 @@ export function joinWorkspaceRelativePath(workspaceRoot: string, relativePath: s
   return `${root}/${relative}`;
 }
 
-// A `text/plain` `file://` part is expanded by opencode through the Read tool
-// before the model sees the message. Read inlines text and attaches images and
-// PDFs, but refuses every other binary with "Cannot read binary file", which
-// opencode surfaces as a session error. Paths with these extensions therefore
-// stay plain text in the prompt so tools can still act on the file.
 const READ_BINARY_EXTENSIONS = new Set([
-  // video / audio
   "mp4", "m4v", "mov", "mkv", "avi", "webm", "wmv", "flv", "mpg", "mpeg",
   "mp3", "m4a", "aac", "wav", "aif", "aiff", "flac", "ogg", "oga", "opus", "wma",
-  // images Read cannot attach
   "heic", "heif", "tif", "tiff", "bmp", "ico", "psd", "ai", "raw", "sketch",
-  // archives / disk images
   "zip", "tar", "gz", "tgz", "bz2", "xz", "7z", "rar", "dmg", "iso", "pkg",
-  // office / documents
   "doc", "docx", "xls", "xlsx", "ppt", "pptx", "odt", "ods", "odp", "key", "numbers", "pages",
-  // compiled / executable / data
   "exe", "dll", "so", "dylib", "bin", "dat", "obj", "o", "a", "lib", "wasm", "class", "jar", "war", "pyc", "pyo",
   "sqlite", "sqlite3", "db",
-  // fonts
   "ttf", "otf", "woff", "woff2",
 ]);
 
@@ -113,10 +102,6 @@ function hasFileExtension(name: string) {
   return dot > 0 && /^[A-Za-z0-9]{1,10}$/.test(name.slice(dot + 1));
 }
 
-// Detection stops at whitespace, so a path containing spaces
-// ("/Applications/Open Coworker.app") is cut to a prefix that does not exist,
-// and Read reports "File not found" as a session error. When the text right
-// after a match looks like the rest of that path, leave it as plain text.
 function looksCutAtWhitespace(line: string, end: number, raw: string) {
   const next = line[end];
   if (next === "\\") return true;

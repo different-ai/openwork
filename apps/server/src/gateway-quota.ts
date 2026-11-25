@@ -29,7 +29,6 @@ export function gatewayBase(id: string, baseURL: unknown): URL | undefined {
   }
 }
 
-/** OpenWork Models: the engine's `openwork` provider, served at `<models origin>/api/v1`. */
 export function openWorkModelsBase(id: string, baseURL: unknown): URL | undefined {
   if (id !== "openwork" || typeof baseURL !== "string") return;
   try {
@@ -43,10 +42,6 @@ export function openWorkModelsBase(id: string, baseURL: unknown): URL | undefine
   }
 }
 
-/**
- * The organization used its OpenWork Models allowance (`x-openwork-error-code: openwork_models_allowance_reached`).
- * It lasts until the window resets, so the engine must not retry it as a rate limit.
- */
 export async function isOpenWorkModelsAllowanceResponse(base: URL, url: URL, response: Response): Promise<boolean> {
   if (url.origin !== base.origin || !url.pathname.startsWith(`${base.pathname}/`)
     || (response.url && new URL(response.url).origin !== base.origin)

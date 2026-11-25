@@ -50,17 +50,12 @@ export type ExtensionItem = {
   marketplaceName?: string;
   plugin?: DenOrgPlugin;
   importedPlugin?: CloudImportedPlugin;
-  /** Installed cloud plugin that was removed from the organization marketplace. */
   removedUpstream?: boolean;
   orgMcpConnection?: DenExternalMcpConnection;
   mcpEntry?: McpDirectoryInfo;
   skill?: { name: string; description?: string; path: string };
 };
 
-/**
- * Map an inventory item into the unified Extensions readiness groups.
- * Org/cloud readiness wins when present; otherwise fall back to install state.
- */
 export function resolveExtensionInventoryGroup(
   item: ExtensionItem,
   opts: ResolveExtensionInventoryGroupOptions = {},
@@ -129,13 +124,11 @@ type PersonalKeyReadiness = Partial<Pick<DenExternalMcpConnection, "authType" | 
 
 export function isOrgMcpConnectionReady(connection: Pick<DenExternalMcpConnection, "credentialMode" | "connected" | "connectedForMe" | "needsReconnect" | "missingFeatures"> & PersonalKeyReadiness) {
   if (connection.credentialMode === "per_member" && connection.authType === "apikey") {
-    // A saved key enables use/replacement, but does not assert upstream validity.
     return connection.connectedForMe && connection.credentialHealth !== "reconnect_required" && !connectionNeedsReconnect(connection);
   }
   return connection.credentialMode === "shared" ? connection.connected : connection.connectedForMe && !connectionNeedsReconnect(connection);
 }
 
-/** Human name of the service behind a native connector, so a card named "Acme Labs" still says what it signs in to. */
 export function nativeProviderDisplayName(nativeProviderKey: string | null | undefined): string | null {
   if (nativeProviderKey === "google-workspace") return "Google Workspace";
   if (nativeProviderKey === "microsoft-365") return "Microsoft 365";
@@ -155,7 +148,6 @@ export function orgMcpConnectionDescription(connection: Pick<DenExternalMcpConne
   }
   if (connection.connectedForMe && connectionNeedsReconnect(connection)) return `${prefix}Reconnect your account to grant newly requested permissions.`;
   if (connection.connectedForMe) {
-    // Keep the base sentence intact as a prefix: specs and people both read it.
     const account = connection.externalAccountId;
     return account
       ? `${prefix}Connected with your own account. Signed in as ${account}.`
@@ -172,8 +164,6 @@ export function orgMcpConnectionActionLabel(connection: Pick<DenExternalMcpConne
   }
   if (connection.connectedForMe && connectionNeedsReconnect(connection)) return "Reconnect";
   if (connection.connectedForMe) {
-    // Show WHICH account: with several connectors for one service (two Google
-    // domains), a bare "Connected" badge cannot tell the sign-ins apart.
     return connection.externalAccountId ? `Connected — ${connection.externalAccountId}` : "Connected";
   }
   return "Connect your account";
@@ -298,7 +288,6 @@ export function buildExtensionItems(input: ExtensionItemBuildInput) {
     }];
   });
 
-  // The Library lists every connection the member can see, including a shared one an admin has not connected yet.
   const orgMcpConnectionItems = (input.orgMcpConnections ?? []).flatMap((connection): ExtensionItem[] => {
     const ready = isOrgMcpConnectionReady(connection);
     return [{
@@ -355,7 +344,6 @@ export function buildExtensionItems(input: ExtensionItemBuildInput) {
     !item.orgMcpConnection || !groupedExternalMcpConnectionIds.has(item.orgMcpConnection.id));
 
   return {
-    // Org-managed MCP connections are beta, so keep them last in unified lists.
     items: [...builtInItems, ...cloudPluginItems, ...importedPluginItems, ...standaloneMcpEntries.map((entry): ExtensionItem => ({
       id: `mcp:${getMcpServerName(entry)}`,
       source: "mcp-directory",
@@ -375,9 +363,6 @@ export function buildExtensionItems(input: ExtensionItemBuildInput) {
       ...builtInItems.flatMap((item) => item.active && item.builtInEntry ? [item.builtInEntry] : []),
       ...standaloneMcpEntries,
     ],
-    // Extensions is an inventory, not a browse catalog: built-ins always show
-    // so they can be turned on, and everything else only shows once it is
-    // configured here. Third-party connections arrive through the organization.
     quickConnectEntries: [
       ...builtInItems.flatMap((item) => item.builtInEntry ? [item.builtInEntry] : []),
       ...standaloneMcpEntries,

@@ -3,29 +3,12 @@ import { MemberTable, OrganizationTable, ScimProviderTable, SsoProviderTable } f
 import { emailDomainMatches } from "./account-linking-policy.js"
 import { db } from "./db.js"
 import { getOrganizationEntitlements } from "./entitlements.js"
-import { runPostOrganizationMemberChangeHooks } from "./organization-member-hooks.js"
 import { acceptPendingInvitationForBootstrapMembership, ensureBootstrapMembershipForOrganization } from "./orgs.js"
 import { resolveStoredScimProvider } from "./scim-token-storage.js"
-import { ORGANIZATION_SSO_JIT_ROLE } from "./sso-jit.js"
+import { restoreScimProvisionedMembership } from "./scim-reprovisioning.js"
+import { readSsoPerOrganization } from "./organization-sso-access.js"
+import { allowsVerifiedDomainAutoJoin, readOrganizationSsoPolicy, ORGANIZATION_SSO_JIT_ROLE } from "@openwork-ee/den-sso"
 import { getOrganizationSeatAddEligibility } from "./stripe-billing.js"
-
-/**
- * People joining an organization without an invitation:
- *
- * - SCIM provisioning needs the Enterprise plan (`scim` entitlement).
- * - SSO sign-up (just-in-time on sign-in, or signing in with an email on the
- *   organization's verified SSO domain) needs the Team plan (`sso`
- *   entitlement).
- *
- * Both respect the organization's user limit exactly like an invitation
- * (organization-plan.ts): Free allows 5 (or more if a platform admin raised
- * it), a Team or Enterprise plan a platform admin set allows its seats, and a
- * paid Stripe plan has no limit.
- * Invited people always join through their invitation.
- *
- * Better Auth's SCIM and SSO plugins write member rows through the raw adapter,
- * which skips Den's member hooks, so Den provisions and syncs billing here.
- */
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
 type UserId = NonNullable<typeof MemberTable.$inferSelect.userId>
@@ -35,11 +18,6 @@ export const SCIM_ENTERPRISE_REQUIRED_MESSAGE = "SCIM provisioning requires an E
 
 type ProvisioningKind = "scim" | "sso"
 
-/**
- * Whether someone may join this organization without an invitation, through
- * SCIM ("scim") or SSO sign-up ("sso"). Reads the organization fresh, so a plan
- * a platform admin sets in /admin applies to the next sign-in or SCIM request.
- */
 export async function organizationAllowsProvisioning(organizationId: OrgId, kind: ProvisioningKind) {
   const [organization] = await db
     .select({ metadata: OrganizationTable.metadata })
@@ -48,13 +26,10 @@ export async function organizationAllowsProvisioning(organizationId: OrgId, kind
     .limit(1)
   if (!organization) return false
   if (!getOrganizationEntitlements(organization.metadata)[kind]) return false
-  // The same user limit as an invitation (organization-plan.ts): a plan a
-  // platform admin set allows its seats, a paid Stripe plan has no limit.
   return (await getOrganizationSeatAddEligibility(organizationId)).allowed
 }
 
 async function hasMemberRow(organizationId: OrgId, userId: UserId) {
-  // Removed members keep their row: they still sign in, without access.
   const [member] = await db
     .select({ id: MemberTable.id })
     .from(MemberTable)
@@ -65,11 +40,6 @@ async function hasMemberRow(organizationId: OrgId, userId: UserId) {
 
 export type SsoMembershipResult = "member" | "joined_by_invitation" | "provisioned" | "invitation_required"
 
-/**
- * Membership for someone signing in through an organization's SSO connection:
- * invited people join through their invitation on any plan; anyone else joins
- * automatically on Team and Enterprise.
- */
 export async function provisionSsoMembership(input: { organizationId: OrgId; userId: UserId; email: string | null }): Promise<SsoMembershipResult> {
   if (await hasMemberRow(input.organizationId, input.userId)) return "member"
 
@@ -83,7 +53,6 @@ export async function provisionSsoMembership(input: { organizationId: OrgId; use
 
   if (!await organizationAllowsProvisioning(input.organizationId, "sso")) return "invitation_required"
 
-  // Runs the member hooks: billing follows the new user and a gateway key is issued.
   await ensureBootstrapMembershipForOrganization({
     organizationId: input.organizationId,
     userId: input.userId,
@@ -93,24 +62,19 @@ export async function provisionSsoMembership(input: { organizationId: OrgId; use
   return "provisioned"
 }
 
-/**
- * Sign-in with another method (e.g. Google) using a verified email on an
- * organization's verified SSO domain joins that organization (Team plan and
- * up), as Better Auth's domain provisioning did, but never with an unverified
- * email.
- */
 export async function provisionVerifiedDomainMembership(input: { userId: UserId; email: string; emailVerified: boolean }) {
-  // The email's domain is the only proof of belonging here, so the provider
-  // must have verified the email; an unverified address could claim any domain.
   if (!input.emailVerified) return
   const emailDomain = input.email.trim().toLowerCase().split("@")[1]
   if (!emailDomain) return
   const providers = await db
-    .select({ organizationId: SsoProviderTable.organizationId, domain: SsoProviderTable.domain })
+    .select({ organizationId: SsoProviderTable.organizationId, domain: SsoProviderTable.domain, metadata: OrganizationTable.metadata })
     .from(SsoProviderTable)
+    .innerJoin(OrganizationTable, eq(OrganizationTable.id, SsoProviderTable.organizationId))
     .where(eq(SsoProviderTable.domainVerified, true))
   const provider = providers.find((entry) => emailDomainMatches(emailDomain, entry.domain))
   if (!provider) return
+  const perOrganization = (await readSsoPerOrganization([provider.organizationId])).get(provider.organizationId) === true
+  if (!allowsVerifiedDomainAutoJoin({ policy: readOrganizationSsoPolicy(provider.metadata), perOrganization })) return
   if (await hasMemberRow(provider.organizationId, input.userId)) return
   if (!await organizationAllowsProvisioning(provider.organizationId, "sso")) return
   await ensureBootstrapMembershipForOrganization({
@@ -126,11 +90,9 @@ function bearerToken(authorization: string | null | undefined) {
   return match?.[1]?.trim() || null
 }
 
-/** The organization a SCIM request's bearer token belongs to. */
 export async function scimRequestOrganizationId(authorization: string | null | undefined): Promise<OrgId | null> {
   const token = bearerToken(authorization)
   if (!token) return null
-  // Verified against the stored token hash, like the SCIM endpoints do.
   const provider = await resolveStoredScimProvider(token, async (providerId, organizationId) => {
     const [row] = await db
       .select({ organizationId: ScimProviderTable.organizationId, scimToken: ScimProviderTable.scimToken })
@@ -142,13 +104,6 @@ export async function scimRequestOrganizationId(authorization: string | null | u
   return provider?.organizationId ?? null
 }
 
-/** After SCIM creates a user in an organization: billing and member setup, like any other join. */
 export async function finishScimProvisionedMember(input: { organizationId: OrgId; userId: UserId }) {
-  const [member] = await db
-    .select({ id: MemberTable.id, removedAt: MemberTable.removedAt })
-    .from(MemberTable)
-    .where(and(eq(MemberTable.organizationId, input.organizationId), eq(MemberTable.userId, input.userId)))
-    .limit(1)
-  if (!member || member.removedAt) return
-  await runPostOrganizationMemberChangeHooks({ organizationId: input.organizationId, memberId: member.id, change: "added" })
+  await restoreScimProvisionedMembership(input)
 }

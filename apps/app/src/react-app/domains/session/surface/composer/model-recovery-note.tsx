@@ -20,8 +20,6 @@ export function ModelRecoveryNote(props: {
   const organizationId = settings.activeOrgId?.trim() ?? "";
   const previousProvider = recovery?.previous.providerID;
   const previousModel = recovery?.previous.modelID;
-  // Each visible composer owns return monitoring, including an alternate-workspace
-  // pane. A dismissed note can reappear only after a verified usable return.
   useEffect(() => {
     if (!props.scope || !previousProvider || !previousModel || !token || !organizationId) return;
     const client = createDenClient({ baseUrl: settings.baseUrl, token, requireCompleteInventory: true });
@@ -34,7 +32,7 @@ export function ModelRecoveryNote(props: {
         const same = (model: ModelRef) => model.providerID === previousProvider && model.modelID === previousModel;
         useModelRecoveryStore.getState().markReturned(chatKey,
           inventory.models.some(same) && !inventory.lockedModels.some(same));
-      } catch { /* Unverifiable is not a newly removed or restored assignment. */ }
+      } catch {}
       if (!cancelled) timer = setTimeout(() => void inspect(), 30_000);
     };
     void inspect();

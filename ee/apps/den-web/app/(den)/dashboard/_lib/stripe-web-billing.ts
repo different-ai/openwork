@@ -1,7 +1,5 @@
 export const OPENWORK_WEB_CHECKOUT_TYPE = "web";
-/** Joined members only; pending invitations are not billed. */
 export const OPENWORK_WEB_QUANTITY_JOINED_MEMBERS = "joined_non_removed_members";
-/** Members plus pending invitations: the same users every subscription bills. */
 export const OPENWORK_WEB_QUANTITY_BILLING_USERS = "members_and_pending_invitations";
 export type OpenWorkWebQuantityDefinition = typeof OPENWORK_WEB_QUANTITY_JOINED_MEMBERS | typeof OPENWORK_WEB_QUANTITY_BILLING_USERS;
 
@@ -124,7 +122,6 @@ export function parseStripeWebBilling(payload: unknown): StripeWebBilling | null
   };
 }
 
-/** True when OpenWork Web bills pending invitations too. */
 export function openWorkWebCountsPendingInvitations(definition: OpenWorkWebQuantityDefinition | null | undefined): boolean {
   return definition === OPENWORK_WEB_QUANTITY_BILLING_USERS;
 }

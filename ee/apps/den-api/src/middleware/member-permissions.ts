@@ -10,17 +10,8 @@ export type MemberPermissionsVariables = {
   memberPermissions: MemberPermissions
 }
 
-// One resolution per OrganizationContext object, i.e. per request: the
-// context is rebuilt for every request. Lets helpers that cannot set
-// c.var (or run before the middleware) share the same answer.
 const resolutions = new WeakMap<OrganizationContext, Promise<MemberPermissions>>()
 
-/**
- * The caller's effective permissions for this request's organization context.
- * Pass `memberTeams` when already loaded (resolveMemberTeamsMiddleware);
- * otherwise the member's teams are read, only when team sets can apply
- * (feature on and not the owner).
- */
 export function memberPermissionsForOrganizationContext(
   context: OrganizationContext,
   memberTeams?: readonly { id: string }[],
@@ -40,12 +31,6 @@ export function memberPermissionsForOrganizationContext(
   return resolution
 }
 
-/**
- * Resolves the caller's effective permissions once per request and sets
- * `c.var.memberPermissions`. Requires the organization context
- * (orgMemberRoute / orgRoleRoute / orgPermissionRoute / cloudTransportRoute
- * first). Skips when an earlier middleware already set it.
- */
 export const resolveMemberPermissionsMiddleware: MiddlewareHandler<{
   Variables: AuthContextVariables
     & Partial<OrganizationContextVariables>

@@ -1,14 +1,3 @@
-/**
- * OpenWork AI Gateway providers → OpenCode V2 providers.
- *
- * Den returns, per gateway provider (`ipr_*`), an OpenCode V1-shaped provider
- * block (`providerConfig`) and a models.dev-shaped catalog config per model
- * (`models[].config`, ids `gwm_*`). The desktop materializes these as V1
- * config (apps/server/src/cloud-provider-sync.ts). Here they become V2
- * `Provider.Info` + `Model.Info`, following how OpenCode V2 itself ingests
- * models.dev entries (packages/core/src/models-dev.ts modelInfo/nativePackage)
- * and V1 config (packages/core/src/v1/config/migrate.ts).
- */
 import { DenAuthError, DenRequestError, denRequest, isRecord, type DenSession, type Fetch } from "./den.ts"
 import type { ModelCost, ModelInfo, ModelVariant, ProviderInfo } from "./opencode.ts"
 
@@ -40,7 +29,6 @@ export interface SkippedProvider {
 
 export interface GatewayInventory {
   readonly providers: readonly GatewayProvider[]
-  /** The member's `ow_gw_` key; one per member per organization, the same for every provider. */
   readonly apiKey: string | null
   readonly skipped: readonly SkippedProvider[]
 }
@@ -98,10 +86,7 @@ async function fetchGatewayInventoryOnce(fetcher: Fetch, session: DenSession, si
   try {
     listed = await denRequest(fetcher, session, "/v1/inference-providers?scope=usable", { signal })
   } catch (error) {
-    // Whole-list denial means membership/session access was revoked, not an
-    // individual provider changing while the inventory was being read.
     if (error instanceof DenRequestError && error.status === 403) throw new DenAuthError(403, "/v1/inference-providers")
-    // Deployments without the AI Gateway answer 404/405/501: no gateway providers.
     if (error instanceof DenRequestError && [404, 405, 501].includes(error.status)) {
       return { providers: [], apiKey: null, skipped: [] }
     }
@@ -129,8 +114,6 @@ async function fetchGatewayInventoryOnce(fetcher: Fetch, session: DenSession, si
       connected = await denRequest(fetcher, session, `/v1/inference-providers/${encodeURIComponent(provider.id)}/connect`, { signal })
     } catch (error) {
       if (!(error instanceof DenRequestError) || error.status !== 403) throw error
-      // Access may have changed between list and connect. Reconcile the whole
-      // list once; a still-denied provider must not retain its old credentials.
       if (!relisted) return fetchGatewayInventoryOnce(fetcher, session, signal, true, credentialScope)
       skipped.push({ id: provider.id, name: provider.name, reason: "missing_credentials" })
       continue
@@ -150,9 +133,6 @@ async function fetchGatewayInventoryOnce(fetcher: Fetch, session: DenSession, si
   return { providers, apiKey, skipped }
 }
 
-// ---- V1 / models.dev → V2 ----
-
-/** AI SDK package → native OpenCode V2 package (packages/core/src/aisdk-native.ts PACKAGES). */
 const NATIVE_PACKAGES: Readonly<Record<string, string>> = {
   "@ai-sdk/amazon-bedrock": "@opencode/ai/providers/amazon-bedrock",
   "@ai-sdk/anthropic": "@opencode/ai/providers/anthropic",
@@ -221,7 +201,6 @@ function reasoningEfforts(config: JsonRecord): string[] {
   return [...new Set(values)]
 }
 
-/** Claude generations that only take a manual thinking budget (packages/core/src/variant.ts claudeInfo). */
 function manualClaude(upstreamModelId: string | null): boolean {
   const id = upstreamModelId ?? ""
   const familyFirst = /(?:claude-)?(opus|sonnet|haiku)-(\d+)(?:[.-](\d+))?/i.exec(id)
@@ -268,14 +247,12 @@ export function reasoningVariants(pkg: string, config: JsonRecord, upstreamModel
   }
 }
 
-/** Variant ids the desktop reads as Fast mode (packages/types/src/cloud-model-fast.ts). */
 const FAST_VARIANT_PREFIX = "__openwork_fast_v1/"
 export const FAST_DEFAULT_VARIANT = `${FAST_VARIANT_PREFIX}default`
 function fastVariantId(effort: string): string {
   return `${FAST_VARIANT_PREFIX}variant/${encodeURIComponent(effort)}`
 }
 
-/** True only for the exact catalog shape the desktop's own materializer accepts. */
 function catalogOffersFast(providerNpm: string | null, config: JsonRecord): boolean {
   const modelProvider = isRecord(config.provider) ? config.provider : {}
   if (providerNpm !== "@ai-sdk/openai") return false
@@ -305,7 +282,6 @@ export function fastVariants(providerNpm: string | null, pkg: string, config: Js
   ]
 }
 
-/** Older Den responses append "(group / credential set)" to model names; the picker shows the plain name. */
 function displayName(model: GatewayModel): string {
   const selection = model.modelGroupName && model.credentialSetName
     ? ` (${model.modelGroupName} / ${model.credentialSetName})`
@@ -329,7 +305,6 @@ export function toModelInfo(provider: GatewayProvider, model: GatewayModel, prov
   const providerNpm = readString(provider.providerConfig.npm)
   return {
     id: model.id,
-    // Den sets config.id to the gwm alias; the gateway routes on it.
     modelID: readString(config.id) ?? model.id,
     providerID: provider.id,
     name: displayName(model),
@@ -378,14 +353,12 @@ export function toProviderRecord(provider: GatewayProvider, apiKey: string): Pro
   const info: ProviderInfo = {
     id: provider.id,
     name: provider.name,
-    // Always available while signed in: the key is ours, not an integration credential.
     activation: "enabled",
     integrationID: GATEWAY_INTEGRATION_ID,
     package: pkg,
     settings: {
       ...optionSettings,
       ...(baseURL ? { baseURL } : {}),
-      // OpenCode names the provider-options namespace of an openai-compatible route after its provider.
       ...(pkg === "@opencode/ai/providers/openai-compatible" ? { provider: provider.id } : {}),
       apiKey,
     },

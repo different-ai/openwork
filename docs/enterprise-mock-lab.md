@@ -6,7 +6,7 @@ The Enterprise MCP Mock Lab gives developers a safe, repeatable place to reprodu
 
 ```text
 enterprise-mock-lab
-  -> enterprise-mcp-mock-server
+  -> mcp-enterprise-mock-server
        -> MCP, OAuth, HTTP, and JSON-RPC contracts only
 ```
 
@@ -36,14 +36,14 @@ It does **not**:
 
 ## Package-first boundary
 
-The reusable package is [`packages/enterprise-mcp-mock-server`](../packages/enterprise-mcp-mock-server). It owns declarative contracts, provider profiles, the fault catalog, protocol behavior, the in-memory runtime, safe traces, and the probe. It must remain usable without Den or the EE app.
+The reusable package is [`packages/mcp-enterprise-mock-server`](../packages/mcp-enterprise-mock-server). It owns declarative contracts, provider profiles, the fault catalog, protocol behavior, the in-memory runtime, safe traces, and the probe. It must remain usable without Den or the EE app.
 
 The local admin application is [`ee/apps/enterprise-mock-lab`](../ee/apps/enterprise-mock-lab). It owns process configuration, authentication, CSRF/origin enforcement, instance lifecycle, the HTML interface, and the control-plane API. It consumes the package only through its public exports.
 
 Dependency rules:
 
-1. `enterprise-mock-lab` may depend on `enterprise-mcp-mock-server`.
-2. `enterprise-mcp-mock-server` must not import Den, an EE app, OpenWork's MCP client, or a provider SDK.
+1. `enterprise-mock-lab` may depend on `mcp-enterprise-mock-server`.
+2. `mcp-enterprise-mock-server` must not import Den, an EE app, OpenWork's MCP client, or a provider SDK.
 3. Den must not import the EE app. A future Den test connects to a lab data-plane URL like any other remote MCP client.
 4. Provider differences belong in named, sourced profiles or faults—not hidden environment checks.
 5. Runtime secrets and ports belong to the app or test harness, never to package fixtures.
@@ -349,8 +349,8 @@ No single test is allowed to stand in for all the others.
 
 | Layer | What it proves | Command or owner |
 | --- | --- | --- |
-| Contract/unit | Scenario schema, profile provenance, fault applicability, revisions, redaction, deterministic state | `pnpm --filter @openwork/enterprise-mcp-mock-server test` |
-| Package quality | Public TypeScript surface and distributable build | `pnpm --filter @openwork/enterprise-mcp-mock-server check` |
+| Contract/unit | Scenario schema, profile provenance, fault applicability, revisions, redaction, deterministic state | `pnpm --filter @openwork/mcp-enterprise-mock-server test` |
+| Package quality | Public TypeScript surface and distributable build | `pnpm --filter @openwork/mcp-enterprise-mock-server check` |
 | Protocol integration | OAuth discovery/token path, MCP initialize/lifecycle, pagination, tool calls, JSON/SSE, exact injected failures | Package integration tests |
 | Control-plane security | Loopback configuration, login/rate limit, session cookie, Origin/CSRF, write-only secrets, safe errors | `pnpm --filter @openwork-ee/enterprise-mock-lab test` |
 | App build | EE app imports only the public package contract and compiles as a standalone process | `pnpm --filter @openwork-ee/enterprise-mock-lab build` |
@@ -362,7 +362,7 @@ No single test is allowed to stand in for all the others.
 
 New enterprise development packages and apps should follow these rules:
 
-1. Use kebab-case folder and package names that state one concern, such as `enterprise-mcp-mock-server` or `enterprise-mock-lab`.
+1. Use kebab-case folder and package names that state one concern, such as `mcp-enterprise-mock-server` or `enterprise-mock-lab`.
 2. Put reusable, browser-safe or runtime-neutral contracts in a package; put listeners, secrets, storage, and operator UI in an app.
 3. Export a small deliberate public API from the package root. Internal files are not consumer contracts.
 4. Make provider behavior declarative. Every new profile/fault includes an ID, phase, category, applicability, operator action, source URL, verified date, fidelity, limitation, and positive/negative tests.

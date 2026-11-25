@@ -14,5 +14,5 @@ export function PermissionsScreen() {
   const create = canCreateRole({ canManageTeams: permissions.access.canManageTeams, canManagePermissions: permissions.access.canManagePermissions })
     ? <DenButton icon={Plus} href={getNewRoleRoute(permissions.orgSlug)} data-testid="roles-create">Create role</DenButton>
     : undefined;
-  return <PermissionsPage title="Roles" testId="permissions-landing"><RolesTab action={create} /></PermissionsPage>;
+  return <PermissionsPage title="Roles" testId="permissions-landing"><RolesTab action={create} showIntro /></PermissionsPage>;
 }

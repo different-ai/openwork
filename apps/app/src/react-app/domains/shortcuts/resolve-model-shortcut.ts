@@ -1,12 +1,3 @@
-// Decide what pressing a model shortcut does. Pure so every branch is tested.
-//
-// Rules (ENG-398 / ENG-401 / ENG-406):
-// - An unavailable model never changes the current model and never removes
-//   the shortcut; the caller shows the reason and one fix.
-// - A catalog that has not settled is pending, never unavailable.
-// - Reasoning and Fast are preferences: when the model does not offer them the
-//   switch still happens at the provider default / standard speed, and the
-//   caller says so.
 import { FAST_VARIANT_PREFIX, fastVariantId } from "@openwork/types/cloud-model-fast";
 
 import type { ModelRef } from "@/app/types";
@@ -16,7 +7,6 @@ import type { ModelSwitchAction } from "./model-shortcuts-store";
 
 export type ShortcutModelOption = {
   behaviorOptions?: ReadonlyArray<{ value: string | null }>;
-  /** The picker shows this option but will not select it right now (e.g. Auto while its allowance is blocked). */
   disabled?: boolean;
 };
 
@@ -27,17 +17,12 @@ export type ModelShortcutDecision =
   | {
       kind: "switch";
       variant: string | null;
-      /** Standard reasoning level that was applied (null: provider default). */
       effort: string | null;
-      /** Fast was requested and applied. */
       fastApplied: boolean;
-      /** Fast was requested but the model does not offer it right now. */
       fastSkipped: boolean;
-      /** A reasoning level was requested but the model does not offer it. */
       effortSkipped: boolean;
     };
 
-/** Resolve a saved {effort, fast} preference to a variant the model offers. */
 export function resolveShortcutVariant(
   values: ReadonlyArray<string | null>,
   effort: string | null,

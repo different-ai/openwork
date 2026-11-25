@@ -21,9 +21,7 @@ const DRIVE_READ_SCOPES = [
 ]
 const DRIVE_FOLDER_MIME_TYPE = "application/vnd.google-apps.folder"
 const DRIVE_SHORTCUT_MIME_TYPE = "application/vnd.google-apps.shortcut"
-// Streams are relayed at the client's pace, so they outlive the 30 s Google API budget; a client disconnect still stops them.
 const DRIVE_STREAM_TIMEOUT_MS = 10 * 60 * 1000
-// Short-lived like other agents' file download URLs (OpenAI's last about five minutes); a download in progress continues.
 const DOWNLOAD_LINK_TTL_SECONDS = 5 * 60
 const DOWNLOAD_LINK_DOMAIN = "openwork.google-drive.download-link.v1"
 const FILE_FIELDS = "id,name,mimeType,size,md5Checksum,headRevisionId,version,modifiedTime,webViewLink,parents,trashed,shortcutDetails(targetId)"
@@ -115,7 +113,6 @@ function selected(dependencies: GoogleWorkspaceActionDependencies, connectionId:
   }
 }
 
-/** Metadata and the exact bytes a pull would save, without downloading anything. Shortcuts resolve to their target. */
 async function describeDriveDownload(c: DriveContext, dependencies: GoogleWorkspaceActionDependencies, fileId: string, format: string | undefined, followShortcut = true): Promise<DescribeResult> {
   const url = new URL(`${googleApiBase()}/drive/v3/files/${encodeURIComponent(fileId)}`)
   url.searchParams.set("supportsAllDrives", "true")
@@ -167,7 +164,6 @@ async function describeDriveDownload(c: DriveContext, dependencies: GoogleWorksp
   return { ok: true, file, download: { format: null, mimeType: google.mimeType, extension: null, size: file.size, exported: false, maxBytes: GOOGLE_DRIVE_PULL_MAX_BYTES } }
 }
 
-/** Stops a stream that grows past the pull cap; the client sees a short, failed download. */
 function capped(body: ReadableStream<Uint8Array>, maxBytes: number) {
   let seen = 0
   return body.pipeThrough(new TransformStream<Uint8Array, Uint8Array>({
@@ -234,7 +230,6 @@ function verifyDownloadLink(token: string) {
   return verifyLink(DOWNLOAD_LINK_DOMAIN, token, downloadLinkPayloadSchema)
 }
 
-/** Drive file downloads for host file transport and shell clients; bytes never enter tool results. */
 export function registerGoogleDriveFileRoutes<T extends { Variables: OrgRouteVariables }>(routeApp: Hono<T>, dependencies: GoogleWorkspaceActionDependencies) {
   const app = new Hono<{ Variables: OrgRouteVariables }>()
   const fileParams = z.object({ fileId: driveIdSchema })
@@ -294,7 +289,6 @@ export function registerGoogleDriveFileRoutes<T extends { Variables: OrgRouteVar
       v: 1, o: context.organization.id, u: context.currentMember.userId, m: context.currentMember.id,
       c: connectionId, f: described.file.id, x: described.download.format, e: expires,
     })
-    // In the query, which request traces strip, rather than the path they keep.
     const downloadUrl = `${resolvePublicApiBaseUrl(c.req.raw, env.apiPublicUrl)}/v1/direct-downloads/google-workspace/drive-link?token=${token}`
     const name = `${described.file.name}${described.download.extension && !described.file.name.toLowerCase().endsWith(described.download.extension) ? described.download.extension : ""}`
     c.header("cache-control", "no-store")

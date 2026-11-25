@@ -32,7 +32,6 @@ export type AuditFilters = Partial<{
 
 type AuditCursor = { cursor: string | null; snapshot: string | null; cursors: string[]; ids: string[] };
 const firstPage: AuditCursor = { cursor: null, snapshot: null, cursors: [], ids: [] };
-// Reads retry once on 503: two first reads at once can collide while the audit policy is set up.
 const retryUnavailableOnce = (failureCount: number, error: Error) => failureCount < 1 && error instanceof AuditReadError && error.status === 503;
 const defaults = { retry: retryUnavailableOnce, gcTime: 0, staleTime: 0, refetchOnWindowFocus: false };
 export const auditPageSize = 50;
@@ -184,7 +183,6 @@ export function useAuditCapture(scope: AuditScope, onAccessError: (error: AuditR
   const member = dashboard.orgContext?.currentMember;
   const auditLogs = dashboard.orgContext?.capabilities.auditLogs === true;
   const memberAccess = member ? getOrgAccessFlags(member.role, member.isOwner, member.permissions) : null;
-  // Reading capture status needs `audit.view`; changing it needs `audit.manage`.
   const canChange = memberAccess?.canManageAuditCapture === true;
   const allowed = dashboard.orgId === scope.orgId && dashboard.orgContext?.organization.id === scope.orgId
     && auditLogs

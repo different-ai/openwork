@@ -5,10 +5,6 @@ import { gatewayBase, GATEWAY_QUOTA_MESSAGE, isGatewayQuotaResponse, isOpenWorkM
 
 type Fetch = (input: Parameters<typeof fetch>[0], init?: RequestInit) => Promise<Response>;
 
-/**
- * Usage limits that last until a window resets are not rate limits: the AI SDK marks every 429 retryable, so the
- * engine would retry them for about a minute. Answer them once, as a non-retryable error the app can classify.
- */
 function noRetryFetch(base: URL, matches: (base: URL, url: URL, response: Response) => Promise<boolean>, error: (url: URL, response: Response) => APICallError): Fetch {
   return async (input, init) => {
     const response = await globalThis.fetch(input, init);

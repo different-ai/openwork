@@ -1,18 +1,5 @@
 "use client";
 
-/**
- * Animated agent glyphs.
- *
- * The four animated SVG glyphs are adapted from Flue
- * (https://github.com/withastro/flue, apps/www/src/pages/index.astro),
- * licensed under the Apache License, Version 2.0
- * (http://www.apache.org/licenses/LICENSE-2.0).
- *
- * MODIFIED by OpenWork from the original Flue source:
- *  - converted Astro markup to a React component
- *  - kept the four glyph SVGs and hover animations
- */
-
 type Props = {
   className?: string;
 };

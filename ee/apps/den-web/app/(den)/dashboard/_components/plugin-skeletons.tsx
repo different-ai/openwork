@@ -5,7 +5,6 @@ function Bar({ className }: { className: string }) {
   return <span aria-hidden className={`inline-block rounded bg-gray-100 align-middle motion-safe:animate-pulse ${className}`} />;
 }
 
-/** The plugin page's header and sections, in place, while the plugin loads. */
 export function PluginPageSkeleton({ back, mode, compact = false }: { back: { href: string; label: string }; mode: "member" | "admin"; compact?: boolean }) {
   return (
     <ItemPage>

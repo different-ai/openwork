@@ -1,16 +1,3 @@
-/**
- * Den telemetry reporter.
- *
- * Activates lazily when the user is signed into Den.
- * Sends lightweight usage signals to POST /v1/telemetry/ingest.
- * Fire-and-forget: no retries and no local storage; a short in-memory batch
- * is sent only under the account and organization that recorded it.
- * If the request fails, the error is swallowed silently.
- *
- * The server extracts org_id and user_id from the auth session.
- * The client never sends prompt contents, code, or file paths.
- */
-
 import { type DenSettings, readDenSettings, resolveDenBaseUrls } from "./den";
 import { desktopFetchViaMain } from "./desktop";
 import { isDesktopRuntime } from "./runtime-env";
@@ -39,7 +26,6 @@ type TelemetryEvent = TelemetryEventFields & {
 };
 
 let pendingEvents: TelemetryEvent[] = [];
-/** The account, organization and server the queued events were recorded under. */
 let pendingContext: string | null = null;
 let flushTimer: ReturnType<typeof setTimeout> | null = null;
 const FLUSH_INTERVAL_MS = 10_000;
@@ -56,10 +42,6 @@ export function resolveDenTelemetryIngestUrl(settings: DenSettings): string | nu
   return `${baseUrls.apiBaseUrl}${INGEST_PATH}`;
 }
 
-/**
- * The ingest route attributes events to the caller's token and active
- * organization, so a batch may only be sent under the context that recorded it.
- */
 export function telemetryContextKey(settings: DenSettings): string | null {
   if (!settings.authToken) return null;
   return JSON.stringify([settings.baseUrl, settings.apiBaseUrl ?? null, settings.authToken, settings.activeOrgId ?? null]);
@@ -75,8 +57,6 @@ async function flushEvents(): Promise<void> {
 
   const settings = readDenSettings();
   const context = telemetryContextKey(settings);
-  // Signed out, or switched account or organization since these were recorded:
-  // drop them rather than attribute them to the new context.
   if (!context || context !== pendingContext) {
     discardPending();
     return;
@@ -113,7 +93,6 @@ async function flushEvents(): Promise<void> {
       clearTimeout(timeout);
     }
   } catch {
-    // Swallow silently -- telemetry should never affect UX
   }
 }
 
@@ -125,10 +104,6 @@ function scheduleFlush(): void {
   }, FLUSH_INTERVAL_MS);
 }
 
-/**
- * Track a telemetry event. The event is batched and flushed periodically.
- * If the user is not signed into Den, the event is silently dropped.
- */
 export function trackTelemetryEvent(type: string, fields: TelemetryEventFields = {}): void {
   const context = telemetryContextKey(readDenSettings());
   if (!context) return;
@@ -149,32 +124,18 @@ export function trackTelemetryEvent(type: string, fields: TelemetryEventFields =
   }
 }
 
-/**
- * Track that the user started an OpenCode session.
- * This is the primary "are people actually using the app" signal.
- */
 export function trackSessionActive(sessionId?: string, dimensions?: TelemetryDimensionInput[]): void {
   trackTelemetryEvent("session.active", { sessionId, dimensions });
 }
 
-/**
- * Track that a task run started in a session.
- * Carries only an opaque session id -- never prompt text or file paths.
- */
 export function trackTaskStarted(sessionId: string, dimensions?: TelemetryDimensionInput[]): void {
   trackTelemetryEvent("task.started", { sessionId, dimensions });
 }
 
-/**
- * Track that a task run finished successfully.
- */
 export function trackTaskCompleted(sessionId: string, durationMs: number): void {
   trackTelemetryEvent("task.completed", { sessionId, durationMs, success: true });
 }
 
-/**
- * Track that a task run errored.
- */
 export function trackTaskFailed(sessionId: string, durationMs: number): void {
   trackTelemetryEvent("task.failed", { sessionId, durationMs, success: false });
 }

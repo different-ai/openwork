@@ -1,6 +1,8 @@
 # Build and push this image first; create a linux-vm Daytona snapshot from its registry digest.
 # Default to the verified official Node 24.22.1 multi-platform image; operators may override with a pinned digest.
 ARG OPENWORK_COMPUTER_BASE_IMAGE=node:24.22.1-bookworm-slim@sha256:1681862882da07ee5476fee047bcf34138833f1df42633bb25bcb0f438d5bf3d
+FROM python:3.11.18-slim-bookworm@sha256:a83ba18aef0f865b1a4a611c2cf460fe446f2795673bbb9fe43be570439e3b39 AS document-python
+
 FROM ${OPENWORK_COMPUTER_BASE_IMAGE} AS desktop-vnc-builder
 USER root
 COPY ee/packages/headless-computer/scripts/build-desktop-vnc.sh /tmp/build-desktop-vnc.sh
@@ -15,7 +17,10 @@ RUN corepack pnpm --filter @openwork/types build \
     && corepack pnpm --filter @openwork-ee/headless-computer exec node scripts/build-desktop.mjs
 
 FROM ${OPENWORK_COMPUTER_BASE_IMAGE}
+# Document jobs use an up-to-date 3.11 on PATH. Debian keeps its own Python for LibreOffice UNO.
+COPY --from=document-python /usr/local/ /usr/local/
 USER root
+RUN ldconfig
 RUN apt-get update && apt-get install -y --no-install-recommends \
     bash sudo python3 python3-pip ca-certificates curl chromium chromium-sandbox xvfb xauth x11-utils \
     openbox xdotool x11vnc util-linux dbus-x11 iptables nftables \
@@ -28,6 +33,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && chmod 0440 /etc/sudoers.d/ubuntu /etc/sudoers.d/openwork-command
 COPY ee/packages/headless-computer/src/image.ts /tmp/openwork-computer-image.ts
 COPY ee/packages/headless-computer/requirements-desktop.lock /usr/local/share/openwork-computer/requirements-desktop.lock
+COPY ee/packages/headless-computer/desktop-node-packages.json ee/packages/headless-computer/desktop-node-packages.lock.json /usr/local/share/openwork-computer/
 RUN node --input-type=module -e "import { DESKTOP_COMPUTER_INSTALL_SCRIPT } from '/tmp/openwork-computer-image.ts'; import { writeFileSync } from 'node:fs'; writeFileSync('/tmp/install-computer.sh', DESKTOP_COMPUTER_INSTALL_SCRIPT)" \
     && bash /tmp/install-computer.sh && rm /tmp/install-computer.sh /tmp/openwork-computer-image.ts
 COPY ee/packages/headless-computer/src/desktop-apps.mjs /usr/local/share/openwork-desktop/apps.mjs
@@ -40,6 +46,7 @@ COPY ee/packages/headless-computer/src/scripting/ /usr/local/share/openwork-desk
 RUN chmod 0755 /usr/local/share/openwork-desktop/scripting && chmod 0644 /usr/local/share/openwork-desktop/scripting/*
 COPY --from=desktop-bridge-builder /src/ee/packages/headless-computer/dist/desktop-guest.mjs /usr/local/share/openwork-desktop/guest.mjs
 COPY --from=desktop-bridge-builder /src/ee/packages/headless-computer/dist/desktop-guest.version /usr/local/share/openwork-desktop/guest.version
+COPY --from=desktop-bridge-builder /src/ee/packages/headless-computer/dist/desktop-image.version /usr/local/share/openwork-desktop/image.version
 COPY ee/apps/den-worker-runtime/scripts/cloud-desktop.sh /usr/local/share/openwork-desktop/start.sh
 COPY ee/packages/headless-computer/scripts/desktop-bridge.py /usr/local/sbin/openwork-desktop-bridge
 COPY ee/packages/headless-computer/scripts/vnc-stdio.py /usr/local/share/openwork-desktop/vnc-stdio.py

@@ -37,7 +37,6 @@ export async function POST(request: Request, { params }: { params: Promise<{ id:
     return Response.json({ error: "No checkpoint was saved for this image." }, { status: 404, headers });
   if (Date.parse(image.checkpoint.expiresAt) <= Date.now())
     return Response.json({ error: "This checkpoint has expired. The screenshot is still available." }, { status: 410, headers });
-  // The provider that saved the checkpoint opens it, whatever the current default is.
   const provider = reviewProvider(image.checkpoint.provider);
   if (!provider.configured())
     return Response.json({ error: "Checkpoint access is not configured. Contact the review app owner." }, { status: 503, headers });

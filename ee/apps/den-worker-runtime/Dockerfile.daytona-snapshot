@@ -13,7 +13,35 @@ RUN apt-get update \
   && corepack enable \
   && rm -rf /var/lib/apt/lists/*
 
-COPY . .
+# Keep the app/server build closure, not landing pages, docs, screenshots or
+# unrelated services. runtime-scope.test.mjs checks this boundary against the
+# workspace manifests and the plugin's source-level imports.
+COPY package.json pnpm-lock.yaml pnpm-workspace.yaml constants.json tsconfig.declarations.json turbo.json .nvmrc ./
+COPY patches/ patches/
+COPY apps/app/ apps/app/
+COPY apps/server/ apps/server/
+# Vite reads the shipped desktop version even for the browser app.
+COPY apps/desktop/package.json apps/desktop/package.json
+COPY packages/browser-tabs/ packages/browser-tabs/
+COPY packages/calendar/ packages/calendar/
+COPY packages/codemode/ packages/codemode/
+COPY packages/computer-use/ packages/computer-use/
+COPY packages/documents/ packages/documents/
+COPY packages/mcp-enterprise-client/ packages/mcp-enterprise-client/
+COPY packages/free-auto/ packages/free-auto/
+COPY packages/install-config/ packages/install-config/
+COPY packages/managed-deployments/ packages/managed-deployments/
+COPY packages/paths/ packages/paths/
+COPY packages/product-analytics/ packages/product-analytics/
+COPY packages/sandbox/ packages/sandbox/
+COPY packages/sandbox-microsandbox/ packages/sandbox-microsandbox/
+COPY packages/types/ packages/types/
+COPY packages/ui/ packages/ui/
+COPY packages/workbook/ packages/workbook/
+# The server bundles this plugin by relative path, outside workspace declarations.
+COPY packages/opencode-plugin/ packages/opencode-plugin/
+COPY packages/remote-sessions/ packages/remote-sessions/
+COPY ee/packages/telemetry-contracts/ ee/packages/telemetry-contracts/
 
 # python3/make/g++ above: better-sqlite3 v13 has no install script, but pnpm's
 # implicit node-gyp build for packages with a binding.gyp still compiles it
@@ -34,8 +62,7 @@ RUN set -eux; \
   pnpm --filter openwork-server build; \
   pnpm --filter openwork-server exec bun ./script/build.ts --outdir dist/bin --target "$target"; \
   install -m 0755 "apps/server/dist/bin/openwork-server-${target}" /tmp/openwork-server; \
-  pnpm --filter @openwork/app build:web; \
-  pnpm --filter @openwork/documents build:collabora-theme
+  pnpm --filter @openwork/app build:web
 
 FROM node:24.22.1-bookworm-slim
 
@@ -46,33 +73,6 @@ ARG OPENCODE_DOWNLOAD_URL=
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates curl tar unzip \
   && rm -rf /var/lib/apt/lists/*
-
-# Workbot Documents' editor: the open-source Collabora Online engine from its
-# CODE packages, without proprietary branding (packages/documents/README.md).
-# The bootstrap starts it only when Den sets DEN_DOCUMENTS_EDITOR=cloud-worker.
-# DOCUMENTS_EDITOR=0 builds an image without it.
-ARG DOCUMENTS_EDITOR=1
-ARG COLLABORA_REPO=https://collaboraoffice.com/repos/CollaboraOnline/25.04-CODE/CODE-deb/
-COPY --from=openwork-builder /src/packages/documents/collabora/dist/branding.js /tmp/openwork-branding.js
-COPY --from=openwork-builder /src/packages/documents/collabora/branding.css /tmp/openwork-branding.css
-COPY packages/documents/collabora/install-openwork-theme.sh /tmp/install-openwork-theme.sh
-COPY ee/apps/den-worker-runtime/documents-editor-proxy.mjs /opt/openwork/documents-editor-proxy.mjs
-RUN set -eux; \
-  if [ "$DOCUMENTS_EDITOR" = "1" ]; then \
-    apt-get update; \
-    apt-get install -y cpio tzdata libcap2-bin; \
-    curl -fsSL https://www.collaboraoffice.com/downloads/gpg/collaboraonline-release-keyring.gpg \
-      -o /usr/share/keyrings/collaboraonline-release-keyring.gpg; \
-    echo "deb [signed-by=/usr/share/keyrings/collaboraonline-release-keyring.gpg] $COLLABORA_REPO /" \
-      > /etc/apt/sources.list.d/collabora.list; \
-    apt-get update; \
-    apt-get install -y coolwsd collaboraofficebasis-en-us; \
-    sh /tmp/install-openwork-theme.sh /tmp/openwork-branding.js /tmp/openwork-branding.css; \
-    chown cool:cool /etc/coolwsd /etc/coolwsd/coolwsd.xml; \
-    chmod 644 /etc/coolwsd/coolwsd.xml; \
-    rm -rf /etc/coolwsd/proof_key* /var/lib/apt/lists/*; \
-  fi; \
-  rm -f /tmp/openwork-branding.js /tmp/openwork-branding.css /tmp/install-openwork-theme.sh
 
 COPY --from=openwork-builder /tmp/openwork-server /usr/local/bin/openwork-server
 COPY --from=openwork-builder /src/apps/app/dist /opt/openwork/web

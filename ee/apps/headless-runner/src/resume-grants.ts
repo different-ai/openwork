@@ -1,10 +1,5 @@
 import { createHash } from "node:crypto"
 
-/**
- * Resume grants at rest: AES-256-GCM with a random IV, keyed by SHA-256("headless-grant:" + HEADLESS_GRANT_KEY).
- * Web Crypto, because both hosts have it (celld has no `createCipheriv`). A value that doesn't open (another key, a
- * damaged row) is no grant at all: that turn simply waits for its caller, as without self-resume.
- */
 export type GrantVault = {
   seal(grant: string): Promise<string>
   open(sealed: string): Promise<string | null>

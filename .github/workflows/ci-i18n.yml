@@ -9,17 +9,29 @@ permissions:
   contents: read
 
 jobs:
+  # This is a dependency-free source audit, not a consumer of any build output.
   i18n-audit:
     runs-on: blacksmith-4vcpu-ubuntu-2204
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 2
 
       - name: Setup Node
-        uses: actions/setup-node@v6
+        uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
         with:
           node-version: 24.22.1
 
+      - name: Compare i18n audit inputs
+        id: inputs
+        continue-on-error: true
+        env:
+          BASE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: node .github/scripts/build-inputs.mjs --target i18n --base "$BASE_SHA" --head "$HEAD_SHA"
+
       - name: Run i18n audit
+        if: ${{ !cancelled() && (steps.inputs.outcome != 'success' || steps.inputs.outputs.fingerprint == '' || steps.inputs.outputs.affected != 'false') }}
         run: node scripts/i18n-audit.mjs --ci

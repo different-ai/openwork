@@ -2,10 +2,6 @@ import { Icon } from "./icons";
 import { StatusIcon } from "./status-icon";
 import { designNotesLabel, visualState, type ReportSection } from "../lib/sections";
 
-/**
- * One lane per section, one card per recorded step, read left to right.
- * Lanes jump to their section; step cards open the screenshot viewer.
- */
 export function EvidenceMap({ sections, onJump }: { sections: readonly ReportSection[]; onJump: (id: string) => void }) {
   return (
     <section className="block evidence-map" aria-labelledby="evidence-map-title">

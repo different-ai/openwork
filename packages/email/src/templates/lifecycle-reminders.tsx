@@ -6,7 +6,6 @@ const LOGO_URL = "https://openworklabs.com/email/openwork-mark.png"
 export type ClaimReminderEmailProps = {
   organizationName: string
   claimLink: string
-  /** Human-readable expiry, e.g. "Monday, October 6 at 3:00 PM UTC". */
   expiresAtLabel: string
 }
 
@@ -98,7 +97,6 @@ function Fallback({ link }: { link: string }) {
   )
 }
 
-// Same visual system as the organization invite email.
 const styles = {
   body: {
     backgroundColor: "#F0F1F3",

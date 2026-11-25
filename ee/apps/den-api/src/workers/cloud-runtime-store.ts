@@ -30,11 +30,6 @@ function sandboxIdOf(record: RuntimeInstanceRecord) {
   return sandboxId
 }
 
-/**
- * Keep the pre-neutral table in step so a rollback to a Den that still reads
- * `daytona_sandbox` sees the same instance and endpoint. Only Daytona records
- * have a legacy shape; other providers write the neutral table alone.
- */
 async function mirrorLegacyDaytonaRow(record: RuntimeInstanceRecord) {
   if (record.sandbox.providerId !== "daytona") return
   const legacy = {
@@ -45,7 +40,7 @@ async function mirrorLegacyDaytonaRow(record: RuntimeInstanceRecord) {
     signed_preview_url_expires_at: record.endpointExpiresAt,
     region: record.region,
   }
-  const existing = await db
+  const existing = await db.$primary
     .select({ id: DaytonaSandboxTable.id })
     .from(DaytonaSandboxTable)
     .where(eq(DaytonaSandboxTable.worker_id, workerId(record.workerId)))
@@ -64,7 +59,7 @@ async function mirrorLegacyDaytonaRow(record: RuntimeInstanceRecord) {
 export function createDatabaseRuntimeInstanceStore(input: { endpointKind: ProviderEndpointKind }): RuntimeInstanceStore {
   return {
     async get(id) {
-      const rows = await db
+      const rows = await db.$primary
         .select()
         .from(CloudRuntimeInstanceTable)
         .where(eq(CloudRuntimeInstanceTable.worker_id, workerId(id)))
@@ -83,7 +78,7 @@ export function createDatabaseRuntimeInstanceStore(input: { endpointKind: Provid
         endpoint_kind: input.endpointKind,
         region: record.region,
       }
-      const existing = await db
+      const existing = await db.$primary
         .select({ id: CloudRuntimeInstanceTable.id })
         .from(CloudRuntimeInstanceTable)
         .where(eq(CloudRuntimeInstanceTable.worker_id, workerId(record.workerId)))

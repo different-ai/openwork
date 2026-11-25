@@ -84,9 +84,6 @@ export async function setPlan(call: DenCall, organizationId: string, plan: { tie
 
 /** Pays for Team through the loopback test-mode Stripe; no real Stripe or money. */
 export async function payForTeam(call: DenCall, organizationId: string, checkoutOrigin: string): Promise<void> {
-  await expectOk("Turning on Team checkout", await call(`/v1/admin/organizations/${organizationId}/capabilities`, {
-    method: "PUT", headers: json, body: JSON.stringify({ capabilities: { teamPlan: true } }),
-  }));
   const checkout = record(await expectOk("Starting Team checkout", await call("/v1/billing/stripe/checkout", {
     method: "POST", headers: scoped(organizationId), body: JSON.stringify({ type: "plan", plan: "team" }),
   })));

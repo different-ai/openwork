@@ -8,7 +8,9 @@ import {
   Globe,
   Loader2,
   MessagesSquare,
+  MonitorSmartphone,
   Maximize2,
+  PanelRight,
   PictureInPicture2,
   ShieldOff,
   Plus,
@@ -16,7 +18,7 @@ import {
   X,
 } from "lucide-react";
 import { useDragControls } from "motion/react";
-import { AGENT_VIEWPORTS, type AgentViewportKey } from "@openwork/browser-tabs";
+import { AGENT_VIEWPORTS, DEFAULT_AGENT_VIEWPORT, type AgentViewportKey } from "@openwork/browser-tabs";
 
 import type { OpenworkServerClient } from "@/app/lib/openwork-server";
 import { PanelTab, PanelTabClose, PanelTabItem, PanelTabList } from "@/components/panel-tabs";
@@ -43,8 +45,10 @@ import {
 } from "./panel-tab-store";
 import { useControlAction, type OpenworkControlAction } from "../../../shell/control/control-provider";
 import type { OpenTarget } from "../artifacts/open-target";
+import type { OpenTargetOptions } from "@/lib/target-provider";
 import { useSidePanelTabs } from "./use-side-panel-tabs";
 import { handlePanelEscape, PanelEmpty } from "./panel-empty";
+import type { EmptyPanelView } from "./files-rail";
 import {
   getElectronBrowser,
   getNativeMenuPoint,
@@ -53,9 +57,12 @@ import {
 import { computeBrowserBounds, createBrowserBoundsSync } from "./browser-bounds-sync";
 import { browserOperationLabels } from "./browser-status";
 import type { BrowserPresentationMode } from "./browser-presentation-store";
-import { chooseAgentViewport, storedAgentViewport } from "./agent-viewport";
+import { chooseTabPageSize } from "./agent-viewport";
+import { isBrowserSecretsDialogTarget } from "./browser-secrets";
+import { BrowserSecretsButton } from "./browser-secrets-dialog";
+import { NO_SESSION_SIDE_PANEL_KEY } from "./side-panel-session";
+import { useBrowserSecretsEnabled } from "./use-browser-secrets";
 
-/** Floating browser presentation controls, present only while that feature is on. */
 export type BrowserPresentationControls = {
   onPresent: (mode: BrowserPresentationMode) => void;
 };
@@ -65,51 +72,59 @@ type SidePanelProps = {
   client: OpenworkServerClient | null;
   workspaceId: string | null;
   workspaceRoot: string;
+  onOpenTarget?: (target: OpenTarget, options?: OpenTargetOptions) => void;
+  isLocalWorkspace?: boolean;
   onClose: () => void;
   onOpenExtensions?: () => void;
-  /** Floating browser presentation; undefined keeps the docked-only browser. */
+  emptyView: EmptyPanelView;
+  onShowEmptyChooser: () => void;
+  onOpenFiles: () => void;
   browserPresentation?: BrowserPresentationControls;
-  /** The browser is shown full screen: keep its tab but not a second native view here. */
   browserShownElsewhere?: boolean;
+  sideChat?: { content: React.ReactNode; onOpen: () => void };
 };
 
-// HMR can remount this module without unmounting BrowserPanelContent, leaving
-// the native Electron browser overlay visible — hide it before the module reloads.
 if (import.meta.hot) {
   import.meta.hot.dispose(() => {
     getElectronBrowser()?.hide?.();
   });
 }
 
-/** The size pages lay out at while the agent works, like Chrome's device toolbar. */
-function AgentViewportMenu({ viewport }: { viewport: { key: AgentViewportKey; scale: number } | null }) {
-  const [chosen, setChosen] = React.useState(storedAgentViewport);
-  const active = viewport?.key ?? chosen;
+function PageSizeMenu({ tabId, viewport }: { tabId: string; viewport: { key: AgentViewportKey; scale: number } | null }) {
+  const active = viewport?.key ?? DEFAULT_AGENT_VIEWPORT;
+  const fixed = !AGENT_VIEWPORTS[active].fitsPanel;
   return (
     <Popover>
       <PopoverTrigger
         render={(
-          <Button variant="ghost" size="sm" className="h-6 shrink-0 px-2 text-xs text-muted-foreground"
-            aria-label={`Agent page size: ${AGENT_VIEWPORTS[active].label}. Change it`}>
-            {AGENT_VIEWPORTS[active].label}{viewport && viewport.scale < 1 ? ` · ${Math.round(viewport.scale * 100)}%` : ""}
+          <Button variant="ghost" size={fixed ? "sm" : "icon-sm"} className={fixed ? "h-6 shrink-0 px-2 text-xs text-muted-foreground" : "shrink-0"}
+            aria-label={`Page size: ${AGENT_VIEWPORTS[active].label}. Change it`} data-testid="browser-page-size">
+            {fixed ? `${AGENT_VIEWPORTS[active].label}${viewport && viewport.scale < 1 ? ` · ${Math.round(viewport.scale * 100)}%` : ""}` : <MonitorSmartphone />}
           </Button>
         )}
       />
       <PopoverContent align="end" side="bottom" sideOffset={8} className="w-64 gap-0 p-1">
         <p className="px-2 pb-1.5 pt-1 text-xs text-muted-foreground">
-          While the agent works, pages keep this size and scale to fit the panel.
+          Pages show at the panel's width, like any website. Pick a fixed size to check a phone, tablet or desktop layout.
         </p>
         {(Object.keys(AGENT_VIEWPORTS) as AgentViewportKey[]).map((key) => (
-          <button key={key} type="button" aria-pressed={key === active}
+          <button key={key} type="button" aria-pressed={key === active} data-testid={`browser-page-size-${key}`}
             className="flex w-full items-center justify-between rounded-md px-2 py-1.5 text-left text-xs hover:bg-muted aria-pressed:bg-muted"
-            onClick={() => { setChosen(key); chooseAgentViewport(key); }}>
+            onClick={() => chooseTabPageSize(tabId, key)}>
             <span className="font-medium">{AGENT_VIEWPORTS[key].label}</span>
-            <span className="text-muted-foreground">{AGENT_VIEWPORTS[key].width} × {AGENT_VIEWPORTS[key].height}</span>
+            <span className="text-muted-foreground">
+              {AGENT_VIEWPORTS[key].fitsPanel ? "Fits the panel" : `${AGENT_VIEWPORTS[key].width} × ${AGENT_VIEWPORTS[key].height}`}
+            </span>
           </button>
         ))}
       </PopoverContent>
     </Popover>
   );
+}
+
+function BrowserSecretsControl({ sessionId, pageUrl }: { sessionId: string; pageUrl: string }) {
+  const enabled = useBrowserSecretsEnabled();
+  return enabled && sessionId !== NO_SESSION_SIDE_PANEL_KEY ? <BrowserSecretsButton key={sessionId} sessionId={sessionId} pageUrl={pageUrl} /> : null;
 }
 
 const MARKDOWN_PRIMITIVE_ARTIFACT_CONTENT = `# Artifact Markdown Proof
@@ -135,6 +150,11 @@ type SidePanelTabProps = {
   onSelect: (tabId: string) => void;
   onClose: (tab: PanelTabEntry) => void;
 };
+
+export function BrowserTabIcon({ tab }: { tab: BrowserPanelTab }) {
+  if (tab.favicon) return <img src={tab.favicon} alt="" className="size-3.5 shrink-0 rounded-[2px]" />;
+  return tab.status === "loading" ? <Loader2 className="animate-spin" /> : <Globe />;
+}
 
 function SidePanelTab({ tab, active, onSelect, onClose }: SidePanelTabProps) {
   const dragControls = useDragControls();
@@ -163,6 +183,14 @@ function SidePanelTab({ tab, active, onSelect, onClose }: SidePanelTabProps) {
         event.stopPropagation();
         showBrowserTabContextMenu({ clientX: event.clientX, clientY: event.clientY });
       } : undefined}
+      onMouseDown={(event: React.MouseEvent<HTMLDivElement>) => {
+        if (event.button === 1) event.preventDefault();
+      }}
+      onAuxClick={(event: React.MouseEvent<HTMLDivElement>) => {
+        if (event.button !== 1) return;
+        event.preventDefault();
+        onClose(tab);
+      }}
     >
       <div ref={tabRef} className="relative" data-browser-shortcut-tab={tab.type === "browser" ? tab.id : undefined}>
         <PanelTab
@@ -186,15 +214,7 @@ function SidePanelTab({ tab, active, onSelect, onClose }: SidePanelTabProps) {
           title={tab.label}
           aria-label={`Select tab: ${tab.label}`}
         >
-          {tab.type === "browser" ? (
-            tab.favicon ? (
-              <img src={tab.favicon} alt="" className="size-3.5 shrink-0 rounded-[2px]" />
-            ) : tab.status === "loading" ? (
-              <Loader2 className="animate-spin" />
-            ) : (
-              <Globe />
-            )
-          ) : (tab.type === "app" || tab.type === "mcp-app") ? <Blocks /> : tab.type === "remote-thread" ? <MessagesSquare /> : (
+          {tab.type === "browser" ? <BrowserTabIcon tab={tab} /> : (tab.type === "app" || tab.type === "mcp-app") ? <Blocks /> : (tab.type === "remote-thread" || tab.type === "side-chat") ? <MessagesSquare /> : (
             <ArtifactIcon type={tab.preview} />
           )}
           <span className="min-w-0 flex-1 truncate text-left">{tab.label}</span>
@@ -213,8 +233,7 @@ type BrowserPanelContentProps = {
   sessionId: string;
   tab: BrowserPanelTab;
   onClose: () => void;
-  /** Where this content is shown and how to move it, with the floating browser feature on. */
-  presentation?: BrowserPresentationControls & { mode: "side" | "fullscreen" };
+  presentation?: BrowserPresentationControls & { mode: "side" | "fullscreen" | "window" };
 };
 
 export function BrowserPanelContent({
@@ -287,21 +306,21 @@ export function BrowserPanelContent({
       return;
     }
 
+    const view = content.ownerDocument.defaultView ?? window;
     let disposed = false;
     let ready = false;
     let boundsFrame: number | null = null;
     const boundsSync = createBrowserBoundsSync(browser, sessionId, (error) => {
       reportFailure("Could not show the browser. Try reopening this tab.", error);
-    });
+    }, view === window ? undefined : "window");
 
     const scheduleBounds = () => {
       if (!disposed && ready && boundsFrame === null) {
-        boundsFrame = window.requestAnimationFrame(watchBounds);
+        boundsFrame = view.requestAnimationFrame(watchBounds);
       }
     };
 
     const resetNativeView = async () => {
-      // This hide only stages fresh geometry; it is not leaving browser focus.
       await browser.hide?.({ preserveShortcutFocus: true });
 
       if (disposed) {
@@ -316,9 +335,9 @@ export function BrowserPanelContent({
       if (!ready || disposed) return;
       const bounds = computeBrowserBounds(content);
       const occluded = extendedOccluders
-        ? hasNativeBrowserOccluder({ bounds, exclude: content.closest("[data-browser-fullscreen-dialog]") })
+        ? hasNativeBrowserOccluder({ bounds, exclude: content.closest("[data-browser-fullscreen-dialog]"), doc: content.ownerDocument })
         : hasNativeBrowserOccluder();
-      boundsSync.sync(bounds, window.devicePixelRatio, occluded);
+      boundsSync.sync(bounds, view.devicePixelRatio, occluded);
     };
 
     const invalidateBounds = () => {
@@ -329,26 +348,24 @@ export function BrowserPanelContent({
     const watchBounds = () => {
       boundsFrame = null;
       syncBounds();
-      // Position-only layout changes and dialog occlusion also need tracking.
       scheduleBounds();
     };
 
     void resetNativeView();
 
-    // Panel constraints can settle in ResizeObserver after this frame's RAF.
     const observer = new ResizeObserver(syncBounds);
     observer.observe(content);
-    window.addEventListener("resize", invalidateBounds);
+    view.addEventListener("resize", invalidateBounds);
     window.addEventListener("openwork:browser:bounds-invalidated", invalidateBounds);
 
     return () => {
       disposed = true;
       observer.disconnect();
-      window.removeEventListener("resize", invalidateBounds);
+      view.removeEventListener("resize", invalidateBounds);
       window.removeEventListener("openwork:browser:bounds-invalidated", invalidateBounds);
 
       if (boundsFrame !== null) {
-        window.cancelAnimationFrame(boundsFrame);
+        view.cancelAnimationFrame(boundsFrame);
       }
 
       boundsSync.dispose();
@@ -365,7 +382,6 @@ export function BrowserPanelContent({
           <span role="status" className="min-w-0 flex-1 truncate text-muted-foreground">
             {tab.browserTask?.status === "paused" ? "You have control · your next message hands it back" : tab.browserTask?.status === "running" ? browserOperationLabels[tab.browserTask.operation ?? ""] ?? "Working on this page" : tab.browserTask?.status === "needs_attention" ? browserOperationLabels[tab.browserTask.operation ?? ""] ?? "Review this page" : "This conversation's tab"}
           </span>
-          <AgentViewportMenu viewport={tab.agentViewport ?? null} />
           <Button variant="outline" size="sm" className="h-6 px-2 text-xs"
             onClick={() => { void window.__OPENWORK_ELECTRON__?.browser?.taskControl?.(tab.id, tab.browserTask?.status === "paused" ? "resume" : "pause"); }}>
             {tab.browserTask?.status === "paused" ? "Resume browser" : "Take over"}
@@ -447,6 +463,7 @@ export function BrowserPanelContent({
                 <Globe />
               </InputGroupAddon>
             </InputGroup>
+            <PageSizeMenu tabId={tab.id} viewport={tab.agentViewport ?? null} />
             {tab.siteToolCount > 0 ? (
               <Popover>
                 <PopoverTrigger
@@ -500,6 +517,7 @@ export function BrowserPanelContent({
                 </PopoverContent>
               </Popover>
             ) : null}
+            <BrowserSecretsControl sessionId={sessionId} pageUrl={tab.url} />
           </div>
         ) : (
           <p className="px-2 text-sm text-muted-foreground">
@@ -511,12 +529,12 @@ export function BrowserPanelContent({
             <Tooltip>
               <TooltipTrigger
                 render={(
-                  <Button variant="ghost" size="icon-sm" aria-label="Float browser" data-testid="browser-mode-float" onClick={() => presentation.onPresent("floating")}>
+                  <Button variant="ghost" size="icon-sm" aria-label="Pop out browser" data-testid="browser-mode-float" onClick={() => presentation.onPresent("floating")}>
                     <PictureInPicture2 />
                   </Button>
                 )}
               />
-              <TooltipContent>Float over chat</TooltipContent>
+              <TooltipContent>Pop out into its own window</TooltipContent>
             </Tooltip>
             <Tooltip>
               <TooltipTrigger
@@ -530,7 +548,19 @@ export function BrowserPanelContent({
             </Tooltip>
           </>
         ) : null}
-        {presentation?.mode === "fullscreen" ? null : (
+        {isAvailable && presentation?.mode === "window" ? (
+          <Tooltip>
+            <TooltipTrigger
+              render={(
+                <Button variant="ghost" size="icon-sm" aria-label="Open beside chat" data-testid="browser-mode-side" onClick={() => presentation.onPresent("side")}>
+                  <PanelRight />
+                </Button>
+              )}
+            />
+            <TooltipContent>Open beside chat</TooltipContent>
+          </Tooltip>
+        ) : null}
+        {presentation?.mode === "fullscreen" || presentation?.mode === "window" ? null : (
           <Button
             variant="ghost"
             size="icon-sm"
@@ -549,7 +579,6 @@ export function BrowserPanelContent({
       ) : null}
       <div className="relative min-h-0 flex-1 overflow-hidden">
         {isAvailable ? (
-          // A page the agent controls is drawn scaled inside this area; the rest frames it.
           <div ref={contentRef} data-browser-shortcut-tab={tab.id} className={`h-full overflow-hidden${tab.agentViewport ? " bg-muted" : ""}`}>
             {blockedSite && !suspended ? (
               <BlockedSitePage url={blockedSite.url} message={blockedSite.message} errorDescription={blockedSite.errorDescription} />
@@ -582,10 +611,16 @@ export function SidePanel({
   client,
   workspaceId,
   workspaceRoot,
+  onOpenTarget,
+  isLocalWorkspace,
   onClose,
   onOpenExtensions,
+  emptyView,
+  onShowEmptyChooser,
+  onOpenFiles,
   browserPresentation,
   browserShownElsewhere = false,
+  sideChat,
 }: SidePanelProps) {
   const { tabs } = useSessionPanelState(sessionId);
   const activeTab = useActivePanelTab(sessionId);
@@ -717,7 +752,6 @@ export function SidePanel({
       execute: async () => {
         if (!client || !workspaceId) return { ok: false, error: "Workspace client is not ready." };
 
-        // Minimal single-page PDF that draws "OpenWork PDF" — base64 encoded.
         const pdfBase64 =
           "JVBERi0xLjQKMSAwIG9iago8PC9UeXBlL0NhdGFsb2cvUGFnZXMgMiAwIFI+PgplbmRvYmoKMiAwIG9iago8PC9UeXBlL1BhZ2VzL0tpZHNbMyAwIFJdL0NvdW50IDE+PgplbmRvYmoKMyAwIG9iago8PC9UeXBlL1BhZ2UvUGFyZW50IDIgMCBSL01lZGlhQm94WzAgMCAzMDAgMTQ0XS9SZXNvdXJjZXM8PC9Gb250PDwvRjEgNCAwIFI+Pj4+L0NvbnRlbnRzIDUgMCBSPj4KZW5kb2JqCjQgMCBvYmoKPDwvVHlwZS9Gb250L1N1YnR5cGUvVHlwZTEvQmFzZUZvbnQvSGVsdmV0aWNhPj4KZW5kb2JqCjUgMCBvYmoKPDwvTGVuZ3RoIDQ0Pj4Kc3RyZWFtCkJUCi9GMSAyNCBUZgo3MiA3MCBUZAooT3BlbldvcmsgUERGKSBUagpFVAplbmRzdHJlYW0KZW5kb2JqCnhyZWYKMCA2CjAwMDAwMDAwMDAgNjU1MzUgZiAKMDAwMDAwMDAwOSAwMDAwMCBuIAowMDAwMDAwMDU4IDAwMDAwIG4gCjAwMDAwMDAxMTUgMDAwMDAgbiAKMDAwMDAwMDI0MSAwMDAwMCBuIAowMDAwMDAwMzEyIDAwMDAwIG4gCnRyYWlsZXIKPDwvU2l6ZSA2L1Jvb3QgMSAwIFI+PgpzdGFydHhyZWYKNDA2CiUlRU9G";
         const binary = atob(pdfBase64);
@@ -775,6 +809,7 @@ export function SidePanel({
       <div
         className="flex h-full flex-col"
         onKeyDownCapture={(event) => {
+          if (isBrowserSecretsDialogTarget(event.target)) return;
           if (!handlePanelEscape(event.key, onClose)) return;
           event.preventDefault();
           event.stopPropagation();
@@ -829,8 +864,12 @@ export function SidePanel({
         </div> : null}
         {!activeTab ? (
           <PanelEmpty
+            view={emptyView}
+            onShowChooser={onShowEmptyChooser}
+            onOpenFiles={onOpenFiles}
             onOpenBrowser={isBrowserAvailable ? createTab : undefined}
             onOpenExtensions={onOpenExtensions}
+            onOpenSideChat={sideChat?.onOpen}
           />
         ) : null}
         {activeTab?.type === "browser" ? (
@@ -844,6 +883,8 @@ export function SidePanel({
           )
         ) : activeTab?.type === "mcp-app" ? (
           <BuiltMcpAppPanel key={activeTab.id} tab={activeTab} onClose={onClose} />
+        ) : activeTab?.type === "side-chat" ? (
+          <div className="min-h-0 flex-1 overflow-hidden">{sideChat?.content}</div>
         ) : activeTab?.type === "remote-thread" ? (
           <div className="min-h-0 flex-1 overflow-hidden"><RemoteThreadPanel key={activeTab.id} tab={activeTab} /></div>
         ) : activeTab?.type === "app" ? (
@@ -856,6 +897,8 @@ export function SidePanel({
               client={client}
               workspaceId={workspaceId}
               workspaceRoot={workspaceRoot}
+              onOpenTarget={onOpenTarget}
+              isLocalWorkspace={isLocalWorkspace}
               onClose={onClose}
             />
           </div>
@@ -873,7 +916,6 @@ function siteHost(url: string): string {
   }
 }
 
-/** A site the organization's website rules block, shown like a browser's own blocked-site page. */
 function BlockedSitePage({ url, message, errorDescription }: { url: string; message: string; errorDescription: string }) {
   return (
     <div className="flex h-full items-center justify-center p-6" data-testid="browser-blocked-site" role="alert">

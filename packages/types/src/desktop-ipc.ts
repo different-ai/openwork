@@ -1,24 +1,5 @@
-/**
- * Shared contract for the Electron desktop IPC bridge.
- *
- * Producer: apps/desktop/electron/main.mjs — `desktopCommandHandlers`, typed
- * via JSDoc against `DesktopCommandHandlers` so missing/extra/renamed
- * commands fail `typecheck:electron`.
- * Consumer: apps/app/src/app/lib/desktop.ts — the `desktopBridge` Proxy and
- * its named exports derive per-command signatures from `DesktopCommandMap`.
- *
- * Every command sent over the `openwork:desktop` channel has exactly one
- * entry here: `args` is the tuple the renderer passes, `result` what the
- * main process resolves. Results marked `unknown` are not yet modeled —
- * tighten them instead of widening call sites.
- */
 import type { ConnectLinkVerifyFailure, ConnectLinkVerifyResult } from "./connect-link.js";
 import type { WorkspaceWire } from "./workspace.js";
-
-// ---------------------------------------------------------------------------
-// Payload shapes (moved from apps/app/src/app/lib/desktop-types.ts, which
-// re-exports them — keep that file as the app-side import path).
-// ---------------------------------------------------------------------------
 
 export type OpencodeExecutionEnvEntry = {
   name: string;
@@ -87,13 +68,6 @@ export type DesktopIntegrationResult = {
 
 export type OpenworkServerInfo = {
   running: boolean;
-  /**
-   * Monotonic per-start identity of the embedded server within this desktop
-   * process. Sticky ports and persisted tokens keep the connection details
-   * identical across restarts, so clients that must re-deliver state to a new
-   * server lifetime (e.g. the Connect policy) key on this value. Null when
-   * the bridge predates the field or no start completed yet.
-   */
   generation: number | null;
   host: string | null;
   port: number | null;
@@ -103,7 +77,6 @@ export type OpenworkServerInfo = {
   hostToken: string | null;
   managedOpencodeBinPath: string | null;
   managedOpencodeBinSource: string | null;
-  /** Structured server log on disk, or null when the server runs without a file sink. */
   logFilePath: string | null;
   pid: number | null;
   lastStdout: string | null;
@@ -178,7 +151,6 @@ export type DesktopStartupTimings = {
   processStartedAt: number;
   windowShownAt: number | null;
   engineSettledAt: number | null;
-  /** How the launch's first runtime boot settled; "skipped" means no local workspace. */
   engine: "ready" | "failed" | "skipped" | null;
 };
 
@@ -304,7 +276,9 @@ export type NukeReceipt = {
 };
 
 export type DesktopFetchInit = {
+  cancellable?: boolean;
   transferId?: string;
+  redirect?: "error";
   method?: string;
   headers?: Record<string, string>;
   body?: string;
@@ -327,7 +301,7 @@ export type DesktopFetchResult = {
  * resolves elsewhere is shown in its folder instead of being handed to an application.
  */
 export type DesktopWorkspaceFileOpenResult =
-  | { ok: true; action: "opened" | "revealed" }
+  | { ok: true; action: "opened" | "revealed" | "unavailable" }
   | { ok: false; error: string };
 
 export type DesktopBinaryDownloadResult = {
@@ -355,28 +329,65 @@ export type ComputerPermission = "accessibility" | "screenRecording";
 /** The agent needs computer use this chat does not have yet: setup, or the person's allowance. */
 export type ComputerRequest = {
   id: string;
-  /** setup: macOS permissions or a remote connection; script: an app script waiting for the person's approval. */
-  reason: "setup" | "script";
-  /** The computer the chat uses, e.g. "This Mac" or "Freestyle VM". */
+  reason: "setup" | "script" | "files" | "credential";
   computer: string;
   placement: "local" | "remote";
-  /** What a remote computer still needs; macOS setup uses the checklist instead. */
   detail?: string;
   appId?: string;
   purpose?: string;
-  /** The exact script that runs if the person approves it. */
+  standing?: boolean;
   script?: { app: "applescript" | "jxa" | "blender"; code: string };
+  files?: { app: string; names: string[]; site?: string; canRemember?: boolean; save?: boolean };
+  credential?: { site?: string; use?: PrivateValueUse; app?: string; appId?: string; secret?: { label: string; kind: BrowserSecretKind; field: string }; fills?: PrivateValueFill[]; paste?: false; keep?: false };
 };
+
+/**
+ * One field the built-in browser fills with a value the agent never sees: the field's input type, and where the
+ * value comes from. `command` is the program and arguments that print it. `ask` is the name under which the person
+ * pastes it into the card; `kept` says one pasted earlier is kept for this chat. A command that reads a key from
+ * its environment names the variable in `needs`; that key is its own row after the fields, with the variable in
+ * `unlock`, the command it is for in `program`, and the name under which the person pastes it in `ask`.
+ */
+export type PrivateValueUse =
+  | { kind: "run"; command: string[] }
+  | { kind: "request"; method: string; url: string; origin: string; seal?: PrivateValueSeal[] };
+
+/** A value a request's JSON answer keeps for the chat instead of showing: its name, the path it is taken from, and the one https origin it may later be sent to. */
+export type PrivateValueSeal = { name: string; from: string; for: string };
+
+export type PrivateValueFill =
+  | { field: string; command: string[]; needs?: string; ask?: undefined; kept?: undefined; unlock?: undefined; program?: undefined }
+  | { field: string; ask: string; kept?: true; command?: undefined; needs?: undefined; unlock?: undefined; program?: undefined }
+  | { unlock: string; program: string; ask: string; kept?: true; field?: undefined; command?: undefined; needs?: undefined };
+
+/** One of the person's own switches for private values, in Settings under Computer use. */
+export type PrivateValueSwitch = "commands" | "paste" | "keep";
+
+/**
+ * What Settings shows about private values. No value is in it. `organization` says what the person's
+ * organization set and they cannot change: `blocked`, `limited` to some websites or commands, or `ask` every time.
+ */
+export type PrivateValueSettings = {
+  enabled: boolean;
+  switches: Record<PrivateValueSwitch, boolean>;
+  organization: { fills: "blocked" | "limited" | "ask" | null; commands: "blocked" | "limited" | null; paste: "blocked" | null };
+  always: Array<{ id: string; sessionId: string; site: string; field: string; command: string; blocked: boolean }>;
+  kept: Array<{ id: string; sessionId: string; site?: string; program?: string; label: string }>;
+  recent: Array<{ at: number; sessionId: string; site: string; field: string; source: "command" | "paste" | "kept"; program?: string; result: string }>;
+};
+
+/** What a saved browser secret is: a password, a one-time code, or an API key or token. */
+export type BrowserSecretKind = "password" | "code" | "token";
+
+/** A chat's saved browser secret as the app shows it. The value never leaves the main process. */
+export type BrowserSecretSummary = { secretRef: string; label: string; kind: BrowserSecretKind; origins: string[] };
 
 /** One chat's computer use state, as the broker reports it. */
 export type ComputerSnapshot = {
   revision: number;
-  /** Usable right now (allowed and not paused after an automatic stop this turn). */
   enabled: boolean;
-  /** The app macOS lists in System Settings for these permissions; `ours` when OpenWork can reset it. */
   entry: { name: string; ours: boolean };
   request: ComputerRequest | null;
-  /** The computer this chat uses, and every computer it could use (this Mac, connected VMs). */
   targetId: string;
   targets: { id: string; label: string; placement: "local" | "remote" }[];
   placement: "local" | "remote";
@@ -394,12 +405,52 @@ export type ComputerSnapshot = {
     reason?: string;
   } | null;
   cleanupPending?: boolean;
-  /** This chat's computer steps: time spent on the computer, and waiting for the model between steps. */
   timing?: { steps: number; computerMs: number; modelMs: number; last?: { name: string; computerMs: number; modelMs?: number } };
+};
+
+/** One of a chat's subagents on its computer, for the chat's crew view (`parallelComputerUse`). */
+export type ComputerCrewMember = {
+  sessionId: string;
+  name: string;
+  color: string;
+  app: string | null;
+  state: "working" | "waiting" | "paused" | "done";
+  intent: string | null;
+  frame?: { mimeType: "image/png"; data: string; width: number; height: number };
 };
 
 /** Settings: the computer every chat uses and whether it is set up. */
 export type ComputerStatus = Pick<ComputerSnapshot, "enabled" | "entry" | "targetId" | "targets" | "placement" | "readiness" | "permissions" | "detail">;
+
+/**
+ * The computers this desktop offers and how they are doing, for the organization's
+ * devices list (`remoteDevices`). Names and readiness only.
+ */
+export type ComputerDevicesSnapshot = {
+  enabled: boolean;
+  remoteEnabled: boolean;
+  selectedId: string | null;
+  permissions: { accessibility: boolean; screenRecording: boolean } | null;
+  computers: Array<{
+    id: string;
+    label: string;
+    placement: "local" | "remote";
+    readiness: "ready" | "setup-required" | "unsupported" | "unavailable" | null;
+    detail: string | null;
+    provider: "freestyle" | "daytona" | null;
+    externalId: string | null;
+  }>;
+};
+
+/** How this desktop names itself to the organization's devices list. */
+export type DesktopDeviceIdentity = {
+  installId: string | null;
+  label: string;
+  platform: string;
+  appVersion: string;
+  osVersion: string | null;
+  arch: string | null;
+};
 
 /** The live watch view: recent redacted frames and dispatched input, never actionable. */
 export type ComputerPresentation = {
@@ -415,20 +466,13 @@ export type ComputerPresentation = {
   inputs: { sequence: number; at: number; action: string; phase: string; x?: number; y?: number }[];
 };
 
-// ---------------------------------------------------------------------------
-// The command map
-// ---------------------------------------------------------------------------
-
 export type DesktopCommandMap = {
   __startNativeDictation: { args: [requestId: string]; result: { ok: true } | { ok: false; reason: "unavailable" | "not_focused" | "failed" } };
   __cancelNativeDictationStart: { args: [requestId: string]; result: boolean };
-  // Bundled speech helper: "local" is Apple's on-device recognizer, "online"
-  // Windows' online speech recognition. Results arrive on the dictation event channel.
   __speechDictationMode: { args: []; result: "local" | "online" | null };
   __startSpeechDictation: { args: [requestId: string, language: string]; result: { ok: true } | { ok: false; reason: "unavailable" | "not_focused" | "failed" } };
   __stopSpeechDictation: { args: [requestId: string]; result: boolean };
   __abortSpeechDictation: { args: [requestId: string]; result: boolean };
-  // Workspace state
   workspaceBootstrap: { args: []; result: WorkspaceList };
   workspaceSetSelected: { args: [workspaceId: string]; result: WorkspaceList };
   workspaceSetRuntimeActive: { args: [workspaceId: string | null]; result: WorkspaceList };
@@ -443,7 +487,6 @@ export type DesktopCommandMap = {
     result: unknown;
   };
 
-  // Engine / runtime lifecycle
   engineStart: { args: [projectDir: string, options?: Record<string, unknown>]; result: EngineInfo };
   runtimeBootstrap: { args: []; result: unknown };
   runtimeStatus: { args: []; result: unknown };
@@ -451,7 +494,6 @@ export type DesktopCommandMap = {
   engineRestart: { args: [options?: Record<string, unknown>]; result: EngineInfo };
   engineInfo: { args: []; result: EngineInfo };
 
-  // App / bridge info
   appBuildInfo: { args: []; result: AppBuildInfo };
   startupTimings: { args: []; result: DesktopStartupTimings };
   desktopNotificationShow: {
@@ -463,6 +505,7 @@ export type DesktopCommandMap = {
     result: { enabled: boolean };
   };
   desktopSentryClearSession: { args: []; result: { enabled: boolean } };
+  desktopSetKeepAwake: { args: [active: boolean]; result: { active: boolean } };
   desktopIntegrationStatus: { args: []; result: DesktopIntegrationStatus };
   desktopIntegrationInstall: {
     args: [options?: { useExternalLauncher?: boolean }];
@@ -473,10 +516,13 @@ export type DesktopCommandMap = {
   getOpenworkUiMcpCommand: { args: []; result: string[] };
   getOpenworkUiMcpEnvironment: { args: []; result: Record<string, string> };
 
-  // Computer use (macOS): chat ownership, the watch view and permission setup
   computerSnapshot: { args: [sessionId: string]; result: ComputerSnapshot };
+  computerCrew: { args: [sessionId: string, thumbnails: boolean]; result: ComputerCrewMember[] };
   computerStatus: { args: []; result: ComputerStatus };
+  computerDevices: { args: []; result: ComputerDevicesSnapshot };
+  desktopDeviceIdentity: { args: []; result: DesktopDeviceIdentity };
   computerPresentation: { args: [sessionId: string, visible: boolean]; result: ComputerPresentation | null };
+  computerFollow: { args: [sessionId: string, watching: boolean]; result: void };
   computerInteract: {
     args: [input: { sessionId: string; id: string; action: "takeover" | "resume" }];
     result: void;
@@ -485,13 +531,30 @@ export type DesktopCommandMap = {
   computerDismissSetup: { args: [setupId?: string]; result: void };
   computerChoose: { args: [targetId: string]; result: ComputerStatus };
   computerHalt: { args: [sessionId: string]; result: ComputerSnapshot };
-  computerAnswerRequest: { args: [input: { sessionId: string; answer: "dismiss" | "allow" | "always"; id?: string }]; result: ComputerSnapshot };
-  computerSetFeatureEnabled: { args: [enabled: boolean]; result: boolean };
+  computerAnswerRequest: { args: [input: { sessionId: string; answer: "dismiss" | "allow" | "always" | "remember"; id?: string; values?: Array<string | null>; keep?: boolean[] }]; result: ComputerSnapshot };
+  computerOpenSavedFile: { args: [input: { sessionId: string; path: string; reveal?: boolean }]; result: DesktopWorkspaceFileOpenResult };
+  computerChatFiles: { args: [input: { sessionId: string }]; result: { files: Array<{ path: string; bytes: number; modifiedAt: number }> } };
+  computerChatImage: { args: [input: { sessionId: string; path: string }]; result: { data: Uint8Array<ArrayBuffer>; contentType: string } | null };
+  computerListFileGrants: { args: []; result: { enabled: boolean; grants: Array<{ id: string; origin: string; folder: string; blocked?: boolean }> } };
+  computerRemoveFileGrant: { args: [id: string]; result: { ok: boolean } };
+  computerListPrivateValues: { args: []; result: PrivateValueSettings };
+  computerSetPrivateValueSwitch: { args: [name: PrivateValueSwitch, enabled: boolean]; result: { ok: boolean } };
+  computerRemovePrivateValue: { args: [kind: "always" | "kept", id: string]; result: { ok: boolean } };
   computerSetRemoteEnabled: { args: [enabled: boolean]; result: boolean };
+  computerRecordableOverlay: { args: []; result: boolean };
+  computerSetRecordableOverlay: { args: [enabled: boolean]; result: boolean };
+  computerSetBackgroundEnabled: { args: [enabled: boolean]; result: boolean };
   computerResetPermission: { args: [permission: ComputerPermission]; result: { setupId: string } };
   computerEndTurn: { args: [sessionId: string]; result: boolean };
 
-  // Bootstrap config
+  browserSecretsSetEnabled: { args: [enabled: boolean]; result: boolean };
+  browserSecretsList: { args: [sessionId: string]; result: BrowserSecretSummary[] };
+  browserSecretsAdd: {
+    args: [input: { sessionId: string; label: string; kind: BrowserSecretKind; origins: string[]; value: string }];
+    result: { ok: true; secret: BrowserSecretSummary } | { ok: false; error: string };
+  };
+  browserSecretsRemove: { args: [input: { sessionId: string; secretRef: string }]; result: boolean };
+
   getDesktopBootstrapConfig: { args: []; result: DesktopBootstrapConfig };
   debugDesktopBootstrapConfig: { args: []; result: unknown };
   clearDesktopBootstrapConfig: { args: []; result: unknown };
@@ -500,10 +563,6 @@ export type DesktopCommandMap = {
     result: DesktopBootstrapConfig;
   };
 
-  // Connect links use a short-lived HTTPS exchange by default and can use an
-  // embedded-key signed token when explicitly enabled. The renderer relays
-  // only the raw URL. `connectLinkAccept` resolves it again after confirmation,
-  // enforces one-time use, and persists the target as desktop bootstrap config.
   connectLinkVerify: { args: [rawUrl: string]; result: ConnectLinkVerifyResult };
   connectLinkAccept: {
     args: [rawUrl: string];
@@ -512,7 +571,6 @@ export type DesktopCommandMap = {
   nukeOpenworkAndOpencodeConfigPreview: { args: [options?: NukeOptions]; result: NukeManifestPreview };
   nukeOpenworkAndOpencodeConfigAndExit: { args: [options?: NukeOptions]; result: NukeReceipt };
 
-  // Openwork server sidecar
   openworkServerInfo: { args: []; result: OpenworkServerInfo };
   automationRunnerConfigure: {
     args: [configuration: { baseUrl: string; token: string; runnerId: string } | null];
@@ -523,7 +581,6 @@ export type DesktopCommandMap = {
     result: OpenworkServerInfo;
   };
 
-  // Dialogs
   pickDirectory: {
     args: [options?: { title?: string; defaultPath?: string; multiple?: boolean }];
     result: string | string[] | null;
@@ -540,7 +597,6 @@ export type DesktopCommandMap = {
     result: string | string[] | null;
   };
 
-  // Skills
   importSkill: {
     args: [projectDir: string, sourceDir: string, options?: { overwrite?: boolean }];
     result: ExecResult;
@@ -557,27 +613,20 @@ export type DesktopCommandMap = {
   };
   uninstallSkill: { args: [projectDir: string, skillName: string]; result: ExecResult };
 
-  // Updater / config / resets
   updaterEnvironment: { args: []; result: UpdaterEnvironment };
   readOpencodeConfig: { args: [scope: string, projectDir?: string]; result: OpencodeConfigFile };
   writeOpencodeConfig: {
     args: [scope: string, projectDir: string, content: string];
     result: ExecResult;
   };
-  /**
-   * The renderer passes its reset-modal mode, but the main process currently
-   * IGNORES it and always removes workspace state + bootstrap config; only
-   * the renderer's localStorage cleanup is mode-scoped. Follow-up: decide
-   * whether "onboarding" should preserve desktop workspace state.
-   */
   resetOpenworkState: { args: [mode?: "onboarding" | "all"]; result: unknown };
   opencodeMcpAuth: { args: [action: string, name: string]; result: ExecResult };
 
-  // Window / OS utilities (dunder commands)
   __showContextMenu: { args: [request: NativeContextMenuRequest]; result: string | null };
   __cancelContextMenu: { args: [requestId: string]; result: boolean };
+  __resolveChatFilePath: { args: [target: string]; result: string | null };
   __openPath: { args: [target: string]; result: unknown };
-  __openWorkspaceFile: { args: [workspaceRoot: string, target: string]; result: DesktopWorkspaceFileOpenResult };
+  __openWorkspaceFile: { args: [workspaceRoot: string, target: string, options?: { reveal?: boolean }]; result: DesktopWorkspaceFileOpenResult };
   __revealItemInDir: { args: [target: string]; result: unknown };
   __applyBrandAppName: { args: [appName: string | null]; result: { ok: true; appName: string } };
   __applyBrandIcon: { args: [url: string | null]; result: BrandIconApplyResult };
@@ -616,18 +665,6 @@ export type DesktopCommandArgs<C extends DesktopCommandName> = DesktopCommandMap
 
 export type DesktopCommandResult<C extends DesktopCommandName> = DesktopCommandMap[C]["result"];
 
-/**
- * Main-process handler registry shape. `Event` is electron's
- * IpcMainInvokeEvent (kept generic so this package does not depend on
- * electron types).
- *
- * Args are deliberately loose (`any[]`) on this side: IPC input crosses a
- * trust boundary, so handlers validate/normalize whatever arrives with
- * defensive dynamic access (`String(args[0] ?? "")`, `input.foo ?? null`)
- * rather than assuming the renderer's tuple. `unknown[]` would force ~50
- * narrowing rewrites in the plain-JS main process for no runtime gain.
- * Key parity and result types are still enforced.
- */
 type DesktopCommandHandler<Event, C extends DesktopCommandName> = (
   event: Event,
   // eslint-disable-next-line @typescript-eslint/no-explicit-any

@@ -16,6 +16,8 @@ const entrySchema = z
     pluginId: z.string(),
     pluginName: z.string(),
     requiresApproval: z.boolean(),
+    isOwner: z.boolean().optional(),
+    canDelete: z.boolean().optional(),
   })
   .refine(
     (entry) =>

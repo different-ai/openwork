@@ -1,10 +1,4 @@
-/**
- * Predefined "quick add" External MCP Connections — the same real servers
- * (and URLs) the desktop app already offers as one-click Quick Connect
- * entries (apps/app/src/app/constants.ts MCP_QUICK_CONNECT), surfaced here
- * so an org admin can add them once, org-wide, in Den, instead of every
- * device connecting to them separately.
- */
+import { mcpRegistrationStatusSchema, type McpRegistrationStatus } from "@openwork/types/den/mcp-registration"
 import { z } from "zod"
 
 export type ExternalMcpPreset = {
@@ -12,13 +6,15 @@ export type ExternalMcpPreset = {
   displayName: string
   description: string
   url: string
-  // Setup default, not an exclusive requirement when supportedAuthTypes lists alternatives.
   authType: "oauth" | "apikey" | "none"
   supportedAuthTypes?: readonly ("oauth" | "apikey" | "none")[]
   requiresOAuthClient?: boolean
   defaultOAuthClientId?: string
   authorizationServerIssuer?: string
   defaultOAuthScopes?: readonly string[]
+  optionalOAuthScopes?: readonly string[]
+  registrationStatus?: McpRegistrationStatus
+  oauthCallbackUrl?: string
 }
 
 export const externalMcpPresetResponseSchema = z.object({
@@ -32,6 +28,9 @@ export const externalMcpPresetResponseSchema = z.object({
   defaultOAuthClientId: z.string().min(1).optional(),
   authorizationServerIssuer: z.string().url().optional(),
   defaultOAuthScopes: z.array(z.string()).optional(),
+  optionalOAuthScopes: z.array(z.string()).optional().describe("Extra scopes the provider offers. Never requested by default; setup requests them only after an admin explicitly chooses them."),
+  registrationStatus: mcpRegistrationStatusSchema.optional(),
+  oauthCallbackUrl: z.string().url().optional().describe("For presets that need a pre-registered OAuth app: the exact redirect URL to register in it. Absent when this deployment has no public API URL."),
 }).meta({ ref: "ExternalMcpPresetResponse" })
 
 export const externalMcpPresetListResponseSchema = z.object({
@@ -111,6 +110,27 @@ export const EXTERNAL_MCP_PRESETS: ExternalMcpPreset[] = [
       "mpim:history",
       "users:read",
     ],
+    optionalOAuthScopes: [
+      "canvases:read",
+      "canvases:write",
+      "channels:read",
+      "channels:write",
+      "emoji:read",
+      "files:read",
+      "files:write",
+      "groups:read",
+      "groups:write",
+      "im:read",
+      "im:write",
+      "lists:read",
+      "lists:write",
+      "mpim:read",
+      "mpim:write",
+      "reactions:read",
+      "reactions:write",
+      "search:read.users",
+      "users:read.email",
+    ],
   },
   {
     presetId: "exa",
@@ -137,3 +157,145 @@ export const EXTERNAL_MCP_PRESETS: ExternalMcpPreset[] = [
     authType: "none",
   },
 ]
+
+export const EXTERNAL_MCP_PRESETS_EXPANDED: readonly ExternalMcpPreset[] = [
+  {
+    presetId: "airtable",
+    displayName: "Airtable",
+    description: "Read and update Airtable bases, tables, and records. Sign in with your Airtable account.",
+    url: "https://mcp.airtable.com/mcp",
+    authType: "oauth",
+  },
+  {
+    presetId: "amplitude",
+    displayName: "Amplitude",
+    description: "Inspect Amplitude analytics, events, and product insights. Sign in with your Amplitude account.",
+    url: "https://mcp.amplitude.com/mcp",
+    authType: "oauth",
+  },
+  {
+    presetId: "cal",
+    displayName: "Cal.com",
+    description: "Manage Cal.com scheduling, event types, and bookings. Sign in with your Cal.com account.",
+    url: "https://mcp.cal.com/mcp",
+    authType: "oauth",
+  },
+  {
+    presetId: "canva",
+    displayName: "Canva",
+    description: "Search and create Canva designs, folders, and assets. Sign in with your Canva account.",
+    url: "https://mcp.canva.com/mcp",
+    authType: "oauth",
+  },
+  {
+    presetId: "figma",
+    displayName: "Figma",
+    description: "Read Figma files, designs, and dev mode details. Sign in with your Figma account.",
+    url: "https://mcp.figma.com/mcp",
+    authType: "oauth",
+  },
+  {
+    presetId: "fireflies",
+    displayName: "Fireflies",
+    description: "Search your Fireflies meeting notes and transcripts. Sign in with your Fireflies account.",
+    url: "https://api.fireflies.ai/mcp",
+    authType: "oauth",
+  },
+  {
+    presetId: "grafana",
+    displayName: "Grafana Cloud",
+    description: "Query metrics, logs, traces, and profiles, and review dashboards, alerts, and incidents. Sign in with your Grafana Cloud account and choose read, query, or write access on Grafana's consent screen.",
+    url: "https://mcp.grafana.com/mcp",
+    authType: "oauth",
+  },
+  {
+    presetId: "huggingface",
+    displayName: "Hugging Face",
+    description: "Browse Hugging Face models, datasets, and Spaces. Sign in with your Hugging Face account.",
+    url: "https://huggingface.co/mcp",
+    authType: "oauth",
+  },
+  {
+    presetId: "honeycomb",
+    displayName: "Honeycomb",
+    description: "Query Honeycomb traces, events, and SLOs. Sign in with your Honeycomb account.",
+    url: "https://mcp.honeycomb.io/mcp",
+    authType: "oauth",
+  },
+  {
+    presetId: "klaviyo",
+    displayName: "Klaviyo",
+    description: "Inspect Klaviyo campaigns, flows, and contact data. Sign in with your Klaviyo account.",
+    url: "https://mcp.klaviyo.com/mcp",
+    authType: "oauth",
+  },
+  {
+    presetId: "lucid",
+    displayName: "Lucid",
+    description: "Open and update Lucidchart and Lucidspark documents. Sign in with your Lucid account.",
+    url: "https://mcp.lucid.app/mcp",
+    authType: "oauth",
+  },
+  {
+    presetId: "monday",
+    displayName: "monday.com",
+    description: "Manage monday.com boards, items, and workspaces. Sign in with your monday.com account.",
+    url: "https://mcp.monday.com/mcp",
+    authType: "oauth",
+  },
+  {
+    presetId: "mural",
+    displayName: "Mural",
+    description: "Read and update Mural canvases, rooms, and workspaces. Sign in with your Mural account.",
+    url: "https://mcp-canvas.mural.co/mcp",
+    authType: "oauth",
+  },
+  {
+    presetId: "posthog",
+    displayName: "PostHog",
+    description: "Inspect PostHog events, persons, and insights. Sign in with your PostHog account.",
+    url: "https://mcp.posthog.com/mcp",
+    authType: "oauth",
+  },
+  {
+    presetId: "semgrep",
+    displayName: "Semgrep",
+    description: "Run Semgrep security scans and review findings. Sign in with your Semgrep account.",
+    url: "https://mcp.semgrep.ai/mcp",
+    authType: "oauth",
+  },
+  {
+    presetId: "tavily",
+    displayName: "Tavily",
+    description: "Web search and research for agents. Uses your Tavily API key from app.tavily.com; provider rate limits and billing apply.",
+    url: "https://mcp.tavily.com/mcp",
+    authType: "apikey",
+  },
+  {
+    presetId: "vercel",
+    displayName: "Vercel",
+    description: "Manage Vercel projects, deployments, and logs. Sign in with your Vercel account.",
+    url: "https://mcp.vercel.com",
+    authType: "oauth",
+  },
+]
+
+export const ALL_EXTERNAL_MCP_PRESETS: readonly ExternalMcpPreset[] = [
+  ...EXTERNAL_MCP_PRESETS,
+  ...EXTERNAL_MCP_PRESETS_EXPANDED,
+]
+
+export function externalMcpPresetForResponse(
+  preset: ExternalMcpPreset,
+  extra: { registrationStatus?: McpRegistrationStatus; oauthCallbackUrl?: string | null },
+): ExternalMcpPreset {
+  return {
+    ...preset,
+    ...(extra.registrationStatus && extra.registrationStatus !== "unknown" ? { registrationStatus: extra.registrationStatus } : {}),
+    ...(preset.requiresOAuthClient && extra.oauthCallbackUrl ? { oauthCallbackUrl: extra.oauthCallbackUrl } : {}),
+  }
+}
+
+export function externalMcpPresetsForCatalog(): ExternalMcpPreset[] {
+  return [...ALL_EXTERNAL_MCP_PRESETS]
+}

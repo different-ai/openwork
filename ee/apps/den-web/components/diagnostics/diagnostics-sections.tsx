@@ -1,7 +1,6 @@
 "use client";
 
-import { Globe, Laptop, Lock, Plug, Waypoints } from "lucide-react";
-import { useState, type ReactNode } from "react";
+import { Laptop, Lock, Plug, Waypoints } from "lucide-react";
 import type {
   ConnectorCheck,
   ConnectorsDiagnostics,
@@ -35,7 +34,6 @@ import {
   DESKTOP_REASON_NEXT_STEPS,
   DESKTOP_STEP_LABELS,
   INSTALLATION_COPY,
-  NETWORK_COPY,
   PROVIDER_ACTIONS,
   PROVIDER_COPY,
   PROVIDER_NEXT_STEPS,
@@ -102,8 +100,6 @@ function LockedSection({ id, title, scope, permission }: { id: string; title: st
     </DiagnosticsSection>
   );
 }
-
-// ── Desktop app ────────────────────────────────────────────────────────────
 
 const DESKTOP_SUMMARY_BADGES: Record<DesktopSummaryState, { label: string; tone: DiagnosticsTone }> = {
   no_data: { label: DESKTOP_COPY.noData, tone: "neutral" },
@@ -177,7 +173,6 @@ export function DesktopSection({ report, now }: SectionProps) {
         </DiagnosticsRow>
       )}
       {desktop.failures.map((failure) => {
-        // Attention items point at the step; the first row for each step is its anchor.
         const anchor = anchoredSteps.has(failure.step) ? undefined : diagnosticsRowId("desktop", failure.step);
         anchoredSteps.add(failure.step);
         return (
@@ -204,9 +199,6 @@ export function DesktopSection({ report, now }: SectionProps) {
   );
 }
 
-// ── AI providers ───────────────────────────────────────────────────────────
-
-/** States where the endpoint stopped working, so "Last worked" is the useful fact. */
 const FAILING_PROVIDER_STATES: ReadonlySet<ProviderCheckState> = new Set(["key_rejected", "unreachable", "misconfigured"]);
 
 function providerHref(provider: ProviderCheck, orgSlug: string | null): string {
@@ -292,8 +284,6 @@ function ProviderRows({ providers, ...props }: { providers: ProvidersDiagnostics
   );
 }
 
-// ── Connectors ─────────────────────────────────────────────────────────────
-
 function connectorMetric(connector: ConnectorCheck, now: number): string {
   if (connector.kind === "google_workspace") {
     return connector.apis.filter((api) => api.status === "enabled").map((api) => api.name).join(", ");
@@ -354,8 +344,6 @@ function ConnectorRows({ connectors, ...props }: { connectors: ConnectorsDiagnos
   );
 }
 
-// ── Installation ───────────────────────────────────────────────────────────
-
 export function InstallationSection({ report, now }: SectionProps) {
   const installation = report.installation;
   if (installation.access === "operator") {
@@ -372,35 +360,6 @@ export function InstallationSection({ report, now }: SectionProps) {
       ) : (
         <DiagnosticsLockedRow name={INSTALLATION_COPY.lockedName} sub={INSTALLATION_COPY.lockedSub} />
       )}
-    </DiagnosticsSection>
-  );
-}
-
-// ── Advanced › Network check ───────────────────────────────────────────────
-
-function NetworkRow({ canRun, renderNetworkCheck }: { canRun: boolean; renderNetworkCheck: (canRun: boolean) => ReactNode }) {
-  // The check loads its own configuration, so it mounts only once the row is opened.
-  const [opened, setOpened] = useState(false);
-  return (
-    <DiagnosticsRow
-      id={diagnosticsRowId("network", "egress")}
-      testId="diagnostics-network-check"
-      lead={<Icon icon={Globe} />}
-      name={NETWORK_COPY.name}
-      sub={NETWORK_COPY.sub}
-      onToggle={(open) => { if (open) setOpened(true); }}
-    >
-      {opened ? renderNetworkCheck(canRun) : null}
-    </DiagnosticsRow>
-  );
-}
-
-export function NetworkSection({ report, renderNetworkCheck }: { report: OrgDiagnostics; renderNetworkCheck: (canRun: boolean) => ReactNode }) {
-  const network = report.network;
-  if (network.access === "locked") return <LockedSection id="diagnostics-network" title={SECTION_TITLES.network} permission={network.permission} />;
-  return (
-    <DiagnosticsSection id="diagnostics-network" title={SECTION_TITLES.network} testId="diagnostics-network">
-      <NetworkRow canRun={network.canRun} renderNetworkCheck={renderNetworkCheck} />
     </DiagnosticsSection>
   );
 }

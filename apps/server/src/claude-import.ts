@@ -1,24 +1,9 @@
 import { createHash } from "node:crypto";
 import { inflateRawSync } from "node:zlib";
 
-/**
- * Turns Claude history into native OpenCode v2 sessions.
- *
- * Sources:
- * - Claude data export (`conversations.json`, alone or in its ZIP part):
- *   claude.ai chats. Claude's export does not contain Cowork tasks.
- * - Claude Code transcripts (`~/.claude/projects/<folder>/<id>.jsonl`).
- *
- * Only the branch the person last saw is imported (walked back from the
- * newest message), so edited and retried turns do not interleave. Nothing in
- * the history is executed: tool calls become finished tool rows.
- */
-
 export const CLAUDE_IMPORT_LIMITS = {
-  /** Uploaded export file (ZIP or JSON). */
   uploadBytes: 256 * 1024 * 1024,
   zipEntries: 10_000,
-  /** Declared uncompressed size of one ZIP entry we read. */
   entryBytes: 512 * 1024 * 1024,
   transcriptBytes: 64 * 1024 * 1024,
   conversations: 5_000,
@@ -53,7 +38,6 @@ function millis(value: unknown): number | undefined {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-/** Key-sorted JSON, so a hash does not depend on property order. */
 function stableJson(value: unknown): string {
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
   if (isRecord(value)) {
@@ -65,10 +49,6 @@ function stableJson(value: unknown): string {
 function sha256(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
-
-// ---------------------------------------------------------------------------
-// ZIP (stored + deflate). Claude's export parts are ordinary ZIP files; we
-// read only the entries we need and never write anything to disk.
 
 type ZipEntry = { name: string; method: number; compressedSize: number; size: number; localOffset: number; flags: number };
 
@@ -127,9 +107,6 @@ export function readZipEntry(bytes: Buffer, entry: ZipEntry): Buffer {
   return inflated;
 }
 
-// ---------------------------------------------------------------------------
-// Neutral transcript shape shared by both sources.
-
 export type ImportedToolCall = { id: string; name: string; input: JsonRecord; output: string; failed: boolean; time: number };
 
 export type ImportedMessage =
@@ -150,9 +127,7 @@ export type ImportedConversation = {
   created: number;
   updated: number;
   messages: ImportedMessage[];
-  /** Hash of the source records, to tell an unchanged re-import from an edited one. */
   sourceHash: string;
-  /** Content that could not be carried over, as plain notes. */
   notes: string[];
 };
 
@@ -170,7 +145,6 @@ function toolOutputText(content: unknown): string {
   return "";
 }
 
-/** Walk from the newest message to the root through `parent`. */
 function currentBranch<T>(items: T[], id: (item: T) => string | undefined, parent: (item: T) => string | undefined): T[] {
   const byId = new Map<string, T>();
   for (const item of items) {
@@ -193,9 +167,6 @@ function currentBranch<T>(items: T[], id: (item: T) => string | undefined, paren
   return branch.reverse();
 }
 
-// ---------------------------------------------------------------------------
-// Claude data export
-
 function parseExportJson(bytes: Buffer): unknown {
   try {
     return JSON.parse(bytes.toString("utf8"));
@@ -212,7 +183,6 @@ function isManifest(value: unknown): boolean {
   return isRecord(value) && Array.isArray(value.data_files);
 }
 
-/** Read every conversation in a Claude export ZIP part or `conversations.json`. */
 export function readClaudeExport(bytes: Buffer): ImportedConversation[] {
   if (bytes.length > CLAUDE_IMPORT_LIMITS.uploadBytes) {
     throw new ClaudeImportError("claude_export_too_large", "This export is too large. Export a shorter date range.");
@@ -307,7 +277,6 @@ function convertChat(record: JsonRecord): ImportedConversation | undefined {
     messages.push({ role: "assistant", sourceId: id, time, completed: millis(item.updated_at) ?? time, blocks });
   }
   if (messages.length === 0) return undefined;
-  // The account that owns a conversation is personal data; it is not imported.
   const { account: _account, ...rest } = record;
   return {
     format: "claude-chat",
@@ -329,10 +298,6 @@ function firstUserLine(messages: ImportedMessage[]): string | undefined {
   return line.length > 80 ? `${line.slice(0, 77)}…` : line;
 }
 
-// ---------------------------------------------------------------------------
-// Claude Code transcripts
-
-/** The folder name Claude Code uses for a project directory. */
 export function claudeCodeProjectFolder(directory: string): string {
   return directory.replace(/[^a-zA-Z0-9]/g, "-");
 }
@@ -343,7 +308,6 @@ function textOf(content: unknown): string {
   return content.filter(isRecord).filter((block) => block.type === "text").map((block) => str(block.text) ?? "").join("\n");
 }
 
-/** Claude Code wraps commands and hook output in tags; they are not what the person typed. */
 function isMachineText(text: string): boolean {
   const trimmed = text.trim();
   return /^<(command-name|command-message|command-args|local-command-stdout|local-command-caveat|system-reminder|bash-input|bash-stdout|bash-stderr)>/.test(trimmed);
@@ -360,7 +324,6 @@ export function readClaudeCodeTranscript(text: string): ImportedConversation {
       const value: unknown = JSON.parse(line);
       if (isRecord(value)) rows.push(value);
     } catch {
-      // A transcript can end mid-line if Claude Code was closed while writing.
     }
   }
   const linked = rows.filter((row) => str(row.uuid) && !row.isSidechain);
@@ -368,8 +331,6 @@ export function readClaudeCodeTranscript(text: string): ImportedConversation {
   const leaf = conversational[conversational.length - 1];
   const sourceId = str(leaf?.sessionId) ?? str(rows.find((row) => str(row.sessionId))?.sessionId);
   if (!leaf || !sourceId) throw new ClaudeImportError("claude_transcript_unreadable", "This Claude Code session has no messages.");
-  // Walk the full parent chain (attachments and other records sit between
-  // messages), ending at the newest message.
   const leafIndex = linked.indexOf(leaf);
   const branch = currentBranch(linked.slice(0, leafIndex + 1), (row) => str(row.uuid), (row) => str(row.parentUuid))
     .filter((row) => row.type === "user" || row.type === "assistant");
@@ -420,8 +381,6 @@ export function readClaudeCodeTranscript(text: string): ImportedConversation {
     }
     if (blocks.length === 0) continue;
     const model = str(message.model);
-    // Claude Code writes one record per content block of the same reply;
-    // OpenWork shows a reply as one message, so consecutive parts merge.
     const previous = messages[messages.length - 1];
     if (previous?.role === "assistant") {
       previous.blocks.push(...blocks);
@@ -444,9 +403,6 @@ export function readClaudeCodeTranscript(text: string): ImportedConversation {
     notes: [...notes],
   };
 }
-
-// ---------------------------------------------------------------------------
-// Native OpenCode v2 import payload
 
 export const IMPORTED_AGENT = "imported";
 const UNKNOWN_MODEL = { id: "unknown", providerID: "claude" };
@@ -502,7 +458,6 @@ export function buildNativeImport(conversation: ImportedConversation, options: {
       id,
       projectID: options.projectID,
       title: conversation.title,
-      // No agent or model: continuing an imported chat uses the workspace defaults.
       cost: 0,
       tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } },
       time: { created: conversation.created, updated: conversation.updated, idle: conversation.updated },
@@ -513,7 +468,6 @@ export function buildNativeImport(conversation: ImportedConversation, options: {
           sourceID: conversation.sourceId,
           sourceHash: conversation.sourceHash,
           notes: conversation.notes,
-          // Imported usage and cost are unknown, not zero.
           usageUnknown: true,
         },
       },

@@ -16,10 +16,8 @@ const MAX_BYTES = 16 * 1024 * 1024;
 const TTL_MS = 24 * 60 * 60_000;
 const digest = (resource: CachedMcpAppResource) => createHash("sha256").update(JSON.stringify(resource)).digest("hex");
 
-/** Content only: credentials, tool definitions, permissions and launch leases are never cached. */
 export function createMcpAppResourceCache(directory: string, now = Date.now) {
   const memory = new Map<string, z.infer<typeof storedSchema>>();
-  // Sized once on insert: a hit must not re-serialize every cached App.
   const sizes = new Map<string, number>();
   const remember = (key: string, value: z.infer<typeof storedSchema>) => {
     memory.delete(key); memory.set(key, value);
@@ -63,7 +61,6 @@ export function createMcpAppResourceCache(directory: string, now = Date.now) {
         const resource = resourceSchema.parse(await load());
         const value = { savedAt: now(), digest: digest(resource), resource };
         sizes.delete(key); remember(key, value);
-        // A full disk, corrupt entry or failed cache write must never prevent an App opening.
         maintenance = maintenance.then(async () => {
           await mkdir(directory, { recursive: true, mode: 0o700 });
           await writeFile(join(directory, `${key}.json`), JSON.stringify(value), { mode: 0o600 });

@@ -74,3 +74,22 @@ test("view-only and manage-only members can always read; writes/probes remain ma
   }
   assert.equal(runner.calls().length, 1)
 })
+
+test("a step limit is not a Workbot setting: saving one is refused and neither the settings nor Workbot's session carry one", async () => {
+  const workspace = await den.createOrg(await den.signUp("Step Limit Owner"), "Step limit workspace")
+  const owner = den.as(workspace.owner, workspace.orgId)
+  const token = await den.mintMcpToken(workspace.owner, workspace.orgId)
+  for (const body of [{ maxSteps: 250 }, { maxSteps: 0 }, { maxSteps: null }, { model: null, maxSteps: 250 }]) {
+    const refused = await owner("PUT", path, body)
+    assert.equal(refused.status, 400, summary(refused))
+  }
+  const modelOnly = await owner("PUT", path, { model: null })
+  assert.equal(modelOnly.status, 200, summary(modelOnly))
+  assert.equal(field(modelOnly.body, "maxSteps"), undefined)
+  const settings = await owner("GET", path)
+  assert.equal(settings.status, 200, summary(settings))
+  assert.equal(field(settings.body, "maxSteps"), undefined)
+  const session = await den.request(token, "GET", "/v1/workbot/session")
+  assert.equal(session.status, 200, summary(session))
+  assert.equal(field(session.body, "maxSteps"), undefined)
+})

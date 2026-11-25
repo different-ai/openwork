@@ -1,0 +1,24 @@
+id: build_artifact_by_prompt
+title: Build a sample Artifact from chat
+surface: desktop
+label: MOCKED
+status: grounded
+requires: [employee_connected, sample_sources]
+do:
+  - {type: ask, turn: build_artifact, prompt: artifact-prompt, model: '{{model}}', same_thread: false}
+  - {type: wait_turn, turn: build_artifact, timeout_seconds: 240}
+  - {type: manual, instruction: 'If offered the sample-data choice, select Build sample dashboard, wait for it to finish, then open the Created artifact card.'}
+  - {type: show, turn: build_artifact, seconds: 8}
+say: You can ask for a reusable view. For this sample, use fictional source data only.
+paste:
+  artifact-prompt: Build an interactive Q4 pipeline dashboard from the sample Salesforce source. Read only; do not send or upload anything.
+see: A new Artifact opens and renders interactive sample pipeline data.
+checks:
+  - {type: turn_succeeded, turn: build_artifact}
+  - {type: artifact_frame_has, text: Orchard, last_resort: true, reason: No typed probe for the sample view is available.}
+reset: [Remove only the trial Artifact and its new chat.]
+fallback: Use the retained Artifact instead; label it as prebuilt.
+expect_seconds: 180
+questions:
+  - {question: Can I see a retained view instead?, beat: open_retained_artifact}
+avoid: [Do not rebuild in the main live flow or connect a real Salesforce tenant.]

@@ -1,0 +1,91 @@
+{
+  "name": "@openwork-ee/den-sso",
+  "private": true,
+  "type": "module",
+  "description": "Den organization SSO rules shared by Den API and Den Web: who must sign in with SSO, login routing, the last sign-in cookie, domain verification names and SAML policy. No I/O; safe in the browser.",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": {
+        "openwork-build": "./dist/types/src/index.d.ts",
+        "default": "./src/index.ts"
+      },
+      "development": "./src/index.ts",
+      "default": "./src/index.ts"
+    },
+    "./domain-verification": {
+      "types": {
+        "openwork-build": "./dist/types/src/domain-verification.d.ts",
+        "default": "./src/domain-verification.ts"
+      },
+      "development": "./src/domain-verification.ts",
+      "default": "./src/domain-verification.ts"
+    },
+    "./entra-domain": {
+      "types": {
+        "openwork-build": "./dist/types/src/entra-domain.d.ts",
+        "default": "./src/entra-domain.ts"
+      },
+      "development": "./src/entra-domain.ts",
+      "default": "./src/entra-domain.ts"
+    },
+    "./jit": {
+      "types": {
+        "openwork-build": "./dist/types/src/jit.d.ts",
+        "default": "./src/jit.ts"
+      },
+      "development": "./src/jit.ts",
+      "default": "./src/jit.ts"
+    },
+    "./last-sign-in": {
+      "types": {
+        "openwork-build": "./dist/types/src/last-sign-in.d.ts",
+        "default": "./src/last-sign-in.ts"
+      },
+      "development": "./src/last-sign-in.ts",
+      "default": "./src/last-sign-in.ts"
+    },
+    "./policy": {
+      "types": {
+        "openwork-build": "./dist/types/src/policy.d.ts",
+        "default": "./src/policy.ts"
+      },
+      "development": "./src/policy.ts",
+      "default": "./src/policy.ts"
+    },
+    "./readiness": {
+      "types": {
+        "openwork-build": "./dist/types/src/readiness.d.ts",
+        "default": "./src/readiness.ts"
+      },
+      "development": "./src/readiness.ts",
+      "default": "./src/readiness.ts"
+    },
+    "./saml-policy": {
+      "types": {
+        "openwork-build": "./dist/types/src/saml-policy.d.ts",
+        "default": "./src/saml-policy.ts"
+      },
+      "development": "./src/saml-policy.ts",
+      "default": "./src/saml-policy.ts"
+    },
+    "./state-identifier": {
+      "types": {
+        "openwork-build": "./dist/types/src/state-identifier.d.ts",
+        "default": "./src/state-identifier.ts"
+      },
+      "development": "./src/state-identifier.ts",
+      "default": "./src/state-identifier.ts"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "test": "node --conditions=development --import tsx --test test/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.30",
+    "tsx": "^4.23.1",
+    "typescript": "^5.5.4"
+  }
+}

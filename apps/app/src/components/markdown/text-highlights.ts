@@ -61,9 +61,6 @@ export function clearTextHighlights(root: HTMLElement) {
 
 export function applyTextHighlights(root: HTMLElement, query: string) {
   const needle = query.trim().toLowerCase();
-  // Fast path: if search is inactive, avoid walking large message DOM trees.
-  // We only need to clear existing marks if a previous search actually added
-  // some.
   if (!needle) {
     if (root.querySelector(SEARCH_HIGHLIGHT_SELECTOR)) {
       clearTextHighlights(root);
@@ -88,10 +85,6 @@ export function applyTextHighlights(root: HTMLElement, query: string) {
         return NodeFilter.FILTER_REJECT;
       }
 
-      // `.katex` is excluded because injecting <mark> into rendered math corrupts
-      // KaTeX's layout spans, and its MathML branch duplicates the visible text.
-      // Zoomable Mermaid diagrams are rendered by React; marks there would
-      // break its reconciliation.
       if (parent.closest("pre, code, .katex, [data-openwork-mermaid-interactive]")) {
         return NodeFilter.FILTER_REJECT;
       }

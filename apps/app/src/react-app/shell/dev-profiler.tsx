@@ -1,23 +1,5 @@
 /** @jsxImportSource react */
 
-/**
- * Dev-only React profiler + overlay.
- *
- * <DevProfiler id="SessionSurface"> wraps a subtree with React's built-in
- * <Profiler>. It aggregates commits per id (count, total time, self time,
- * last commit timestamp, recent burst).
- *
- * <DevProfilerOverlay /> renders a small floating card in the bottom-right
- * that shows the hottest zones. Toggle with Cmd+Shift+P or set
- * localStorage.openwork.debug.profilerOverlay = "1" / "0".
- *
- * In prod builds the wrapper is a pass-through (no Profiler overhead) and
- * the overlay renders null.
- *
- * Findings also land on window.__openwork.slice("profiler") so external
- * tools can read them.
- */
-
 import {
   Profiler,
   useEffect,
@@ -58,20 +40,6 @@ type ProfilerState = {
   recent: CommitRecord[];
 };
 
-// Profiler is OFF BY DEFAULT, even in dev builds.
-//
-// Running React's <Profiler> under sustained streaming commits causes the
-// browser's performance timeline to accumulate `measure` entries faster than
-// it can reclaim them; React-dom's own `logComponentRender` eventually hits
-// "Failed to execute 'measure' on 'Performance': Data cannot be cloned, out
-// of memory" and the webview freezes mid-stream. That matches the "stream
-// produces 2 words then the app blocks" symptom.
-//
-// Explicit opt-ins:
-//   - VITE_OPENWORK_PROFILER=1 at `pnpm dev`
-//   - window.localStorage.setItem("openwork.debug.profiler", "1")
-// When off, <DevProfiler> is a pure pass-through (no <Profiler> mounted) and
-// the overlay renders null.
 const PROFILER_ENABLED = (() => {
   if (typeof window === "undefined") return false;
   try {
@@ -79,12 +47,10 @@ const PROFILER_ENABLED = (() => {
     const flag = env.VITE_OPENWORK_PROFILER;
     if (flag === "1" || flag === "true" || flag === true) return true;
   } catch {
-    // ignore
   }
   try {
     if (window.localStorage.getItem("openwork.debug.profiler") === "1") return true;
   } catch {
-    // ignore
   }
   return false;
 })();
@@ -103,7 +69,6 @@ function emit() {
     try {
       fn();
     } catch {
-      // ignore faulty subscribers
     }
   }
 }
@@ -120,20 +85,11 @@ function readSnapshot() {
   };
 }
 
-// Register a top-level inspector slice so the snapshot is accessible via
-// window.__openwork.slice("profiler") — even for operators who aren't
-// looking at the overlay.
 if (typeof window !== "undefined") {
   publishInspectorSlice("profiler", readSnapshot);
 }
 
 function recordCommit(record: CommitRecord) {
-  // Fast path: when nobody is listening (overlay hidden, no external
-  // reader), don't mutate the map at all. This is critical — otherwise the
-  // overlay renders, re-renders itself inside the profiler zone, records
-  // its own commit, schedules another emit, re-renders, and so on forever.
-  // With zero subscribers we also never schedule an rAF, so the profiler
-  // is effectively free when it's off.
   if (subscribers.size === 0) return;
 
   const prev = state.zonesById.get(record.id);
@@ -166,8 +122,6 @@ function recordCommit(record: CommitRecord) {
   if (state.recent.length > RECENT_MAX) {
     state.recent.splice(0, state.recent.length - RECENT_MAX);
   }
-  // Notify overlay subscribers. We throttle via rAF so a burst of commits
-  // during a stream doesn't flood setState.
   scheduleEmit();
 }
 
@@ -224,10 +178,6 @@ const onRender: ProfilerOnRenderCallback = (
   });
 };
 
-/**
- * Zone wrapper. In prod this is a pass-through and the Profiler is never
- * mounted so we don't pay the runtime cost.
- */
 export function DevProfiler({
   id,
   children,
@@ -267,7 +217,6 @@ function writeOverlayStoredPreference(value: boolean) {
   try {
     window.localStorage.setItem("openwork.debug.profilerOverlay", value ? "1" : "0");
   } catch {
-    // ignore
   }
 }
 
@@ -288,13 +237,6 @@ export function DevProfilerOverlay() {
   return <DevProfilerOverlayToggle />;
 }
 
-/**
- * Owns only visibility state + the global keybind. Does NOT subscribe to
- * profiler snapshots. When the user toggles the overlay on, it mounts
- * <DevProfilerOverlayVisible/> which is the only component that subscribes.
- * This means when the overlay is hidden there are zero subscribers and
- * `recordCommit` short-circuits — the profiler becomes free.
- */
 function DevProfilerOverlayToggle() {
   const [visible, toggleVisible] = useReducer((current: boolean, next?: boolean) => {
     const visible = next ?? !current;
@@ -328,8 +270,6 @@ function DevProfilerOverlayVisible({ onHide }: { onHide: () => void }) {
   const snapshot = useDevProfilerSnapshot();
   const lastCommitByIdRef = useRef<Record<string, number>>({});
 
-  // Flash zones whose lastCommitAt changed since the previous render so
-  // operators can spot hot spots.
   const flashing = new Set<string>();
   const now = performance.now();
   for (const zone of snapshot.zones) {

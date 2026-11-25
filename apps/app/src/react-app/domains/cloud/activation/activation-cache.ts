@@ -1,7 +1,6 @@
 import type { QueryClient } from "@tanstack/react-query";
 import type { ActivationState } from "@openwork/types/den/activation";
 
-/** Bind event reporting to the exact query authenticated by useActivation, never an organization's query prefix. */
 export function createActivationCache<Scope extends object>(client: () => QueryClient) {
   const bindings = new WeakMap<Scope, readonly unknown[]>();
   return {

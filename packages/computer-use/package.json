@@ -8,6 +8,7 @@
   "scripts": {
     "build:native": "swift build --package-path native -c release --product ComputerUse",
     "check": "swift test --package-path native",
+    "prove:mac-apps": "node scripts/prove-mac-apps.mjs",
     "build": "pnpm --filter @openwork/codemode build && tsup && tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit"
   },
@@ -17,6 +18,10 @@
     "./computer-x11-driver": "./computer-x11-driver.mjs",
     "./computer-windows-driver": "./computer-windows-driver.mjs",
     "./browser-task": "./browser-task.mjs",
+    "./browser-navigation": "./browser-navigation.mjs",
+    "./browser-secrets": "./browser-secrets.mjs",
+    "./value-command": "./value-command.mjs",
+    "./private-value-use": "./private-value-use.mjs",
     "./browser-demonstration": "./browser-demonstration.mjs",
     "./cloud": {
       "types": "./cloud.d.mts",
@@ -35,7 +40,7 @@
   "devDependencies": {
     "tsup": "^8.5.0",
     "@openwork/codemode": "workspace:*",
-    "effect": "4.0.0-beta.83",
+    "effect": "4.0.6",
     "zod": "^4.6.6"
   }
 }

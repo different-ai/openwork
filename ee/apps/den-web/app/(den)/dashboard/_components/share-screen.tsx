@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
 import { DenButton } from "../../_components/ui/button";
 import type { DenOrgContext } from "../../_lib/den-org";
-import { getLibraryConnectorRoute, getLibraryPluginRoute, getLibraryRoute, getOrgAccessFlags } from "../../_lib/den-org";
+import { getLibraryConnectorRoute, getLibraryPluginRoute, getOrgAccessFlags } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import {
   type AccessDraft,
@@ -25,7 +25,6 @@ import { usePluginAccess } from "./plugin-access-data";
 import { usePlugin } from "./plugin-data";
 import { WhoCanUseIt } from "./who-can-use-it";
 
-/** "6 people can use it now." or "8 people in Sales can use it now." */
 function ShareLayout({ back, logo, title, subtitle, draft, setDraft, savedDraft, ownerName, onSave, saving, error }: {
   back: { href: string; label: string };
   logo: ReactNode;
@@ -63,8 +62,8 @@ function ShareLayout({ back, logo, title, subtitle, draft, setDraft, savedDraft,
       </section>
       {error ? <p className="text-[13px] text-red-600">{error}</p> : null}
       <StepFooter note={shareConsequence(draft, orgContext, ownerId)}>
-        <LinkButton href={back.href}>Cancel</LinkButton>
-        <DenButton loading={saving} disabled={unchanged} onClick={onSave}>
+        <LinkButton size="sm" href={back.href}>Cancel</LinkButton>
+        <DenButton size="sm" loading={saving} disabled={unchanged} onClick={onSave}>
           {count > 0 ? `Share with ${peopleLabel(count)}` : "Save"}
         </DenButton>
       </StepFooter>
@@ -85,7 +84,6 @@ function viewerName(org: DenOrgContext | null, fallback: string): string {
   return me?.user.name || me?.user.email || fallback;
 }
 
-/** A7: share a connector the member added. */
 export function ShareConnectorScreen({ connectionId }: { connectionId: string }) {
   const router = useRouter();
   const toast = useDenToast();
@@ -128,7 +126,7 @@ export function ShareConnectorScreen({ connectionId }: { connectionId: string })
         description: sharedToastDescription(draft, orgContext, orgContext.currentMember.id),
         action: { label: "Undo", onClick: () => saveAccess(connectionId, previous) },
       });
-      router.push(getLibraryRoute(orgSlug));
+      router.push(back.href);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Sharing did not save.");
       setSaving(false);
@@ -152,7 +150,6 @@ export function ShareConnectorScreen({ connectionId }: { connectionId: string })
   );
 }
 
-/** B3: share a plugin the member made. */
 export function SharePluginScreen({ pluginId }: { pluginId: string }) {
   const router = useRouter();
   const toast = useDenToast();
@@ -198,7 +195,7 @@ export function SharePluginScreen({ pluginId }: { pluginId: string }) {
           },
         },
       });
-      router.push(getLibraryRoute(orgSlug));
+      router.push(back.href);
     } catch (saveError) {
       setError(saveError instanceof Error ? saveError.message : "Sharing did not save.");
       setSaving(false);

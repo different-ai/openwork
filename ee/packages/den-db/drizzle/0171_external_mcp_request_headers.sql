@@ -1,0 +1,1 @@
+ALTER TABLE `external_mcp_connection` ADD `request_headers` text;

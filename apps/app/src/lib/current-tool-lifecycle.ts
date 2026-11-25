@@ -8,11 +8,6 @@ const ACTIVE_SESSION_STATUSES = new Set<SessionActivityStatus>([
   "compacting",
 ])
 
-/**
- * Reconcile a current-turn unfinished tool with the task's authoritative
- * lifecycle. Only active work may keep animating; every other state is made
- * explicit instead of leaving a stale "Running" step beside a ready task.
- */
 export function resolveCurrentToolLifecycle(
   activityStatus: SessionActivityStatus,
   isCurrentTurnTool: boolean,

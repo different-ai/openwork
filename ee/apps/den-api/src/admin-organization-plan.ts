@@ -8,11 +8,6 @@ import { getOrganizationPlanState } from "./organization-plan-state.js"
 
 type OrgId = typeof OrganizationTable.$inferSelect.id
 
-/**
- * What a platform admin sets for an organization in /admin › Billing (and the
- * den_update_org_plan admin tool): the plan and how many users it allows.
- * `seatLimit` keeps its old name for compatibility; it means "users allowed".
- */
 export const adminOrganizationPlanInputSchema = z.object({
   tier: z.enum(["free", "team", "enterprise"]),
   seatLimit: z.number().int().min(1).max(MAX_PLAN_USERS).describe("Users allowed, counting pending invitations. Never fewer than 5; smaller values are raised to 5."),
@@ -24,10 +19,6 @@ export const adminOrganizationPlanInputSchema = z.object({
 })
 export type AdminOrganizationPlanInput = z.infer<typeof adminOrganizationPlanInputSchema>
 
-/**
- * Saves the plan and returns the resolved plan every join path now enforces.
- * Never touches Stripe: Stripe quantities follow users, not the plan's seats.
- */
 export async function setOrganizationPlanByAdmin(organizationId: OrgId, input: { tier: BillingPlanTier; seatLimit: number; endsAt?: string | null }): Promise<OrganizationPlanState> {
   const now = new Date()
   await updateOrganizationMetadata(organizationId, (current) => applyAdminPlan(normalizeOrganizationMetadata(current).metadata, input, now))

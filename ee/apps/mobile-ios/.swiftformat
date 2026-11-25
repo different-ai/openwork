@@ -1,0 +1,5 @@
+# SwiftFormat settings for OpenWork for iPhone
+--swiftversion 6.0
+--maxwidth 180
+--indent 4
+--exclude .build,build,DerivedData

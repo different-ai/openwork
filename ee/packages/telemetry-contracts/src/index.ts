@@ -102,6 +102,14 @@ export const telemetryAnalyticsWeekSchema = z.object({
   tasksFailed: z.number(),
 })
 
+export const telemetryAnalyticsDaySchema = z.object({
+  day: z.string(),
+  activeMembers: z.number(),
+  sessions: z.number(),
+  tasksCompleted: z.number(),
+  tasksFailed: z.number(),
+})
+
 export const telemetryAnalyticsModelsSchema = z.object({
   usage30d: z.array(z.object({
     id: z.string(),
@@ -127,6 +135,7 @@ export const telemetryAnalyticsResponseSchema = z.object({
   tasksFailed30d: z.number(),
   avgTaskDurationMs30d: z.number().nullable(),
   weekly: z.array(telemetryAnalyticsWeekSchema),
+  daily: z.array(telemetryAnalyticsDaySchema).optional(),
   models: telemetryAnalyticsModelsSchema,
 }).meta({ ref: "TelemetryAnalyticsResponse" })
 
@@ -142,6 +151,7 @@ export const telemetryDimensionListResponseSchema = z.object({
 
 export type TelemetryAdoptionResponse = z.infer<typeof telemetryAdoptionResponseSchema>
 export type TelemetryAnalyticsWeek = z.infer<typeof telemetryAnalyticsWeekSchema>
+export type TelemetryAnalyticsDay = z.infer<typeof telemetryAnalyticsDaySchema>
 export type TelemetryAnalyticsModels = z.infer<typeof telemetryAnalyticsModelsSchema>
 export type TelemetryAnalyticsResponse = z.infer<typeof telemetryAnalyticsResponseSchema>
 export type TelemetryDimensionListResponse = z.infer<typeof telemetryDimensionListResponseSchema>

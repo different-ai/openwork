@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
-import { buildRelease, GCP_REPOSITORIES, HEALTH_SOURCE, resolveGcpImages, resolveAwsImages, validateModuleReferences } from "../tools/build-release.mjs";
+import "./aws-assistant-bootstrap.test.mjs";
+import { AWS_REPOSITORIES, buildRelease, GCP_REPOSITORIES, HEALTH_SOURCE, resolveGcpImages, resolveAwsImages, validateModuleReferences } from "../tools/build-release.mjs";
 
 const digest = (character) => "sha256:" + character.repeat(64);
 const metadata = (character, os = "linux", architecture = "amd64") => ({
@@ -74,16 +75,22 @@ test("registry re-verification and approved manifest identity must match", () =>
   assert.throws(() => resolveGcpImages("0.18.0", { ...pins, den_api: GCP_REPOSITORIES.den_api + "@" + digest("e") }, inspect), /Approved pin/);
 });
 
-test("AWS release architecture does not invoke Docker or add GCP image inventory", () => {
+test("default AWS release resolves current image tags without adding GCP inventory", () => {
   const output = mkdtempSync(join(tmpdir(), "openwork-aws-build-test-"));
   try {
-    buildRelease(["aws", "0.18.0", output]);
+    buildRelease(["aws", "0.18.65", output], inspect);
     const manifest = JSON.parse(readFileSync(join(output, "manifest.json"), "utf8"));
     assert.equal(manifest.provider, "aws");
     const release = JSON.parse(execFileSync("tar", ["-xOf", join(output, "bundle.tar.gz"), "release.json"], { encoding: "utf8" }));
     assert.equal(release.provider, "aws");
-    assert.equal(release.images, undefined);
+    assert.deepEqual(release.images, pins);
     assert.ok(release.files["infra/managed-deployments/aws/runner/runner.py"]);
+    for (const healthFile of ["health_agent.py", "assistant_health_agent.py"]) {
+      const path = "infra/managed-deployments/aws/health/" + healthFile;
+      const archived = execFileSync("tar", ["-xOf", join(output, "bundle.tar.gz"), path]);
+      assert.equal(createHash("sha256").update(archived).digest("hex"), release.files[path]);
+      assert.deepEqual(archived, readFileSync(resolve(root, path)));
+    }
     assert.equal(Object.keys(release.files).some((file) => file.includes("/gcp/")), false);
   } finally {
     rmSync(output, { recursive: true, force: true });
@@ -117,6 +124,135 @@ test("new AWS installer versions use independently approved immutable applicatio
   }
   assert.throws(() => resolveAwsImages(pins, () => { throw new Error("missing image"); }), /missing image/);
 });
+test("AWS tag resolution verifies both unique Linux/amd64 manifests", () => {
+  const calls = [];
+  assert.deepEqual(resolveAwsImages("0.18.65", undefined, (ref) => {
+    calls.push(ref);
+    return [metadata("e", "linux", "arm64"), inspect(ref)];
+  }), pins);
+  assert.deepEqual(calls, [GCP_REPOSITORIES.den_api + ":0.18.65", pins.den_api,
+    GCP_REPOSITORIES.den_web + ":0.18.65", pins.den_web]);
+  for (const response of [[], metadata("a", "linux", "arm64"), [metadata("a"), metadata("b")]]) {
+    assert.throws(() => resolveAwsImages("0.18.65", undefined, () => response), /Linux\/amd64/);
+  }
+  assert.deepEqual(resolveAwsImages("0.18.65", pins, inspect), pins);
+});
+
+const legacyAssistantPins = { ...pins,
+  headless_runner: AWS_REPOSITORIES.headless_runner + "@" + digest("e"),
+  workbot: AWS_REPOSITORIES.workbot + "@" + digest("f"),
+};
+const assistantPins = { ...legacyAssistantPins, ai_gateway: AWS_REPOSITORIES.ai_gateway + "@" + digest("c") };
+const inspectAssistants = (source) => source.includes("openwork-headless-runner") ? metadata("e")
+  : source.includes("openwork-workbot") ? metadata("f") : inspect(source);
+
+test("AWS explicitly opts into resolving the complete assistant image set", () => {
+  const calls = [];
+  assert.deepEqual(resolveAwsImages("0.18.65", undefined, (source) => {
+    calls.push(source);
+    return [metadata("d", "linux", "arm64"), inspectAssistants(source)];
+  }, true), assistantPins);
+  assert.deepEqual(calls, Object.entries(AWS_REPOSITORIES).flatMap(([kind, repository]) => [repository + ":0.18.65", assistantPins[kind]]));
+  assert.deepEqual(resolveAwsImages(assistantPins, inspectAssistants), assistantPins);
+  assert.deepEqual(resolveAwsImages("0.18.65", assistantPins, inspectAssistants), assistantPins);
+  assert.deepEqual(resolveAwsImages(legacyAssistantPins, inspectAssistants), legacyAssistantPins);
+  assert.deepEqual(resolveAwsImages("0.18.65", legacyAssistantPins, inspectAssistants), legacyAssistantPins);
+  assert.throws(() => resolveAwsImages("0.18.65", legacyAssistantPins, inspectAssistants, true), /five/);
+});
+
+test("AWS refuses partial assistant inventories and validates every fixed repository before registry access", () => {
+  for (const candidate of [
+    { ...pins, headless_runner: assistantPins.headless_runner }, { ...pins, workbot: assistantPins.workbot },
+    { ...pins, ai_gateway: assistantPins.ai_gateway },
+    { ...pins, headless_runner: assistantPins.headless_runner, ai_gateway: assistantPins.ai_gateway },
+    { ...assistantPins, extra: pins.den_api }, { ...assistantPins, health: HEALTH_SOURCE },
+    { ...assistantPins, ai_gateway: AWS_REPOSITORIES.ai_gateway + ":0.18.67" },
+    { ...assistantPins, ai_gateway: "ghcr.io/other/inference@" + digest("c") },
+    { ...assistantPins, headless_runner: AWS_REPOSITORIES.headless_runner + ":0.18.65" },
+    { ...assistantPins, workbot: "ghcr.io/other/workbot@" + digest("f") },
+    { ...assistantPins, workbot: assistantPins.headless_runner }, { ...assistantPins, workbot: assistantPins.workbot + "\n" },
+  ]) {
+    let contacted = false;
+    assert.throws(() => resolveAwsImages(candidate, () => { contacted = true; return metadata("a"); }));
+    assert.equal(contacted, false);
+  }
+  assert.throws(() => resolveAwsImages("0.18.65", pins, inspectAssistants, true), /complete/);
+  assert.throws(() => resolveAwsImages(assistantPins, (source) => {
+    if (source.includes("headless-runner")) throw new Error("assistant image missing");
+    return inspectAssistants(source);
+  }), /assistant image missing/);
+  assert.throws(() => resolveAwsImages(assistantPins, (source) => source.includes("workbot") ? metadata("e") : inspectAssistants(source)), /Approved pin/);
+  // Google Cloud still rejects optional AWS images instead of expanding its scope.
+  assert.throws(() => resolveGcpImages("0.18.65", assistantPins, inspectAssistants), /exactly den_api and den_web/);
+});
+
+test("AWS builder packages opt-in tag and explicit-pin inventories without changing the baseline", () => {
+  const output = mkdtempSync(join(tmpdir(), "openwork-assistant-build-"));
+  try {
+    const approved = join(output, "approved.json");
+    writeFileSync(approved, JSON.stringify(assistantPins));
+    for (const options of [["--include-assistants"], ["--image-pins", approved], ["--image-pins", approved, "--include-assistants"]]) {
+      buildRelease(["aws", "0.18.65", output, ...options], inspectAssistants);
+      const release = JSON.parse(execFileSync("tar", ["-xOf", join(output, "bundle.tar.gz"), "release.json"], { encoding: "utf8" }));
+      assert.deepEqual(release.images, assistantPins);
+      assert.equal(Object.hasOwn(release.images, "health"), false);
+      assert.equal(Object.keys(release.files).some((file) => file.includes("/gcp/")), false);
+    }
+    buildRelease(["aws", "0.18.65", output], inspectAssistants);
+    const baseline = JSON.parse(execFileSync("tar", ["-xOf", join(output, "bundle.tar.gz"), "release.json"], { encoding: "utf8" }));
+    assert.deepEqual(baseline.images, pins);
+    assert.equal(Object.hasOwn(baseline.images, "headless_runner"), false);
+    assert.equal(Object.hasOwn(baseline.images, "workbot"), false);
+    assert.equal(Object.hasOwn(baseline.images, "ai_gateway"), false);
+    writeFileSync(approved, JSON.stringify(legacyAssistantPins));
+    buildRelease(["aws", "0.18.65", output, "--image-pins", approved], inspectAssistants);
+    const legacy = JSON.parse(execFileSync("tar", ["-xOf", join(output, "bundle.tar.gz"), "release.json"], { encoding: "utf8" }));
+    assert.deepEqual(legacy.images, legacyAssistantPins);
+  } finally { rmSync(output, { force: true, recursive: true }); }
+});
+
+test("assistant CLI opt-in is AWS-only and rejects duplicate, missing and unknown options", () => {
+  for (const options of [["--include-assistants", "--include-assistants"], ["--image-pins"], ["--image-pins", "--include-assistants"], ["--skip-verification"]]) {
+    assert.throws(() => buildRelease(["aws", "0.18.65", "/unused", ...options], inspectAssistants), /Use --image-pins/);
+  }
+  assert.throws(() => buildRelease(["gcp", "0.18.65", "/unused", "--include-assistants"], inspectAssistants), /AWS-only/);
+});
+
+for (const provider of ["aws", "gcp"]) {
+  test(`${provider} repeated builds produce identical archives and manifests`, () => {
+    const output = mkdtempSync(join(tmpdir(), "openwork-reproducible-build-"));
+    try {
+      buildRelease([provider, "0.18.65-test.1", output], inspect);
+      const before = ["bundle.tar.gz", "manifest.json"].map((name) => readFileSync(join(output, name)));
+      buildRelease([provider, "0.18.65-test.1", output], inspect);
+      for (const [index, name] of ["bundle.tar.gz", "manifest.json"].entries()) {
+        assert.deepEqual(readFileSync(join(output, name)), before[index]);
+      }
+    } finally { rmSync(output, { recursive: true, force: true }); }
+  });
+}
+
+test("portable archive ignores source timestamps, modes and output filename, refuses symlinks", () => {
+  const directory = mkdtempSync(join(tmpdir(), "openwork-archive-test-"));
+  const source = join(directory, "source");
+  const helper = fileURLToPath(new URL("../tools/deterministic-archive.py", import.meta.url));
+  try {
+    // Keep outputs outside the archived source tree.
+    mkdirSync(source);
+    const file = join(source, "runner.py");
+    writeFileSync(file, "print('fixture')\n");
+    execFileSync("python3", [helper, source, join(directory, "first.tar.gz")]);
+    chmodSync(file, 0o755);
+    utimesSync(file, 100, 200);
+    execFileSync("python3", [helper, source, join(directory, "second.tar.gz")]);
+    assert.deepEqual(readFileSync(join(directory, "first.tar.gz")), readFileSync(join(directory, "second.tar.gz")));
+    symlinkSync(file, join(source, "link"));
+    const result = spawnSync("python3", [helper, source, join(directory, "third.tar.gz")], { encoding: "utf8" });
+    assert.notEqual(result.status, 0);
+    assert.match(result.stderr, /Refusing symlink/);
+  } finally { rmSync(directory, { recursive: true, force: true }); }
+});
+
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 test("missing module-local file references fail the release before packaging", () => {
   const definition = `${modulePath}/migration.tf`;
@@ -140,7 +276,7 @@ test("managed AWS explicitly preserves legacy keys while adopting the shared mod
 test("installer archive contains every shared operational dependency with identical file bytes", () => {
   const output = mkdtempSync(join(tmpdir(), "openwork-shared-installer-test-"));
   try {
-    buildRelease(["aws", "0.18.58", output]);
+    buildRelease(["aws", "0.18.58", output], inspect);
     const bundle = join(output, "bundle.tar.gz");
     const manifest = JSON.parse(readFileSync(join(output, "manifest.json"), "utf8"));
     assert.equal(manifest.bundleSha256, sha256(readFileSync(bundle)));

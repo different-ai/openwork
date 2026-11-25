@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { randomBytes, createHash } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { startWorkshop } from "./workshop.mjs";
@@ -53,4 +53,35 @@ test("business data, browser sessions, connector registration and OAuth tokens s
   assert.equal((await call(participants[0], "/_workshop/reset", "POST")).status, 303);
   assert.equal((await call(participants[0], `/download/${file.id}`)).status, 404);
   assert.deepEqual((await (await call(participants[1], "/v1.0/me/messages/mail-blueharbor-2")).json()).categories, ["Bob persistent marker"]);
+});
+
+test("a new workspace's sample week is the current week; saved workspaces keep their dates", { timeout: 90000 }, async (t) => {
+  const { createSnapshotStore } = await import("./workshop-store.mjs");
+  const directory = await mkdtemp(join(process.env.TMPDIR || tmpdir(), "workshop-sample-clock-"));
+  const OLD = "2026-10-21T19:04:20.517Z";
+  const store = () => createSnapshotStore({ file: join(directory, "auth.sqlite") });
+  // A workshop that has been running since an older sample week.
+  await mkdir(join(directory, "participants"), { recursive: true, mode: 0o700 });
+  const seed = store(); seed.write("workshop-sample-clock", OLD); seed.close();
+  let workshop = await startWorkshop({ participants, dataDir: directory, port: 0 });
+  const port = workshop.server.address().port, base = workshop.origin;
+  t.after(async () => { await workshop?.close(); await rm(directory, { recursive: true, force: true }); });
+  const call = (person, path, method = "GET") => fetch(base + path, { method, redirect: "manual", headers: { authorization: `Bearer ${person.token}` } });
+  const week = async (person) => (await (await call(person, "/v1.0/me/events")).json()).value.map((event) => event.start.dateTime.slice(0, 10));
+  const days = (date) => Math.abs(Date.parse(`${date}T00:00:00Z`) - Date.now()) / 86_400_000;
+  const alice = await week(participants[0]);
+  assert.ok(alice.length > 0 && alice.every((date) => days(date) < 8), `Alice's new workspace has this week's meetings: ${alice}`);
+  await week(participants[1]);
+  assert.equal((await call(participants[0], "/_workshop/reset", "POST")).status, 303);
+  assert.deepEqual(await week(participants[0]), alice, "Resetting brings back the same sample week");
+  await workshop.close(); workshop = undefined;
+  // Bob's workspace was saved before per-workspace clocks existed.
+  const legacy = store(); legacy.delete("participant-sample-clock:bob"); legacy.close();
+  workshop = await startWorkshop({ participants, dataDir: directory, port });
+  assert.deepEqual(await week(participants[0]), alice, "Dates stay stable across restarts");
+  await week(participants[1]);
+  await workshop.close(); workshop = undefined;
+  const after = store();
+  assert.equal(after.read("participant-sample-clock:bob"), OLD, "A workspace saved before keeps the clock its data was made with");
+  after.close();
 });

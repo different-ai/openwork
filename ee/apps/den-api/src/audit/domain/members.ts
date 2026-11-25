@@ -2,12 +2,6 @@ import type { MemberTable } from "@openwork-ee/den-db/schema"
 import type { AuditChangeEventInput } from "../request-capture.js"
 import { auditChangeEvent, auditText, auditTime, organizationParent, relatedResource, targetResource, type AuditSnapshot } from "./snapshot.js"
 
-// member.role_updated / member.ownership_transferred / member.removed (legacy
-// organization.member.*). Every path that changes or removes a member uses
-// these builders: the members routes, invitation cancel (placeholder member),
-// SCIM deprovisioning (removeOrganizationMember) and, through
-// memberRemovedEvent, better-auth organization hooks.
-
 export type MemberAuditRow = Pick<typeof MemberTable.$inferSelect, "id" | "userId" | "role" | "joinedAt" | "inviteId">
 
 export function serializeMember(row: MemberAuditRow): AuditSnapshot {
@@ -22,10 +16,6 @@ export function memberRoleUpdatedEvent(organizationId: string, before: MemberAud
   return auditChangeEvent({ action: "member.role_updated", resources: memberResources(organizationId, before.id), before: serializeMember(before), after: serializeMember({ ...before, role: nextRole }) })
 }
 
-/**
- * One event for the whole transfer: target the new owner, relate every member
- * whose role changed, and record owner ids plus each changed member's role.
- */
 export function memberOwnershipTransferredEvent(input: {
   organizationId: string
   newOwner: MemberAuditRow
@@ -42,7 +32,6 @@ export function memberOwnershipTransferredEvent(input: {
   })
 }
 
-/** Reusable for every removal path (soft delete: after is null). */
 export function memberRemovedEvent(input: { organizationId: string; member: MemberAuditRow; removedByMemberId?: string | null; reasonCode?: string }): AuditChangeEventInput | null {
   return auditChangeEvent({
     action: "member.removed",

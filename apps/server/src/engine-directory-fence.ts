@@ -11,10 +11,6 @@ function directoryKey(workspace: WorkspaceInfo): string {
     : directory;
 }
 
-/**
- * Serialize target-directory runtime maintenance. Prompt forwarding does not
- * join this queue. Different directories intentionally use different queues.
- */
 export async function withEngineDirectoryFence<T>(
   config: ServerConfig,
   workspace: WorkspaceInfo,

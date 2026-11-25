@@ -30,7 +30,6 @@ import {
 import { LibraryPage } from "./library-page";
 import { McpServerCheckList } from "./mcp-server-check-list";
 
-/** Fill well only — no stacked border + inset ring (those look like a double edge in-app). */
 export const libraryFieldClass = [
   "rounded-xl border-transparent bg-dls-hover shadow-none ring-0",
   "before:hidden before:shadow-none",
@@ -38,7 +37,6 @@ export const libraryFieldClass = [
   "focus-visible:border-transparent focus-visible:ring-0",
 ].join(" ");
 
-/** The same fill well for a SecretTextInput's input box. */
 export const librarySecretFieldClass = [
   "rounded-xl border-transparent bg-dls-hover shadow-none hover:bg-dls-hover dark:bg-dls-hover dark:hover:bg-dls-hover",
   "has-[[data-slot=input-group-control]:focus-visible]:border-transparent has-[[data-slot=input-group-control]:focus-visible]:ring-0",
@@ -48,13 +46,10 @@ export type AddLibraryItemPageProps = {
   kind: LibraryAuthorableKind;
   busy?: boolean;
   cloud?: boolean;
-  /** Owners and admins can configure a connector's sign-in inline; Den refuses it from members. */
   canConfigureMcpConnections?: boolean;
-  /** Connectors a plugin can include without typing an address. */
+  addsPersonalConnection?: boolean;
   connectorPresets?: DenExternalMcpPreset[];
-  /** Looks at an MCP server before it is added; the page shows each check and waits for Continue. */
   checkMcpServer?: (url: string) => Promise<DenMcpDiscovery>;
-  /** Steps between Library and this page, e.g. Add a connector. */
   crumbs?: Array<{ label: string; onClick?: () => void }>;
   onClose: () => void;
   onCreate: (input: CreateLibraryItemInput) => Promise<unknown>;
@@ -138,11 +133,9 @@ function RadioOption(props: {
   );
 }
 
-/** How a server signs in. Everything starts as Just me, so the AI always uses the member's own account. */
 export function McpConnectionFields(props: {
   connection: LibraryMcpConnectionForm;
   disabled: boolean;
-  /** The API key stays in the field; the page takes it once on submit. */
   apiKeyField: Ref<SecretFieldHandle>;
   onApiKeyChange: (hasValue: boolean) => void;
   onChange: (update: (connection: LibraryMcpConnectionForm) => LibraryMcpConnectionForm) => void;
@@ -193,7 +186,6 @@ function PresetIcon(props: { preset: DenExternalMcpPreset }) {
   );
 }
 
-/** Pick a listed connector for a plugin, or type the address of something else. */
 function PluginConnectorPicker(props: {
   component: LibraryPluginComponentDraft;
   presets: DenExternalMcpPreset[];
@@ -292,14 +284,13 @@ export function AddLibraryItemPage(props: AddLibraryItemPageProps) {
   const [connection, setConnection] = useState<LibraryMcpConnectionForm>(emptyLibraryMcpConnectionForm);
   const apiKeyField = useRef<SecretFieldHandle>(null);
   const [hasApiKey, setHasApiKey] = useState(false);
-  // Taken from the field on submit and held only until the server is added,
-  // because the check step replaces the form. Never state, props or storage.
   const pendingApiKey = useRef("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [mcpCheck, setMcpCheck] = useState<McpCheckState | null>(null);
   const [checksSettled, setChecksSettled] = useState(false);
   const configureConnections = props.cloud === true && props.canConfigureMcpConnections === true;
+  const personalConnection = kind === "mcp" && props.cloud === true && !configureConnections && props.addsPersonalConnection === true;
   const presets = props.connectorPresets ?? [];
 
   useEffect(() => {
@@ -316,7 +307,6 @@ export function AddLibraryItemPage(props: AddLibraryItemPageProps) {
     setChecksSettled(false);
   }, [kind]);
 
-  // Switching sign-in type unmounts the key field, which empties it.
   useEffect(() => {
     setHasApiKey(false);
   }, [connection.authType]);
@@ -410,7 +400,9 @@ export function AddLibraryItemPage(props: AddLibraryItemPageProps) {
         components: kind === "plugin" ? components : undefined,
         connection: kind === "mcp" && configureConnections
           ? { ...withConnection, apiKey: withConnection.authType === "apikey" ? pendingApiKey.current : "" }
-          : undefined,
+          : personalConnection
+            ? { ...withConnection, credentialMode: withConnection.authType === "oauth" ? "per_member" : "shared", apiKey: "" }
+            : undefined,
       });
       pendingApiKey.current = "";
     } catch (caught) {
@@ -419,8 +411,11 @@ export function AddLibraryItemPage(props: AddLibraryItemPageProps) {
     }
   };
 
-  /** Den knows better than the form how the server signs in; a keyless server needs no sign-in step. */
   const continueAfterCheck = () => {
+    if (personalConnection && mcpCheck?.status === "done" && mcpCheck.discovery.authentication.kind === "manual_bearer") {
+      setError(t("extensions.add_mcp_personal_key_admin"));
+      return;
+    }
     if (mcpCheck?.status === "done" && mcpCheck.discovery.authentication.kind === "none" && connection.authType !== "none") {
       const adjusted = withLibraryMcpAuthType(connection, "none");
       setConnection(adjusted);
@@ -436,7 +431,7 @@ export function AddLibraryItemPage(props: AddLibraryItemPageProps) {
     : kind === "skill"
       ? t("extensions.create_skill_submit")
       : kind === "mcp"
-        ? configureConnections && connection.authType === "oauth"
+        ? (configureConnections || personalConnection) && connection.authType === "oauth"
           ? t("extensions.create_mcp_submit_sign_in")
           : t("extensions.create_mcp_submit")
         : t("extensions.add_create");

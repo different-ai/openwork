@@ -4,8 +4,6 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import { Clock3, X } from "lucide-react";
 
-// Per-browser convenience only. Entries hold an organization's id, name and
-// slug, and render only inside pages that already passed the admin access check.
 const STORAGE_KEY = "den-admin-recent-organizations";
 const CHANGE_EVENT = "den-admin-recent-organizations-change";
 const MAX_ENTRIES = 8;
@@ -31,7 +29,7 @@ function writeEntries(entries: AdminRecentOrganization[]) {
   try {
     if (entries.length) window.localStorage.setItem(STORAGE_KEY, JSON.stringify(entries));
     else window.localStorage.removeItem(STORAGE_KEY);
-  } catch { /* Storage is optional. */ }
+  } catch {}
   window.dispatchEvent(new Event(CHANGE_EVENT));
 }
 
@@ -41,7 +39,6 @@ export function recordAdminOrganizationVisit(organization: { id: string; name: s
 }
 
 export function useAdminRecentOrganizations() {
-  // Read after mount so server and first client render agree.
   const [entries, setEntries] = useState<AdminRecentOrganization[]>([]);
   useEffect(() => {
     const sync = () => setEntries(readEntries());
@@ -69,7 +66,6 @@ function visitedLabel(value: string) {
 
 const organizationHref = (id: string) => `/admin/organizations/${encodeURIComponent(id)}`;
 
-/** Overview panel: a short list with when each organization was last opened. */
 export function AdminRecentOrganizationsPanel() {
   const { entries, remove, clear } = useAdminRecentOrganizations();
   return <section aria-label="Recently viewed organizations" data-testid="admin-recent-organizations" className="min-w-0 rounded-lg border border-slate-200 bg-white">
@@ -95,7 +91,6 @@ export function AdminRecentOrganizationsPanel() {
   </section>;
 }
 
-/** Organization list: compact chips above the search results. */
 export function AdminRecentOrganizationsStrip() {
   const { entries } = useAdminRecentOrganizations();
   if (!entries.length) return null;

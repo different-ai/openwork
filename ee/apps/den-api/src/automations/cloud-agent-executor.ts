@@ -1,5 +1,12 @@
 import { createHash } from "node:crypto"
-import { createHeadlessThreadClient, isHeadlessModelAccessError, type HeadlessThreadTranscript } from "@openwork/headless-threads"
+import {
+  connectionBlockerFromToolCalls,
+  connectionBlockerMessage,
+  createHeadlessThreadClient,
+  isHeadlessModelAccessError,
+  type ConnectionBlocker,
+  type HeadlessThreadTranscript,
+} from "@openwork/headless-threads"
 import { and, asc, eq, isNull } from "@openwork-ee/den-db/drizzle"
 import { MemberTable, WorkerTable } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
@@ -26,11 +33,6 @@ const WORKER_READY_POLL_MS = 1_000
 const WORKER_REQUEST_TIMEOUT_MS = 15_000
 const ABORT_SETTLE_TIMEOUT_MS = 15_000
 const RESULT_SUMMARY_LIMIT = 20_000
-// A woken sandbox answers /health as soon as openwork-server binds, before its
-// managed OpenCode engine has spawned. Until then the Cloud MCP health probe
-// reports opencode_unconfigured. Cloud Chat rides this window out because a
-// person takes seconds to type; an Automation sends its first request at once,
-// so it needs an explicit bounded wait instead of a terminal failure.
 const ENGINE_WARMUP_TIMEOUT_MS = 60_000
 const ENGINE_WARMUP_POLL_MS = 2_000
 const ENGINE_WARMUP_FAILURE_CODE = "opencode_unconfigured"
@@ -73,6 +75,7 @@ export type CloudAgentExecution =
       needsAttention?: boolean
       events?: CloudAgentEvent[]
       usage?: AutomationUsage
+      resultSummary?: string
     }
 
 export type CloudAgentExecutorInput = OwnerScope & {
@@ -83,7 +86,6 @@ export type CloudAgentExecutorInput = OwnerScope & {
   previousReceipt: Record<string, unknown> | null
   signal: AbortSignal
   onAdmitted: (receipt: Record<string, unknown>) => Promise<void>
-  /** Workspace pinned on the revision; null falls back to the worker's active workspace. */
   workspaceId?: string | null
 }
 
@@ -175,7 +177,7 @@ export async function cloudAgentRuntimeAvailable(scope: OwnerScope): Promise<boo
   )).limit(1)
   if (!members[0]) return false
   if (!cloudHostingAvailable({ orgMode: env.orgMode, openworkWebEnabled: env.openworkWebEnabled })) return false
-  const webAccess = await getOpenWorkWebRuntimeAccess(organizationId)
+  const webAccess = await getOpenWorkWebRuntimeAccess(organizationId, { memberId: scope.ownerMemberId })
   if (!webAccess.hasAccess) return false
   const worker = await ownerCloudWorker(scope)
   return worker !== null && worker.status !== "failed"
@@ -319,11 +321,6 @@ type CloudConnectResult =
   | { ok: true }
   | { ok: false; code: "connect_access_unavailable" | "model_access_lost" | "provider_unavailable" | "execution_failed"; message: string }
 
-/**
- * Den leaves a per-member provider off the owner's worker while the owner has
- * no active key for it, so its model cannot run there. Say that, instead of
- * letting the health probe report it as an OpenWork Connect problem.
- */
 function missingMemberCredentialMessage(providerName: string): string {
   return `${providerName} uses a separate key for each member, and the Automation owner has no active key for it. `
     + `Ask an organization admin to issue your key for ${providerName}, then resume this Automation.`
@@ -334,12 +331,6 @@ function engineWarmingUp(health: Record<string, unknown> | null): boolean {
   return failure?.code === ENGINE_WARMUP_FAILURE_CODE
 }
 
-/**
- * Bring the worker's Cloud MCP to a usable state for this run's model: wait
- * for the managed engine to finish starting, deliver the organization's
- * current provider credentials and catalog, then run the health probe (with
- * one engine refresh) exactly as before.
- */
 export async function connectHealth(input: {
   organizationId: string
   workerId: string
@@ -384,11 +375,6 @@ export async function connectHealth(input: {
     health = await request("GET", healthPath)
   }
 
-  // Cloud Chat materializes providers on every gateway resolve; Automations
-  // are the only other producer of engine turns and must do the same, or a
-  // provider added or rotated after the worker was provisioned never reaches
-  // a worker that only runs Automations. Runs after the engine is up so the
-  // read phase cannot fail on the same warm-up window.
   if (!engineWarmingUp(health)) {
     try {
       const materialized = await deps.materializeProviders({
@@ -463,9 +449,6 @@ function transcriptEvents(
   for (const message of transcript.messages.slice(-100)) {
     if (message.role === "user") events.push({ type: "user", payload: { messageId: message.id, text: message.text.slice(0, 20_000) } })
     if (message.role === "assistant") {
-      // Keep the native thread as the source of any provider-visible reasoning
-      // trace. Den receipts need the answer and tool activity, not a second
-      // durable copy of the model's internal working text.
       events.push({ type: "assistant", payload: { messageId: message.id, text: message.text.slice(0, 20_000) } })
       for (const tool of message.toolCalls) {
         events.push({ type: "capability_execution", payload: { messageId: message.id, ...tool } })
@@ -498,6 +481,33 @@ function terminalFailure(input: {
   }
 }
 
+export function connectionBlockedExecution(input: {
+  blocker: ConnectionBlocker
+  answer: string
+  usage: AutomationUsage
+  events: CloudAgentEvent[]
+}): CloudAgentExecution {
+  const { blocker } = input
+  const message = connectionBlockerMessage(blocker)
+  return {
+    ok: false,
+    status: "failed",
+    code: "connection_action_required",
+    message,
+    retryable: false,
+    ...(input.answer.trim() ? { resultSummary: input.answer.trim().slice(0, RESULT_SUMMARY_LIMIT) } : {}),
+    usage: input.usage,
+    events: [
+      ...input.events,
+      {
+        type: "warning",
+        payload: { code: "connection_action_required", ...blocker },
+      },
+      { type: "terminal", payload: { status: "failed", code: "connection_action_required", message } },
+    ],
+  }
+}
+
 async function abortAndObserve(
   client: ReturnType<typeof createHeadlessThreadClient>,
   nativeThreadId: string,
@@ -514,7 +524,6 @@ async function abortAndObserve(
 
 async function currentAgentAuthority(input: OwnerScope & { action: AgentAction }): Promise<CloudAgentExecution | null> {
   if (isAutomationCloudDefaultModel(input.action.model)) {
-    // Only the headless runner can run the cloud default; this organization moved off it.
     return {
       ok: false,
       status: "failed",
@@ -524,7 +533,7 @@ async function currentAgentAuthority(input: OwnerScope & { action: AgentAction }
       needsAttention: true,
     }
   }
-  const webAccess = await getOpenWorkWebRuntimeAccess(input.organizationId)
+  const webAccess = await getOpenWorkWebRuntimeAccess(input.organizationId, { memberId: input.ownerMemberId })
   if (!webAccess.hasAccess) {
     return {
       ok: false,
@@ -540,6 +549,7 @@ async function currentAgentAuthority(input: OwnerScope & { action: AgentAction }
     ownerMemberId: input.ownerMemberId,
     providerId: input.action.model.providerId,
     modelId: input.action.model.modelId,
+    executionTarget: "cloud",
   })
   if (access.ok) return null
   return {
@@ -579,8 +589,6 @@ export async function executeCloudAgent(input: CloudAgentExecutorInput): Promise
       return { ok: false, status: "failed", code: "execution_runtime_unavailable", message: "The Cloud worker changed while this Automation run was recovering.", retryable: false, needsAttention: true }
     }
 
-    // Recovery keeps the receipt's workspace (the turn may already be running
-    // there); otherwise the revision pin wins over the worker's active workspace.
     const workspaceId = previousReceipt?.workspaceId ?? input.workspaceId ?? runtime.workspaceId
     const connect = await connectHealth({
       organizationId: input.organizationId,
@@ -614,25 +622,15 @@ export async function executeCloudAgent(input: CloudAgentExecutorInput): Promise
     nativeThreadId = previousReceipt?.nativeThreadId ?? null
     const recoveringNativeThread = nativeThreadId !== null
     if (!nativeThreadId) {
-      // Wake-up and Connect repair can take minutes. Re-check live authority at
-      // the native-thread boundary so queued recovery cannot use credentials
-      // materialized before the owner or model grant was revoked.
       const authorityFailure = await currentAgentAuthority(input)
       if (authorityFailure) return authorityFailure
       const thread = await client.createThread({ title: `Automation: ${input.automationName}`, signal })
       nativeThreadId = thread.id
-      // Persist the native session and stable user-message id before any work
-      // is submitted. Recovery can now observe-or-submit the exact same turn.
       await input.onAdmitted({ workerId: runtime.workerId, workspaceId, nativeThreadId, messageId })
     }
 
-    // Thread creation and receipt persistence are also asynchronous. Make the
-    // final authorization decision immediately before submitting the turn.
     const authorityFailure = await currentAgentAuthority(input)
     if (authorityFailure) {
-      // A recovered receipt may refer to a turn admitted by a previous Den
-      // process. Do not terminalize the run until that thread is observably
-      // stopped, or a retry could overlap side effects from the revoked turn.
       if (recoveringNativeThread && !await abortAndObserve(client, nativeThreadId)) {
         return {
           ok: false,
@@ -689,6 +687,10 @@ export async function executeCloudAgent(input: CloudAgentExecutorInput): Promise
     const usage = usageFromTranscript(transcript.usage)
     if (transcript.terminalError) return terminalFailure({ error: transcript.terminalError, transcript, usage })
     const resultSummary = transcript.finalAssistantText.trim() || "OpenWork Cloud completed the Automation run."
+    const blocker = connectionBlockerFromToolCalls(transcript.messages.flatMap((message) => message.parts.flatMap((part) => part.type === "tool" ? [part] : [])))
+    if (blocker) {
+      return connectionBlockedExecution({ blocker, answer: transcript.finalAssistantText, usage, events: transcriptEvents(transcript, usage) })
+    }
     return {
       ok: true,
       threadId: nativeThreadId,
@@ -703,9 +705,6 @@ export async function executeCloudAgent(input: CloudAgentExecutorInput): Promise
   } catch (error) {
     const cancelled = input.signal.aborted
     const timedOut = deadlineController.signal.aborted
-    // Once a native thread exists, any exception may have happened after the
-    // deterministic user turn was accepted (including an individual request
-    // timeout). Do not terminalize until the engine is observably idle.
     if (client && nativeThreadId) {
       const stopped = await abortAndObserve(client, nativeThreadId)
       if (!stopped) {
@@ -728,9 +727,6 @@ export async function executeCloudAgent(input: CloudAgentExecutorInput): Promise
       needsAttention: modelAccess,
       message: cancelled ? "The Automation run was cancelled."
         : timedOut ? "The Automation run exceeded its maximum runtime." : error instanceof Error ? error.message : "Cloud agent execution failed.",
-      // A thrown transport or executor error may happen after OpenCode accepted
-      // the stable user-message id. Never replay agent work automatically when
-      // we cannot prove that no side effects started.
       retryable: false,
     }
   } finally {

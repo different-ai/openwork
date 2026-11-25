@@ -1,6 +1,8 @@
 import type { SandboxProvider } from "@openwork/sandbox"
 import { computerSnapshotSlug } from "./image.js"
 
+const COMPUTER_RESOURCES = { cpu: 2, memoryGb: 4, diskGb: 8 }
+
 export type ComputerProviderConfig = {
   kind: "freestyle" | "daytona"
   apiKey: string
@@ -10,9 +12,7 @@ export type ComputerProviderConfig = {
   sandboxClass?: "container" | "linux-vm"
   desktop?: boolean
   keepDays?: number
-  /** Never auto-delete a conversation's computer; it stays paused with its memory until removed. */
   persistent?: boolean
-  /** Freestyle: the domain the desktop viewer is published under (default style.dev). */
   endpointDomain?: string
 }
 
@@ -24,7 +24,6 @@ export async function createComputerProvider(config: ComputerProviderConfig): Pr
     return createFreestyleProvider({
       apiKey: config.apiKey, snapshot: config.snapshot ?? computerSnapshotSlug(),
       firewall: { rules: [{ action: "allow", source: {}, destination: { public: true } }] },
-      // The viewer port is reached through Freestyle's TLS edge; tickets inside the guest still gate every connection.
       ...(config.desktop ? { endpointDomain: config.endpointDomain ?? "style.dev" } : {}),
     })
   }
@@ -33,7 +32,7 @@ export async function createComputerProvider(config: ComputerProviderConfig): Pr
   const { createDaytonaProvider } = await import("@openwork/sandbox-daytona")
   return createDaytonaProvider({
     apiKey: config.apiKey, apiUrl: config.apiUrl ?? "https://app.daytona.io/api", target: config.target,
-    snapshot: config.snapshot, image: "ubuntu:24.04", resources: { cpu: 2, memoryGb: 4, diskGb: 8 },
+    snapshot: config.snapshot, image: "ubuntu:24.04", resources: COMPUTER_RESOURCES,
     helperCreateTimeoutMs: 120_000, pollIntervalMs: 100, platform: { os: "linux", isolation: config.sandboxClass === "linux-vm" ? "microvm" : "container" },
     supportsPause: config.sandboxClass === "linux-vm",
     ...(config.sandboxClass === "linux-vm" && config.keepDays && !config.persistent ? { idleRetentionMinutes: config.keepDays * 1440 } : {}),

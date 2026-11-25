@@ -1,5 +1,7 @@
 # Workbot's Computer tab
 
+> **Generally available:** `browserUse` is retired; the enabled behavior is now standard. Permissions, organization settings and entitlements still apply. Any rollout, off-state or kill-switch instructions below describe the historical rollout; see [the retirement guide](../features/ga-rollout-retirement/README.md).
+
 Workbot's **Computer** tab appears after **Documents** when `workbot` and
 `remoteComputers` are enabled for the organization in `/admin`, together with at
 least one of its two views. It opens directly, without a consent screen. The
@@ -11,7 +13,7 @@ Each view is its own rollout (both on `cloud` and `self_hosted`, owned by
 
 | Flag | What Workbot gets | Off |
 |---|---|---|
-| `browserUse` (default off) | The **Browser** view and the `desktop` tool's browser operations. Teaching browser tasks (`browserDemonstrations`) and the page stream (`browserLiveView`) need it too. | No Browser view; the model is offered only the native desktop, and the runner refuses browser calls. |
+| `browserUse` (default off) | The **Browser** view and the `desktop` tool's browser operations. It includes the page stream; teaching browser tasks (`browserDemonstrations`) needs it too. | No Browser view; the model is offered only the native desktop, and the runner refuses browser calls. |
 | `computerUse` | The **Computer** view and the `desktop` tool's native-app operations (`computer_*`). | No Computer view; the model is offered only the browser, and the runner refuses native-app calls. |
 
 Workspaces that had Workbot's computer before the split keep the Computer view
@@ -27,10 +29,16 @@ the runner has a computer.
 
 The two views use one conversation computer:
 
-- **Browser** (`/browser`) streams the Chromium window, including its tabs and address bar.
+- **Browser** (`/browser`) streams the page itself with Workbot's tabs and
+  address bar. It is included in `browserUse`, without a separate live-view
+  gate. Computers whose image predates page streaming still fall back to
+  noVNC; remove that transport fallback when those images are unsupported.
+  Den and Workbot keep the `browserLiveView` response field derived from
+  browser access for older clients; remove it when those clients are unsupported.
 - **Computer** (`/computer`) streams the entire Linux desktop.
 - **Take control** interrupts Workbot's current turn, pauses both browser and
-  computer tools, and enables native mouse/keyboard input through noVNC.
+  computer tools, and enables input through the page stream (Browser) or
+  noVNC (Computer and older browser images).
 - **Return to Workbot** ends the manual connection and releases the tools.
 - **Pause** suspends the VM; reopening the tab leaves it paused until **Resume**.
   Memory, browser tabs and unsaved applications survive VM pause/resume.
@@ -80,6 +88,18 @@ The main Workbot conversation's existing `hc-…` computer owns both views. The
 viewer does not create a second computer or accept a sandbox/session id from the
 page. Agent browser and computer operations use the shared computer-use package,
 with the existing `bash` and `look` tools available on the same machine.
+
+## Devices
+
+With `remoteDevices` on, Workbot shows a **Devices** page (after Calendar): the
+person's desktops, Workbot's own computers and registered virtual computers,
+read from Den. Workbot's server tells Den what happens to each chat's computer
+from the computer route: a view was opened, it was paused, resumed, rebuilt or
+handed back, or it could not connect (the fixed `desktop_…` code, never error
+text). Reports are best-effort and never delay or fail the route. Customer
+organization admins read them in regular Den's Manage › Computers
+(`/dashboard/computers`). See
+[Devices](../features/remote-devices/README.md).
 
 ## Prepare the headless runner
 
@@ -135,17 +155,32 @@ Render service variables alone are not Worker bindings. Deploy with the existing
 runner workflow and wait for every node to adopt the bundle. Keep its compatibility
 and real-turn checks enabled.
 
-The headless computer build embeds the same guest identity in the image and
-runner bundle, so celld needs no local package asset files. The identity covers
-the files esbuild bundles into the guest, the versions of the packages it
-bundles, and the files the image installs (`scripts/desktop-identity.mjs`). The
-rest of the lockfile, Mac-only code and tests do not change it. The root-owned
-bridge is already installed in the snapshot; it rejects incompatible runners.
-The runner then logs the bridge's reason and Workbot tells the person their
-computer needs an update (`desktop_outdated`) instead of asking them to
-reconnect. Existing computers and their files are not replaced automatically:
-after a snapshot upgrade, each person can use **Rebuild computer**, which erases
-that computer's disk, so tell people to keep anything they need in Files first.
+A computer has two identities (`scripts/desktop-identity.mjs`). The image's
+covers the files the image installs, including the root-owned bridge; it names
+the snapshot. The guest's covers the files esbuild bundles into the guest and
+the versions of the packages it bundles. The rest of the lockfile, Mac-only code
+and tests change neither. The headless computer build embeds both, and the
+compressed guest, in the runner bundle, so celld needs no local package asset
+files.
+
+New runner builds reach existing computers without erasing them:
+
+- **Same image, new guest** (most changes): the runner hands the bridge its
+  guest, which the bridge checks against the image and its checksum, then
+  restarts the guest. The browser, its tabs and the disk stay as they were.
+- **Older image that speaks the same protocol** (`DESKTOP_PROTOCOL`): the runner
+  keeps using the computer's own desktop and replaces the computer the next
+  time it is idle.
+- **Older image it can't drive**: the runner replaces the computer as soon as
+  no other command or background job is running on it. Until then the person
+  sees "Updating your computer" and the model is told to try again shortly
+  (`desktop_updating`).
+
+A replacement comes from the current snapshot and carries the browser profile
+(signed-in sites, without caches) and `/workspace` over, each up to 100 MB; the
+person's Files are copied in again on next use. Computers from before this
+existed carry only `/workspace`. An idle replacement happens only when both
+carry over. **Rebuild computer** still starts clean, carrying nothing.
 
 ### Freestyle instead of Daytona
 
@@ -170,11 +205,22 @@ HEADLESS_COMPUTER_DOMAIN=computers.example.com
 ```
 
 The production deploy (`celld-runner-deploy.yml`) builds the snapshot itself
-when the configured slug was built for a different guest, for example after a
-dependency bump changes a package the guest bundles. It uses the runner's
-`FREESTYLE_API_KEY`, names the snapshot after the new guest, and bundles the
-runner with that slug. A later run with the same guest finds the snapshot
-already built. If the build fails, the deploy stops before the fleet changes.
+when the configured slug was built for a different image. It uses the runner's
+`FREESTYLE_API_KEY`, names the snapshot after the new image, and bundles the
+runner with that slug. A later run with the same image finds the snapshot already
+built. If the build fails, the deploy stops before the fleet changes. Building a
+snapshot also gives the earlier `workbot-desktop-freestyle-…` snapshots a 14-day
+deletion window: Freestyle deletes one once no computer has been created from it
+for 14 days, so a recent one stays available to roll back to.
+
+A guest-only change needs no new image. The deploy layers the runner's guest onto
+the image's snapshot (`snapshot:build:freestyle-guest`), which takes seconds, and
+bundles the runner with `workbot-desktop-freestyle-<image>-<guest>`, so a new
+computer skips installing the guest on first open. Each new layer gives the
+earlier layers the same 14-day window, and the image's snapshot stays. If the
+layer fails, the deploy carries on with the image's snapshot and the runner
+installs its guest, as it does into every computer that already exists.
+
 The plain `HEADLESS_COMPUTER_SNAPSHOT` variable in the `celld-production`
 GitHub environment overrides the same field in `CELLD_RUNNER_VARS`; set it to a
 slug not named by the builder to choose a snapshot by hand, which the deploy
@@ -186,8 +232,8 @@ single-use, origin-bound viewer tickets still gate every connection. Freestyle
 pauses a computer with its memory after the runner's idle period, and resumes it
 for the next turn. The builder installs the desktop on Freestyle's Ubuntu base,
 with Chromium for Testing in place of Debian's package and patched Node 24.x
-(24.22.1 or newer). Rebuild the snapshot and existing computers to adopt the
-updated runtime; changing runner configuration does not patch an existing VM.
+(24.22.1 or newer). A runtime change is an image change: deploying it builds a
+new snapshot, and existing computers move to it as described above.
 
 ## Transport and rollout
 

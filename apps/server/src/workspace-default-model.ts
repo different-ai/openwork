@@ -3,11 +3,6 @@ import { z } from "zod";
 import type { ServerConfig } from "./types.js";
 import { createWorkspaceKvStore } from "./workspace-kv-store.js";
 
-/**
- * The model a new chat in a workspace would use. The renderer owns the choice
- * and mirrors it here so background callers (automations, remote sessions,
- * cloud workers) can start sessions on the same model.
- */
 const modelPart = z.string().trim().min(1).max(200);
 
 export const workspaceDefaultModelSchema = z.object({

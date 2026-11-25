@@ -26,7 +26,6 @@ export function workspaceFileGuidance(directory: string): string {
   return `The opened workspace directory is ${JSON.stringify(promptWorkspacePath(directory))}. For files requested in this workspace, prefer plain relative names such as report.html; native file tools save them inside this directory. Do not invent /workspace or a drive-root location. On Windows, drive-less rooted file paths such as /report.html or \\report.html are interpreted relative to this workspace, with the actual destination reported. Explicit full drive paths and UNC paths retain external-folder permissions. Do not bypass a denied path using another tool.`;
 }
 
-/** Only drive-less rooted syntax changes. Fully qualified and shell-drive forms keep native semantics. */
 export function workspaceRootedPath(input: string, directory: string): string | undefined {
   if (!/^[\\/]/.test(input)) return undefined;
   if (/^[\\/]{2}[^\\/]+[\\/][^\\/]+/.test(input) || /^[\\/]{2}[?.][\\/]/.test(input)) return undefined;
@@ -62,7 +61,6 @@ export async function planWorkspacePaths(tool: string, args: unknown, directory:
   const path = async (requested: string) => {
     const resolved = workspaceRootedPath(requested, directory);
     if (!resolved) return requested;
-    // Explicit folder grants continue to use the engine's original destination/permission flow.
     const original = tool === "apply_patch" ? win32.resolve(directory, requested) : win32.resolve(options.cwd ?? process.cwd(), requested);
     if (await options.externalAllowed?.(original)) return requested;
     if (!resolutions.some(entry => entry.requested === requested && entry.resolved === resolved)) resolutions.push({ requested, resolved });
@@ -75,7 +73,6 @@ export async function planWorkspacePaths(tool: string, args: unknown, directory:
   if (tool !== "apply_patch" || typeof args.patchText !== "string") return undefined;
   const lines = args.patchText.split("\n");
   for (let index = 0; index < lines.length; index++) {
-    // Match the pinned v1 parser's source/move headers, not added/context lines.
     const match = /^(\*\*\* (?:Add File|Update File|Delete File|Move to):[ \t]*)([^\r]*)(\r?)$/.exec(lines[index]);
     if (match) lines[index] = match[1] + await path(match[2].trim()) + match[3];
   }
@@ -88,7 +85,6 @@ export function workspaceFileHooks(context?: Context, options: { platform?: stri
     "tool.definition": async (input: { toolID: string }, output: { description: string; jsonSchema?: unknown }) => {
       if (!context?.directory || !nativeMutations.has(input.toolID)) return;
       output.description += `\n\n${workspaceFileGuidance(context.directory)}`;
-      // Pinned v1 file schemas; runtime validation remains the engine's original schema.
       const filePath = { type: "string", description: "Path to the file. Prefer a plain workspace-relative name such as report.html; relative paths are saved in the opened workspace. Explicit full external paths retain folder permissions." };
       if (input.toolID === "write") output.jsonSchema = { type: "object", properties: { content: { type: "string", description: "The content to write" }, filePath }, required: ["content", "filePath"] };
       if (input.toolID === "edit") output.jsonSchema = { type: "object", properties: { filePath, oldString: { type: "string", description: "The exact text to replace" }, newString: { type: "string", description: "The replacement text" }, replaceAll: { type: "boolean", description: "Replace every matching occurrence" } }, required: ["filePath", "oldString", "newString"] };
@@ -105,7 +101,6 @@ export function workspaceFileHooks(context?: Context, options: { platform?: stri
           if (!response.data || response.error) throw new Error("Could not check external-folder grants; no workspace path was changed. Retry the operation.");
           const rules = rulesFromPermissionConfig(response.data.permission);
           const grant = winningRule(rules, "external_directory", win32.join(win32.dirname(original), "*"));
-          // A blanket run-mode allow is not an explicit destination choice.
           return grant?.permission === "external_directory" && grant.action === "allow" && grant.pattern !== "*";
         },
       });

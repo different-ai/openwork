@@ -18,7 +18,6 @@ export function draftFromPluginGrants(grants: readonly PluginAccessGrant[] | und
   };
 }
 
-/** Moves a plugin's grants to the draft: grants what is new, revokes what was removed. */
 export function useSavePluginAccess() {
   const queryClient = useQueryClient();
   const grant = useGrantPluginAccess();
@@ -28,7 +27,6 @@ export function useSavePluginAccess() {
     pluginId: string;
     grants: readonly PluginAccessGrant[];
     next: AccessDraft;
-    /** The owner's own grant is never removed from here. */
     ownerId: string | null;
   }) => {
     const { pluginId, next, ownerId } = input;

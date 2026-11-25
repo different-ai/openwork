@@ -39,7 +39,6 @@
     "packaging/docker/workspace/**",
     ".opencode/node_modules/**",
     ".opencode/openwork/**",
-    ".warden/**",
     "infra/**/.terraform/**"
   ],
   "ignoreDependencies": [

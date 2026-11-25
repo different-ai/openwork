@@ -1,8 +1,4 @@
-// Shared by the host and bundled engine plugins. Keep this outside
-// opencode-plugins: installed desktops relocate that directory out of the server.
 export function automationRuntimeKnowledge(runtimeProvider = process.env.DEN_RUNTIME_PROVIDER) {
-  // The Automation catalog section owns "read live before reporting"; these
-  // lines own capability roles, mutation gating, and schedule shape.
   const shared = [
     "OpenWork has first-class Automations. Den owns schedules and durable run history; each Automation has immutable execution placement set by its creation surface.",
     "Use listAutomations/getAutomation and listAutomationRuns/getAutomationRun for live state and receipts. Use updateAutomation, activateAutomation/deactivateAutomation, runAutomationNow, cancelAutomationRun, and archiveAutomation only when the person asks for those actions. Deactivation stops future runs but does not cancel a run already in progress.",
@@ -19,7 +15,7 @@ export function automationRuntimeKnowledge(runtimeProvider = process.env.DEN_RUN
   }
   return [
     ...shared,
-    "This chat is running in OpenWork Desktop. For new recurring work, use openwork_execute id automation.propose so the person can review and create it in the app. Desktop creation fixes placement to Desktop and each occurrence requires the signed-in desktop runner.",
-    "Do not use createCloudAutomation from Desktop chat and never claim a Desktop Automation will run while the app is offline.",
+    "This chat is running in OpenWork Desktop. For new recurring work, use openwork_execute id automation.propose so the person can review and create it in the app. The card lets them choose where it runs when both are available: Desktop (each occurrence requires the signed-in desktop runner) or Cloud (headless in OpenWork Cloud, runs while this computer is off).",
+    "When the person asks for Cloud, or for work that must run while their computer is off, pass executionTarget \"cloud\" in the proposal; calendar schedules always need Cloud. Do not tell them Desktop chat can only make Desktop Automations. Still propose rather than calling createCloudAutomation directly from Desktop chat, and never claim a Desktop Automation will run while the app is offline.",
   ].map((line) => `- ${line}`).join("\n");
 }

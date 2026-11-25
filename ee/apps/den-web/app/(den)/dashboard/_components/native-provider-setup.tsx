@@ -4,7 +4,7 @@ import { useRouter } from "next/navigation";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { DenButton } from "../../_components/ui/button";
 import { DenInput } from "../../_components/ui/input";
-import { getAddConnectorRoute, getMcpConnectionRoute, getMcpConnectionsRoute } from "../../_lib/den-org";
+import { getAddConnectorRoute, getLibraryMyAgentRoute, getMcpConnectionRoute, getMcpConnectionsRoute } from "../../_lib/den-org";
 import { useOrgDashboard } from "../_providers/org-dashboard-provider";
 import { GOOGLE_WORKSPACE_QUICK_ADD_ID, MICROSOFT_365_QUICK_ADD_ID, type NativeProviderKey } from "./connector-catalog";
 import { useDenToast } from "./den-toast";
@@ -70,7 +70,6 @@ function permissionGroupName(feature: string) {
   return GOOGLE_WORKSPACE_PERMISSION_GROUPS.find((group) => group.permissions.some((permission) => permission.key === feature))?.name;
 }
 
-/** Each permission calls a Google API that must be turned on in the OAuth client's Cloud project. */
 function GoogleApiStatus({ providerId, unsaved }: { providerId: string; unsaved: boolean }) {
   const check = useGoogleApiCheck(providerId);
   const off = check.data?.apis.filter((api) => api.status === "disabled").length ?? 0;
@@ -110,11 +109,6 @@ function GoogleApiStatus({ providerId, unsaved }: { providerId: string; unsaved:
   );
 }
 
-/**
- * The org OAuth app and permissions for Google Workspace or Microsoft 365.
- * `create` adds a new Google Workspace connection; otherwise it saves the
- * client for `clientProviderId` (a connection id or the provider alias).
- */
 export function NativeProviderSettings({ providerKey, clientProviderId, create, onSaved, footer }: {
   providerKey: NativeProviderKey;
   clientProviderId: string;
@@ -292,16 +286,18 @@ export function NativeProviderSettings({ providerKey, clientProviderId, create, 
   );
 }
 
-/** Add Google Workspace or Microsoft 365 as a full page: one OAuth app, then each person signs in. */
-export function NativeProviderSetupScreen({ providerKey }: { providerKey: NativeProviderKey }) {
+export function NativeProviderSetupScreen({ providerKey, returnToAgent = false }: { providerKey: NativeProviderKey; returnToAgent?: boolean }) {
   const router = useRouter();
   const toast = useDenToast();
   const { orgSlug } = useOrgDashboard();
   const provider = PROVIDERS[providerKey];
+  const back = returnToAgent
+    ? { href: getLibraryMyAgentRoute(orgSlug), label: "My bot" }
+    : { href: getAddConnectorRoute(orgSlug), label: "Add a connector" };
   return (
     <ItemPage testId="connector-setup">
       <ItemHeader
-        back={{ href: getAddConnectorRoute(orgSlug), label: "Add a connector" }}
+        back={back}
         logo={<ConnectorLogo name={provider.name} url={provider.url} size="md" />}
         title={`Add ${provider.name}`}
       />
@@ -311,11 +307,11 @@ export function NativeProviderSetupScreen({ providerKey }: { providerKey: Native
         create
         onSaved={(connectionId, name) => {
           toast({ title: `${name} is ready`, description: "Each person signs in with their own account." });
-          router.push(getMcpConnectionRoute(orgSlug, connectionId));
+          router.push(returnToAgent ? getLibraryMyAgentRoute(orgSlug) : getMcpConnectionRoute(orgSlug, connectionId));
         }}
         footer={({ save, saving, disabled, label }) => (
           <StepFooter note="Each person signs in with their own account">
-            <DenButton variant="secondary" disabled={saving} onClick={() => router.push(getMcpConnectionsRoute(orgSlug))}>Cancel</DenButton>
+            <DenButton variant="secondary" disabled={saving} onClick={() => router.push(returnToAgent ? getLibraryMyAgentRoute(orgSlug) : getMcpConnectionsRoute(orgSlug))}>Cancel</DenButton>
             <DenButton loading={saving} disabled={disabled} onClick={save} data-testid="native-provider-save">{label}</DenButton>
           </StepFooter>
         )}

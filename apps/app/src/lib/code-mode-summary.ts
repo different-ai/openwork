@@ -1,23 +1,28 @@
 import type { DynamicToolUIPart } from "ai";
-import { getCapabilityCallSentence } from "./capability-call";
+import { getCapabilityCallSentence, type CapabilityCallSentence } from "./capability-call";
+import { codeModeScriptError } from "./code-mode-tools";
 
-/** A summary of the work, not a mirror of whichever child happened to run last. */
 export function codeModeSummary(
   calls: DynamicToolUIPart[],
   options: {
     running: boolean;
     failed: boolean;
     serviceName: (call: DynamicToolUIPart) => string | null;
+    sentence?: (call: DynamicToolUIPart) => CapabilityCallSentence | null;
+    isBlocked?: (call: DynamicToolUIPart) => boolean;
   },
 ): string {
+  const sentenceOf = (call: DynamicToolUIPart, includeQuery = false) =>
+    options.sentence?.(call) ?? getCapabilityCallSentence(call, { connectionName: options.serviceName(call), includeQuery });
+  const blocked = calls.filter((call) => call.state === "output-error" && options.isBlocked?.(call) === true);
+  if (blocked.length > 0 && blocked.length === calls.filter((call) => call.state === "output-error").length) {
+    return blocked.length === 1 ? "Sharing is blocked by your organization" : `${blocked.length} actions are blocked by your organization`;
+  }
   const failedCalls = calls.filter((call) => call.state === "output-error");
-  // A finished script whose every call failed did not "look up" anything,
-  // even when the engine reports the script itself as completed.
   const allFailed = !options.running && calls.length > 0 && failedCalls.length === calls.length;
   if (options.failed || allFailed) {
-    // Name what failed when one call did ("Script on OpenWork Cloud failed").
     const only = failedCalls.length === 1 ? failedCalls[0] : undefined;
-    const failure = only ? getCapabilityCallSentence(only, { connectionName: options.serviceName(only), includeQuery: false }).failure : undefined;
+    const failure = only ? sentenceOf(only).failure : undefined;
     return failure ?? "Script failed";
   }
   if (calls.length === 0) return options.running ? "Running a script" : "Ran a script";
@@ -31,10 +36,8 @@ export function codeModeSummary(
   });
   if (changes.length === 1) {
     const call = changes[0]!;
-    const sentence = getCapabilityCallSentence(call, { connectionName: options.serviceName(call), includeQuery: false });
+    const sentence = sentenceOf(call);
     const label = options.running && (call.state === "input-available" || call.state === "input-streaming") ? sentence.present : sentence.past;
-    // A successful write is more informative than a later read. Don't report
-    // success for a write the engine says failed.
     if (call.state !== "output-error") {
       const service = options.serviceName(call);
       const input = typeof call.input === "object" && call.input !== null ? call.input : null;
@@ -65,9 +68,34 @@ export function codeModeSummary(
     const verb = options.running ? "Changing" : changes.every(call => call.state === "output-error") ? "Tried to change" : "Changed";
     return `${verb} ${names || "connected services"}`;
   }
-  // A group of searches says so ("Searched Exa"), not a vague "Looked up".
   const allSearches = calls.length > 0 && calls.every((call) =>
     getCapabilityCallSentence(call, { includeQuery: false }).past.startsWith("Searched "));
   if (allSearches && names) return `${options.running ? "Searching" : "Searched"} ${names}`;
   return `${options.running ? "Looking up" : "Looked up"} ${names || "information"}`;
+}
+
+export function shortFailureReason(part: DynamicToolUIPart): string | null {
+  return shortFailureText(codeModeScriptError(part) ?? (part.state === "output-error" ? part.errorText : null));
+}
+
+const DROPPED_CONNECTION = /\bECONNRESET\b|socket connection was closed unexpectedly|\bsocket hang up\b/i;
+
+export const DROPPED_CONNECTION_REASON = "The connection dropped. Trying again usually works.";
+
+export function isDroppedConnection(errorText: string): boolean {
+  return DROPPED_CONNECTION.test(errorText);
+}
+
+export function shortFailureText(text: string | null | undefined): string | null {
+  if (!text) return null;
+  if (isDroppedConnection(text)) return DROPPED_CONNECTION_REASON;
+  const first = text.replace(/\s+/g, " ").trim().split(/(?<=[.!?])\s/)[0] ?? "";
+  return first.length > 90 ? `${first.slice(0, 89)}…` : first || null;
+}
+
+export function codeModeFailureReason(part: DynamicToolUIPart, failedCalls: DynamicToolUIPart[], running: boolean): string | null {
+  if (running) return null;
+  const own = part.state === "output-error" ? shortFailureReason(part) : null;
+  if (own) return own;
+  return failedCalls.length === 1 && failedCalls[0] ? shortFailureReason(failedCalls[0]) : null;
 }

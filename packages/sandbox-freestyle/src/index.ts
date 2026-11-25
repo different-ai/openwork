@@ -5,18 +5,10 @@ import { SandboxError, shellQuote, type SandboxProvider, type SandboxHandle, typ
 export type FreestyleProviderOptions = {
   apiKey?: string
   snapshot: string
-  /** Provider-native creation settings for preview jobs; identity and ownership stay in SandboxSpec. */
   createOptions?: Pick<CreateVmOptions, "displayName" | "ttlSeconds" | "tls" | "placement">
   linuxUser?: string
-  /** Required: Freestyle never grants network access implicitly. */
   firewall: NonNullable<Parameters<Freestyle["vms"]["create"]>[0]["firewall"]>
-  /** Provider-specific endpoint composition (TLS/domains), not assumed by compute. */
   endpoint?: SandboxProvider["endpoint"]
-  /**
-   * Publishes each spec's `exposePorts` over HTTPS at an unguessable host under this
-   * domain: any unused `style.dev` subdomain works without DNS, or a domain verified
-   * on the Freestyle account. Hosts are fixed at create and stored in VM metadata.
-   */
   endpointDomain?: string
 }
 const ENDPOINT_LABEL = "openwork-endpoint"
@@ -35,7 +27,6 @@ export function createFreestyleProvider(options: FreestyleProviderOptions, deps:
   const api = deps.client ?? (options.apiKey ? new Freestyle({ apiKey: options.apiKey }) : (() => { throw new Error("Freestyle requires apiKey or an injected client") })())
   const now = deps.now ?? Date.now
   const id = "freestyle"
-  /** A VM's public hosts never change, so each is read from its metadata once per process. */
   const published = new Map<string, { label: string; ports: string[] }>()
   const unsupported = (feature: string): never => { throw new SandboxError({ providerId: id, code: "invalid_state", retryable: false, message: `Freestyle adapter does not provide ${feature}` }) }
   const identity = (ref: SandboxRef) => {
@@ -43,7 +34,7 @@ export function createFreestyleProvider(options: FreestyleProviderOptions, deps:
     return ref.ref.vmId
   }
   function state(value: VmData["state"]): SandboxState {
-    if (value === "paused") return "stopped" // start resumes memory; pause block distinguishes it from a cold stop
+    if (value === "paused") return "stopped"
     if (value === "pausing") return "stopping"
     return value
   }
@@ -81,7 +72,6 @@ export function createFreestyleProvider(options: FreestyleProviderOptions, deps:
       if (Object.keys(spec.env).length) unsupported("create-time env; use run.env")
       if (spec.exposePorts.length && !options.endpointDomain) unsupported("exposed ports without an endpoint domain")
       if (spec.exposePorts.some(port => !Number.isInteger(port) || port < 1 || port > 65_535)) unsupported("ports outside 1-65535")
-      // One random label per VM: the public host names nothing about the conversation or person.
       const label = spec.exposePorts.length ? randomBytes(12).toString("hex") : null
       const published = label ? spec.exposePorts.map(port => ({ action: "allow" as const, domain: `${label}-${port}.${options.endpointDomain}`, source: { public: true as const }, destination: { port } })) : []
       const tls = [...(options.createOptions?.tls?.rules ?? []), ...published]

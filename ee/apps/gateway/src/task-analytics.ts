@@ -17,8 +17,6 @@ function identifier(value: string | null, fallback: string) {
   return value && /^[a-zA-Z0-9_.:-]{1,128}$/.test(value) ? value : fallback
 }
 
-// Bounded, incremental inspection. Bytes are forwarded unchanged; text, tool
-// arguments and content are never retained in the analytics record.
 export function observeModelResponse(input: {
   id: string; sessionId: string; taskId: string; startedAt: number; model: string | null; streaming: boolean
 }, save: (event: ModelsAnalyticsEvent) => Promise<void>): AnalyticsObserver {
@@ -46,7 +44,7 @@ export function observeModelResponse(input: {
         cacheReadTokens: number(cache.cached_tokens), cacheWriteTokens: number(cache.cache_write_tokens), costUsd: number(usage.cost),
         usageComplete: number(usage.prompt_tokens) !== undefined && number(usage.completion_tokens) !== undefined && number(usage.cost) !== undefined,
       }
-    } catch { /* A malformed accounting frame never changes the response. */ }
+    } catch {}
   }
   return {
     chunk(bytes) {

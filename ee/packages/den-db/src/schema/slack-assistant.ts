@@ -1,8 +1,6 @@
 import { boolean, index, int, mysqlEnum, mysqlTable, timestamp, uniqueIndex, varchar } from "drizzle-orm/mysql-core"
 import { compatJsonColumn, denTypeIdColumn, encryptedMediumTextColumn, encryptedTextColumn } from "../columns"
 
-// One app per connector; teamId is globally unique so a Slack workspace cannot
-// accidentally route into two OpenWork organizations.
 export const SlackAssistantInstallationTable = mysqlTable(
   "slack_assistant_installation",
   {
@@ -17,9 +15,7 @@ export const SlackAssistantInstallationTable = mysqlTable(
     channelIds: compatJsonColumn<string[]>("channel_ids"),
     shadowMode: boolean("shadow_mode").notNull().default(false),
     dailyLimit: int("daily_limit").notNull().default(100),
-    /** Gateway model alias the headless runner uses for this workspace; null means the runner default. */
     model: varchar("model", { length: 255 }),
-    /** Show steps and notes in Slack while a task works; off shows only Slack's working status, then the answer. */
     progressUpdates: boolean("progress_updates").notNull().default(false),
     createdAt: timestamp("created_at", { fsp: 3 }).notNull().defaultNow(),
   },
@@ -66,7 +62,6 @@ export const SlackAssistantEventTable = mysqlTable(
     slackUserId: varchar("slack_user_id", { length: 64 }).notNull(),
     channelId: varchar("channel_id", { length: 64 }).notNull(),
     threadTs: varchar("thread_ts", { length: 64 }).notNull(),
-    // Text, context, and output never appear in queue metadata or logs.
     payload: encryptedMediumTextColumn("payload").notNull(),
     checkpoint: encryptedMediumTextColumn("checkpoint"),
     status: varchar("status", { length: 24 }).notNull().default("pending"),
@@ -123,7 +118,6 @@ export const SlackAssistantDesktopHandoffTable = mysqlTable(
     commandId: denTypeIdColumn("remoteSessionCommand", "command_id").primaryKey(),
     connectionId: denTypeIdColumn("externalMcpConnection", "connection_id").notNull(),
     organizationId: denTypeIdColumn("organization", "organization_id").notNull(),
-    /** The member whose desktop runs the work; the command is read as them. */
     userId: denTypeIdColumn("user", "user_id").notNull(),
     eventId: varchar("event_id", { length: 64 }).notNull(),
     teamId: varchar("team_id", { length: 64 }).notNull(),
@@ -131,7 +125,6 @@ export const SlackAssistantDesktopHandoffTable = mysqlTable(
     threadTs: varchar("thread_ts", { length: 64 }).notNull(),
     recipientUserId: varchar("recipient_user_id", { length: 64 }).notNull(),
     postedOutcome: mysqlEnum("posted_outcome", ["finished", "failed", "expired", "undeliverable", "abandoned"]),
-    /** The current waiting episode was already announced; cleared when the session moves on. */
     waitingPosted: boolean("waiting_posted").notNull().default(false),
     attempts: int("attempts").notNull().default(0),
     availableAt: timestamp("available_at", { fsp: 3 }).notNull().defaultNow(),

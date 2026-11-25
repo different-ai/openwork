@@ -3,6 +3,14 @@ export const SESSION_TITLE_SPEED_PX_PER_SECOND = 32;
 
 export type SessionTitleIntent = "hover" | "focus" | null;
 
+export function isKeyboardFocus(element: { matches: (selector: string) => boolean }) {
+  try {
+    return element.matches(":focus-visible");
+  } catch {
+    return true;
+  }
+}
+
 export type SessionTitleMarqueeState = {
   durationMs: number;
   moving: boolean;

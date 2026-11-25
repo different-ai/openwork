@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import { test } from "node:test"
 import { loadProviderCatalogFromFile } from "../src/provider-catalog.js"
-import { isAllowedRequestHeader } from "../src/protocols.js"
+import { isAllowedRequestHeader } from "@openwork-ee/gateway-upstreams"
 
 const catalog = loadProviderCatalogFromFile()
 

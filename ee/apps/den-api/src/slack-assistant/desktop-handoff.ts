@@ -21,29 +21,17 @@ import { SlackApiError, slackClient, type SlackCall } from "./protocol.js"
 import { getInstallation, resolveSlackActor } from "./repository.js"
 import { checkpointSchema } from "./run.js"
 
-/**
- * Work a Slack run hands to the member's desktop reports back to the thread
- * that asked for it. The link is server-side only: Den records which Slack
- * run each headless-run MCP token was minted for, and `remote-session:create`
- * with target "desktop" made with that token copies the thread onto the
- * command. Nothing the model sends chooses the thread.
- */
-
 export type HandoffRow = typeof Handoff.$inferSelect
 type Outcome = NonNullable<HandoffRow["postedOutcome"]>
 
 const LEASE_MS = 60_000
 const POLL_MS = 5_000
 const MAX_POST_ATTEMPTS = 10
-/** Desktops that never report (older builds) stop being watched with the Slack run data's retention. */
 export const HANDOFF_MAX_AGE_MS = 7 * 86_400_000
-/** A claimed command whose delivery never completed counts as expired after this grace. */
 const CLAIMED_GRACE_MS = 5 * 60_000
 const PERMANENT_SLACK_ERRORS = ["invalid_auth", "token_revoked", "account_inactive", "channel_not_found", "is_archived", "not_in_channel", "missing_scope"]
 
 function eventIdFromMessageId(messageId: string | undefined) {
-  // The Slack worker sends each run's turn as `msg_<event id>`; background tasks it starts (resumed with a fresh
-  // token) are `msg_<event id>.t<n>`, and their reports `.t<n>.r`. All belong to the thread that asked.
   const match = /^msg_([a-f0-9]{64})(?:\.t\d{1,3}(?:\.r)?)?$/.exec(messageId ?? "")
   return match?.[1] ?? null
 }
@@ -56,7 +44,6 @@ function tokenIdOrNull(value: string) {
   }
 }
 
-/** Remembers which Slack run a freshly minted headless-run token belongs to. */
 export async function recordSlackRunToken(input: { tokenId: string; expiresAt: Date; userId: string; messageId?: string }) {
   const eventId = eventIdFromMessageId(input.messageId)
   const tokenId = tokenIdOrNull(input.tokenId)
@@ -74,11 +61,6 @@ export async function recordSlackRunToken(input: { tokenId: string; expiresAt: D
   return true
 }
 
-/**
- * Links a queued desktop command to the Slack thread whose run created it.
- * Returns false (and links nothing) unless the token is a live headless-run
- * token of this member and organization that Den minted for a Slack run.
- */
 export async function linkDesktopCommandToSlack(input: {
   commandId: string
   organizationId: DenTypeId<"organization">
@@ -89,7 +71,7 @@ export async function linkDesktopCommandToSlack(input: {
   if (!tokenId) return false
   const userId = normalizeDenTypeId("user", input.userId)
   const now = new Date()
-  const [link] = await db
+  const [link] = await db.$primary
     .select({ eventId: RunToken.eventId, connectionId: RunToken.connectionId })
     .from(RunToken)
     .innerJoin(OAuthAccessTokenTable, eq(OAuthAccessTokenTable.id, RunToken.tokenId))
@@ -114,7 +96,6 @@ export async function linkDesktopCommandToSlack(input: {
     .where(and(eq(Event.id, link.eventId), eq(Event.connectionId, link.connectionId)))
     .limit(1)
   if (!event) return false
-  // The run's reply may live in a DM (private replies); post where the answer went.
   const output = checkpointSchema.safeParse(event.checkpoint ? JSON.parse(event.checkpoint) : {})
   const cp = output.success ? output.data : null
   await db.insert(Handoff).values({
@@ -139,7 +120,6 @@ export type HandoffStep =
   | { action: "reset_waiting" }
   | { action: "post"; notice: DesktopHandoffNotice; outcome: Outcome | null }
 
-/** What the thread should hear now, given the command's latest state. */
 export function nextHandoffStep(
   command: RemoteSessionCommand | null,
   handoff: Pick<HandoffRow, "waitingPosted" | "createdAt">,
@@ -199,7 +179,6 @@ function owned(handoff: HandoffRow) {
   )
 }
 
-/** Releases the lease with the given changes; false when another instance took over. */
 async function settle(
   handoff: HandoffRow,
   changes: Partial<Pick<HandoffRow, "postedOutcome" | "waitingPosted" | "attempts">>,
@@ -213,7 +192,6 @@ async function settle(
   return automationUpdateChangedRows(result)
 }
 
-/** Extends the lease right before posting so no other instance can post the same outcome meanwhile. */
 async function holdLease(handoff: HandoffRow, now: number) {
   const result = await db
     .update(Handoff)
@@ -245,8 +223,6 @@ async function processHandoff(handoff: HandoffRow, deps: HandoffSweepDeps) {
   if (step.action === "close") return settle(handoff, { postedOutcome: step.outcome }, 0, deps.now())
   if (step.action === "reset_waiting") return settle(handoff, { waitingPosted: false }, POLL_MS, deps.now())
 
-  // Proactive posts follow the same gates as a reply: the assistant is still on for this workspace and
-  // organization, the member is still connected and allowed, and it is still the member who handed it off.
   const installation = await getInstallation(handoff.connectionId)
   const actor = installation?.botToken ? await resolveSlackActor(installation, handoff.recipientUserId) : null
   if (!installation?.botToken || !actor || actor.userId !== handoff.userId)
@@ -257,7 +233,7 @@ async function processHandoff(handoff: HandoffRow, deps: HandoffSweepDeps) {
     await deps.slack(installation.botToken)("chat.postMessage", {
       channel: handoff.channelId,
       thread_ts: handoff.threadTs,
-      text: desktopHandoffMessage(handoff.recipientUserId, step.notice),
+      ...desktopHandoffMessage(handoff.recipientUserId, step.notice),
       unfurl_links: false,
       unfurl_media: false,
     })
@@ -278,7 +254,6 @@ async function processHandoff(handoff: HandoffRow, deps: HandoffSweepDeps) {
   )
 }
 
-/** One sweep: claims due handoffs and posts what their threads should hear. Returns how many were claimed. */
 export async function sweepSlackDesktopHandoffs(deps: HandoffSweepDeps = defaultSweepDeps, limit = 20) {
   const handoffs = await claimHandoffs(limit, new Date(deps.now()))
   for (const handoff of handoffs) {

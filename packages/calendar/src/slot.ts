@@ -12,11 +12,9 @@ import { addDays, localDateOf, weekdayOf, zonedParts, zonedTimeToInstant, type L
 export type SlotRepeat = "once" | "weekly" | "weekdays" | "daily"
 
 export type CalendarSlot = {
-  /** The local day the slot is on, in the display time zone. */
   date: LocalDate
   hour: number
   minute: number
-  /** The slot's start instant. */
   at: number
   timeZone: string
 }
@@ -72,7 +70,6 @@ export function automationNameFrom(instructions: string): string {
   return capped.charAt(0).toUpperCase() + capped.slice(1)
 }
 
-// Plain scans rather than regular expressions: the request is free text of any length.
 function firstSentence(text: string): string {
   for (let index = 0; index < text.length; index += 1) {
     const char = text[index]
@@ -88,7 +85,6 @@ function trimEnd(text: string, drop: (char: string) => boolean): string {
   return text.slice(0, end)
 }
 
-/** Drops a partial last word, unless the text is one word. */
 function cutOnWord(text: string): string {
   const space = text.lastIndexOf(" ")
   return space > 0 ? text.slice(0, space).trimEnd() : text

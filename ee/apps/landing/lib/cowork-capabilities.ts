@@ -1,18 +1,5 @@
 import type { CompareSource } from "./compare";
 
-/**
- * Grouped capability matrix shared by /alternatives/claude-cowork and
- * /alternatives/claude-cowork-3p (page, agent markdown, and tests).
- *
- * Rules for every cell:
- * - `value` is what ships today. Roadmap items are never "yes".
- * - `planned: true` marks an OpenWork gap that is on the public roadmap
- *   (Building, Next, or Preview in packages/docs/roadmap.mdx).
- * - `note` explains any Partial, or a Yes/No a reader could dispute.
- * - `source` is the evidence: an Anthropic docs URL, or an OpenWork path
- *   on this site (`/docs/...` pages are built from packages/docs/*.mdx).
- */
-
 export const capabilitiesCheckedAt = "2026-10-27";
 
 export type Support = "yes" | "partial" | "no";
@@ -274,7 +261,6 @@ export const capabilityGroups: CapabilityGroup[] = [
   }
 ];
 
-/** Seat price shown under the totals; not a Yes/No capability. */
 export const seatPrice: Record<ProductKey, string> = {
   enterprise: "$20 + usage",
   thirdParty: "No seat fee",
@@ -320,7 +306,6 @@ export function capabilitySubtitle(rows: CapabilityRow[] = capabilityRows): stri
   return `${rows.length} capabilities, checked against each vendor's own docs. Yes, Partial, or No for what ships today.`;
 }
 
-/** Footnote numbers for cells with a note, in reading order. */
 export function capabilityFootnotes(rows: CapabilityRow[] = capabilityRows): { id: string; number: number; note: string; source: string }[] {
   const notes: { id: string; number: number; note: string; source: string }[] = [];
   for (const row of rows) {
@@ -340,7 +325,6 @@ function absolute(href: string): string {
   return href.startsWith("/") ? `https://openworklabs.com${href}` : href;
 }
 
-/** The matrix as GitHub-flavoured markdown for agent views. */
 export function capabilityMarkdown(): string {
   const footnotes = new Map(capabilityFootnotes().map((note) => [note.id, note.number]));
   const cellText = (row: CapabilityRow, key: ProductKey) => {

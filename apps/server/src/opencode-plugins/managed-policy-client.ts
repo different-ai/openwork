@@ -1,5 +1,3 @@
-// Both engine generations call this same OpenWork boundary before side effects.
-// This module has no engine SDK dependency so it can be loaded by either build.
 import type { ManagedPolicyAction } from "../managed-policy-rules.js";
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -16,8 +14,6 @@ export async function checkManagedTool(tool: string, raw: unknown, evaluate = ch
     if (input.id === "browser.open_url") return evaluate("browser", record(input.args));
     if (typeof input.id === "string" && /^(?:plugin|skill|mcp)\.(?:install|add|update|remove)/.test(input.id)) action = "extensions";
   }
-  // Even read-only tools synchronize policy, so unknown identities cannot keep
-  // running with a previous member's loaded configuration.
   await evaluate(action ?? "sync", input);
 }
 export async function check(action: ManagedPolicyAction, input: Record<string, unknown>): Promise<void> {

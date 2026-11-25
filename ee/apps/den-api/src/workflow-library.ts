@@ -36,6 +36,7 @@ export type WorkflowLibraryItem = {
   state: "ready" | "needs_signin" | "needs_admin_setup"
   resultState: "never_run" | "fresh" | "stale" | "needs_attention"
   latestSuccessfulAt: string | null
+  failureReason: string | null
   viewState: "default" | "custom_active" | "build_failed" | "retired"
   activeViewTitle: string | null
   automationCount: number
@@ -144,6 +145,7 @@ function workflowLibraryItem(input: WorkflowCard & {
   grants: ConfigObjectGrant[]
   requiredCapabilities: Array<{ capabilityName: string }>
   resultState: WorkflowLibraryItem["resultState"]
+  failureReason: string | null
   latestSuccessfulAt: string | null
   views: GeneratedArtifactView[]
   automationCount: number
@@ -166,6 +168,7 @@ function workflowLibraryItem(input: WorkflowCard & {
       requiredCapabilities: input.requiredCapabilities,
     }),
     resultState: input.resultState,
+    failureReason: input.resultState === "needs_attention" ? input.failureReason : null,
     latestSuccessfulAt: input.latestSuccessfulAt,
     ...viewLifecycle(input.views),
     automationCount: input.automationCount,
@@ -210,6 +213,7 @@ async function workflowItem(input: WorkflowCard & {
       grants: grants.get(input.row.id) ?? [],
       requiredCapabilities: script.currentVersion.requiredCapabilities,
       resultState: script.freshness.state,
+      failureReason: script.freshness.state === "needs_attention" ? script.freshness.reason : null,
       latestSuccessfulAt: script.latestSuccessfulSnapshot?.finishedAt ?? null,
       views,
       automationCount: new Set(script.versions.flatMap((version) => version.automationReferences.map((reference) => reference.id))).size,
@@ -219,7 +223,6 @@ async function workflowItem(input: WorkflowCard & {
   }
 }
 
-/** Library cards for many Workflows, read in batches instead of one detail load per Workflow. */
 async function workflowLibraryItems(input: {
   context: PluginArchActorContext
   connections: MemberUsableConnectionFacts[]
@@ -245,6 +248,7 @@ async function workflowLibraryItems(input: {
       grants: grants.get(workflow.row.id) ?? [],
       requiredCapabilities: card.requiredCapabilities,
       resultState: card.freshness.state,
+      failureReason: card.freshness.state === "needs_attention" ? card.freshness.reason : null,
       latestSuccessfulAt: card.latestSuccessfulAt,
       views: views.get(workflow.row.id) ?? [],
       automationCount: card.automationCount,
@@ -341,8 +345,5 @@ export async function getWorkflowLibraryDetail(input: {
     connections,
   })
   if (!workflow) throw new Error("workflow_not_found")
-  // A readable Workflow already permits manual REST/MCP execution using the
-  // caller's live tools. Do not project the stricter scheduling permission onto
-  // this library action; scheduling and manager-only editing keep their checks.
   return { workflow, script: { ...script, canRun: true }, views }
 }

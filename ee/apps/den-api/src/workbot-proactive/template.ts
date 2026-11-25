@@ -10,28 +10,18 @@ import {
 } from "@openwork/types/den/workbot-proactive"
 import { db } from "../db.js"
 
-/**
- * The "Your agent" template: a versioned config object of type `agent`, in the same markdown agent-definition format
- * Library imports (`AGENT.md`: frontmatter, then the agent's instructions). OpenWork extends the frontmatter with
- * `sources`, `responsibilities` and `schedule`. The built-in default is version 1 and lives here, in code; each admin
- * save adds a `config_object_version` to the organization's one "Your agent" object. Each member's agent row points
- * at the version it last ran.
- */
-
 export const AGENT_TEMPLATE_PATH = "openwork/agents/your-agent.md"
 export const AGENT_TEMPLATE_SCHEMA_VERSION = "openwork-agent/1"
 const TEMPLATE_TITLE = "Your agent"
-const TEMPLATE_DESCRIPTION = "Reads each member's Gmail and Google Calendar on a schedule and tells them only what needs them."
+const TEMPLATE_DESCRIPTION = "Reads each member's calendar and the connections they turn on, on a schedule, and tells them only what needs them."
 
 export type AgentTemplateVersion = AgentTemplateContent & {
-  /** The saved version, or null for the built-in default. */
   versionId: DenTypeId<"configObjectVersion"> | null
   version: number
 }
 
 export const BUILTIN_AGENT_TEMPLATE: AgentTemplateVersion = { ...DEFAULT_AGENT_TEMPLATE, versionId: null, version: 1 }
 
-/** The template as an agent definition file. */
 export function renderAgentTemplate(content: AgentTemplateContent): string {
   const hours = AGENT_TIMING.checkEveryMs / 3_600_000
   const lines = [
@@ -39,7 +29,7 @@ export function renderAgentTemplate(content: AgentTemplateContent): string {
     "name: your-agent",
     `description: ${TEMPLATE_DESCRIPTION}`,
     "mode: primary",
-    "sources: gmail, google_calendar",
+    "sources: calendar, connections",
     `responsibilities: ${enabledResponsibilities(content).join(", ") || "none"}`,
     `schedule: morning pass, then every ${hours} hours in working hours`,
     "---",
@@ -49,8 +39,8 @@ export function renderAgentTemplate(content: AgentTemplateContent): string {
   return `${lines.join("\n")}\n`
 }
 
-async function findTemplateObject(organizationId: DenTypeId<"organization">) {
-  const [row] = await db
+async function findTemplateObject(organizationId: DenTypeId<"organization">, database: typeof db.$primary) {
+  const [row] = await database
     .select({ id: ConfigObjectTable.id })
     .from(ConfigObjectTable)
     .where(and(
@@ -65,11 +55,10 @@ async function findTemplateObject(organizationId: DenTypeId<"organization">) {
   return row ?? null
 }
 
-/** The organization's current template: its newest saved version, or the built-in default. */
-export async function readAgentTemplate(organizationId: DenTypeId<"organization">): Promise<AgentTemplateVersion> {
-  const object = await findTemplateObject(organizationId)
+export async function readAgentTemplate(organizationId: DenTypeId<"organization">, database: typeof db.$primary = db): Promise<AgentTemplateVersion> {
+  const object = await findTemplateObject(organizationId, database)
   if (!object) return BUILTIN_AGENT_TEMPLATE
-  const [latest] = await db
+  const [latest] = await database
     .select({ id: ConfigObjectVersionTable.id, payload: ConfigObjectVersionTable.normalizedPayloadJson })
     .from(ConfigObjectVersionTable)
     .where(and(eq(ConfigObjectVersionTable.configObjectId, object.id), eq(ConfigObjectVersionTable.isDeletedVersion, false)))
@@ -77,11 +66,10 @@ export async function readAgentTemplate(organizationId: DenTypeId<"organization"
     .limit(1)
   const parsed = agentTemplateContentSchema.safeParse(latest?.payload)
   if (!latest || !parsed.success) return BUILTIN_AGENT_TEMPLATE
-  const [saved] = await db.select({ versions: count() }).from(ConfigObjectVersionTable).where(eq(ConfigObjectVersionTable.configObjectId, object.id))
+  const [saved] = await database.select({ versions: count() }).from(ConfigObjectVersionTable).where(eq(ConfigObjectVersionTable.configObjectId, object.id))
   return { ...parsed.data, versionId: latest.id, version: (saved?.versions ?? 0) + 1 }
 }
 
-/** Saves an admin's edit as a new version (creating the organization's "Your agent" object on the first save). */
 export async function saveAgentTemplate(input: {
   organizationId: DenTypeId<"organization">
   memberId: DenTypeId<"member">
@@ -139,5 +127,5 @@ export async function saveAgentTemplate(input: {
       createdAt: now,
     })
   })
-  return readAgentTemplate(input.organizationId)
+  return readAgentTemplate(input.organizationId, db.$primary)
 }

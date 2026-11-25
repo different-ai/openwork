@@ -9,7 +9,6 @@ export type AdminOpenWorkWebSubscription = Pick<
   "status" | "stripe_price_id" | "payment_failed"
 >
 
-/** OpenWork Web access as /admin shows it: complimentary access (metadata) and any paid subscription. */
 export function readAdminOpenWorkWebAccess(
   metadata: Record<string, unknown> | string | null | undefined,
   subscription: AdminOpenWorkWebSubscription | null,

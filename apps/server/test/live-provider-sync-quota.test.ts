@@ -18,7 +18,7 @@ test("live-only gateway catalogs retain quota handling without static provider d
   assert.deepEqual(rendered.providers, {});
   assert.ok(JSON.stringify(rendered).includes('"liveProviders":true'));
   const off = renderOpencodeV2Config({ providers: [], skills: [], gatewayQuotaPluginDirectory: "/fixture/quota" });
-  assert.equal(off.plugins, undefined, "flag-off still omits unused quota registration");
+  assert.equal(off.plugins, undefined, "an unmanaged empty catalog omits unused quota registration");
 });
 
 for (const live of [false, true]) test(`${live ? "plugin-injected" : "legacy materialized"} gateways receive the same no-retry response`, async () => {

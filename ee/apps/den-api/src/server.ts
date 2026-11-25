@@ -1,3 +1,5 @@
+import { startNativeEventWorker } from "./native-mcp-events/worker.js"
+import { startMcpEventWorker } from "./mcp-events/worker.js"
 import { Server } from "node:http"
 import { DEN_HTTP_KEEP_ALIVE_TIMEOUT_MS, serveDenHttp } from "./http-server.js"
 import { DEN_SHUTDOWN_DRAIN_MS, installGracefulShutdown, trackEventStreams } from "./graceful-shutdown.js"
@@ -6,11 +8,14 @@ import app from "./app.js"
 import { startSlackAssistantWorker } from "./slack-assistant/worker.js"
 import { startSlackDesktopHandoffWorker } from "./slack-assistant/desktop-handoff.js"
 import { startWorkbotProactiveWorker } from "./workbot-proactive/worker.js"
+import { startHarnessFeedbackNotifier } from "./harness-feedback/notifier.js"
+import { startHarnessFeedbackWorker } from "./harness-feedback/worker.js"
 import { env } from "./env.js"
 import { appLogger } from "./observability/logger.js"
 import { shutdownObservability } from "./observability/runtime.js"
 import { startScimMaintenanceLoop } from "./scim-maintenance.js"
 import { startBillingInvitationExpiryLoop } from "./billing-invitation-expiry.js"
+import { startSandboxExpiryLoop } from "./sandbox-organizations.js"
 import { startLifecycleEmailLoop } from "./lifecycle-emails/index.js"
 import { startCloudIdleStopLoop } from "./workers/cloud-lifecycle.js"
 import { startWorkerProvisioningReconcileLoop } from "./workers/reconciler.js"
@@ -19,24 +24,36 @@ import { externalMcpClientRuntimeName } from "./capability-sources/external-mcp-
 import { startAutomationSchedulerLoop } from "./automations/scheduler-loop.js"
 import { startModelsAnalyticsExportLoop } from "./models-analytics-export.js"
 import { markServerListening } from "./server-start.js"
+import { startMcpRegistrationProbeLoop } from "./mcp-registration/probe.js"
+import { startAdminMetricsRefreshLoop } from "./admin-metrics/worker.js"
+import { startComputerFleetSampler } from "./computer-fleet/service.js"
+import { startRunnerFleetSampler } from "./runner-fleet/service.js"
+import { startConfigBlobWorker } from "./config-blobs/worker.js"
 
 const stopSlackAssistantWorker = startSlackAssistantWorker()
 const stopSlackDesktopHandoffWorker = startSlackDesktopHandoffWorker()
+const stopMcpEventWorker = startMcpEventWorker()
+const stopNativeEventWorker = startNativeEventWorker()
 const stopWorkbotProactiveWorker = startWorkbotProactiveWorker()
+const stopHarnessFeedbackWorker = startHarnessFeedbackWorker()
+const stopHarnessFeedbackNotifier = startHarnessFeedbackNotifier()
 const stopScimMaintenanceLoop = startScimMaintenanceLoop()
 const stopBillingInvitationExpiryLoop = startBillingInvitationExpiryLoop()
+const stopSandboxExpiryLoop = startSandboxExpiryLoop()
 const stopLifecycleEmailLoop = startLifecycleEmailLoop()
 const stopCloudIdleStopLoop = startCloudIdleStopLoop()
 const stopWorkerProvisioningReconcileLoop = startWorkerProvisioningReconcileLoop()
 const stopGithubSyncWorker = startGithubSyncWorker()
 const stopModelsAnalyticsExportLoop = startModelsAnalyticsExportLoop()
+const stopMcpRegistrationProbeLoop = startMcpRegistrationProbeLoop()
+const stopAdminMetricsRefreshLoop = startAdminMetricsRefreshLoop()
+const stopRunnerFleetSampler = startRunnerFleetSampler()
+const stopComputerFleetSampler = startComputerFleetSampler()
+const stopConfigBlobWorker = startConfigBlobWorker()
 const automationScheduler = startAutomationSchedulerLoop({ enabled: env.automations.runtimeEnabled })
 
 appLogger.info("external mcp implementation selected", { component: "server", runtime: externalMcpClientRuntimeName })
 
-// Optional bind host: eval/testkit servers run in dev mode (unauthenticated
-// dev outbox) and must not be reachable from the LAN; production/default
-// behavior (all interfaces) is unchanged when DEN_BIND_HOST is unset.
 const bindHost = process.env.DEN_BIND_HOST?.trim()
 const server = serveDenHttp({ fetch: trackEventStreams(app.fetch), port: env.port, ...(bindHost ? { hostname: bindHost } : {}) }, (info) => {
   markServerListening()
@@ -52,13 +69,23 @@ async function stopBackgroundLoops() {
   const results = await Promise.allSettled([
     stopScimMaintenanceLoop(),
     stopBillingInvitationExpiryLoop(),
+    stopSandboxExpiryLoop(),
     stopLifecycleEmailLoop(),
     stopSlackAssistantWorker(),
     stopSlackDesktopHandoffWorker(),
     stopWorkbotProactiveWorker(),
+    stopHarnessFeedbackWorker(),
+    stopHarnessFeedbackNotifier(),
+    stopMcpEventWorker(),
+    stopNativeEventWorker(),
     stopCloudIdleStopLoop(),
     stopWorkerProvisioningReconcileLoop(),
     stopGithubSyncWorker(),
+    stopMcpRegistrationProbeLoop(),
+    stopAdminMetricsRefreshLoop(),
+    stopRunnerFleetSampler(),
+    stopComputerFleetSampler(),
+    stopConfigBlobWorker(),
     automationScheduler.stop(),
   ])
 

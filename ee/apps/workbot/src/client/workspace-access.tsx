@@ -1,6 +1,5 @@
 import type { Me } from "./host"
 
-/** A disabled workspace is a policy decision, not a failed sign-in. Only platform admins can change its rollout. */
 export function WorkspaceAccess({ me }: { me: Me }) {
   return (
     <main className="workbot grid h-full place-items-center px-6 text-[var(--wb-text)]" data-testid="workbot-workspace-access">

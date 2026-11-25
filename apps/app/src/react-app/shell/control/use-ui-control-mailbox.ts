@@ -36,8 +36,6 @@ export function useUiControlMailbox(apiRef: RefObject<OpenworkControlAPI | null>
     async function poll(): Promise<void> {
       while (mounted) {
         try {
-          // Resolve again after each poll so switching servers or signing in
-          // cannot leave this window answering a previous server's mailbox.
           const connection = await resolveOpenworkConnection();
           if (!mounted) return;
           if (!connection.normalizedBaseUrl || !connection.resolvedToken) {

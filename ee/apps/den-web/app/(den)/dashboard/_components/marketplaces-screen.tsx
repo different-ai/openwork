@@ -1,8 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
-import { useMemo, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
+import { useEffect, useMemo, useState } from "react";
 import { Cable, Loader2, LockKeyhole, Plus, Search } from "lucide-react";
 import { DenInput } from "../../_components/ui/input";
 import { buttonVariants, DenButton } from "../../_components/ui/button";
@@ -19,11 +19,14 @@ import {
 import { DenCatalogList, DenCatalogRow } from "../../_components/ui/catalog-row";
 import { CatalogIdentityTile } from "./catalog-identity-tile";
 import { AdvancedPageTemplate } from "./advanced-page-template";
+import { useFeatureIntro } from "../_features/feature-intros";
+import { collectionsIntroFacts } from "./collections-intro-facts";
 
 export function MarketplacesScreen() {
   const { orgContext, orgSlug } = useOrgDashboard();
   const router = useRouter();
-  const { data: marketplaces = [], isLoading, error } = useMarketplaces();
+  const { data: marketplacesData, isLoading, error } = useMarketplaces();
+  const marketplaces = marketplacesData ?? [];
   const { hasAny: hasAnyIntegration, isLoading: integrationsLoading } = useHasAnyIntegration();
   const [query, setQuery] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
@@ -33,6 +36,18 @@ export function MarketplacesScreen() {
     orgContext?.currentMember.permissions,
   );
 
+  const intro = useFeatureIntro("collections", collectionsIntroFacts(error ? undefined : marketplacesData, access.canManageAllShared));
+
+  const searchParams = useSearchParams();
+  const newRequested = searchParams.get("new") === "1";
+  useEffect(() => {
+    if (!orgContext || !newRequested) return;
+    if (access.canManageMarketplaces) setCreateOpen(true);
+    const url = new URL(window.location.href);
+    url.searchParams.delete("new");
+    window.history.replaceState(null, "", url);
+  }, [orgContext, newRequested, access.canManageMarketplaces]);
+
   const normalizedQuery = query.trim().toLowerCase();
   const filtered = useMemo(() => {
     const matches = normalizedQuery
@@ -41,16 +56,34 @@ export function MarketplacesScreen() {
         )
       : marketplaces;
 
-    // The API returns newest first, which buries a stocked catalogue under an
-    // empty one somebody just created. Lead with the marketplaces that have
-    // something in them.
     return [...matches].sort(
       (a, b) => b.pluginCount - a.pluginCount || a.name.localeCompare(b.name),
     );
   }, [marketplaces, normalizedQuery]);
 
+  const createDialog = access.canManageMarketplaces ? (
+    <CreateMarketplaceDialog
+      open={createOpen}
+      onClose={() => setCreateOpen(false)}
+      onCreated={(marketplace) => {
+        setCreateOpen(false);
+        router.push(getMarketplaceRoute(orgSlug, marketplace.id));
+      }}
+    />
+  ) : null;
+
+  if (intro.size === "fullscreen") {
+    return (
+      <AdvancedPageTemplate tab="collections">
+        {intro.element}
+        {createDialog}
+      </AdvancedPageTemplate>
+    );
+  }
+
   return (
     <AdvancedPageTemplate tab="collections">
+      {intro.size === "banner" ? <div className="mb-6">{intro.element}</div> : null}
       <div className="mb-6 flex flex-col gap-3 sm:flex-row">
         <div className="min-w-0 flex-1">
           <DenInput
@@ -124,16 +157,7 @@ export function MarketplacesScreen() {
           ))}
         </DenCatalogList>
       )}
-      {access.canManageMarketplaces ? (
-        <CreateMarketplaceDialog
-          open={createOpen}
-          onClose={() => setCreateOpen(false)}
-          onCreated={(marketplace) => {
-            setCreateOpen(false);
-            router.push(getMarketplaceRoute(orgSlug, marketplace.id));
-          }}
-        />
-      ) : null}
+      {createDialog}
     </AdvancedPageTemplate>
   );
 }
@@ -165,7 +189,6 @@ function CreateMarketplaceDialog({
       setDescription("");
       onCreated(created);
     } catch {
-      // The mutation error is rendered in the dialog.
     }
   }
 

@@ -2,11 +2,12 @@ import type { RunSpec, SandboxHandle, SandboxProvider } from "@openwork/sandbox"
 
 type Step = { ms: number; count: number }
 
-/** What one bridge command asked the guest, from its command line; never the command or its payload. */
 function bridgeStep(command: string) {
   if (/openwork-desktop-bridge start /.test(command)) return "desktop_start"
   const path = /openwork-desktop-bridge call '?\/([a-z/]+)/.exec(command)?.[1]
-  return path ? path.replaceAll("/", "_") : "command"
+  if (path) return path.replaceAll("/", "_")
+  const helper = /openwork-desktop-bridge (install|versions|export|import) /.exec(`${command} `)?.[1]
+  return helper ? `desktop_${helper}` : "command"
 }
 
 /**
@@ -16,7 +17,6 @@ function bridgeStep(command: string) {
 export class DesktopTiming {
   private readonly started = performance.now()
   private readonly steps: Record<string, Step> = {}
-  /** The VM's state when the request first looked it up: `stopped` is paused, `missing` means a new computer. */
   before?: string
 
   constructor(readonly sessionId: string, readonly operation: string) {}
@@ -27,7 +27,6 @@ export class DesktopTiming {
     step.count++
   }
 
-  /** Whether the request woke, created or started anything, rather than finding the desktop ready. */
   get prepared() {
     return ["vm_start", "vm_create", "desktop_start"].some(name => name in this.steps)
   }

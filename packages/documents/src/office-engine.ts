@@ -31,7 +31,6 @@ export type OfficeEditor = {
   open(fileId: string, signal?: AbortSignal): Promise<OfficeSession>
   status(fileId: string, sessionId: string, signal?: AbortSignal): Promise<OfficeStatus>
   save(fileId: string, sessionId: string, draftVersion: number): Promise<{ fileId: string }>
-  /** `keepalive` lets the close finish while the page unloads. */
   close(fileId: string, sessionId: string, options?: { keepalive?: boolean }): Promise<void>
 }
 

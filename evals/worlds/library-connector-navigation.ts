@@ -3,7 +3,6 @@ import { browserScript, evaluate } from "@openwork/cdp";
 import type { DenSession } from "@openwork/behaviors";
 import type { Seed } from "@openwork/env";
 import { isRecord, records, stringField } from "./library.ts";
-import { seededOrganizationId } from "./organization-capabilities.ts";
 
 /** A private Den and a local OAuth MCP, with two genuinely separate member accounts. */
 export async function libraryConnectorNavigation(seed: Seed) {
@@ -14,14 +13,6 @@ export async function libraryConnectorNavigation(seed: Seed) {
       unassigned: seed.mock({ isolatedProcessEnv: true, allowUnauthenticatedMcp: true }),
     },
   });
-  const organizationId = await seededOrganizationId(seed, den.admin);
-  if (!organizationId) throw new Error("The Library fixture has no organization.");
-  const featurePath = `/v1/admin/organizations/${organizationId}/capabilities`;
-  const initial = await seed.api(den.admin, featurePath, {
-    method: "PUT", body: JSON.stringify({ capabilities: { libraryConnectorNavigation: false } }),
-  });
-  if (!initial.response.ok) throw new Error(`Disabling Library navigation failed: ${initial.text}`);
-
   const connection = await seed.orgConnection(den.admin, {
     name: "Review notes", url: den.mocks.connector.mcpUrl, authType: "oauth", credentialMode: "per_member", access: { orgWide: true },
   });
@@ -84,19 +75,6 @@ export async function libraryConnectorNavigation(seed: Seed) {
     den, web, connection, unassigned, pluginName, pluginId, skillDescription, skillBody,
     singlePluginName, singlePluginId, singleFirstLine: singleSteps[0] ?? "", singleLastLine: singleSteps.at(-1) ?? "",
     url: (path: string) => `${den.ref.webUrl}${path}`,
-    async setNavigation(enabled: boolean) {
-      // Same authenticated platform-admin operation as /admin; this is a rollout action, not fixture mutation.
-      const result = await denFetch(den.admin, featurePath, {
-        method: "PUT", headers: { authorization: `Bearer ${den.admin.token}`, "content-type": "application/json" },
-        body: JSON.stringify({ capabilities: { libraryConnectorNavigation: enabled } }),
-      });
-      if (!result.response.ok) throw new Error(`Changing Library navigation failed: ${result.text}`);
-    },
-    async navigationEnabled() {
-      const result = await denFetch(den.admin, "/v1/org", { headers: { authorization: `Bearer ${den.admin.token}` } });
-      if (!result.response.ok || !isRecord(result.body) || !isRecord(result.body.features)) throw new Error("Reading Library rollout failed.");
-      return result.body.features.libraryConnectorNavigation === true;
-    },
     async accounts() {
       const [owner, peer] = await Promise.all([connectionState(den.admin), connectionState(den.members.peer)]);
       return { owner: owner?.connectedForMe === true, peer: peer?.connectedForMe === true, exists: Boolean(owner), orgWide: isRecord(owner?.access) && owner.access.orgWide === true };
@@ -112,10 +90,10 @@ export async function libraryConnectorNavigation(seed: Seed) {
     async restorePluginReads() {
       await web.client.send("Network.setBlockedURLs", { urls: ["https://www.google.com/s2/favicons*"] });
     },
-    async pluginReads() {
+    async pluginReads(id = pluginId) {
       // Read Chromium's actual resource timings, without proxying the auth or web origins.
       return evaluate(web.client, browserScript((path) => performance.getEntriesByType("resource")
-        .filter(entry => new URL(entry.name).pathname.endsWith(path)).length, [`/v1/plugins/${pluginId}`]));
+        .filter(entry => new URL(entry.name).pathname.endsWith(path)).length, [`/v1/plugins/${id}`]));
     },
     async tokenFingerprints() {
       return [...new Set((await den.mocks.connector.requests()).filter(request => request.grantType === "authorization_code" && request.status === 200).flatMap(request => request.tokenId ? [request.tokenId] : []))];

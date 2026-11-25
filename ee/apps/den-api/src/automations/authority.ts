@@ -7,7 +7,13 @@ import {
   TeamMemberTable,
 } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
-import { AUTOMATION_CLOUD_DEFAULT_MODEL, AUTOMATION_FREE_MODEL, automationModelAllowedByProvider } from "@openwork/types/automations"
+import {
+  AUTOMATION_CLOUD_DEFAULT_MODEL,
+  AUTOMATION_FREE_MODEL,
+  automationModelAllowedByProvider,
+  isDenAuthorizedAutomationProvider,
+  type AutomationExecutionTarget,
+} from "@openwork/types/automations"
 import { INFERENCE_MODEL_ALIASES } from "@openwork/types/den/inference"
 import { db } from "../db.js"
 import { organizationAllowsManagedModels } from "../inference.js"
@@ -37,7 +43,7 @@ export type AutomationModelSelection = {
 }
 
 export type ResolvedAutomationModel = AutomationModelSelection & {
-  accessKind: "free" | "openwork_managed" | "authorized_custom" | "cloud_default"
+  accessKind: "free" | "openwork_managed" | "authorized_custom" | "cloud_default" | "desktop_runtime"
   providerRecordId: string | null
   providerName: string
   modelName: string
@@ -47,7 +53,6 @@ export type AutomationAuthorityFailure = {
   ok: false
   code: "owner_membership_lost" | "model_access_lost" | "provider_unavailable"
   message: string
-  /** Internal rollout classification; never substitutes for checking existing grants. */
   reason?: "provider_model_disabled"
 }
 
@@ -145,8 +150,14 @@ function resolvedProviderModel(input: {
   }
 }
 
+export type AutomationModelAccessInput = {
+  organizationId: string
+  ownerMemberId: string
+  executionTarget: AutomationExecutionTarget
+} & AutomationModelSelection
+
 export async function resolveAutomationModelAccessWithStore(
-  input: { organizationId: string; ownerMemberId: string } & AutomationModelSelection,
+  input: AutomationModelAccessInput,
   store: AutomationModelAuthorityStore,
 ): Promise<AutomationAuthorityResult> {
   const member = await store.findActiveMember(input)
@@ -155,8 +166,6 @@ export async function resolveAutomationModelAccessWithStore(
   }
 
   if (input.providerId === AUTOMATION_CLOUD_DEFAULT_MODEL.providerId) {
-    // Placement (cloud, headless runtime) is enforced where the Automation is
-    // created or changed; here an active owner is all the cloud default needs.
     if (input.modelId !== AUTOMATION_CLOUD_DEFAULT_MODEL.modelId) {
       return { ok: false, code: "model_access_lost", message: "The selected cloud model is not available for Automations." }
     }
@@ -209,6 +218,23 @@ export async function resolveAutomationModelAccessWithStore(
     }
   }
 
+  if (!isDenAuthorizedAutomationProvider(input.providerId)) {
+    if (input.executionTarget !== "desktop") {
+      return { ok: false, code: "provider_unavailable", message: "This model is only available on a desktop. Choose a model your organization provides to run this Automation in the cloud." }
+    }
+    return {
+      ok: true,
+      value: {
+        accessKind: "desktop_runtime",
+        providerRecordId: null,
+        providerId: input.providerId,
+        modelId: input.modelId,
+        providerName: input.providerId,
+        modelName: input.modelId,
+      },
+    }
+  }
+
   const provider = await store.findProvider(input)
   if (!provider || provider.source === "openwork") {
     return { ok: false, code: "provider_unavailable", message: "The selected model provider is no longer available." }
@@ -233,23 +259,13 @@ export async function isActiveAutomationOwnerWithStore(
   return Boolean(await store.findActiveMember(input))
 }
 
-/**
- * Runner tokens outlive membership changes (12h HMAC credentials with no
- * server-side state), so every runner request re-checks that the owner is
- * still an active member before honoring the token.
- */
 export function isActiveAutomationOwner(
   input: { organizationId: string; ownerMemberId: string },
 ): Promise<boolean> {
   return isActiveAutomationOwnerWithStore(input, databaseAuthorityStore)
 }
 
-export function resolveAutomationModelAccess(input: {
-  organizationId: string
-  ownerMemberId: string
-  providerId: string
-  modelId: string
-}): Promise<AutomationAuthorityResult> {
+export function resolveAutomationModelAccess(input: AutomationModelAccessInput): Promise<AutomationAuthorityResult> {
   return resolveAutomationModelAccessWithStore(input, databaseAuthorityStore)
 }
 

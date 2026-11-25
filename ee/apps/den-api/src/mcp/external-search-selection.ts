@@ -2,7 +2,6 @@ import { scoreText, tokenize } from "./search.js"
 
 export const EXTERNAL_MCP_SEARCH_CONNECTION_LIMIT = 16
 
-/** The parts of a provider tool that capability search reads. */
 export type SearchableExternalTool = { name: string; title?: string; description?: string }
 
 export function scoreExternalTool(connectionName: string, tool: SearchableExternalTool, queryTokens: string[]): number {
@@ -13,13 +12,6 @@ export function scoreExternalTool(connectionName: string, tool: SearchableExtern
   )
 }
 
-/**
- * A capability search must never turn an unbounded org connection list into
- * unbounded remote handshakes. Prefer connections whose names match the
- * query, or whose recently listed tools do ("my open issues" finds Linear
- * without naming it), keep source order as the deterministic tiebreaker, and
- * enforce one hard fanout ceiling before any provider network request is started.
- */
 export function selectExternalMcpSearchConnections<T extends { name: string }>(
   connections: readonly T[],
   queryTokens: string[],

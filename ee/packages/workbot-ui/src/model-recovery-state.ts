@@ -14,12 +14,9 @@ export type RecoveryLock = { kind: "locked"; label: string; reason: string };
 export type ModelRecoveryView = {
   title: string;
   resetsAt: string | null;
-  /** State the person needs before acting, e.g. that paid Luna is ready. Null when the actions say it all. */
   note: string | null;
   primary: RecoveryLink | RecoveryLock | null;
-  /** The way to keep working: another model for the conversation. */
   changeModel: RecoveryLink | null;
-  /** "check": re-read access (an allowance or purchase can change it); "retry": run the same message again. */
   check: "check" | "retry";
 };
 
@@ -43,8 +40,6 @@ export function modelRecoveryView(issue: WorkbotModelIssue, options: WorkbotMode
     const primary: ModelRecoveryView["primary"] = !options || paidReady ? null
       : offerModels ? { kind: "link", label: "Get OpenWork Models", path: MODELS_PAGE }
         : options.hasModelsSubscription ? null
-          // No in-conversation purchase (billing not offered here, or upgrades not rolled out): a model admin still
-          // gets Den's Models page, which rechecks billing and shows only what this workspace can do.
           : confirmed && options.canManageModels ? { kind: "link", label: "Review OpenWork Models", path: MODELS_PAGE }
           : billingCapable ? null
             : { kind: "locked", label: "Ask an admin for OpenWork Models", reason: "Only people with billing access can get OpenWork Models." };
@@ -63,7 +58,6 @@ export function modelRecoveryView(issue: WorkbotModelIssue, options: WorkbotMode
     return {
       title: "Your workspace reached its model usage limit",
       resetsAt: null, note: null,
-      // An admin keeps working by choosing another model; there is no self-serve plan upgrade to offer yet.
       primary: !options || options.canManageModels ? null
         : { kind: "locked", label: "Ask an admin for more", reason: "Workspace admins can raise the limit or choose another model." },
       changeModel, check: "retry",

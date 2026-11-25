@@ -5,7 +5,6 @@ export type DenLibraryTarget = {
   pluginId?: string;
 };
 
-/** Existing Cloud create routes and the member's available MCP inventory. */
 export const DEN_ADD_PATHS: Record<LibraryAddKind, string | null> = {
   skill: "/dashboard/plugins/new",
   command: "/dashboard/plugins/new",

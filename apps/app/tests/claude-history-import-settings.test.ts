@@ -14,10 +14,10 @@ test("workspace settings always offer Import without a feature lookup", () => {
   expect(getWorkspaceSettingsTabs()).toEqual(["preferences", "permissions", "extensions", "import", "advanced"]);
 });
 
-test("graduating Import keeps Computer use settings opt-in", () => {
+test("Computer use settings follow the native shell, without a feature lookup", () => {
   expect(getGlobalSettingsTabs(false, { autoUpdate: false })).not.toContain("computer");
-  expect(getGlobalSettingsTabs(false, { autoUpdate: false }, { computerUse: false })).not.toContain("computer");
-  expect(getGlobalSettingsTabs(false, { autoUpdate: false }, { computerUse: true })).toContain("computer");
+  expect(getGlobalSettingsTabs(false, { autoUpdate: false }, { desktop: false })).not.toContain("computer");
+  expect(getGlobalSettingsTabs(false, { autoUpdate: false }, { desktop: true })).toContain("computer");
 });
 
 test("the settings command palette offers the same Import destination", () => {

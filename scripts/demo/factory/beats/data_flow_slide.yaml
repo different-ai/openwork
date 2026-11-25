@@ -1,0 +1,20 @@
+id: data_flow_slide
+title: "Show the approved data-flow slide"
+surface: slide
+label: MOCKED
+status: draft
+requires: [data_flow_slide_ready]
+do:
+  - {type: manual, instruction: "Open the approved deployment-specific diagram."}
+  - {type: show, seconds: 5}
+say: "Explain only the routes verified for this sample configuration."
+paste: {}
+see: "The reviewed slide names where source reads, model calls and exports occur."
+checks:
+  - {"type": "slide_visible", "title": "Sample data flow"}
+reset: []
+fallback: Skip until verified on the rehearsal desktop; make no live claim.
+expect_seconds: 45
+questions:
+  - {question: Is this part of the verified live sequence?, answer: No. This is a rehearsal placeholder until its expected result is verified.}
+avoid: ["Do not generalize data-residency or zero-retention promises."]

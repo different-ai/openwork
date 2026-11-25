@@ -11,20 +11,13 @@ export type SecretTextInputProps = {
   placeholder?: string;
   disabled?: boolean;
   autoFocus?: boolean;
-  /** Read the value once with `handleRef.current.take()` when submitting. */
   handleRef: Ref<SecretFieldHandle>;
   onValueChange?: (hasValue: boolean) => void;
   onSubmit?: () => void;
   testId?: string;
-  /** Classes for the input box, as TextInput's `className`. */
   className?: string;
 };
 
-/**
- * TextInput's layout (small label above, hint below) around a SecretField, so
- * a secret sits beside ordinary design-system fields without looking
- * different. The value never enters React state.
- */
 export function SecretTextInput(props: SecretTextInputProps) {
   return (
     <div>

@@ -23,7 +23,6 @@ export function UnsavedChangesDialog({ name, saveLabel, saving, canSave, error, 
   useEffect(() => {
     const element = dialog.current
     if (element && !element.open) element.showModal()
-    // showModal focuses the first button, "Don't save"; start on the safe choice instead.
     ;(saveButton.current && !saveButton.current.disabled ? saveButton.current : cancelButton.current)?.focus()
     return () => element?.close()
   }, [])

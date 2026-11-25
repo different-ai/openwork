@@ -1,5 +1,7 @@
 /** @jsxImportSource react */
 import { useCallback, useEffect, useState } from "react";
+import { useOnboardingStep } from "../../shell/use-onboarding-step";
+import { captureOnboardingEvent } from "../../../app/lib/analytics";
 
 import { t } from "../../../i18n";
 import {
@@ -34,16 +36,8 @@ export type ForcedSigninPageProps = {
   developerMode: boolean;
 };
 
-/**
- * React port of the Solid `ForcedSigninPage`
- * (`apps/app/src/app/cloud/forced-signin-page.tsx` on dev).
- *
- * Full-screen sign-in gate rendered when the desktop bootstrap config has
- * `requireSignin: true` and the user is not yet signed in. Owns the local
- * draft state (base URL, manual auth input) and pipes it into the
- * shared `DenSignInSurface` presentation layer.
- */
 export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
+  const signinRef = useOnboardingStep("signin");
   const platform = usePlatform();
   const denAuth = useDenAuth();
   const desktopConfig = useDesktopConfig();
@@ -79,6 +73,7 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
 
   const openBrowserAuth = useCallback(
     (mode: "sign-in" | "sign-up") => {
+      captureOnboardingEvent("onboarding_signin_selected", { choice: mode === "sign-in" ? "sign_in" : "sign_up" });
       const url = buildDenAuthUrl(baseUrl, mode);
       clearSignInReturnTarget();
       markDesktopSignInInitiated();
@@ -91,6 +86,7 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
       setAuthError(null);
       void tryOpenBrowserAuthUrl(url).then((opened) => {
         if (opened) return;
+        captureOnboardingEvent("onboarding_signin_failed", { reason: "browser_open_failed" });
         setStatusMessage(null);
         setManualAuthOpen(true);
       });
@@ -105,12 +101,8 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
     setStatusMessage(t("den.signing_in"));
 
     try {
-      // The helper exchanges, commits, and dispatches the success/error session
-      // events. An enterprise activation stamp lands in the same durable
-      // commit as the enrollment it locks in.
       const result = await exchangeHandoffAndSignIn(grant, {
         baseUrl: nextBaseUrl,
-        // Pasted one-time codes are desktop-initiated sign-ins.
         desktopInitiated: true,
         fallbackErrorMessage: t("den.error_no_token"),
         ...(readDesktopDistributionInfo().flavor === "enterprise"
@@ -162,9 +154,7 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
       try {
         pastedOrigin = new URL(parsed.baseUrl).origin;
       } catch {
-        // Keep the parsed URL as the safe display fallback.
       }
-      // Warden LZL-USH: switching servers must use the explicit workspace-address control, never a pasted link.
       setBaseUrlDraft(parsed.baseUrl);
       setAuthError(t("den.error_signin_link_other_server", { origin: pastedOrigin }));
       return;
@@ -233,9 +223,6 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
     }
   }, [baseUrlDraft, denAuth, desktopConfig]);
 
-  // Listen for Den session events broadcast from the Tauri deep-link handler,
-  // a successful browser auth, or an org switch, and reflect the result in
-  // the sign-in surface's status/error banners.
   useEffect(() => {
     markRouteReady();
   }, [markRouteReady]);
@@ -280,6 +267,7 @@ export function ForcedSigninPage({ developerMode }: ForcedSigninPageProps) {
 
   return (
     <DenSignInSurface
+      ref={signinRef}
       variant="fullscreen"
       appName={appName}
       logoUrl={bootstrap.brandLogoUrl ?? null}

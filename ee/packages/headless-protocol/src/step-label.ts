@@ -7,7 +7,6 @@ export function stepLabel(name: string, input: Record<string, unknown> = {}) {
       return "Finding the right tool"
     case "execute_capability":
       if (typeof input.name === "string" && /createCloudAutomation$/i.test(input.name)) return "Setting up the schedule"
-      // Capability names are internal ("getMe"); the person only knows their apps.
       return app ? `Using ${app}` : "Checking your apps"
     case "execute_capability_script":
       return "Running a multi-step action"

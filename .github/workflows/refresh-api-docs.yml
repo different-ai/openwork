@@ -1,63 +1,102 @@
 # The hosted docs (Mintlify) build the API tab from the live public contract at
 # api.openworklabs.com/openapi.json?public=1, but Mintlify's Git integration
 # only rebuilds when packages/docs changes. When the Den API contract sources
-# change, this waits until production den-api (Render deploys every dev commit)
-# serves this commit or a newer one, then asks Mintlify to rebuild. A skipped or
-# failed rebuild only warns: the next docs change rebuilds the API tab anyway.
+# change, this waits until production den-api serves the latest API deployment
+# input commit (Render skips unrelated dev commits), then asks Mintlify to rebuild.
+# A skipped or failed rebuild only warns: the next docs change rebuilds the API tab anyway.
 name: Refresh API Docs
 
 on:
   push:
     branches: [dev]
-    paths:
-      - ee/apps/den-api/**
-      - ee/packages/**
-      - packages/types/**
-      - packages/features/**
-      - .github/workflows/refresh-api-docs.yml
 
 permissions:
   contents: read
-
-concurrency:
-  group: ${{ github.workflow }}
-  cancel-in-progress: true
 
 env:
   OPENAPI_URL: https://api.openworklabs.com/openapi.json?public=1
 
 jobs:
-  refresh:
-    # The Mintlify key is only for dev's own workflow code: no manual runs, and
-    # never from another ref.
+  scope:
+    name: Select API docs inputs
     if: github.repository == 'different-ai/openwork' && github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
+    outputs:
+      affected: ${{ steps.inputs.outcome == 'success' && steps.inputs.outputs.fingerprint != '' && steps.inputs.outputs.affected || 'true' }}
+      deployment_sha: ${{ steps.deployment.outputs.deployment_sha }}
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6.1.0
+        with:
+          fetch-depth: 2
+      - uses: actions/setup-node@249970729cb0ef3589644e2896645e5dc5ba9c38 # v6
+        with:
+          node-version: 24.22.1
+      - name: Compare API docs inputs
+        id: inputs
+        continue-on-error: true
+        env:
+          BASE_SHA: ${{ github.event.before }}
+          HEAD_SHA: ${{ github.sha }}
+        run: node .github/scripts/build-inputs.mjs --target api-docs --base "$BASE_SHA" --head "$HEAD_SHA"
+      - name: Read API deployment history only for a selected refresh
+        id: history
+        if: steps.inputs.outcome != 'success' || steps.inputs.outputs.fingerprint == '' || steps.inputs.outputs.affected != 'false'
+        continue-on-error: true
+        env:
+          HEAD_SHA: ${{ github.sha }}
+        run: |
+          # History is needed to find the last API-input commit, not its old
+          # blobs (screenshots and docs make a full clone unnecessarily large).
+          if [ "$(git rev-parse --is-shallow-repository)" = "true" ]; then
+            git fetch --no-tags --filter=blob:none --unshallow origin "$HEAD_SHA"
+          fi
+      - name: Resolve the latest API deployment input commit
+        id: deployment
+        if: steps.history.outcome == 'success'
+        continue-on-error: true
+        env:
+          HEAD_SHA: ${{ github.sha }}
+        run: node .github/scripts/runtime-scope.mjs "$HEAD_SHA"
+
+  refresh:
+    needs: scope
+    # The Mintlify key is only for dev's own workflow code: no manual runs, and
+    # never from another ref. Selection errors refresh instead of silently skipping.
+    if: ${{ !cancelled() && github.repository == 'different-ai/openwork' && github.ref == 'refs/heads/dev' && needs.scope.outputs.affected != 'false' }}
+    runs-on: ubuntu-latest
     timeout-minutes: 45
+    # Scope jobs can finish out of order. A late older selector (or an
+    # unrelated push) must not cancel the refresh for the newest API input.
+    concurrency:
+      group: ${{ github.workflow }}-${{ github.sha }}
+      cancel-in-progress: false
 
     steps:
-      - name: Wait for den-api to serve this commit
+      - name: Wait for den-api to serve the API deployment input commit
         id: live
         env:
           GH_TOKEN: ${{ github.token }}
+          DEPLOYMENT_SHA: ${{ needs.scope.outputs.deployment_sha || github.sha }}
         run: |
           set -uo pipefail
 
           # den-api reports its Render commit as info.version ("commit 0b73707").
-          # Render cancels a deploy when a newer commit lands, so a newer commit
-          # counts too. Old instances keep serving for a few minutes after a
-          # deploy goes live, so require a few matching reads in a row.
+          # The workflow/helper itself can change without an API deploy, so wait
+          # for the newest commit in native-den-api's actual build input scope.
+          # A newer deployed commit counts too. Old instances keep serving for a
+          # few minutes after a deploy, so require matching reads in a row.
           deadline=$((SECONDS + 30 * 60))
           matches=0
           while [ "$SECONDS" -lt "$deadline" ]; do
             version="$(curl -fsS --compressed --max-time 60 "$OPENAPI_URL" | jq -r '.info.version // empty' 2> /dev/null)"
             status=""
             if [[ "$version" =~ ^commit\ [0-9a-f]{7,40}$ ]]; then
-              status="$(gh api "repos/$GITHUB_REPOSITORY/compare/$GITHUB_SHA...${version#commit }" --jq '.status' 2> /dev/null)"
+              status="$(gh api "repos/$GITHUB_REPOSITORY/compare/$DEPLOYMENT_SHA...${version#commit }" --jq '.status' 2> /dev/null)"
             fi
             if [ "$status" = "identical" ] || [ "$status" = "ahead" ]; then
               matches=$((matches + 1))
               if [ "$matches" -ge 3 ]; then
-                echo "den-api serves $version, which includes $GITHUB_SHA."
+                echo "den-api serves $version, which includes API deployment input $DEPLOYMENT_SHA (workflow commit $GITHUB_SHA)."
                 echo "live=true" >> "$GITHUB_OUTPUT"
                 exit 0
               fi
@@ -67,7 +106,7 @@ jobs:
             sleep 20
           done
 
-          echo "::warning title=API docs not refreshed::den-api did not serve $GITHUB_SHA or a newer commit within 30 minutes (last seen: ${version:-no response}). The next packages/docs change rebuilds the API tab."
+          echo "::warning title=API docs not refreshed::den-api did not serve API deployment input $DEPLOYMENT_SHA or a newer commit within 30 minutes (last seen: ${version:-no response}). The next packages/docs change rebuilds the API tab."
           echo "live=false" >> "$GITHUB_OUTPUT"
 
       - name: Rebuild the docs

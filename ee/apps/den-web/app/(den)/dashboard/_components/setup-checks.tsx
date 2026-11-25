@@ -1,9 +1,9 @@
 "use client";
 
-import { Loader2, Lock, X } from "lucide-react";
+import { Loader2, Lock, Minus, X } from "lucide-react";
 import type { ReactNode } from "react";
 
-export type SetupCheckStatus = "waiting" | "running" | "current" | "done" | "failed" | "blocked";
+export type SetupCheckStatus = "waiting" | "running" | "current" | "done" | "failed" | "blocked" | "skipped";
 
 export type SetupCheck = {
   id: string;
@@ -11,7 +11,6 @@ export type SetupCheck = {
   description: string;
   status: SetupCheckStatus;
   action?: ReactNode;
-  /** Inline fields under the check, for the one thing it needs from you. */
   body?: ReactNode;
 };
 
@@ -24,8 +23,9 @@ function CheckIcon({ status }: { status: SetupCheckStatus }) {
       </svg>
     );
   }
+  if (status === "skipped") return <Minus className="h-[18px] w-[18px] shrink-0 text-gray-500" strokeWidth={1.5} aria-hidden />;
   if (status === "blocked") return <Lock className="h-[18px] w-[18px] shrink-0 text-gray-500" strokeWidth={1.5} aria-hidden />;
-  if (status === "running") return <Loader2 className="h-[18px] w-[18px] shrink-0 animate-spin text-gray-400" aria-hidden />;
+  if (status === "running") return <Loader2 className="h-[18px] w-[18px] shrink-0 motion-safe:animate-spin text-gray-500" aria-hidden />;
   if (status === "failed") {
     return (
       <span aria-hidden className="flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded-full bg-red-600 text-white">
@@ -43,7 +43,6 @@ function CheckIcon({ status }: { status: SetupCheckStatus }) {
   return <span aria-hidden className="h-[18px] w-[18px] shrink-0 rounded-full border-[1.5px] border-gray-200" />;
 }
 
-/** The one checks list: each check fills in as OpenWork confirms it. */
 export function SetupChecks({ checks }: { checks: SetupCheck[] }) {
   return (
     <ol className="flex flex-col divide-y divide-gray-100 rounded-2xl border border-gray-100 bg-white" data-testid="setup-checks">
@@ -57,8 +56,8 @@ export function SetupChecks({ checks }: { checks: SetupCheck[] }) {
           <div className="flex items-center gap-3.5">
             <CheckIcon status={check.status} />
             <div className="min-w-0 flex-1">
-              <p className={`text-[14px] font-medium leading-5 ${check.status === "waiting" ? "text-gray-400" : "text-gray-900"}`}>{check.title}</p>
-              <p className={`text-[13px] leading-[18px] ${check.status === "failed" ? "text-red-600" : check.status === "waiting" ? "text-gray-400" : "text-gray-500"}`}>
+              <p className={`text-[14px] font-medium leading-5 ${check.status === "waiting" ? "text-gray-500" : "text-gray-900"}`}>{check.title}</p>
+              <p className={`text-[13px] leading-[18px] ${check.status === "failed" ? "text-red-600" : "text-gray-500"}`}>
                 {check.description}
               </p>
             </div>

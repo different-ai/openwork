@@ -5,14 +5,12 @@ import { cn } from "@/lib/utils"
 import { DashboardConnectionCard } from "@/react-app/domains/dashboard/dashboard-connection-card"
 import { useOptionalMessageList } from "./message-list-provider"
 
-// The native connection card reads a connection report from this tool's results.
 const CONNECTION_TOOL_NAME = "openwork-cloud_connection_action"
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value)
 }
 
-/** The App a launch result opened, as Den summarizes it: its title and the capabilities its tools run. */
 function launchedApp(result: { structuredContent?: Record<string, unknown> } | null | undefined) {
   const app = result?.structuredContent?.app
   if (!isRecord(app) || !Array.isArray(app.tools)) return null
@@ -22,7 +20,6 @@ function launchedApp(result: { structuredContent?: Record<string, unknown> } | n
   }
 }
 
-/** Connections an App built in OpenWork calls through its tools (`mcp:<connectionId>:<tool>`). */
 export function connectionIdsUsedByApp(result: { structuredContent?: Record<string, unknown> } | null | undefined): string[] {
   const ids = (launchedApp(result)?.capabilities ?? []).flatMap((capability) => {
     const match = /^mcp:([^:]+):./.exec(capability)
@@ -31,11 +28,6 @@ export function connectionIdsUsedByApp(result: { structuredContent?: Record<stri
   return [...new Set(ids)]
 }
 
-/**
- * What the viewer must do before the App's connection tools can run, from the
- * live connection list. Connections the viewer cannot see stay quiet: their
- * tools report access to the App itself.
- */
 export function signInPromptsForConnections(connectionIds: readonly string[], connections: readonly DenExternalMcpConnection[]): ConnectionActionPayload[] {
   return connectionIds.flatMap((connectionId): ConnectionActionPayload[] => {
     const connection = connections.find(item => item.id === connectionId)
@@ -62,7 +54,6 @@ export function signInPromptsForConnections(connectionIds: readonly string[], co
   })
 }
 
-/** A bound App tool that failed because the viewer has not signed in (or must sign in again). */
 export function signInPromptFromToolResult(result: { isError?: boolean; structuredContent?: unknown } | null | undefined): ConnectionActionPayload | null {
   if (result?.isError !== true) return null
   const parsed = connectionActionPayloadSchema.safeParse(result.structuredContent)
@@ -74,10 +65,6 @@ function withPrompt(prompts: ConnectionActionPayload[], next: ConnectionActionPa
   return prompts.some(prompt => prompt.connectionId === next.connectionId) ? prompts : [...prompts, next]
 }
 
-/**
- * Sign-in prompts for one open App: connections its tools use that the viewer
- * has not signed in to, found when it opens and whenever a tool reports one.
- */
 export function useMcpAppSignIn(result: { structuredContent?: Record<string, unknown> } | null | undefined) {
   const [prompts, setPrompts] = useState<ConnectionActionPayload[]>([])
   const connectionIds = connectionIdsUsedByApp(result).join("\n")
@@ -97,7 +84,6 @@ export function useMcpAppSignIn(result: { structuredContent?: Record<string, unk
         const found = signInPromptsForConnections(connectionIds.split("\n"), connections)
         if (found.length > 0) setPrompts(current => found.reduce(withPrompt, current))
       })
-      // The App's own tools still report the connection when it is used.
       .catch(() => undefined)
     return () => { cancelled = true }
   }, [connectionIds])
@@ -112,7 +98,6 @@ export function useMcpAppSignIn(result: { structuredContent?: Record<string, unk
   return { prompts, appTitle, reportToolResult, signedIn }
 }
 
-/** One sign-in row per connection, above the App; signing in reloads the App. */
 export function McpAppSignInPrompts({ prompts, appTitle, scope, className, onSignedIn }: {
   prompts: ConnectionActionPayload[]
   className?: string
@@ -122,8 +107,6 @@ export function McpAppSignInPrompts({ prompts, appTitle, scope, className, onSig
 }) {
   const cachedIdentities = useOptionalMessageList()?.connectorIdentities
   if (prompts.length === 0) return null
-  // These prompts come from a fresher check than the chat's cached connector
-  // list, which keeps only its logos here: it can still call a person connected.
   const connectorIdentities = (cachedIdentities ?? []).map(identity => prompts.some(prompt => prompt.connectionId === identity.connectionId)
     ? { ...identity, connectedForMe: false }
     : identity)

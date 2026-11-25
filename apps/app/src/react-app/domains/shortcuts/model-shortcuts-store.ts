@@ -1,11 +1,3 @@
-// User-defined shortcuts. v1 ships one action type, `model.switch`: a key that
-// switches the focused conversation to a saved model, reasoning level and
-// Fast preference. The action is a discriminated union so later actions
-// (open browser, select connections, open a file, open a dashboard) can reuse
-// the same list, recorder and failure notice.
-//
-// A shortcut is never removed because its model became unavailable; only the
-// person removes or reassigns it.
 import { z } from "zod";
 import { create } from "zustand";
 
@@ -17,11 +9,8 @@ const modelSwitchAction = z.object({
   type: z.literal("model.switch"),
   providerID: z.string().trim().min(1),
   modelID: z.string().trim().min(1),
-  /** Standard reasoning variant id; null is the provider default. */
   effort: z.string().min(1).nullable(),
-  /** Preference only: applied when the model offers Fast, skipped otherwise. */
   fast: z.boolean(),
-  /** Last known names, so a shortcut to a model that disappeared still reads well. */
   modelTitle: z.string().optional(),
   providerName: z.string().optional(),
 });
@@ -41,7 +30,6 @@ export function shortcutModelRef(shortcut: Shortcut): ModelRef {
   return { providerID: shortcut.action.providerID, modelID: shortcut.action.modelID };
 }
 
-/** Parse stored shortcuts, dropping only malformed entries and duplicate keys. */
 export function parseStoredShortcuts(raw: unknown): Shortcut[] {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
   const list = Reflect.get(raw, "shortcuts");
@@ -75,15 +63,9 @@ function writeStoredShortcuts(shortcuts: readonly Shortcut[]) {
   try {
     window.localStorage.setItem(MODEL_SHORTCUTS_STORAGE_KEY, JSON.stringify({ version: 1, shortcuts }));
   } catch {
-    // Storage can be full or disabled; the in-memory list still works.
   }
 }
 
-/**
- * Insert or replace one shortcut. A shortcut that already owns the same keys
- * is replaced (the person confirmed "Reassign"); the same model may only have
- * one shortcut, so saving a model again edits its existing entry.
- */
 export function upsertShortcut(shortcuts: readonly Shortcut[], next: Shortcut): Shortcut[] {
   const sameModel = (entry: Shortcut) =>
     entry.action.providerID === next.action.providerID && entry.action.modelID === next.action.modelID;
@@ -129,8 +111,6 @@ export const useModelShortcutsStore = create<ModelShortcutsStore>((set) => ({
   }),
 }));
 
-// Keep windows in sync: settings and chat can live in different renderer
-// windows, and a shortcut saved in one must work in the other.
 if (typeof window !== "undefined") {
   window.addEventListener("storage", (event) => {
     if (event.key !== MODEL_SHORTCUTS_STORAGE_KEY) return;

@@ -2,29 +2,17 @@ import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { dirname, join, resolve, sep } from "node:path"
 import { AwsClient } from "aws4fetch"
 
-/**
- * Where saved files' bytes live. The runner keeps each file's name, type and owner in SQLite and only the
- * bytes here: a folder on the runner's disk (development and single-disk installs), or any S3-compatible bucket
- * (AWS S3, Cloudflare R2, MinIO, Tigris, Backblaze B2, Google Cloud Storage's XML API), which every host can share.
- * Files are optional: with no store configured, the file routes and tools are simply not offered.
- *
- * Keys are `sessions/<sessionId>/<fileId>` (plus `.preview/...` for page images); the runner only ever reads a
- * key it recorded for that session, so one conversation can never name another's bytes.
- */
 export type BlobStore = {
   kind: "disk" | "s3"
   put(key: string, bytes: Uint8Array<ArrayBuffer>, contentType: string): Promise<void>
-  /** Null when the object does not exist. */
   get(key: string): Promise<Uint8Array<ArrayBuffer> | null>
   delete(key: string): Promise<void>
-  /**
-   * Every object under a prefix, with when it was last written (epoch ms): for orphan cleanup of sealed segments and
-   * large bodies (storage/), which deletes only old objects nothing references. Optional for test stores.
-   */
   list?(prefix: string): Promise<Array<{ key: string; lastModified: number }>>
+  link?(method: "GET" | "PUT", key: string, expiresSeconds: number): Promise<string>
+  size?(key: string): Promise<number | null>
+  copy?(from: string, to: string, contentType: string): Promise<void>
 }
 
-/** Keys are runner-generated (`sessions/<id>/<fileId>`); this only guards against a key escaping the folder. */
 function safeKey(key: string) {
   if (!/^[A-Za-z0-9._/-]+$/.test(key) || key.split("/").some((part) => part === ".." || part === "")) throw new Error("invalid_blob_key")
   return key
@@ -77,20 +65,17 @@ export function diskBlobStore(directory: string): BlobStore {
 }
 
 export type S3Options = {
-  /** e.g. https://<account>.r2.cloudflarestorage.com, https://s3.us-east-1.amazonaws.com, http://127.0.0.1:9000 */
   endpoint: string
   region: string
   bucket: string
   accessKeyId: string
   secretAccessKey: string
-  /** `https://endpoint/bucket/key` instead of `https://bucket.endpoint/key`. MinIO and most self-hosted stores need it. */
   forcePathStyle: boolean
   fetch?: typeof fetch
 }
 
 const S3_TIMEOUT_MS = 120_000
 
-/** Any S3-compatible bucket, signed with SigV4. No provider SDK, so it runs the same on Node and Workers runtimes. */
 export function s3BlobStore(options: S3Options): BlobStore {
   const client = new AwsClient({
     accessKeyId: options.accessKeyId,
@@ -104,11 +89,11 @@ export function s3BlobStore(options: S3Options): BlobStore {
     if (options.forcePathStyle) return `${base.origin}/${encodeURIComponent(options.bucket)}/${path}`
     return `${base.protocol}//${options.bucket}.${base.host}/${path}`
   }
-  const send = async (method: string, key: string, init: { body?: Uint8Array<ArrayBuffer>; contentType?: string } = {}) => {
+  const send = async (method: string, key: string, init: { body?: Uint8Array<ArrayBuffer>; contentType?: string; headers?: Record<string, string> } = {}) => {
     const request = await client.sign(urlOf(key), {
       method,
       ...(init.body ? { body: init.body } : {}),
-      headers: init.contentType ? { "content-type": init.contentType } : {},
+      headers: { ...init.headers, ...(init.contentType ? { "content-type": init.contentType } : {}) },
     })
     return (options.fetch ?? fetch)(request, { signal: AbortSignal.timeout(S3_TIMEOUT_MS) })
   }
@@ -137,7 +122,26 @@ export function s3BlobStore(options: S3Options): BlobStore {
       if (!response.ok && response.status !== 404) throw await fail("delete", response)
       await response.body?.cancel()
     },
-    // ListObjectsV2, page by page.
+    async link(method, key, expiresSeconds) {
+      const url = new URL(urlOf(key))
+      url.searchParams.set("X-Amz-Expires", String(Math.max(1, Math.round(expiresSeconds))))
+      return (await client.sign(url.toString(), { method, aws: { signQuery: true } })).url
+    },
+    async size(key) {
+      const response = await send("HEAD", key)
+      await response.body?.cancel()
+      if (response.status === 404) return null
+      const length = response.headers.get("content-length")
+      if (!response.ok || length === null || !/^\d+$/.test(length)) throw new Error(`s3_head_${response.status}`)
+      return Number(length)
+    },
+    async copy(from, to, contentType) {
+      const source = `/${encodeURIComponent(options.bucket)}/${safeKey(from).split("/").map(encodeURIComponent).join("/")}`
+      const response = await send("PUT", to, { contentType, headers: { "x-amz-copy-source": source, "x-amz-metadata-directive": "REPLACE" } })
+      if (!response.ok) throw await fail("copy", response)
+      const body = await response.text()
+      if (/<Error>/.test(body)) throw new Error(`s3_copy_failed: ${body.slice(0, 300)}`)
+    },
     async list(prefix) {
       safeKey(prefix.replace(/\/$/, ""))
       const bucketUrl = options.forcePathStyle ? `${base.origin}/${encodeURIComponent(options.bucket)}` : `${base.protocol}//${options.bucket}.${base.host}/`

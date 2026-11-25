@@ -152,9 +152,6 @@ export async function initializeDenDb(executor: Executor) {
 }
 
 export async function bootstrapDenDb() {
-  // Recovery is maintenance on an already-upgraded database. A refusal must
-  // not perform unrelated migration/repair/reconciliation writes first.
-  // Disabled recovery leaves the normal upgrade path completely unchanged.
   if (await administratorRecoveryRequestedFromEnv()) {
     const check = await createExecutor()
     try {
@@ -187,9 +184,6 @@ export async function bootstrapDenDb() {
     await repairExecutor.close()
   }
 
-  // Not schema: a failure here must not stop den-api from starting. den-api
-  // also reconciles an organization's default sets when it first resolves
-  // permissions for it, so the next deploy or request catches up.
   console.log("[den-db] reconciling default permission sets")
   try {
     await reconcilePermissionsFromEnv()

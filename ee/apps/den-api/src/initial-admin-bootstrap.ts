@@ -174,7 +174,7 @@ export function initialAdminBootstrapSignupRejectedResponse() {
 }
 
 async function readSessionByToken(token: string) {
-  const rows = await db
+  const rows = await db.$primary
     .select({ id: AuthSessionTable.id, userId: AuthSessionTable.userId, activeOrganizationId: AuthSessionTable.activeOrganizationId })
     .from(AuthSessionTable)
     .where(sessionTokenMatches(token))

@@ -11,6 +11,7 @@ import {
   evalUpdaterFeedUrl,
   preventPendingUpdaterInstall,
   registerUpdaterIpc,
+  staleUpdaterStateHome,
   staleUpdaterStatePaths,
   targetedStableUpdaterFeed,
 } from "./updater.mjs";
@@ -97,7 +98,7 @@ async function registerFakeUpdaterIpc({ version, platform = "linux", manualNativ
   const { registerUpdaterIpc: registerIsolatedUpdaterIpc } = await import(
     updaterModuleUrl.href
   );
-  registerIsolatedUpdaterIpc({
+  const controls = registerIsolatedUpdaterIpc({
     app: {
       isPackaged: true,
       getVersion: () => "0.17.0",
@@ -114,18 +115,40 @@ async function registerFakeUpdaterIpc({ version, platform = "linux", manualNativ
     writeDefaults: async (args) => { defaultsWrites.push(args); },
     ...(assertActivation ? { assertActivation } : {}),
   });
-  return { tempDir, handlers, defaultsWrites, ...harness };
+  return { tempDir, handlers, defaultsWrites, controls, ...harness };
 }
 
 describe("staleUpdaterStatePaths", () => {
   it("targets the ShipIt cache on macOS", { skip: process.platform !== "darwin" }, () => {
-    assert.deepEqual(staleUpdaterStatePaths(fakeApp), [
+    assert.deepEqual(staleUpdaterStatePaths(fakeApp, undefined, {}), [
       "/Users/test/Library/Caches/com.differentai.openwork.ShipIt",
+    ]);
+  });
+
+  it("targets the isolated home when HOME is overridden", { skip: process.platform !== "darwin" }, () => {
+    assert.deepEqual(staleUpdaterStatePaths(fakeApp, undefined, { HOME: "/tmp/eval-home" }), [
+      "/tmp/eval-home/Library/Caches/com.differentai.openwork.ShipIt",
     ]);
   });
 
   it("is a no-op off macOS", { skip: process.platform === "darwin" }, () => {
     assert.deepEqual(staleUpdaterStatePaths(fakeApp), []);
+  });
+});
+
+describe("staleUpdaterStateHome", () => {
+  it("prefers an overridden HOME over the Electron account home", () => {
+    assert.equal(staleUpdaterStateHome(fakeApp, { HOME: "/tmp/eval-home" }), "/tmp/eval-home");
+  });
+
+  it("trims an overridden HOME", () => {
+    assert.equal(staleUpdaterStateHome(fakeApp, { HOME: "  /tmp/eval-home  " }), "/tmp/eval-home");
+  });
+
+  it("falls back to the Electron account home when HOME is absent or blank", () => {
+    assert.equal(staleUpdaterStateHome(fakeApp, {}), "/Users/test");
+    assert.equal(staleUpdaterStateHome(fakeApp, { HOME: "" }), "/Users/test");
+    assert.equal(staleUpdaterStateHome(fakeApp, { HOME: "   " }), "/Users/test");
   });
 });
 
@@ -570,6 +593,41 @@ describe("pre-activation guard", () => {
 });
 
 describe("downloaded update lifecycle", () => {
+  it("does not start a staged Windows update while the session is ending", async () => {
+    const { tempDir, handlers, updater, controls } = await registerFakeUpdaterIpc({
+      version: "0.17.1",
+      platform: "win32",
+    });
+    try {
+      assert.equal((await handlers.get("openwork:updater:check")(null, "stable")).available, true);
+      assert.deepEqual(await handlers.get("openwork:updater:download")(), { ok: true });
+      assert.equal(updater.autoInstallOnAppQuit, true);
+
+      controls.holdInstallForSessionEnd();
+      assert.equal(updater.autoInstallOnAppQuit, false);
+
+      // A download that finishes during shutdown must not re-arm install on quit.
+      assert.deepEqual(await handlers.get("openwork:updater:download")(), { ok: true });
+      assert.equal(updater.autoInstallOnAppQuit, false);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
+  it("ignores session end outside Windows", async () => {
+    const { tempDir, handlers, updater, controls } = await registerFakeUpdaterIpc({
+      version: "0.17.1",
+    });
+    try {
+      assert.equal((await handlers.get("openwork:updater:check")(null, "stable")).available, true);
+      assert.deepEqual(await handlers.get("openwork:updater:download")(), { ok: true });
+      controls.holdInstallForSessionEnd();
+      assert.equal(updater.autoInstallOnAppQuit, true);
+    } finally {
+      await rm(tempDir, { recursive: true, force: true });
+    }
+  });
+
   it("a transient failed check does not invalidate a downloaded update", async () => {
     const { tempDir, handlers, updater, calls } = await registerFakeUpdaterIpc({
       version: "0.17.1",

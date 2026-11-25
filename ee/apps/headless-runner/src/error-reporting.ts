@@ -1,23 +1,12 @@
-/**
- * Opt-in error reports to Sentry that run on both hosts (Node and celld cells, where Sentry's Node SDK can't run):
- * each report is one event in one envelope, posted with `fetch` to the DSN's project. Nothing is sent without
- * HEADLESS_SENTRY_DSN, so self-hosted runners never report anywhere they weren't told to.
- *
- * Reports carry stable codes, ids and counts only: never prompts, messages, tool inputs or outputs, tokens or
- * credentials. Sending is fire-and-forget with a short timeout; it never throws and drops the report on failure.
- */
-
 export type ErrorReportingConfig = {
   dsn: string
   environment?: string
   release?: string
-  /** HEADLESS_RUNNER_VERSION, tagged on every report. */
   runnerVersion?: string
 }
 
 export type ParsedDsn = { envelopeUrl: string; publicKey: string }
 
-/** `https://<key>@<host>[/<path>]/<project>` to the project's envelope endpoint, or null if it isn't a DSN. */
 export function parseDsn(dsn: string): ParsedDsn | null {
   let url: URL
   try {
@@ -34,20 +23,15 @@ export function parseDsn(dsn: string): ParsedDsn | null {
 }
 
 export type ErrorReport = {
-  /** The stable code: a turn's error (`model_http_429`, `mcp_unavailable`, `turn_timeout`) or `request_failed`. */
   code: string
-  /** Groups reports into issues; defaults to the code. */
   kind?: string
   level?: "error" | "warning"
-  /** Ids, codes and counts only. */
   tags?: Record<string, string | number | boolean | null | undefined>
-  /** Contributes its type, Node error code and stack frames; its message only when it is a plain code. */
   error?: unknown
 }
 
 export type ErrorReporter = {
   readonly enabled: boolean
-  /** Resolves once sent or dropped; never rejects. Callers may leave it running. */
   report: (report: ErrorReport) => Promise<void>
 }
 
@@ -57,7 +41,6 @@ const SDK = { name: "openwork.headless-runner", version: "1.0.0" }
 const DEFAULT_TIMEOUT_MS = 3_000
 const MAX_TAG_LENGTH = 200
 const MAX_STACK_LINES = 30
-/** Our own codes pass (`runner_error`, `ERR_SQLITE_ERROR`); any other text could hold content. */
 const CODE_LIKE = /^[A-Za-z0-9_.:-]{1,120}$/
 const TAG_KEY = /^[A-Za-z0-9_.:-]{1,32}$/
 
@@ -68,7 +51,6 @@ export const safeMessage = (value: string) => (CODE_LIKE.test(value) ? value : "
 function exceptionOf(error: unknown) {
   if (!(error instanceof Error)) return null
   const code = "code" in error && typeof error.code === "string" ? error.code : undefined
-  // Only the "at ..." lines: the first line of a stack repeats the message.
   const stack = (error.stack ?? "")
     .split("\n")
     .filter((line) => /^\s+at /.test(line))
@@ -93,7 +75,6 @@ function tagsOf(report: ErrorReport, config: ErrorReportingConfig) {
   return tags
 }
 
-/** The Sentry event for one report. Exported for tests. */
 export function buildEvent(report: ErrorReport, config: ErrorReportingConfig, eventId: string, nowMs: number) {
   const exception = exceptionOf(report.error)
   const kind = report.kind ?? report.code
@@ -118,7 +99,6 @@ export function buildEvent(report: ErrorReport, config: ErrorReportingConfig, ev
   }
 }
 
-/** One event in one envelope: header, item header, event. Exported for tests. */
 export function buildEnvelope(event: ReturnType<typeof buildEvent>, dsn: string, sentAt: string) {
   const payload = JSON.stringify(event)
   return [
@@ -128,7 +108,6 @@ export function buildEnvelope(event: ReturnType<typeof buildEvent>, dsn: string,
   ].join("\n")
 }
 
-/** A reporter for the config; without a (valid) DSN, one that sends nothing. */
 export function createErrorReporter(config: ErrorReportingConfig | undefined, deps: ErrorReporterDeps = {}): ErrorReporter {
   const target = config ? parseDsn(config.dsn) : null
   if (!config || !target) return disabled
@@ -150,7 +129,6 @@ export function createErrorReporter(config: ErrorReportingConfig | undefined, de
         })
         await response.body?.cancel().catch(() => undefined)
       } catch {
-        // Dropped: a report must never break or slow what it describes.
       }
     },
   }

@@ -1,6 +1,3 @@
-// Minimal Streamable-HTTP MCP client used to read discovery resources from an
-// openwork-cloud connection. Extracted from connect-skill-catalog so the skill
-// index and the Automation index speak to the same connection the same way.
 export type McpFetch = (input: string, init?: RequestInit) => Promise<Response>;
 
 export function isRecord(value: unknown): value is Record<string, unknown> {
@@ -39,7 +36,6 @@ export async function readMcpPayload(response: Response, requestId?: string | nu
       const chunk = await reader.read();
       if (chunk.done) return null;
       pending += decoder.decode(chunk.value, { stream: true });
-      // Parse lines incrementally: CR, LF and CRLF are legal, including across chunks.
       while (pending.length) {
         if (skipLf) {
           if (pending.startsWith("\n")) pending = pending.slice(1);
@@ -62,7 +58,6 @@ export async function readMcpPayload(response: Response, requestId?: string | nu
       }
     }
   } finally {
-    // A server may keep the stream open after the result. Never wait for EOF.
     void reader.cancel().catch(() => {});
     reader.releaseLock();
   }
@@ -86,24 +81,11 @@ export async function mcpPost(fetcher: McpFetch, url: string, headers: Record<st
 }
 
 export type McpResourceReader = {
-  /** Resource text, or null when the read failed or returned no matching text. */
   read(uri: string, meta?: Record<string, unknown>): Promise<string | null>;
-  /**
-   * One `resources/read` whose result may list several resources: each URI's
-   * text, plus the result's `_meta`. Null when the request itself failed.
-   */
-  readContents(uri: string, meta?: Record<string, unknown>): Promise<{ texts: Map<string, string>; meta: Record<string, unknown> } | null>;
-  /** Set once a request failed at the transport or session level; open a new reader. */
+  readContents(uri: string, meta?: Record<string, unknown>): Promise<{ texts: Map<string, string>; blobs: Map<string, string>; meta: Record<string, unknown> } | null>;
   readonly broken: boolean;
 };
 
-/**
- * Opens one initialized Streamable HTTP session against an openwork-cloud
- * config. Returns null when the config is unusable (invalid URL, disabled, auth
- * rejected, transport or protocol error). The reader issues sequential
- * `resources/read` requests on that session, so one session can serve a whole
- * refresh instead of paying initialize and notifications/initialized per read.
- */
 export async function openMcpResourceReader(input: {
   config: Record<string, unknown>;
   fetcher: McpFetch;
@@ -124,10 +106,8 @@ export async function openMcpResourceReader(input: {
   });
   if (!initialized.response.ok) return null;
   const protocolVersion = jsonRpcResult(initialized.payload)?.protocolVersion;
-  // These are the Streamable HTTP revisions supported by this discovery client.
   if (protocolVersion !== "2025-06-18" && protocolVersion !== "2025-03-26") return null;
   const sessionId = initialized.response.headers.get("mcp-session-id");
-  // Normalize header names so configured casing cannot duplicate session headers.
   const sessionHeaders = {
     ...Object.fromEntries(new Headers(baseHeaders)),
     ...(sessionId ? { "mcp-session-id": sessionId } : {}),
@@ -144,8 +124,6 @@ export async function openMcpResourceReader(input: {
       method: "resources/read",
       params: { uri, ...(meta ? { _meta: meta } : {}) },
     }).catch(() => null);
-    // An expired session (404) or a transport failure ends this reader; a
-    // JSON-RPC error for one resource does not.
     if (!resource?.response.ok || resource.payload === null) {
       broken = true;
       return null;
@@ -153,10 +131,13 @@ export async function openMcpResourceReader(input: {
     const result = jsonRpcResult(resource.payload);
     if (!result || !Array.isArray(result.contents)) return null;
     const texts = new Map<string, string>();
+    const blobs = new Map<string, string>();
     for (const item of result.contents) {
-      if (isRecord(item) && typeof item.uri === "string" && typeof item.text === "string" && !texts.has(item.uri)) texts.set(item.uri, item.text);
+      if (!isRecord(item) || typeof item.uri !== "string") continue;
+      if (typeof item.text === "string" && !texts.has(item.uri)) texts.set(item.uri, item.text);
+      else if (typeof item.blob === "string" && !blobs.has(item.uri)) blobs.set(item.uri, item.blob);
     }
-    return { texts, meta: isRecord(result._meta) ? result._meta : {} };
+    return { texts, blobs, meta: isRecord(result._meta) ? result._meta : {} };
   };
   return {
     readContents,
@@ -169,11 +150,6 @@ export async function openMcpResourceReader(input: {
   };
 }
 
-/**
- * Reads one JSON resource from an openwork-cloud config. Returns the resource
- * text, or null when the config is unusable (invalid URL, disabled, auth
- * rejected, transport or protocol error) so callers can try another candidate.
- */
 export async function readMcpResourceText(input: {
   config: Record<string, unknown>;
   uri: string;

@@ -23,11 +23,6 @@ import { planUsageLabel } from "../../_lib/plan-display";
 
 const TIER_NAMES: Record<BillingPlanSummary["tier"], string> = { free: "Free", team: "Team", enterprise: "Enterprise" };
 
-/**
- * The workspace's plan, first on Billing: which plan it is on, the people it
- * counts, and (behind `teamPlan`) starting Team for every person at $10.
- * Add-ons such as OpenWork Models stay separate purchases below.
- */
 export function BillingPlanCard({
   plan,
   plans,
@@ -38,23 +33,18 @@ export function BillingPlanCard({
   requestedAddPeople,
   busy,
   notSold,
-  teamOffered = true,
   onStartTeam,
   onOpenPortal,
 }: {
   plan: BillingPlanSummary;
   plans: BillingPlans;
-  /** Quantity on the active plan subscription, when there is one. */
   seatQuantity: number | null;
   seatInterval: string;
   canManageBilling: boolean;
   canOpenPortal: boolean;
   requestedAddPeople: number | null;
   busy: "plan-checkout" | "portal" | null;
-  /** The last Start Team answered 503 billing_not_configured. */
   notSold: boolean;
-  /** `teamPlan` is on for this organization: a Free workspace is offered Team. */
-  teamOffered?: boolean;
   onStartTeam: (addPeople: number) => void;
   onOpenPortal: () => void;
 }) {
@@ -64,7 +54,7 @@ export function BillingPlanCard({
   const team = plans.team;
   const quote = quotePlan({ plan: "team", people: plan.people, addPeople: people - plan.people });
   const paidByStripe = plan.source === "stripe" && plan.tier !== "free";
-  const unitAmount = plan.tier === "enterprise" ? plans.enterprise.unitAmount : team.unitAmount;
+  const unitAmount = team.unitAmount;
   const billedPeople = seatQuantity ?? plan.people;
   const teamSold = team.available && !notSold;
   const adminSetUsage = planUsageLabel(plan);
@@ -92,7 +82,7 @@ export function BillingPlanCard({
             value={paidByStripe ? formatMoneyMinor(billedPeople * unitAmount, team.currency) : formatMoneyMinor(0, team.currency)}
             valueCaption={`per ${seatInterval}`}
           />
-        ) : !teamOffered ? null : teamSold ? (
+        ) : teamSold ? (
           <div className="flex flex-wrap items-end justify-between gap-4 pt-4" data-testid="billing-plan-team-offer">
             <div className="grid gap-1">
               <p className="text-[14px] font-medium text-gray-950">Team</p>

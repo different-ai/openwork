@@ -1,13 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { createContext, lazy, Suspense, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import { adminOrganizationDetailSchema, adminOrganizationInsightsSchema, adminOrganizationUsageSchema, type AdminOrganizationDetail, type AdminOrganizationInsights as InsightReport, type AdminOrganizationUsage, type AdminOrganizationUsageTotals } from "@openwork/types/den/admin-organization";
 import { DenButton } from "../../app/(den)/_components/ui/button";
 import { DenInput } from "../../app/(den)/_components/ui/input";
+import { DenSegmented } from "../../app/(den)/_components/ui/segmented";
 import { DenTable, type DenTableColumn } from "../../app/(den)/_components/ui/table";
 import { AdminOrganizationFeatureControls, type AdminFeatureAccessFailure } from "./admin-organization-feature-controls";
+import { AdminOrganizationFeatureUsageView } from "./admin-organization-feature-usage";
 import { AdminAccessScreen } from "./admin-access-screen";
 import { AdminBreadcrumbs } from "./admin-breadcrumbs";
 import { ADMIN_LIST_PAGE_SIZE, useAdminListLocation } from "./admin-list-location";
@@ -40,16 +42,14 @@ function Coverage({ totals }: { totals: AdminOrganizationUsageTotals }) {
   return <p className="mt-1 text-xs text-gray-500">{totals.unreportedRequests === null ? "Token coverage unknown" : `${requests(totals.unreportedRequests)} without reported tokens`}; {totals.unpricedRequests === null ? "price coverage unknown" : `${requests(totals.unpricedRequests)} without a recorded price`}.</p>;
 }
 
-/** "Enterprise · set by admin", "Team · paid in Stripe" or "Free". */
 function planSummary(organization: Organization) {
   const plan = organization.plan;
   if (!plan) return planName(organization.planTier === "team" || organization.planTier === "enterprise" ? organization.planTier : "free");
-  if (plan.paidBy !== "none") return `${planName(plan.paidBy === "stripe_enterprise" ? "enterprise" : "team")} · paid in Stripe`;
+  if (plan.paidBy !== "none") return `${planName("team")} · paid in Stripe`;
   if (plan.tier === "free") return "Free";
   return `${planName(plan.tier)} · ${plan.source === "grandfathered" ? "grandfathered" : "set by admin"}`;
 }
 
-/** "7 of 20" or "31 · no limit". */
 function usersSummary(organization: Organization) {
   const plan = organization.plan;
   if (!plan) return `${count(organization.memberCount)} / ${count(organization.seatLimit)}`;
@@ -64,9 +64,6 @@ function sectionPath(organizationId: string, section: Section, search: string, o
   return `${organizationPath(organizationId)}${section === "members" ? "" : `/${section}`}?${query}`;
 }
 
-// Tab snapshots live in memory for this tab only. A revisited tab renders its
-// last snapshot at once and refreshes it; a hovered tab starts its request
-// early. Cached records are never shown before this visit's access check.
 const sectionCache = new Map<string, PageData>();
 const sectionRequests = new Map<string, Promise<AdminResult<PageData>>>();
 
@@ -109,11 +106,6 @@ function useOrganization() {
   return context;
 }
 
-/**
- * Header, tabs and identity stay mounted while the admin switches tabs. Only
- * the identity is required to draw the header; each tab loads its own data
- * in parallel and never blocks the header or the other tabs.
- */
 export function AdminOrganizationLayout({ organizationId, children }: { organizationId: string; children: ReactNode }) {
   const hasSessionCookie = useAdminSessionCookie();
   const pathname = usePathname();
@@ -145,8 +137,6 @@ export function AdminOrganizationLayout({ organizationId, children }: { organiza
       if (controller.signal.aborted) return;
       if (result.access === "error") setErrorMessage(result.message);
       if (result.access === "signed-out" || result.access === "forbidden") sectionCache.clear();
-      // Preserve the organization during a failed refresh. Authentication and
-      // access failures still discard every record and control immediately.
       setState((current) => result.access === "error" && current.access === "ready" ? current : result);
     };
     void requestAdmin<Organization>(`${organizationPath(organizationId)}?limit=1&offset=0`, (payload) => {
@@ -223,12 +213,36 @@ function SectionSkeleton({ label }: { label: string }) {
   return <div aria-busy="true" aria-label={label} className="py-5"><div className="h-5 w-40 rounded-sm bg-gray-100" /><div className="mt-4 h-10 rounded-sm bg-gray-100" /><div className="mt-4 h-56 rounded-sm bg-gray-100" /></div>;
 }
 
+type FeaturesView = "usage" | "settings";
+const FEATURES_VIEWS = [{ value: "usage", label: "Usage" }, { value: "settings", label: "Settings" }] as const satisfies readonly { value: FeaturesView; label: string }[];
+
+function OrganizationFeatures({ organizationId, refreshKey, fail }: { organizationId: string; refreshKey: number; fail: (failure: AdminFeatureAccessFailure) => void }) {
+  const params = useSearchParams();
+  const router = useRouter();
+  const pathname = usePathname();
+  const view: FeaturesView = params.get("view") === "settings" ? "settings" : "usage";
+  const [opened, setOpened] = useState<ReadonlySet<FeaturesView>>(() => new Set([view]));
+  useEffect(() => setOpened((current) => current.has(view) ? current : new Set([...current, view])), [view]);
+
+  function choose(next: FeaturesView) {
+    const query = new URLSearchParams(params.toString());
+    if (next === "settings") query.set("view", next); else query.delete("view");
+    router.replace(`${pathname}${query.size ? `?${query}` : ""}`, { scroll: false });
+  }
+
+  return <>
+    <div className="pt-5"><DenSegmented aria-label="Feature views" options={FEATURES_VIEWS} value={view} onChange={choose} optionTestId={(value) => `admin-features-view-${value}`} /></div>
+    {opened.has("usage") ? <div hidden={view !== "usage"}>
+      <AdminOrganizationFeatureUsageView key={`usage:${organizationId}`} organizationId={organizationId} refreshKey={refreshKey} onAccessFailure={fail} />
+    </div> : null}
+    {view === "settings" ? <AdminOrganizationFeatureControls key={organizationId} organizationId={organizationId} refreshKey={refreshKey} onAccessFailure={fail} /> : null}
+  </>;
+}
+
 export function AdminOrganizationPage({ organizationId, section }: { organizationId: string; section: Section }) {
   const { organization, verified, refreshKey, refresh, fail, setSectionBusy } = useOrganization();
   const { search, draftSearch, page, offset, setSearch, setPage } = useAdminListLocation();
   const path = sectionPath(organizationId, section, search, offset);
-  // `trusted` is false only for a snapshot read from memory before this
-  // visit's access check finished.
   const [snapshot, setSnapshot] = useState<{ data: PageData; trusted: boolean } | null>(() => {
     const cached = path ? sectionCache.get(path) : undefined;
     return cached ? { data: cached, trusted: false } : null;
@@ -247,7 +261,6 @@ export function AdminOrganizationPage({ organizationId, section }: { organizatio
     if (cached) setSnapshot((current) => current?.data === cached ? current : { data: cached, trusted: false });
     setLoading(true);
     setErrorMessage(null);
-    // Debounce search typing only; tab switches and pages start at once.
     const timeout = window.setTimeout(() => {
       void loadSection(path, section as DataSection).then((result) => {
         if (cancelled) return;
@@ -259,7 +272,7 @@ export function AdminOrganizationPage({ organizationId, section }: { organizatio
     return () => { cancelled = true; window.clearTimeout(timeout); };
   }, [path, section, search, refreshKey, fail]);
 
-  if (section === "features") return <AdminOrganizationFeatureControls key={organizationId} organizationId={organizationId} refreshKey={refreshKey} onAccessFailure={fail} />;
+  if (section === "features") return <OrganizationFeatures organizationId={organizationId} refreshKey={refreshKey} fail={fail} />;
   if (section === "billing") return organization ? <AdminOrganizationBilling key={organizationId} organization={organization} onSaved={refresh} onAccessFailure={fail} /> : <SectionSkeleton label="Loading billing" />;
 
   const data = snapshot && (snapshot.trusted || verified) ? snapshot.data : null;

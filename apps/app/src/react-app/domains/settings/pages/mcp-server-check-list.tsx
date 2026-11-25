@@ -40,10 +40,6 @@ function StatusMark(props: { status: McpServerCheckStatus | "pending" }) {
   }
 }
 
-/**
- * The checks Den runs on an MCP server before it is added, ticked off one at
- * a time. `checks` is null while Den is still looking.
- */
 export function McpServerCheckList(props: { checks: McpServerCheck[] | null; onSettled?: () => void }) {
   const [shown, setShown] = useState(0);
   const checks = props.checks;

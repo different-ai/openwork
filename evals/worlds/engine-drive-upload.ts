@@ -1,4 +1,4 @@
-import { writeFile } from "node:fs/promises";
+import { mkdir, realpath, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { createNativeConnector, denFetch } from "@openwork/behaviors";
 import { localMysqlIsRunning, localRedisIsRunning, SkipError, type Place, type Seed } from "@openwork/env";
@@ -50,12 +50,21 @@ export async function engineDriveUpload(seed: Seed, context: { place: Place }) {
     config: { type: "remote", url: `${den.ref.apiUrl}/mcp/agent`, enabled: true, oauth: false, headers: { Authorization: `Bearer ${token}` } }, trigger: "drive-upload-fixture",
   });
   if (connected.status !== 200) throw new Error(`Connect reconciliation failed: ${connected.status}`);
+  // A sibling directory deliberately not registered as a workspace/root.
+  const outside = seed.tmpPath("unregistered-files");
+  await mkdir(outside, { recursive: true });
+  const outsideRoot = await realpath(outside);
   const resources = setup.move();
   return {
     ...base, google, mailboxes, selectedId,
     /** A local Office file the member asks to put in Drive. */
     async writeWorkspaceFile(name: string, bytes: Uint8Array) {
       await writeFile(join(base.workspacePath, name), bytes);
+    },
+    async writeOutsideFile(name: string, bytes: Uint8Array) {
+      const path = join(outsideRoot, name);
+      await writeFile(path, bytes);
+      return path;
     },
     async [Symbol.asyncDispose]() { await resources.disposeAsync(); },
   };

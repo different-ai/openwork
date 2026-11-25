@@ -13,15 +13,8 @@ export const CREDENTIAL_PROMPT_KIND = "credential_prompt" as const
 const id = z.string().trim().min(1).max(160)
 
 export const credentialPromptTargetSchema = z.discriminatedUnion("type", [
-  /** A shared API key for one organization MCP connection. */
   z.object({ type: z.literal("mcp_connection_key"), connectionId: id }).strict(),
-  /** The signed-in person's own API key for a connection where each person uses their own key. */
   z.object({ type: z.literal("mcp_connection_member_key"), connectionId: id }).strict(),
-  /**
-   * One shared organization key that replaces each person's own key. Saving
-   * the key is what changes the connection, and only while it is unchanged
-   * since `expectedUpdatedAt`; `audience` is who will share it, for display.
-   */
   z.object({
     type: z.literal("mcp_connection_shared_switch"),
     connectionId: id,
@@ -32,15 +25,8 @@ export const credentialPromptTargetSchema = z.discriminatedUnion("type", [
       teamCount: z.number().int().min(0).max(100_000),
     }).strict(),
   }).strict(),
-  /** The shared API key of a plugin's declared MCP server, saved through the plugin's own setup. */
   z.object({ type: z.literal("plugin_connection_key"), pluginId: id, configObjectId: id, serverName: z.string().trim().min(1).max(255), connectionId: id }).strict(),
-  /** The shared API key of one AI Gateway provider's organization credential set. */
   z.object({ type: z.literal("gateway_provider_key"), inferenceProviderId: id, credentialSetId: id }).strict(),
-  /**
-   * Several values for one AI Gateway provider's organization credential set:
-   * AWS keys (Bedrock), a Google service-account key (Vertex), or one key per
-   * named variable. The host draws the fields for the kind; Den checks the shape.
-   */
   z.object({
     type: z.literal("gateway_provider_credential"),
     inferenceProviderId: id,
@@ -54,9 +40,7 @@ export const credentialPromptSchema = z.object({
   schemaVersion: z.literal("1"),
   kind: z.literal(CREDENTIAL_PROMPT_KIND),
   target: credentialPromptTargetSchema,
-  /** The saved resource's name, such as the connection or provider name. */
   name: z.string().trim().min(1).max(255),
-  /** Where the key will be sent: origin and path only, never credentials or query. */
   destination: z.string().trim().max(2048).nullable(),
 }).strict()
 

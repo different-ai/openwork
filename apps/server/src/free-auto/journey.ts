@@ -5,10 +5,8 @@ import { runtimeStorageDir } from "../runtime-db.js";
 import type { ServerConfig } from "../types.js";
 
 const JOURNEY_FILE = "free-auto-journey";
-/** The app's analytics choice, as last reported by the app. Missing means not yet reported: send nothing. */
 const ANALYTICS_FILE = "free-auto-analytics";
 
-/** Random analytics correlation only. It never authorizes requests or changes the IP-based guest allowance. */
 export async function readFreeAutoJourney(config: Pick<ServerConfig, "configPath">): Promise<string> {
   const fallback = randomBytes(32).toString("hex");
   const directory = runtimeStorageDir(config);
@@ -23,17 +21,12 @@ export async function readFreeAutoJourney(config: Pick<ServerConfig, "configPath
   } catch { return fallback; }
 }
 
-/** True only after the app reported that analytics is on. Unreadable or absent state is treated as off. */
 export async function readFreeAutoAnalyticsEnabled(config: Pick<ServerConfig, "configPath">): Promise<boolean> {
   try {
     return (await readFile(join(runtimeStorageDir(config), ANALYTICS_FILE), "utf8")).trim() === "enabled";
   } catch { return false; }
 }
 
-/**
- * Stores the app's analytics choice so it survives a server restart. Turning analytics off also deletes the journey,
- * so turning it back on starts a new identifier that cannot be linked to the old one.
- */
 export async function writeFreeAutoAnalyticsEnabled(config: Pick<ServerConfig, "configPath">, enabled: boolean): Promise<void> {
   const directory = runtimeStorageDir(config);
   await mkdir(directory, { recursive: true });

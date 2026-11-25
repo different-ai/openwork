@@ -1,12 +1,8 @@
 name: opencode-openwork
 
+# Not on PRs (the quick check typechecks the plugin there): dev pushes that
+# change it.
 on:
-  pull_request:
-    paths:
-      - "packages/opencode-plugin/**"
-      - "packages/remote-sessions/**"
-      - ".github/workflows/ci-opencode-openwork.yml"
-      - ".github/workflows/publish-opencode-plugin.yml"
   push:
     branches: [dev]
     paths:
