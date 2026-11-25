@@ -1,18 +1,52 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
-import { LockKeyhole } from "lucide-react";
-import { DenPageHeader } from "../../(den)/_components/ui/page-header";
-import { DenButton, buttonVariants } from "../../(den)/_components/ui/button";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
+import { Check, CircleAlert, Info, KeyRound, LoaderCircle, LockKeyhole } from "lucide-react";
+import { DenButton } from "../../(den)/_components/ui/button";
 import { DenSecretInput } from "../../(den)/_components/ui/secret-input";
-import { DenNotice } from "../../(den)/_components/ui/notice";
+import { DenStatusScreen } from "../../../components/den-status-screen";
 import { gatewayBrowserEndpoint } from "./gateway-browser-endpoint";
 
-type BrowserStep = "loading" | "sign_in_required" | "account_mismatch" | "ready" | "error" | "blocked" | "restart" | "connected";
+type BrowserStep = "loading" | "sign_in_required" | "account_mismatch" | "ready" | "error" | "blocked" | "restart" | "connected" | "handoff";
 type ConnectMethod = "google" | "microsoft" | "aws_sso" | "litellm_key" | "litellm_issued" | "truefoundry_issued";
 type AwsDevice = { attempt: string; userCode: string; verificationUrl: string; expiresAt: number };
+type RedirectBrand = "Google" | "Microsoft";
+type Handoff = { brand: RedirectBrand; phase: "opening" | "returned" };
+type AttemptMarker = { kind: "handoff"; brand: RedirectBrand } | { kind: "connected"; providerName: string };
 
 const METHOD_BRAND: Record<"google" | "microsoft" | "aws_sso", string> = { google: "Google", microsoft: "Microsoft", aws_sso: "AWS" };
+const MARKER_PREFIX = "openwork.gateway-connect.";
+
+async function attemptMarkerKey(attempt: string) {
+  if (!globalThis.crypto?.subtle) return null;
+  const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(attempt));
+  return MARKER_PREFIX + Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+async function rememberAttempt(attempt: string, marker: AttemptMarker) {
+  try {
+    const key = await attemptMarkerKey(attempt);
+    if (key) window.sessionStorage.setItem(key, JSON.stringify(marker));
+  } catch {
+    return;
+  }
+}
+
+async function recallAttempt(attempt: string): Promise<AttemptMarker | null> {
+  try {
+    const key = await attemptMarkerKey(attempt);
+    const raw = key ? window.sessionStorage.getItem(key) : null;
+    const value: unknown = raw ? JSON.parse(raw) : null;
+    const kind = readString(value, "kind");
+    const brand = readString(value, "brand");
+    const providerName = readString(value, "providerName");
+    if (kind === "handoff" && (brand === "Google" || brand === "Microsoft")) return { kind, brand };
+    if (kind === "connected" && providerName) return { kind, providerName };
+  } catch {
+    return null;
+  }
+  return null;
+}
 
 function isAuthorizationUrl(method: ConnectMethod, url: URL) {
   if (url.username || url.password) return false;
@@ -60,12 +94,31 @@ export function GatewayConnect() {
   const [method, setMethod] = useState<ConnectMethod>("google");
   const [providerName, setProviderName] = useState("LiteLLM");
   const [liteLlmKey, setLiteLlmKey] = useState("");
-  const [connectedModels, setConnectedModels] = useState(0);
+  const [connectedModels, setConnectedModels] = useState<number | null>(null);
   const [issue, setIssue] = useState<IssueState | null>(null);
   const [awsDevice, setAwsDevice] = useState<AwsDevice | null>(null);
   const [accountName, setAccountName] = useState<string | null>(null);
   const awsPoll = useRef<number | null>(null);
   const connected = useRef(false);
+  const [handoff, setHandoffState] = useState<Handoff | null>(null);
+  const handoffRef = useRef<Handoff | null>(null);
+  const setHandoff = useCallback((next: Handoff | null) => {
+    handoffRef.current = next;
+    setHandoffState(next);
+    if (next) setStep("handoff");
+  }, []);
+
+  const applyMarker = useCallback((marker: AttemptMarker) => {
+    if (marker.kind === "handoff") {
+      startAttempted.current = true;
+      setHandoff({ brand: marker.brand, phase: "returned" });
+      return;
+    }
+    connected.current = true;
+    setProviderName(marker.providerName);
+    setConnectedModels(null);
+    setStep("connected");
+  }, [setHandoff]);
 
   const checkStatus = useCallback(async () => {
     if (!mounted.current || actionRequest.current || startAttempted.current || connected.current) return;
@@ -96,6 +149,14 @@ export function GatewayConnect() {
       const payload: unknown = await response.json();
       if (!current()) return;
       if (!response.ok) {
+        if (response.status === 400) {
+          const marker = await recallAttempt(attempt);
+          if (!current()) return;
+          if (marker) {
+            applyMarker(marker);
+            return;
+          }
+        }
         setStep(response.status === 400 ? "restart" : response.status === 403 ? "blocked" : "error");
         setError(readString(payload, "message") ?? (response.status === 400
           ? "This sign-in link expired. Start signing in again in OpenWork."
@@ -135,16 +196,27 @@ export function GatewayConnect() {
         setChecking(false);
       }
     }
-  }, []);
+  }, [applyMarker]);
 
   useEffect(() => {
     mounted.current = true;
     void checkStatus();
+    const markReturned = () => {
+      const current = handoffRef.current;
+      if (current?.phase === "opening") setHandoff({ ...current, phase: "returned" });
+    };
     const onFocus = () => void checkStatus();
     const onVisibility = () => {
-      if (document.visibilityState === "visible") void checkStatus();
+      if (document.visibilityState === "visible") {
+        markReturned();
+        void checkStatus();
+      }
+    };
+    const onPageShow = (event: PageTransitionEvent) => {
+      if (event.persisted) markReturned();
     };
     window.addEventListener("focus", onFocus);
+    window.addEventListener("pageshow", onPageShow);
     document.addEventListener("visibilitychange", onVisibility);
     return () => {
       mounted.current = false;
@@ -153,9 +225,18 @@ export function GatewayConnect() {
       actionRequest.current?.abort();
       if (awsPoll.current !== null) window.clearTimeout(awsPoll.current);
       window.removeEventListener("focus", onFocus);
+      window.removeEventListener("pageshow", onPageShow);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [checkStatus]);
+  }, [checkStatus, setHandoff]);
+
+  useEffect(() => {
+    if (handoff?.phase !== "opening") return;
+    const timer = window.setTimeout(() => {
+      if (handoffRef.current?.phase === "opening") setHandoff({ brand: handoffRef.current.brand, phase: "returned" });
+    }, 15_000);
+    return () => window.clearTimeout(timer);
+  }, [handoff, setHandoff]);
 
   useEffect(() => {
     if (step !== "sign_in_required" && step !== "account_mismatch") return;
@@ -217,6 +298,10 @@ export function GatewayConnect() {
       if (!url || !isAuthorizationUrl(method, url)) {
         throw new Error("invalid_authorization_url");
       }
+      const brand: RedirectBrand = method === "microsoft" ? "Microsoft" : "Google";
+      await rememberAttempt(attempt, { kind: "handoff", brand });
+      if (!current()) return;
+      setHandoff({ brand, phase: "opening" });
       window.location.assign(url.toString());
     } catch {
       if (!current()) return;
@@ -325,6 +410,8 @@ export function GatewayConnect() {
         setAccountName(readString(payload, "accountName"));
         setAwsDevice(null);
         setStep("connected");
+        const entry = browserAttempt();
+        if (entry) void rememberAttempt(entry, { kind: "connected", providerName });
         return;
       }
       if (response.ok) {
@@ -385,6 +472,7 @@ export function GatewayConnect() {
         ready.current = false;
         connected.current = true;
         setStep("connected");
+        void rememberAttempt(attempt, { kind: "connected", providerName });
         return;
       }
       const code = readString(payload, "error");
@@ -446,6 +534,7 @@ export function GatewayConnect() {
           ready.current = false;
           connected.current = true;
           setStep("connected");
+          void rememberAttempt(attempt, { kind: "connected", providerName });
         }
         return;
       }
@@ -508,55 +597,180 @@ export function GatewayConnect() {
   const liteLlm = method === "litellm_key";
   const issued = method === "litellm_issued" || method === "truefoundry_issued";
   const brand = method === "google" || method === "microsoft" || method === "aws_sso" ? METHOD_BRAND[method] : null;
-  const title = step === "sign_in_required" ? "Sign in to OpenWork"
-    : step === "account_mismatch" ? "Switch OpenWork account"
-      : step === "connected" ? issued ? `${providerName} is ready` : `${providerName} connected`
-      : step === "ready" ? liteLlm ? `Connect your ${providerName} key` : issued ? `${providerName} isn't set up for you yet` : awsDevice ? "Approve in AWS" : `Sign in to ${brand ?? "Google"}`
-        : step === "blocked" ? "Sign-in unavailable"
-          : step === "restart" ? "Start signing in again"
-            : "Could not verify sign-in";
+  const consentNote = "Only continue if you started signing in from the OpenWork app.";
+
+  if (step === "loading") {
+    return (
+      <DenStatusScreen title="" description="" loading loadingLabel="Checking OpenWork sign-in">
+        <div aria-hidden="true" className="mt-9 flex items-center gap-3 rounded-xl border border-[var(--dls-border)] px-4 py-3.5 motion-safe:animate-pulse">
+          <span className="size-8 shrink-0 rounded-lg bg-[var(--dls-hover)]" />
+          <span className="flex flex-1 flex-col gap-2"><span className="h-3.5 w-2/5 rounded bg-[var(--dls-hover)]" /><span className="h-3 w-1/4 rounded bg-[var(--dls-hover)]" /></span>
+        </div>
+        <div aria-hidden="true" className="mt-6 h-10 w-full rounded-lg bg-[var(--dls-hover)] motion-safe:animate-pulse" />
+      </DenStatusScreen>
+    );
+  }
+
+  const view = ((): { title: string; description: string; body: ReactNode; footer?: string } => {
+    if (step === "sign_in_required") return {
+      title: "Sign in to OpenWork",
+      description: "Sign in to OpenWork in this browser with the account you use in the app. This page continues on its own.",
+      body: <Actions><DenButton href="/" target="_blank" rel="noopener noreferrer" className="w-full">Sign in to OpenWork</DenButton></Actions>,
+      footer: consentNote,
+    };
+    if (step === "account_mismatch") return {
+      title: "Switch OpenWork account",
+      description: "This browser is signed in to a different OpenWork account than the one you use in the app.",
+      body: <>
+        <StatusRow tone="neutral" icon={<LockKeyhole aria-hidden="true" strokeWidth={1.5} className="size-4" />} title="Use the account that started signing in" detail="Sign out here, then sign in with the account you use in OpenWork." />
+        {error ? <StatusRow tone="error" icon={<CircleAlert aria-hidden="true" strokeWidth={1.5} className="size-4" />} title="Something went wrong" detail={error} stacked /> : null}
+        <Actions><DenButton loading={busy} disabled={checking} className="w-full" onClick={() => void signOut()}>Sign out of this account</DenButton></Actions>
+      </>,
+      footer: consentNote,
+    };
+    if (step === "handoff" && handoff) return handoff.phase === "opening" ? {
+      title: `Opening ${handoff.brand}`,
+      description: `Taking you to ${handoff.brand} to sign in.`,
+      body: <StatusRow tone="waiting" icon={<LoaderCircle aria-hidden="true" strokeWidth={1.5} className="size-4 animate-spin motion-reduce:animate-none" />} title={providerName} detail={`Opening ${handoff.brand}…`} />,
+    } : {
+      title: "Return to OpenWork",
+      description: `This sign-in already went to ${handoff.brand}. If you finished there, your models are ready in OpenWork and you can close this tab.`,
+      body: <StatusRow tone="neutral" icon={<Info aria-hidden="true" strokeWidth={1.5} className="size-4" />} title="Didn't finish signing in?" detail="Start signing in again from OpenWork. This link only works once." />,
+    };
+    if (step === "connected") {
+      const detail = method === "aws_sso" ? accountName ? `Signed in to AWS as ${accountName}` : "Signed in to AWS"
+        : !issued && connectedModels !== null ? `${connectedModels} ${connectedModels === 1 ? "model is" : "models are"} ready in OpenWork`
+          : "Your models are ready in OpenWork";
+      return {
+        title: issued ? `${providerName} is ready` : `${providerName} connected`,
+        description: "You can close this tab and go back to OpenWork.",
+        body: <StatusRow tone="success" icon={<Check aria-hidden="true" strokeWidth={2} className="size-4" />} title={`${providerName} is connected to OpenWork`} detail={detail} />,
+      };
+    }
+    if (step === "ready" && awsDevice) return {
+      title: "Approve in AWS",
+      description: "Approve OpenWork in the AWS tab. Check that AWS shows this code.",
+      body: <>
+        <div className="mt-9 flex justify-center rounded-xl border border-[var(--dls-border)] px-4 py-6" data-testid="gateway-connect-aws-device">
+          <code className="select-all font-mono text-[28px] font-medium leading-none tracking-[0.2em]" data-testid="gateway-connect-aws-code">{awsDevice.userCode}</code>
+        </div>
+        <StatusRow tone="waiting" icon={<LoaderCircle aria-hidden="true" strokeWidth={1.5} className="size-4 animate-spin motion-reduce:animate-none" />} title={providerName} detail="Waiting for AWS…" stacked />
+        <Actions><DenButton variant="secondary" href={awsDevice.verificationUrl} target="_blank" rel="noopener noreferrer" className="w-full">Open AWS again</DenButton></Actions>
+      </>,
+      footer: "Keep this tab open until AWS approves.",
+    };
+    if (step === "ready" && liteLlm) return {
+      title: `Connect your ${providerName} key`,
+      description: `Paste your own ${providerName} key to use its models in OpenWork.`,
+      body: <>
+        <label className="mt-9 flex flex-col gap-1.5 text-[13px] font-medium text-[var(--dls-text-primary)]">
+          {providerName} key
+          <DenSecretInput autoComplete="off" value={liteLlmKey} placeholder="sk-…" data-testid="gateway-connect-litellm-key" className="font-mono text-[13px]"
+            onChange={setLiteLlmKey} onKeyDown={(event) => { if (event.key === "Enter") void connectLiteLlmKey(); }} />
+        </label>
+        {error ? <StatusRow tone="error" icon={<CircleAlert aria-hidden="true" strokeWidth={1.5} className="size-4" />} title="Key not connected" detail={error} stacked /> : null}
+        <Actions><DenButton loading={busy} disabled={checking} data-testid="gateway-connect-litellm-submit" className="w-full" icon={KeyRound} onClick={() => void connectLiteLlmKey()}>Connect key</DenButton></Actions>
+      </>,
+      footer: consentNote,
+    };
+    if (step === "ready" && issued) return {
+      title: `${providerName} isn't set up for you yet`,
+      description: issue?.message ?? `OpenWork is creating your ${providerName} key. Check again in a moment.`,
+      body: <>
+        {error ? <StatusRow tone="error" icon={<CircleAlert aria-hidden="true" strokeWidth={1.5} className="size-4" />} title="Couldn't check" detail={error} /> : null}
+        <Actions><DenButton loading={busy} disabled={checking} data-testid="gateway-connect-litellm-check" className="w-full" onClick={() => void checkIssuedKey()}>Check again</DenButton></Actions>
+      </>,
+    };
+    if (step === "ready" && brand) {
+      const mark = method === "microsoft" ? <MicrosoftMark /> : method === "google" ? <GoogleMark /> : <span aria-hidden="true" className="text-[10px] font-semibold tracking-tight">AWS</span>;
+      const start = method === "aws_sso" ? () => void startAwsSignIn() : () => void continueToProvider();
+      return {
+        title: `Sign in to ${brand}`,
+        description: `${providerName} uses your ${brand} account to give you access to its models in OpenWork.`,
+        body: <>
+          <StatusRow tone="neutral" icon={mark} title={providerName} detail={`Signs in with your ${brand} account`} />
+          {error ? <StatusRow tone="error" icon={<CircleAlert aria-hidden="true" strokeWidth={1.5} className="size-4" />} title={`${brand} sign-in didn't start`} detail={error} stacked /> : null}
+          <Actions>
+            <DenButton loading={busy} disabled={checking || startAttempted.current} className="w-full" data-testid={method === "aws_sso" ? "gateway-connect-aws-start" : "gateway-connect-continue"} onClick={start}>
+              {method === "aws_sso" ? null : mark}Continue to {brand}
+            </DenButton>
+          </Actions>
+        </>,
+        footer: consentNote,
+      };
+    }
+    if (step === "blocked") return {
+      title: "Sign-in unavailable",
+      description: "Your admin controls who can use these models.",
+      body: <>
+        <StatusRow tone="neutral" icon={<LockKeyhole aria-hidden="true" strokeWidth={1.5} className="size-4" />} title="You can't sign in right now" detail={error ?? "Ask your admin for access."} />
+        <Actions><DenButton variant="secondary" loading={checking} className="w-full" onClick={() => void checkStatus()}>Check again</DenButton></Actions>
+      </>,
+    };
+    if (step === "restart") return {
+      title: "Start signing in again",
+      description: "This sign-in link can't be used anymore. Go back to OpenWork to get a new one.",
+      body: error ? <StatusRow tone="neutral" icon={<Info aria-hidden="true" strokeWidth={1.5} className="size-4" />} title="Link no longer works" detail={error} /> : null,
+      footer: "You can close this tab.",
+    };
+    return {
+      title: "Couldn't verify sign-in",
+      description: "OpenWork couldn't check this sign-in.",
+      body: <>
+        <StatusRow tone="error" icon={<CircleAlert aria-hidden="true" strokeWidth={1.5} className="size-4" />} title="Check failed" detail={error ?? "Check your connection and try again."} />
+        <Actions><DenButton loading={checking} className="w-full" onClick={() => void checkStatus()}>Try again</DenButton></Actions>
+      </>,
+    };
+  })();
 
   return (
-    <main aria-busy={busy || checking} className="flex min-h-dvh items-center justify-center bg-[var(--dls-surface)] p-4 text-sm text-[var(--dls-text-primary)]">
-      <div className="flex w-full max-w-xl flex-col gap-4">
-        {step === "loading" ? (
-          <div role="status" aria-label="Checking OpenWork sign-in" className="flex flex-col items-start gap-4 motion-safe:animate-pulse">
-            <div aria-hidden="true" className="h-6 w-56 rounded bg-[var(--dls-hover)]" />
-            <div aria-hidden="true" className="h-10 w-44 rounded-lg bg-[var(--dls-hover)]" />
-          </div>
-        ) : <DenPageHeader title={title} className="[&_h1]:text-xl [&_h1]:leading-tight [&_h1]:text-[var(--dls-text-primary)]" />}
-        {step === "account_mismatch" ? <DenNotice tone="neutral" message={<span className="flex items-start gap-2"><LockKeyhole aria-hidden="true" strokeWidth={1.5} className="size-4 shrink-0" />Use the OpenWork account that started signing in.</span>} /> : null}
-        {error ? <DenNotice tone={step === "blocked" ? "neutral" : "error"} message={error} /> : null}
-        {step === "connected" && method === "aws_sso" ? <DenNotice tone="info" message={`${accountName ? `Signed in to AWS as ${accountName}. ` : ""}Your models are ready in OpenWork. You can close this tab.`} /> : null}
-        {step === "connected" && !issued && method !== "aws_sso" ? <DenNotice tone="info" message={`${connectedModels} ${connectedModels === 1 ? "model is" : "models are"} ready in OpenWork. You can close this tab.`} /> : null}
-        {step === "ready" && awsDevice ? (
-          <div className="flex flex-col gap-3" data-testid="gateway-connect-aws-device">
-            <p className="text-[var(--dls-text-secondary)]">Approve OpenWork in the AWS tab. Check that AWS shows this code:</p>
-            <code className="w-fit rounded-lg border border-[var(--dls-border)] px-3 py-2 font-mono text-lg tracking-widest" data-testid="gateway-connect-aws-code">{awsDevice.userCode}</code>
-            <span role="status" className="text-[var(--dls-text-secondary)]">Waiting for AWS…</span>
-          </div>
-        ) : null}
-        {step === "connected" && issued ? <DenNotice tone="info" message="Your models are ready in OpenWork. You can close this tab." /> : null}
-        {step === "ready" && issued ? <DenNotice tone="neutral" message={issue?.message ?? `OpenWork is creating your ${providerName} key. Check again in a moment.`} /> : null}
-        {step === "ready" && liteLlm ? (
-          <label className="flex flex-col gap-1.5 text-[12px] font-medium text-[var(--dls-text-secondary)]">
-            {providerName} key
-            <DenSecretInput autoComplete="off" value={liteLlmKey} placeholder="sk-…" data-testid="gateway-connect-litellm-key" className="font-mono text-[12px]"
-              onChange={setLiteLlmKey} onKeyDown={(event) => { if (event.key === "Enter") void connectLiteLlmKey(); }} />
-          </label>
-        ) : null}
-        <div className="flex flex-wrap gap-3">
-          {step === "sign_in_required" ? <a href="/" target="_blank" rel="noopener noreferrer" className={buttonVariants()}>Sign in to OpenWork</a> : null}
-          {step === "ready" && (method === "google" || method === "microsoft") ? <DenButton loading={busy} disabled={checking || startAttempted.current} onClick={() => void continueToProvider()}>Continue to {METHOD_BRAND[method]}</DenButton> : null}
-          {step === "ready" && method === "aws_sso" && !awsDevice ? <DenButton loading={busy} disabled={checking || startAttempted.current} data-testid="gateway-connect-aws-start" onClick={() => void startAwsSignIn()}>Continue to AWS</DenButton> : null}
-          {step === "ready" && awsDevice ? <a href={awsDevice.verificationUrl} target="_blank" rel="noopener noreferrer" className={buttonVariants({ variant: "secondary" })}>Open AWS again</a> : null}
-          {step === "ready" && issued ? <DenButton loading={busy} disabled={checking} data-testid="gateway-connect-litellm-check" onClick={() => void checkIssuedKey()}>Check again</DenButton> : null}
-          {step === "ready" && liteLlm ? <DenButton loading={busy} disabled={checking} data-testid="gateway-connect-litellm-submit" onClick={() => void connectLiteLlmKey()}>Connect key</DenButton> : null}
-          {step === "account_mismatch" ? <DenButton loading={busy} disabled={checking} onClick={() => void signOut()}>Sign out of this browser account</DenButton> : null}
-          {step === "error" || step === "blocked" ? <DenButton loading={checking} onClick={() => void checkStatus()}>Retry sign-in check</DenButton> : null}
-        </div>
-        {checking && step !== "loading" ? <span role="status" className="sr-only">Checking OpenWork sign-in</span> : null}
+    <DenStatusScreen title={view.title} description={view.description} busy={busy || checking}>
+      <div data-testid="gateway-connect" data-step={step}>
+        {view.body}
+        {view.footer ? <p className="mt-8 border-t border-[var(--dls-border)] pt-6 text-[13px] leading-5 text-[var(--dls-text-secondary)]">{view.footer}</p> : null}
+        {checking ? <span role="status" className="sr-only">Checking OpenWork sign-in</span> : null}
       </div>
-    </main>
+    </DenStatusScreen>
+  );
+}
+
+function Actions({ children }: { children: ReactNode }) {
+  return <div className="mt-6 flex flex-col gap-3">{children}</div>;
+}
+
+type RowTone = "neutral" | "waiting" | "success" | "error";
+
+const ROW_TONE: Record<RowTone, { row: string; tile: string }> = {
+  neutral: { row: "border-[var(--dls-border)]", tile: "bg-[var(--dls-hover)] text-[var(--dls-text-primary)]" },
+  waiting: { row: "border-[var(--dls-border)]", tile: "bg-[var(--dls-hover)] text-[var(--dls-text-secondary)]" },
+  success: { row: "border-[var(--dls-border)]", tile: "bg-emerald-50 text-emerald-700" },
+  error: { row: "border-red-200 bg-red-50", tile: "bg-red-100 text-red-700" },
+};
+
+function StatusRow({ tone, icon, title, detail, stacked = false }: { tone: RowTone; icon: ReactNode; title: string; detail: string; stacked?: boolean }) {
+  return (
+    <div role={tone === "error" ? "alert" : "status"} className={`${stacked ? "mt-3" : "mt-9"} flex items-center gap-3 rounded-xl border px-4 py-3.5 ${ROW_TONE[tone].row}`}>
+      <span aria-hidden="true" className={`grid size-8 shrink-0 place-items-center rounded-lg ${ROW_TONE[tone].tile}`}>{icon}</span>
+      <span className="grid min-w-0 gap-0.5">
+        <strong className="break-words text-[15px] font-medium leading-[22px] text-[var(--dls-text-primary)]">{title}</strong>
+        <small className={`break-words text-[13px] leading-5 ${tone === "error" ? "text-red-700" : "text-[var(--dls-text-secondary)]"}`}>{detail}</small>
+      </span>
+    </div>
+  );
+}
+
+function MicrosoftMark() {
+  return (
+    <svg viewBox="0 0 21 21" aria-hidden="true" className="size-3.5 shrink-0" fill="currentColor">
+      <rect x="1" y="1" width="9" height="9" /><rect x="11" y="1" width="9" height="9" /><rect x="1" y="11" width="9" height="9" /><rect x="11" y="11" width="9" height="9" />
+    </svg>
+  );
+}
+
+function GoogleMark() {
+  return (
+    <svg viewBox="0 0 24 24" aria-hidden="true" className="size-3.5 shrink-0" fill="currentColor">
+      <path d="M12.48 10.92v3.28h7.84c-.24 1.84-.853 3.187-1.787 4.133-1.147 1.147-2.933 2.4-6.053 2.4-4.827 0-8.6-3.893-8.6-8.72s3.773-8.72 8.6-8.72c2.6 0 4.507 1.027 5.907 2.347l2.307-2.307C18.747 1.44 16.133 0 12.48 0 5.867 0 .307 5.387.307 12s5.56 12 12.173 12c3.573 0 6.267-1.173 8.373-3.36 2.16-2.16 2.84-5.213 2.84-7.667 0-.76-.053-1.467-.173-2.053H12.48z" />
+    </svg>
   );
 }

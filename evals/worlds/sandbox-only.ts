@@ -7,18 +7,16 @@ import { access, mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:
 import { join } from "node:path";
 import { configureProvider } from "./chat.ts";
 import { isRecord, records } from "./library.ts";
-import { enableOrganizationCapabilities, seededOrganizationId } from "./organization-capabilities.ts";
+import { seededOrganizationId } from "./organization-capabilities.ts";
 
 /** Only isolated, seeded Den data; never a member's production organization. */
-async function organization(seed: Seed, enabled: boolean, web = true) {
-  const den = await seed.den({ web, org: {
+async function organization(seed: Seed) {
+  const den = await seed.den({ web: true, org: {
     name: `Sandbox tools proof ${Date.now()}`,
     admin: { name: "Avery Owner" },
     members: { riley: { name: "Riley Contractor" }, morgan: { name: "Morgan Staff" } },
   } });
-  const organizationId = enabled
-    ? await enableOrganizationCapabilities(seed, den.admin, { sandboxTools: true })
-    : await seededOrganizationId(seed, den.admin);
+  const organizationId = await seededOrganizationId(seed, den.admin);
   const riley = den.members.riley;
   const morgan = den.members.morgan;
   if (!riley || !morgan || !organizationId) throw new Error("The sandbox proof organization was not provisioned");
@@ -34,17 +32,8 @@ async function organization(seed: Seed, enabled: boolean, web = true) {
   return { den, organizationId, teamId, teamPath, riley, morgan };
 }
 
-async function controlsWorld(seed: Seed, enabled: boolean) {
-  const world = await organization(seed, true);
-  if (!enabled) {
-    const stored = await seed.api(world.den.admin, world.teamPath, {
-      method: "PUT", headers: sandboxHeaders, body: JSON.stringify({ settings: { sandboxOptOut: { decision: "deny" } } }),
-    });
-    const disabled = await seed.api(world.den.admin, `/v1/admin/organizations/${world.organizationId}/capabilities`, {
-      method: "PUT", body: JSON.stringify({ capabilities: { sandboxTools: false } }),
-    });
-    if (!stored.response.ok || !disabled.response.ok) throw new Error(`Arranging rollout loss failed: HTTP ${stored.response.status} / ${disabled.response.status}`);
-  }
+async function controlsWorld(seed: Seed) {
+  const world = await organization(seed);
   // The native renderer supplies the real managed-policy host handoff. A
   // non-directory runtime home prevents preparation from launching a microVM.
   const member = await seed.desktop({ name: "sandbox-controls-member", den: world.den, as: "riley", env: { MSB_HOME: "/dev/null" } });
@@ -65,17 +54,16 @@ async function controlsWorld(seed: Seed, enabled: boolean) {
 }
 
 /** Portable Den-only proof: it needs no /dev/kvm, host token or microVM. */
-export const sandboxControls = (seed: Seed) => controlsWorld(seed, true);
-export const sandboxControlsFlagOff = (seed: Seed) => controlsWorld(seed, false);
+export const sandboxControls = (seed: Seed) => controlsWorld(seed);
 
-/** A signed-out person's real local settings, with no verified sandbox rollout. */
+/** A signed-out person's real local settings. */
 export async function sandboxSignedOutSettings(seed: Seed) {
   const workspacePath = seed.tmpPath("sandbox-signed-out");
   const app = await seed.appWeb({ workspacePath, engine: "v2", mouse: true });
   const workspace = await seed.workspace(app, workspacePath);
-  // A saved stricter local preference must remain visible even after sign-out
-  // removes rollout eligibility. Arrange that persisted preference through the
-  // same public API as Settings, before the first user act.
+  // A saved stricter local preference must remain in force after sign-out.
+  // Arrange that persisted preference through the same public API as Settings,
+  // before the first user act.
   const prepared = await evalIn(app, browserScript(async (workspaceId) => {
     const base = localStorage.getItem("openwork.server.urlOverride") || `http://127.0.0.1:${localStorage.getItem("openwork.server.port")}`;
     const response = await fetch(`${base.replace(/\/+$/, "")}/workspace/${workspaceId}/sandbox-settings`, {
@@ -111,13 +99,13 @@ async function ownedSandboxHome(stack: AsyncDisposableStack) {
  * Tool implementations and the microVM are real; only the model is scripted.
  * The nonce file is deliberately a sibling of, not inside, either mount.
  */
-async function desktopWorld(seed: Seed, place: Place, enabled: boolean, brokenRuntime = false) {
+async function desktopWorld(seed: Seed, place: Place, brokenRuntime = false) {
   if (place.kind !== "local") throw new Error("The live microVM proof must run locally; Daytona's default user cannot open /dev/kvm");
   if (resolveEvalEngine() !== "v2") throw new Error("Run this proof with --engine v2; sandbox tool replacement is a v2 plugin");
   const stack = new AsyncDisposableStack();
   try {
     // The native host handoff uses Den's web proxy as well as its API.
-    const world = await organization(seed, enabled);
+    const world = await organization(seed);
     const root = seed.tmpPath("sandbox-product");
     await mkdir(root, { recursive: true });
     const fixtureRoot = await realpath(root);
@@ -217,15 +205,14 @@ async function desktopWorld(seed: Seed, place: Place, enabled: boolean, brokenRu
   } catch (error) { await stack.disposeAsync(); throw error; }
 }
 
-export const sandboxOnlyDesktop = (seed: Seed, { place }: { place: Place }) => desktopWorld(seed, place, true);
-export const sandboxFlagOffDesktop = (seed: Seed, { place }: { place: Place }) => desktopWorld(seed, place, false);
-export const sandboxUnavailableDesktop = (seed: Seed, { place }: { place: Place }) => desktopWorld(seed, place, true, true);
+export const sandboxOnlyDesktop = (seed: Seed, { place }: { place: Place }) => desktopWorld(seed, place);
+export const sandboxUnavailableDesktop = (seed: Seed, { place }: { place: Place }) => desktopWorld(seed, place, true);
 /** Managed Settings needs no inference provider or task: the policy itself is the subject. */
 export async function sandboxManagedDesktop(seed: Seed, { place }: { place: Place }) {
   if (place.kind !== "local") throw new Error("The managed native Settings proof requires local placement");
   const stack = new AsyncDisposableStack();
   try {
-    const world = await organization(seed, true);
+    const world = await organization(seed);
     const saved = await seed.api(world.den.admin, world.teamPath, {
       method: "PUT", headers: { "X-OpenWork-Sandbox-Only": "1" },
       body: JSON.stringify({ settings: { hostExecution: { decision: "deny" } } }),

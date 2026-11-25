@@ -19,23 +19,8 @@ const BLOCKED_WITH_COMPUTER_USE: readonly string[] = ["computerFiles", "computer
 
 const BLOCKED_WITH_HOST_EXECUTION: readonly string[] = ["computerUse", "computerFiles", "computerClipboard", "appScripting", "localMcpServers"];
 
-export type AgentPermissionEditorFeatures = {
-  sandboxTools: boolean;
-};
-
 function forceRequired(settings: AgentPermissionSettings, everyone: AgentPermissionSettings | null): boolean {
   return (settings.hostExecution?.decision ?? everyone?.hostExecution?.decision) === "deny";
-}
-
-function requires(setting: AgentPermissionSettings[keyof AgentPermissionSettings]): boolean {
-  return setting?.decision === "deny";
-}
-
-export function sandboxRequirementVisibility(features: AgentPermissionEditorFeatures, settings: AgentPermissionSettings, everyone: AgentPermissionSettings | null) {
-  return {
-    hostExecution: features.sandboxTools || requires(settings.hostExecution) || requires(everyone?.hostExecution),
-    sandboxOptOut: features.sandboxTools || requires(settings.sandboxOptOut) || requires(everyone?.sandboxOptOut) || forceRequired(settings, everyone),
-  };
 }
 
 export function agentPermissionToggleState(definition: AgentPermissionDefinition, decision: AgentPermissionDecision, lockKey?: string) {
@@ -43,7 +28,7 @@ export function agentPermissionToggleState(definition: AgentPermissionDefinition
   const offDecision: AgentPermissionDecision = onDecision === "deny" ? "allow" : "deny";
   const included = lockKey === "force-includes-use";
   const checked = included || decision === onDecision;
-  return { checked, disabled: included || (lockKey === "sandbox-off" && !checked), onDecision, offDecision };
+  return { checked, disabled: included, onDecision, offDecision };
 }
 
 function inArea(area: AgentPermissionsArea, key: string): boolean {
@@ -59,15 +44,14 @@ const EDITOR_GROUPS: readonly { label: string; sections: readonly AgentPermissio
   { label: "Skills and MCP servers", sections: ["extensions"] },
 ];
 
-export function visibleAgentPermissionGroups(area: AgentPermissionsArea, options: Partial<Record<keyof ReturnType<typeof sandboxRequirementVisibility>, boolean>> & { privateValues?: boolean } = {}) {
+export function visibleAgentPermissionGroups(area: AgentPermissionsArea, options: { privateValues?: boolean } = {}) {
   const groups = area === "browser" ? [{ label: "Websites", sections: ["web"] }, { label: "Private values", sections: ["privateValues"] }] : EDITOR_GROUPS;
   return groups.map((group) => ({
     label: group.label,
     definitions: agentPermissionDefinitions.filter((definition) =>
       group.sections.includes(definition.section)
       && inArea(area, definition.key)
-      && (!PRIVATE_VALUE_KEYS.includes(definition.key) || options.privateValues === true)
-      && ((definition.key !== "hostExecution" && definition.key !== "sandboxOptOut") || options[definition.key] !== false)),
+      && (!PRIVATE_VALUE_KEYS.includes(definition.key) || options.privateValues === true)),
   })).filter((group) => group.definitions.length > 0);
 }
 
@@ -101,23 +85,10 @@ export function storedAgentPermissionDecision(definition: AgentPermissionDefinit
   return team === null && !agentPermissionMemberDecides(definition.key) && decision === agentPermissionDefaultDecision(definition.key) ? undefined : decision;
 }
 
-export function agentPermissionBlockedBy(key: string, settings: AgentPermissionSettings, everyone: AgentPermissionSettings | null, features?: AgentPermissionEditorFeatures): { key: string; reason: string } | null {
+export function agentPermissionBlockedBy(key: string, settings: AgentPermissionSettings, everyone: AgentPermissionSettings | null): { key: string; reason: string } | null {
   const sandboxRequired = forceRequired(settings, everyone);
   if (key === "sandboxOptOut" && sandboxRequired) {
     return { key: "force-includes-use", reason: "Included in Force OpenWork Sandbox" };
-  }
-  if (features && !features.sandboxTools) {
-    if (key === "hostExecution") {
-      return {
-        key: "sandbox-off",
-        reason: sandboxRequired
-          ? "Agents can't run while the sandbox is unavailable and Force OpenWork Sandbox is on."
-          : "The sandbox is turned off for this organization.",
-      };
-    }
-    if (key === "sandboxOptOut") {
-      return { key: "sandbox-off", reason: "The sandbox is turned off for this organization." };
-    }
   }
   if (BLOCKED_WITH_HOST_EXECUTION.includes(key) && sandboxRequired) {
     return { key: "host-execution", reason: "Blocked while Force OpenWork Sandbox is on." };

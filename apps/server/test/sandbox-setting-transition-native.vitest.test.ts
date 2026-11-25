@@ -25,7 +25,7 @@ test.skipIf(process.env.OPENWORK_TEST_SANDBOX_NATIVE !== "1")("setting applies b
   let organizationRequiresSandbox = false;
   const fixture = await serve({ hostname: "127.0.0.1", port: 0, fetch: async request => {
     const path = new URL(request.url).pathname;
-    if (path === "/v1/features" || path === "/v1/org") return Response.json({ features: { sandboxTools: true } });
+    if (path === "/v1/features" || path === "/v1/org") return Response.json({ features: {} });
     if (path === "/v1/me/desktop-config") return Response.json({ agentPermissions: { rules: [{ action: "host_execution", resource: "*", effect: organizationRequiresSandbox ? "deny" : "allow", source: "Everyone" }] } });
     if (path === "/models/api.json") return Response.json({});
     if (path === "/v1/chat/completions") {
@@ -136,7 +136,7 @@ test.skipIf(process.env.OPENWORK_TEST_SANDBOX_NATIVE !== "1")("setting applies b
     expect(setting.status, await setting.clone().text()).toBe(200);
     expect(await setting.json()).toEqual({
       useSandbox: true, forceSandbox: true, effectiveUseSandbox: true, effectiveForceSandbox: true, managedUse: false, managedForce: false,
-      allowHostExecution: false, effectiveAllowHostExecution: false, pending: false, managed: false, featureEnabled: true, verification: "verified",
+      allowHostExecution: false, effectiveAllowHostExecution: false, pending: false, managed: false, verification: "verified",
     });
     const isolatedPid = await pid(); expect(isolatedPid).not.toBe(originalPid);
     const plugins = await request("/workspace/hostile/opencode2/api/agent");

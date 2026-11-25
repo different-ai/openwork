@@ -172,21 +172,18 @@ Workbot. Enable it through Den's existing Features controls; there is no separat
 Workbot environment switch.
 
 Recent and My Drive use the member's real Drive API v3 connection. Missing
-access offers Connect/Reconnect. Word, Excel, PowerPoint and OpenDocument files
-open in tabs with OpenWork controls and a separately hosted editor engine.
-Explicit saves update original uploaded files. Native Google Docs, Sheets and
-Slides export into Office copies; saving creates a new file and preserves the
-Google original. UTF-8 text edits save to the original; PDFs/images preview inline.
-Other formats link to the original editor. This is not Google native collaboration.
+access offers Connect/Reconnect. Word, Excel, PowerPoint, OpenDocument, text and
+native Google files open in tabs as read-only previews; PDFs/images preview
+inline. Other formats link to the original editor. Workbot does not edit or save
+documents.
 
 The reusable package and browser UI are MIT-licensed; the server host retains
 OpenWork's EE license. An all-open-source editor deployment requires a maintained
 unbranded engine image (`nobrand=yes` or a source build); the default vendor image
 is not the production license baseline. See the package's `THIRD_PARTY_NOTICES.md` for the boundary.
 
-The host protects dirty tabs before navigation. Den independently checks the
-feature, membership, OAuth read/write scopes and the exact Google connection.
-The editor preserves unrelated file parts and refuses unsupported unsafe edits.
+Den independently checks the feature, membership, OAuth read scope and the
+exact Google connection.
 See `packages/documents/README.md` for the package contract, format limits,
 permission requirements and concurrency boundaries.
 
@@ -207,8 +204,8 @@ contains the open Drive file's ID and unsaved status, or the calendar
 range, time zone and selected event/automation ID. Display titles, MIME labels and search text never enter the model prompt. It contains no document bytes or
 unsaved text. Contextual turns, retries and interrupted-turn resumes use read-only MCP credentials and disable write-capable runner tools. Changes require a separate explicit request from Home without view context. Workbot reads saved content using the member's existing connected
 apps and permissions; visible metadata grants no access. The snapshot remains
-with that turn for transcript display, editing and retry. After a native Google
-file is saved as an Office copy, context follows the confirmed copy’s file ID.
+with that turn for transcript display, editing and retry. Connected documents
+are read-only in Workbot; open the original file to edit it.
 
 Canonical Google document links in replies offer an explicit open action in
 Documents. Metadata resolves through Den again before the file opens; links

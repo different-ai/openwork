@@ -6,7 +6,6 @@ import { z } from "zod"
 import { db } from "../db.js"
 import { canonicalArguments, MAX_SUBSCRIPTION_TTL_MS } from "../mcp-events/protocol.js"
 import { checkRateLimit } from "../utils/rate-limit.js"
-import { markFeaturesUsed } from "../feature-usage.js"
 import { fingerprint, NativeEventError } from "./protocol.js"
 import { nativeAccess, readNativeSource, type NativeActor } from "./sources.js"
 import { verifyCallback } from "./webhook.js"
@@ -75,7 +74,6 @@ export async function createNativeSubscription(actor: NativeActor, input: Subscr
     await db.update(Subscription).set({ ...values, ...(previous ? { observation: sql`${Subscription.observation}`, sequence: sql`${Subscription.sequence}` } : {}), status: "active", availableAt: new Date(), verifiedAt: verify ? new Date() : previous?.verifiedAt ?? null, verificationToken: null, verificationUntil: null }).where(and(eq(Subscription.id, row.id), eq(Subscription.verificationToken, verificationToken), inArray(Subscription.status, ["active", "verifying"])))
     const [live] = await db.$primary.select().from(Subscription).where(eq(Subscription.id, row.id)).limit(1)
     if (live?.status !== "active" || live.secret !== values.secret || live.expiresAt.getTime() !== expiresAt.getTime()) throw new NativeEventError(-32000, "Subscription cancelled")
-    markFeaturesUsed({ organizationId: actor.organizationId, memberId: actor.memberId, keys: ["nativeMcpEvents"] })
     return summary(live)
   } catch (error) {
     await db.update(Subscription).set({ ...(previous ? {} : { status: "stopped" }), verificationToken: null, verificationUntil: null }).where(and(eq(Subscription.id, row.id), eq(Subscription.verificationToken, verificationToken), inArray(Subscription.status, ["active", "verifying"])))

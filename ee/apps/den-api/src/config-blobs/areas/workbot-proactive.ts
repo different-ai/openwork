@@ -15,8 +15,7 @@ import {
 } from "@openwork/types/den/workbot-proactive"
 import { z } from "zod"
 import { saveWorkbotProactiveSettings } from "../../routes/org/workbot-settings.js"
-import { agentBriefAllowed, readProactiveSettings } from "../../workbot-proactive/access.js"
-import { canBeSource, sourceSlotsOf, type SourceMode } from "../../workbot-proactive/sources.js"
+import { readProactiveSettings } from "../../workbot-proactive/access.js"
 import { listOrganizationSourceConnections } from "../../workbot-proactive/sources-repository.js"
 import { readAgentTemplate } from "../../workbot-proactive/template.js"
 import { workbotOrigin } from "../../workbot/config.js"
@@ -137,11 +136,10 @@ function localList(list: readonly SpecConnection[] | null, connections: readonly
 
 async function exportItems(ctx: ConfigAreaContext): Promise<ConfigItem[]> {
   const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
-  const [settings, template, connectionList, briefOn] = await Promise.all([
+  const [settings, template, connectionList] = await Promise.all([
     readProactiveSettings(organizationId),
     readAgentTemplate(organizationId),
     organizationConnections(organizationId),
-    agentBriefAllowed(organizationId, ctx.actor.userId),
   ])
   const connections = new Map(connectionList.map((connection) => [connection.id, connection]))
   const { sources } = settings
@@ -174,7 +172,7 @@ async function exportItems(ctx: ConfigAreaContext): Promise<ConfigItem[]> {
       connections: policyEntries,
       toolOverrides,
     },
-    brief: briefOn ? { ...settings.brief } : {},
+    brief: { ...settings.brief },
     template: { responsibilities: { ...template.responsibilities }, instructions: template.instructions },
   }
   return [{ id: ctx.organizationId, name: ITEM_NAME, spec }]
@@ -191,41 +189,20 @@ function sameTools(a: Readonly<Record<string, string>> | undefined, b: Readonly<
   return JSON.stringify(left) === JSON.stringify(right)
 }
 
-function listed(names: readonly string[]): string {
-  if (names.length <= 1) return names[0] ?? ""
-  return `${names.slice(0, -1).join(", ")} and ${names[names.length - 1]}`
-}
-
-function sourcesChange(op: ConfigApplyOp, spec: ApplySpec["sources"], current: AgentSourcesPolicy, connections: readonly TargetConnection[], mode: SourceMode, warnings: Set<string>): AgentSourcesPolicyInput {
+function sourcesChange(op: ConfigApplyOp, spec: ApplySpec["sources"], current: AgentSourcesPolicy, connections: readonly TargetConnection[], warnings: Set<string>): AgentSourcesPolicyInput {
   const change: AgentSourcesPolicyInput = {}
-  const byId = new Map(connections.map((connection) => [connection.id, connection]))
-  const unreadable = new Set<string>()
-  const notOther = new Set<string>()
   for (const kind of AGENT_CORE_SOURCES) {
     if (touches(op, `sources.${kind}`) && spec[kind] !== current[kind]) change[kind] = spec[kind]
   }
   if (touches(op, "sources.otherConnections")) {
-    const found = localList(spec.otherConnections, connections, warnings)
-    const wanted = found === null ? null : found.filter((id) => {
-      const connection = byId.get(id)
-      if (!connection || sourceSlotsOf(connection, mode).includes("other")) return true
-      if (connection.native !== null) notOther.add(connection.name)
-      else unreadable.add(connection.name)
-      return false
-    })
+    const wanted = localList(spec.otherConnections, connections, warnings)
     if (!sameSet(wanted, current.otherConnections)) change.otherConnections = wanted
   }
   if (touches(op, "sources.connections")) {
     const wanted = new Map<string, "everyone" | "off">()
     for (const entry of spec.connections) {
       const id = localConnection(entry.connection, connections, warnings)
-      if (!id) continue
-      const connection = byId.get(id)
-      if (connection && !canBeSource(connection, mode)) {
-        if (entry.policy !== "off") unreadable.add(connection.name)
-        continue
-      }
-      wanted.set(id, entry.policy)
+      if (id) wanted.set(id, entry.policy)
     }
     const policies: Record<string, "everyone" | "members" | "off" | null> = {}
     for (const id of new Set([...wanted.keys(), ...Object.keys(current.connections)])) {
@@ -260,16 +237,6 @@ function sourcesChange(op: ConfigApplyOp, spec: ApplySpec["sources"], current: A
     }
     if (Object.keys(overrides).length) change.toolOverrides = overrides
   }
-  if (unreadable.size) {
-    const names = [...unreadable].sort()
-    warnings.add(names.length === 1
-      ? `Agents can't read ${names[0]} here yet; it is left out of what agents read.`
-      : `Agents can't read ${listed(names)} here yet; they are left out of what agents read.`)
-  }
-  if (notOther.size) {
-    const names = [...notOther].sort()
-    warnings.add(`${listed(names)} can't be other context here; ${names.length === 1 ? "it is" : "they are"} left out.`)
-  }
   return change
 }
 
@@ -277,22 +244,20 @@ type TargetState = {
   settings: Awaited<ReturnType<typeof readProactiveSettings>>
   template: Awaited<ReturnType<typeof readAgentTemplate>>
   connections: TargetConnection[]
-  briefOn: boolean
 }
 
 async function readTargetState(ctx: ConfigAreaContext): Promise<TargetState> {
   const organizationId = normalizeDenTypeId("organization", ctx.organizationId)
-  const [settings, template, connections, briefOn] = await Promise.all([
+  const [settings, template, connections] = await Promise.all([
     readProactiveSettings(organizationId),
     readAgentTemplate(organizationId),
     organizationConnections(organizationId),
-    agentBriefAllowed(organizationId, ctx.actor.userId),
   ])
-  return { settings, template, connections, briefOn }
+  return { settings, template, connections }
 }
 
 function plannedChange(op: ConfigApplyOp, spec: ApplySpec, state: TargetState): { change: WorkbotProactiveSettingsInput; warnings: string[] } {
-  const { settings, template, connections, briefOn } = state
+  const { settings, template, connections } = state
   const warnings = new Set<string>()
   const change: WorkbotProactiveSettingsInput = {}
 
@@ -305,11 +270,7 @@ function plannedChange(op: ConfigApplyOp, spec: ApplySpec, state: TargetState): 
   if (touches(op, "membersStart") && spec.membersStart !== settings.membersStart) change.membersStart = spec.membersStart
   if (touches(op, "destination") && spec.destination !== settings.destination) change.destination = spec.destination
 
-  const sources = sourcesChange(op, spec.sources, settings.sources, connections, briefOn ? "any" : "reviewed", warnings)
-  if (sources.toolOverrides && !briefOn) {
-    delete sources.toolOverrides
-    warnings.add("Choosing tools for agents isn't on for this organization; the tool choices are left out.")
-  }
+  const sources = sourcesChange(op, spec.sources, settings.sources, connections, warnings)
   if (Object.keys(sources).length) change.sources = sources
 
   const brief: NonNullable<WorkbotProactiveSettingsInput["brief"]> = {}
@@ -327,10 +288,7 @@ function plannedChange(op: ConfigApplyOp, spec: ApplySpec, state: TargetState): 
     else if (field === "dailyCap" && typeof wanted === "number") brief.dailyCap = wanted
     else if (field === "extraChecksPerDay" && typeof wanted === "number") brief.extraChecksPerDay = wanted
   }
-  if (Object.keys(brief).length) {
-    if (briefOn) change.brief = brief
-    else warnings.add("Your agent's brief isn't on for this organization; the brief settings are left out.")
-  }
+  if (Object.keys(brief).length) change.brief = brief
 
   const responsibilities: NonNullable<WorkbotProactiveSettingsInput["responsibilities"]> = {}
   for (const responsibility of AGENT_RESPONSIBILITIES) {
@@ -436,9 +394,9 @@ export const workbotProactiveArea = defineConfigArea({
     const step = { action: "update" as const, target: "settings", detail: planned.map((entry) => entry.target).join(", ") }
     await steps.run(step, undefined, async () => {
       await requireActorPermission(ctx, "inference.manage")
-      const saved = await saveWorkbotProactiveSettings({ organizationId, memberId, userId: ctx.actor.userId, change })
+      const saved = await saveWorkbotProactiveSettings({ organizationId, memberId, change })
       if (!saved.ok) {
-        const field = saved.error === "invalid_working_hours" ? "endHour" : saved.error === "invalid_sources" ? "sources" : "brief"
+        const field = saved.error === "invalid_working_hours" ? "endHour" : "sources"
         throw new ConfigFieldError(saved.error === "invalid_sources" ? "invalid_request" : saved.error, saved.message, field, 400)
       }
     })

@@ -1,14 +1,12 @@
 import { spec, type Probe, type User } from "@openwork/testkit";
 import { expect } from "vitest";
-import { desktopRules, sandboxControls, sandboxControlsFlagOff, sandboxHeaders, sandboxSignedOutSettings } from "../worlds/sandbox-only.ts";
+import { desktopRules, sandboxControls, sandboxHeaders, sandboxSignedOutSettings } from "../worlds/sandbox-only.ts";
 
 // Native policy handoff, but no guest execution or virtualization dependency.
 // A cold Daytona run spent 665s provisioning Den alone, and another world
 // spent 160s on Den plus 796s installing one desktop's dependencies. The
 // provisioning budget is separate from the individual assertion deadlines.
 const controls = spec.world(sandboxControls, { timeout: 1_500_000,
-  resources: { surfaces: ["web", "desktop"], services: ["den"], nativeReason: "The embedded desktop server receives the signed-in member's verified Den policy." } });
-const flagOff = spec.world(sandboxControlsFlagOff, { timeout: 1_500_000,
   resources: { surfaces: ["web", "desktop"], services: ["den"], nativeReason: "The embedded desktop server receives the signed-in member's verified Den policy." } });
 const signedOut = spec.world(sandboxSignedOutSettings, { timeout: 600_000, resources: { surfaces: ["appWeb"], services: [] } });
 const configPath = "/v1/me/desktop-config";
@@ -146,54 +144,11 @@ controls("an owner requires a sandbox for Contractors without removing another m
   });
 });
 
-flagOff("an owner outside the rollout can remove an old requirement but cannot add a new one", { timeout: 1_650_000 }, async ({ world, user, agent, probe, step, evidence }) => {
-  const admin = user.on(world.web);
-  const member = user.on(world.member);
-  await step("before: the old Use requirement is visible but Force is not offered", async () => {
-    await admin.see({ testId: "sandbox-use-requirement" }, { timeoutMs: 60_000 });
-    await admin.notSee({ testId: "sandbox-force-requirement" });
-    const config = await probe.api(world.riley, configPath, { headers: sandboxHeaders });
-    expect(config.response.status).toBe(200);
-    expect(deniedModes(config.body).map(rule => rule.action)).toEqual(["sandbox_opt_out"]);
-    evidence.recordAssertionEvidence("The stored setting can still be removed", "Use is visible; Force is absent", deniedModes(config.body).length === 1);
-    await admin.screenshot();
-  });
-  await step("after: removing the stored requirement leaves no sandbox requirements in the editor", async () => {
-    await admin.click({ testId: "sandbox-use-requirement" });
-    await admin.click("Save changes");
-    const config = await probe.eventually(() => probe.api(world.riley, configPath, { headers: sandboxHeaders }), {
-      within: 30_000, label: "the old requirement is removed", until: result => result.response.status === 200 && deniedModes(result.body).length === 0,
-    });
-    await admin.reload();
-    await admin.see({ testId: "agent-permissions-editor" }, { timeoutMs: 60_000 });
-    await admin.notSee({ testId: "sandbox-use-requirement" });
-    await admin.notSee({ testId: "sandbox-force-requirement" });
-    const write = await world.tryMemberPolicyWrite();
-    expect(write.response.status).toBe(403);
-    evidence.recordAssertionEvidence("No sandbox requirement reaches the member and policy remains admin-only", `desktop config HTTP ${config.response.status}, zero requirements; member write HTTP ${write.response.status}`, deniedModes(config.body).length === 0 && write.response.status === 403);
-    await admin.screenshot();
-  });
-  await step("after: the member's Permissions page has Authorized folders but no sandbox section", async () => {
-    await member.reload();
-    await agent.on(world.member).run("route.settings.authorized_folders");
-    await member.see({ testId: "authorized-folders-panel" }, { timeoutMs: 60_000 });
-    const desktop = probe.on(world.member);
-    await desktop.eventually(() => desktop.dom(`${settingsReady}[hidden]`), { within: 45_000, label: "Permissions settles without a visible sandbox section", until: state => state.elements.length === 1 });
-    await member.notSee({ testId: "sandbox-panel" });
-    await member.notSee({ testId: "sandbox-use-switch" });
-    await member.notSee({ testId: "sandbox-force-switch" });
-    const settings = await desktop.desktopApi(world.memberSettings);
-    expect(settings.body).toMatchObject({ featureEnabled: false, managedUse: false, managedForce: false, effectiveForceSandbox: false });
-    evidence.recordAssertionEvidence("The desktop omits the sandbox section outside the rollout", JSON.stringify(settings.body), settings.status === 200);
-    await member.screenshot();
-  });
-});
-
 signedOut("a signed-out person keeps a local Force choice until they turn off the sandbox", async ({ world, user, probe, step, evidence }) => {
   await step("before: the saved local restriction remains visible after sign-out", async () => {
     const state = await switches(user, probe, true, true, true, false);
     const settings = await probe.desktopApi(world.settingsPath);
-    expect(settings.body).toMatchObject({ forceSandbox: true, effectiveForceSandbox: true, managedForce: false, featureEnabled: false, effectiveAllowHostExecution: false });
+    expect(settings.body).toMatchObject({ forceSandbox: true, effectiveForceSandbox: true, managedForce: false, effectiveAllowHostExecution: false });
     evidence.recordAssertionEvidence("Sign-out does not re-enable tools on the computer", `${state}; ${JSON.stringify(settings.body)}`, settings.status === 200 && state.includes("Force on (editable)"));
     await user.screenshot();
   });
@@ -209,9 +164,9 @@ signedOut("a signed-out person keeps a local Force choice until they turn off th
   await step("after: reloading does not bring back the old restriction", async () => {
     await user.reload();
     await user.see({ testId: "authorized-folders-panel" }, { timeoutMs: 60_000 });
-    await user.notSee({ testId: "sandbox-force-switch" });
+    await switches(user, probe, false, false, false, false);
     const settings = await probe.desktopApi(world.settingsPath);
-    expect(settings.body).toMatchObject({ useSandbox: false, forceSandbox: false, effectiveAllowHostExecution: true, featureEnabled: false });
+    expect(settings.body).toMatchObject({ useSandbox: false, forceSandbox: false, effectiveAllowHostExecution: true });
     evidence.recordAssertionEvidence("The signed-out choice persists", JSON.stringify(settings.body), settings.status === 200 && JSON.stringify(settings.body).includes('"effectiveAllowHostExecution":true'));
     await user.screenshot();
   });

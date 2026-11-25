@@ -36,3 +36,14 @@ export function coerceNestedJsonArgs(raw: unknown): unknown {
   }
   return out;
 }
+
+export function singleActionAsList(raw: unknown): unknown {
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw) || !("action" in raw)) {
+    return raw;
+  }
+  if ("actions" in raw) {
+    throw new Error("Pass every step in actions, not in both action and actions.");
+  }
+  const { action, ...rest } = raw;
+  return { ...rest, actions: [coerceJsonValue(action)] };
+}

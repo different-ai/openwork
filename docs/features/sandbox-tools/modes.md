@@ -1,6 +1,6 @@
 # OpenWork Sandbox: Use and Force
 
-Feature `sandboxTools` (cloud and self-hosted, off by default). This page is the contract for the two sandbox
+Feature `sandboxTools` (cloud and self-hosted, generally available; rollout switch retired). This page is the contract for the two sandbox
 modes that replace the single "Run tools on this computer" switch. [design.md](design.md) still describes the
 security boundary of Force (formerly "sandbox only"); nothing here loosens it.
 
@@ -12,8 +12,7 @@ security boundary of Force (formerly "sandbox only"); nothing here loosens it.
 | **Force OpenWork Sandbox** | Everything the agent runs stays inside the sandbox. It can only reach this project and your authorized folders. | Today's sandbox-only: the six tools are replaced by guest versions under the same names, nothing falls back to the computer, and computer use, the built-in browser and MCP are blocked as in design.md section 4. |
 
 - Force implies Use. Turning Force on turns Use on; turning Use off turns Force off.
-- Both off is the default, and is exactly the behavior without the feature. Unlike the first release, having the
-  rollout on no longer adds sandbox tools by itself: Use is opt-in.
+- Both settings are off by default; Use is opt-in unless required by the organization.
 - The organization can require Use and/or Force. A requirement locks that switch on the desktop with
   "Managed by your organization". The stricter of the local and organization choice wins.
 - No jargon in the product: never "microVM", "bridge", "host", "fallback", "engine", "guest" in user-facing copy.
@@ -46,18 +45,17 @@ Older desktops:
 - No header: `host_execution` keeps its existing conservative blocks. `sandbox_opt_out` is dropped: requiring Use
   restricts nothing, so a desktop that cannot run the sandbox keeps working.
 - `X-OpenWork-Sandbox-Only` only (0.18.69 alphas): `sandbox_opt_out` is dropped (those builds reject unknown
-  actions) and they already add the sandbox tools whenever the rollout is on, which is what Use requires.
+  actions) and they add sandbox tools when Den returns the legacy compatibility value.
 
 ## Effective mode
 
 ```
 force = localApplied.forceSandbox || org.force || (signedIn && !orgPolicyVerified)
 use   = force || local.useSandbox || org.use
-mode  = force ? "only" : use && rolloutVerifiedOn ? "tools" : "off"
+mode  = force ? "only" : use && sandboxPolicyAllows ? "tools" : "off"
 ```
 
-A Force requirement survives rollout loss (calls fail, the computer's tools do not come back). Use does not: with
-the rollout off and only Use chosen, the mode is `off`.
+Force survives an unavailable sandbox or unverified managed policy: sandbox calls may fail, but host tools do not return. Additive guest tools require applicable policy verification for signed-in members.
 
 ## Server API (embedded OpenWork server)
 
@@ -67,7 +65,6 @@ Answers from local state. It never waits for the network and never starts or pro
 
 ```ts
 type SandboxSettingsResponse = {
-  featureEnabled: boolean;        // last verified rollout state (false until first verification)
   useSandbox: boolean;            // saved local choice
   forceSandbox: boolean;          // saved local choice
   effectiveUseSandbox: boolean;   // what applies to new messages now
@@ -75,7 +72,7 @@ type SandboxSettingsResponse = {
   managedUse: boolean;            // organization requires Use (or Force)
   managedForce: boolean;          // organization requires Force
   pending: boolean;               // a Force change is saved and waits for current tasks
-  // Organization/rollout check, refreshed in the background. "checking": no answer yet (or retrying after a
+  // Organization policy check, refreshed in the background. "checking": no answer yet (or retrying after a
   // failure); "refreshing": a verified answer is being checked again, shown without any notice.
   verification: "verified" | "refreshing" | "checking" | "unavailable";
   // Compatibility with the first release:

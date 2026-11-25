@@ -31,7 +31,6 @@ export type LoadProviderCredential = (input: GatewayCredentialLookup) => Promise
 type CredentialId = GatewayCredential["id"]
 
 type MaterializedCredential =
-  | { kind: "feature_disabled" }
   | { kind: "secret"; credentialId: CredentialId; credentialKind: GatewayProviderCredentialKind; secret: string }
   | { kind: "aws_keys"; credentialId: CredentialId; credentialKind: "aws_keys" | "aws_sso"; awsKeys: GatewayAwsKeysSecret }
   | { kind: "auth_required"; credentialId: CredentialId | null; reason: "missing" | "expired" | "inactive" | "refresh_failed"; googleReason?: GoogleRenewalReason }
@@ -128,7 +127,6 @@ export async function resolveUpstreamCredential(input: {
   selection: GatewayGrantSelection
   envNames: string[]
   loadProviderCredential: LoadProviderCredential
-  checkLiteLlmEntraFeature?: () => Promise<boolean>
   refreshMemberToken?: RefreshMemberToken
   mintGcpAccessToken?: MintGcpAccessToken
   mintAwsRoleCredentials?: MintAwsRoleCredentials
@@ -167,7 +165,6 @@ export async function resolveUpstreamCredential(input: {
 
   const refreshKind = credential.kind
   const apiScope = liteLlmEntraScope(input.provider)
-  if (apiScope !== null && input.checkLiteLlmEntraFeature && !await input.checkLiteLlmEntraFeature()) return { kind: "feature_disabled" }
   if (set.credential_mode === "member" && isRefreshableCredentialKind(refreshKind) && parsed.kind === refreshKind && input.refreshMemberToken
     && needsOauthRefresh(credential, hasRefreshToken(parsed), clock())) {
     const outcome = await input.refreshMemberToken({ credential: { ...credential, kind: refreshKind }, provider: { ...set, api_scope: apiScope }, authorization: lookup, subject, now: clock(), clock })
@@ -184,7 +181,6 @@ export async function resolveUpstreamCredential(input: {
   if (isExpired(credential, clock())) return set.credential_mode === "member"
     ? { kind: "auth_required", credentialId: credential.id, reason: "expired" }
     : { kind: "org_credential_expired", credentialId: credential.id }
-  if (apiScope !== null && input.checkLiteLlmEntraFeature && !await input.checkLiteLlmEntraFeature()) return { kind: "feature_disabled" }
   const result = await materialize(credential, parsed, { envNames: input.envNames, now: clock(), mintGcpAccessToken: input.mintGcpAccessToken, mintAwsRoleCredentials: input.mintAwsRoleCredentials, set, apiScope })
   const snapshot = credential
   const isCurrent = async () => {

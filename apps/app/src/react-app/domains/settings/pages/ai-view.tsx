@@ -4,7 +4,7 @@ import { Lock, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { DesktopFreePreferences } from "@/app/lib/openwork-server";
 import { t } from "@/i18n";
-import { gatewayConnectProviderKey, type GatewayConnectProvider, isCloudManagedProviderKey } from "../../connections/provider-auth/cloud-provider-config";
+import { gatewayConnectProviderKey, type GatewayConnectProvider, isCloudManagedProviderKey, type LiveGatewayProvider } from "../../connections/provider-auth/cloud-provider-config";
 import { isKeylessZenProvider } from "../../connections/provider-auth/provider-policy";
 import type { ProviderLoadState } from "../../connections/provider-auth/store";
 import { credentialHealthKey, useProviderCredentialHealth, type ProviderCredentialHealth } from "../../connections/provider-auth/credential-health";
@@ -97,6 +97,20 @@ export function GatewayConnectRow({ provider, busy, onConnect, onCancel }: {
         <Button disabled={busy || !onConnect} onClick={() => void onConnect?.(provider)}>{busy ? "Waiting for sign-in…" : `Sign in to ${provider.name}`}</Button>
         {busy && onCancel ? <Button variant="ghost" onClick={onCancel}>Stop waiting</Button> : null}
       </>}
+    />
+  );
+}
+
+export function GatewayReadyRow({ provider }: { provider: LiveGatewayProvider }) {
+  const modelCount = provider.models.length;
+  return (
+    <ProviderRow
+      testId={`gateway-provider-${provider.id}`}
+      scope="organization"
+      tile={<ProviderTile providerId={provider.providerId} name={provider.name} />}
+      name={provider.name}
+      status={<ProviderStatus tone="ready">Ready to use</ProviderStatus>}
+      meta={<ProviderMeta id={provider.id} parts={["OpenWork Gateway", modelCount === 1 ? "1 model" : `${modelCount} models`]} />}
     />
   );
 }

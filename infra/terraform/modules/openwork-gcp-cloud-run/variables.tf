@@ -364,7 +364,7 @@ variable "cloud_sql_connection_name" {
 }
 
 variable "database" {
-  description = "Cloud SQL settings. den-api reaches the instance through Cloud Run's Cloud SQL connector (IAM-authorized, verified TLS). For a private-IP instance or another database, set create_database = false and pass database_url."
+  description = "Cloud SQL settings. den-api reaches the instance through Cloud Run's Cloud SQL connector (IAM-authorized, verified TLS). For a private-IP instance or another database, set create_database = false and pass database_url. backup_location is the Cloud SQL region or multi-region that stores new backups; null leaves Google's default, the multi-region nearest the instance, which can lie outside the instance's region."
   type = object({
     tier                = optional(string, "db-g1-small")
     edition             = optional(string, "ENTERPRISE")
@@ -372,6 +372,7 @@ variable "database" {
     disk_size_gb        = optional(number, 20)
     availability_type   = optional(string, "ZONAL")
     backup_enabled      = optional(bool, true)
+    backup_location     = optional(string)
     deletion_protection = optional(bool) # Deprecated alias; null uses deletion_protection.
   })
   default = {}

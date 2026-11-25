@@ -123,9 +123,6 @@ export async function denComputerDisconnectWorld(seed: Seed) {
       },
       /** Someone signs in to OpenWork on that computer again. */
       signInAgain: (desktop: Desktop, person: "member" | "manager") => signInOn(person === "member" ? memberSession : managerSession, desktop.installId, desktop.label, desktop.appVersion),
-      async setFeature(key: "denGreySidebar", enabled: boolean) {
-        await send(den.admin, `/v1/admin/organizations/${organizationId}/capabilities`, { capabilities: { [key]: enabled } }, "PUT");
-      },
       async [Symbol.asyncDispose]() { await stack.disposeAsync(); },
     };
   } catch (error) { await stack.disposeAsync(); throw error; }

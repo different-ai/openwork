@@ -30,8 +30,6 @@ import {
 } from "@openwork-ee/den-db/schema"
 import { normalizeDenTypeId, type DenTypeId } from "@openwork-ee/utils/typeid"
 import { attributeOAuthCallbackMember } from "../../audit/request-capture.js"
-import { DEN_MCP_OAUTH_RESOURCE } from "../../auth.js"
-import { connectionServerUrl } from "../../mcp/connection-server-tools.js"
 import { cache, type CachedOrgMember } from "../../cache.js"
 import { latestConfigObjectVersions } from "../../config-object-versions.js"
 import { db } from "../../db.js"
@@ -525,7 +523,6 @@ const connectionResponseSchema = z.object({
   apiKeyAuthScheme: z.enum(["bearer", "token"]),
   requestHeaderNames: z.array(z.string()),
   exposeDirectly: z.boolean(),
-  mcpUrl: z.string().url().optional(),
   connected: z.boolean(),
   connectedAt: z.string().datetime().nullable(),
   createdByName: z.string().nullable().optional(),
@@ -2875,8 +2872,7 @@ export function registerMcpConnectionRoutes<T extends { Variables: OrgRouteVaria
       }
 
       const connections = await listMemberUsableConnectionFacts({ context })
-      if (!payload.features.connectionMcpServers) return c.json({ connections })
-      return c.json({ connections: connections.map((connection) => ({ ...connection, mcpUrl: connectionServerUrl(DEN_MCP_OAUTH_RESOURCE, connection.id) })) })
+      return c.json({ connections })
     },
   )
 
