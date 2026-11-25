@@ -1,11 +1,12 @@
 import assert from "node:assert/strict"
 import { after, test } from "node:test"
-import { normalizeDenTypeId } from "@openwork-ee/utils/typeid"
+import { AuthAccountTable, ScimProviderTable } from "@openwork-ee/den-db/schema"
+import { createDenTypeId, normalizeDenTypeId } from "@openwork-ee/utils/typeid"
 import { bootDen, field, list, summary, text, type Call } from "./harness.js"
 
 const den = await bootDen({ env: { DEN_PLAN_GATING_ENABLED: "true" } })
 after(() => den.close())
-const { client } = await import("../../src/db.js")
+const { client, db } = await import("../../src/db.js")
 if (!("getConnection" in client)) throw new Error("An isolated MySQL test database is required")
 const mysql = client
 const dayMs = 24 * 60 * 60 * 1000
@@ -164,4 +165,45 @@ test("same-named creator-only plugins arrive separately and do not replace share
       assert.ok(sharedRead.text.includes("Original shared witness."), JSON.stringify(sharedRead))
     }
   }
+})
+
+test("Config reviews a SCIM-owned skill only after its owner is provisioned", async () => {
+  const source = await den.createOrg(await den.signUp("Directory Source"), "Directory source")
+  const target = await den.createOrg(await den.signUp("Directory Target"), "Directory target")
+  const creator = await den.newMember(source.owner, source.orgId, "Directory Member")
+  async function seedProvider(orgId: string) {
+    const providerId = `directory-${orgId}`
+    await db.insert(ScimProviderTable).values({ id: createDenTypeId("scimProvider"), providerId,
+      organizationId: normalizeDenTypeId("organization", orgId), scimToken: "synthetic-not-a-live-token" })
+    return providerId
+  }
+  async function seedDirectoryAccount(providerId: string) {
+    await db.insert(AuthAccountTable).values({ id: createDenTypeId("account"), providerId, accountId: `account-${providerId}`,
+      userId: normalizeDenTypeId("user", creator.userId) })
+  }
+  await seedDirectoryAccount(await seedProvider(source.orgId))
+  const targetProvider = await seedProvider(target.orgId)
+  for (const orgId of [source.orgId, target.orgId]) expectStatus(await den.setFeature(orgId, "configPrivateItems", true), 200)
+  const name = `directory-skill-${den.stamp}`
+  expectStatus(await den.as(creator, source.orgId)("POST", "/v1/plugins", { name, components: [{ type: "skill", input: {
+    rawSourceText: `---\nname: ${name}\ndescription: Synthetic directory review.\n---\n\nRead the directory witness.`,
+  } }] }), 201)
+  const blob = expectStatus(await den.as(source.owner, source.orgId)("GET", "/v1/config-blobs/export?areas=members.people,plugins.skills,plugins.plugins"), 200)
+  const person = list(field(blob, "areas", "members", "people", "items")).find((item) => field(item, "spec", "email") === creator.email)
+  assert.equal(field(person, "spec", "managedBy"), "scim")
+  const admin = den.as(target.owner, target.orgId)
+  async function review() {
+    const submitted = expectStatus(await admin("POST", "/v1/config-blobs/change-requests", { blob, mode: "merge" }), 202)
+    const id = text(field(submitted, "changeRequest", "id"), "request id")
+    await settle(admin, id)
+    return expectStatus(await admin("GET", `/v1/config-blobs/change-requests/${id}/plan`), 200)
+  }
+  const early = await review()
+  assert.ok(Number(field(early, "plan", "summary", "blocking")) > 0)
+  assert.match(JSON.stringify(early), /SCIM provisions them/)
+  assert.match(JSON.stringify(early), /ref_unresolved/)
+  await den.join(target.owner, target.orgId, creator)
+  await seedDirectoryAccount(targetProvider)
+  const late = await review()
+  assert.equal(field(late, "plan", "summary", "blocking"), 0, JSON.stringify(late))
 })
