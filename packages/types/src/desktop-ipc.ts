@@ -371,7 +371,7 @@ export type PrivateValueSettings = {
   enabled: boolean;
   switches: Record<PrivateValueSwitch, boolean>;
   organization: { fills: "blocked" | "limited" | "ask" | null; commands: "blocked" | "limited" | null; paste: "blocked" | null };
-  always: Array<{ id: string; sessionId: string; site: string; field: string; command: string; blocked: boolean }>;
+  always: Array<{ id: string; sessionId: string; site: string; field: string; command?: string; kept?: true; blocked: boolean }>;
   kept: Array<{ id: string; sessionId: string; site?: string; program?: string; label: string }>;
   recent: Array<{ at: number; sessionId: string; site: string; field: string; source: "command" | "paste" | "kept"; program?: string; result: string }>;
 };

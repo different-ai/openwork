@@ -184,6 +184,52 @@ test("a value used outside a page shows the program or the request in place of a
   }
 });
 
+test("a value kept for this chat can be made standing for its program or its site, and asks again once it has to be pasted", async () => {
+  const { control, ask } = broker();
+  const kept = { field: "$GEMINI_API_KEY", ask: "Gemini API key", kept: true };
+  const first = await ask({ sessionId: "chat", use: { kind: "run", command: ["/usr/local/bin/node", "probe-history.mjs"] }, fills: [kept] });
+  assert.equal(first.request.standing, undefined);
+  await control.answerRequest({ sessionId: "chat", answer: "always", id: first.request.id });
+  assert.deepEqual(await first.answer, yes([null]));
+  const reworded = { ...kept, ask: "Gemini API key (same as before)" };
+  assert.deepEqual(await control.approveValues({ sessionId: "chat", use: { kind: "run", command: ["node", "probe-signature.mjs"] }, fills: [reworded] }), yes([null]), "another script of the same program does not ask");
+  assert.deepEqual(control.listValueGrants().map(({ sessionId, site, field, command, kept: fromKept }) => [sessionId, site, field, command, fromKept]), [["chat", "run node", "$GEMINI_API_KEY", undefined, true]]);
+  for (const [why, input] of [
+    ["another program", { sessionId: "chat", use: { kind: "run", command: ["python3", "probe.py"] }, fills: [kept] }],
+    ["another variable", { sessionId: "chat", use: { kind: "run", command: ["node", "probe.mjs"] }, fills: [{ ...kept, field: "$OTHER_KEY" }] }],
+    ["another chat", { sessionId: "other", use: { kind: "run", command: ["node", "probe.mjs"] }, fills: [kept] }],
+    ["a key to paste beside it", { sessionId: "chat", use: { kind: "run", command: ["node", "probe.mjs"] }, fills: [kept, { field: "$SECOND", ask: "Second key" }] }],
+  ]) {
+    const card = await ask(input);
+    assert.equal(card.raised, true, why);
+    await control.answerRequest({ sessionId: input.sessionId, answer: "dismiss", id: card.request.id });
+  }
+  const pastedAgain = await ask({ sessionId: "chat", use: { kind: "run", command: ["node", "probe.mjs"] }, fills: [{ field: "$GEMINI_API_KEY", ask: "Gemini API key" }] });
+  assert.equal(pastedAgain.request.standing, false);
+  await control.answerRequest({ sessionId: "chat", answer: "allow", id: pastedAgain.request.id, values: ["pasted-again"], keep: [true] });
+  await pastedAgain.answer;
+  const after = await ask({ sessionId: "chat", use: { kind: "run", command: ["node", "probe.mjs"] }, fills: [kept] });
+  assert.equal(after.raised, true, "an Always ends when its value had to be pasted again");
+  await control.answerRequest({ sessionId: "chat", answer: "dismiss", id: after.request.id });
+
+  const request = { kind: "request", method: "GET", url: "https://api.example/v1/models", origin: "https://api.example" };
+  const header = { field: "header Authorization", ask: "Example token", kept: true };
+  const sent = await ask({ sessionId: "chat", use: request, fills: [header] });
+  await control.answerRequest({ sessionId: "chat", answer: "always", id: sent.request.id });
+  await sent.answer;
+  assert.deepEqual(await control.approveValues({ sessionId: "chat", use: { ...request, method: "POST", url: "https://api.example/v1/chat" }, fills: [header] }), yes([null]), "another request to the same site does not ask");
+  const elsewhere = await ask({ sessionId: "chat", use: { ...request, url: "https://other.example/v1/models", origin: "https://other.example" }, fills: [header] });
+  assert.equal(elsewhere.raised, true, "another site asks");
+  await control.answerRequest({ sessionId: "chat", answer: "dismiss", id: elsewhere.request.id });
+  const everyTime = await ask({ sessionId: "chat", use: request, fills: [header], limits: { everyTime: true } });
+  assert.equal(everyTime.raised, true, "an organization that asks every time still does");
+  assert.equal(everyTime.request.standing, false);
+  await control.answerRequest({ sessionId: "chat", answer: "dismiss", id: everyTime.request.id });
+  const page = await ask({ sessionId: "chat", site: SITE, fills: [{ ...ASKED, kept: true }] });
+  assert.equal(page.request.standing, false, "a kept value typed into a page still asks every time");
+  await control.answerRequest({ sessionId: "chat", answer: "dismiss", id: page.request.id });
+});
+
 test("the typed-credential question takes no fills: a card of commands is only ever raised as one", async () => {
   const { control, ask } = broker();
   const typed = await ask({ sessionId: "chat", site: SITE });

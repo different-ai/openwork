@@ -571,7 +571,7 @@ export function PrivateValues() {
         ) : null}
       </Group>
       {always.length ? (
-        <Group title="Always used without asking" count={`${always.length} ${always.length === 1 ? "command" : "commands"}`} footnote="Each holds in the chat where you chose Always, until OpenWork quits.">
+        <Group title="Always used without asking" count={`${always.length} ${always.length === 1 ? "choice" : "choices"}`} footnote="Each holds in the chat where you chose Always, until OpenWork quits.">
           {always.map((grant) => (
             <Row key={grant.id} className="items-center" data-testid="settings-private-values-always">
               <RowText>
@@ -580,10 +580,12 @@ export function PrivateValues() {
                   {grant.blocked ? <OrganizationSet>Blocked by your organization</OrganizationSet> : null}
                 </LayoutSectionItemTitle>
                 <LayoutSectionItemDescription className="break-all text-xs">
-                  The {grant.field} field, from <span dir="ltr" className="font-mono">{grant.command}</span>
+                  {grant.command === undefined
+                    ? <><span dir="ltr" className="font-mono">{grant.field}</span>, from the value you kept for this chat</>
+                    : <>The {grant.field} field, from <span dir="ltr" className="font-mono">{grant.command}</span></>}
                 </LayoutSectionItemDescription>
               </RowText>
-              <Button size="sm" variant="outline" className="ml-auto shrink-0" disabled={changing !== null} aria-busy={changing === grant.id} data-testid="settings-private-values-always-remove" aria-label={`Ask again before using ${grant.command} for ${grant.site}`} onClick={() => void change(grant.id, "Couldn't remove it.", () => desktopBridge.computerRemovePrivateValue("always", grant.id))}>Remove</Button>
+              <Button size="sm" variant="outline" className="ml-auto shrink-0" disabled={changing !== null} aria-busy={changing === grant.id} data-testid="settings-private-values-always-remove" aria-label={`Ask again before using ${grant.command ?? "the value you kept"} for ${grant.site}`} onClick={() => void change(grant.id, "Couldn't remove it.", () => desktopBridge.computerRemovePrivateValue("always", grant.id))}>Remove</Button>
             </Row>
           ))}
         </Group>

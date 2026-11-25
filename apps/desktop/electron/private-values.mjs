@@ -131,7 +131,7 @@ export function privateValueCommandLines(command) {
  *   readPolicy: () => Promise<unknown>,
  *   switches: { read: () => Promise<PrivateValueSwitches>, write: (switches: PrivateValueSwitches) => Promise<void> },
  *   approveValues: (sessionId: string, request: { site?: string, use?: PrivateValueUse, fills: PrivateValueFill[], limits: { everyTime: boolean, paste: boolean, keep: boolean } }, signal: AbortSignal) => Promise<{ approved: boolean, values: Array<string | null>, keep: boolean[] }>,
- *   grants: { list: () => Array<{ id: string, sessionId: string, site: string, field: string, command: string[] }>, remove: (id?: string) => boolean },
+ *   grants: { list: () => Array<{ id: string, sessionId: string, site: string, field: string, command?: string[], kept?: true }>, remove: (id?: string) => boolean },
  *   sources?: { list: () => Promise<string[]>, add: (names: string[]) => Promise<void> },
  *   secrets: { listAllKept: () => Array<{ sessionId: string, site: string, label: string }>, forget: (input: { sessionId: string, site: string, label: string }) => boolean, forgetAllKept: () => void },
  *   onRecord?: (record: PrivateValueRecord) => void,
@@ -359,8 +359,11 @@ export function createPrivateValues({ readPolicy, switches, approveValues, grant
         switches: await switches.read(),
         organization: organization(policy),
         always: grants.list().map((grant) => ({
-          id: grant.id, sessionId: grant.sessionId, site: grant.site, field: grant.field, command: grant.command.join(" "),
-          blocked: site(policy, grant.site).effect === "deny" || command(policy, grant.command).effect === "deny",
+          id: grant.id, sessionId: grant.sessionId, site: grant.site, field: grant.field,
+          ...(grant.command ? { command: grant.command.join(" ") } : { kept: /** @type {const} */ (true) }),
+          // A kept value's Always names a program, not a whole command: its rules are checked when it is used.
+          blocked: grant.command ? site(policy, grant.site).effect === "deny" || command(policy, grant.command).effect === "deny"
+            : !grant.site.startsWith("run ") && site(policy, grant.site).effect === "deny",
         })),
         kept: secrets.listAllKept().map((entry) => ({
           id: JSON.stringify([entry.sessionId, entry.site, entry.label]), sessionId: entry.sessionId,

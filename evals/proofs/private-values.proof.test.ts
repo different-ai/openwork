@@ -364,6 +364,51 @@ test("a person keeps a sign-in in their password manager, or pastes it by hand, 
     await user.notSee(approvalCard, { timeoutMs: 3_000 });
   });
 
+  await step("after: a program needs a key the person pastes and keeps; asked again in other words for another script there is nothing to paste, the card says the model never sees it, and after Always for this program a third script runs without a card", async () => {
+    const apiKey = `made-up-api-key-${world.password.length}-7f3c91e2`;
+    const script = (label: string) => ["/bin/sh", "-c", `printf "${label} key=%s length=%s" "$EXAMPLE_API_KEY" "\${#EXAMPLE_API_KEY}"`];
+    const run = (ask: string, label: string) => agent.privateValues({ sessionId, args: { values: [{ name: "EXAMPLE_API_KEY", ask }], run: { command: script(label) } } })
+      .then((reply) => { agentSaw.push(JSON.stringify(reply)); return reply; });
+    const always = () => cardLines("session-computer-credential-always");
+    const unseen = async () => (await cardLines("session-computer-credential-unseen")).join(" ");
+
+    const first = run("Example API key", "first");
+    await user.see(approvalCard, { timeoutMs: 30_000 });
+    const firstCard = { paste: await rowsBy("paste"), kept: await rowsBy("kept"), always: await always(), unseen: await unseen() };
+    await user.type({ testId: "session-computer-credential-paste" }, apiKey, { sensitive: true });
+    await user.click({ testId: "session-computer-credential-keep" });
+    await user.screenshot();
+    await user.click({ testId: "session-computer-credential-allow" });
+    const one = await first;
+    await user.notSee(approvalCard, { timeoutMs: 3_000 });
+
+    const second = run("Example API key (one of ours, same as before)", "second");
+    await user.see(approvalCard, { timeoutMs: 30_000 });
+    const secondCard = { paste: await rowsBy("paste"), kept: await rowsBy("kept"), always: await always(), unseen: await unseen(), into: await cardLines("session-computer-credential-field") };
+    await user.screenshot();
+    await user.click({ testId: "session-computer-credential-always" });
+    const two = await second;
+    await user.notSee(approvalCard, { timeoutMs: 3_000 });
+
+    const three = await run("The Example API key again", "third");
+    const cardsAfter = await countOf('[data-testid="session-computer-request"]');
+    const outputs = [one, two, three].map((reply) => String(reply.output ?? ""));
+    const hidden = (label: string) => `${label} key=[secret] length=${apiKey.length}`;
+    evidence.recordAssertionEvidence(
+      "A key pasted once and kept is found again under its NAME however the agent words it, the card says the model never sees it, and Always for this program stops the repeated cards",
+      `first card: private paste fields: ${firstCard.paste}, kept rows: ${firstCard.kept}, Always offered: ${firstCard.always.length === 1}, "${firstCard.unseen}"; `
+        + `second card, asked for in other words: private paste fields: ${secondCard.paste}, kept rows: ${secondCard.kept}, "${secondCard.into.join(" / ")}", button "${secondCard.always.join("")}", "${secondCard.unseen}"; `
+        + `third script: cards on screen: ${cardsAfter}; the agent got ${JSON.stringify(outputs)}; a reply held the key: ${[one, two, three].some((reply) => JSON.stringify(reply).includes(apiKey))}`,
+      outputs.join("|") === ["first", "second", "third"].map(hidden).join("|") && secondCard.paste === 0 && cardsAfter === 0,
+    );
+    expect(firstCard).toEqual({ paste: 1, kept: 0, always: [], unseen: "The model never sees this value." });
+    expect(secondCard).toEqual({ paste: 0, kept: 1, always: ["Always for this program in this chat"], into: ["As $EXAMPLE_API_KEY, from what you kept for this chat"],
+      unseen: "The model never sees this value. Always covers any command that starts with sh with this value in this chat." });
+    expect(cardsAfter).toBe(0);
+    expect(outputs).toEqual(["first", "second", "third"].map(hidden));
+    expect(JSON.stringify([one, two, three])).not.toContain(apiKey);
+  });
+
   const VAULT_KEY = "Vault session key";
   const keyRows = (source: "paste" | "kept") => countOf(`[data-testid="session-computer-credential-fill"][data-row="key"][data-source="${source}"]`);
   const pasteFields = () => countOf('[data-testid="session-computer-credential-paste"]');

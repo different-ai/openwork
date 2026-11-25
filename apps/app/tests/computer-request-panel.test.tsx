@@ -202,7 +202,7 @@ test("commands are listed whole with their fields, and can be run once or always
 test("a value the agent asks for is pasted into a private field, and Fill waits for it", async () => {
   const container = await render(values([ASKED], { standing: false }))
   expect(container.querySelector('[data-testid="session-computer-credential-title"]')?.textContent).toBe("Fill this field on app.example?")
-  expect(container.textContent).toContain("the agent never sees it")
+  expect(container.querySelector('[data-testid="session-computer-credential-unseen"]')?.textContent).toBe("The model never sees this value.")
   expect(rows(container).map((row) => row.dataset.source)).toEqual(["paste"])
   expect(container.querySelector('[data-testid="session-computer-credential-ask"]')?.textContent).toBe("Example password")
   const [field] = pasteFields(container)
@@ -291,6 +291,46 @@ test("a value kept for the chat fills with one click, or a different one can be 
   expect(answers).toEqual([{ sessionId: "chat_1", answer: "allow", id: "req_7" }, { sessionId: "chat_1", answer: "allow", id: "req_7", values: ["another-pasted"], keep: [false] }])
 })
 
+const keptKey = { field: "$GEMINI_API_KEY", ask: "Gemini API key", kept: true } as const
+const used = (use: NonNullable<NonNullable<ComputerRequest["credential"]>["use"]>, fills: NonNullable<NonNullable<ComputerRequest["credential"]>["fills"]>, extra: Partial<ComputerRequest> = {}): ComputerRequest => ({
+  id: "req_7", reason: "credential", computer: "This Mac", placement: "local", ...extra, credential: { use, fills },
+})
+
+test("a program run with a value kept for the chat says the model never sees it, and Always names the program it covers", async () => {
+  const container = await render(used({ kind: "run", command: ["/usr/local/bin/node", "/tmp/probe-history.mjs"] }, [keptKey]))
+  expect(container.querySelector('[data-testid="session-computer-credential-title"]')?.textContent).toBe("Run this command with a private value?")
+  expect(container.querySelector('[data-testid="session-computer-credential-field"]')?.textContent).toBe("As $GEMINI_API_KEY, from what you kept for this chat")
+  expect(container.querySelector('[data-testid="session-computer-credential-unseen"]')?.textContent)
+    .toBe("The model never sees this value. Always covers any command that starts with node with this value in this chat.")
+  expect([button(container, "dismiss")?.textContent, button(container, "always")?.textContent, button(container, "allow")?.textContent])
+    .toEqual(["Don't run", "Always for this program in this chat", "Run"])
+  const { answers, press } = answersFrom(container)
+  try {
+    await press("always")
+    await act(async () => button(container, "switch")?.click())
+    expect(button(container, "always")).toBeNull()
+    expect(container.querySelector('[data-testid="session-computer-credential-unseen"]')?.textContent).toBe("The model never sees this value.")
+  } finally {
+    Reflect.deleteProperty(window, "__OPENWORK_ELECTRON__")
+  }
+  expect(answers).toEqual([{ sessionId: "chat_1", answer: "always", id: "req_7" }])
+})
+
+test("a request sent with a kept value offers Always for its site, and a value to paste or an organization that asks every time offers none", async () => {
+  const request = { kind: "request", method: "GET", url: "https://api.example/v1/models", origin: "https://api.example" } as const
+  const kept = await render(used(request, [{ field: "header Authorization", ask: "Example token", kept: true }]))
+  expect(button(kept, "always")?.textContent).toBe("Always for this site in this chat")
+  expect(kept.querySelector('[data-testid="session-computer-credential-covered"]')?.textContent).toBe("api.example")
+  const pasted = await render(used({ kind: "run", command: ["node", "probe.mjs"] }, [{ field: "$GEMINI_API_KEY", ask: "Gemini API key" }], { standing: false }))
+  expect([button(pasted, "always"), pasted.querySelector('[data-testid="session-computer-credential-covered"]')]).toEqual([null, null])
+  expect(pasted.querySelector('[data-testid="session-computer-credential-unseen"]')?.textContent).toBe("The model never sees this value.")
+  const everyTime = await render(used({ kind: "run", command: ["node", "probe.mjs"] }, [keptKey], { standing: false }))
+  expect([button(everyTime, "always"), everyTime.querySelector('[data-testid="session-computer-credential-covered"]')]).toEqual([null, null])
+  const command = await render(used({ kind: "run", command: ["gh", "api", "user"] }, [{ field: "$GH_TOKEN", command: ["op", "read", "op://Private/GitHub/token"] }]))
+  expect(button(command, "always")?.textContent).toBe("Always for this command in this chat")
+  expect(command.querySelector('[data-testid="session-computer-credential-covered"]')).toBeNull()
+})
+
 test("hidden characters in a command or a name are shown and warned about, and a card with no site fills nothing", async () => {
   const container = await render(values([{ field: "password", ask: "Example‮password" }, { field: "text", command: ["op", "read​"] }], { standing: false }))
   expect(container.querySelector('[data-testid="session-computer-credential-ask"]')?.textContent).toBe("Example<U+202E>password")
@@ -330,7 +370,7 @@ test("a command that needs a key shows the key as its own row, pasted once and k
   expect(text(rows(container)[1], "field")).toBe("Into a number field")
   expect([text(rows(container)[2], "ask"), text(rows(container)[2], "field")]).toEqual(["Bitwarden session key", "Given to /opt/homebrew/bin/bw as BW_SESSION, for this run only"])
   expect(container.textContent).toContain("with the key you paste here")
-  expect(container.textContent).toContain("never sees the key or the result")
+  expect(container.querySelector('[data-testid="session-computer-credential-unseen"]')?.textContent).toBe("The model never sees these values.")
   expect(pasteFields(container).map((field) => field.getAttribute("placeholder"))).toEqual(["Paste the key here"])
   expect([button(container, "always"), button(container, "dismiss")?.textContent, button(container, "allow")?.textContent, button(container, "allow")?.disabled]).toEqual([null, "Don't run", "Run and fill", true])
   const keep = container.querySelector<HTMLButtonElement>('[data-testid="session-computer-credential-keep"]')

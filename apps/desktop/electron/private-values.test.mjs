@@ -205,6 +205,13 @@ test("Settings lists the switches, what the organization set, every Always, what
   assert.deepEqual(limited.organization, { fills: "limited", commands: "limited", paste: null });
   assert.equal(limited.always[0].blocked, true);
 
+  const keptAlways = host({ rules: [rule("private_value_fill", "deny", "api.example")] });
+  keptAlways.state.grants = [{ id: "g2", sessionId: "chat", site: "run node", field: "$API_KEY", kept: true }, { id: "g3", sessionId: "chat", site: "https://api.example", field: "header Authorization", kept: true }];
+  assert.deepEqual((await keptAlways.values.list()).always, [
+    { id: "g2", sessionId: "chat", site: "run node", field: "$API_KEY", kept: true, blocked: false },
+    { id: "g3", sessionId: "chat", site: "https://api.example", field: "header Authorization", kept: true, blocked: true },
+  ]);
+
   const kept = await host().values.list();
   assert.deepEqual(kept.kept.map((entry) => [entry.site, entry.program, entry.label]), [[SITE, undefined, "Account number"], [undefined, "/opt/homebrew/bin/bw", "Bitwarden session key"]]);
 });

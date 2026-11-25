@@ -170,10 +170,31 @@ go:
 
 The same card asks first. It shows the exact command, or the method and the
 address, and one row per value with where it goes ("As $DEPLOY_TOKEN", "In the
-Authorization header"). Its buttons are Run or Send, Don't run or Don't send,
-and "Always for this command in this chat" or "Always for this request in this
-chat". "Always" covers only the same command, or the same method and address,
-with the same sources.
+Authorization header"). Under the rows it says "The model never sees this
+value." Its buttons are Run or Send, Don't run or Don't send, and "Always for
+this command in this chat" or "Always for this request in this chat". That
+"Always" covers only the same command, or the same method and address, with
+the same sources.
+
+A value pasted for a program or a request is kept under the NAME it is used as
+("GEMINI_API_KEY") and the program or site it goes to, when the person ticks
+"Keep for this chat". The next use of that NAME with that program or site
+finds it, however the agent words what it asks for. A card whose values are
+all kept, with nothing left to paste, has a wider "Always":
+
+- **"Always for this program in this chat"** covers any command that starts
+  with the same program, with the same kept values. The card says so and names
+  the program, for example "Always covers any command that starts with node
+  with this value in this chat."
+- **"Always for this site in this chat"** covers any request to the same
+  site, with the same kept values in the same places.
+
+It is wider on purpose. The person already chose to keep the value for the
+chat, and a script can change between two runs of the same command, so naming
+the exact command would promise nothing more. It ends when the value has to be
+pasted again, when the person removes it in Settings, or when OpenWork quits.
+A request that seals a value, a card with a key for a command, and a website
+whose organization rule is Ask first never offer it.
 
 The agent gets back what the program printed (up to 32 KB) or the response
 (up to 64 KB), with every value replaced by `[secret]`, including its
@@ -290,7 +311,7 @@ beats an allow of the same reach.
 | Get private values from commands | Allow, Block, and lists of commands | Block stops every command. With Block, "Always allow" lists the only commands that may run, for example `op read *`. A blocked command is refused even where the member had chosen Always. |
 | Paste private values in the chat | On or off | Off stops pasting a value and pasting a key for a command, and forgets every value kept so far. |
 | Let the agent run its private-value programs in its own terminal | On or off, starts off | Off refuses, in the agent's own terminal, every program the agent has named as the source of a private value. There is no list of names: any program named as a source counts. The same programs still work through the card. |
-| Give private values to programs | Allow, Block, and lists of commands | Programs the agent runs with a private value in their environment or a private file (`use_private_values`). Block stops every such run. With Block, "Always allow" lists the only programs that may get values, for example `deploy *`. The member still approves every run on a card. A request to a website is ruled by "Fill private values on websites" instead. |
+| Give private values to programs | Allow, Block, and lists of commands | Programs the agent runs with a private value in their environment or a private file (`use_private_values`). Block stops every such run. With Block, "Always allow" lists the only programs that may get values, for example `deploy *`. The member approves each run on a card, or chooses "Always" there for one chat. A request to a website is ruled by "Fill private values on websites" instead. |
 
 No setting lets a value be used without the member's card. An allowed website or
 command means the member decides there.
@@ -473,9 +494,16 @@ on disk, so there is nothing to migrate or clean up.
   line break goes only into a multi-line field.
 - **A pasted value is not checked against the name.** OpenWork cannot tell
   whether what was pasted is the "Billing password" the card asked for.
-- **A kept value is tied to the name the agent used.** If the agent asks for
-  the same value under a different name, or on a different site, the person
-  pastes again.
+- **A value kept for a website field is tied to the name the agent used.** If
+  the agent asks for the same value under a different name, or on a different
+  site, the person pastes again. A value kept for a program or a request is
+  found by its NAME instead.
+- **"Always" for a kept value trusts the program, not one script.** After
+  "Always for this program in this chat", the agent can run any command that
+  starts with that program with the kept value, without a card, until the
+  chat's Always is removed in Settings or OpenWork quits. An organization
+  cannot yet ask for a card on every program run; it can block programs, or
+  block pasting.
 - **One command, one field.** A command runs once for each field it fills.
   One that makes a new value every time it runs, such as a password
   generator, gives "Password" and "Confirm password" two different values.
