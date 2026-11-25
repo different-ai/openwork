@@ -12,6 +12,7 @@ export { default as chatSkillCardShare } from "@openwork/features/flags/chat-ski
 export { default as composerInlineSuggestions } from "@openwork/features/flags/composer-inline-suggestions"
 export { default as connectionSelectedScopesOnly } from "@openwork/features/flags/connection-selected-scopes-only"
 export { default as desktopSystemProxy } from "@openwork/features/flags/desktop-system-proxy"
+export { default as followUpDelivery } from "@openwork/features/flags/follow-up-delivery"
 export { default as gatewayOpenCodeSetup } from "@openwork/features/flags/gateway-open-code-setup"
 export { default as gmailThreadRead } from "@openwork/features/flags/gmail-thread-read"
 export { default as importOpencodeConnections } from "@openwork/features/flags/import-opencode-connections"

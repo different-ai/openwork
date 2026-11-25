@@ -22,6 +22,7 @@ import type { SentMessageDraft } from "@/react-app/domains/session/surface/compo
 interface MessageListContextValue {
   mcpAppOrigin: McpAppOrigin | null
   readOnly: boolean
+  waitingFollowUpIds: readonly string[]
   workspaceId: string
   sessionId: string
   uiStateOwner?: string | null
@@ -67,6 +68,7 @@ interface MessageListProviderProps {
   client?: OpenworkServerClient
   mcpAppEngine?: "v1" | "v2"
   readOnly?: boolean
+  waitingFollowUpIds?: readonly string[]
   children: React.ReactNode
   workspaceId: string
   sessionId: string
@@ -108,10 +110,13 @@ export interface DispatchAction {
   section: "commands" | "skills" | "mcps" | "plugins" | "providers"
 }
 
+const NO_WAITING_FOLLOW_UPS: readonly string[] = []
+
 export function MessageListProvider({
   client,
   mcpAppEngine,
   readOnly = false,
+  waitingFollowUpIds = NO_WAITING_FOLLOW_UPS,
   children,
   workspaceId,
   sessionId,
@@ -240,6 +245,7 @@ export function MessageListProvider({
     () => ({
       mcpAppOrigin,
       readOnly,
+      waitingFollowUpIds,
       workspaceId,
       sessionId,
       uiStateOwner,
@@ -278,6 +284,7 @@ export function MessageListProvider({
     [
       mcpAppOrigin,
       readOnly,
+      waitingFollowUpIds,
       workspaceId,
       sessionId,
       uiStateOwner,
